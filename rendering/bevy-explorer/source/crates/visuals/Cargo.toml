@@ -23,3 +23,9 @@ clap = { workspace = true }
 chrono = { workspace = true }
 noise = "0.9"
 web-time = { workspace = true }
+
+[dev-dependencies]
+# the pipeline-compile test: embedded shared shaders, and naga_oil with `override_any` as the
+# engine builds it
+assets = { workspace = true }
+naga_oil = { workspace = true }

@@ -202,3 +202,32 @@ fn ripples_tile_and_are_deterministic() {
     let top = &bytes[..ripples::SIZE * ripples::SIZE * 2];
     assert!(top.iter().any(|&v| v < 100) && top.iter().any(|&v| v > 155));
 }
+
+/// Cliffs are built no farther than the Landscape Distance, and the sea hides when even its
+/// nearest part is beyond it.
+#[test]
+fn coast_culled_beyond_distance() {
+    let bounds = bounds(IVec2::splat(-150), IVec2::splat(150));
+    // 600 m in from the west side, far from the others
+    let parcel = Vec3::new(bounds.x + 600.0, 0.0, 0.0);
+    let west = |range: f32| {
+        near_chunks(bounds, parcel, range)
+            .into_iter()
+            .filter(|(side, _)| *side == 3)
+            .count()
+    };
+    assert_eq!(west(cliff_range(500.0)), 0);
+    assert!(west(cliff_range(1000.0)) > 0);
+    // the highest setting builds no more than the cliffs always did
+    assert_eq!(cliff_range(7000.0), CLIFF_RANGE);
+
+    let camera = parcel + Vec3::Y * 2.0;
+    assert!(!ocean_visible(bounds, camera, 500.0));
+    assert!(ocean_visible(bounds, camera, 1000.0));
+    assert!(ocean_visible(bounds, camera, 7000.0));
+    // high above the land the sea is farther away
+    assert!(!ocean_visible(bounds, parcel + Vec3::Y * 900.0, 1000.0));
+    // over the sea it always shows
+    let offshore = Vec3::new(bounds.x - 100.0, 2.0, 0.0);
+    assert!(ocean_visible(bounds, offshore, 500.0));
+}

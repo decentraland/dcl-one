@@ -24,10 +24,14 @@ const GROUND_NEAR_MIN: i32 = -13;
 const GROUND_NEAR_MAX: i32 = 12;
 // cell size of the ground ring beyond them (terrain.rs RING_CELL)
 const RING_CELL: f32 = 16.0;
-// Beyond the rings at RING_CELL (terrain.rs TERRAIN_RINGS, each doubling the extent) the ground is
-// flat: coarser cells slide over the terrain as the mesh follows the player, so can't follow it
-// without swimming.
-const FLAT_REACH: f32 = f32(-GROUND_NEAR_MIN) * 16.0 * 4.0;
+// Half-size of the rings at RING_CELL (terrain.rs TERRAIN_RINGS, each doubling the extent). Each
+// ring beyond doubles both its cell and its extent.
+const FINE_REACH: f32 = f32(-GROUND_NEAR_MIN) * 16.0 * 4.0;
+// rings beyond those (terrain.rs GROUND_RINGS - TERRAIN_RINGS)
+const COARSE_RINGS: i32 = 4;
+// Past the hill reach the hills flatten over this share of it, so no vertex drops abruptly as the
+// player walks.
+const REACH_FADE: f32 = 0.1;
 
 fn modulo289(value: f32) -> f32 {
     return value - floor(value * (1.0 / 289.0)) * 289.0;
@@ -97,9 +101,20 @@ fn terrain_texel(parcel: vec2<i32>) -> f32 {
     return 255.0 - TEXEL_STEP * terrain.max_steps + TEXEL_STEP * steps;
 }
 
-// x and unity z (= -bevy z)
+// 1 within the hill reach of the player (square, like the ground rings), falling to 0 over
+// REACH_FADE of it beyond (x and unity z)
+fn hill_fade(p: vec2<f32>) -> f32 {
+    let player = (vec2<f32>(terrain.player_parcel) + terrain.player_offset) * 16.0;
+    let offset = abs(p - player);
+    let reach = terrain.hill_reach;
+    return 1.0 - smoothstep(reach, reach * (1.0 + REACH_FADE), max(offset.x, offset.y));
+}
+
+// x and unity z (= -bevy z). Within the hill reach, where the collider and the player stand, this
+// is `common::terrain::height`.
 fn terrain_height_unity(p: vec2<f32>) -> f32 {
-    if terrain.max_steps <= 0.0 {
+    let fade = hill_fade(p);
+    if terrain.max_steps <= 0.0 || fade <= 0.0 {
         return 0.0;
     }
     let uv_size = terrain.uv_size;
@@ -130,7 +145,25 @@ fn terrain_height_unity(p: vec2<f32>) -> f32 {
         normalized * (terrain.max_steps * STEP_HEIGHT)
             + mountain_noise(p) * clamp(normalized * 20.0, 0.0, 1.0),
         0.0,
-    );
+    ) * fade;
+}
+
+// Cell size of the ground ring holding a vertex `distance` metres (the larger of x and z) from the
+// mesh origin. A vertex on the border of two rings takes the finer ring's cell, so the two rings'
+// copies of it land on the same point.
+fn ring_cell(distance: f32) -> f32 {
+    var cell = RING_CELL;
+    var edge = FINE_REACH;
+    for (var ring = 0; ring < COARSE_RINGS && distance > edge; ring++) {
+        cell *= 2.0;
+        edge *= 2.0;
+    }
+    return cell;
+}
+
+// terrain.rs `ring_origin`: the corner of the `cell` holding `p` (x and unity z)
+fn ring_origin(p: vec2<f32>, cell: f32) -> vec2<f32> {
+    return floor(p / cell) * cell;
 }
 
 // bevy world x/z
@@ -329,15 +362,23 @@ fn vertex(vertex: Vertex) -> VertexOutput {
     stitch = vertex.uv;
     out.uv = vec2<f32>(0.0);
 #endif
-    let xz = world_position.xz;
+    // The mesh follows the player's parcel. Rings coarser than a parcel move to the corner of the
+    // player's cell of their own size instead, so their vertices stay on the same terrain points
+    // while the player walks rather than swimming over the hills.
     let anchor = world_from_local[3].xz;
-    let outer = max(abs(xz.x - anchor.x), abs(xz.y - anchor.y)) >= FLAT_REACH;
-    if !outer {
-        world_position.y += vertex_height(
-            vec2<f32>(xz.x, -xz.y),
-            stitch,
-            vec2<f32>(anchor.x, -anchor.y),
-        );
+    let local = world_position.xz - anchor;
+    let cell = ring_cell(max(abs(local.x), abs(local.y)));
+    var origin = vec2<f32>(anchor.x, -anchor.y);
+    if cell > RING_CELL {
+        origin = ring_origin(origin, cell);
+    }
+    let p = origin + vec2<f32>(local.x, -local.y);
+    world_position.x = p.x;
+    world_position.z = -p.y;
+    let xz = world_position.xz;
+    let beyond_reach = hill_fade(p) <= 0.0;
+    if !beyond_reach {
+        world_position.y += vertex_height(p, stitch, origin);
     }
 
     out.world_position = world_position;
@@ -349,13 +390,13 @@ fn vertex(vertex: Vertex) -> VertexOutput {
     out.position.z = min(out.position.z, 1.0);
 #endif
 #ifdef NORMAL_PREPASS_OR_DEFERRED_PREPASS
-    out.world_normal = select(terrain_normal(xz), vec3<f32>(0.0, 1.0, 0.0), outer);
+    out.world_normal = select(terrain_normal(xz), vec3<f32>(0.0, 1.0, 0.0), beyond_reach);
 #endif
 #ifdef MOTION_VECTOR_PREPASS
     out.previous_world_position = world_position;
 #endif
 #else
-    out.world_normal = select(terrain_normal(xz), vec3<f32>(0.0, 1.0, 0.0), outer);
+    out.world_normal = select(terrain_normal(xz), vec3<f32>(0.0, 1.0, 0.0), beyond_reach);
 #endif
 
 #ifdef VERTEX_OUTPUT_INSTANCE_INDEX

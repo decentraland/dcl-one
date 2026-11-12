@@ -8,7 +8,7 @@ use bevy::{
     },
 };
 use bevy_console::ConsoleCommand;
-use common::structs::{PrimaryCamera, SceneLoadDistance, TimeOfDay};
+use common::structs::{LandscapeDistance, PrimaryCamera, SceneLoadDistance, TimeOfDay};
 use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand};
 use serde_json::json;
 
@@ -61,6 +61,7 @@ pub(super) fn register(app: &mut App) {
         query: "/landscape",
         fields: &[
             ("Scene load distance (m)", "loadDistance"),
+            ("Landscape distance (m)", "landscapeDistance"),
             ("Loaded trees", "treeCount"),
             ("Grass parcels", "grassParcels"),
         ],
@@ -160,6 +161,7 @@ fn landscape_command(
     preview: Option<Res<common::structs::PreviewMode>>,
     mut layers: ResMut<LandscapeLayers>,
     load: Res<SceneLoadDistance>,
+    landscape: Res<LandscapeDistance>,
     trees: Query<(), With<Tree>>,
     grass: Query<(), With<ParcelGrass>>,
 ) {
@@ -176,7 +178,7 @@ fn landscape_command(
         }
     }
     cmd.reply_ok(json!({"ground":layers.ground, "trees":layers.trees, "grass":layers.grass,
-        "treeCount":trees.iter().len(), "grassParcels":grass.iter().len(), "loadDistance":load.load}).to_string());
+        "treeCount":trees.iter().len(), "grassParcels":grass.iter().len(), "loadDistance":load.load, "landscapeDistance":landscape.0}).to_string());
 }
 
 type LandscapeObjects = Or<(With<Ground>, With<Tree>, With<ParcelGrass>)>;

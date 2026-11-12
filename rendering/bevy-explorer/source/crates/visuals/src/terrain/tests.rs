@@ -230,3 +230,199 @@ fn scene_casts_hit_the_heightfield() {
         assert_eq!(all.len(), 1, "avatar all, skip_inside {skip_inside}");
     }
 }
+
+/// The lowest Landscape Distance still displaces the hills as far as the fine rings always did.
+#[test]
+fn hill_reach_never_below_832() {
+    assert_eq!(hill_reach(500.0), 832.0);
+    assert_eq!(hill_reach(832.0), 832.0);
+    assert_eq!(hill_reach(1000.0), 1000.0);
+    assert_eq!(hill_reach(7000.0), 7000.0);
+
+    let mut surface = TerrainSurface::default();
+    assert_eq!(surface.params().hill_reach, 1000.0);
+    surface.set_landscape_distance(500.0);
+    assert!(surface.changes().params);
+    assert_eq!(surface.params().hill_reach, 832.0);
+    surface.changes = SurfaceChanges::default();
+    surface.set_landscape_distance(500.0);
+    assert!(!surface.changes().params);
+    surface.set_landscape_distance(7000.0);
+    assert_eq!(surface.params().hill_reach, 7000.0);
+    surface.set_landscape_distance(500.0);
+    assert_eq!(surface.params().hill_reach, 832.0);
+}
+
+/// The ground mesh reaches past the highest setting, so hills are displaced all the way out.
+#[test]
+fn ground_reaches_the_highest_hill_reach() {
+    assert!(ground_extent(GROUND_RINGS) >= hill_reach(7000.0) * 1.1);
+}
+
+/// A ring's origin moves only when the player crosses a whole cell of that ring, so its vertices
+/// stay on the same terrain points while the player walks.
+#[test]
+fn ring_origins_snap_to_cell_size() {
+    for cell in [32.0, 64.0, 128.0, 256.0] {
+        let origin = ring_origin(Vec2::new(1000.0, -3000.0), cell);
+        assert_eq!(origin % cell, Vec2::ZERO);
+        for step in [0.0, 1.0, 15.9, 16.0, 31.0] {
+            let player = origin + Vec2::new(step, step * 0.5);
+            assert_eq!(ring_origin(player, cell), origin, "{cell} {step}");
+        }
+        assert_eq!(
+            ring_origin(origin + Vec2::new(cell, -0.5), cell),
+            origin + Vec2::new(cell, -cell)
+        );
+    }
+    // the whole ground snaps to its first rings' cell, the player's parcel corner
+    let player = Vec3::new(37.0, 0.0, -21.0);
+    let corner = ring_origin(Vec2::new(player.x, -player.z), RING_CELL);
+    assert_eq!(ground_origin(player), Vec3::new(corner.x, 0.0, -corner.y));
+}
+
+/// Every terrain vertex shader variant (flat ground and grass shells, main pass, prepasses and
+/// shadows) compiles. Needs a GPU:
+/// `cargo test -p visuals terrain_vertex_compiles -- --ignored --nocapture`.
+#[test]
+#[ignore = "needs a GPU"]
+fn terrain_vertex_compiles() {
+    use bevy::{
+        core_pipeline::prepass::{DepthPrepass, NormalPrepass},
+        log::LogPlugin,
+        render::{
+            camera::RenderTarget,
+            mesh::MeshTag,
+            pipelined_rendering::PipelinedRenderingPlugin,
+            render_resource::{
+                CachedPipelineState, PipelineCache, PipelineCacheError, PipelineDescriptor,
+                TextureUsages,
+            },
+        },
+        window::ExitCondition,
+        winit::WinitPlugin,
+    };
+
+    use crate::shell_texturing::{self, ShellTexture};
+
+    let mut app = App::new();
+    app.add_plugins(
+        DefaultPlugins
+            .build()
+            .disable::<LogPlugin>()
+            .disable::<WinitPlugin>()
+            .disable::<PipelinedRenderingPlugin>()
+            .set(WindowPlugin {
+                primary_window: None,
+                exit_condition: ExitCondition::DontExit,
+                close_when_requested: false,
+            }),
+    )
+    .add_plugins(assets::EmbedAssetsPlugin)
+    .add_plugins((
+        MaterialPlugin::<TerrainFlatMaterial>::default(),
+        MaterialPlugin::<ShellTexture>::default(),
+    ));
+    embed_shaders(&mut app);
+    shell_texturing::embed_shaders(&mut app);
+    app.finish();
+    app.cleanup();
+
+    let world = app.world_mut();
+    let mut target = Image::new_fill(
+        Extent3d {
+            width: 64,
+            height: 64,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        &[0; 4],
+        TextureFormat::Bgra8UnormSrgb,
+        RenderAssetUsages::default(),
+    );
+    target.texture_descriptor.usage |= TextureUsages::RENDER_ATTACHMENT;
+    let mut images = world.resource_mut::<Assets<Image>>();
+    let target = images.add(target);
+    images.insert(TERRAIN_TEXTURE.id(), TerrainSurface::default().image());
+    world.spawn((
+        Camera3d::default(),
+        Camera {
+            target: RenderTarget::Image(target.into()),
+            ..default()
+        },
+        DepthPrepass,
+        NormalPrepass,
+        Transform::from_xyz(0.0, 50.0, 100.0).looking_at(Vec3::ZERO, Vec3::Y),
+    ));
+    world.spawn((
+        DirectionalLight {
+            shadows_enabled: true,
+            ..default()
+        },
+        Transform::from_xyz(1.0, 2.0, 1.0).looking_at(Vec3::ZERO, Vec3::Y),
+    ));
+    let mut meshes = world.resource_mut::<Assets<Mesh>>();
+    let ground = meshes.add(ground_mesh(|_| 4, GROUND_RINGS));
+    let parcel = meshes.add(parcel_mesh(4));
+    let flat = world
+        .resource_mut::<Assets<TerrainFlatMaterial>>()
+        .add(TerrainFlatMaterial {
+            base: StandardMaterial::default(),
+            extension: TerrainExtension::default(),
+        });
+    let shells = world
+        .resource_mut::<Assets<ShellTexture>>()
+        .add(shell_texturing::shell_material(
+            &default(),
+            4,
+            TerrainParams::default(),
+        ));
+    world.spawn((Mesh3d(ground.clone()), MeshMaterial3d(flat)));
+    for mesh in [ground, parcel] {
+        world.spawn((
+            Mesh3d(mesh),
+            MeshMaterial3d(shells.clone()),
+            MeshTag(1 << 16),
+        ));
+    }
+    let ShaderRef::Path(path) = terrain_vertex_shader() else {
+        unreachable!("the terrain vertex shader is embedded");
+    };
+    let vertex = world.resource::<AssetServer>().load::<Shader>(path).id();
+
+    let mut seen = 0;
+    for _ in 0..2000 {
+        app.update();
+        let cache = app.sub_app(RenderApp).world().resource::<PipelineCache>();
+        let terrain: Vec<_> = cache
+            .pipelines()
+            .filter(|pipeline| {
+                matches!(&pipeline.descriptor,
+                    PipelineDescriptor::RenderPipelineDescriptor(descriptor)
+                        if descriptor.vertex.shader.id() == vertex)
+            })
+            .collect();
+        for pipeline in &terrain {
+            if let CachedPipelineState::Err(error) = &pipeline.state {
+                // both clear once the shader and its imports have loaded
+                if !matches!(
+                    error,
+                    PipelineCacheError::ShaderNotLoaded(_)
+                        | PipelineCacheError::ShaderImportNotYetAvailable
+                ) {
+                    panic!("a terrain pipeline failed to compile: {error}");
+                }
+            }
+        }
+        seen = terrain.len();
+        let ready = terrain
+            .iter()
+            .all(|pipeline| matches!(pipeline.state, CachedPipelineState::Ok(_)));
+        // each material's main pass, prepass and shadow pass
+        if seen >= 4 && ready && cache.waiting_pipelines().next().is_none() {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    panic!("the terrain pipelines did not finish compiling ({seen} seen)");
+}
