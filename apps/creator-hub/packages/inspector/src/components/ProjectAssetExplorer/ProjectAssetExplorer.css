@@ -41,15 +41,14 @@
   flex: 1;
 }
 
-.ProjectView > .Tree-View > .with-context-menu {
+.ProjectView > .Tree-View > .TreeRoot {
   flex: 1;
   min-height: 0;
   overflow-x: hidden;
   overflow-y: auto;
 }
 
-/* Every nested node carries .editor-assets-tree too, so only the root may be padded. */
-.ProjectView > .Tree-View > .with-context-menu > .editor-assets-tree {
+.ProjectView > .Tree-View > .TreeRoot > .with-context-menu > .editor-assets-tree {
   padding: 0 8px 8px 8px;
 }
 

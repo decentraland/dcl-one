@@ -136,9 +136,7 @@ class UIDesignerPageObject {
     const rowSelector = this.nodeRowSelector(label);
     const before = await this.isNodeHidden(label);
     const row = page.locator(rowSelector);
-    const button = page.locator(
-      `${rowSelector} [aria-label="Hide node"], ${rowSelector} [aria-label="Show node"]`,
-    );
+    const button = page.locator(`${rowSelector} [aria-label="Hide ${label}"]`);
     await revealThenClick(row, button, () =>
       page.waitForFunction(
         ([selector, was]) =>
