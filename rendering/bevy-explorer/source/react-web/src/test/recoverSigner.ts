@@ -3,7 +3,7 @@
 import { secp256k1 } from '@noble/curves/secp256k1.js'
 import { keccak_256 } from '@noble/hashes/sha3.js'
 import { hexToBytes, utf8ToBytes } from '@noble/hashes/utils.js'
-import { publicKeyAddress } from '../features/auth/guest'
+import { publicKeyAddress } from '@explorer-core/features/auth/guest'
 
 export function recoverSigner(message: string, signature: string): string {
   const body = utf8ToBytes(message)

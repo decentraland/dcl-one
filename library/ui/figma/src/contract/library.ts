@@ -39,12 +39,24 @@ function entryOf(pkg: z.infer<typeof packageSchema>): string | undefined {
 }
 
 // Provenance comes from the package that owns the mapping files, never from the consumer's own package.
-async function loadLibrary(mappingRoot: string): Promise<LibraryInfo | undefined> {
+// Undefined outside any package; `{ invalid }` when the owning package.json cannot be read or names no name and
+// version, so the caller answers with a coded diagnostic instead of a raw error.
+async function loadLibrary(
+  mappingRoot: string
+): Promise<LibraryInfo | { invalid: string } | undefined> {
   const rootDir = findPackageRoot(mappingRoot)
   if (!rootDir) return undefined
-  const pkg = packageSchema.parse(
-    JSON.parse(await readFile(path.join(rootDir, 'package.json'), 'utf8'))
-  )
+  const file = path.join(rootDir, 'package.json')
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(await readFile(file, 'utf8'))
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    return { invalid: `${file} cannot be read (${code ?? 'not JSON'})` }
+  }
+  const result = packageSchema.safeParse(parsed)
+  if (!result.success) return { invalid: `${file} names no package name and version` }
+  const pkg = result.data
   const entry = entryOf(pkg)
   return {
     rootDir,
