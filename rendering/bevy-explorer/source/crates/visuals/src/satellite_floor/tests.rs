@@ -1,3 +1,5 @@
+use std::time::{Duration, Instant};
+
 use bevy::{asset::LoadState, render::mesh::VertexAttributeValues};
 
 use super::*;
@@ -79,14 +81,29 @@ fn satellite_assets_load_embedded() {
     let handles: Vec<Handle<Image>> = ["0,0", "7,7"]
         .map(|tile| server.load(format!("embedded://landscape/satellite/{tile}.jpg")))
         .into();
-    for _ in 0..200 {
+    // The images decode on the IO task pool, which every test in the process shares: wait on the
+    // clock, not on a count of frames, and let the pool run between frames.
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
         app.update();
-        if handles
+        let pending: Vec<_> = handles
             .iter()
-            .all(|handle| matches!(server.load_state(handle), LoadState::Loaded))
-        {
+            .filter(|handle| {
+                !matches!(
+                    server.load_state(*handle),
+                    LoadState::Loaded | LoadState::Failed(_)
+                )
+            })
+            .map(Handle::path)
+            .collect();
+        if pending.is_empty() {
             break;
         }
+        assert!(
+            Instant::now() < deadline,
+            "still loading after 30 s: {pending:?}"
+        );
+        std::thread::sleep(Duration::from_millis(1));
     }
     for handle in &handles {
         assert!(
