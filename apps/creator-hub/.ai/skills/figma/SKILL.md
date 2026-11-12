@@ -1,6 +1,6 @@
 ---
 name: figma
-description: Project umbrella for Figma→code work in the inspector / Creator Hub. Read this FIRST whenever a task involves Figma — a figma.com URL, the word "figma", "design from figma", "match the design", or restyling/building UI to a spec. It sets the design loop (Match → user answers → Spec → test-first implementation → Validate against the live Figma frame → user sign-off → decisions in docs/DESIGN.md), the MCP budget (structure from the MCP, values from the browser), and links the references for browser extraction, screenshots, the multi-page sync, change detection and SVG/CSS gotchas.
+description: Project umbrella for Figma→code work in the inspector / Creator Hub. Read this FIRST whenever a task involves Figma — a figma.com URL, the word "figma", "design from figma", "match the design", or restyling/building UI to a spec. It sets the design loop (Match → user answers → Spec → test-first implementation → Validate against the live Figma frame → user sign-off → decisions in docs/DESIGN.md), how to read Figma (the MCP first, the browser as the fallback), and links the references for browser extraction, screenshots, the multi-page sync, change detection and SVG/CSS gotchas.
 ---
 
 # Figma → code (project workflow)
@@ -27,12 +27,12 @@ Work in **units, small to big**: one Figma component set per unit (primitives, t
 
 Figma moves while you work: re-read the set and its board at the start of Spec, right before handing to the implementer, and at the start of every Validate round, and record the read time and the diff in the spec's §0.
 
-## MCP for structure, browser for values
+## Read with the MCP; the browser is the fallback
 
-- **The budget.** The Figma MCP allows **20 read calls a month** on this account's seats, and every read tool counts, `get_metadata` included. `whoami` is free and lists the seats; nothing reports the remaining count. Never spend a call to probe the budget, pace calls ≥ 10 s apart, and on `reached the Figma MCP tool call limit` put the error text in the handoff and finish in the browser.
-- **Spend calls on structure.** `get_metadata` for a page's sets, variants and node ids, and `get_design_context` / `get_variable_defs` on a dense, new or ambiguous set. Node-addressed calls serve any page; only the no-`nodeId` page listing is pinned to COVER. Pass a frame or set id, never a page id, to `get_variable_defs`. Page ids are in `docs/DESIGN.md` → "Pages inventory".
-- **Read values in the browser.** Claude-in-Chrome on the `?node-id=` URL, with the Properties panel as the value source, Figma's client store for the page list, and canvas zooms labelled "canvas measurement (±2px)": [`references/browser-extraction.md`](references/browser-extraction.md).
-- **Leaf skills are checklists only.** The installed `figma-implement-design` skill and the MCP server's `/figma-design-to-code` describe what a design-to-code pass covers; their fetch order ("Always fetch `get_design_context` and `get_screenshot` first") does not apply here, because the budget above overrides it. This skill wins wherever they differ. The downloaded skills are pinned in `skills-lock.json`; `web-design-guidelines` is vendored in `.ai/skills/` at a fixed commit. If missing, run `make install-skills`, then `/reload-skills`.
+- **The limit.** Figma MCP read calls are limited per seat, on the plan that owns the file. This account has a Dev seat on the Decentraland Team plan (Professional): **200 read calls a day and 10 a minute** for that plan's files. Every read tool counts, `get_metadata` included. `whoami` is free and lists every plan and seat; nothing reports the remaining count. Parallel agents share the per-minute limit, so pace them together. On `reached the Figma MCP tool call limit`, put the error text in the handoff and finish in the browser.
+- **Read everything through the MCP.** `get_metadata` for a page's sets, variants and node ids; `get_design_context` for values and copy; `get_variable_defs` for the variables a frame uses; `get_screenshot` for reference images. A frame above the size limit comes back as metadata only, or saved to a file: read the child frame you need. Node-addressed calls serve any page; only the no-`nodeId` page listing is pinned to COVER. Pass a frame or set id, never a page id, to `get_variable_defs`. Page ids are in `docs/DESIGN.md` → "Pages inventory".
+- **The browser is the fallback** when the MCP is unavailable or capped: Claude-in-Chrome on the `?node-id=` URL, with the Properties panel as the value source, Figma's client store for the page list, and canvas zooms labelled "canvas measurement (±2px)": [`references/browser-extraction.md`](references/browser-extraction.md).
+- **Leaf skills are checklists only.** The installed `figma-implement-design` skill and the MCP server's `/figma-design-to-code` describe what a design-to-code pass covers. This skill wins wherever they differ. The downloaded skills are pinned in `skills-lock.json`; `web-design-guidelines` is vendored in `.ai/skills/` at a fixed commit. If missing, run `make install-skills`, then `/reload-skills`.
 - **A multi-page sync** (the Design System → `docs/DESIGN.md`) follows [`references/extraction-runbook.md`](references/extraction-runbook.md).
 
 ## References
@@ -41,7 +41,7 @@ Figma moves while you work: re-read the set and its board at the start of Spec, 
 | --- | --- |
 | [`references/design-loop.md`](references/design-loop.md) | Units, the star PR layout, the match pass, decisions, board reads, mismatch classes, the stop condition |
 | [`references/mapping-and-reuse.md`](references/mapping-and-reuse.md) | Frame ↔ screen mapping, the reuse audit, palette sync, verifying against the real render |
-| [`references/browser-extraction.md`](references/browser-extraction.md) | The MCP budget in full and the Claude-in-Chrome Properties-panel procedure |
+| [`references/browser-extraction.md`](references/browser-extraction.md) | The MCP limits in full and the Claude-in-Chrome fallback procedure |
 | [`references/comments.md`](references/comments.md) | Harvesting a designer's comment threads, the ledger, mapping a comment to a node and property |
 | [`references/change-detection.md`](references/change-detection.md) | The page, set and value diffs that decide what to re-read |
 | [`references/extraction-runbook.md`](references/extraction-runbook.md) | Running a multi-page sync into `docs/DESIGN.md` |

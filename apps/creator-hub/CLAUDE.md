@@ -266,7 +266,7 @@ If `git status -sb` shows `## <branch>...origin/main`, the branch's upstream is 
 - The UI is moving to [`dcl-one` → `apps/ui3`](https://github.com/decentraland/dcl-one/tree/main/apps/ui3), a plain-CSS React UI with no MUI or `decentraland-ui2`. Our tokens don't follow ui3 yet: of ui3's 153 global tokens (`apps/ui3/src/atoms/primitives.css`), only 21 exist in `theme.css` and 34 in `vars.css`, and some shared names carry different values (`--brand-dark`, `--r-card`, `--text`). ui3's values win when the UI moves. Until the move, `docs/DESIGN.md` documents the current inspector and Creator Hub.
 - Figma file: "📗️ Design System | Creator Tools" ([`docs/DESIGN.md`](docs/DESIGN.md) → "Figma source").
 - Owner: `dcl-designer-specialist` pulls frames into specs, syncs `docs/DESIGN.md` and the token blocks, and validates the render against Figma.
-- The Figma MCP allows **20 read calls per month**; spend them on structure and read values in the browser.
+- The Figma MCP allows **200 read calls a day and 10 a minute** (the Dev seat on the Decentraland Team plan; `whoami` shows it). Read through it; the browser is the fallback when it is unavailable or capped.
 - Read [`.ai/skills/figma/SKILL.md`](.ai/skills/figma/SKILL.md) before any Figma or design work.
 
 ## Skills
