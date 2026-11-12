@@ -13,7 +13,7 @@ import { signTypedData, TxPendingError, TxRevertedError } from '../../shop/marke
 import type { StoredLogin } from '@explorer-core/features/auth/sso'
 import { isShellError } from '@explorer-core/lib/shellReply'
 import { DONATE_BUSY, DONATE_EVENT, DONATE_UNAVAILABLE } from '../lib/donateProtocol'
-import { createShellDonate, parsePresets, placeTitle, resolvePlace, weiToMana, type DonateHandlers, type DonateView, type ShellDonateServices } from '../shell/donate/donation'
+import { createShellDonate, parsePresets, safeCreator, placeTitle, resolvePlace, weiToMana, type DonateHandlers, type DonateView, type ShellDonateServices } from '../shell/donate/donation'
 import type { ShellShopWallet } from '../shell/shop/purchase'
 
 const TIPPER = '0x' + 'aa'.repeat(20)
@@ -293,7 +293,8 @@ describe('sending a tip', () => {
     await open(s.donate)
     s.handlers().onSend?.('166')
     await flush()
-    expect(transfers).toHaveBeenCalledWith(expect.anything(), TIPPER, CREATOR, 100n)
+    // From the block after the one read before signing: the tip can't be mined in that one.
+    expect(transfers).toHaveBeenCalledWith(expect.anything(), TIPPER, CREATOR, 101n)
     expect(s.views.map((v) => v.step)).toContain('processing')
     expect(s.last().step).toBe('sent')
     expect(s.services.forward).toHaveBeenCalledWith(MINED, LOGIN)
@@ -541,6 +542,66 @@ describe('sending a tip', () => {
     expect(first.last().step).toBe('sent')
     expect(locks.held.size).toBe(0)
     expect(second.last().step).toBe('form')
+  })
+
+  it('watches by Transfer only, never in a loop, once its known hash reverted and its nonce moved', async () => {
+    const wait = vi.fn(async (_c: number, h: string) => Promise.reject(new TxRevertedError(h)))
+    const nonce = vi.fn(async () => 2n)
+    const s = setup({ wait, nonce })
+    await open(s.donate)
+    s.handlers().onSend?.('166')
+    await flush()
+    await flush()
+    expect(wait).toHaveBeenCalledOnce()
+    expect(nonce).toHaveBeenCalledOnce()
+    expect(s.last()).toMatchObject({ step: 'processing', final: true })
+  })
+
+  it('retries a failed tip with the same nonce, and shows it sent instead if it was mined after all', async () => {
+    const signed: bigint[] = []
+    const relay = vi.fn(async (p: Eip1193Provider, token: typeof TOKEN, data: `0x${string}`, f: typeof fetch, pinned?: bigint) => {
+      const nonce = pinned ?? 1n
+      signed.push(nonce)
+      await signTypedData(p, TIPPER, metaTransactionTypedData(token, 'collection', TIPPER, nonce, data))
+      await f('https://relay.test/transactions', { method: 'POST' })
+      throw new MetaTransactionError('Invalid transaction', 'invalid_transaction', 400, true)
+    })
+    let used = 1n
+    const MINED = '0x' + 'ef'.repeat(32)
+    const s = setup({ sendGasless: relay, now: () => 0, nonce: async () => used, transfers: async () => (used > 1n ? [{ hash: MINED, value: parseUnits('166', 18) }] : []) })
+    await open(s.donate)
+    s.handlers().onSend?.('166')
+    await flush()
+    expect(s.last().step).toBe('failed')
+    // TRY AGAIN while the nonce is still unused: the retry signs that same nonce, so at most one of the two lands.
+    s.handlers().onRetry?.()
+    s.handlers().onSend?.('166')
+    await flush()
+    expect(signed).toEqual([1n, 1n])
+    expect(s.last().step).toBe('failed')
+    // The first tip is mined after all: the next SEND shows it sent and signs nothing.
+    used = 2n
+    s.handlers().onRetry?.()
+    s.handlers().onSend?.('166')
+    await flush()
+    expect(signed).toHaveLength(2)
+    expect(s.last().step).toBe('sent')
+    expect(s.services.forward).toHaveBeenCalledWith(MINED, LOGIN)
+  })
+
+  it('draws only an https face and a plain colour from a profile, and ignores a stored record with any bad field', async () => {
+    expect(safeCreator({ address: CREATOR, nameColor: 'url(https://x.example/a)', face: 'http://x.example/f.png' })).toEqual({ address: CREATOR })
+    expect(safeCreator({ address: CREATOR, nameColor: '#abc', face: 'https://x.example/f.png' })).toEqual({ address: CREATOR, nameColor: '#abc', face: 'https://x.example/f.png' })
+    expect(safeCreator({ address: 'nobody' })).toBeNull()
+    const good = { id: 'x', amount: '166', wei: '1', fromBlock: '1', nonce: '1', until: Number.MAX_SAFE_INTEGER, creator: { address: CREATOR } }
+    for (const bad of [{ id: 1 }, { amount: '1e3' }, { wei: '-1' }, { fromBlock: '0x1' }, { nonce: '' }, { until: 'later' }, { hash: '0x12' }, { creator: { address: 'nobody' } }]) {
+      const storage = memoryStorage()
+      storage.setItem(`dcl:donate:pending:v2:${TIPPER}`, JSON.stringify({ ...good, ...bad }))
+      const s = setup({}, { storage })
+      await open(s.donate)
+      expect(s.last().step).toBe('form')
+      expect(storage.length).toBe(0)
+    }
   })
 
   it('lets the lock go when nothing was signed', async () => {

@@ -27,6 +27,8 @@ export interface DonationIntent {
   to: string
   /** The confirmed amount, in wei. */
   wei: bigint
+  /** The meta-transaction nonce it must sign, when pinned (a retry of a tip shown as failed signs that one's). */
+  nonce?: bigint
   /** False once the login or the wallet changed since the player confirmed. */
   current(): boolean
 }
@@ -91,6 +93,7 @@ function checkMetaTransaction(from: unknown, data: unknown, intent: DonationInte
     (primaryType as unknown) === 'MetaTransaction' &&
     sameKeys(message, ['nonce', 'from', 'functionSignature']) &&
     /^\d{1,78}$/.test(String(message.nonce)) &&
+    (intent.nonce === undefined || BigInt(String(message.nonce)) === intent.nonce) &&
     lower(message.from) === intent.from
   if (!ok) refuse('Donate only signs the tip you confirmed.')
   checkTransfer(message.functionSignature, intent)

@@ -100,9 +100,11 @@ export async function sendMetaTransaction(opts: {
   kind: MetaTxKind;
   functionData: `0x${string}`;
   fetchImpl?: typeof fetch;
+  /** The nonce to sign instead of the contract's current one (a retry that must replace, never add to, a signed one). */
+  nonce?: bigint;
 }): Promise<string> {
   const from = await walletAccount(opts.provider);
-  const nonce = await readNonce(opts.contract, from);
+  const nonce = opts.nonce ?? (await readNonce(opts.contract, from));
   const signature = await signTypedData(opts.provider, from, metaTransactionTypedData(opts.contract, opts.kind, from, nonce, opts.functionData));
   const txData = executeMetaTransactionData(opts.kind, from, signature, opts.functionData);
   const res = await (opts.fetchImpl ?? fetch)(`${relayBase()}/transactions`, {

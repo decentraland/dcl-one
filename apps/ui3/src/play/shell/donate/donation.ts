@@ -92,8 +92,11 @@ export interface ShellDonateServices {
   tipTarget(): Promise<TipTarget | null>
   chainId(): ChainId
   guard(provider: Eip1193Provider, intent: DonationIntent): Eip1193Provider
-  /** Relays the token meta-transaction; `fetchImpl` carries the relay POST (its timeout, and whether it was made). */
-  sendGasless(provider: Eip1193Provider, token: ContractData, data: `0x${string}`, fetchImpl: typeof fetch): Promise<string>
+  /**
+   * Relays the token meta-transaction; `fetchImpl` carries the relay POST (its timeout, and whether it was made).
+   * With `nonce`, it signs exactly that meta-transaction nonce.
+   */
+  sendGasless(provider: Eip1193Provider, token: ContractData, data: `0x${string}`, fetchImpl: typeof fetch, nonce?: bigint): Promise<string>
   /** A fresh id for a pending tip's record. */
   newId(): string
   /**
@@ -203,7 +206,7 @@ const LIVE: ShellDonateServices = {
     const avatar = await fetchProfile(address).catch(() => null)
     if (!avatar) return { address }
     const p = mapProfile(avatar, address)
-    return { address, name: p.name, claimed: p.hasClaimedName, nameColor: p.nameColor, face: profileFaceUrl(avatar) ?? undefined }
+    return safeCreator({ address, name: p.name, claimed: p.hasClaimedName, nameColor: p.nameColor, face: profileFaceUrl(avatar) ?? undefined }) ?? { address }
   },
   balance: async (account, token) => BigInt(await readManaBalance(token.chainId, account)),
   nonce: (token, account) => readNonce(token, account),
@@ -219,7 +222,7 @@ const LIVE: ShellDonateServices = {
   tipTarget: () => fetchTipTarget().catch(() => null),
   chainId: () => settlementChainId(),
   guard: guardedDonationProvider,
-  sendGasless: (provider, token, data, fetchImpl) => sendMetaTransaction({ provider, contract: token, kind: 'collection', functionData: data, fetchImpl }),
+  sendGasless: (provider, token, data, fetchImpl, nonce) => sendMetaTransaction({ provider, contract: token, kind: 'collection', functionData: data, fetchImpl, nonce }),
   newId: () => crypto.randomUUID(),
   claim: (account, wait) => webLock(pageLocks(), `dcl-donate:account:${account}`, wait),
   locksAvailable: () => pageLocks() != null,
@@ -286,6 +289,21 @@ export function resolvePlace(place: DonatePlace, rows: DestinationRow[]): Resolv
   const creator = row?.creator_address?.trim().toLowerCase()
   if (!row || !creator || !/^0x[0-9a-f]{40}$/.test(creator)) return null
   return { creator, title: placeTitle(place, row.title), positions: row.positions }
+}
+
+/**
+ * The creator as the money panel may draw them: a name, a `#rgb`-style colour and an `https:` face only, so a
+ * profile can't make the page that holds the wallet load anything else. Null without a valid address.
+ */
+export function safeCreator(c: Partial<DonateCreator> | null | undefined): DonateCreator | null {
+  if (!c || typeof c.address !== 'string' || !/^0x[0-9a-f]{40}$/.test(c.address)) return null
+  return {
+    address: c.address,
+    ...(typeof c.name === 'string' ? { name: c.name } : {}),
+    ...(c.claimed === true ? { claimed: true } : {}),
+    ...(typeof c.nameColor === 'string' && /^#[0-9a-fA-F]{3,8}$/.test(c.nameColor) ? { nameColor: c.nameColor } : {}),
+    ...(typeof c.face === 'string' && /^https:\/\/[^\s"'()\\]+$/.test(c.face) ? { face: c.face } : {})
+  }
 }
 
 /** The catalyst refused a tip's forward (a 4xx other than its rate limit): asking again changes nothing. */
@@ -368,6 +386,13 @@ export function createShellDonate(deps: ShellDonateDeps): ShellDonate {
   const targets = new Map<string, { at: number; tippable: boolean }>()
   /** Unsettled tips, by account; also kept in storage, so a reload or another tab sees them. */
   const pending = new Map<string, Pending>()
+  /**
+   * The account's last tip shown as failed, while its watch would still run. Failed means its nonce was unused when
+   * checked, but a broadcast the relay lost can still be mined after that. So the next send first checks it: once its
+   * nonce is used, its Transfer is looked for and shown instead; while unused, the next tip signs that same nonce,
+   * so at most one of the two can land.
+   */
+  const lastFailed = new Map<string, PendingRecord>()
 
   const account = (): string | null => {
     const login = deps.login()
@@ -393,7 +418,7 @@ export function createShellDonate(deps: ShellDonateDeps): ShellDonate {
       if (!raw) return null
       const r = JSON.parse(raw) as Partial<PendingRecord> | null
       const digits = (v: unknown): v is string => typeof v === 'string' && /^\d{1,78}$/.test(v)
-      const creator = r?.creator
+      const creator = safeCreator(r?.creator)
       const ok =
         typeof r?.id === 'string' &&
         typeof r.amount === 'string' &&
@@ -404,9 +429,7 @@ export function createShellDonate(deps: ShellDonateDeps): ShellDonate {
         digits(r.fromBlock) &&
         digits(r.nonce) &&
         (r.hash === undefined || (typeof r.hash === 'string' && /^0x[0-9a-fA-F]{64}$/.test(r.hash))) &&
-        creator != null &&
-        typeof creator.address === 'string' &&
-        /^0x[0-9a-f]{40}$/.test(creator.address)
+        creator != null
       if (!ok) {
         save(who, null)
         return null
@@ -421,13 +444,7 @@ export function createShellDonate(deps: ShellDonateDeps): ShellDonate {
         nonce: valid.nonce,
         ...(valid.hash ? { hash: valid.hash } : {}),
         until: Math.min(valid.until, svc.now() + WATCH_FOR_MS),
-        creator: {
-          address: creator.address,
-          ...(typeof creator.name === 'string' ? { name: creator.name } : {}),
-          ...(creator.claimed === true ? { claimed: true } : {}),
-          ...(typeof creator.nameColor === 'string' && /^#[0-9a-fA-F]{3,8}$/.test(creator.nameColor) ? { nameColor: creator.nameColor } : {}),
-          ...(typeof creator.face === 'string' && /^https?:\/\//.test(creator.face) ? { face: creator.face } : {})
-        }
+        creator
       }
     } catch {
       return null
@@ -448,6 +465,9 @@ export function createShellDonate(deps: ShellDonateDeps): ShellDonate {
     if (pending.get(who) === p) pending.delete(who)
     // Only this tip's record: another tab may since have stored a newer one (where it has no tip lock).
     if (load(who)?.id === p.record.id) save(who, null)
+    if (outcome === 'failed') lastFailed.set(who, p.record)
+    // A tip mined uses the nonce a failed one signed (it signed that one or a later one): that one can't land now.
+    else if (outcome === 'sent') lastFailed.delete(who)
     p.release?.()
     if (p.onSettle) p.onSettle(outcome)
     else if (outcome === 'sent') tipped()
@@ -467,9 +487,12 @@ export function createShellDonate(deps: ShellDonateDeps): ShellDonate {
     }
   }
 
-  /** Its Transfer (from the tipper to the creator, of exactly its amount, since the block it was signed at), if mined. */
+  /**
+   * Its Transfer (from the tipper to the creator, of exactly its amount, after the block read before signing: it
+   * can't be mined in that one), if mined.
+   */
   async function findTransfer(who: string, record: PendingRecord, token: ContractData): Promise<string | null> {
-    const found = (await svc.transfers(token, who, record.creator.address, BigInt(record.fromBlock)).catch(() => [])).find((t) => t.value === BigInt(record.wei))
+    const found = (await svc.transfers(token, who, record.creator.address, BigInt(record.fromBlock) + 1n).catch(() => [])).find((t) => t.value === BigInt(record.wei))
     return found?.hash ?? null
   }
 
@@ -483,6 +506,8 @@ export function createShellDonate(deps: ShellDonateDeps): ShellDonate {
     const { record } = p
     const chainId = token.chainId as ChainId
     const sent = (hash: string): void => {
+      // The hash and the Transfer watch may both answer: the tip is forwarded once.
+      if (p.settled) return
       settle(who, p, 'sent')
       if (login) void forward(hash, login)
     }
@@ -523,6 +548,9 @@ export function createShellDonate(deps: ShellDonateDeps): ShellDonate {
       return
     }
     p.onShowProcessing?.()
+    // Its known hash reverted: watching it again would revert at once and come back here. Its Transfer only.
+    delete p.record.hash
+    save(who, p.record)
     watch(who, p, token, login)
   }
 
@@ -617,9 +645,15 @@ export function createShellDonate(deps: ShellDonateDeps): ShellDonate {
     const lock = await svc.claim(who)
     if (!lock && svc.locksAvailable()) {
       show({ step: 'elsewhere' })
-      void svc.claim(who, true).then((waited) => {
+      void svc.claim(who, true).then(async (waited) => {
         if (!live()) return waited?.()
-        resume(waited).catch(() => close(s))
+        try {
+          await resume(waited)
+        } catch {
+          // Whatever threw, the lock is never kept: a second release of one already let go does nothing.
+          waited?.()
+          close(s)
+        }
       })
       return
     }
@@ -699,7 +733,24 @@ export function createShellDonate(deps: ShellDonateDeps): ShellDonate {
         if (before == null || fromBlock == null) return toForm(amount, 'Couldn’t read your MANA balance. Try again.')
         form = { ...form, balance: weiToMana(before) }
         if (wei > before) return toForm(amount, 'Insufficient MANA')
-        await sendTip(amount, wei, fromBlock, login, () => cancelled, owned)
+        // The last tip shown as failed may have been mined since: show it rather than pay again.
+        let pin: bigint | undefined
+        const earlier = lastFailed.get(who)
+        if (earlier && earlier.until > svc.now()) {
+          const used = await svc.nonce(token, who).catch(() => null)
+          if (cancelled) return
+          if (used == null) return toForm(amount, 'Couldn’t check your last tip. Try again.')
+          if (used > BigInt(earlier.nonce)) {
+            lastFailed.delete(who)
+            const hash = await findTransfer(who, earlier, token)
+            if (cancelled) return
+            if (hash) {
+              void forward(hash, login)
+              return sent(earlier.creator)
+            }
+          } else pin = BigInt(earlier.nonce)
+        } else lastFailed.delete(who)
+        await sendTip(amount, wei, fromBlock, login, () => cancelled, owned, pin)
       } finally {
         sending = false
         // Not handed to a signed tip: nothing is pending, so the lock goes now.
@@ -707,7 +758,15 @@ export function createShellDonate(deps: ShellDonateDeps): ShellDonate {
       }
     }
 
-    async function sendTip(amount: string, wei: bigint, fromBlock: bigint, login: StoredLogin, cancelled: () => boolean, owned: { lock: (() => void) | null }): Promise<void> {
+    async function sendTip(
+      amount: string,
+      wei: bigint,
+      fromBlock: bigint,
+      login: StoredLogin,
+      cancelled: () => boolean,
+      owned: { lock: (() => void) | null },
+      pin: bigint | undefined
+    ): Promise<void> {
       // What left the wallet decides what a failure means: before the signature did, nothing can have reached the
       // chain. Tracked on the real wallet, under the guard: a request the guard refused never reached it. The tip is
       // pending from the moment it is signed, with the nonce it signed.
@@ -719,6 +778,7 @@ export function createShellDonate(deps: ShellDonateDeps): ShellDonate {
         token: { address: lower(token.address), name: token.name, version: token.version },
         to: form.creator.address,
         wei,
+        ...(pin !== undefined ? { nonce: pin } : {}),
         // A close cancels only until the tip is signed; after that it goes on without the panel.
         current: () => (tip != null || !cancelled()) && account() === who
       }
@@ -756,7 +816,7 @@ export function createShellDonate(deps: ShellDonateDeps): ShellDonate {
 
       let hash: string
       try {
-        hash = await svc.sendGasless(wallet, token, encodeManaTransfer(intent.to, wei), relayFetch)
+        hash = await svc.sendGasless(wallet, token, encodeManaTransfer(intent.to, wei), relayFetch, pin)
       } catch (e) {
         const p = signed()
         if (!p) return cancelled() ? undefined : failed(amount)

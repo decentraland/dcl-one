@@ -69,6 +69,24 @@ describe('Donate', () => {
     expect(desktop.result.current.visible).toBe(false)
   })
 
+  it('hides on the map as soon as another place is picked, and keeps the last answer on the minimap', async () => {
+    const OTHER = { parcel: { x: 9, y: 9 } }
+    let answer: (v: boolean) => void = () => {}
+    const map = renderHook(({ place }) => useDonate(place), { initialProps: { place: PLACE as typeof PLACE | typeof OTHER } })
+    const minimap = renderHook(({ place }) => useDonate(place, { keepWhileAsking: true }), { initialProps: { place: PLACE as typeof PLACE | typeof OTHER } })
+    await settle()
+    expect(map.result.current.visible).toBe(true)
+    host.donations!.tippable.mockImplementation(() => new Promise<boolean>((r) => (answer = r)))
+    map.rerender({ place: OTHER })
+    minimap.rerender({ place: OTHER })
+    await settle()
+    expect(map.result.current.visible).toBe(false)
+    expect(minimap.result.current.visible).toBe(true)
+    answer(false)
+    await settle()
+    expect(minimap.result.current.visible).toBe(false)
+  })
+
   it('plays the tip emote when the host says a tip was sent', () => {
     let sent: () => void = () => {}
     host.donations!.onSent.mockImplementation((fn: () => void) => {

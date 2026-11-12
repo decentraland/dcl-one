@@ -10,10 +10,11 @@ import styles from './DonatePanel.module.css'
 
 const OTHER = -1
 
-/** An amount with at most two decimals. */
+/** An amount with at most two decimals, in plain digits (never `1e+21`), so the amount rule reads it as typed. */
 export function formatAmount(n: number): string {
-  if (!Number.isFinite(n)) return '0'
-  return String(Math.round(n * 100) / 100)
+  if (!Number.isFinite(n) || n < 0) return '0'
+  if (n >= 1e21) return BigInt(Math.round(n)).toString()
+  return (Math.round(n * 100) / 100).toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1')
 }
 
 /** A balance with at most two decimals, rounded down: what can actually be tipped (9.996 reads 9.99, not 10). */
@@ -21,9 +22,9 @@ export function formatBalance(n: number): string {
   return Number.isFinite(n) ? String(Math.floor(n * 100) / 100) : '0'
 }
 
-/** A typed amount, by the rule the shell sends by; null when it isn't one (`10.`, `.5`, empty). */
+/** A typed amount, by the rule the shell sends by; null when it isn't one (`10.`, `.5`, `-1`, empty). */
 export function parseAmount(text: string): number | null {
-  const clean = text.replace(/-/g, '').trim()
+  const clean = text.trim()
   return TIP_AMOUNT.test(clean) ? Number(clean) : null
 }
 

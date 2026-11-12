@@ -96,6 +96,14 @@ describe('the tip wallet', () => {
     expect(w.reached('eth_signTypedData_v4')).toBe(false)
   })
 
+  it('signs only the pinned nonce when a retry must replace a failed tip', async () => {
+    const pinned = guardedDonationProvider(fakeWallet().provider, intent({ nonce: 7n }))
+    await expect(signTypedData(pinned, FROM, typedFor(transfer(CREATOR, WEI)))).resolves.toMatch(/^0x/)
+    const w = fakeWallet()
+    await expect(signTypedData(guardedDonationProvider(w.provider, intent({ nonce: 6n })), FROM, typedFor(transfer(CREATOR, WEI)))).rejects.toThrow()
+    expect(w.reached('eth_signTypedData_v4')).toBe(false)
+  })
+
   it('never lets the wallet send a transaction itself: the tip is the relayed one only', async () => {
     const tx = { from: FROM, to: TOKEN.address, data: transfer(CREATOR, WEI) }
     const w = fakeWallet()

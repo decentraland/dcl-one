@@ -71,7 +71,7 @@ export const Minimap = memo(function Minimap({
   const [markerCategories, setMarkerCategories] = useState(loadMarkers)
   // Donate to the creator of the scene the player stands in, shown where the host can sign a tip and the scene
   // has a creator.
-  const donate = useDonate(minimap.donatePlace)
+  const donate = useDonate(minimap.donatePlace, { keepWhileAsking: true })
   const [places, setPlaces] = useState<MinimapPlace[]>([])
   // Tiles + coords re-render only on a boundary, not per pose sample.
   const [chunks, setChunks] = useState<Chunk[]>([])

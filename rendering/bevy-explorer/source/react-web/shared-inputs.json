@@ -6241,7 +6241,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/donate/DonatePanel.tsx",
-      "sha256": "77d12da9787e883b505853d7351959cf1fa684f0c7ab1a5abfdc2d8da3861fcc"
+      "sha256": "6c2ba0c28051a41ec1af448a197ee2be8b6237b5873e5aca2445756c0b5e437e"
     },
     {
       "path": "library/ui/apps/hud/features/donate/types.ts",
@@ -6249,7 +6249,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/donate/useDonate.ts",
-      "sha256": "861e77799e6d7e20618aa6110fd987a4c413ea388d78a1a59f811c8173137271"
+      "sha256": "8ab0027955816fa256471324b87798baec096565b893a191b34d3446e6e51c5a"
     },
     {
       "path": "library/ui/apps/hud/features/editorHost/CreatePage.module.css",
@@ -6497,7 +6497,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/minimap/Minimap.tsx",
-      "sha256": "0bc96bfc0dd71cb8e43675a9dfcc67a34084acf806cb03391a2b3f8804353414"
+      "sha256": "ae42dfa24c7edfb7c29815c0c9956620b8a6d6d897107d090ff7e7b128d22e82"
     },
     {
       "path": "library/ui/apps/hud/features/minimap/MinimapSettings.module.css",
@@ -6833,7 +6833,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/donate.test.tsx",
-      "sha256": "8a20d4dc3d0db752344422d2fb15732297b5acb199d4b6e47d78781c42197f56"
+      "sha256": "f4ec75594124b98414a12b39ce84e4ae01ad3fa28ce5e2a128d866a9374dcf5e"
     },
     {
       "path": "library/ui/apps/hud/test/error.test.tsx",

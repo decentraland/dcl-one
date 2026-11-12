@@ -340,7 +340,8 @@ web shell; null here, so this HUD shows no Donate). The shared HUD names a place
 - **Where it shows:** the minimap's header for the scene the player stands in (the session's
   `minimap.donatePlace`: a Genesis City parcel or a World, none in a preview or a local realm), and the
   map's place panel. Only when the host says the session may tip and the place has a creator; hidden while
-  either answer is pending.
+  the first answer is pending. On the minimap the last answer stays while the next parcel is asked about (no
+  flicker while walking); on the map a newly picked place hides it until answered.
 - **After a tip** the host's `onSent` plays the `money` base emote; a `tip_received` notification opens the
   tipper's passport (`notifications/summary.ts` `tipTarget`).
 - Tests: `library/ui/apps/hud/test/donate.test.tsx` (gating, open, emote, notification),

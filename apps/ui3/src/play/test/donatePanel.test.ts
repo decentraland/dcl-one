@@ -8,8 +8,7 @@ describe('the tip amount', () => {
   it('reads whole MANA and decimals, nothing else', () => {
     expect(parseAmount('166')).toBe(166)
     expect(parseAmount('10.5')).toBe(10.5)
-    expect(parseAmount('-12')).toBe(12)
-    for (const bad of ['10.', '.5', '', '1e3', 'abc']) expect(parseAmount(bad)).toBeNull()
+    for (const bad of ['10.', '.5', '', '1e3', 'abc', '-12', '1-2']) expect(parseAmount(bad)).toBeNull()
   })
 
   it('accepts exactly what the shell can send', () => {
@@ -29,5 +28,14 @@ describe('the tip amount', () => {
   it('shows at most two decimals', () => {
     expect(formatAmount(69.7234)).toBe('69.72')
     expect(formatAmount(Number.NaN)).toBe('0')
+    expect(formatAmount(166)).toBe('166')
+    expect(formatAmount(100)).toBe('100')
+    expect(formatAmount(0.5)).toBe('0.5')
+  })
+
+  it('writes a huge amount in plain digits, so it reads as too much rather than as no amount', () => {
+    const huge = formatAmount(2e21)
+    expect(huge).toBe('2000000000000000000000')
+    expect(parseAmount(huge)).toBe(2e21)
   })
 })

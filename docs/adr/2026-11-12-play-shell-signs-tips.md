@@ -30,16 +30,18 @@ Donate runs in the `/play` web shell, the same way the Shop's purchases do.
   reaches the wallet, and re-checks the account and the login before the signature.
 - **Gasless only, never twice.** The tip is relayed as a meta-transaction and nothing else: a transaction from the
   wallet beside it would not use up its nonce, so both could land. The relay's refusal (`ok: false`, which it also
-  answers after a broadcast it lost) fails the tip; trying again signs the same nonce, so at most one of the two
-  can land. Any outcome the shell can't tell apart from a broadcast (a lost answer, a transaction not yet mined) is
+  answers after a broadcast it lost) fails the tip. The account's next send first reads the token's nonce: once it
+  is past the failed tip's, that tip was mined after all and is shown as sent (its Transfer found) instead of paying
+  again; while it is not, the new tip is pinned to the failed tip's nonce (the guard refuses any other), so at most
+  one of the two can land. Any outcome the shell can't tell apart from a broadcast (a lost answer, a transaction not yet mined) is
   shown as processing and watched, never retried.
 - **Confirmed by its own Transfer.** An unclear tip is watched by its hash, when there is one, and by the MANA
-  token's `Transfer(tipper, creator, amount)` since the block it was signed at, which also gives the hash the
+  token's `Transfer(tipper, creator, amount)` after the block read just before signing, which also gives the hash the
   creator's notification needs.
 - **Failed only while unused.** A relay refusal, or a revert of the known transaction, fails the tip (with TRY
   AGAIN) only while the token's meta-transaction nonce is still the one the tip signed. Once it has moved past it,
   the signature was used, so the tip's Transfer is looked for and the tip is never retried: a retry would sign the
-  next nonce and could pay twice.
+  next nonce and could pay twice. A known hash that reverted is not watched again; its Transfer is.
 - **Web3 sign-ins only.** Donate is offered, and `donate.open` is accepted, only for a web3 wallet sign-in, as
   AGENTS.md requires for MANA. The shell checks this on every open, not only in what the HUD reads.
 - **One dialog over the app.** The Shop's dialog and the Donate panel each refuse to open while the other's is up.
@@ -62,6 +64,8 @@ the player owns.
   goes on once the lock is let go; it can't start a tip of its own. The browser lets a closed tab's lock go.
 - A tip whose outcome is unknown is the account's pending tip, kept in the browser's storage (with an id) until it
   settles or its watch ends: after a reload, the page takes the lock again and shows it, not a new form.
+- The failed tip a next send checks is kept in the tab's memory for its watch window: after a reload, the next tip
+  signs the token's current nonce.
 - A tip that is mined only after its 30-minute watch ends is never forwarded, so its creator gets no notification.
 - A second tip of the same amount to the same creator, signed in the watch window from another tab, could be taken
   for the first one's Transfer.

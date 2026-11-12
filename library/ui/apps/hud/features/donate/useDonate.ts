@@ -8,16 +8,23 @@ import type { DonatePlace } from '@explorer-core/hostContract'
 /** The emote the player's avatar plays once a tip is sent. */
 export const TIP_EMOTE = 'urn:decentraland:off-chain:base-emotes:money'
 
-/** Whether Donate shows for `place`, and how to open it. Hidden while either answer is pending, or on any failure. */
-export function useDonate(place: DonatePlace | null): { visible: boolean; open: (input?: 'pointer' | 'keyboard') => void } {
+/**
+ * Whether Donate shows for `place`, and how to open it. Hidden on any failure, and while the first answer is
+ * pending. With `keepWhileAsking` (the minimap, as the player walks across parcels) the last answer stays shown while
+ * the next place is asked about, so it doesn't flicker; otherwise (the map, a place picked) it hides until answered.
+ */
+export function useDonate(
+  place: DonatePlace | null,
+  { keepWhileAsking = false }: { keepWhileAsking?: boolean } = {}
+): { visible: boolean; open: (input?: 'pointer' | 'keyboard') => void } {
   const key = place ? JSON.stringify(place) : null
-  // The last answer stays shown while the next place is asked about, so walking across parcels doesn't flicker.
   const [shown, setShown] = useState(false)
   useEffect(() => {
     if (!donations || !key) {
       setShown(false)
       return
     }
+    if (!keepWhileAsking) setShown(false)
     let alive = true
     const target = JSON.parse(key) as DonatePlace
     // The place is looked up only for a session that may tip at all.
@@ -28,7 +35,7 @@ export function useDonate(place: DonatePlace | null): { visible: boolean; open: 
     return () => {
       alive = false
     }
-  }, [key])
+  }, [key, keepWhileAsking])
   const open = useCallback(
     (input?: 'pointer' | 'keyboard') => {
       if (!donations || !key) return

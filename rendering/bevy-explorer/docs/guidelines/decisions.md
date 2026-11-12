@@ -347,7 +347,8 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   transaction reverted), so a player never tips twice. A tip still unconfirmed after 30 minutes
   stays "still being processed" with no retry, and opening Donate again shows it until it settles.
   There is no fallback to a transaction from the wallet: the relay's refusal fails the tip, and
-  trying again signs the same nonce, so at most one can land.
+  trying again signs the same nonce (pinned), so at most one can land; if the failed tip was mined
+  after all, the next send shows it as sent instead.
 - **The MANA price comes from the deployment.** unity-explorer reads the MANA/USD rate from
   CoinGecko; the panel reads the catalyst's price service (`/price/api/v3/simple/price`), which
   answers in the same shape.
