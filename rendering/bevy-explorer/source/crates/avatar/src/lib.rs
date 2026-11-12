@@ -44,6 +44,7 @@ pub mod foreign_dynamics;
 pub mod ghost;
 pub mod head_ik;
 mod ik_debug;
+pub mod jump_marker;
 pub mod mask_material;
 pub mod material_cache;
 pub mod npc_dynamics;
@@ -97,6 +98,7 @@ use crate::{
     foot_ik::FootIkPlugin,
     ghost::GhostAvatarPlugin,
     head_ik::HeadIkPlugin,
+    jump_marker::JumpMarkerPlugin,
     material_cache::{bounds_bits, AvatarMaskKey, AvatarMatKey, BoundsBits},
     point_at_ik::PointAtIkPlugin,
     point_at_marker::PointAtMarkerPlugin,
@@ -141,6 +143,7 @@ impl Plugin for AvatarPlugin {
         debug_avatars::register(app);
         app.add_plugins(PointAtIkPlugin);
         app.add_plugins(PointAtMarkerPlugin);
+        app.add_plugins(JumpMarkerPlugin);
         app.init_resource::<AssetCache<AvatarMatKey, SceneMaterial>>();
         app.init_resource::<AssetCache<AvatarMaskKey, MaskMaterial>>();
         app.add_systems(

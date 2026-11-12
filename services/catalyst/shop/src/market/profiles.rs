@@ -15,6 +15,8 @@
 //! `POST /lambdas/profiles/metadata` serves the compact projection of the same
 //! processed profiles, as asset-bundle-registry's `/profiles/metadata`.
 
+pub mod registry;
+
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 

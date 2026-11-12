@@ -5,7 +5,7 @@ import { parseArgs } from 'node:util'
 import { checkKit, installKit } from './kit.mjs'
 
 const USAGE = `Usage:
-  figma-agent-kit install [--target <repo>] [--force] [--no-agents-link]
+  figma-agent-kit install [--target <repo>] [--force] [--agents-link]
   figma-agent-kit check [--target <repo>]
 `
 
@@ -14,6 +14,8 @@ const { values, positionals } = parseArgs({
   options: {
     target: { type: 'string' },
     force: { type: 'boolean', default: false },
+    'agents-link': { type: 'boolean', default: false },
+    // Accepted for older scripts; the link is off unless --agents-link asks for it.
     'no-agents-link': { type: 'boolean', default: false }
   }
 })
@@ -24,7 +26,7 @@ try {
     const result = await installKit({
       target,
       force: values.force,
-      linkAgents: !values['no-agents-link']
+      linkAgents: values['agents-link'] && !values['no-agents-link']
     })
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`)
   } else if (positionals[0] === 'check') {

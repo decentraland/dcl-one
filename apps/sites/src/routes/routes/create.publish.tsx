@@ -111,7 +111,7 @@ const FALLBACK: PageDefaults = {
   variant: "wizard",
 };
 
-export async function loader({ request }: Route.LoaderArgs) {
+export async function loader({ request, context }: Route.LoaderArgs) {
   const url = new URL(request.url);
   const step = url.searchParams.get("step")?.trim() || null;
   const address = url.searchParams.get("address")?.trim() || readWallet(request);
@@ -120,6 +120,7 @@ export async function loader({ request }: Route.LoaderArgs) {
 
   const { sid, assignment, wrap, data: deployData } = await pageLoaderWith<DeployWorldData>(
     request,
+    context,
     FALLBACK,
     () => loadDeployWorld(address, { signal: request.signal }).catch(() => fallbackDeployWorld(address)),
   );

@@ -11,7 +11,7 @@ const inspectRequest = [
   '  await checkBuild({',
   '    dist: process.argv[2], prefix: "/gallery/", browser: "unused",',
   '    open: async () => ({',
-  '      send: async (_method, { url }) => {',
+  '      navigate: async (url) => {',
   '        const response = await fetch(new URL(process.argv[3], url));',
   '        console.log(JSON.stringify({ status: response.status, body: await response.text() }));',
   '        throw new Error("request inspected");',

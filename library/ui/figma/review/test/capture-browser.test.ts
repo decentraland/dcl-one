@@ -1,9 +1,11 @@
-import { describe, it, afterEach } from 'node:test'
+import { after, afterEach, before, describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { chmod, mkdtemp, readFile, rm, writeFile, stat } from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
 import { EventEmitter } from 'node:events'
+import { createServer, type Server } from 'node:http'
+import type { AddressInfo } from 'node:net'
 import { browserArgs } from '../scripts/browser-args.mjs'
 import { findBrowser, openSession } from '../scripts/capture-browser.mjs'
 import { cleanupCapture, installCaptureSignals } from '../scripts/capture-teardown.mjs'
@@ -175,5 +177,271 @@ describe('when a command is sent on a capture session that can no longer answer'
     } finally {
       await session.close()
     }
+  })
+})
+
+// A DevTools stand-in that answers Page.getFrameTree with a top frame, and Runtime.evaluate and Page.navigate with what
+// `reply` returns:
+// the Page events to deliver first, then the answer.
+class ScriptedSocket extends FakeSocket {
+  static reply: (method: string) => { events: object[]; answer: object } = () => ({
+    events: [],
+    answer: { result: {} }
+  })
+  override send(data: string) {
+    this.sent.push(data)
+    const { id, method } = JSON.parse(data) as { id: number; method: string }
+    const { events, answer } =
+      method === 'Page.getFrameTree'
+        ? { events: [], answer: { result: { frameTree: { frame: { id: 'top' } } } } }
+        : method === 'Runtime.evaluate' || method === 'Page.navigate'
+          ? ScriptedSocket.reply(method)
+          : { events: [], answer: { result: {} } }
+    queueMicrotask(() => {
+      for (const event of [...events, { id, ...answer }])
+        this.dispatchEvent(Object.assign(new Event('message'), { data: JSON.stringify(event) }))
+    })
+  }
+}
+type CaptureBrowser = typeof import('../scripts/capture-browser.mjs')
+async function scriptedCaptureBrowser(): Promise<CaptureBrowser> {
+  const { fetch, WebSocket } = globalThis
+  Object.assign(globalThis, {
+    fetch: async () =>
+      new Response(JSON.stringify({ webSocketDebuggerUrl: 'ws://127.0.0.1:1/devtools' })),
+    WebSocket: ScriptedSocket
+  })
+  try {
+    const specifier = new URL('../scripts/capture-browser.mjs?scripted-cdp', import.meta.url).href
+    return (await import(specifier)) as CaptureBrowser
+  } finally {
+    Object.assign(globalThis, { fetch, WebSocket })
+  }
+}
+const contextLost = { error: { code: -32000, message: 'Inspected target navigated or closed' } }
+const started = (frameId: string) => ({
+  method: 'Page.frameStartedNavigating',
+  params: { frameId }
+})
+
+describe('when an evaluation loses its document', () => {
+  afterEach(() => {
+    ScriptedSocket.reply = () => ({ events: [], answer: { result: {} } })
+  })
+  // Resolves with the evaluation's error, and the NavigationInterrupted class of the module that raised it.
+  const evaluateWith = async (events: object[], answer: object) => {
+    const { openSession: open, NavigationInterrupted } = await scriptedCaptureBrowser()
+    const { file } = await script(PORT_BROWSER)
+    const session = await open(file)
+    ScriptedSocket.reply = () => ({ events, answer })
+    try {
+      await session.evaluate('1')
+      throw new Error('the evaluation resolved')
+    } catch (error) {
+      return { error: error as Error, NavigationInterrupted }
+    } finally {
+      await session.close()
+    }
+  }
+  it('should report a navigation of the top frame that started while it was pending', async () => {
+    const { error, NavigationInterrupted } = await evaluateWith([started('top')], contextLost)
+    assert.ok(error instanceof NavigationInterrupted, String(error))
+    assert.match(String(error.cause), /Inspected target navigated or closed/)
+  })
+  it('should keep the CDP error when no navigation was observed, as a closed or crashed target answers', async () => {
+    const { error, NavigationInterrupted } = await evaluateWith([], contextLost)
+    assert.ok(!(error instanceof NavigationInterrupted))
+    assert.match(error.message, /Inspected target navigated or closed/)
+  })
+  it('should keep the CDP error when only a child frame navigated', async () => {
+    const { error, NavigationInterrupted } = await evaluateWith([started('child')], contextLost)
+    assert.ok(!(error instanceof NavigationInterrupted))
+    assert.match(error.message, /Inspected target navigated or closed/)
+  })
+  it('should keep any other CDP error during a navigation', async () => {
+    const { error, NavigationInterrupted } = await evaluateWith([started('top')], {
+      error: { code: -32601, message: 'method not found' }
+    })
+    assert.ok(!(error instanceof NavigationInterrupted))
+    assert.match(error.message, /method not found/)
+  })
+})
+
+describe('when a navigation is answered before its document commits', () => {
+  afterEach(() => {
+    ScriptedSocket.reply = () => ({ events: [], answer: { result: {} } })
+  })
+  const deliver = (...events: object[]) => {
+    for (const event of events)
+      FakeSocket.last!.dispatchEvent(
+        Object.assign(new Event('message'), { data: JSON.stringify(event) })
+      )
+  }
+  const navigateWith = async (answer: object) => {
+    const { openSession: open } = await scriptedCaptureBrowser()
+    const { file } = await script(PORT_BROWSER)
+    const session = await open(file)
+    ScriptedSocket.reply = () => ({ events: [], answer })
+    let settled = false
+    const navigation = session.navigate('http://127.0.0.1:1/next', 1000).then(() => {
+      settled = true
+    })
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    return { session, navigation, settled: () => settled }
+  }
+  it('should wait for the document of the loader it started, not the idle frame it answered from', async () => {
+    const { session, navigation, settled } = await navigateWith({
+      result: { frameId: 'top', loaderId: 'next' }
+    })
+    try {
+      assert.equal(settled(), false)
+      deliver(
+        { method: 'Page.frameStartedLoading', params: { frameId: 'top' } },
+        { method: 'Page.frameNavigated', params: { frame: { id: 'top', loaderId: 'next' } } },
+        { method: 'Page.frameStoppedLoading', params: { frameId: 'top' } }
+      )
+      await navigation
+    } finally {
+      await session.close()
+    }
+  })
+  it('should not wait for a document a child frame commits', async () => {
+    const { session, navigation, settled } = await navigateWith({
+      result: { frameId: 'top', loaderId: 'next' }
+    })
+    try {
+      deliver({
+        method: 'Page.frameNavigated',
+        params: { frame: { id: 'child', parentId: 'top', loaderId: 'next' } }
+      })
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      assert.equal(settled(), false)
+      await assert.rejects(navigation, /Timed out waiting for the page/)
+    } finally {
+      await session.close()
+    }
+  })
+  it('should count a request for this tab as a navigation, but not one that opens a new tab', async () => {
+    const { openSession: open } = await scriptedCaptureBrowser()
+    const { file } = await script(PORT_BROWSER)
+    const session = await open(file)
+    try {
+      const request = (disposition: string) => ({
+        method: 'Page.frameRequestedNavigation',
+        params: { frameId: 'top', reason: 'anchorClick', url: 'http://127.0.0.1:1/', disposition }
+      })
+      deliver(request('newTab'))
+      assert.deepEqual([session.navigations, session.loading], [0, false])
+      deliver(request('currentTab'))
+      assert.deepEqual([session.navigations, session.loading], [1, true])
+    } finally {
+      await session.close()
+    }
+  })
+  it('should resolve a failed navigation once the frame is idle, since it commits no document of its own', async () => {
+    const { session, navigation, settled } = await navigateWith({
+      result: { frameId: 'top', loaderId: 'failed', errorText: 'net::ERR_ABORTED' }
+    })
+    try {
+      await navigation
+      assert.equal(settled(), true)
+    } finally {
+      await session.close()
+    }
+  })
+})
+
+// A real Chromium against a local server: /slow answers after 1.5 s, /hang sends its headers and never finishes the body, /redirect replaces itself with /landed while it
+// loads, and every other path is a small page.
+describe('when a real page navigates', () => {
+  let session: Awaited<ReturnType<typeof openSession>>
+  let server: Server
+  let origin: string
+  before(async () => {
+    server = createServer((request, response) => {
+      if (request.url === '/slow')
+        return void setTimeout(
+          () => response.writeHead(200, { 'content-type': 'text/html' }).end('<title>slow</title>'),
+          1500
+        )
+      if (request.url === '/hang')
+        return void response
+          .writeHead(200, { 'content-type': 'text/html' })
+          .write('<!doctype html>')
+      const body =
+        request.url === '/redirect'
+          ? `<script>location.replace('/landed')</script>`
+          : `<title>${request.url}</title>`
+      response.writeHead(200, { 'content-type': 'text/html' }).end(`<!doctype html>${body}`)
+    })
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
+    session = await openSession(
+      await findBrowser([
+        process.env.BROWSER_PATH,
+        process.env.CHROME_PATH,
+        '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+        '/usr/bin/google-chrome',
+        '/usr/bin/chromium',
+        '/usr/bin/chromium-browser'
+      ])
+    )
+  })
+  after(async () => {
+    await session?.close()
+    server.closeAllConnections()
+    await new Promise((resolve) => server.close(resolve))
+  })
+  const evaluate = (expression: string) => session.evaluate(expression)
+
+  it('should resolve navigate only after the document a script redirect lands on has loaded', async () => {
+    await session.navigate(`${origin}/redirect`)
+    assert.equal(session.loading, false)
+    assert.equal(
+      await evaluate(`document.readyState + ' ' + location.pathname`),
+      'complete /landed'
+    )
+  })
+  it('should reject an evaluation pending when the page navigates as NavigationInterrupted, then evaluate in the new document', async () => {
+    await session.navigate(`${origin}/first`)
+    const { NavigationInterrupted } = await import('../scripts/capture-browser.mjs')
+    await assert.rejects(
+      evaluate(`setTimeout(() => { location.href = '/second' }), new Promise(() => {})`),
+      NavigationInterrupted
+    )
+    await session.whenLoaded()
+    assert.equal(await evaluate('location.pathname'), '/second')
+  })
+  it('should count a navigation that replaces the document but not one within it', async () => {
+    await session.navigate(`${origin}/first`)
+    const before = session.navigations
+    await session.navigate(`${origin}/first#fragment`)
+    assert.equal(session.navigations, before)
+    await session.navigate(`${origin}/second`)
+    assert.ok(session.navigations > before)
+  })
+  it('should count a navigation the page requested as loading before the evaluation that requested it answers', async () => {
+    await session.navigate(`${origin}/first`)
+    const before = session.navigations
+    await evaluate(`location.href = '/slow', true`)
+    // The request event comes before that answer; the start and loading events of the navigation come after it.
+    assert.equal(session.loading, true)
+    assert.ok(session.navigations > before)
+    await session.whenLoaded()
+    assert.equal(await evaluate('location.pathname'), '/slow')
+  })
+  it('should still report an exception the page throws as an ordinary error', async () => {
+    const { NavigationInterrupted } = await import('../scripts/capture-browser.mjs')
+    await assert.rejects(
+      evaluate(`(() => { throw new Error('page threw') })()`),
+      (error) => !(error instanceof NavigationInterrupted) && /page threw/.test(String(error))
+    )
+  })
+  it('should time out waiting for a document that never finishes loading', async () => {
+    await assert.rejects(session.navigate(`${origin}/hang`, 300), /Timed out waiting for the page/)
+    assert.equal(session.loading, true)
+    const waiting = assert.rejects(session.whenLoaded(), /Capture browser session closed/)
+    await session.close()
+    await waiting
   })
 })
