@@ -1,8 +1,8 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fetchEvents, type Event } from "../places/events";
 import { fetchMostActivePlaces } from "../places/index";
 import { heroEventCards } from "./home";
-import { loadHomeEvents } from "./home.server";
+import { createHomeEventsLoader, loadHomeEvents } from "./home.server";
 
 vi.mock("../places/events", async (original) => ({
   ...(await original<typeof import("../places/events")>()),
@@ -25,6 +25,7 @@ const event = (id: string, live: boolean): Event =>
   }) as Event;
 const opts = { fetchImpl: vi.fn() };
 beforeEach(() => vi.resetAllMocks());
+afterEach(() => vi.useRealTimers());
 
 describe("Home live-only event read", () => {
   it("requests the live feed once without fetching unused hotspots or rituals", async () => {
@@ -32,9 +33,13 @@ describe("Home live-only event read", () => {
       data: [event("live", true)],
     } as never);
     const result = await loadHomeEvents(opts);
-    expect(fetchEvents).toHaveBeenCalledExactlyOnceWith(
+    expect(fetchEvents).toHaveBeenCalledOnce();
+    expect(fetchEvents).toHaveBeenCalledWith(
       { list: "live", limit: 3 },
-      opts,
+      expect.objectContaining({
+        fetchImpl: opts.fetchImpl,
+        signal: expect.any(AbortSignal),
+      }),
     );
     expect(fetchMostActivePlaces).not.toHaveBeenCalled();
     expect(heroEventCards(result.content)?.map((card) => card.id)).toEqual([
@@ -66,5 +71,48 @@ describe("Home live-only event read", () => {
     expect(heroEventCards(empty.content)).toBeUndefined();
     expect(heroEventCards(failed.content)).toBeUndefined();
     expect(failed.unreadable).toEqual(["events"]);
+  });
+
+  it("aborts a hanging events request at the deadline", async () => {
+    vi.useFakeTimers();
+    vi.mocked(fetchEvents).mockImplementation(
+      (_params, options) =>
+        new Promise((_resolve, reject) => {
+          options?.signal?.addEventListener(
+            "abort",
+            () => reject(options.signal?.reason),
+            { once: true },
+          );
+        }),
+    );
+
+    const pending = loadHomeEvents({ fetchImpl: vi.fn() });
+    await vi.advanceTimersByTimeAsync(2000);
+    const result = await pending;
+
+    expect(vi.mocked(fetchEvents).mock.calls[0]?.[1]?.signal?.aborted).toBe(
+      true,
+    );
+    expect(result.unreadable).toEqual(["events"]);
+  });
+
+  it("caches an unavailable live rail briefly before retrying", async () => {
+    vi.useFakeTimers();
+    vi.mocked(fetchEvents)
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockResolvedValue({ data: [event("live", true)] } as never);
+    const load = createHomeEventsLoader(fetchEvents);
+
+    const first = await load();
+    const cached = await load();
+    expect(first.unreadable).toEqual(["events"]);
+    expect(cached.unreadable).toEqual(["events"]);
+    expect(fetchEvents).toHaveBeenCalledOnce();
+
+    await vi.advanceTimersByTimeAsync(5000);
+    const recovered = await load();
+    expect(recovered.live).toBe(true);
+    expect(recovered.unreadable).toEqual([]);
+    expect(fetchEvents).toHaveBeenCalledTimes(2);
   });
 });

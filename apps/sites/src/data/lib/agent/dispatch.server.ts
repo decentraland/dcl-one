@@ -22,13 +22,14 @@ import {
 } from "./markdown";
 
 const SERIALIZERS: Record<AgentMarkdownKey, (data: unknown) => string | null> = {
+  // A 404 or 503 blog page is not a list of 0 posts: null keeps the HTML page with its status and headers.
   blogIndex: (data) => {
-    const d = data as { posts?: Parameters<typeof blogIndexToMarkdown>[0] } | undefined;
-    return blogIndexToMarkdown(d?.posts ?? []);
+    const d = data as { state?: string; posts?: Parameters<typeof blogIndexToMarkdown>[0] } | undefined;
+    return d?.state === "ok" && d.posts ? blogIndexToMarkdown(d.posts) : null;
   },
   blogPost: (data) => {
-    const d = data as { post?: Parameters<typeof blogPostToMarkdown>[0] | null } | undefined;
-    return d?.post ? blogPostToMarkdown(d.post) : null;
+    const d = data as { state?: string; post?: Parameters<typeof blogPostToMarkdown>[0] | null } | undefined;
+    return d?.state === "ok" && d.post ? blogPostToMarkdown(d.post) : null;
   },
   legalDoc: (data) => {
     const d = data as { doc?: string } | undefined;

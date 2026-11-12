@@ -18,7 +18,7 @@ export async function profileClientLoader() {
 
 export function ProfileRoute({ loaderData }: { loaderData: ProfileLoaderData | null | undefined }) {
   const params = useParams();
-  const root = useRouteLoaderData("root") as { sid?: string } | undefined;
+  const root = useRouteLoaderData("root") as { sid?: string | null } | undefined;
   const sid = loaderData?.sid ?? root?.sid ?? "";
   return (
     <HydrationBoundary state={loaderData?.dehydratedState}>

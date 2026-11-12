@@ -1,4 +1,4 @@
-import { expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { profileFaceUrl } from "./profile-face-url";
 
 const base = "https://interconnected.online";
@@ -18,4 +18,11 @@ it("preserves content snapshots, local images and unrelated origins", () => {
   }
   expect(profileFaceUrl(undefined, base)).toBe("");
   expect(profileFaceUrl("https://[", base)).toBe("");
+});
+
+
+describe("when an allowlisted host serves the wrong snapshot path", () => {
+  it.each(["body.png", "missing.png", "../face.png"])("should reject %s as a face snapshot", file => {
+    expect(profileFaceUrl(`https://profile-images.decentraland.org/entities/${entity}/${file}`, base)).toBe("");
+  });
 });
