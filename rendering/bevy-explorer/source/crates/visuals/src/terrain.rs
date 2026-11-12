@@ -614,18 +614,22 @@ fn sync(
     }
 }
 
-/// Heights jump to their targets behind the loading screen (the player is out of world and no
-/// lobby holds the world back, the rule `update_loading_backdrop` shows it by), so the ground has
-/// settled when the screen lifts. Runs before `sync` and `ease`: targets that arrive on the frame
-/// the screen lifts ease.
+/// Heights jump to their targets behind the loading screen, so the ground has settled when it
+/// lifts. The screen is up while the primary player is out of world and no lobby holds the world
+/// back. The frame it lifts still snaps: the player is let back in on the frame their parcel
+/// resolves, so the first batch of targets reaches `sync` on that frame. Targets that arrive on
+/// later frames ease. Runs before `sync` and `ease`, so the flag is set before they run.
 fn snap_while_loading(
     mut surface: ResMut<TerrainSurface>,
     out_of_world: Query<(), (With<PrimaryUser>, With<OutOfWorld>)>,
     hold: Option<Res<WorldHold>>,
+    mut was_loading: Local<bool>,
 ) {
     let loading = !out_of_world.is_empty() && hold.is_none();
-    if surface.snap != loading {
-        surface.set_snap(loading);
+    let snap = loading || *was_loading;
+    *was_loading = loading;
+    if surface.snap != snap {
+        surface.set_snap(snap);
     }
 }
 
