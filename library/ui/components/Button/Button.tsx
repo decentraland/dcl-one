@@ -23,11 +23,14 @@ type Variant =
   | 'inverse'
   | 'iconOnly'
 type NativeProps =
-  | (Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'children'> & {
+  | (Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'children' | 'dangerouslySetInnerHTML'> & {
       href?: never
       ref?: Ref<HTMLButtonElement>
     })
-  | (Omit<AnchorHTMLAttributes<HTMLAnchorElement>, 'children' | 'type'> & {
+  | (Omit<
+      AnchorHTMLAttributes<HTMLAnchorElement>,
+      'children' | 'type' | 'dangerouslySetInnerHTML'
+    > & {
       href: string
       disabled?: boolean
       type?: never
@@ -36,6 +39,7 @@ type NativeProps =
 
 export type ButtonProps = NativeProps &
   Content & {
+    dangerouslySetInnerHTML?: never
     children?: ReactNode
     label?: ReactNode
     size?: 'xl' | 'lg' | 'md' | 'sm'
@@ -73,6 +77,8 @@ export function Button({
   disabled = false,
   ...native
 }: ButtonProps) {
+  // Button owns its content, including when an untyped caller supplies native HTML props.
+  Reflect.deleteProperty(native, 'dangerouslySetInnerHTML')
   const compact = iconOnly || variant === 'iconOnly'
   const unavailable =
     disabled || loading || native['aria-disabled'] === true || native['aria-disabled'] === 'true'
