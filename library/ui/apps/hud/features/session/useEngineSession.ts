@@ -1134,6 +1134,13 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const pendingLogin = useRef<((driver: LoginDriver) => Promise<unknown>) | null>(null)
   // Counts sign-outs, so a sign-in the engine answers after one (runPendingLogin) is known stale.
   const signOuts = useRef(0)
+  // The welcome page asks in flight, each with the sign-out count it went out under: the bridge
+  // answers them in order, so an answer to one from before a sign-out is the signed-out account's.
+  const welcomeAsks = useRef<number[]>([])
+  const askWelcome = useCallback((driver: LoginDriver): void => {
+    welcomeAsks.current.push(signOuts.current)
+    driver.send({ kind: 'getWelcome' })
+  }, [])
   // The sign-in `/hud_login` runs (lib/hudAutomation.ts, a test runner's), answered once it has
   // landed (`landed`: the engine took it) and the welcome page is done, or failed. The destination
   // it then goes to from the lobby, as a link's would.
@@ -2164,9 +2171,9 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           setPendingLook((pending) => (pending === msg.look ? null : pending))
           break
         case 'welcome': {
-          // asked only once a sign-in is submitted: an answer that comes after a sign-out is the
-          // signed-out account's, and no page of the next sign-in
-          if (!submittedRef.current) break
+          // an answer to an ask from before a sign-out is the signed-out account's: no page of a
+          // sign-in since, even one already submitted, and none of its pick
+          if (welcomeAsks.current.shift() !== signOuts.current) break
           // ACCEPT AND PLAY's pick accepted the terms already, and a /hud_login's sign-in stands
           // for them too (lib/hudAutomation.ts): the page is answered, with the pick's name. A
           // first login deploys its profile under the pick's name, so without one a /hud_login
@@ -3035,7 +3042,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           setHudLoginTick((n) => n + 1)
         }
         setBusy(false)
-        if (welcomeShown()) driver.send({ kind: 'getWelcome' })
+        if (welcomeShown()) askWelcome(driver)
       })
       .catch((e: unknown) => {
         console.error('[login] post-launch login failed:', e)
@@ -3991,7 +3998,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
         // at once: the welcome page's answer may come before the next render
         submittedRef.current = true
         welcomeLink.current = urlDestination.current
-        if (welcomeShown()) driverRef.current?.send({ kind: 'getWelcome' })
+        if (welcomeShown() && driverRef.current != null) askWelcome(driverRef.current)
         // the engine booted holding the world, as for Jump in: the pick is the lobby's
         if (urlDestination.current == null) {
           setLobby(true)

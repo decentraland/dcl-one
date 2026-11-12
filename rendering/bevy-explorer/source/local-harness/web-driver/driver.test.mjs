@@ -105,17 +105,21 @@ describe('redact', () => {
     assert.equal(redact(line, `the second piece ${pieces[1]}`), 'the second piece <redacted>');
   });
 
-  test('stops where the JSON does not go on, and finds an identity glued to other text', () => {
+  test('keeps what goes with an identity on its line out of later text, and finds one glued to other text', () => {
     // padded to whole groups, so no `=` ends it
     const json = JSON.stringify({ ephemeralIdentity: { privateKey: '0x' + '56'.repeat(32) } });
     const long = Buffer.from(json + ' '.repeat((3 - (json.length % 3)) % 3)).toString('base64');
     assert.ok(!long.endsWith('='));
     for (const after of ['my-long-world-name-2025.dcl.eth', 'tester', '-default-on-error']) {
       const line = `/hud_login ${long} ${after}`;
-      assert.deepEqual(secretsOf(line), [long], after);
+      assert.ok(secretsOf(line).includes(long), after);
       assert.equal(redact(line, `connected to ${after}`), `connected to ${after}`);
     }
+    // the line itself is redacted up to the next flag
+    assert.equal(redact(`/hud_login ${long} tester`, `/hud_login ${long} tester`), '/hud_login <redacted>');
     assert.equal(redact(`/hud_login x${id}`, `x${id}`), 'x<redacted>');
+    // a camelCase `eyL` in a realm's name is no identity
+    assert.equal(redact(`/hud_login ${id} --realm moneyLand-world-2025.dcl.eth`, 'mon moneyLand-world-2025'), 'mon moneyLand-world-2025');
   });
 });
 

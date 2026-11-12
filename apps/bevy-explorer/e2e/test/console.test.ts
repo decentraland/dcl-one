@@ -70,9 +70,11 @@ describe('ConsoleError', () => {
     const long = Buffer.from(json + ' '.repeat((3 - (json.length % 3)) % 3)).toString('base64')
     assert.ok(!long.endsWith('='))
     const pieces = long.match(/.{1,76}/g) ?? []
-    // a character mistyped in the first piece: `/` starting a group decodes to a byte no JSON has
-    const mistyped = [pieces[0]!.slice(0, 40) + '/' + pieces[0]!.slice(41), ...pieces.slice(1)]
-    assert.ok(Buffer.from(mistyped[0]!, 'base64').some((byte) => byte > 0x7e))
+    // a character mistyped in a piece: `/` starting a group decodes to a byte no JSON has
+    const mistype = (piece: string): string => piece.slice(0, 40) + '/' + piece.slice(41)
+    const mistypedFirst = [mistype(pieces[0]!), ...pieces.slice(1)]
+    const mistypedThird = [...pieces.slice(0, 2), mistype(pieces[2]!), ...pieces.slice(3)]
+    assert.ok(Buffer.from(mistype(pieces[2]!), 'base64').some((byte) => byte > 0x7e))
     // each case: the line, and the line as it may be logged
     const cases: [string, string][] = [
       [`/hud_login ${id} --guest`, '/hud_login <redacted> --guest'],
@@ -85,19 +87,26 @@ describe('ConsoleError', () => {
       [`/hud_login ${spaced}`, '/hud_login <redacted>'],
       [`/login_identity ${pretty} --guest`, '/login_identity <redacted> --guest'],
       ...afterWhitespace.map((encoded): [string, string] => [`/hud_login ${encoded}`, '/hud_login <redacted>']),
-      // a realm's long name is no identity, though base64 characters spell it
+      // a realm's or a name's long value is no identity, though base64 characters spell it, even
+      // one with `eyI`..`eyL` (`{"`) inside
       [`/hud_login ${id} --realm example-world-name.dcl.eth`, '/hud_login <redacted> --realm example-world-name.dcl.eth'],
       [`/hud_login ${id} --realm ezra-test-world-2025.dcl.eth --default-on-error`, '/hud_login <redacted> --realm ezra-test-world-2025.dcl.eth --default-on-error'],
+      [`/hud_login ${id} --realm moneyLand-world-2025.dcl.eth`, '/hud_login <redacted> --realm moneyLand-world-2025.dcl.eth'],
+      [`/hud_login ${id} --name greyKnight-tester01 --look 1`, '/hud_login <redacted> --name greyKnight-tester01 --look 1'],
       // in a flag's value slot: the identity, never the word the flags leave over
       [`/hud_login --name ${id} --look 1`, '/hud_login --name <redacted> --look 1'],
-      // pasted twice, wrapped or split, the first piece short too: all of it
-      [`/hud_login ${id} ${pretty}`, '/hud_login <redacted> <redacted>'],
+      // pasted twice, wrapped, split, quoted or mistyped, the first piece short too: all of it, up
+      // to the next flag, and the words up to it as well (a bare realm name, a stray word)
+      [`/hud_login ${id} ${pretty}`, '/hud_login <redacted>'],
       [`/hud_login ${pieces.join('\n')} --guest`, '/hud_login <redacted> --guest'],
       [`/hud_login ${pieces.join(' ')}`, '/hud_login <redacted>'],
+      [`/hud_login "${pieces.join('\n')}" --guest`, '/hud_login "<redacted>" --guest'],
+      [`/hud_login '${pieces.join(' ')}'`, "/hud_login '<redacted>'"],
+      [`/hud_login ${mistypedFirst.join('\n')}`, '/hud_login <redacted>'],
+      [`/hud_login ${mistypedThird.join('\n')} --guest`, '/hud_login <redacted> --guest'],
       [`/hud_login ${long.slice(0, 8)} ${long.slice(8)}`, '/hud_login <redacted>'],
-      // ...but not the words after it that do not go on with its JSON: a bare realm name, a flag's typo
-      [`/hud_login ${long} my-long-world-name-2025.dcl.eth`, '/hud_login <redacted> my-long-world-name-2025.dcl.eth'],
-      [`/hud_login ${long} tester`, '/hud_login <redacted> tester'],
+      [`/hud_login ${long} my-long-world-name-2025.dcl.eth`, '/hud_login <redacted>'],
+      [`/hud_login ${long} tester`, '/hud_login <redacted>'],
       [`/hud_login ${long} -default-on-error`, '/hud_login <redacted> -default-on-error'],
       // raw JSON, which the commands refuse after it was logged, closed or cut
       [`/hud_login ${raw} --guest`, '/hud_login <redacted>'],
@@ -118,11 +127,16 @@ describe('ConsoleError', () => {
       ['/hud_login', '/hud_login']
     ]
     for (const [line, logged] of cases) assert.equal(redactLine(line), logged, line)
-    // a later piece of a wrapped identity is a secret of its own, wherever text quotes it, and a
-    // character mistyped before it does not end the identity there
-    assert.ok(pieces.length >= 3)
+    // a later piece of a wrapped identity is a secret of its own, wherever text quotes it, the
+    // pieces after a mistyped one too
+    assert.ok(pieces.length >= 4)
     assert.equal(redact(`/hud_login ${pieces.join('\n')}`, `bad piece ${pieces[2]}`), 'bad piece <redacted>')
-    assert.equal(redactLine(`/hud_login ${mistyped.join('\n')}`), '/hud_login <redacted>')
+    assert.equal(redact(`/hud_login ${mistypedThird.join('\n')}`, `bad piece ${pieces[3]}`), 'bad piece <redacted>')
+    // what goes with an identity on its line is no secret of its own: later text naming it stays
+    for (const after of ['my-long-world-name-2025.dcl.eth', 'tester']) assert.equal(redact(`/hud_login ${long} ${after}`, `connected to ${after}`), `connected to ${after}`)
+    for (const value of ['moneyLand-world-2025.dcl.eth', 'greyKnight-tester01']) {
+      assert.equal(redact(`/hud_login ${id} --realm ${value}`, `connected to ${value}`), `connected to ${value}`)
+    }
     // the web driver's command line redacts by the same rule
     const driver = (await import(pathToFileURL(WEB_DRIVER).href)) as { secretsOf: (line: string) => string[] }
     const lines = cases.map(([line]) => line)

@@ -458,7 +458,7 @@ describe('hudLogin', () => {
 
   test('a reply that is not JSON fails the command, the payload redacted before the reply is cut', async () => {
     // longer than the cut, so a cut before the redaction would leave a part of it
-    const payload = 'eyJ' + 'A'.repeat(400) + '='
+    const payload = Buffer.from(JSON.stringify({ privateKey: '0x' + '56'.repeat(150) })).toString('base64')
     const fake = new FakeConsole({ hud_login: `signed in with ${payload}` })
     const explorer = new Explorer(fake)
     const records: CommandRecord[] = []

@@ -800,6 +800,28 @@ describe('/hud_logout', () => {
     expect(driver.sentOf('acceptWelcome')).toEqual([{ kind: 'acceptWelcome' }])
   })
 
+  it("a welcome answer that comes after /hud_logout, the next /hud_login under way, neither answers its page nor takes its pick", async () => {
+    const driver = new HeldWelcomeDriver()
+    driver.welcome = { terms: true, newProfile: true }
+    const h = await ready(driver)
+    const first = expect(login(`${ENCODED} --name first --look 1`)).rejects.toThrow('signed out')
+    await waitFor(() => expect(driver.sentOf('getWelcome')).toHaveLength(1))
+    let next!: Promise<Reply>
+    await act(async () => {
+      expect(await logout()).toBe('signed out')
+      next = login(`${ENCODED} --name second --look 2`)
+    })
+    await first
+    // the signed-out sign-in's answer arrives while the next one is under way
+    await act(async () => driver.answerWelcome())
+    expect(driver.sentOf('acceptWelcome')).toEqual([])
+    await waitFor(() => expect(driver.sentOf('getWelcome')).toHaveLength(2))
+    await act(async () => driver.answerWelcome())
+    await expect(next).resolves.toMatchObject({ phase: 'lobby' })
+    expect(driver.sentOf('acceptWelcome')).toEqual([{ kind: 'acceptWelcome', name: 'second' }])
+    expect(h.session().phase).toBe('lobby')
+  })
+
   it('a sign-in the engine refuses after /hud_logout puts no error on the start page', async () => {
     const driver = new IdentityDriver()
     driver.hold = true

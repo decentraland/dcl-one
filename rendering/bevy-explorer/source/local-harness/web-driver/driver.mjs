@@ -85,62 +85,81 @@ function noChromeMessage(env) {
 
 /** A whole run of base64 characters (either alphabet). */
 const BASE64_RUN = /(?<![A-Za-z0-9+/_-])[A-Za-z0-9+/_-]{4,}={0,2}/g;
-/** The next word on the line, when it is base64 through to the next space. */
-const NEXT_WORD = /^\s+([A-Za-z0-9+/_-]+={0,2})(?=\s|$)/;
-/** How an AuthIdentity's JSON starts once its base64 is decoded, as the commands parse it: any
- *  whitespace, then an object and the quote of its first key. Only the start is read, so a
- *  mistyped identity is still found. */
-const JSON_OBJECT_START = /^\s*\{\s*"/;
-/** What the rest of it decodes to: JSON text, printable ASCII and whitespace. */
+const BASE64_WORD = /^[A-Za-z0-9+/_-]+={0,2}$/;
+/** Where an AuthIdentity's JSON may start once its base64 is decoded, as the commands parse it:
+ *  any whitespace, then `{` and a quote. */
+const OBJECT_START = /^\s*\{\s*"/;
+/** What makes it one: that object's first key, closed and followed by its colon. */
+const OBJECT_KEY = /^\s*\{\s*"[\x20\x21\x23-\x5b\x5d-\x7e]{1,64}"\s*:/;
+/** JSON text: printable ASCII and whitespace. */
 const JSON_TEXT = /^[\t\n\r\x20-\x7e]*$/;
+/** Where an identity's words end on its line: at the next word that starts with `-`, a flag or a
+ *  typo of one. */
+const NEXT_FLAG = /\s+-/;
+/** The quotes and punctuation a hand-typed line may close a word with. */
+const CLOSERS = /["'`,;)\]]+$/;
 /** A payload sent as raw JSON, which the commands refuse after it was logged: the line's first
  *  `{` to its end, closed or cut. */
 const RAW_JSON = /\{.*/s;
 /** Shorter than this, it could be part of other text; an identity is hundreds of characters. */
 const MIN_SECRET = 16;
 
-const decodesTo = (base64, text) => text.test(Buffer.from(base64, 'base64').toString('latin1'));
+const decoded = (base64) => Buffer.from(base64, 'base64').toString('latin1');
 
-/** Whether `piece` goes on with the JSON text `joined` decodes to: only the bytes it adds are read,
- *  so a mistyped character before it does not end the identity there. */
-const continues = (joined, piece) =>
-  JSON_TEXT.test(Buffer.from(joined + piece, 'base64').subarray(Math.max(0, Math.floor((joined.length * 3) / 4) - 1)).toString('latin1'));
-
-/** Where in a base64 run an identity starts, after whatever a hand-typed line glued to its front
- *  (`x<id>`, `https://a/<id>`), or -1. */
-function identityStart(run) {
-  for (let at = 0; at + 4 <= run.length; at++) if (decodesTo(run.slice(at, at + 64), JSON_OBJECT_START)) return at;
-  return -1;
+/** Whether the bytes `length` base64 characters at `offset` of `joined` add are JSON text: a piece
+ *  of the identity as it was meant, not one a typo changed. */
+function jsonTextAt(joined, offset, length) {
+  const from = offset === 0 ? 0 : Math.floor((offset * 3) / 4) + 1;
+  return JSON_TEXT.test(decoded(joined.slice(0, offset + length)).slice(from));
 }
 
-/** The credentials a console line carries: the payload of `/login_identity` or `/hud_login`, an
- *  AuthIdentity (an ephemeral private key and a signed delegation valid for days), found by what
- *  it decodes to wherever a hand-typed line puts it (after flags, as a flag's value, quoted, glued
- *  to other text, twice, wrapped or split, whole and each long piece, or as raw JSON). Nothing
- *  else is one, so an empty or short word, or a realm's name, never becomes a secret. The e2e
- *  suite's `driver/console.ts` has the same rule, which its tests keep in step. */
+/** The identity a line carries from `start`, if one starts there: the text it spans on the line, up
+ *  to the next flag (wrapped, split, quoted or mistyped, all of it), its pieces of base64, and how
+ *  far into the line they go (a second identity after its padding is found on its own). */
+function identityAt(line, start, first) {
+  const rest = line.slice(start);
+  const flag = NEXT_FLAG.exec(rest);
+  const span = (flag == null ? rest : rest.slice(0, flag.index)).trimEnd().replace(CLOSERS, '');
+  let joined = first;
+  const pieces = [[0, first]];
+  const word = /\s+(\S+)/y;
+  word.lastIndex = first.length;
+  let end = first.length;
+  for (let next = word.exec(span); next != null; next = word.exec(span)) {
+    const piece = next[1].replace(CLOSERS, '');
+    if (joined.endsWith('=') || !BASE64_WORD.test(piece)) break;
+    pieces.push([joined.length, piece]);
+    joined += piece;
+    end = word.lastIndex;
+  }
+  if (joined.length < MIN_SECRET || !OBJECT_KEY.test(decoded(joined.slice(0, 128)))) return undefined;
+  return { span, pieces, joined, end: start + end };
+}
+
+/** The credentials a line carries: the payload of `/login_identity` or `/hud_login`, an
+ *  AuthIdentity (an ephemeral private key and a signed delegation that stays valid for days),
+ *  found by what it decodes to wherever a hand-typed line puts it: after flags, as a flag's value,
+ *  quoted, glued to other text, twice, wrapped, split or mistyped, or as raw JSON (the commands
+ *  refuse such a line, but after it was logged). Once one starts, the line is a secret up to the
+ *  next flag, so no piece of it is left; each piece is one of its own too, when its bytes are JSON
+ *  text, for text that quotes it alone. Nothing else is one, so an empty or short word, or a
+ *  realm's name, never turns lines into `<redacted>`. The e2e suite's `driver/console.ts` has the
+ *  same rule, which its tests keep in step. */
 export function secretsOf(line) {
   if (!/^\s*\/?(?:login_identity|hud_login)(?:\s|$)/.test(line)) return [];
   const secrets = new Set();
+  let covered = 0;
   for (const { 0: run, index } of line.matchAll(BASE64_RUN)) {
-    const start = identityStart(run);
-    if (start < 0) continue;
-    // wrapped (as `base64` wraps at 76 characters) or split by spaces, it goes on in the next
-    // words for as long as they continue its JSON: never past its padding, a flag or a typo of
-    // one (`-`), or a word such as a realm's name
-    let joined = run.slice(start);
-    let end = index + run.length;
-    const pieces = [joined];
-    for (let next = NEXT_WORD.exec(line.slice(end)); next != null && !joined.endsWith('='); next = NEXT_WORD.exec(line.slice(end))) {
-      const piece = next[1];
-      if (piece.startsWith('-') || !continues(joined, piece)) break;
-      joined += piece;
-      end += next[0].length;
-      pieces.push(piece);
+    if (index < covered) continue;
+    for (let at = 0; at + 4 <= run.length; at++) {
+      if (!OBJECT_START.test(decoded(run.slice(at, at + 64)))) continue;
+      const identity = identityAt(line, index + at, run.slice(at));
+      if (identity == null) continue;
+      secrets.add(identity.span);
+      for (const [offset, piece] of identity.pieces) if (piece.length >= MIN_SECRET && jsonTextAt(identity.joined, offset, piece.length)) secrets.add(piece);
+      covered = identity.end;
+      break;
     }
-    if (joined.length < MIN_SECRET) continue;
-    secrets.add(line.slice(index + start, end));
-    for (const piece of pieces) if (piece.length >= MIN_SECRET) secrets.add(piece);
   }
   const raw = RAW_JSON.exec(line)?.[0].trimEnd();
   if (raw !== undefined && raw.length >= MIN_SECRET) secrets.add(raw);
