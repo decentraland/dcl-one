@@ -28,24 +28,34 @@ function bridgeScenePreview(): Plugin {
         // fetch the UNRELATED registry package "sdk-commands" when bridge-scene/node_modules is stale,
         // and on Windows npx is npx.cmd, which Node starts only through a shell.
         const cwd = fileURLToPath(new URL('./bridge-scene', import.meta.url))
+        // A throw here would stop vite: this runs in the probe's error handler.
         const pkgDir = join(cwd, 'node_modules/@dcl/sdk-commands')
-        if (!existsSync(join(pkgDir, 'package.json'))) {
-          console.warn('[bridge-scene] @dcl/sdk-commands is not installed: run npm install in react-web/bridge-scene')
+        let script: string
+        try {
+          const { bin } = JSON.parse(readFileSync(join(pkgDir, 'package.json'), 'utf8')) as {
+            bin?: string | Record<string, string>
+          }
+          const path = typeof bin === 'string' ? bin : bin?.['sdk-commands']
+          if (!path) throw new Error('package.json names no sdk-commands bin')
+          script = join(pkgDir, path)
+        } catch (error) {
+          console.warn(`[bridge-scene] cannot start @dcl/sdk-commands (run npm install in react-web/bridge-scene): ${error}`)
           return
         }
-        const { bin } = JSON.parse(readFileSync(join(pkgDir, 'package.json'), 'utf8')) as { bin: Record<string, string> }
         // Windows has no process group to signal, so the tree is stopped with taskkill.
         const windows = process.platform === 'win32'
-        const child = spawn(process.execPath, [join(pkgDir, bin['sdk-commands']), 'start', '--no-client', '--port', '8100'], {
+        const child = spawn(process.execPath, [script, 'start', '--no-client', '--port', '8100'], {
           cwd,
           stdio: ['ignore', 'inherit', 'inherit'],
           detached: !windows
         })
-        // Runs on both the server's close and process exit; once the child is gone its pid may
-        // belong to another process, which taskkill /T /F would kill with its tree.
+        // Runs on both the server's close and process exit. On Windows, once the child is gone its
+        // pid may belong to another process, which taskkill /T /F would kill with its tree. A POSIX
+        // process group is not reused while a member lives, so its survivors are still stopped.
         let stopped = false
         const stop = (): void => {
-          if (stopped || child.pid == null || child.exitCode !== null || child.signalCode !== null) return
+          if (stopped || child.pid == null) return
+          if (windows && (child.exitCode !== null || child.signalCode !== null)) return
           stopped = true
           try {
             if (windows) spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' })
