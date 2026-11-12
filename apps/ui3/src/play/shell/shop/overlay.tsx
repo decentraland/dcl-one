@@ -4,14 +4,14 @@
 // Escape cancels unless the purchase is processing); closing gives the focus back to the app.
 
 import '@fontsource-variable/inter/index.css'
-import '../../styles/tokens.css'
+import '@hud/styles/tokens.css'
 import { useEffect, useRef } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { MaskIcon } from '../../design'
-import emotesIcon from '../../assets/backpack/icon-emotes.webp'
-import { CategoryIcon } from '../../features/backpack/categoryIcons'
+import { MaskIcon } from '@hud/design'
+import emotesIcon from '@hud/assets/backpack/icon-emotes.webp'
+import { CategoryIcon } from '@hud/features/backpack/categoryIcons'
 import { ShopPurchaseDialog, type ShopPurchaseItem, type ShopPurchaseStep } from '../../features/shop/ui'
-import { installHudScale } from '../../lib/hudScale'
+import { installHudScale } from '@explorer-core/lib/hudScale'
 import type { ShellPurchaseHandlers, ShellPurchaseItem, ShellPurchaseView, ShellShopUi } from './purchase'
 import styles from './overlay.module.css'
 

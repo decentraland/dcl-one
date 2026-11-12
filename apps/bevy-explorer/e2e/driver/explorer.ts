@@ -153,6 +153,48 @@ export interface ChatHistory {
   messages: ChatMessage[]
 }
 
+/** A participant of the voice call or community stream the player is in (`/voice_state` `call`). */
+export interface VoiceCallParticipant {
+  address: string
+  name: string
+  role: string
+  isSpeaker: boolean
+  isRequestingToSpeak: boolean
+  isMuted: boolean
+  isSpeaking: boolean
+}
+
+/** `/voice`'s actions: ring (`call`), answer (`accept` / `reject`), hang up or leave (`end`), open,
+ *  join or close a community stream, raise the hand, the call mic, and moderation (`deny` turns
+ *  down a raised hand). */
+export type VoiceAction =
+  | ['call', string]
+  | ['accept' | 'reject' | 'end' | 'close']
+  | ['start' | 'join', string]
+  | ['hand', 'up' | 'down']
+  | ['mic', 'on' | 'off']
+  | ['promote' | 'demote' | 'kick' | 'deny', string]
+
+/** The private call or community stream as the HUD sees it: its status
+ *  (`disconnected`, `receivedCall`, `startingCall`, `startedCall`, `inCall`, `endingCall`,
+ *  `rejectingCall`, `busy`, `genericError`) and kind (`none`, `private`, `community`). */
+export interface VoiceCallState {
+  status: string
+  kind: string
+  callId: string | null
+  communityId: string | null
+  peer: string | null
+  connection: string
+  participants: VoiceCallParticipant[]
+  micEnabled: boolean
+  localSpeaker: boolean
+  localRole: string
+  localRequestingToSpeak: boolean
+  error: string | null
+  /** `error` tells how the call ended (hung up, removed, joined elsewhere), not a failure. */
+  errorIsNotice: boolean
+}
+
 /** `/community_state`: community chat's routing and counters (no message bodies). */
 export interface CommunityState {
   routerIdentity: string
@@ -174,6 +216,51 @@ export interface VoiceState {
   connected: boolean | null
   rooms: { scene: boolean; state: string }[] | null
   speakers: string[] | null
+  /** Null without `livekit`. */
+  call: VoiceCallState | null
+}
+
+/** `/ban_block_state [address]`: the one answer to "is this user banned or blocked?", with every
+ *  `null` reading explained in `unavailable` by its field path. */
+export interface BanBlockState {
+  address: string | null
+  blocks: {
+    state: 'unavailable' | 'live'
+    reason: 'social_feature_off' | 'not_signed_in' | 'social_not_connected' | null
+    blocked: string[]
+    blockedBy: string[]
+  }
+  platformBan: {
+    state: 'unknown' | 'checked' | 'failed'
+    isBanned: boolean | null
+    source: 'ban_status_endpoint' | 'scene_admission_refusal' | null
+    reason: string | null
+    matchedOn: string | null
+    customMessage: string | null
+    expiresAt: string | null
+    checkedAgoSecs: number | null
+    error: string | null
+  }
+  sceneAdmission: {
+    state: 'unknown' | 'allowed' | 'refused'
+    scope: 'platform' | 'world' | 'scene' | null
+    message: string | null
+    sceneId: string | null
+  }
+  sceneRoom: {
+    state: 'not_connected' | 'connected'
+    sceneId: string | null
+    bannedAddresses: string[]
+    sceneAdmins: string[]
+  }
+  lookup: {
+    address: string
+    isBlockedEitherWay: boolean
+    direction: 'none' | 'local_user_blocked_them' | 'they_blocked_local_user' | 'mutual'
+    bannedInScene: boolean
+    adminPermissions: 'admin' | 'not_admin' | 'not_loaded_yet'
+  } | null
+  unavailable: Record<string, string>
 }
 
 export interface ScreenPosition {
@@ -549,6 +636,27 @@ export class Explorer {
 
   voiceState(): Promise<VoiceState> {
     return this.json<VoiceState>('/voice_state')
+  }
+
+  /** The ban and block status; with an address, also that address's standing. */
+  banBlockState(address?: string): Promise<BanBlockState> {
+    return this.json<BanBlockState>(address ? `/ban_block_state ${address}` : '/ban_block_state')
+  }
+
+  /** Block a user through the social service; answers once the service has. */
+  async blockUser(address: string): Promise<void> {
+    await this.run(`/block_user ${address}`)
+  }
+
+  /** Lift a block through the social service; answers once the service has. */
+  async unblockUser(address: string): Promise<void> {
+    await this.run(`/unblock_user ${address}`)
+  }
+
+  /** A voice chat action, as the HUD's buttons do it (`/voice`, through the HUD's own path and
+   *  refusals). Only queues the request: `/voice_state` `call` follows. */
+  async voice(...action: VoiceAction): Promise<void> {
+    await this.run(['/voice', ...action].join(' '))
   }
 
   /** The sky time: `/time` reports; with `hours` (and `speed`, 0 stops the clock) it sets. */

@@ -102,6 +102,8 @@
 
 # explorer-client
 /rendering/bevy-explorer/ @decentraland/client
+/library/ui/apps/hud/ @decentraland/client
+/library/explorer-core/ @decentraland/client
 /apps/bevy-explorer/ @decentraland/client
 /.github/workflows/bevy-explorer-*.yml @decentraland/client
 /.github/actions/bevy-explorer-*/ @decentraland/client
@@ -132,32 +134,6 @@
 
 # documentation
 /docs/ @decentraland/infra
-
-# ui-provenance
-/library/ui/upstream.lock.json @decentraland/web-applications
-/library/ui/port-verification.json @decentraland/web-applications
-/library/ui/figma/lock-digests.mjs @decentraland/web-applications
-/library/ui/figma/port-verification.mjs @decentraland/web-applications
-/library/ui/figma/public-foundations.mjs @decentraland/web-applications
-/library/ui/figma/src/public-foundations.test.ts @decentraland/web-applications
-/library/ui/test/foundations-source.test.ts @decentraland/web-applications
-/library/ui/test/foundations.test.tsx @decentraland/web-applications
-/library/ui/foundations/source.json @decentraland/web-applications
-/library/ui/foundations/typography/font-source.json @decentraland/web-applications
-/library/ui/figma/src/install.ts @decentraland/web-applications
-/library/ui/figma/src/install.test.ts @decentraland/web-applications
-/library/ui/figma/component-generation.mjs @decentraland/web-applications
-/library/ui/figma/source-identity.mjs @decentraland/web-applications
-/library/ui/figma/public-output.mjs @decentraland/web-applications
-/library/ui/figma/public-components.mjs @decentraland/web-applications
-/library/ui/figma/public-components-policy.mjs @decentraland/web-applications
-/library/ui/figma/src/component-generation.test.ts @decentraland/web-applications
-/library/ui/figma/src/public-output.test.ts @decentraland/web-applications
-/library/ui/figma/src/public-components.test.ts @decentraland/web-applications
-/library/ui/figma/src/public-components-policy.test.ts @decentraland/web-applications
-/library/ui/figma/src/install-components.ts @decentraland/web-applications
-/library/ui/figma/src/install-components.test.ts @decentraland/web-applications
-/library/ui/components/generation.json @decentraland/web-applications
 
 # ui-library-workflow
 /.github/workflows/ui-library.yml @decentraland/web-applications @decentraland/infra

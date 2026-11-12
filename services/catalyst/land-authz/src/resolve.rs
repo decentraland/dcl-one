@@ -6,7 +6,7 @@
 //! subgraph's: the estate's owner and operator, but a per-parcel update
 //! operator still wins over the estate's.
 
-use sqlx::PgPool;
+use sqlx::{PgConnection, PgPool};
 
 use super::{
     KIND_APPROVED_FOR_ALL, KIND_UPDATE_MANAGER, LandOperators, ParcelSubject, UpdatableParcel,
@@ -157,6 +157,12 @@ type ParcelRightsRow = (
 );
 
 /// The reads over `land_authz.*` for one network's two registries.
+///
+/// A read that depends on the index being published runs on the
+/// connection of a ready snapshot (the `*_on` forms, see
+/// [`crate::indexer::ready_snapshot`]), so its check and its reads see one
+/// state. The forms that read from the pool see no such state; the ones
+/// with an `_on` twin are for tests only.
 #[derive(Clone)]
 pub struct Store {
     pool: PgPool,
@@ -315,30 +321,54 @@ impl Store {
         .await
     }
 
-    /// Subject plus both grant legs per parcel in one round trip,
-    /// positional; `None` = not indexed. The grant legs list operators in
-    /// lamb2's order ([`GRANTED_SINCE`]).
+    /// [`Self::rights_batch_on`] on a pool connection, for tests.
+    #[cfg(test)]
     pub async fn rights_batch(
         &self,
         parcels: &[(i32, i32)],
     ) -> Result<Vec<Option<ParcelRights>>, sqlx::Error> {
-        self.rights_batch_in(parcels, GRANTED_SINCE, GRANTED_ORDER)
+        let mut conn = self.pool.acquire().await?;
+        self.rights_batch_on(&mut conn, parcels).await
+    }
+
+    /// Subject plus both grant legs per parcel in one round trip,
+    /// positional; `None` = not indexed. The grant legs list operators in
+    /// lamb2's order ([`GRANTED_SINCE`]). On the caller's connection (a
+    /// ready snapshot).
+    pub async fn rights_batch_on(
+        &self,
+        conn: &mut PgConnection,
+        parcels: &[(i32, i32)],
+    ) -> Result<Vec<Option<ParcelRights>>, sqlx::Error> {
+        self.rights_batch_in(conn, parcels, GRANTED_SINCE, GRANTED_ORDER)
             .await
     }
 
-    /// [`Self::rights_batch`] for the deploy check, which reads only whether
-    /// the actor is among the grant legs: the operators come in address
-    /// order, without the two history lookups per operator that lamb2's
-    /// order costs.
+    /// [`Self::deploy_rights_batch_on`] on a pool connection, for tests.
+    #[cfg(test)]
     pub async fn deploy_rights_batch(
         &self,
         parcels: &[(i32, i32)],
     ) -> Result<Vec<Option<ParcelRights>>, sqlx::Error> {
-        self.rights_batch_in(parcels, "", "ar.operator").await
+        let mut conn = self.pool.acquire().await?;
+        self.deploy_rights_batch_on(&mut conn, parcels).await
+    }
+
+    /// [`Self::rights_batch_on`] for the deploy check, which reads only
+    /// whether the actor is among the grant legs: the operators come in
+    /// address order, without the two history lookups per operator that
+    /// lamb2's order costs.
+    pub async fn deploy_rights_batch_on(
+        &self,
+        conn: &mut PgConnection,
+        parcels: &[(i32, i32)],
+    ) -> Result<Vec<Option<ParcelRights>>, sqlx::Error> {
+        self.rights_batch_in(conn, parcels, "", "ar.operator").await
     }
 
     async fn rights_batch_in(
         &self,
+        conn: &mut PgConnection,
         parcels: &[(i32, i32)],
         granted_since: &str,
         granted_order: &str,
@@ -375,7 +405,7 @@ impl Store {
         .bind(&self.estate_registry)
         .bind(KIND_UPDATE_MANAGER)
         .bind(KIND_APPROVED_FOR_ALL)
-        .fetch_all(&self.pool)
+        .fetch_all(conn)
         .await?;
 
         let mut out: Vec<Option<ParcelRights>> = vec![None; parcels.len()];
@@ -417,22 +447,44 @@ impl Store {
         Ok(out)
     }
 
+    /// [`Self::rights_on`] on a pool connection, for tests.
+    #[cfg(test)]
     pub async fn rights(&self, x: i32, y: i32) -> Result<Option<ParcelRights>, sqlx::Error> {
         Ok(self.rights_batch(&[(x, y)]).await?.pop().flatten())
     }
 
-    pub async fn operators(&self, x: i32, y: i32) -> Result<Option<LandOperators>, sqlx::Error> {
-        Ok(self.rights(x, y).await?.map(|r| r.operators))
+    /// One parcel's [`Self::rights_batch_on`], on the caller's connection (a
+    /// ready snapshot).
+    pub async fn rights_on(
+        &self,
+        conn: &mut PgConnection,
+        x: i32,
+        y: i32,
+    ) -> Result<Option<ParcelRights>, sqlx::Error> {
+        Ok(self.rights_batch_on(conn, &[(x, y)]).await?.pop().flatten())
     }
 
     pub async fn parcel_owner(&self, x: i32, y: i32) -> Result<Option<String>, sqlx::Error> {
         Ok(self.parcel_subject(x, y).await?.map(|s| s.owner))
     }
 
-    /// Whether `owner` holds any parcel at `coords`, directly or through the
-    /// estate it sits in (the LAND leg of `worlds::policy::is_admin`).
+    /// [`Self::owns_land_at_on`] on a pool connection, for tests.
+    #[cfg(test)]
     pub async fn owns_land_at(
         &self,
+        owner: &str,
+        coords: &[(i32, i32)],
+    ) -> Result<bool, sqlx::Error> {
+        let mut conn = self.pool.acquire().await?;
+        self.owns_land_at_on(&mut conn, owner, coords).await
+    }
+
+    /// Whether `owner` holds any parcel at `coords`, directly or through the
+    /// estate it sits in (the LAND leg of `worlds::policy::is_admin`). On the
+    /// caller's connection (a ready snapshot).
+    pub async fn owns_land_at_on(
+        &self,
+        conn: &mut PgConnection,
         owner: &str,
         coords: &[(i32, i32)],
     ) -> Result<bool, sqlx::Error> {
@@ -454,7 +506,7 @@ impl Store {
         .bind(&self.land_registry)
         .bind(&self.estate_registry)
         .bind(owner)
-        .fetch_one(&self.pool)
+        .fetch_one(conn)
         .await
     }
 
@@ -487,13 +539,29 @@ impl Store {
         Ok(rows.into_iter().map(updatable).collect())
     }
 
+    /// [`Self::parcels_with_update_operator_page_on`] on a pool connection,
+    /// for tests.
+    #[cfg(test)]
+    pub async fn parcels_with_update_operator_page(
+        &self,
+        address: &str,
+        limit: i64,
+        offset: i64,
+    ) -> Result<(Vec<OperatedParcel>, i64), sqlx::Error> {
+        let mut conn = self.pool.acquire().await?;
+        self.parcels_with_update_operator_page_on(&mut conn, address, limit, offset)
+            .await
+    }
+
     /// One page of the direct reverse lookup with its total (`count(*) OVER
     /// ()`, a bare COUNT when the page is past the end), keyed and ordered
     /// as the land-manager subgraph's `Parcel.id`: the token id as
     /// lower-case `0x` hex without leading zeros, sorted as a string
-    /// ([`PARCEL_SUBGRAPH_ID`]).
-    pub async fn parcels_with_update_operator_page(
+    /// ([`PARCEL_SUBGRAPH_ID`]). On the caller's connection (a ready
+    /// snapshot).
+    pub async fn parcels_with_update_operator_page_on(
         &self,
+        conn: &mut PgConnection,
         address: &str,
         limit: i64,
         offset: i64,
@@ -510,7 +578,7 @@ impl Store {
             .bind(address)
             .bind(limit)
             .bind(offset)
-            .fetch_all(&self.pool)
+            .fetch_all(&mut *conn)
             .await?;
         let total = match rows.first() {
             Some(row) => row.4,
@@ -521,7 +589,7 @@ impl Store {
                 )
                 .bind(&self.land_registry)
                 .bind(address)
-                .fetch_one(&self.pool)
+                .fetch_one(&mut *conn)
                 .await?
             }
         };

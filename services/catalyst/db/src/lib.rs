@@ -17,6 +17,11 @@ pub const SCHEMA_SQL: &str = include_str!(concat!(env!("OUT_DIR"), "/schema.sql"
 /// steps `catalyst schema migrate` applies to a database stamped before them
 /// (`schema_migrate`); `catalyst schema print --migrations` writes the same text.
 pub const MIGRATIONS_SQL: &str = include_str!(concat!(env!("OUT_DIR"), "/migrations.sql"));
+/// The reviewed release that takes a database stamped `SCHEMA_VERSION - 1` to
+/// `SCHEMA_VERSION` (`schemas/releases/v3-private-voice-pending.sql`, rendered
+/// by build.rs without its psql commands, transaction lines and includes).
+/// `catalyst schema migrate --release` runs it in its own transaction.
+pub const RELEASE_SQL: &str = include_str!(concat!(env!("OUT_DIR"), "/release.sql"));
 
 /// Every connection runs with this path and clock; application SQL is
 /// schema-qualified anyway, and no request ever changes either.
@@ -262,7 +267,30 @@ pub async fn bootstrap(pool: &PgPool) -> Result<(), BootstrapError> {
 }
 
 #[derive(Debug, Error)]
+pub enum EncodingError {
+    #[error(
+        "unsupported PostgreSQL server_encoding {0}: catalyst requires UTF8; no schema changes were applied"
+    )]
+    Unsupported(String),
+    #[error(transparent)]
+    Sqlx(#[from] sqlx::Error),
+}
+
+/// Check before DDL: Unicode JSON escapes in expression indexes require UTF8.
+async fn require_utf8(pool: &PgPool) -> Result<(), EncodingError> {
+    let encoding: String = sqlx::query_scalar("SHOW server_encoding")
+        .fetch_one(pool)
+        .await?;
+    if encoding != "UTF8" {
+        return Err(EncodingError::Unsupported(encoding));
+    }
+    Ok(())
+}
+
+#[derive(Debug, Error)]
 pub enum ApplySchemaError {
+    #[error(transparent)]
+    Encoding(#[from] EncodingError),
     #[error("refusing to apply schema.sql: meta.schema already exists in this database")]
     AlreadyApplied,
 
@@ -278,6 +306,7 @@ pub enum ApplySchemaError {
 /// of `schemas/migrations/` still active in this version are recorded as carried
 /// from birth. Retired steps gain no receipt; `schema migrate` never runs them.
 pub async fn apply_schema(pool: &PgPool) -> Result<(), ApplySchemaError> {
+    require_utf8(pool).await?;
     // One apply at a time per process: the DDL holds a lock per object it
     // creates until commit, and parallel applies (the test suites create a
     // database per module) exhaust the cluster's shared lock table
@@ -482,6 +511,45 @@ mod tests {
         second.close().await;
     }
 
+    #[tokio::test]
+    async fn schema_apply_and_migrate_refuse_non_utf8_before_ddl() {
+        let Ok(base) = std::env::var("CATALYST_TEST_DATABASE_URL") else {
+            return;
+        };
+        let opts: PgConnectOptions = base.parse().unwrap();
+        let admin = PgPoolOptions::new()
+            .max_connections(1)
+            .connect_with(opts.clone().database("postgres"))
+            .await
+            .unwrap();
+        let name = format!("dcl_encoding_{}", uuid::Uuid::new_v4().simple());
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "CREATE DATABASE \"{name}\" TEMPLATE template0 ENCODING 'LATIN1' LOCALE_PROVIDER libc LC_COLLATE 'C' LC_CTYPE 'C'"
+        ))).execute(&admin).await.unwrap();
+        let pool = PgPoolOptions::new()
+            .max_connections(1)
+            .connect_with(opts.database(&name))
+            .await
+            .unwrap();
+        assert!(matches!(apply_schema(&pool).await,
+            Err(ApplySchemaError::Encoding(EncodingError::Unsupported(ref e))) if e == "LATIN1"));
+        assert!(
+            matches!(schema_migrate::migrate(&pool, SCHEMA_SQL, MIGRATIONS_SQL).await,
+            Err(schema_migrate::MigrateError::Encoding(EncodingError::Unsupported(ref e))) if e == "LATIN1")
+        );
+        let exists: bool = sqlx::query_scalar("SELECT to_regnamespace('meta') IS NOT NULL")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert!(!exists, "refusal must precede schema creation");
+        pool.close().await;
+        sqlx::query(sqlx::AssertSqlSafe(format!("DROP DATABASE \"{name}\"")))
+            .execute(&admin)
+            .await
+            .unwrap();
+        admin.close().await;
+    }
+
     #[cfg(unix)]
     #[test]
     fn scratch_cleanup_distinguishes_a_live_child_from_a_reaped_process() {
@@ -581,6 +649,31 @@ mod tests {
         assert!(
             SCHEMA_SQL.contains(&stamp),
             "schema.sql must insert {stamp}"
+        );
+    }
+
+    /// `schema migrate --release` runs RELEASE_SQL on a database one version
+    /// behind; a version bump without its own release must fail here.
+    #[test]
+    fn release_sql_takes_the_previous_version_to_this_one() {
+        let accepts = format!("IS DISTINCT FROM {} THEN", SCHEMA_VERSION - 1);
+        assert_eq!(
+            RELEASE_SQL.matches(&accepts).count(),
+            1,
+            "the release requires the previous version"
+        );
+        let stamps = format!("UPDATE meta.schema SET version = {SCHEMA_VERSION},");
+        assert_eq!(
+            RELEASE_SQL.matches(&stamps).count(),
+            1,
+            "the release stamps this version"
+        );
+        assert!(!RELEASE_SQL.contains("BEGIN;") && !RELEASE_SQL.contains("COMMIT;"));
+        assert!(
+            RELEASE_SQL
+                .lines()
+                .all(|line| !line.trim_start().starts_with('\\')),
+            "no psql meta-command reaches the migrator"
         );
     }
 

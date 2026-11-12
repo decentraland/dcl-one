@@ -11,11 +11,11 @@ import type { Route } from "./+types/shop.$";
 // Every other /shop path: the upstream Shop's aliases (market, my-purchases, import, authorizations,
 // assets/*, my-assets) and the retained Marketplace resolvers (browse, parcels/:x/:y, estates/:id)
 // redirect keeping identity, query and hash; anything else is the Shop's not-found page, with a 404.
-export async function loader({ request, params }: Route.LoaderArgs) {
+export async function loader({ request, params, context }: Route.LoaderArgs) {
   const url = new URL(request.url);
   const target = resolveShopAlias(url.pathname, url.search);
   if (target) throw redirect(target, 308);
-  return shopLoader("notFound", request, params);
+  return shopLoader("notFound", request, params, context);
 }
 
 export function clientLoader({ request }: Route.ClientLoaderArgs) {

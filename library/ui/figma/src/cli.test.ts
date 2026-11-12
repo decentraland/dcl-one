@@ -76,14 +76,122 @@ describe('when the CLI receives an explicit configuration outside its working di
       await expect(run(['install', target, '--source', 'rest'])).rejects.toMatchObject({
         stderr: expect.stringContaining('never rest')
       })
-    }
+    },
+    30_000
   )
+
+  // The install process parses its own arguments, so a forwarded value that starts with '-' must stay a value.
+  it('should forward an --out value that starts with a dash to the install process as a value', async () => {
+    await expect(run(['install', 'components', '--out=-stage'])).rejects.toMatchObject({
+      stderr: expect.stringContaining('Install output must be components')
+    })
+  }, 30_000)
+
+  // The CLI is not a generation input, so the install process itself refuses a preload it was not started with.
+  it('should refuse an install whose process carries a preload besides the tsx loader', async () => {
+    const preload = 'data:text/javascript,globalThis.preloaded = true'
+    const result = execute(
+      process.execPath,
+      [
+        '--import',
+        import.meta.resolve('tsx'),
+        '--import',
+        preload,
+        path.join(import.meta.dirname, 'cli.ts'),
+        'install',
+        'components',
+        '--config',
+        config
+      ],
+      { cwd }
+    )
+    await expect(result).rejects.toMatchObject({
+      stderr: expect.stringContaining('runs only with the tsx loader')
+    })
+  }, 30_000)
+
+  it.each([
+    ['NODE_OPTIONS', { NODE_OPTIONS: '--max-old-space-size=4096' }, 'without NODE_OPTIONS'],
+    [
+      'another tsconfig',
+      { TSX_TSCONFIG_PATH: path.resolve(import.meta.dirname, '..', '..', 'tsconfig.json') },
+      'figma/tsconfig.json'
+    ]
+  ])(
+    'should refuse an install process started directly with %s',
+    async (_case, env, message) => {
+      const result = execute(
+        process.execPath,
+        [
+          '--import',
+          import.meta.resolve('tsx'),
+          path.join(import.meta.dirname, 'install-main.ts'),
+          'components',
+          '--config',
+          config
+        ],
+        {
+          cwd,
+          env: {
+            ...process.env,
+            TSX_TSCONFIG_PATH: path.resolve(import.meta.dirname, '..', 'tsconfig.json'),
+            ...env
+          }
+        }
+      )
+      await expect(result).rejects.toMatchObject({ stderr: expect.stringContaining(message) })
+    },
+    30_000
+  )
+
+  it('should forward a --config value that starts with a dash to the install process as a value', async () => {
+    await writeFile(path.join(cwd, '-dash.config.json'), await readFile(config))
+    const result = execute(
+      process.execPath,
+      [
+        '--import',
+        import.meta.resolve('tsx'),
+        path.join(import.meta.dirname, 'cli.ts'),
+        'install',
+        'components',
+        '--config=-dash.config.json',
+        '--out=-stage'
+      ],
+      { cwd }
+    )
+    // The child read the dashed configuration and reached the output check.
+    await expect(result).rejects.toMatchObject({
+      stderr: expect.stringContaining('Install output must be components')
+    })
+  }, 30_000)
+
+  it('should report an install process that ends on a signal', async () => {
+    const kill =
+      "data:text/javascript,if(process.argv.some(a=>a.endsWith('install-main.ts')))process.kill(process.pid,'SIGKILL')"
+    const result = execute(
+      process.execPath,
+      [
+        '--import',
+        import.meta.resolve('tsx'),
+        path.join(import.meta.dirname, 'cli.ts'),
+        'install',
+        'components',
+        '--config',
+        config
+      ],
+      { cwd, env: { ...process.env, NODE_OPTIONS: '--import=' + kill } }
+    )
+    await expect(result).rejects.toMatchObject({
+      code: 1,
+      stderr: expect.stringContaining('The install process ended on signal SIGKILL')
+    })
+  }, 30_000)
 
   it('should reject an unknown install target', async () => {
     await expect(run(['install', 'unknown'])).rejects.toMatchObject({
       stderr: expect.stringContaining('Unknown install target')
     })
-  })
+  }, 30_000)
 
   it.each([['install'], ['install', 'foundations', 'extra']])(
     'should reject the incomplete install arguments %j',

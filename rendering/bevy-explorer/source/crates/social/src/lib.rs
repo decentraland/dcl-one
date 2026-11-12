@@ -12,6 +12,7 @@ mod rpc_websocket;
 pub mod runtime;
 #[cfg(feature = "social")]
 pub use client::{FriendshipEventBody, SocialClientHandler};
+pub mod voice;
 
 use bevy::prelude::*;
 use bevy::tasks::IoTaskPool;
@@ -50,17 +51,11 @@ impl Plugin for SocialPlugin {
         app.add_event::<CommunityConnectivityEvent>();
         app.add_event::<BlockUpdateEvent>();
         app.add_event::<DirectChatEvent>();
+        app.add_event::<VoiceEventReceived>();
         app.init_resource::<SocialClient>();
         app.init_resource::<SocialConsumerRequested>();
         app.add_event::<SocialStateChanged>();
-        app.add_systems(
-            PostUpdate,
-            |mut client: ResMut<SocialClient>, mut changed: EventWriter<SocialStateChanged>| {
-                if client.0.as_mut().is_some_and(|client| client.update()) {
-                    changed.write(SocialStateChanged);
-                }
-            },
-        );
+        app.add_systems(PostUpdate, apply_social_updates);
         app.add_systems(PostUpdate, init_social_client);
         app.add_systems(
             PostUpdate,
@@ -83,11 +78,26 @@ impl Plugin for SocialPlugin {
             app.add_console_command::<RestartSocialCommand, _>(restart_social);
             app.add_console_command::<DmPrivacyCommand, _>(dm_privacy);
             app.add_console_command::<DmPrivacyOfCommand, _>(dm_privacy_of);
+            app.add_console_command::<BlockUserCommand, _>(block_user);
+            app.add_console_command::<UnblockUserCommand, _>(unblock_user);
             app.add_systems(
                 PostUpdate,
                 debug_write_social.run_if(|e: Res<DebugSocialEnabled>| e.0),
             );
         }
+    }
+}
+
+/// Whether this build carries the social client; without it `SocialClientHandler` is a stub.
+pub const SOCIAL_FEATURE: bool = cfg!(feature = "social");
+
+/// Drains the social client's channel into its state.
+fn apply_social_updates(
+    mut client: ResMut<SocialClient>,
+    mut changed: EventWriter<SocialStateChanged>,
+) {
+    if client.0.as_mut().is_some_and(|client| client.update()) {
+        changed.write(SocialStateChanged);
     }
 }
 
@@ -120,6 +130,9 @@ fn is_social_consumer_request(event: &SystemApi) -> bool {
             | SystemApi::GetBlockUpdateStream(_)
             | SystemApi::GetDmUserStateStream(_, _)
             | SystemApi::GetCommunityConnectivityStream(_)
+            | SystemApi::GetVoiceChatStateStream(_)
+            | SystemApi::GetCommunityVoiceUpdateStream(_)
+            | SystemApi::VoiceChatAction(_)
     )
 }
 
@@ -318,6 +331,86 @@ fn dm_privacy_of(
     );
 }
 
+/// `/block_user <address>` blocks a user through the social service.
+#[cfg(feature = "social")]
+#[derive(clap::Parser, ConsoleCommand)]
+#[command(name = "/block_user")]
+struct BlockUserCommand {
+    address: String,
+}
+
+#[cfg(feature = "social")]
+fn block_user(
+    mut input: ConsoleCommand<BlockUserCommand>,
+    social: Res<SocialClient>,
+    mut pending: ResMut<console::PendingConsoleResponses>,
+) {
+    let Some(Ok(command)) = input.take() else {
+        return;
+    };
+    let Some(address) = command.address.as_h160() else {
+        input.reply_failed("invalid address");
+        return;
+    };
+    let Some(client) = social.0.as_ref() else {
+        input.reply_failed("social not connected");
+        return;
+    };
+    let rx = match client.block_user(format!("{address:#x}")) {
+        Ok(rx) => rx,
+        Err(e) => {
+            input.reply_failed(format!("{e}"));
+            return;
+        }
+    };
+    let responder = input.take_responder();
+    pending.push_oneshot(
+        rx,
+        |result| result.map(|()| "block requested".to_owned()),
+        responder,
+    );
+}
+
+/// `/unblock_user <address>` lifts a block through the social service.
+#[cfg(feature = "social")]
+#[derive(clap::Parser, ConsoleCommand)]
+#[command(name = "/unblock_user")]
+struct UnblockUserCommand {
+    address: String,
+}
+
+#[cfg(feature = "social")]
+fn unblock_user(
+    mut input: ConsoleCommand<UnblockUserCommand>,
+    social: Res<SocialClient>,
+    mut pending: ResMut<console::PendingConsoleResponses>,
+) {
+    let Some(Ok(command)) = input.take() else {
+        return;
+    };
+    let Some(address) = command.address.as_h160() else {
+        input.reply_failed("invalid address");
+        return;
+    };
+    let Some(client) = social.0.as_ref() else {
+        input.reply_failed("social not connected");
+        return;
+    };
+    let rx = match client.unblock_user(format!("{address:#x}")) {
+        Ok(rx) => rx,
+        Err(e) => {
+            input.reply_failed(format!("{e}"));
+            return;
+        }
+    };
+    let responder = input.take_responder();
+    pending.push_oneshot(
+        rx,
+        |result| result.map(|()| "unblock requested".to_owned()),
+        responder,
+    );
+}
+
 #[cfg(feature = "social")]
 #[derive(Resource, Default)]
 struct DebugSocialEnabled(bool);
@@ -404,6 +497,7 @@ fn init_social_client(
     mut block_updates: Local<Option<UnboundedReceiver<BlockUpdateEvent>>>,
     mut chats: Local<Option<UnboundedReceiver<DirectChatEvent>>>,
     mut community_connectivity: Local<Option<UnboundedReceiver<CommunityConnectivityEvent>>>,
+    mut voice: Local<Option<UnboundedReceiver<VoiceEventReceived>>>,
     social_runtime: runtime::SocialRuntimeRes,
     mut restart: ResMut<RestartSocialRequested>,
     mut consumer_requested: ResMut<SocialConsumerRequested>,
@@ -424,6 +518,7 @@ fn init_social_client(
         *block_updates = None;
         *chats = None;
         *community_connectivity = None;
+        *voice = None;
     }
 
     let restart_requested = std::mem::take(&mut restart.0);
@@ -432,18 +527,25 @@ fn init_social_client(
         // Drop the old handler (and its event channels) before opening a new
         // connection so the old async task observes its channels closed and tears
         // down its WS, rather than overlapping with the new one.
-        social.0 = None;
+        // the same account keeps its blocks across the rebuild
+        let carried = social
+            .0
+            .take()
+            .filter(|_| !wallet.is_changed())
+            .map(|old| (old.blocked, old.blocked_by, old.has_snapshot));
         *friends = None;
         *connectivity = None;
         *block_updates = None;
         *chats = None;
         *community_connectivity = None;
+        *voice = None;
 
         let (f_sx, f_rx) = unbounded_channel();
         let (conn_sx, conn_rx) = unbounded_channel();
         let (block_sx, block_rx) = unbounded_channel();
         let (c_sx, c_rx) = unbounded_channel();
         let (community_sx, community_rx) = unbounded_channel();
+        let (v_sx, v_rx) = unbounded_channel();
         let client = SocialClientHandler::connect(
             wallet.clone(),
             &social_runtime,
@@ -472,13 +574,22 @@ fn init_social_client(
                     status: status as i32,
                 });
             },
+            move |v| {
+                let _ = v_sx.send(VoiceEventReceived(v));
+            },
         );
         social.0 = client;
+        if let (Some(client), Some((blocked, blocked_by, has_snapshot))) =
+            (social.0.as_mut(), carried)
+        {
+            client.carry_blocks(blocked, blocked_by, has_snapshot);
+        }
         *friends = Some(f_rx);
         *connectivity = Some(conn_rx);
         *block_updates = Some(block_rx);
         *chats = Some(c_rx);
         *community_connectivity = Some(community_rx);
+        *voice = Some(v_rx);
     }
 
     drain_events(
@@ -488,6 +599,7 @@ fn init_social_client(
         &mut block_updates,
         &mut chats,
         &mut community_connectivity,
+        &mut voice,
     );
 }
 
@@ -502,6 +614,7 @@ fn init_social_client(
     mut block_updates: Local<Option<UnboundedReceiver<BlockUpdateEvent>>>,
     mut chats: Local<Option<UnboundedReceiver<DirectChatEvent>>>,
     mut community_connectivity: Local<Option<UnboundedReceiver<CommunityConnectivityEvent>>>,
+    mut voice: Local<Option<UnboundedReceiver<VoiceEventReceived>>>,
     mut consumer_requested: ResMut<SocialConsumerRequested>,
     mut system_api_events: EventReader<SystemApi>,
 ) {
@@ -520,6 +633,7 @@ fn init_social_client(
         *block_updates = None;
         *chats = None;
         *community_connectivity = None;
+        *voice = None;
     }
 
     let reconnect_signal = wallet.is_changed() || social.0.is_none();
@@ -529,6 +643,7 @@ fn init_social_client(
         let (block_sx, block_rx) = unbounded_channel();
         let (c_sx, c_rx) = unbounded_channel();
         let (community_sx, community_rx) = unbounded_channel();
+        let (v_sx, v_rx) = unbounded_channel();
         let client = SocialClientHandler::connect(
             wallet.clone(),
             move |f| {
@@ -556,6 +671,9 @@ fn init_social_client(
                     status: status as i32,
                 });
             },
+            move |v| {
+                let _ = v_sx.send(VoiceEventReceived(v));
+            },
         );
         social.0 = client;
         *friends = Some(f_rx);
@@ -563,6 +681,7 @@ fn init_social_client(
         *block_updates = Some(block_rx);
         *chats = Some(c_rx);
         *community_connectivity = Some(community_rx);
+        *voice = Some(v_rx);
     }
 
     drain_events(
@@ -572,6 +691,7 @@ fn init_social_client(
         &mut block_updates,
         &mut chats,
         &mut community_connectivity,
+        &mut voice,
     );
 }
 
@@ -582,7 +702,11 @@ fn drain_events(
     block_updates: &mut Option<UnboundedReceiver<BlockUpdateEvent>>,
     chats: &mut Option<UnboundedReceiver<DirectChatEvent>>,
     community_connectivity: &mut Option<UnboundedReceiver<CommunityConnectivityEvent>>,
+    voice: &mut Option<UnboundedReceiver<VoiceEventReceived>>,
 ) {
+    while let Some(v) = voice.as_mut().and_then(|rx| rx.try_recv().ok()) {
+        commands.send_event(v);
+    }
     while let Some(f) = friends.as_mut().and_then(|rx| rx.try_recv().ok()) {
         commands.send_event(f);
     }
@@ -1376,6 +1500,10 @@ pub struct BlockUpdateEvent {
 
 #[derive(Event)]
 pub struct DirectChatEvent(pub DirectChatMessage);
+
+/// A voice chat event from the social connection (see [`voice::VoiceEvent`]).
+#[derive(Event, Clone, Debug)]
+pub struct VoiceEventReceived(pub voice::VoiceEvent);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DirectChatMessage {

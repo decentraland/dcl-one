@@ -1,8 +1,7 @@
 import { z } from "zod";
 
-import { postJSON } from "../client";
 import { okDataTotalOf } from "../envelope";
-import { eventsApiPath } from "../typed";
+import { writeAttendance } from "../places/attendance";
 import type { AuthIdentity } from "../../auth/types";
 import type {
   CommitFn,
@@ -17,17 +16,7 @@ export function buildRsvpCommit(identitySource: AuthIdentity | null | (() => Aut
     if (!identity) throw new Error("Sign in to RSVP.");
     if (!eventId) throw new Error("This event is no longer available.");
 
-    const going = direction === "going";
-    const path = eventsApiPath(
-      going ? "post" : "delete",
-      "/api/events/{event_id}/attendees",
-      { event_id: eventId },
-    );
-    const raw = await postJSON<unknown>(path, undefined, {
-      identity,
-      method: going ? "POST" : "DELETE",
-      signal,
-    });
+    const raw = await writeAttendance(identity, eventId, direction === "going", signal);
 
     const env = AttendeeListEnvelope.safeParse(raw);
     if (!env.success) return { count };

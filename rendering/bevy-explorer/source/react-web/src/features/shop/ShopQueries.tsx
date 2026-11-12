@@ -6,7 +6,7 @@
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { profileKey } from '../session/profileStore'
+import { profileKey } from '@hud/features/session/profileStore'
 
 // The reference defaults (docs/web-app-standards.md, "QueryClient"), as /play's in-world Shop uses them.
 const newClient = (): QueryClient => new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: 30_000 } } })

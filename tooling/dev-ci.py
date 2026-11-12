@@ -27,7 +27,7 @@ MACOS = ('tooling/dev*', 'tooling/enet-provenance.py', 'tooling/tests/test_dev_r
          '**/rust-toolchain*', 'services/catalyst/.cargo/**', 'library/vendor/rusty_enet/**')
 # Inputs whose Rust-job behaviour the Linux leg covers: web apps, other Python tooling and Rust/SQL
 # source whose compiled code is the same on both platforms. Main pushes still run them on macOS.
-LINUX_ONLY = ('apps/sites/**', 'apps/ui3/**', 'rendering/bevy-explorer/upstream.lock.json',
+LINUX_ONLY = ('apps/sites/**', 'apps/ui3/**',
               'tooling/*.py', 'tooling/tests/**', 'tooling/migration/**', 'services/catalyst/**', 'library/**', 'schemas/**')
 
 

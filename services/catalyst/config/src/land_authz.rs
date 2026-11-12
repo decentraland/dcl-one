@@ -18,7 +18,9 @@ pub struct LandAuthzConfig {
     #[arg(long, env = "LAND_AUTHZ_INDEX_REQUESTS_PER_PASS", default_value_t = 50)]
     pub land_authz_index_requests_per_pass: usize,
 
-    /// Rewind the index durably once at the first pass (the registry start block for a full repair).
+    /// Rewind the index durably once, at the first pass able to begin it (the registry start block
+    /// for a full repair, which may also switch registries). While it is set, every restart replays
+    /// again: unset it once the replay has published.
     #[arg(long, env = "LAND_AUTHZ_REPLAY_FROM_BLOCK")]
     pub land_authz_replay_from_block: Option<u64>,
 

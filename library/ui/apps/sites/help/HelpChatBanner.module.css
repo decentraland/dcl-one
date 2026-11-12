@@ -1,0 +1,82 @@
+/* Source: decentraland/sites ChatCtaBanner and its parts (src/pages/help/HelpPage.styled.ts). */
+.root {
+  position: sticky;
+  bottom: 20px;
+  z-index: 10;
+  isolation: isolate;
+  display: flex;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 900px;
+  min-height: 220px;
+  align-items: center;
+  /* Close under the section list, which fills the page down to here. */
+  margin: var(--dcl-space-24) auto 0;
+  padding: var(--dcl-space-32);
+  overflow: hidden;
+  border-radius: var(--dcl-radius-lg);
+  background: var(--dcl-background-web-dark);
+}
+
+.backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+}
+
+.texts {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: var(--dcl-space-12);
+}
+
+.title {
+  composes: text68656164696e672f31 from '../../../foundations/typography/text-styles.module.css';
+  margin: 0;
+  color: var(--dcl-neutrals-white);
+}
+
+.subtitle {
+  composes: text626f64792f736d from '../../../foundations/typography/text-styles.module.css';
+  max-width: 340px;
+  margin: 0;
+  color: var(--dcl-text-secondary-on-brand);
+}
+
+.action {
+  margin-top: var(--dcl-space-16);
+}
+
+.image {
+  position: absolute;
+  right: var(--dcl-space-16);
+  bottom: 0;
+  z-index: 1;
+  width: auto;
+  height: 110%;
+  object-fit: contain;
+  object-position: right bottom;
+  pointer-events: none;
+}
+
+@media (max-width: 767px) {
+  .root {
+    bottom: var(--dcl-space-16);
+    min-height: auto;
+    margin-top: var(--dcl-space-32);
+    padding: var(--dcl-space-24) var(--dcl-space-16);
+    border-radius: var(--dcl-radius-md);
+  }
+
+  .texts {
+    margin-bottom: var(--dcl-space-16);
+  }
+
+  .image {
+    right: 0;
+    height: 90%;
+    opacity: 0.6;
+  }
+}
