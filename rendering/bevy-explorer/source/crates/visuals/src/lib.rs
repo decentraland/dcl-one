@@ -2,6 +2,9 @@ mod atmosphere_params;
 mod coast;
 mod day_night;
 mod debug_panel;
+// The spawn system that reads the layout lands in the next commit; until then nothing calls it.
+#[allow(dead_code)]
+mod landscape_trees;
 mod nishita_cloud;
 mod props;
 mod satellite_floor;
