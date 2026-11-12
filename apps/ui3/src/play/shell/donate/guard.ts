@@ -12,7 +12,7 @@
 // else is refused before it reaches the wallet.
 
 import { decodeFunctionData, type Hex } from 'viem'
-import { TRANSFER_ABI } from '../../../explorer/components/manaTip'
+import { TRANSFER_ABI } from '@explorer-core/features/donate/tip'
 import { chainSalt } from '../../../shop/market/lib/tx'
 import type { ChainId } from '@shop/model/chain'
 import type { Eip1193Provider } from '../../../data/auth/wallet'

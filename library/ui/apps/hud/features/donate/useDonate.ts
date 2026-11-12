@@ -4,38 +4,55 @@
 import { useCallback, useEffect, useState } from 'react'
 import { donations } from '@hud-host'
 import type { DonatePlace } from '@explorer-core/hostContract'
+import { useOptionalSession } from '../session/SessionContext'
 
 /** The emote the player's avatar plays once a tip is sent. */
 export const TIP_EMOTE = 'urn:decentraland:off-chain:base-emotes:money'
 
 /**
  * Whether Donate shows for `place`, and how to open it. Hidden on any failure, and while the first answer is
- * pending. With `keepWhileAsking` (the minimap, as the player walks across parcels) the last answer stays shown while
- * the next place is asked about, so it doesn't flicker; otherwise (the map, a place picked) it hides until answered.
+ * pending. Whether this session may tip at all is asked once per sign-in (the session's phase and account), and
+ * the place only while it may. With `keepWhileAsking` (the minimap, as the player moves between scenes) the last
+ * answer stays shown while the next place is asked about, so it doesn't flicker; otherwise (the map, a place
+ * picked) it hides until answered.
  */
 export function useDonate(
   place: DonatePlace | null,
   { keepWhileAsking = false }: { keepWhileAsking?: boolean } = {}
 ): { visible: boolean; open: (input?: 'pointer' | 'keyboard') => void } {
   const key = place ? JSON.stringify(place) : null
+  const session = useOptionalSession()
+  const signIn = `${session?.phase ?? ''}|${session?.login.account ?? ''}`
+  const [available, setAvailable] = useState(false)
   const [shown, setShown] = useState(false)
   useEffect(() => {
-    if (!donations || !key) {
+    setAvailable(false)
+    if (!donations) return
+    let alive = true
+    void donations.available().then(
+      (yes) => alive && setAvailable(yes),
+      () => {}
+    )
+    return () => {
+      alive = false
+    }
+  }, [signIn])
+  useEffect(() => {
+    if (!donations || !key || !available) {
       setShown(false)
       return
     }
     if (!keepWhileAsking) setShown(false)
     let alive = true
     const target = JSON.parse(key) as DonatePlace
-    // The place is looked up only for a session that may tip at all.
-    void (async () => {
-      const visible = (await donations.available()) && (await donations.tippable(target))
-      if (alive) setShown(visible)
-    })()
+    void donations.tippable(target).then(
+      (yes) => alive && setShown(yes),
+      () => alive && setShown(false)
+    )
     return () => {
       alive = false
     }
-  }, [key, keepWhileAsking])
+  }, [key, keepWhileAsking, available])
   const open = useCallback(
     (input?: 'pointer' | 'keyboard') => {
       if (!donations || !key) return

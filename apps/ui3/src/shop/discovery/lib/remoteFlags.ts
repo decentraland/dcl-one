@@ -43,8 +43,7 @@ function subscribe(listener: () => void): () => void {
 
 const getSnapshot = () => snapshot;
 
-/** The flags service this page asks: the host's, else Decentraland's. */
-export function flagsService(): string {
+function service(): string {
   const declared = typeof window !== "undefined" ? (window as FlagsWindow).__SHOP_FEATURE_FLAGS__ : undefined;
   return (declared || FLAGS_SERVICE).replace(/\/$/, "");
 }
@@ -75,7 +74,7 @@ const fetchFlags: FlagsTransport = async (url, { signal }) => {
 
 /** Reads the flags file of `app` (the Shop's own unless named) from this page's flags service. */
 export async function readRemoteFlags(signal?: AbortSignal, app?: string): Promise<RemoteFlagsAnswer> {
-  return readFlagsFile(flagsService(), fetchFlags, signal, app);
+  return readFlagsFile(service(), fetchFlags, signal, app);
 }
 
 export async function fetchRemoteFlags(signal?: AbortSignal): Promise<Record<string, boolean>> {

@@ -15,7 +15,7 @@
 import type { Eip1193Provider } from '../../../data/auth/wallet'
 import { CatalystError, catalystBase, getJSON } from '../../../data/catalyst/client'
 import { fetchProfile, mapProfile, profileFaceUrl } from '../../../data/catalyst/profile'
-import { encodeManaTransfer, fetchTipTarget, forwardUntil, manaToWei, TIP_DELIVERY_WINDOW_MS, TIP_FORWARD_PATH, type TipTarget } from '../../../explorer/components/manaTip'
+import { encodeManaTransfer, fetchTipTarget, manaToWei, TIP_DELIVERY_WINDOW_MS, TIP_FORWARD_PATH, type TipTarget } from '../../../explorer/components/manaTip'
 import { settlementChainId } from '../../../shop/checkout/chain/config'
 import { readRemoteFlags } from '../../../shop/discovery/lib/remoteFlags'
 import { manaToken, type ContractData } from '@shop/market/lib/contracts'
@@ -25,6 +25,7 @@ import { rpc } from '../../../shop/market/lib/rpc'
 import { isTxReverted, waitForReceipt } from '../../../shop/market/lib/tx'
 import type { ChainId } from '@shop/model/chain'
 import { loginExpired, rootAddress, type StoredLogin } from '@explorer-core/features/auth/sso'
+import { forwardUntil } from '@explorer-core/features/donate/tip'
 import { siteUrl } from '../../lib/baseDomain'
 import {
   DONATE_EVENT,

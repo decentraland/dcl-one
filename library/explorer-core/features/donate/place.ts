@@ -12,3 +12,11 @@ export function donatePlaceOf(info: { parcel?: { x: number; y: number }; realm?:
   const world = info.realm?.match(WORLD)?.[1]
   return world ? { world: world.toLowerCase() } : null
 }
+
+/**
+ * The scene Donate's place is taken from (its realm and hash), or null where it names none (a parcel with no
+ * scene included). The engine reports every parcel crossed; the place is asked about again only when this changes.
+ */
+export function donateSceneKey(info: Parameters<typeof donatePlaceOf>[0] & { scene?: string }): string | null {
+  return info.scene && donatePlaceOf(info) ? `${info.realm ?? ''}|${info.scene}` : null
+}

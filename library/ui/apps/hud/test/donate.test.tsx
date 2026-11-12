@@ -87,6 +87,15 @@ describe('Donate', () => {
     expect(minimap.result.current.visible).toBe(false)
   })
 
+  it('asks whether the session may tip once, not again for each place', async () => {
+    const hook = renderHook(({ place }) => useDonate(place, { keepWhileAsking: true }), { initialProps: { place: PLACE as { parcel: { x: number; y: number } } } })
+    await settle()
+    hook.rerender({ place: { parcel: { x: 9, y: 9 } } })
+    await settle()
+    expect(host.donations!.available).toHaveBeenCalledOnce()
+    expect(host.donations!.tippable).toHaveBeenCalledTimes(2)
+  })
+
   it('plays the tip emote when the host says a tip was sent', () => {
     let sent: () => void = () => {}
     host.donations!.onSent.mockImplementation((fn: () => void) => {

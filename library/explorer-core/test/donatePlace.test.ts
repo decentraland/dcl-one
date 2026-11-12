@@ -1,6 +1,6 @@
 // The place Donate names for where the player stands (features/donate/place).
 import { describe, expect, it } from 'vitest'
-import { donatePlaceOf } from '../features/donate/place'
+import { donatePlaceOf, donateSceneKey } from '../features/donate/place'
 
 describe('the place Donate names', () => {
   it('is the parcel in Genesis City, and the World by its name elsewhere', () => {
@@ -13,5 +13,13 @@ describe('the place Donate names', () => {
     expect(donatePlaceOf({ genesis: true, preview: true, parcel: { x: 0, y: 0 } })).toBeNull()
     expect(donatePlaceOf({ realm: 'http://127.0.0.1:8000', parcel: { x: 0, y: 0 } })).toBeNull()
     expect(donatePlaceOf({ genesis: true })).toBeNull()
+  })
+
+  it('changes with the scene, not with each parcel crossed inside it, and is none where no scene is', () => {
+    const at = (x: number, scene?: string) => donateSceneKey({ genesis: true, parcel: { x, y: 0 }, realm: 'main', scene })
+    expect(at(0, 'bafyplaza')).toBe(at(1, 'bafyplaza'))
+    expect(at(2, 'bafyother')).not.toBe(at(1, 'bafyplaza'))
+    expect(at(3)).toBeNull()
+    expect(donateSceneKey({ genesis: true, preview: true, parcel: { x: 0, y: 0 }, scene: 'bafypreview' })).toBeNull()
   })
 })

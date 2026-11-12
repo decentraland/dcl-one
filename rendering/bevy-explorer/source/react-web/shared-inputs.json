@@ -290,6 +290,10 @@
         {
           "name": "place.ts",
           "kind": "regular"
+        },
+        {
+          "name": "tip.ts",
+          "kind": "regular"
         }
       ]
     },
@@ -648,6 +652,10 @@
         },
         {
           "name": "donatePlace.test.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "donateTip.test.ts",
           "kind": "regular"
         },
         {
@@ -4525,7 +4533,11 @@
     },
     {
       "path": "library/explorer-core/features/donate/place.ts",
-      "sha256": "59d3a3e5ee2a6855cecf8815f491d3dc6a25defed6ce65209f799046bd4aff85"
+      "sha256": "272bca7a014151925f09ae5ca7032813260dbfaed0f0919293d6cf15af2a65a2"
+    },
+    {
+      "path": "library/explorer-core/features/donate/tip.ts",
+      "sha256": "8d83e3410f013de8165e9d97a1d48b6745cb442a07a1da22026d2430004be463"
     },
     {
       "path": "library/explorer-core/features/editorHost/config.ts",
@@ -4789,7 +4801,11 @@
     },
     {
       "path": "library/explorer-core/test/donatePlace.test.ts",
-      "sha256": "42fe0d6107a1040a83e88dcc35039a0e31d332e6ebff31f6012f8483b9929d7d"
+      "sha256": "0a5c5afa134fccc816b56aebdc86200c031973a3ce699627aca2af8dd76a0715"
+    },
+    {
+      "path": "library/explorer-core/test/donateTip.test.ts",
+      "sha256": "920446a0dcf3b0ef15f1422b584a37ddc43df345eb2595210b9ab87934107e1e"
     },
     {
       "path": "library/explorer-core/test/engineDriver.test.ts",
@@ -6249,7 +6265,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/donate/useDonate.ts",
-      "sha256": "8ab0027955816fa256471324b87798baec096565b893a191b34d3446e6e51c5a"
+      "sha256": "aae70008f009476ec95abdd28d33f18cd3cd4dbe26b2a4795b5336a93175d91b"
     },
     {
       "path": "library/ui/apps/hud/features/editorHost/CreatePage.module.css",
@@ -6681,7 +6697,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "f134d18546e2a4beea9f619e43d79c116da1a8220b5e21016257ce1c6442d126"
+      "sha256": "c1717e51e54e5dbb022227b7ba746867dff570cb3b7bc6249c7c4add2e1d33a5"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -6833,7 +6849,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/donate.test.tsx",
-      "sha256": "f4ec75594124b98414a12b39ce84e4ae01ad3fa28ce5e2a128d866a9374dcf5e"
+      "sha256": "44680443a805669f5b626106cf7ccdbb4b428737f42a0442b5d71b2ec1ecbf6e"
     },
     {
       "path": "library/ui/apps/hud/test/error.test.tsx",
@@ -8490,6 +8506,21 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/explorer-core/test/donateTip.test.ts",
+      "to": "library/explorer-core/features/donate/tip.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/donateTip.test.ts",
+      "to": "library/explorer-core/features/donate/tip.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/donateTip.test.ts",
+      "to": "library/explorer-core/features/donate/tip.ts",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/explorer-core/test/engineDriver.test.ts",
       "to": "library/explorer-core/engine/EngineDriver.ts",
       "kind": "native:runtime"
@@ -15792,6 +15823,21 @@
     {
       "from": "library/ui/apps/hud/features/donate/DonatePanel.tsx",
       "to": "library/ui/apps/hud/features/donate/types.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/donate/useDonate.ts",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/donate/useDonate.ts",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/donate/useDonate.ts",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
       "kind": "test:runtime"
     },
     {
@@ -28331,6 +28377,11 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/explorer-core/features/donate/tip.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/explorer-core/features/editorHost/config.ts",
       "kind": "type"
     },
@@ -28657,6 +28708,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/explorer-core/test/donatePlace.test.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/explorer-core/test/donateTip.test.ts",
       "kind": "type"
     },
     {

@@ -53,7 +53,7 @@ import { EDITOR_BUILD } from '@explorer-core/features/editorHost/config'
 import { editorEntry } from '@explorer-core/features/editorHost/source'
 import { hudActsOn, type EditorHudMode } from '@explorer-core/features/editorHost/hudMode'
 import { streamHere } from '../voiceChat/streamHere'
-import { donatePlaceOf } from '@explorer-core/features/donate/place'
+import { donatePlaceOf, donateSceneKey } from '@explorer-core/features/donate/place'
 import type { DonatePlace } from '@explorer-core/hostContract'
 import type {
   AvatarColorTarget,
@@ -1395,6 +1395,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const [sceneTitle, setSceneTitle] = useState('')
   // Kept as its key, so a scene report for the same place leaves the minimap's state as it was.
   const [donatePlaceKey, setDonatePlaceKey] = useState<string | null>(null)
+  /** The scene (realm and hash) Donate's place was last taken from. */
+  const donateSceneRef = useRef<string | null>(null)
   const [placesOpen, setPlacesOpen] = useState(false)
   // The lobby reopened in-world: over the running world, under the panels it opens.
   const [lobbyOpen, setLobbyOpen] = useState(false)
@@ -2219,8 +2221,14 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           setSceneTitle(msg.title)
           setScenePlace(msg.parcel == null ? null : { parcel: `${msg.parcel.x},${msg.parcel.y}`, realm: msg.realm ?? '' })
           {
-            const place = donatePlaceOf(msg)
-            setDonatePlaceKey(place ? JSON.stringify(place) : null)
+            // Donate's place changes with the scene, not with each parcel crossed inside it (the bridge reports
+            // every parcel), so the host is asked once per scene; a parcel with no scene names none.
+            const sceneKey = donateSceneKey(msg)
+            if (sceneKey !== donateSceneRef.current) {
+              donateSceneRef.current = sceneKey
+              const place = sceneKey ? donatePlaceOf(msg) : null
+              setDonatePlaceKey(place ? JSON.stringify(place) : null)
+            }
           }
           // Leaving a scene forgets its visit answers (a neighbour's are kept until the player leaves
           // that one); the used permissions and the badge are the current scene's only.
