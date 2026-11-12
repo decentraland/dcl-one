@@ -2,6 +2,7 @@
 // the rich-profile fetch, and renders the presentational ProfilePassport. Opened as a popup via
 // openPassport() (from the profile card's "View Passport" and the sidebar's own profile), so it lives
 // in the HUD-wide popup layer and reads the session via useSession() like the profile card.
+import { offersInvite, useInviteToCommunityItems } from '../communities/InviteToCommunity'
 import { useEffect, useRef, useState } from 'react'
 import { openPopup, showConfirm } from '../../design'
 import { useSession } from '../session/SessionContext'
@@ -71,6 +72,7 @@ export function Passport({
   )
   const profile: Profile = pickedColor != null ? { ...stored, nameColor: hexToColor3(pickedColor) } : stored
   const friendUser = { address: userId, name: profile.name, picture: profile.picture }
+  const inviteItems = useInviteToCommunityItems(userId, offersInvite(isSelf))
 
   // Only your own passport can be edited, so the claimed-name list is only worth fetching there.
   useEffect(() => {
@@ -111,6 +113,7 @@ export function Passport({
       onUnblock={() => void confirmUnblock(splitName(friendUser.name).base).then((ok) => ok && session.friends.act('unblock', userId))}
       onBlock={() => void confirmBlock(splitName(friendUser.name).base).then((ok) => ok && session.friends.act('block', userId))}
       onReport={() => void reportUser(session.profile.data?.address, userId)}
+      inviteItems={inviteItems}
       onClose={onClose}
     />
   )
