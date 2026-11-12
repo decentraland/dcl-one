@@ -3345,6 +3345,10 @@
           "kind": "regular"
         },
         {
+          "name": "donatePanel.test.ts",
+          "kind": "regular"
+        },
+        {
           "name": "error.test.tsx",
           "kind": "regular"
         },
@@ -6850,6 +6854,10 @@
     {
       "path": "library/ui/apps/hud/test/donate.test.tsx",
       "sha256": "44680443a805669f5b626106cf7ccdbb4b428737f42a0442b5d71b2ec1ecbf6e"
+    },
+    {
+      "path": "library/ui/apps/hud/test/donatePanel.test.ts",
+      "sha256": "6ff187f0c763b8c51980477fe79611261e17f40836089bf5dd45159778e8c0ea"
     },
     {
       "path": "library/ui/apps/hud/test/error.test.tsx",
@@ -23191,6 +23199,21 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/apps/hud/test/donatePanel.test.ts",
+      "to": "library/ui/apps/hud/features/donate/DonatePanel.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/donatePanel.test.ts",
+      "to": "library/ui/apps/hud/features/donate/DonatePanel.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/donatePanel.test.ts",
+      "to": "library/ui/apps/hud/features/donate/DonatePanel.tsx",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/apps/hud/test/error.test.tsx",
       "to": "library/explorer-core/lib/inputLock.ts",
       "kind": "native:runtime"
@@ -29667,6 +29690,11 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/test/donatePanel.test.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/test/error.test.tsx",
       "kind": "type"
     },
@@ -33488,11 +33516,6 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/hud/assets/voice/stream-small.png",
-      "kind": "test:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/features/donate/DonatePanel.tsx",
       "kind": "test:asset"
     }
   ]
