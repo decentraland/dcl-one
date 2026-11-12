@@ -310,13 +310,15 @@ Kept from explorer-automation's guides:
 `/memory_reclaim` simulation modes, reset and budget validation.
 The same control scenario checks `/debug_memory` limit changes and reset in preview,
 and mutation denial with read-only readings outside preview.
-A separate scenario measures the active emote baseline, observes wave
-playing with cache-pin growth, waits for the observed playback to finish or yield
-its slot and idle cache pins to leave, then verifies replay with renewed pin growth.
+A separate scenario observes wave playing on the intact avatar, snapshots the
+reclamation counters, then enables pressure. After playback finishes or yields its
+slot, it waits for `released` and `completedScans` to advance and
+verifies replay. Scene movement can change cache size independently, so the scenario
+does not compare global entry counts.
 The graph continues owning the stopped emote after its cache pin is released;
 managed asset-loader tests verify replay does not fetch or parse it again.
-Both full URNs and short emote names are accepted. Active scene movement animations
-may keep the baseline nonzero. Per-asset ownership is checked by the native library tests.
+Both full URNs and short emote names are accepted. Per-asset ownership and release
+are checked by the native library tests.
 Simulation is preview-only; the
 scenarios restore the session settings after exercising it. The control scenario
 checks mutation denial when `controlsAvailable` is false; the release scenario

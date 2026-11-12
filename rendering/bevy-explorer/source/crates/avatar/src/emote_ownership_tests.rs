@@ -968,8 +968,8 @@ fn replacement_and_avatar_despawn_drop_their_pending_loads() {
 }
 
 #[test]
-fn masked_suspension_releases_its_pending_load_without_ending_the_request() {
-    let mut fixture = PlaybackFixture::new();
+fn suspended_masked_request_keeps_one_pending_load_and_resolves_after_resume() {
+    let mut fixture = PlaybackFixture::with_pressure();
     let mut overlay = fixture.gate("wave");
     let mut full = fixture.gate("dance");
     fixture.request("wave", 1, EmoteMask::UpperBody);
@@ -984,20 +984,18 @@ fn masked_suspension_releases_its_pending_load_without_ending_the_request() {
         .unwrap();
     assert!(!request.is_playing());
     assert_eq!(request.request.as_ref().unwrap().urn, scene_emote("wave"));
-    assert!(
-        masked.upgrade().is_none(),
-        "suspended overlay still owns its pending load"
-    );
+    assert!(!request.request.as_ref().unwrap().finished);
+    for _ in 0..8 {
+        fixture.app.update();
+        assert!(Weak::ptr_eq(&masked, &fixture.pending("wave")));
+    }
+    assert_eq!(fixture.loads.lock().unwrap()["wave"], 1);
     assert!(
         fixture.pending("dance").upgrade().is_some(),
         "full-body replacement is not retained"
     );
 
-    let mut resumed = fixture.gate("wave");
     full.result.send(false).unwrap();
-    fixture.wait_for_load(&mut resumed);
-    assert!(!Weak::ptr_eq(&masked, &fixture.pending("wave")));
-    resumed.result.send(true).unwrap();
     let avatar = fixture.avatar;
     fixture.update_until(
         "the looping overlay did not resume after suspension",
@@ -1005,11 +1003,114 @@ fn masked_suspension_releases_its_pending_load_without_ending_the_request() {
             world
                 .get::<MaskedEmote>(avatar)
                 .and_then(MaskedEmote::active_request)
-                .is_some_and(|request| {
-                    request.urn == scene_emote("wave") && request.duration_ms == Some(1000)
-                })
+                .is_some_and(|request| request.urn == scene_emote("wave"))
         },
     );
+    for _ in 0..8 {
+        fixture.app.update();
+        assert!(Weak::ptr_eq(&masked, &fixture.pending("wave")));
+    }
+    overlay.result.send(true).unwrap();
+    fixture.wait_for_playback("wave", EmoteMask::UpperBody);
+    assert!(Weak::ptr_eq(&masked, &fixture.pending("wave")));
+    assert_eq!(fixture.loads.lock().unwrap()["wave"], 1);
+    assert!(fixture
+        .app
+        .world()
+        .get::<PendingEmoteLoads>(avatar)
+        .unwrap()
+        .masked
+        .0
+        .is_none());
+    let aggregate = fixture.aggregate_id("wave").unwrap();
+    fixture
+        .app
+        .world_mut()
+        .entity_mut(avatar)
+        .insert(EmoteCommand {
+            timestamp: 3,
+            ..Default::default()
+        });
+    fixture.app.update();
+    assert!(fixture
+        .app
+        .world()
+        .get::<MaskedEmote>(avatar)
+        .unwrap()
+        .request
+        .is_none());
+    fixture.expire_without_resolution();
+    assert_eq!(fixture.aggregate_id("wave"), Some(aggregate));
+    assert!(
+        masked.upgrade().is_some(),
+        "stopped graph node lost its GLTF"
+    );
+    fixture.app.world_mut().despawn(avatar);
+    fixture.expire_without_resolution();
+    assert!(masked.upgrade().is_none());
+    assert_eq!(fixture.aggregate_id("wave"), None);
+    assert_eq!(fixture.gltf_id("wave"), None);
+}
+
+#[test]
+fn suspended_masked_request_releases_pending_load_when_finished_replaced_stopped_or_despawned() {
+    for action in ["finish", "replace", "stop", "despawn"] {
+        let mut fixture = PlaybackFixture::with_pressure();
+        let mut overlay = fixture.gate("wave");
+        let mut full = fixture.gate("dance");
+        fixture.request("wave", 1, EmoteMask::UpperBody);
+        fixture.wait_for_load(&mut overlay);
+        let pending = fixture.pending("wave");
+        fixture.request("dance", 2, EmoteMask::FullBody);
+        fixture.wait_for_load(&mut full);
+        let avatar = fixture.avatar;
+        assert!(!fixture
+            .app
+            .world()
+            .get::<MaskedEmote>(avatar)
+            .unwrap()
+            .is_playing());
+        assert!(pending.upgrade().is_some());
+
+        match action {
+            "finish" => {
+                fixture
+                    .app
+                    .world_mut()
+                    .get_mut::<MaskedEmote>(avatar)
+                    .unwrap()
+                    .request
+                    .as_mut()
+                    .unwrap()
+                    .finished = true;
+            }
+            "replace" => {
+                let mut replacement = fixture.gate("clap");
+                fixture.request("clap", 3, EmoteMask::UpperBody);
+                fixture.wait_for_load(&mut replacement);
+            }
+            "stop" => {
+                fixture
+                    .app
+                    .world_mut()
+                    .entity_mut(avatar)
+                    .insert(EmoteCommand {
+                        timestamp: 3,
+                        ..Default::default()
+                    });
+            }
+            "despawn" => {
+                fixture.app.world_mut().despawn(avatar);
+            }
+            _ => unreachable!(),
+        }
+        fixture.app.update();
+        assert!(
+            pending.upgrade().is_none(),
+            "{action} retained the pending overlay"
+        );
+        assert_eq!(fixture.loads.lock().unwrap()["wave"], 1);
+    }
 }
 
 #[test]

@@ -3,7 +3,7 @@ use pin_project::{pin_project, pinned_drop};
 use serde::{de::DeserializeOwned, Deserialize, Deserializer, Serialize};
 use std::{
     future::Future,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, PoisonError},
     task::{Context, Poll},
 };
 use tokio_util::sync::{CancellationToken, DropGuard};
@@ -137,7 +137,10 @@ impl<T: Serialize + 'static> RpcResultSender<T> {
     pub fn send(&self, result: T) {
         match self {
             RpcResultSender::Local { channel, .. } => {
-                let response = channel.lock().unwrap().take();
+                let response = channel
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .take();
                 if let Some(response) = response {
                     let _ = response.send(result);
                 }
@@ -180,20 +183,23 @@ impl<T: 'static + Serialize + DeserializeOwned + Send> Serialize for RpcResultSe
             panic!();
         };
 
-        let id = channel.lock().unwrap().serialize_with(|sender| {
-            let endpoint = IpcResultCallback {
-                sender: Some(sender),
-                _cancel_on_drop: cancel.clone().drop_guard(),
-            };
-            let (id, close_sender) = ipc_register(endpoint);
-            let cancel = cancel.clone();
-            tokio::spawn(async move {
-                cancel.cancelled().await;
-                let _ = close_sender.send(id);
+        let id = channel
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .serialize_with(|sender| {
+                let endpoint = IpcResultCallback {
+                    sender: Some(sender),
+                    _cancel_on_drop: cancel.clone().drop_guard(),
+                };
+                let (id, close_sender) = ipc_register(endpoint);
+                let cancel = cancel.clone();
+                tokio::spawn(async move {
+                    cancel.cancelled().await;
+                    let _ = close_sender.send(id);
+                });
+                debug!("created sender {id} -> {}", std::any::type_name::<T>());
+                id
             });
-            debug!("created sender {id} -> {}", std::any::type_name::<T>());
-            id
-        });
 
         serializer.serialize_u64(id)
     }

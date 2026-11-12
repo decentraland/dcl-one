@@ -80,34 +80,32 @@ scenario('memory pressure releases an idle emote pin and preserves replay', asyn
   { timeoutMs: 20_000, intervalMs: 100, what: 'scene movement to yield the triggered emote slot' })
   try {
     await explorer.run('/memory_reclaim both')
-    const baseline = await until(() => explorer.json<MemoryState>('/memory_reclaim'), state =>
+    await until(() => explorer.json<MemoryState>('/memory_reclaim'), state =>
       emote(state).completedScans > emote(before).completedScans && emote(state).lastScanReleased === 0,
-    { timeoutMs: 30_000, what: 'only active emote pins to remain before loading wave' })
-    const waitForWavePin = () => until(async () => ({
-      memory: await explorer.json<MemoryState>('/memory_reclaim'), avatar: await explorer.myAvatar()
-    }), ({ memory, avatar }) =>
-      emote(memory).entries > emote(baseline).entries &&
+    { timeoutMs: 30_000, what: 'an emote cache scan with no releases before loading wave' })
+    const waitForWave = () => until(() => explorer.myAvatar(), avatar =>
       !!avatar.rendered?.processed && !avatar.rendered.failed &&
       avatar.emote?.source === 'triggeredEmote' && !avatar.emote.finished && isWave(avatar.emote.urn),
-    { timeoutMs: 30_000, what: 'wave to play on the intact avatar with a pin above the active baseline' })
+    { timeoutMs: 30_000, intervalMs: 100, what: 'wave to play on the intact avatar' })
     await explorer.run('/memory_reclaim off')
     await waitForEmoteSlot()
     await explorer.run('/emote ' + wave)
-    const { memory: loaded } = await waitForWavePin()
+    await waitForWave()
+    const loaded = await explorer.json<MemoryState>('/memory_reclaim')
     await explorer.run('/memory_reclaim both')
     await until(() => explorer.myAvatar(), avatar =>
       !isWave(avatar.emote?.urn) || avatar.emote?.finished === true,
     { timeoutMs: 30_000, what: 'the observed wave to finish or yield the emote slot' })
     await until(() => explorer.json<MemoryState>('/memory_reclaim'), state =>
-      emote(state).entries <= emote(baseline).entries && emote(state).released > emote(loaded).released &&
+      emote(state).released > emote(loaded).released &&
       emote(state).completedScans > emote(loaded).completedScans,
-    { timeoutMs: 30_000, what: 'idle emote pins to release after wave while active scene emotes remain' })
-    // Releasing the cache's pin leaves the stopped graph node's aggregate intact.
-    // Managed asset-loader tests assert that this replay does not load it again.
+    { timeoutMs: 30_000, what: 'an idle emote pin to release and another cache scan to complete after wave' })
+    // Scene movement can change cache size independently of wave. Managed asset-loader
+    // tests verify the specific pin's release and graph-owned replay without another load.
     await explorer.run('/memory_reclaim off')
     await waitForEmoteSlot()
     await explorer.run('/emote ' + wave)
-    await waitForWavePin()
+    await waitForWave()
   } finally {
     await explorer.run(`/memory_reclaim ${before.simulation} --budget-ms ${before.budgetMs}`)
   }

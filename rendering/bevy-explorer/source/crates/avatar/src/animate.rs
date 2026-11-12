@@ -122,9 +122,10 @@ fn synchronize_emote_ownership(
         pending
             .full
             .synchronize(full.filter(|emote| !emote.finished).map(|emote| &emote.urn));
+        // Suspension pauses rendering without ending the masked request's pending load.
         pending.masked.synchronize(
             masked
-                .and_then(MaskedEmote::active_request)
+                .and_then(|masked| masked.request.as_ref())
                 .filter(|emote| !emote.finished)
                 .map(|emote| &emote.urn),
         );
