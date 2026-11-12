@@ -10,11 +10,16 @@
 //! ktx2 bytes, so the next load reads a dds (`DDS ` magic), which `bevy_image` decodes as a dds
 //! without calling the transcoder. A transcode whose write never
 //! comes (the image was dropped before it loaded, or it has no cache entry) is evicted after
-//! `RESULT_LIFETIME`. An embedded KTX2 is transcoded on every load: the glTF holding it is not
-//! rewritten in the cache.
+//! `RESULT_LIFETIME`.
+//!
+//! An embedded KTX2 arrives at its labelled path (`model.glb#Texture0`). Its transcode is noted
+//! in `EMBEDDED_TRANSCODES`, and `engine::check_assets` queues the glTF holding it for a
+//! `ProcessingAssetType::Gltf` pass, which transcodes the glTF's KTX2 images and writes it back
+//! with dds, so the next load reads dds. One it can't transcode fails to load: glTF content never
+//! reaches bevy's own KTX2 decode, which trusts the header's sizes and offsets.
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     sync::{Arc, LazyLock, Mutex},
     time::Duration,
 };
@@ -31,6 +36,11 @@ use bevy::{
 type Ktx2Results = HashMap<String, (Instant, Vec<u8>)>;
 
 pub(crate) static KTX2_RESULTS: LazyLock<Mutex<Ktx2Results>> = LazyLock::new(Default::default);
+
+/// Labelled paths of embedded KTX2 images transcoded and not yet seen by `check_assets`, which
+/// queues their glTF for the pass that writes them back as dds. An image dropped before it
+/// loaded leaves its path here until it loads again.
+static EMBEDDED_TRANSCODES: LazyLock<Mutex<HashSet<String>>> = LazyLock::new(Default::default);
 
 /// Far longer than a stashed transcode waits for its write, which goes ahead of every texture
 /// compression in the processor's queue.
@@ -57,6 +67,15 @@ pub(crate) fn has_waiting_transcode(path: &AssetPath<'_>) -> bool {
         .is_ok_and(|results| results.contains_key(&path.to_string()))
 }
 
+/// Whether the image loaded at the labelled `path` is an embedded KTX2 that was transcoded, and
+/// so whether its glTF needs the pass that writes it back as dds; the note is taken.
+pub(crate) fn take_embedded_transcode(path: &AssetPath<'_>) -> bool {
+    path.label().is_some()
+        && EMBEDDED_TRANSCODES
+            .lock()
+            .is_ok_and(|mut noted| noted.remove(&path.to_string()))
+}
+
 /// Sets [`transcode_ktx2_image`] as the process's `bevy_image` KTX2 transcoder. A second call
 /// keeps the first.
 pub(crate) fn install_ktx2_transcoder() {
@@ -66,22 +85,29 @@ pub(crate) fn install_ktx2_transcoder() {
 /// `bevy_image`'s KTX2 transcoder (`bevy::image::Ktx2Transcoder`): a UASTC KTX2 becomes a BC7
 /// dds, which bevy decodes with the `is_srgb`, sampler and asset usage the KTX2 was loaded with.
 ///
-/// - Loaded by path (`path` is `Some`): a fresh transcode is stashed for the cache write when
-///   the path is unlabelled. A KTX2 that can't be transcoded (not UASTC, malformed) fails to
-///   load, as it did with the former `Ktx2Loader`.
-/// - Embedded, or any other `Image::from_buffer` caller (`path` is `None`): a KTX2 that can't be
-///   transcoded is left to bevy's own KTX2 decode, as the former glTF image transcoder left it.
-///   bevy's own KTX2 LUTs, which are not UASTC, keep loading that way.
+/// - With a path: a fresh transcode is stashed for the cache write when the path is unlabelled
+///   (a file of its own), and noted for its glTF's write-back when it is labelled (embedded in a
+///   glTF). A KTX2 that can't be transcoded (not UASTC, malformed) fails to load.
+/// - Without one (`Image::from_buffer` callers, bevy's own KTX2 LUTs, which are not UASTC): a
+///   KTX2 that can't be transcoded is left to bevy's own decode.
 pub(crate) fn transcode_ktx2_image(
     bytes: &[u8],
     path: Option<&AssetPath<'_>>,
 ) -> Option<Ktx2Transcoded> {
     match crate::processor::transcode_ktx2(bytes) {
         Ok(dds) => {
-            if let Some(path) = path.filter(|path| is_cacheable_path(path)) {
-                if let Ok(mut results) = KTX2_RESULTS.lock() {
-                    results.insert(path.to_string(), (Instant::now(), dds.clone()));
+            match path {
+                Some(path) if is_cacheable_path(path) => {
+                    if let Ok(mut results) = KTX2_RESULTS.lock() {
+                        results.insert(path.to_string(), (Instant::now(), dds.clone()));
+                    }
                 }
+                Some(path) => {
+                    if let Ok(mut noted) = EMBEDDED_TRANSCODES.lock() {
+                        noted.insert(path.to_string());
+                    }
+                }
+                None => {}
             }
             Some(Ok((dds, ImageFormat::Dds)))
         }
@@ -89,7 +115,7 @@ pub(crate) fn transcode_ktx2_image(
             "ktx2 transcode failed: {e:?}"
         )))),
         Err(e) => {
-            debug!("embedded ktx2 not transcoded ({e:?}), left to bevy's decoder");
+            debug!("ktx2 with no asset path not transcoded ({e:?}), left to bevy's decoder");
             None
         }
     }
@@ -122,8 +148,18 @@ mod tests {
 
     /// `bytes` decoded by bevy as `image_type`, through the installed transcoder.
     fn decode(bytes: &[u8], image_type: ImageType, is_srgb: bool) -> Result<Image, TextureError> {
+        decode_at(bytes, image_type, is_srgb, None)
+    }
+
+    /// [`decode`] at an asset path, as the glTF loader decodes an embedded image.
+    fn decode_at(
+        bytes: &[u8],
+        image_type: ImageType,
+        is_srgb: bool,
+        path: Option<&AssetPath<'_>>,
+    ) -> Result<Image, TextureError> {
         install_ktx2_transcoder();
-        Image::from_buffer(
+        Image::from_buffer_at(
             #[cfg(debug_assertions)]
             "test".to_owned(),
             bytes,
@@ -132,6 +168,7 @@ mod tests {
             is_srgb,
             ImageSampler::nearest(),
             RenderAssetUsages::RENDER_WORLD,
+            path,
         )
     }
 
@@ -152,22 +189,30 @@ mod tests {
             let asset_path = AssetPath::from(path);
             assert!(transcode_ktx2_image(UASTC_8, Some(&asset_path)).is_some());
             assert!(has_waiting_transcode(&asset_path));
+            assert!(!take_embedded_transcode(&asset_path));
             assert!(unstash(path).is_some());
         }
-        // part of another file: no cache entry of its own
+        // part of another file: no cache entry of its own; noted once for its glTF's write-back
         let path = AssetPath::from("ktx2_tests/model.glb#Texture0");
         assert!(transcode_ktx2_image(UASTC_8, Some(&path)).is_some());
         assert!(!stashed("ktx2_tests/model.glb#Texture0"));
+        assert!(take_embedded_transcode(&path));
+        assert!(!take_embedded_transcode(&path));
     }
 
     #[test]
-    fn bad_ktx2_fails_by_path_and_is_left_to_bevy_embedded() {
-        let path = AssetPath::from("ktx2_tests/bad.ktx2");
-        assert!(matches!(
-            transcode_ktx2_image(b"not a ktx2", Some(&path)),
-            Some(Err(_))
-        ));
-        assert!(!stashed("ktx2_tests/bad.ktx2"));
+    fn bad_ktx2_fails_with_a_path_and_is_left_to_bevy_without_one() {
+        // a file of its own, and one embedded in a glTF: both fail here
+        for path in ["ktx2_tests/bad.ktx2", "ktx2_tests/bad.glb#Texture0"] {
+            let asset_path = AssetPath::from(path);
+            assert!(matches!(
+                transcode_ktx2_image(b"not a ktx2", Some(&asset_path)),
+                Some(Err(_))
+            ));
+            assert!(!stashed(path));
+            assert!(!take_embedded_transcode(&asset_path));
+        }
+        // no path (bevy's own LUTs): bevy decodes it
         assert!(transcode_ktx2_image(b"not a ktx2", None).is_none());
     }
 
@@ -186,13 +231,23 @@ mod tests {
                 TextureFormat::Bc7RgbaUnormSrgb
             );
             assert_eq!((image.width(), image.height()), (8, 8));
+            // a warm load keeps the caller's usage, as the cold (ktx2) load does
+            assert_eq!(image.asset_usage, RenderAssetUsages::RENDER_WORLD);
         }
     }
 
     #[test]
     fn embedded_ktx2_is_transcoded_for_the_gltf_loader() {
-        // a glb buffer view or `data:` uri, as the glTF loader passes it to `Image::from_buffer`
-        let image = decode(UASTC_8, ImageType::MimeType("image/ktx2"), true).unwrap();
+        // a glb buffer view or `data:` uri, at the labelled path the glTF loader decodes it at
+        let path = AssetPath::from("ktx2_tests/embedded.glb#Texture0");
+        let image = decode_at(
+            UASTC_8,
+            ImageType::MimeType("image/ktx2"),
+            true,
+            Some(&path),
+        )
+        .unwrap();
+        assert!(take_embedded_transcode(&path));
         assert_eq!(
             image.texture_descriptor.format,
             TextureFormat::Bc7RgbaUnormSrgb
@@ -213,7 +268,13 @@ mod tests {
             true
         )
         .is_ok());
-        // a ktx2 the transcoder rejects goes to bevy's decoder, which can't read it either
-        assert!(decode(b"not a ktx2", ImageType::MimeType("image/ktx2"), true).is_err());
+        // a ktx2 the transcoder rejects fails as glTF content, never reaching bevy's decoder
+        let rejected = decode_at(
+            b"\xABKTX 20\xBB\r\n\x1A\nnot uastc",
+            ImageType::MimeType("image/ktx2"),
+            true,
+            Some(&path),
+        );
+        assert!(matches!(rejected, Err(TextureError::TranscodeError(_))));
     }
 }

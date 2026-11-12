@@ -958,13 +958,15 @@ impl Image {
     }
 
     /// [`Image::from_buffer`] for an asset read from `asset_path`, which the host's KTX2
-    /// transcoder is given (see [`Ktx2Transcoder`](crate::Ktx2Transcoder)).
+    /// transcoder is given (see [`Ktx2Transcoder`](crate::Ktx2Transcoder)). An image embedded
+    /// in another asset (a glTF texture) passes its labelled path, so the host can tell it from
+    /// bevy's own KTX2 LUTs, which come through [`Image::from_buffer`] with no path.
     ///
     /// The bytes win over `image_type`: KTX2 bytes decode as KTX2 and DDS bytes as DDS, whatever
     /// was declared. A host that caches its transcode over the KTX2 bytes reads the DDS back from
     /// the same path, whatever its extension.
     #[expect(clippy::too_many_arguments, reason = "from_buffer's arguments and the path")]
-    pub(crate) fn from_buffer_at(
+    pub fn from_buffer_at(
         #[cfg(all(debug_assertions, feature = "dds"))] name: String,
         buffer: &[u8],
         image_type: ImageType,
@@ -1054,7 +1056,7 @@ impl Image {
                 match transcoded {
                     Some(transcoded) => {
                         let (bytes, format) = transcoded?;
-                        let mut image = Self::decode_buffer(
+                        Self::decode_buffer(
                             #[cfg(all(debug_assertions, feature = "dds"))]
                             name,
                             &bytes,
@@ -1065,10 +1067,7 @@ impl Image {
                             asset_usage,
                             None,
                             false,
-                        )?;
-                        // the compressed decodes (dds, ktx2) leave the default usage
-                        image.asset_usage = asset_usage;
-                        image
+                        )?
                     }
                     None => ktx2_buffer_to_image(buffer, supported_compressed_formats, is_srgb)?,
                 }
@@ -1093,6 +1092,9 @@ impl Image {
             }
         };
         image.sampler = image_sampler;
+        // the compressed decodes (basis, dds, ktx2) leave the default usage: a cached dds must
+        // load with the caller's usage as its first (ktx2) load did
+        image.asset_usage = asset_usage;
         Ok(image)
     }
 

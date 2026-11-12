@@ -294,6 +294,16 @@ jobs:
           key: ${{ steps.compiler-cache-tool.outputs.cache-primary-key }}
       - name: Test the texture decoder boundaries
         run: cargo test --manifest-path vendor/basisu/Cargo.toml --locked --lib --target-dir target
+      # the vendored Bevy crates are path dependencies, not workspace members, so `cargo test --all`
+      # never compiles their tests, and cargo tests a non-member with dev-dependencies only from
+      # its own workspace, which has no lock file: it starts from this one, so the dependencies
+      # both share keep their versions. These are the crates the explorer patches for KTX2 and
+      # glTF loading, with the features the explorer enables on them.
+      - name: Test the patched vendored Bevy crates
+        run: |
+          cp Cargo.lock ../bevy/Cargo.lock
+          cargo test --manifest-path ../bevy/Cargo.toml -p bevy_image -p bevy_gltf --lib \
+            --features bevy_gltf/dds,bevy_image/ktx2,bevy_image/zstd --target-dir target/fork-tests
       - name: Run the native test suite
         env:
           RUSTC_WRAPPER: ${{ runner.os == 'Windows' && steps.compiler-cache.outcome == 'success' && 'sccache' || '' }}

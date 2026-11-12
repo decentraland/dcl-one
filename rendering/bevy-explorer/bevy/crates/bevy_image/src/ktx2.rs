@@ -30,9 +30,10 @@ pub const KTX2_MAGIC: &[u8; 12] = b"\xABKTX 20\xBB\r\n\x1A\n";
 /// What a [`Ktx2Transcoder`] turned a KTX2 into: bytes and the format to decode them as.
 pub type Ktx2Transcoded = Result<(Vec<u8>, ImageFormat), TextureError>;
 
-/// A host's transcoder for KTX2 images, given the KTX2 bytes and, when the image is an asset
-/// loaded by path through [`ImageLoader`](crate::ImageLoader), that path (`None` for
-/// [`Image::from_buffer`] callers: images embedded in a glTF, bevy's own LUTs).
+/// A host's transcoder for KTX2 images, given the KTX2 bytes and the image's asset path: the
+/// path [`ImageLoader`](crate::ImageLoader) loaded it from, or the labelled path an embedded
+/// image is decoded at through [`Image::from_buffer_at`] (a glTF texture, `model.glb#Texture0`).
+/// `None` for [`Image::from_buffer`] callers, such as bevy's own LUTs.
 ///
 /// - `None`: not the host's; bevy's own KTX2 decode takes the bytes as it would without a hook.
 /// - `Some(Ok((bytes, format)))`: decode `bytes` as `format` (not KTX2) instead, with the same

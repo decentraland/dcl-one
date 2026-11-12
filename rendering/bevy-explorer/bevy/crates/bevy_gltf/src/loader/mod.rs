@@ -10,7 +10,7 @@ use std::{
 #[cfg(feature = "bevy_animation")]
 use bevy_animation::{prelude::*, AnimationTarget, AnimationTargetId};
 use bevy_asset::{
-    AssetLoadError, AssetLoader, Handle, LoadContext, ReadAssetBytesError, RenderAssetTransferPriority, RenderAssetUsages, io::Reader
+    AssetLoadError, AssetLoader, AssetPath, Handle, LoadContext, ReadAssetBytesError, RenderAssetTransferPriority, RenderAssetUsages, io::Reader
 };
 use bevy_color::{Color, LinearRgba};
 use bevy_core_pipeline::prelude::Camera3d;
@@ -574,6 +574,7 @@ async fn load_gltf<'a, 'b, 'c>(
             texture,
             &buffer_data,
             &linear_textures,
+            load_context.asset_path(),
             parent_path,
             loader.uri_resolver.as_ref(),
             loader.supported_compressed_formats,
@@ -1035,7 +1036,7 @@ fn basisu_source(texture: &gltf::json::Texture, image_count: usize) -> Option<u3
 
 /// Points every texture whose only image is its `KHR_texture_basisu` one at that image, so the
 /// rest of the loader reads the KTX2 as the texture's ordinary `source`: by path through the
-/// asset server, or embedded through `Image::from_buffer`. Both end in `bevy_image`'s KTX2
+/// asset server, or embedded through `Image::from_buffer_at` at its labelled path. Both end in `bevy_image`'s KTX2
 /// decode, where the host's transcoder (`bevy_image::set_ktx2_transcoder`) takes UASTC.
 /// `gltf`'s `allow_empty_texture` feature is what lets a file that requires the extension, and
 /// whose textures have no `source`, through validation.
@@ -1059,16 +1060,21 @@ fn prefer_basisu_sources(gltf: gltf::Gltf) -> gltf::Gltf {
     }
     gltf::Gltf {
         // only in-range image indices were written, over a document that already validated
-        document: gltf::Document::from_json_without_validation(root),
+        document: Document::from_json_without_validation(root),
         blob,
     }
 }
 
-/// Loads a glTF texture as a bevy [`Image`] and returns it together with its label.
+/// Loads a glTF texture as a bevy [`Image`] and returns it together with its label. An image
+/// embedded in the file (buffer view or `data:` URI) is decoded at its labelled path
+/// (`model.glb#Texture0`), so a KTX2 among them reaches the host's transcoder as glTF content:
+/// one it can't transcode fails to load rather than fall to bevy's own KTX2 decode.
+#[expect(clippy::too_many_arguments, reason = "the glTF's path joins the texture's context")]
 fn load_image<'a, 'b>(
     gltf_texture: gltf::Texture<'a>,
     buffer_data: &[Vec<u8>],
     linear_textures: &HashSet<usize>,
+    gltf_path: &AssetPath<'_>,
     parent_path: &'b Path,
     uri_resolver: Option<&GltfUriResolver>,
     supported_compressed_formats: CompressedImageFormats,
@@ -1128,12 +1134,15 @@ fn load_image<'a, 'b>(
     let name = gltf_texture
         .name()
         .map_or("Unknown GLTF Texture".to_string(), ToString::to_string);
+    let texture_path = gltf_path
+        .clone_owned()
+        .with_label(GltfAssetLabel::Texture(gltf_texture.index()).to_string());
     match source.source() {
         Source::View { view, mime_type } => {
             let start = view.offset();
             let end = view.offset() + view.length();
             let buffer = &buffer_data[view.buffer().index()][start..end];
-            let image = Image::from_buffer(
+            let image = Image::from_buffer_at(
                 #[cfg(all(debug_assertions, feature = "dds"))]
                 name,
                 buffer,
@@ -1142,6 +1151,7 @@ fn load_image<'a, 'b>(
                 is_srgb,
                 ImageSampler::Descriptor(sampler_descriptor),
                 render_asset_usages,
+                Some(&texture_path),
             )?;
 
             // wasm can't sample Rgba16Unorm; native keeps 16-bit except for sRGB
@@ -1248,7 +1258,7 @@ fn load_image<'a, 'b>(
                 let bytes = data_uri.decode()?;
                 let image_type = ImageType::MimeType(data_uri.mime_type);
 
-                let image = Image::from_buffer(
+                let image = Image::from_buffer_at(
                     #[cfg(all(debug_assertions, feature = "dds"))]
                     name,
                     &bytes,
@@ -1257,6 +1267,7 @@ fn load_image<'a, 'b>(
                     is_srgb,
                     ImageSampler::Descriptor(sampler_descriptor),
                     render_asset_usages,
+                    Some(&texture_path),
                 )?;
 
                 // wasm can't sample Rgba16Unorm; native keeps 16-bit except for

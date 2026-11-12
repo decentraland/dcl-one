@@ -157,9 +157,11 @@ fn check_assets(
             };
             // a ktx2 loads compressed already; when bevy's image loader transcoded it
             // (`ktx2::transcode_ktx2_image`), the dds is waiting in `KTX2_RESULTS` to be
-            // written over the cached ktx2 bytes, whatever the path's extension. a cached
-            // ktx2 has nothing waiting and is skipped as compressed, like any cached image
-            let ktx2 = crate::ktx2::has_waiting_transcode(asset_path);
+            // written over the cached ktx2 bytes, whatever the path's extension. an embedded
+            // ktx2 that was transcoded queues its gltf, whose pass writes it back as dds. a
+            // cached ktx2 has nothing waiting and is skipped as compressed, like any cached image
+            let ktx2 = crate::ktx2::has_waiting_transcode(asset_path)
+                || crate::ktx2::take_embedded_transcode(asset_path);
             if !ktx2 && image.is_compressed() {
                 // skip already processed
                 stats.already_compressed += 1;
