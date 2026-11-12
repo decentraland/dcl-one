@@ -97,6 +97,8 @@ const samples = [
   ['matroska', 5000, ebml('matroska')],
   ['ebml-other-doctype', 5000, ebml('other')],
   ['pdf-small', 100, ascii('%PDF-1.7\n')],
+  ['pdf-1350', 1350, ascii('%PDF-1.7\n')],
+  ['pdf-1351', 1351, ascii('%PDF-1.7\n')],
   ['pdf', 5000, ascii('%PDF-1.7\n')],
   ['pdf-illustrator', 5000, Buffer.concat([ascii('%PDF-1.5\n'), Buffer.alloc(2000), ascii('AIPrivateData1')])],
   ['woff', 5000, Buffer.concat([ascii('wOFF'), hex('00010000')])],
@@ -104,6 +106,12 @@ const samples = [
   ['otf', 5000, ascii('OTTO\0')],
   ['ttf', 5000, hex('0001000000')],
   ['wasm', 5000, hex('0061736D01000000')],
+  ['mpeg-ps-mp2p', 5000, hex('000001BA 44')],
+  ['mpeg-ps-mov-atom', 5000, Buffer.concat([hex('000001BA'), ascii('mdat')])],
+  ['mpeg-ps-other', 5000, hex('000001BA 00')],
+  ['mpeg-ts-in-mp3-frame', 5000, Buffer.concat([hex('FFFB9064 47'), Buffer.alloc(187), hex('47')])],
+  ['sketchup', 5000, Buffer.concat([hex('FFFEFF0E'), Buffer.from('SketchUp Model', 'utf16le')])],
+  ['ftyp-brand-nel', 5000, Buffer.concat([hex('00000018'), ascii('ftyp'), hex('71742085')])],
   ['zip', 5000, Buffer.concat([hex('504B0304'), Buffer.alloc(22), hex('0500 0000'), ascii('a.txt')])],
   ['gzip', 5000, hex('1F8B08')]
 ]

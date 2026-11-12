@@ -127,7 +127,7 @@ Files read:
 
 | # | method | upstream path | dcl-one route(s) | status |
 |---|---|---|---|---|
-| 1 | GET | `/contents/:hashId` | `/worlds-content-server/contents/{hashId}` → `content/src/get_content.rs:147` (`get_world_content`; route `worlds/src/lib.rs:399-404`); root `/contents/{hashId}` is the catalyst handler (`get_content.rs:133`) | DIVERGENT |
+| 1 | GET | `/contents/:hashId` | `/worlds-content-server/contents/{hashId}` → `content/src/get_content.rs:183` (`get_world_content`; route `worlds/src/lib.rs:399-404`); root `/contents/{hashId}` is the catalyst handler (`get_content.rs:168`) | DIVERGENT |
 | 2 | HEAD | `/contents/:hashId` | same handler | DIVERGENT |
 | 3 | GET | `/ipfs/:hashId` | `/worlds-content-server/ipfs/{hashId}` → same handler (`worlds/src/lib.rs:413-418`); no root route | DIVERGENT |
 | 4 | HEAD | `/ipfs/:hashId` | same handler | DIVERGENT |
@@ -150,32 +150,32 @@ error envelope, CORS, mounts) are in "Common notes" and the backlog.
 Upstream handlers: `getContentFile` and `headContentFile`
 (`src/controllers/handlers/content-file-handler.ts:123-211`), the same pair at both paths
 (`src/controllers/routes.ts:245-250`). dcl-one: `get_world_content` → `serve` with the `WORLDS`
-mount (`content/src/get_content.rs:95-132,147-281`) at both paths under the prefix.
+mount (`content/src/get_content.rs:99-163,183-340`) at both paths under the prefix.
 
 ### Request
 
 | aspect | upstream | dcl-one |
 |---|---|---|
-| Key format | `IPFSv2.validate` (`^(ba)[a-zA-Z0-9]{57}$`, `@dcl/schemas`) or a lowercase 64-hex SHA-256 (`content-file-handler.ts:47-51`). Anything else → **400**, no body. `Qm…` CIDv0 → 400. | `is_canonical_cid` (CIDv0 `Qm…` of 46, or `ba` + base32 lowercase, ≥58) or, on this mount, a lowercase 64-hex SHA-256 read as the raw-leaf CIDv1 of that digest (`get_content.rs:163-174`, `library/dcl-auth/src/hash.rs:176-204`). Anything else → **404** (intended, `docs/worlds-compatibility.md` "Legacy content keys"). CIDv0 keys are served (WR-09). |
+| Key format | `IPFSv2.validate` (`^(ba)[a-zA-Z0-9]{57}$`, `@dcl/schemas`) or a lowercase 64-hex SHA-256 (`content-file-handler.ts:47-51`). Anything else → **400**, no body. `Qm…` CIDv0 → 400. | `is_canonical_cid` (CIDv0 `Qm…` of 46, or `ba` + base32 lowercase, ≥58) or, on this mount, a lowercase 64-hex SHA-256 read as the raw-leaf CIDv1 of that digest (`get_content.rs:206-216`, `library/dcl-auth/src/hash.rs:176-204`). Anything else → **404** (intended, `docs/worlds-compatibility.md` "Legacy content keys"). CIDv0 keys are served (WR-09). |
 | SHA-256 key | The blob stored under that literal key. | The blob whose raw-leaf CIDv1 has that digest, so a file of one chunk (256 KiB) or less (intended, same doc entry). Pinned by `worlds_contents_sniff_and_answer_legacy_sha256_keys` (`worlds/src/core/tests.rs:5405`). |
 | `Range` (GET) | `parseRangeHeader` (`content-file-handler.ts:85-111`): `bytes=S-E`, `bytes=S-`, `bytes=-N` by regex `^bytes=(\d*)-(\d*)$`; multi-range, other units, `bytes=-` → unsupported → full 200; `-0`, start ≥ size, end < start → 416 `Content-Range: bytes */size`. Compressed or unknown-size files ignore the range. | `parse_range_header` (`content/src/formatters.rs:41-83`): the same outcomes for the cases upstream tests (`test/unit/content-file-handler.spec.ts:12-186`, `test/integration/get-endpoints.spec.ts:63-229`). Edge differences in WR-08. |
 | `Range` (HEAD) | Ignored: `headContentFile` answers 200 with the full headers (`content-file-handler.ts:200-211`). | Ignored on this mount: 200 with the full headers (WR-05). |
-| `If-None-Match` | Ignored. | A match answers 304 with `ETag`, `Cache-Control`, `Access-Control-Expose-Headers: ETag` (`get_content.rs:180-184`, `formatters.rs:9-33`) (WR-07). |
-| Denylist | None. | The content denylist answers 404 (`get_content.rs:175-177`) (WR-09). |
-| Missing blob | 404. | 404, unless the content read-through is on and fills it from the sync sources first (`get_content.rs:186-197`) (WR-09). |
+| `If-None-Match` | Ignored. | A match answers 304 with `ETag`, `Cache-Control`, `Access-Control-Expose-Headers: ETag` (`get_content.rs:221-225`, `formatters.rs:9-33`) (WR-07). |
+| Denylist | None. | The content denylist answers 404 (`get_content.rs:217-219`) (WR-09). |
+| Missing blob | 404. | 404, unless the content read-through is on and fills it from the sync sources first (`get_content.rs:227-237`) (WR-09). |
 
 ### Responses
 
 | case | upstream | dcl-one |
 |---|---|---|
 | 200 GET | `Content-Type` sniffed by `file-type` `fromStream` on the raw stream (4100-byte sample) else `application/octet-stream`; `ETag: "<hashId>"`; `Access-Control-Expose-Headers: ETag, Accept-Ranges, Content-Range`; `Cache-Control: public,max-age=31536000,s-maxage=31536000,immutable`; `Accept-Ranges: bytes` (or `Content-Encoding` when compressed); `Content-Length` when known (`content-file-handler.ts:27-69`). | `content_file_headers` (`formatters.rs`): `Content-Type` from `file-type`'s checks ported in `content/src/file_type.rs` over the whole file, plus a JSON check (`get_content.rs`); `ETag: "<hashId>"` (the client's spelling, also for a SHA-256 key); `Access-Control-Expose-Headers: ETag, Content-Range, Accept-Ranges, Content-Length`; the same `Cache-Control`; `Accept-Ranges: bytes`; `Content-Length`. Sniffing differs for unported formats (WR-04). |
-| 200 HEAD | Same headers, no body (`get-endpoints.spec.ts:27-40`). | Same headers, sniffed, no body (`get_content.rs:248-261`). MATCH. |
+| 200 HEAD | Same headers, no body (`get-endpoints.spec.ts:27-40`). | Same headers, sniffed, no body (`get_content.rs:300-317`). MATCH. |
 | 206 | The sniff reads the file's first 4100 bytes (a failed read falls back to octet-stream); `Content-Length` of the window; `Content-Range: bytes S-E/size` (`content-file-handler.ts:176-197`). | The same sniff over the file's first 4100 bytes; same `Content-Length` and `Content-Range`. MATCH except unported formats (WR-04). |
-| 416 | `Content-Range: bytes */size` only. | `Content-Range: bytes */size` and `Access-Control-Expose-Headers: Content-Range` (`get_content.rs:198-208`). MATCH (one extra header). |
+| 416 | `Content-Range: bytes */size` only. | `Content-Range: bytes */size` and `Access-Control-Expose-Headers: Content-Range` (`get_content.rs:249-259`). MATCH (one extra header). |
 | 400 | Invalid key: empty body. | Not answered: an invalid key is a 404 (WR-02). |
 | 404 | Missing: empty body. | Empty body (`get_world_content`) (WR-03). |
 | 500 | A storage error other than `RangeError` rethrows → `{"error":"Internal Server Error"}` (`content-file-handler.ts:163-173`). | A storage fault → 500 `{"error":"Internal Server Error"}` (`content/src/errors.rs:56-61`). MATCH. |
-| Full GET with `STORAGE_X_ACCEL_BASE` | n/a | The app answers 200 with `X-Accel-Redirect` and its content headers; nginx serves the file with the app's `Content-Type`, `Cache-Control`, `ETag` and expose list (one value each) plus `Access-Control-Allow-Origin: *`, and gives a range the app does not support the whole file (`get_content.rs:367-380`, `infra/gateway/gateway.py:265-272`). MATCH (WR-25). |
+| Full GET with `STORAGE_X_ACCEL_BASE` | n/a | The app answers 200 with `X-Accel-Redirect` and its content headers; nginx serves the file with the app's `Content-Type`, `Cache-Control`, `ETag` and expose list (one value each) plus `Access-Control-Allow-Origin: *`, and gives a range the app does not support the whole file (`get_content.rs:319-332`, `infra/gateway/gateway.py:265-272`). MATCH (WR-25). |
 | CORS | `Access-Control-Allow-Origin: *` on a request with `Origin`. | `shared::cors` (WR-06; shape WR-32). |
 
 ### Data dependency
@@ -355,16 +355,16 @@ documented in `docs/worlds-compatibility.md` "Mounts" (WR-23).
    - Upstream: 400, empty body (`content-file-handler.ts:126,203`; `get-endpoints.spec.ts:199-212`,
      `content-file-handler.spec.ts:548-567`).
    - dcl-one: a key that is neither a canonical CID nor a 64-hex SHA-256 is a miss, the bare 404 of
-     WR-03 (`content/src/get_content.rs:266`, `get_world_content` at `:243`). Listed under "Legacy
+     WR-03 (`content/src/get_content.rs:190`, `get_world_content` at `:183`). Listed under "Legacy
      content keys". No known client branches on 400 versus 404 for a hash it built.
    - Severity: none (closed).
 
 3. **WR-03 · `/contents`, `/ipfs` · the 404 body.** Status: MATCH, no work.
    - Upstream: `{status: 404}`, empty body (`content-file-handler.ts:118,135,174,207`).
    - dcl-one: `get_world_content` answers a miss, and an invalid key, with a 404 and no body
-     (`content/src/get_content.rs:243-255`, `Mount::bare_not_found`); the root keeps the catalyst
+     (`content/src/get_content.rs:183-195`, `Mount::bare_not_found`); the root keeps the catalyst
      body. Pinned by `worlds/src/core/tests.rs:5518` `worlds_contents_answer_wcs_misses_heads_and_types`
-     and `content/src/get_content.rs:861`
+     and `content/src/get_content.rs:872`
      `the_worlds_mount_answers_a_legacy_sha256_key_and_the_root_does_not`.
    - Severity: none (closed).
 
@@ -377,23 +377,32 @@ documented in `docs/worlds-compatibility.md` "Mounts" (WR-23).
    - dcl-one: `content/src/file_type.rs` ports `core.js`'s checks in its order for images (BMP,
      JPEG, GIF, WebP, PNG/APNG by chunk walk, TIFF and its camera raws, ICO, KTX), glTF binary,
      audio (ID3 tags skipped and the file read again, MPEG/AAC frames, Ogg codecs, WAV, AIFF, FLAC,
-     MIDI), video (ISO-BMFF brands, QuickTime atoms, WebM/Matroska by EBML doctype, AVI), fonts,
-     PDF/Illustrator (10 MiB scan from byte 1350), WebAssembly, XML, gzip and ZIP. It reads past
-     the first 4100 bytes only where `core.js` does. A file opening with `{` or `[` is
-     `application/json` (worlds-compatibility.md "Content types"). The root's `?includeMimeType`
-     table is separate. Pinned by `content/src/file_type.rs`
+     MIDI), video (ISO-BMFF brands, QuickTime atoms, MPEG-PS, MPEG-TS, WebM/Matroska by EBML
+     doctype, AVI), fonts, PDF/Illustrator (10 MiB scan from byte 1350), WebAssembly, SketchUp,
+     XML, gzip and ZIP. It reads past the first 4100 bytes only where `core.js` does. The answer
+     is kept per content key, so a file is sniffed once. Pinned by `content/src/file_type.rs`
      `the_worlds_sniff_answers_as_file_type` (every `worlds-sniff.tsv` row, whole and ranged) and
      `content/src/get_content.rs` `the_worlds_sniff_reads_past_the_window_on_a_whole_get_only`.
+   - Deliberate differences (`docs/worlds-compatibility.md` "Content types"): XML is
+     `application/octet-stream`, since this mount shares the node's origin and a browser runs an
+     XHTML or SVG document's scripts; a file opening with `{` or `[` is `application/json`; a
+     storage fault while sniffing is `application/octet-stream`, as upstream's catch. More than 16
+     chained ID3 tags, 256 PNG chunks before `IDAT`, or 64 EBML header elements answer
+     `application/octet-stream` where `file-type` walks to the end of the file, and a `DocType`
+     longer than 8 bytes is not read. Pinned by `get_content.rs`
+     `the_worlds_mount_serves_xml_as_octet_stream_and_keeps_its_answers` and the `file_type.rs`
+     cap tests.
    - Left: the rest of `core.js`'s table (archives, office documents, camera, executable and
-     database formats) answers `application/octet-stream`, and a ZIP is `application/zip` without
-     reading its entries (DOCX, EPUB, ODF, 3MF, XPI).
+     database formats) answers `application/octet-stream`, or the type of a ported check that its
+     bytes also match, and a ZIP is `application/zip` without reading its entries (DOCX, EPUB,
+     ODF, 3MF, XPI).
    - Severity: P3.
 
 5. **WR-05 · `/contents`, `/ipfs` · HEAD with a `Range` header.** Status: MATCH, no work.
    - Upstream: `headContentFile` ignores `Range` and answers 200 with the full length.
    - dcl-one: the worlds mount skips range parsing on HEAD (`Mount::head_ignores_range`,
-     `content/src/get_content.rs:302`); the root keeps its 206. Pinned by
-     `content/src/get_content.rs:840` `a_worlds_head_ignores_its_range` and
+     `content/src/get_content.rs:242`); the root keeps its 206. Pinned by
+     `content/src/get_content.rs:851` `a_worlds_head_ignores_its_range` and
      `worlds_contents_answer_wcs_misses_heads_and_types`.
    - Severity: none (closed).
 
@@ -408,7 +417,7 @@ documented in `docs/worlds-compatibility.md` "Mounts" (WR-23).
 
 7. **WR-07 · `/contents`, `/ipfs` · `If-None-Match` answers 304.** Status: intended (worlds-compatibility.md).
    - Upstream: always 200.
-   - dcl-one: 304 on a matching ETag (`content/src/get_content.rs:282`). Listed under "Conditional
+   - dcl-one: 304 on a matching ETag (`content/src/get_content.rs:221`). Listed under "Conditional
      reads": a conditional request is only sent by a cache that holds the immutable body.
    - Severity: none (closed).
 
@@ -424,7 +433,7 @@ documented in `docs/worlds-compatibility.md` "Mounts" (WR-23).
 9. **WR-09 · `/contents`, `/ipfs` · CIDv0 keys, the denylist and the read-through.** Status: intended (worlds-compatibility.md).
    - Upstream: `Qm…` → 400; no denylist; a missing key is 404.
    - dcl-one: `Qm…` keys are served; denylisted keys answer 404; with `READ_THROUGH_ENABLED` a
-     missing key is fetched from the sync sources before the 404 (`content/src/get_content.rs:266-290`).
+     missing key is fetched from the sync sources before the 404 (`content/src/get_content.rs:227-237`).
      A consequence of the one blob store, listed under "Legacy content keys".
    - Severity: none (closed).
 

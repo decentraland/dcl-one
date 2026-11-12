@@ -4,6 +4,9 @@
 //! carries; any other file answers nothing. The stream's size is unknown to `file-type`, so a
 //! check that reads past the end answers nothing too. `None` is `application/octet-stream`.
 //!
+//! The loops that walk a file (ID3 tags, PNG chunks, EBML header elements) stop after more turns
+//! than a real file takes and answer nothing, where `file-type` walks on to the end.
+//!
 //! `tests/fixtures/conformance/worlds/worlds-sniff.tsv` holds upstream's answers for a sample of
 //! each format; `the_worlds_sniff_answers_as_file_type` replays it.
 
@@ -18,6 +21,15 @@ pub(crate) const SAMPLE: u64 = 4100;
 const PDF_SCAN: u64 = 10 * 1024 * 1024;
 /// Reads past the sample are made in blocks of this size.
 const BLOCK: u64 = 64 * 1024;
+/// The most ID3 tags skipped before the sniff gives up.
+const MAX_ID3_TAGS: usize = 16;
+/// The most PNG chunks walked looking for `IDAT` or `acTL`.
+const MAX_PNG_CHUNKS: usize = 256;
+/// The most EBML header elements read looking for `DocType`.
+const MAX_EBML_ELEMENTS: u64 = 64;
+/// The longest `DocType` that can match (`matroska`); a longer one is read by `file-type` only to
+/// be compared and fail.
+const MAX_DOC_TYPE: u64 = 8;
 
 /// The bytes `file-type` reads: up to `len` bytes from `start`, fewer only at the end.
 pub(crate) trait Source {
@@ -127,7 +139,7 @@ impl<S: Source> Tokenizer<'_, S> {
 pub(crate) async fn file_type(src: &mut impl Source) -> Result<Option<&'static str>, StorageError> {
     let mut tok = Tokenizer { src, pos: 0 };
     // Each turn is one `_fromTokenizer` call; an ID3 tag skips itself and starts another.
-    loop {
+    for _ in 0..=MAX_ID3_TAGS {
         let b = tok.peek(SAMPLE).await?;
         let at = |offset: usize, sig: &[u8]| b[offset..offset + sig.len()] == *sig;
         let found = |mime| Ok(Some(mime));
@@ -207,10 +219,12 @@ pub(crate) async fn file_type(src: &mut impl Source) -> Result<Option<&'static s
             if !tok.ignore(1350).await? {
                 return Ok(None);
             }
-            return Ok(Some(if illustrator(&mut tok).await? {
-                "application/postscript"
-            } else {
-                "application/pdf"
+            return Ok(illustrator(&mut tok).await?.map(|ai| {
+                if ai {
+                    "application/postscript"
+                } else {
+                    "application/pdf"
+                }
             }));
         }
         if at(0, &[0x00, 0x61, 0x73, 0x6D]) {
@@ -243,6 +257,14 @@ pub(crate) async fn file_type(src: &mut impl Source) -> Result<Option<&'static s
         if at(0, b"OTTO\0") {
             return found("font/otf");
         }
+        if at(0, &[0x00, 0x00, 0x01, 0xBA]) {
+            if b[4] & 0xF1 == 0x21 {
+                return found("video/MP1S");
+            }
+            if b[4] & 0xC4 == 0x44 {
+                return found("video/MP2P");
+            }
+        }
         if at(0, b"<?xml ") {
             return found("application/xml");
         }
@@ -264,21 +286,36 @@ pub(crate) async fn file_type(src: &mut impl Source) -> Result<Option<&'static s
         ) {
             return found("image/ktx");
         }
+        if at(0, &[0x00, 0x00, 0x01, 0xBA]) || at(0, &[0x00, 0x00, 0x01, 0xB3]) {
+            return found("video/mpeg");
+        }
         if at(0, &[0x00, 0x01, 0x00, 0x00, 0x00]) {
             return found("font/ttf");
         }
         if at(0, &[0x00, 0x00, 0x01, 0x00]) || at(0, &[0x00, 0x00, 0x02, 0x00]) {
             return found("image/x-icon");
         }
+        if b[4] == 0x47 && (b[192] == 0x47 || b[196] == 0x47) {
+            return found("video/mp2t");
+        }
+        if at(
+            0,
+            b"\xFF\xFE\xFF\x0ES\0k\0e\0t\0c\0h\0U\0p\0 \0M\0o\0d\0e\0l\0",
+        ) {
+            return found("application/vnd.sketchup.skp");
+        }
         return Ok(mpeg_audio(b[0], b[1]));
     }
+    Ok(None)
 }
 
-/// The `ftyp` major brand: the first NUL read as a space, trimmed.
+/// The `ftyp` major brand read as Latin-1, the first NUL as a space, trimmed as JavaScript's
+/// `trim()` does (which keeps U+0085, unlike Rust's).
 fn iso_bmff_brand(raw: &[u8]) -> &'static str {
     let brand: String = raw.iter().map(|&c| char::from(c)).collect();
     let brand = brand.replacen('\0', " ", 1);
-    match brand.trim() {
+    let js_space = |c: char| matches!(c, '\t' | '\n' | '\x0B' | '\x0C' | '\r' | ' ' | '\u{A0}');
+    match brand.trim_matches(js_space) {
         "avif" => "image/avif",
         "mif1" => "image/heif",
         "msf1" => "image/heif-sequence",
@@ -321,8 +358,9 @@ fn tiff_le(b: &[u8]) -> &'static str {
     }
 }
 
-/// Whether the 10 MiB from the tokenizer's position carry `AIPrivateData`.
-async fn illustrator<S: Source>(tok: &mut Tokenizer<'_, S>) -> Result<bool, StorageError> {
+/// Whether the 10 MiB from the tokenizer's position carry `AIPrivateData`; `None` when nothing is
+/// left to read (`readBuffer` throws).
+async fn illustrator<S: Source>(tok: &mut Tokenizer<'_, S>) -> Result<Option<bool>, StorageError> {
     const MARK: &[u8] = b"AIPrivateData";
     let mut scanned = 0;
     let mut tail = Vec::new();
@@ -332,31 +370,34 @@ async fn illustrator<S: Source>(tok: &mut Tokenizer<'_, S>) -> Result<bool, Stor
             .read_at(tok.pos + scanned, BLOCK.min(PDF_SCAN - scanned))
             .await?;
         if chunk.is_empty() {
-            return Ok(false);
+            return Ok((scanned > 0).then_some(false));
         }
         tail.extend_from_slice(&chunk);
         if tail.windows(MARK.len()).any(|w| w == MARK) {
-            return Ok(true);
+            return Ok(Some(true));
         }
         tail.drain(..tail.len().saturating_sub(MARK.len() - 1));
         scanned += chunk.len() as u64;
     }
-    Ok(false)
+    Ok(Some(false))
 }
 
 /// The EBML header's `DocType`, read as `file-type` does: the root element's length is taken as
-/// a count of children.
+/// a count of children. A `DocType` longer than [`MAX_DOC_TYPE`] cannot match and is not read.
 async fn ebml_doc_type<S: Source>(
     tok: &mut Tokenizer<'_, S>,
 ) -> Result<Option<Vec<u8>>, StorageError> {
     let Some((_, children)) = ebml_element(tok).await? else {
         return Ok(None);
     };
-    for _ in 0..children {
+    for _ in 0..children.min(MAX_EBML_ELEMENTS) {
         let Some((id, len)) = ebml_element(tok).await? else {
             return Ok(None);
         };
         if id == 0x4282 {
+            if len > MAX_DOC_TYPE {
+                return Ok(None);
+            }
             return Ok(tok.read(len).await?.map(|doc| doc.to_vec()));
         }
         if !tok.ignore(len).await? {
@@ -412,10 +453,10 @@ impl<S: Source> Tokenizer<'_, S> {
     }
 }
 
-/// PNG: an `acTL` chunk before the first `IDAT` is APNG. A chunk header past the end, or a
-/// negative length, answers nothing.
+/// PNG: an `acTL` chunk before the first `IDAT` is APNG. A chunk header past the end, a
+/// negative length, or more than [`MAX_PNG_CHUNKS`] chunks before either answers nothing.
 async fn png<S: Source>(tok: &mut Tokenizer<'_, S>) -> Result<Option<&'static str>, StorageError> {
-    loop {
+    for _ in 0..MAX_PNG_CHUNKS {
         let Some(length) = tok.read(4).await? else {
             return Ok(None);
         };
@@ -433,6 +474,7 @@ async fn png<S: Source>(tok: &mut Tokenizer<'_, S>) -> Result<Option<&'static st
             _ => {}
         }
     }
+    Ok(None)
 }
 
 /// The MPEG audio sync word: ADTS is AAC, layers 1 to 3 are MPEG audio.
@@ -480,5 +522,77 @@ mod tests {
             rows += 1;
         }
         assert!(rows > 60, "{rows} rows");
+    }
+
+    /// A [`Source`] that records the largest read it served.
+    struct Counting<'a> {
+        bytes: &'a [u8],
+        largest: u64,
+        reads: usize,
+    }
+
+    impl Source for Counting<'_> {
+        async fn read_at(&mut self, start: u64, len: u64) -> Result<Bytes, StorageError> {
+            let got = self.bytes.read_at(start, len).await?;
+            self.largest = self.largest.max(got.len() as u64);
+            self.reads += 1;
+            Ok(got)
+        }
+    }
+
+    async fn counted(bytes: &[u8]) -> (Option<&'static str>, Counting<'_>) {
+        let mut src = Counting {
+            bytes,
+            largest: 0,
+            reads: 0,
+        };
+        let mime = file_type(&mut src).await.unwrap();
+        (mime, src)
+    }
+
+    /// An EBML `DocType` whose length field says 2^44 bytes: nothing past the sample is read.
+    #[tokio::test]
+    async fn a_huge_ebml_doc_type_length_is_not_read() {
+        let mut bytes = b"\x1A\x45\xDF\xA3\x84\x42\x82\x01\x00\x00\x10\x00\x00\x00\x00".to_vec();
+        bytes.resize(1 << 20, b'w');
+        let (mime, src) = counted(&bytes).await;
+        assert_eq!(mime, None);
+        assert!(src.largest <= SAMPLE, "read {} bytes at once", src.largest);
+    }
+
+    /// Chained ID3 tags are skipped up to [`MAX_ID3_TAGS`]; past that the sniff gives up.
+    #[tokio::test]
+    async fn chained_id3_tags_stop_at_the_cap() {
+        let file = |tags: usize| {
+            let mut bytes = b"ID3\x04\x00\x00\x00\x00\x00\x00".repeat(tags);
+            bytes.extend_from_slice(&[0xFF, 0xFB, 0x90, 0x64]);
+            bytes.resize(bytes.len() + 64, 0);
+            bytes
+        };
+        assert_eq!(counted(&file(3)).await.0, Some("audio/mpeg"));
+        assert_eq!(counted(&file(MAX_ID3_TAGS)).await.0, Some("audio/mpeg"));
+        let bytes = file(10_000);
+        let (mime, src) = counted(&bytes).await;
+        assert_eq!(mime, None);
+        assert!(src.reads < 4 * MAX_ID3_TAGS, "{} reads", src.reads);
+    }
+
+    /// PNG chunks are walked up to [`MAX_PNG_CHUNKS`]; a file of empty chunks is not walked to
+    /// its end.
+    #[tokio::test]
+    async fn a_png_of_empty_chunks_stops_at_the_cap() {
+        let file = |chunks: usize| {
+            let mut bytes = b"\x89PNG\r\n\x1a\n".to_vec();
+            for _ in 0..chunks {
+                bytes.extend_from_slice(b"\0\0\0\0tEXt\0\0\0\0");
+            }
+            bytes.extend_from_slice(b"\0\0\0\x01IDAT\0\0\0\0\0");
+            bytes
+        };
+        assert_eq!(counted(&file(10)).await.0, Some("image/png"));
+        let bytes = file(100_000);
+        let (mime, src) = counted(&bytes).await;
+        assert_eq!(mime, None);
+        assert!(src.reads < 3 * MAX_PNG_CHUNKS + 3, "{} reads", src.reads);
     }
 }

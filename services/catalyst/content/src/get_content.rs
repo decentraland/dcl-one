@@ -5,13 +5,13 @@ use axum::response::{IntoResponse, Response};
 use bytes::Bytes;
 use serde::Deserialize;
 
-use super::SharedState;
 use super::errors::{AppError, AppResult};
 use super::file_type::{SAMPLE, Window, file_type};
 use super::formatters::{
     ParsedRange, check_not_modified, content_file_headers, parse_range_header,
 };
 use super::storage::OpenedContent;
+use super::{ContentState, SharedState};
 
 #[derive(Debug, Deserialize)]
 pub struct ContentQuery {
@@ -106,23 +106,40 @@ struct Mount {
 /// The root's sniff window.
 const ROOT_SNIFF_BYTES: u64 = 32;
 
-/// The worlds mount's Content-Type for the file cut at `end`: `file-type`'s answer, else
-/// `application/json` for a head that opens a JSON object or array, which `file-type` (and so
-/// worlds-content-server) answers as `application/octet-stream`
-/// (services/catalyst/docs/worlds-compatibility.md). Also the file's head, with the reader
-/// positioned after it.
+/// The worlds mount's Content-Type for `key`'s file cut at `end` (`ranged` when that is the
+/// window a ranged GET sniffs), and the head read for it, with the reader positioned after it.
+///
+/// `file-type`'s answer, with two deliberate differences from worlds-content-server
+/// (services/catalyst/docs/worlds-compatibility.md): XML is `application/octet-stream`, since this
+/// mount shares the node's origin and a browser runs the scripts of an XHTML or SVG document; and
+/// a head that opens a JSON object or array is `application/json`. A storage fault while sniffing
+/// answers `application/octet-stream`, as upstream's catch does. Content is immutable by key, so
+/// an answer is kept and later reads of the file skip the sniff.
 async fn worlds_content_type(
+    state: &ContentState,
+    key: &str,
     opened: &mut OpenedContent,
     end: u64,
+    ranged: bool,
 ) -> AppResult<(&'static str, Bytes)> {
+    let cache_key = (key.to_string(), ranged);
+    if let Some(mime) = state.worlds_sniffed.lock().get(&cache_key).copied() {
+        return Ok((mime, Bytes::new()));
+    }
     let mut window = Window::new(opened, end);
-    let detected = file_type(&mut window).await?;
+    let detected = file_type(&mut window).await;
     let head = window.into_head().await?;
-    let mime = detected.unwrap_or(if looks_like_json(&head) {
-        "application/json"
-    } else {
-        "application/octet-stream"
-    });
+    let mime = match detected {
+        Ok(Some("application/xml")) => "application/octet-stream",
+        Ok(Some(mime)) => mime,
+        Ok(None) if looks_like_json(&head) => "application/json",
+        Ok(None) => "application/octet-stream",
+        Err(error) => {
+            tracing::warn!(key, %error, "worlds content sniff failed; answering octet-stream");
+            return Ok(("application/octet-stream", head));
+        }
+    };
+    state.worlds_sniffed.lock().insert(cache_key, mime);
     Ok((mime, head))
 }
 
@@ -245,7 +262,9 @@ async fn serve(
                 // The worlds mount sniffs the file's first `SAMPLE` bytes, as WCS does; the root
                 // the range's head.
                 let mime = if mount.always_sniff {
-                    worlds_content_type(&mut opened, SAMPLE).await?.0
+                    worlds_content_type(&state, &key, &mut opened, SAMPLE, true)
+                        .await?
+                        .0
                 } else {
                     let head = opened
                         .read_range(start, start + ROOT_SNIFF_BYTES - 1)
@@ -280,7 +299,7 @@ async fn serve(
     // worlds mount sniffs every HEAD, as WCS does.
     let head = if sniff || (method == Method::HEAD && mount.always_sniff) {
         let (mime, head) = if mount.always_sniff {
-            worlds_content_type(&mut opened, total).await?
+            worlds_content_type(&state, &key, &mut opened, total, false).await?
         } else {
             let head = opened.read_range(0, ROOT_SNIFF_BYTES - 1).await?;
             (detect_content_type(&head), head)
@@ -786,6 +805,46 @@ mod tests {
             };
             assert_eq!(header(&resp, "content-type").unwrap(), ranged, "{whole}");
         }
+    }
+
+    /// XML is octet-stream on the worlds mount (an XHTML or SVG document would run its scripts on
+    /// the node's origin), and a sniffed answer is kept for the key: content does not change
+    /// under it.
+    #[tokio::test]
+    async fn the_worlds_mount_serves_xml_as_octet_stream_and_keeps_its_answers() {
+        let node = TestNode::without_db("content-world-sniff-xml").await;
+        let xml = Bytes::from_static(
+            b"<?xml version=\"1.0\"?><svg xmlns=\"http://www.w3.org/2000/svg\"/>",
+        );
+        let xml_cid = crate::auth::hash_bytes_v1(&xml);
+        node.store(&xml_cid, xml.clone()).await;
+        for range in [None, Some("bytes=0-1")] {
+            let resp = world_get(&node, &xml_cid, Method::GET, range)
+                .await
+                .unwrap();
+            assert_eq!(
+                header(&resp, "content-type").unwrap(),
+                "application/octet-stream",
+                "{range:?}"
+            );
+        }
+
+        let gif = Bytes::from_static(b"GIF89a\x01\x00\x01\x00");
+        node.store(TEST_CID, gif.clone()).await;
+        let resp = world_get(&node, TEST_CID, Method::HEAD, None)
+            .await
+            .unwrap();
+        assert_eq!(header(&resp, "content-type").unwrap(), "image/gif");
+        // Other bytes under the same key (a test can store them; a real key cannot change).
+        node.store(TEST_CID, Bytes::from_static(b"BM\x36\x00\x00\x00"))
+            .await;
+        let resp = world_get(&node, TEST_CID, Method::GET, None).await.unwrap();
+        assert_eq!(header(&resp, "content-type").unwrap(), "image/gif", "kept");
+        assert_eq!(
+            body_of(resp).await,
+            Bytes::from_static(b"BM\x36\x00\x00\x00"),
+            "the body is read whole after a kept answer"
+        );
     }
 
     #[tokio::test]
