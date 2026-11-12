@@ -30,6 +30,7 @@ for suite in "${suites[@]}"; do
       "$nats_binary" --version
       export PULSE_NATS_SERVER_BIN="$nats_binary" ARCHIPELAGO_NATS_SERVER_BIN="$nats_binary"
       export CATALYST_TEST_DATABASE_URL="$test_database_url"
+      export MIGRATION_SYNC_TEST_DATABASE_URL="$test_database_url"
       export RUST_TEST_THREADS="${RUST_TEST_THREADS:-4}"
       cd "$FOUNDATION_DEV_ROOT"
       python3 -m unittest discover -s tooling/tests -p 'test_dev_regressions.py'

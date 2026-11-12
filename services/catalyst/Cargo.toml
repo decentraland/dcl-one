@@ -22,6 +22,7 @@ path = "src/main.rs"
 # select it with -p, not --workspace beside the node, since dcl-scene-authoring
 # turns on serde_json's preserve_order and would reorder the node's JSON in that build.
 members = [
+    "../migration-sync",
     "builder",
     "camera-reel",
     "chain-index",

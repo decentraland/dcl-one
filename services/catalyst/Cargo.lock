@@ -2931,6 +2931,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "dcl-migration-sync"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "clap",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
 name = "dcl-preview-tunnel"
 version = "0.32.0"
 dependencies = [

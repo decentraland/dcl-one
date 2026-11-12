@@ -332,6 +332,17 @@
       "paths": [
         "/.github/workflows/ui-library.yml"
       ]
+    },
+    {
+      "id": "migration-sync",
+      "description": "Removable one-way migration worker and synchronization state",
+      "owners": [
+        "@decentraland/apis"
+      ],
+      "paths": [
+        "/services/migration-sync/",
+        "/schemas/70_migration_sync.sql"
+      ]
     }
   ]
 }

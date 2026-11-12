@@ -137,3 +137,7 @@
 
 # ui-library-workflow
 /.github/workflows/ui-library.yml @decentraland/web-applications @decentraland/infra
+
+# migration-sync
+/services/migration-sync/ @decentraland/apis
+/schemas/70_migration_sync.sql @decentraland/apis

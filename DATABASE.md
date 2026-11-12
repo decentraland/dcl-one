@@ -1559,3 +1559,21 @@ any wallet has a row of it. Each upsert (with the definition it wrote) and
 each publication or archive transition appends a row to
 `social.badge_catalog_audit`; `badge_admin_audit` keeps per-wallet grants and
 revokes, whose `address` a catalog write does not have.
+
+## Removable one-way migration worker
+
+`services/migration-sync` owns the `migration_sync` stream, inbox and favorite
+version tables. Its workload is a bounded, ordered source transaction (up to
+1,000 changes) applied to an isolated destination. One stream row lock serializes
+workers; facts, versions, receipt and position commit together. A predecessor gap
+waits; a failed domain transaction rolls back before its head is marked blocked.
+The unique Places source owner prevents overlapping streams mutating the same
+scope. No throughput or production-load budget is claimed without measurement.
+
+The pilot changes Explore favorite facts and recomputes interaction counts from
+facts. It reads canonical non-mirrored Genesis catalogue IDs and preserves
+delete history without an FK to a place that can disappear. Existing Explore
+writers/mirrors must remain off for this scope. Dual-command application is
+blocked until backend receipts and execution/repair arbitration exist. The
+worker uses the single root schema bootstrap/object migration pass and has no
+automatic schema installer or history cleanup.
