@@ -62,6 +62,34 @@ pub async fn register(pool: &PgPool, name: &str, generation: Uuid, baseline: &st
     Ok(())
 }
 
+/// No-op commands and outcomes still name an entity even without row changes.
+/// Check on admission and application so retained input cannot bypass the scope.
+async fn within_capture_scope(conn: &mut sqlx::PgConnection, envelope: &Envelope) -> Result<bool> {
+    let mut entities: BTreeSet<&str> = envelope
+        .changes
+        .iter()
+        .map(|change| change.key().1)
+        .collect();
+    if let Some(command) = &envelope.command {
+        entities.insert(&command.entity_id);
+    }
+    if let Some(command) = &envelope.like_command {
+        entities.insert(&command.entity_id);
+    }
+    if let Some(result) = &envelope.poi_result {
+        entities.insert(&result.entity_id);
+    }
+    let ids = entities
+        .into_iter()
+        .map(Uuid::parse_str)
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(sqlx::query_scalar(
+        "SELECT NOT EXISTS(SELECT 1 FROM migration_sync.capture_sources WHERE stream=$1 AND generation=$2)
+         OR NOT EXISTS(SELECT 1 FROM unnest($3::uuid[]) wanted(id) WHERE NOT EXISTS(
+           SELECT 1 FROM migration_sync.capture_scope s WHERE s.stream=$1 AND s.generation=$2 AND s.entity_id=wanted.id))"
+    ).bind(&envelope.stream).bind(envelope.generation).bind(ids).fetch_one(conn).await?)
+}
+
 /// Return false for an identical retained transaction; changed payloads or forks
 /// fail rather than replacing previously captured evidence.
 pub async fn enqueue(pool: &PgPool, envelope: &Envelope) -> Result<bool> {
@@ -80,24 +108,10 @@ pub async fn enqueue(pool: &PgPool, envelope: &Envelope) -> Result<bool> {
         stream.try_get::<Uuid, _>("generation")? == envelope.generation,
         "stream generation mismatch"
     );
-    let scoped: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM migration_sync.capture_sources WHERE stream=$1 AND generation=$2)")
-        .bind(&envelope.stream).bind(envelope.generation).fetch_one(&mut *tx).await?;
-    if scoped {
-        let mut entities: BTreeSet<&str> = envelope
-            .changes
-            .iter()
-            .map(|change| change.key().1)
-            .collect();
-        if let Some(command) = &envelope.command {
-            entities.insert(&command.entity_id);
-        }
-        for entity in entities {
-            let allowed: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM migration_sync.capture_scope WHERE stream=$1 AND generation=$2 AND entity_id=$3)")
-                .bind(&envelope.stream).bind(envelope.generation).bind(Uuid::parse_str(entity)?)
-                .fetch_one(&mut *tx).await?;
-            ensure!(allowed, "transaction escapes installed capture scope");
-        }
-    }
+    ensure!(
+        within_capture_scope(&mut tx, envelope).await?,
+        "transaction escapes installed capture scope"
+    );
     let existing: Option<Value> = sqlx::query_scalar(
         "SELECT payload FROM migration_sync.inbox
          WHERE stream=$1 AND generation=$2 AND commit_lsn=$3::text::pg_lsn",
@@ -242,6 +256,9 @@ pub async fn process_next(pool: &PgPool, name: &str) -> Result<Outcome> {
         }
         _ => return block(tx, name, generation, &position, "invalid_envelope").await,
     };
+    if !within_capture_scope(&mut tx, &envelope).await? {
+        return block(tx, name, generation, &position, "capture_scope_conflict").await;
+    }
     match envelope.classify() {
         Decision::ApplyPoi => {
             let result = envelope

@@ -21,11 +21,11 @@ The Places handler and existing gateway replay changes align with the selected d
 
 ## Separate source defects discovered
 
-- Events recurrence does not await a DB update: [evidence and implications](events-social-coverage-audit.md). A fix is about job completion/error handling, not adding table-wide sync.
+- Events recurrence completion is fixed locally on refreshed upstream `master`: [endpoint contract, evidence and validation](events-command-contract.md). It awaits persistence and propagates failure; this does not install Events synchronization.
 - Notifications acknowledges queue input after failed persistence: [evidence and retry requirements](remaining-services-sync-audit.md). Neither gateway replay nor CDC can recover an event never durably recorded.
 - Worlds owner updates omit the timestamp used by incremental import: [evidence](worlds-creator-sync-audit.md). A source timestamp fix alone does not solve deletes or make batch imports continuous replication.
 
-These source defects remain pending; no source fix is claimed by this documentation cleanup.
+Notifications and Worlds fixes remain pending. The Events recurrence fix is local and not deployed.
 
 ## Native vote and selective POI increment
 
@@ -36,3 +36,9 @@ The [POI job contract](places-poi-residual.md) justifies one selective outcome: 
 ## Current local verification
 
 The gateway passes 301 tests, TypeScript checking and build. Places passes 42 focused tests plus TypeScript and scoped lint checks; its commit hooks also passed related tests, formatting and type checks. The worker passes 27 unit/CLI tests and three real PostgreSQL integration suites. They cover source acceptance/native replay, repeated attempt identities, tampered inbox rejection, POI-only mapping, rollback, reconciliation and blocked-head ordering. Clippy with warnings denied, four schema checks, ownership generation and local documentation links also pass. No production deployment or multi-day soak is claimed.
+
+## Events follow-up and scope validation
+
+The [Events endpoint contract](events-command-contract.md) selects schedule PATCH before creation and RSVP. No Events gateway route or row adapter is enabled. The source change has a job-lifecycle purpose independent of replication.
+
+The worker now validates entity IDs from vote commands and POI results even when `changes` is empty. It rechecks the same scope before application. PostgreSQL regressions reject out-of-scope no-ops on enqueue and block directly inserted retained payloads without advancing the checkpoint. The full 27 unit/CLI tests, three PostgreSQL suites and Clippy pass. Events has six focused recurrence tests plus passing type/lint checks.

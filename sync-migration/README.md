@@ -26,6 +26,7 @@ Caller-supplied stable IDs remain the default. For these idempotent setters only
 ## Evidence and follow-up
 
 - [Places command protocol](places-hybrid-commands.md) and [POI residual justification](places-poi-residual.md): exact implemented boundaries and source-change reasons.
+- [Next Events command contract](events-command-contract.md): schedule edits first, creation/RSVP blockers, and the local recurrence completion fix. Events replay is not enabled.
 - [Operation classification and backlog](operation-classification.md): duplicate candidates, residual candidates and acceptance requirements.
 - [Gateway feasibility](gateway-feasibility.md): routing, signed requests, WebSockets and public-read blockers.
 - Service evidence: [Places](places-coverage-audit.md), [Events/Social](events-social-coverage-audit.md), [Worlds/creator/content](worlds-creator-sync-audit.md), [remaining services and uncatalogued dependencies](remaining-services-sync-audit.md).

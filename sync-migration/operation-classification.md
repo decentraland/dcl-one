@@ -18,7 +18,7 @@ Before implementing a lane, record the operation, every writer, source and targe
 | Places like/dislike/delete | Native tri-state replay implemented; no continuous row adapter | Local state/timestamp/count/retry tests pass; staging ingress and source-role validation remain |
 | Places POI categories, ranking replacement, scene-consumer catalogue outcomes | POI membership implemented; ranking/deployment still candidates | POI job depends on mutable feed/catalogue with no equivalent API; other writers still need replay assessment and exact outcomes |
 | Events schedule edits and RSVP/cancel | Duplicate candidates | Shared generated IDs, source's separate counter commits, authorization and target response compatibility |
-| Events recurrence job | Residual candidate | Replaying the same occurrence computation versus copying source outcome; repair unawaited source write before using job completion as evidence |
+| Events recurrence job | Residual candidate | Replaying the same occurrence computation versus copying source outcome; local missing-await fix prepared; deployment and committed-outcome contract still pending |
 | Social settings, mutes, friendship/community commands | Duplicate candidates, not proven | WebSocket command adaptation or durable source command capture, pair/history/role invariants; suppress repeated provider and notification effects |
 | Social ranking and queue-generated metrics | Residual candidates | Same event identity, deduplication, source-owned computation and cross-service ordering |
 | Notification read receipts, opt-outs and subscriptions | Duplicate candidates | Broadcast/notification identity, retry semantics and no duplicate delivery |
@@ -39,7 +39,7 @@ Detailed source links and writer evidence are in the four service audits linked 
 
 1. Rehearse the implemented favorite/vote command and POI residual paths through actual gateway/source roles. Untagged mutations remain blocked.
 2. Validate the optional per-request-attempt gateway policy under real retries; it mirrors actual accepted setter attempts and does not provide logical client retry deduplication.
-3. Classify the next writer after comparing deterministic input replay with outcome mapping. The POI bit is the only approved residual; do not broaden it to the rest of the catalogue.
+3. Implement Events schedule PATCH acceptance and native replay using the [endpoint contract](events-command-contract.md), before enabling its gateway route. Classify other writers after comparing deterministic input replay with outcome mapping. The POI bit is the only approved residual; do not broaden it to the rest of the catalogue.
 4. Test replay and residual updates touching the same entity, mixed transactions, deletes, delayed retries, source rejection and unknown target commit outcomes. No second application of native results.
 5. Build a public read surface that runs without target jobs/providers and validates every dependency's scope and freshness. The current private follower is not this surface.
 6. Rehearse against disposable source clones, then verify actual deployed routing/writers and measure contention, lag, retention and recovery before a public cohort.

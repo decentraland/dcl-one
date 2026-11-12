@@ -66,6 +66,48 @@ async fn assertions(source: &PgPool, target: &PgPool, noncanonical: bool) -> Res
     first.commit().await?;
     assert_eq!(baseline.await??.position, 1);
     assert!(capture::bootstrap(source, target, "pilot").await.is_err());
+    // No-op commands still name an entity even when their change array is empty.
+    // Admission must fence every command/result, not just observed row changes.
+    let generation = capture::source_info(source).await?.generation;
+    for marker in ["like_command", "poi_result"] {
+        let mut payload = serde_json::json!({
+            "version":1,"source":"places","stream":"pilot","generation":generation,
+            "previous_lsn":"0/1","commit_lsn":"0/2",
+            "mode":if marker == "like_command" {"dual"} else {"source_only"},"changes":[]
+        });
+        let outside = "b2222222-2222-4222-8222-222222222222";
+        payload[marker] = if marker == "like_command" {
+            serde_json::json!({"operation_id":Uuid::new_v4(),"request_hash":"a".repeat(64),
+                "user":USER,"entity_id":outside,"like":null,"user_activity":0.0,"expected":null})
+        } else {
+            serde_json::json!({"producer":"places_poi_category_update_v1","entity_id":outside,"poi":false})
+        };
+        let envelope = serde_json::from_value(payload)?;
+        assert!(store::enqueue(target, &envelope).await.is_err());
+        // Retained input is checked again even if admission was bypassed.
+        sqlx::query("INSERT INTO migration_sync.inbox(stream,generation,commit_lsn,previous_lsn,payload) VALUES('pilot',$1,'0/2','0/1',$2)")
+            .bind(generation).bind(serde_json::to_value(&envelope)?).execute(target).await?;
+        store::pause(target, "pilot", false).await?;
+        assert_eq!(
+            store::process_next(target, "pilot").await?,
+            store::Outcome::Blocked
+        );
+        assert_eq!(
+            store::status(target, "pilot").await?["head_error"],
+            "capture_scope_conflict"
+        );
+        assert_eq!(store::status(target, "pilot").await?["applied_lsn"], "0/1");
+        sqlx::query("DELETE FROM migration_sync.inbox WHERE stream='pilot'")
+            .execute(target)
+            .await?;
+        store::pause(target, "pilot", true).await?;
+    }
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM migration_sync.inbox")
+            .fetch_one(target)
+            .await?,
+        0
+    );
     store::pause(target, "pilot", false).await?;
     assert_eq!(
         capture::reconcile(source, target, "pilot").await?["matches"],
