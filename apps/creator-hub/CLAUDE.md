@@ -40,19 +40,21 @@ cd packages/asset-packs && npm run start    # Asset packs dev server (port 8001)
 ### Testing
 
 ```bash
-make test                  # Unit tests for all packages (vitest)
-make test-e2e              # E2E tests (Playwright) for inspector + creator-hub
+VITEST_MAX_THREADS=2 VITEST_MIN_THREADS=1 make test                                         # Unit tests for all packages (vitest)
+make test-e2e                                                                               # E2E tests (Playwright) for inspector + creator-hub
 
 # Per-package tests
-cd packages/creator-hub && npm run test:unit      # All unit tests (main, preload, renderer, shared)
-cd packages/creator-hub && npm run test:main       # Main process tests only
-cd packages/creator-hub && npm run test:renderer   # Renderer tests only
-cd packages/creator-hub && npm run test:shared     # Shared tests only
-cd packages/inspector && npm run test              # Inspector unit tests
-cd packages/inspector && npm run test:e2e          # Inspector E2E tests
+cd packages/creator-hub && VITEST_MAX_THREADS=2 VITEST_MIN_THREADS=1 npm run test:unit      # All unit tests (main, preload, renderer, shared)
+cd packages/creator-hub && VITEST_MAX_THREADS=2 VITEST_MIN_THREADS=1 npm run test:main      # Main process tests only
+cd packages/creator-hub && VITEST_MAX_THREADS=2 VITEST_MIN_THREADS=1 npm run test:renderer  # Renderer tests only
+cd packages/creator-hub && VITEST_MAX_THREADS=2 VITEST_MIN_THREADS=1 npm run test:shared    # Shared tests only
+cd packages/inspector && VITEST_MAX_THREADS=2 VITEST_MIN_THREADS=1 npm run test             # Inspector unit tests
+cd packages/inspector && npm run test:e2e                                                   # Inspector E2E tests
 ```
 
-**Note:** run vitest from inside the package (`cd packages/<pkg> && npx vitest run`). Invoking `npx vitest run` from the repo root sweeps up every workspace's specs without their per-package configs/setup and reports mass failures that are pure cwd artifacts.
+**Note:** run vitest with the thread cap and one run at a time, as the commands above do. The rule, the single-spec flags and how to read the result: `docs/testing-standards.md` → "Run vitest capped".
+
+**Note:** run vitest from inside the package (`cd packages/<pkg> && VITEST_MAX_THREADS=2 VITEST_MIN_THREADS=1 npx vitest run`; Creator Hub: `VITEST_MAX_THREADS=2 VITEST_MIN_THREADS=1 npx vitest run -r <layer> …`, since its vitest configs live in each layer folder). Invoking `npx vitest run` from the repo root sweeps up every workspace's specs without their per-package configs/setup and reports mass failures that are pure cwd artifacts.
 
 **Note:** `.spec.ts` and `.test.ts` files are not type-checked, but `.spec.tsx` files are. All three creator-hub tsconfigs carry `exclude: ["**/*.spec.ts", "**/*.test.ts"]`, and vitest transpiles without checking — so `npm run typecheck` says nothing about a `.ts` test's own types, and a wrong cast or a stale `Partial<…>` in its fixture is caught by neither gate. The exclude does not match `.tsx`, so the renderer's component specs ARE checked: a fixture such as `mockResolvedValue(null)` against a non-null return fails `make typecheck`.
 
@@ -135,6 +137,7 @@ make protoc        # Regenerate TypeScript from .proto files
 - **Never store editor metadata in a react-ecs `key`.** react-ecs uses stock `react-reconciler`, so React's key diffing runs above the host config: a changed key unmounts the fiber → `removeChildEntity` → `engine.removeEntity` RECURSIVELY over the whole subtree, then recreates it (`reconciler/index.ts:207-213`). Anything editable — a display name, say — would destroy and rebuild the entity tree on every edit.
 - **Multi-node ops must batch their splices.** Synthetic ids are positional per parse, so the FIRST op's reparse invalidates every id after it. `Tree` delivers a multi-item drop by calling `onDrop` once per item, so a naive loop of store ops corrupts the source. Build one `Edit[]` and apply it in a single `applySourceEdits` (see `removeNodes` in `emit-adapter.ts`). Multi-node MOVE uses this — `spliceUiTransformPositions` (`code/store.ts`) commits every dragged node in one batch; see [`docs/UIDesigner.md`](docs/UIDesigner.md).
 - **Bevy editor hot-reload is decided by file names, never by timing.** `sdk-commands start --data-layer` rebuilds the bundle for the editor's own autosave (`assets/scene/main.composite`, `entity-names.ts`) and for IDE code saves alike, and its `SCENE_UPDATE` WebSocket message names no file. Creator Hub main therefore relays the bundler's per-file log lines (`bevy-realm.ts` → `notify_scene_build`) and `lib/renderer/bevy/build-reload-bridge.ts` reloads only when a cycle names a source file the inspector did not write itself (`lib/logic/own-writes.ts`), or after a Script component edit. Script inputs have no live path: the bundle bakes each `asset-packs::Script` layout in at build time (`@dcl/sdk-commands` `collectScriptData`) and its inlined `runtime-script.ts` resolves the params once at startup, so an input edit is invisible until a reload — issued at once while the scene runs, deferred to the next Play while it is frozen. Forwarding Script as a raw CRDT PUT (`set_component_raw`) was tried and parked: it needs a matching runtime in js-sdk-toolchain (branch `fix/script-live-inputs`), which was pushed back on. Do not reintroduce a "recent local edit" quiet window: the autosave→rebuild→notify chain lands at ~1.3 s and races any window, which produced both spurious reloads and swallowed Script updates. The standalone bevy-editor repo uses the same log lines.
+- **The Bevy editor's movement keys, idle avatar and mute bypass the engine's own paths; don't move them back into the agent.** The agent's `InputModifier` can't reliably stop WASD walking the avatar, and the engine has no volume command. So the host owns the fly keys (`lib/renderer/bevy/fly-input-bridge.ts`), the agent hides the avatar with an `AvatarModifierArea` (`agents/bevy/src/avatar-visibility.ts`), and the engine host page owns the mute (`scripts/bevy-engine-host/editor-audio.js`, driven by `engine-audio.ts`). The why is in each file's header.
 - **Nothing in the Bevy editor can read engine-written state on a frozen scene without ticking it — so don't.** The editor agent (`agents/bevy`) is a separate super-user scene: its SDK getters (`GltfContainerLoadingState.getOrNull(entity)`) see only its own ECS and return null for the inspected scene. And every engine console READ (`crdt_snapshot`, `scene_entities`, `inspect_component`) is answered by the scene THREAD's copy of the world, which a frozen scene refreshes only on a tick — while console WRITES (`set_component`, `new_entity`) apply to the renderer immediately and are queued for the scene thread until the next tick (a `set 1086.Transform = …` reply says nothing about that). `tick_scene` runs the scene's systems for a frame per edit (it surfaced a scene-script runtime error live), so it is not an editor tool. Anything the panels need from a model — e.g. Animator clip names — is parsed from the GLTF file itself via the mount context's `loadAsset` (`lib/renderer/bevy/gltf-animations.ts`; unnamed clips are `Animation<index>` like the engine). Engine-written state becomes readable once the scene ticks on Play.
 - **Interaction-state styling is a "recognized construct"** — a `useInteraction({ base, hover, press, active })` call spread onto an element (`code/interaction-convention.ts`). The parser special-cases that spread instead of opacifying it, so the node stays first-class and splice-editable. Reuse this pattern for other constructs (e.g. platform variants): an inline ternary inside `uiTransform`/`uiBackground` instead sets `dynamicProps`, a hard write barrier that freezes EVERY panel edit on the node. Two consequences worth knowing: an opaque node renders `children: []`, so a mis-resolved construct makes the whole subtree vanish from the canvas; and for a node with interaction states, every modeled prop must live in the layers — a JSX attribute would shadow the spread and, for the pointer props, replace the helper's own hover/press trackers.
 - **Tree rows carry five non-obvious details** (`components/Tree`, `ProjectAssetExplorer/ProjectView.tsx`):
@@ -205,6 +208,10 @@ Hard-won traps that reading the code does not reveal. Testing-specific ones live
 ### `packages/asset-packs/packs/**` is type-checked by nothing
 
 `tsconfig.lib.json` includes only `src`, so the smart-item scene sources under `packs/` sit outside every type gate — `make typecheck` and `make build-asset-packs` both pass without looking at them, and the build's `Type checking completed without errors` refers to `src` alone (`tsc --listFiles` confirms zero `packs/` files in the program). Verify an edit there by other means: a repo-wide reference count for anything removed, plus a standalone `tsc --noEmit --noResolve --jsx react --jsxFactory 'ReactEcs.createElement' <file>` parse.
+
+### A tab that loads several requests shows nothing from them until all settle
+
+Coming back to a Redux-backed tab renders the data cached from the last visit while its requests run again. If the requests start one after another, or the tab renders each part as soon as its own state exists, that stale data flashes and then disappears (the Creator Fund Payouts email and wallet cards did exactly this before the error state). Start the requests together (`Promise.all`, or dispatch every thunk at once) and gate the dependent UI on all of them settling. A spec that only covers the first load misses it, so test leaving the tab and coming back.
 
 ### Changing a value in `DEFAULT_CONFIG` does nothing for existing installs
 

@@ -7,6 +7,7 @@ import { configureStore, createDraftSafeSelector } from '@reduxjs/toolkit';
 import { captureException } from '@sentry/electron/renderer';
 
 import { createAnalyticsMiddleware } from './analytics/middleware';
+import { deploymentRecordMiddleware } from './workspace/deploymentRecord';
 import { logger } from './logger';
 import * as ai from './ai';
 import * as editor from './editor';
@@ -24,6 +25,7 @@ import * as management from './management';
 import * as placeAnalytics from './placeAnalytics';
 import * as profiles from './profiles';
 import * as optimizer from './optimizer';
+import * as creatorFund from './creatorFund';
 
 export function createRootReducer() {
   return {
@@ -43,6 +45,7 @@ export function createRootReducer() {
     placeAnalytics: placeAnalytics.reducer,
     profiles: profiles.reducer,
     optimizer: optimizer.reducer,
+    creatorFund: creatorFund.reducer,
   };
 }
 
@@ -51,7 +54,10 @@ export function createRootReducer() {
 const store = configureStore({
   reducer: createRootReducer(),
   middleware: getDefaultMiddleware =>
-    getDefaultMiddleware().concat(logger).concat(createAnalyticsMiddleware()),
+    getDefaultMiddleware()
+      .concat(logger)
+      .concat(createAnalyticsMiddleware())
+      .concat(deploymentRecordMiddleware),
 });
 
 const isDevelopment = true; // todo

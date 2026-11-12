@@ -14,8 +14,8 @@ that loaded the web Creator Hub and that nothing shipped.
 
 ## Decision
 
-`apps/creator-hub` is a first-party snapshot of `decentraland/creator-hub` `main` (`755e8d7`,
-2026-11-09) and replaces the Tauri shell. It keeps its npm layout (one root `package-lock.json`,
+`apps/creator-hub` is a first-party snapshot of `decentraland/creator-hub` `main` (`7a68e6a`,
+2026-11-11) and replaces the Tauri shell. It keeps its npm layout (one root `package-lock.json`,
 `packages/asset-packs`, `packages/inspector`, `packages/creator-hub`, `file:` links between
 them), its `Makefile` and its agent files, and is run from that folder: like
 `library/js-sdk-toolchain`, it is its own npm project and dcl-one has no JavaScript workspace at
@@ -76,7 +76,7 @@ What else changes:
   the branch's package tarballs.
 - **UI standards.** The Electron renderer is built on `decentraland-ui2`/MUI with `styled`, and
   the inspector keeps one plain stylesheet per component, both against
-  [the UI standards](../ui-standards.md). `tooling/ui-standards-imported.txt` lists the 221 files
+  [the UI standards](../ui-standards.md). `tooling/ui-standards-imported.txt` lists the 238 files
   that broke the standard when they were imported. `tooling/ui_standards.py` passes them only as
   files the change adds, so every later change to them is checked as usual, and the list never
   grows.
