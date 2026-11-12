@@ -1,7 +1,7 @@
 // The React HUD's page main-thread cost, accumulated into one window: the HUD root's React
 // commits, where the HUD is React's profiling build, and, where the browser reports them, the
-// page's long animation frames (over 50 ms), with the HUD bundle's script time in them and their
-// style and layout time.
+// page's long animation frames (over 50 ms) that began inside the window, with the HUD bundle's
+// script time in them and their style and layout time.
 import type { ProfilerOnRenderCallback } from 'react'
 import { isNativeHud } from './bootMode'
 
@@ -57,11 +57,13 @@ export const recordHudReactCommit: ProfilerOnRenderCallback = (_id, _phase, actu
   reactCommitSums.commitTimeSumMs += actualDuration
 }
 
-/** Adds the frame; its scripts under `hudScriptPrefix` count as HUD script time. */
-function recordLongAnimationFrame(entry: LongAnimationFrameEntryLike, hudScriptPrefix: string): void {
+/** Adds the frame; its scripts under one of `hudScriptPrefixes` count as HUD script time. */
+function recordLongAnimationFrame(entry: LongAnimationFrameEntryLike, hudScriptPrefixes: readonly string[]): void {
   longAnimationFrameSums.frameCount += 1
   for (const script of entry.scripts) {
-    if (script.sourceURL.startsWith(hudScriptPrefix)) longAnimationFrameSums.hudScriptTimeSumMs += script.duration
+    if (hudScriptPrefixes.some((prefix) => script.sourceURL.startsWith(prefix))) {
+      longAnimationFrameSums.hudScriptTimeSumMs += script.duration
+    }
   }
   if (entry.styleAndLayoutStart > 0) {
     longAnimationFrameSums.styleAndLayoutTimeSumMs += entry.startTime + entry.duration - entry.styleAndLayoutStart
@@ -88,10 +90,10 @@ export function discardHudMainThreadCostWindow(now: number): void {
 
 /** No-op on the native HUD. Reports React commits only when `reactCommitsReportedByBuild`
  *  (the profiling build). Observes the page's long animation frames where the browser reports
- *  them, and exposes the window to the page as `window.__bevyTakeHudMainThreadCost` and
- *  `window.__bevyDiscardHudMainThreadCost`. */
+ *  them, from the install on, and exposes the window to the page as
+ *  `window.__bevyTakeHudMainThreadCost` and `window.__bevyDiscardHudMainThreadCost`. */
 export function installHudMainThreadCostMeter(
-  hudScriptPrefix: string,
+  hudScriptPrefixes: readonly string[],
   reactCommitsReportedByBuild: boolean = HUD_REACT_COMMITS_REPORTED
 ): void {
   if (isNativeHud()) return
@@ -101,10 +103,12 @@ export function installHudMainThreadCostMeter(
     typeof PerformanceObserver !== 'undefined' && PerformanceObserver.supportedEntryTypes.includes(LONG_ANIMATION_FRAME_ENTRY)
   if (longAnimationFramesSupported) {
     new PerformanceObserver((entries) => {
-      for (const entry of entries.getEntries()) {
-        recordLongAnimationFrame(entry as unknown as LongAnimationFrameEntryLike, hudScriptPrefix)
+      for (const entry of entries.getEntries() as unknown as LongAnimationFrameEntryLike[]) {
+        // a frame that began before the window is not counted
+        if (entry.startTime < windowStartedAt) continue
+        recordLongAnimationFrame(entry, hudScriptPrefixes)
       }
-    }).observe({ type: LONG_ANIMATION_FRAME_ENTRY, buffered: true })
+    }).observe({ type: LONG_ANIMATION_FRAME_ENTRY })
   }
   window.__bevyTakeHudMainThreadCost = () => takeHudMainThreadCostWindow(performance.now())
   window.__bevyDiscardHudMainThreadCost = () => discardHudMainThreadCostWindow(performance.now())

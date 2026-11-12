@@ -102,7 +102,7 @@ pub fn latest_entity_count(diagnostics: &DiagnosticsStore) -> Option<u32> {
 /// the in-progress sample by the `Time<Real>` delta while `Sampling`, except on the frame
 /// sampling resumed, whose delta spans the pause.
 #[allow(clippy::too_many_arguments)]
-pub fn update_sampling_status_system(
+pub(crate) fn update_sampling_status_system(
     mut status: ResMut<SamplingStatus>,
     mut sample: ResMut<InProgressSample>,
     time: Res<Time<Real>>,
@@ -149,7 +149,7 @@ pub fn update_sampling_status_system(
 /// builds the [`PerformanceSnapshot`], inserts it as the resource, sends it as an event and
 /// starts the next sample.
 #[allow(clippy::too_many_arguments)]
-pub fn sample_frame_times_system(
+pub(crate) fn sample_frame_times_system(
     status: Res<SamplingStatus>,
     mut sample: ResMut<InProgressSample>,
     mut frame_times: ResMut<InProgressSampleMeasurements>,

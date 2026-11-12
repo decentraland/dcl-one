@@ -215,18 +215,7 @@ pub fn runner_section(section: &RunnerSection) -> String {
         .unwrap_or_default();
     if !change.scope_self_ms_per_run.is_empty() || !base_scopes.is_empty() {
         out += "\n<details><summary>Top scopes (self time per run, ms)</summary>\n\n";
-        // the change's scopes first, by its self time; then the baseline's it lacks
-        let mut names: Vec<&str> = change
-            .scope_self_ms_per_run
-            .iter()
-            .map(|(name, _)| name.as_str())
-            .collect();
-        for (name, _) in base_scopes {
-            if !names.contains(&name.as_str()) {
-                names.push(name);
-            }
-        }
-        names.truncate(TOP_SCOPES_SHOWN);
+        let names = top_scope_names(&change.scope_self_ms_per_run, base_scopes);
         let self_ms = |scopes: &[(String, f32)], name: &str| {
             scopes
                 .iter()
@@ -391,6 +380,24 @@ fn frame_time_cell(aggregate: &MedianAndRange) -> String {
 
 /// Scopes the breakdown lists.
 const TOP_SCOPES_SHOWN: usize = 15;
+
+/// The scopes of either build, by the larger of the two builds' values, the first
+/// [`TOP_SCOPES_SHOWN`]: a scope that fell out of one build's rows stays listed.
+fn top_scope_names<'a>(change: &'a [(String, f32)], base: &'a [(String, f32)]) -> Vec<&'a str> {
+    let mut largest: Vec<(&str, f32)> = Vec::new();
+    for (name, ms) in change.iter().chain(base) {
+        match largest.iter_mut().find(|(known, _)| *known == name) {
+            Some((_, known_ms)) => *known_ms = known_ms.max(*ms),
+            None => largest.push((name, *ms)),
+        }
+    }
+    largest.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(b.0)));
+    largest
+        .into_iter()
+        .take(TOP_SCOPES_SHOWN)
+        .map(|(name, _)| name)
+        .collect()
+}
 
 /// The hiccup count's median and range, with the threshold in effect.
 fn cpu_hiccups_cell(build: &BuildBenchmarkRunsStatistics) -> String {
@@ -605,6 +612,31 @@ mod tests {
             headline(&[], &[]),
             "**Overall: ✅ no significant changes**\n\n"
         );
+    }
+
+    #[test]
+    fn the_top_scopes_rank_by_the_larger_of_the_two_builds() {
+        let scopes = |rows: &[(&str, f32)]| -> Vec<(String, f32)> {
+            rows.iter().map(|(n, ms)| (n.to_string(), *ms)).collect()
+        };
+        let change = scopes(
+            &(0..TOP_SCOPES_SHOWN)
+                .map(|i| ("c", 10.0 - i as f32))
+                .collect::<Vec<_>>(),
+        );
+        let mut change: Vec<(String, f32)> = change
+            .into_iter()
+            .enumerate()
+            .map(|(i, (n, ms))| (format!("{n}{i}"), ms))
+            .collect();
+        change.push(("fell".to_owned(), 0.1));
+        // the baseline's top scope dropped out of the change's shown rows
+        let base = scopes(&[("fell", 30.0), ("c0", 9.0)]);
+        let names = top_scope_names(&change, &base);
+        assert_eq!(names.len(), TOP_SCOPES_SHOWN);
+        assert_eq!(names[0], "fell");
+        assert_eq!(names[1], "c0");
+        assert_eq!(top_scope_names(&[], &base), ["fell", "c0"]);
     }
 
     #[test]

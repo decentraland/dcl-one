@@ -3890,7 +3890,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/deploy/web/engine/engine.js",
-      "sha256": "26fd8edf4b872120e5c7467cea5d98a3158cdf0551168aad98a4379d2c707562"
+      "sha256": "2b760a572bbc83a41679591883dc4ea097b4408a9f49cf1a7a5d0600e56bbf5c"
     },
     {
       "path": "rendering/bevy-explorer/source/deploy/web/engine/perf_stream.js",
@@ -4050,7 +4050,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/lib/hudMainThreadCost.ts",
-      "sha256": "46336260562ca50871d80dd4f29368f6f1684aa49ee603b3da1bee8604274349"
+      "sha256": "f5d44dd81b9b717dcca91ef54566ebff639892b2e2aacb271cb417f0ff7c4711"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/lib/launchGate.ts",
@@ -4070,7 +4070,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/main.tsx",
-      "sha256": "25556b4f8fbedd612a7e4801c967024cba994c38c6bc1ce970893f0c1daec426"
+      "sha256": "71308f3e5257b606c59896913c7a66466a4e964fa8d08f28660648989b86eecf"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/shell/localGuest.ts",
@@ -4178,7 +4178,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/hudMainThreadCost.test.ts",
-      "sha256": "71c26a68359bfafd63d8fb94ea0122fefe7e958dcc3e4b44c25f1569f93f55be"
+      "sha256": "7797170a559345dc6f23db49d9255e4da2f84480182a436c17c39440925afca4"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/lobbySession.test.tsx",
@@ -4254,7 +4254,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/vite-env.d.ts",
-      "sha256": "964e41dd86fa5f773bdd74778a28bcd2f4089b65a83db66f695ecb083dea7bb6"
+      "sha256": "9b47f913f58f1f330fe1ac584a83ff1c3e9e2219526c18c523bb5ffabbaf3ac2"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/tsconfig.json",
@@ -4262,7 +4262,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "sha256": "aa8638db090f31cdb9e1cf235ff282fe00fea064460b9ecf3370a489045b68b5"
+      "sha256": "1df4fee8c67a2dff8b7987511bd2afefb0116b07ead1ada9fee7899825723ca1"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/vite.shared.ts",

@@ -182,8 +182,7 @@ pub struct HudMainThreadCostDataPoint {
 #[serde(rename_all = "camelCase")]
 pub struct ReactCommitSums {
     pub commit_count: u32,
-    /// Sum of the commits' `actualDuration`. Part of the long frames' HUD script time, not
-    /// additional to it.
+    /// Sum of the commits' `actualDuration`; not a part of the long frames' HUD script time.
     pub commit_time_sum_ms: f32,
 }
 
@@ -192,7 +191,8 @@ pub struct ReactCommitSums {
 #[serde(rename_all = "camelCase")]
 pub struct LongAnimationFrameSums {
     pub frame_count: u32,
-    /// Scripts whose `sourceURL` starts with the HUD bundle's asset directory.
+    /// The long frames' scripts whose `sourceURL` is the HUD bundle's: `assets/` in a build,
+    /// Vite's module URLs on the dev server.
     pub hud_script_time_sum_ms: f32,
     /// `startTime + duration − styleAndLayoutStart`; 0 for a frame whose `styleAndLayoutStart`
     /// is 0.
@@ -268,7 +268,8 @@ pub struct FrameTimeBreakdown {
     /// Render world, `ExtractCommands` through cleanup, CPU side; extraction and the present wait
     /// excluded.
     pub render_world_cpu_ms: f32,
-    /// Blocking wait for the swapchain image (vsync); `None` when not measurable.
+    /// Blocking wait for the swapchain image (vsync); on the web, the render worker's wait for
+    /// the browser's next animation frame. `None` when not measurable.
     pub swapchain_present_wait_ms: Option<f32>,
     /// GPU execution time of the frame's render graph (`gpu/frame_time`); `None` without
     /// timestamp queries.
@@ -286,8 +287,8 @@ pub enum FrameBottleneck {
     MainThreadCpu,
     Gpu,
     SwapchainPresentWait,
-    /// The frame-rate cap holds the frame: the frame limiter's sleep natively, the wait for the
-    /// browser's next animation frame on the web.
+    /// The frame-rate cap holds the frame: the frame limiter's sleep natively, the app loop's
+    /// wait for its frame timer on the web.
     FrameRateLimiter,
     /// CPU busy time and GPU time within 20 % of each other.
     CpuAndGpuBalanced,
@@ -298,15 +299,17 @@ const BOTTLENECK_MIN_RATIO: f32 = 1.2;
 /// A wait that takes this share of the frame bounds it.
 const BOTTLENECK_MIN_WAIT_SHARE_OF_FRAME: f32 = 0.2;
 
-/// Compares CPU busy time (whole frame minus the pacing wait), GPU time and present wait with a
-/// 20 % margin. `frame_pacing_wait_ms` is the time the frame-rate cap held the frame: the frame
-/// limiter's sleep natively, the wait for the next animation frame on the web. That wait or a
-/// present wait of a fifth of the frame or more bounds the frame (`FrameRateLimiter`,
-/// `SwapchainPresentWait` for vsync); otherwise the longer of CPU busy and GPU time does, or
-/// `CpuAndGpuBalanced` when they are within the margin. `None` without a GPU time.
+/// Compares the main thread's busy time, GPU time and present wait with a 20 % margin.
+/// `frame_pacing_wait_ms` is the time the frame-rate cap held the frame: the frame limiter's
+/// sleep natively, the app loop's wait for its frame timer on the web. `cpu_busy_ms` is the
+/// frame without the waits that pace it. The pacing wait or a present wait of a fifth of the
+/// frame or more bounds the frame (`FrameRateLimiter`, `SwapchainPresentWait` for vsync);
+/// otherwise the longer of CPU busy and GPU time does, or `CpuAndGpuBalanced` when they are
+/// within the margin. `None` without a GPU time.
 pub fn classify_frame_bottleneck(
     whole_frame_wall_ms: f32,
     frame_pacing_wait_ms: f32,
+    cpu_busy_ms: f32,
     gpu_frame_time_ms: Option<f32>,
     swapchain_present_wait_ms: Option<f32>,
 ) -> Option<FrameBottleneck> {
@@ -322,7 +325,7 @@ pub fn classify_frame_bottleneck(
         return Some(FrameBottleneck::SwapchainPresentWait);
     }
     let gpu = gpu_frame_time_ms?;
-    let cpu_busy = (whole_frame_wall_ms - frame_pacing_wait_ms).max(0.0);
+    let cpu_busy = cpu_busy_ms.max(0.0);
     Some(if gpu > cpu_busy * BOTTLENECK_MIN_RATIO {
         FrameBottleneck::Gpu
     } else if cpu_busy > gpu * BOTTLENECK_MIN_RATIO {
@@ -436,28 +439,36 @@ mod tests {
     #[test]
     fn the_bottleneck_follows_the_twenty_percent_margin() {
         use FrameBottleneck::*;
-        assert_eq!(classify_frame_bottleneck(0.0, 0.0, Some(1.0), None), None);
-        assert_eq!(classify_frame_bottleneck(16.0, 0.0, None, None), None);
+        assert_eq!(
+            classify_frame_bottleneck(0.0, 0.0, 0.0, Some(1.0), None),
+            None
+        );
+        assert_eq!(classify_frame_bottleneck(16.0, 0.0, 16.0, None, None), None);
         // the limiter slept a fifth of the frame
         assert_eq!(
-            classify_frame_bottleneck(33.0, 20.0, Some(5.0), Some(0.0)),
+            classify_frame_bottleneck(33.0, 20.0, 13.0, Some(5.0), Some(0.0)),
             Some(FrameRateLimiter)
         );
         // vsync held the frame
         assert_eq!(
-            classify_frame_bottleneck(16.6, 0.0, Some(4.0), Some(8.0)),
+            classify_frame_bottleneck(16.6, 0.0, 16.6, Some(4.0), Some(8.0)),
             Some(SwapchainPresentWait)
         );
         assert_eq!(
-            classify_frame_bottleneck(20.0, 0.0, Some(30.0), Some(1.0)),
+            classify_frame_bottleneck(20.0, 0.0, 20.0, Some(30.0), Some(1.0)),
+            Some(Gpu)
+        );
+        // the main thread spent most of the frame waiting for the render worker's GPU backlog
+        assert_eq!(
+            classify_frame_bottleneck(33.0, 0.0, 8.0, Some(25.0), Some(2.0)),
             Some(Gpu)
         );
         assert_eq!(
-            classify_frame_bottleneck(20.0, 1.0, Some(10.0), Some(1.0)),
+            classify_frame_bottleneck(20.0, 1.0, 19.0, Some(10.0), Some(1.0)),
             Some(MainThreadCpu)
         );
         assert_eq!(
-            classify_frame_bottleneck(20.0, 1.0, Some(18.0), None),
+            classify_frame_bottleneck(20.0, 1.0, 19.0, Some(18.0), None),
             Some(CpuAndGpuBalanced)
         );
     }

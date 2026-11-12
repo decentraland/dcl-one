@@ -120,7 +120,8 @@ the worst 1% or 0.1% of a run's frames, the
 run*, and, where a run's log holds the engine's `perf_summary` lines ([Files](#files)),
 *Hiccups per run* (frames over the engine's hiccup threshold, shown with the threshold) and
 *Peak memory* (the engine's peak memory in MiB), with a collapsed *Top scopes* list of the
-profiler's scopes and their self time per run ([profiling](profiling.md)).
+profiler's scopes and their self time per run ([profiling](profiling.md)), the 15 highest by the
+larger of the two builds' values, so a scope that fell out of one build's top rows stays listed.
 
 - A value is the **median** of the build's runs, followed by the **(min–max)** range when the runs
   differ. A wide range means a noisy metric, where small differences mean little.
@@ -133,7 +134,8 @@ profiler's scopes and their self time per run ([profiling](profiling.md)).
   - **⚪ within noise:** the runs overlap or the difference is small. Treat it as no change.
   - **🟢 fewer / 🔴 more hiccups:** the exceptions rule applied to the hiccup medians; **🟢 _N_%
     less / 🔴 _N_% more memory:** the frame-time rule applied to the peak memory medians, with an
-    absolute floor of 32 MiB.
+    absolute floor of 32 MiB. Both need 2 runs with the summary lines per build; with fewer the
+    row reads *⚠️ no verdict — fewer than 2 summaries*.
   - **— informational:** the 0.1% worst rows. They average the two or three worst frames of a run,
     so one OS hiccup moves them by tens of percent; they never get a verdict.
   - **⚠️ no verdict — _reason_:** the sessions cannot be compared. *too few runs*: a build has
@@ -274,8 +276,8 @@ and `AutopilotPhase`.
     `entity_count`, `sample_count`, `snapshot_duration_seconds`; a value the run could not
     measure is `n/a`. The second is `top_scopes=<name>:<self ms>,...`, up to 30 scopes by self
     time, with commas, colons and equals signs in a name replaced by spaces. The report reads the
-    last pair before the exit line (`report/summary.rs`); a log without them gets no hiccup,
-    memory or scope rows.
+    last pair before the exit line whose entry category is `perf_summary`
+    (`report/perf_summary.rs`); a log without them gets no hiccup, memory or scope rows.
 - Both formats live once in `crates/perf_output/src/format.rs`; the desktop sinks and the page's
   stream take its bytes unchanged. The log layer first replaces every credential in a message or
   a category with `REDACTED` (`crates/perf_output/src/scrub.rs`): `access_token=` values, string

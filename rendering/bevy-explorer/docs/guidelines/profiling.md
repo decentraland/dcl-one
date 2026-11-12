@@ -34,12 +34,16 @@ numbers.
 - **HUD main thread (web).** The React HUD's cost on the page's main thread over the page's
   last second: the HUD root's React commits (count and their time) and, where the browser has
   Long Animation Frame timing (Chromium), the page's frames over 50 ms: their count, the HUD
-  bundle's script time in them and their style and layout time. The commits are reported only by
-  a HUD built with `HUD_REACT_PROFILING=1` in the environment (`react-web`, `npm run build`, or
-  `make web` in `apps/bevy-explorer`, which passes it through), which is React's
-  profiling build, slower on every commit than the production build the players load; otherwise
-  their two cells are `-`. The commit time is part of the HUD script time, not additional to
-  it. `-` on native and before the first window. A snapshot carries the windows of its sampled
+  bundle's script time in them and their style and layout time. The HUD bundle is the whole of
+  `assets/` (the HUD's own chunks and its vendor, shell and crypto chunks); on the Vite dev
+  server, its module URLs. The browser attributes a long frame's scripts of 5 ms or more, so the
+  HUD script time counts those scripts within frames over 50 ms. The commits are reported only
+  by a HUD built with `HUD_REACT_PROFILING=1` in the environment (`react-web`, `npm run build`,
+  or `make web` in `apps/bevy-explorer`, which passes it through), which is React's profiling
+  build, slower on every commit than the production build the players load; otherwise their two
+  cells are `-`. React measures every commit, in a long frame or not, so the commit time is a
+  separate measure and can exceed the HUD script time. `-` on native and before the first
+  window. Frames that began before the window are not counted. A snapshot carries the windows of its sampled
   time summed (`snapshot.hudMainThreadCost`, `null` when none arrived).
 - **Hiccup threshold.** The larger of 50 ms and two target frame times: 50 ms at 60 FPS and
   above, 66.7 ms at a 30 FPS cap, 50 ms with vsync or uncapped. The target is the session
@@ -48,19 +52,24 @@ numbers.
   schedules (`First` through `Last`), the scene loop until its deadline, the frame limiter's sleep
   (native), the render world's CPU time from `ExtractCommands` on (extraction and the swapchain wait
   excluded), the swapchain wait itself
-  (vsync shows here) and the GPU time. The parts are measured separately and overlap in part
+  (vsync shows here; on the web, the render worker's wait for the browser's next animation
+  frame) and the GPU time. The parts are measured separately and overlap in part
   (the render world runs in parallel with the next main-world frame), so they do not sum to the
   frame. The same numbers are the diagnostics `perf/main_world_schedules_ms`,
   `perf/scene_runtime_loop_ms`, `perf/frame_limiter_sleep_ms`, `perf/render_world_cpu_ms`,
   `perf/swapchain_present_wait_ms` and `gpu/frame_time`.
 - **Bottleneck.** Which stage bounds the frame rate, from the smoothed values with a 20 %
   margin: `frame_rate_limiter` when the frame's pacing wait is a fifth of the frame or more (the
-  limiter's sleep natively; on the web, where the scene loop never sleeps, the render worker's
-  wait for the browser's next animation frame, `pipelined/wait_frame`);
-  `swapchain_present_wait` when the swapchain wait takes a fifth of the frame or more (vsync);
-  otherwise `main_thread_cpu` or `gpu`, whichever of CPU busy time (frame minus the pacing wait)
-  and GPU time is the longer by the margin, or `cpu_and_gpu_balanced` when they are within it.
-  Null until a GPU time exists.
+  limiter's sleep natively; on the web, where the scene loop never sleeps, the app loop's time
+  outside the app's update, `pipelined/main_update` minus the main world's schedules: its frame
+  timer, the cap, then the animation frame that runs the next update);
+  `swapchain_present_wait` when the present wait takes a fifth of the frame or more (vsync; on
+  the web the render worker's wait for the browser's next animation frame,
+  `pipelined/wait_frame`); otherwise `main_thread_cpu` or `gpu`, whichever of CPU busy time and
+  GPU time is the longer by the margin, or `cpu_and_gpu_balanced` when they are within it. CPU
+  busy time is the frame without its pacing wait and, on the web, without the handoff wait
+  (`pipelined/wait_handoff`, the app blocked until the render worker takes the frame). Null
+  until a GPU time exists.
 - **System.** On Linux and Windows, Bevy's system information: system and process CPU usage, the OS, the CPU,
   its cores and the RAM.
 
@@ -140,6 +149,7 @@ Bevy's `trace_chrome` and set `TRACE_CHROME=<file>`; open it in `chrome://tracin
 The autopilot's CSV holds every frame's CPU and GPU time (`benchmark.md`, *Files*). When the
 measured phase ends the engine logs two `perf_summary` lines: the CPU and GPU p99 and hiccup
 counts over the whole phase with the threshold in effect, the peak engine memory, the JavaScript
-heap sum, the entity count and the sample count; then the top 30 scopes by self time, summed over
-the phase's snapshots. The report shows them as *Hiccups per run*, *Peak memory* and *Top scopes*
-(`benchmark.md`, *Reading the results*).
+heap sum, the entity count and the sample count; then the top 30 scopes by self time over every
+frame of the phase, focused or not (the profiler's table, reset when the phase starts). The report
+shows them as *Hiccups per run*, *Peak memory* and *Top scopes* (`benchmark.md`, *Reading the
+results*).

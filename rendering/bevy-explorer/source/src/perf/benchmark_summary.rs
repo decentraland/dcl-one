@@ -2,9 +2,10 @@
 //! ends.
 //!
 //! While `Measuring`, every frame's `Time<Real>` delta and every new GPU frame time are kept, so
-//! the lines summarise the whole measured phase, not one sample. The profiler is enabled for the
-//! phase; the top scopes are the sum of every snapshot's top rows and those of the sample under
-//! way at the end. The lines are logged in `Last` of the frame the phase turns `Ending`.
+//! the lines summarise the whole measured phase, not one sample. The profiler records for the
+//! phase, its table reset at the start, so the top scopes are the table's rows at the end: every
+//! frame of the phase, focused or not, where a snapshot's rows are its sampled frames only. The
+//! lines are logged in `Last` of the frame the phase turns `Ending`.
 //!
 //! Line 1, `key=value` pairs in this order:
 //! `cpu_p99_ms cpu_frames_over_hiccup_threshold_count cpu_hiccup_threshold_ms gpu_p99_ms
@@ -14,14 +15,12 @@
 //! Line 2: `top_scopes=<name>:<self ms>,...`, up to 30, highest self time first; a name has its
 //! commas, colons and equals signs replaced by spaces.
 
-use std::collections::HashMap;
-
 use bevy::{diagnostic::DiagnosticsStore, platform::time::Instant, prelude::*};
 use common::{
     autopilot::AutopilotPhase,
     memory::MemoryStatus,
     perf::{
-        hiccup_threshold_ms, FrameTimeSampleSummary, PerformanceSnapshot, ProfiledScopeSummary,
+        hiccup_threshold_ms, FrameTimeSampleSummary, ProfiledScopeSummary,
         SNAPSHOT_TOP_PROFILED_SCOPE_COUNT,
     },
     structs::{AppConfig, SessionGraphics},
@@ -44,8 +43,6 @@ pub struct BenchmarkMeasuredPhaseAccumulator {
     gpu_frame_times_ms: Vec<f32>,
     last_gpu_frame_time_measured_at: Option<Instant>,
     used_peak_bytes: u64,
-    /// Self time per scope name, summed over the snapshots' top rows.
-    scope_self_time_sum_ms: HashMap<String, f32>,
     sampled_seconds: f64,
     perf_summary_logged: bool,
 }
@@ -61,7 +58,6 @@ pub fn accumulate_benchmark_measured_phase_system(
     config: Res<AppConfig>,
     session: Option<Res<SessionGraphics>>,
     mut profiled_scopes: ResMut<ProfiledScopesTable>,
-    mut snapshots: EventReader<PerformanceSnapshot>,
     mut run: Local<BenchmarkMeasuredPhaseAccumulator>,
 ) {
     let Some(phase) = phase else {
@@ -73,6 +69,8 @@ pub fn accumulate_benchmark_measured_phase_system(
             if !run.measured_phase_started {
                 run.measured_phase_started = true;
                 profiled_scopes.set_recording_enabled(true);
+                // the table covers the phase only
+                profiled_scopes.reset();
                 // the frame the phase changed spans the arrival
                 return;
             }
@@ -88,15 +86,6 @@ pub fn accumulate_benchmark_measured_phase_system(
             if let Some(reading) = memory.reading() {
                 run.used_peak_bytes = run.used_peak_bytes.max(reading.used_bytes);
             }
-            for snapshot in snapshots.read() {
-                add_scope_self_times(
-                    run,
-                    snapshot
-                        .top_profiled_scope_summaries
-                        .as_deref()
-                        .unwrap_or_default(),
-                );
-            }
         }
         AutopilotPhase::Ending { exit_code } => {
             if run.perf_summary_logged || !run.measured_phase_started {
@@ -104,21 +93,9 @@ pub fn accumulate_benchmark_measured_phase_system(
             }
             run.perf_summary_logged = true;
             let run = &mut *run;
-            for snapshot in snapshots.read() {
-                add_scope_self_times(
-                    run,
-                    snapshot
-                        .top_profiled_scope_summaries
-                        .as_deref()
-                        .unwrap_or_default(),
-                );
-            }
-            add_scope_self_times(
-                run,
-                &profiled_scopes.take_sample_top_scope_summaries(
-                    SNAPSHOT_TOP_PROFILED_SCOPE_COUNT,
-                    ProfiledScopeSortMetric::SelfTime,
-                ),
+            let top_scopes = profiled_scopes.top_scope_summaries(
+                SNAPSHOT_TOP_PROFILED_SCOPE_COUNT,
+                ProfiledScopeSortMetric::SelfTime,
             );
             profiled_scopes.set_recording_enabled(false);
             if exit_code != 0 {
@@ -136,7 +113,7 @@ pub fn accumulate_benchmark_measured_phase_system(
                 sum_scene_js_heaps(scenes.iter()).map(|heap| heap.used_bytes_sum),
                 u64::from(latest_entity_count(&diagnostics).unwrap_or(0)),
                 run.sampled_seconds,
-                &run.scope_self_time_sum_ms,
+                &top_scopes,
             );
             info!(target: PERF_SUMMARY_LOG_TARGET, "{values_line}");
             info!(target: PERF_SUMMARY_LOG_TARGET, "{top_scopes_line}");
@@ -144,20 +121,9 @@ pub fn accumulate_benchmark_measured_phase_system(
     }
 }
 
-fn add_scope_self_times(
-    run: &mut BenchmarkMeasuredPhaseAccumulator,
-    rows: &[ProfiledScopeSummary],
-) {
-    for row in rows {
-        *run.scope_self_time_sum_ms
-            .entry(row.scope_name.clone())
-            .or_default() += row.self_time_ms;
-    }
-}
-
 const BYTES_PER_MIB: u64 = 1 << 20;
 
-/// The two lines, as the module doc lays them out.
+/// The two lines, as the module doc lays them out; `top_scopes` highest self time first.
 pub fn perf_summary_log_lines(
     cpu: Option<&FrameTimeSampleSummary>,
     gpu: Option<&FrameTimeSampleSummary>,
@@ -165,7 +131,7 @@ pub fn perf_summary_log_lines(
     js_heap_used_bytes: Option<u64>,
     entity_count: u64,
     sampled_seconds: f64,
-    scope_self_time_sum_ms: &HashMap<String, f32>,
+    top_scopes: &[ProfiledScopeSummary],
 ) -> (String, String) {
     let ms = |value: Option<f32>| value.map_or("n/a".to_owned(), |ms| format!("{ms:.2}"));
     let count = |value: Option<u32>| value.map_or("n/a".to_owned(), |count| count.to_string());
@@ -182,14 +148,18 @@ pub fn perf_summary_log_lines(
         count(cpu.map(|cpu| cpu.sample_count)),
         sampled_seconds,
     );
-    let mut scopes: Vec<(&String, &f32)> = scope_self_time_sum_ms.iter().collect();
-    scopes.sort_by(|a, b| b.1.total_cmp(a.1).then_with(|| a.0.cmp(b.0)));
     let top_scopes_line = format!(
         "top_scopes={}",
-        scopes
+        top_scopes
             .iter()
             .take(SNAPSHOT_TOP_PROFILED_SCOPE_COUNT)
-            .map(|(name, self_ms)| format!("{}:{self_ms:.2}", name.replace([',', ':', '='], " ")))
+            .map(|row| {
+                format!(
+                    "{}:{:.2}",
+                    row.scope_name.replace([',', ':', '='], " "),
+                    row.self_time_ms
+                )
+            })
             .collect::<Vec<_>>()
             .join(",")
     );
@@ -200,11 +170,23 @@ pub fn perf_summary_log_lines(
 mod tests {
     use super::*;
 
+    fn scope(name: &str, self_time_ms: f32) -> ProfiledScopeSummary {
+        ProfiledScopeSummary {
+            scope_name: name.to_owned(),
+            scope_kind: common::perf::ProfiledScopeKind::EcsSystem,
+            call_count: 1,
+            self_time_ms,
+            inclusive_time_ms: self_time_ms,
+            max_single_call_ms: self_time_ms,
+            smoothed_self_time_per_frame_ms: self_time_ms,
+        }
+    }
+
     #[test]
-    fn the_lines_hold_every_key_in_order_and_the_scopes_by_self_time() {
+    fn the_lines_hold_every_key_in_order_and_the_scopes_with_their_separators_replaced() {
         let mut cpu_times = vec![10.0, 20.0, 80.0, 15.0];
         let cpu = FrameTimeSampleSummary::from_frame_times(&mut cpu_times, 50.0).unwrap();
-        let scopes = HashMap::from([("a::b".to_owned(), 1.5), ("x, y: z=w".to_owned(), 9.0)]);
+        let scopes = [scope("x, y: z=w", 9.0), scope("a::b", 1.5)];
         let (values_line, top_scopes_line) = perf_summary_log_lines(
             Some(&cpu),
             None,

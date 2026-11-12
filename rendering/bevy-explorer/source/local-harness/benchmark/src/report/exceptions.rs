@@ -114,7 +114,7 @@ pub fn count(log: &Path) -> io::Result<(u64, ExceptionKindCounts)> {
 /// `^\d\d:\d\d:\d\d\.\d\d\d - <color=#[0-9A-Fa-f]{6}>\[(?<cat>[^\]]+)\]</color>: (?<msg>.*)$`:
 /// the category and the message of an entry line. `\d` is an ASCII digit here, where .NET also
 /// takes other scripts' digits; the explorer writes the time in ASCII.
-fn entry_start(line: &str) -> Option<(&str, &str)> {
+pub(super) fn entry_start(line: &str) -> Option<(&str, &str)> {
     let time = line.as_bytes().get(..12)?;
     let time_shaped = time.iter().enumerate().all(|(i, b)| match i {
         2 | 5 => *b == b':',

@@ -11,6 +11,7 @@ let nativeHud = false
 vi.mock('../lib/bootMode', () => ({ isNativeHud: () => nativeHud }))
 
 const HUD_PREFIX = 'https://cdn.example.com/bevy-web/1.0.0/assets/'
+const HUD_PREFIXES = [HUD_PREFIX]
 const commit = (actualDuration: number) => recordHudReactCommit('hud', 'update', actualDuration, actualDuration, 0, 0)
 
 /** A browser that reports long animation frames: the observer gets the entries handed to `report`. */
@@ -33,7 +34,7 @@ describe('the HUD main-thread cost meter (lib/hudMainThreadCost.ts)', () => {
   afterEach(() => vi.unstubAllGlobals())
 
   it('sums the React commits and reports the span since the last take', () => {
-    installHudMainThreadCostMeter(HUD_PREFIX, true)
+    installHudMainThreadCostMeter(HUD_PREFIXES, true)
     discardHudMainThreadCostWindow(1000)
     commit(1.5)
     commit(2)
@@ -42,7 +43,7 @@ describe('the HUD main-thread cost meter (lib/hudMainThreadCost.ts)', () => {
   })
 
   it('reports no React commits unless the build is the profiling build', () => {
-    installHudMainThreadCostMeter(HUD_PREFIX, false)
+    installHudMainThreadCostMeter(HUD_PREFIXES, false)
     discardHudMainThreadCostWindow(1000)
     commit(1.5)
     expect(takeHudMainThreadCostWindow(2000)).toMatchObject({ coveredSeconds: 1, reactCommits: null })
@@ -50,8 +51,11 @@ describe('the HUD main-thread cost meter (lib/hudMainThreadCost.ts)', () => {
 
   it('splits the observed long animation frames into the HUD script time and the style and layout time', () => {
     vi.stubGlobal('PerformanceObserver', FakePerformanceObserver)
-    installHudMainThreadCostMeter(HUD_PREFIX)
+    installHudMainThreadCostMeter(HUD_PREFIXES)
+    discardHudMainThreadCostWindow(50)
     FakePerformanceObserver.report!([
+      // the boot frame, under way when the meter was installed
+      { startTime: 20, duration: 90, styleAndLayoutStart: 0, scripts: [{ sourceURL: HUD_PREFIX + 'app-abc123.js', duration: 70 }] },
       {
         startTime: 100, duration: 80, styleAndLayoutStart: 170,
         scripts: [{ sourceURL: HUD_PREFIX + 'app-abc123.js', duration: 40 }, { sourceURL: '', duration: 15 }]
@@ -59,19 +63,36 @@ describe('the HUD main-thread cost meter (lib/hudMainThreadCost.ts)', () => {
       // a frame that rendered nothing: no style and layout time
       { startTime: 300, duration: 60, styleAndLayoutStart: 0, scripts: [] }
     ])
-    expect(window.__bevyTakeHudMainThreadCost!().longAnimationFrames).toEqual({ frameCount: 2, hudScriptTimeSumMs: 40, styleAndLayoutTimeSumMs: 10 })
-    expect(window.__bevyTakeHudMainThreadCost!().longAnimationFrames).toEqual({ frameCount: 0, hudScriptTimeSumMs: 0, styleAndLayoutTimeSumMs: 0 })
+    expect(takeHudMainThreadCostWindow(400).longAnimationFrames).toEqual({ frameCount: 2, hudScriptTimeSumMs: 40, styleAndLayoutTimeSumMs: 10 })
+    expect(takeHudMainThreadCostWindow(500).longAnimationFrames).toEqual({ frameCount: 0, hudScriptTimeSumMs: 0, styleAndLayoutTimeSumMs: 0 })
+  })
+
+  it('counts a script under any of the HUD prefixes', () => {
+    vi.stubGlobal('PerformanceObserver', FakePerformanceObserver)
+    installHudMainThreadCostMeter(['http://localhost:5173/src/', 'http://localhost:5173/@fs/'])
+    discardHudMainThreadCostWindow(0)
+    FakePerformanceObserver.report!([
+      {
+        startTime: 100, duration: 80, styleAndLayoutStart: 0,
+        scripts: [
+          { sourceURL: 'http://localhost:5173/src/main.tsx', duration: 20 },
+          { sourceURL: 'http://localhost:5173/@fs/library/ui/index.ts', duration: 5 },
+          { sourceURL: 'http://localhost:5173/engine/engine.js', duration: 30 }
+        ]
+      }
+    ])
+    expect(takeHudMainThreadCostWindow(400).longAnimationFrames).toEqual({ frameCount: 1, hudScriptTimeSumMs: 25, styleAndLayoutTimeSumMs: 0 })
   })
 
   it('discards what accumulated and restarts the span', () => {
-    installHudMainThreadCostMeter(HUD_PREFIX, true)
+    installHudMainThreadCostMeter(HUD_PREFIXES, true)
     commit(5)
     discardHudMainThreadCostWindow(4000)
     expect(takeHudMainThreadCostWindow(4250)).toMatchObject({ coveredSeconds: 0.25, reactCommits: { commitCount: 0, commitTimeSumMs: 0 } })
   })
 
   it('installs the page hooks without the observer where the browser has no long animation frames', () => {
-    installHudMainThreadCostMeter(HUD_PREFIX)
+    installHudMainThreadCostMeter(HUD_PREFIXES)
     expect(typeof window.__bevyTakeHudMainThreadCost).toBe('function')
     expect(typeof window.__bevyDiscardHudMainThreadCost).toBe('function')
     expect(window.__bevyTakeHudMainThreadCost!().longAnimationFrames).toBeNull()
@@ -79,7 +100,7 @@ describe('the HUD main-thread cost meter (lib/hudMainThreadCost.ts)', () => {
 
   it('does nothing on the native HUD', () => {
     nativeHud = true
-    installHudMainThreadCostMeter(HUD_PREFIX)
+    installHudMainThreadCostMeter(HUD_PREFIXES)
     expect(window.__bevyTakeHudMainThreadCost).toBeUndefined()
   })
 })

@@ -192,7 +192,16 @@ pub fn publish_frame_time_breakdown_system(
     {
         *last_render_world_timings = Some(new);
     }
-    let (render_world_cpu_ms, present_wait_ms) = last_render_world_timings.unwrap_or((0.0, 0.0));
+    let render_world_cpu_ms = last_render_world_timings.map_or(0.0, |(cpu_ms, _)| cpu_ms);
+    // natively the render world's swapchain wait; on the web the render worker's wait for the
+    // browser's next animation frame
+    #[cfg(not(target_arch = "wasm32"))]
+    let present_wait_ms = last_render_world_timings.map(|(_, wait_ms)| wait_ms);
+    #[cfg(target_arch = "wasm32")]
+    let present_wait_ms = store
+        .get(&bevy::render::pipelined_rendering::diagnostics::WAIT_FRAME)
+        .and_then(Diagnostic::value)
+        .map(|ms| ms as f32);
     let scene_loop = scene_loop.as_deref().copied();
     let scene_runtime_loop_ms = scene_loop.map_or(0.0, |timing| timing.scene_loop_ms);
     let frame_limiter_sleep_ms = scene_loop.map_or(0.0, |timing| timing.frame_limiter_sleep_ms);
@@ -208,40 +217,55 @@ pub fn publish_frame_time_breakdown_system(
         f64::from(frame_limiter_sleep_ms)
     });
     diagnostics.add_measurement(&PERF_RENDER_WORLD_CPU_MS, || f64::from(render_world_cpu_ms));
-    if last_render_world_timings.is_some() {
+    if let Some(present_wait_ms) = present_wait_ms {
         diagnostics.add_measurement(&PERF_SWAPCHAIN_PRESENT_WAIT_MS, || {
             f64::from(present_wait_ms)
         });
     }
 
-    let smoothed = |path: &DiagnosticPath| store.get(path).and_then(Diagnostic::smoothed);
-    let gpu_frame_time_ms = smoothed(&GPU_FRAME_TIME).map(|ms| ms as f32);
-    let smoothed_frame = smoothed(&FrameTimeDiagnosticsPlugin::FRAME_TIME)
-        .map_or(whole_frame_wall_ms, |ms| ms as f32);
-    // what paces the frame: the frame limiter's sleep natively; on the web, where the scene loop
-    // never sleeps, the render worker's wait for the browser's next animation frame
+    let smoothed = |path: &DiagnosticPath| {
+        store
+            .get(path)
+            .and_then(Diagnostic::smoothed)
+            .map(|ms| ms as f32)
+    };
+    let gpu_frame_time_ms = smoothed(&GPU_FRAME_TIME);
+    let smoothed_frame =
+        smoothed(&FrameTimeDiagnosticsPlugin::FRAME_TIME).unwrap_or(whole_frame_wall_ms);
+    // what the frame-rate cap held the frame for, and the frame without the waits that pace it
     #[cfg(not(target_arch = "wasm32"))]
-    let frame_pacing_wait_ms =
-        smoothed(&PERF_FRAME_LIMITER_SLEEP_MS).map_or(frame_limiter_sleep_ms, |ms| ms as f32);
+    let (frame_pacing_wait_ms, cpu_busy_ms) = {
+        let sleep = smoothed(&PERF_FRAME_LIMITER_SLEEP_MS).unwrap_or(frame_limiter_sleep_ms);
+        (sleep, smoothed_frame - sleep)
+    };
     #[cfg(target_arch = "wasm32")]
-    let frame_pacing_wait_ms =
-        smoothed(&bevy::render::pipelined_rendering::diagnostics::WAIT_FRAME)
-            .map_or(0.0, |ms| ms as f32);
-    let smoothed_present = last_render_world_timings
-        .map(|_| smoothed(&PERF_SWAPCHAIN_PRESENT_WAIT_MS).map_or(present_wait_ms, |ms| ms as f32));
+    let (frame_pacing_wait_ms, cpu_busy_ms) = {
+        use bevy::render::pipelined_rendering::diagnostics::{MAIN_UPDATE, WAIT_HANDOFF};
+        let smoothed_schedules =
+            smoothed(&PERF_MAIN_WORLD_SCHEDULES_MS).unwrap_or(main_timer.last_frame_schedules_ms);
+        // the app loop's time outside the app's update: the frame timer's wait and the next
+        // animation frame's
+        let app_loop_idle = (smoothed(&MAIN_UPDATE).unwrap_or(0.0) - smoothed_schedules).max(0.0);
+        // the handoff wait is not CPU time
+        let handoff_wait = smoothed(&WAIT_HANDOFF).unwrap_or(0.0);
+        (app_loop_idle, smoothed_frame - app_loop_idle - handoff_wait)
+    };
+    let smoothed_present =
+        present_wait_ms.map(|wait_ms| smoothed(&PERF_SWAPCHAIN_PRESENT_WAIT_MS).unwrap_or(wait_ms));
     *breakdown = FrameTimeBreakdown {
         whole_frame_wall_ms,
         main_world_schedules_ms: main_timer.last_frame_schedules_ms,
         scene_runtime_loop_ms,
         frame_limiter_sleep_ms,
         render_world_cpu_ms,
-        swapchain_present_wait_ms: last_render_world_timings.map(|_| present_wait_ms),
+        swapchain_present_wait_ms: present_wait_ms,
         gpu_frame_time_ms,
         scene_ticks_run_count: scene_loop.map_or(0, |timing| timing.scene_schedule_run_count),
         scene_jobs_left_count: scene_loop.map_or(0, |timing| timing.eligible_scene_jobs_left_count),
         bottleneck: classify_frame_bottleneck(
             smoothed_frame,
             frame_pacing_wait_ms,
+            cpu_busy_ms,
             gpu_frame_time_ms,
             smoothed_present,
         ),

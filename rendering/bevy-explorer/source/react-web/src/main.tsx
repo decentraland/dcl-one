@@ -31,8 +31,13 @@ installHudScale()
 // over window.cef, see cefNativeBridge).
 if (!isNativeHud()) installHudAutomation()
 
-// The HUD's main-thread cost meter (web only); the HUD's scripts are the bundle under assets/.
-installHudMainThreadCostMeter(publicUrl('assets/'))
+// The HUD's main-thread cost meter (web only): the HUD's scripts are the bundle under assets/ in
+// a build and Vite's module URLs on the dev server.
+installHudMainThreadCostMeter(
+  import.meta.env.DEV
+    ? ['src/', '@fs/', '@id/', '@vite/', '@react-refresh', 'node_modules/'].map(publicUrl)
+    : [publicUrl('assets/')]
+)
 
 let redirecting = false
 // NATIVE (?native=1): bevy renders the 3D world *behind* this transparent webview, so the page must

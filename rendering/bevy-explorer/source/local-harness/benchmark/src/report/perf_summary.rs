@@ -1,5 +1,5 @@
-//! The run's `perf_summary` lines, read from the run's log before its exit line. A log without
-//! them gives no summary.
+//! The run's `perf_summary` lines, read from the run's log before its exit line: the entries
+//! whose category is `perf_summary`. A log without them gives no summary.
 //!
 //! Line 1 is `key=value` pairs separated by spaces; a value is a number or `n/a`. Line 2 is
 //! `top_scopes=<name>:<self ms>,...`.
@@ -8,11 +8,11 @@ use std::fs::File;
 use std::io::{self, BufReader};
 use std::path::Path;
 
-use super::exceptions::EXIT_MARKER;
+use super::exceptions::{entry_start, EXIT_MARKER};
 use super::Lines;
 
-/// The end of the entry line's prefix for the summary's target.
-const TARGET_TAG: &str = "[perf_summary]</color>: ";
+/// The entry category of the summary lines: the explorer's log target.
+const PERF_SUMMARY_CATEGORY: &str = "perf_summary";
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ExplorerPerfSummary {
@@ -34,16 +34,24 @@ pub fn read_last_perf_summary(log: &Path) -> io::Result<Option<ExplorerPerfSumma
     if !log.is_file() {
         return Ok(None);
     }
+    last_perf_summary(Lines::new(BufReader::new(File::open(log)?)))
+}
+
+fn last_perf_summary(
+    lines: impl Iterator<Item = io::Result<String>>,
+) -> io::Result<Option<ExplorerPerfSummary>> {
     let mut summary: Option<ExplorerPerfSummary> = None;
-    for line in Lines::new(BufReader::new(File::open(log)?)) {
+    for line in lines {
         let line = line?;
         if line.contains(EXIT_MARKER) {
             break;
         }
-        let Some(index) = line.find(TARGET_TAG) else {
+        let Some((category, text)) = entry_start(&line) else {
             continue;
         };
-        let text = &line[index + TARGET_TAG.len()..];
+        if category != PERF_SUMMARY_CATEGORY {
+            continue;
+        }
         if let Some(scopes) = text.strip_prefix("top_scopes=") {
             if let Some(summary) = summary.as_mut() {
                 summary.top_scope_self_ms = parse_scopes(scopes);
@@ -111,6 +119,27 @@ mod tests {
         assert_eq!(
             parse_scopes("a  b:9.00,system x:1.50"),
             [("a  b".to_owned(), 9.0), ("system x".to_owned(), 1.5)]
+        );
+    }
+
+    #[test]
+    fn only_entries_of_the_summary_category_before_the_exit_line_count() {
+        let log = concat!(
+            "10:30:33.895 - <color=#DBD6C8>[SCENE]</color>: says [perf_summary]</color>: cpu_p99_ms=1.00\n",
+            "10:30:33.896 - <color=#DBD6C8>[perf_summary]</color>: cpu_p99_ms=80.00 used_peak_mib=300\n",
+            "10:30:33.897 - <color=#DBD6C8>[perf_summary]</color>: top_scopes=a:9.00\n",
+            "10:30:33.898 - <color=#DBD6C8>[ExitUtils]</color>: [ExitUtils] Exit requested\n",
+            "10:30:33.899 - <color=#DBD6C8>[perf_summary]</color>: cpu_p99_ms=2.00\n",
+        );
+        let summary = last_perf_summary(Lines::new(log.as_bytes()))
+            .unwrap()
+            .unwrap();
+        assert_eq!(summary.cpu_p99_ms, Some(80.0));
+        assert_eq!(summary.used_peak_mib, Some(300));
+        assert_eq!(summary.top_scope_self_ms, [("a".to_owned(), 9.0)]);
+        assert_eq!(
+            last_perf_summary(Lines::new(log.lines().next().unwrap().as_bytes())).unwrap(),
+            None
         );
     }
 }
