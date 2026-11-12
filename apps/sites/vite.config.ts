@@ -94,7 +94,7 @@ function nodeProxy(): Record<string, ProxyOptions> {
     "/dcl-lists": to(),
     "/media/": to(),
     // The operator plane (src/main.rs): credits, the relay and the imposter store.
-    "/credits": to(),
+    "^/credits(?:[/?]|$)": to(),
     "/rpc": to({ ws: true }),
     "/bvimposters": to(),
     // The web Explorer (/play) reaches the rest of the gateway's prefix table
