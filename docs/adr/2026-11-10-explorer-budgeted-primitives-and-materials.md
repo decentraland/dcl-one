@@ -26,7 +26,7 @@ next frame:
 
 Since the [node-by-node spawning ADR](2026-11-06-explorer-gltf-node-by-node-spawning.md), the
 Explorer has one instantiation slice a frame: `slice_scene_spawning`, in `SpawnScene`, gives the
-scene spawner and glTF processing 4 ms together.
+scene spawner and glTF processing a quarter of the target frame together (4.2 ms at 60 fps).
 
 A clock cannot bound this work where it is gated. In the `PostLoop` loops an item costs well under
 a microsecond: a handle clone, a hash, queued commands. The cost lands later in the frame:
@@ -43,22 +43,22 @@ instantiation slice; what does not fit waits, marked, and goes first next frame.
 ends that much earlier for spawning and glTF processing.
 
 - **One slice.** `update_mesh` and `update_materials` charge `InstantiationCharges` through the
-  `InstantiationBudget` system param. `slice_scene_spawning` sets the slice's end to
-  4 ms − charges after it runs (the spawner's deadline 1 ms before that end, processing's at it,
-  as before) and resets the charges. No system or ordering point is added: the charges are reset
-  where they are read.
+  `InstantiationBudget` system param, which reads the same slice. `slice_scene_spawning` sets
+  the slice's end to the slice − charges after it runs (the spawner's deadline a quarter of the
+  slice before that end, processing's at it) and resets the charges. No system or ordering point
+  is added: the charges are reset where they are read.
 - **What waits.** Only instantiation:
   - a primitive is an entity with a `MeshDefinition` and no `Mesh3d` yet;
   - a material is a `PbMaterialComponent` added since `update_materials` last ran (Bevy keeps a
     component's added tick when it is replaced, and the CRDT bridge writes with `try_insert`), or
     one still marked `PendingMaterial`.
 
-  A changed mesh or material is attached as before, uncharged. Texture tweens rewrite their
+  A changed mesh or material is attached at once, uncharged. Texture tweens rewrite their
   entity's `PbMaterialComponent` every frame, and each rewrite creates a material: gated, they
   would either animate less often under load or spend the slice every frame.
 - **The gate.** A system run's first item is always admitted, so every consumer moves each frame,
   as the spawner writes at least one entity and processing at least one node. Each other item is
-  admitted while it fits in what is left of the 4 ms. Behind the loading backdrop
+  admitted while it fits in what is left of the slice. Behind the loading backdrop
   (`OutOfWorld`) and on headless (`NoRenderApp`) everything is admitted uncharged, as spawning
   and processing run whole there.
 - **The costs.** Four constants, measured with the stress scene in the appendix (1,000-entity
@@ -77,12 +77,13 @@ ends that much earlier for spawning and glTF processing.
   and a texture source that is not ready yet costs nothing.
 - **Waiting is a marker on the entity.** `PendingPrimitive` and `PendingMaterial` are sparse-set
   components, so marking moves no table rows. Each system queries its pending entities first,
-  then its usual changed ones without the marker, in one loop: what waited goes first, and new
-  arrivals cannot starve it. Once a run has refused an item, its remaining first meshes and
+  then its usual changed ones without the marker, in one loop: what waited goes before what is
+  new, so new arrivals cannot starve it. Among the waiting there is no arrival order; the query
+  returns them in storage order. Once a run has refused an item, its remaining first meshes and
   materials wait as they are, untouched: no resolving and no marker written again, so a backlog
-  costs nothing outside the charges, and admission stays in order. Removals are handled before
-  that loop and drop the marker; so does
-  every path that gives up on an item (no scene context, a glTF mesh the resolver rejects).
+  costs nothing outside the charges. Removals are handled before that loop and drop the marker,
+  unless the component was put back in the same tick: the entity then keeps waiting. Every path
+  that gives up on an item (no scene context, a glTF mesh the resolver rejects) drops it too.
   A refused material leaves no new components: `BaseMaterial`, `MaterialSource` and the texture
   camera's cursor are inserted once it is admitted.
 - **A new primitive brings its material.** When `update_mesh` admits a first mesh for an entity
@@ -90,9 +91,13 @@ ends that much earlier for spawning and glTF processing.
   the entity `MaterialPrepaid`; `update_materials` creates a prepaid material without asking the
   gate. A first material whose primitive still waits waits with it, uncharged. So a new primitive
   appears with its own material, never with the scene's white default first. A textured material
-  still shows the default while its textures load, as before.
-- **Instrumentation.** A consumer that defers logs one line under target `instantiation_budget`
-  at debug level: admitted, deferred, and the frame's charges.
+  still shows the default while its textures load. A prepaid material that has to wait for a
+  texture source or its glTF base loses `MaterialPrepaid`, so the slice decides it again when it
+  is ready, instead of all such materials arriving in one uncharged frame.
+- **Instrumentation.** The debug panel's Instantiation section (`/instantiation_state`) shows
+  what primitives and materials charged the last frame and how many first meshes and first
+  materials wait. A consumer that defers also logs one line under target `instantiation_budget` at
+  debug level: admitted, deferred, and the frame's charges.
 
 ## Rejected
 
@@ -120,7 +125,9 @@ ends that much earlier for spawning and glTF processing.
 ## Consequences
 
 **Measured.** Native release builds on Windows (RTX 5080 laptop, Vulkan, 60 fps), the base
-`3e3e40526` against this change, three runs each, interleaved, on an idle machine; medians. The
+`3e3e40526` against this change at `3bb15259c`, three runs each, interleaved, on an idle
+machine; medians. The slice was then a fixed 4 ms; it is now a quarter of the target frame,
+4.2 ms at 60 fps. The
 stress scene (appendix) adds one wave every 9 s, each created in one tick. *Excess* is a wave's
 frame time above the run's median + 3 ms over the 2 s after it.
 
@@ -150,8 +157,13 @@ Per run, frames over 50 ms went from 3 to 0 and the worst 1 % mean from 29.6 to 
 
 **What else follows:**
 
-- A scene that adds many primitives at once fills in over a few frames: at these costs about 570
-  primitives a frame with the default material, or about 265 each with a new material.
+- A scene that adds many primitives at once fills in over a few frames: at these costs and
+  60 fps, about 590 primitives a frame with the default material, or about 275 each with a new
+  material.
+- A primitive's first material is charged as a new one even when the scene's cache holds it:
+  `update_mesh` cannot tell, since the cache fills in `update_materials`, later in the frame. The
+  shared-material wave above is charged that way: it fills in over four frames where two would
+  do, at the floor's frame time.
 - A waiting primitive's collider (`MeshCollider` is not gated) can work a few frames before its
   mesh shows; unity-explorer does the same.
 - During a flood of primitives the spawner and glTF processing run at their minimum, one entity
@@ -164,7 +176,7 @@ Per run, frames over 50 ms went from 3 to 0 and the worst 1 % mean from 29.6 to 
 
 - A cost that scales with the scene, or one learned on the running machine, if floods of
   thousands of primitives turn out to matter.
-- Nearest-first ordering for every instantiation consumer (E2), as the node-by-node ADR proposes
+- Nearest-first ordering for every instantiation consumer, as the node-by-node ADR proposes
   for the spawner.
 - Texture tweens create a new `SceneMaterial` for each tweened entity every frame; reusing or
   updating the material in place is separate work.
@@ -176,7 +188,7 @@ An SDK7 scene on one parcel (`0,0`, spawn at `8,0,1` facing `8,2,8`), built with
 `sdk-commands start --port 8765 --no-browser --no-watch --skip-build --no-client`. Each run:
 `decentra-bevy --autopilot --csv <file> --log-file <file> --realm http://127.0.0.1:8765
 --position 0,0 --fps 60 --scene_log_to_console`, with `RUST_LOG=info,instantiation_budget=debug`;
-the scene logs `E5STRESS wave <n> <name>` when a wave starts, which aligns it with the CSV.
+the scene logs `stress wave <n> <name>` when a wave starts, which aligns it with the CSV.
 
 ```ts
 import { engine, Transform, MeshRenderer, Material, Entity } from '@dcl/sdk/ecs'
@@ -222,7 +234,7 @@ export function main() {
       })
       wave.make(e, i, next)
     }
-    console.log(`E5STRESS wave ${next} ${wave.name} at t=${t.toFixed(2)}`)
+    console.log(`stress wave ${next} ${wave.name} at t=${t.toFixed(2)}`)
     next++
   })
 }
