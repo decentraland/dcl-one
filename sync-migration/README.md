@@ -29,6 +29,8 @@ Caller-supplied stable IDs remain the default. For these idempotent setters only
 
 ## Evidence and follow-up
 
+- [Repository-wide coverage and priorities](repository-service-inventory.md): Discovery ownership, Mobile/Exploration/CMS gaps, warehouse writers, retained services and missing source checkouts. Includes the complete 246-checkout screening catalog.
+
 - [Places command protocol](places-hybrid-commands.md) and [POI residual justification](places-poi-residual.md): exact implemented boundaries and source-change reasons.
 - [Notifications gateway contract](notifications-gateway-contract.md): read-only paths, mutating GET endpoints, native command candidates and queue reliability blockers.
 - [Next Events command contract](events-command-contract.md): schedule edits first, creation/RSVP blockers, and the local recurrence completion fix. Events replay is not enabled.

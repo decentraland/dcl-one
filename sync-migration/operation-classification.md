@@ -37,6 +37,8 @@ Detailed source links and writer evidence are in the four service audits linked 
 
 ## Ordered next work
 
+**Source ownership gate:** confirm whether deployed Discovery or legacy Places/Events owns each route and writer before expanding command receipts. The [repository-wide review](repository-service-inventory.md) also tracks Mobile, Exploration Games, CMS and warehouse feed coverage; these are scope and operation-classification tasks, not approved broad DB adapters.
+
 1. Rehearse the implemented favorite/vote command and POI residual paths through actual gateway/source roles. Untagged mutations remain blocked.
 2. Validate the optional per-request-attempt gateway policy under real retries; it mirrors actual accepted setter attempts and does not provide logical client retry deduplication.
 3. Implement Events schedule PATCH acceptance and native replay using the [endpoint contract](events-command-contract.md), before enabling its gateway route. Classify other writers after comparing deterministic input replay with outcome mapping. The POI bit is the only approved residual; do not broaden it to the rest of the catalogue.
