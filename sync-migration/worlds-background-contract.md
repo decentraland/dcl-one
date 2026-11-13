@@ -2,7 +2,7 @@
 
 **Decision:** player values written by authoritative multiplayer scenes are an uncovered mutation path. Cover their accepted storage operations without executing the scene twice. For Worlds content, use production-committed owner/quota facts; do not rerun external-data decisions at the target. Physical eviction of already-retired scenes does not justify an active-scene DB mirror.
 
-Reviewed 2026-11-12 against refreshed defaults: [SDK multiplayer e0d2e7ef](https://github.com/decentraland/sdk-multiplayer-server/tree/e0d2e7ef688b2db41293e4b4bed87226dba74071), [World Storage de0178e1](https://github.com/decentraland/world-storage-service/tree/de0178e1d78fa50188824a83bf28e02b8fe427af), and [Worlds content ebbf8d41](https://github.com/decentraland/worlds-content-server/tree/ebbf8d41d07973e317892067c765107d3512938e). This is static source review, not a deployed traffic capture or completed sync implementation.
+Reviewed 2026-11-12 against refreshed defaults: [SDK multiplayer e0d2e7ef](https://github.com/decentraland/sdk-multiplayer-server/tree/e0d2e7ef688b2db41293e4b4bed87226dba74071), [World Storage de0178e1](https://github.com/decentraland/world-storage-service/tree/de0178e1d78fa50188824a83bf28e02b8fe427af), and [Worlds content ebbf8d41](https://github.com/decentraland/worlds-content-server/tree/ebbf8d41d07973e317892067c765107d3512938e). These source pins support the coverage assessment. The bounded implementation and local validation are described below; production traffic has not been captured.
 
 ## Player values: a real coverage gap
 
@@ -46,13 +46,11 @@ The target [evicts retired scene records](../services/catalyst/worlds/src/core/s
 
 Retired-history equivalence remains a separate retention decision. If required, apply an exact source retirement/eviction fact only to the matching retired identity, never to a replacement deployment. Otherwise retain target history until replay/blob-copy progress makes cleanup safe. Gate target GC against outstanding references; a new TTL calculation on the follower is not evidence the source evicted the same records. Keep pending upload cleanup source-owned.
 
-## Next work and acceptance tests
+## Remaining activation work
 
-1. Implement the World Storage acceptance/replay contract, or explicitly select residual player-value capture if that path cannot be made compatible. Test direct multiplayer-origin writes, lost responses, expired delegations, clears, redeployment and cache invalidation.
-2. Implement minimal owner/quota capture with writer classification and target effect suppression. Test transfer, unresolved ownership, block refresh, grace expiry, cron unblock, deployment-triggered unblock, delete/reblock and delayed delivery.
-3. Prove undeployment coverage before adding any eviction handling. Test retirement followed by redeployment and delayed source eviction; the new active scene and player values must survive.
-
-The bounded player-command and owner/quota paths are implemented as opt-in rehearsals. They are not deployed or approved for public target traffic. Exact retired-history replication remains optional pending the retention contract.
+1. Rehearse direct multiplayer-origin writes and recovery with real ingress and credentials. The fixed scene binding deliberately stops on redeployment; supporting a moving deployment requires a separate ordered identity contract.
+2. Measure source contention and run a multi-day recovery/retention soak. Before any public target traffic, provide target job suppression, cache/admission freshness gates and operational fencing.
+3. Prove undeployment coverage before adding eviction handling. Test retirement followed by redeployment and delayed source eviction; the new active scene and player values must survive. Exact retired-history replication remains optional pending the retention contract.
 
 ## Implemented boundary
 
@@ -63,3 +61,13 @@ The bounded player-command and owner/quota paths are implemented as opt-in rehea
 - Native target operations: replay trusts source acceptance and uses the storage mutation shared with normal handlers. It does not re-run mutable quota/auth decisions; normal public handlers retain them. No target serving cache runs in the isolated rehearsal.
 
 The installation and runtime commands live in the [worker runbook](../services/migration-sync/README.md). Staging traffic, contention, retention, recovery and multi-day soak remain unverified.
+
+## Local validation (2026-11-13)
+
+The combined worker passed 29 unit/CLI tests and all five real PostgreSQL integration suites (capture, player, POI, PostgreSQL replay and Worlds), Clippy with warnings denied, four schema checks and Rust formatting. Native player storage passed 62 tests and the runtime fence passed two tests. Fresh-install and upgrade storage functions match; the source player-capture SQL matches the worker copy byte-for-byte.
+
+The [World Storage source change](https://github.com/decentraland/world-storage-service/pull/130) passed 516 unit tests, 16 PostgreSQL tests, TypeScript checks and ESLint. The [Worlds source change](https://github.com/decentraland/worlds-content-server/pull/561) passed nine tests, including real PostgreSQL lock contention, TypeScript checks and focused ESLint.
+
+Regression coverage includes restricted source roles, rollback and ordered capture, transient database retry, original quota timestamps, delete/reblock, unknown writers, scope/identity changes, deeply nested JSON and escaped values at the storage size limit. Source writers acquire the capture lock before native row/quota locks to avoid reversed lock ordering. Transient database failures leave progress retryable; identity or state conflicts stop application.
+
+These are local results, not production load, failover or deployment evidence. Source flags remain disabled by default and target application is restricted to an isolated rehearsal.
