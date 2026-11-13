@@ -140,7 +140,7 @@ def settings(env, resolv_conf="/etc/resolv.conf"):
 
 
 # Worlds routes: reads (GET, HEAD, OPTIONS) are not rate-limited, as upstream; writes and
-# the admin routes keep the server-wide read budget (see the worlds zone below).
+# the admin routes (reachable from admin networks only) keep the server-wide read budget.
 WORLDS_LIMIT = "limit_req zone=worlds burst=60 nodelay;"
 
 # First path segments of social's badges router (services/catalyst/social/src/badges/mod.rs).
@@ -427,13 +427,15 @@ http {{
     }}
     # The telemetry dash entries guard the old serve's routes: they leave with the
     # gateway redeploy once no old serve runs (DATABASE.md, the sink's rollout).
-    # An admin segment under an API mount is a bearer-only route; /events/admin pages stay public.
+    # An admin segment under an API mount is a bearer-only route, as are the worlds collector and
+    # reprocess aliases; /events/admin pages stay public.
     map $uri $operator_path {{
         volatile;
         default 0;
         "~*^/(admin|server)(\\\\W|$)" 1;
         "~*^/((shop-api|marketplace-api|market|transactions-api|signatures-api|credits|rpc|price|badges|builder-api|camera-reel-service|camera-reel|worlds-content-server|world-storage|scene-state|presence|social-api|social-rpc|comms-gatekeeper)/)?((v1|api)/)?admin(\\\\W|$)" 1;
         "~*^/(places|events)/(v1|api)/admin(\\\\W|$)" 1;
+        "~*^/worlds-content-server/(gc|reprocess-ab)(\\\\W|$)" 1;
         "~*^/metabase(/|\\\\.|$)" 1;
         "~*^/telemetry/dash/(sql|flag|group/target)(\\\\.data)?/?$" 1;
         "~*^/telemetry/dash/admin(/|\\\\.|$)" 1;
@@ -460,7 +462,7 @@ http {{
     limit_req_zone $storage_write_key zone=storage_write:10m rate=30r/s;
     limit_req_zone $storage_trusted_key zone=storage_trusted:10m rate=1000r/s;
     # Requests with an empty key are not counted: worlds reads are not limited, while
-    # writes and the admin routes keep the read zone's rate per address.
+    # writes and the admin routes (admin networks only) keep the read zone's rate per address.
     map "$request_method:$uri" $worlds_limit_key {{
         default $binary_remote_addr;
         "~^[^:]+:/worlds-content-server/(admin|gc|reprocess-ab)(/|$)" $binary_remote_addr;
