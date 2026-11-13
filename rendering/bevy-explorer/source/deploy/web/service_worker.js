@@ -242,11 +242,22 @@ async function trimContentCache(capBytes, quotaError) {
     }
     const { picked } = pickEvictions(sized, toFree);
     if (picked.length === 0) return report;
-    // An entry written again while this trim sized moved to the newest end: keep it. Only keys
-    // still among the oldest go.
-    const oldest = new Set((await cache.keys()).slice(0, picked.length).map((key) => key.url));
+    // An entry written again while this trim sized moved to the newest end, behind a key that
+    // followed it in the first listing: keep it, and skip keys gone meanwhile. This covers the
+    // sizing only, not a write between this listing and the deletes.
+    const first = new Map(requests.map((key, i) => [key.url, i]));
+    const listed = new Set();
+    const rewritten = new Set();
+    let latest = -1;
+    for (const key of await cache.keys()) {
+        const i = first.get(key.url);
+        if (i === undefined) continue;
+        listed.add(key.url);
+        if (i < latest) rewritten.add(key.url);
+        else latest = i;
+    }
     const sizes = new Map(sized.map(({ key, size }) => [key.url, size]));
-    const evicted = picked.filter((key) => oldest.has(key.url));
+    const evicted = picked.filter((key) => listed.has(key.url) && !rewritten.has(key.url));
     await Promise.all(evicted.map((key) => cache.delete(key)));
     report.evictedEntries = evicted.length;
     report.evictedBytes = evicted.reduce((sum, key) => sum + sizes.get(key.url), 0);

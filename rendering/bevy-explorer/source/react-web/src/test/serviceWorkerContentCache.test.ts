@@ -190,6 +190,24 @@ describe('content cache trim message', () => {
     expect(port.postMessage).toHaveBeenCalledWith(expect.objectContaining({ evictedEntries: 5, evictedBytes: 500 }))
   })
 
+  it('keeps an entry written again while the trim was sizing when the pick takes the whole cache', async () => {
+    const sw = serviceWorker()
+    sw.seed(0, 100)
+    sw.seed(1, 900)
+    const match = sw.content.match
+    let rewritten = false
+    sw.content.match = async (key: string | Request) => {
+      if (!rewritten) {
+        rewritten = true
+        await sw.content.put(entryUrl(0), entry(100))
+      }
+      return match(key)
+    }
+    const { port } = await sw.trim({ capBytes: 500 })
+    expect(sw.remaining()).toEqual(['bafkrei0'])
+    expect(port.postMessage).toHaveBeenCalledWith(expect.objectContaining({ evictedEntries: 1, evictedBytes: 900 }))
+  })
+
   it('moves an entry written again to the newest end', async () => {
     const sw = serviceWorker()
     for (let n = 0; n < 3; n++) sw.seed(n)
