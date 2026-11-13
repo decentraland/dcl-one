@@ -201,3 +201,80 @@ pub async fn swagger_ui(uri: axum::http::Uri, nested: Option<Extension<NestedPat
     };
     ([(header::CONTENT_TYPE, content_type)], bytes).into_response()
 }
+
+#[cfg(test)]
+mod tests {
+    use serde_json::{Value, json};
+
+    fn openapi_spec() -> Value {
+        serde_json::from_str(include_str!("openapi.json")).unwrap()
+    }
+
+    fn ref_to(name: &str) -> Value {
+        json!({ "$ref": format!("#/components/schemas/{name}") })
+    }
+
+    /// The production document (`docs-openapi`, 2026-09-25) with what
+    /// upstream 3e8bd0b added after it (#61: `User.screenRect` and the
+    /// `ScreenRect` component). The referenced but undefined
+    /// `GalleryImageWithPlace` component stays absent, as in the source.
+    #[test]
+    fn the_spec_is_the_captured_one_plus_the_later_upstream_screen_rect() {
+        let path = format!(
+            "{}/services/catalyst/tests/fixtures/conformance/social/camera-reel/docs-openapi.json",
+            env!("DCL_ONE_ROOT")
+        );
+        let captured: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        let spec = openapi_spec();
+        let ours = &spec["components"]["schemas"];
+        let mut expected = captured["response"]["body_json"].clone();
+        let schemas = &mut expected["components"]["schemas"];
+        assert!(schemas.get("GalleryImageWithPlace").is_none());
+        assert!(ours.get("GalleryImageWithPlace").is_none());
+        schemas["ScreenRect"] = ours["ScreenRect"].clone();
+        schemas["User"]["properties"]["screenRect"] =
+            json!({ "allOf": [ref_to("ScreenRect")], "nullable": true });
+        assert_eq!(spec, expected);
+    }
+
+    #[test]
+    fn the_spec_documents_the_wire_and_every_path_parameter() {
+        let spec = openapi_spec();
+        let schemas = &spec["components"]["schemas"];
+        assert_eq!(
+            schemas["UpdateVisibility"]["required"],
+            json!(["is_public"])
+        );
+        assert_eq!(
+            schemas["Upload"]["required"],
+            json!(["image", "metadata", "is_public"])
+        );
+        assert_eq!(
+            schemas["User"]["properties"]["screenRect"],
+            json!({ "allOf": [ref_to("ScreenRect")], "nullable": true })
+        );
+        assert_eq!(
+            schemas["ScreenRect"]["required"],
+            json!(["x", "y", "width", "height"])
+        );
+        for (path, item) in spec["paths"].as_object().unwrap() {
+            for (method, op) in item.as_object().unwrap() {
+                let declared: Vec<&str> = op["parameters"]
+                    .as_array()
+                    .map(|ps| {
+                        ps.iter()
+                            .filter(|p| p["in"] == "path")
+                            .map(|p| p["name"].as_str().unwrap())
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                for segment in path.split('/') {
+                    if let Some(name) = segment.strip_prefix('{').and_then(|s| s.strip_suffix('}'))
+                    {
+                        assert!(declared.contains(&name), "{method} {path} lacks {name}");
+                    }
+                }
+            }
+        }
+    }
+}

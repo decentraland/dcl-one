@@ -41,6 +41,7 @@ catalyst-shared = { path = "../shared", features = ["test-support"] }
 catalyst-storage = { path = "../storage", features = ["test-support"] }
 catalyst-content = { path = "../content", features = ["test-support"] }
 catalyst-builder = { path = "../builder", features = ["test-support"] }
+catalyst-social = { path = "../social", features = ["test-support"] }
 catalyst-db = { path = "../db", features = ["test-support"] }
 tokio = { workspace = true, features = ["test-util"] }
 alloy = { version = "2", default-features = false, features = ["std", "signer-local"] }
