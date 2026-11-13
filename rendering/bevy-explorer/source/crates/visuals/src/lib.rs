@@ -2,18 +2,14 @@ mod atmosphere_params;
 mod coast;
 mod day_night;
 mod debug_panel;
-// The spawn system that reads the layout lands in the next commit; until then nothing calls it.
-#[allow(dead_code)]
 mod landscape_trees;
 mod nishita_cloud;
-mod props;
 mod satellite_floor;
 pub mod shell_texturing;
 mod sky_envmap;
 mod solids;
 mod stars;
 pub mod terrain;
-mod trees;
 
 use bevy::{
     core_pipeline::dof::{DepthOfField, DepthOfFieldMode},
@@ -45,13 +41,12 @@ use scene_runner::update_world::lights::{moon_direction, SUN_COLOR_NOON};
 use crate::{
     coast::CoastPlugin,
     day_night::DayNightPlugin,
-    props::PropsPlugin,
+    landscape_trees::LandscapeTreesPlugin,
     satellite_floor::SatelliteFloorPlugin,
     shell_texturing::ShellTexturingPlugin,
     sky_envmap::{SkyEnvmapPlugin, SkyEnvmapSettings},
     solids::SolidsPlugin,
     terrain::TerrainPlugin,
-    trees::TreesPlugin,
 };
 
 const MIN_CASCADE: f32 = 0.1;
@@ -81,7 +76,7 @@ impl Plugin for VisualsPlugin {
             .add_plugins(ShellTexturingPlugin)
             .add_plugins(TerrainPlugin)
             .add_plugins(CoastPlugin)
-            .add_plugins((TreesPlugin, PropsPlugin, SolidsPlugin, SatelliteFloorPlugin))
+            .add_plugins((LandscapeTreesPlugin, SolidsPlugin, SatelliteFloorPlugin))
             .add_systems(Update, apply_global_light)
             .add_systems(Update, update_dof)
             .add_systems(Startup, setup.in_set(SetupSets::Main));

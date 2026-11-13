@@ -338,6 +338,29 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
     session that never enters Genesis City does not pay for them.
   - Each tile appears once its own image has loaded, and a tile that fails to load is simply
     missing. Unity waits for all 64 and shows nothing if one fails.
+- **The baked trees, bushes and stones** keep unity-explorer's layouts (Genesis City's and the
+  Worlds'), prototypes, scale ranges, footprints, first level of detail, collider shapes and
+  material values, and differ in these ways.
+  - They stand only on parcels whose pointers have resolved empty near the player; unknown and
+    occupied parcels and parcels outside the terrain count as occupied. Unity reads a static
+    occupancy map of the whole city, so inside the city, beyond the resolved parcels, it has trees
+    where bevy has none.
+  - Each instance is an entity, spawned when it is within the Landscape Distance of the player
+    (horizontally) and checked again when the player changes parcel; bevy batches the shared
+    meshes. Unity hands the whole layout to a GPU instancing package that culls by distance.
+  - Bevy's lit material replaces Unity's simple Blinn-Phong one. Colour, texture, cut-off,
+    culling and normal maps carry over; the trunk and the stones take a roughness of one minus
+    their smoothness. The leaves are fully rough: their Unity smoothness of 1 is a pin-point
+    highlight there, and a mirror of the sky under bevy's image-based light.
+  - The stones' Unity shader belongs to the GPU instancing package and is not ported: the stones
+    draw their colour texture, normal map and smoothness only, without the terrain colour and
+    moss the stone materials also bind.
+  - The wind moves the leaves in the depth and shadow passes too. Unity's moves the colour pass
+    only; here the depth prepass has to match it.
+  - The textures are 512x512 (1024x1024 in Unity), uncompressed RGBA8 with their mips built when
+    they load.
+  - Their colliders are built over the ground collider's 64 m patch around the player, like the
+    ground's, rather than parcel by parcel around each character.
 
 ## Deliberate choices that look like mistakes
 

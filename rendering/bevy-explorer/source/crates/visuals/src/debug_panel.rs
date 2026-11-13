@@ -15,9 +15,9 @@ use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddCo
 use serde_json::json;
 
 use crate::{
+    landscape_trees::Tree,
     satellite_floor,
     shell_texturing::{Ground, ParcelGrass},
-    trees::Tree,
     CloudCover,
 };
 

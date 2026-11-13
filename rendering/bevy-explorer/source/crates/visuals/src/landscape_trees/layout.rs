@@ -32,15 +32,16 @@ pub(crate) struct TreeLayout {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct TreeInstance {
-    /// Index into `PROTOTYPES`; `parse` rejects any other value.
-    pub prototype: u8,
+    /// Index into `PROTOTYPES`; `parse` rejects any other value, and only `parse` builds
+    /// instances, so `transform` can index the table.
+    pub(super) prototype: u8,
     /// Position inside the parcel, x then z (north), in 1/255ths of the parcel's side.
-    pub pos: [u8; 2],
+    pub(super) pos: [u8; 2],
     /// Yaw in 1/255ths of a turn, clockwise seen from above (east turns towards south).
-    pub rot_y: u8,
+    pub(super) rot_y: u8,
     /// Horizontal and vertical scale, in 1/255ths of the prototype's range.
-    pub scale_xz: u8,
-    pub scale_y: u8,
+    pub(super) scale_xz: u8,
+    pub(super) scale_y: u8,
 }
 
 #[derive(Debug)]
@@ -218,7 +219,13 @@ impl TreeLayout {
         &self.instances[start..end]
     }
 
+    /// The parcels the layout covers, minimum inclusive and maximum exclusive.
+    pub fn bounds(&self) -> (IVec2, IVec2) {
+        (self.min, self.max_excl)
+    }
+
     /// Instances in the whole layout.
+    #[cfg(test)]
     pub fn len(&self) -> usize {
         self.instances.len()
     }
@@ -251,7 +258,8 @@ impl TreeInstance {
 /// Whether an instance at bevy world `world_xz` (x and bevy z) is hidden: its own parcel is
 /// occupied, or `radius` (the prototype's radius times the instance's horizontal scale) reaches
 /// past an edge or, on both axes at once, a corner of its parcel into an occupied parcel.
-/// `occupied` takes Decentraland parcel coordinates (y north).
+/// `occupied` takes Decentraland parcel coordinates (y north). The caller counts parcels outside
+/// the terrain bounds as occupied, as it does parcels whose occupancy is not yet known.
 pub(crate) fn hidden_by_occupancy(
     world_xz: Vec2,
     radius: f32,
