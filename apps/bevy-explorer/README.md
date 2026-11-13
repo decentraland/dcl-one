@@ -204,7 +204,8 @@ CDN, and a failed rollout re-runs alone.
 
 Same-repo PRs publish under the `pr-<n>` dist-tag. The CI status *Build* section links the exact
 package version for the run after checking its CDN completion marker's commit against the web
-checkout SHA. It uses the PR tag to look up the version if the run lacks a usable package artifact or was dispatched manually.
+checkout SHA. It uses the PR tag to look up the version if the run lacks a usable package artifact
+or was dispatched manually.
 A PR publish failure does not fail the build, and closing the PR removes the tag (the trusted
 publisher needs "npm dist-tag"). A `pr-<n>` version is for testing only, never for a rollout;
 while `BENCHMARK_ENABLED_RUNNERS` is `none`, a PR that compiles the engine also skips wasm-opt. The

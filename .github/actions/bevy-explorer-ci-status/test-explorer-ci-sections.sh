@@ -160,6 +160,7 @@ cat > "$WORK/curl" <<'EOF'
 set -eu
 url="${*: -1}"
 [ "$url" = "https://cdn.decentraland.org/@dcl-regenesislabs/bevy-explorer-web/$PUBLISHED_VERSION/.deploy-complete.json" ] || exit 22
+if [ -n "${MARKER_BODY+set}" ]; then printf '%s' "$MARKER_BODY"; exit 0; fi
 jq -nc --arg v "$PUBLISHED_VERSION" --arg c "$PUBLISHED_SHA" \
   '{package:"@dcl-regenesislabs/bevy-explorer-web", version:$v, commit:$c, objectCount:1, kind:"upload"}'
 EOF
@@ -177,6 +178,10 @@ TAG_VERSION=0.1.1-2.commit-abc1234 preview_compose "$WEB_SHA"
 check "a newer PR tag does not change the versioned link" build.md "$VERSION/index.html"
 preview_compose "$SPOOF_SHA"
 check_absent "an upload with a different full SHA is not linked" build.md '[preview]'
+MARKER_BODY='' preview_compose "$WEB_SHA"
+check_absent "an empty marker is not linked" build.md '[preview]'
+MARKER_BODY='<html>error</html>' preview_compose "$WEB_SHA"
+check_absent "a non-JSON marker is not linked" build.md '[preview]'
 artifacts "bevy-explorer-web-$WEB_SHA:11" "dcl-regenesislabs-bevy-explorer-web-0.1.1-2.commit-abc1234.tgz:12"
 VERSION=0.1.1-2.commit-abc1234 preview_compose "$WEB_SHA"
 check_absent "a package for a different run is not linked" build.md '[preview]'

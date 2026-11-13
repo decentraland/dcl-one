@@ -111,7 +111,7 @@ preview_matches_checkout() {
   local version="$1" revision="$2" marker
   [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+-$RUN_ID\.commit-([0-9a-f]{7,40})$ &&
      "$revision" == "${BASH_REMATCH[1]}"* ]] || return 1
-  marker=$(curl -fsS --max-time 15 \
+  marker=$(curl -fsS --max-time 15 --retry 2 --retry-connrefused \
     "https://cdn.decentraland.org/@dcl-regenesislabs/bevy-explorer-web/$version/.deploy-complete.json" \
     2>/dev/null) || return 1
   jq -e --arg v "$version" --arg c "$revision" \
