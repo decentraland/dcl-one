@@ -22,6 +22,10 @@ use wallet::Wallet;
 use crate::{
     global_crdt::{NetworkUpdate, PlayerMessage},
     profile::CurrentUserProfile,
+    room_connection::{
+        AdmissionError, ConnectionHealth, CredentialRequest, FailureKind, NeedsAdapter,
+        RoomRecovery,
+    },
     Transport, TransportType,
 };
 
@@ -44,16 +48,17 @@ impl Plugin for WebsocketRoomPlugin {
 
 #[derive(Event)]
 pub struct StartWsRoom {
+    pub entity: Entity,
     pub address: String,
     /// crdt context this room's transport feeds
     pub context: Entity,
 }
 
 #[derive(Component)]
+#[require(RoomRecovery)]
 pub struct WebsocketRoomTransport {
     pub address: String,
     pub receiver: Option<Receiver<NetworkMessage>>,
-    pub retries: usize,
 }
 
 #[derive(Component)]
@@ -68,23 +73,24 @@ pub fn start_ws_room(
         info!("starting ws-room protocol");
         let (sender, receiver) = tokio::sync::mpsc::channel(1000);
 
-        // never announce an edit still deploying
-        let Some(current_profile) = current_profile.peer_profile() else {
+        // Never announce an edit still deploying.
+        if let Some(current_profile) = current_profile.peer_profile() {
+            let response = rfc4::Packet {
+                message: Some(rfc4::packet::Message::ProfileVersion(
+                    rfc4::AnnounceProfileVersion {
+                        profile_version: current_profile.version,
+                    },
+                )),
+                protocol_version: 100,
+            };
+            let _ = sender.try_send(NetworkMessage::reliable(&response));
+        }
+
+        let Ok(mut entity) = commands.get_entity(ev.entity) else {
             return;
         };
-
-        // queue a profile version message
-        let response = rfc4::Packet {
-            message: Some(rfc4::packet::Message::ProfileVersion(
-                rfc4::AnnounceProfileVersion {
-                    profile_version: current_profile.version,
-                },
-            )),
-            protocol_version: 100,
-        };
-        let _ = sender.try_send(NetworkMessage::reliable(&response));
-
-        commands.spawn((
+        entity.try_remove::<WebSocketConnection>();
+        entity.try_insert((
             Transport {
                 transport_type: TransportType::WebsocketRoom,
                 sender,
@@ -94,7 +100,6 @@ pub fn start_ws_room(
             WebsocketRoomTransport {
                 address: ev.address.to_owned(),
                 receiver: Some(receiver),
-                retries: 0,
             },
         ));
     }
@@ -104,30 +109,43 @@ pub fn start_ws_room(
 fn connect_websocket(
     mut commands: Commands,
     mut new_websockets: Query<
-        (Entity, &mut WebsocketRoomTransport, &Transport),
-        Without<WebSocketConnection>,
+        (
+            Entity,
+            &mut WebsocketRoomTransport,
+            &Transport,
+            &RoomRecovery,
+        ),
+        (Without<WebSocketConnection>, Without<NeedsAdapter>),
     >,
     wallet: Res<Wallet>,
     contexts: Query<&GlobalCrdtState>,
+    time: Res<Time>,
 ) {
-    for (transport_id, mut new_transport, transport) in new_websockets.iter_mut() {
+    for (transport_id, mut new_transport, transport, recovery) in new_websockets.iter_mut() {
+        if !recovery.can_retry(time.elapsed_secs_f64()) {
+            continue;
+        }
         let Ok(player_state) = contexts.get(transport.context) else {
             continue;
         };
         let remote_address = new_transport.address.to_owned();
         let wallet = wallet.clone();
-        let receiver = new_transport.receiver.take().unwrap();
+        let Some(receiver) = new_transport.receiver.take() else {
+            continue;
+        };
         let sender = player_state.get_sender();
+        let health = ConnectionHealth::default();
         let task = IoTaskPool::get().spawn(websocket_room_handler(
             transport_id,
             remote_address,
             wallet,
             receiver,
             sender,
+            health.clone(),
         ));
         commands
             .entity(transport_id)
-            .try_insert(WebSocketConnection(task));
+            .try_insert((WebSocketConnection(task), health));
     }
 }
 
@@ -137,41 +155,30 @@ fn reconnect_websocket(
         Entity,
         &mut WebsocketRoomTransport,
         &mut WebSocketConnection,
-        &Transport,
+        &mut RoomRecovery,
+        &ConnectionHealth,
+        Has<CredentialRequest>,
     )>,
-    wallet: Res<Wallet>,
-    contexts: Query<&GlobalCrdtState>,
+    time: Res<Time>,
 ) {
-    for (transport_id, mut transport, mut conn, base_transport) in websockets.iter_mut() {
-        if transport.retries < 3 {
-            if let Some((receiver, err)) = conn.0.complete() {
-                transport.retries += 1;
-                warn!(
-                    "websocket room error: {err}, retrying [{}]",
-                    transport.address
-                );
-                let Ok(player_state) = contexts.get(base_transport.context) else {
-                    continue;
-                };
-                let remote_address = transport.address.to_owned();
-                let wallet = wallet.clone();
-                let sender = player_state.get_sender();
-                let task = IoTaskPool::get().spawn(websocket_room_handler(
-                    transport_id,
-                    remote_address,
-                    wallet,
-                    receiver,
-                    sender,
-                ));
-                conn.0 = task;
+    for (entity, mut transport, mut connection, mut recovery, health, refreshable) in
+        &mut websockets
+    {
+        if health.is_connected() && recovery.failure == Some(FailureKind::Transient) {
+            recovery.failure = None;
+        }
+        if let Some((receiver, error)) = connection.0.complete() {
+            transport.receiver = Some(receiver);
+            let error = error
+                .downcast_ref::<AdmissionError>()
+                .cloned()
+                .unwrap_or(AdmissionError::new(FailureKind::Transient));
+            commands.entity(entity).try_remove::<WebSocketConnection>();
+            if refreshable && !error.terminal() {
+                commands.entity(entity).try_insert(NeedsAdapter);
             }
-        } else if transport.retries == 3 {
-            if let Some((_, err)) = conn.0.complete() {
-                warn!("websocket room error: {err}, giving up");
-                // despawning the transport scrubs it from all foreign players' transport
-                // sets, so members don't linger on a connection that will never recover
-                commands.entity(transport_id).despawn();
-            }
+            warn!(?entity, kind = ?error.kind, "websocket room disconnected");
+            recovery.fail(time.elapsed_secs_f64(), error);
         }
     }
 }
@@ -182,10 +189,18 @@ async fn websocket_room_handler(
     wallet: Wallet,
     mut receiver: Receiver<NetworkMessage>,
     sender: Sender<NetworkUpdate>,
+    health: ConnectionHealth,
 ) -> (Receiver<NetworkMessage>, anyhow::Error) {
-    let res =
-        websocket_room_handler_inner(transport_id, remote_address, wallet, &mut receiver, sender)
-            .await;
+    let _health_lifetime = health.reset_on_drop();
+    let res = websocket_room_handler_inner(
+        transport_id,
+        remote_address,
+        wallet,
+        &mut receiver,
+        sender,
+        &health,
+    )
+    .await;
     (receiver, res.err().unwrap_or(anyhow!("connection closed")))
 }
 
@@ -195,8 +210,9 @@ async fn websocket_room_handler_inner(
     wallet: Wallet,
     receiver: &mut Receiver<NetworkMessage>,
     sender: Sender<NetworkUpdate>,
+    health: &ConnectionHealth,
 ) -> Result<(), anyhow::Error> {
-    debug!(">> stream connect async : {remote_address}");
+    debug!("connecting websocket room");
 
     let remote_address = if remote_address.starts_with("ws:") || remote_address.starts_with("wss:")
     {
@@ -205,6 +221,7 @@ async fn websocket_room_handler_inner(
         format!("wss://{remote_address}")
     };
 
+    crate::adapter::validate_url(&remote_address)?;
     let mut request = remote_address.into_client_request()?;
     request
         .headers_mut()
@@ -240,7 +257,8 @@ async fn websocket_room_handler_inner(
 
         match message {
             ws_packet::Message::WelcomeMessage(welcome) => {
-                debug!("<< welcome received: {welcome:?}");
+                health.connected();
+                debug!("websocket welcome received");
                 from_alias = welcome.alias;
                 foreign_aliases = BiMap::from_iter(welcome.peer_identities.into_iter().flat_map(
                     |(alias, address)| {
@@ -258,7 +276,7 @@ async fn websocket_room_handler_inner(
                 challenge_to_sign, ..
             }) => {
                 // send challenge response
-                debug!("<< challenge received; {challenge_to_sign}");
+                debug!("websocket challenge received");
 
                 if !challenge_to_sign.starts_with("dcl-") {
                     error!("invalid challenge to sign");
@@ -268,7 +286,7 @@ async fn websocket_room_handler_inner(
                 // sign challenge
                 let chain = wallet.sign_message(challenge_to_sign).await?;
                 let auth_chain_json = serde_json::to_string(&chain)?;
-                debug!(">> auth chain created: {auth_chain_json}");
+                debug!("websocket auth chain created");
 
                 // send response
                 let message = WsPacket {
@@ -416,9 +434,8 @@ async fn websocket_room_handler_inner(
                         .await
                         .map_err(|_| anyhow!("Send error"))?;
                 }
-                ws_packet::Message::PeerKicked(reason) => {
-                    warn!("kicked: {}", reason.reason);
-                    return Ok(());
+                ws_packet::Message::PeerKicked(_) => {
+                    return Err(AdmissionError::new(FailureKind::Denied).into());
                 }
             }
         }
@@ -432,5 +449,58 @@ async fn websocket_room_handler_inner(
     select! {
         read_res = f_read => read_res,
         write_res = f_write => write_res,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn direct_websocket_reconnect_preserves_backoff_until_stable() {
+        let mut app = App::new();
+        app.init_resource::<Time>()
+            .add_systems(Update, reconnect_websocket)
+            .add_systems(
+                PostUpdate,
+                crate::room_connection::observe_stable_connections,
+            );
+        let health = ConnectionHealth::default();
+        health.connected();
+        let mut recovery = RoomRecovery::default();
+        recovery.fail(0.0, AdmissionError::new(FailureKind::Transient));
+        let task = IoTaskPool::get_or_init(bevy::tasks::TaskPool::new)
+            .spawn(futures_lite::future::pending());
+        let room = app
+            .world_mut()
+            .spawn((
+                WebsocketRoomTransport {
+                    address: "wss://rooms.example/direct".into(),
+                    receiver: None,
+                },
+                WebSocketConnection(task),
+                health,
+                recovery,
+            ))
+            .id();
+        app.update();
+        assert_eq!(app.world().get::<RoomRecovery>(room).unwrap().failure, None);
+        app.world_mut()
+            .resource_mut::<Time>()
+            .advance_by(std::time::Duration::from_secs(10));
+        app.update();
+        {
+            let mut recovery = app.world_mut().get_mut::<RoomRecovery>(room).unwrap();
+            recovery.fail(10.0, AdmissionError::new(FailureKind::Transient));
+            assert_eq!(recovery.retry.due, 12.0);
+        }
+        app.update();
+        app.world_mut()
+            .resource_mut::<Time>()
+            .advance_by(std::time::Duration::from_secs(30));
+        app.update();
+        let mut recovery = app.world_mut().get_mut::<RoomRecovery>(room).unwrap();
+        recovery.fail(40.0, AdmissionError::new(FailureKind::Transient));
+        assert_eq!(recovery.retry.due, 41.0);
     }
 }

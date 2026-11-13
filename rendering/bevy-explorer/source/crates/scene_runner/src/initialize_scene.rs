@@ -170,17 +170,41 @@ pub(crate) fn load_scene_entity(
             None => commands.spawn_empty(),
         };
 
-        let h_scene = match &event.location {
-            SceneIpfsLocation::Hash(hash) => ipfas.load_hash::<EntityDefinition>(hash),
+        let (h_scene, id) = match &event.location {
+            SceneIpfsLocation::Hash(hash) => (
+                ipfas.load_hash::<EntityDefinition>(hash),
+                Some(hash.clone()),
+            ),
             SceneIpfsLocation::Urn(urn) => match ipfas.load_urn::<EntityDefinition>(urn) {
-                Ok(h_scene) => h_scene,
+                Ok(h_scene) => (
+                    h_scene,
+                    IpfsPath::new_from_urn::<EntityDefinition>(urn)
+                        .ok()
+                        .and_then(|path| path.context_free_hash().ok().flatten()),
+                ),
                 Err(e) => {
                     warn!("failed to parse urn: {e}");
                     commands.try_insert(SceneLoading::Failed);
                     continue;
                 }
             },
+            // a smart wearable's scene: the wearable entity's manifest covers its files
+            SceneIpfsLocation::ContentFile { hash, file } => {
+                match ipfas.load_content_file::<EntityDefinition>(file, hash) {
+                    Ok(h_scene) => (h_scene, Some(hash.clone())),
+                    Err(e) => {
+                        warn!("failed to load {file} of {hash}: {e}");
+                        commands.try_insert(SceneLoading::Failed);
+                        continue;
+                    }
+                }
+            }
         };
+        // the scene's Bevy variants manifest, alongside its entity file rather than after it:
+        // the entity id is all it needs (`load_urn` has registered a urn's own content server)
+        if let Some(id) = id {
+            ipfas.ipfs().request_bevy_variants(&id);
+        }
 
         commands.try_insert((
             SceneLoading::SceneEntity,
@@ -305,6 +329,8 @@ pub(crate) fn load_scene_javascript(
         };
 
         let portable = portable_scenes.get(&definition.id);
+        let portable_experiences = meta.portable_experiences_toggle();
+        let nearby_voice_chat_enabled = meta.nearby_voice_chat_enabled();
 
         let Some(base) = meta
             .scene
@@ -415,11 +441,7 @@ pub(crate) fn load_scene_javascript(
                 .try_insert(SceneTime { time: fixed_time });
         }
 
-        if meta
-            .feature_toggles
-            .as_ref()
-            .is_some_and(|toggles| !toggles.nearby_voice_chat_enabled())
-        {
+        if !nearby_voice_chat_enabled {
             commands.entity(root).try_insert(NearbyVoiceDisabled);
         }
 
@@ -444,6 +466,7 @@ pub(crate) fn load_scene_javascript(
             false,
             meta.authoritative_multiplayer.unwrap_or_default(),
         );
+        renderer_context.portable_experiences = portable_experiences;
 
         // start from this scene's crdt context (its own room's on a multi-tenant server,
         // the shared context otherwise), with position data localized for this scene.
@@ -788,6 +811,56 @@ pub struct PortableSource {
     pub parent_scene: Option<String>,
     pub ens: Option<String>,
     pub super_user: bool,
+    pub kind: PortableKind,
+}
+
+/// Where a portable came from, which decides who may kill it, whether scenes see it, and how
+/// its entity is loaded.
+#[derive(Clone, Debug)]
+pub enum PortableKind {
+    /// Spawned by a scene (`PortableExperiences.spawn`); `parent_scene` is set.
+    Scene,
+    /// A launch-time (`--portables`), console or server-hosted portable: never killable by a
+    /// scene and hidden from `getPortableExperiencesLoaded`.
+    Startup,
+    /// The scene of an equipped (or previewed, or console-run) smart wearable. `pid` is the
+    /// wearable urn and the scene hash is `{wearable collection}-sw-{shape}`; `location` is the
+    /// wearable content file the scene's definition loads from.
+    SmartWearable {
+        name: String,
+        location: SceneIpfsLocation,
+    },
+}
+
+impl PortableSource {
+    /// A source from a scene spawn or a startup list: the kind follows `parent_scene`.
+    pub fn new(
+        pid: String,
+        parent_scene: Option<String>,
+        ens: Option<String>,
+        super_user: bool,
+    ) -> Self {
+        let kind = if parent_scene.is_some() {
+            PortableKind::Scene
+        } else {
+            PortableKind::Startup
+        };
+        Self {
+            pid,
+            parent_scene,
+            ens,
+            super_user,
+            kind,
+        }
+    }
+
+    pub fn is_smart_wearable(&self) -> bool {
+        matches!(self.kind, PortableKind::SmartWearable { .. })
+    }
+
+    pub fn is_startup(&self) -> bool {
+        matches!(self.kind, PortableKind::Startup)
+    }
 }
 
 #[derive(Resource, Default)]
@@ -1815,12 +1888,19 @@ pub fn process_scene_lifecycle(
         live_scenes
             .scenes
             .insert(required_scene_hash.clone(), entity);
-        spawn.write(LoadSceneEvent {
-            entity: Some(entity),
-            location: match maybe_urn {
+        let location = match portables
+            .get(required_scene_hash)
+            .map(|source| &source.kind)
+        {
+            Some(PortableKind::SmartWearable { location, .. }) => location.clone(),
+            _ => match maybe_urn {
                 Some(urn) => SceneIpfsLocation::Urn(urn.to_owned()),
                 None => SceneIpfsLocation::Hash(required_scene_hash.to_owned()),
             },
+        };
+        spawn.write(LoadSceneEvent {
+            entity: Some(entity),
+            location,
             super_user: *super_user,
         });
     }
@@ -2040,6 +2120,7 @@ pub fn handle_live_scene_info(
     mut events: EventReader<SystemApi>,
     scenes: Query<(&RendererSceneContext, Option<&SuperUserScene>)>,
     ipfas: IpfsAssetServer,
+    portables: Res<PortableScenes>,
 ) {
     let mut senders = events
         .read()
@@ -2070,6 +2151,9 @@ pub fn handle_live_scene_info(
                 .map(|v| dcl_component::proto_components::common::Vector2::from(v.as_vec2()))
                 .collect(),
             is_portable: ctx.is_portable,
+            is_smart_wearable: portables
+                .get(&ctx.hash)
+                .is_some_and(PortableSource::is_smart_wearable),
             is_broken: ctx.broken(),
             is_blocked: !ctx.blocked.is_empty(),
             is_super: maybe_super.is_some(),

@@ -13,6 +13,8 @@
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronDown, ChevronUp, Gear, Minus, Plus } from '../../design'
+import tipIcon from '../../assets/donate/tip.png'
+import { useDonate } from '../donate/useDonate'
 import { EngineViewport } from '../engine/EngineViewport'
 import { PARCEL_METERS, atlasPx, chunksInRect, isGenesisSatelliteView, parcelTileFor, type Chunk } from '@explorer-core/features/map/atlas'
 import { pinForCategories } from '../map/mapArt'
@@ -68,6 +70,9 @@ export const Minimap = memo(function Minimap({
   const [rotation, setRotation] = useState(loadRotation)
   const [visibleMeters, setVisibleMeters] = useState(loadZoom)
   const [markerCategories, setMarkerCategories] = useState(loadMarkers)
+  // Donate to the creator of the scene the player stands in, shown where the host can sign a tip and the scene
+  // has a creator.
+  const donate = useDonate(minimap.donatePlace, { keepWhileAsking: true })
   const [places, setPlaces] = useState<MinimapPlace[]>([])
   // Tiles + coords re-render only on a boundary, not per pose sample.
   const [chunks, setChunks] = useState<Chunk[]>([])
@@ -245,6 +250,17 @@ export const Minimap = memo(function Minimap({
           {map.x},{map.y}
         </span>
         {minimap.restrictions.length > 0 && <SceneRestrictions restrictions={minimap.restrictions} />}
+        {donate.visible && (
+          <button
+            type="button"
+            className={styles.collapse}
+            onClick={(e) => donate.open(e.detail === 0 ? 'keyboard' : 'pointer')}
+            aria-label="Tip this scene's creator"
+            title="Tip this scene's creator"
+          >
+            <img className={styles.tipIcon} src={tipIcon} alt="" />
+          </button>
+        )}
         <button
           type="button"
           className={styles.collapse}

@@ -5,7 +5,10 @@ use common::{
     structs::{AudioDecoderError, AudioSettings, MicState},
     util::VolumePanning,
 };
-use comms::global_crdt::{ForeignAudioSource, NearbyPanning, VoicePan};
+use comms::{
+    global_crdt::{ForeignAudioSource, ForeignPlayer, NearbyPanning, VoicePan},
+    nearby_mutes::NearbyMutes,
+};
 use kira::{
     manager::backend::DefaultBackend,
     sound::{streaming::StreamingSoundData, PlaybackState},
@@ -191,6 +194,7 @@ fn update_foreign_audio_player_volume(
             Option<&RenderLayers>,
             &mut AudioSpawned<ForeignAudioSource>,
             &mut VoicePan,
+            &ForeignPlayer,
         ),
         With<ForeignAudioSource>,
     >,
@@ -198,12 +202,15 @@ fn update_foreign_audio_player_volume(
     settings: Res<AudioSettings>,
     mic_state: Res<MicState>,
     panning_settings: Res<NearbyPanning>,
+    mutes: Res<NearbyMutes>,
     time: Res<Time>,
 ) {
-    for (emitter_transform, render_layers, mut audio_spawned, mut voice_pan) in streams.iter_mut() {
+    for (emitter_transform, render_layers, mut audio_spawned, mut voice_pan, player) in
+        streams.iter_mut()
+    {
         let (volume, panning) =
             pan.volume_and_panning(emitter_transform.translation(), render_layers);
-        let volume = if mic_state.scene_blocked {
+        let volume = if mic_state.scene_blocked || mutes.is_muted(player.address) {
             0.0
         } else {
             volume * settings.voice()

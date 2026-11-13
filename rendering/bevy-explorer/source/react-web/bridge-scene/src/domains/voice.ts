@@ -1,11 +1,11 @@
 // Voice activity: who is talking right now.
 //   from: BevyApi.getVoiceStream() (LiveKit active-speaker changes, local player included)
-//   to:   the page (Nearby list) + the nametag speaking badge (isSpeaking)
+//   to:   the page (Nearby list) + the nametag speaking badge (isSpeaking, isSpeakingInCall)
 import { BevyApi } from '../bevy-api'
 import { relay } from '../system-helpers'
 import type { Ctx } from '../bridge'
 
-/** The engine's channel for the voice room (comms `VOICE_CHAT_CHANNEL`). */
+// comms `VOICE_CHAT_CHANNEL`: calls and community streams, which neither a nearby mute nor a scene's nearby-voice toggle silences.
 const CALL_CHANNEL = 'voice-chat'
 
 const nearby = new Set<string>()
@@ -29,6 +29,10 @@ export function setNearbyVoiceBlocked(blocked: boolean): void {
   for (const address of nearby) {
     if (!call.has(address)) send?.({ kind: 'voiceActivity', address, active: !blocked })
   }
+}
+
+export function isSpeakingInCall(address: string): boolean {
+  return call.has(address.toLowerCase())
 }
 
 export function registerVoice(ctx: Ctx): void {

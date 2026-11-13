@@ -13,7 +13,7 @@ vi.mock('../../bridge-scene/src/system-helpers', () => ({
 }))
 vi.mock('../../bridge-scene/src/bevy-api', () => ({ BevyApi: { getVoiceStream: vi.fn() } }))
 
-const { isSpeaking, registerVoice, setNearbyVoiceBlocked } = await import('../../bridge-scene/src/domains/voice')
+const { isSpeaking, isSpeakingInCall, registerVoice, setNearbyVoiceBlocked } = await import('../../bridge-scene/src/domains/voice')
 
 const NEARBY = '0x00000000000000000000000000000000000000aa'
 const CALLER = '0x00000000000000000000000000000000000000bb'
@@ -96,5 +96,26 @@ describe('speaking while the scene blocks nearby voice', () => {
     setNearbyVoiceBlocked(false)
     expect(isSpeaking(NEARBY)).toBe(false)
     expect(sent).toHaveLength(1)
+  })
+})
+
+describe('voice activity (bridge)', () => {
+  beforeEach(async () => {
+    setNearbyVoiceBlocked(false)
+    await stream.open()
+  })
+
+  it('tells nearby speech from call speech, so a hushed caller keeps the speaking badge', () => {
+    say(CALLER, 'voice-chat', true)
+    expect(isSpeaking(CALLER)).toBe(true)
+    expect(isSpeakingInCall(CALLER)).toBe(true)
+
+    say(CALLER, 'voice-chat', false)
+    expect(isSpeaking(CALLER)).toBe(false)
+    expect(isSpeakingInCall(CALLER)).toBe(false)
+
+    say(CALLER, 'Nearby', true)
+    expect(isSpeaking(CALLER)).toBe(true)
+    expect(isSpeakingInCall(CALLER)).toBe(false)
   })
 })

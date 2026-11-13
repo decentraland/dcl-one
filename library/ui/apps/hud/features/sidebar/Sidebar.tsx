@@ -41,6 +41,7 @@ import { bugReportUrl } from '@explorer-core/lib/bugReport'
 import { registerCancelLayer } from '@explorer-core/lib/cancelLayers'
 import { NearbyVoiceWidget } from '../voice/NearbyVoiceWidget'
 import { PermissionsPopover } from '../permissions/PermissionsPopover'
+import { PortablesPopover, portablesTooltip, showPortables } from '../portables/PortablesPopover'
 import { useNearbyVoice, type NearbyVoice } from '../voice/useNearbyVoice'
 import { withUtm } from '@explorer-core/lib/utm'
 import { IN_WORLD_SHOP, siteUrl } from '@hud-host'
@@ -62,6 +63,7 @@ type Item =
   | { kind: 'events'; icon: IconName; label: string }
   | { kind: 'skybox'; icon: IconName; label: string }
   | { kind: 'permissions'; icon: IconName; label: string }
+  | { kind: 'portables'; icon: IconName; label: string }
   | { kind: 'gallery'; icon: IconName; label: string; hotkey?: string }
   | { kind: 'shop'; icon: IconName; label: string }
   | { kind: 'camera'; icon: IconName; label: string; hotkey?: string }
@@ -117,6 +119,7 @@ const BOTTOM: Item[] = [
   { kind: 'mic', icon: 'mic', label: 'Voice chat' },
   { kind: 'skybox', icon: 'skybox', label: 'Skybox' },
   { kind: 'permissions', icon: 'permissions', label: 'Scene permissions' },
+  { kind: 'portables', icon: 'portables', label: 'Portable experiences' },
   { kind: 'divider' },
   { kind: 'emotes', icon: 'emotes', label: 'Emotes', hotkey: 'Emote' },
   { kind: 'divider' },
@@ -127,9 +130,10 @@ const BOTTOM: Item[] = [
 const NEARBY_VOICE_BLOCKED = 'Nearby voice chat unavailable in this scene.'
 
 type VoiceProps = NearbyVoice & { onOpen: (button: HTMLElement) => void }
-type PermissionsProps = { open: boolean; onOpen: (button: HTMLElement) => void }
+type PopoverProps = { open: boolean; onOpen: (button: HTMLElement) => void }
+type Popovers = { permissions: PopoverProps; portables: PopoverProps }
 
-function renderItem(item: Item, i: number, session: EngineSession, snap: BindingsSnapshot, liveEvents: number, voice: VoiceProps, permissions: PermissionsProps, create: boolean, onViewProfile?: () => void): React.JSX.Element | null {
+function renderItem(item: Item, i: number, session: EngineSession, snap: BindingsSnapshot, liveEvents: number, voice: VoiceProps, popovers: Popovers, create: boolean, onViewProfile?: () => void): React.JSX.Element | null {
   if (item.kind === 'divider') return <div key={`d${i}`} className={styles.divider} />
   const shortcut = 'hotkey' in item && item.hotkey != null ? keyHintFor(snap, item.hotkey) : undefined
   if (item.kind === 'chat')
@@ -293,8 +297,22 @@ function renderItem(item: Item, i: number, session: EngineSession, snap: Binding
         icon={item.icon}
         label={item.label}
         badge={session.permissions.unseenDenied}
-        active={permissions.open}
-        onClick={(e) => permissions.onOpen(e.currentTarget)}
+        active={popovers.permissions.open}
+        onClick={(e) => popovers.permissions.onOpen(e.currentTarget)}
+      />
+    )
+  }
+  if (item.kind === 'portables') {
+    // only while the engine lists a portable (a smart wearable, or one a scene spawned)
+    if (!showPortables(session.portables.list)) return null
+    return (
+      <RailButton
+        key="portables"
+        icon={item.icon}
+        label={item.label}
+        tooltip={portablesTooltip(session.portables.list)}
+        active={popovers.portables.open}
+        onClick={(e) => popovers.portables.onOpen(e.currentTarget)}
       />
     )
   }
@@ -355,7 +373,8 @@ export function Sidebar({
   const debugPanel = useDebugPanel(session)
   const [voiceAnchor, setVoiceAnchor] = useState<HTMLElement | null>(null)
   const [permissionsAnchor, setPermissionsAnchor] = useState<HTMLElement | null>(null)
-  const autoHide = useAutoHide(configOpen || voiceAnchor != null || permissionsAnchor != null)
+  const [portablesAnchor, setPortablesAnchor] = useState<HTMLElement | null>(null)
+  const autoHide = useAutoHide(configOpen || voiceAnchor != null || permissionsAnchor != null || portablesAnchor != null)
   const nearby = useNearbyVoice(session)
   const voice: VoiceProps = {
     ...nearby,
@@ -368,15 +387,27 @@ export function Sidebar({
     if (nearby.blocked) setVoiceAnchor(null)
   }, [nearby.blocked])
   const closeVoice = useCallback(() => setVoiceAnchor(null), [])
-  const permissions: PermissionsProps = {
-    open: permissionsAnchor != null,
-    onOpen: (button) => {
-      session.permissions.markSeen()
-      session.permissions.loadRules()
-      setPermissionsAnchor((a) => (a == null ? button : null))
+  const popovers: Popovers = {
+    permissions: {
+      open: permissionsAnchor != null,
+      onOpen: (button) => {
+        session.permissions.markSeen()
+        session.permissions.loadRules()
+        setPermissionsAnchor((a) => (a == null ? button : null))
+      }
+    },
+    portables: {
+      open: portablesAnchor != null,
+      onOpen: (button) => setPortablesAnchor((a) => (a == null ? button : null))
     }
   }
   const closePermissions = useCallback(() => setPermissionsAnchor(null), [])
+  const closePortables = useCallback(() => setPortablesAnchor(null), [])
+  // The button leaves the rail once the engine lists no portable; its popover goes with it.
+  const portablesShown = showPortables(session.portables.list)
+  useEffect(() => {
+    if (!portablesShown) setPortablesAnchor(null)
+  }, [portablesShown])
   // The "..." panel closes on an outside click or Cancel, like the other popovers.
   useEffect(() => {
     if (!configOpen) return
@@ -423,9 +454,9 @@ export function Sidebar({
           >
             <DotsGlyph />
           </ControlButton>
-          {TOP.map((item, i) => renderItem(item, i, session, snap, liveEvents, voice, permissions, create, onViewProfile))}
+          {TOP.map((item, i) => renderItem(item, i, session, snap, liveEvents, voice, popovers, create, onViewProfile))}
         </div>
-        <div className={styles.group}>{BOTTOM.map((item, i) => renderItem(item, i, session, snap, liveEvents, voice, permissions, create, onViewProfile))}</div>
+        <div className={styles.group}>{BOTTOM.map((item, i) => renderItem(item, i, session, snap, liveEvents, voice, popovers, create, onViewProfile))}</div>
       </nav>
       {voiceAnchor != null && (
         <NearbyVoiceWidget
@@ -456,6 +487,15 @@ export function Sidebar({
           clearRule={session.permissions.clearRule}
           resetDefaults={session.permissions.resetDefaults}
           onClose={closePermissions}
+        />
+      )}
+      {portablesAnchor != null && (
+        <PortablesPopover
+          anchor={portablesAnchor}
+          list={session.portables.list}
+          onStop={session.portables.stop}
+          onRestart={session.portables.restart}
+          onClose={closePortables}
         />
       )}
       {configOpen && (
