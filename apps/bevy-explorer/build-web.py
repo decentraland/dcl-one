@@ -115,11 +115,11 @@ def web(no_opt=False, engine_cache=None, shared_build=False):
     # Relative URLs allow the same build at / or a gateway subpath. No upstream CDN stamping.
     web_env = {**env, 'PUBLIC_URL': '', 'SCENE_BASE_URL': '../'}
     run('npm', 'run', 'build', '--prefix', 'react-web', env=web_env)
-    run('npm', 'run', 'test', '--prefix', 'react-web', env=web_env)
     run('corepack', 'pnpm@11.27.0', '--dir', 'react-web/bridge-scene',
         '--filter', '@dcl/hashing', 'build', env=web_env)
     run('node', str(ROOT / 'tooling/check-local-hashing.mjs'),
         str(SOURCE / 'react-web/bridge-scene'), env=web_env)
+    run('npm', 'run', 'test', '--prefix', 'react-web', env=web_env)
     run('corepack', 'pnpm@11.27.0', '--dir', 'react-web/bridge-scene', 'run', 'bundle', env=web_env)
     output = APP / 'dist/web'
     if output.exists():
