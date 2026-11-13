@@ -96,8 +96,15 @@ difference not listed here is a gap, not a decision.
   the secret is checked and the count is cleared by a right secret
   (upstream also clears it when the owner joins). A caller already out of
   attempts gets 429 before any ban or access check, as upstream; that check
-  charges nothing. If the counter cannot be read or written the mint answers
-  503.
+  charges nothing. It runs only on a world the mint admits: an unknown,
+  blocked or name-deny-listed world answers 404 first. Upstream's
+  `/worlds/{name}/comms` and scene mints also run it for a blocked world and
+  for every world the DAO name list refuses (`<label>.dcl.eth` and
+  `<label>.eth`, whatever the entry's case): the access read leaves out only
+  names equal to a `BLOCKED_WORLD_NAMES` entry or to a list entry without its
+  suffix, and no stored world name equals the latter. So a caller throttled on
+  such a shared-secret world gets 429 there. If the counter
+  cannot be read or written the mint answers 503.
 - **Scene bans in the lobby.** A wallet banned from the world's active scene
   is refused the world lobby too (`/worlds/{name}/comms` and
   `/get-comms-adapter`, 401 `You are banned from world "<name>".`);
@@ -192,7 +199,13 @@ difference not listed here is a gap, not a decision.
   hash-addressed store, so a deployment may reference any blob already in
   it (including Genesis content) without uploading it again. Upstream could
   only reuse files from its own bucket.
-- **Thumbnails** are hashed as CIDv1.
+- **Thumbnails** are hashed as CIDv1. A mirrored world's thumbnail is
+  copied from its source's `/contents` and stored under the CIDv1 of its
+  bytes, so for a thumbnail uploaded to the source (stored there under the
+  SHA-256 hex of its bytes) `GET /world/{name}/settings` names the CID where
+  the source names the hex key. `/contents/<hex key>` still answers it on the
+  worlds mount. A thumbnail the source does not serve, or whose bytes are not
+  an image, leaves the mirrored world without one.
 - **ENS names.** With `ALLOW_ENS_DOMAINS=true` the holder is read over
   `ETH_RPC_URL` (required then; the process refuses to start without it).
   Only names whose labels the upstream's UTS46 normalization leaves
@@ -294,6 +307,20 @@ difference not listed here is a gap, not a decision.
   value answers 400), refuses an empty reference set without
   `allow_empty_active_set=true`, and answers 503 `A garbage collection run
   is already in progress.` to a second concurrent run.
+- **`/reprocess-ab`** takes the same bearer as `/gc` and answers the same
+  validator, `No scenes found for reprocessing` and 200 bodies as upstream,
+  but it hands the scenes to the local abgen (`ABGEN_ADMIN_URL`) instead of
+  publishing `WorldDeploymentEvent`s to SNS. For each scene it asks abgen for
+  the `windows` and `mac` manifests, and abgen converts a manifest it does not
+  hold. A scene abgen already converted is not built again. `successful`
+  counts the scenes abgen took on every platform, including one still
+  converting when the 10 s hand-off times out; `failed` counts the ones it
+  refused or could not be reached for. Without `ABGEN_ADMIN_URL` the route
+  answers 500, as upstream does without `AWS_SNS_ARN`. abgen fetches the
+  scene's files from its own content source, so it needs its worlds content
+  URL (`ABGEN_WORLDS_CONTENT_URL`) set to this node's
+  `<PUBLIC_URL>/worlds-content-server`. The route stays open while
+  `WORLDS_WRITES_ENABLED` is off, since it writes nothing here.
 - **Partial uploads** follow the upstream contract and limits, with these
   differences:
   - A stored file is free of staging charges when any domain of the shared
@@ -336,9 +363,10 @@ difference not listed here is a gap, not a decision.
   prefix itself. At the node root, `GET /contents/{hash}`,
   `GET /available-content`, `POST /entities`, `POST /entities/active` and
   `GET /status` are the catalyst content server's; `DELETE
-  /entities/{name}`, `/ipfs/{hash}` and `/gc` answer only under the prefix,
-  and the worlds status is also at `/worlds/status`. `/about` and `/index`
-  link files under `<PUBLIC_URL>/worlds-content-server/contents/`.
+  /entities/{name}`, `/ipfs/{hash}`, `/gc` and `/reprocess-ab` answer only
+  under the prefix, and the worlds status is also at `/worlds/status`.
+  `/about` and `/index` link files under
+  `<PUBLIC_URL>/worlds-content-server/contents/`.
 - **CORS.** The worlds routes answer a preflight with 204 and reflect
   the request's `Origin` with `Access-Control-Allow-Credentials: true` and
   `Vary: Origin`, allows `PATCH` as well, exposes `*` when the handler
@@ -441,12 +469,15 @@ difference not listed here is a gap, not a decision.
   `@dcl/http-server` answers a body over its `maxBodySize`). Upstream sets
   no body limit on this route.
 - **Deny list in world listings (shared with upstream).** `GET /worlds`
-  filters the deny list as upstream's `getBannedNames` does: each entry
-  loses its first `.eth` and `.dcl` and is compared case-sensitively with
-  the stored name, so only a bare name equal to a stripped entry is hidden.
-  A deny-listed `<name>.dcl.eth` stays listed, with its title, description
-  and thumbnail, while `/about` and the manifest answer 404 for it. This is
-  a moderation gap both services have, kept for parity.
+  and `/index` filter the deny list as upstream's `getBannedNames` does:
+  each `BLOCKED_WORLD_NAMES` entry is a whole lowercased world name and
+  hides that world; each DAO list entry loses its first `.eth` and `.dcl`
+  and is compared case-sensitively with the stored name, so only a bare
+  name equal to a stripped entry is hidden. A `<name>.dcl.eth` on the DAO
+  list stays listed, with its title, description and thumbnail, while
+  `/about`, the manifest and the comms mints answer 404 for it. This is a
+  moderation gap both services have, kept for parity; `BLOCKED_WORLD_NAMES`
+  is the way to hide a full name.
 - **World listings.** In `GET /worlds`, `blocked_since` is set only for a
   storage-quota block of a DCL NAME or ENS world published here (upstream:
   any block of the stored owner), and `owner` is `null` for a world with no

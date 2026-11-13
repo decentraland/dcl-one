@@ -1,10 +1,13 @@
 .PHONY: web web-dev headless
 
+# python3 is a Microsoft Store stub on a stock Windows: make web PYTHON=python
+PYTHON ?= python3
+
 web:
-	python3 build-web.py
+	$(PYTHON) build-web.py
 
 web-dev:
-	python3 build-web.py --no-opt
+	$(PYTHON) build-web.py --no-opt
 
 headless:
-	python3 build-headless.py
+	$(PYTHON) build-headless.py

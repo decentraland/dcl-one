@@ -46,7 +46,7 @@ export interface MenuItem {
 export const MENU_ITEMS: MenuItem[] = [
   { label: 'Places', icon: 'places', hotkey: 'Places', page: 'places' },
   { label: 'Shop', icon: 'marketplace', page: 'shop' },
-  { label: 'Events', icon: 'events', page: 'events' },
+  { label: 'Events', icon: 'events', hotkey: 'Events', page: 'events' },
   { label: 'Map', icon: 'map', hotkey: 'Map', page: 'map' },
   { label: 'Backpack', icon: 'backpack', hotkey: 'Backpack', page: 'backpack' },
   { label: 'Gallery', icon: 'gallery', hotkey: 'Gallery', page: 'gallery' },
