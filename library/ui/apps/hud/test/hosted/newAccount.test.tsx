@@ -6,7 +6,7 @@ import { PopupHost, resetPopups } from '../../design'
 import { SessionProvider } from '../../features/session/SessionContext'
 import { StartupFlow } from '../../features/startup/StartupFlow'
 import { PRESETS } from '../../features/startup/presets'
-import type { EngineSession, WelcomeFlow } from '../../features/session/useEngineSession'
+import { VERIFY_TIMED_OUT, type EngineSession, type WelcomeFlow } from '../../features/session/useEngineSession'
 import { FakeDriver, fakeSession, renderSession, renderSettled } from '../harness'
 
 function welcomeSession(welcome: Partial<WelcomeFlow>, over: Partial<EngineSession> = {}): EngineSession {
@@ -92,6 +92,25 @@ describe('after sign-in', () => {
     expect(screen.getByText('Character limit reached')).toBeInTheDocument()
   })
 
+  it('signing out from the name screen and in again starts the new account on its look', async () => {
+    const session = welcomeSession({ pending: false, newProfile: true })
+    const view = (s: EngineSession): React.JSX.Element => (
+      <SessionProvider value={s}>
+        <StartupFlow flow={s.login} music={{ muted: false, toggleMute: vi.fn() }} />
+        <PopupHost />
+      </SessionProvider>
+    )
+    const { rerender } = await renderSettled(view(session))
+    await userEvent.click(screen.getByRole('radio', { name: 'Look 3' }))
+    await userEvent.click(screen.getByRole('button', { name: /CONTINUE/i }))
+    // BACK on the name screen signs out: the first screen, then a new guest's welcome
+    await act(async () => rerender(view({ ...session, phase: 'login' })))
+    await act(async () => rerender(view(session)))
+    expect(screen.getByRole('heading', { name: 'Choose a Starting Look' })).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: 'Look 1' })).toHaveAttribute('aria-checked', 'true')
+    expect(session.welcome.showLook).toHaveBeenLastCalledWith(1, PRESETS.a[0].look)
+  })
+
   it("a guest's name screen has no newsletter", async () => {
     await show(welcomeSession({ pending: false, newProfile: true, email: null }))
     await userEvent.click(screen.getByRole('button', { name: /CONTINUE/i }))
@@ -121,7 +140,7 @@ describe('the session after sign-in', () => {
     await act(async () => vi.advanceTimersByTime(15_500))
     await waitFor(() => expect(h.session().phase).toBe('login'))
     expect(h.session().login.status).toBe('sign-in-or-guest')
-    expect(h.session().login.error).toBe('verifying timed out')
+    expect(h.session().login.error).toBe(VERIFY_TIMED_OUT)
     expect(driver.calls).toContain('logout')
   })
 

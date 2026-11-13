@@ -6,7 +6,7 @@ import { BootProgress } from '../../features/engine/BootProgress'
 import { SessionProvider } from '../../features/session/SessionContext'
 import { StartupFlow } from '../../features/startup/StartupFlow'
 import type { LoginMusic } from '../../features/startup/useLoginMusic'
-import type { EngineSession, LoginFlow } from '../../features/session/useEngineSession'
+import { VERIFY_TIMED_OUT, type EngineSession, type LoginFlow } from '../../features/session/useEngineSession'
 import { renderSettled, fakeSession } from '../harness'
 
 vi.mock('../../features/gate/exitApplication', async (importOriginal) => ({ ...(await importOriginal<object>()), exitApplication: vi.fn() }))
@@ -128,6 +128,17 @@ describe('startup screens', () => {
     const dialog = await screen.findByRole('dialog')
     expect(within(dialog).getByText('nothing on this mac handles decentraland:// links')).toBeInTheDocument()
     expect(within(dialog).queryByText(/We couldn't connect to the server/)).toBeNull()
+  })
+
+  it('an account sign-in whose Verifying gave up shows the plain Connection Error, not its internal reason', async () => {
+    const f = flow({ status: 'sign-in-or-guest' })
+    const { rerender } = await renderSettled(startup(f))
+    await userEvent.click(screen.getByRole('button', { name: /LOGIN OR SIGNUP/i }))
+    await userEvent.click(screen.getByRole('button', { name: /GOOGLE/i }))
+    rerender(startup({ ...f, error: VERIFY_TIMED_OUT }))
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).queryByText(VERIFY_TIMED_OUT)).toBeNull()
+    expect(within(dialog).getByText(/We couldn't connect to the server/)).toBeInTheDocument()
   })
 
   it('the desktop client offers no Exit: not in the footer, not in Connection Error', async () => {

@@ -38,7 +38,7 @@ import { bootMode, hostEntryParams, isNativeHud, unrecognisedEntryParams, untrus
 import { FpsMeter } from './features/debug/FpsMeter'
 import { BootProgress } from './features/engine/BootProgress'
 import { StartupFlow } from './features/startup/StartupFlow'
-import { useLoginMusic } from './features/startup/useLoginMusic'
+import { useBeforeWorld, useLoginMusic } from './features/startup/useLoginMusic'
 import { SceneLoadingOverlay } from './features/session/SceneLoadingOverlay'
 import { openTravelError } from './features/session/TravelError'
 import { useEngineSession, type EngineSession } from './features/session/useEngineSession'
@@ -397,8 +397,8 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
   // Tell the engine how much of the screen the persistent HUD occupies. A full-screen page is
   // transient, so the last in-world value stands while one is open.
   useHudInsetReport(session.setInteractableArea, session.phase === 'world' && !session.menuOpen && !pageOpen)
-  // the sign-in music, from the first screen until the player is in the world
-  const loginMusic = useLoginMusic(session.phase !== 'world' && !HIDE_HUD)
+  // the sign-in music, from the first screen until the player is first in the world
+  const loginMusic = useLoginMusic(useBeforeWorld(session.phase) && !HIDE_HUD)
 
   // Embedded mode: mount only the engine (+ the error surfaces so a crash isn't silently blank).
   // No sidebar / chat / pointer / panels / sign-in UI. PopupHost renders nothing while the stack is

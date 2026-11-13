@@ -85,8 +85,8 @@ export async function request(method: unknown, params: unknown): Promise<unknown
 
 // Sites' keys for an in-app (thirdweb) sign-in: its token, for the Shop to sign with, and that the
 // account is a managed one, not a browser wallet's.
-const THIRDWEB_SESSION_KEY = 'dcl:auth:thirdweb:v1'
-const SIGN_IN_KIND_KEY = 'dcl:auth:signin-kind:v1'
+export const THIRDWEB_SESSION_KEY = 'dcl:auth:thirdweb:v1'
+export const SIGN_IN_KIND_KEY = 'dcl:auth:signin-kind:v1'
 
 function recordInAppSession(identity: AuthIdentity, wallet: { token: string; walletAddress: string }): void {
   try {

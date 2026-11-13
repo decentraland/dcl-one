@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { getPref, PREF, setPref } from '@explorer-core/lib/prefs'
 import music from '../../assets/startup/login-music.mp3'
+import type { SessionPhase } from '../session/useEngineSession'
 
 const VOLUME = 0.2
 
@@ -61,4 +62,15 @@ export function useLoginMusic(active: boolean): LoginMusic {
   }, [active, muted])
 
   return { muted, toggleMute }
+}
+
+/** Whether the player has yet to reach the world since signing in: the music's span. A trip's loading
+ *  screen later (the phase back to 'entering') doesn't count as before; signing out starts it over. */
+export function useBeforeWorld(phase: SessionPhase): boolean {
+  const [reached, setReached] = useState(false)
+  useEffect(() => {
+    if (phase === 'world') setReached(true)
+    else if (phase === 'login') setReached(false)
+  }, [phase])
+  return !reached && phase !== 'world'
 }

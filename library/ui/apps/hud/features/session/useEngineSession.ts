@@ -834,6 +834,8 @@ const REVEAL_DEBOUNCE_MS = 600
 // how long, back from the auth site, the stored sign-in waits for the catalyst to have the profile
 // How long Verifying waits for a sign-in before giving up.
 const VERIFY_TIMEOUT_MS = 15_000
+/** The sign-in error a Verifying that gave up leaves: no reason to show the player. */
+export const VERIFY_TIMED_OUT = 'verifying timed out'
 const AUTH_PROFILE_WAIT_MS = 30_000
 
 export type LoginStatus =
@@ -4268,7 +4270,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const verifying = phase === 'welcome' && welcome == null
   useEffect(() => {
     if (!verifying) return
-    const id = setTimeout(() => cancelSignIn('verifying timed out'), VERIFY_TIMEOUT_MS)
+    const id = setTimeout(() => cancelSignIn(VERIFY_TIMED_OUT), VERIFY_TIMEOUT_MS)
     return () => clearTimeout(id)
   }, [verifying, cancelSignIn])
 

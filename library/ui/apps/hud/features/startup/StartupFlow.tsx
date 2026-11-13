@@ -11,7 +11,7 @@ import { NewAccountName } from './NewAccountName'
 import { PRESETS } from './presets'
 import { Verifying } from './Verifying'
 import type { LoginMethod } from '@explorer-core/features/auth/sso'
-import type { LoginFlow } from '../session/useEngineSession'
+import { VERIFY_TIMED_OUT, type LoginFlow } from '../session/useEngineSession'
 import { GuestOrSignUp } from './GuestOrSignUp'
 import { LoginSelection } from './LoginSelection'
 import { StartupFooter } from './StartupFooter'
@@ -40,6 +40,14 @@ export function StartupFlow({
   const [step, setStep] = useState<'look' | 'name'>('look')
   const [look, setLook] = useState<LookChoice>({ body: 'a', slot: 0 })
   const { showLook } = session.welcome
+  // a new account starts on its look, body type A's first: one that signed out from its name screen
+  // and signs in again (a new guest, say) starts over
+  const inWelcome = session.phase === 'welcome'
+  useEffect(() => {
+    if (inWelcome) return
+    setStep('look')
+    setLook({ body: 'a', slot: 0 })
+  }, [inWelcome])
   const wear = useCallback(
     (choice: LookChoice) => {
       setLook(choice)
@@ -58,7 +66,7 @@ export function StartupFlow({
   useEffect(() => {
     if (error == null) return
     const abort = new AbortController()
-    showConnectionError(attempt.current === 'account' ? error : undefined, abort.signal)
+    showConnectionError(attempt.current === 'account' && error !== VERIFY_TIMED_OUT ? error : undefined, abort.signal)
     return () => abort.abort()
   }, [error])
 

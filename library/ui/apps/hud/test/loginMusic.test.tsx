@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, renderHook } from '@testing-library/react'
 import { getPref, PREF, setPref } from '@explorer-core/lib/prefs'
-import { useLoginMusic } from '../features/startup/useLoginMusic'
+import { useBeforeWorld, useLoginMusic } from '../features/startup/useLoginMusic'
 
 describe('sign-in music', () => {
   let play: ReturnType<typeof vi.spyOn>
@@ -18,6 +18,20 @@ describe('sign-in music', () => {
     expect(play).toHaveBeenCalled()
     rerender({ active: false })
     expect(pause).toHaveBeenCalled()
+  })
+
+  it("doesn't come back over a trip's loading screen once in the world; a sign-out starts it over", () => {
+    const { result, rerender } = renderHook(({ phase }) => useBeforeWorld(phase), { initialProps: { phase: 'login' as Parameters<typeof useBeforeWorld>[0] } })
+    expect(result.current).toBe(true)
+    rerender({ phase: 'entering' })
+    expect(result.current).toBe(true)
+    rerender({ phase: 'world' })
+    expect(result.current).toBe(false)
+    // a teleport or realm change shows the loader again
+    rerender({ phase: 'entering' })
+    expect(result.current).toBe(false)
+    rerender({ phase: 'login' })
+    expect(result.current).toBe(true)
   })
 
   it('a browser that refused to play before any interaction plays on the first click', () => {

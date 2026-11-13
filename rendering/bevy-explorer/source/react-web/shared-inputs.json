@@ -5441,7 +5441,7 @@
     },
     {
       "path": "library/ui/apps/hud/App.tsx",
-      "sha256": "feccaf35ffd0f1f5c2e7e0cbd449f3148207bdeb57b1d2db657afc34ce6f5c7f"
+      "sha256": "a002090527192e4535c09b4ec4d7beab170bdf029a7144be7e3fff2de14994c0"
     },
     {
       "path": "library/ui/apps/hud/assets/backpack/add-gradient.webp",
@@ -7609,7 +7609,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "f831c84e11fee2af032081448f22d51017ed7b2f8e0f70ebe25962256f9b8a99"
+      "sha256": "b4cbf2a3a713fe5f84ec296b9075fe656d92d46c10ff527cac419c73a983511d"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -7705,7 +7705,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/startup/StartupFlow.tsx",
-      "sha256": "d054e92ea9964f9f01e10d0242b0b67fa9ec83a8897d7df976a4ef7ac7f263e5"
+      "sha256": "4ba7a8da3a7c76875bffbe9698aa998a605b10caa45908078391baae3f8b6e60"
     },
     {
       "path": "library/ui/apps/hud/features/startup/StartupFooter.module.css",
@@ -7753,7 +7753,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/startup/useLoginMusic.ts",
-      "sha256": "61b62bf81b1e4a6166e2935318c798b297057e62987ab61a295a868a2892b772"
+      "sha256": "b60015d390add47a2add9e6a77f64e8be86a4fd7267e5f3362f697fd0d981b37"
     },
     {
       "path": "library/ui/apps/hud/features/voice/NearbyVoiceWidget.module.css",
@@ -8073,7 +8073,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/login.clicks.test.tsx",
-      "sha256": "80d0a22f2233b6f8e32ae92be870b36119e939bbd04e4ae717473249f203d93c"
+      "sha256": "8e53400aa33ebc0460600592a42a51cd32b348e0701dfb4fc8400e1abdb472f7"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/map.clicks.test.tsx",
@@ -8101,7 +8101,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/newAccount.test.tsx",
-      "sha256": "6fcdcc7bc74d0e7a19116870ab66736b148419d6cbf1fd0cb390d8242a351fb8"
+      "sha256": "7a4c6b081a3047ea670f99dd46fd46aec222d08e78e4e7d14eb1b0e7574a7309"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/notifications.clicks.test.tsx",
@@ -8237,7 +8237,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/loginMusic.test.tsx",
-      "sha256": "56d84aa57d37317638819f3781fd66411039c80985f08b7e08e5e1e072453bce"
+      "sha256": "09d0a44450c9f5765d4247b991b5863eaec4c3a19591a50ca659a321d5d361b4"
     },
     {
       "path": "library/ui/apps/hud/test/menu.clicks.test.tsx",
@@ -25129,6 +25129,21 @@
     },
     {
       "from": "library/ui/apps/hud/features/startup/StartupFlow.tsx",
+      "to": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/StartupFlow.tsx",
+      "to": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/StartupFlow.tsx",
+      "to": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/StartupFlow.tsx",
       "to": "library/ui/apps/hud/features/startup/GuestOrSignUp.tsx",
       "kind": "native:runtime"
     },
@@ -29119,6 +29134,21 @@
     },
     {
       "from": "library/ui/apps/hud/test/hosted/login.clicks.test.tsx",
+      "to": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/login.clicks.test.tsx",
+      "to": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/login.clicks.test.tsx",
+      "to": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/login.clicks.test.tsx",
       "to": "library/ui/apps/hud/features/startup/StartupFlow.tsx",
       "kind": "native:runtime"
     },
@@ -29385,6 +29415,21 @@
     {
       "from": "library/ui/apps/hud/test/hosted/newAccount.test.tsx",
       "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/newAccount.test.tsx",
+      "to": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/newAccount.test.tsx",
+      "to": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/newAccount.test.tsx",
+      "to": "library/ui/apps/hud/features/session/useEngineSession.ts",
       "kind": "test:runtime"
     },
     {
