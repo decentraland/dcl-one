@@ -1115,10 +1115,7 @@ mod tests {
             "scene".to_owned(),
             "b.png".to_owned(),
         ));
-        assert!(!matches!(
-            missing.cache_key(&context),
-            Some(CacheKey::Content(_))
-        ));
+        assert!(missing.cache_key(&context).is_none());
 
         // a url inside the content map's miss path is named by a digest of the url
         let remote = IpfsPath::new(IpfsType::new_content_file(
