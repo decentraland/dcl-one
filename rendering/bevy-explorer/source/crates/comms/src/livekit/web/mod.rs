@@ -409,6 +409,7 @@ async fn request(command: impl FnOnce(RequestId) -> LivekitCommand) -> RoomResul
     let (sender, receiver) = oneshot::channel();
     PENDING.insert(request, sender);
     if host.commands.unbounded_send(command(request)).is_err() {
+        PENDING.remove(&request);
         return Err(RoomError::from("livekit host is gone".to_owned()));
     }
     receiver
