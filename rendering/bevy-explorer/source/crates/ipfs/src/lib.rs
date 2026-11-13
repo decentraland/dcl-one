@@ -1428,6 +1428,22 @@ impl IpfsIo {
         Ok(Some(buffer))
     }
 
+    /// Drops the cached bytes under `key`, if there are any (native only: on web the worker's
+    /// cache entry goes through `web_cache`).
+    #[cfg(not(target_arch = "wasm32"))]
+    async fn forget_disk_cache(&self, key: &CacheKey) -> Result<(), std::io::Error> {
+        let Some(cached) = self
+            .cache_path()
+            .and_then(|root| root.join_relative(key.name()))
+        else {
+            return Ok(());
+        };
+        match async_fs::remove_file(&cached).await {
+            Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error),
+            _ => Ok(()),
+        }
+    }
+
     // load entities from pointers and cache urls
     pub fn active_entities(
         self: &Arc<Self>,

@@ -66,7 +66,7 @@ export const WEB_PARAMS: WebParam[] = [
     "name": "abgenCdn",
     "kind": "string",
     "delivery": "resolved",
-    "doc": "Asset-bundle generator CDN (the scenes' LOD descriptors and meshes); absent = `https://abgen-cdn.<base>`"
+    "doc": "Asset-bundle generator CDN (Bevy variants); absent = `https://abgen-cdn.<base>`"
   },
   {
     "name": "storage",

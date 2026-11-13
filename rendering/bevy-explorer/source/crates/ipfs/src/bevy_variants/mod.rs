@@ -13,9 +13,11 @@
 //! original's hash. abgen keeps a path's bytes fixed for the life of its generation, and the
 //! manifest names no hash for them, so a variant is trusted by its path and rejected only by
 //! what it decodes to. A texture variant is a BC KTX2 whose header names its BC format, handed
-//! to the loaders as the DDS it unwraps to (`ktx2`); that DDS is cached too. Anything else, at
-//! any step, reads the original. A variant that fails to decode is marked bad for the session
-//! and its asset reloaded from the original. An entity's files wait for its manifest for at
+//! to the image loaders as it is; they unwrap it to the DDS they decode (`ktx2`), inside the
+//! asset load. Anything else, at any step, reads the original. A variant that fails to decode
+//! is marked bad for the session, its cached copy dropped, and its asset reloaded from the
+//! original. Manifests and variants are fetched in a single attempt with short timeouts: the
+//! original is their retry. An entity's files wait for its manifest for at
 //! most [`MANIFEST_DEADLINE`] from the request, then read their originals.
 //!
 //! The formats taken are the [`SUPPORTED_FORMATS`] table: a manifest variant is loaded when its
@@ -57,13 +59,14 @@ use web_time::Duration;
 
 use crate::{
     content_hash,
+    download::FetchPolicy,
     ipfs_path::{CacheKey, IpfsPath},
     IpfsIo, IpfsResource, SharedBytes,
 };
 
-/// Image paths whose loader guesses the format from the bytes (or, for `.ktx2`, passes a dds
-/// through), so a dds decodes at the original path. A path without an extension goes to the
-/// last image loader, which guesses too.
+/// Image paths whose loader unwraps a BC KTX2 (`ktx2::bc_ktx2_dds`) before it decodes, so a
+/// texture variant loads at the original path. A path without an extension goes to the last
+/// image loader, which does too.
 const TEXTURE_EXTENSIONS: [&str; 5] = ["png", "jpg", "jpeg", "webp", "ktx2"];
 /// Every variant class the manifest schema (v3) names by a path's prefix letter, taken or not.
 const SCHEMA_FORMATS: [&str; 3] = ["ktx2-bc", "glb-br", "glb"];
@@ -75,8 +78,8 @@ const RECENT_FALLBACKS: usize = 20;
 /// What a supported variant's bytes are handed to the loaders as.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Decoded {
-    /// A BC KTX2 texture (BC1, BC5 or BC7, as its header says), unwrapped to the DDS the image
-    /// loaders read.
+    /// A BC KTX2 texture (BC1, BC5 or BC7, as its header says), which the image loaders unwrap
+    /// to the DDS they decode.
     BcTexture,
     /// A `glb-br` model: the original `.glb`, fetched as its Brotli copy that the browser
     /// decodes, handed to the glTF loader of the original path. Web only.
@@ -151,7 +154,7 @@ pub fn taken_formats() -> String {
     let mut groups: Vec<(Vec<&str>, &str)> = Vec::new();
     for row in SUPPORTED_FORMATS {
         let how = match row.decoded {
-            Decoded::BcTexture => "BC1/BC5/BC7, loaded as DDS",
+            Decoded::BcTexture => "BC1/BC5/BC7, unwrapped to DDS by the image loaders",
             Decoded::BrotliGlb => "Brotli, decoded by the browser",
         };
         match groups.iter_mut().find(|(_, group_how)| *group_how == how) {
@@ -175,6 +178,16 @@ pub fn taken_formats() -> String {
 /// the files read after it. Long enough for a first connection to the service (DNS, TLS), and
 /// short next to a cold scene load.
 pub const MANIFEST_DEADLINE: Duration = Duration::from_secs(2);
+/// How long a manifest request may wait for headers, or between body chunks, in its single
+/// attempt. Its files stop waiting for it at [`MANIFEST_DEADLINE`] anyway; this bounds how long
+/// a host that never answers holds a request slot.
+const MANIFEST_TIMEOUT: Duration = Duration::from_secs(3);
+/// A variant download: one attempt, with short timeouts, since the original is the retry.
+const VARIANT_FETCH: FetchPolicy = FetchPolicy {
+    headers_timeout: Duration::from_secs(5),
+    idle_timeout: Duration::from_secs(5),
+    max_attempts: 1,
+};
 /// Consecutive transport failures (manifest or variant) after which the service is treated as
 /// down for the rest of the session, so a dead host costs a few requests, not one per file.
 const BREAKER_FAILURES: u32 = 5;
@@ -366,6 +379,8 @@ struct ServedVariant {
     /// The variant's path, its identity.
     variant: String,
     format: String,
+    /// Where its bytes came from, the key of their cached copy.
+    url: String,
 }
 
 #[derive(Debug)]
@@ -383,6 +398,8 @@ struct Session {
     served: HashMap<PathBuf, ServedVariant>,
     downloaded: u64,
     cached: u64,
+    /// [downloaded, from cache] by variant format.
+    served_by_format: BTreeMap<String, [u64; 2]>,
     fallbacks: u64,
     recent: VecDeque<Fallback>,
 }
@@ -502,6 +519,10 @@ impl BevyVariants {
         } else {
             session.downloaded += 1;
         }
+        session
+            .served_by_format
+            .entry(served.format.clone())
+            .or_default()[usize::from(cached)] += 1;
         session.served.insert(path.to_owned(), served);
     }
 
@@ -510,25 +531,23 @@ impl BevyVariants {
         self.session.lock().unwrap().served.contains_key(path)
     }
 
-    /// Marks the variant served for `path` bad, if there was one; true when the asset should be
-    /// reloaded (from its original).
-    fn decode_failed(&self, path: &Path, error: &str) -> bool {
+    /// Marks the variant served for `path` bad, if there was one, and returns the url of its
+    /// cached copy: the asset should be reloaded (from its original), and the copy dropped.
+    fn decode_failed(&self, path: &Path, error: &str) -> Option<String> {
         let mut session = self.session.lock().unwrap();
-        let Some(served) = session.served.remove(path) else {
-            return false;
-        };
+        let served = session.served.remove(path)?;
         session.bad.insert(served.variant.clone());
         session.fallback(
             &served.scene,
             &served.file,
             format!("{} variant failed to load: {error}", served.format),
         );
-        true
+        Some(served.url)
     }
 }
 
-/// What the loader reads for a variant (the DDS a BC texture unwraps to, a model's own bytes),
-/// and whether it came from the cache.
+/// What the loader reads for a variant (a BC texture's KTX2, a model's own bytes), and whether
+/// it came from the cache.
 pub(crate) struct VariantRead {
     pub(crate) bytes: Vec<u8>,
     pub(crate) cached: bool,
@@ -554,6 +573,23 @@ impl IpfsIo {
     /// reprocessed as if it were the original).
     pub fn served_bevy_variant(&self, path: &Path) -> bool {
         self.bevy_variants.is_served(path)
+    }
+
+    /// Drops the cached copy of the variant fetched from `url`: it was rejected, and must not be
+    /// read again in a later session.
+    async fn forget_variant(&self, url: &str) {
+        #[cfg(not(target_arch = "wasm32"))]
+        let forgotten = self
+            .forget_disk_cache(&CacheKey::Url(content_hash::url_cache_name(url)))
+            .await
+            .map_err(|e| e.to_string());
+        #[cfg(target_arch = "wasm32")]
+        let forgotten = crate::web_cache::forget(url)
+            .await
+            .map_err(|e| format!("{e:?}"));
+        if let Err(error) = forgotten {
+            warn!("failed to drop the cached copy of `{url}`: {error}");
+        }
     }
 
     /// Asks abgen for an entity's manifest (a scene, wearable or emote), once per session. A
@@ -589,11 +625,11 @@ impl IpfsIo {
             Err(e) => return ManifestState::Failed(e.to_string()),
         };
         match self
-            .fetch_request(
+            .fetch_request_once(
                 request,
                 self.client.clone(),
-                Duration::from_secs(15),
-                Duration::from_secs(10),
+                MANIFEST_TIMEOUT,
+                MANIFEST_TIMEOUT,
                 Some(entity.to_owned()),
             )
             .await
@@ -712,36 +748,13 @@ impl IpfsIo {
             Decoded::BrotliGlb => format!("{base}/{}.br", variant.path),
         };
         let key = CacheKey::Url(content_hash::url_cache_name(&url));
-        // a BC texture's unwrapped DDS, under a name of its own
-        #[cfg(not(target_arch = "wasm32"))]
-        let dds_key = format!("{}.dds", key.name());
-        #[cfg(target_arch = "wasm32")]
-        let dds_url = format!("{url}.dds");
         let served = ServedVariant {
             scene: scene.to_owned(),
             file: file.to_owned(),
             variant: variant.path.clone(),
             format: variant.format.clone(),
+            url: url.clone(),
         };
-
-        // a warm visit of a texture skips the download and the zstd decode
-        if matches!(decoded, Decoded::BcTexture) {
-            #[cfg(not(target_arch = "wasm32"))]
-            let dds = self
-                .read_disk_cache(&CacheKey::Url(dds_key.clone()))
-                .await
-                .ok()
-                .flatten();
-            #[cfg(target_arch = "wasm32")]
-            let dds = crate::web_cache::read(&dds_url).await;
-            if let Some(dds) = dds.filter(|dds| dds.starts_with(b"DDS ")) {
-                variants.served(path, served, true);
-                return Some(VariantRead {
-                    bytes: dds,
-                    cached: true,
-                });
-            }
-        }
 
         #[cfg(not(target_arch = "wasm32"))]
         let cached = self.read_disk_cache(&key).await.ok().flatten();
@@ -751,8 +764,14 @@ impl IpfsIo {
             Some(bytes) => (SharedBytes(Arc::new(bytes)), true),
             None => {
                 let token = self.reqno.fetch_add(1, Ordering::SeqCst);
-                let (download, task) =
-                    self.share_download(key, token, path.to_owned(), url, Some(scene.to_owned()));
+                let (download, task) = self.share_download_with(
+                    key,
+                    token,
+                    path.to_owned(),
+                    url.clone(),
+                    Some(scene.to_owned()),
+                    VARIANT_FETCH,
+                );
                 if let Some(task) = task {
                     IoTaskPool::get().spawn_compat(task).detach();
                 }
@@ -781,48 +800,33 @@ impl IpfsIo {
             }
         };
 
-        let bytes = match decoded {
-            Decoded::BcTexture => {
-                let dds = match ktx2::bc_format(&fetched)
-                    .and_then(|format| ktx2::bc_ktx2_to_dds(&fetched, format))
-                {
-                    Ok(dds) => dds,
-                    Err(reason) => {
-                        variants.fail(
-                            scene,
-                            file,
-                            Some(&variant.path),
-                            format!("invalid KTX2: {reason}"),
-                        );
-                        return None;
-                    }
-                };
-                #[cfg(not(target_arch = "wasm32"))]
-                if let Err(error) = self.cache_bytes(&dds_key, &dds).await {
-                    warn!("failed to cache the DDS of `{}`: {error}", variant.path);
-                }
-                #[cfg(target_arch = "wasm32")]
-                if let Err(error) = crate::web_cache::keep(&dds_url, &dds).await {
-                    warn!("failed to cache the DDS of `{}`: {error:?}", variant.path);
-                }
-                dds
-            }
-            Decoded::BrotliGlb => {
-                // the browser hands over the decoded bytes, which are the original `.glb` byte
-                // for byte: checked against the original's own content hash, a truncated or
-                // corrupt copy falls back here, and one that passes is the original, so a glTF
-                // loader failure on it is the original's own and needs no reload
-                if !content_hash::matches_content_hash(&original, &fetched) {
-                    let reason = format!(
+        // checks that need no decoding; a copy that fails them is dropped from the cache too,
+        // so a later session does not read it again
+        let rejected = match decoded {
+            // the loaders unwrap the KTX2 (`ktx2::bc_ktx2_dds`), inside the asset load; here
+            // only its header is read, so a file that is not a BC KTX2 at all falls back
+            // before it reaches them
+            Decoded::BcTexture => ktx2::bc_format(&fetched)
+                .err()
+                .map(|reason| format!("invalid KTX2: {reason}")),
+            // the browser hands over the decoded bytes, which are the original `.glb` byte for
+            // byte: checked against the original's own content hash, a truncated or corrupt
+            // copy falls back here, and one that passes is the original, so a glTF loader
+            // failure on it is the original's own and needs no reload
+            Decoded::BrotliGlb => (!content_hash::matches_content_hash(&original, &fetched))
+                .then(|| {
+                    format!(
                         "{} bytes from the Brotli copy are not the original `{original}`",
                         fetched.len()
-                    );
-                    variants.fail(scene, file, Some(&variant.path), reason);
-                    return None;
-                }
-                Arc::try_unwrap(fetched.0).unwrap_or_else(|shared| shared.as_ref().clone())
-            }
+                    )
+                }),
         };
+        if let Some(reason) = rejected {
+            self.forget_variant(&served.url).await;
+            variants.fail(scene, file, Some(&variant.path), reason);
+            return None;
+        }
+        let bytes = Arc::try_unwrap(fetched.0).unwrap_or_else(|shared| shared.as_ref().clone());
         variants.served(path, served, from_cache);
         Some(VariantRead {
             bytes,
@@ -870,11 +874,15 @@ fn fall_back_from_failed_variants(
     server: Res<AssetServer>,
 ) {
     for event in images.read() {
-        if ipfs
+        if let Some(url) = ipfs
             .bevy_variants
             .decode_failed(event.path.path(), &event.error.to_string())
         {
             server.reload(event.path.without_label().into_owned());
+            let io = ipfs.clone();
+            IoTaskPool::get()
+                .spawn_compat(async move { io.forget_variant(&url).await })
+                .detach();
         }
     }
 }

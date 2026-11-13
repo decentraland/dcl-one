@@ -1,7 +1,9 @@
 //! A BC texture variant arrives as KTX2 (zstd-supercompressed levels) and is handed to the image
-//! loaders as DDS: they detect DDS by its magic whatever the path's extension, and a DDS in
-//! UNORM takes sRGB or linear from how the texture is requested. Every size read from the file
-//! is checked against what the header implies before anything is allocated or decoded.
+//! loaders as it is. The reader checks only its header ([`bc_format`]); the loaders unwrap it
+//! ([`bc_ktx2_dds`]) to the DDS they decode, so the inflated levels are only ever held while an
+//! asset loads. A DDS in UNORM takes sRGB or linear from how the texture is requested. Every
+//! size read from the file is checked against what the header implies before anything is
+//! allocated or decoded.
 
 /// The BC payloads a texture variant may carry; the manifest's `format` names one through
 /// `super::SUPPORTED_FORMATS`.
@@ -70,6 +72,14 @@ pub fn bc_format(bytes: &[u8]) -> Result<BcFormat, String> {
         .into_iter()
         .find(|format| format.vk_formats().contains(&vk_format))
         .ok_or_else(|| format!("vkFormat {vk_format} is not BC1, BC5 or BC7 UNORM"))
+}
+
+/// The DDS an image loader decodes for `bytes`, when they are a BC KTX2 texture variant; None
+/// for anything else (another image format, or a KTX2 of another format, such as Basis
+/// Universal).
+pub fn bc_ktx2_dds(bytes: &[u8]) -> Option<Result<Vec<u8>, String>> {
+    let format = bc_format(bytes).ok()?;
+    Some(bc_ktx2_to_dds(bytes, format))
 }
 
 /// The DDS (DX10 header, all levels largest first) a BC KTX2 of `format` holds.
@@ -297,6 +307,21 @@ pub(crate) mod tests {
             .unwrap_err()
             .contains("vkFormat 146"));
         assert!(bc_format(b"not a ktx2").is_err());
+    }
+
+    #[test]
+    fn the_loaders_unwrap_only_a_bc_ktx2() {
+        let (file, _, _) = bc7_two_levels();
+        assert_eq!(
+            bc_ktx2_dds(&file),
+            Some(bc_ktx2_to_dds(&file, BcFormat::Bc7))
+        );
+        // anything else is left to the loader's own decoding: another image, or a KTX2 of
+        // another format (Basis Universal declares vkFormat 0)
+        assert_eq!(bc_ktx2_dds(b"\x89PNG\r\n\x1a\n"), None);
+        assert_eq!(bc_ktx2_dds(&ktx2(0, 4, 4, &[vec![0; 16]])), None);
+        // a BC KTX2 that does not unwrap is an error, not another format
+        assert!(matches!(bc_ktx2_dds(&file[..file.len() - 1]), Some(Err(_))));
     }
 
     #[test]

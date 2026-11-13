@@ -78,7 +78,7 @@ const GATEWAY_PREFIXES: Readonly<Record<string, string>> = {
   'assets-cdn': '/assets-cdn'
 }
 // Services the gateway cannot serve yet, reached on Decentraland's public host instead: abgen's
-// CDN (Bevy variants), whose `/ab-cdn` route reads Unity's ab-cdn and refuses `bevy/` paths
+// CDN (Bevy variants), whose `/ab-cdn` route serves the asset-bundle CDN and refuses `bevy/` paths
 // (decentraland/dcl-one#631). Behind the gateway they compose from decentraland.org, never from
 // the page's own host, as the engine does (`Gateway::segment` → its default base domain).
 const NOT_THROUGH_GATEWAY: ReadonlySet<string> = new Set(['abgen-cdn'])

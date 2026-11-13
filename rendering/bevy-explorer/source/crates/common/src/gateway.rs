@@ -42,8 +42,9 @@ impl Gateway {
             Service::AssetsCdn if !self.virtual_host => Some("social-api"),
             // Site links and storage delegations use their own public destinations.
             Service::AuthPage | Service::Reels | Service::Storage => None,
-            // Not through the gateway yet: its `/ab-cdn` cache reads Unity's ab-cdn and refuses
-            // `bevy/` paths, so abgen's CDN is reached directly until it has its own route.
+            // Not through the gateway yet: its `/ab-cdn` route serves the asset-bundle CDN and
+            // refuses `bevy/` paths, so abgen's CDN is reached directly until it has its own
+            // route.
             Service::AbgenCdn => None,
             service if service.value() == ServiceValue::Http => Some(service.composition().1),
             _ => None,

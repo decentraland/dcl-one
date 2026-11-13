@@ -75,7 +75,7 @@ from the configured service, rejecting only what fails to decode.
 Classes:
 
 - `t`, a texture: KTX2 with a BC payload, whose header's vkFormat names BC7, BC1
-  or BC5 UNORM, and zstd supercompression, full mip chain,
+  or BC5 UNORM, and zstd supercompression, level 0 alone or with its mip chain,
   longest side at most 1024. The Explorer applies sRGB or linear from how the
   texture is requested. Level 0 must be whole 4×4 blocks (width and height
   multiples of 4), because the GPU refuses anything else; a reader rejects such
@@ -108,6 +108,10 @@ Excluded from variants: source maps, audio, video and scene code.
   each wearable and emote when its entity is fetched for an avatar. A `404` is
   remembered as "no manifest". A wearable or emote takes its content server from
   the catalyst it was fetched from, so it is eligible on any realm.
+- A scene's manifest is requested when its entity file is, from the entity id,
+  not after that file arrives. Manifests and variants are fetched in one attempt
+  with short timeouts and no retry: a file's original is its retry, so a host
+  that does not answer holds a request slot for seconds, not minutes.
 - An entity's files wait for its manifest for at most two seconds from the
   request. A file read after that loads its original at once, so a slow service
   delays a load by that much at worst; a manifest that arrives later still serves
@@ -116,13 +120,14 @@ Excluded from variants: source maps, audio, video and scene code.
   a class the Explorer supports for that file type and GPU: original CID, first
   supported variant, fetch from `{base}/{path}`, decode. Any failure (fetch, a
   KTX2 that does not unwrap, a texture that does not load) falls back to the
-  original, per file; a variant that failed is not tried again in the session and
-  the asset is reloaded from the original. Repeated transport failures turn the
+  original, per file; a variant that failed is not tried again in the session,
+  its cached copy is dropped and the asset is reloaded from the original. Repeated transport failures turn the
   service off for the session.
 - Variant bytes are cached under a digest of the URL they came from, never under
   the original's content hash, so a variant can never stand in for an original
-  in the content cache. A texture variant is handed to the image loaders as the
-  DDS it unwraps to, cached beside it.
+  in the content cache. A texture variant is handed to the image loaders as its
+  KTX2; the reader checks only its header, and the loaders unwrap it to the DDS
+  they decode, so the inflated levels are held only inside an asset load.
 - The supported classes are one table in the manifest client
   (`crates/ipfs/src/bevy_variants`): the class, the file types it may replace,
   what the GPU must support and what the bytes decode as. The table holds the

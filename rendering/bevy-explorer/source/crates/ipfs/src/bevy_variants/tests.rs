@@ -4,12 +4,11 @@ use crate::{
 };
 use bevy::asset::io::Reader;
 
-/// A 2-level BC7 KTX2 variant, its CID, and the DDS it unwraps to.
-fn bc7_variant() -> (Vec<u8>, String, Vec<u8>) {
+/// A 2-level BC7 KTX2 variant and its CID.
+fn bc7_variant() -> (Vec<u8>, String) {
     let (file, _, _) = super::ktx2::tests::bc7_two_levels();
     let cid = crate::content_hash::raw_cid(&file);
-    let dds = ktx2::bc_ktx2_to_dds(&file, ktx2::BcFormat::Bc7).unwrap();
-    (file, cid, dds)
+    (file, cid)
 }
 
 // `i % 251` for 1000 bytes (no KTX2), and its raw-leaf CIDv1 (see `content_hash` tests)
@@ -153,7 +152,7 @@ fn selects_the_first_variant_this_client_takes() {
     assert!(select_variant(&brotli, "models/a.glb", true, none_bad).is_none());
     assert_eq!(
         taken_formats(),
-        "ktx2-bc (BC1/BC5/BC7, loaded as DDS); not glb-br, glb"
+        "ktx2-bc (BC1/BC5/BC7, unwrapped to DDS by the image loaders); not glb-br, glb"
     );
     assert!(!could_have_variant("a.glb"));
     // the earlier mesh format is not in the schema any more
@@ -378,9 +377,9 @@ fn requests_for(log: &Mutex<Vec<String>>, path: &str) -> usize {
 }
 
 #[tokio::test]
-async fn a_texture_variant_is_served_as_dds_and_cached_under_its_url() {
+async fn a_texture_variant_is_served_as_its_ktx2_and_cached_under_its_url() {
     let (io, dir) = io_with_cache("served");
-    let (ktx2, cid, dds) = bc7_variant();
+    let (ktx2, cid) = bc7_variant();
     let variant_route = format!("/{}", served_path(&cid));
     let original_route = format!("/contents/{ORIGINAL_CID}");
     let (base, log) = serve(vec![
@@ -391,30 +390,28 @@ async fn a_texture_variant_is_served_as_dds_and_cached_under_its_url() {
     scene_with_variant(&io, &base, &cid).await;
     let path = content_path("tex.png");
 
-    assert_eq!(read_all(&io, &path).await, dds);
+    // the reader hands the KTX2 over as it is: the image loaders unwrap it
+    assert_eq!(read_all(&io, &path).await, ktx2);
     assert!(io.served_bevy_variant(&path));
-    // the KTX2 under a digest of its url, its DDS beside it, and nothing under the original's
-    // hash or the variant's path
+    // the KTX2 under a digest of its url, and nothing beside it, under the original's hash or
+    // under the variant's path
     let name = cache_name(&base, &served_path(&cid));
     assert_eq!(std::fs::read(dir.join(&name)).unwrap(), ktx2);
-    assert_eq!(std::fs::read(dir.join(format!("{name}.dds"))).unwrap(), dds);
+    assert!(!dir.join(format!("{name}.dds")).exists());
     assert!(!dir.join(ORIGINAL_CID).exists());
     assert!(!dir.join("bevy").exists());
 
-    // a warm read is the cached DDS
-    assert_eq!(read_all(&io, &path).await, dds);
-    // without it, the cached KTX2 is unwrapped again, and the DDS cached again
-    std::fs::remove_file(dir.join(format!("{name}.dds"))).unwrap();
-    assert_eq!(read_all(&io, &path).await, dds);
-    assert!(dir.join(format!("{name}.dds")).exists());
+    // a warm read is the cached KTX2
+    assert_eq!(read_all(&io, &path).await, ktx2);
 
     assert_eq!(requests_for(&log, &variant_route), 1);
     assert_eq!(requests_for(&log, &original_route), 0);
     let session = io.bevy_variants.session.lock().unwrap();
     assert_eq!(
         (session.downloaded, session.cached, session.fallbacks),
-        (1, 2, 0)
+        (1, 1, 0)
     );
+    assert_eq!(session.served_by_format.get("ktx2-bc"), Some(&[1, 1]));
     drop(session);
     std::fs::remove_dir_all(dir).unwrap();
 }
@@ -426,7 +423,7 @@ async fn a_texture_variant_is_served_as_dds_and_cached_under_its_url() {
 async fn a_wearable_entity_fetches_its_manifest_and_reads_its_variants() {
     const WEARABLE: &str = "bafkreiwearable";
     let (io, dir) = io_with_cache("wearable");
-    let (ktx2, cid, dds) = bc7_variant();
+    let (ktx2, cid) = bc7_variant();
     let manifest = format!(
         r#"{{"v": 3, "lanes": {{"texture": "t2"}}, "files": {{"{ORIGINAL_CID}": ["{}"]}}}}"#,
         served_path(&cid)
@@ -435,7 +432,7 @@ async fn a_wearable_entity_fetches_its_manifest_and_reads_its_variants() {
     let variant_route = format!("/{}", served_path(&cid));
     let (base, log) = serve(vec![
         (manifest_route.clone(), manifest.into_bytes()),
-        (variant_route.clone(), ktx2),
+        (variant_route.clone(), ktx2.clone()),
     ])
     .await;
     let about = ServerAbout {
@@ -482,7 +479,7 @@ async fn a_wearable_entity_fetches_its_manifest_and_reads_its_variants() {
         WEARABLE.to_owned(),
         "male/tex.png".to_owned(),
     )));
-    assert_eq!(read_all(&io, &path).await, dds);
+    assert_eq!(read_all(&io, &path).await, ktx2);
     assert!(io.served_bevy_variant(&path));
     assert_eq!(requests_for(&log, &manifest_route), 1);
     assert_eq!(requests_for(&log, &variant_route), 1);
@@ -508,8 +505,9 @@ async fn a_texture_variant_whose_header_names_no_bc_format_falls_back_to_the_ori
 
     assert_eq!(read_all(&io, &path).await, b"original png");
     assert!(!io.served_bevy_variant(&path));
+    // the rejected copy is dropped from the cache, so a later session does not read it again
     let name = cache_name(&base, &served_path(VARIANT_CID));
-    assert!(!dir.join(format!("{name}.dds")).exists());
+    assert!(!dir.join(&name).exists());
     assert!(!dir.join(ORIGINAL_CID).exists());
     {
         let session = io.bevy_variants.session.lock().unwrap();
@@ -540,7 +538,7 @@ async fn a_variant_that_is_no_ktx2_falls_back_to_the_original() {
 
     assert_eq!(read_all(&io, &path).await, b"original png");
     let name = cache_name(&base, &served_path(VARIANT_CID));
-    assert!(!dir.join(format!("{name}.dds")).exists());
+    assert!(!dir.join(&name).exists());
     {
         let session = io.bevy_variants.session.lock().unwrap();
         assert!(session.recent[0].reason.starts_with("invalid KTX2"));
@@ -577,16 +575,25 @@ fn a_variant_that_fails_to_decode_is_marked_bad_once() {
             file: "tex.png".to_owned(),
             variant: served_path(VARIANT_CID),
             format: "ktx2-bc".to_owned(),
+            url: "https://abgen.example/bevy/t3/variant".to_owned(),
         },
         false,
     );
     assert!(variants.is_served(&path));
-    assert!(variants.decode_failed(&path, "unsupported texture format"));
+    // reloaded from the original, and the url of the copy to drop handed back
+    assert_eq!(
+        variants
+            .decode_failed(&path, "unsupported texture format")
+            .as_deref(),
+        Some("https://abgen.example/bevy/t3/variant")
+    );
     assert!(!variants.is_served(&path));
     assert!(variants.is_bad(&served_path(VARIANT_CID)));
     // an asset that was never a variant is not reloaded
-    assert!(!variants.decode_failed(&path, "again"));
-    assert!(!variants.decode_failed(&content_path("other.png"), "x"));
+    assert!(variants.decode_failed(&path, "again").is_none());
+    assert!(variants
+        .decode_failed(&content_path("other.png"), "x")
+        .is_none());
 }
 
 #[test]
@@ -636,9 +643,9 @@ fn snapshot_of(variants: &BevyVariants) -> serde_json::Value {
 #[tokio::test]
 async fn files_wait_for_a_pending_manifest_only_until_its_deadline() {
     let (io, dir) = io_with_cache("deadline");
-    let (ktx2, cid, dds) = bc7_variant();
+    let (ktx2, cid) = bc7_variant();
     let variant_route = format!("/{}", served_path(&cid));
-    let (base, log) = serve(vec![(variant_route.clone(), ktx2)]).await;
+    let (base, log) = serve(vec![(variant_route.clone(), ktx2.clone())]).await;
     // a loaded manifest first, for the entity and realm setup, then put back to pending
     scene_with_variant(&io, &base, &cid).await;
     let loaded = io.bevy_variants.manifest(SCENE).unwrap().borrow().clone();
@@ -681,7 +688,7 @@ async fn files_wait_for_a_pending_manifest_only_until_its_deadline() {
 
     // the manifest arrives late: the next read is served from it
     sender.send_replace(loaded);
-    assert_eq!(read_all(&io, &path).await, dds);
+    assert_eq!(read_all(&io, &path).await, ktx2);
     assert_eq!(requests_for(&log, &variant_route), 1);
 
     // a read that is waiting when the manifest arrives in time is served too
@@ -703,6 +710,6 @@ async fn files_wait_for_a_pending_manifest_only_until_its_deadline() {
     sender.send_replace(ManifestState::Loaded(Arc::new(
         parse_manifest(manifest.as_bytes()).unwrap(),
     )));
-    assert_eq!(reading.await.unwrap(), dds);
+    assert_eq!(reading.await.unwrap(), ktx2);
     std::fs::remove_dir_all(dir).unwrap();
 }

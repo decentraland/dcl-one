@@ -21,6 +21,7 @@ pub(super) fn register(app: &mut App) {
                 ),
                 ("Scene manifests", "manifests"),
                 ("Variants served (downloaded / from cache)", "served"),
+                ("Variants served by format", "servedByFormat"),
                 ("Fallbacks to the original", "fallbacks"),
                 ("Recent fallbacks", "recentFallbacks"),
             ],
@@ -102,11 +103,22 @@ pub(super) fn snapshot(variants: &BevyVariants) -> Value {
         "manifestCounts": counts,
         "manifests": (!manifests.is_empty()).then(|| manifests.join("\n")),
         "served": [session.downloaded, session.cached],
+        "servedByFormat": (!session.served_by_format.is_empty()).then(|| {
+            session
+                .served_by_format
+                .iter()
+                .map(|(format, [downloaded, cached])| {
+                    format!("{format}: {downloaded} downloaded / {cached} from cache")
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        }),
         "fallbacks": session.fallbacks,
         "recentFallbacks": (!recent.is_empty()).then(|| recent.join("\n")),
         "unavailable": {
             "base": "Off: --bevy-variants-url, ?bevyVariants= or bevy_variants_url in the config is `off`.",
             "manifests": "No scene has asked for a manifest yet.",
+            "servedByFormat": "No variant has been served.",
             "recentFallbacks": "No file has fallen back to its original.",
         },
     })
