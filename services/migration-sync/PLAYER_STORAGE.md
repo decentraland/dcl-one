@@ -6,6 +6,11 @@ per-key delete, player clear and scene clear through the same native SQL
 operation used by the target's storage handlers. It does not run scenes, copy
 unreceipted rows, or enable world/env storage replication.
 
+The decoded accepted value serialization is bounded to 1 MiB; the command envelope
+allows worst-case JSON string escaping plus bounded metadata. Oversized envelopes
+are rejected in the source query before transferring their payload to the worker.
+JSON nesting is validated by PostgreSQL rather than a second, stricter Rust parser.
+
 Production remains the authorization/quota authority. Replay verifies the
 accepted command's shape and original resolved world/place/scene binding; it
 does not reuse expired delegations or recalculate later production policy.
@@ -68,7 +73,7 @@ selected imported rows against a source snapshot established under the capture
 lock. Values, sizes and original timestamps must match exactly. It also rejects
 missing, retired, replaced or mirrored target scene bindings. A mismatch leaves
 no registered stream. The bounded verification permits at most 100,000 rows and
-64 MiB of stored JSON per selected scene; larger scopes require a reviewed
+64 MiB of JSON text per selected scene; larger scopes require a reviewed
 streaming bootstrap before use.
 
 ```sh

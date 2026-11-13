@@ -9,7 +9,10 @@ use uuid::Uuid;
 const SOURCE_LOCK: &str = "SELECT pg_advisory_xact_lock(179323,1)";
 const TARGET_LOCK: &str =
     "SELECT pg_advisory_xact_lock(hashtextextended('dcl-one/migration-follower',0))";
-pub const MAX_COMMAND_BYTES: usize = 1_100_000;
+pub const MAX_VALUE_BYTES: usize = 1_048_576;
+// JSON stores the accepted serialization inside a string: every byte can expand
+// to a six-byte escape. Reserve additional room for bounded command metadata.
+pub const MAX_COMMAND_BYTES: usize = 6 * MAX_VALUE_BYTES + 16_384;
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -131,11 +134,12 @@ impl Command {
                 .as_deref()
                 .ok_or_else(|| anyhow::anyhow!("missing player value"))?;
             ensure!(
-                value.len() <= 1_048_576 && self.value_size == Some(value.len() as i64),
+                value.len() <= MAX_VALUE_BYTES && self.value_size == Some(value.len() as i64),
                 "invalid player value size"
             );
-            serde_json::from_str::<Value>(value)
-                .map_err(|_| anyhow::anyhow!("invalid player JSON value"))?;
+            // The source committed this exact text through PostgreSQL's JSONB
+            // parser. The native target uses the same parser; parsing again in
+            // Rust would impose a lower nesting limit on accepted source data.
             ensure!(
                 self.created_at.is_some() && self.updated_at.is_some(),
                 "missing player timestamps"
@@ -267,12 +271,12 @@ pub async fn bootstrap(source: &PgPool, target: &PgPool, stream: &str) -> Result
             source_count <= 100_000,
             "player baseline exceeds rehearsal row bound"
         );
-        let source_bytes:i64=sqlx::query_scalar("SELECT COALESCE(sum(pg_column_size(value)::bigint),0)::bigint FROM public.player_storage WHERE world_name=$1 AND place_id=$2").bind(&scope.world_name).bind(scope.place_id).fetch_one(&mut *snapshot).await?;
+        let source_bytes:i64=sqlx::query_scalar("SELECT COALESCE(sum(octet_length(value::text)::bigint),0)::bigint FROM public.player_storage WHERE world_name=$1 AND place_id=$2").bind(&scope.world_name).bind(scope.place_id).fetch_one(&mut *snapshot).await?;
         ensure!(
             source_bytes <= 64 * 1024 * 1024,
             "player baseline exceeds rehearsal byte bound"
         );
-        let rows=sqlx::query("SELECT player_address,key,value,value_size,created_at,updated_at FROM public.player_storage WHERE world_name=$1 AND place_id=$2 ORDER BY player_address,key")
+        let rows=sqlx::query("SELECT player_address,key,value::text AS value_text,value_size,created_at,updated_at FROM public.player_storage WHERE world_name=$1 AND place_id=$2 ORDER BY player_address,key")
             .bind(&scope.world_name).bind(scope.place_id).fetch_all(&mut *snapshot).await?;
         let count: i64 = sqlx::query_scalar(
             "SELECT count(*) FROM worlds.player_storage WHERE realm=$1 AND scene_namespace=$2",
@@ -286,9 +290,9 @@ pub async fn bootstrap(source: &PgPool, target: &PgPool, stream: &str) -> Result
             "player baseline row count differs"
         );
         for row in rows {
-            let same:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM worlds.player_storage WHERE realm=$1 AND scene_namespace=$2 AND player_address=$3 AND key=$4 AND value=$5 AND value_size=$6 AND created_at=$7 AND updated_at=$8)")
+            let same:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM worlds.player_storage WHERE realm=$1 AND scene_namespace=$2 AND player_address=$3 AND key=$4 AND value=$5::text::jsonb AND value_size=$6 AND created_at=$7 AND updated_at=$8)")
                 .bind(&scope.world_name).bind(scope.place_id.to_string()).bind(row.try_get::<String,_>("player_address")?)
-                .bind(row.try_get::<String,_>("key")?).bind(row.try_get::<Value,_>("value")?).bind(row.try_get::<i32,_>("value_size")?)
+                .bind(row.try_get::<String,_>("key")?).bind(row.try_get::<String,_>("value_text")?).bind(row.try_get::<i32,_>("value_size")?)
                 .bind(row.try_get::<NaiveDateTime,_>("created_at")?).bind(row.try_get::<NaiveDateTime,_>("updated_at")?).fetch_one(&mut *tx).await?;
             ensure!(same, "player baseline differs from source snapshot");
         }
@@ -344,18 +348,21 @@ pub async fn pump_once(source: &PgPool, target: &PgPool, stream: &str) -> Result
         return Ok(false);
     }
     let row = sqlx::query(
-        "SELECT command,unclassified FROM migration_player_capture.transactions WHERE position=$1",
+        "SELECT CASE WHEN octet_length(command::text)<=$2 THEN command END AS command,
+                COALESCE(octet_length(command::text),0) AS command_bytes,unclassified
+         FROM migration_player_capture.transactions WHERE position=$1",
     )
     .bind(cursor + 1)
+    .bind(MAX_COMMAND_BYTES as i32)
     .fetch_one(&mut *snapshot)
     .await?;
-    let command: Option<Value> = row.try_get("command")?;
+    // The oversized payload stays in PostgreSQL; do not deserialize it merely
+    // to find out that it exceeds this worker's intake bound.
     ensure!(
-        command
-            .as_ref()
-            .is_none_or(|v| v.to_string().len() <= MAX_COMMAND_BYTES),
+        row.try_get::<i32, _>("command_bytes")? as usize <= MAX_COMMAND_BYTES,
         "player command exceeds capture size"
     );
+    let command: Option<Value> = row.try_get("command")?;
     sqlx::query("INSERT INTO migration_sync.player_inbox(stream,generation,position,command,unclassified) VALUES($1,$2,$3,$4,$5)")
         .bind(stream).bind(generation).bind(cursor+1).bind(command).bind(row.try_get::<bool,_>("unclassified")?).execute(&mut *tx).await?;
     sqlx::query(
@@ -540,6 +547,21 @@ mod tests {
             ),
         };
         command.validate().unwrap();
+        let deep = format!("{}1{}", "[".repeat(129), "]".repeat(129));
+        command.value_size = Some(deep.len() as i64);
+        command.value_text = Some(deep);
+        command.validate().unwrap();
+        let escaped = format!("\"{}\"", "\\\\".repeat((MAX_VALUE_BYTES - 2) / 2));
+        command.value_size = Some(escaped.len() as i64);
+        command.value_text = Some(escaped);
+        command.validate().unwrap();
+        assert!(serde_json::to_string(&command).unwrap().len() > 1_100_000);
+        assert!(serde_json::to_string(&command).unwrap().len() <= MAX_COMMAND_BYTES);
+        command.value_text = Some("x".repeat(MAX_VALUE_BYTES + 1));
+        command.value_size = Some((MAX_VALUE_BYTES + 1) as i64);
+        assert!(command.validate().is_err());
+        command.value_text = Some("1".into());
+        command.value_size = Some(1);
         command.key = Some("x".repeat(256));
         assert!(command.validate().is_err());
         command.key = Some("key".into());

@@ -72,6 +72,13 @@ async fn assertions(source: &PgPool, target: &PgPool, drift: bool) -> Result<()>
         place_id: Uuid::parse_str(PLACE)?,
         scene_id: SCENE.into(),
     }];
+    if drift {
+        let deep = format!("{}1{}", "[".repeat(129), "]".repeat(129));
+        sqlx::query("INSERT INTO public.player_storage(world_name,place_id,player_address,key,value,value_size,created_at,updated_at) VALUES($1,$2,$3,'baseline',$4::text::jsonb,$5,'2026-11-13','2026-11-13')")
+            .bind(WORLD).bind(Uuid::parse_str(PLACE)?).bind(PLAYER).bind(&deep).bind(deep.len() as i32).execute(source).await?;
+        sqlx::query("INSERT INTO worlds.player_storage(realm,scene_namespace,player_address,key,value,value_size,created_at,updated_at) VALUES($1,$2,$3,'baseline',$4::text::jsonb,$5,'2026-11-13','2026-11-13')")
+            .bind(WORLD).bind(PLACE).bind(PLAYER).bind(&deep).bind(deep.len() as i32).execute(target).await?;
+    }
     player::install(source, &scopes).await?;
     player::install(source, &scopes).await?;
     assert!(
@@ -89,7 +96,7 @@ async fn assertions(source: &PgPool, target: &PgPool, drift: bool) -> Result<()>
             .await?,
         0
     );
-    sqlx::query("DELETE FROM worlds.player_storage")
+    sqlx::query("DELETE FROM worlds.player_storage WHERE key='extra'")
         .execute(target)
         .await?;
     // A normal serving process fences registration even for an empty baseline.
@@ -130,7 +137,7 @@ async fn assertions(source: &PgPool, target: &PgPool, drift: bool) -> Result<()>
             player::apply_next(target, "players").await?,
             Outcome::Blocked
         );
-        assert_eq!(count(target).await?, 0);
+        assert_eq!(count(target).await?, 1);
         return Ok(());
     }
     // Commands roll back with source data, including their allocated cursor.
@@ -183,6 +190,20 @@ async fn assertions(source: &PgPool, target: &PgPool, drift: bool) -> Result<()>
         .fetch_one(target)
         .await?;
     assert_eq!(size as i64, accepted["value_size"].as_i64().unwrap());
+    // Accepted JSON beyond serde_json's default nesting limit must retain its
+    // native PostgreSQL meaning without imposing a second parser's limits.
+    let deep = format!("{}1{}", "[".repeat(129), "]".repeat(129));
+    // A valid1MiB value is more than2MiB once escaped inside command JSON.
+    let escaped = format!("\"{}\"", "\\\\".repeat((player::MAX_VALUE_BYTES - 2) / 2));
+    for (key, value) in [("deep", deep), ("escaped", escaped)] {
+        command(source, "set", Some(PLAYER), Some(key), Some(&value)).await?;
+        step(source, target).await?;
+        let matches:bool=sqlx::query_scalar("SELECT value=$1::text::jsonb AND value_size=$2 FROM worlds.player_storage WHERE key=$3")
+            .bind(&value).bind(value.len() as i32).bind(key).fetch_one(target).await?;
+        assert!(matches);
+        command(source, "delete", Some(PLAYER), Some(key), None).await?;
+        step(source, target).await?;
+    }
     command(source, "set", Some(PLAYER), Some("score"), Some("4")).await?;
     step(source, target).await?;
     command(source, "set", Some(OTHER), Some("score"), Some("5")).await?;
@@ -257,6 +278,18 @@ async fn assertions(source: &PgPool, target: &PgPool, drift: bool) -> Result<()>
         )?)))
         .await?;
     assert_eq!(count(target).await?, 1);
+    let before = player::status(target, "players").await?["captured"].clone();
+    let oversized = format!("\"{}\"", "x".repeat(player::MAX_COMMAND_BYTES));
+    command(
+        source,
+        "set",
+        Some(PLAYER),
+        Some("oversized"),
+        Some(&oversized),
+    )
+    .await?;
+    assert!(player::pump_once(source, target, "players").await.is_err());
+    assert_eq!(player::status(target, "players").await?["captured"], before);
     Ok(())
 }
 
