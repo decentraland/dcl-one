@@ -456,7 +456,7 @@ async fn configured_bucket_preserves_known_and_unknown_object_names() {
     assert_eq!(status, StatusCode::TEMPORARY_REDIRECT);
     assert_eq!(
         headers[header::LOCATION],
-        "https://bucket.example/absent%23file.png"
+        "https://bucket.example/absent#file.png"
     );
     s.done().await;
 }

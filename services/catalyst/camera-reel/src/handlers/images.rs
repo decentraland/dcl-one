@@ -165,7 +165,7 @@ async fn read_form_bytes(
     while let Some(chunk) = field.chunk().await.map_err(multipart_read_error)? {
         *remaining = remaining
             .checked_sub(chunk.len())
-            .ok_or_else(|| multipart_error("Payload reached size limit."))?;
+            .ok_or_else(|| multipart_error("payload reached size limit"))?;
         bytes.extend_from_slice(&chunk);
     }
     Ok(bytes.freeze())

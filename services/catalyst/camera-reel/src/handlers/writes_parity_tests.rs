@@ -511,21 +511,28 @@ async fn multipart_first_duplicate_wins_and_total_memory_is_bounded() {
             "{\"message\":\"invalid metadata\"}".into()
         )
     );
-    let body = form(&[(
-        "image",
-        None,
-        Some("image/png"),
-        &vec![0; MAX_MULTIPART_MEMORY_BYTES + 1],
-    )]);
-    let response = request(&state, "POST", "/api/images", body, Some(FORM_TYPE), true).await;
-    assert_eq!(
-        response,
-        (
-            StatusCode::BAD_REQUEST,
-            "text/plain; charset=utf-8".into(),
-            "Payload reached size limit.".into()
-        )
-    );
+    let oversized = vec![0; MAX_MULTIPART_MEMORY_BYTES + 1];
+    let half = vec![0; MAX_MULTIPART_MEMORY_BYTES / 2];
+    for body in [
+        form(&[("image", None, Some("image/png"), &oversized)]),
+        form(&[("metadata", None, None, &oversized)]),
+        form(&[("is_public", None, Some("text/plain"), &oversized)]),
+        form(&[
+            ("image", None, Some("image/png"), &half),
+            ("metadata", None, None, &half),
+            ("is_public", None, None, b"true"),
+        ]),
+    ] {
+        let response = request(&state, "POST", "/api/images", body, Some(FORM_TYPE), true).await;
+        assert_eq!(
+            response,
+            (
+                StatusCode::BAD_REQUEST,
+                "text/plain; charset=utf-8".into(),
+                "payload reached size limit".into(),
+            )
+        );
+    }
     tokio::fs::remove_dir_all(dir).await.unwrap();
 }
 
