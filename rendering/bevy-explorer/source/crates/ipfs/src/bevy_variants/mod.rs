@@ -813,13 +813,14 @@ impl IpfsIo {
             // byte: checked against the original's own content hash, a truncated or corrupt
             // copy falls back here, and one that passes is the original, so a glTF loader
             // failure on it is the original's own and needs no reload
-            Decoded::BrotliGlb => (!content_hash::matches_content_hash(&original, &fetched))
-                .then(|| {
+            Decoded::BrotliGlb => {
+                (!content_hash::matches_content_hash(&original, &fetched)).then(|| {
                     format!(
                         "{} bytes from the Brotli copy are not the original `{original}`",
                         fetched.len()
                     )
-                }),
+                })
+            }
         };
         if let Some(reason) = rejected {
             self.forget_variant(&served.url).await;

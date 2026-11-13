@@ -148,10 +148,14 @@ impl IpfsIo {
             self.preview_request_delay(),
         );
         self.request_metrics
-            .measure(
-                self.clone()
-                    .download_inner(token, path, remote, cache_key, attempts, FetchPolicy::CONTENT),
-            )
+            .measure(self.clone().download_inner(
+                token,
+                path,
+                remote,
+                cache_key,
+                attempts,
+                FetchPolicy::CONTENT,
+            ))
             .await
     }
 
@@ -385,10 +389,9 @@ impl IpfsIo {
                 }
                 let detail = match e {
                     platform::FetchError::Headers => "timed out awaiting headers".to_owned(),
-                    platform::FetchError::Stalled => format!(
-                        "stalled (no data for {}s)",
-                        policy.idle_timeout.as_secs()
-                    ),
+                    platform::FetchError::Stalled => {
+                        format!("stalled (no data for {}s)", policy.idle_timeout.as_secs())
+                    }
                     platform::FetchError::Send(e) => format!("server responded `{e}`"),
                     platform::FetchError::Status(s, _) => {
                         format!("server responded with status {s}")
