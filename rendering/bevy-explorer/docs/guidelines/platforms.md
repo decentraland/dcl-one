@@ -56,10 +56,10 @@ sees a `cfg`. Backend functionality that only one caller needs lives next to tha
   dropped the record, go first, oldest written first; uses noted in the last 30 s before the tab
   closes, or in a batch that is not delivered, are not recorded), down to 90% of the cap, when the
   engine asks through the `__contentCacheTrim` page function
-  (`deploy/web/engine/content_cache.js`): at start, after each
-  sixteenth of the cap written (at most 64 MiB), and before retrying a write that failed for quota
-  (then it frees at least a quarter, at most once a minute). It never opens another cache. The
-  page asks once for persistent storage. The **Web Content Cache** debug section shows the readings;
+  (`deploy/web/engine/content_cache.js`): at start, after each sixteenth of the cap written (at
+  most 64 MiB), and before retrying a write that failed for quota (then it frees at least a
+  quarter, at most once a minute). It never opens another cache. The page asks once for
+  persistent storage. The **Web Content Cache** debug section shows the readings;
   in preview mode it can override the cap for the session.
 - **Two GPUs: Chrome takes the low-power one.** On a laptop with integrated and discrete GPUs,
   Chrome's WebGPU renders on the integrated one while native wgpu takes the discrete one: on one

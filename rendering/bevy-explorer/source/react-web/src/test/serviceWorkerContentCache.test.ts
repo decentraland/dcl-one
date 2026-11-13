@@ -346,6 +346,12 @@ describe('content cache last use', () => {
     expect(await recordedKeys(sw.indexedDB as IDBFactory)).toHaveLength(4096 + 2)
   })
 
+  it('records the own key of a plain http content server', async () => {
+    const sw = serviceWorker()
+    const { port } = await sw.touch(['http://192.168.0.5:8080/contents/bafkreihash'])
+    expect(port.postMessage).toHaveBeenCalledWith({ recorded: 1 })
+  })
+
   it('looks only at the first 4096 keys of a batch', async () => {
     const sw = serviceWorker()
     const keys = [...Array.from({ length: 4096 }, () => 7), entryUrl('late')]

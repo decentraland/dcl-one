@@ -131,7 +131,7 @@ const CONTENT_CACHE_TOUCH = 'content-cache-touch';
 const CONTENT_CACHE_INDEX_DB = 'dcl-content-cache-index-v1';
 const CONTENT_CACHE_INDEX_STORE = 'lastUsed';
 // Only this many keys of a message are looked at: the engine sends at most 1024. A key is an
-// https url of at most this many characters, as the engine builds them.
+// http(s) url of at most this many characters, as the engine builds them.
 const CONTENT_CACHE_TOUCH_MAX = 4096;
 const CONTENT_CACHE_KEY_MAX = 2048;
 // The index is an aid: an operation on it that has not finished by then is given up, so a trim
@@ -294,7 +294,7 @@ async function recordContentCacheUse(keys) {
     if (!Array.isArray(keys)) throw new Error('keys must be an array');
     const valid = keys
         .slice(0, CONTENT_CACHE_TOUCH_MAX)
-        .filter((key) => typeof key === 'string' && key.length <= CONTENT_CACHE_KEY_MAX && key.startsWith('https://'));
+        .filter((key) => typeof key === 'string' && key.length <= CONTENT_CACHE_KEY_MAX && /^https?:\/\//.test(key));
     await writeContentCacheUses(valid, []);
     return { recorded: valid.length };
 }
