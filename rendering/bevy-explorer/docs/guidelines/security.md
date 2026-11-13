@@ -66,8 +66,8 @@ in it. Validate resource ids, buffer lengths and handles, and return an error. T
 arguments as `#[from_v8] Plain<T>` rather than `#[serde]`: serde_v8 panics when a getter or proxy
 throws while it reads a value. Such ops take plain data only: own enumerable data properties
 and arrays, within a depth and total-size budget, read without running any getter. Accessors,
-boxed primitives, proxies, functions and objects whose data lives in internal slots are
-rejected. Replace an upstream op that
+boxed primitives, proxies, functions, resizable buffers and objects whose data lives in internal
+slots are rejected. Replace an upstream op that
 panics through the middleware in `crates/dcl_deno/src/js/mod.rs`, keeping its async-ness and
 argument count; `every_override_replaces_an_op_of_the_same_shape` checks that each override
 replaces an op of the same async-ness. The

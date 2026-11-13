@@ -337,6 +337,8 @@ async fn send_request(
     // allowance. Link-local and metadata remain forbidden in every mode.
     common::util::assert_public_url(&url, allow_private).await?;
 
+    // the stream's bytes stay charged to the scene's stream budget until they are sent
+    let upload = request_body.as_ref().map(|body| body.0.clone());
     let request = if let Some(body) = request_body {
         let mut buf = Vec::new();
         if is_server {
@@ -360,7 +362,9 @@ async fn send_request(
     } else {
         request
     };
-    let mut res = match request.send().await {
+    let sent = request.send().await;
+    drop(upload);
+    let mut res = match sent {
         Ok(res) => res,
         Err(err) => return Ok(transport_failure(url, &err)),
     };
