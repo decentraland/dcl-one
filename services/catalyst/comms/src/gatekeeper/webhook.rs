@@ -2,6 +2,7 @@
 //! The verified participant events drive the voice rooms' presence
 //! (`gatekeeper::voice`), the ingress events the stream rows
 //! (`gatekeeper::streaming`), then the live presence and the room event sink.
+//! The room event store receives every verified participant event.
 
 use axum::body::Bytes;
 use axum::extract::State;
@@ -64,11 +65,23 @@ impl<V> History<V> {
         self.order.insert(self.sequence, key.clone());
         self.values.insert(key, (value, self.sequence));
     }
-    fn remove(&mut self, key: &str) {
-        if let Some((_, order)) = self.values.remove(key) {
-            self.order.remove(&order);
-        }
+    fn remove(&mut self, key: &str) -> bool {
+        let Some((_, order)) = self.values.remove(key) else {
+            return false;
+        };
+        self.order.remove(&order);
+        true
     }
+}
+
+/// What the webhook does with a verified event.
+#[derive(Debug, PartialEq, Eq)]
+enum Prepared {
+    Apply,
+    /// A redelivery of an applied event.
+    Duplicate,
+    /// A participant event an ordered session supersedes for comms.
+    Superseded,
 }
 
 #[derive(Default)]
@@ -77,6 +90,8 @@ struct WebhookState {
     participants: History<(i64, bool)>,
     current: History<(String, i64, bool)>,
     metadata: History<(String, tokio::time::Instant)>,
+    /// Event IDs whose store failed before the sink observed them.
+    unobserved: History<()>,
 }
 
 pub(super) struct WebhookCoordinator {
@@ -125,12 +140,12 @@ impl WebhookState {
         })
     }
 
-    fn prepare(&mut self, event: &Value, kind: &str, deadline: u64, now: u64) -> bool {
+    fn prepare(&mut self, event: &Value, kind: &str, deadline: u64, now: u64) -> Prepared {
         let id = event_id(event).unwrap();
         if let Some(previous) = self.applied.get(id).copied() {
             if now <= previous {
                 self.applied.insert(id.to_owned(), deadline.max(previous));
-                return false;
+                return Prepared::Duplicate;
             }
             self.applied.remove(id);
         }
@@ -142,7 +157,7 @@ impl WebhookState {
                 .get(&sid)
                 .is_some_and(|(latest, left)| at < *latest || (at == *latest && *left))
             {
-                return false;
+                return Prepared::Superseded;
             }
             if let Some((current_sid, joined, left)) =
                 self.current.get(&current_key(event).unwrap())
@@ -152,22 +167,23 @@ impl WebhookState {
                     // identity. Keep its tombstone so a delayed join cannot
                     // resurrect it after an equal-second leave.
                     self.participants.insert(sid, (at, true));
-                    return false;
+                    return Prepared::Superseded;
                 }
                 if kind == "participant_joined"
                     && (at < *joined
                         || (at == *joined
                             && (sid < *current_sid || (sid == *current_sid && *left))))
                 {
-                    return false;
+                    return Prepared::Superseded;
                 }
             }
         }
-        true
+        Prepared::Apply
     }
 
     fn applied(&mut self, event: &Value, kind: &str, deadline: u64) {
         let id = event_id(event).unwrap().to_owned();
+        self.unobserved.remove(&id);
         self.applied.insert(id.clone(), deadline);
         if matches!(kind, "participant_joined" | "participant_left") {
             let sid = participant_sid(event).unwrap();
@@ -284,13 +300,25 @@ pub async fn livekit_webhook(
     if now > deadline {
         return Err(unauthorized("expired livekit webhook signature"));
     }
-    if !state
+    let prepared = state
         .webhooks
         .state
         .lock()
         .unwrap()
-        .prepare(&event, event_kind, deadline, now)
-    {
+        .prepare(&event, event_kind, deadline, now);
+    if prepared != Prepared::Apply {
+        // The store orders sessions itself: a superseded event still counts there.
+        if prepared == Prepared::Superseded
+            && state.room_event_store.is_some()
+            && let Some(room_event) = room_event(&state, event_kind, &event).await?
+        {
+            store_room_event(&state, &room_event).await?;
+            // A failed store's redelivery can be superseded by then; the sink still gets it once.
+            let owed = state.webhooks.state.lock().unwrap().unobserved.remove(id);
+            if owed && let Some(sink) = state.room_events.as_ref() {
+                sink.observe_room_event(&room_event);
+            }
+        }
         return Ok(axum::http::StatusCode::OK.into_response());
     }
     // Invalidate before any awaited side effect/resolution. Even a handler
@@ -327,49 +355,20 @@ pub async fn livekit_webhook(
         }
     }
     dispatch(&state, event_kind, &event).await?;
-    // Presence and the event sink consume one resolved identity. A world
-    // scene's complete name is resolved without guessing a hyphen boundary;
-    // store failures leave the webhook unapplied for retry.
-    if let (Some(room), Some(identity)) = (room_name(&event), participant_identity(&event))
-        && matches!(event_kind, "participant_joined" | "participant_left")
-        && let Some(parsed) = crate::rooms::resolve_room_name(state.scenes.as_ref(), &room)
-            .await
-            .map_err(|error| {
-                tracing::warn!(%error, room, "canonical room identity unavailable");
-                ApiError::http(503, "Room identity is temporarily unavailable")
-            })?
-        && let Some(sink) = state.room_events.as_ref()
-    {
-        use crate::protocol::bus::room_events::{RoomEvent, RoomEventKind, RoomType};
-        sink.observe_room_event(&RoomEvent {
-            kind: if event_kind == "participant_joined" {
-                RoomEventKind::Joined
-            } else {
-                RoomEventKind::Left
-            } as i32,
-            room,
-            room_type: if parsed.realm.is_world() {
-                RoomType::World
-            } else {
-                RoomType::Scene
-            } as i32,
-            realm_name: parsed
-                .realm
-                .world()
-                .map(|w| w.key())
-                .unwrap_or_else(|| parsed.realm.as_str())
-                .to_owned(),
-            scene_id: parsed
-                .scene_id
-                .as_ref()
-                .map(|s| s.as_str())
-                .unwrap_or("")
-                .to_owned(),
-            identity,
-            participant_sid: participant_sid(&event).unwrap(),
-            event_time_ms: event_time_ms(&event).unwrap() as u64,
-            event_id: event_id(&event).unwrap().to_owned(),
-        });
+    if let Some(room_event) = room_event(&state, event_kind, &event).await? {
+        if let Err(error) = store_room_event(&state, &room_event).await {
+            state
+                .webhooks
+                .state
+                .lock()
+                .unwrap()
+                .unobserved
+                .insert(id.to_owned(), ());
+            return Err(error);
+        }
+        if let Some(sink) = state.room_events.as_ref() {
+            sink.observe_room_event(&room_event);
+        }
     }
     state
         .webhooks
@@ -378,6 +377,75 @@ pub async fn livekit_webhook(
         .unwrap()
         .applied(&event, event_kind, deadline);
     Ok(axum::http::StatusCode::OK.into_response())
+}
+
+/// The participant event the store and the sink consume, with one resolved
+/// identity. A world scene's complete name is resolved without guessing a
+/// hyphen boundary; a failed resolution leaves the webhook unapplied for retry.
+async fn room_event(
+    state: &CommsState,
+    event_kind: &str,
+    event: &Value,
+) -> Result<Option<crate::protocol::bus::room_events::RoomEvent>, ApiError> {
+    use crate::protocol::bus::room_events::{RoomEvent, RoomEventKind, RoomType};
+    let (Some(room), Some(identity)) = (room_name(event), participant_identity(event)) else {
+        return Ok(None);
+    };
+    if !matches!(event_kind, "participant_joined" | "participant_left") {
+        return Ok(None);
+    }
+    let Some(parsed) = crate::rooms::resolve_room_name(state.scenes.as_ref(), &room)
+        .await
+        .map_err(|error| {
+            tracing::warn!(%error, room, "canonical room identity unavailable");
+            ApiError::http(503, "Room identity is temporarily unavailable")
+        })?
+    else {
+        return Ok(None);
+    };
+    Ok(Some(RoomEvent {
+        kind: if event_kind == "participant_joined" {
+            RoomEventKind::Joined
+        } else {
+            RoomEventKind::Left
+        } as i32,
+        room,
+        room_type: if parsed.realm.is_world() {
+            RoomType::World
+        } else {
+            RoomType::Scene
+        } as i32,
+        realm_name: parsed
+            .realm
+            .world()
+            .map(|w| w.key())
+            .unwrap_or_else(|| parsed.realm.as_str())
+            .to_owned(),
+        scene_id: parsed
+            .scene_id
+            .as_ref()
+            .map(|s| s.as_str())
+            .unwrap_or("")
+            .to_owned(),
+        identity,
+        participant_sid: participant_sid(event).unwrap(),
+        event_time_ms: event_time_ms(event).unwrap() as u64,
+        event_id: event_id(event).unwrap().to_owned(),
+    }))
+}
+
+/// Stores the event before the webhook is acknowledged; a failure is a 503.
+async fn store_room_event(
+    state: &CommsState,
+    event: &crate::protocol::bus::room_events::RoomEvent,
+) -> Result<(), ApiError> {
+    let Some(store) = state.room_event_store.as_ref() else {
+        return Ok(());
+    };
+    store.store_room_event(event).await.map_err(|error| {
+        tracing::warn!(%error, event_id = event.event_id, "room event not stored");
+        ApiError::http(503, "Room event not stored")
+    })
 }
 
 async fn dispatch(state: &CommsState, event_kind: &str, event: &Value) -> Result<(), ApiError> {
@@ -535,23 +603,47 @@ mod tests {
     fn retries_ordering_and_equal_second_leave_precedence() {
         let mut state = WebhookState::default();
         let join = participant_event("j", "participant_joined", "PA_1", 100);
-        assert!(state.prepare(&join, "participant_joined", 500, 100));
-        assert!(state.prepare(&join, "participant_joined", 500, 100));
+        assert_eq!(
+            state.prepare(&join, "participant_joined", 500, 100),
+            Prepared::Apply
+        );
+        assert_eq!(
+            state.prepare(&join, "participant_joined", 500, 100),
+            Prepared::Apply
+        );
         state.applied(&join, "participant_joined", 500);
-        assert!(!state.prepare(&join, "participant_joined", 600, 100));
+        assert_eq!(
+            state.prepare(&join, "participant_joined", 600, 100),
+            Prepared::Duplicate
+        );
         assert_eq!(state.applied.get("j"), Some(&600));
         let old_leave = participant_event("old", "participant_left", "PA_1", 99);
-        assert!(!state.prepare(&old_leave, "participant_left", 500, 100));
+        assert_eq!(
+            state.prepare(&old_leave, "participant_left", 500, 100),
+            Prepared::Superseded
+        );
         let leave = participant_event("l", "participant_left", "PA_1", 100);
-        assert!(state.prepare(&leave, "participant_left", 500, 100));
+        assert_eq!(
+            state.prepare(&leave, "participant_left", 500, 100),
+            Prepared::Apply
+        );
         state.applied(&leave, "participant_left", 500);
         let same_second_join = participant_event("j2", "participant_joined", "PA_1", 100);
-        assert!(!state.prepare(&same_second_join, "participant_joined", 500, 100));
+        assert_eq!(
+            state.prepare(&same_second_join, "participant_joined", 500, 100),
+            Prepared::Superseded
+        );
         let newer = participant_event("newer", "participant_joined", "PA_2", 101);
-        assert!(state.prepare(&newer, "participant_joined", 500, 100));
+        assert_eq!(
+            state.prepare(&newer, "participant_joined", 500, 100),
+            Prepared::Apply
+        );
         state.applied(&newer, "participant_joined", 500);
         let delayed_old = participant_event("old-sid", "participant_left", "PA_1", 102);
-        assert!(!state.prepare(&delayed_old, "participant_left", 500, 100));
+        assert_eq!(
+            state.prepare(&delayed_old, "participant_left", 500, 100),
+            Prepared::Superseded
+        );
     }
 
     #[test]
@@ -567,7 +659,7 @@ mod tests {
             }
             for event in events {
                 let kind = event["event"].as_str().unwrap();
-                if state.prepare(&event, kind, 500, 100) {
+                if state.prepare(&event, kind, 500, 100) == Prepared::Apply {
                     state.applied(&event, kind, 500);
                 }
             }
@@ -587,7 +679,7 @@ mod tests {
                 events.reverse();
             }
             for event in events {
-                if state.prepare(&event, "participant_joined", 500, 100) {
+                if state.prepare(&event, "participant_joined", 500, 100) == Prepared::Apply {
                     state.applied(&event, "participant_joined", 500);
                 }
             }
@@ -595,7 +687,10 @@ mod tests {
                 current_key(&participant_event("a", "participant_joined", "PA_A", 100)).unwrap();
             assert_eq!(state.current.get(&key).unwrap().0, "PA_B");
             let old_leave = participant_event("left-a", "participant_left", "PA_A", 100);
-            assert!(!state.prepare(&old_leave, "participant_left", 500, 100));
+            assert_eq!(
+                state.prepare(&old_leave, "participant_left", 500, 100),
+                Prepared::Superseded
+            );
         }
     }
 
@@ -613,21 +708,36 @@ mod tests {
                 100 + n,
             );
             event["participant"]["identity"] = Value::String(format!("wallet{n}"));
-            assert!(state.prepare(&event, "participant_joined", 1000, 100));
+            assert_eq!(
+                state.prepare(&event, "participant_joined", 1000, 100),
+                Prepared::Apply
+            );
             state.applied(&event, "participant_joined", 1000);
             let leave = serde_json::json!({"id": format!("l{n}"), "createdAt": 101+n,
                 "room": event["room"], "participant": event["participant"]});
-            assert!(state.prepare(&leave, "participant_left", 1000, 100));
+            assert_eq!(
+                state.prepare(&leave, "participant_left", 1000, 100),
+                Prepared::Apply
+            );
             state.applied(&leave, "participant_left", 1000);
             assert!(state.applied.values.len() <= 8);
             assert!(state.participants.values.len() <= 8);
             assert!(state.current.values.len() <= 8);
         }
         let ingress = serde_json::json!({"id": "ingress"});
-        assert!(state.prepare(&ingress, "ingress_started", 2000, 1001));
+        assert_eq!(
+            state.prepare(&ingress, "ingress_started", 2000, 1001),
+            Prepared::Apply
+        );
         state.applied(&ingress, "ingress_started", 2000);
-        assert!(!state.prepare(&ingress, "ingress_started", 2000, 2000));
-        assert!(state.prepare(&ingress, "ingress_started", 3000, 2001));
+        assert_eq!(
+            state.prepare(&ingress, "ingress_started", 2000, 2000),
+            Prepared::Duplicate
+        );
+        assert_eq!(
+            state.prepare(&ingress, "ingress_started", 3000, 2001),
+            Prepared::Apply
+        );
     }
 
     #[test]

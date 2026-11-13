@@ -435,6 +435,8 @@ pub struct CommsState {
     pub caches: admission::scene::SceneCaches,
     /// Where the LiveKit webhook's participant events are also handed.
     pub room_events: Option<Arc<dyn RoomEventSink>>,
+    /// Where every verified participant event is stored before it is acknowledged.
+    pub room_event_store: Option<Arc<dyn events::RoomEventStore>>,
     webhooks: webhook::WebhookCoordinator,
     /// The Pulse room authority, mounted when `PULSE_ROOM_AUTHORITY_KEY` is set.
     pub relay_authority: Option<Arc<admission::relay_authority::RelayAuthority>>,
@@ -491,6 +493,7 @@ impl CommsState {
             eip1654,
             caches: admission::scene::SceneCaches::default(),
             room_events: None,
+            room_event_store: None,
             webhooks: webhook::WebhookCoordinator::default(),
             relay_authority: None,
             world_mint: admission::world_mint::MintState::default(),
@@ -563,6 +566,11 @@ impl CommsState {
 
     pub fn with_room_event_sink(mut self, sink: Arc<dyn RoomEventSink>) -> Self {
         self.room_events = Some(sink);
+        self
+    }
+
+    pub fn with_room_event_store(mut self, store: Arc<dyn events::RoomEventStore>) -> Self {
+        self.room_event_store = Some(store);
         self
     }
 
