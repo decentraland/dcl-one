@@ -254,10 +254,7 @@ fn check_assets(
     // actual bytes.
     for ev in failed_gltfs.read() {
         let error = ev.error.to_string();
-        if !ipfs::cache_heal::REPAIRABLE_GLTF_EXTENSIONS
-            .iter()
-            .any(|extension| error.contains(extension))
-        {
+        if !ipfs::cache_heal::names_repairable_extension(&error) {
             continue;
         }
         let asset_path = ev.path.clone();

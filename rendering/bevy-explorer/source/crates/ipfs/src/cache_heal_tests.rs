@@ -268,7 +268,7 @@ fn each_entry_is_checked_once_and_the_session_holds_at_most_1024() {
     let heals = CacheHeals::default();
     assert!(heals.begin("a"));
     assert!(!heals.begin("a"));
-    heals.dropped("a");
+    heals.finish("a", true);
     assert!(heals.was_dropped("a"));
     assert!(!heals.was_dropped("b"));
     assert_eq!(heals.counts(), (1, 1));
@@ -286,12 +286,18 @@ async fn a_cached_copy_that_is_not_its_hash_is_dropped_once() {
     scene_with(&io, "https://content.invalid", "tex.png", &hash).await;
     std::fs::write(dir.join(&hash), b"processed bytes").unwrap();
 
-    assert!(io.drop_bad_cached_entry(&content_path("tex.png")).await);
+    assert_eq!(
+        io.drop_bad_cached_entry(&content_path("tex.png")).await,
+        Some(hash.clone())
+    );
     assert!(!dir.join(&hash).exists());
     assert!(io.cache_entry_dropped(&hash));
 
     std::fs::write(dir.join(&hash), b"processed bytes").unwrap();
-    assert!(!io.drop_bad_cached_entry(&content_path("tex.png")).await);
+    assert_eq!(
+        io.drop_bad_cached_entry(&content_path("tex.png")).await,
+        Some(hash.clone())
+    );
     assert!(dir.join(&hash).exists());
     assert_eq!(io.cache_heals.counts(), (1, 1));
     std::fs::remove_dir_all(dir).unwrap();
@@ -304,7 +310,10 @@ async fn a_cached_copy_that_matches_its_hash_is_kept() {
     scene_with(&io, "https://content.invalid", "tex.png", &hash).await;
     std::fs::write(dir.join(&hash), b"original").unwrap();
 
-    assert!(!io.drop_bad_cached_entry(&content_path("tex.png")).await);
+    assert_eq!(
+        io.drop_bad_cached_entry(&content_path("tex.png")).await,
+        Some(hash.clone())
+    );
     assert_eq!(std::fs::read(dir.join(&hash)).unwrap(), b"original");
     assert!(!io.cache_entry_dropped(&hash));
     assert_eq!(io.cache_heals.counts(), (1, 0));
@@ -330,7 +339,7 @@ async fn a_url_keyed_copy_is_dropped() {
     assert_eq!(read_all(&io, &path).await, b"<html>not a picture</html>");
     assert!(log.lock().unwrap().is_empty());
 
-    assert!(io.drop_bad_cached_entry(&path).await);
+    assert_eq!(io.drop_bad_cached_entry(&path).await, Some(name.clone()));
     assert!(!dir.join(&name).exists());
     assert_eq!(read_all(&io, &path).await, b"a picture");
     let requests = log.lock().unwrap().clone();
@@ -362,8 +371,12 @@ async fn nothing_cached_nothing_dropped() {
     let hash = raw_cid(b"original");
     scene_with(&io, "https://content.invalid", "tex.png", &hash).await;
 
-    assert!(!io.drop_bad_cached_entry(&content_path("tex.png")).await);
+    assert_eq!(
+        io.drop_bad_cached_entry(&content_path("tex.png")).await,
+        Some(hash.clone())
+    );
     assert!(!io.cache_entry_dropped(&hash));
+    assert_eq!(io.cache_heals.counts(), (1, 0));
     std::fs::remove_dir_all(dir).unwrap();
 }
 
@@ -380,7 +393,8 @@ async fn after_a_drop_the_next_read_downloads_the_original() {
     assert_eq!(read_all(&io, &path).await, b"processed bytes");
     assert!(log.lock().unwrap().is_empty());
 
-    assert!(io.drop_bad_cached_entry(&path).await);
+    assert!(io.drop_bad_cached_entry(&path).await.is_some());
+    assert!(io.cache_entry_dropped(&hash));
     assert_eq!(read_all(&io, &path).await, b"original");
     let requests = log.lock().unwrap().clone();
     assert_eq!(requests, vec![route]);
@@ -420,7 +434,12 @@ fn a_failed_load_drops_a_bad_cached_copy_and_a_reader_error_does_not() {
             loader_name: "test",
         }));
     let start = std::time::Instant::now();
-    while (dir.join(&hash).exists() || !app.world().resource::<PendingCacheHeals>().0.is_empty())
+    while (dir.join(&hash).exists()
+        || !app
+            .world()
+            .resource::<PendingCacheHeals>()
+            .checks
+            .is_empty())
         && start.elapsed().as_secs() < 5
     {
         app.update();
@@ -428,6 +447,75 @@ fn a_failed_load_drops_a_bad_cached_copy_and_a_reader_error_does_not() {
     }
     assert!(!dir.join(&hash).exists());
     assert_eq!(io.cache_heals.counts(), (1, 1));
-    assert!(app.world().resource::<PendingCacheHeals>().0.is_empty());
+    assert!(app
+        .world()
+        .resource::<PendingCacheHeals>()
+        .checks
+        .is_empty());
     std::fs::remove_dir_all(dir).unwrap();
+}
+
+fn sorted(paths: Vec<AssetPath<'static>>) -> Vec<String> {
+    let mut names: Vec<String> = paths.iter().map(|path| path.to_string()).collect();
+    names.sort();
+    names
+}
+
+fn asset(file: &str) -> AssetPath<'static> {
+    AssetPath::from(content_path(file)).into_owned()
+}
+
+#[test]
+fn every_asset_that_failed_on_a_dropped_entry_is_reloaded_once() {
+    let heals = CacheHeals::default();
+    let mut pending = PendingCacheHeals::default();
+    let (a, b, c) = (asset("a.png"), asset("b.png"), asset("c.png"));
+    assert!(heals.begin("h"));
+    assert!(pending
+        .settle(&heals, b.clone(), Some("h".to_owned()))
+        .is_empty());
+    heals.finish("h", true);
+    assert_eq!(
+        sorted(pending.settle(&heals, a.clone(), Some("h".to_owned()))),
+        sorted(vec![a.clone(), b.clone()])
+    );
+    assert_eq!(
+        pending.settle(&heals, c.clone(), Some("h".to_owned())),
+        vec![c]
+    );
+    assert!(pending.settle(&heals, a, Some("h".to_owned())).is_empty());
+    assert!(pending.settle(&heals, b, None).is_empty());
+}
+
+#[test]
+fn assets_that_failed_on_a_kept_entry_are_not_reloaded() {
+    let heals = CacheHeals::default();
+    let mut pending = PendingCacheHeals::default();
+    let (a, b) = (asset("a.png"), asset("b.png"));
+    assert!(heals.begin("k"));
+    assert!(pending
+        .settle(&heals, b.clone(), Some("k".to_owned()))
+        .is_empty());
+    heals.finish("k", false);
+    assert!(pending.settle(&heals, a, Some("k".to_owned())).is_empty());
+    assert!(pending.settle(&heals, b, Some("k".to_owned())).is_empty());
+    assert!(pending.waiting.is_empty());
+}
+
+#[test]
+fn a_session_reloads_at_most_1024_assets() {
+    let heals = CacheHeals::default();
+    let mut pending = PendingCacheHeals::default();
+    assert!(heals.begin("h"));
+    heals.finish("h", true);
+    for n in 0..MAX_CACHE_HEALS {
+        let path = asset(&format!("f{n}.png"));
+        assert_eq!(
+            pending.settle(&heals, path.clone(), Some("h".to_owned())),
+            vec![path]
+        );
+    }
+    assert!(pending
+        .settle(&heals, asset("one-too-many.png"), Some("h".to_owned()))
+        .is_empty());
 }

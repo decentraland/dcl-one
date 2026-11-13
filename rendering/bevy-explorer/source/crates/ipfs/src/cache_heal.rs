@@ -4,24 +4,26 @@
 //! file reads from checked, once per entry per session ([`CacheHeals`]). An entry filed under a
 //! content hash is dropped only when its bytes do not hash to it: the cache takes nothing else under
 //! a hash, so what fails the check is a processed or damaged copy, never the content itself. An
-//! entry filed under a url cannot be checked and is dropped. After a drop the asset is reloaded,
-//! which downloads it, and the asset processor leaves that file alone for the rest of the session
-//! ([`IpfsIo::cache_entry_dropped`]). On web the entry is the service worker's, under both its keys
-//! (`web_cache`); natively it is the disk cache file.
+//! entry filed under a url cannot be checked and is dropped. After a drop every asset that failed
+//! on the entry is reloaded once, which downloads it, and the asset processor leaves that file
+//! alone for the rest of the session ([`IpfsIo::cache_entry_dropped`]). On web the entry is the
+//! service worker's, under both its keys (`web_cache`); natively it is the disk cache file.
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 #[path = "cache_heal_tests.rs"]
 mod tests;
 
-use std::{collections::HashMap, path::Path, sync::Mutex};
+use std::{
+    collections::{HashMap, HashSet},
+    path::Path,
+    sync::Mutex,
+};
 
 use bevy::{
     asset::{AssetLoadError, AssetPath, UntypedAssetLoadFailedEvent},
     prelude::*,
     tasks::{IoTaskPool, Task},
 };
-#[cfg(any(target_arch = "wasm32", test))]
-use common::util::UrlLoopbackExt;
 use common::util::{TaskCompat, TaskExt};
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -35,6 +37,13 @@ use crate::{content_hash, ipfs_path::IpfsPath, IpfsIo, IpfsResource};
 pub const REPAIRABLE_GLTF_EXTENSIONS: [&str; 2] =
     ["KHR_draco_mesh_compression", "KHR_texture_basisu"];
 
+/// Whether a load error's text names an extension the asset processor repairs.
+pub fn names_repairable_extension(text: &str) -> bool {
+    REPAIRABLE_GLTF_EXTENSIONS
+        .iter()
+        .any(|extension| text.contains(extension))
+}
+
 /// Most cache entries checked in one session; failures past it are left as they are.
 const MAX_CACHE_HEALS: usize = 1024;
 
@@ -43,12 +52,7 @@ const MAX_CACHE_HEALS: usize = 1024;
 pub fn says_bad_bytes(error: &AssetLoadError) -> bool {
     match error {
         // the loader's own error is opaque: its text is the only way to tell a repairable glTF
-        AssetLoadError::AssetLoaderError(_) => {
-            let text = error.to_string();
-            !REPAIRABLE_GLTF_EXTENSIONS
-                .iter()
-                .any(|extension| text.contains(extension))
-        }
+        AssetLoadError::AssetLoaderError(_) => !names_repairable_extension(&error.to_string()),
         AssetLoadError::AssetLoaderPanic { .. } => true,
         _ => false,
     }
@@ -71,9 +75,17 @@ pub(crate) fn holds_other_bytes(filed: FiledUnder, bytes: &[u8]) -> bool {
     }
 }
 
-/// The cache entries checked this session, by cache name, and whether each was dropped.
+/// Where the check of one cache entry stands.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Check {
+    Checking,
+    Kept,
+    Dropped,
+}
+
+/// The cache entries checked this session, by cache name, and where each check stands.
 #[derive(Default)]
-pub(crate) struct CacheHeals(Mutex<HashMap<String, bool>>);
+pub(crate) struct CacheHeals(Mutex<HashMap<String, Check>>);
 
 impl CacheHeals {
     /// Claims the one check `name` gets this session: false when it had it, or when the session
@@ -83,24 +95,32 @@ impl CacheHeals {
         if checked.contains_key(name) || checked.len() >= MAX_CACHE_HEALS {
             return false;
         }
-        checked.insert(name.to_owned(), false);
+        checked.insert(name.to_owned(), Check::Checking);
         true
     }
 
-    fn dropped(&self, name: &str) {
-        if let Some(dropped) = self.0.lock().unwrap().get_mut(name) {
-            *dropped = true;
+    /// Records what the check of `name` found.
+    fn finish(&self, name: &str, dropped: bool) {
+        if let Some(check) = self.0.lock().unwrap().get_mut(name) {
+            *check = if dropped { Check::Dropped } else { Check::Kept };
         }
     }
 
+    fn state(&self, name: &str) -> Option<Check> {
+        self.0.lock().unwrap().get(name).copied()
+    }
+
     fn was_dropped(&self, name: &str) -> bool {
-        self.0.lock().unwrap().get(name).copied().unwrap_or(false)
+        self.state(name) == Some(Check::Dropped)
     }
 
     /// (entries checked, entries dropped) this session.
     pub(crate) fn counts(&self) -> (usize, usize) {
         let checked = self.0.lock().unwrap();
-        (checked.len(), checked.values().filter(|d| **d).count())
+        (
+            checked.len(),
+            checked.values().filter(|c| **c == Check::Dropped).count(),
+        )
     }
 }
 
@@ -112,24 +132,22 @@ impl IpfsIo {
         self.cache_heals.was_dropped(name)
     }
 
-    /// Drops the cached entry the file at `path` reads from, when its bytes are not what the
-    /// entry's name vouches for. Once per entry per session. True when an entry was dropped: the
-    /// asset should be reloaded.
-    pub(crate) async fn drop_bad_cached_entry(&self, path: &Path) -> bool {
+    /// The name of the cache entry whose check covers the failed load of `path`: the check drops
+    /// the entry when its bytes are not what its name vouches for, once per entry per session. The
+    /// entry's state in `CacheHeals` says what the check found, or that one is still under way.
+    /// None when there is no entry to check.
+    pub(crate) async fn drop_bad_cached_entry(&self, path: &Path) -> Option<String> {
         let Ok(Some(ipfs_path)) = IpfsPath::new_from_path(path) else {
-            return false;
+            return None;
         };
         let context = self.context.read().await;
-        let Some(key) = ipfs_path.cache_key(&context) else {
-            return false;
-        };
+        let key = ipfs_path.cache_key(&context)?;
         #[cfg(target_arch = "wasm32")]
-        let Some(remote) = web_lookup_url(&ipfs_path, &context) else {
-            return false;
-        };
+        let remote = web_lookup_url(&ipfs_path, &context)?;
         drop(context);
-        if !self.cache_heals.begin(key.name()) {
-            return false;
+        let name = key.name().to_owned();
+        if !self.cache_heals.begin(&name) {
+            return self.cache_heals.state(&name).is_some().then_some(name);
         }
         #[cfg(not(target_arch = "wasm32"))]
         let dropped = self.drop_bad_disk_entry(&key).await;
@@ -140,9 +158,9 @@ impl IpfsIo {
                 "dropped the cached copy of `{}`: its bytes failed to load",
                 path.display()
             );
-            self.cache_heals.dropped(key.name());
         }
-        dropped
+        self.cache_heals.finish(&name, dropped);
+        Some(name)
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -172,8 +190,7 @@ impl IpfsIo {
 #[cfg(any(target_arch = "wasm32", test))]
 fn web_lookup_url(ipfs_path: &IpfsPath, context: &IpfsContext) -> Option<String> {
     let remote = ipfs_path.to_url(context).ok()?;
-    let loopback = url::Url::parse(&remote).is_ok_and(|url| url.is_loopback());
-    (!loopback).then_some(remote)
+    (!common::util::is_loopback_url(&remote)).then_some(remote)
 }
 
 /// Drops the entry a read of `remote` gets (its shared one first, else its own), when its bytes
@@ -203,9 +220,60 @@ async fn drop_bad_web_entry(remote: &str) -> bool {
     }
 }
 
-/// Checks under way: each yields the asset to reload once its cached entry is gone.
+/// Checks under way, and the assets that failed on an entry until its check has finished.
 #[derive(Resource, Default)]
-pub(crate) struct PendingCacheHeals(Vec<Task<Option<AssetPath<'static>>>>);
+pub(crate) struct PendingCacheHeals {
+    // each yields the failed asset and the name of the entry whose check covers it
+    checks: Vec<Task<(AssetPath<'static>, Option<String>)>>,
+    // failed assets whose entry another failure is still checking, with that entry's name
+    waiting: Vec<(String, AssetPath<'static>)>,
+    // assets reloaded after their entry was dropped, with its name: each is reloaded once
+    reloaded: HashSet<(String, AssetPath<'static>)>,
+}
+
+impl PendingCacheHeals {
+    /// The assets to reload now that the failed load of `path` has its entry check `name`.
+    fn settle(
+        &mut self,
+        heals: &CacheHeals,
+        path: AssetPath<'static>,
+        name: Option<String>,
+    ) -> Vec<AssetPath<'static>> {
+        let Some(name) = name else {
+            return Vec::new();
+        };
+        match heals.state(&name) {
+            Some(Check::Checking) => {
+                let entry = (name, path);
+                if self.waiting.len() + self.reloaded.len() < MAX_CACHE_HEALS
+                    && !self.waiting.contains(&entry)
+                {
+                    self.waiting.push(entry);
+                }
+                Vec::new()
+            }
+            Some(Check::Dropped) => {
+                let mut assets = vec![path];
+                self.waiting.retain(|(waiting, asset)| {
+                    let ours = *waiting == name;
+                    if ours {
+                        assets.push(asset.clone());
+                    }
+                    !ours
+                });
+                assets.retain(|asset| {
+                    self.reloaded.len() < MAX_CACHE_HEALS
+                        && self.reloaded.insert((name.clone(), asset.clone()))
+                });
+                assets
+            }
+            Some(Check::Kept) | None => {
+                self.waiting.retain(|(waiting, _)| *waiting != name);
+                Vec::new()
+            }
+        }
+    }
+}
 
 /// After the asset plugins exist: an app without them has no load failures.
 pub(crate) fn finish(app: &mut App) {
@@ -233,17 +301,24 @@ pub(crate) fn drop_failed_cached_entries(
         }
         let path = event.path.without_label().into_owned();
         let io = ipfs.inner.clone();
-        pending.0.push(IoTaskPool::get().spawn_compat(async move {
-            let dropped = io.drop_bad_cached_entry(path.path()).await;
-            dropped.then_some(path)
-        }));
+        pending
+            .checks
+            .push(IoTaskPool::get().spawn_compat(async move {
+                let name = io.drop_bad_cached_entry(path.path()).await;
+                (path, name)
+            }));
     }
-    pending.0.retain_mut(|task| match task.complete() {
-        Some(Some(path)) => {
-            server.reload(path);
+    let mut done = Vec::new();
+    pending.checks.retain_mut(|task| match task.complete() {
+        Some(result) => {
+            done.push(result);
             false
         }
-        Some(None) => false,
         None => true,
     });
+    for (path, name) in done {
+        for asset in pending.settle(&ipfs.cache_heals, path, name) {
+            server.reload(asset);
+        }
+    }
 }
