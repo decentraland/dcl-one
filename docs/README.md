@@ -26,7 +26,7 @@
 - [Referral Slack effect budget (proposed)](adr/2026-11-04-referral-slack-effect-budget.md)
 - [Social schema v3 activation (proposed)](adr/2026-11-04-social-schema-v3-activation.md)
 - [Referral reward recovery (proposed)](adr/2026-11-04-social-runtime-boundaries.md)
-- [Opt-in AI conversation sharing (proposed)](adr/2026-11-12-ai-conversation-sharing.md)
+- [Opt-in AI conversation sharing and analysis (proposed)](adr/2026-11-12-ai-conversation-sharing.md)
 - [Web app server state](adr/2026-11-04-web-app-server-state.md)
 
 Verify compatibility, readiness and performance claims against evidence at the
