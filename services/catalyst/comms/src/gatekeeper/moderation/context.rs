@@ -190,9 +190,9 @@ impl<'a> Context<'a> {
             rooms,
             place_title: current_deployment
                 .title
-                .as_ref()
+                .as_deref()
+                .map(crate::explore::sanitize::strip_all_markup)
                 .filter(|title| !title.is_empty())
-                .cloned()
                 .unwrap_or_else(|| format!("Place at {}", current_deployment.base.canonical())),
         })
     }
@@ -335,6 +335,7 @@ mod tests {
             (Some("Exact Scene B"), "Exact Scene B"),
             (None, "Place at 1,1"),
             (Some(""), "Place at 1,1"),
+            (Some("<link=\"smb://h/s\">Rules</link>"), "Rules"),
         ] {
             let world = WorldName::parse("title.dcl.eth").unwrap();
             let realm = RealmId::World(world.clone());

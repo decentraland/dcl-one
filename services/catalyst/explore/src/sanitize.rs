@@ -15,7 +15,7 @@ pub(crate) const MAX_SANITIZE_PASSES: usize = 5;
 
 /// Stripping a tag can fuse residual text into a new tag a single pass never revisits, so the strip is re-run to a fixed point; each changing pass strictly shortens the input, so it converges. An input that has not stabilized within [`MAX_SANITIZE_PASSES`] fails closed with every angle bracket removed.
 pub fn sanitize_markup_description(description: &str) -> String {
-    let mut current = description.to_owned();
+    let mut current = decode_bracket_escapes(description).into_owned();
     for _ in 0..MAX_SANITIZE_PASSES {
         let next = strip_pass(&current);
         if next == current {
@@ -68,18 +68,72 @@ fn strip_markup_once(description: &str) -> String {
 }
 
 fn markup_tag_end(bytes: &[u8], lt: usize) -> Option<usize> {
+    if let Some(end) = colour_tag_end(bytes, lt) {
+        return Some(end);
+    }
     let mut j = lt + 1;
     if bytes.get(j) == Some(&b'/') {
         j += 1;
     }
-    let first = *bytes.get(j)?;
-    // `<#rrggbb>` is the rich-text colour shorthand.
-    if !(first.is_ascii_alphabetic() || (first == b'#' && j == lt + 1)) {
+    if !bytes.get(j)?.is_ascii_alphabetic() {
         return None;
     }
     j += 1;
     let rel = bytes[j..].iter().position(|b| *b == b'>')?;
     Some(j + rel + 1)
+}
+
+/// The rich-text colour shorthand `<#rgb>`, `<#rgba>`, `<#rrggbb>` or
+/// `<#rrggbbaa>`; any other `<#` is text.
+fn colour_tag_end(bytes: &[u8], lt: usize) -> Option<usize> {
+    if bytes.get(lt + 1) != Some(&b'#') {
+        return None;
+    }
+    let digits = bytes[lt + 2..]
+        .iter()
+        .take_while(|b| b.is_ascii_hexdigit())
+        .count();
+    let end = lt + 2 + digits;
+    (matches!(digits, 3 | 4 | 6 | 8) && bytes.get(end) == Some(&b'>')).then_some(end + 1)
+}
+
+/// The rich-text renderer decodes `\uXXXX` and `\UXXXXXXXX` escapes before it
+/// reads tags, so an escaped `<` or `>` is turned into the bracket itself
+/// first and then sanitized like one.
+fn decode_bracket_escapes(text: &str) -> std::borrow::Cow<'_, str> {
+    if !text.contains("\\u") && !text.contains("\\U") {
+        return std::borrow::Cow::Borrowed(text);
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find('\\') {
+        out.push_str(&rest[..at]);
+        let tail = &rest[at..];
+        let width = match tail.as_bytes().get(1) {
+            Some(b'u') => 4,
+            Some(b'U') => 8,
+            _ => 0,
+        };
+        let decoded = (width > 0)
+            .then(|| tail.get(2..2 + width))
+            .flatten()
+            .filter(|hex| hex.bytes().all(|b| b.is_ascii_hexdigit()))
+            .and_then(|hex| u32::from_str_radix(hex, 16).ok())
+            .and_then(char::from_u32)
+            .filter(|c| matches!(c, '<' | '>'));
+        match decoded {
+            Some(c) => {
+                out.push(c);
+                rest = &tail[2 + width..];
+            }
+            None => {
+                out.push('\\');
+                rest = &tail[1..];
+            }
+        }
+    }
+    out.push_str(rest);
+    std::borrow::Cow::Owned(out)
 }
 
 fn drop_unclosed_link_openers(text: &str) -> String {
@@ -645,6 +699,30 @@ mod markup_tests {
     }
 
     #[test]
+    fn strip_all_markup_is_idempotent() {
+        for input in [
+            "Party <link=\"file:///etc\">click</link><size=300>!",
+            "<<<<<<<<b>b>b>b>b>b>b>b>",
+            "<<Best Party>>",
+            "\\u003Cb\\u003Ebold",
+            "Club <VIP>  Night",
+            "<b></b>",
+        ] {
+            let once = strip_all_markup(input);
+            assert_eq!(strip_all_markup(&once), once, "{input:?}");
+            assert!(!once.is_empty(), "{input:?}");
+        }
+    }
+
+    #[test]
+    fn description_drops_escaped_tags() {
+        let out = sanitize_markup_description(
+            "see \\u003Clink=\"file:///x\"\\u003Ehere\\u003C/link\\u003E",
+        );
+        assert_eq!(out, "see here");
+    }
+
+    #[test]
     fn description_strips_the_colour_shorthand_and_keeps_safe_links() {
         assert_eq!(
             sanitize_markup_description(
@@ -653,6 +731,12 @@ mod markup_tests {
             "red and <link=\"https://a.com\">a</link>"
         );
         assert_eq!(sanitize_markup_description("issue <#12"), "issue <#12");
+        assert_eq!(
+            sanitize_markup_description("see <#12 and a > b"),
+            "see <#12 and a > b",
+            "only a hex colour is a tag"
+        );
+        assert_eq!(sanitize_markup_description("<#f00a>x"), "x");
     }
 
     #[test]
@@ -669,6 +753,16 @@ mod markup_tests {
             ("Plaza <b>", "Plaza"),
             ("<size=9> Tagged </size>", "Tagged"),
             (" Untagged ", " Untagged "),
+            ("Club <VIP> Night", "Club Night"),
+            ("<<Best Party>>", "Best Party"),
+            ("I <3 you >_<", "I <3 you >_<"),
+            ("issue <#12 and a > b", "issue <#12 and a > b"),
+            (
+                "\\u003Clink=\"file:///x\"\\u003Eclick\\u003C/link\\u003E",
+                "click",
+            ),
+            ("<size=300\\U0000003EBig", "Big"),
+            ("a \\u0041 b", "a \\u0041 b"),
             ("5 < 10, I <3 it", "5 < 10, I <3 it"),
             ("a > b", "a > b"),
         ] {
@@ -911,47 +1005,68 @@ pub fn sanitize_event_description(description: &str) -> String {
     sanitize_markup_description(description)
 }
 
-/// Plain text for names and titles, which keep no markup at all: every `<…>`
-/// span is dropped to a fixed point, so no rich-text tag (link, size, colour)
-/// survives. Fails closed like [`sanitize_markup_description`]. Text that
-/// lost a tag is trimmed, so no edge space is left where the tag was.
+/// Plain text for names and titles, which keep no markup at all: every
+/// rich-text tag (a `<` then a letter, `/` or the colour shorthand, up to the
+/// next `>`) is dropped to a fixed point, so no link, size or colour tag
+/// survives; other `<`/`>` text is kept. Fails closed like
+/// [`sanitize_markup_description`]. When a tag was dropped, whitespace is
+/// collapsed; when nothing readable is left, the text keeps its words with the
+/// brackets removed instead.
 pub fn strip_all_markup(text: &str) -> String {
-    let mut current = text.to_owned();
+    let decoded = decode_bracket_escapes(text);
+    let mut current = decoded.clone().into_owned();
+    let mut stable = false;
     for _ in 0..MAX_SANITIZE_PASSES {
         let next = strip_tag_spans(&current);
         if next == current {
-            return trim_if_stripped(text, current);
+            stable = true;
+            break;
         }
         current = next;
     }
-    current.retain(|c| !matches!(c, '<' | '>'));
-    trim_if_stripped(text, current)
-}
-
-fn trim_if_stripped(original: &str, stripped: String) -> String {
-    if stripped.len() == original.len() {
-        stripped
-    } else {
-        stripped.trim().to_owned()
+    if !stable {
+        current.retain(|c| !matches!(c, '<' | '>'));
     }
+    if current == text {
+        return current;
+    }
+    let readable = |s: &str| s.chars().any(char::is_alphanumeric);
+    if !readable(&current) && readable(&decoded) {
+        current = decoded.replace(['<', '>'], " ");
+    }
+    current.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 fn strip_tag_spans(text: &str) -> String {
+    let bytes = text.as_bytes();
     let mut out = String::with_capacity(text.len());
-    let mut rest = text;
-    while let Some(lt) = rest.find('<') {
-        out.push_str(&rest[..lt]);
-        let after = &rest[lt + 1..];
-        match after.find(['<', '>']) {
-            Some(end) if after.as_bytes()[end] == b'>' => rest = &after[end + 1..],
-            _ => {
+    let mut i = 0;
+    while let Some(rel) = text[i..].find('<') {
+        let lt = i + rel;
+        out.push_str(&text[i..lt]);
+        match name_tag_end(bytes, lt).or_else(|| colour_tag_end(bytes, lt)) {
+            Some(end) => i = end,
+            None => {
                 out.push('<');
-                rest = after;
+                i = lt + 1;
             }
         }
     }
-    out.push_str(rest);
+    out.push_str(&text[i..]);
     out
+}
+
+/// A `<name…>` or `</name…>` tag ending at the first `>` before any other `<`.
+fn name_tag_end(bytes: &[u8], lt: usize) -> Option<usize> {
+    let mut j = lt + 1;
+    if bytes.get(j) == Some(&b'/') {
+        j += 1;
+    }
+    if !bytes.get(j)?.is_ascii_alphabetic() {
+        return None;
+    }
+    let rel = bytes[j..].iter().position(|b| matches!(b, b'<' | b'>'))?;
+    (bytes[j + rel] == b'>').then_some(j + rel + 1)
 }
 
 pub fn strip_all_markup_opt(text: Option<String>) -> Option<String> {

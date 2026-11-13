@@ -672,7 +672,12 @@ impl EventsComponent {
             if out.get(&key).is_some_and(Option::is_some) {
                 continue;
             }
-            out.insert(key, ev.name.filter(|n| !n.is_empty()));
+            out.insert(
+                key,
+                ev.name
+                    .map(|n| strip_all_markup(&n))
+                    .filter(|n| !n.is_empty()),
+            );
         }
         Ok(out)
     }
@@ -697,7 +702,7 @@ impl EventsComponent {
             };
             out.entry(key).or_insert(NextEvent {
                 id: ev.id,
-                name,
+                name: strip_all_markup(&name),
                 next_start_at: json_date::wire(&next_start_at.and_utc()),
             });
         }
@@ -1308,12 +1313,13 @@ mod tests {
             ("live", now - chrono::Duration::minutes(30)),
             ("next", now + chrono::Duration::hours(3)),
         ] {
+            let stored = format!("<link=\"file:///x\">{name}</link><size=300>");
             sqlx::query(
                 "INSERT INTO explore.event (id, name, start_at, next_start_at, duration_ms, approved, raw) \
                  VALUES ($1, $2, $3, $3, 7200000, true, $4)",
             )
             .bind(format!("ev-{run}-{name}"))
-            .bind(name)
+            .bind(&stored)
             .bind(start.naive_utc())
             .bind(json!({ "approved": true, "place_id": place.to_uppercase() }))
             .execute(&pool)

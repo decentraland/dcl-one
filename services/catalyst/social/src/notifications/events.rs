@@ -201,6 +201,10 @@ async fn recipients(
 fn metadata(intent: &Intent, recipient: &Recipient, links: &Links) -> Value {
     let base = links.base.trim_end_matches('/');
     let name = crate::explore::sanitize::strip_all_markup(text(&intent.event, "name"));
+    let community_name = recipient
+        .community_name
+        .as_deref()
+        .map(crate::explore::sanitize::strip_all_markup);
     let description =
         crate::explore::sanitize::sanitize_event_description(text(&intent.event, "description"));
     // `Notifications/index.ts:48,85,205`: the jump-in link; the other kinds
@@ -225,7 +229,7 @@ fn metadata(intent: &Intent, recipient: &Recipient, links: &Links) -> Value {
             "Community Event starting".into(),
             format!(
                 "A {} event is about to start.",
-                recipient.community_name.as_deref().unwrap_or("community")
+                community_name.as_deref().unwrap_or("community")
             ),
         ),
         "events_started" => (
@@ -236,7 +240,7 @@ fn metadata(intent: &Intent, recipient: &Recipient, links: &Links) -> Value {
             "Community Event Added".into(),
             format!(
                 "The {} Community has added a new event.",
-                recipient.community_name.as_deref().unwrap_or("community")
+                community_name.as_deref().unwrap_or("community")
             ),
         ),
         _ => (name.to_string(), description),
@@ -266,7 +270,7 @@ fn metadata(intent: &Intent, recipient: &Recipient, links: &Links) -> Value {
     if recipient.community {
         let community = text(&intent.event, "community_id");
         metadata["communityId"] = json!(community);
-        metadata["communityName"] = json!(recipient.community_name);
+        metadata["communityName"] = json!(community_name);
         if recipient.community_thumbnail {
             // The stored thumbnail lives under the canonical UUID.
             let id = Uuid::parse_str(community).map_or(community.to_string(), |id| id.to_string());
@@ -1835,8 +1839,6 @@ mod tests {
         );
     }
 
-    /// `Notifications/index.ts:44-68,73-110`: the reminder and start titles,
-    /// descriptions, jump-in links (`position` and `realm`) and `attendee`.
     #[test]
     fn notice_text_carries_the_event_name_without_rich_text_tags() {
         let links = test_links("https://example.org");
@@ -1866,6 +1868,8 @@ mod tests {
         assert_eq!(plain["title"], "Launch");
     }
 
+    /// `Notifications/index.ts:44-68,73-110`: the reminder and start titles,
+    /// descriptions, jump-in links (`position` and `realm`) and `attendee`.
     #[test]
     fn reminder_and_start_notices_follow_upstream_titles_and_links() {
         let start = chrono::DateTime::parse_from_rfc3339("2099-06-01T18:00:00Z")

@@ -42,6 +42,10 @@ pub(super) fn placeholder_image_patterns() -> Vec<String> {
 
 pub(super) const ROAD_POSITIONS_TABLE: &str = "explore.road_positions";
 
+/// The title as clients show it: rich-text tags removed, as
+/// `sanitize::strip_all_markup` does for one pass.
+const PLAIN_TITLE_SQL: &str = "REGEXP_REPLACE(title, '</?[a-zA-Z][^<>]*>|<#([0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})>', '', 'g')";
+
 pub(super) fn build_content_quality_condition(
     f: &PlaceListFilters,
     road_positions: bool,
@@ -69,9 +73,9 @@ pub(super) fn build_content_quality_condition(
         "raw->>'image' IS NOT NULL \
          AND TRIM(raw->>'image') <> '' \
          AND NOT (raw->>'image' LIKE ANY (${images}::text[])) \
-         AND TRIM(COALESCE(title, '')) <> '' \
-         AND title !~ ${test_word} \
-         AND LOWER(TRIM(REGEXP_REPLACE(title, ${suffix}, ''))) <> ALL (${titles}::text[]) \
+         AND TRIM(COALESCE({PLAIN_TITLE_SQL}, '')) <> '' \
+         AND {PLAIN_TITLE_SQL} !~ ${test_word} \
+         AND LOWER(TRIM(REGEXP_REPLACE({PLAIN_TITLE_SQL}, ${suffix}, ''))) <> ALL (${titles}::text[]) \
          AND (TRIM(COALESCE(raw->>'owner', '')) <> '' \
            OR (world IS TRUE AND TRIM(COALESCE(raw->>'creator_address', '')) <> '') \
            OR (TRIM(COALESCE(raw->>'contact_name', '')) <> '' \
@@ -193,6 +197,29 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn the_gate_reads_titles_without_rich_text_tags() {
+        let Some(pool) = crate::db::scratch::pool(1).await else {
+            return;
+        };
+        for (title, plain) in [
+            ("<b>Untitled</b>", "Untitled"),
+            ("<size=1> </size>", " "),
+            ("<#ff0000>Red <link=\"x\">Garden</link>", "Red Garden"),
+            ("I <3 it", "I <3 it"),
+            ("issue <#12 b>", "issue <#12 b>"),
+        ] {
+            let got: String = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+                "SELECT {PLAIN_TITLE_SQL} FROM (SELECT $1::text AS title) t"
+            )))
+            .bind(title)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            assert_eq!(got, plain, "{title:?}");
+        }
+    }
+
     #[test]
     fn both_branches_share_one_gate_with_curation_first() {
         assert!(build_content_quality_condition(&feed(false, false), true, 1).is_none());
@@ -202,9 +229,14 @@ mod tests {
             clause.contains("raw->>'image' LIKE ANY ($3::text[])"),
             "{clause}"
         );
-        assert!(clause.contains("title !~ $4"), "{clause}");
         assert!(
-            clause.contains("LOWER(TRIM(REGEXP_REPLACE(title, $5, ''))) <> ALL ($6::text[])"),
+            clause.contains(&format!("{PLAIN_TITLE_SQL} !~ $4")),
+            "{clause}"
+        );
+        assert!(
+            clause.contains(&format!(
+                "LOWER(TRIM(REGEXP_REPLACE({PLAIN_TITLE_SQL}, $5, ''))) <> ALL ($6::text[])"
+            )),
             "{clause}"
         );
         assert!(
