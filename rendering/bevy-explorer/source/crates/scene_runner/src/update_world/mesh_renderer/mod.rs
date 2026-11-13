@@ -272,7 +272,11 @@ pub fn update_mesh(
         }
     }
 
-    let mut gate = budget.gate();
+    let gate = budget.gate();
+    // what waited goes before what is new. Once the slice is spent the walk leaves the rest of
+    // the waiting as they are, untouched: a waiting primitive never has a mesh, so there is
+    // nothing left to do for it. What is new is still gone through, to mark it and apply changes.
+    let waiting = pending_primitives.iter().take_while(|_| !gate.is_spent());
     for (
         ent,
         scene_ent,
@@ -282,9 +286,9 @@ pub fn update_mesh(
         maybe_existing_mesh,
         has_material,
         pending,
-    ) in pending_primitives.iter().chain(new_primitives.iter())
+    ) in waiting.chain(new_primitives.iter())
     {
-        // the slice is spent: what waits stays as it is, untouched, and what is new joins it
+        // the slice is spent: a new primitive joins the waiting
         if maybe_existing_mesh.is_none() && gate.is_spent() {
             mark_waiting(&mut commands, ent, PendingPrimitive, pending);
             continue;

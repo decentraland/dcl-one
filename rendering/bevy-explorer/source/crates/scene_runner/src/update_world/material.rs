@@ -544,7 +544,17 @@ type MaterialData = (
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub fn update_materials(
     mut commands: Commands,
-    pending_materials: Query<MaterialData, With<PendingMaterial>>,
+    prepaid_materials: Query<MaterialData, With<MaterialPrepaid>>,
+    // one waiting for its primitive is left out: it comes back prepaid once `update_mesh` admits
+    // the primitive, so a flood of waiting primitives is not walked here every frame
+    pending_materials: Query<
+        MaterialData,
+        (
+            With<PendingMaterial>,
+            Without<PendingPrimitive>,
+            Without<MaterialPrepaid>,
+        ),
+    >,
     new_materials: Query<
         MaterialData,
         (
@@ -554,6 +564,7 @@ pub fn update_materials(
                 With<RetryMaterial>,
             )>,
             Without<PendingMaterial>,
+            Without<MaterialPrepaid>,
         ),
     >,
     mut removed_materials: RemovedComponents<PbMaterialComponent>,
@@ -583,7 +594,12 @@ pub fn update_materials(
         }
     }
 
-    let mut gate = budget.gate();
+    let gate = budget.gate();
+    // prepaid ones first: they come with their primitive, whatever stops the walk below. Then
+    // what waited, before what is new; once the slice is spent the walk leaves the rest of the
+    // waiting as they are, untouched. What is new is still gone through, to mark it and apply
+    // changes.
+    let waiting = pending_materials.iter().take_while(|_| !gate.is_spent());
     for (
         ent,
         mat,
@@ -594,7 +610,10 @@ pub fn update_materials(
         pending,
         prepaid,
         primitive_pending,
-    ) in pending_materials.iter().chain(new_materials.iter())
+    ) in prepaid_materials
+        .iter()
+        .chain(waiting)
+        .chain(new_materials.iter())
     {
         let Ok((mut scene, mut cache)) = scenes.get_mut(container.root) else {
             commands
@@ -608,8 +627,8 @@ pub fn update_materials(
         // primitive.
         let first = mat.is_added() || pending || prepaid;
         let gated = first && !prepaid;
-        // one waiting for its primitive is admitted with it, which pays for both; once the slice
-        // is spent, what waits stays as it is, untouched, and what is new joins it
+        // a new one whose primitive waits is admitted with it, which pays for both; once the
+        // slice is spent, a new one joins the waiting
         if gated && (primitive_pending || gate.is_spent()) {
             mark_waiting(&mut commands, ent, PendingMaterial, pending);
             continue;
