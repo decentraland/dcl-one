@@ -1,7 +1,8 @@
 -- One row per lowercase world name: mixed-case duplicates collapse onto the
 -- already-lowercase row, else the newest. The access JSONB becomes the three
 -- typed columns plus the allow-list members; a malformed restricted setting
--- (no secret, no nft, unknown type) becomes an empty allow-list, fail closed.
+-- (no secret, no nft, unknown type) becomes an empty allow-list, fail closed,
+-- and is flagged in access_coerced so the load can report it.
 SELECT
     lower(w.name) AS name,
     CASE WHEN lower(w.owner) ~ '^0x[0-9a-f]{40}$' THEN lower(w.owner) END AS owner,
@@ -27,6 +28,11 @@ SELECT
                                             THEN w.access->'communities' ELSE '[]'::jsonb END) c
         WHERE c ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
     ) AS access_communities,
+    (w.access IS NOT NULL
+     AND coalesce(w.access->>'type', '') NOT IN ('unrestricted', 'allow-list')
+     AND NOT (coalesce(w.access->>'type', '') = 'shared-secret' AND coalesce(w.access->>'secret', '') <> '')
+     AND NOT (coalesce(w.access->>'type', '') = 'nft-ownership' AND coalesce(w.access->>'nft', '') <> ''))
+        AS access_coerced,
     w.spawn_coordinates::text AS spawn_coordinates,
     w.title::text AS title,
     w.description,
