@@ -630,7 +630,11 @@ async fn captcha_requires_solve_time_and_blocks_three_failures_for_a_day() {
     let Some(db) = OwnDatabase::create("photo_goal_captcha_limits").await else {
         return;
     };
-    let now = super::super::store::now();
+    use chrono::Timelike;
+    // Deliberately retain sub-microsecond precision that PostgreSQL drops.
+    let now = super::super::store::now()
+        .with_nanosecond(123_456_789)
+        .unwrap();
     let answer = match captcha::challenge(&db.pool, OWNER, now).await.unwrap() {
         Challenge::Ready(answer) => answer,
         _ => panic!("unexpected block"),
@@ -694,9 +698,14 @@ async fn captcha_requires_solve_time_and_blocks_three_failures_for_a_day() {
     };
     assert_eq!(answer, repeated, "GET reuses and refreshes the challenge");
     assert_eq!(
-        captcha::solve(&db.pool, OWNER, answer, tomorrow + TimeDelta::seconds(3))
-            .await
-            .unwrap(),
+        captcha::solve(
+            &db.pool,
+            OWNER,
+            answer,
+            tomorrow + TimeDelta::milliseconds(2001)
+        )
+        .await
+        .unwrap(),
         (true, false)
     );
     assert_eq!(
@@ -837,10 +846,7 @@ async fn retryable_events_do_not_starve_later_photos() {
 #[tokio::test]
 async fn signed_http_progress_claim_credits_and_native_aliases_keep_source_units() {
     use super::super::tests::{call, scratch_wallet, seed_wallet, send};
-    use axum::{
-        Router,
-        http::{HeaderMap, StatusCode},
-    };
+    use axum::http::{HeaderMap, StatusCode};
     let Some(db) = OwnDatabase::create("photo_goal_http").await else {
         return;
     };
@@ -869,9 +875,9 @@ async fn signed_http_progress_claim_credits_and_native_aliases_keep_source_units
     process_event(&state, id, super::super::store::now())
         .await
         .unwrap();
-    let app = Router::new()
-        .nest("/credits", super::super::router(state.clone()))
-        .nest("/shop-api", super::super::shop_router(state.clone()));
+    let storage_root =
+        std::env::temp_dir().join(format!("shop-goals-http-{}", uuid::Uuid::new_v4()));
+    let app = crate::paths::tests::mounted_with_credits(&storage_root, state.clone()).await;
     let (status, body) = call(
         &app,
         &wallet,
@@ -992,6 +998,60 @@ async fn signed_http_progress_claim_credits_and_native_aliases_keep_source_units
     assert_eq!(body["isBlockedForClaiming"], true);
     assert_eq!(body["reason"]["linkedAddresses"], json!([OTHER]));
     assert_eq!(body["usd"], json!({"balanceCents":120,"credits":12}));
+    // A paid wallet can leave the seasonal program without losing its USD
+    // balance. Exercise both aliases through the entire mounted Shop tree.
+    let paid_wallet = scratch_wallet();
+    let paid_address = &paid_wallet.address;
+    seed_wallet(&db.pool, paid_address, "0", "12").await;
+    let (status, body) = call(
+        &app,
+        &paid_wallet,
+        "get",
+        &format!("/credits/users/{paid_address}/status"),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["data"]["status"], "not_registered");
+    sqlx::query("UPDATE credits.wallets SET has_started_program=true WHERE address=$1")
+        .bind(paid_address)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    let (status, body) = call(
+        &app,
+        &paid_wallet,
+        "delete",
+        &format!("/shop-api/v1/users/{paid_address}"),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, json!({"ok":true}));
+    for path in [
+        format!("/credits/users/{paid_address}/status"),
+        format!("/shop-api/v1/users/{paid_address}/status"),
+    ] {
+        let (status, body) = call(&app, &paid_wallet, "get", &path, &[], None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["data"]["status"], "opted_out");
+        assert!(body["data"]["optedOutAt"].is_string());
+    }
+    let (status, body) = call(
+        &app,
+        &paid_wallet,
+        "get",
+        &format!("/shop-api/v1/users/{paid_address}/credits"),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["usd"], json!({"balanceCents":120,"credits":12}));
+    drop(app);
+    std::fs::remove_dir_all(storage_root).unwrap();
     db.drop().await;
 }
 

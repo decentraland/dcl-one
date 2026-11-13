@@ -8,6 +8,17 @@ use serde_json::Value;
 
 use super::thumbnail_of;
 
+// The pinned JPEG decoder selects SSSE3 at runtime, with different rounding
+// from its scalar implementation. Both goldens come from the source pipeline.
+fn source_pixel_hash(expected: &Value) -> &Value {
+    let scalar = &expected["pixelHash"];
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    if std::is_x86_feature_detected!("ssse3") {
+        return expected.get("pixelHashSsse3").unwrap_or(scalar);
+    }
+    scalar
+}
+
 #[test]
 fn source_image_format_and_thumbnail_contract() {
     let cases: Vec<Value> =
@@ -44,7 +55,7 @@ fn source_image_format_and_thumbnail_contract() {
         );
         assert_eq!(
             dcl_auth::hash_bytes(decoded.as_bytes()),
-            expected["pixelHash"],
+            *source_pixel_hash(expected),
             "{name}"
         );
     }
