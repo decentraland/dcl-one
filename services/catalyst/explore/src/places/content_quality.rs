@@ -68,17 +68,18 @@ pub(super) fn plain_title_sql() -> &'static str {
             );
         }
         let settled = format!(
-            "CASE WHEN {d} ~ '{TAG_RE}' THEN REGEXP_REPLACE({d}, '[<>]', '', 'g') ELSE {passes} END",
+            "CASE WHEN {d} ~ '{TAG_RE}' THEN REGEXP_REPLACE({d}, '[<>\\\\]', '', 'g') ELSE {passes} END",
             d = decoded_sql(&passes)
         );
         let known = crate::sanitize::RICH_TEXT_TAG_NAMES.join("|");
         let literal = format!("<(?!/?(?:{known})[ =/>])/?[a-z][^<>]*>");
+        // Whitespace collapses as the served name collapses around a tag.
         format!(
-            "(CASE WHEN strpos(title, '<') = 0 AND strpos(title, '\\') = 0 THEN title \
+            "REGEXP_REPLACE((CASE WHEN strpos(title, '<') = 0 AND strpos(title, '\\') = 0 THEN title \
              ELSE (SELECT CASE WHEN p = title OR p ~ '[[:alnum:]]' THEN p \
                WHEN title ~ '[[:alnum:]]' AND {d} ~* '{literal}' \
-                 THEN REGEXP_REPLACE({d}, '[<>]', ' ', 'g') \
-               ELSE '' END FROM (SELECT {settled} AS p) plain) END)",
+                 THEN REGEXP_REPLACE(REGEXP_REPLACE({d}, '[<>]', ' ', 'g'), '\\\\', '', 'g') \
+               ELSE '' END FROM (SELECT {settled} AS p) plain) END), '\\s+', ' ', 'g')",
             d = decoded_sql("title"),
         )
     });
@@ -265,6 +266,9 @@ mod tests {
             "<br/>",
             "<3 :)",
             "\\ <> /",
+            "new <b> scene",
+            "<Untitled\\x>",
+            "<<<<<<<b>b>b>b>b>b>b>\\u003\\u003<CC",
         ] {
             let got: String = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
                 "SELECT {} FROM (SELECT $1::text AS title) t",

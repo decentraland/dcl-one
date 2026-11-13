@@ -30,13 +30,9 @@ pub fn sanitize_markup_description(description: &str) -> String {
 /// The fail-closed end: every bracket, escaped or not, is removed, until no
 /// removal joins a new escape.
 fn drop_brackets(mut text: String) -> String {
-    loop {
-        let next = decode_bracket_escapes(&text).replace(['<', '>'], "");
-        if next == text {
-            return next;
-        }
-        text = next;
-    }
+    // Without `\` no escape can form, and without brackets no tag: one pass.
+    text.retain(|c| !matches!(c, '<' | '>' | '\\'));
+    text
 }
 
 fn strip_pass(description: &str) -> String {
@@ -180,6 +176,14 @@ fn opens_link_word(bytes: &[u8], lt: usize) -> bool {
     if bytes.get(j) == Some(&b'/') {
         j += 1;
     }
+    // A name holding an escape may decode to `link` on the client.
+    let name_end = bytes[j..]
+        .iter()
+        .position(|b| matches!(b, b' ' | b'=' | b'>' | b'<'))
+        .map_or(bytes.len(), |rel| j + rel);
+    if bytes[j..name_end].contains(&b'\\') {
+        return true;
+    }
     let Some(word) = bytes.get(j..j + 4) else {
         return false;
     };
@@ -228,7 +232,8 @@ fn link_open_target(tag: &str) -> Option<&str> {
 /// The host is read with a deliberately narrow parser rather than a URL library: anything it cannot fully account for -- a missing `://`, a non-numeric port, a percent-escaped or non-ASCII host, an unparseable IP literal -- fails closed, so a target is only ever kept when its host is unambiguous.
 pub fn is_safe_link_target(target: &str) -> bool {
     let trimmed = target.trim_matches(is_js_whitespace);
-    if trimmed.chars().any(is_js_whitespace) {
+    // The client decodes `\u` escapes in the target before it opens it.
+    if trimmed.chars().any(is_js_whitespace) || trimmed.contains('\\') {
         return false;
     }
     match http_link_host(trimmed) {
@@ -740,6 +745,50 @@ mod markup_tests {
     }
 
     #[test]
+    fn a_link_target_with_an_escape_is_not_kept() {
+        assert!(!is_safe_link_target("https://example.com\\u0040127.0.0.1/"));
+        assert!(!is_safe_link_target("https://example.com\\@127.0.0.1/"));
+        assert!(is_safe_link_target("https://example.com/"));
+        assert_eq!(
+            sanitize_markup_description("<link=\"https://example.com\\u0040127.0.0.1/\">x</link>"),
+            "x"
+        );
+        assert_eq!(
+            sanitize_markup_description("<link=\"https://example.com/\">x</link>"),
+            "<link=\"https://example.com/\">x</link>"
+        );
+    }
+
+    #[test]
+    fn an_unclosed_escaped_link_opener_is_dropped() {
+        for (input, expected) in [
+            ("x<\\u006Cink=\"file:///x\"", "x\\u006Cink=\"file:///x\""),
+            ("x<l\\u0069nk=\"file:///x\"", "xl\\u0069nk=\"file:///x\""),
+            ("x<link=\"file:///x\"", "xlink=\"file:///x\""),
+            ("5 < 10", "5 < 10"),
+        ] {
+            assert_eq!(sanitize_markup_description(input), expected, "{input:?}");
+        }
+    }
+
+    #[test]
+    fn the_fail_closed_path_is_linear_on_layered_escapes() {
+        let k = 50_000;
+        let input = format!(
+            "<<<<<<<b>b>b>b>b>b>b>{}<{}",
+            "\\u003".repeat(k),
+            "C".repeat(k)
+        );
+        let started = std::time::Instant::now();
+        let out = sanitize_markup_description(&input);
+        let name = strip_all_markup(&input);
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
+        for text in [out, name] {
+            assert!(!text.contains(['<', '>']));
+        }
+    }
+
+    #[test]
     fn description_drops_tags_whose_name_starts_with_an_escape() {
         for (input, expected) in [
             ("<\\u006Cink=\"file:///x\">click</link>", "click"),
@@ -979,9 +1028,9 @@ mod markup_tests {
     }
 
     #[test]
-    fn backslash_terminates_the_authority_like_a_slash() {
-        let kept = "<link=\"https://example.com\\@127.0.0.1/\">x</link>";
-        assert_eq!(sanitize_markup_description(kept), kept);
+    fn a_target_with_a_backslash_is_not_kept() {
+        let target = "<link=\"https://example.com\\@127.0.0.1/\">x</link>";
+        assert_eq!(sanitize_markup_description(target), "x");
     }
 
     #[test]
