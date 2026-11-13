@@ -1281,3 +1281,45 @@ async fn a_full_host_answers_503_before_the_upgrade() {
     );
     assert!(h.state.scenes.get(second.key()).is_none());
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_load_in_progress_does_not_hold_up_joins_to_other_scenes() {
+    let Some(h) = host(false).await else { return };
+    let (slow, hosted) = (world_name(), world_name());
+    for (world, id) in [(&slow, "bafySlowLoad"), (&hosted, "bafyHostedJoin")] {
+        seed_world(&h.state.pool, world, None, AccessType::Unrestricted).await;
+        seed_scene(&h.state, world, id, "", None, "0,0", &["0,0"], false).await;
+    }
+    h.state
+        .load(&SceneKey::World(hosted.clone()))
+        .await
+        .unwrap();
+    let addr = serve(h.state.clone()).await;
+
+    // Hold the slow scene's load lock, as a long load would.
+    let held = h
+        .state
+        .load_lock(&SceneKey::World(slow.clone()))
+        .lock_owned()
+        .await;
+    let waiting = {
+        let slow = slow.clone();
+        tokio::spawn(async move { join(addr, &slow, VISITOR_KEY, "{}").await.is_some() })
+    };
+    let (_ws, _) = tokio::time::timeout(
+        Duration::from_secs(3),
+        join(addr, &hosted, VISITOR_KEY, "{}"),
+    )
+    .await
+    .expect("a hosted scene's join does not wait on another key's load")
+    .expect("admitted");
+    assert!(
+        !waiting.is_finished(),
+        "the slow key's join waits for its load"
+    );
+    drop(held);
+    assert!(
+        waiting.await.unwrap(),
+        "the slow key's join completes after its load"
+    );
+}

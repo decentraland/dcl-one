@@ -218,9 +218,8 @@ pub(super) async fn load_scene(
     require_opt_in: bool,
 ) -> Result<()> {
     let name = key.room_key();
-    if let Some(prev) = state.scenes.remove(&name) {
+    if let Some((prev, _)) = state.remove_hosted(&name) {
         tracing::info!(scene = %name, "stopping existing scene");
-        prev.kick_all();
         drop(prev);
     }
     let resolved = match key {

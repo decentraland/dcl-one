@@ -79,6 +79,7 @@ mod tests {
 }
 
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use anyhow::{Context, anyhow};
@@ -484,15 +485,37 @@ pub struct SceneHostState {
     /// for an operator-allowed `http://` storage origin.
     pub(crate) fetch_http: Outbound,
     pub eip1654: Option<Arc<dyn Eip1654Validator>>,
-    /// Loads are rare and disk-bound; one at a time keeps two sockets from
-    /// loading the same scene twice.
-    loads: tokio::sync::Mutex<()>,
+    /// Joins and unloads exclude each other briefly; loads of one key run
+    /// one at a time without holding up other keys.
+    loads: SceneLocks,
     /// The jobs' root token once `spawn_jobs` ran: every per-scene delegation
     /// renewal loop stops with it, not only when its scene is dropped.
     shutdown: std::sync::OnceLock<tokio_util::sync::CancellationToken>,
 }
 
 pub type SharedState = Arc<SceneHostState>;
+
+/// How loads and joins exclude each other.
+#[derive(Default)]
+struct SceneLocks {
+    /// Held, never across an await, while a scene is looked up and a client
+    /// added, or a scene removed.
+    membership: parking_lot::Mutex<()>,
+    /// One lock per key: loads of the same key run one at a time.
+    per_key: parking_lot::Mutex<std::collections::HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+    /// Loads in flight, counted against the scene cap.
+    loading: std::sync::atomic::AtomicUsize,
+}
+
+struct SlotReservation<'a>(Option<&'a std::sync::atomic::AtomicUsize>);
+
+impl Drop for SlotReservation<'_> {
+    fn drop(&mut self) {
+        if let Some(loading) = self.0 {
+            loading.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
+}
 
 impl SceneHostState {
     pub fn with_secret_max_attempts(mut self, max: u32) -> Self {
@@ -530,7 +553,7 @@ impl SceneHostState {
             scenes: SceneManager::new(),
             fetch_http,
             eip1654,
-            loads: tokio::sync::Mutex::new(()),
+            loads: SceneLocks::default(),
             shutdown: std::sync::OnceLock::new(),
         })
     }
@@ -568,62 +591,115 @@ impl SceneHostState {
     /// reload of an already hosted scene never counts against the cap.
     pub async fn load(&self, key: &SceneKey) -> anyhow::Result<()> {
         let key = self.canonical_key(key).await;
-        let _guard = self.loads.lock().await;
-        self.ensure_capacity(&key)?;
+        let lock = self.load_lock(&key);
+        let _guard = lock.lock().await;
+        let _slot = self.reserve_slot(&key)?;
         load_or_reload(self, &key).await
     }
 
-    /// Adds an admitted client to the scene hosting `identity`'s deployment,
-    /// under the load lock so an idle unload cannot strand it. A scene that is
-    /// no longer hosted is loaded again only if it sets
-    /// `authoritativeMultiplayer`; a different deployment now hosted under
-    /// the key refuses the join (the client was admitted for the old one).
+    /// The lock loads of `key` take; loads of other keys never wait on it.
+    pub(crate) fn load_lock(&self, key: &SceneKey) -> Arc<tokio::sync::Mutex<()>> {
+        let mut locks = self.loads.per_key.lock();
+        locks.retain(|_, lock| Arc::strong_count(lock) > 1);
+        Arc::clone(locks.entry(key.room_key()).or_default())
+    }
+
+    /// Holds a place under the scene cap for a load of `key` that is not
+    /// hosted yet, until the returned guard drops.
+    fn reserve_slot(&self, key: &SceneKey) -> anyhow::Result<SlotReservation<'_>> {
+        let _membership = self.loads.membership.lock();
+        if self.scenes.get(&key.room_key()).is_some() {
+            return Ok(SlotReservation(None));
+        }
+        let loading = &self.loads.loading;
+        if self.scenes.len() + loading.load(Ordering::SeqCst) >= self.settings.max_scenes {
+            anyhow::bail!(
+                "scene host is full ({} scenes hosted, SCENE_HOST_MAX_SCENES)",
+                self.settings.max_scenes
+            );
+        }
+        loading.fetch_add(1, Ordering::SeqCst);
+        Ok(SlotReservation(Some(loading)))
+    }
+
+    /// Removes and kicks the scene hosted under `name`, atomically with joins.
+    pub(crate) fn remove_hosted(&self, name: &str) -> Option<(Arc<scene::Scene>, usize)> {
+        let _membership = self.loads.membership.lock();
+        let scene = self.scenes.remove(name)?;
+        let kicked = scene.kick_all();
+        Some((scene, kicked))
+    }
+
+    /// Adds an admitted client to the scene hosting `identity`'s deployment.
+    /// The lookup and the add happen under the membership lock unloads take,
+    /// so a client never lands in an unloaded scene; only a missing scene
+    /// waits, on its own key's load lock. A scene that is no longer hosted is
+    /// loaded again only if it sets `authoritativeMultiplayer`; a different
+    /// deployment now hosted under the key refuses the join (the client was
+    /// admitted for the old one).
     pub async fn join<R>(
         &self,
         identity: &scene::SceneIdentity,
         add: impl FnOnce(&Arc<scene::Scene>) -> R,
     ) -> anyhow::Result<(Arc<scene::Scene>, R)> {
         let key = &identity.key;
-        let _guard = self.loads.lock().await;
-        let scene = match self.scenes.get(&key.room_key()) {
-            Some(scene) if scene.identity.scene_id() == identity.scene_id() => scene,
-            Some(_) => anyhow::bail!("{key} was redeployed while the client was admitted"),
-            None => {
-                self.ensure_capacity(key)?;
-                loader::load_scene(self, key, true).await?;
-                self.scenes
-                    .get(&key.room_key())
-                    .ok_or_else(|| anyhow!("{key} was not hosted after loading"))?
+        let mut add = Some(add);
+        for _ in 0..2 {
+            if let Some(joined) = self.try_join(identity, &mut add)? {
+                return Ok(joined);
             }
-        };
-        let added = add(&scene);
-        Ok((scene, added))
+            let lock = self.load_lock(key);
+            let _guard = lock.lock().await;
+            if let Some(joined) = self.try_join(identity, &mut add)? {
+                return Ok(joined);
+            }
+            let _slot = self.reserve_slot(key)?;
+            loader::load_scene(self, key, true).await?;
+        }
+        Err(anyhow!("{key} was not hosted after loading"))
     }
 
-    fn ensure_capacity(&self, key: &SceneKey) -> anyhow::Result<()> {
-        let hosted = self.scenes.get(&key.room_key()).is_some();
-        if !hosted && self.scenes.len() >= self.settings.max_scenes {
-            anyhow::bail!(
-                "scene host is full ({} scenes hosted, SCENE_HOST_MAX_SCENES)",
-                self.settings.max_scenes
-            );
+    fn try_join<R, F: FnOnce(&Arc<scene::Scene>) -> R>(
+        &self,
+        identity: &scene::SceneIdentity,
+        add: &mut Option<F>,
+    ) -> anyhow::Result<Option<(Arc<scene::Scene>, R)>> {
+        let _membership = self.loads.membership.lock();
+        match self.scenes.get(&identity.key.room_key()) {
+            Some(scene) if scene.identity.scene_id() == identity.scene_id() => {
+                let add = add.take().ok_or_else(|| anyhow!("client already added"))?;
+                let added = add(&scene);
+                Ok(Some((scene, added)))
+            }
+            Some(_) => Err(anyhow!(
+                "{} was redeployed while the client was admitted",
+                identity.key
+            )),
+            None => Ok(None),
         }
-        Ok(())
     }
 
     /// Unloads every scene other than the local one that has had no client
-    /// for the idle timeout, under the load lock joins take.
+    /// for the idle timeout; each check and removal is atomic with joins.
     pub async fn unload_idle(&self) -> usize {
         let Some(timeout) = self.settings.idle_unload else {
             return 0;
         };
-        let _guard = self.loads.lock().await;
         let mut unloaded = 0;
         for scene in self.scenes.all() {
             let key = scene.identity.key.clone();
-            if key != SceneKey::Local && scene.idle_for().is_some_and(|idle| idle >= timeout) {
+            let _membership = self.loads.membership.lock();
+            let still_hosted = self
+                .scenes
+                .get(&key.room_key())
+                .is_some_and(|hosted| Arc::ptr_eq(&hosted, &scene));
+            if still_hosted
+                && key != SceneKey::Local
+                && scene.idle_for().is_some_and(|idle| idle >= timeout)
+            {
                 tracing::info!(scene = %key, "no clients for the idle timeout; unloading");
-                self.unload(&key);
+                self.scenes.remove(&key.room_key());
+                scene.kick_all();
                 unloaded += 1;
             }
         }
@@ -632,9 +708,8 @@ impl SceneHostState {
 
     /// Stops hosting `key`: every client is kicked and the runtime dropped.
     pub fn unload(&self, key: &SceneKey) -> usize {
-        match self.scenes.remove(&key.room_key()) {
-            Some(scene) => {
-                let kicked = scene.kick_all();
+        match self.remove_hosted(&key.room_key()) {
+            Some((_, kicked)) => {
                 tracing::info!(scene = %key, kicked, "scene unloaded");
                 kicked
             }
