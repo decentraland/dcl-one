@@ -762,7 +762,8 @@ fn content_routes(state: &SharedState, max_deploy_body: usize) -> Router<SharedS
                 .route_layer(axum::middleware::from_fn_with_state(
                     state.clone(),
                     content_get_limit::limit,
-                )),
+                ))
+                .route_layer(get_content::compression_layer()),
         )
         .route(
             "/contents/{hashId}/active-entities",

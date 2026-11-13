@@ -299,8 +299,16 @@ def render(table, cfg, mime):
         # the redirect and drops its other headers, so ETag and the expose list
         # are copied back. The app answers every Range it supports itself; one it
         # does not (multi-range, `bytes=-`) gets the whole file, as upstream.
+        # Content blobs are public and immutable, so compressing them on the wire
+        # leaks nothing (no secret shares a body with requester input). nginx
+        # can't tell a GLB from a PNG here (no extension, one type), so every blob
+        # over 1 KiB is offered gzip at a moderate level; the API's own layer
+        # skips already-compressed formats when it streams a file itself. nginx
+        # gzips only whole (200) responses, so the app's 206 range answers stay
+        # as stored.
         storage = (f'internal; alias {cfg["storage"]}/contents/; sendfile on; etag off;\n'
                    'max_ranges 0;\n'
+                   'gzip on; gzip_types *; gzip_min_length 1024; gzip_comp_level 5; gzip_vary on;\n'
                    'if ($upstream_http_x_accel_redirect = "") { return 404; }\n'
                    'add_header ETag $upstream_http_etag always;\n'
                    'add_header Access-Control-Expose-Headers $upstream_http_access_control_expose_headers always;\n'

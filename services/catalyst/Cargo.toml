@@ -62,7 +62,7 @@ dcl-scene-authoring = { path = "../../library/dcl-scene-authoring" }
 dcl-scene-cli = { path = "../../apps/dcl-scene-cli" }
 tokio = { version = "1", features = ["full"] }
 axum = { version = "0.8", features = ["multipart", "ws"] }
-tower-http = { version = "0.7", features = ["cors", "trace", "timeout", "fs", "normalize-path"] }
+tower-http = { version = "0.7", features = ["cors", "trace", "timeout", "fs", "normalize-path", "compression-br", "compression-gzip"] }
 sqlx = { version = "0.9", features = ["runtime-tokio", "postgres", "json", "chrono", "macros", "uuid"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["float_roundtrip", "raw_value"] }
