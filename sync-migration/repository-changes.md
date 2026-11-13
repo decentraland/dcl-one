@@ -31,7 +31,7 @@ Branches are published for review; nothing is deployed. The dcl-one branch was r
 - Notifications acknowledges queue input after failed persistence: [evidence and retry requirements](remaining-services-sync-audit.md). Neither gateway replay nor CDC can recover an event never durably recorded.
 - Worlds owner updates omit the timestamp used by incremental import: [evidence](worlds-creator-sync-audit.md). A source timestamp fix alone does not solve deletes or make batch imports continuous replication.
 
-Notifications and Worlds fixes remain pending. The Events recurrence fix is local and not deployed.
+The Notifications retry fix and Worlds incremental-import timestamp fix remain pending; the continuous Worlds lane observes committed changes directly and does not use that watermark. The Events recurrence fix is local and not deployed.
 
 ## Native vote and selective POI increment
 
@@ -48,3 +48,11 @@ The gateway passes 301 tests, TypeScript checking and build. Places passes 42 fo
 The [Events endpoint contract](events-command-contract.md) selects schedule PATCH before creation and RSVP. No Events gateway route or row adapter is enabled. The source change has a job-lifecycle purpose independent of replication.
 
 The worker now validates entity IDs from vote commands and POI results even when `changes` is empty. It rechecks the same scope before application. PostgreSQL regressions reject out-of-scope no-ops on enqueue and block directly inserted retained payloads without advancing the checkpoint. The full 27 unit/CLI tests, three PostgreSQL suites and Clippy pass. Events has six focused recurrence tests plus passing type/lint checks.
+
+## Player storage and Worlds owner/quota rehearsals
+
+[World Storage #130](https://github.com/decentraland/world-storage-service/pull/130) is required because authoritative multiplayer writes bypass the gateway. It records accepted player set/delete/clear commands in the source transaction; it does not duplicate gameplay or copy player rows. The flag defaults off, and installation plus all-writer activation requires a paused write window.
+
+[dcl-one #706](https://github.com/decentraland/dcl-one/pull/706) adds the native target player operation, ordered receipts, baseline verification and source capture/apply commands. The normal storage handlers share the native operation and retain their quotas/cache behavior. Target replay trusts the already accepted source operation; it does not re-evaluate expired delegation credentials or later quota inputs.
+
+The Worlds residual adapter captures only owner/quota committed facts, including physical unblocks. [Worlds content #561](https://github.com/decentraland/worlds-content-server/pull/561) supplies the source lock-order hook required before existing Worlds row/advisory locks: a statement trigger alone could deadlock requests that already locked a world row. Source effects and jobs remain production-owned; eviction is not treated as another active-scene deletion. See [the implementation boundary](worlds-background-contract.md#implemented-boundary) and [source installation](../services/migration-sync/source/worlds.md).

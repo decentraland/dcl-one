@@ -6,7 +6,7 @@ Reviewed 2026-11-12 from local source revisions pinned in the links below. This 
 
 ## Inventory boundary
 
-The [batch source catalog](../tooling/migration/sources) contains 16 sources: badges, builder-server, camera-reel-service, comms-gatekeeper, credits-server, events, marketplace-favorites-server, marketplace-server, notifications-workers, places, referral-server, shop-server, signatures-server, social-service-ea, world-storage-service and worlds-content-server. The retained pilot executes accepted favorite/vote commands and maps only the justified POI membership outcome; broader source-only adapters remain removed. A batch mapping is not a continuous delete/order/recovery contract.
+The [batch source catalog](../tooling/migration/sources) contains 16 sources: badges, builder-server, camera-reel-service, comms-gatekeeper, credits-server, events, marketplace-favorites-server, marketplace-server, notifications-workers, places, referral-server, shop-server, signatures-server, social-service-ea, world-storage-service and worlds-content-server. The Places pilot executes accepted favorite/vote commands and maps only the justified POI membership outcome; separate bounded player replay and Worlds owner/quota lanes are described in the [background contract](worlds-background-contract.md); broader source-only adapters remain removed. A batch mapping is not a continuous delete/order/recovery contract.
 
 Shop, credits, treasury and both marketplace sources remain excluded for security reasons. Signatures/rentals are deferred because their target status depends on excluded shop chain data. Source names outside this catalog must be classified as deliberately retained dependencies or missing migration scope; absence is not evidence they are stateless.
 

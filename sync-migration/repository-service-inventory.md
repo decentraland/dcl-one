@@ -12,7 +12,7 @@ The [complete repository catalog](repository-inventory.md) records every checkou
 
 The repository inventory is broader than dcl-one's migration scope. **Discovery is not a separate migration source: its product functionality is Places and Events in dcl-one. CMS and warehouse feeds are not dcl-one services; Exploration Games is out of scope.** Their existence in the checkout inventory does not create a gateway or synchronization requirement. Mobile BFF is not automatically included either; target scope must be established before proposing work.
 
-The next relevant coverage is **worlds-content-server and world-storage-service**, both represented in dcl-one and in the initial migration. Their [focused replay/sync assessment](worlds-creator-sync-audit.md#worlds-recheck-and-next-contracts) separates request replay, derived state and source-job outcomes. Neither has a continuous migration lane yet.
+The next relevant coverage is **worlds-content-server and world-storage-service**, both represented in dcl-one and in the initial migration. Their [focused replay/sync assessment](worlds-creator-sync-audit.md#worlds-recheck-and-next-contracts) separates request replay, derived state and source-job outcomes. Bounded player-command replay and owner/quota capture are implemented; see the [exact boundary](worlds-background-contract.md#implemented-boundary).
 
 ## Service disposition
 
@@ -63,4 +63,4 @@ These are **definition-only evidence**, not source-code reviews. The list comes 
 4. **Assess exact Worlds job outcomes:** owner changes, quota block creation/removal and eviction. Compare captured input replay with minimal committed-outcome mapping; never run independent external-data decisions in both instances.
 5. **Verify deployed ingress and internal writers for these in-scope services.** Scene/runtime calls must reach the chosen gateway or durable acceptance path. Rehearse ordering across deployments and storage writes, deletion, retries and recovery before activation.
 
-No additional gateway route or sync adapter was enabled by this audit. Favorites/votes remain native replay; the POI membership bit remains the only implemented residual projection. Shop, treasury, credits and marketplace stay excluded for security reasons. Voice, notifications, rewards, push, uploads and scene sessions retain one effect owner until a separate handover is proven.
+No additional gateway route or sync adapter was enabled by this audit. Favorites/votes remain native replay; residual projections remain limited to POI membership and scoped Worlds owner/quota facts. Shop, treasury, credits and marketplace stay excluded for security reasons. Voice, notifications, rewards, push, uploads and scene sessions retain one effect owner until a separate handover is proven.

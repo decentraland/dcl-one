@@ -26,7 +26,9 @@ Before implementing a lane, record the operation, every writer, source and targe
 | Badge catalog/admin commands | Duplicate candidates | Version IDs, permission checks and publication assets |
 | Badge evaluator and presence progress | Residual candidates | Event/progress provenance, resets and deletes; one reward/effect owner |
 | Worlds permission/storage edits and deployments | Assess replay before sync | Identical namespace/scene identity, authorization, upload bytes and safe revocation behavior; multi-step uploads are not one duplicate JSON request |
-| Worlds owner/quota/eviction jobs | Residual candidates | Exact retained outputs, permission/scene/blob dependencies; timestamp-based imports miss some owner updates |
+| Worlds owner/quota jobs and request-triggered unblocks | Bounded committed-outcome mapping implemented | Scoped worlds/wallets, original grace timestamps and quota deletions; no providers or notifications. Staging verification remains. |
+| World Storage player setters/deletes/clears | Source acceptance and native replay implemented | Includes direct multiplayer callers; immutable world/place/scene bindings, unknown writes block. Genesis and changed deployments remain unsupported. |
+| Worlds physical eviction | Retention cleanup; no active-scene sync added | Earlier undeployment must be covered before cleanup; protect outstanding blobs and replacement scenes. |
 | Camera and Builder mutations | Assess replay before sync | Generated IDs, complete object/version transfer, publication/moderation effects and delete behavior |
 | Content/profile entities | Reuse existing content replication where compatible | Isolated peer ingestion, accepted pointers/deletes and verified blobs; not another generic DB adapter |
 | Gatekeeper voice/streaming, provider webhooks and cleanup | Single effect owner / explicit handover | No duplicate LiveKit calls; durable outcomes and stale-permission policy before any fact projection |
@@ -41,7 +43,7 @@ Detailed source links and writer evidence are in the four service audits linked 
 
 1. Rehearse the implemented favorite/vote command and POI residual paths through actual gateway/source roles. Untagged mutations remain blocked.
 2. Validate the optional per-request-attempt gateway policy under real retries; it mirrors actual accepted setter attempts and does not provide logical client retry deduplication.
-3. Implement Events schedule PATCH acceptance and native replay using the [endpoint contract](events-command-contract.md), before enabling its gateway route. Classify other writers after comparing deterministic input replay with outcome mapping. The POI bit is the only approved residual; do not broaden it to the rest of the catalogue.
+3. Implement Events schedule PATCH acceptance and native replay using the [endpoint contract](events-command-contract.md), before enabling its gateway route. Classify other writers after comparing deterministic input replay with outcome mapping. The Places residual remains POI-only; the separate Worlds projection covers only owner/quota facts. Do not broaden either to catalogue/world rows.
 4. Test replay and residual updates touching the same entity, mixed transactions, deletes, delayed retries, source rejection and unknown target commit outcomes. No second application of native results.
 5. Build a public read surface that runs without target jobs/providers and validates every dependency's scope and freshness. The current private follower is not this surface.
 6. Rehearse against disposable source clones, then verify actual deployed routing/writers and measure contention, lag, retention and recovery before a public cohort.

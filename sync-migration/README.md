@@ -17,15 +17,16 @@
 | Status | Scope and reason |
 | --- | --- |
 | Native execution | Favorite and like/dislike/withdrawal setters use durable source acceptance, ordered native target execution and atomic receipts. The gateway returns production's response. |
-| Selective sync | Only the source POI job's effective POI membership bit is mapped. There is no equivalent existing request to duplicate. Other categories/catalogue data are not copied. Unknown writers stop the shared stream. |
+| Selective sync | Places POI membership and scoped Worlds owner/quota outcomes. Both depend on source decisions without an equivalent compatible request. Quota deletes and original grace timestamps are preserved; no whole-world rows or notifications are copied. |
+| Player storage | Accepted set/delete/player-clear/scene-clear commands are captured inside World Storage, including direct multiplayer callers, and replayed natively. Explicit world/place/scene scopes are immutable; unknown writes block progress. |
 | Not included | Broad interaction/catalogue/schedule/settings row replication and generic gateway read activation. Public target APIs and the remaining operation contracts are still incomplete. |
-| Next | Rehearse the integrated command/POI paths, then classify the next API command or residual writer. No whole-service sync is implied by this pilot. |
+| Next | Rehearse Places, player-storage and owner/quota streams against source clones, verify real ingress and measure lock/retention costs. No whole-service sync or public activation is implied. |
 
 Caller-supplied stable IDs remain the default. For these idempotent setters only, opt-in gateway `request-attempt` IDs allow unchanged clients: each actual production acceptance is replayed in order. Separate client retries are not deduplicated as one logical intent. Source/target receipts remain required. Initial migration may copy baseline rows; that is different from continuously copying compatible request outcomes.
 
 ## Review requests
 
-[Hybrid worker #706](https://github.com/decentraland/dcl-one/pull/706) (depends on [initial migration #195](https://github.com/decentraland/dcl-one/pull/195)), [Places #901](https://github.com/decentraland/places/pull/901), [Events #1032](https://github.com/decentraland/events/pull/1032), and [gateway !446](https://dcl.tools/ops/cloudflare-workers/-/merge_requests/446). All are published; none is deployed.
+[Hybrid worker #706](https://github.com/decentraland/dcl-one/pull/706) (depends on [initial migration #195](https://github.com/decentraland/dcl-one/pull/195)), [World Storage #130](https://github.com/decentraland/world-storage-service/pull/130), [Worlds content #561](https://github.com/decentraland/worlds-content-server/pull/561), [Places #901](https://github.com/decentraland/places/pull/901), [Events #1032](https://github.com/decentraland/events/pull/1032), and [gateway !446](https://dcl.tools/ops/cloudflare-workers/-/merge_requests/446). All are published; none is deployed.
 
 ## Evidence and follow-up
 

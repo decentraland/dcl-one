@@ -10,6 +10,8 @@ The first scope is 1–1,000 canonical world names and 1–1,000 canonical walle
 
 Source transactions above 1,000 changes or 1 MiB stop capture before progress advances. A physical `TRUNCATE` is refused while triggers are installed. Ordinary outside-scope changes create no captured facts, but share the statement lock. Source DDL, trigger disabling and privileged manual writes are operator-controlled boundaries, not solved by this adapter.
 
+Source lock-order integration: [Worlds content #561](https://github.com/decentraland/worlds-content-server/pull/561). Install this code on every writer before activation; a DML statement trigger alone is insufficient for transactions that already hold row locks.
+
 ## Install and bootstrap
 
 Use the existing worker's `MIGRATION_SYNC_SOURCE_DATABASE_URL` and `MIGRATION_SYNC_DATABASE_URL` secret environment variables. The CLI integration exposes installation and the `worlds` command group; consult `dcl-migration-sync --help` and `dcl-migration-sync worlds --help` for argument names.

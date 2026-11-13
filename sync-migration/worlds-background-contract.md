@@ -10,7 +10,7 @@ The multiplayer parent [mints scene-scoped storage delegations](https://github.c
 
 World Storage accepts `PUT /players/:player_address/values/:key`, per-key DELETE, per-player clear and scene-wide player clear. Its [handler](https://github.com/decentraland/world-storage-service/blob/de0178e1d78fa50188824a83bf28e02b8fe427af/src/controllers/handlers/player-storage/upsert-player-storage.ts) passes the accepted value and resolved world/place/player/key to [quota-locked transactional storage operations](https://github.com/decentraland/world-storage-service/blob/de0178e1d78fa50188824a83bf28e02b8fe427af/src/logic/storage-operations/component.ts). The [adapter](https://github.com/decentraland/world-storage-service/blob/de0178e1d78fa50188824a83bf28e02b8fe427af/src/adapters/player-storage/component.ts) persists JSON values and physically deletes rows.
 
-**Preferred coverage:** capture an accepted storage command in the same source transaction, then replay it through a private target native operation. This covers multiplayer and other callers even when they bypass the edge gateway. Alternatively, route the existing storage hostname through the gateway, preserving signed URLs and delegation verification; that still needs durable source acceptance. Neither option needs client changes or duplicate scene execution. Both require implementation and compatibility tests before enabling.
+**Preferred coverage:** capture an accepted storage command in the same source transaction, then replay it through a private target native operation. This covers multiplayer and other callers even when they bypass the edge gateway. Alternatively, route the existing storage hostname through the gateway, preserving signed URLs and delegation verification; that still needs durable source acceptance. Neither option needs client changes or duplicate scene execution. The source-acceptance approach is implemented for the bounded player pilot; real ingress and production load still require rehearsal.
 
 **If storage ingress and source acceptance remain unchanged:** selective committed-change capture for player values is needed to keep the follower current. Include inserts, updates, per-key deletes and bulk clears; timestamp polling cannot recover physical deletes. Capture only changes without native receipts, and stop on ambiguous provenance. Do not apply both row outcomes and replay to the same mutation.
 
@@ -52,4 +52,14 @@ Retired-history equivalence remains a separate retention decision. If required, 
 2. Implement minimal owner/quota capture with writer classification and target effect suppression. Test transfer, unresolved ownership, block refresh, grace expiry, cron unblock, deployment-triggered unblock, delete/reblock and delayed delivery.
 3. Prove undeployment coverage before adding any eviction handling. Test retirement followed by redeployment and delayed source eviction; the new active scene and player values must survive.
 
-These are implementation requirements, not completed adapters or deployment approval. They replace the vague “further assessment” classification for owner/quota outcomes; exact retired-history replication remains optional pending the retention contract.
+The bounded player-command and owner/quota paths are implemented as opt-in rehearsals. They are not deployed or approved for public target traffic. Exact retired-history replication remains optional pending the retention contract.
+
+## Implemented boundary
+
+- Player commands: set, per-key delete, per-player clear and scene-wide clear. Source command capture includes no-op clears and actual acceptance order; unreceipted writes block the stream. No player-row copy fallback is enabled.
+- Scope: explicit fixed world/place/scene bindings, matching preimported baseline and local target scenes. A changed binding stops replay. Genesis many-to-one mapping and continuing through redeployments are not supported by this slice.
+- Worlds facts: scoped owner changes and block insert/update/delete, with original timestamps and target before-state verification. Transfers outside the approved wallet scope stop the stream instead of silently losing quota coverage.
+- Effects: production owns scene execution, jobs, providers and notifications. Both new stream registrations fence normal target startup. Source application flags, SQL installation and credentials are explicit; nothing is automatically enabled on deployment.
+- Native target operations: replay trusts source acceptance and uses the storage mutation shared with normal handlers. It does not re-run mutable quota/auth decisions; normal public handlers retain them. No target serving cache runs in the isolated rehearsal.
+
+The installation and runtime commands live in the [worker runbook](../services/migration-sync/README.md). Staging traffic, contention, retention, recovery and multi-day soak remain unverified.

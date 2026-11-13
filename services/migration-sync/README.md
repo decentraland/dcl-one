@@ -3,16 +3,15 @@
 A separately deployable, removable **production → dcl-one** coordinator. Production
 remains the write authority and owns jobs and external effects. The gateway returns
 production's result. Its production transaction records the command durably; the
-coordinator executes the equivalent native target command in source order. The only residual mapping is the POI job’s committed membership bit; it has no equivalent inbound request. Unrecognized changes block progress. Compatible operations use native execution, never continuous interaction-row copying.
+coordinator executes the equivalent native target command in source order. Residual mappings are POI membership and bounded Worlds owner/quota outcomes; neither has an equivalent compatible inbound request. Unrecognized changes block progress. Compatible operations use native execution, never continuous interaction-row copying.
 
-## Supported pilot
+## Supported rehearsals
 
 Favorites, tri-state votes and trusted POI-job membership for explicitly selected Genesis Places UUIDs. Shop and credits are
-excluded for security reasons, including marketplace imports. Worlds, social/voice,
-notifications, other aggregates and arbitrary SQL replication are not implemented.
+excluded for security reasons, including marketplace imports. Additional opt-in rehearsals cover accepted World Storage player commands and Worlds owner/quota outcomes. World/env storage, deployments, social/voice, notifications, other aggregates and arbitrary SQL replication are not implemented.
 The asset-bundle rewriter is unrelated and unchanged.
 
-The [executable scope contract](pilot-contract.json) lists the command scope and activation gates.
+The Places [executable scope contract](pilot-contract.json) lists the command scope and activation gates.
 The migration decision document under [`sync-migration`](../../sync-migration/README.md) owns strategy and exceptions.
 
 The target's dedicated `catalyst migration-follower` listener starts no normal
@@ -174,3 +173,13 @@ fields and side effects, and its validation. A job or internal call is a candida
 for investigation, not automatic permission to copy its tables.
 
 See the [deployment ADR](../../docs/adr/2026-11-12-removable-migration-sync-service.md).
+
+## Worlds and player storage
+
+The new streams use separate `player` and `worlds` CLI subcommands and immutable source scopes. They verify an already imported baseline at a consistent source capture boundary, retain committed source transactions, then apply them with atomic progress. Normal server/index startup is forbidden while any migration stream is registered. No public target storage endpoint is enabled by these commands.
+
+Player replay uses the same native SQL mutation as normal storage handlers; production acceptance supplies authorization/quota evidence. World/player namespace identity must remain fixed. The source application change is necessary because direct multiplayer storage requests bypass the gateway. No client or multiplayer-service change is required for this path. Source capture is disabled by default and must be installed and granted explicitly before application opt-in.
+
+Worlds source installation uses triggers on owner/quota facts and requires an opt-in source lock-order hook before existing transaction row/advisory locks. Enable it on every writer while writes are paused; mixed old/new ordering is unsupported. It includes post-deployment unblocks and physical quota deletions. The apply worker has no SNS, name-resolution or quota-provider clients. Neither new stream implements eviction or runs GC; normal target jobs remain fenced during rehearsal.
+
+See the [player runbook](PLAYER_STORAGE.md), [Worlds installation](source/worlds.md) and [operation contract](../../sync-migration/worlds-background-contract.md) for commands, scope, source-change rationale and activation limits. Run `dcl-migration-sync player --help`, `worlds --help`, `install-player-source --help` and `install-worlds-source --help` for the commands. Keep source installation credentials separate from read-only capture credentials and the isolated target writer.
