@@ -58,7 +58,7 @@ pub struct IndexSceneSummary {
     pub pointers: Vec<String>,
     /// Absent when the metadata has no such key; an explicit `null` is kept.
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "ts", ts(optional, type = "string"))]
+    #[cfg_attr(feature = "ts", ts(optional, type = "string | null"))]
     pub runtime_version: Option<Value>,
     /// `entity.timestamp || Date.now()`: the page's build time when missing or 0.
     #[cfg_attr(feature = "ts", ts(type = "number"))]

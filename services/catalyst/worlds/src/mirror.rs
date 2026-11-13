@@ -11,12 +11,17 @@
 //! `worlds.world_scenes` rows in one transaction per world. Every world the walk
 //! reaches, changed or not, also gets the access setting its
 //! `GET {source}/world/{name}/permissions` reports (a shared secret stored as one no secret
-//! matches), unless its owner set the access on this node (`access_set_here`, kept then);
-//! an unreadable or unknown setting fails that world's sync, so a world restricted
-//! upstream is never stored open. The deployment and streaming grants it lists are not copied.
-//! A world whose scenes are all held is still read for its settings and its `/scenes` listing,
-//! since upstream edits settings and access without a deployment and its held rows take the
-//! listed times, size, chain and deployer.
+//! matches), and the settings `/settings` reports. Either is kept while the owner that set it on
+//! this node (`access_set_here`, `settings_set_here`) still holds the name, as the source's
+//! `/permissions` owner says ([`mirror_keeps_local`]). An unreadable or unknown access setting
+//! keeps the stored one: it fails the sync of a changed world, so a world restricted upstream is
+//! never stored open, and a world whose scenes are all held skips only the access copy. The
+//! deployment and streaming grants it lists are not copied. A world whose scenes are all held
+//! is still read for its settings and its `/scenes` listing, since upstream edits settings and
+//! access without a deployment and its held rows take the listed times, size, chain and
+//! deployer. Each such world costs a pass `/permissions`, every `/scenes` page, `/settings` and
+//! a thumbnail check against the store (a fetch only when it is not held), then one transaction
+//! that writes only what changed.
 //!
 //! Resumable: the scenes walk persists its cursor (the last world name
 //! completed) after every batch in `worlds.mirror_passes`, so a restart
@@ -70,7 +75,7 @@ use crate::core::settings_policy::{
     MAX_CATEGORIES, VALID_RATINGS, detect_image_format, storable_skybox_time,
     storable_thumbnail_hash,
 };
-use crate::core::store::{AccessSetting, replace_mirrored_access};
+use crate::core::store::{AccessSetting, SetHere, mirror_keeps_local, replace_mirrored_access};
 use crate::explore::places::scene_identity;
 use crate::http::{is_safe_http_url, read_body_capped};
 use crate::jobs::JobContext;
@@ -1023,15 +1028,25 @@ async fn fetch_permissions(client: &crate::http::Outbound, url: &str) -> Result<
         .with_context(|| format!("parsing {url}"))
 }
 
-/// The world's access setting at the source ([`parse_upstream_access`]), read on every pass that
-/// reaches the world, a changed one or not; an error stops the world's sync.
+/// The world's access setting at the source ([`parse_upstream_access`]) and the owner it names,
+/// read on every pass that reaches the world, a changed one or not.
+struct UpstreamAccess {
+    setting: AccessSetting,
+    /// `owner`, when it is an address: who holds the name, for [`mirror_keeps_local`].
+    owner: Option<Address>,
+}
+
 async fn upstream_access(
     client: &crate::http::Outbound,
     source: &str,
     name: &str,
-) -> Result<AccessSetting> {
+) -> Result<UpstreamAccess> {
     let url = world_url(source, name, "permissions")?;
-    parse_upstream_access(&fetch_permissions(client, &url).await?)
+    let body = fetch_permissions(client, &url).await?;
+    Ok(UpstreamAccess {
+        setting: parse_upstream_access(&body)?,
+        owner: body["owner"].as_str().and_then(|o| Address::parse(o).ok()),
+    })
 }
 
 /// The access setting the source's `/permissions` reports (`permissions.access`, upstream's
@@ -1334,6 +1349,8 @@ struct WorldSettingsCopy {
     /// The source's key, a canonical CID or the SHA-256 hex of an upload; [`mirrored_thumbnail`]
     /// turns it into the CID of the bytes held here before it is stored.
     thumbnail_hash: Option<String>,
+    /// The source names a thumbnail this pass could not fetch: the stored one stays.
+    thumbnail_unread: bool,
     /// `Some(None)` clears: upstream answers `null` for no fixed hour.
     skybox_time: Option<Option<i32>>,
     single_player: Option<bool>,
@@ -1364,6 +1381,7 @@ impl WorldSettingsCopy {
             }),
             thumbnail_hash: text("thumbnail_hash")
                 .filter(|h| is_canonical_cid(h) || raw_cid_v1_from_sha256_hex(h).is_some()),
+            thumbnail_unread: false,
             skybox_time: match body.get("skybox_time") {
                 None => None,
                 Some(Value::Null) => Some(None),
@@ -1403,19 +1421,26 @@ async fn upstream_settings(
     let mut copy = match read.await {
         Ok(copy) => copy,
         Err(e) => {
-            tracing::debug!(world = %name, error = %e, "keeping the stored settings: GET {url}");
+            tracing::warn!(world = %name, error = %e, "keeping the stored settings: GET {url}");
             return None;
         }
     };
     if let Some(key) = copy.thumbnail_hash.take() {
-        copy.thumbnail_hash = mirrored_thumbnail(client, pool, storage, source, name, &key).await;
+        match mirrored_thumbnail(client, pool, storage, source, name, &key).await {
+            Ok(cid) => copy.thumbnail_hash = cid,
+            Err(e) => {
+                tracing::warn!(world = %name, thumbnail = %key, error = %e, "keeping the stored thumbnail");
+                copy.thumbnail_unread = true;
+            }
+        }
     }
     Some(copy)
 }
 
 /// The CID under which this node holds the thumbnail the source stores under `key`, fetched
-/// from `{source}/contents/{key}` when it is not held, or `None` (the world then has no
-/// thumbnail here, as one whose file cannot be served). A SHA-256 hex key (an upload upstream,
+/// from `{source}/contents/{key}` when it is not held, or `None` when the source's file is no
+/// image this node serves (the world then has no thumbnail here). A failed read or store is an
+/// error, so the stored thumbnail stays. A SHA-256 hex key (an upload upstream,
 /// served only by the source) is checked against the bytes' SHA-256 and stored under their
 /// CIDv1, the key every route here serves; a row whose stored thumbnail already holds those
 /// bytes keeps it without a fetch (a thumbnail over one 256 KiB chunk has a CIDv1 that is not
@@ -1428,7 +1453,7 @@ async fn mirrored_thumbnail(
     source: &str,
     name: &str,
     key: &str,
-) -> Option<String> {
+) -> Result<Option<String>> {
     let sha256_is_key = |bytes: &[u8]| {
         use sha2::Digest;
         hex::encode(sha2::Sha256::digest(bytes)) == key
@@ -1484,7 +1509,8 @@ async fn mirrored_thumbnail(
                     hash_bytes_v1(&bytes)
                 };
                 if detect_image_format(&bytes).is_none() {
-                    bail!("{url} is not an image");
+                    tracing::debug!(world = %name, thumbnail = %key, "{url} is not an image");
+                    return Ok(None);
                 }
                 storage.store(&cid, Bytes::from(bytes)).await?;
                 cid
@@ -1492,10 +1518,7 @@ async fn mirrored_thumbnail(
         };
         Ok::<_, anyhow::Error>(storable_thumbnail_hash(storage, &cid).await)
     };
-    resolve.await.unwrap_or_else(|e| {
-        tracing::debug!(world = %name, thumbnail = %key, error = %e, "mirrored world kept without its thumbnail");
-        None
-    })
+    resolve.await
 }
 
 /// `{source}/contents/{key}`.
@@ -1508,41 +1531,63 @@ fn contents_url(source: &str, key: &str) -> Result<String> {
     Ok(url.into())
 }
 
-/// Writes a source's settings answer onto a mirrored row. `settings_version` never goes back:
-/// it takes the source's counter, or this row's plus one when a copied column changes and the
-/// source's is not ahead, so a consumer ordering by it never sees an update out of order (a row
-/// bumped by earlier ingests can be ahead of its source). No write when nothing changes.
+/// Writes a source's settings answer onto a mirrored row that is not disabled, unless the owner
+/// that set its settings here still holds the name ([`mirror_keeps_local`], with the source's
+/// `/permissions` owner). A thumbnail the pass could not fetch keeps the stored one. `settings_version` never goes back: it takes the source's counter, or this row's
+/// plus one when a copied column changes and the source's is not ahead, so a consumer ordering
+/// by it never sees an update out of order (a row bumped by earlier ingests can be ahead of its
+/// source). No write when nothing changes.
 async fn apply_settings(
     conn: &mut sqlx::PgConnection,
-    name: &str,
+    world: &WorldName,
     copy: &WorldSettingsCopy,
+    source_owner: Option<&Address>,
 ) -> Result<()> {
+    let name = world.key();
+    if mirror_keeps_local(conn, world, SetHere::Settings, source_owner)
+        .await
+        .with_context(|| format!("settings of {name}"))?
+        != Some(false)
+    {
+        return Ok(());
+    }
     sqlx::query(
-        r#"WITH n AS (
-             SELECT name, $2::text AS title, $3::text AS description, $4::text AS content_rating,
-                    $5::text[] AS categories, $6::text AS thumbnail_hash,
+        r#"WITH cur AS (
+             SELECT name, title, description, content_rating, categories, thumbnail_hash,
+                    skybox_time, single_player, show_in_places
+             FROM worlds.worlds
+             WHERE name = $1 AND mirror_source IS NOT NULL AND blocked_since IS NULL
+           ), n AS (
+             SELECT name,
+                    $2::text AS title,
+                    $3::text AS description,
+                    $4::text AS content_rating,
+                    $5::text[] AS categories,
+                    CASE WHEN $12 THEN thumbnail_hash ELSE $6::text END AS thumbnail_hash,
                     CASE WHEN $8 THEN $7::integer ELSE skybox_time END AS skybox_time,
                     COALESCE($9, single_player) AS single_player,
                     COALESCE($10, show_in_places) AS show_in_places,
-                    COALESCE($11::bigint, 0) AS source_version,
-                    (title, description, content_rating, categories, thumbnail_hash, skybox_time,
-                     single_player, show_in_places)
+                    COALESCE($11::bigint, 0) AS source_version
+             FROM cur
+           ), d AS (
+             SELECT n.*,
+                    (cur.title, cur.description, cur.content_rating, cur.categories,
+                     cur.thumbnail_hash, cur.skybox_time, cur.single_player, cur.show_in_places)
                       IS DISTINCT FROM
-                    ($2::text, $3::text, $4::text, $5::text[], $6::text,
-                     CASE WHEN $8 THEN $7::integer ELSE skybox_time END,
-                     COALESCE($9, single_player), COALESCE($10, show_in_places)) AS changed
-             FROM worlds.worlds WHERE name = lower($1) AND mirror_source IS NOT NULL
+                    (n.title, n.description, n.content_rating, n.categories, n.thumbnail_hash,
+                     n.skybox_time, n.single_player, n.show_in_places) AS changed
+             FROM n JOIN cur USING (name)
            )
            UPDATE worlds.worlds w
-           SET title = n.title, description = n.description, content_rating = n.content_rating,
-               categories = n.categories, thumbnail_hash = n.thumbnail_hash,
-               skybox_time = n.skybox_time, single_player = n.single_player,
-               show_in_places = n.show_in_places,
-               settings_version = GREATEST(n.source_version,
-                                           w.settings_version + CASE WHEN n.changed THEN 1 ELSE 0 END),
+           SET title = d.title, description = d.description, content_rating = d.content_rating,
+               categories = d.categories, thumbnail_hash = d.thumbnail_hash,
+               skybox_time = d.skybox_time, single_player = d.single_player,
+               show_in_places = d.show_in_places,
+               settings_version = GREATEST(d.source_version,
+                                           w.settings_version + CASE WHEN d.changed THEN 1 ELSE 0 END),
                updated_at = timezone('UTC', now())
-           FROM n
-           WHERE w.name = n.name AND (n.changed OR w.settings_version < n.source_version)"#,
+           FROM d
+           WHERE w.name = d.name AND (d.changed OR w.settings_version < d.source_version)"#,
     )
     .bind(name)
     .bind(&copy.title)
@@ -1555,6 +1600,7 @@ async fn apply_settings(
     .bind(copy.single_player)
     .bind(copy.show_in_places)
     .bind(copy.settings_version)
+    .bind(copy.thumbnail_unread)
     .execute(&mut *conn)
     .await
     .with_context(|| format!("settings of {name}"))?;
@@ -1686,15 +1732,25 @@ async fn mirror_world(
             // The scenes are current. The access setting and the world settings change upstream
             // without a deployment, and the listing carries what rows written before it was kept
             // (or while it gave none) lack: the deploy times, size, chain and deployer.
-            let access = upstream_access(client, source, name).await?;
+            // An unreadable access setting keeps the stored one and the rest of the sync.
+            let access = upstream_access(client, source, name)
+                .await
+                .inspect_err(|e| {
+                    tracing::warn!(world = %name, error = %e, "keeping the stored access setting");
+                })
+                .ok();
             let listed = listed_scenes(client, source, name).await?;
             let world_settings = upstream_settings(client, pool, storage, source, name).await;
+            let world = WorldName::parse(name)?;
+            let source_owner = access.as_ref().and_then(|a| a.owner.as_ref());
             let mut tx = pool.begin().await.context("begin tx")?;
-            replace_mirrored_access(&mut tx, &WorldName::parse(name)?, &access)
-                .await
-                .with_context(|| format!("access setting of {name}"))?;
+            if let Some(access) = &access {
+                replace_mirrored_access(&mut tx, &world, &access.setting, source_owner)
+                    .await
+                    .with_context(|| format!("access setting of {name}"))?;
+            }
             if let Some(copy) = &world_settings {
-                apply_settings(&mut tx, name, copy).await?;
+                apply_settings(&mut tx, &world, copy, source_owner).await?;
             }
             refresh_listed_scenes(&mut tx, name, &listed).await?;
             tx.commit().await.context("commit tx")?;
@@ -1938,11 +1994,14 @@ async fn mirror_world(
         let retired = retire_beside_local(pool, name).await?;
         return Ok(Outcome::RefusedLocalPublish { retired });
     }
-    replace_mirrored_access(&mut tx, &WorldName::parse(name)?, &access)
+    let world = WorldName::parse(name)?;
+    replace_mirrored_access(&mut tx, &world, &access.setting, access.owner.as_ref())
         .await
         .with_context(|| format!("access setting of {name}"))?;
+    // A held row keeps its settings without an answer: the `/about` values mix the newest
+    // scene's own with the stored ones, so writing them would flap with each failed read.
     if copied.present {
-        apply_settings(&mut tx, name, &copied).await?;
+        apply_settings(&mut tx, &world, &copied, access.owner.as_ref()).await?;
     }
 
     let cids: Vec<&str> = records.iter().map(|r| r.cid.as_str()).collect();

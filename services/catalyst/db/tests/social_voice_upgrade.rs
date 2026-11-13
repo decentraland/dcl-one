@@ -26,7 +26,7 @@ const PREPARED_PENDING_STEPS: [&str; 18] = [
     "0036_credits_authorization_request_digest",
     "0037_social_badges_catalog_parity",
     "0038_social_badge_processor",
-    "0039_worlds_access_set_here",
+    "0039_worlds_set_here",
 ];
 const PREPARED_V2: &str = include_str!(concat!(
     env!("DCL_ONE_ROOT"),

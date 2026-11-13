@@ -69,8 +69,8 @@ an intended difference.
 - **Name deny list** (WD-28, WR-35, WP-11, WP-20, WC-28): one `NameDenyList` carries
   `BLOCKED_WORLD_NAMES` and the DAO `banned-names` list to every consumer upstream has: deploy
   validation, `/entities/active`, the world reads and listings, the permission routes and the comms
-  mints. A failed list read is not cached here, while upstream caches an empty list for an hour
-  (WR-35, open).
+  mints. After a failed list read only the configured blocks apply for five seconds here, while
+  upstream caches an empty list for an hour (WR-35, open).
 - **Multipart limits and texts** (WD-04..11, WW-21..23): both multipart routes answer upstream's caps,
   duplicate-field rule, 413 and timeout texts, apart from the intended WD-08, WD-09 and WD-11.
 - **CORS** (WR-06, WW-37, WR-32): every worlds router carries the layer (WR-06; the mints, WC-02);

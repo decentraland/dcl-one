@@ -232,7 +232,7 @@ The metadata is the signed `x-identity-metadata` header; there is no body.
 | `allow-list`, signer not a member | 400 | `You are not a member of the following communities: a, b.` | `access/errors.ts:15-19` | `require_community_member` `:378-404` | MATCH. Membership comes from upstream's social-service HTTP and from this node's `social.community_members` (`policy.rs:918-931`; social area). |
 | `allow-list`, a wallet that is not an address, or a community that is not a UUID | upstream 204 (stored); dcl-one 400 `Invalid address: <w>.` / `Invalid community id.` | | none | `access_from_metadata` | intended (worlds-compatibility.md "Community ids", "Permission payloads"; WP-10) |
 | World row missing | 204 and the row is created with the signer as owner | | `createBasicWorldIfNotExists` | `replace_world_wide_permission` / `store_access_for_owner` upsert (`store.rs:1182-1220,1493-1578`) | MATCH (upstream tests "should create the world") |
-| `access` on a mirrored world, or on a world the mirror later takes over | 204; the setting is stored and kept | | `storeAccess` (`access/component.ts:118`) | `store_access_for_owner` marks the row `access_set_here` (`store.rs:1684`); the mirror then keeps it (`replace_mirrored_access`, `store.rs:1749`) | MATCH (WP-21; test `an_access_setting_the_owner_made_here_is_kept_by_the_mirror`). The allow-list edits of routes 7-10 mark it the same way (`modify_allow_list_access`, `store.rs:1826`). |
+| `access` on a mirrored world, or on a world the mirror later takes over | 204; the setting is stored and kept | | `storeAccess` (`access/component.ts:118`) | `store_access_for_owner` marks the row `access_set_here` by the signer (`store.rs:1594`); the mirror then keeps it while the source's `/permissions` names that owner (`mirror_keeps_local`, `store.rs:1668`) | MATCH (WP-21; tests `an_access_setting_the_owner_made_here_is_kept_by_the_mirror`, `an_owner_edit_here_is_kept_while_that_owner_holds_the_name`). The allow-list edits of routes 7-10 mark it the same way (`modify_allow_list_access`, `store.rs:1806`). |
 | Name authority unavailable | upstream 500 `{"error":"Internal Server Error"}`; dcl-one 503 + `Retry-After: 1` | | `dcl-name-checker.ts:14` throws | `owner_decision` | intended (worlds-compatibility.md "Owner admission", WP-12) |
 
 ### Side effects
@@ -702,15 +702,18 @@ filter keeps it (`store::raw_records_exclude`), and no operator disable or quota
       deployment and three streaming wallets.
     - dcl-one, access: every mirror pass that reaches a world, changed scenes or not, and every read-through
       fill reads `{source}/world/{name}/permissions` and copies `permissions.access` onto the world while the
-      row is the mirror's (`mirror_source` set, not disabled) and its owner has not set the access on this
-      node: `upstream_access`, `parse_upstream_access` (`mirror.rs:1028-1074`) and
-      `store::replace_mirrored_access` (`store.rs:1749`), inside the world's sync transaction
-      (`mirror.rs:1941`) or, for unchanged scenes, its own (`mirror.rs:1693`). Only a difference is written;
-      it queues the access recheck and sends no notice. An unreadable answer or an unknown type fails the
-      world's sync and keeps the stored setting. The owner's access writes here (route 2 `access`, the
-      allow-list edits of routes 7-10) mark the row `access_set_here`, and no pass replaces a marked setting,
-      also when a scheduled pass later takes over a row the owner created before any scene; a world published
-      here keeps its own setting. Pinned by `tests/worlds_mirror.rs`
+      row is the mirror's (`mirror_source` set, not disabled) and the setting is not one its owner made on
+      this node: `upstream_access`, `parse_upstream_access` (`mirror.rs`) and
+      `store::replace_mirrored_access` (`store.rs:1729`), inside the world's sync transaction or, for
+      unchanged scenes, its own. Only a difference is written; it bumps `settings_version`, queues the
+      access recheck and sends no notice. An unreadable answer or an unknown type keeps the stored setting:
+      it fails the sync of a world with changed scenes and skips only the access copy for unchanged scenes.
+      The owner's access writes here (route 2 `access`, the allow-list edits of routes 7-10) mark the row
+      `access_set_here` with the signer as `access_set_by`, and no pass replaces a marked setting while the
+      source's `/permissions` `owner` is that signer (`store::mirror_keeps_local`), also when a scheduled pass
+      later takes over a row the owner created before any scene. Once the source names another owner (a NAME
+      transfer), the mark is cleared and the source's setting is copied. A world published here keeps its own
+      setting. Pinned by `tests/worlds_mirror.rs`
       `a_mirror_pass_copies_the_upstream_access_setting` (allow-list copied, `Policy::can_access` admits the
       listed wallet and refuses another, a later shared-secret copied on an unchanged pass and refusing any
       secret, failures keeping the setting, a local publish kept) and

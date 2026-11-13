@@ -28,6 +28,7 @@
 //! worlds federation routes.
 
 pub mod active;
+mod active_entity;
 pub mod admin;
 pub mod auth;
 pub mod deploy;

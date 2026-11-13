@@ -17,6 +17,9 @@ use sqlx::PgPool;
 use crate::shared::cache::TtlMap;
 
 const NAME_DENYLIST_TTL: Duration = Duration::from_secs(60 * 60);
+/// How long a failed list read answers the configured blocks alone before the list is read
+/// again, so an unhealthy database is not asked by every admission and read.
+const FAILED_READ_TTL: Duration = Duration::from_secs(5);
 pub const BANNED_NAMES_LIST: &str = "banned-names";
 
 /// `BLOCKED_WORLD_NAMES`: comma-separated, each entry trimmed and lowercased,
@@ -79,6 +82,10 @@ impl BannedNames {
 pub struct NameDenyList {
     blocked: Arc<BlockedNames>,
     cache: TtlMap<(), Arc<BannedNames>>,
+    /// One list read at a time: callers that miss the memo wait for it instead of each reading.
+    reading: tokio::sync::Mutex<()>,
+    /// When the last read failed, kept for [`FAILED_READ_TTL`].
+    failed_at: std::sync::Mutex<Option<std::time::Instant>>,
 }
 
 impl Default for NameDenyList {
@@ -93,17 +100,35 @@ impl NameDenyList {
         Self {
             blocked: Arc::new(BlockedNames::parse(blocked_world_names)),
             cache: TtlMap::bounded(NAME_DENYLIST_TTL, 1),
+            reading: tokio::sync::Mutex::new(()),
+            failed_at: std::sync::Mutex::new(None),
         }
     }
 
-    /// The current snapshot. A failed list read answers the configured blocks
-    /// alone and is not cached, so the next call reads again (upstream caches
-    /// `[]` for its hour); an expired snapshot is never served (WR-35).
+    /// The current snapshot, read by one caller at a time. A failed list read
+    /// answers the configured blocks alone for [`FAILED_READ_TTL`], then the
+    /// list is read again (upstream caches `[]` for its hour); an expired
+    /// snapshot is never served (WR-35).
     pub async fn snapshot(&self, pool: &PgPool) -> Arc<BannedNames> {
-        if let Some(cached) = self.cache.get_fresh(&()) {
+        if let Some(cached) = self.fresh() {
+            return cached;
+        }
+        let _reading = self.reading.lock().await;
+        if let Some(cached) = self.fresh() {
             return cached;
         }
         self.read(crate::explore::api::lists::values(pool, BANNED_NAMES_LIST).await)
+    }
+
+    /// The memoized list, or the configured blocks alone shortly after a failed read.
+    fn fresh(&self) -> Option<Arc<BannedNames>> {
+        if let Some(cached) = self.cache.get_fresh(&()) {
+            return Some(cached);
+        }
+        let failed_at = *self.failed_at.lock().unwrap_or_else(|e| e.into_inner());
+        failed_at
+            .filter(|at| at.elapsed() < FAILED_READ_TTL)
+            .map(|_| Arc::new(BannedNames::new(self.blocked.clone(), Vec::new())))
     }
 
     fn read<E: std::fmt::Display>(&self, list: Result<Vec<String>, E>) -> Arc<BannedNames> {
@@ -111,9 +136,12 @@ impl NameDenyList {
             Ok(names) => {
                 let fetched = Arc::new(BannedNames::new(self.blocked.clone(), names));
                 self.cache.insert((), fetched.clone());
+                *self.failed_at.lock().unwrap_or_else(|e| e.into_inner()) = None;
                 fetched
             }
             Err(e) => {
+                *self.failed_at.lock().unwrap_or_else(|e| e.into_inner()) =
+                    Some(std::time::Instant::now());
                 tracing::warn!(error = %e, "failed to read the name denylist; only BLOCKED_WORLD_NAMES applies until it reads");
                 Arc::new(BannedNames::new(self.blocked.clone(), Vec::new()))
             }
@@ -250,13 +278,20 @@ mod tests {
         );
         assert!(
             checker.cache.get_fresh(&()).is_none(),
-            "a failed read is not memoized"
+            "a failed read is not memoized for the list's hour"
         );
+        let held = checker
+            .fresh()
+            .expect("the blocks alone, for a few seconds");
+        assert!(!held.allows("blocked.dcl.eth") && held.allows("banned.dcl.eth"));
+        *checker.failed_at.lock().unwrap() = Some(std::time::Instant::now() - FAILED_READ_TTL);
+        assert!(checker.fresh().is_none(), "then the list is read again");
         // The next read that succeeds applies the list at once (upstream would
         // serve its cached `[]` until the hour ends).
         let snapshot = checker.read(Ok::<_, String>(vec!["Banned".to_string()]));
         assert!(!snapshot.allows("banned.dcl.eth"));
         assert!(checker.cache.get_fresh(&()).is_some());
+        assert!(checker.failed_at.lock().unwrap().is_none());
     }
 
     /// "adds configured blocks without replacing the remote denylist".

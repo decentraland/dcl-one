@@ -10,6 +10,8 @@ use std::collections::HashSet;
 
 use chrono::NaiveDateTime;
 use serde_json::value::RawValue;
+
+use super::active_entity::active_entities;
 use serde_json::{Value, json};
 use sqlx::postgres::PgRow;
 use sqlx::{PgPool, Postgres, Row};
@@ -1225,114 +1227,13 @@ pub async fn entities_for_worlds(
     .bind(&keys)
     .fetch_all(pool)
     .await?;
-    rows.into_iter()
-        .map(|r| {
-            let entity: String = r.get("entity");
-            let entity_id: String = r.get("entity_id");
-            let owner: Option<String> = r.get("owner");
-            active_entity(&entity, &entity_id, owner.as_deref())
-                .map_err(|e| ApiError::internal(format!("stored entity {entity_id}: {e}")))
-        })
-        .collect()
-}
-
-/// One JSON object's members in the order written, each value as written.
-struct Members<'a>(Vec<(String, &'a RawValue)>);
-
-impl<'de> serde::Deserialize<'de> for Members<'de> {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        struct Visit;
-        impl<'de> serde::de::Visitor<'de> for Visit {
-            type Value = Members<'de>;
-            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-                f.write_str("a JSON object")
-            }
-            fn visit_map<A: serde::de::MapAccess<'de>>(
-                self,
-                mut map: A,
-            ) -> Result<Self::Value, A::Error> {
-                let mut members = Vec::new();
-                while let Some(member) = map.next_entry::<String, &'de RawValue>()? {
-                    members.push(member);
-                }
-                Ok(Members(members))
-            }
-        }
-        deserializer.deserialize_map(Visit)
-    }
-}
-
-/// JSON text without the whitespace outside strings (`jsonb::text` writes
-/// `", "` and `": "`; `JSON.stringify` writes none).
-fn compact_json(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    let (mut in_string, mut escaped) = (false, false);
-    for c in text.chars() {
-        if in_string {
-            out.push(c);
-            if escaped {
-                escaped = false;
-            } else if c == '\\' {
-                escaped = true;
-            } else if c == '"' {
-                in_string = false;
-            }
-        } else if c == '"' {
-            in_string = true;
-            out.push(c);
-        } else if !c.is_ascii_whitespace() {
-            out.push(c);
-        }
-    }
-    out
-}
-
-/// `{...object, [key]: value}` over written members: `key` keeps its place
-/// when present and is appended otherwise.
-fn spread_with(members: &mut Vec<(String, String)>, key: &str, value: String) {
-    match members.iter_mut().find(|(k, _)| k == key) {
-        Some(member) => member.1 = value,
-        None => members.push((key.to_string(), value)),
-    }
-}
-
-fn write_object(members: &[(String, String)]) -> serde_json::Result<String> {
-    let mut out = String::from("{");
-    for (i, (key, value)) in members.iter().enumerate() {
-        if i > 0 {
-            out.push(',');
-        }
-        out.push_str(&serde_json::to_string(key)?);
-        out.push(':');
-        out.push_str(value);
-    }
-    out.push('}');
-    Ok(out)
-}
-
-/// One `getEntityForWorlds` element from the stored entity's `jsonb::text`.
-/// A metadata that is not an object spreads to nothing, as in JS.
-fn active_entity(stored: &str, id: &str, owner: Option<&str>) -> serde_json::Result<Box<RawValue>> {
-    let compact = compact_json(stored);
-    let Members(members) = serde_json::from_str(&compact)?;
-    let mut metadata: Vec<(String, String)> = members
-        .iter()
-        .find(|(k, _)| k == "metadata")
-        .and_then(|(_, raw)| serde_json::from_str::<Members>(raw.get()).ok())
-        .map(|Members(m)| {
-            m.into_iter()
-                .map(|(k, v)| (k, v.get().to_string()))
-                .collect()
-        })
-        .unwrap_or_default();
-    spread_with(&mut metadata, "owner", serde_json::to_string(&owner)?);
-    let mut entity: Vec<(String, String)> = members
-        .into_iter()
-        .map(|(k, v)| (k, v.get().to_string()))
-        .collect();
-    spread_with(&mut entity, "id", serde_json::to_string(id)?);
-    spread_with(&mut entity, "metadata", write_object(&metadata)?);
-    RawValue::from_string(write_object(&entity)?)
+    Ok(active_entities(rows.into_iter().map(|r| {
+        (
+            r.get::<String, _>("entity_id"),
+            r.get::<String, _>("entity"),
+            r.get::<Option<String>, _>("owner"),
+        )
+    })))
 }
 
 /// `POST /permissions/{deployment|streaming}` in one statement: ensure the
@@ -1679,8 +1580,9 @@ fn access_columns(access: &AccessSetting) -> (Option<&str>, Option<&str>, Vec<Ad
 /// transaction: the typed columns, then the `access` grants and the
 /// communities (deleted on every write, whatever the previous type, so a
 /// list never resurfaces after a round trip through another type). A fresh
-/// row lands at settings_version 1. The row is marked `access_set_here`, so
-/// the worlds mirror never replaces the setting with its source's.
+/// row lands at settings_version 1. The row is marked `access_set_here` by
+/// `owner`, so the worlds mirror keeps the setting while `owner` holds the
+/// name ([`mirror_keeps_local`]).
 pub async fn store_access_for_owner(
     pool: &PgPool,
     world: &WorldName,
@@ -1690,13 +1592,14 @@ pub async fn store_access_for_owner(
     let (secret_hash, nft, wallets, communities) = access_columns(access);
     let mut tx = pool.begin().await?;
     sqlx::query(
-        r#"INSERT INTO worlds.worlds AS w (name, owner, access_type, access_secret_hash, access_nft, access_set_here, settings_version)
-           VALUES ($1, $2, $3, $4, $5, true, 1)
+        r#"INSERT INTO worlds.worlds AS w (name, owner, access_type, access_secret_hash, access_nft, access_set_here, access_set_by, settings_version)
+           VALUES ($1, $2, $3, $4, $5, true, $2, 1)
            ON CONFLICT (name) DO UPDATE SET
              access_type = EXCLUDED.access_type,
              access_secret_hash = EXCLUDED.access_secret_hash,
              access_nft = EXCLUDED.access_nft,
              access_set_here = true,
+             access_set_by = EXCLUDED.access_set_by,
              settings_version = w.settings_version + 1,
              updated_at = timezone('UTC', now())"#,
     )
@@ -1738,28 +1641,90 @@ pub async fn store_access_for_owner(
     Ok(())
 }
 
+/// Which of a mirrored row's settings [`mirror_keeps_local`] reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SetHere {
+    /// The access setting (`access_set_here`, `access_set_by`).
+    Access,
+    /// The settings the mirror copies from `/settings` (`settings_set_here`, `settings_set_by`).
+    Settings,
+}
+
+/// Whether the mirror leaves `which` of `world` as it is, in the transaction that syncs it, under
+/// the row lock (taken here): `None` when the row is not the mirror's (`mirror_source` unset, or
+/// disabled), so nothing is copied; `Some(true)` while the owner that set it on this node still
+/// holds the name, as `source_owner` (the source's `/permissions` owner) says. A row marked
+/// before its setter was recorded takes `source_owner` as it. Once the source names another
+/// owner (a NAME transfer), the mark is cleared and `Some(false)` lets the source's setting in.
+/// Without a `source_owner` a marked setting is kept.
+pub async fn mirror_keeps_local(
+    conn: &mut sqlx::PgConnection,
+    world: &WorldName,
+    which: SetHere,
+    source_owner: Option<&Address>,
+) -> Result<Option<bool>, sqlx::Error> {
+    let (here, by) = match which {
+        SetHere::Access => ("access_set_here", "access_set_by"),
+        SetHere::Settings => ("settings_set_here", "settings_set_by"),
+    };
+    let held: Option<(bool, Option<String>)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT {here}, {by} FROM worlds.worlds \
+         WHERE name = $1 AND mirror_source IS NOT NULL AND blocked_since IS NULL FOR UPDATE"
+    )))
+    .bind(world.key())
+    .fetch_optional(&mut *conn)
+    .await?;
+    let Some((set_here, set_by)) = held else {
+        return Ok(None);
+    };
+    if !set_here {
+        return Ok(Some(false));
+    }
+    let Some(source_owner) = source_owner else {
+        return Ok(Some(true));
+    };
+    let source_owner = source_owner.as_str();
+    match set_by.as_deref() {
+        Some(setter) if setter.eq_ignore_ascii_case(source_owner) => Ok(Some(true)),
+        None => {
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "UPDATE worlds.worlds SET {by} = $2 WHERE name = $1"
+            )))
+            .bind(world.key())
+            .bind(source_owner)
+            .execute(&mut *conn)
+            .await?;
+            Ok(Some(true))
+        }
+        Some(setter) => {
+            tracing::info!(%world, setter, owner = source_owner, ?which,
+                "the owner that set this here no longer holds the name; the source's setting applies");
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "UPDATE worlds.worlds SET {here} = false, {by} = NULL WHERE name = $1"
+            )))
+            .bind(world.key())
+            .execute(&mut *conn)
+            .await?;
+            Ok(Some(false))
+        }
+    }
+}
+
 /// The mirror's copy of the source's access setting, in the transaction that
-/// syncs `world`: written only while the row is the mirror's (`mirror_source`
-/// set, not disabled; the row is locked here) and its owner has not set its
-/// access on this node (`access_set_here`), and only where it differs, so
-/// an unchanged pass writes nothing. No settings version bump (the mirror
-/// copies the source's) and no notice; a change queues the access recheck,
-/// as an owner's edit does, so a connected wallet the new setting refuses
-/// leaves. Returns whether anything changed.
+/// syncs `world`: written only while the row is the mirror's and the setting
+/// is not one its owner made here ([`mirror_keeps_local`], with the source's
+/// `/permissions` owner), and only where it differs, so an unchanged pass
+/// writes nothing. A change bumps `settings_version` (the settings copy then
+/// keeps it from going back) and queues the access recheck, as an owner's
+/// edit does, so a connected wallet the new setting refuses leaves; no
+/// notice. Returns whether anything changed.
 pub async fn replace_mirrored_access(
     conn: &mut sqlx::PgConnection,
     world: &WorldName,
     access: &AccessSetting,
+    source_owner: Option<&Address>,
 ) -> Result<bool, sqlx::Error> {
-    let held: Option<bool> = sqlx::query_scalar(
-        "SELECT true FROM worlds.worlds \
-         WHERE name = $1 AND mirror_source IS NOT NULL AND blocked_since IS NULL \
-           AND NOT access_set_here FOR UPDATE",
-    )
-    .bind(world.key())
-    .fetch_optional(&mut *conn)
-    .await?;
-    if held.is_none() {
+    if mirror_keeps_local(conn, world, SetHere::Access, source_owner).await? != Some(false) {
         return Ok(false);
     }
     let (secret_hash, nft, wallets, communities) = access_columns(access);
@@ -1814,6 +1779,13 @@ pub async fn replace_mirrored_access(
     .await?
     .rows_affected();
     if changed > 0 {
+        sqlx::query(
+            "UPDATE worlds.worlds SET settings_version = settings_version + 1, \
+             updated_at = timezone('UTC', now()) WHERE name = $1",
+        )
+        .bind(world.key())
+        .execute(&mut *conn)
+        .await?;
         queue_access_recheck(conn, world).await?;
     }
     Ok(changed > 0)
@@ -1822,10 +1794,11 @@ pub async fn replace_mirrored_access(
 /// One allow-list edit under the world row's lock: refused unless the row
 /// exists and is an allow-list, capped at `caps` wallets / communities; the
 /// settings version bumps on every applied edit, as the old upsert did, and
-/// the row is marked `access_set_here` (see [`store_access_for_owner`]).
+/// the row is marked `access_set_here` by `owner` (see [`store_access_for_owner`]).
 pub async fn modify_allow_list_access(
     pool: &PgPool,
     world: &WorldName,
+    owner: &Address,
     caps: AccessCaps,
     edit: AllowListEdit<'_>,
 ) -> Result<AllowListEditOutcome, ApiError> {
@@ -1894,8 +1867,9 @@ pub async fn modify_allow_list_access(
                 .await?;
         }
     }
-    sqlx::query("UPDATE worlds.worlds SET settings_version = settings_version + 1, access_set_here = true, updated_at = timezone('UTC', now()) WHERE name = $1")
+    sqlx::query("UPDATE worlds.worlds SET settings_version = settings_version + 1, access_set_here = true, access_set_by = $2, updated_at = timezone('UTC', now()) WHERE name = $1")
         .bind(world.key())
+        .bind(owner)
         .execute(&mut *tx)
         .await?;
     queue_access_recheck(&mut tx, world).await?;
@@ -1939,8 +1913,10 @@ pub async fn get_world_settings(
 
 /// One locked transaction: the row (`FOR UPDATE`) plus, when a spawn is being
 /// set, the world's bounding rectangle; the upsert, bumping the version only
-/// when a versioned settings column is in the patch. Returns the row and the
-/// previous spawn.
+/// when a versioned settings column is in the patch. A patch to a setting the
+/// worlds mirror copies marks the row `settings_set_here` by `owner`, so the
+/// mirror keeps the owner's settings while `owner` holds the name
+/// ([`mirror_keeps_local`]). Returns the row and the previous spawn.
 pub async fn update_world_settings(
     pool: &PgPool,
     world: &WorldName,
@@ -2003,14 +1979,23 @@ pub async fn update_world_settings(
         || input.thumbnail_hash.is_some()
         || input.realm_name_override_provided
         || input.preview_wearable_urns_provided;
+    let mirrored_setting_patch = input.title.is_some()
+        || input.description.is_some()
+        || input.content_rating.is_some()
+        || input.skybox_time_provided
+        || input.categories_provided
+        || input.single_player.is_some()
+        || input.show_in_places.is_some()
+        || input.thumbnail_hash.is_some();
 
     let row = sqlx::query(sqlx::AssertSqlSafe(format!(
         r#"INSERT INTO worlds.worlds AS w (
                name, owner, title, description, content_rating, spawn_coordinates,
                skybox_time, categories, single_player, show_in_places, thumbnail_hash,
-               realm_name_override, preview_wearable_urns
+               realm_name_override, preview_wearable_urns, settings_set_here, settings_set_by
            )
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8::text[], COALESCE($9, false), COALESCE($10, true), $11, $14, $16::text[])
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8::text[], COALESCE($9, false), COALESCE($10, true), $11, $14, $16::text[],
+                   $18, CASE WHEN $18 THEN $2 END)
            ON CONFLICT (name) DO UPDATE SET
              title = COALESCE(EXCLUDED.title, w.title),
              description = COALESCE(EXCLUDED.description, w.description),
@@ -2028,6 +2013,8 @@ pub async fn update_world_settings(
                                           ELSE w.preview_wearable_urns END,
              settings_version = CASE WHEN $13::boolean THEN w.settings_version + 1
                                      ELSE w.settings_version END,
+             settings_set_here = w.settings_set_here OR $18,
+             settings_set_by = CASE WHEN $18 THEN EXCLUDED.settings_set_by ELSE w.settings_set_by END,
              updated_at = timezone('UTC', now())
            RETURNING {SETTINGS_COLUMNS}"#
     )))
@@ -2048,6 +2035,7 @@ pub async fn update_world_settings(
     .bind(input.realm_name_override_provided)
     .bind(&input.preview_wearable_urns)
     .bind(input.preview_wearable_urns_provided)
+    .bind(mirrored_setting_patch)
     .fetch_one(&mut *tx)
     .await?;
 
@@ -2539,39 +2527,6 @@ async fn queue_access_recheck(
 mod tests {
     use super::*;
     use serde_json::json;
-
-    /// `{...row.entity, id, metadata: {...metadata, owner}}` over the text
-    /// `jsonb` writes (members ordered by key length, then bytes): members keep
-    /// their order, `id`, `metadata` and `owner` take their places, and nothing
-    /// inside strings is touched.
-    #[test]
-    fn active_entity_spreads_in_the_stored_member_order() {
-        let stored = r#"{"id": "old", "type": "scene", "content": [{"file": "a b.png", "hash": "h"}], "version": "v3", "metadata": {"main": "bin/index.js", "owner": "0xold", "scene": {"base": "0,0", "parcels": ["0,0"]}, "display": {"title": "Say \"hi\": \\ ok"}}, "pointers": ["0,0"], "timestamp": 1}"#;
-        let got = active_entity(stored, "bafy", Some("0xnew")).unwrap();
-        assert_eq!(
-            got.get(),
-            r#"{"id":"bafy","type":"scene","content":[{"file":"a b.png","hash":"h"}],"version":"v3","metadata":{"main":"bin/index.js","owner":"0xnew","scene":{"base":"0,0","parcels":["0,0"]},"display":{"title":"Say \"hi\": \\ ok"}},"pointers":["0,0"],"timestamp":1}"#
-        );
-    }
-
-    #[test]
-    fn active_entity_appends_what_the_entity_lacks() {
-        let got = active_entity(r#"{"type": "scene", "timestamp": 2}"#, "bafy", None).unwrap();
-        assert_eq!(
-            got.get(),
-            r#"{"type":"scene","timestamp":2,"id":"bafy","metadata":{"owner":null}}"#
-        );
-        let got = active_entity(
-            r#"{"metadata": null, "type": "scene"}"#,
-            "bafy",
-            Some("0xa"),
-        )
-        .unwrap();
-        assert_eq!(
-            got.get(),
-            r#"{"metadata":{"owner":"0xa"},"type":"scene","id":"bafy"}"#
-        );
-    }
 
     fn entity_with_wc(wc: Value) -> Value {
         json!({ "metadata": { "worldConfiguration": wc } })

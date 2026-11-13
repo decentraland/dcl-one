@@ -773,25 +773,30 @@ tree, and orders by name (upstream: group order). `owner` is `null` for worlds w
       getWorldSettings" (`:768-776`); `/index` carries neither. `/about` serves the row's `skybox_time` when it is
       not null, else the scene's, and `offline:offline` when `single_player` (`:409-419`).
     - dcl-one: every pass that reaches a mirrored world, changed or not, reads
-      `GET {source}/world/{name}/settings` (one body of at most 256 KiB, `upstream_settings`, `mirror.rs:1385`) and
+      `GET {source}/world/{name}/settings` (one body of at most 256 KiB, `upstream_settings`) and, on a row that is not disabled,
       writes `title`, `description`, `content_rating` (one of `RP`, `E`, `T`, `A`, `R`), `categories` (the first
       20), `show_in_places`, `single_player`, `skybox_time` (`null` clears) and `thumbnail_hash`
-      (`WorldSettingsCopy`, `mirror.rs:1323`; `apply_settings`, `mirror.rs:1514`). `settings_version` takes the
+      (`WorldSettingsCopy`, `apply_settings` in `mirror.rs`). An owner's `PUT /world/{name}/settings` here that
+      changes one of these marks the row `settings_set_here` by that owner, and no pass replaces those settings
+      while the source's `/permissions` names that owner; after a NAME transfer the source's settings apply again
+      (`store::mirror_keeps_local`). `settings_version` takes the
       source's counter and never goes back: a row ahead of its source (bumped by earlier ingests) moves one past
       its own value when a copied column changes. No answer, a refusal or a body that is not an object leaves
-      the stored settings as they are; a new row then takes the fixed hour and offline adapter the source's
-      `/about` serves (`mirror.rs:1743`), which is the source's stored value whenever it has one, until a later
+      the stored settings as they are and is logged as a warning; a new row then takes the fixed hour and offline adapter the source's
+      `/about` serves, which is the source's stored value whenever it has one, until a later
       pass reads the settings. `access_type` is copied from `/permissions` (worlds-permissions.md, WP-21).
       Pinned by `mirror.rs:2332` `upstream_settings_are_copied_as_the_columns_accept_them`,
       `tests/worlds_mirror.rs:1468` `a_mirror_pass_copies_the_upstream_world_settings`, `:1730`
       `an_unchanged_mirrored_world_takes_settings_and_listing_updates` (an edit with no redeploy, a first pass
-      without an answer, a version ahead of the source) and `:608` (the `/about` fallback).
-    - The thumbnail is held here (`mirrored_thumbnail`, `mirror.rs:1423`): a CID key is fetched from the source's
+      without an answer, a version ahead of the source), `an_owner_edit_here_is_kept_while_that_owner_holds_the_name`
+      and `:608` (the `/about` fallback).
+    - The thumbnail is held here (`mirrored_thumbnail`): a CID key is fetched from the source's
       `/contents` when not held; a SHA-256 hex key (an upload upstream, `logic/settings/component.ts:65`) is
       fetched, checked against its digest and kept under the CIDv1 of its bytes, so `/settings` names that CID and
       Places' `image` and `/contents` serve it; worlds-compatibility.md, "Thumbnails". A key the source does not
-      serve, or whose bytes are not an image, leaves the world without a thumbnail. Pinned by
-      `tests/worlds_mirror.rs:1831` `a_mirrored_world_holds_the_thumbnail_its_settings_name`.
+      serve, or whose bytes are not an image, leaves a new world without a thumbnail; a held row keeps its stored
+      thumbnail when the fetch fails, and drops it when the bytes are not an image. Pinned by
+      `tests/worlds_mirror.rs` `a_mirrored_world_holds_the_thumbnail_its_settings_name`.
     - Severity: none (closed).
 
 ## Endpoints dcl-one serves in this area that upstream does not

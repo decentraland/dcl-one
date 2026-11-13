@@ -70,13 +70,17 @@ CREATE SCHEMA worlds;
 -- refresh, PUT /settings, access edits) under the row lock so a settings
 -- consumer can refuse an out-of-order update. A mirrored row takes its
 -- source's counter, or its own plus one when a copied setting changes and the
--- source's is not ahead, so it never goes back. `access_set_here` is set by
--- the owner's access writes on this node (POST /permissions/access and the
--- allow-list edits, core::store) and never cleared: the worlds mirror copies
--- its source's access setting only onto a mirrored row without it
--- (core::store::replace_mirrored_access, which reads it under the row lock it
--- already takes), so a pass never replaces what the owner set here. No index:
--- it is read only with the row by its primary key.
+-- source's is not ahead, so it never goes back; a copied access change bumps
+-- it too. `access_set_here` is set by the owner's access writes on this node
+-- (POST /permissions/access and the allow-list edits, core::store) and
+-- `settings_set_here` by a PUT /settings that changes a setting the mirror
+-- copies; `*_set_by` is the owner that wrote it. The worlds mirror leaves
+-- either setting as it is while the source's /permissions names that owner
+-- (core::store::mirror_keeps_local, under the row lock it already takes). It
+-- clears both columns and copies the source's once the source names another
+-- owner, after a NAME transfer. A row marked before the setter was recorded
+-- (`*_set_by` NULL) takes the source's owner of the next pass as its setter.
+-- No index: they are read only with the row by its primary key.
 CREATE TABLE worlds.worlds (
     name text NOT NULL,
     owner text,
@@ -84,6 +88,9 @@ CREATE TABLE worlds.worlds (
     access_secret_hash text,
     access_nft text,
     access_set_here boolean NOT NULL DEFAULT false,
+    access_set_by text,
+    settings_set_here boolean NOT NULL DEFAULT false,
+    settings_set_by text,
     blocked_since timestamp without time zone,
     spawn_coordinates text,
     title text,

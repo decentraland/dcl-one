@@ -3523,9 +3523,15 @@ async fn allow_list_edits_are_guarded_updates() {
     };
 
     assert_eq!(
-        store::modify_allow_list_access(&f.pool, &world, caps, AllowListEdit::AddWallet(&abc))
-            .await
-            .unwrap(),
+        store::modify_allow_list_access(
+            &f.pool,
+            &world,
+            &owner,
+            caps,
+            AllowListEdit::AddWallet(&abc)
+        )
+        .await
+        .unwrap(),
         AllowListEditOutcome::NotAllowList
     );
     store::store_access_for_owner(&f.pool, &world, &owner, &AccessSetting::Unrestricted)
@@ -3533,9 +3539,15 @@ async fn allow_list_edits_are_guarded_updates() {
         .unwrap();
     assert_eq!(version().await, 1);
     assert_eq!(
-        store::modify_allow_list_access(&f.pool, &world, caps, AllowListEdit::AddWallet(&abc))
-            .await
-            .unwrap(),
+        store::modify_allow_list_access(
+            &f.pool,
+            &world,
+            &owner,
+            caps,
+            AllowListEdit::AddWallet(&abc)
+        )
+        .await
+        .unwrap(),
         AllowListEditOutcome::NotAllowList
     );
 
@@ -3552,40 +3564,76 @@ async fn allow_list_edits_are_guarded_updates() {
     .unwrap();
     assert_eq!(version().await, 2);
     assert_eq!(
-        store::modify_allow_list_access(&f.pool, &world, caps, AllowListEdit::AddWallet(&abc))
-            .await
-            .unwrap(),
+        store::modify_allow_list_access(
+            &f.pool,
+            &world,
+            &owner,
+            caps,
+            AllowListEdit::AddWallet(&abc)
+        )
+        .await
+        .unwrap(),
         AllowListEditOutcome::Applied,
         "presence still counts as a write"
     );
     assert_eq!(
-        store::modify_allow_list_access(&f.pool, &world, caps, AllowListEdit::AddWallet(&def))
-            .await
-            .unwrap(),
+        store::modify_allow_list_access(
+            &f.pool,
+            &world,
+            &owner,
+            caps,
+            AllowListEdit::AddWallet(&def)
+        )
+        .await
+        .unwrap(),
         AllowListEditOutcome::Applied
     );
     assert_eq!(
-        store::modify_allow_list_access(&f.pool, &world, caps, AllowListEdit::AddCommunity(c1))
-            .await
-            .unwrap(),
+        store::modify_allow_list_access(
+            &f.pool,
+            &world,
+            &owner,
+            caps,
+            AllowListEdit::AddCommunity(c1)
+        )
+        .await
+        .unwrap(),
         AllowListEditOutcome::Applied
     );
     assert_eq!(
-        store::modify_allow_list_access(&f.pool, &world, caps, AllowListEdit::AddCommunity(c2))
-            .await
-            .unwrap(),
+        store::modify_allow_list_access(
+            &f.pool,
+            &world,
+            &owner,
+            caps,
+            AllowListEdit::AddCommunity(c2)
+        )
+        .await
+        .unwrap(),
         AllowListEditOutcome::Applied
     );
     assert_eq!(
-        store::modify_allow_list_access(&f.pool, &world, caps, AllowListEdit::RemoveWallet(&abc))
-            .await
-            .unwrap(),
+        store::modify_allow_list_access(
+            &f.pool,
+            &world,
+            &owner,
+            caps,
+            AllowListEdit::RemoveWallet(&abc)
+        )
+        .await
+        .unwrap(),
         AllowListEditOutcome::Applied
     );
     assert_eq!(
-        store::modify_allow_list_access(&f.pool, &world, caps, AllowListEdit::RemoveCommunity(c1))
-            .await
-            .unwrap(),
+        store::modify_allow_list_access(
+            &f.pool,
+            &world,
+            &owner,
+            caps,
+            AllowListEdit::RemoveCommunity(c1)
+        )
+        .await
+        .unwrap(),
         AllowListEditOutcome::Applied
     );
     assert_eq!(version().await, 8);
@@ -3622,27 +3670,46 @@ async fn allow_list_edits_are_guarded_updates() {
     let last = Wallet::random().address;
     let too_many = Wallet::random().address;
     assert_eq!(
-        store::modify_allow_list_access(&f.pool, &world, caps, AllowListEdit::AddWallet(&last))
-            .await
-            .unwrap(),
-        AllowListEditOutcome::Applied
-    );
-    assert_eq!(
-        store::modify_allow_list_access(&f.pool, &world, caps, AllowListEdit::AddWallet(&too_many))
-            .await
-            .unwrap(),
-        AllowListEditOutcome::CapExceeded
-    );
-    assert_eq!(
-        store::modify_allow_list_access(&f.pool, &world, caps, AllowListEdit::AddWallet(&last))
-            .await
-            .unwrap(),
+        store::modify_allow_list_access(
+            &f.pool,
+            &world,
+            &owner,
+            caps,
+            AllowListEdit::AddWallet(&last)
+        )
+        .await
+        .unwrap(),
         AllowListEditOutcome::Applied
     );
     assert_eq!(
         store::modify_allow_list_access(
             &f.pool,
             &world,
+            &owner,
+            caps,
+            AllowListEdit::AddWallet(&too_many)
+        )
+        .await
+        .unwrap(),
+        AllowListEditOutcome::CapExceeded
+    );
+    assert_eq!(
+        store::modify_allow_list_access(
+            &f.pool,
+            &world,
+            &owner,
+            caps,
+            AllowListEdit::AddWallet(&last)
+        )
+        .await
+        .unwrap(),
+        AllowListEditOutcome::Applied
+    );
+    assert_eq!(
+        store::modify_allow_list_access(
+            &f.pool,
+            &world,
+            &owner,
             caps,
             AllowListEdit::AddCommunity(Uuid::new_v4())
         )
@@ -3654,6 +3721,7 @@ async fn allow_list_edits_are_guarded_updates() {
         store::modify_allow_list_access(
             &f.pool,
             &world,
+            &owner,
             caps,
             AllowListEdit::AddCommunity(Uuid::parse_str(&communities[7]).unwrap())
         )

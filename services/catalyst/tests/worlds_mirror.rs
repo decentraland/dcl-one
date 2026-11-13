@@ -1658,7 +1658,8 @@ async fn a_mirror_pass_copies_the_upstream_access_setting() {
             .unwrap();
     assert_eq!(listed, 0, "the allow-list goes with its type");
 
-    // An unreadable or unknown setting fails the world and keeps what is stored.
+    // An unreadable or unknown setting keeps what is stored; a world whose scenes are all held
+    // still syncs the rest.
     for (status, body) in [
         (Some(StatusCode::INTERNAL_SERVER_ERROR), json!({})),
         (
@@ -1672,7 +1673,7 @@ async fn a_mirror_pass_copies_the_upstream_access_setting() {
             st.permissions.insert(world.to_string(), body);
         }
         let summary = node.pass(&ctx).await;
-        assert_eq!(summary.scenes.failed, 1, "{summary:?}");
+        assert_eq!(summary.scenes.unchanged, 1, "{summary:?}");
         let (_, permissions) = node.get(&format!("/world/{world}/permissions")).await;
         assert_eq!(
             permissions["permissions"]["access"]["type"],
@@ -1789,6 +1790,7 @@ async fn an_access_setting_the_owner_made_here_is_kept_by_the_mirror() {
     let added = modify_allow_list_access(
         &scratch.pool,
         &WorldName::parse(edited).unwrap(),
+        &owner,
         AccessCaps::default(),
         AllowListEdit::AddWallet(&Address::parse(d).unwrap()),
     )
@@ -1821,6 +1823,156 @@ async fn world_row(pool: &PgPool, world: &str) -> (Option<String>, Option<i32>, 
         .fetch_one(pool)
         .await
         .unwrap()
+}
+
+async fn set_here(pool: &PgPool, world: &str) -> (bool, Option<String>, bool, Option<String>) {
+    sqlx::query_as(
+        "SELECT access_set_here, access_set_by, settings_set_here, settings_set_by \
+         FROM worlds.worlds WHERE name = $1",
+    )
+    .bind(world)
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
+/// The owner's settings and access writes on this node stick while that owner holds the name,
+/// as the source's `/permissions` owner says, and a NAME transfer upstream lets the source's
+/// settings and access in again. A copied access change bumps `settings_version`; a disabled
+/// row takes no copy.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_owner_edit_here_is_kept_while_that_owner_holds_the_name() {
+    use catalyst::comms::world_identity::WorldName;
+    use catalyst::shared::identity::Address;
+    use catalyst::worlds::core::store::{WorldSettingsUpdate, update_world_settings};
+
+    let Some(scratch) = db::scratch_database().await else {
+        eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
+        return;
+    };
+    let fake = start_fake().await;
+    let node = Node::new(scratch.pool.clone(), &fake.base, "set-here").await;
+    let world = "kept.dcl.eth";
+    let (holder, buyer) = (
+        "0x00000000000000000000000000000000000000a1",
+        "0x00000000000000000000000000000000000000b2",
+    );
+    let permissions = |owner: &str, access: Value| json!({"owner": owner, "permissions": {"access": access}, "summary": {}});
+    {
+        let mut st = fake.state.lock();
+        add_scene(&mut st, world, "K", "0,0", &[("k.txt", b"kept")]);
+        st.settings.insert(
+            world.to_string(),
+            json!({"title": "Source", "settings_version": 1}),
+        );
+        st.permissions.insert(
+            world.to_string(),
+            permissions(holder, json!({"type": "unrestricted"})),
+        );
+    }
+    let ctx = node.ctx().await;
+    let summary = node.pass(&ctx).await;
+    assert_eq!(summary.scenes.synced, 1, "{summary:?}");
+    assert_eq!(
+        world_row(&node.pool, world).await.0.as_deref(),
+        Some("Source")
+    );
+
+    // The holder retitles the world here; the source keeps its own title.
+    update_world_settings(
+        &node.pool,
+        &WorldName::parse(world).unwrap(),
+        &Address::parse(holder).unwrap(),
+        &WorldSettingsUpdate {
+            title: Some("Mine".into()),
+            ..WorldSettingsUpdate::default()
+        },
+    )
+    .await
+    .unwrap();
+    let edited = world_row(&node.pool, world).await;
+    assert_eq!(edited.0.as_deref(), Some("Mine"));
+    for _ in 0..2 {
+        let summary = node.pass(&ctx).await;
+        assert_eq!(summary.scenes.unchanged, 1, "{summary:?}");
+        assert_eq!(
+            world_row(&node.pool, world).await,
+            edited,
+            "no revert, no bump"
+        );
+    }
+    assert_eq!(
+        set_here(&node.pool, world).await,
+        (false, None, true, Some(holder.into()))
+    );
+
+    // The source restricts the world: the copied access bumps the version even though the
+    // source's settings counter is not ahead.
+    fake.state.lock().permissions.insert(
+        world.to_string(),
+        permissions(holder, json!({"type": "allow-list", "wallets": [holder]})),
+    );
+    node.pass(&ctx).await;
+    let (_, access) = node.get(&format!("/world/{world}/permissions")).await;
+    assert_eq!(access["permissions"]["access"]["type"], "allow-list");
+    assert_eq!(world_row(&node.pool, world).await.2, edited.2 + 1);
+
+    // A marked row from before the setter was recorded takes the source's owner as it.
+    sqlx::query(
+        "UPDATE worlds.worlds SET access_set_here = true, access_set_by = NULL WHERE name = $1",
+    )
+    .bind(world)
+    .execute(&node.pool)
+    .await
+    .unwrap();
+    node.pass(&ctx).await;
+    assert_eq!(
+        set_here(&node.pool, world).await,
+        (true, Some(holder.into()), true, Some(holder.into()))
+    );
+
+    // A disabled row takes no copy.
+    sqlx::query("UPDATE worlds.worlds SET blocked_since = timezone('UTC', now()) WHERE name = $1")
+        .bind(world)
+        .execute(&node.pool)
+        .await
+        .unwrap();
+    {
+        let mut st = fake.state.lock();
+        st.settings.insert(
+            world.to_string(),
+            json!({"title": "Sold", "settings_version": 2}),
+        );
+        st.permissions.insert(
+            world.to_string(),
+            permissions(buyer, json!({"type": "unrestricted"})),
+        );
+    }
+    let before = world_row(&node.pool, world).await;
+    node.pass(&ctx).await;
+    assert_eq!(world_row(&node.pool, world).await, before);
+    sqlx::query("UPDATE worlds.worlds SET blocked_since = NULL WHERE name = $1")
+        .bind(world)
+        .execute(&node.pool)
+        .await
+        .unwrap();
+
+    // The name changed hands upstream: the source's settings and access apply again.
+    node.pass(&ctx).await;
+    assert_eq!(
+        set_here(&node.pool, world).await,
+        (false, None, false, None)
+    );
+    assert_eq!(
+        world_row(&node.pool, world).await.0.as_deref(),
+        Some("Sold")
+    );
+    let (_, access) = node.get(&format!("/world/{world}/permissions")).await;
+    assert_eq!(access["permissions"]["access"]["type"], "unrestricted");
+
+    node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
+    drop(node);
+    scratch.teardown().await;
 }
 
 /// Upstream changes a world's settings and access without a deployment and bumps
@@ -1999,6 +2151,17 @@ async fn a_mirrored_world_holds_the_thumbnail_its_settings_name() {
     node.pass(&node.ctx().await).await;
     let (_, settings) = node.get("/world/upload.dcl.eth/settings").await;
     assert_eq!(settings["thumbnail_hash"], json!(cid), "{settings}");
+
+    // A thumbnail the source names but fails to serve keeps the stored one and its version.
+    let version = world_row(&node.pool, "upload.dcl.eth").await.2;
+    fake.state.lock().settings.insert(
+        "upload.dcl.eth".to_string(),
+        json!({"title": "Thumb", "thumbnail_hash": "1".repeat(64), "settings_version": 1}),
+    );
+    node.pass(&node.ctx().await).await;
+    let (_, settings) = node.get("/world/upload.dcl.eth/settings").await;
+    assert_eq!(settings["thumbnail_hash"], json!(cid), "{settings}");
+    assert_eq!(world_row(&node.pool, "upload.dcl.eth").await.2, version);
 
     node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
     drop(node);

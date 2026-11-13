@@ -213,16 +213,16 @@ client on the root host gets those answers (WR-12 for the mount, WR-23 for the d
 Upstream: `activeEntitiesHandler` (`src/controllers/handlers/active-entities.ts:7-48`) and
 `worldsManager.getEntityForWorlds` (`src/adapters/worlds-manager.ts:822-862`). dcl-one:
 `active::active_entities` (`worlds/src/core/active.rs:21-59`) and `store::entities_for_worlds`
-(`worlds/src/core/store.rs:1206-1332`).
+(`worlds/src/core/store.rs` `entities_for_worlds`, `worlds/src/core/active_entity.rs`).
 
 | aspect | upstream | dcl-one |
 |---|---|---|
 | Body read | `request.json()`, no content-type check, no body cap (`@dcl/http-server` is built without `maxBodySize`). Invalid or empty JSON throws a `SyntaxError` → 500 `{"error":"Internal Server Error"}`. | Raw bytes, no content-type check, 256 KiB cap (`core/mod.rs:645-648`) under the gateway's 1 MiB (`gateway.py:366`). Invalid JSON → 400 `Invalid request. Request body is not valid` (`active.rs:25-26`) (WR-13, WR-16). |
 | Shape | Not an object, or `pointers` not an array → 400 `{"error":"Bad request","message":"Invalid request. Request body is not valid"}` (`active-entities-handler.spec.ts:17-28`). | Same message and envelope (`active.rs:27-31`). MATCH. |
 | Pointers | Non-empty strings kept; more than 50 → 400 `Maximum 50 pointers allowed per request`; lowercased and deduplicated (`active-entities.ts:17-29`). | Same filter, same cap and message, deduplicated by lowercase key (`active.rs`). A pointer with surrounding whitespace finds nothing; one that is not a `WorldName` (inner whitespace, `/` or a control character) is dropped, which also finds nothing upstream (WR-14). |
-| Deny list | `checkNameDenyList`: first the whole lowercased name against `BLOCKED_WORLD_NAMES` (entries trimmed and lowercased, applied while the remote list is offline), then the name lowercased with its first `.eth` and first `.dcl` removed against the remote list, case-insensitively (`src/adapters/name-deny-list-checker.ts:8-13,45-59`; `active-entities.ts:33-42`, again in `worlds-manager.ts:827-832`). | `BannedNames::allows` checks `BLOCKED_WORLD_NAMES` the same way, then the same normalization over the `banned-names` list (`worlds/src/core/names.rs:31-39,51-54`; source: the explorer-api mirror instead of `DCL_LISTS_URL`), applied in `active.rs:44-53` (WR-35). MATCH while the list reads; a failed read is not cached (WR-35). |
+| Deny list | `checkNameDenyList`: first the whole lowercased name against `BLOCKED_WORLD_NAMES` (entries trimmed and lowercased, applied while the remote list is offline), then the name lowercased with its first `.eth` and first `.dcl` removed against the remote list, case-insensitively (`src/adapters/name-deny-list-checker.ts:8-13,45-59`; `active-entities.ts:33-42`, again in `worlds-manager.ts:827-832`). | `BannedNames::allows` checks `BLOCKED_WORLD_NAMES` the same way, then the same normalization over the `banned-names` list (`worlds/src/core/names.rs:31-39,51-54`; source: the explorer-api mirror instead of `DCL_LISTS_URL`), applied in `active.rs:44-53` (WR-35). MATCH while the list reads; a failed read is held five seconds, not an hour (WR-35). |
 | Query | `DISTINCT ON (world_name)` the newest `DEPLOYED` scene, `ORDER BY world_name, created_at DESC`. | The same `DISTINCT ON` over `worlds.world_scenes` (which keeps only live scenes; retired ones move to `worlds.retired_world_scenes`). MATCH. |
-| Body | `[{...entity, id, metadata: {...metadata, owner}}]`: the stored entity's keys in their jsonb order, `id` and `metadata` at their places, `owner` last in `metadata` (`worlds-manager.ts:854-861`). | The same: `entities_for_worlds` reads `entity::text` and writes the members in that order, `id`, `metadata` and `owner` (`null` when the row has none) replaced in place or appended (`worlds/src/core/store.rs:1206-1332`) (WR-15). MATCH. |
+| Body | `[{...entity, id, metadata: {...metadata, owner}}]`: the stored entity's keys in their jsonb order, `id` and `metadata` at their places, `owner` last in `metadata` (`worlds-manager.ts:854-861`). | The same: `entities_for_worlds` reads `entity::text` and writes the members in that order, `id`, `metadata` and `owner` (`null` when the row has none) replaced in place or appended (`worlds/src/core/store.rs` `entities_for_worlds`, `worlds/src/core/active_entity.rs`) (WR-15). MATCH. |
 | Order | `world_name` order. | `world_name` order. MATCH. |
 
 Upstream tests matched: empty `[]` for an undeployed world, `[]` for empty `pointers`, the 50 cap,
@@ -478,7 +478,7 @@ documented in `docs/worlds-compatibility.md` "Mounts" (WR-23).
       bytes), `id` and `metadata` in place, `owner` in place or last (`worlds-manager.ts:854-861`).
     - dcl-one: `entities_for_worlds` reads `entity::text`, drops the whitespace outside strings and
       writes the members in that order with the same three keys spliced
-      (`worlds/src/core/store.rs:1206-1332`); `metadata.owner` is the row's owner, `null` when it
+      (`worlds/src/core/store.rs` `entities_for_worlds`, `worlds/src/core/active_entity.rs`); `metadata.owner` is the row's owner, `null` when it
       has none. Pinned by `worlds/src/core/tests.rs:6543` `active_entities_answer_upstream_member_order`,
       `store.rs` `active_entity_spreads_in_the_stored_member_order`,
       `active_entity_appends_what_the_entity_lacks` and
@@ -701,10 +701,10 @@ documented in `docs/worlds-compatibility.md` "Mounts" (WR-23).
       `the_mints_answer_404_for_a_deny_listed_world_name`.
     - Difference on a failed list read: upstream's `fetchMethod` catches the fetch error and returns
       `[]`, which the LRU cache keeps for its hour (`name-deny-list-checker.ts:21-43`), so after the
-      list service recovers DAO-listed names stay allowed until that hour ends. dcl-one answers the
-      configured blocks alone for the failed call and caches nothing (`names.rs:109-120`), so the next
-      call reads `explore_api.lists` again and a recovered list applies at once; an expired snapshot is
-      never served. Both answer the configured blocks alone while the read fails. The edge is not
+      list service recovers DAO-listed names stay allowed until that hour ends. dcl-one reads the list
+      one caller at a time and answers the configured blocks alone for five seconds after a failed read
+      (`NameDenyList::snapshot`, `FAILED_READ_TTL`), then reads `explore_api.lists` again, so a
+      recovered list applies within seconds; an expired snapshot is never served. Both answer the configured blocks alone while the read fails. The edge is not
       listed in `docs/worlds-compatibility.md`.
     - Proposed fix: decide whether this stricter recovery is intended; if so, list it under "Deny list
       in world listings"; if not, cache the blocks-only snapshot for the hour in `NameDenyList::read`.
