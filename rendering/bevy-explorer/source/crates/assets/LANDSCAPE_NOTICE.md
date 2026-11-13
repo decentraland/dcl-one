@@ -7,8 +7,7 @@ into the build as `embedded://landscape/...`. They are stored in Git LFS (see th
 checkout (`git lfs pull --include="rendering/bevy-explorer/source/crates/assets/src/assets/landscape/**"`),
 so the build embeds the files rather than their pointers; a local checkout needs `git lfs pull`.
 
-That repository is licensed under the Apache License 2.0 (its `LICENSE` file). The satellite map
-images are Decentraland's own map data, published there.
+That repository is licensed under the Apache License 2.0 (its `LICENSE` file).
 
 The ground, sand and cliff textures are Decentraland's own assets, published there (confirmed by
 the project on 2026-11-12). They are the textures Unity's runtime binds: the splat, ground and sand
@@ -22,7 +21,6 @@ Unity paths are relative to `Explorer/Assets/` in that repository.
 
 | Files here | Unity repository and commit | Unity source path | Licence | Conversion | Tool and version |
 | --- | --- | --- | --- | --- | --- |
-| `src/assets/landscape/satellite/{x},{y}.jpg`, x and y each 0 to 7 (64 files, 512x512 JPEG) | decentraland/unity-explorer `206efdac5b8d447899e70dd732f45af9482ed97b` | `DCL/MapRenderer/MapLayers/Atlas/SatelliteAtlasFallbackImages/{x},{y}.jpg` (same names) | Apache-2.0 | none (copied byte for byte; the `.meta` files are not copied) | `cp` (GNU coreutils 8.32) |
 | `src/assets/landscape/ground/splat.png` (1024x1024 RGBA PNG) | decentraland/unity-explorer `206efdac5b8d447899e70dd732f45af9482ed97b` | `DCL/Landscape/Assets/Textures/SplatAlpha.png` | Apache-2.0 | none (copied byte for byte: linear blend weights, kept lossless) | `cp` (GNU coreutils 8.32) |
 | `src/assets/landscape/ground/ground_basecolor.jpg` (1024x1024 JPEG) | decentraland/unity-explorer `206efdac5b8d447899e70dd732f45af9482ed97b` | `DCL/Landscape/Assets/Textures/TerrainBase_basecolor.tga` (2048x2048) | Apache-2.0 | scaled to 1024x1024 (area filter), JPEG at `-q:v 2` (high quality): `ffmpeg -i TerrainBase_basecolor.tga -vf scale=1024:1024:flags=area -q:v 2 ground_basecolor.jpg` | FFmpeg 8.1.2 (gyan.dev full build) |
 | `src/assets/landscape/ground/sand_basecolor.jpg` (1024x1024 JPEG) | decentraland/unity-explorer `206efdac5b8d447899e70dd732f45af9482ed97b` | `DCL/Landscape/Assets/Textures/StylizedGround_v01_basecolor.png` (1024x1024) | Apache-2.0 | JPEG at `-q:v 2` (high quality): `ffmpeg -i StylizedGround_v01_basecolor.png -q:v 2 sand_basecolor.jpg` | FFmpeg 8.1.2 (gyan.dev full build) |
