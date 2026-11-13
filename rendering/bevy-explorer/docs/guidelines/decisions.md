@@ -340,13 +340,13 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   - Each instance is an entity, spawned when it is within the Landscape Distance of the player
     (horizontally) and checked again when the player changes parcel; bevy batches the shared
     meshes. Unity hands the whole layout to a GPU instancing package that culls by distance.
-  - Bevy's lit material replaces Unity's simple Blinn-Phong one. Colour, texture, cut-off,
-    culling and normal maps carry over; the trunk and the stones take a roughness of one minus
-    their smoothness. The leaves are fully rough: their Unity smoothness of 1 is a pin-point
+  - Bevy's lit material replaces the trees' and bushes' simple Blinn-Phong one. Colour, texture,
+    cut-off, culling and normal maps carry over; the trunk and the stones take a roughness of one
+    minus their smoothness. The leaves are fully rough: their Unity smoothness of 1 is a pin-point
     highlight there, and a mirror of the sky under bevy's image-based light.
-  - The stones' Unity shader belongs to the GPU instancing package and is not ported: the stones
-    draw their colour texture, normal map and smoothness only, without the terrain colour and
-    moss the stone materials also bind.
+  - The stones keep Unity's ground colour at their foot and moss on their upward faces, on bevy's
+    lit material as in Unity; the ground colour texture they take it from is 512x512 (2048x2048
+    in Unity).
   - The wind moves the leaves in the depth and shadow passes too. Unity's moves the colour pass
     only; here the depth prepass has to match it.
   - The textures are 512x512 (1024x1024 in Unity), uncompressed RGBA8 with their mips built when

@@ -18,7 +18,7 @@ use scene_runner::initialize_scene::{PointerResult, ScenePointers};
 use super::{
     add_spawn_systems,
     layout::TreeLayout,
-    material::{Surface, SURFACES},
+    material::{Surface, SURFACES, TERRAIN_TEXTURE},
     prototypes::PROTOTYPES,
     tree_radius_parcels, LandscapeTreeAssets, Tree, ASSET_DIR,
 };
@@ -168,7 +168,13 @@ fn tree_assets_load_embedded() {
         .collect();
     let textures: Vec<Handle<Image>> = SURFACES
         .iter()
-        .flat_map(|surface| [Some(surface.texture), surface.normal_map])
+        .flat_map(|surface| {
+            [
+                Some(surface.texture),
+                surface.normal_map,
+                surface.stone.as_ref().map(|_| TERRAIN_TEXTURE),
+            ]
+        })
         .flatten()
         .map(|texture| server.load(format!("{ASSET_DIR}/{texture}")))
         .collect();
@@ -540,14 +546,14 @@ fn landscape_trees_schedule_is_acyclic() {
 }
 
 /// A spawned instance's meshes draw with the surfaces' materials, the swaying ones inside bounds
-/// padded for the wind: a tree's leaves and trunk, a stone's rock.
+/// padded for the wind: a tree's leaves and trunk, a stone's rock with its terrain colour and moss.
 #[test]
 fn spawned_meshes_wear_the_surface_materials() {
     use bevy::render::{mesh::MeshAabb, primitives::Aabb};
 
     use super::{
         dress_trees,
-        material::{TreeMaterial, ALL_SURFACES},
+        material::{StoneMaterial, SurfaceMaterial, TreeMaterial, ALL_SURFACES},
         setup, wind_padding, TreeMaterials, TreeWind,
     };
 
@@ -574,6 +580,7 @@ fn spawned_meshes_wear_the_surface_materials() {
     .init_asset::<AnimationClip>()
     .init_asset::<TreeLayout>()
     .init_asset::<TreeMaterial>()
+    .init_asset::<StoneMaterial>()
     .init_resource::<TreeWind>()
     .add_systems(Startup, setup)
     .add_systems(PostUpdate, dress_trees);
@@ -593,19 +600,20 @@ fn spawned_meshes_wear_the_surface_materials() {
             Entity,
             &Mesh3d,
             Option<&MeshMaterial3d<TreeMaterial>>,
+            Option<&MeshMaterial3d<StoneMaterial>>,
             Has<MeshMaterial3d<StandardMaterial>>,
             Option<&Aabb>,
         )>();
         query
             .iter(app.world())
-            .map(|(entity, mesh, material, standard, aabb)| {
-                (
-                    entity,
-                    mesh.0.clone(),
-                    material.map(|material| material.0.clone()),
-                    standard,
-                    aabb.copied(),
-                )
+            .map(|(entity, mesh, tree, stone, standard, aabb)| {
+                let material = match (tree, stone) {
+                    (Some(tree), None) => Some(SurfaceMaterial::Tree(tree.0.clone())),
+                    (None, Some(stone)) => Some(SurfaceMaterial::Stone(stone.0.clone())),
+                    (None, None) => None,
+                    (Some(_), Some(_)) => panic!("a mesh with two surface materials"),
+                };
+                (entity, mesh.0.clone(), material, standard, aabb.copied())
             })
             .collect::<Vec<_>>()
     };
@@ -633,9 +641,31 @@ fn spawned_meshes_wear_the_surface_materials() {
             root = parent.parent();
         }
         if root == roots[0] {
+            assert!(matches!(material, SurfaceMaterial::Tree(_)), "{surface:?}");
             tree.push(surface);
         } else {
             assert_eq!(root, roots[1]);
+            // the rock blends the terrain colour and its moss with the reference's values
+            let SurfaceMaterial::Stone(handle) = &material else {
+                panic!("{surface:?} draws without the stone blend");
+            };
+            let blend = &app
+                .world()
+                .resource::<Assets<StoneMaterial>>()
+                .get(handle)
+                .unwrap()
+                .extension;
+            let moss = Color::srgb(0.043137256, 0.42745098, 0.3019608).to_linear();
+            assert_eq!(
+                blend.moss,
+                Vec4::new(moss.red, moss.green, moss.blue, 0.0),
+                "{surface:?}"
+            );
+            assert_eq!(blend.terrain, Vec4::new(0.9, 0.6, 0.5, 0.0), "{surface:?}");
+            assert_eq!(
+                blend.terrain_texture.path().map(ToString::to_string),
+                Some(format!("{ASSET_DIR}/{TERRAIN_TEXTURE}")),
+            );
             stone.push(surface);
         }
 
@@ -686,9 +716,10 @@ fn every_surface_is_used() {
     assert_eq!(used.len(), SURFACES.len());
 }
 
-/// The tree shader compiles on this machine's adapter, in a renderer with no window: a swaying
-/// leaf surface (cut out, both faces) and the trunk (opaque, normal-mapped) in front of a camera
-/// with the prepasses and a shadowing light. Needs a GPU, so `#[ignore]`d and skipped by CI:
+/// The tree and stone shaders compile on this machine's adapter, in a renderer with no window: a
+/// swaying leaf surface (cut out, both faces), the trunk (opaque, normal-mapped) and a stone (its
+/// terrain colour and moss) in front of a camera with the prepasses and a shadowing light. Needs a
+/// GPU, so `#[ignore]`d and skipped by CI:
 ///
 /// ```text
 /// cargo test -p visuals landscape_tree_shader_compiles -- --ignored --nocapture
@@ -713,7 +744,11 @@ fn landscape_tree_shader_compiles() {
         winit::WinitPlugin,
     };
 
-    use super::{embed_shaders, material::surface_material, TreeMaterial};
+    use super::{
+        embed_shaders,
+        material::{stone_material, surface_material, StoneMaterial},
+        TreeMaterial,
+    };
 
     let mut app = App::new();
     app.add_plugins(
@@ -732,6 +767,7 @@ fn landscape_tree_shader_compiles() {
     app.add_plugins((
         assets::EmbedAssetsPlugin,
         MaterialPlugin::<TreeMaterial>::default(),
+        MaterialPlugin::<StoneMaterial>::default(),
     ));
     embed_shaders(&mut app);
     app.finish();
@@ -746,6 +782,10 @@ fn landscape_tree_shader_compiles() {
         textures.extend(loading);
         materials.push(world.resource_mut::<Assets<TreeMaterial>>().add(material));
     }
+    let rock = Surface::Rock03.spec();
+    let (material, loading) = stone_material(rock, rock.stone.as_ref().unwrap(), &server);
+    textures.extend(loading);
+    let stone = world.resource_mut::<Assets<StoneMaterial>>().add(material);
     let mut images = world.resource_mut::<Assets<Image>>();
     let mut target = Image::new_fill(
         Extent3d {
@@ -789,6 +829,11 @@ fn landscape_tree_shader_compiles() {
             Transform::from_xyz(x, 0.5, 0.0),
         ));
     }
+    world.spawn((
+        Mesh3d(cube.clone()),
+        MeshMaterial3d(stone),
+        Transform::from_xyz(0.0, 0.5, -1.0),
+    ));
 
     // the materials are prepared once their textures are in
     let started = Instant::now();
@@ -837,6 +882,6 @@ fn landscape_tree_shader_compiles() {
         "pipeline errors:\n{}",
         errors.join("\n\n")
     );
-    // both surfaces' main, depth and normal prepass, and shadow passes
-    assert!(ok >= 6, "only {ok} pipelines compiled");
+    // the three surfaces' main, depth and normal prepass, and shadow passes
+    assert!(ok >= 9, "only {ok} pipelines compiled");
 }

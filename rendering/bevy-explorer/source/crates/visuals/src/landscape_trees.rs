@@ -30,7 +30,10 @@ use crate::{
     terrain::{TerrainSet, TerrainSurface},
 };
 use layout::{hidden_by_occupancy, TreeLayout, TreeLayoutLoader};
-use material::{add_mips, surface_material, Surface, TreeMaterial, TreeSway, ALL_SURFACES};
+use material::{
+    add_mips, stone_material, surface_material, StoneMaterial, Surface, SurfaceMaterial,
+    TreeMaterial, TreeSway, ALL_SURFACES,
+};
 use prototypes::PROTOTYPES;
 
 pub(crate) mod layout;
@@ -46,7 +49,10 @@ impl Plugin for LandscapeTreesPlugin {
         embed_shaders(app);
         app.init_asset::<TreeLayout>()
             .init_asset_loader::<TreeLayoutLoader>()
-            .add_plugins(MaterialPlugin::<TreeMaterial>::default())
+            .add_plugins((
+                MaterialPlugin::<TreeMaterial>::default(),
+                MaterialPlugin::<StoneMaterial>::default(),
+            ))
             .init_resource::<TreeWind>()
             .add_console_command::<TreeWindCommand, _>(tree_wind_command)
             .add_systems(Startup, setup)
@@ -134,8 +140,8 @@ pub(crate) struct LandscapeTreeAssets {
 #[derive(Resource)]
 struct TreeMaterials {
     /// By `Surface`.
-    surfaces: Vec<Handle<TreeMaterial>>,
-    by_model_material: HashMap<AssetId<StandardMaterial>, (Surface, Handle<TreeMaterial>)>,
+    surfaces: Vec<SurfaceMaterial>,
+    by_model_material: HashMap<AssetId<StandardMaterial>, (Surface, SurfaceMaterial)>,
     /// Held so the models' materials keep the ids `by_model_material` knows them by.
     _model_materials: Vec<Handle<StandardMaterial>>,
     textures: Vec<Handle<Image>>,
@@ -150,15 +156,23 @@ fn setup(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
     mut materials: ResMut<Assets<TreeMaterial>>,
+    mut stone_materials: ResMut<Assets<StoneMaterial>>,
     wind: Res<TreeWind>,
 ) {
     let mut textures = Vec::new();
     let surfaces: Vec<_> = ALL_SURFACES
         .iter()
         .map(|surface| {
-            let (material, loading) = surface_material(surface.spec(), &asset_server, wind.0);
-            textures.extend(loading);
-            materials.add(material)
+            let spec = surface.spec();
+            if let Some(stone) = &spec.stone {
+                let (material, loading) = stone_material(spec, stone, &asset_server);
+                textures.extend(loading);
+                SurfaceMaterial::Stone(stone_materials.add(material))
+            } else {
+                let (material, loading) = surface_material(spec, &asset_server, wind.0);
+                textures.extend(loading);
+                SurfaceMaterial::Tree(materials.add(material))
+            }
         })
         .collect();
     let mut by_model_material = HashMap::new();
@@ -238,13 +252,16 @@ fn dress_trees(
 ) {
     let Some(materials) = materials else { return };
     for (entity, material, mesh) in &added {
-        let Some((surface, tree_material)) = materials.by_model_material.get(&material.id()) else {
+        let Some((surface, surface_material)) = materials.by_model_material.get(&material.id())
+        else {
             continue;
         };
         let mut entity = commands.entity(entity);
-        entity
-            .remove::<MeshMaterial3d<StandardMaterial>>()
-            .insert(MeshMaterial3d(tree_material.clone()));
+        entity.remove::<MeshMaterial3d<StandardMaterial>>();
+        match surface_material {
+            SurfaceMaterial::Tree(handle) => entity.insert(MeshMaterial3d(handle.clone())),
+            SurfaceMaterial::Stone(handle) => entity.insert(MeshMaterial3d(handle.clone())),
+        };
         let padding = wind_padding(surface.spec().wind.as_ref());
         if padding > 0.0 {
             if let Some(mut aabb) = meshes.get(mesh).and_then(|mesh| mesh.compute_aabb()) {
@@ -291,7 +308,10 @@ fn apply_tree_wind(
     if !wind.is_changed() {
         return;
     }
-    for (surface, handle) in ALL_SURFACES.iter().zip(&materials.surfaces) {
+    for (surface, material) in ALL_SURFACES.iter().zip(&materials.surfaces) {
+        let SurfaceMaterial::Tree(handle) = material else {
+            continue;
+        };
         if let Some(material) = assets.get_mut(handle) {
             material.extension = TreeSway::new(surface.spec().wind.as_ref(), wind.0);
         }

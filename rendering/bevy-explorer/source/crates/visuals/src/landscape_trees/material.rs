@@ -1,14 +1,21 @@
 //! The surfaces of the trees, bushes and stones: the reference values on bevy's lit material, the
-//! leaves swaying in the wind, and the mip chains their textures need.
+//! leaves swaying in the wind, the stones taking the ground's colour and moss, and the mip chains
+//! their textures need.
 
 use bevy::{
     image::{
         ImageAddressMode, ImageFilterMode, ImageLoaderSettings, ImageSampler,
         ImageSamplerDescriptor,
     },
-    pbr::{ExtendedMaterial, MaterialExtension},
+    pbr::{ExtendedMaterial, MaterialExtension, MaterialExtensionKey, MaterialExtensionPipeline},
     prelude::*,
-    render::render_resource::{AsBindGroup, Face, ShaderRef, TextureFormat},
+    render::{
+        mesh::MeshVertexBufferLayoutRef,
+        render_resource::{
+            AsBindGroup, Face, RenderPipelineDescriptor, ShaderRef, SpecializedMeshPipelineError,
+            TextureFormat,
+        },
+    },
 };
 
 use super::ASSET_DIR;
@@ -53,7 +60,24 @@ pub(crate) struct SurfaceSpec {
     pub cutoff: Option<f32>,
     pub perceptual_roughness: f32,
     pub wind: Option<Wind>,
+    pub stone: Option<StoneSpec>,
 }
+
+/// How a stone blends the ground's colour over its foot and moss over its upward faces.
+pub(crate) struct StoneSpec {
+    /// In sRGB.
+    pub moss: Color,
+    /// Faces turned up at least this far (the height of their unit normal) are fully mossed; the
+    /// moss thins over the steeper faces, and a little stays even on the undersides.
+    pub moss_mask: f32,
+}
+
+/// Under `landscape/trees/`: the ground colour the stones take near the ground.
+pub(crate) const TERRAIN_TEXTURE: &str = "terrain_color.jpg";
+/// Repeats of the terrain texture per 10 m of world.
+const TERRAIN_TILING: f32 = 0.6;
+/// The shift of the terrain texture's coordinates, in repeats.
+const TERRAIN_OFFSET: f32 = 0.5;
 
 /// The tree leaves' wind; the bushes' is gentler and slower to flutter.
 const LEAF_WIND: Wind = Wind {
@@ -89,11 +113,17 @@ const fn leaf(base_color: Color, texture: &'static str, wind: Wind) -> SurfaceSp
         cutoff: Some(LEAF_CUTOFF),
         perceptual_roughness: LEAF_ROUGHNESS,
         wind: Some(wind),
+        stone: None,
     }
 }
 
 /// Smoothness 0.209 as roughness.
-const fn rock(texture: &'static str, normal_map: &'static str) -> SurfaceSpec {
+const fn rock(
+    texture: &'static str,
+    normal_map: &'static str,
+    moss: Color,
+    moss_mask: f32,
+) -> SurfaceSpec {
     SurfaceSpec {
         base_color: Color::WHITE,
         texture,
@@ -102,8 +132,12 @@ const fn rock(texture: &'static str, normal_map: &'static str) -> SurfaceSpec {
         cutoff: None,
         perceptual_roughness: 1.0 - 0.209,
         wind: None,
+        stone: Some(StoneSpec { moss, moss_mask }),
     }
 }
+
+/// The first and third stones' moss.
+const MOSS: Color = Color::srgb(0.043137256, 0.42745098, 0.3019608);
 
 /// Indexed by `Surface`.
 pub(crate) const SURFACES: [SurfaceSpec; 9] = [
@@ -137,10 +171,16 @@ pub(crate) const SURFACES: [SurfaceSpec; 9] = [
         cutoff: None,
         perceptual_roughness: 1.0 - 0.33,
         wind: None,
+        stone: None,
     },
-    rock("stone01_color.jpg", "stone01_normal.jpg"),
-    rock("stone02_color.jpg", "stone02_normal.jpg"),
-    rock("stone03_color.jpg", "stone03_normal.jpg"),
+    rock("stone01_color.jpg", "stone01_normal.jpg", MOSS, 0.9),
+    rock(
+        "stone02_color.jpg",
+        "stone02_normal.jpg",
+        Color::srgb(0.042052332, 0.4245283, 0.3003053),
+        0.734,
+    ),
+    rock("stone03_color.jpg", "stone03_normal.jpg", MOSS, 0.886),
 ];
 
 pub(crate) const ALL_SURFACES: [Surface; 9] = [
@@ -212,6 +252,49 @@ impl MaterialExtension for TreeSway {
     }
 }
 
+/// A surface's material: a tree's or bush's, or a stone's.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum SurfaceMaterial {
+    Tree(Handle<TreeMaterial>),
+    Stone(Handle<StoneMaterial>),
+}
+
+pub(crate) type StoneMaterial = ExtendedMaterial<StoneBlend>;
+
+/// The ground's colour and the moss of `soft_shadows.wgsl`'s stone blend.
+#[derive(Asset, TypePath, AsBindGroup, Clone)]
+pub(crate) struct StoneBlend {
+    /// The moss colour, linear, in rgb.
+    #[uniform(100)]
+    pub(crate) moss: Vec4,
+    /// The moss mask, the terrain texture's tiling and its offset.
+    #[uniform(101)]
+    pub(crate) terrain: Vec4,
+    #[texture(102)]
+    #[sampler(103)]
+    pub(crate) terrain_texture: Handle<Image>,
+}
+
+impl MaterialExtension for StoneBlend {
+    type Base = StandardMaterial;
+
+    fn fragment_shader() -> ShaderRef {
+        super::soft_shadows_fragment()
+    }
+
+    fn specialize(
+        _pipeline: &MaterialExtensionPipeline,
+        descriptor: &mut RenderPipelineDescriptor,
+        _layout: &MeshVertexBufferLayoutRef,
+        _key: MaterialExtensionKey<Self>,
+    ) -> Result<(), SpecializedMeshPipelineError> {
+        if let Some(fragment) = descriptor.fragment.as_mut() {
+            fragment.shader_defs.push("LANDSCAPE_STONE".into());
+        }
+        Ok(())
+    }
+}
+
 /// Repeating, filtered within a mip and not between mips.
 fn sampler() -> ImageSampler {
     ImageSampler::Descriptor(ImageSamplerDescriptor {
@@ -234,12 +317,46 @@ pub(crate) fn load_texture(asset_server: &AssetServer, file: &str, srgb: bool) -
     )
 }
 
-/// The material of a surface, with its textures loading.
+/// The material of a tree or bush surface, with its textures loading.
 pub(crate) fn surface_material(
     spec: &SurfaceSpec,
     asset_server: &AssetServer,
     wind: bool,
 ) -> (TreeMaterial, Vec<Handle<Image>>) {
+    let (base, textures) = lit_material(spec, asset_server);
+    let material = TreeMaterial {
+        base,
+        extension: TreeSway::new(spec.wind.as_ref(), wind),
+    };
+    (material, textures)
+}
+
+/// The material of a stone surface, with its textures loading.
+pub(crate) fn stone_material(
+    spec: &SurfaceSpec,
+    stone: &StoneSpec,
+    asset_server: &AssetServer,
+) -> (StoneMaterial, Vec<Handle<Image>>) {
+    let (base, mut textures) = lit_material(spec, asset_server);
+    let terrain_texture = load_texture(asset_server, TERRAIN_TEXTURE, true);
+    textures.push(terrain_texture.clone());
+    let moss = stone.moss.to_linear();
+    let material = StoneMaterial {
+        base,
+        extension: StoneBlend {
+            moss: Vec4::new(moss.red, moss.green, moss.blue, 0.0),
+            terrain: Vec4::new(stone.moss_mask, TERRAIN_TILING, TERRAIN_OFFSET, 0.0),
+            terrain_texture,
+        },
+    };
+    (material, textures)
+}
+
+/// A surface's values on bevy's lit material, with its textures loading.
+fn lit_material(
+    spec: &SurfaceSpec,
+    asset_server: &AssetServer,
+) -> (StandardMaterial, Vec<Handle<Image>>) {
     let texture = load_texture(asset_server, spec.texture, !spec.linear);
     let normal_map = spec
         .normal_map
@@ -248,23 +365,20 @@ pub(crate) fn surface_material(
         .into_iter()
         .flatten()
         .collect();
-    let material = TreeMaterial {
-        base: StandardMaterial {
-            base_color: spec.base_color,
-            base_color_texture: Some(texture),
-            normal_map_texture: normal_map,
-            alpha_mode: spec.cutoff.map_or(AlphaMode::Opaque, AlphaMode::Mask),
-            // the leaf cards keep their normals on both faces
-            cull_mode: if spec.cutoff.is_some() {
-                None
-            } else {
-                Some(Face::Back)
-            },
-            double_sided: false,
-            perceptual_roughness: spec.perceptual_roughness,
-            ..default()
+    let material = StandardMaterial {
+        base_color: spec.base_color,
+        base_color_texture: Some(texture),
+        normal_map_texture: normal_map,
+        alpha_mode: spec.cutoff.map_or(AlphaMode::Opaque, AlphaMode::Mask),
+        // the leaf cards keep their normals on both faces
+        cull_mode: if spec.cutoff.is_some() {
+            None
+        } else {
+            Some(Face::Back)
         },
-        extension: TreeSway::new(spec.wind.as_ref(), wind),
+        double_sided: false,
+        perceptual_roughness: spec.perceptual_roughness,
+        ..default()
     };
     (material, textures)
 }
