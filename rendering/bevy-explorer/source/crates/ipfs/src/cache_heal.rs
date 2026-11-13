@@ -20,10 +20,14 @@ use bevy::{
     prelude::*,
     tasks::{IoTaskPool, Task},
 };
+#[cfg(any(target_arch = "wasm32", test))]
+use common::util::UrlLoopbackExt;
 use common::util::{TaskCompat, TaskExt};
 
 #[cfg(not(target_arch = "wasm32"))]
 use crate::ipfs_path::CacheKey;
+#[cfg(any(target_arch = "wasm32", test))]
+use crate::IpfsContext;
 use crate::{content_hash, ipfs_path::IpfsPath, IpfsIo, IpfsResource};
 
 /// glTF extensions the asset processor (`image_processing`) repairs a failed load for: such a
@@ -120,7 +124,9 @@ impl IpfsIo {
             return false;
         };
         #[cfg(target_arch = "wasm32")]
-        let remote = ipfs_path.to_url(&context);
+        let Some(remote) = web_lookup_url(&ipfs_path, &context) else {
+            return false;
+        };
         drop(context);
         if !self.cache_heals.begin(key.name()) {
             return false;
@@ -128,10 +134,7 @@ impl IpfsIo {
         #[cfg(not(target_arch = "wasm32"))]
         let dropped = self.drop_bad_disk_entry(&key).await;
         #[cfg(target_arch = "wasm32")]
-        let dropped = match remote {
-            Ok(remote) => drop_bad_web_entry(&remote).await,
-            Err(_) => false,
-        };
+        let dropped = drop_bad_web_entry(&remote).await;
         if dropped {
             warn!(
                 "dropped the cached copy of `{}`: its bytes failed to load",
@@ -162,6 +165,15 @@ impl IpfsIo {
             }
         }
     }
+}
+
+/// The url whose web cache entry a read of `ipfs_path` gets, if a read looks in the cache at all:
+/// loopback content is local already, and a preview server's is mutable, so it is never cached.
+#[cfg(any(target_arch = "wasm32", test))]
+fn web_lookup_url(ipfs_path: &IpfsPath, context: &IpfsContext) -> Option<String> {
+    let remote = ipfs_path.to_url(context).ok()?;
+    let loopback = url::Url::parse(&remote).is_ok_and(|url| url.is_loopback());
+    (!loopback).then_some(remote)
 }
 
 /// Drops the entry a read of `remote` gets (its shared one first, else its own), when its bytes

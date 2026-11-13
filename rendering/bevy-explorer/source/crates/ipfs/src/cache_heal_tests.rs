@@ -314,10 +314,10 @@ async fn a_cached_copy_that_matches_its_hash_is_kept() {
 #[tokio::test]
 async fn a_url_keyed_copy_is_dropped() {
     let (io, dir) = io_with_cache("url");
-    let path = PathBuf::from(&IpfsPath::new_from_url(
-        "https://example.invalid/pic.png",
-        "png",
-    ));
+    let (base, log) = serve(vec![("/pic.png".to_owned(), b"a picture".to_vec())]).await;
+    // a read waits for a connected realm
+    scene_with(&io, &base, "unused.png", "bafkreiunused").await;
+    let path = PathBuf::from(&IpfsPath::new_from_url(&format!("{base}/pic.png"), "png"));
     // the engine reads through the path, which names the url as it is written there
     let ipfs_path = IpfsPath::new_from_path(&path).unwrap().unwrap();
     let name = ipfs_path
@@ -327,8 +327,32 @@ async fn a_url_keyed_copy_is_dropped() {
         .to_owned();
     std::fs::write(dir.join(&name), b"<html>not a picture</html>").unwrap();
 
+    assert_eq!(read_all(&io, &path).await, b"<html>not a picture</html>");
+    assert!(log.lock().unwrap().is_empty());
+
     assert!(io.drop_bad_cached_entry(&path).await);
     assert!(!dir.join(&name).exists());
+    assert_eq!(read_all(&io, &path).await, b"a picture");
+    let requests = log.lock().unwrap().clone();
+    assert_eq!(requests, vec!["/pic.png".to_owned()]);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[tokio::test]
+async fn a_loopback_remote_is_never_looked_up_in_the_web_cache() {
+    let (io, dir) = io_with_cache("loopback");
+    let hash = raw_cid(b"original");
+    scene_with(&io, "http://127.0.0.1:9", "tex.png", &hash).await;
+    let ipfs_path = IpfsPath::new_from_path(&content_path("tex.png"))
+        .unwrap()
+        .unwrap();
+    assert_eq!(web_lookup_url(&ipfs_path, &*io.context.read().await), None);
+
+    scene_with(&io, "https://content.invalid", "tex.png", &hash).await;
+    assert_eq!(
+        web_lookup_url(&ipfs_path, &*io.context.read().await),
+        Some(format!("https://content.invalid/contents/{hash}"))
+    );
     std::fs::remove_dir_all(dir).unwrap();
 }
 
@@ -396,11 +420,12 @@ fn a_failed_load_drops_a_bad_cached_copy_and_a_reader_error_does_not() {
             loader_name: "test",
         }));
     let start = std::time::Instant::now();
-    while dir.join(&hash).exists() && start.elapsed().as_secs() < 5 {
+    while (dir.join(&hash).exists() || !app.world().resource::<PendingCacheHeals>().0.is_empty())
+        && start.elapsed().as_secs() < 5
+    {
         app.update();
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
-    app.update();
     assert!(!dir.join(&hash).exists());
     assert_eq!(io.cache_heals.counts(), (1, 1));
     assert!(app.world().resource::<PendingCacheHeals>().0.is_empty());

@@ -18,7 +18,7 @@ pub(super) fn register(app: &mut App, preview: bool) {
                 ("Cached reads", "cached"),
                 ("Non-IPFS reads", "local"),
                 ("Failed reads", "failed"),
-                ("Cached entries checked after a failed load", "cacheChecks"),
+                ("Failed loads checked against the cache", "cacheChecks"),
                 ("Cached entries dropped for bad bytes", "cacheDrops"),
                 #[cfg(not(target_arch = "wasm32"))]
                 ("IPFS connection failures (native)", "connectFailed"),
