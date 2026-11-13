@@ -1043,31 +1043,11 @@
 
 /* Loading: one skeleton tile per slot on the page, with a sweeping shimmer. */
 .skeleton {
-  position: relative;
-  display: block;
   width: 126px;
   height: 126px;
   margin: 6px 0 0 -3px;
   border-radius: var(--r-md);
-  background: var(--skeleton);
-  overflow: hidden;
-}
-.skeleton::after {
-  content: '';
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 126px;
-  background: url('../../assets/backpack/gradient-loading.webp') center / 100% 100% no-repeat;
-  animation: shimmer var(--dur-shimmer) linear infinite;
-}
-@keyframes shimmer {
-  from {
-    transform: translateX(-126px);
-  }
-  to {
-    transform: translateX(126px);
-  }
+  --skeleton-sweep: 100%;
 }
 
 /* Opening: the header slides down while the content fades in. */

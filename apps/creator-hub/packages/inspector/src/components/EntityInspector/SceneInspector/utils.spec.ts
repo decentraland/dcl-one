@@ -1,0 +1,570 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import type { EditorComponentsTypes } from '../../../lib/sdk/components';
+import { SceneAgeRating, SceneCategory } from '../../../lib/sdk/components';
+import { TransitionMode } from '../../../lib/sdk/components/SceneMetadata';
+import type { Layout } from '../../../lib/utils/layout';
+import type { SceneInput } from './types';
+import {
+  addLogsPermission,
+  containsAddress,
+  dedupeAddresses,
+  disableMultiplayerWithUninstall,
+  enableMultiplayerWithInstall,
+  fromScene,
+  getThumbnailWarnings,
+  hasThumbnailAspectRatio,
+  isDuplicateAddress,
+  isValidInput,
+  nextMultiplayerValue,
+  parseParcels,
+  toScene,
+  validateThumbnailFile,
+  validateThumbnailPath,
+  withoutAddress,
+} from './utils';
+
+const getFile = vi.fn();
+
+vi.mock('../../../redux/data-layer', () => ({
+  getDataLayerInterface: () => ({ getFile }),
+}));
+
+//TODO fix tests
+function getInput(base: string, parcels: string): SceneInput {
+  const input: SceneInput = {
+    name: 'name',
+    description: 'description',
+    thumbnail: 'assets/scene/thumbnail.png',
+    ageRating: 'A',
+    categories: ['game'],
+    tags: 'tag1, tag2',
+    silenceVoiceChat: false,
+    disablePortableExperiences: false,
+    disableNearbyVoiceChat: false,
+    hideLandscapeTerrain: false,
+    spawnPoints: [],
+    creator: '0x0000000000000000000000000000000000000000',
+    author: 'John Doe',
+    email: 'jane.doe@example.com',
+    skyboxConfig: {
+      fixedTime: '36000',
+      transitionMode: TransitionMode.TM_FORWARD.toString(),
+    },
+    layout: {
+      base,
+      parcels,
+    },
+  };
+  return input;
+}
+
+function getScene(layout: Layout): EditorComponentsTypes['Scene'] {
+  const scene: EditorComponentsTypes['Scene'] = {
+    name: 'name',
+    description: 'description',
+    creator: '0x0000000000000000000000000000000000000000',
+    thumbnail: 'assets/scene/thumbnail.png',
+    ageRating: SceneAgeRating.Adult,
+    categories: [SceneCategory.GAME],
+    tags: ['tag1', 'tag2'],
+    silenceVoiceChat: false,
+    disablePortableExperiences: false,
+    disableNearbyVoiceChat: false,
+    hideLandscapeTerrain: false,
+    spawnPoints: [],
+    author: 'John Doe',
+    email: 'jane.doe@example.com',
+    layout,
+    skyboxConfig: {
+      fixedTime: 36000,
+      transitionMode: TransitionMode.TM_FORWARD,
+    },
+  };
+  return scene;
+}
+
+const CHECKSUM_ADDRESS = '0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed';
+const LOWERCASE_ADDRESS = '0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed';
+const PREFIXLESS_ADDRESS = '5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed';
+const OTHER_ADDRESS = '0x0000000000000000000000000000000000000001';
+
+describe('SceneInspector/utils', () => {
+  describe('fromScene', () => {
+    it('should convert a Scene to a SceneInput', () => {
+      const scene = getScene({
+        base: { x: 1, y: 1 },
+        parcels: [
+          { x: 1, y: 1 },
+          { x: 2, y: 2 },
+        ],
+      });
+
+      const result = fromScene(scene);
+
+      expect(result).toEqual(getInput('1,1', '1,1 2,2'));
+    });
+  });
+
+  describe('toScene', () => {
+    it('should convert a SceneInput to a Scene', () => {
+      const input = getInput('1,1', '1,1 2,2');
+
+      const result = toScene(input);
+
+      expect(result).toEqual(
+        getScene({
+          base: { x: 1, y: 1 },
+          parcels: [
+            { x: 1, y: 1 },
+            { x: 2, y: 2 },
+          ],
+        }),
+      );
+    });
+  });
+
+  describe('parseParcels', () => {
+    it('should parse a string of parcels into Coords array', () => {
+      const input = '1,1 2,2 3,3';
+
+      const result = parseParcels(input);
+
+      expect(result).toEqual([
+        { x: 1, y: 1 },
+        { x: 2, y: 2 },
+        { x: 3, y: 3 },
+      ]);
+    });
+
+    it('should return an empty array for invalid input', () => {
+      const input = '1,1 2,2 invalid 3,3';
+
+      const result = parseParcels(input);
+
+      expect(result).toEqual([]);
+    });
+  });
+
+  describe('isValidInput', () => {
+    it('should return true for connected parcels', () => {
+      const validInput = getInput('1,1', '1,1 1,2');
+      const invalidInput = getInput('1,1', '1,1 2,2');
+
+      const isValidValidInput = isValidInput(validInput);
+      const isValidInvalidInput = isValidInput(invalidInput);
+
+      expect(isValidValidInput).toBe(true);
+      expect(isValidInvalidInput).toBe(false);
+    });
+
+    it('should return true if parcels contains base coord', () => {
+      const validInput = getInput('1,1', '1,1 1,2');
+      const invalidInput = getInput('0,1', '1,1 2,2');
+
+      const isValidValidInput = isValidInput(validInput);
+      const isValidInvalidInput = isValidInput(invalidInput);
+
+      expect(isValidValidInput).toBe(true);
+      expect(isValidInvalidInput).toBe(false);
+    });
+  });
+
+  describe('nextMultiplayerValue', () => {
+    it('should switch off and put the latest SDK back when the auth-server SDK is present', () => {
+      expect(nextMultiplayerValue(false, true)).toEqual({
+        sdk: 'uninstall',
+        patch: { multiplayerServer: false },
+      });
+    });
+
+    it('should switch off without touching the SDK when it is already the latest release', () => {
+      expect(nextMultiplayerValue(false, false)).toEqual({
+        sdk: null,
+        patch: { multiplayerServer: false },
+      });
+    });
+
+    it('should never name logsPermissions, so an accidental toggle cannot erase it', () => {
+      for (const supported of [true, false]) {
+        const { patch } = nextMultiplayerValue(false, supported);
+        expect(patch && 'logsPermissions' in patch).toBe(false);
+      }
+    });
+
+    it('should enable without installing when the SDK is already present', () => {
+      expect(nextMultiplayerValue(true, true)).toEqual({
+        sdk: null,
+        patch: { multiplayerServer: true },
+      });
+    });
+
+    it('should install and write nothing when the SDK is absent', () => {
+      expect(nextMultiplayerValue(true, false)).toEqual({ sdk: 'install', patch: null });
+    });
+  });
+
+  describe('disableMultiplayerWithUninstall', () => {
+    it('should write the flag off before the swap answers, since that answer can arrive after the iframe reloads', async () => {
+      const writes: boolean[] = [];
+      let writesWhenUninstallStarted: boolean[] = [];
+      const uninstall = vi.fn(async () => {
+        writesWhenUninstallStarted = [...writes];
+        return { ok: true };
+      });
+
+      const ok = await disableMultiplayerWithUninstall(enabled => writes.push(enabled), uninstall);
+
+      expect(ok).toBe(true);
+      expect(writesWhenUninstallStarted).toEqual([false]);
+      expect(writes).toEqual([false]);
+    });
+
+    it('should leave the flag off and report failure when the host cannot swap the SDK', async () => {
+      const writes: boolean[] = [];
+
+      const ok = await disableMultiplayerWithUninstall(
+        enabled => writes.push(enabled),
+        async () => ({ ok: false }),
+      );
+
+      expect(ok).toBe(false);
+      expect(writes).toEqual([false]);
+    });
+
+    it('should leave the flag off and report failure when there is no host', async () => {
+      const writes: boolean[] = [];
+
+      const ok = await disableMultiplayerWithUninstall(
+        enabled => writes.push(enabled),
+        async () => undefined,
+      );
+
+      expect(ok).toBe(false);
+      expect(writes).toEqual([false]);
+    });
+
+    it('should leave the flag off and report failure when the request throws', async () => {
+      const writes: boolean[] = [];
+
+      const ok = await disableMultiplayerWithUninstall(
+        enabled => writes.push(enabled),
+        async () => {
+          throw new Error('rpc closed');
+        },
+      );
+
+      expect(ok).toBe(false);
+      expect(writes).toEqual([false]);
+    });
+  });
+
+  describe('enableMultiplayerWithInstall', () => {
+    describe('when the install succeeds', () => {
+      it('should write the flag before the install answers, since that answer can arrive after the iframe reloads', async () => {
+        const writes: boolean[] = [];
+        let writesWhenInstallStarted: boolean[] = [];
+        const install = vi.fn(async () => {
+          writesWhenInstallStarted = [...writes];
+          return { ok: true };
+        });
+
+        await enableMultiplayerWithInstall(enabled => writes.push(enabled), install);
+
+        expect(writesWhenInstallStarted).toEqual([true]);
+      });
+
+      it('should leave the flag on and report success', async () => {
+        const writes: boolean[] = [];
+
+        const ok = await enableMultiplayerWithInstall(
+          enabled => writes.push(enabled),
+          async () => ({ ok: true }),
+        );
+
+        expect(ok).toBe(true);
+        expect(writes).toEqual([true]);
+      });
+    });
+
+    describe('when the host reports the install failed', () => {
+      it('should turn the flag back off and report failure', async () => {
+        const writes: boolean[] = [];
+
+        const ok = await enableMultiplayerWithInstall(
+          enabled => writes.push(enabled),
+          async () => ({ ok: false }),
+        );
+
+        expect(ok).toBe(false);
+        expect(writes).toEqual([true, false]);
+      });
+    });
+
+    describe('when there is no host to install through', () => {
+      it('should turn the flag back off and report failure', async () => {
+        const writes: boolean[] = [];
+
+        const ok = await enableMultiplayerWithInstall(
+          enabled => writes.push(enabled),
+          async () => undefined,
+        );
+
+        expect(ok).toBe(false);
+        expect(writes).toEqual([true, false]);
+      });
+    });
+
+    describe('when the install request throws', () => {
+      it('should turn the flag back off and report failure', async () => {
+        const writes: boolean[] = [];
+
+        const ok = await enableMultiplayerWithInstall(
+          enabled => writes.push(enabled),
+          async () => {
+            throw new Error('rpc closed');
+          },
+        );
+
+        expect(ok).toBe(false);
+        expect(writes).toEqual([true, false]);
+      });
+    });
+  });
+
+  describe('dedupeAddresses', () => {
+    it('should fold every spelling of one address into a single entry', () => {
+      expect(dedupeAddresses([CHECKSUM_ADDRESS, LOWERCASE_ADDRESS, PREFIXLESS_ADDRESS])).toEqual([
+        CHECKSUM_ADDRESS,
+      ]);
+    });
+
+    it('should drop blank entries', () => {
+      expect(dedupeAddresses([CHECKSUM_ADDRESS, '', OTHER_ADDRESS])).toEqual([
+        CHECKSUM_ADDRESS,
+        OTHER_ADDRESS,
+      ]);
+    });
+
+    it('should keep the stored spelling of the entry it kept', () => {
+      expect(dedupeAddresses([CHECKSUM_ADDRESS])).toEqual([CHECKSUM_ADDRESS]);
+    });
+
+    it('should return an empty list when there is nothing stored', () => {
+      expect(dedupeAddresses(undefined)).toEqual([]);
+    });
+  });
+
+  describe('containsAddress', () => {
+    it('should match a stored address under a different spelling', () => {
+      expect(containsAddress([CHECKSUM_ADDRESS], LOWERCASE_ADDRESS)).toBe(true);
+      expect(containsAddress([CHECKSUM_ADDRESS], PREFIXLESS_ADDRESS)).toBe(true);
+    });
+
+    it('should not match a different address', () => {
+      expect(containsAddress([CHECKSUM_ADDRESS], OTHER_ADDRESS)).toBe(false);
+    });
+
+    it('should not match when nothing is stored', () => {
+      expect(containsAddress(undefined, CHECKSUM_ADDRESS)).toBe(false);
+    });
+  });
+
+  describe('addLogsPermission', () => {
+    const STORED = ['0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed'];
+
+    it('should append a new address straight away, trimmed', () => {
+      expect(addLogsPermission(STORED, ' 0x0000000000000000000000000000000000000001 ')).toEqual({
+        next: [...STORED, '0x0000000000000000000000000000000000000001'],
+        duplicate: false,
+      });
+    });
+
+    it('should flag an upper-case spelling of a stored address as a duplicate', () => {
+      expect(addLogsPermission(STORED, '0x5AAEB6053F3E94C9B9A09F33669435E7EF1BEAED')).toEqual({
+        next: null,
+        duplicate: true,
+      });
+    });
+
+    it('should do nothing for empty text', () => {
+      expect(addLogsPermission(STORED, '  ')).toEqual({ next: null, duplicate: false });
+    });
+  });
+
+  describe('isDuplicateAddress', () => {
+    const STORED = ['0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed'];
+
+    it('should flag a pasted checksummed spelling of a stored address', () => {
+      expect(isDuplicateAddress(STORED, '0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed')).toBe(true);
+    });
+
+    it('should not flag a partial address while it is still being typed', () => {
+      expect(isDuplicateAddress(STORED, '0x5aaeb6053f')).toBe(false);
+    });
+
+    it('should not flag an address that is not stored', () => {
+      expect(isDuplicateAddress(STORED, '0x0000000000000000000000000000000000000001')).toBe(false);
+    });
+  });
+
+  describe('withoutAddress', () => {
+    it('should remove every stored spelling of the address', () => {
+      expect(
+        withoutAddress([CHECKSUM_ADDRESS, LOWERCASE_ADDRESS, PREFIXLESS_ADDRESS], CHECKSUM_ADDRESS),
+      ).toEqual([]);
+    });
+
+    it('should keep the addresses it was not asked to remove', () => {
+      expect(withoutAddress([CHECKSUM_ADDRESS, OTHER_ADDRESS], CHECKSUM_ADDRESS)).toEqual([
+        OTHER_ADDRESS,
+      ]);
+    });
+  });
+
+  describe('hasThumbnailAspectRatio', () => {
+    it('should accept the recommended 1920x1080 size', () => {
+      expect(hasThumbnailAspectRatio(1920, 1080)).toBe(true);
+    });
+
+    it('should accept other 16:9 sizes', () => {
+      expect(hasThumbnailAspectRatio(1280, 720)).toBe(true);
+      expect(hasThumbnailAspectRatio(640, 360)).toBe(true);
+    });
+
+    it('should tolerate rounding to whole pixels', () => {
+      expect(hasThumbnailAspectRatio(1000, 563)).toBe(true);
+    });
+
+    it('should reject other aspect ratios', () => {
+      expect(hasThumbnailAspectRatio(1080, 1080)).toBe(false);
+      expect(hasThumbnailAspectRatio(1600, 1200)).toBe(false);
+      expect(hasThumbnailAspectRatio(1080, 1920)).toBe(false);
+    });
+
+    it('should reject degenerate sizes', () => {
+      expect(hasThumbnailAspectRatio(0, 0)).toBe(false);
+      expect(hasThumbnailAspectRatio(1920, 0)).toBe(false);
+    });
+  });
+
+  describe('getThumbnailWarnings', () => {
+    describe('when the thumbnail is a 16:9 png', () => {
+      it('should return no warnings', () => {
+        expect(
+          getThumbnailWarnings('assets/scene/thumbnail.png', { width: 1920, height: 1080 }),
+        ).toEqual([]);
+      });
+    });
+
+    describe('when the dimensions are not known yet', () => {
+      it('should not warn about the aspect ratio', () => {
+        expect(getThumbnailWarnings('assets/scene/thumbnail.png', null)).toEqual([]);
+      });
+    });
+
+    describe('when the thumbnail is not 16:9', () => {
+      it('should warn with the actual size', () => {
+        const warnings = getThumbnailWarnings('assets/scene/thumbnail.png', {
+          width: 1080,
+          height: 1080,
+        });
+        expect(warnings).toHaveLength(1);
+        expect(warnings[0]).toContain('1080×1080');
+        expect(warnings[0]).toContain('16:9');
+      });
+    });
+
+    describe('when the thumbnail is not a png or jpg', () => {
+      it('should warn about the format', () => {
+        const warnings = getThumbnailWarnings('assets/scene/thumbnail.gif', {
+          width: 1920,
+          height: 1080,
+        });
+        expect(warnings).toHaveLength(1);
+        expect(warnings[0]).toContain('.png');
+        expect(warnings[0]).toContain('.jpg');
+      });
+    });
+  });
+
+  describe('validateThumbnailFile', () => {
+    const bitmap = { width: 0, height: 0, close: vi.fn() };
+    const createImageBitmap = vi.fn();
+
+    beforeEach(() => {
+      createImageBitmap.mockResolvedValue(bitmap);
+      vi.stubGlobal('createImageBitmap', createImageBitmap);
+    });
+
+    afterEach(() => {
+      vi.unstubAllGlobals();
+      vi.clearAllMocks();
+    });
+
+    describe('when the image is 16:9', () => {
+      it('should accept it', async () => {
+        bitmap.width = 1920;
+        bitmap.height = 1080;
+        expect(await validateThumbnailFile(new Blob())).toBeUndefined();
+      });
+    });
+
+    describe('when the image is not 16:9', () => {
+      it('should reject it naming the size', async () => {
+        bitmap.width = 1000;
+        bitmap.height = 1000;
+        const error = await validateThumbnailFile(new Blob());
+        expect(error?.type).toBe('dimensions');
+        expect(error?.message).toContain('1000×1000');
+        expect(error?.message).toContain('16:9');
+      });
+    });
+
+    describe('when the file cannot be decoded as an image', () => {
+      it('should reject it', async () => {
+        createImageBitmap.mockRejectedValue(new Error('bad image'));
+        const error = await validateThumbnailFile(new Blob());
+        expect(error?.type).toBe('dimensions');
+      });
+    });
+  });
+
+  describe('validateThumbnailPath', () => {
+    const bitmap = { width: 1000, height: 1000, close: vi.fn() };
+
+    beforeEach(() => {
+      vi.stubGlobal('createImageBitmap', vi.fn().mockResolvedValue(bitmap));
+      getFile.mockResolvedValue({ content: new Uint8Array([1, 2, 3]) });
+    });
+
+    afterEach(() => {
+      vi.unstubAllGlobals();
+      vi.clearAllMocks();
+    });
+
+    describe('when the path is empty', () => {
+      it('should accept clearing the thumbnail', async () => {
+        expect(await validateThumbnailPath('')).toBeUndefined();
+        expect(getFile).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('when the scene file is not 16:9', () => {
+      it('should reject it', async () => {
+        const error = await validateThumbnailPath('assets/scene/square.png');
+        expect(getFile).toHaveBeenCalledWith({ path: 'assets/scene/square.png' });
+        expect(error?.type).toBe('dimensions');
+      });
+    });
+
+    describe('when the scene file cannot be read', () => {
+      // A missing file is a broken reference, not a bad image; the preview
+      // reports it, so the selection is not blocked here.
+      it('should not block the selection', async () => {
+        getFile.mockRejectedValue(new Error('ENOENT'));
+        expect(await validateThumbnailPath('assets/scene/missing.png')).toBeUndefined();
+      });
+    });
+  });
+});

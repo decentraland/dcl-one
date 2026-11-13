@@ -1,0 +1,215 @@
+import { ipcRenderer, type IpcRendererEvent } from 'electron';
+
+import type { DeployOptions } from '/shared/types/deploy';
+import {
+  BEVY_REALM_BUILD_EVENT,
+  BEVY_REALM_EXIT_EVENT,
+  PROJECT_ASSETS_CHANGED_EVENT,
+  type BevyRealmBuildEvent,
+  type BevyRealmExitEvent,
+  type ProjectAssetsChangedEvent,
+} from '/shared/types/ipc';
+import type { MobileDebugSessionInfo } from '/shared/types/ipc';
+
+import { invoke } from '../services/ipc';
+import type { PreviewOptions } from '/shared/types/settings';
+
+export type { MobileDebugSessionInfo };
+
+export async function getVersion() {
+  return invoke('electron.getAppVersion');
+}
+
+export async function install() {
+  return invoke('bin.install');
+}
+
+export async function openCode(_path: string) {
+  return invoke('code.open', _path);
+}
+
+export async function startInspector() {
+  const port = await invoke('inspector.start');
+  return port;
+}
+
+/**
+ * Start the headless Bevy realm server for a project (the sdk-commands content +
+ * data-layer the embedded Bevy editor engine loads from). Returns the realm URL
+ * and its data-layer WS URL, which the inspector iframe is configured with.
+ */
+export async function startBevyRealm(path: string) {
+  return invoke('bevyRealm.start', path);
+}
+
+export async function killBevyRealm(path: string) {
+  return invoke('bevyRealm.kill', path);
+}
+
+/**
+ * Subscribe to the Bevy realm bundler's build events (a rebuild trigger naming its file,
+ * or the bundle landing). Events for every running realm arrive; filter by `path`.
+ */
+export function onBevyRealmBuildEvent(callback: (event: BevyRealmBuildEvent) => void): () => void {
+  const handler = (_event: IpcRendererEvent, event: BevyRealmBuildEvent) => callback(event);
+  ipcRenderer.on(BEVY_REALM_BUILD_EVENT, handler);
+  return () => {
+    ipcRenderer.removeListener(BEVY_REALM_BUILD_EVENT, handler);
+  };
+}
+
+/** Subscribe to unexpected Bevy realm exits for every project; filter by `path`. */
+export function onBevyRealmExit(callback: (event: BevyRealmExitEvent) => void): () => void {
+  const handler = (_event: IpcRendererEvent, event: BevyRealmExitEvent) => callback(event);
+  ipcRenderer.on(BEVY_REALM_EXIT_EVENT, handler);
+  return () => {
+    ipcRenderer.removeListener(BEVY_REALM_EXIT_EVENT, handler);
+  };
+}
+
+/**
+ * Start (or reuse) a filesystem watcher over the project's assets/ tree, so files dropped
+ * in from outside the editor auto-refresh the inspector catalog. Idempotent per path.
+ */
+export async function startProjectWatcher(path: string) {
+  return invoke('projectWatcher.start', path);
+}
+
+export async function stopProjectWatcher(path: string) {
+  return invoke('projectWatcher.stop', path);
+}
+
+/**
+ * Subscribe to out-of-editor asset changes (a file added/changed/removed in a watched
+ * project's assets/ tree). Events for every watched project arrive; filter by `path`.
+ */
+export function onProjectAssetsChanged(
+  callback: (event: ProjectAssetsChangedEvent) => void,
+): () => void {
+  const handler = (_event: IpcRendererEvent, event: ProjectAssetsChangedEvent) => callback(event);
+  ipcRenderer.on(PROJECT_ASSETS_CHANGED_EVENT, handler);
+  return () => {
+    ipcRenderer.removeListener(PROJECT_ASSETS_CHANGED_EVENT, handler);
+  };
+}
+
+const activeDebuggers = new Map<string, () => void>();
+
+export async function attachSceneDebugger(
+  path: string,
+  cb: (data: string | string[]) => void,
+): Promise<{ cleanup: () => void }> {
+  // Clean up any previous debugger for this path (handles React StrictMode double-mount)
+  activeDebuggers.get(path)?.();
+
+  const { eventName, backlog } = await invoke('inspector.attachSceneDebugger', path);
+
+  const handler = (_: IpcRendererEvent, data: string) => cb(data);
+  ipcRenderer.on(eventName, handler);
+
+  // Replay the backlog now that the listener is registered. Main returns it (instead of
+  // pushing it on the channel before we subscribe) precisely so re-attaching after a scene
+  // reload repaints the console with the running preview's output instead of leaving it empty.
+  if (backlog.length > 0) cb(backlog);
+
+  const cleanup = () => {
+    ipcRenderer.off(eventName, handler);
+    activeDebuggers.delete(path);
+    invoke('inspector.detachSceneDebugger', path);
+  };
+
+  activeDebuggers.set(path, cleanup);
+
+  return { cleanup };
+}
+
+export async function runScene({
+  path,
+  opts,
+  mobile,
+}: {
+  path: string;
+  opts: PreviewOptions;
+  mobile?: boolean;
+}) {
+  const port = await invoke('cli.start', path, opts, mobile);
+  return port;
+}
+
+export async function killPreviewScene(path: string) {
+  const port = await invoke('cli.killPreview', path);
+  return port;
+}
+
+export async function publishScene(opts: DeployOptions) {
+  return invoke('cli.deploy', opts);
+}
+
+export async function openPreview(port: number) {
+  const url = `http://localhost:${port}`;
+  await invoke('electron.openExternal', url);
+}
+
+export async function openTutorial(opts: { id: string; list?: string }) {
+  const { id, list } = opts;
+  const url = `https://youtu.be/${id}${list ? `?list=${list}` : ''}`.trim();
+  await invoke('electron.openExternal', url);
+}
+
+export async function openExternalURL(url: string) {
+  await invoke('electron.openExternal', url);
+}
+
+export async function getMobilePreview(path: string) {
+  return invoke('cli.getMobilePreview', path);
+}
+
+export async function getMobileDebugSessions() {
+  return invoke('mobileDebug.getSessions');
+}
+
+export async function broadcastMobileDebugCommand(cmd: string, args: Record<string, unknown> = {}) {
+  return invoke('mobileDebug.broadcastCommand', cmd, args);
+}
+
+export async function startMobileDebugServer() {
+  return invoke('mobileDebug.startServer');
+}
+
+export async function stopMobileDebugServer() {
+  return invoke('mobileDebug.stopServer');
+}
+
+export async function getMobileDebugServerStatus() {
+  return invoke('mobileDebug.getServerStatus');
+}
+
+export async function getStandaloneDeeplink() {
+  return invoke('mobileDebug.getStandaloneDeeplink');
+}
+
+export function onMobileDebugEntries(
+  callback: (data: { sessionId: number; entries: unknown[] }) => void,
+): () => void {
+  const handler = (_event: IpcRendererEvent, data: { sessionId: number; entries: unknown[] }) =>
+    callback(data);
+  ipcRenderer.on('mobileDebug:entries', handler);
+  void invoke('mobileDebug.subscribeEntries');
+  return () => {
+    ipcRenderer.removeListener('mobileDebug:entries', handler);
+    void invoke('mobileDebug.unsubscribeEntries');
+  };
+}
+
+export function onMobileDebugSessions(
+  callback: (sessions: MobileDebugSessionInfo[]) => void,
+): () => void {
+  const handler = (_event: IpcRendererEvent, sessions: MobileDebugSessionInfo[]) =>
+    callback(sessions);
+  ipcRenderer.on('mobileDebug:sessions', handler);
+  void invoke('mobileDebug.subscribeSessions');
+  return () => {
+    ipcRenderer.removeListener('mobileDebug:sessions', handler);
+    void invoke('mobileDebug.unsubscribeSessions');
+  };
+}
