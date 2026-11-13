@@ -131,13 +131,16 @@ Options of `run`:
 
 | Option | Effect |
 | --- | --- |
-| `--dry-run` | Plans the walk a real run would take from the stored checkpoints, then loads every selected step of every selected source in one target transaction and rolls it back, so later steps and sources see what earlier ones would write. Prints row counts per step and writes nothing. Each step's extract is staged whole on local disk, so `--batch-size` does not apply. |
+| `--dry-run` | Plans the walk a real run would take from the stored checkpoints, then loads every selected step of every selected source in one target transaction and rolls it back, so later steps and sources see what earlier ones would write. Prints row counts per step and keeps no rows. Each step's extract is staged whole under `--work-dir`, so `--batch-size` does not apply. The transaction holds the row locks of everything it loads until it ends, and sequences it draws from stay advanced (sequences are not transactional): run it when the target is not serving, or accept the gaps. |
 | `--step NAME` | Only these steps (repeatable). |
-| `--since TS` | Re-imports rows whose watermark is at or after `TS` (ISO 8601). Steps without a watermark re-scan fully. |
-| `--since last` | `--since` the start of the last completed run of each step, minus `--overlap`. |
-| `--overlap DURATION` | Safety margin for `--since last` (default `10m`): covers writes that committed after a later timestamp was already read. |
+| `--since TS` | Re-imports rows whose watermark is at or after `TS` (ISO 8601). Steps without a watermark re-scan fully. Refused while a step has an interrupted walk from another `--since`: finish it with a plain `run`, or pass `--restart`. |
+| `--since last` | `--since` the last completed walk of each step, minus `--overlap` (what a plain `run` does too). An interrupted walk is resumed instead. |
+| `--overlap DURATION` | How far back a catch-up re-reads (default `10m`). Set it above the longest source transaction plus the worst clock lag of any app that stamps a watermark. |
 | `--restart` | Ignores the stored checkpoint and starts the step over. |
 | `--batch-size N` | Rows per batch (default 5000). |
+| `--lock-timeout DURATION` | Gives up waiting for a lock after this long, on the source and the target (default `1m`, `0s` never). |
+| `--statement-timeout DURATION` | Cancels a target statement after this long (default `30m`, `0s` never). The source extract has none: it stays open for the whole walk. |
+| `--work-dir DIR` | Where batches, and a dry run's whole extracts, are staged (default: the system temp directory). |
 | `--skip-unconfigured` | Skips sources whose database variable is unset (with `all`). |
 | `--storage-root DIR` | The node's storage root (default `STORAGE_ROOT_FOLDER`), required by runs of steps whose rows name blobs. |
 
@@ -148,8 +151,17 @@ set it runs each load against an empty `stage` and rolls back.
 `tooling/tests/test_migration.py` does the latter against a fresh rendering of
 `schemas/`, so a schema change that breaks a mapping fails the tooling tests.
 Its database tests start a throwaway cluster with `initdb`, or use the server
-at `MIGRATION_TEST_SERVER_URL` (a disposable one: they drop and create
-databases there).
+at `MIGRATION_TEST_SERVER_URL`. They create and drop databases there, under
+per-run names they drop again afterwards; a server that is not local also
+needs `MIGRATION_TEST_SERVER_DISPOSABLE=1`. Under `CI` a missing `psql` or a
+`schemas/` that does not apply fails these tests instead of skipping them.
+
+Connections take their credentials from the URL, passed to `psql` through
+libpq environment variables, never argv. `sslmode` and the other TLS
+parameters come from the URL or the operator's `PGSSL*` variables; a host that
+is not local and names neither gets `sslmode=verify-full`, trusting the system
+CA store unless `PGSSLROOTCERT` or `~/.postgresql/root.crt` names a CA (pass
+`?sslmode=...&sslrootcert=...` for a provider CA such as RDS).
 
 Database errors are printed terse, without the failing row; `--verbose-errors`
 (before the command) adds PostgreSQL's DETAIL, which can print row values.
@@ -158,27 +170,42 @@ Database errors are printed terse, without the failing row; `--verbose-errors`
 
 Each step is a keyset walk over its extract query, ordered by its cursor:
 `(watermark, key...)` when the step has a watermark, `(key...)` otherwise.
-Each batch:
+A walk runs one
+`COPY (SELECT * FROM (<extract>) e [WHERE <cursor> > <checkpoint>] [AND e.<watermark> >= <since>] ORDER BY <cursor>) TO STDOUT`
+on the source, so the extract is evaluated once, in one snapshot, and the
+stream is cut into batches on the client. Each batch:
 
-1. runs `COPY (SELECT * FROM (<extract>) e WHERE <cursor> > <checkpoint> [AND e.<watermark> >= <since>] ORDER BY <cursor> LIMIT <batch>) TO STDOUT` on the source;
+1. takes the next `--batch-size` rows of the stream (two adjacent rows with
+   the same cursor stop the run: the key is not unique);
 2. in one target transaction: creates the temporary table `stage` with the
    manifest's columns, copies the batch into it, runs the step's `load` SQL
    and records the batch's last cursor in `dcl_migration.checkpoint`;
 3. commits.
 
+A full batch commits while the stream continues; the last, short batch
+commits only after the source finished the `COPY` without error, so a source
+failure never ends a walk early.
+
 Each batch also takes an advisory lock and checks that the checkpoint is
 still the one this run last wrote, so two runs of one step cannot interleave.
-A crash loses at most the batch in flight; the next `run` starts after the
-last committed cursor. A step whose walk reaches the end is marked complete;
-the next `run` without `--since` continues from its cursor and picks up only
-rows whose watermark moved past it. A step without a watermark re-scans fully
-on every run. Watermarks are compared with the source's clock, and a walk's
+A crash loses at most the batch in flight; the next `run` resumes the
+interrupted walk after the last committed cursor. A step whose walk reaches
+the end is marked complete; the next `run` re-reads from the earlier of that
+walk's start and its last watermark, minus `--overlap`, so a row stamped
+before the last read but committed after it is not lost. Loads are idempotent,
+so the overlap only re-applies rows. A step without a watermark re-scans fully
+on every run.
+
+A source's `after` sources run first in the same run, or must have completed
+a walk of every step on this target; otherwise the run stops, including when
+`--skip-unconfigured` skipped them. Watermarks are compared with the source's clock, and a walk's
 start time is read from the source, so `--since last` does not depend on the
 machine running the tool.
 
 The engine creates the `dcl_migration` schema (`checkpoint`, `blob_inventory`,
-`blob_missing`, `world_limit_seeded`, and the `*_loaded` records of the
-notifications-workers and world-storage-service reconcile steps) in the target on the first real run. It is outside the
+`blob_missing`, `world_limit_seeded`, and the `*_loaded` records some loads
+keep of what they wrote, so reconcile steps delete only imported rows and
+re-runs leave rows the node changed alone) in the target on the first real run. It is outside the
 catalyst schema, which only checks for missing objects; drop it when the
 migration is over.
 
@@ -229,5 +256,8 @@ step writes. Rules for the SQL:
   `TRUNCATE` or `\` commands. psql variables `:'source'`, `:'step'` and
   `:dry_run` are set. Idempotent: `INSERT ... ON CONFLICT ... DO UPDATE`, so
   replaying a batch yields the same rows. Preserves source identifiers. Never
-  deletes or truncates target rows unless the manifest notes say why. Sessions
-  run with `TimeZone=UTC`.
+  deletes or truncates target rows unless the manifest notes say why. Never
+  undoes a change the node made after the import: re-runs re-read rows (the
+  overlap, full re-scans, `whole` steps), so an upsert of a row the node also
+  writes keeps the node's newer state (a lifted ban, a revoked grant, a changed
+  setting). Sessions run with `TimeZone=UTC`.

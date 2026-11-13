@@ -135,6 +135,67 @@ CREATE TABLE IF NOT EXISTS dcl_migration.wss_env_variable_loaded (
 );
 CREATE INDEX IF NOT EXISTS wss_env_variable_loaded_target
     ON dcl_migration.wss_env_variable_loaded (realm, scene_namespace, key);
+-- The camera_reel.images.is_public each image import last wrote; a row that no longer matches was
+-- toggled on the node and keeps its value.
+CREATE TABLE IF NOT EXISTS dcl_migration.camera_reel_image_loaded (
+    id uuid PRIMARY KEY,
+    is_public boolean NOT NULL
+);
+-- Per badge, a fingerprint of the definition and tiers the catalog import last wrote; a badge that
+-- no longer matches was edited on the node and is kept.
+CREATE TABLE IF NOT EXISTS dcl_migration.badge_catalog_loaded (
+    id text PRIMARY KEY,
+    fingerprint text NOT NULL
+);
+-- What world_permission wrote per grant; a grant revoked upstream is deleted only while the node
+-- row still holds these timestamps.
+CREATE TABLE IF NOT EXISTS dcl_migration.world_permission_loaded (
+    world_name text NOT NULL,
+    permission text NOT NULL,
+    address text NOT NULL,
+    created_at timestamp NOT NULL,
+    updated_at timestamp NOT NULL,
+    PRIMARY KEY (world_name, permission, address)
+);
+-- What the social-service-ea loads last wrote per key: a target row that no longer matches was
+-- changed on the node and is kept, a recorded row the node removed is not re-added, and the
+-- reconcile loads delete only recorded rows upstream no longer holds.
+CREATE TABLE IF NOT EXISTS dcl_migration.social_user_settings_loaded (
+    address text PRIMARY KEY,
+    private_messages_privacy text NOT NULL,
+    blocked_users_messages_visibility text NOT NULL,
+    show_situation_reactions text NOT NULL
+);
+CREATE TABLE IF NOT EXISTS dcl_migration.social_block_loaded (
+    blocker_address text NOT NULL,
+    blocked_address text NOT NULL,
+    blocked_at timestamp NOT NULL,
+    PRIMARY KEY (blocker_address, blocked_address)
+);
+CREATE TABLE IF NOT EXISTS dcl_migration.social_user_mute_loaded (
+    muter_address text NOT NULL,
+    muted_address text NOT NULL,
+    muted_at timestamp NOT NULL,
+    PRIMARY KEY (muter_address, muted_address)
+);
+CREATE TABLE IF NOT EXISTS dcl_migration.social_community_member_loaded (
+    community_id uuid NOT NULL,
+    member_address text NOT NULL,
+    role text NOT NULL,
+    joined_at timestamp NOT NULL,
+    PRIMARY KEY (community_id, member_address)
+);
+CREATE TABLE IF NOT EXISTS dcl_migration.social_community_ban_loaded (
+    community_id uuid NOT NULL,
+    banned_address text NOT NULL,
+    active boolean NOT NULL,
+    unbanned_at timestamp,
+    PRIMARY KEY (community_id, banned_address)
+);
+CREATE TABLE IF NOT EXISTS dcl_migration.social_community_post_loaded (
+    id uuid PRIMARY KEY,
+    content text NOT NULL
+);
 RESET client_min_messages;
 """
 
@@ -359,9 +420,20 @@ def ordered(sources, names):
 
 # ── psql ────────────────────────────────────────────────────────────────────
 
-def connection_env(url, read_only=False):
-    """libpq environment for `url`, so credentials never appear in argv."""
-    env = {k: v for k, v in os.environ.items() if not k.startswith('PG')}
+# Operator TLS settings survive; every other PG* variable is replaced by the URL.
+KEPT_PG_ENV = {'PGSSLMODE', 'PGSSLROOTCERT', 'PGSSLCERT', 'PGSSLKEY', 'PGSSLCRL', 'PGSSLCRLDIR',
+               'PGSSLNEGOTIATION', 'PGSSLMINPROTOCOLVERSION', 'PGSSLMAXPROTOCOLVERSION'}
+LOCAL_HOSTS = {'localhost', '127.0.0.1', '::1'}
+
+
+def connection_env(url, read_only=False, extra_options=()):
+    """libpq environment for `url`, so credentials never appear in argv.
+
+    A remote host without an sslmode (URL or PGSSLMODE) gets `verify-full`, trusting the system CA
+    store unless PGSSLROOTCERT or ~/.postgresql/root.crt names one; libpq's own default, `prefer`,
+    checks no certificate and falls back to plaintext.
+    """
+    env = {k: v for k, v in os.environ.items() if not k.startswith('PG') or k in KEPT_PG_ENV}
     parsed = urllib.parse.urlsplit(url)
     options = []
     if parsed.scheme in ('postgres', 'postgresql'):
@@ -387,17 +459,43 @@ def connection_env(url, read_only=False):
                 raise MigrationError(f'unsupported connection parameter {key!r}')
     else:
         raise MigrationError('database URLs must be postgres:// or postgresql:// URIs')
-    options += ['-c TimeZone=UTC', '-c standard_conforming_strings=on', '-c DateStyle=ISO']
+    host = env.get('PGHOST', '')
+    remote = host and not host.startswith('/') and not all(h in LOCAL_HOSTS for h in host.split(','))
+    if remote and 'PGSSLMODE' not in env:
+        env['PGSSLMODE'] = 'verify-full'
+        if 'PGSSLROOTCERT' not in env and not (Path.home() / '.postgresql/root.crt').exists():
+            env['PGSSLROOTCERT'] = 'system'
+    options += ['-c TimeZone=UTC', '-c standard_conforming_strings=on', '-c DateStyle=ISO', *extra_options]
     if read_only:
         options.append('-c default_transaction_read_only=on')
     env['PGOPTIONS'] = ' '.join(options)
     return env
 
 
-def psql(url, script=None, *, read_only=False, stdin=None, stdout=None, extra=()):
+@dataclasses.dataclass(frozen=True)
+class Timeouts:
+    """Session limits, in milliseconds (0: none). The extract stream gets no statement timeout:
+    it stays open for the whole walk."""
+    lock_ms: int = 60_000
+    statement_ms: int = 1_800_000
+
+    @property
+    def source(self):
+        return (f'-c lock_timeout={self.lock_ms}',)
+
+    @property
+    def target(self):
+        return (f'-c lock_timeout={self.lock_ms}', f'-c statement_timeout={self.statement_ms}')
+
+
+def psql_args(extra=()):
+    return ['psql', '-X', '-At', '-F', '\t', '-v', 'ON_ERROR_STOP=1', '-v', f'VERBOSITY={VERBOSITY}', *extra]
+
+
+def psql(url, script=None, *, read_only=False, stdin=None, stdout=None, extra=(), options=()):
     """Runs `script` through psql -f - (or stdin passthrough when stdin is a file)."""
-    args = ['psql', '-X', '-At', '-F', '\t', '-v', 'ON_ERROR_STOP=1', '-v', f'VERBOSITY={VERBOSITY}', *extra]
-    env = connection_env(url, read_only)
+    args = psql_args(extra)
+    env = connection_env(url, read_only, options)
     try:
         if stdin is not None:
             proc = subprocess.run(args, stdin=stdin, stdout=stdout or subprocess.PIPE,
@@ -423,6 +521,11 @@ def literal(value):
 
 def ident(name):
     return '"' + name.replace('"', '""') + '"'
+
+
+def psql_path(path):
+    """`path` as a single-quoted psql meta-command argument."""
+    return "'" + str(path).replace('\\', '\\\\').replace("'", "''") + "'"
 
 
 def database_url(env_name):
@@ -506,38 +609,48 @@ class Walk:
 
 
 def plan_walk(step, checkpoint, *, since, since_last, overlap, restart):
-    """The walk a run takes for `step`, given its stored checkpoint (or None)."""
+    """The walk a run takes for `step`, given its stored checkpoint (or None).
+
+    A completed watermark step is never continued from its bare cursor: a row stamped before the
+    last read but committed after it (or stamped by a lagging app clock) sorts below that cursor.
+    A plain run, like `--since last`, therefore re-reads from the last walk minus `overlap`. An
+    interrupted walk is resumed, never silently replaced.
+    """
     if step.whole:
         # Never a partial set: its load treats what the extract lacks as gone upstream.
         return Walk(None, None, None, 0, True, 'whole set')
-    if since_last:
-        if checkpoint and checkpoint.last_completed_walk_started_at:
-            since = iso(parse_timestamp(checkpoint.last_completed_walk_started_at) - overlap)
-        else:
-            return Walk(None, None, None, 0, True, 'no completed walk yet: full walk')
+    since_note = ''
     if since is not None and not step.watermark:
-        since_note = ' (step has no watermark: full walk)'
-        since = None
-        if checkpoint and not checkpoint.completed_at and checkpoint.since is None and not restart:
-            return Walk(None, checkpoint.cursor, checkpoint.walk_started_at, checkpoint.walk_rows, False,
-                        'resuming interrupted walk' + since_note)
-        return Walk(None, None, None, 0, True, 'full walk' + since_note)
+        since, since_note = None, ' (step has no watermark: full walk)'
     if restart or checkpoint is None:
-        return Walk(since, None, None, 0, True,
-                    'restart' if restart else (f'since {since}' if since else 'first walk'))
-    if not checkpoint.completed_at and (since is None or same_instant(since, checkpoint.since)):
-        return Walk(checkpoint.since, checkpoint.cursor, checkpoint.walk_started_at, checkpoint.walk_rows,
-                    False, 'resuming interrupted walk')
+        if restart:
+            return Walk(since, None, None, 0, True, 'restart' + since_note)
+        return Walk(since, None, None, 0, True, (f'since {since}' if since else 'first walk') + since_note)
+    if not checkpoint.completed_at:
+        if since is None or same_instant(since, checkpoint.since):
+            return Walk(checkpoint.since, checkpoint.cursor, checkpoint.walk_started_at, checkpoint.walk_rows,
+                        False, 'resuming interrupted walk' + since_note)
+        raise MigrationError(f'{step.source}/{step.name}: a walk since {checkpoint.since or "the start"} was'
+                             f' interrupted; rerun without --since to finish it, or pass --restart to drop it')
+    if not step.watermark:
+        return Walk(None, None, None, 0, True, 'full re-scan (no watermark)' + since_note)
     if since is not None:
         return Walk(since, None, None, 0, True, f'since {since}')
-    if step.watermark:
-        return Walk(None, checkpoint.cursor, None, 0, True, 'continuing after the last cursor')
-    return Walk(None, None, None, 0, True, 'full re-scan (no watermark)')
+    # From the earlier of the last walk's start and the highest watermark it read, so a row
+    # stamped below either (a slow commit, a lagging app clock) is read again within `overlap`.
+    starts = [parse_timestamp(checkpoint.last_completed_walk_started_at or checkpoint.walk_started_at)]
+    if checkpoint.cursor:
+        starts.append(parse_timestamp(str(checkpoint.cursor[0])))
+    since = iso(min(starts) - overlap)
+    how = 'since last' if since_last else 'catching up'
+    return Walk(since, None, None, 0, True, f'{how}: since {since} (last walk minus overlap)')
 
 
 # ── a step's batches ────────────────────────────────────────────────────────
 
-def extract_sql(step, walk_since, cursor, batch_size):
+def extract_sql(step, walk_since, cursor):
+    """The walk's one COPY: every row past `cursor`, in cursor order, in a single snapshot. Text
+    format keeps one row per line (newlines in values are escaped), so batches split on lines."""
     extract = strip_sql_comments(step.extract.read_text()).strip()
     cols = ', '.join(f'e.{ident(c)}' for c, _ in step.columns)
     conditions = []
@@ -552,9 +665,67 @@ def extract_sql(step, walk_since, cursor, batch_size):
         conditions.append(f'e.{ident(step.watermark)} >= {literal(walk_since)}::timestamptz')
     where = f' WHERE {" AND ".join(conditions)}' if conditions else ''
     order = ', '.join(f'e.{ident(c)}' for c in step.cursor)
-    limit = f' LIMIT {int(batch_size)}' if batch_size is not None else ''
-    return (f'COPY (SELECT {cols} FROM (\n{extract}\n) AS e{where} ORDER BY {order}{limit})'
-            ' TO STDOUT WITH (FORMAT csv);\n')
+    return f'COPY (SELECT {cols} FROM (\n{extract}\n) AS e{where} ORDER BY {order}) TO STDOUT;\n'
+
+
+class ExtractStream:
+    """A walk's extract, read once from one psql and cut into batches on the client.
+
+    Every full batch is a prefix of the ordered snapshot, so it can commit while the rest still
+    streams; the last (short) batch commits only after psql exits cleanly, so a source failing
+    mid-stream never ends a walk early. Adjacent rows with one cursor mean the key is not unique.
+    """
+
+    def __init__(self, step, url, sql, options=()):
+        self.step = step
+        names = [c for c, _ in step.columns]
+        self.key_at = [names.index(c) for c in step.cursor]
+        self.previous = None
+        self.err = tempfile.TemporaryFile()
+        try:
+            self.proc = subprocess.Popen(psql_args(['-f', '-']), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                         stderr=self.err, env=connection_env(url, True, options))
+        except FileNotFoundError as e:
+            self.err.close()
+            raise MigrationError('psql is not on PATH') from e
+        self.proc.stdin.write(sql.encode())
+        self.proc.stdin.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        if self.proc.poll() is None:
+            self.proc.kill()
+        self.proc.wait()
+        self.proc.stdout.close()
+        self.err.close()
+
+    def finish(self):
+        if self.proc.wait() != 0:
+            self.err.seek(0)
+            raise MigrationError(self.err.read().decode(errors='replace').strip()
+                                 or f'psql exited {self.proc.returncode}')
+
+    def take(self, fh, limit):
+        """Copies up to `limit` rows (None: all) into `fh`; returns how many."""
+        n = 0
+        while limit is None or n < limit:
+            line = self.proc.stdout.readline()
+            if not line or not line.endswith(b'\n'):
+                self.finish()
+                if line:
+                    raise MigrationError(f'{self.step.source}/{self.step.name}: extract ended mid-row')
+                break
+            fields = line[:-1].split(b'\t')
+            key = [fields[i] for i in self.key_at]
+            if key == self.previous:
+                raise MigrationError(f'{self.step.source}/{self.step.name}: two extract rows share one cursor'
+                                     f' ({", ".join(self.step.cursor)}); the key must be unique')
+            self.previous = key
+            fh.write(line)
+            n += 1
+        return n
 
 
 def null_check(step):
@@ -599,7 +770,7 @@ def batch_script(step, walk, *, batch_size, expected):
     ]
     lines += [
         f'CREATE TEMP TABLE stage ({defs}, _ord bigint GENERATED ALWAYS AS IDENTITY) ON COMMIT DROP;',
-        f'\\copy stage ({col_list}) FROM pstdin WITH (FORMAT csv)',
+        f'\\copy stage ({col_list}) FROM pstdin',
         null_check(step),
         "SELECT '@@rows', count(*) FROM stage;",
         f"SELECT COALESCE((SELECT json_build_array({last_cursor})::text FROM stage ORDER BY _ord DESC LIMIT 1), '')"
@@ -607,7 +778,7 @@ def batch_script(step, walk, *, batch_size, expected):
         "\\echo '@@cursor' :batch_cursor",
         'ALTER TABLE stage DROP COLUMN _ord;',
         "\\echo '@@load'",
-        f'\\i {step.load}',
+        f'\\i {psql_path(step.load)}',
         "\\echo '@@loaded'",
     ]
     lines.append(checkpoint_upsert(step, walk, batch_size, first_batch=expected is None or walk.fresh))
@@ -671,7 +842,8 @@ def source_now(source_url):
     return psql(source_url, 'SELECT now();\n', read_only=True).strip()
 
 
-def run_step(step, source_url, target_url, walk, checkpoint, *, batch_size, log):
+def run_step(step, source_url, target_url, walk, checkpoint, *, batch_size, log, work_dir=None,
+             timeouts=Timeouts()):
     """Walks `step` batch by batch from `walk`; returns (rows, write summary)."""
     if step.whole:
         batch_size = None
@@ -680,59 +852,58 @@ def run_step(step, source_url, target_url, walk, checkpoint, *, batch_size, log)
     # The checkpoint row the first batch must find: what this run read, untouched.
     expected = (checkpoint.cursor, checkpoint.walk_started_at) if checkpoint else None
     cursor, rows_total, batch_no, tag_totals = walk.cursor, walk.rows, 0, []
-    while True:
-        batch_no += 1
-        batch_walk = dataclasses.replace(walk, cursor=cursor, fresh=walk.fresh and batch_no == 1)
-        with tempfile.TemporaryDirectory(prefix='dcl-migration-') as tmp:
-            data = Path(tmp) / 'batch.csv'
-            # The whole batch lands on disk before the target sees it: a source that fails
-            # mid-stream must not commit a truncated batch as if the walk had ended.
+    with tempfile.TemporaryDirectory(prefix='dcl-migration-', dir=work_dir) as tmp, \
+            ExtractStream(step, source_url, extract_sql(step, walk.since, walk.cursor), timeouts.source) as stream:
+        data, script = Path(tmp) / 'batch.tsv', Path(tmp) / 'batch.sql'
+        while True:
+            batch_no += 1
+            batch_walk = dataclasses.replace(walk, cursor=cursor, fresh=walk.fresh and batch_no == 1)
             with data.open('wb') as fh:
-                psql(source_url, extract_sql(step, walk.since, cursor, batch_size), read_only=True, stdout=fh)
-            script = Path(tmp) / 'batch.sql'
+                stream.take(fh, batch_size)
             script.write_text(batch_script(step, batch_walk, batch_size=batch_size, expected=expected))
             with data.open('rb') as fh:
-                out = psql(target_url, None, stdin=fh, extra=['-f', str(script)])
-        rows, last, tags = parse_batch_output(out)
-        tag_totals += tags
-        rows_total += rows
-        if last is not None:
-            cursor = last
-        expected = (cursor, started_at)
-        log(f'    batch {batch_no}: {rows} rows ({summarize_tags(tags)})'
-            + (f', cursor {json.dumps(cursor)}' if cursor else ''))
-        if batch_size is None or rows < batch_size:
-            return rows_total, summarize_tags(tag_totals)
+                out = psql(target_url, None, stdin=fh, extra=['-f', str(script)], options=timeouts.target)
+            rows, last, tags = parse_batch_output(out)
+            tag_totals += tags
+            rows_total += rows
+            if last is not None:
+                cursor = last
+            expected = (cursor, started_at)
+            log(f'    batch {batch_no}: {rows} rows ({summarize_tags(tags)})'
+                + (f', cursor {json.dumps(cursor)}' if cursor else ''))
+            if batch_size is None or rows < batch_size:
+                return rows_total, summarize_tags(tag_totals)
 
 
-def dry_run(plans, target_url, log):
+def dry_run(plans, target_url, log, work_dir=None, timeouts=Timeouts()):
     """Loads every planned step in one target transaction and rolls it back, so a step (or a source
     named in `after`) sees the rows the steps before it would have written. Extracts are whole
     walks, staged on disk first; `--batch-size` does not apply."""
-    with tempfile.TemporaryDirectory(prefix='dcl-migration-dry-') as tmp:
+    with tempfile.TemporaryDirectory(prefix='dcl-migration-dry-', dir=work_dir) as tmp:
         lines = ['\\set ON_ERROR_STOP 1', 'BEGIN;', CHECKPOINT_DDL.strip()]
         for index, (step, source_url, walk) in enumerate(plans):
-            data = Path(tmp) / f'{index}.csv'
-            with data.open('wb') as fh:
-                psql(source_url, extract_sql(step, walk.since, walk.cursor, None), read_only=True, stdout=fh)
+            data = Path(tmp) / f'{index}.tsv'
+            with data.open('wb') as fh, \
+                    ExtractStream(step, source_url, extract_sql(step, walk.since, walk.cursor), timeouts.source) as stream:
+                stream.take(fh, None)
             defs = ', '.join(f'{ident(c)} {t}' for c, t in step.columns)
             col_list = ', '.join(ident(c) for c, _ in step.columns)
             lines += [
                 *step_vars(step, True),
                 f"\\echo '@@step' {step.source}/{step.name}",
                 f'CREATE TEMP TABLE stage ({defs});',
-                f"\\copy stage ({col_list}) FROM '{data}' WITH (FORMAT csv)",
+                f'\\copy stage ({col_list}) FROM {psql_path(data)}',
                 null_check(step),
                 "SELECT '@@rows', count(*) FROM stage;",
                 "\\echo '@@load'",
-                f'\\i {step.load}',
+                f'\\i {psql_path(step.load)}',
                 "\\echo '@@loaded'",
                 'DROP TABLE stage;',
             ]
         lines.append('ROLLBACK;')
         script = Path(tmp) / 'dry-run.sql'
         script.write_text('\n'.join(lines) + '\n')
-        out = psql(target_url, None, stdin=subprocess.DEVNULL, extra=['-f', str(script)])
+        out = psql(target_url, None, stdin=subprocess.DEVNULL, extra=['-f', str(script)], options=timeouts.target)
     segments, current = {}, None
     for line in out.splitlines():
         if line.startswith('@@step '):
@@ -750,7 +921,7 @@ def dry_run(plans, target_url, log):
 # guard must accompany any selected financial step, even with --step.
 EXCLUDED_FROM_ALL = {'credits-server', 'shop-server', 'marketplace-server', 'marketplace-favorites-server'}
 CUTOVER_STEPS = {
-    'credits-server': {'cutover_guard', 'wallet', 'purchase', 'ledger'},
+    'credits-server': {'cutover_guard', 'wallet', 'wallet_flag', 'purchase', 'ledger'},
     'shop-server': {'treasury_guard', 'treasury_ledger', 'treasury_pending_refill'},
 }
 CUTOVER_GUARDS = {'credits-server': 'cutover_guard', 'shop-server': 'treasury_guard'}
@@ -821,7 +992,7 @@ def cmd_check(args, sources):
                 try:
                     defs = ', '.join(f'{ident(c)} {t}' for c, t in step.columns)
                     psql(target_url, f'BEGIN;\n{CHECKPOINT_DDL}\n' + '\n'.join(step_vars(step, True))
-                         + f'\nCREATE TEMP TABLE stage ({defs});\n\\i {step.load}\nROLLBACK;\n')
+                         + f'\nCREATE TEMP TABLE stage ({defs});\n\\i {psql_path(step.load)}\nROLLBACK;\n')
                     print(f'ok   {where}: load runs on an empty stage')
                 except MigrationError as e:
                     failures += 1
@@ -845,6 +1016,13 @@ def validate_worlds_blocked_names(path):
         raise MigrationError('nonempty BLOCKED_WORLD_NAMES cannot yet be migrated with exact-name semantics; resolve the target blocking policy before cutover')
 
 
+def completed(source, checkpoints):
+    """Whether every step of `source` has completed a walk on this target."""
+    return source is not None and all(
+        (cp := checkpoints.get((source.name, step.name))) and (cp.last_completed_walk_started_at or cp.completed_at)
+        for step in source.steps)
+
+
 def cmd_run(args, sources):
     selected = run_sources(sources, args.sources, args.step)
     if args.sources == ['all']:
@@ -864,11 +1042,18 @@ def cmd_run(args, sources):
         ensure_checkpoint_table(target_url)
     checkpoints = read_checkpoints(target_url)
     log = lambda line: print(line, flush=True)  # noqa: E731
-    plans = []
+    timeouts = Timeouts(int(args.lock_timeout.total_seconds() * 1000),
+                        int(args.statement_timeout.total_seconds() * 1000))
+    plans, running = [], set()
     for source in selected:
         if not os.environ.get(source.database_env):
             log(f'{source.name}: skipped ({source.database_env} unset)')
             continue
+        pending = [dep for dep in source.after if dep not in running and not completed(sources.get(dep), checkpoints)]
+        if pending:
+            raise MigrationError(f'{source.name} runs after {", ".join(pending)}, which has not completed a run;'
+                                 ' run it first or in the same run')
+        running.add(source.name)
         source_url = database_url(source.database_env)
         for step in source.steps:
             walk = plan_walk(step, checkpoints.get((source.name, step.name)), since=since,
@@ -883,7 +1068,7 @@ def cmd_run(args, sources):
         store = load_blobs_module().Store(storage_root(args))
     if args.dry_run:
         log('dry run (one transaction, rolled back):')
-        dry_run(plans, target_url, log)
+        dry_run(plans, target_url, log, args.work_dir, timeouts)
     else:
         current = None
         for step, source_url, walk in plans:
@@ -892,7 +1077,8 @@ def cmd_run(args, sources):
                 log(f'{current}:')
             log(f'  {step.name}: {walk.reason}')
             rows, writes = run_step(step, source_url, target_url, walk,
-                                    checkpoints.get((step.source, step.name)), batch_size=args.batch_size, log=log)
+                                    checkpoints.get((step.source, step.name)), batch_size=args.batch_size, log=log,
+                                    work_dir=args.work_dir, timeouts=timeouts)
             log(f'  {step.name}: done, {rows} rows in this walk; {writes}')
         for name in verify:
             log(f'{name}: checking that the store holds every imported blob')
@@ -1357,14 +1543,14 @@ def cmd_worlds_unban_quota_blocks(args, sources):
     step = next(s for s in source.steps if s.name == 'quota_block')
     source_url = database_url(source.database_env)
     with tempfile.TemporaryDirectory(prefix='dcl-migration-') as tmp:
-        data = Path(tmp) / 'blocked.csv'
-        with data.open('wb') as fh:
-            psql(source_url, extract_sql(step, None, None, None), read_only=True, stdout=fh)
+        data = Path(tmp) / 'blocked.tsv'
+        with data.open('wb') as fh, ExtractStream(step, source_url, extract_sql(step, None, None)) as stream:
+            stream.take(fh, None)
         script = Path(tmp) / 'unban.sql'
         script.write_text(f"""\\set ON_ERROR_STOP 1
 BEGIN;
 CREATE TEMP TABLE upstream_blocked (wallet text, created_at timestamptz, updated_at timestamptz) ON COMMIT DROP;
-\\copy upstream_blocked FROM pstdin WITH (FORMAT csv)
+\\copy upstream_blocked FROM pstdin
 CREATE TEMP TABLE walk ON COMMIT DROP AS
 SELECT walk_started_at AT TIME ZONE 'UTC' AS started FROM dcl_migration.checkpoint
 WHERE source = 'worlds-content-server' AND step = 'blocked_wallet';
@@ -1421,6 +1607,12 @@ def parser():
                      help="margin subtracted for --since last (default 10m)")
     run.add_argument('--restart', action='store_true', help='ignore stored checkpoints')
     run.add_argument('--batch-size', type=int, default=5000)
+    run.add_argument('--lock-timeout', type=parse_duration, default=datetime.timedelta(minutes=1),
+                     help='give up waiting for a lock after this long, on both sides (default 1m; 0s: never)')
+    run.add_argument('--statement-timeout', type=parse_duration, default=datetime.timedelta(minutes=30),
+                     help='cancel a target statement after this long (default 30m; 0s: never)')
+    run.add_argument('--work-dir', type=Path,
+                     help='where batches (and a dry run\'s whole extracts) are staged (default: system temp)')
     run.add_argument('--skip-unconfigured', action='store_true',
                      help='skip sources whose database variable is unset')
     run.add_argument('--storage-root',
