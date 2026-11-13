@@ -240,10 +240,16 @@ async function trimContentCache(capBytes, quotaError) {
         report.targetUnreachable = true;
         toFree = contentCacheTarget({ capBytes, quota, cachesUsage: contentBytes, quotaError }).bytesToFree;
     }
-    const { picked, freed } = pickEvictions(sized, toFree);
-    await Promise.all(picked.map((key) => cache.delete(key)));
-    report.evictedEntries = picked.length;
-    report.evictedBytes = freed;
+    const { picked } = pickEvictions(sized, toFree);
+    if (picked.length === 0) return report;
+    // An entry written again while this trim sized moved to the newest end: keep it. Only keys
+    // still among the oldest go.
+    const oldest = new Set((await cache.keys()).slice(0, picked.length).map((key) => key.url));
+    const sizes = new Map(sized.map(({ key, size }) => [key.url, size]));
+    const evicted = picked.filter((key) => oldest.has(key.url));
+    await Promise.all(evicted.map((key) => cache.delete(key)));
+    report.evictedEntries = evicted.length;
+    report.evictedBytes = evicted.reduce((sum, key) => sum + sizes.get(key.url), 0);
     return report;
 }
 

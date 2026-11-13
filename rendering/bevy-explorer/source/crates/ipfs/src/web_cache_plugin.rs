@@ -82,10 +82,9 @@ fn apply_cap(
     mut applied: Local<Option<u64>>,
 ) {
     let cap = web_cache::effective_cap(config.cache_bytes, cap_override.0);
-    if *applied == Some(cap) {
+    if !web_cache::cap_changed(&mut applied, cap) {
         return;
     }
-    *applied = Some(cap);
     web_cache::set_cap(cap);
     IoTaskPool::get()
         .spawn_compat(async {
