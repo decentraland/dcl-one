@@ -827,6 +827,89 @@ mod tests {
         .unwrap();
     }
 
+    /// The server seal does not depend on built-ins or prototypes scene code can replace:
+    /// `require` hands the internals to `~system/*` modules without passing them through any.
+    #[test]
+    fn the_seal_holds_when_the_scene_replaces_builtins() {
+        run_scene(
+            true,
+            r#"
+            const RA = Reflect.apply;
+            const reached = [];
+            const internal = (v) => {
+                if (v === null || (typeof v !== "object" && typeof v !== "function")) { return false; }
+                return "core" in v || "ops" in v
+                    || (typeof v.name === "string" && v.name.startsWith("op_"));
+            };
+            const check = (self, args) => {
+                if (internal(self)) { reached.push("this"); }
+                for (let i = 0; i < args.length; i++) {
+                    if (internal(args[i])) { reached.push(`argument ${i}`); }
+                }
+            };
+            const wrap = (target, key) => {
+                const original = target[key];
+                target[key] = function (...args) {
+                    check(this, args);
+                    return RA(original, this, args);
+                };
+            };
+            const bind = Function.prototype.bind;
+            Function.prototype.call = function (self, ...args) {
+                check(self, args);
+                return RA(this, self, args);
+            };
+            Function.prototype.apply = function (self, args) {
+                check(self, args || []);
+                return RA(this, self, args || []);
+            };
+            Function.prototype.bind = function (self, ...args) {
+                check(self, args);
+                return RA(bind, this, [self].concat(args));
+            };
+            Reflect.apply = function (f, self, args) {
+                check(self, args);
+                return RA(f, self, args);
+            };
+            const iterator = Array.prototype[Symbol.iterator];
+            Array.prototype[Symbol.iterator] = function () {
+                check(this, this);
+                return RA(iterator, this, []);
+            };
+            wrap(String.prototype, "replace");
+            wrap(String.prototype, "substring");
+            wrap(RegExp.prototype, Symbol.replace);
+            wrap(RegExp.prototype, "exec");
+            // index accessors: a setter sees each value stored at a missing index and keeps
+            // functions for itself, and a getter answers every read of a missing index
+            const substitute = function (...args) { check(this, args); };
+            for (const proto of [Array.prototype, Object.prototype]) {
+                for (const index of [0, 1]) {
+                    Object.defineProperty(proto, index, {
+                        get() { return substitute; },
+                        set(value) {
+                            check(this, [value]);
+                            if (typeof value !== "function") {
+                                Object.defineProperty(this, index, { value, writable: true, enumerable: true, configurable: true });
+                            }
+                        },
+                        configurable: true,
+                    });
+                }
+            }
+
+            const engine = require("~system/EngineApi");
+            const testing = require("~system/Testing");
+            if (reached.length > 0) { throw new Error(`internals reached scene code: ${reached}`); }
+            if (typeof engine.crdtSendToRenderer !== "function" || typeof testing.plan !== "function") {
+                throw new Error("a system module did not load");
+            }
+            if (typeof Deno !== "undefined") { throw new Error("`Deno` is reachable"); }
+            "#,
+        )
+        .unwrap();
+    }
+
     /// The seal is scoped to the authoritative server on purpose: the desktop client runs on
     /// the user's own machine, and narrowing the change keeps preview and every deployed
     /// scene behaving exactly as they do today. Pinned so the scoping is a decision rather
