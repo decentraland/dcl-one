@@ -190,6 +190,25 @@ class UiStandardsIntegrationTest(unittest.TestCase):
         component.write_text("import styled from 'styled-components'\nimport { css } from '@emotion/css'\n")
         self.assertEqual(ui_standards.check('HEAD'), ['apps/sites/src/Old.tsx: new CSS-in-JS imports are not allowed'])
 
+    def test_import_list_cannot_grow_or_be_deleted_after_it_exists(self):
+        (self.root / 'tooling').mkdir()
+        listing = self.root / ui_standards.IMPORTED
+        listing.write_text('apps/sites/src/Old.tsx\n')
+        (self.path / 'Old.tsx').write_text("import styled from 'styled-components'\n")
+        self.git('add', '.')
+        self.commit('import')
+        listing.write_text('apps/sites/src/Old.tsx\napps/sites/src/New.tsx\n')
+        (self.path / 'New.tsx').write_text("import styled from 'styled-components'\n")
+        self.assertEqual(ui_standards.check('HEAD'), [
+            f'{ui_standards.IMPORTED}: paths can\'t be added to the import list',
+            'apps/sites/src/New.tsx: new CSS-in-JS imports are not allowed',
+        ])
+        listing.unlink()
+        self.assertEqual(ui_standards.check('HEAD')[0], f'{ui_standards.IMPORTED}: the import list can\'t be deleted; empty it instead')
+        listing.write_text('')
+        (self.path / 'New.tsx').unlink()
+        self.assertEqual(ui_standards.check('HEAD'), [])
+
     def test_colored_diff_config_does_not_hide_added_lines(self):
         self.git('config', 'color.diff', 'always')
         component = self.path / 'Card.tsx'
