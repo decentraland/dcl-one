@@ -34,7 +34,8 @@ ON CONFLICT (order_id) WHERE order_id IS NOT NULL DO UPDATE SET
     failure_reason = EXCLUDED.failure_reason,
     created_at = EXCLUDED.created_at,
     updated_at = EXCLUDED.updated_at
-WHERE (p.address, p.sku, p.credits, p.amount_cents, p.quantity, p.source, p.status,
+WHERE p.updated_at <= EXCLUDED.updated_at  -- a row the node moved since (refund, abandon) wins
+  AND (p.address, p.sku, p.credits, p.amount_cents, p.quantity, p.source, p.status,
        p.stripe_payment_intent, p.stripe_checkout_session, p.refunded_cents, p.revoked_credits,
        p.failure_reason, p.created_at, p.updated_at)
       IS DISTINCT FROM

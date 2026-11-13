@@ -11,11 +11,13 @@ ORDER BY s.address, s.ord, s.tx_ref;
 -- the batch (the reconciler's signed sums), so the wallet always equals its
 -- ledger whatever ran before. A wallet that would go below zero fails the
 -- table's CHECK and stops the run: that wallet needs a human decision.
-INSERT INTO credits.wallets AS w (address, available, earned_available)
+-- A wallet first seen here has not started the program, as on the node.
+INSERT INTO credits.wallets AS w (address, available, earned_available, has_started_program)
 SELECT l.address,
        SUM(CASE WHEN l.kind IN ('grant', 'refund', 'purchase', 'claim') THEN l.amount ELSE -l.amount END),
        COALESCE(SUM(CASE WHEN l.kind IN ('grant', 'refund', 'purchase', 'claim') THEN l.amount ELSE -l.amount END)
-                FILTER (WHERE l.bucket = 'earned'), 0)
+                FILTER (WHERE l.bucket = 'earned'), 0),
+       false
 FROM credits.ledger l
 WHERE l.address IN (SELECT DISTINCT address FROM stage)
 GROUP BY l.address

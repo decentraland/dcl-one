@@ -29,7 +29,9 @@ LAND/Estate rentals listings.
   signature and update timestamp match the extracted parent version.
 - Skipped: a signature that the node holds under another id, and a second
   `open` listing for an asset (the node allows one open listing per asset).
-  Periods of skipped listings are skipped too.
+  Periods of skipped listings are skipped too. Listings leaving `open` are
+  closed before any insert, so a batch carrying both a cancelled listing and
+  its open replacement lands the replacement.
 - `timestamp` columns hold UTC.
 
 ## Not migrated

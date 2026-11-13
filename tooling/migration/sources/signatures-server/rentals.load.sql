@@ -1,6 +1,15 @@
 -- Upstream ids kept. Skipped: a signature the node holds under another id,
 -- an asset the previous step did not land, and a second open listing of an
 -- asset (the node's one-open-per-asset rule).
+
+-- Listings leaving `open` first, so the open-per-asset check below sees them
+-- closed when the same batch carries their open replacement.
+UPDATE signatures.rentals r
+   SET status = s.status::signatures.rental_status, updated_at = s.updated_at AT TIME ZONE 'UTC'
+  FROM stage s
+ WHERE r.id = s.id AND r.signature = s.signature AND r.status = 'open' AND s.status <> 'open'
+   AND r.updated_at <= s.updated_at AT TIME ZONE 'UTC';
+
 WITH accepted AS (
 INSERT INTO signatures.rentals
     (id, contract_address, token_id, network, chain_id, expiration, nonces, signature,
