@@ -4534,6 +4534,7 @@ dependencies = [
  "naga_oil",
  "nft",
  "once_cell",
+ "opener",
  "parking_lot",
  "particle_system",
  "perf_output",

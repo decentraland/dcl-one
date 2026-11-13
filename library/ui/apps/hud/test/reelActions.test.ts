@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import type { ReactElement } from 'react'
 import { expectConsoleOutput } from '@explorer-core/test/console'
 
 const { native, showToast } = vi.hoisted(() => ({ native: { value: false }, showToast: vi.fn() }))
@@ -61,8 +64,10 @@ describe('downloadReel', () => {
   })
 
   describe('on native', () => {
+    const emit = vi.fn()
     beforeEach(() => {
-      ;(window as { cef?: unknown }).cef = { emit: vi.fn(), listen: (id: string, cb: Listener) => listeners.set(id, cb) }
+      emit.mockReset()
+      ;(window as { cef?: unknown }).cef = { emit, listen: (id: string, cb: Listener) => listeners.set(id, cb) }
     })
 
     it('waits for the engine to report the file saved', async () => {
@@ -73,6 +78,21 @@ describe('downloadReel', () => {
       await done
       expect(toasts()).toEqual([REEL_MESSAGES.downloaded])
       expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:cef://localhost/1')
+    })
+
+    it('the toast names the folder, which a click opens once', async () => {
+      const done = downloadReel('https://img/feb.jpg')
+      await vi.waitFor(() => expect(URL.createObjectURL).toHaveBeenCalled())
+      listeners.get('download')?.(JSON.stringify({ url: 'blob:cef://localhost/1', ok: true, dir: '/home/ada/Downloads' }))
+      await done
+      expect(showToast.mock.calls[0][1]).toMatchObject({ duration: 3000 })
+      render(showToast.mock.calls[0][0] as ReactElement)
+      expect(screen.getByText(REEL_MESSAGES.downloaded)).toBeInTheDocument()
+      const folder = screen.getByRole('button', { name: 'Open /home/ada/Downloads' })
+      expect(folder).toHaveTextContent('/home/ada/Downloads')
+      await userEvent.click(folder)
+      await userEvent.click(folder)
+      expect(emit.mock.calls).toEqual([[{ to: 'engine', kind: 'openDownloads' }]])
     })
 
     it('reports a save the engine refused or could not finish', async () => {

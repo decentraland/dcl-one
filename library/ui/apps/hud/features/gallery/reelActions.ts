@@ -1,4 +1,6 @@
+import { createElement, type ReactNode } from 'react'
 import { showConfirm, showToast } from '../../design'
+import { DownloadedToast } from './DownloadedToast'
 import { isNativeHud, serviceUrl } from '@hud-host'
 import { cefDownloadOutcome } from '@explorer-core/lib/cefNativeBridge'
 
@@ -18,8 +20,8 @@ const NATIVE_DOWNLOAD_TIMEOUT_MS = 30_000
 
 export type OpenExternalUrl = (url: string) => Promise<boolean>
 
-export function reelToast(text: string, tone: 'default' | 'error' = 'default'): void {
-  showToast(text, { duration: TOAST_MS, tone, key: TOAST_KEY })
+export function reelToast(content: ReactNode, tone: 'default' | 'error' = 'default'): void {
+  showToast(content, { duration: TOAST_MS, tone, key: TOAST_KEY })
 }
 
 function reelLink(id: string): string {
@@ -81,12 +83,13 @@ export async function downloadReel(url: string): Promise<void> {
     a.remove()
     if (saved == null) {
       setTimeout(() => URL.revokeObjectURL(href), 1000)
-    } else {
-      const ok = await saved
-      URL.revokeObjectURL(href)
-      if (!ok) throw new Error('the engine did not save the file')
+      reelToast(REEL_MESSAGES.downloaded)
+      return
     }
-    reelToast(REEL_MESSAGES.downloaded)
+    const { ok, dir } = await saved
+    URL.revokeObjectURL(href)
+    if (!ok) throw new Error('the engine did not save the file')
+    reelToast(dir == null ? REEL_MESSAGES.downloaded : createElement(DownloadedToast, { message: REEL_MESSAGES.downloaded, dir }))
   } catch (e) {
     console.warn('[gallery] download failed', e)
     reelToast(REEL_MESSAGES.failure, 'error')

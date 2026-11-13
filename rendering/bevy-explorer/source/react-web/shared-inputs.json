@@ -2824,6 +2824,14 @@
       "path": "library/ui/apps/hud/features/gallery",
       "entries": [
         {
+          "name": "DownloadedToast.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "DownloadedToast.tsx",
+          "kind": "regular"
+        },
+        {
           "name": "GalleryPage.module.css",
           "kind": "regular"
         },
@@ -4856,7 +4864,7 @@
     },
     {
       "path": "library/explorer-core/lib/cefNativeBridge.ts",
-      "sha256": "efb8ef0d978efd79f96cd0a39e9f41224b2379ee7dafa687d4431ec3508a5a7e"
+      "sha256": "e70b6a5c87803a9c91c027f7a67a45d8abc0fe62e41e50bdb193f17ece39b7a0"
     },
     {
       "path": "library/explorer-core/lib/coiServiceWorker.ts",
@@ -6639,6 +6647,14 @@
       "sha256": "c07b73ba4ff6afa4c2c066813d9eeb533d7f29e089ffc4a6a62a6760c7363ef3"
     },
     {
+      "path": "library/ui/apps/hud/features/gallery/DownloadedToast.module.css",
+      "sha256": "19e79b9238b2c6fec6c74c34485fc9bcbb8c45a3425c8073b9ef2af2073eb8b3"
+    },
+    {
+      "path": "library/ui/apps/hud/features/gallery/DownloadedToast.tsx",
+      "sha256": "5993439fe320f0a6788ca370d66d710cdab76c3e27614e0663901795ce69cddd"
+    },
+    {
       "path": "library/ui/apps/hud/features/gallery/GalleryPage.module.css",
       "sha256": "3385a09446ebb86f2e65ea0e63c597a71c83d2e7c872c80692dafef112309fb2"
     },
@@ -6672,7 +6688,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/gallery/reelActions.ts",
-      "sha256": "8bfce88a41c540d34257372d1c5f35ba10d814d152272c4c838fc2375ee7bb26"
+      "sha256": "bcf50ee56954cef67a32dc4fdfdd9c90fcf129f040d6b82a3de2ff9ab3059aa6"
     },
     {
       "path": "library/ui/apps/hud/features/gallery/useOwnReelActions.ts",
@@ -7552,7 +7568,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/reelActions.test.ts",
-      "sha256": "06445f991f1326f87d2186edb1a848dcdd46ad6d18b2670ab2f84593b167f599"
+      "sha256": "d9e21751a0f85eb6742e4dd18e2793379844217e3f2ad7a3295c2affad4cb2a0"
     },
     {
       "path": "library/ui/apps/hud/test/reelGrid.test.tsx",
@@ -17349,6 +17365,36 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/apps/hud/features/gallery/DownloadedToast.tsx",
+      "to": "library/explorer-core/lib/cefNativeBridge.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/DownloadedToast.tsx",
+      "to": "library/explorer-core/lib/cefNativeBridge.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/DownloadedToast.tsx",
+      "to": "library/explorer-core/lib/cefNativeBridge.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/DownloadedToast.tsx",
+      "to": "library/ui/apps/hud/features/gallery/DownloadedToast.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/DownloadedToast.tsx",
+      "to": "library/ui/apps/hud/features/gallery/DownloadedToast.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/DownloadedToast.tsx",
+      "to": "library/ui/apps/hud/features/gallery/DownloadedToast.module.css",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/apps/hud/features/gallery/GalleryPage.tsx",
       "to": "library/ui/apps/hud/design/index.ts",
       "kind": "native:runtime"
@@ -17841,6 +17887,21 @@
     {
       "from": "library/ui/apps/hud/features/gallery/reelActions.ts",
       "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/reelActions.ts",
+      "to": "library/ui/apps/hud/features/gallery/DownloadedToast.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/reelActions.ts",
+      "to": "library/ui/apps/hud/features/gallery/DownloadedToast.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/reelActions.ts",
+      "to": "library/ui/apps/hud/features/gallery/DownloadedToast.tsx",
       "kind": "test:runtime"
     },
     {
@@ -30736,6 +30797,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/features/friends/friendToasts.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/features/gallery/DownloadedToast.tsx",
       "kind": "type"
     },
     {

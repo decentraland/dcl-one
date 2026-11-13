@@ -9,7 +9,8 @@ use cef::{
 use std::os::raw::c_int;
 use std::path::{Path, PathBuf};
 
-/// The id of the host event that tells the page how a download ended: `{ url, ok }`.
+/// The id of the host event that tells the page how a download ended: `{ url, ok }`, with the
+/// folder as `dir` when it was saved.
 pub const DOWNLOAD_EVENT: &str = "download";
 
 /// Only a `blob:` url of the page's own origin is saved, so an embedded frame can't write files.
@@ -126,7 +127,8 @@ fn report(browser: Option<&Browser>, url: &str, ok: bool) {
         && let Some(mut message) = process_message_create(Some(&PROCESS_MESSAGE_HOST_EMIT.into()))
         && let Some(arguments) = message.argument_list()
     {
-        let event = serde_json::json!({ "url": url, "ok": ok }).to_string();
+        let dir = ok.then(downloads_dir).flatten();
+        let event = serde_json::json!({ "url": url, "ok": ok, "dir": dir }).to_string();
         arguments.set_string(0, Some(&DOWNLOAD_EVENT.into()));
         arguments.set_string(1, Some(&event.as_str().into()));
         frame.send_process_message(
@@ -136,7 +138,8 @@ fn report(browser: Option<&Browser>, url: &str, ok: bool) {
     }
 }
 
-fn downloads_dir() -> Option<PathBuf> {
+/// Where downloads are saved, created when missing.
+pub fn downloads_dir() -> Option<PathBuf> {
     let dir = downloads_under(directories::UserDirs::new()?.home_dir());
     std::fs::create_dir_all(&dir).ok()?;
     Some(dir)
