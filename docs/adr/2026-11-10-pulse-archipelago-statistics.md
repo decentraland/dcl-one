@@ -60,9 +60,11 @@ its already-started blocking encoding running while a successor starts.
 The current transport supports recovery payloads up to 64 MiB, with at most two
 incomplete transfers per reader and a 15-second transfer lifetime. Larger states
 are rejected as a whole; the last complete view remains visible. Readers retain
-up to 4,096 retired Pulse incarnation fences plus their active producer; at
-capacity, a new Pulse incarnation is refused until that reader restarts. This
-reader limit is separate from connector registration. The selected
+fences for the 4,096 most recently retired Pulse incarnations plus their active
+producer; at capacity the oldest fence is forgotten, so a new Pulse incarnation
+is never refused. An incarnation whose fence was forgotten can again replace a
+quiet producer with a complete snapshot. This reader limit is separate from
+connector registration. The selected
 producer remains selected while valid publications arrive; replacement requires
 15 seconds of silence and a valid complete snapshot. This is not leader election.
 Deployment capacity and a single active writer remain release requirements.
