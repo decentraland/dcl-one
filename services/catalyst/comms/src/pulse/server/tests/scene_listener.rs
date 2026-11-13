@@ -129,6 +129,37 @@ async fn scene_listeners_are_limited_to_the_configured_wallets() {
     }
 }
 
+/// The allow-list as startup builds it from the environment.
+#[tokio::test]
+async fn the_environment_allow_list_admits_the_authoritative_host_listener() {
+    let (base, wallet, now) = signed_handshake_request().await;
+    let bytes = one_realm_msg(&base, "realm", vec![rect(0, 0, 0, 0)], 0);
+    for (host, admitted) in [
+        (Some(wallet.clone()), true),
+        (
+            Some("0x1111111111111111111111111111111111111111".to_string()),
+            false,
+        ),
+        (None, false),
+    ] {
+        let mut srv = PulseServer::new();
+        crate::pulse::env::apply_scene_listener_env(&mut srv, &|key| {
+            (key == "AUTHORITATIVE_SERVER_ADDRESS")
+                .then(|| host.clone())
+                .flatten()
+        })
+        .unwrap();
+        srv.peers
+            .insert(1, PeerState::new(PeerConnectionState::PendingAuth, 0));
+        let action = srv.dispatch(1, channel::RELIABLE, &bytes, now, 0);
+        assert_eq!(
+            matches!(action, Action::AuthenticatedListener { .. }),
+            admitted,
+            "{host:?}"
+        );
+    }
+}
+
 fn rect(min_x: i32, min_z: i32, max_x: i32, max_z: i32) -> ParcelRect {
     ParcelRect {
         min_x,

@@ -79,13 +79,7 @@ async fn ws_upgrade(
         &state.settings.server.trusted_proxy_cidrs,
     );
     if client.is_none() && state.sockets_per_ip.enabled() {
-        static UNATTRIBUTED: std::sync::Once = std::sync::Once::new();
-        UNATTRIBUTED.call_once(|| {
-            tracing::warn!(
-                "a /ws upgrade has no attributable client address (gateway peer outside HTTP_TRUSTED_PROXY_CIDRS, or no X-Real-IP); WS_MAX_SOCKETS_PER_IP does not count such sockets"
-            )
-        });
-        metrics::counter!("archipelago_ws_unattributed_upgrades_total").increment(1);
+        crate::gatekeeper::admission::cluster::metrics::ws_unattributed_upgrade();
     }
     // Optional protocol names never select the authentication or packet decoder.
     let protocols = headers

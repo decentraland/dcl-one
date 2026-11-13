@@ -53,6 +53,10 @@ pub const ENV_DOCS: &[(&str, &str)] = &[
         "required moderator bearer for the Pulse ban poll",
     ),
     (
+        "AUTHORITATIVE_SERVER_ADDRESS",
+        "the authoritative scene host's wallet, admitted as a scene listener (written by catalyst secrets init); a malformed value fails startup",
+    ),
+    (
         "PULSE_BANS_URL",
         "required HTTPS moderator GET /bans endpoint (loopback HTTP permitted)",
     ),
@@ -321,8 +325,7 @@ pub async fn run_from_env() -> anyhow::Result<()> {
         env_or("PULSE_DISCRETE_BURST", DEFAULT_DISCRETE_BURST)?,
     );
     server.aoi = SpatialAreaOfInterest::new(aoi);
-    server.scene_listener_wallets =
-        Some(scene_listener_allow_list(&|key| std::env::var(key).ok())?);
+    apply_scene_listener_env(&mut server, &|key| std::env::var(key).ok())?;
     let fallback = limiter_options_from_lookup(&|key| std::env::var(key).ok())?;
     server.apply_ip_limiter_options(fallback.clone());
     if let Some(url) = env_value("PULSE_FLAGS_URL", std::env::var("PULSE_FLAGS_URL"))? {
@@ -407,6 +410,15 @@ fn scene_listener_allow_list(
         );
     }
     Ok(listeners)
+}
+
+/// The scene-listener allow-list `run_from_env` gives the server.
+pub(crate) fn apply_scene_listener_env(
+    server: &mut PulseServer,
+    env: &dyn Fn(&str) -> Option<String>,
+) -> anyhow::Result<()> {
+    server.scene_listener_wallets = Some(scene_listener_allow_list(env)?);
+    Ok(())
 }
 
 fn ip_whitelist_from(raw: Option<String>) -> anyhow::Result<IpWhitelist> {

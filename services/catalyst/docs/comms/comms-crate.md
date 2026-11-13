@@ -90,7 +90,7 @@ re-announce sweep's 30 s cadence), beyond it 503 with `Retry-After: 5`; `WS_MAX_
 (default 64, 0 unlimited) per client source (IPv4 address or IPv6 /64) attributable through
 `HTTP_TRUSTED_PROXY_CIDRS`, beyond it 429; an unattributable upgrade (a gateway peer outside that
 list, or no `X-Real-IP`) is not counted, logs one warning and increments
-`archipelago_ws_unattributed_upgrades_total`; positions coalesce
+`comms_ws_unattributed_upgrades_total` (registered at 0, exported with the other `comms_` series on `SERVE_METRICS_BIND`); positions coalesce
 for ownership control to one per 500 ms; statistical observations retain every decoded position; a flooding socket closes with 1008; a 64-frame send queue in which a newer
 `island_changed` replaces the queued one and `kicked` is never dropped, full for 10 s closes
 with 1013; undecodable frames 1007; restart closes every socket with 1012.
