@@ -3699,23 +3699,25 @@
           }
         },
         "library/ui/figma/src/port.test.ts": {
-          "sha256": "9056ada1ea80b2c70a976f6c05acca0e71207c21903141d588c70c21f4d31316",
+          "sha256": "2b7fa85586b8935b0712d2f849d68937f099c5c778be337af0d0795c68528726",
           "fds": null,
           "deviation": [
             "port-command",
             "port-command-followups",
             "port-safe-restore",
-            "hand-written-components"
+            "hand-written-components",
+            "preview-selection-cleanup"
           ]
         },
         "library/ui/figma/src/port.ts": {
-          "sha256": "a426e93aa118000080305def7f286992186237b9c5090a9481a936364d024b05",
+          "sha256": "3d1a19ca62ac0c9c825cdae9fdc604acd4de4bf9bc91b3cab8463f21643994ad",
           "fds": null,
           "deviation": [
             "port-command",
             "port-command-followups",
             "port-safe-restore",
-            "hand-written-components"
+            "hand-written-components",
+            "preview-selection-cleanup"
           ]
         },
         "library/ui/figma/src/preview-cleanup.ts": {
