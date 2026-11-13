@@ -23,7 +23,6 @@ deno_url = { git = "https://github.com/robtfm/deno", rev = "3ee34819c57653610521
 deno_web = { git = "https://github.com/robtfm/deno", rev = "3ee34819c57653610521dc6501ddf8e2cf0c5aaa" }
 deno_webidl = { git = "https://github.com/robtfm/deno", rev = "3ee34819c57653610521dc6501ddf8e2cf0c5aaa" }
 deno_websocket = { git = "https://github.com/robtfm/deno", rev = "3ee34819c57653610521dc6501ddf8e2cf0c5aaa" }
-deno_webstorage = { git = "https://github.com/robtfm/deno", rev = "3ee34819c57653610521dc6501ddf8e2cf0c5aaa" }
 # https://github.com/robtfm/deno_core (branch 0_307_hotfix)
 deno_core = { git = "https://github.com/robtfm/deno_core", rev = "9b59a4e33f4729799409c20f85a80764f1d447e5" }
 deno_ops = { git = "https://github.com/robtfm/deno_core", rev = "9b59a4e33f4729799409c20f85a80764f1d447e5" }
