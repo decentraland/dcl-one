@@ -297,6 +297,105 @@ fn scene_with_a_deprecated_module_resolution_builds_with_the_vendored_toolchain(
         stderr.contains("--ignoreDeprecations 6.0") && stderr.contains("moduleResolution=node10"),
         "{stderr}"
     );
+
+    // The next check passes the flag at once, having learnt it is needed,
+    // and says the same.
+    let source = f.read("src/index.ts");
+    std::fs::write(
+        f.path().join("src/index.ts"),
+        format!("{source}\n// edited\n"),
+    )
+    .unwrap();
+    let out = run_with_path(&["build", "--dir", &dir]);
+    let (stdout, stderr) = (stdout_of(&out), stderr_of(&out));
+    assert!(out.status.success(), "stdout: {stdout}\nstderr: {stderr}");
+    assert!(stdout.contains("Type check passed ("), "{stdout}");
+    assert!(
+        stderr.contains("--ignoreDeprecations 6.0") && stderr.contains("moduleResolution=node10"),
+        "{stderr}"
+    );
+    // What it learnt still reports this scene's type errors.
+    std::fs::write(
+        f.path().join("src/index.ts"),
+        format!("{source}\nexport const wrong: number = 'text'\n"),
+    )
+    .unwrap();
+    let out = run_with_path(&["build", "--dir", &dir]);
+    let stderr = stderr_of(&out);
+    assert!(!out.status.success(), "{stderr}");
+    assert!(
+        stderr.contains("TS2322") && !stderr.contains("TS5107"),
+        "{stderr}"
+    );
+
+    // A tsconfig that no longer needs the flag is checked without it.
+    let fixed = f.read("tsconfig.json").replace(
+        "\"moduleResolution\": \"node\"",
+        "\"moduleResolution\": \"bundler\"",
+    );
+    std::fs::write(f.path().join("tsconfig.json"), fixed).unwrap();
+    std::fs::write(f.path().join("src/index.ts"), source).unwrap();
+    let out = run_with_path(&["build", "--dir", &dir]);
+    let (stdout, stderr) = (stdout_of(&out), stderr_of(&out));
+    assert!(out.status.success(), "stdout: {stdout}\nstderr: {stderr}");
+    assert!(stdout.contains("Type check passed ("), "{stdout}");
+    assert!(!stderr.contains("ignoreDeprecations"), "{stderr}");
+}
+
+/// The upstream template's tsconfig sets `baseUrl`, which the vendored
+/// TypeScript 6 deprecates (TS5101): the build knows from the tsconfig and
+/// says so, on the first check and on later ones.
+#[cfg(unix)]
+#[test]
+fn scene_with_base_url_builds_with_the_vendored_toolchain() {
+    let Some(()) = node_available() else { return };
+    let f = Fixture::new("vendored-baseurl");
+    let dir = f.dir_arg();
+    let out = run(&["init", "--dir", &dir]);
+    assert!(out.status.success(), "stderr: {}", stderr_of(&out));
+    let tsconfig = f.read("tsconfig.json").replacen(
+        "\"compilerOptions\": {",
+        "\"compilerOptions\": {\n    \"baseUrl\": \".\",",
+        1,
+    );
+    assert!(tsconfig.contains("\"baseUrl\""), "{tsconfig}");
+    std::fs::write(f.path().join("tsconfig.json"), &tsconfig).unwrap();
+    let source = f.read("src/index.ts");
+    for edit in ["", "\n// edited\n"] {
+        std::fs::write(f.path().join("src/index.ts"), format!("{source}{edit}")).unwrap();
+        let out = run_with_path(&["build", "--dir", &dir]);
+        let (stdout, stderr) = (stdout_of(&out), stderr_of(&out));
+        assert!(out.status.success(), "stdout: {stdout}\nstderr: {stderr}");
+        assert!(stdout.contains("Type check passed ("), "{stdout}");
+        assert!(
+            stderr.contains("tsconfig uses baseUrl, which TypeScript 6.")
+                && stderr.contains("--ignoreDeprecations 6.0"),
+            "{stderr}"
+        );
+    }
+    std::fs::write(
+        f.path().join("src/index.ts"),
+        format!("{source}\nexport const wrong: number = 'text'\n"),
+    )
+    .unwrap();
+    let out = run_with_path(&["build", "--dir", &dir]);
+    let stderr = stderr_of(&out);
+    assert!(!out.status.success(), "{stderr}");
+    assert!(
+        stderr.contains("TS2322") && !stderr.contains("TS5101"),
+        "{stderr}"
+    );
+
+    std::fs::write(
+        f.path().join("tsconfig.json"),
+        tsconfig.replace("\"baseUrl\": \".\",", ""),
+    )
+    .unwrap();
+    std::fs::write(f.path().join("src/index.ts"), source).unwrap();
+    let out = run_with_path(&["build", "--dir", &dir]);
+    let (stdout, stderr) = (stdout_of(&out), stderr_of(&out));
+    assert!(out.status.success(), "stdout: {stdout}\nstderr: {stderr}");
+    assert!(!stderr.contains("ignoreDeprecations"), "{stderr}");
 }
 
 /// init, then pack, with no edits in between: the zip the builder takes

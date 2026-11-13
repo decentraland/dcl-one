@@ -1,0 +1,120 @@
+import React, { useCallback, useState } from 'react';
+import { type ActionPayload, type ActionType } from '@dcl/asset-packs';
+import { recursiveCheck } from '../../../../lib/utils/deep-equal';
+import { CheckboxField, TextField, InfoTooltip } from '../../../ui';
+import { Block } from '../../../Block';
+import type { Props } from './types';
+
+import './SetRotationAction.css';
+
+function isValid(
+  payload: Partial<ActionPayload<ActionType.SET_POSITION>>,
+): payload is ActionPayload<ActionType.SET_POSITION> {
+  return (
+    typeof payload.x === 'number' &&
+    !isNaN(payload.x) &&
+    typeof payload.y === 'number' &&
+    !isNaN(payload.y) &&
+    typeof payload.z === 'number' &&
+    !isNaN(payload.z)
+  );
+}
+
+const SetRotationAction: React.FC<Props> = ({ value, onUpdate }: Props) => {
+  const [payload, setPayload] = useState<Partial<ActionPayload<ActionType.SET_POSITION>>>({
+    ...value,
+  });
+
+  const handleUpdate = useCallback(
+    (_payload: Partial<ActionPayload<ActionType.SET_POSITION>>) => {
+      setPayload(_payload);
+      if (!recursiveCheck(_payload, value, 2) || !isValid(_payload)) return;
+      onUpdate(_payload);
+    },
+    [setPayload, value, onUpdate],
+  );
+
+  const handleChangeX = useCallback(
+    ({ target: { value } }: React.ChangeEvent<HTMLInputElement>) => {
+      const parsed = parseFloat(value);
+      const actual = isNaN(parsed) ? ('' as any) : parsed;
+      handleUpdate({ ...payload, x: actual });
+    },
+    [payload, handleUpdate],
+  );
+
+  const handleChangeY = useCallback(
+    ({ target: { value } }: React.ChangeEvent<HTMLInputElement>) => {
+      const parsed = parseFloat(value);
+      const actual = isNaN(parsed) ? ('' as any) : parsed;
+      handleUpdate({ ...payload, y: actual });
+    },
+    [payload, handleUpdate],
+  );
+
+  const handleChangeZ = useCallback(
+    ({ target: { value } }: React.ChangeEvent<HTMLInputElement>) => {
+      const parsed = parseFloat(value);
+      const actual = isNaN(parsed) ? ('' as any) : parsed;
+      handleUpdate({ ...payload, z: actual });
+    },
+    [payload, handleUpdate],
+  );
+
+  const handleChangeRelative = useCallback(
+    ({ target: { checked } }: React.ChangeEvent<HTMLInputElement>) => {
+      handleUpdate({ ...payload, relative: checked });
+    },
+    [payload, handleUpdate],
+  );
+
+  return (
+    <div className="SetRotationActionContainer">
+      <div className="row">
+        <Block label="Rotation">
+          <TextField
+            leftLabel="X"
+            type="number"
+            value={payload.x}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) => handleChangeX(e)}
+            autoSelect
+          />
+          <TextField
+            leftLabel="Y"
+            type="number"
+            value={payload.y}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) => handleChangeY(e)}
+            autoSelect
+          />
+          <TextField
+            leftLabel="Z"
+            type="number"
+            value={payload.z}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) => handleChangeZ(e)}
+            autoSelect
+          />
+        </Block>
+      </div>
+      <div className="row">
+        <Block
+          label={
+            <>
+              Relative{' '}
+              <InfoTooltip
+                text="When enabled, the rotation is relative to the entity's current rotation. When disabled, the rotation is absolute."
+                position="top center"
+              />
+            </>
+          }
+        >
+          <CheckboxField
+            checked={payload.relative}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) => handleChangeRelative(e)}
+          />
+        </Block>
+      </div>
+    </div>
+  );
+};
+
+export default React.memo(SetRotationAction);

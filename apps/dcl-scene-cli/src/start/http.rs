@@ -147,6 +147,7 @@ pub(super) fn contents_cache_dir(st: &AppState) -> Option<PathBuf> {
 }
 
 pub(super) async fn about(State(st): State<Arc<AppState>>, req: Request) -> Json<Value> {
+    st.voice_settled().await;
     let headers = req.headers();
     let host = preview_host(headers);
     let origin = preview_origin(headers);
@@ -216,6 +217,7 @@ pub(super) async fn get_scene_adapter(
     body: Bytes,
 ) -> Response {
     let body: Option<Value> = serde_json::from_slice(&body).ok();
+    st.voice_settled().await;
     if let Some(lk) = st.voice() {
         let (signer, metadata) = match verified_signer(&headers, "/get-scene-adapter").await {
             Ok(v) => v,
@@ -263,7 +265,8 @@ fn no_scene_id() -> Response {
 /// endpoint through its fixed-room path (over plain http only with its
 /// `--accept-untrusted-realm`, over a tunnel's https with nothing).
 pub(super) async fn signed_login(State(st): State<Arc<AppState>>, headers: HeaderMap) -> Response {
-    let Some(lk) = &st.livekit else {
+    st.voice_settled().await;
+    let Some(lk) = st.livekit.get() else {
         return (
             StatusCode::NOT_FOUND,
             "this preview has no LiveKit server (--no-livekit, or none could start)\n",
@@ -1239,7 +1242,7 @@ mod tests {
     fn livekit_state() -> State<Arc<AppState>> {
         let mut st = testkit::state(vec![]);
         st.offline_comms = false;
-        st.livekit = Some(
+        st.livekit = std::sync::OnceLock::from(
             crate::livekit::Livekit::new(
                 "ws://127.0.0.1:7880",
                 "devkey",
@@ -1354,7 +1357,7 @@ mod tests {
     async fn an_embedded_server_is_advertised_on_the_host_the_peer_dialled() {
         let mut st = testkit::state(vec![]);
         st.offline_comms = false;
-        st.livekit = Some(
+        st.livekit = std::sync::OnceLock::from(
             crate::livekit::Livekit::embedded(7880, "dcl-scene-cli", "devsecret", "LocalPreview")
                 .unwrap(),
         );

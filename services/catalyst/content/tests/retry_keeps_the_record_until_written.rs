@@ -34,11 +34,8 @@ async fn a_retried_deployment_keeps_its_record_until_its_write_commits() {
     let Some(pool) = catalyst_db::scratch::pool(4).await else {
         return;
     };
-    let body = serde_json::to_vec(&serde_json::json!({
-        "version": "v3", "type": "scene", "pointers": ["retry:0,0"], "timestamp": 1_000,
-        "content": [], "metadata": {}
-    }))
-    .unwrap();
+    let body = br#"{"version":"v3","type":"scene","pointers":["retry:0,0"],"timestamp":1000,"content":[],"metadata":{"z":9007199254740993,"a":{"z":1,"a":2}}}"#.to_vec();
+    let original = body.clone();
     let entity_id = dcl_auth::hash_bytes_v1(&body);
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -72,7 +69,7 @@ async fn a_retried_deployment_keeps_its_record_until_its_write_commits() {
         "catalyst-retry-record-{}",
         uuid::Uuid::new_v4().simple()
     ));
-    let storage = catalyst_storage::Storage::from_config(&tmp).await.unwrap();
+    let storage = Arc::new(catalyst_storage::Storage::from_config(&tmp).await.unwrap());
     let deployer = Arc::new(LiveSyncDeployer::new(
         pool.clone(),
         1,
@@ -81,10 +78,10 @@ async fn a_retried_deployment_keeps_its_record_until_its_write_commits() {
     let retry = RetryFailedDeployments::new(
         RetryFailedConfig::default(),
         reqwest::Client::new(),
-        Arc::new(storage),
+        storage.clone(),
         deployer.clone(),
-        store,
-        Arc::new(tokio::sync::RwLock::new(vec![peer])),
+        store.clone(),
+        Arc::new(tokio::sync::RwLock::new(vec![peer.clone()])),
     );
     let count = |sql: &'static str| {
         let pool = pool.clone();
@@ -109,6 +106,41 @@ async fn a_retried_deployment_keeps_its_record_until_its_write_commits() {
         "a buffered deployment is not durable: its record stays"
     );
 
+    // Lose the in-memory batch, then rebuild from the durable record and bytes.
+    drop(retry);
+    drop(deployer);
+    assert_eq!(
+        storage
+            .retrieve(&entity_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .as_ref(),
+        original
+    );
+    let deployer = Arc::new(LiveSyncDeployer::new(
+        pool.clone(),
+        1,
+        catalyst_content::sync_deployer::SyncValidation::AuthChainOnly,
+    ));
+    let retry = RetryFailedDeployments::new(
+        RetryFailedConfig::default(),
+        reqwest::Client::new(),
+        storage,
+        deployer.clone(),
+        store,
+        Arc::new(tokio::sync::RwLock::new(vec![peer])),
+    );
+    sqlx::query(
+        "UPDATE content.failed_deployments SET next_retry_at=to_timestamp(0) WHERE entity_id=$1",
+    )
+    .bind(&entity_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    assert_eq!(retry.execute_retry_cycle().await.unwrap().succeeded, 1);
+    assert_eq!(count(deployed).await, 0);
+    assert_eq!(count(recorded).await, 1);
     deployer.flush().await.unwrap();
     assert_eq!(count(deployed).await, 1);
     assert_eq!(
@@ -117,6 +149,17 @@ async fn a_retried_deployment_keeps_its_record_until_its_write_commits() {
         "the transaction that wrote it cleared the record"
     );
 
+    let metadata: String = sqlx::query_scalar(
+        "SELECT entity_metadata::text FROM content.deployments WHERE entity_id=$1",
+    )
+    .bind(&entity_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        metadata,
+        r#"{"v":{"z":9007199254740993,"a":{"z":1,"a":2}}}"#
+    );
     server.abort();
     let _ = tokio::fs::remove_dir_all(&tmp).await;
     pool.close().await;

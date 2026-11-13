@@ -15,7 +15,9 @@ use super::scene_thread::{SceneScript, run_scene_thread};
 
 static V8_INIT: std::sync::Once = std::sync::Once::new();
 
-pub(super) fn ensure_v8_initialized() {
+/// Initialize the process platform before creating any V8 execution workers.
+/// This Once does not repair the PKRU state of preexisting threads.
+pub fn ensure_v8_initialized() {
     V8_INIT.call_once(|| {
         let platform = v8::new_default_platform(0, false).make_shared();
         v8::V8::initialize_platform(platform);

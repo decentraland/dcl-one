@@ -5,4 +5,4 @@ mod handle;
 mod scene_thread;
 
 pub use fetch::{StorageCtx, parse_origin};
-pub use handle::{Command, JsRuntimeHandle, SharedState, spawn};
+pub use handle::{Command, JsRuntimeHandle, SharedState, ensure_v8_initialized, spawn};

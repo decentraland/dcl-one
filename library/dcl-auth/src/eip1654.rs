@@ -4,6 +4,13 @@ use super::error::AuthError;
 
 #[async_trait]
 pub trait Eip1654Validator: Send + Sync {
+    /// A validator that asks the current authority on every call, without reusing a
+    /// previous signature verdict. Fresh authentication fails closed when unavailable.
+    /// Wrappers must forward this capability explicitly; historical trust is not fresh.
+    fn fresh_validator(&self) -> Option<&dyn Eip1654Validator> {
+        None
+    }
+
     async fn validate_signature(
         &self,
         contract_address: &str,
@@ -22,6 +29,14 @@ pub trait Eip1654Validator: Send + Sync {
     ) -> Result<bool, AuthError> {
         Err(AuthError::Eip1654ValidationFailed(
             "this validator cannot answer for a past block".to_string(),
+        ))
+    }
+
+    /// Selects the contract-check block for a captured verification-start timestamp.
+    /// This selector includes first/head shortcuts and strict predecessor selection.
+    async fn verification_time_block(&self, _started_ms: i64) -> Result<u64, AuthError> {
+        Err(AuthError::Eip1654ValidationFailed(
+            "this validator cannot select a verification-time block".into(),
         ))
     }
 }
@@ -65,18 +80,73 @@ pub async fn verify_eip1654(
     message: &[u8],
     signature: &[u8],
 ) -> Result<bool, AuthError> {
+    verify_hash_pair(validator, contract_address, message, signature, None).await
+}
+
+pub(crate) async fn verify_eip1654_at_verification_time(
+    validator: &dyn Eip1654Validator,
+    contract_address: &str,
+    message: &[u8],
+    signature: &[u8],
+    started_ms: i64,
+) -> Result<bool, AuthError> {
+    if matches!(
+        verify_eip1654(validator, contract_address, message, signature).await,
+        Ok(true)
+    ) {
+        return Ok(true);
+    }
+    let block = validator.verification_time_block(started_ms).await?;
+    verify_hash_pair(validator, contract_address, message, signature, Some(block)).await
+}
+
+async fn verify_hash_pair(
+    validator: &dyn Eip1654Validator,
+    contract_address: &str,
+    message: &[u8],
+    signature: &[u8],
+    block: Option<u64>,
+) -> Result<bool, AuthError> {
     let raw_hash = alloy_primitives::keccak256(message);
-    let raw = validator
-        .validate_signature(contract_address, raw_hash.as_slice(), signature)
-        .await;
+    let raw = match block {
+        Some(block) => {
+            validator
+                .validate_signature_at_block(
+                    contract_address,
+                    raw_hash.as_slice(),
+                    signature,
+                    block,
+                )
+                .await
+        }
+        None => {
+            validator
+                .validate_signature(contract_address, raw_hash.as_slice(), signature)
+                .await
+        }
+    };
     if let Ok(true) = raw {
         return Ok(true);
     }
 
     let prefixed_hash = alloy_primitives::eip191_hash_message(message);
-    let prefixed = validator
-        .validate_signature(contract_address, prefixed_hash.as_slice(), signature)
-        .await;
+    let prefixed = match block {
+        Some(block) => {
+            validator
+                .validate_signature_at_block(
+                    contract_address,
+                    prefixed_hash.as_slice(),
+                    signature,
+                    block,
+                )
+                .await
+        }
+        None => {
+            validator
+                .validate_signature(contract_address, prefixed_hash.as_slice(), signature)
+                .await
+        }
+    };
     match (raw, prefixed) {
         (_, Ok(true)) => Ok(true),
         (Err(e), _) | (_, Err(e)) => Err(e),
