@@ -55,7 +55,7 @@ pub struct VisualsPlugin {
 
 impl Plugin for VisualsPlugin {
     fn build(&self, app: &mut App) {
-        debug_panel::register(app);
+        app.add_plugins(debug_panel::VisualsDebugPanelPlugin);
         app.insert_resource(DirectionalLightShadowMap { size: 4096 })
             .init_resource::<SceneGlobalLight>()
             .insert_resource(CloudCover {

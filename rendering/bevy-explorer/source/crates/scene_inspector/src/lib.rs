@@ -29,7 +29,7 @@ impl Plugin for SceneInspectorPlugin {
         manual_registry::register_engine_components(app);
 
         read_commands::add_read_commands(app);
-        panel::register(app);
+        app.add_plugins(panel::SceneInspectorPanelPlugin);
         write_commands::add_write_commands(app);
         asset_commands::add_asset_commands(app);
         mobile_ui::add_mobile_ui_command(app);

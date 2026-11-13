@@ -665,7 +665,7 @@ impl Plugin for IpfsIoPlugin {
         );
 
         app.add_console_command::<ChangeRealmCommand, _>(change_realm_command);
-        debug_panel::register(app, self.preview);
+        app.add_plugins(debug_panel::WebRequestsDebugPanelPlugin);
         bevy_variants::build(app);
 
         app.register_diagnostic(Diagnostic::new(IPFS_IN_FLIGHT_DIAGNOSTIC_PATH));

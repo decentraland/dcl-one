@@ -838,7 +838,7 @@ impl IpfsIo {
 
 pub(crate) fn build(app: &mut App) {
     app.add_systems(Update, detect_gpu_formats);
-    debug_panel::register(app);
+    app.add_plugins(debug_panel::BevyVariantsDebugPanelPlugin);
 }
 
 /// After the asset plugins exist: an app without images has nothing to fall back.
