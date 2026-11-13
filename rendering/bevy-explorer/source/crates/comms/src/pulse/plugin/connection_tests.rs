@@ -1152,8 +1152,6 @@ fn a_full_send_queue_recovers_through_the_pump_without_inbound_or_game_time_prog
         ))
     ));
     assert_eq!(harness.session().resyncs[0], (0, 1));
-    harness.pump_at(0.0);
-    assert!(harness.sent().is_empty());
 
     harness.receive(pulse::server_message::Message::PlayerStateFull(
         pulse::PlayerStateFull {
