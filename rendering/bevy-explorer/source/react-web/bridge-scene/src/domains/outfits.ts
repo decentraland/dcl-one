@@ -147,6 +147,23 @@ async function loadMetadata(address: string, isGuest: boolean): Promise<OutfitsM
   return res.metadata
 }
 
+// Same look, whatever the key order or a missing alpha.
+function sameOutfit(a: Outfit, b: Outfit): boolean {
+  const color = (c: RGBColor): string => {
+    const { r, g, b, a } = opaque(c)
+    return `${r},${g},${b},${a}`
+  }
+  const list = (l: string[] | undefined): string => JSON.stringify(l ?? [])
+  return (
+    a.bodyShape === b.bodyShape &&
+    color(a.eyes.color) === color(b.eyes.color) &&
+    color(a.hair.color) === color(b.hair.color) &&
+    color(a.skin.color) === color(b.skin.color) &&
+    list(a.wearables) === list(b.wearables) &&
+    list(a.forceRender) === list(b.forceRender)
+  )
+}
+
 // Capture the Backpack's CURRENT look into a deployable Outfit (colors default to grey if absent).
 function currentOutfit(look: AvatarLook): Outfit {
   return {
@@ -215,7 +232,7 @@ export function registerOutfits(ctx: Ctx): void {
       const outfit = currentOutfit(look)
       const next = await apply(me, { slot: msg.slot, action: 'save' }, (metadata) => {
         const held = metadata.outfits.find((o) => o.slot === msg.slot)
-        if (held != null && JSON.stringify(held.outfit) === JSON.stringify(outfit)) return metadata
+        if (held != null && sameOutfit(held.outfit, outfit)) return metadata
         if (held != null) throw new Error(`slot ${msg.slot} holds an outfit`)
         const outfits = [...metadata.outfits]
         outfits.push({ slot: msg.slot, outfit })
