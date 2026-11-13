@@ -41,6 +41,7 @@ vi.mock('electron', () => ({ net: { isOnline: () => mocks.online } }));
 vi.mock('electron-log/main', () => ({
   default: {
     info: vi.fn(),
+    warn: vi.fn(),
     transports: { file: { getFile: () => ({ path: mocks.logPath }) } },
   },
 }));
@@ -53,12 +54,13 @@ vi.mock('@sentry/electron/main', () => ({
 import { send } from '../src/modules/feedback';
 
 const MB = 1024 * 1024;
+const EVENT_ID = '0123456789abcdef0123456789abcdef';
 
 const report: FeedbackReport = {
   message: 'Publishing failed twice',
   contact: { method: 'email', value: 'jane.doe@example.com' },
   includeLogs: true,
-  associatedEventId: 'deploy-event-id',
+  associatedEventId: EVENT_ID,
   source: 'publish-failure',
 };
 
@@ -191,6 +193,38 @@ describe('send', () => {
     });
 
     describe.each([
+      [
+        'a sign-in deeplink',
+        'open dcl-creator-hub://open?signin=abc123&authRequestId=req-9',
+        'open dcl-creator-hub://open?signin=<redacted>&authRequestId=<redacted>',
+      ],
+      [
+        'a URL token',
+        'GET https://example.com/a?token=s3cr3t&page=2',
+        'GET https://example.com/a?token=<redacted>&page=2',
+      ],
+      ['an API key', 'key sk-example1234567890', 'key sk-<redacted>'],
+      ['a bearer token', 'Authorization: Bearer abc.def.ghi', 'Authorization: Bearer <redacted>'],
+    ])('and the log contains %s', (_, line, expected) => {
+      beforeEach(() => {
+        fs.writeFileSync(mocks.logPath, line);
+      });
+
+      it('should mask it', async () => {
+        await send(report);
+        expect(attachment()?.data).toBe(expected);
+      });
+    });
+
+    describe('and the log cannot be read', () => {
+      it('should send the report without the attachment', async () => {
+        await expect(send(report)).resolves.toBe('sent');
+        expect(mocks.captureFeedback).toHaveBeenCalledOnce();
+        expect(attachment()).toBeUndefined();
+      });
+    });
+
+    describe.each([
       ['a file named users', 'read /var/data/users.json'],
       ['a users folder below the root', 'read /var/data/users/jane/a'],
     ])('and the log mentions %s', (_, line) => {
@@ -212,6 +246,9 @@ describe('send', () => {
       'an unknown contact method',
       { ...report, contact: { method: 'phone', value: '+1-555-0100' } as never },
     ],
+    ['an unknown source', { ...report, source: 'somewhere' as never }],
+    ['an event id that is not a Sentry id', { ...report, associatedEventId: 'deploy-event-id' }],
+    ['includeLogs that is not a boolean', { ...report, includeLogs: 'yes' as never }],
     [
       'a contact value over 254 characters',
       { ...report, contact: { method: 'email', value: `${'a'.repeat(243)}@example.com` } },
@@ -265,7 +302,7 @@ describe('send', () => {
           {
             message: 'Publishing failed twice',
             email: 'jane.doe@example.com',
-            associatedEventId: 'deploy-event-id',
+            associatedEventId: EVENT_ID,
             tags: { source: 'publish-failure', contact_method: 'email' },
           },
           expect.anything(),
@@ -279,7 +316,7 @@ describe('send', () => {
         expect(mocks.captureFeedback).toHaveBeenCalledWith(
           {
             message: 'Publishing failed twice',
-            associatedEventId: 'deploy-event-id',
+            associatedEventId: EVENT_ID,
             tags: { source: 'publish-failure', contact_method: 'discord', discord: 'fixture_user' },
           },
           expect.anything(),
@@ -293,7 +330,7 @@ describe('send', () => {
         expect(mocks.captureFeedback).toHaveBeenCalledWith(
           {
             message: 'Publishing failed twice',
-            associatedEventId: 'deploy-event-id',
+            associatedEventId: EVENT_ID,
             tags: { source: 'publish-failure' },
           },
           expect.anything(),

@@ -37,14 +37,16 @@ import { Button } from '/@/components/Button';
 import { Loader } from '/@/components/Loader';
 import { ExpandMore } from '/@/components/ExpandMore';
 import { ReportIssue } from '/@/components/Modals/ReportIssue';
+import { ExternalLink } from '/@/components/ExternalLink';
 
 import type { Step } from '/@/components/Step/types';
 import type { Props } from '/@/components/Modals/PublishProject/types';
 import { ProjectStepWrapper } from '/@/components/Modals/PublishProject/ProjectStepWrapper';
 import { parseCoords } from '/@/components/Modals/PublishProject/utils';
 
-import { HelpCenterLink, SettingsLink } from './Deploy.styled';
+import { SettingsLink } from './Deploy.styled';
 import { DeployProgress, type DeployCancel } from './DeployProgress';
+import styles from './Deploy.module.css';
 
 import './styles.css';
 
@@ -584,7 +586,12 @@ function Error({
       )}
       {errorType !== 'code_error' && <ConnectedSteps steps={steps} />}
       <div className="actions">
-        <HelpCenterLink href={HELP_FAQ_URL}>{t('modal.report_issue.help_center')}</HelpCenterLink>
+        <ExternalLink
+          className={styles.helpCenterLink}
+          href={HELP_FAQ_URL}
+        >
+          {t('modal.report_issue.help_center')}
+        </ExternalLink>
         <Button
           size="large"
           variant="outlined"

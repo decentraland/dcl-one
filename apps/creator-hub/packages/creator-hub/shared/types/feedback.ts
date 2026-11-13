@@ -1,6 +1,8 @@
 export const FEEDBACK_MESSAGE_MAX_LENGTH = 4096;
 
-export type FeedbackSource = 'publish-failure' | 'logo-menu';
+export const FEEDBACK_SOURCES = ['publish-failure', 'logo-menu'] as const;
+
+export type FeedbackSource = (typeof FEEDBACK_SOURCES)[number];
 
 export type FeedbackDelivery = 'sent' | 'queued' | 'unknown';
 

@@ -7,13 +7,19 @@ import log from 'electron-log/main';
 
 import {
   FEEDBACK_MESSAGE_MAX_LENGTH,
+  FEEDBACK_SOURCES,
   type FeedbackDelivery,
   type FeedbackReport,
 } from '/shared/types/feedback';
 
+import { redactSecrets } from './redact';
+
 const LOG_TAIL_BYTES = 1024 * 1024;
 const DELIVERY_TIMEOUT_MS = 30_000;
 const CONTACT_MAX_LENGTH = 254;
+const SENTRY_EVENT_ID = /^[0-9a-f]{32}$/i;
+// A sign-in deeplink (`?signin=…&authRequestId=…`) or a URL carrying a token.
+const SECRET_QUERY_VALUE = /([?&](?:signin|authRequestId|token|access_token|code)=)[^&\s"'<>]+/gi;
 const USER_FOLDER =
   /(?:(?<!\w)[a-z]:|(?<![\w.~\\/-]))[\\/]+(?:users|home)[\\/]+[^\\/\r\n"'<>:|?*]+/gi;
 
@@ -40,11 +46,29 @@ async function readLogTail(logPath: string) {
   return Buffer.concat([old, current]).toString('utf8');
 }
 
-function redactHome(text: string) {
-  return text.replaceAll(os.homedir(), '~').replace(USER_FOLDER, '~');
+function redactLog(text: string) {
+  const withoutHome = text.replaceAll(os.homedir(), '~').replace(USER_FOLDER, '~');
+  return redactSecrets(withoutHome).replace(SECRET_QUERY_VALUE, '$1<redacted>');
 }
 
-function assertValidReport({ message, contact }: FeedbackReport) {
+/** The redacted log tail, or nothing when the log can't be read: the report goes without it. */
+async function logAttachment() {
+  try {
+    const data = redactLog(await readLogTail(log.transports.file.getFile().path));
+    return [{ filename: 'main.log', data }];
+  } catch (error) {
+    log.warn('[Feedback] Could not read the log; sending the report without it', error);
+    return undefined;
+  }
+}
+
+function assertValidReport({
+  message,
+  contact,
+  includeLogs,
+  associatedEventId,
+  source,
+}: FeedbackReport) {
   const validMessage =
     typeof message === 'string' &&
     message.length > 0 &&
@@ -54,7 +78,13 @@ function assertValidReport({ message, contact }: FeedbackReport) {
     ((contact.method === 'discord' || contact.method === 'email') &&
       typeof contact.value === 'string' &&
       contact.value.length <= CONTACT_MAX_LENGTH);
-  if (!validMessage || !validContact) throw new Error('Invalid feedback report');
+  const validEventId =
+    associatedEventId === undefined ||
+    (typeof associatedEventId === 'string' && SENTRY_EVENT_ID.test(associatedEventId));
+  const validRest = typeof includeLogs === 'boolean' && FEEDBACK_SOURCES.includes(source);
+  if (!validMessage || !validContact || !validEventId || !validRest) {
+    throw new Error('Invalid feedback report');
+  }
 }
 
 function unconfirmed(): FeedbackDelivery {
@@ -99,14 +129,7 @@ export async function send(report: FeedbackReport): Promise<FeedbackDelivery> {
     log.info('[Feedback] dev build, not sent', { message, includeLogs, associatedEventId, source });
     return 'sent';
   }
-  const attachments = includeLogs
-    ? [
-        {
-          filename: 'main.log',
-          data: redactHome(await readLogTail(log.transports.file.getFile().path)),
-        },
-      ]
-    : undefined;
+  const attachments = includeLogs ? await logAttachment() : undefined;
   const email = contact?.method === 'email' ? contact.value : undefined;
   const tags = {
     source,
