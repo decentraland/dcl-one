@@ -11,7 +11,7 @@ use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions};
 use catalyst::schema_migrate::{self, MigrateError};
 
 /// The steps a prepared version-2 database has not recorded.
-const PREPARED_PENDING_STEPS: [&str; 18] = [
+const PREPARED_PENDING_STEPS: [&str; 19] = [
     "0018_event_hook_compatibility",
     "0019_event_hook_admin_priority",
     "0023_social_referral_pending_reward",
@@ -30,6 +30,7 @@ const PREPARED_PENDING_STEPS: [&str; 18] = [
     "0037_social_badges_catalog_parity",
     "0038_social_badge_processor",
     "0039_worlds_set_here",
+    "0040_camera_reel_original_filename",
 ];
 type LedgerRow = (String, String, bool, chrono::NaiveDateTime);
 /// id, category, is_tier, criteria_steps, published, created_at
@@ -583,6 +584,24 @@ async fn a_database_stamped_with_the_closure_base_upgrades_to_head_with_its_rows
     .execute(pool)
     .await
     .unwrap();
+    assert!(!has_column(pool, "camera_reel.images", "original_filename").await);
+    let photo_id = uuid::Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO camera_reel.images (id, user_address, image_hash, thumbnail_hash, metadata) \
+         VALUES ($1, '0x1111111111111111111111111111111111111111', \
+                 'legacy-photo', 'legacy-thumbnail', \
+                 '{\"userAddress\":\"0x1111111111111111111111111111111111111111\",\"placeId\":\"legacy-place\"}')",
+    )
+    .bind(photo_id)
+    .execute(pool)
+    .await
+    .unwrap();
+    let photo_before: serde_json::Value =
+        sqlx::query_scalar("SELECT to_jsonb(image) FROM camera_reel.images image WHERE id=$1")
+            .bind(photo_id)
+            .fetch_one(pool)
+            .await
+            .unwrap();
     let done =
         schema_migrate::migrate(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
             .await
@@ -592,6 +611,19 @@ async fn a_database_stamped_with_the_closure_base_upgrades_to_head_with_its_rows
         "only steps the prepared capture lacks run; historical steps never replay"
     );
     assert_only_pending_steps_added(&historical_ledger, &step_ledger(pool).await);
+    let photo_after: (serde_json::Value, Option<String>) = sqlx::query_as(
+        "SELECT to_jsonb(image)-'original_filename', original_filename \
+         FROM camera_reel.images image WHERE id=$1",
+    )
+    .bind(photo_id)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        photo_after,
+        (photo_before.clone(), None),
+        "the additive filename migration preserves every existing photo value and leaves its hash URL unnamed"
+    );
     assert!(
         !done.created.iter().any(|object| matches!(object,
         schema_migrate::Object::Index(name) if name == "social.private_voice_chats_caller_idx"
@@ -712,6 +744,15 @@ async fn a_database_stamped_with_the_closure_base_upgrades_to_head_with_its_rows
             .is_empty(),
         "a second run applies nothing"
     );
+    let photo_after_replay: (serde_json::Value, Option<String>) = sqlx::query_as(
+        "SELECT to_jsonb(image)-'original_filename', original_filename \
+         FROM camera_reel.images image WHERE id=$1",
+    )
+    .bind(photo_id)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert_eq!(photo_after_replay, (photo_before, None));
     let status =
         schema_migrate::status(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
             .await

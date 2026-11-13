@@ -371,7 +371,12 @@ pub fn router(state: SharedState) -> Router {
         .method_not_allowed_fallback(|| async { axum::http::StatusCode::NOT_FOUND })
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
         .with_state(state.clone());
-    writes::guard(router, writes_enabled)
+    let router = writes::guard(router, writes_enabled)
         .layer(axum::middleware::from_fn(http::cors))
-        .layer(axum::middleware::from_fn_with_state(state, http::observe))
+        .layer(axum::middleware::from_fn_with_state(state, http::observe));
+    Router::new().fallback_service(
+        tower::ServiceBuilder::new()
+            .map_request(http::routing_request)
+            .service(router),
+    )
 }

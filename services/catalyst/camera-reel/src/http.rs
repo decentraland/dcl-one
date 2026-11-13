@@ -170,17 +170,14 @@ where
         _state: &S,
     ) -> Result<Self, Self::Rejection> {
         const LIMIT: usize = 2_097_152;
-        let content_type = request
+        let json = request
             .headers()
             .get(header::CONTENT_TYPE)
             .and_then(|value| value.to_str().ok())
-            .and_then(|value| value.split(';').next())
-            .unwrap_or("")
-            .trim()
-            .to_ascii_lowercase();
-        let json = content_type
-            .split_once('/')
-            .is_some_and(|(_, subtype)| subtype == "json" || subtype.ends_with("+json"));
+            .and_then(|value| value.parse::<mime::Mime>().ok())
+            .is_some_and(|value| {
+                value.subtype() == mime::JSON || value.suffix() == Some(mime::JSON)
+            });
         if !json {
             return Err(ApiError::PlainText(
                 StatusCode::BAD_REQUEST,
@@ -227,8 +224,11 @@ pub(crate) async fn cors(
     let path = request.uri().path();
     let health = path == "/health" || path.starts_with("/health/");
     let api = path == "/api" || path.starts_with("/api/");
-    // Documentation is registered outside the CORS-wrapped API scope.
-    if (!health && !api) || path.starts_with("/api/docs/") {
+    // Only the registered GET documentation resources bypass the API scope.
+    // Unknown documentation paths and other methods still use the scope's CORS policy.
+    let documentation = request.method() == Method::GET
+        && (path == "/api/docs/openapi.json" || path.starts_with("/api/docs/ui/"));
+    if (!health && !api) || documentation {
         return next.run(request).await;
     }
     let origin = request.headers().get(header::ORIGIN).cloned();
@@ -468,4 +468,142 @@ pub(crate) async fn observe(
         started.elapsed().as_secs_f64(),
     );
     response
+}
+
+/// Decode an asset name once; malformed escapes stay literal and unknown
+/// names, including invalid UTF-8, are not present in the asset whitelist.
+pub(crate) fn decoded_path_component(value: &str) -> Option<String> {
+    String::from_utf8(decoded_path_bytes(value)).ok()
+}
+
+fn decoded_path_bytes(value: &str) -> Vec<u8> {
+    fn hex(byte: u8) -> Option<u8> {
+        match byte {
+            b'0'..=b'9' => Some(byte - b'0'),
+            b'a'..=b'f' => Some(byte - b'a' + 10),
+            b'A'..=b'F' => Some(byte - b'A' + 10),
+            _ => None,
+        }
+    }
+    let bytes = value.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%'
+            && let (Some(high), Some(low)) = (
+                bytes.get(index + 1).copied().and_then(hex),
+                bytes.get(index + 2).copied().and_then(hex),
+            )
+        {
+            decoded.push((high << 4) | low);
+            index += 3;
+        } else {
+            decoded.push(bytes[index]);
+            index += 1;
+        }
+    }
+    decoded
+}
+
+/// Match encoded spellings of static API segments before routing. Valid
+/// parameter bytes remain untouched. Invalid UTF-8 is converted to replacement
+/// characters and re-escaped so the Path extractor still decodes exactly once.
+/// OriginalUri retains the bytes the client signed in both cases.
+pub(crate) fn routing_request(mut request: axum::extract::Request) -> axum::extract::Request {
+    const ROUTES: &[&str] = &[
+        "api/images",
+        "api/images/:id",
+        "api/images/:id/metadata",
+        "api/images/:id/visibility",
+        "api/users/:address",
+        "api/users/:address/images",
+        "api/places/:id/images",
+        "api/places/images",
+        "api/wearables/:item/images",
+        "api/docs/openapi.json",
+        "api/docs/ui/*",
+        "health/live",
+    ];
+    let path = request.uri().path();
+    if !path.contains('%') {
+        return request;
+    }
+    let raw: Vec<&str> = path.strip_prefix('/').unwrap_or(path).split('/').collect();
+    let decoded: Vec<Vec<u8>> = raw.iter().map(|part| decoded_path_bytes(part)).collect();
+    let mut segments: Vec<std::borrow::Cow<'_, str>> =
+        raw.iter().map(|part| (*part).into()).collect();
+    // The two scopes must also recognize encoded prefixes for their fallbacks.
+    if let Some(prefix) = decoded.first() {
+        if prefix == b"api" {
+            segments[0] = "api".into();
+        }
+        if prefix == b"health" {
+            segments[0] = "health".into();
+        }
+    }
+    for route in ROUTES {
+        let pattern: Vec<&str> = route.split('/').collect();
+        let wildcard = pattern.last() == Some(&"*");
+        let required = pattern.len() - usize::from(wildcard);
+        if (!wildcard && pattern.len() != raw.len()) || (wildcard && raw.len() < required) {
+            continue;
+        }
+        if !pattern
+            .iter()
+            .take(required)
+            .enumerate()
+            .all(|(index, part)| part.starts_with(':') || decoded[index] == part.as_bytes())
+        {
+            continue;
+        }
+        for (index, part) in pattern.iter().take(required).enumerate() {
+            if !part.starts_with(':') {
+                segments[index] = (*part).into();
+            } else if let std::borrow::Cow::Owned(value) = String::from_utf8_lossy(&decoded[index])
+            {
+                // Escape reserved bytes too: a percent or slash inside a parameter
+                // must not acquire a second meaning when Axum decodes the new URI.
+                use std::fmt::Write;
+                let mut encoded = String::new();
+                for byte in value.bytes() {
+                    if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
+                        encoded.push(char::from(byte));
+                    } else {
+                        write!(encoded, "%{byte:02X}").expect("writing to a string");
+                    }
+                }
+                segments[index] = encoded.into();
+            }
+        }
+        break;
+    }
+    let canonical = format!("/{}", segments.join("/"));
+    if canonical == path {
+        return request;
+    }
+    let original = request.uri().clone();
+    let path_and_query = if let Some(query) = original.query() {
+        format!("{canonical}?{query}")
+    } else {
+        canonical
+    };
+    let mut parts = original.clone().into_parts();
+    let Ok(path_and_query) = path_and_query.parse() else {
+        return request;
+    };
+    parts.path_and_query = Some(path_and_query);
+    let Ok(uri) = axum::http::Uri::from_parts(parts) else {
+        return request;
+    };
+    if request
+        .extensions()
+        .get::<axum::extract::OriginalUri>()
+        .is_none()
+    {
+        request
+            .extensions_mut()
+            .insert(axum::extract::OriginalUri(original));
+    }
+    *request.uri_mut() = uri;
+    request
 }

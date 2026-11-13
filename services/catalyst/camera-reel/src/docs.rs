@@ -1,6 +1,7 @@
 //! Camera Reel API documentation and locally served Swagger UI assets.
 
-use axum::extract::OriginalUri;
+use axum::Extension;
+use axum::extract::NestedPath;
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 
@@ -15,20 +16,30 @@ pub async fn openapi_json() -> Response {
         .into_response()
 }
 
-pub async fn swagger_ui(OriginalUri(uri): OriginalUri) -> Response {
+pub async fn swagger_ui(uri: axum::http::Uri, nested: Option<Extension<NestedPath>>) -> Response {
     let path = uri.path();
-    let Some((prefix, tail)) = path.split_once("/api/docs/ui/") else {
+    let Some((local_prefix, tail)) = path.split_once("/docs/ui/") else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let prefix = format!(
+        "{}{local_prefix}",
+        nested
+            .as_ref()
+            .map(|Extension(path)| path.as_str())
+            .unwrap_or("")
+    );
+    let Some(tail) = crate::http::decoded_path_component(tail) else {
         return StatusCode::NOT_FOUND.into_response();
     };
     let name = if tail.is_empty() || tail == "/" {
         "index.html"
     } else {
-        tail
+        tail.as_str()
     };
     if name == "swagger-initializer.js" {
         let config = serde_json::json!({
             "dom_id": "#swagger-ui",
-            "url": format!("{prefix}/api/docs/openapi.json"),
+            "url": format!("{prefix}/docs/openapi.json"),
             "deepLinking": true,
             "layout": "StandaloneLayout"
         });

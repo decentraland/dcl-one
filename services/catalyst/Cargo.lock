@@ -1644,6 +1644,7 @@ dependencies = [
  "dcl-auth",
  "dcl-http",
  "image",
+ "mime",
  "serde",
  "serde_html_form",
  "serde_json",

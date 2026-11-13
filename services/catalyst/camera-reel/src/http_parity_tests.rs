@@ -16,6 +16,10 @@ async fn app() -> (Router, std::path::PathBuf) {
 }
 
 async fn app_with_token(token: Option<&str>) -> (Router, std::path::PathBuf) {
+    app_at_mount(token, "/camera-reel-service").await
+}
+
+async fn app_at_mount(token: Option<&str>, prefix: &str) -> (Router, std::path::PathBuf) {
     let dir = std::env::temp_dir().join(format!("camera-http-{}", uuid::Uuid::new_v4()));
     let pool = sqlx::postgres::PgPoolOptions::new()
         .connect_lazy("postgres://localhost/camera_http_unused")
@@ -25,8 +29,13 @@ async fn app_with_token(token: Option<&str>) -> (Router, std::path::PathBuf) {
     settings.writes_enabled = true;
     settings.metrics_bearer_token = token.map(str::to_owned);
     let state = Arc::new(State::new(pool, storage, settings, None));
+    let app = router(state);
     (
-        Router::new().nest("/camera-reel-service", router(state)),
+        if prefix.is_empty() {
+            app
+        } else {
+            Router::new().nest(prefix, app)
+        },
         dir,
     )
 }
@@ -529,5 +538,292 @@ async fn openapi_keeps_all_declared_paths_and_existing_schema_contracts() {
         } else {
             assert_eq!(&spec["components"]["schemas"][name], schema, "{name}");
         }
+    }
+}
+
+#[tokio::test]
+async fn json_content_types_use_mime_syntax_before_reading_the_body() {
+    for (content_type, expected) in [
+        ("application/json", StatusCode::OK),
+        ("Application/JSON", StatusCode::OK),
+        ("text/json", StatusCode::OK),
+        ("application/problem+json", StatusCode::OK),
+        ("application/json; charset=iso-8859-1", StatusCode::OK),
+        ("application/json; charset=\"utf-8\"", StatusCode::OK),
+        ("/json", StatusCode::BAD_REQUEST),
+        (" /json", StatusCode::BAD_REQUEST),
+        ("application/a b+json", StatusCode::BAD_REQUEST),
+        ("application/json; nonsense", StatusCode::BAD_REQUEST),
+        ("application/json; charset", StatusCode::BAD_REQUEST),
+        ("application/json;charset=\"", StatusCode::BAD_REQUEST),
+        ("application/json ;charset=utf-8", StatusCode::BAD_REQUEST),
+    ] {
+        let response = extraction_app()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/json")
+                    .header(header::CONTENT_TYPE, content_type)
+                    .body(Body::from(r#"{"placesIds":[]}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), expected, "{content_type}");
+        if expected == StatusCode::BAD_REQUEST {
+            assert_eq!(
+                response.headers()[header::CONTENT_TYPE],
+                "text/plain; charset=utf-8"
+            );
+            assert_eq!(
+                to_bytes(response.into_body(), 4096).await.unwrap(),
+                "Content type error"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn documentation_fallbacks_and_other_methods_keep_api_cors() {
+    let (app, dir) = app().await;
+    for (method, path) in [
+        ("GET", "/api/docs/missing"),
+        ("GET", "/api/docs/ui"),
+        ("HEAD", "/api/docs/openapi.json"),
+        ("POST", "/api/docs/openapi.json"),
+        ("HEAD", "/api/docs/ui/swagger-ui.css"),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(method)
+                    .uri(format!("/camera-reel-service{path}"))
+                    .header(header::ORIGIN, "https://play.example")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND, "{method} {path}");
+        assert_eq!(
+            response.headers()[header::ACCESS_CONTROL_ALLOW_ORIGIN],
+            "https://play.example"
+        );
+        assert!(response.headers().contains_key(header::VARY));
+    }
+    for path in [
+        "/api/docs/missing",
+        "/api/docs/openapi.json",
+        "/api/docs/ui/swagger-ui.css",
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("OPTIONS")
+                    .uri(format!("/camera-reel-service{path}"))
+                    .header(header::ORIGIN, "https://play.example")
+                    .header(header::ACCESS_CONTROL_REQUEST_METHOD, "GET")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK, "OPTIONS {path}");
+        assert_eq!(response.headers()[header::ACCESS_CONTROL_MAX_AGE], "300");
+    }
+    for path in ["/api/docs/openapi.json", "/api/docs/ui/swagger-ui.css"] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/camera-reel-service{path}"))
+                    .header(header::ORIGIN, "https://play.example")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(
+            !response
+                .headers()
+                .contains_key(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+        );
+    }
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[tokio::test]
+async fn encoded_static_routes_work_through_the_mounted_camera_router() {
+    let (app, dir) = app().await;
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/camera-reel-service/%61pi/%75sers/alice/%69mages?limit=nope")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        to_bytes(response.into_body(), 4096).await.unwrap(),
+        "Query deserialize error: invalid digit found in string"
+    );
+    for (path, mime, needle) in [
+        (
+            "/%61pi/docs/%6fpenapi.json",
+            "application/json",
+            "Camera Reel Service",
+        ),
+        (
+            "/api/%64ocs/%75i/%73wagger-ui.css",
+            "text/css",
+            ".swagger-ui",
+        ),
+        (
+            "/%61pi/docs/ui/swagger-initializer.js",
+            "application/javascript",
+            "/camera-reel-service/api/docs/openapi.json",
+        ),
+        ("/%68ealth/%6cive", "application/json", "alive"),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/camera-reel-service{path}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK, "{path}");
+        assert_eq!(response.headers()[header::CONTENT_TYPE], mime);
+        let body = to_bytes(response.into_body(), 3_000_000).await.unwrap();
+        assert!(std::str::from_utf8(&body).unwrap().contains(needle));
+    }
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[tokio::test]
+async fn static_route_decoding_preserves_raw_signed_paths_and_decodes_parameters_once() {
+    use axum::extract::{MatchedPath, OriginalUri, Path};
+    let routes = Router::new().route("/api/users/{address}/images", get(|
+        Path(address): Path<String>, OriginalUri(original): OriginalUri, matched: MatchedPath,
+    | async move { Json(json!({ "address": address, "original": original.to_string(), "matched": matched.as_str() })) }));
+    let routes = Router::new().fallback_service(
+        tower::ServiceBuilder::new()
+            .map_request(crate::http::routing_request)
+            .service(routes),
+    );
+    for prefix in ["", "/camera-reel-service"] {
+        let app = if prefix.is_empty() {
+            routes.clone()
+        } else {
+            Router::new().nest(prefix, routes.clone())
+        };
+        for (raw, address) in [
+            ("a%252Fb", "a%2Fb"),
+            ("a%2Fb", "a/b"),
+            ("a+b", "a+b"),
+            ("%E2%82%AC", "€"),
+            ("%FF", "�"),
+            ("%C0%AF", "��"),
+            ("%E2%82", "�"),
+            ("a%FF%2F%252F%25%2B", "a�/%2F%+"),
+            ("%FF%3F%23", "�?#"),
+        ] {
+            let original = format!("{prefix}/%61pi/%75sers/{raw}/%69mages?limit=%31");
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(&original)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "{original}");
+            let body: serde_json::Value =
+                serde_json::from_slice(&to_bytes(response.into_body(), 4096).await.unwrap())
+                    .unwrap();
+            // Request metrics use the same service-local route label at every mount.
+            assert_eq!(
+                body,
+                json!({ "address": address, "original": original, "matched": "/api/users/{address}/images" })
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn swagger_document_url_keeps_api_nesting_for_canonical_and_encoded_routes() {
+    for prefix in ["", "/camera-reel-service", "/custom/camera"] {
+        let (app, dir) = app_at_mount(None, prefix).await;
+        for path in [
+            "/api/docs/ui/swagger-initializer.js",
+            "/%61pi/%64ocs/%75i/%73wagger-initializer.js",
+        ] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(format!("{prefix}{path}"))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "{prefix}{path}");
+            let body =
+                String::from_utf8(to_bytes(response.into_body(), 4096).await.unwrap().to_vec())
+                    .unwrap();
+            assert!(
+                body.contains(&format!("\"url\": \"{prefix}/api/docs/openapi.json\"")),
+                "{body}"
+            );
+            assert!(!body.contains("/api/api/"));
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+}
+
+#[tokio::test]
+async fn lossy_path_decoding_keeps_authorization_bound_to_the_raw_request() {
+    for prefix in ["", "/camera-reel-service"] {
+        let (app, dir) = app_at_mount(None, prefix).await;
+        let original = format!("{prefix}/%61pi/images/%FF");
+        let headers = crate::shared::signed_fetch::test_support::signed_headers(
+            "DELETE", &original, "{}", true,
+        )
+        .await;
+        for (path, expected) in [
+            (original.clone(), StatusCode::NOT_FOUND),
+            (
+                format!("{prefix}/%61pi/images/%FE"),
+                StatusCode::UNAUTHORIZED,
+            ),
+        ] {
+            let mut request = Request::builder()
+                .method("DELETE")
+                .uri(&path)
+                .body(Body::empty())
+                .unwrap();
+            *request.headers_mut() = headers.clone();
+            let response = app.clone().oneshot(request).await.unwrap();
+            assert_eq!(response.status(), expected, "{path}");
+            let body = to_bytes(response.into_body(), 4096).await.unwrap();
+            if expected == StatusCode::NOT_FOUND {
+                assert_eq!(body, r#"{"message":"image not found"}"#);
+            } else {
+                assert_eq!(body, "Unathorized");
+            }
+        }
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

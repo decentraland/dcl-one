@@ -14,11 +14,13 @@ catalyst-social = { path = "../social" }
 catalyst-jobs = { path = "../jobs" }
 anyhow.workspace = true
 tokio.workspace = true
+tower = { version = "0.5", features = ["util"] }
 axum.workspace = true
 sqlx.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_html_form = "=0.2.4"
+mime = "=0.3.17"
 chrono.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
@@ -40,5 +42,4 @@ catalyst-content = { path = "../content", features = ["test-support"] }
 catalyst-builder = { path = "../builder", features = ["test-support"] }
 catalyst-db = { path = "../db", features = ["test-support"] }
 tokio = { workspace = true, features = ["test-util"] }
-tower = { version = "0.5", features = ["util"] }
 alloy = { version = "2", default-features = false, features = ["std", "signer-local"] }
