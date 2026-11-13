@@ -40,6 +40,10 @@ pub struct AboutComms {
 pub trait CommsCore: Send + Sync {
     /// `(healthy, userCount)`.
     fn core_status(&self) -> (bool, u64);
+    /// One coherent realm view. Implementations with asynchronous feeds override this read.
+    fn realm_view(&self) -> (u64, Vec<((i32, i32), u32)>) {
+        (self.core_status().1, self.parcel_counts())
+    }
     /// Peers per parcel, for `/lambdas/explore/realms`.
     fn parcel_counts(&self) -> Vec<((i32, i32), u32)> {
         Vec::new()
@@ -158,6 +162,13 @@ impl AboutCommsState {
         self.core
             .get()
             .map(|core| core.parcel_counts())
+            .unwrap_or_default()
+    }
+
+    pub fn realm_view(&self) -> (u64, Vec<((i32, i32), u32)>) {
+        self.core
+            .get()
+            .map(|core| core.realm_view())
             .unwrap_or_default()
     }
 

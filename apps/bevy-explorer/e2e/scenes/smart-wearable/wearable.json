@@ -1,0 +1,28 @@
+{
+  "id": "a0f68dc0-1a46-41b8-a7dc-e17fc3885dce",
+  "name": "Smart Wearable Fixture",
+  "description": "E2E fixture: a hat whose code shows one UI label",
+  "rarity": "mythic",
+  "data": {
+    "replaces": [],
+    "hides": [],
+    "tags": ["e2e"],
+    "category": "hat",
+    "representations": [
+      {
+        "bodyShapes": ["urn:decentraland:off-chain:base-avatars:BaseMale"],
+        "mainFile": "model.glb",
+        "contents": ["model.glb"],
+        "overrideHides": [],
+        "overrideReplaces": []
+      },
+      {
+        "bodyShapes": ["urn:decentraland:off-chain:base-avatars:BaseFemale"],
+        "mainFile": "model.glb",
+        "contents": ["model.glb"],
+        "overrideHides": [],
+        "overrideReplaces": []
+      }
+    ]
+  }
+}

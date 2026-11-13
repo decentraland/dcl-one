@@ -408,6 +408,7 @@ pub async fn run_action(
                 port: browser.port,
                 open_browser: !browser.no_browser && !browser.ci,
                 timeout: crate::linker::linker_timeout(),
+                programmatic: false,
                 host: None,
             },
         )

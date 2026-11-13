@@ -85,6 +85,7 @@ pub fn apply_client(
         session_id: _,
         campaign_anon_user_id: _,
         imposter_source,
+        bevy_variants,
         gpu_bytes_per_frame,
         // sizes the task pool, which exists before plugins run (lib.rs desktop_default_plugins;
         // web.rs engine_start spawns the workers)
@@ -108,6 +109,19 @@ pub fn apply_client(
 
     if let Some(source) = imposter_source {
         imposters::imposter_spec::set_source(source);
+    }
+
+    // abgen's Bevy variants: the launch option, else the config, else the asset-bundle
+    // generator's CDN for this base domain; `off` in either turns them off
+    let bevy_variants_base = bevy_variants
+        .as_deref()
+        .or(config.bevy_variants_url.as_deref())
+        .map(str::to_owned)
+        .unwrap_or_else(|| common::base_domain::service(common::base_domain::Service::AbgenCdn));
+    if !bevy_variants_base.trim().eq_ignore_ascii_case("off") {
+        if let Some(ipfs) = app.world().get_resource::<ipfs::IpfsResource>() {
+            ipfs.set_bevy_variants_base(&bevy_variants_base);
+        }
     }
 
     let gpu_bytes_per_frame = gpu_bytes_per_frame.unwrap_or(config.graphics.gpu_bytes_per_frame);

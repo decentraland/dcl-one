@@ -142,15 +142,15 @@ impl MaterialExtension for CliffExtension {
     }
 }
 
-type WaterMaterial = ExtendedMaterial<WaterExtension>;
+pub(crate) type WaterMaterial = ExtendedMaterial<WaterExtension>;
 
 #[derive(Asset, TypePath, AsBindGroup, Clone)]
-struct WaterExtension {
+pub(crate) struct WaterExtension {
     #[uniform(100)]
-    bounds: Vec4,
+    pub(crate) bounds: Vec4,
     #[texture(101)]
     #[sampler(102)]
-    ripples: Handle<Image>,
+    pub(crate) ripples: Handle<Image>,
 }
 
 impl MaterialExtension for WaterExtension {

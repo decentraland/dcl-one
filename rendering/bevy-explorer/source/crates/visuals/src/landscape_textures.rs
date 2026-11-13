@@ -275,10 +275,8 @@ pub(crate) fn add_mips(image: &mut Image, kind: TexelKind) -> bool {
         return false;
     };
     let (mut width, mut height) = (image.width() as usize, image.height() as usize);
-    let mut level: Vec<Vec4> = top
-        .chunks_exact(4)
-        .map(|texel| decode(texel, kind))
-        .collect();
+    let (texels, _) = top.as_chunks::<4>();
+    let mut level: Vec<Vec4> = texels.iter().map(|texel| decode(texel, kind)).collect();
     let mut bytes = top.clone();
     let mut levels = 1;
     while width > 1 || height > 1 {

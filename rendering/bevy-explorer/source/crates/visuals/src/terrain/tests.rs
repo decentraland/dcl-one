@@ -273,6 +273,120 @@ fn ground_shader_compiles() {
     );
 }
 
+/// The softened sun shadow overrides compile on this machine's adapter, in a renderer with no
+/// window: a rock (`soft_shadows.wgsl`), the ground (`terrain_flat.wgsl`), a cliff
+/// (`coast_cliff.wgsl`) and the ocean (`coast_water.wgsl`) in front of a camera with the
+/// prepasses and a shadowing light. The grass's override is compiled by `grass_wind_compiles`.
+/// Needs a GPU, so `#[ignore]`d and skipped by CI:
+///
+/// ```text
+/// cargo test -p visuals soft_shadow_pipelines_compile -- --ignored --nocapture
+/// ```
+#[test]
+#[ignore = "needs a GPU; run with --ignored"]
+fn soft_shadow_pipelines_compile() {
+    use std::path::Path;
+
+    use bevy::{asset::io::embedded::EmbeddedAssetRegistry, pbr::NotShadowCaster};
+
+    use crate::{
+        coast::{self, cliff_material, CliffMaterial, WaterExtension, WaterMaterial},
+        landscape_textures::LandscapeTextures,
+        pipeline_test,
+        trees::{SoftShadowMaterial, SoftShadows},
+    };
+
+    let mut app = pipeline_test::app();
+    embed_shaders(&mut app);
+    coast::embed_shaders(&mut app);
+    // as `TreesPlugin` embeds it; that plugin needs the scene runner
+    let path = Path::new("visuals").join("soft_shadows.wgsl");
+    app.world()
+        .resource::<EmbeddedAssetRegistry>()
+        .insert_asset(
+            path.clone(),
+            &path,
+            include_str!("../soft_shadows.wgsl").as_bytes(),
+        );
+    app.add_plugins((
+        MaterialPlugin::<SoftShadowMaterial>::default(),
+        MaterialPlugin::<TerrainFlatMaterial>::default(),
+        MaterialPlugin::<CliffMaterial>::default(),
+        MaterialPlugin::<WaterMaterial>::default(),
+    ));
+    app.finish();
+    app.cleanup();
+
+    let world = app.world_mut();
+    let textures = world.resource::<LandscapeTextures>().clone();
+    let mut images = world.resource_mut::<Assets<Image>>();
+    images.insert(TERRAIN_TEXTURE.id(), TerrainSurface::default().image());
+    let ripples = images.add(Image::default());
+    let mut meshes = world.resource_mut::<Assets<Mesh>>();
+    let rock_mesh = meshes.add(Cuboid::new(1.0, 1.0, 1.0));
+    let plane_mesh = meshes.add(Plane3d::default().mesh().size(4.0, 4.0));
+    let rock = world
+        .resource_mut::<Assets<SoftShadowMaterial>>()
+        .add(SoftShadowMaterial {
+            base: StandardMaterial::default(),
+            extension: SoftShadows {},
+        });
+    let ground = world
+        .resource_mut::<Assets<TerrainFlatMaterial>>()
+        .add(TerrainFlatMaterial {
+            base: StandardMaterial::default(),
+            extension: TerrainExtension::new(&textures),
+        });
+    let cliff = world
+        .resource_mut::<Assets<CliffMaterial>>()
+        .add(cliff_material(&textures));
+    let water = world
+        .resource_mut::<Assets<WaterMaterial>>()
+        .add(WaterMaterial {
+            base: StandardMaterial {
+                fog_enabled: false,
+                ..default()
+            },
+            extension: WaterExtension {
+                bounds: NO_COAST,
+                ripples,
+            },
+        });
+    world.spawn((
+        Mesh3d(rock_mesh.clone()),
+        MeshMaterial3d(rock),
+        Transform::from_xyz(1.0, 0.5, 0.0),
+    ));
+    world.spawn((
+        Mesh3d(plane_mesh.clone()),
+        MeshMaterial3d(ground),
+        Transform::from_xyz(-1.0, 0.0, 0.0),
+    ));
+    world.spawn((
+        Mesh3d(rock_mesh),
+        MeshMaterial3d(cliff),
+        Transform::from_xyz(-1.0, 0.5, 1.0),
+    ));
+    world.spawn((
+        Mesh3d(plane_mesh),
+        MeshMaterial3d(water),
+        NotShadowCaster,
+        Transform::from_xyz(0.0, -0.1, 1.0),
+    ));
+
+    pipeline_test::assert_pipelines_compile(
+        &mut app,
+        Vec3::new(0.0, 2.0, 6.0),
+        Vec3::ZERO,
+        &[
+            "soft_shadows.wgsl",
+            "terrain_flat.wgsl",
+            "coast_cliff.wgsl",
+            "coast_water.wgsl",
+        ],
+    );
+}
+
 /// The lowest Landscape Distance still displaces the hills as far as the fine rings always did.
 #[test]
 fn hill_reach_never_below_832() {

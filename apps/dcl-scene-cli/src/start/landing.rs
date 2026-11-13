@@ -194,7 +194,7 @@ fn scene_card(
         .map(|arr| {
             arr.iter()
                 .filter_map(Value::as_str)
-                .map(|t| format!(r#"<span class="tag">{}</span>"#, esc(t)))
+                .map(|t| format!(r#"<span class="u-pill u-pill--default">{}</span>"#, esc(t)))
                 .collect()
         })
         .unwrap_or_default();
@@ -214,7 +214,7 @@ fn scene_card(
         plural = if parcel_count == 1 { "" } else { "s" },
         desc = esc(description),
         add = if tags.is_empty() {
-            r#"<span class="tag tag--add">+ Add tags</span>"#
+            r#"<span class="u-pill u-pill--default tag--add">+ Add tags</span>"#
         } else {
             ""
         },
@@ -274,18 +274,17 @@ fn launch_targets(
             carry,
         ));
     }
+    let player = knobs
+        .player
+        .clone()
+        .unwrap_or_else(joinblock::web_explorer_base);
     targets.push(Target::new(
         WHERE_WEB,
         "Web explorer",
-        "Opens the web explorer in this browser — no install",
-        web_join_url(
-            knobs
-                .player
-                .as_deref()
-                .unwrap_or(&joinblock::web_explorer_base()),
-            realm,
-            position,
-        ),
+        joinblock::web_blocked(&player, realm)
+            .as_deref()
+            .unwrap_or("Opens the web explorer in this browser — no install"),
+        web_join_url(&player, realm, position),
         Carry::Nothing,
     ));
     let mut phone = Target::new(
@@ -322,12 +321,12 @@ fn requests_drawer(st: &AppState) -> (usize, String) {
                 format!("{}m ago", secs / 60)
             };
             let tone = match *status {
-                s if s >= 500 => "st--err",
-                s if s >= 400 => "st--warn",
-                _ => "st--ok",
+                s if s >= 500 => "reqs__st--err",
+                s if s >= 400 => "reqs__st--warn",
+                _ => "reqs__st--ok",
             };
             format!(
-                r#"<div><b class="st {tone}">{status}</b> {} · {ago}</div>"#,
+                r#"<div><b class="reqs__st {tone}">{status}</b> {} · {ago}</div>"#,
                 esc(line)
             )
         })
@@ -344,7 +343,7 @@ fn more_scenes_chips(others: &[Project]) -> String {
         .map(|p| {
             let (parcels, _) = parse_parcels(&p.scene_json);
             format!(
-                r#"<span class="chip">{} · {} parcels</span>"#,
+                r#"<span class="u-pill u-pill--default">{} · {} parcels</span>"#,
                 esc(&scene_title(&p.scene_json)),
                 parcels.len()
             )
@@ -550,7 +549,7 @@ fn render_for(
         ),
         route_links = route_links(st, prefix, lan_realm.is_some()),
         creator_link = creator_link(realm, token).map_or_else(String::new, |url| format!(
-            r#"<p><a class="btn" href="{}">Edit in Creator Hub</a></p>"#,
+            r#"<p><a class="btn btn--secondary btn--md" href="{}">Edit in Creator Hub</a></p>"#,
             esc(&url)
         )),
     );

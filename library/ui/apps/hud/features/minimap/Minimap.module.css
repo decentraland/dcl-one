@@ -65,6 +65,13 @@
   cursor: pointer;
 }
 
+/* The tip icon (a hand under a coin), drawn as is: two colours, so not a mask. */
+.tipIcon {
+  width: 16px;
+  height: 16px;
+  object-fit: contain;
+}
+
 .collapse:hover {
   background: var(--fill-3);
   color: var(--text);

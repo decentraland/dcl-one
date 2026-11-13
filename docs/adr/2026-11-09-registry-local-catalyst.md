@@ -20,8 +20,10 @@ missing its id, pointer or timestamp is logged and omitted. A failed entity look
 or ownership pass returns 500 with the Registry's `{"error":"Internal Server Error"}`
 envelope, never unvalidated metadata or an empty array. Full profiles use an entity
 timestamp string. Snapshots and compact thumbnails point to the configured local
-profile-images service. The Registry projection does not use Lambdas' profile
-response cache, so a subsequent read sees changes in the local entity view.
+profile-images service; each full-profile avatar carries exactly the `face256` and
+`body` snapshots, as the Registry's sanitizer writes them. The Registry projection
+does not use Lambdas' profile response cache, so a subsequent read sees changes in
+the local entity view.
 
 The Explore Registry gateway serves these reads from the backend named by
 `EXPLORER_REGISTRY_SOURCE_URL`:
@@ -48,7 +50,8 @@ fragment, and startup refuses any other value, naming the variable.
   `https://asset-bundle-registry.decentraland.org`. It passes the same SSRF and
   own-host checks as the other explorer sources, at startup and on each request,
   and receives no identity or path headers. Signed `GET /entities/status` calls
-  therefore fail with 401 in this mode; signed reads need the local runtime.
+  therefore fail in this mode with the Registry's 400 `Invalid Auth Chain`;
+  signed reads need the local runtime.
 - Empty, the island posture, answers `/entities/active` and `/entities/versions`
   with `200 []` and the other reads with 503.
 
@@ -66,9 +69,15 @@ not follow redirects and buffers at most 8 MiB; a failed request or a larger
 response returns 502. A
 path the URL parser would normalize, such as an encoded `..`, returns 400.
 Responses preserve status, body, content type, cache directives, validators,
-`Allow` and `Retry-After`. Local `/status` and `/health` describe the Catalyst
-gateway; they do not establish native worker readiness. The existing gateway
-routes Registry traffic to Catalyst, so no additional Nginx upstream or new
+`Allow` and `Retry-After`. Local `/status`, `/health` and the status-check probes
+(`/health/live`, `/health/ready`, `/health/startup`) describe the Catalyst
+gateway; they do not establish native worker readiness. Every path under the
+prefix, routed by either half or not, answers the Registry's CORS: a 204
+preflight with origin `*`, its method list, the requested headers and a one-day
+max-age. Behind `infra/gateway`, a response without
+`Access-Control-Allow-Origin`, such as the answer to a request without
+`Origin`, gets `Access-Control-Allow-Origin: *` from the gateway. The existing
+gateway routes Registry traffic to Catalyst, so no additional Nginx upstream or new
 service is introduced here, and this change does not select an abgen release.
 
 The alternative of retaining an external Registry cache would duplicate the
@@ -81,6 +90,6 @@ Compatibility expectations are scoped to Registry source
 `63c9ef2bd7365ac7312d8bd23b6759515ca999e5` and explicit checked-in captures.
 The profile input error tests use the 2026-11-05 captures at Registry
 `f9578d4ab1ab9fdff4576ba6d052b966bd0fd5e9`: malformed JSON returns 500, while a
-valid JSON value with invalid `ids` returns 400. Full transport equivalence,
-including exact OPTIONS status/headers and all failure envelopes, is not implied
-by sharing the profile implementation.
+valid JSON value with invalid `ids` returns 400. The CORS preflight follows the
+2026-11-05 capture `AB-12-preflight.json`. Full transport equivalence, including
+all failure envelopes, is not implied by sharing the profile implementation.
