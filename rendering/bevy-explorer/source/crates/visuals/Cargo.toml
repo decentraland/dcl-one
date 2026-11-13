@@ -23,7 +23,3 @@ clap = { workspace = true }
 chrono = { workspace = true }
 noise = "0.9"
 web-time = { workspace = true }
-
-[dev-dependencies]
-# the embedded satellite images, for the asset test
-assets = { workspace = true }

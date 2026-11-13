@@ -8,12 +8,11 @@ use bevy::{
     },
 };
 use bevy_console::ConsoleCommand;
-use common::structs::{CurrentRealm, PrimaryCamera, SceneLoadDistance, TimeOfDay, WorldHold};
+use common::structs::{PrimaryCamera, SceneLoadDistance, TimeOfDay};
 use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand};
 use serde_json::json;
 
 use crate::{
-    satellite_floor,
     shell_texturing::{Ground, ParcelGrass},
     trees::Tree,
     CloudCover,
@@ -53,7 +52,6 @@ pub(super) fn register(app: &mut App) {
         ground: true,
         trees: true,
         grass: true,
-        satellite: true,
     })
     .add_console_command::<LandscapeCommand, _>(landscape_command)
     .add_console_command::<SkyState, _>(sky_state)
@@ -65,18 +63,12 @@ pub(super) fn register(app: &mut App) {
             ("Scene load distance (m)", "loadDistance"),
             ("Loaded trees", "treeCount"),
             ("Grass parcels", "grassParcels"),
-            ("Satellite floor shown", "satelliteShown"),
         ],
         actions: &[],
         inputs: &[
             toggle("Ground", "ground", "/landscape ground {value}"),
             toggle("Trees", "trees", "/landscape trees {value}"),
             toggle("Parcel grass", "grass", "/landscape grass {value}"),
-            toggle(
-                "Satellite floor",
-                "satellite",
-                "/landscape satellite {value}",
-            ),
         ],
     })
     .add_debug_section(DebugSection {
@@ -147,18 +139,17 @@ pub(super) fn register(app: &mut App) {
 }
 
 #[derive(Resource)]
-pub(crate) struct LandscapeLayers {
-    pub(crate) ground: bool,
-    pub(crate) trees: bool,
-    pub(crate) grass: bool,
-    pub(crate) satellite: bool,
+struct LandscapeLayers {
+    ground: bool,
+    trees: bool,
+    grass: bool,
 }
 
 /// Change visibility for a landscape render layer, including subsequently streamed entities.
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/landscape")]
 struct LandscapeCommand {
-    #[arg(value_parser = ["ground", "trees", "grass", "satellite"], requires = "visible")]
+    #[arg(value_parser = ["ground", "trees", "grass"], requires = "visible")]
     layer: Option<String>,
     #[arg(requires = "layer")]
     visible: Option<bool>,
@@ -169,7 +160,6 @@ fn landscape_command(
     preview: Option<Res<common::structs::PreviewMode>>,
     mut layers: ResMut<LandscapeLayers>,
     load: Res<SceneLoadDistance>,
-    (realm, held): (Res<CurrentRealm>, Option<Res<WorldHold>>),
     trees: Query<(), With<Tree>>,
     grass: Query<(), With<ParcelGrass>>,
 ) {
@@ -182,13 +172,11 @@ fn landscape_command(
         match layer {
             "ground" => layers.ground = value,
             "trees" => layers.trees = value,
-            "satellite" => layers.satellite = value,
             _ => layers.grass = value,
         }
     }
-    let satellite_shown = satellite_floor::shown(layers.satellite, &realm, held.is_some());
-    cmd.reply_ok(json!({"ground":layers.ground, "trees":layers.trees, "grass":layers.grass, "satellite":layers.satellite,
-        "treeCount":trees.iter().len(), "grassParcels":grass.iter().len(), "loadDistance":load.load, "satelliteShown":satellite_shown}).to_string());
+    cmd.reply_ok(json!({"ground":layers.ground, "trees":layers.trees, "grass":layers.grass,
+        "treeCount":trees.iter().len(), "grassParcels":grass.iter().len(), "loadDistance":load.load}).to_string());
 }
 
 type LandscapeObjects = Or<(With<Ground>, With<Tree>, With<ParcelGrass>)>;
