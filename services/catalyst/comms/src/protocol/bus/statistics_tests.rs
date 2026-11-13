@@ -35,6 +35,10 @@ fn producer_churn_keeps_recent_fences_and_never_refuses_a_new_incarnation() {
         assert!(assembler.receive_update(&partial[0], now).is_none());
         assert!(assembler.pending.iter().flatten().count() <= 2);
     }
+    // An incarnation whose fence was forgotten can again replace a quiet producer.
+    now += PRODUCER_QUIET;
+    let returning = frames(&Snapshot::default(), id(0), 1, 1024).unwrap();
+    assert!(assembler.receive_update(&returning[0], now).is_some());
 }
 
 #[test]
