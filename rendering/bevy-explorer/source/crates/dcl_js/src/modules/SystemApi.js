@@ -253,6 +253,11 @@ module.exports.setHomeScene = async function(args) {
     await Deno.core.ops.op_set_home_scene(args.realm, args.parcel)
 }
 
+// Leave the signed-in wallet without a pinned home.
+module.exports.unsetHomeScene = async function() {
+    Deno.core.ops.op_unset_home_scene()
+}
+
 // { [service web param]: base url } for every service the web build can redirect, resolved by
 // the engine: the service's override, else its composition from the base domain
 module.exports.getServiceUrls = async function() {
@@ -580,6 +585,28 @@ module.exports.getPhotoModeStream = async function() {
   async function* streamGenerator() {
     while (true) {
       const next = await Deno.core.ops.op_read_photo_mode_stream(rid);
+      if (next === null) break;
+      yield next;
+    }
+  }
+
+  return streamGenerator();
+}
+
+// Every running scene's map pins: the whole set on subscribing, and again each time it changes.
+// type MapPinInfo = {
+//   id: string,
+//   x: number, y: number,   // parcel
+//   title: string,
+//   description: string,
+//   icon: string | null,    // url
+// }
+module.exports.getMapPinsStream = async function() {
+  const rid = await Deno.core.ops.op_get_map_pins_stream();
+
+  async function* streamGenerator() {
+    while (true) {
+      const next = await Deno.core.ops.op_read_map_pins_stream(rid);
       if (next === null) break;
       yield next;
     }

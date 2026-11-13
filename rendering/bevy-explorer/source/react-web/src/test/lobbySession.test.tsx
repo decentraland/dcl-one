@@ -64,7 +64,7 @@ describe('lobby session regressions', () => {
     expect(h.session().lobbyPage.open).toBe(true)
     expect(h.driver.sent).toContainEqual({ kind: 'getHomeScene' })
 
-    h.driver.emit({ kind: 'homeScene', realm, parcel: { x: 12, y: -7 } })
+    h.driver.emit({ kind: 'homeScene', realm, parcel: { x: 12, y: -7 }, pinned: true })
     expect(h.session().homeScene()).toEqual({ realm: realm === DEFAULT_REALM ? null : realm, parcel: '12,-7' })
     act(() => h.session().lobbyPage.travel(null))
     expect(h.driver.last('teleport')).toMatchObject({ realm, x: 12, y: -7 })
@@ -72,7 +72,7 @@ describe('lobby session regressions', () => {
 
     act(() => h.session().lobbyPage.toggle())
     expect(h.session().homeScene()).toBeNull()
-    h.driver.emit({ kind: 'homeScene', realm: 'new-home.dcl.eth', parcel: { x: 3, y: 4 } })
+    h.driver.emit({ kind: 'homeScene', realm: 'new-home.dcl.eth', parcel: { x: 3, y: 4 }, pinned: true })
     act(() => h.session().lobbyPage.travel(null))
     expect(h.driver.last('teleport')).toMatchObject({ realm: 'new-home.dcl.eth', x: 3, y: 4 })
   })

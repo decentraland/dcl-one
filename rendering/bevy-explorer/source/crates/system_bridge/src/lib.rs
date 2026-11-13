@@ -137,6 +137,8 @@ pub enum SystemApi {
     LiveSceneInfo(RpcResultSender<Vec<LiveSceneInfo>>),
     GetHomeScene(RpcResultSender<HomeScene>),
     SetHomeScene(HomeScene),
+    /// Leave the signed-in wallet without a pinned home.
+    UnsetHomeScene,
     /// Credential-free resolved service endpoints.
     GetServiceUrls(RpcResultSender<Vec<(String, String)>>),
     GetWelcome(RpcResultSender<WelcomeState>),
@@ -152,6 +154,8 @@ pub enum SystemApi {
     GetProximityStream(RpcStreamSender<ProximityEvent>),
     GetPhotoModeStream(RpcStreamSender<PhotoModeState>),
     GetProfileChangedStream(RpcStreamSender<ProfileChangedEvent>),
+    /// Every running scene's map pins: the whole set now, and again each time it changes.
+    GetMapPinsStream(RpcStreamSender<Vec<MapPinInfo>>),
     GetSceneLoadingUiStream(RpcStreamSender<SceneLoadingUi>),
     GetAnalyticsEventStream(RpcStreamSender<AnalyticsEvent>),
     // Native-only transport for the super-user bridge scene's BroadcastChannel: the scene posts page
@@ -301,10 +305,17 @@ fn handle_home_scene(mut ev: EventReader<SystemApi>, mut config: ResMut<AppConfi
             SystemApi::GetHomeScene(rpc_result_sender) => rpc_result_sender.send(HomeScene {
                 realm: config.home_realm(),
                 parcel: config.home_location().as_vec2().into(),
+                pinned: config.home_pinned(),
             }),
             SystemApi::SetHomeScene(home_scene) => {
-                config.home_realm = Some(home_scene.realm.clone());
-                config.home_location = Some(bevy::math::Vec2::from(&home_scene.parcel).as_ivec2());
+                config.pin_home(
+                    home_scene.realm.clone(),
+                    bevy::math::Vec2::from(&home_scene.parcel).as_ivec2(),
+                );
+                platform::write_config_file(&*config);
+            }
+            SystemApi::UnsetHomeScene => {
+                config.unpin_home();
                 platform::write_config_file(&*config);
             }
             _ => (),

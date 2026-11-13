@@ -340,6 +340,10 @@ export function Showcase(): React.JSX.Element {
             <span style={{ fontSize: 14 }}>Fullscreen</span>
             <Toggle checked={on} onChange={setOn} aria-label="Fullscreen" />
           </div>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: 8, borderRadius: 8, background: 'var(--text)', color: 'var(--panel)' }}>
+            <span style={{ fontSize: 14 }}>On a light panel</span>
+            <Toggle size="sm" surface="light" checked={on} onChange={setOn} aria-label="On a light panel" />
+          </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
             <span style={{ fontSize: 14, width: 60 }}>Volume</span>
             <Slider value={vol} onChange={setVol} aria-label="Volume" />

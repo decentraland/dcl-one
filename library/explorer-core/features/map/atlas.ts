@@ -112,3 +112,41 @@ export function parcelTileFor(worldX: number, worldZ: number): ParcelTile {
     meters: PARCEL_TILE_PARCELS * PARCEL_METERS
   }
 }
+
+// ---- parcels map ----
+
+// The full-screen map's Parcels type: the same on-demand images as above, laid out as a fixed
+// grid of square chunks, each centred on a parcel and 51 parcels wide.
+const PARCELS_CHUNK_PX = 1020
+const PARCELS_CHUNK_PARCEL_PX = 20
+/** Parcels across one chunk. */
+export const PARCELS_CHUNK_PARCELS = PARCELS_CHUNK_PX / PARCELS_CHUNK_PARCEL_PX
+const PARCELS_GRID_MIN = -150
+const PARCELS_GRID_MAX = 175
+
+export interface ParcelsChunk {
+  /** The parcel the image is centred on. */
+  x: number
+  y: number
+  url: string
+}
+
+/** Every chunk of the parcels map, west to east then south to north. */
+export function parcelsChunks(): ParcelsChunk[] {
+  const base = `${serviceUrl('mapApi')}/v1/map.png`
+  const out: ParcelsChunk[] = []
+  for (let x = PARCELS_GRID_MIN; x <= PARCELS_GRID_MAX; x += PARCELS_CHUNK_PARCELS) {
+    for (let y = PARCELS_GRID_MIN; y <= PARCELS_GRID_MAX; y += PARCELS_CHUNK_PARCELS) {
+      out.push({ x, y, url: `${base}?center=${x},${y}&width=${PARCELS_CHUNK_PX}&height=${PARCELS_CHUNK_PX}&size=${PARCELS_CHUNK_PARCEL_PX}` })
+    }
+  }
+  return out
+}
+
+// ---- satellite chunks in map units ----
+
+/** Centre of satellite chunk (col, row) in parcels: the grid starts three parcels west and two
+ *  north of the city's corner, where the imagery's border lies outside the world. */
+export function satelliteChunkCenter(col: number, row: number): { x: number; y: number } {
+  return { x: -133 + col * PARCELS_PER_TILE, y: 132 - row * PARCELS_PER_TILE }
+}

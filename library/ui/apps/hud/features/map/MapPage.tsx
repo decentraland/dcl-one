@@ -1,558 +1,311 @@
-// React Map — full-screen page inside MainMenuShell matching the Unity map: the satellite
-// atlas (the same 8×8 tile grid unity-explorer renders) pannable/zoomable, category filter
-// chips + search, a player marker, zoom controls, a satellite minimap, a category sidebar
-// listing the scenes for the selected category (with their pins on the map), and a place-detail
-// panel (places.decentraland.org/api/places) when a parcel/pin is clicked. Teleport via the bridge.
+// The full-screen map: Genesis City with its marker layers, the category chips, the controls
+// and Layers panel, and the panel of search results, places and events on the right.
 
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { serviceUrl } from '@hud-host'
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react'
+import { isGenesisSatelliteView } from '@explorer-core/features/map/atlas'
+import { homeStore, isHomePlace } from '@explorer-core/features/map/home'
+import { isRoad, isWorldPlace, type MapEvent, type MapPlace, type PlacePhoto } from '@explorer-core/features/map/mapApi'
+import { parseParcel, playerMarkerPosition, worldToGrid, type Vec2 } from '@explorer-core/features/map/mapCoords'
+import { mapLayers } from '@explorer-core/features/map/mapLayersStore'
+import type { EventMarker, PlaceMarker } from '@explorer-core/features/map/mapMarkers'
+import { CAMERA_CENTER_SECONDS, CAMERA_MOVE_SECONDS } from '@explorer-core/features/map/mapZoom'
+import { destinationParcel, navigation } from '@explorer-core/features/map/navigation'
+import { scenePins, type ScenePin } from '@explorer-core/features/map/scenePins'
+import { Navmap } from '@explorer-core/features/map/navmap'
+import { showToast } from '../../design'
+import { PhotoDetail } from '../gallery/PhotoDetail'
 import { MainMenuShell } from '../menu/MainMenuShell'
-import { Button } from '../../design'
-import { useDonate } from '../donate/useDonate'
-import { CAT_ICONS, CAT_PINS, WORLD_ICON } from './mapArt'
-import { GRID, ORIGIN_X, ORIGIN_Y, PARCELS_PER_TILE, SIZE, SPAN, tileUrl } from '@explorer-core/features/map/atlas'
-import type { MapState, ProfileState } from '../session/useEngineSession'
-import { openWorldVisit } from '../../components/WorldVisitModal'
-import { isCancelKey } from '../../lib/bindingLabels'
+import type { GalleryState, MapState, MinimapState, ProfileState } from '../session/useEngineSession'
+import { CategoryStrip } from './CategoryStrip'
+import { DestinationBanner } from './DestinationBanner'
+import { LayersPanel } from './LayersPanel'
+import { MapCanvas } from './MapCanvas'
+import { MapToolbar } from './MapToolbar'
+import { PinsLayer } from './PinsLayer'
+import { RouteLayer } from './RouteLayer'
+import { WorldWarning } from './WorldWarning'
+import { EventInfo } from './panel/EventInfo'
+import { PlaceInfo } from './panel/PlaceInfo'
+import { RightPanel } from './panel/RightPanel'
+import { SearchBar } from './panel/SearchBar'
+import { SearchResults } from './panel/SearchResults'
+import { useMapCamera } from './useMapCamera'
+import { useMapLayerData } from './useMapLayerData'
+import noticeStyles from './MapNotices.module.css'
 import styles from './MapPage.module.css'
 
-const PLACES_API = `${serviceUrl('places')}/api/places`
-const WORLDS_API = `${serviceUrl('places')}/api/worlds`
+// Dismissing the worlds warning holds for the session.
+let worldWarningClosed = false
 
-// Category chips. `api` is the lowercase value the places API expects under `categories`
-// (null = no filter / "All"); icons + pins are the unity-explorer textures under /assets/map.
-interface Category {
-  key: string
-  label: string
-  api: string | null
-}
-const CATEGORIES: Category[] = [
-  { key: 'all', label: 'All', api: null },
-  { key: 'favorites', label: 'Favorites', api: 'favorites' },
-  { key: 'social', label: 'Social', api: 'social' },
-  { key: 'music', label: 'Music', api: 'music' },
-  { key: 'art', label: 'Art', api: 'art' },
-  { key: 'game', label: 'Game', api: 'game' },
-  { key: 'fashion', label: 'Fashion', api: 'fashion' },
-  { key: 'education', label: 'Education', api: 'education' },
-  { key: 'shop', label: 'Shop', api: 'shop' },
-  { key: 'sports', label: 'Sports', api: 'sports' },
-  { key: 'business', label: 'Business', api: 'business' }
-]
-
-// Sidebar sort tabs → places-API order_by values (matches unity-explorer's NavmapSearchPlaceSorting).
-const SORTS = [
-  { key: 'most_active', label: 'MOST ACTIVE' },
-  { key: 'like_score', label: 'BEST RATED' },
-  { key: 'created_at', label: 'NEWEST' }
-]
-
-const catIcon = (key: string): string => CAT_ICONS[key] ?? CAT_ICONS.all
-const catPin = (key: string): string => CAT_PINS[key] ?? CAT_ICONS.all
-
-// The 8×8 satellite chunk grid, sized at `size` px per parcel. The container's local origin
-// (0,0) is the atlas's top-left corner = parcel (ORIGIN_X, ORIGIN_Y).
-function AtlasTiles({ size }: { size: number }): React.JSX.Element {
-  const tilePx = PARCELS_PER_TILE * size
-  const tiles: React.JSX.Element[] = []
-  for (let col = 0; col < GRID; col++) {
-    for (let row = 0; row < GRID; row++) {
-      tiles.push(
-        <img
-          key={`${col},${row}`}
-          src={tileUrl(col, row)}
-          alt=""
-          draggable={false}
-          width={tilePx}
-          height={tilePx}
-          style={{ position: 'absolute', left: col * tilePx, top: row * tilePx }}
-        />
-      )
-    }
-  }
-  return (
-    <div className={styles.atlas} style={{ width: GRID * tilePx, height: GRID * tilePx }}>
-      {tiles}
-    </div>
-  )
-}
-
-interface Place {
-  id?: string
-  title: string
-  description: string
-  owner: string | null
-  image: string
-  base_position: string
-  positions: string[]
-  user_count: number
-  like_rate: number | null
-}
-
-// A world (off-atlas realm, e.g. boedo.dcl.eth) from the /api/worlds endpoint.
-interface World {
-  world_name: string
-  title: string
-  owner: string | null
-  image: string
-}
-
-function PlacePanel({ place, onClose, onJump }: { place: Place; onClose: () => void; onJump: () => void }): React.JSX.Element {
-  const [bx, by] = place.base_position.split(',')
-  // Donate to the place's creator, shown where the host can sign a tip and the place has a creator.
-  const donate = useDonate(Number.isInteger(Number(bx)) && Number.isInteger(Number(by)) ? { parcel: { x: Number(bx), y: Number(by) } } : null)
-  return (
-    <aside className={styles.place}>
-      <button type="button" className={styles.placeClose} aria-label="Back" onClick={onClose}>‹</button>
-      <div className={styles.placeImg} style={{ backgroundImage: place.image ? `url(${place.image})` : undefined }} />
-      <div className={styles.placeBody}>
-        <h2 className={styles.placeTitle}>{place.title}</h2>
-        {place.owner && <div className={styles.placeOwner}>created by {place.owner}</div>}
-        <div className={styles.placeStats}>
-          <span>👤 {place.user_count}</span>
-          {place.like_rate != null && <span>👍 {Math.round(place.like_rate * 100)}%</span>}
-        </div>
-        <button type="button" className={styles.jumpBtn} onClick={onJump}>JUMP IN</button>
-        {donate.visible && (
-          <Button variant="outline" size="sm" onClick={(e) => donate.open(e.detail === 0 ? 'keyboard' : 'pointer')}>
-            DONATE
-          </Button>
-        )}
-        <div className={styles.placeMetaRow}>
-          <div>
-            <div className={styles.placeMetaLabel}>LOCATION</div>
-            <div className={styles.placeMetaValue}>{bx}, {by}</div>
-          </div>
-          <div>
-            <div className={styles.placeMetaLabel}>PARCELS</div>
-            <div className={styles.placeMetaValue}>{place.positions.length}</div>
-          </div>
-        </div>
-        <div className={styles.placeMetaLabel}>DESCRIPTION</div>
-        <p className={styles.placeDesc}>{place.description}</p>
-      </div>
-    </aside>
-  )
-}
-
-// Right-side list of scenes for the selected category, with MOST ACTIVE / BEST RATED / NEWEST tabs.
-function CategorySidebar({
-  category,
-  sort,
-  setSort,
-  places,
-  loading,
-  onClose,
-  onSelect
-}: {
-  category: Category
-  sort: string
-  setSort: (s: string) => void
-  places: Place[]
-  loading: boolean
-  onClose: () => void
-  onSelect: (p: Place) => void
-}): React.JSX.Element {
-  return (
-    <aside className={styles.sidebar}>
-      <div className={styles.sidebarHead}>
-        <img className={styles.sidebarIcon} src={catIcon(category.key)} alt="" />
-        <span className={styles.sidebarTitle}>{category.label}</span>
-        <button type="button" className={styles.sidebarClose} aria-label="Close" onClick={onClose}>✕</button>
-      </div>
-      <div className={styles.sorts}>
-        {SORTS.map((s) => (
-          <button
-            key={s.key}
-            type="button"
-            className={`${styles.sort} ${sort === s.key ? styles.sortActive : ''}`.trim()}
-            onClick={() => setSort(s.key)}
-          >
-            {s.label}
-          </button>
-        ))}
-      </div>
-      <div className={styles.list}>
-        {loading && <div className={styles.listMsg}>Loading…</div>}
-        {!loading && places.length === 0 && <div className={styles.listMsg}>No scenes found.</div>}
-        {!loading &&
-          places.map((p) => (
-            <button key={p.id ?? p.base_position} type="button" className={styles.card} onClick={() => onSelect(p)}>
-              <div className={styles.cardImg} style={{ backgroundImage: p.image ? `url(${p.image})` : undefined }} />
-              <div className={styles.cardBody}>
-                <div className={styles.cardTitle}>{p.title}</div>
-                {p.owner && <div className={styles.cardOwner}>created by {p.owner}</div>}
-                <div className={styles.cardStats}>
-                  {p.like_rate != null && <span>👍 {Math.round(p.like_rate * 100)}%</span>}
-                  <span>👤 {p.user_count}</span>
-                </div>
-              </div>
-              <span className={styles.cardChevron}>›</span>
-            </button>
-          ))}
-      </div>
-    </aside>
-  )
-}
+const ARRIVAL_CHECK_MS = 250
 
 export function MapPage({
   map,
+  minimap,
   profile,
+  gallery,
   onNavigate
 }: {
   map: MapState
+  minimap: MinimapState
   profile: ProfileState
+  gallery: GalleryState
   onNavigate: (page: string) => void
 }): React.JSX.Element | null {
-  const [catKey, setCatKey] = useState('all')
-  const [sort, setSort] = useState('most_active')
-  const [pan, setPan] = useState({ x: 0, y: 0 })
-  const [zoom, setZoom] = useState(1.4)
-  const [place, setPlace] = useState<Place | null>(null)
-  const [selected, setSelected] = useState<{ x: number; y: number } | null>(null)
-  const [list, setList] = useState<Place[]>([])
-  const [loading, setLoading] = useState(false)
-  const [query, setQuery] = useState('')
-  const [worldHits, setWorldHits] = useState<World[]>([])
-  const [placeHits, setPlaceHits] = useState<Place[]>([])
-  // The world-jump confirm lives in the HUD-wide popup layer now, so this page no longer unmounts it —
-  // keep its close handle and dismiss it explicitly when the map closes.
-  const closeVisitRef = useRef<(() => void) | null>(null)
-  const drag = useRef<{ x: number; y: number; moved: boolean } | null>(null)
-  const viewRef = useRef<HTMLDivElement>(null)
-
   const open = map.open
-  const category = CATEGORIES.find((c) => c.key === catKey) ?? CATEGORIES[0]
-  const sidebarOpen = category.api !== null
+  const camera = useMapCamera()
+  const layers = useSyncExternalStore(mapLayers.subscribe, mapLayers.getSnapshot)
+  const nav = useMemo(() => new Navmap(), [])
+  const snap = useSyncExternalStore(nav.subscribe, nav.getSnapshot)
+  const home = useSyncExternalStore(homeStore.subscribe, homeStore.getSnapshot)
+  const destination = useSyncExternalStore(navigation.subscribe, navigation.getSnapshot)
+  const pins = useSyncExternalStore(scenePins.subscribe, scenePins.getSnapshot)
+  const [layersOpen, setLayersOpen] = useState(false)
+  const [selected, setSelected] = useState<string | null>(null)
+  const [warning, setWarning] = useState(false)
+  const [photo, setPhoto] = useState<{ photos: PlacePhoto[]; index: number } | null>(null)
 
-  // Place cache keyed by parcel — avoids re-fetching the same place.
-  const cache = useRef<Map<string, Place | null>>(new Map())
-  const fetchPlace = useCallback(async (px: number, py: number): Promise<void> => {
-    const key = `${px},${py}`
-    if (cache.current.has(key)) {
-      setPlace(cache.current.get(key) ?? null)
-      return
-    }
-    try {
-      const res = await fetch(`${PLACES_API}?positions=${key}`)
-      const json = (await res.json()) as { data?: Place[] }
-      const p = json.data?.[0] ?? null
-      cache.current.set(key, p)
-      setPlace(p)
-    } catch {
-      setPlace(null)
-    }
-  }, [])
+  const genesis = isGenesisSatelliteView(minimap.satelliteView)
+  const address = profile.data?.address
+  const { pose } = minimap
+  const data = useMapLayerData(open, layers, address)
 
-  // Load the scenes for the selected category (drives the sidebar list + the map pins).
+  const { translateTo, setPosition, resetZoom } = camera
   useEffect(() => {
-    if (!open || category.api === null) {
-      setList([])
-      return
-    }
-    const params = new URLSearchParams({ order_by: sort, order: 'desc', limit: '50', with_realms_detail: 'true' })
-    if (category.api === 'favorites') params.set('only_favorites', 'true')
-    else params.set('categories', category.api)
-
-    const ac = new AbortController()
-    setLoading(true)
-    fetch(`${PLACES_API}?${params.toString()}`, { signal: ac.signal })
-      .then((r) => r.json())
-      .then((j: { data?: Place[] }) => {
-        setList((j.data ?? []).filter((p) => p.base_position))
-        setLoading(false)
-      })
-      .catch((e) => {
-        if (e?.name !== 'AbortError') setLoading(false)
-      })
-    return () => ac.abort()
-  }, [open, category.api, sort])
-
-  // Search places + worlds as the user types. Worlds (e.g. boedo.dcl.eth) aren't on the
-  // atlas, so they can't be highlighted — selecting one prompts the travel modal instead.
-  useEffect(() => {
-    const q = query.trim()
-    if (q.length < 2) {
-      setWorldHits([])
-      setPlaceHits([])
-      return
-    }
-    const ac = new AbortController()
-    const t = setTimeout(() => {
-      const isEns = /\.eth$/i.test(q)
-      const worldParam = isEns ? `names=${encodeURIComponent(q)}` : `search=${encodeURIComponent(q)}`
-      const getJson = (url: string): Promise<{ data?: unknown[] }> =>
-        fetch(url, { signal: ac.signal }).then((r) => r.json() as Promise<{ data?: unknown[] }>)
-      void getJson(`${WORLDS_API}?${worldParam}&limit=12`)
-        .then((j) => setWorldHits((j.data as World[]) ?? []))
-        .catch(() => undefined)
-      void getJson(`${PLACES_API}?search=${encodeURIComponent(q)}&limit=12`)
-        .then((j) => setPlaceHits(((j.data as Place[]) ?? []).filter((p) => p.base_position)))
-        .catch(() => undefined)
-    }, 280)
-    return () => {
-      clearTimeout(t)
-      ac.abort()
-    }
-  }, [query])
+    nav.setEffects({ moveCamera: translateTo })
+  }, [nav, translateTo])
 
   useEffect(() => {
     if (open) {
-      // Center the view on the player's parcel, like Unity's navmap.
-      setPan({ x: -zoom * map.x * SIZE, y: zoom * map.y * SIZE })
+      resetZoom()
+      setPosition(worldToGrid(pose.current.x, pose.current.z))
+      nav.activate()
+      setWarning(!genesis && !worldWarningClosed)
     } else {
-      setPlace(null)
+      nav.deactivate()
       setSelected(null)
-      setCatKey('all')
-      setQuery('')
-      closeVisitRef.current?.()
-      closeVisitRef.current = null
+      setPhoto(null)
+      setWarning(false)
     }
-    // Only re-center when the map opens — player movement shouldn't yank the view.
+    // the map opening or closing, nothing else
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
 
+  // the route is followed whether or not the map is open
+  useEffect(() => {
+    if (destination == null) return
+    const timer = setInterval(() => {
+      if (navigation.playerMoved(playerMarkerPosition(pose.current.x, pose.current.z))) showToast('You have arrived to your destination')
+    }, ARRIVAL_CHECK_MS)
+    return () => clearInterval(timer)
+  }, [destination, pose])
+
+  const close = map.toggle
+
+  const onParcel = useCallback(
+    (parcel: Vec2): void => {
+      setSelected(null)
+      translateTo(parcel, CAMERA_MOVE_SECONDS)
+      void nav.selectParcel(parcel, true)
+    },
+    [nav, translateTo]
+  )
+  const onEvent = useCallback(
+    (marker: EventMarker): void => {
+      setSelected(`liveEvents:${marker.id}`)
+      void nav.selectEvent(marker.event)
+    },
+    [nav]
+  )
+  const onPlace = useCallback(
+    (layer: 'pois' | 'search' | 'category', marker: PlaceMarker): void => {
+      setSelected(`${layer}:${marker.id}`)
+      // the place opens at once, then again as the parcel it stands on once that has been read
+      void nav.selectPlace(marker.place, { fromSearch: true })
+      const base = parseParcel(marker.place.base_position)
+      if (base != null) void nav.selectParcel(base, true)
+    },
+    [nav]
+  )
+  const onPin = useCallback(
+    (pin: ScenePin): void => {
+      setSelected(null)
+      // the place under the pin opens fresh, then again as a parcel picked on the map
+      void nav.selectParcel(pin.parcel, false).then((shown) => shown && nav.selectParcel(pin.parcel, true))
+    },
+    [nav]
+  )
+  const showHome = useCallback((): void => {
+    if (home.world != null) return
+    const parcel = home.parcel ?? { x: 0, y: 0 }
+    setSelected(null)
+    void nav.selectParcelAsHome(parcel)
+  }, [home, nav])
+
   if (!open) return null
 
-  // Recenter so a parcel sits at the viewport centre (used when picking a search result).
-  const centerOn = (px: number, py: number): void => {
-    setPan({ x: -zoom * px * SIZE, y: zoom * py * SIZE })
-  }
-  const openPlace = (pl: Place): void => {
-    setPlace(pl)
-    const [x, y] = pl.base_position.split(',').map(Number)
-    setSelected({ x, y })
-  }
-  // Picking a place from search: focus it on the map and open its detail.
-  const pickPlace = (pl: Place): void => {
-    const [x, y] = pl.base_position.split(',').map(Number)
-    centerOn(x, y)
-    openPlace(pl)
-    setQuery('')
-  }
-  const visitWorld = (w: World): void => {
-    map.changeRealm(w.world_name)
-    map.toggle()
-  }
-  const askVisitWorld = (w: World): void => {
-    closeVisitRef.current = openWorldVisit({
-      worldName: w.world_name,
-      title: w.title,
-      onConfirm: () => visitWorld(w)
-    })
-  }
-  const jumpTo = (pl: Place): void => {
-    const [x, y] = pl.base_position.split(',').map(Number)
-    map.teleportToPlace(x, y)
-    map.toggle()
-  }
-
-  // The whole menu overlay is rendered inside `transform: scale(--ui-scale)` (DPI scaling),
-  // so raw mouse pixels must be divided by that scale to land in the atlas's local space.
-  const viewScale = (): number => {
-    const v = viewRef.current
-    if (!v || !v.offsetWidth) return 1
-    return v.getBoundingClientRect().width / v.offsetWidth
-  }
-
-  const onMouseDown = (e: React.MouseEvent): void => {
-    drag.current = { x: e.clientX, y: e.clientY, moved: false }
-  }
-  const onMouseMove = (e: React.MouseEvent): void => {
-    const d = drag.current
-    if (!d) return
-    const dx = e.clientX - d.x
-    const dy = e.clientY - d.y
-    if (Math.abs(dx) > 3 || Math.abs(dy) > 3) {
-      d.moved = true
-      d.x = e.clientX
-      d.y = e.clientY
-      const s = viewScale()
-      setPan((pp) => ({ x: pp.x + dx / s, y: pp.y + dy / s }))
+  const jumpInPlace = (): void => {
+    const view = snap.place
+    if (view == null) return
+    const { place, origin, landOnOrigin } = view
+    const base = parseParcel(place.base_position)
+    const target = (landOnOrigin || isRoad(place.title)) && origin != null ? origin : base
+    if (isWorldPlace(place)) {
+      if (place.world_name == null) return
+      nav.clearInput()
+      map.changeRealm(place.world_name)
+    } else {
+      if (target == null) return
+      if (destination != null && base != null && destination.parcel.x === base.x && destination.parcel.y === base.y) navigation.stop()
+      nav.clearInput()
+      map.teleportToPlace(target.x, target.y)
     }
+    close()
   }
-  const onMouseUp = (e: React.MouseEvent): void => {
-    const d = drag.current
-    drag.current = null
-    if (d && !d.moved) {
-      // Click → parcel under cursor. Parcel (0,0) sits at the view's centre + pan (local px).
-      const view = viewRef.current
-      if (!view) return
-      const rect = view.getBoundingClientRect()
-      const s = view.offsetWidth ? rect.width / view.offsetWidth : 1
-      const lx = (e.clientX - rect.left) / s
-      const ly = (e.clientY - rect.top) / s
-      const cx = view.offsetWidth / 2 + pan.x
-      const cy = view.offsetHeight / 2 + pan.y
-      const px = Math.round((lx - cx) / (SIZE * zoom))
-      const py = Math.round(-(ly - cy) / (SIZE * zoom))
-      setSelected({ x: px, y: py })
-      void fetchPlace(px, py)
+  const jumpInEvent = (): void => {
+    const view = snap.event
+    if (view == null) return
+    nav.clearInput()
+    map.teleportToPlace(view.event.x, view.event.y)
+    close()
+  }
+  const setHome = (place: MapPlace, origin: Vec2 | null, on: boolean): void => {
+    if (!on) {
+      homeStore.set(null)
+      return
     }
-  }
-  const onWheel = (e: React.WheelEvent): void => {
-    setZoom((z) => Math.min(4, Math.max(0.6, z - e.deltaY * 0.001)))
+    if (isWorldPlace(place)) {
+      if (place.world_name != null) homeStore.set({ world: place.world_name })
+      return
+    }
+    const parcel = isRoad(place.title) && origin != null ? origin : parseParcel(place.base_position)
+    if (parcel != null) homeStore.set({ parcel })
   }
 
-  // Screen-space position of a parcel (matches the coord-badge / marker math).
-  const screenPos = (px: number, py: number): { left: string; top: string } => ({
-    left: `calc(50% + ${pan.x + zoom * px * SIZE}px)`,
-    top: `calc(50% + ${pan.y - zoom * py * SIZE}px)`
-  })
+  const placeIsHome = (place: MapPlace, origin: Vec2 | null): boolean =>
+    isHomePlace(home, place) || (isRoad(place.title) && origin != null && home.world == null && home.parcel?.x === origin.x && home.parcel.y === origin.y)
+
+  const navigatingTo = (place: MapPlace): boolean => {
+    if (destination == null || isWorldPlace(place)) return false
+    const end = destinationParcel(place)
+    return destination.parcel.x === end.x && destination.parcel.y === end.y
+  }
 
   const p = profile.data
+  const openPhoto = photo != null ? photo.photos[photo.index] : undefined
   return (
-    <MainMenuShell
-      active="map"
-      profileName={p?.name}
-      profilePicture={p?.picture}
-      profileAddress={p?.address}
-      profileClaimed={p?.hasClaimedName}
-      onNavigate={onNavigate}
-      onClose={map.toggle}
-    >
+    <MainMenuShell active="map" profileName={p?.name} profilePicture={p?.picture} profileAddress={p?.address} profileClaimed={p?.hasClaimedName} onNavigate={onNavigate} onClose={close}>
       <div className={styles.wrap}>
-        <div className={styles.chips}>
-          {CATEGORIES.map((c) => (
-            <button
-              key={c.key}
-              type="button"
-              className={`${styles.chip} ${catKey === c.key ? styles.chipActive : ''}`.trim()}
-              onClick={() => {
-                setCatKey(c.key)
-                setPlace(null)
-                setSelected(null)
-              }}
-            >
-              <img className={styles.chipIcon} src={catIcon(c.key)} alt="" />
-              {c.label}
-            </button>
-          ))}
-          <div className={styles.searchWrap}>
-            <input
-              className={styles.search}
-              placeholder="Search places & worlds"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  if (worldHits[0]) askVisitWorld(worldHits[0])
-                  else if (placeHits[0]) pickPlace(placeHits[0])
-                } else if (isCancelKey(e) && query !== '') {
-                  // consume the press: clearing is one step, the session's blur-on-cancel
-                  // rule takes the next one, and a third closes the map via Cancel.
-                  e.stopPropagation()
-                  setQuery('')
-                }
-              }}
-            />
-            {query.trim().length >= 2 && (worldHits.length > 0 || placeHits.length > 0) && (
-              <div className={styles.results}>
-                {worldHits.map((w) => (
-                  <button key={w.world_name} type="button" className={styles.result} onClick={() => askVisitWorld(w)}>
-                    <img className={styles.resultWorldIcon} src={WORLD_ICON} alt="" />
-                    <div className={styles.resultBody}>
-                      <div className={styles.resultTitle}>{w.title || w.world_name}</div>
-                      <div className={styles.resultSub}>{w.world_name}</div>
-                    </div>
-                    <span className={styles.resultTag}>WORLD</span>
-                  </button>
-                ))}
-                {placeHits.map((pl) => (
-                  <button key={pl.id ?? pl.base_position} type="button" className={styles.result} onClick={() => pickPlace(pl)}>
-                    <div className={styles.resultImg} style={{ backgroundImage: pl.image ? `url(${pl.image})` : undefined }} />
-                    <div className={styles.resultBody}>
-                      <div className={styles.resultTitle}>{pl.title}</div>
-                      <div className={styles.resultSub}>{pl.base_position}</div>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-
-        <div
-          ref={viewRef}
-          data-testid="map-view"
-          className={styles.view}
-          onMouseDown={onMouseDown}
-          onMouseMove={onMouseMove}
-          onMouseUp={onMouseUp}
-          onMouseLeave={() => (drag.current = null)}
-          onWheel={onWheel}
+        <MapCanvas
+          camera={camera}
+          open={open}
+          layers={layers}
+          genesis={genesis}
+          pose={pose}
+          liveEvents={data.liveEvents}
+          pois={data.pois}
+          people={data.people}
+          searchMarkers={snap.searchMarkers}
+          categoryMarkers={snap.categoryMarkers}
+          markerCategory={snap.markerCategory}
+          categoryLayer={snap.categoryLayer}
+          home={home.world == null ? home.parcel : null}
+          selected={selected}
+          resultHover={snap.resultHover}
+          resultSelected={snap.resultSelected}
+          onParcel={onParcel}
+          onEvent={onEvent}
+          onPlace={onPlace}
+          onHome={showHome}
         >
-          <div className={styles.atlasWrap} style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }}>
-            {/* Offset so parcel (0,0) sits at the atlasWrap origin (the pan/zoom anchor). */}
-            <div style={{ position: 'absolute', left: -(0 - ORIGIN_X) * SIZE, top: -(ORIGIN_Y - 0) * SIZE }}>
-              <AtlasTiles size={SIZE} />
-            </div>
-            {selected && (
-              <div
-                className={styles.selected}
-                style={{ left: selected.x * SIZE, top: -selected.y * SIZE, width: SIZE, height: SIZE }}
-              />
-            )}
-            <div
-              className={styles.marker}
-              aria-label="You are here"
-              style={{ left: map.x * SIZE, top: -map.y * SIZE }}
-            />
-          </div>
+          <RouteLayer destination={destination} pose={pose} active={open} />
+          {layers.has('pins') && <PinsLayer pins={pins} onPick={onPin} />}
+        </MapCanvas>
 
-          {/* Category pins — screen-space so they stay a constant size while panning/zooming. */}
-          {list.map((pl) => {
-            const [px, py] = pl.base_position.split(',').map(Number)
-            return (
-              <img
-                key={pl.id ?? pl.base_position}
-                className={styles.pin}
-                src={catPin(category.key)}
-                alt={pl.title}
-                style={screenPos(px, py)}
-                onMouseDown={(e) => e.stopPropagation()}
-                onMouseUp={(e) => {
-                  e.stopPropagation()
-                  drag.current = null
-                  openPlace(pl)
-                }}
-              />
-            )
-          })}
-
-          {/* Coordinate badge for the selected parcel — screen-space so the text stays crisp. */}
-          {selected && (
-            <div className={styles.coord} style={screenPos(selected.x, selected.y)}>
-              {selected.x}, {selected.y}
-            </div>
-          )}
-
-          <div className={styles.zoom}>
-            <button type="button" onClick={() => setZoom((z) => Math.min(4, z + 0.3))}>+</button>
-            <button type="button" onClick={() => setZoom((z) => Math.max(0.6, z - 0.3))}>−</button>
-          </div>
-
-          <div className={styles.minimap}>
-            <div className={styles.minimapInner}>
-              <AtlasTiles size={160 / SPAN} />
-            </div>
-          </div>
-        </div>
-
-        {sidebarOpen && (
-          <CategorySidebar
-            category={category}
-            sort={sort}
-            setSort={setSort}
-            places={list}
-            loading={loading}
-            onClose={() => setCatKey('all')}
-            onSelect={openPlace}
+        <CategoryStrip selected={snap.chip} onSelect={(key) => nav.selectCategory(key)} />
+        {warning && (
+          <WorldWarning
+            onClose={() => {
+              worldWarningClosed = true
+              setWarning(false)
+            }}
           />
         )}
+        {destination != null && <DestinationBanner destination={destination} onExit={navigation.stop} />}
+        <MapToolbar
+          level={camera.level}
+          layersOpen={layersOpen}
+          onZoom={camera.zoom}
+          onCenterPlayer={() => translateTo(worldToGrid(pose.current.x, pose.current.z), CAMERA_CENTER_SECONDS)}
+          onCenterHome={showHome}
+          onToggleLayers={() => setLayersOpen((v) => !v)}
+        />
+        {layersOpen && <LayersPanel />}
+        <div className={noticeStyles.credits}>Powered by the Decentraland Foundation</div>
 
-        {place && <PlacePanel place={place} onClose={() => setPlace(null)} onJump={() => jumpTo(place)} />}
+        <RightPanel
+          snapshot={snap}
+          onExpand={() => nav.expand()}
+          onCollapse={() => nav.collapse()}
+          searchBar={
+            <SearchBar
+              input={snap.input}
+              onType={(text) => nav.typeText(text)}
+              onSubmit={() => nav.submitSearch()}
+              onClear={() => nav.clearInput()}
+              onBack={() => void nav.back()}
+            />
+          }
+        >
+          {snap.section === 'search' && snap.results.shown && (
+            <SearchResults
+              results={snap.results}
+              sort={snap.sort}
+              onSort={(sort) => nav.setSort(sort)}
+              onHover={(place, hovered) => nav.hoverResult(place, hovered)}
+              onPick={(place) => nav.clickResult(place)}
+              onPage={(delta) => nav.turnPage(delta)}
+            />
+          )}
+          {snap.section === 'place' && snap.place != null && (
+            <PlaceInfo
+              key={snap.place.visit}
+              view={snap.place}
+              referrer={address}
+              isHome={placeIsHome(snap.place.place, snap.place.origin)}
+              navigating={navigatingTo(snap.place.place)}
+              onPlaceChange={(place) => nav.updatePlace(place)}
+              onHome={(on) => snap.place != null && setHome(snap.place.place, snap.place.origin, on)}
+              onStartNavigation={() => navigation.start(snap.place?.place ?? null)}
+              onStopNavigation={navigation.stop}
+              onJumpIn={jumpInPlace}
+              onOpenEvent={(event: MapEvent) => void nav.selectEvent(event, snap.place?.place ?? null)}
+              onOpenPhoto={(photos, index) => setPhoto({ photos, index })}
+            />
+          )}
+          {snap.section === 'event' && snap.event != null && (
+            <EventInfo key={snap.event.visit} view={snap.event} referrer={address} onEventChange={(event) => nav.updateEvent(event)} onJumpIn={jumpInEvent} />
+          )}
+        </RightPanel>
       </div>
+
+      {photo != null && openPhoto != null && (
+        <PhotoDetail
+          photos={photo.photos.map((ph) => ({ id: ph.id, url: ph.url, thumbnailUrl: ph.thumbnailUrl, dateTime: ph.dateTime ?? '' }))}
+          index={photo.index}
+          meta={gallery.metas[openPhoto.id]}
+          isSelf={false}
+          onIndex={(index) => setPhoto({ photos: photo.photos, index })}
+          onLoadMeta={gallery.loadPhoto}
+          onClose={() => setPhoto(null)}
+          onTeleport={(x, y) => {
+            setPhoto(null)
+            nav.clearInput()
+            map.teleportToPlace(x, y)
+            close()
+          }}
+        />
+      )}
     </MainMenuShell>
   )
 }

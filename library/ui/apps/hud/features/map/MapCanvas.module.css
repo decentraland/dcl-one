@@ -1,0 +1,442 @@
+/* The map viewport. useMapCamera writes the camera on it:
+     --cam-x / --cam-y  camera centre, map units       --k        layout px per map unit
+     --unit             a place marker's unit, px      --parcel   one parcel, px
+     --user-unit / --pin-unit / --path-dot             sizes that follow their own zoom rule
+     --title-scale / --title-y                         a marker title against its marker
+   A marker's unit is one parcel at the closest reference zoom and holds its screen size from
+   there out; sizes below are that unit times the marker art's proportions. */
+.viewport {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: var(--map-bg) url('../../assets/map/icons/background-tile.png') 0 0 / 32px 32px;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  contain: strict;
+}
+.viewport:active {
+  cursor: grabbing;
+}
+
+/* Map units, y down: a child at (x, -y) px sits at map position (x, y). */
+.world {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 0;
+  height: 0;
+  transform: scale(var(--k)) translate(calc(var(--cam-x) * -1px), calc(var(--cam-y) * 1px));
+  transform-origin: 0 0;
+  pointer-events: none;
+}
+/* The sea, behind everything on the map. */
+.ocean {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+/* A rectangle of --w by --h centred on (--cx, --cy), map units. */
+.patch {
+  position: absolute;
+  left: calc((var(--cx) - var(--w) / 2) * 1px);
+  top: calc((var(--cy) + var(--h) / 2) * -1px);
+  width: calc(var(--w) * 1px);
+  height: calc(var(--h) * 1px);
+  background: var(--map-sand);
+}
+/* A square of side --size centred on (--cx, --cy), map units. */
+.chunk {
+  position: absolute;
+  left: calc((var(--cx) - var(--size) / 2) * 1px);
+  top: calc((var(--cy) + var(--size) / 2) * -1px);
+  width: calc(var(--size) * 1px);
+  height: calc(var(--size) * 1px);
+}
+.chunkImage {
+  display: block;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  transition: opacity var(--map-dur-marker) linear;
+}
+.chunkImageLoaded {
+  opacity: 1;
+}
+.chunkLoading {
+  position: absolute;
+  inset: 0;
+  background: url('../../assets/map/icons/loading-tile.png') center / 100% 100%;
+  transition: opacity var(--map-dur-marker) linear;
+}
+.chunkLoadingDone {
+  opacity: 0;
+}
+
+.layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+/* Every marker is a zero-size anchor on its map position; its art hangs off it. */
+.marker {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 0;
+  height: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  font-family: inherit;
+  transform: translate(calc((var(--x) - var(--cam-x)) * var(--k) * 1px), calc((var(--cam-y) - var(--y)) * var(--k) * 1px));
+}
+button.marker {
+  pointer-events: auto;
+  cursor: pointer;
+  animation: appear var(--map-dur-marker) var(--ease-outback);
+}
+button.marker:focus-visible .pinIcon,
+button.marker:focus-visible .clusterIcon {
+  outline: 2px solid var(--text);
+  outline-offset: 2px;
+}
+@keyframes appear {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* The part that grows on hover, about the pin's tip. */
+.scaler {
+  position: absolute;
+  left: 0;
+  top: 0;
+  --w: 0.957;
+  --h: 1.08;
+  --pivot: 0.46;
+  width: calc(var(--unit) * var(--w));
+  height: calc(var(--unit) * var(--h));
+  margin: calc(var(--unit) * var(--h) / -2) 0 0 calc(var(--unit) * var(--w) / -2);
+  transform-origin: 50% calc(50% + var(--unit) * var(--pivot));
+  transition: transform var(--map-dur-marker) var(--ease-outback);
+}
+.marker:hover .scaler,
+.hot .scaler {
+  transform: scale(1.2);
+}
+.pinIcon {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.poi .scaler {
+  --w: 0.972;
+  --h: 1.087;
+  --pivot: 0;
+}
+.poi.selected .scaler {
+  --w: 1.144;
+  --h: 1.258;
+}
+.search .scaler {
+  --w: 1.306;
+  --h: 1.391;
+}
+.search.selected .scaler {
+  --w: 1.536;
+  --h: 1.61;
+}
+.home .scaler {
+  --w: 1.03;
+  --h: 1.258;
+  --pivot: 0;
+}
+
+/* White with a heavy black edge. At the base zoom the text is one unit tall; further out it
+   keeps its map size, so it shrinks on screen and closes on its marker. */
+.title {
+  position: absolute;
+  left: calc(var(--unit) * -5);
+  top: calc(var(--unit) * (-0.75 - var(--title-y)));
+  width: calc(var(--unit) * 10);
+  height: calc(var(--unit) * 1.5);
+  transform: scale(var(--title-scale));
+  color: var(--white);
+  font-size: var(--unit);
+  font-weight: var(--fw-semibold);
+  line-height: 1.21;
+  text-align: center;
+  paint-order: stroke fill;
+  -webkit-text-stroke: calc(var(--unit) * 0.14) var(--map-title-stroke);
+  pointer-events: none;
+}
+
+/* ---- clusters ---- */
+.cluster .scaler {
+  --w: 0.765;
+  --h: 0.81;
+  /* a cluster grows from its top */
+  --pivot: -0.387;
+}
+.clusterIcon {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.clusterCount {
+  position: absolute;
+  left: calc(50% + var(--unit) * 0.333 - var(--unit) * 0.262);
+  top: calc(50% - var(--unit) * 0.324 - var(--unit) * 0.262);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: calc(var(--unit) * 0.524);
+  height: calc(var(--unit) * 0.524);
+  border-radius: var(--r-pill);
+  background: var(--white);
+  color: var(--map-ink);
+  font-size: calc(var(--unit) * 0.34);
+  font-weight: var(--fw-bold);
+  line-height: 1;
+}
+.clusterSearch .scaler {
+  --w: 1.305;
+  --h: 1.404;
+  --pivot: -0.375;
+  margin-top: calc(var(--unit) * (var(--h) / -2 - 0.055));
+}
+.clusterSearch .clusterCount {
+  left: calc(50% + var(--unit) * 0.412 - var(--unit) * 0.29);
+  top: calc(50% - var(--unit) * 0.533 - var(--unit) * 0.29);
+  width: calc(var(--unit) * 0.58);
+  height: calc(var(--unit) * 0.58);
+  font-size: calc(var(--unit) * 0.38);
+}
+
+/* ---- other players ---- */
+.user {
+  pointer-events: none;
+}
+.user::before,
+.user::after {
+  content: '';
+  position: absolute;
+  border-radius: var(--r-pill);
+}
+.user::before {
+  width: calc(var(--user-unit) * 0.576);
+  height: calc(var(--user-unit) * 0.576);
+  margin: calc(var(--user-unit) * -0.288);
+  background: var(--white);
+}
+.user::after {
+  width: calc(var(--user-unit) * 0.486);
+  height: calc(var(--user-unit) * 0.486);
+  margin: calc(var(--user-unit) * -0.243);
+  background: var(--map-user);
+}
+
+/* ---- the local player ---- */
+.player {
+  pointer-events: none;
+}
+.playerCompass {
+  position: absolute;
+  width: calc(var(--unit) * 2.288);
+  height: calc(var(--unit) * 2.288);
+  margin: calc(var(--unit) * -1.144);
+  transform: rotate(var(--yaw, 0deg));
+}
+.playerRing {
+  position: absolute;
+  width: calc(var(--unit) * 4.096);
+  height: calc(var(--unit) * 4.096);
+  margin: calc(var(--unit) * -2.048);
+  border-radius: var(--r-pill);
+  background: var(--map-player-ring);
+  animation: ring 600ms var(--ease-inoutquad) infinite alternate;
+}
+@keyframes ring {
+  from {
+    transform: scale(1);
+  }
+  to {
+    transform: scale(0.85);
+  }
+}
+
+/* ---- the parcel under the pointer ---- */
+.highlight {
+  pointer-events: none;
+}
+.highlightSprite {
+  position: absolute;
+  width: calc(var(--parcel) * 1.12);
+  height: calc(var(--parcel) * 1.12);
+  margin: calc(var(--parcel) * -0.56);
+}
+.highlightCoords {
+  position: absolute;
+  left: 0;
+  bottom: calc(var(--parcel) * 0.68);
+  transform: translateX(-50%);
+  color: var(--white);
+  font-size: calc(var(--unit) * 0.6);
+  font-weight: var(--fw-semibold);
+  line-height: 1.21;
+  white-space: nowrap;
+  paint-order: stroke fill;
+  -webkit-text-stroke: calc(var(--unit) * 0.084) var(--map-title-stroke);
+}
+
+/* ---- scene pins ---- */
+/* A white disc with the pin's icon cut round, sized by its own zoom rule (--pin-unit). */
+.scenePinPulse,
+.scenePinScaler {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
+}
+.scenePinPulse {
+  animation: pulse 1s linear infinite;
+}
+@keyframes pulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.3);
+  }
+}
+.scenePinScaler {
+  transition: transform var(--map-dur-marker) var(--ease-outback);
+}
+.scenePin:hover .scenePinPulse {
+  animation: none;
+}
+.scenePin:hover .scenePinScaler {
+  transform: scale(1.2);
+  transition-duration: var(--map-dur-pin);
+}
+.scenePinDisc,
+.scenePinIcon,
+.scenePinDefault,
+.scenePinOutline {
+  position: absolute;
+  --d: 0.64;
+  width: calc(var(--pin-unit) * var(--d));
+  height: calc(var(--pin-unit) * var(--d));
+  left: calc(var(--pin-unit) * var(--d) / -2);
+  top: calc(var(--pin-unit) * (var(--d) / -2 - 0.0165));
+}
+.scenePinDisc {
+  border-radius: var(--r-pill);
+  background: var(--white);
+}
+.scenePinDefault {
+  --d: 0.58;
+}
+.scenePinIcon {
+  --d: 0.648;
+  border-radius: var(--r-pill);
+  background-repeat: no-repeat;
+  background-position: left bottom;
+  background-size: calc(var(--pin-unit) * var(--d) * var(--iw)) calc(var(--pin-unit) * var(--d) * var(--ih));
+  clip-path: circle(calc(var(--pin-unit) * 0.32));
+}
+.scenePinOutline {
+  --d: 0.72;
+  top: calc(var(--pin-unit) * (var(--d) / -2 + 0.34));
+  opacity: 0;
+}
+.scenePin:hover .scenePinOutline {
+  opacity: 1;
+}
+button.scenePin:focus-visible .scenePinDisc {
+  outline: 2px solid var(--text);
+  outline-offset: 2px;
+}
+
+/* ---- the route ---- */
+/* Dots as long as the gaps between them, laid from the destination towards the player. */
+.route {
+  pointer-events: none;
+}
+.route::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: calc(var(--path-dot) / -2);
+  width: calc(var(--length, 0) * var(--k) * 1px);
+  height: var(--path-dot);
+  background: url('../../assets/map/markers/path-dot.png') 0 0 / var(--path-dot) var(--path-dot) repeat-x;
+  /* every other dot is a gap */
+  mask-image: repeating-linear-gradient(90deg, var(--black) 0 var(--path-dot), transparent var(--path-dot) calc(var(--path-dot) * 2));
+  transform: rotate(var(--angle, 0rad));
+  transform-origin: 0 50%;
+}
+.destinationPin {
+  pointer-events: none;
+}
+.destinationArt {
+  position: absolute;
+  width: calc(var(--pin-unit) * 1.159);
+  height: calc(var(--pin-unit) * 1.496);
+  margin: calc(var(--pin-unit) * -1.408) 0 0 calc(var(--pin-unit) * -0.58);
+}
+.destinationEllipse {
+  position: absolute;
+  width: calc(var(--pin-unit) * 0.64);
+  height: calc(var(--pin-unit) * 0.24);
+  margin: calc(var(--pin-unit) * -0.12) 0 0 calc(var(--pin-unit) * -0.32);
+  animation: ellipse 1s linear infinite;
+}
+@keyframes ellipse {
+  0%,
+  25% {
+    opacity: 0;
+    transform: scale(0.5, 0.3);
+  }
+  25% {
+    opacity: 0.6;
+  }
+  41.7% {
+    opacity: 0.6;
+    transform: scale(1.5, 1.3);
+  }
+  75% {
+    opacity: 0;
+    transform: scale(2.5, 2.3);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(3, 2.8);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scaler,
+  .chunkImage,
+  .chunkLoading {
+    transition: none;
+  }
+  button.marker,
+  .playerRing,
+  .destinationEllipse,
+  .scenePinPulse {
+    animation: none;
+  }
+  .scenePinScaler {
+    transition: none;
+  }
+}

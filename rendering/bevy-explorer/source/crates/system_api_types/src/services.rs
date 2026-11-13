@@ -59,6 +59,10 @@ pub enum Service {
     MarketplaceApi,
     /// Chat translation (a LibreTranslate) — HUD only
     Autotranslate,
+    /// Curated lists: the points of interest the map marks — HUD only
+    DclLists,
+    /// Archipelago stats: where the connected players are, for the map — HUD only
+    ArchipelagoStats,
     /// Pulse comms server — an authority, `host[:port]`; the port defaults per platform
     PulseServer,
 }
@@ -104,6 +108,8 @@ impl Service {
             Service::AssetsCdn => ("https", "assets-cdn", ""),
             Service::MarketplaceApi => ("https", "marketplace-api", ""),
             Service::Autotranslate => ("https", "autotranslate-server", ""),
+            Service::DclLists => ("https", "dcl-lists", ""),
+            Service::ArchipelagoStats => ("https", "archipelago-ea-stats", ""),
             Service::PulseServer => ("", "pulse-server", ""),
         }
     }
@@ -135,6 +141,8 @@ impl Service {
             Service::AssetsCdn => "assets_cdn",
             Service::MarketplaceApi => "marketplace_api",
             Service::Autotranslate => "autotranslate",
+            Service::DclLists => "dcl_lists",
+            Service::ArchipelagoStats => "archipelago_stats",
             Service::PulseServer => "pulse_server",
         }
     }
@@ -272,6 +280,15 @@ pub struct ServiceOverrides {
     #[arg(long, value_name = "url", help_heading = HELP_HEADING)]
     pub autotranslate: Option<String>,
 
+    /// Curated lists (points of interest), used by the HUD; absent = `https://dcl-lists.<base>`
+    #[arg(long, value_name = "url", help_heading = HELP_HEADING)]
+    pub dcl_lists: Option<String>,
+
+    /// Archipelago stats (connected players), used by the HUD; absent =
+    /// `https://archipelago-ea-stats.<base>`
+    #[arg(long, value_name = "url", help_heading = HELP_HEADING)]
+    pub archipelago_stats: Option<String>,
+
     /// Pulse comms server, `host` or `host:port` (no port = the platform's: 7777 ENet on native,
     /// 7743 WebTransport on web); absent = `pulse-server.<base>`
     #[arg(long, value_name = "host[:port]", help_heading = HELP_HEADING)]
@@ -304,6 +321,8 @@ impl ServiceOverrides {
             Service::AssetsCdn => &self.assets_cdn,
             Service::MarketplaceApi => &self.marketplace_api,
             Service::Autotranslate => &self.autotranslate,
+            Service::DclLists => &self.dcl_lists,
+            Service::ArchipelagoStats => &self.archipelago_stats,
             Service::PulseServer => &self.pulse_server,
         }
         .as_deref()

@@ -205,6 +205,7 @@
   /* compact switches / thick sliders / nearby voice (sRGB equivalents of linear blends) */
   --switch-off: rgba(255, 255, 255, 0.38);
   --switch-knob-off: rgba(236, 235, 237, 0.73);
+  --switch-off-on-light: rgba(0, 0, 0, 0.15); /* a switch's off track on a light panel: black 30% */
   --slider-track: rgba(255, 255, 255, 0.19);
   --voice-divider: rgba(255, 255, 255, 0.14);
   --voice-fill: rgba(255, 255, 255, 0.19);
@@ -320,6 +321,47 @@
   --chat-dur-chrome: var(--dur-slide);
   --chat-dur-arrive: 500ms;
   --chat-dur-idle: 3s;
+
+  /* ---- map ----
+     Translucent values are the sRGB equivalents of overlays blended in linear light. */
+  --map-bg: #201c26; /* behind the atlas, under the background tile */
+  --map-panel: #e4e4e4; /* the places and events panel */
+  --map-rule: #cfcdd4; /* separators on light surfaces */
+  --map-ink: #161518;
+  --map-ink-soft: #323232; /* tab labels, the caret */
+  --map-toolbar: rgba(0, 0, 0, 0.52); /* black 80% */
+  --map-band: rgba(0, 0, 0, 0.21); /* black 40%: the band behind the search bar */
+  --map-banner: rgba(0, 0, 0, 0.65); /* black 90%: the destination banner */
+  --map-credits: rgba(0, 0, 0, 0.52);
+  --map-button-hover: #e7e7e7;
+  --map-button-press: #c8c8c8;
+  --map-chip-hover: #e0e0e0;
+  --map-user: #ff1262; /* another player's dot */
+  --map-sand: #a24d44; /* the shore around the city, over the satellite imagery's border */
+  --map-player-ring: rgba(255, 255, 255, 0.16);
+  --map-live: #ff0000;
+  --map-online: #28ac00;
+  --map-nav-tint: #ffd1da; /* start navigation */
+  --map-nav-hover: #ffd7d7;
+  --map-nav-press: #fab6b6;
+  --map-jump-press: #dd2749;
+  --map-field-btn: rgba(0, 0, 0, 0.1); /* black 20% */
+  --map-field-btn-hover: rgba(0, 0, 0, 0.15); /* black 30% */
+  --map-field-btn-press: rgba(0, 0, 0, 0.21); /* black 40% */
+  --map-sort-idle: rgba(0, 0, 0, 0.05); /* black 10% */
+  --map-card: rgba(255, 255, 255, 0.5);
+  --map-action: rgba(255, 255, 255, 0.7);
+  --map-action-press: rgba(0, 0, 0, 0.03);
+  --map-skeleton: rgba(38, 35, 57, 0.15);
+  --map-selection: rgba(168, 206, 255, 0.75);
+  --map-shadow: 0 6px 16px rgba(0, 0, 0, 0.3);
+  --map-title-stroke: var(--black);
+  --map-exit-hover: rgba(255, 0, 0, 0.1);
+  --map-dur-marker: 500ms; /* a marker's hover and appear */
+  --map-dur-pin: 400ms;
+  --map-dur-panel: 500ms;
+  --map-dur-notice: 300ms;
+  --ease-outback: cubic-bezier(0.34, 1.56, 0.64, 1);
 
   /* ---- modal ---- */
   --modal-pad: 30px;

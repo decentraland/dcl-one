@@ -390,11 +390,50 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **The creator is the scene's deployer.** The places service's `creator_address`, which the tip
   goes to, is the deployer of the place's scene here.
 - **Donate's buttons.** The minimap's uses unity-explorer's tip icon, beside the collapse button;
-  the map's place panel has a DONATE text button under JUMP IN, whose art is not ported. The fourth
+  the map's place panel has it in its row of actions, between Home and Share, as there. The fourth
   amount choice reads OTHER, and the minimum reads "Tips must be ≥ 1 MANA".
+- **The map's markers are HUD elements, not a rendered scene.** unity-explorer draws its map and
+  markers with a camera into a texture; here the atlas and every marker are elements of the HUD
+  page, placed from the map camera's position and zoom. The seven zoom levels, the marker sizes at
+  each, the clustering grid, the draw order and the hover and appear timings are the same. Culling
+  and pooling have no counterpart, and a click goes to the topmost marker under the pointer.
+  The sea around the city is the one part drawn by a shader, on a canvas under the satellite map,
+  at most 1920 pixels wide and stretched beyond that; with reduced motion asked for, its water
+  stands still.
+- **The map's layers are on the full map only.** unity-explorer draws live events, points of
+  interest, players, scene pins and the home pin on the minimap too, and the Layers panel switches
+  both. Here the minimap keeps its own place markers and settings, so the Layers panel changes the
+  full map alone, and a route shows no pin on the minimap's edge.
+- **Scene map pins are not feature-flagged.** unity-explorer loads a scene's `MapPin` only under
+  `alfa-map-pins` (or in a portable experience) and its icon only under
+  `alfa-map-pins-custom-icons`; here every scene's pins and icons show.
+- **Home is kept by the engine, per wallet.** unity-explorer keeps the home parcel or world in
+  local preferences by wallet address. Here it is in the engine's config (`homes`), with the
+  signed-in wallet's home copied to `home_realm` and `home_location`, which the engine boots into
+  before anyone signs in. A wallet with no home takes one pinned before homes were kept per
+  wallet, or pinned by a guest; a guest's address is made up per session, so a guest pins no
+  wallet's home.
+- **Home is set from the map's place panel only.** unity-explorer also sets it from the minimap's
+  menu and from Places cards; neither has that control here.
+- **The map fixes what the upstream panel leaves broken.** Search results carry their LIVE badge
+  (upstream keys the lookup by a malformed parcel, so none shows); "remind me" on an event row
+  starts from the player's saved interest and keeps working after the list is rebuilt; a like or
+  a dislike refreshes the rating shown; a like, a favourite or an interest the service refuses
+  goes back to what it was; a place without photos says so; closing the map forgets the whole
+  back history; "Link copied!" is a toast of its own instead of replacing the worlds warning's
+  text; and the text of a post on X and of a calendar entry is url-encoded.
+- **Escape in the map's search field clears it first.** The next press leaves the field and the
+  one after closes the map, as on the HUD's other pages.
 
 ## Deliberate choices that look like mistakes
 
+- **The map carries over upstream's marker rules as they are**, so the two clients' maps match.
+  A place of several parcels is marked on the parcel a walk over them stops at, which depends on
+  their order and is not always the middle one; a cluster stands half a parcel south-west of the
+  average of its markers; the clustering grid is coarser at zoom level 2 (27 parcels) than at
+  level 1 (25); the other players are read when the People layer comes on and after a teleport,
+  not on a timer; a route keeps its destination across a teleport; a scene pin never becomes the
+  route's destination; and an empty search says "No results founds".
 - **`UnapprovedPathMode::Allow`** in the asset server: bevy's check only admits paths under
   the executable's assets directory and the IPFS cache lives elsewhere. Containment is done
   in `ipfs_path.rs` instead. See the security page.

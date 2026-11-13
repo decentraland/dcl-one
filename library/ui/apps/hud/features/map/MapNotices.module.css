@@ -1,0 +1,144 @@
+/* Notices over the map: the worlds warning at the top, the destination banner and the credits
+   at the bottom. */
+.warning {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  display: flex;
+  align-items: center;
+  width: 496px;
+  height: 62px;
+  margin-left: -248px;
+  border-radius: var(--r-md);
+  background: var(--panel);
+  animation: notice var(--map-dur-notice) linear;
+}
+@keyframes notice {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.warningIcon {
+  position: absolute;
+  left: 16px;
+  color: var(--text);
+}
+.warningText {
+  margin: 0 53px;
+  color: var(--text);
+  font-size: var(--type-14);
+  font-weight: var(--fw-semibold);
+  line-height: 1.21;
+}
+.warningClose {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: var(--r-pill);
+  background: var(--fill-1);
+  color: var(--text);
+  cursor: pointer;
+}
+.warningClose:hover {
+  background: var(--fill-2);
+}
+.warningClose:focus-visible {
+  outline: 2px solid var(--text);
+}
+
+.destination {
+  position: absolute;
+  left: 50%;
+  bottom: 10px;
+  width: 496px;
+  height: 62px;
+  margin-left: -248px;
+  border-radius: var(--r-md);
+  background: var(--map-banner);
+  color: var(--text);
+}
+.destinationIcon {
+  position: absolute;
+  top: 50%;
+  left: 31px;
+  transform: translate(-50%, -50%);
+}
+.destinationLabel {
+  position: absolute;
+  top: 14px;
+  left: 62px;
+  color: var(--silver);
+  font-size: var(--type-14);
+  font-weight: var(--fw-semibold);
+  line-height: 17px;
+}
+.destinationTitle {
+  position: absolute;
+  top: 32px;
+  left: 62px;
+  right: 92px;
+  overflow: hidden;
+  font-size: var(--type-16);
+  font-weight: var(--fw-semibold);
+  line-height: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.destinationExit {
+  position: absolute;
+  top: 13px;
+  right: 13px;
+  width: 67px;
+  height: 36px;
+  padding: 0;
+  border: 2px solid var(--map-live);
+  border-radius: var(--r-md);
+  background: none;
+  color: var(--map-live);
+  font-family: inherit;
+  font-size: var(--type-14);
+  font-weight: var(--fw-semibold);
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.destinationExit:hover {
+  background: var(--map-exit-hover);
+}
+.destinationExit:active {
+  background: var(--black-40);
+}
+.destinationExit:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 2px;
+}
+
+.credits {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  width: 250px;
+  height: 20px;
+  border-radius: var(--r-xs);
+  background: var(--map-credits);
+  color: var(--map-rule);
+  font-size: var(--type-12);
+  font-weight: var(--fw-semibold);
+  line-height: 20px;
+  text-align: center;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .warning {
+    animation: none;
+  }
+}

@@ -52,8 +52,25 @@ impl Plugin for LoginPlugin {
             (
                 (login, update_profile_for_realm).run_if(in_state(ui_core::State::Ready)),
                 process_login_bridge.in_set(SceneSets::PostLoop), // use post loop here so that the PlayerIdentityData can be picked up in RestrictedActions
+                follow_home_account,
             ),
         );
+    }
+}
+
+/// Keep the home the engine uses on the signed-in wallet's own. Signing out changes nothing:
+/// the last wallet's home is what the next start boots into.
+fn follow_home_account(wallet: Res<Wallet>, mut config: ResMut<AppConfig>) {
+    if !wallet.is_changed() {
+        return;
+    }
+    let Some(address) = wallet.address() else {
+        return;
+    };
+    // a guest's address is made up for the session, so it keeps no home of its own
+    let account = (!wallet.is_guest()).then(|| format!("{address:#x}"));
+    if config.use_home_of(account.as_deref()) {
+        platform::write_config_file(&*config);
     }
 }
 

@@ -38,6 +38,16 @@ export function registerWorld(ctx: Ctx): void {
     ctx.send({ kind: 'homeScene', ...home })
   })
 
+  // The engine keeps the home per wallet; each change is answered with the home it now holds.
+  ctx.on('setHomeScene', async (msg) => {
+    await BevyApi.setHomeScene({ realm: msg.realm, parcel: msg.parcel })
+    ctx.send({ kind: 'homeScene', ...(await BevyApi.getHomeScene()) })
+  })
+  ctx.on('unsetHomeScene', async () => {
+    await BevyApi.unsetHomeScene()
+    ctx.send({ kind: 'homeScene', ...(await BevyApi.getHomeScene()) })
+  })
+
   ctx.on('getMap', () => {
     const pos = getPlayer()?.position
     ctx.send({ kind: 'mapState', x: Math.floor((pos?.x ?? 0) / 16), y: Math.floor((pos?.z ?? 0) / 16) })
