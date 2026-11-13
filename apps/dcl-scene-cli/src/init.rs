@@ -204,9 +204,35 @@ async fn fetch_zip(from: &str) -> Result<Vec<u8>> {
     .into())
 }
 
+/// The most a template download may hold, and the most it may unpack to.
+const DOWNLOAD_LIMIT: u64 = 256 * 1024 * 1024;
+const UNPACKED_LIMIT: u64 = 1024 * 1024 * 1024;
+const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+/// The longest silence of a download in flight.
+const READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+fn too_large(what: &str, limit: u64) -> anyhow::Error {
+    UserError::new(
+        format!("{what} is larger than {} MB", limit / (1024 * 1024)),
+        TrySteps::one("use a smaller template, or download and unzip it yourself"),
+    )
+    .into()
+}
+
+/// An https URL stays https through every redirect; a stalled server and a
+/// body past [`DOWNLOAD_LIMIT`] end the download.
 async fn download(url: &str) -> Result<Vec<u8>> {
+    let https = url.starts_with("https://");
+    if !https {
+        ux::note_absent(format!(
+            "{url} is plain http: the template can be changed on the network, and its scripts.build runs on the next build"
+        ));
+    }
     let client = reqwest::Client::builder()
         .user_agent("dcl-scene-cli")
+        .https_only(https)
+        .connect_timeout(CONNECT_TIMEOUT)
+        .read_timeout(READ_TIMEOUT)
         .build()
         .context("building the http client")?;
     let response = client.get(url).send().await.map_err(|e| {
@@ -224,11 +250,25 @@ async fn download(url: &str) -> Result<Vec<u8>> {
         )
         .into());
     }
-    let bytes = response
-        .bytes()
+    let mut response = response;
+    let mut bytes = Vec::new();
+    if response
+        .content_length()
+        .is_some_and(|n| n > DOWNLOAD_LIMIT)
+    {
+        return Err(too_large(url, DOWNLOAD_LIMIT));
+    }
+    while let Some(chunk) = response
+        .chunk()
         .await
-        .with_context(|| format!("reading the download from {url}"))?;
-    Ok(bytes.to_vec())
+        .with_context(|| format!("reading the download from {url}"))?
+    {
+        if (bytes.len() + chunk.len()) as u64 > DOWNLOAD_LIMIT {
+            return Err(too_large(url, DOWNLOAD_LIMIT));
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok(bytes)
 }
 
 /// `https://github.com/<owner>/<repo>[/tree/<branch>[/<path>]]`.
@@ -315,6 +355,17 @@ impl GitHubRef {
 /// Unpacks the zip's one top-level folder (or `inner` within it) into `root`;
 /// the number of files written.
 fn unpack_template(bytes: &[u8], root: &Path, inner: Option<&str>) -> Result<usize> {
+    unpack_template_within(bytes, root, inner, UNPACKED_LIMIT)
+}
+
+/// As [`unpack_template`], refusing once the files written pass `limit`
+/// bytes: the sizes a zip declares are not trusted.
+fn unpack_template_within(
+    bytes: &[u8],
+    root: &Path,
+    inner: Option<&str>,
+    limit: u64,
+) -> Result<usize> {
     let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).map_err(|e| {
         UserError::new(
             "the template is not a zip archive",
@@ -347,6 +398,7 @@ fn unpack_template(bytes: &[u8], root: &Path, inner: Option<&str>) -> Result<usi
         None => format!("{top}/"),
     };
     let mut written = 0;
+    let mut unpacked = 0u64;
     for name in &names {
         let Some(rel) = name.strip_prefix(&prefix) else {
             continue;
@@ -371,7 +423,12 @@ fn unpack_template(bytes: &[u8], root: &Path, inner: Option<&str>) -> Result<usi
             .by_name(name)
             .with_context(|| format!("reading {name} from the zip"))?;
         let mut out = std::fs::File::create(&dest).map_err(|e| write_error(&dest, e))?;
-        std::io::copy(&mut entry, &mut out).map_err(|e| write_error(&dest, e))?;
+        let room = limit - unpacked;
+        unpacked += std::io::copy(&mut std::io::Read::take(&mut entry, room + 1), &mut out)
+            .map_err(|e| write_error(&dest, e))?;
+        if unpacked > limit {
+            return Err(too_large("the unpacked template", limit));
+        }
         written += 1;
     }
     if written == 0 {
@@ -710,6 +767,27 @@ fn uuid_v4() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The cap counts the bytes written, whatever sizes the zip declares.
+    #[test]
+    fn a_template_that_unpacks_past_the_limit_is_refused() {
+        let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let opts = zip::write::SimpleFileOptions::default();
+        for name in ["t/scene.json", "t/big.bin"] {
+            zip.start_file(name, opts).unwrap();
+            zip.write_all(&[b'x'; 600]).unwrap();
+        }
+        let bytes = zip.finish().unwrap().into_inner();
+        let fits = crate::deploy::TempTree::new("init-unpack-fits");
+        assert_eq!(
+            unpack_template_within(&bytes, &fits.0, None, 1200).unwrap(),
+            2
+        );
+        let over = crate::deploy::TempTree::new("init-unpack-over");
+        let err = unpack_template_within(&bytes, &over.0, None, 1000).unwrap_err();
+        let shown = ux::render(&err, false, false);
+        assert!(shown.contains("the unpacked template is larger"), "{shown}");
+    }
 
     #[test]
     fn slug_matches_the_ported_projectslug() {

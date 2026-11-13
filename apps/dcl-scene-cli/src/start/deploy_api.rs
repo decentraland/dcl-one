@@ -43,6 +43,25 @@ fn no_pending() -> Response {
     )
 }
 
+/// The gate of the three GET routes. What they tell (the id to sign, the
+/// file list, the progress) is for the machine that signs: a peer elsewhere
+/// is refused, and so is a page on a rebound domain, whose `Host` is not a
+/// loopback name. Open when remote deploys are.
+fn reading_blocked(st: &AppState, peer: SocketAddr, headers: &HeaderMap) -> Option<Response> {
+    if st.allow_remote_deploy {
+        return None;
+    }
+    let rebound = headers
+        .get(header::HOST)
+        .is_some_and(|host| !super::loopback_host(host.to_str().unwrap_or_default()));
+    (rebound || super::remote_peer(false, peer, headers)).then(|| {
+        message(
+            StatusCode::FORBIDDEN,
+            "the deployment is read on the machine hosting this preview",
+        )
+    })
+}
+
 fn header_text<'a>(headers: &'a HeaderMap, name: &str) -> &'a str {
     headers
         .get(name)
@@ -75,7 +94,14 @@ fn is_true(v: Option<&JsValue>) -> bool {
 /// `GET /api/info`: what the signing page shows, for a program. `rootCID`
 /// is the entity id to sign; a world overwrite also signs
 /// `deleteScenesFromWorldPayload`.
-pub(super) async fn info(State(st): State<Arc<AppState>>) -> Response {
+pub(super) async fn info(
+    State(st): State<Arc<AppState>>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+) -> Response {
+    if let Some(blocked) = reading_blocked(&st, peer, &headers) {
+        return blocked;
+    }
     let Some(signer) = cli_signer(&st) else {
         return no_pending();
     };
@@ -114,7 +140,14 @@ pub(super) async fn info(State(st): State<Arc<AppState>>) -> Response {
 }
 
 /// `GET /api/files`: the payload, name and size.
-pub(super) async fn files(State(st): State<Arc<AppState>>) -> Response {
+pub(super) async fn files(
+    State(st): State<Arc<AppState>>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+) -> Response {
+    if let Some(blocked) = reading_blocked(&st, peer, &headers) {
+        return blocked;
+    }
     let Some(signer) = cli_signer(&st) else {
         return no_pending();
     };
@@ -131,7 +164,14 @@ pub(super) async fn files(State(st): State<Arc<AppState>>) -> Response {
 /// `GET /api/deploy`: the state as JSON, or every change as server-sent
 /// `state` events with `Accept: text/event-stream`. The stream ends after a
 /// final state, so an EventSource must close() then or it reconnects.
-pub(super) async fn get(State(st): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+pub(super) async fn get(
+    State(st): State<Arc<AppState>>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+) -> Response {
+    if let Some(blocked) = reading_blocked(&st, peer, &headers) {
+        return blocked;
+    }
     let Some(signer) = cli_signer(&st) else {
         return no_pending();
     };
@@ -239,7 +279,8 @@ fn refusal(outcome: SignOutcome, signer: &LinkerState) -> Response {
 /// `POST /api/deploy`: sign and start. With `Prefer: respond-async` it
 /// answers 202 at once and the run is followed through `GET`; otherwise it
 /// answers when the run ends. A payload that cannot run is refused before
-/// either, so a 202 always means the upload is under way.
+/// either, so a 202 always means this request started the upload. The run
+/// is its own task: a client that goes away does not stop it.
 pub(super) async fn post(
     State(st): State<Arc<AppState>>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
@@ -269,15 +310,12 @@ pub(super) async fn post(
         tracing::error!("invalid deploy payload: {keys}");
         return message(StatusCode::BAD_REQUEST, format!("Invalid payload: {keys}"));
     };
-    if let Some(stopped) = linker::precheck(&signer, &signed) {
-        return refusal(stopped, &signer);
-    }
+    let run = match linker::start_signed(&signer, signed) {
+        Ok(run) => run,
+        Err(stopped) => return refusal(stopped, &signer),
+    };
     if prefers_async(&headers) {
         signer.follow();
-        let run = signer.clone();
-        tokio::spawn(async move {
-            linker::run_signed(&run, signed).await;
-        });
         return (
             StatusCode::ACCEPTED,
             [
@@ -291,7 +329,7 @@ pub(super) async fn post(
         )
             .into_response();
     }
-    let outcome = linker::run_signed(&signer, signed).await;
+    let outcome = linker::joined(&signer, run).await;
     refusal(outcome, &signer)
 }
 
@@ -337,6 +375,10 @@ mod tests {
     );
 
     fn signer(world: Option<&str>) -> Arc<LinkerState> {
+        signer_to(world, "http://127.0.0.1:9")
+    }
+
+    fn signer_to(world: Option<&str>, target: &str) -> Arc<LinkerState> {
         let dep = crate::linker::LinkerDeploy {
             dir: std::env::temp_dir(),
             prepared: crate::deploy::Prepared {
@@ -347,7 +389,7 @@ mod tests {
                 )
                 .unwrap(),
             },
-            target_content: "http://127.0.0.1:9".into(),
+            target_content: target.into(),
             world: world.map(str::to_string),
             needs_delete: false,
             timestamp_override: None,
@@ -396,9 +438,9 @@ mod tests {
     async fn without_a_pending_run_every_route_is_a_404() {
         let (_tmp, st) = app("api-none");
         for resp in [
-            get(State(st.clone()), HeaderMap::new()).await,
-            info(State(st.clone())).await,
-            files(State(st.clone())).await,
+            get(State(st.clone()), ConnectInfo(LOCAL), HeaderMap::new()).await,
+            info(State(st.clone()), ConnectInfo(LOCAL), HeaderMap::new()).await,
+            files(State(st.clone()), ConnectInfo(LOCAL), HeaderMap::new()).await,
             cancel(State(st.clone()), with(&[(TOKEN_HEADER, TOKEN)])).await,
             post(
                 State(st.clone()),
@@ -423,13 +465,16 @@ mod tests {
         let (_tmp, st) = app("api-info");
         adopt_cli_signing(&st, signer(Some("w.dcl.eth")));
 
-        let state = json_of(get(State(st.clone()), HeaderMap::new()).await).await;
+        let state =
+            json_of(get(State(st.clone()), ConnectInfo(LOCAL), HeaderMap::new()).await).await;
         assert_eq!(state["phase"], "awaiting-signature");
         assert_eq!(state["cancelRequested"], false);
         assert!(state["upload"].is_null() && state["result"].is_null() && state["error"].is_null());
 
-        let first = json_of(info(State(st.clone())).await).await;
-        let again = json_of(info(State(st.clone())).await).await;
+        let first =
+            json_of(info(State(st.clone()), ConnectInfo(LOCAL), HeaderMap::new()).await).await;
+        let again =
+            json_of(info(State(st.clone()), ConnectInfo(LOCAL), HeaderMap::new()).await).await;
         assert_eq!(
             first["rootCID"], again["rootCID"],
             "one id while it is fresh"
@@ -453,8 +498,42 @@ mod tests {
             "additive: nothing removed"
         );
 
-        let files = json_of(files(State(st.clone())).await).await;
+        let files =
+            json_of(files(State(st.clone()), ConnectInfo(LOCAL), HeaderMap::new()).await).await;
         assert_eq!(files, json!([{ "name": "scene.json", "size": 2 }]));
+    }
+
+    #[tokio::test]
+    async fn the_run_is_read_on_this_machine_only() {
+        let (_tmp, st) = app("api-read");
+        adopt_cli_signing(&st, signer(None));
+        let rebound = with(&[("host", "rebound.example:8000")]);
+        let tunnelled = with(&[(crate::tunnel::FORWARDED_HEADER, "1")]);
+        for (peer, headers) in [
+            (LAN, HeaderMap::new()),
+            (LOCAL, rebound),
+            (LOCAL, tunnelled),
+        ] {
+            for resp in [
+                get(State(st.clone()), ConnectInfo(peer), headers.clone()).await,
+                info(State(st.clone()), ConnectInfo(peer), headers.clone()).await,
+                files(State(st.clone()), ConnectInfo(peer), headers.clone()).await,
+            ] {
+                assert_eq!(resp.status(), StatusCode::FORBIDDEN, "{peer} {headers:?}");
+            }
+        }
+        let local = with(&[("host", "localhost:8000")]);
+        let ok = info(State(st.clone()), ConnectInfo(LOCAL), local).await;
+        assert_eq!(ok.status(), StatusCode::OK);
+
+        let (_tmp, open) = app("api-read-open");
+        let mut open = Arc::try_unwrap(open).ok().expect("one owner");
+        open.allow_remote_deploy = true;
+        let open = Arc::new(open);
+        adopt_cli_signing(&open, signer(None));
+        let lan = with(&[("host", "10.0.0.5:8000")]);
+        let resp = info(State(open), ConnectInfo(LAN), lan).await;
+        assert_eq!(resp.status(), StatusCode::OK, "remote deploys are open");
     }
 
     #[tokio::test]
@@ -562,7 +641,8 @@ mod tests {
         assert_eq!(body["cancelRequested"], true);
         assert!(body["error"].is_null());
 
-        let after = json_of(get(State(st.clone()), HeaderMap::new()).await).await;
+        let after =
+            json_of(get(State(st.clone()), ConnectInfo(LOCAL), HeaderMap::new()).await).await;
         assert_eq!(after["phase"], "cancelled");
         let again = cancel(State(st.clone()), with(&[(TOKEN_HEADER, TOKEN)])).await;
         assert_eq!(
@@ -584,6 +664,79 @@ mod tests {
             StatusCode::CONFLICT,
             "nothing starts after a cancel"
         );
+    }
+
+    /// A content server that accepts and answers nothing, so the upload
+    /// stays in flight; it hangs up when the sender is dropped.
+    async fn silent_server() -> (String, tokio::sync::oneshot::Sender<()>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let target = format!("http://{}", listener.local_addr().unwrap());
+        let (hang_up, mut released) = tokio::sync::oneshot::channel::<()>();
+        tokio::spawn(async move {
+            let mut kept = Vec::new();
+            loop {
+                tokio::select! {
+                    accepted = listener.accept() => kept.extend(accepted),
+                    _ = &mut released => return,
+                }
+            }
+        });
+        (target, hang_up)
+    }
+
+    async fn phase_becomes(signer: &LinkerState, phase: &str) {
+        let mut changes = signer.changes();
+        let reached = tokio::time::timeout(Duration::from_secs(30), async {
+            while signer.deployment_state().phase != phase {
+                changes.changed().await.unwrap();
+            }
+        })
+        .await;
+        assert!(reached.is_ok(), "{:?}", signer.deployment_state());
+    }
+
+    #[tokio::test]
+    async fn a_client_that_goes_away_does_not_strand_the_run() {
+        let (target, hang_up) = silent_server().await;
+        let (_tmp, st) = app("api-gone");
+        let signer = signer_to(None, &target);
+        adopt_cli_signing(&st, signer.clone());
+        let id = signer.minted().unwrap().0;
+        let request = tokio::spawn(post(
+            State(st.clone()),
+            ConnectInfo(LOCAL),
+            HeaderMap::new(),
+            Ok(Json(chain_for(&id))),
+        ));
+        phase_becomes(&signer, "uploading").await;
+        // What the server does to the handler when the client disconnects.
+        request.abort();
+        assert!(request.await.unwrap_err().is_cancelled());
+        assert_eq!(signer.deployment_state().phase, "uploading");
+
+        drop(hang_up);
+        phase_becomes(&signer, "failed").await;
+    }
+
+    #[tokio::test]
+    async fn of_two_payloads_at_once_only_one_earns_a_202() {
+        let (_tmp, st) = app("api-twice");
+        let signer = signer(None);
+        adopt_cli_signing(&st, signer.clone());
+        let id = signer.minted().unwrap().0;
+        let send = || {
+            post(
+                State(st.clone()),
+                ConnectInfo(LOCAL),
+                with(&[("prefer", "respond-async")]),
+                Ok(Json(chain_for(&id))),
+            )
+        };
+        // Nothing yields between the two: the first run has taken no step.
+        let (first, second) = (send().await, send().await);
+        assert_eq!(first.status(), StatusCode::ACCEPTED);
+        assert_eq!(second.status(), StatusCode::CONFLICT);
+        phase_becomes(&signer, "failed").await;
     }
 
     #[tokio::test]

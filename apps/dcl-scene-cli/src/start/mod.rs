@@ -1370,20 +1370,16 @@ fn spawn_tunnel_printer(
 /// carries (its `--production` is not a preview's); custom scripts own
 /// their output and receive DCL_SCENE_CLI_PRODUCTION=0.
 fn preview_build_opts(opts: &StartOptions, dir: PathBuf) -> BuildOptions {
-    let script = crate::build_script::script_flags(&dir);
-    script.apply(
-        &BuildOptions {
-            built_in: false,
-            dir,
-            production: false,
-            ignore_composite: opts.ignore_composite,
-            custom_entry_point: false,
-            skip_type_check: opts.skip_type_check,
-            out_root: None,
-            quiet: false,
-        },
-        true,
-    )
+    crate::build_script::preview_options(&BuildOptions {
+        built_in: false,
+        dir,
+        production: false,
+        ignore_composite: opts.ignore_composite,
+        custom_entry_point: false,
+        skip_type_check: opts.skip_type_check,
+        out_root: None,
+        quiet: false,
+    })
 }
 
 /// How many `steps` an initial build reports.

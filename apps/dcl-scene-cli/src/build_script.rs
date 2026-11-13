@@ -76,6 +76,12 @@ impl ScriptFlags {
     }
 }
 
+/// The options of a preview or a watcher: the script's `--ignoreComposite`
+/// and `--customEntryPoint` apply, its `--production` does not.
+pub fn preview_options(opts: &BuildOptions) -> BuildOptions {
+    script_flags(&opts.dir).apply(opts, true)
+}
+
 /// The flags of this project's `scripts.build` when it is the SDK build.
 pub fn script_flags(root: &Path) -> ScriptFlags {
     std::fs::read(root.join("package.json"))
@@ -258,5 +264,21 @@ mod tests {
             flags.apply(&explicit, true).production,
             "the caller's own flag stands"
         );
+    }
+
+    /// `build --watch` and `start` read the script of the folder they build.
+    #[test]
+    fn a_watcher_reads_the_flags_of_the_project_script() {
+        let t = crate::deploy::TempTree::new("watch-script-flags");
+        t.write(
+            "package.json",
+            r#"{"scripts":{"build":"sdk-commands build --production --ignoreComposite --customEntryPoint"}}"#,
+        );
+        let mut watched = opts();
+        watched.dir = t.0.clone();
+        let watched = preview_options(&watched);
+        assert!(watched.ignore_composite && watched.custom_entry_point);
+        assert!(!watched.production);
+        assert!(!preview_options(&opts()).custom_entry_point, "no script");
     }
 }

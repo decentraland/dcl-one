@@ -680,9 +680,8 @@ pub(crate) enum SignOutcome {
 
 const NEEDS_DELETE_SIGNATURE: &str = "this deploy also removes the existing world scenes and needs the second signature \u{2014} sign both prompts";
 
-/// What stops a payload before anything runs, so the API refuses it in the
-/// same response instead of after a 202.
-pub(crate) fn precheck(st: &LinkerState, signed: &Signed) -> Option<SignOutcome> {
+/// What stops a payload before anything runs.
+fn precheck(st: &LinkerState, signed: &Signed) -> Option<SignOutcome> {
     if !st.can_start() {
         return Some(SignOutcome::Refused);
     }
@@ -704,26 +703,57 @@ fn fatal(st: &LinkerState, e: anyhow::Error) -> SignOutcome {
     SignOutcome::Fatal(msg)
 }
 
-/// The run itself: claim the pending entity, check the wallet, remove the
-/// world's other scenes when asked, upload. A cancel through the API drops
-/// the upload in flight unless every byte is out, when the server's answer
-/// is the truth.
-pub(crate) async fn run_signed(st: &Arc<LinkerState>, signed: Signed) -> SignOutcome {
-    if let Some(stop) = precheck(st, &signed) {
-        return stop;
+/// Takes the pending entity and marks the run started. Of two payloads that
+/// arrive together one wins; the other is refused here, before any answer.
+fn claim(st: &LinkerState, signed: &Signed) -> Result<PendingEntity, SignOutcome> {
+    if let Some(stop) = precheck(st, signed) {
+        return Err(stop);
     }
-    let pending = {
-        let mut r = st.resource();
-        if r.started || r.cancel_requested || r.outcome.is_some() {
-            return SignOutcome::Refused;
-        }
-        let mut pending = st.pending.lock().unwrap_or_else(PoisonError::into_inner);
-        let Some(entry) = pending.remove(&signed.entity_id) else {
-            return SignOutcome::Stale;
-        };
-        r.started = true;
-        entry
+    let mut r = st.resource();
+    if r.started || r.cancel_requested || r.outcome.is_some() {
+        return Err(SignOutcome::Refused);
+    }
+    let mut pending = st.pending.lock().unwrap_or_else(PoisonError::into_inner);
+    let Some(entry) = pending.remove(&signed.entity_id) else {
+        return Err(SignOutcome::Stale);
     };
+    r.started = true;
+    Ok(entry)
+}
+
+pub(crate) type Run = tokio::task::JoinHandle<SignOutcome>;
+
+/// Starts the run as its own task, or says why the payload cannot run. The
+/// run belongs to no request: a caller that goes away (a client that timed
+/// out or disconnected) drops the handle and the run still reaches its end.
+pub(crate) fn start_signed(st: &Arc<LinkerState>, signed: Signed) -> Result<Run, SignOutcome> {
+    let pending = claim(st, &signed)?;
+    let st = st.clone();
+    Ok(tokio::spawn(async move {
+        run_claimed(&st, signed, pending).await
+    }))
+}
+
+/// The end of a started run. A run that panicked is concluded as failed, so
+/// its state never stays `uploading`.
+pub(crate) async fn joined(st: &LinkerState, run: Run) -> SignOutcome {
+    match run.await {
+        Ok(outcome) => outcome,
+        Err(e) => fatal(st, anyhow::anyhow!("the deployment stopped: {e}")),
+    }
+}
+
+pub(crate) async fn run_signed(st: &Arc<LinkerState>, signed: Signed) -> SignOutcome {
+    match start_signed(st, signed) {
+        Ok(run) => joined(st, run).await,
+        Err(stop) => stop,
+    }
+}
+
+/// The run itself: check the wallet, remove the world's other scenes when
+/// asked, upload. A cancel through the API drops the upload in flight unless
+/// every byte is out, when the server's answer is the truth.
+async fn run_claimed(st: &LinkerState, signed: Signed, pending: PendingEntity) -> SignOutcome {
     *st.signer.lock().unwrap_or_else(PoisonError::into_inner) = Some(signed.address.clone());
     st.progress.touch();
     let world = st.dep.world.as_deref();

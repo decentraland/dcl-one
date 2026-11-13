@@ -1,8 +1,8 @@
 use anyhow::Result;
 use clap::{Args, Parser, Subcommand};
 use dcl_scene_cli::{
-    build, context_files, deploy, export_static, init, joinblock, pack, scene, start, ux, watch,
-    workspace, world, world_access,
+    build, build_script, context_files, deploy, export_static, init, joinblock, pack, scene, start,
+    ux, watch, workspace, world, world_access,
 };
 use std::path::PathBuf;
 
@@ -52,7 +52,7 @@ struct Cli {
     #[arg(
         long,
         global = true,
-        help = "Print the command's result as JSON on stdout and nothing else there (export-static: scenesUrn, destination, entities; deploy: entityId, message); other commands print nothing"
+        help = "Print the command's result as JSON on stdout and nothing else there (export-static: scenesUrn, destination, entities; deploy: entityId, message); the other commands have no result document"
     )]
     json: bool,
     #[command(subcommand)]
@@ -584,7 +584,7 @@ enum Command {
             long,
             default_value = ".",
             value_name = "DIR",
-            help = "Folder the hash-named files and the entity file are written to"
+            help = "Folder the hash-named files and the entity file are written to; not the project folder or one above it"
         )]
         destination: PathBuf,
         #[arg(
@@ -1005,6 +1005,9 @@ async fn run(command: Command) -> Result<()> {
                 out_root: None,
                 quiet: false,
             };
+            if emit_declaration && let Some(why) = build::no_declarations(skip_type_check, watch) {
+                ux::note_absent(why);
+            }
             if let Some(pattern) = single {
                 return build::build_single(&opts, &pattern, emit_declaration)
                     .await
@@ -1022,6 +1025,7 @@ async fn run(command: Command) -> Result<()> {
                 return build::build_workspace(&ws, &opts, mode).await;
             }
             if watch {
+                let opts = build_script::preview_options(&opts);
                 let project = scene::Project::load(&opts.dir)?;
                 let fs = watch::FsWatcher::new(&project.root)?;
                 let mut steps = ux::Steps::new(4);
@@ -1470,7 +1474,7 @@ async fn watch_workspace(ws: &workspace::Workspace, opts: &build::BuildOptions) 
         if let Some(header) = ws.member_header(i) {
             ux::note(header);
         }
-        let member = build::member_options(opts, project);
+        let member = build_script::preview_options(&build::member_options(opts, project));
         let chunk = 3;
         let tc = if member.skip_type_check { 0 } else { 1 };
         let mut steps = ux::Steps::new(chunk + tc);

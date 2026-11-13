@@ -191,6 +191,9 @@ pub async fn build_as(opts: &BuildOptions, mode: BuildMode) -> Result<Built> {
     let emit_declaration = mode == BuildMode::EmitDeclaration;
     let project = Project::load(&opts.dir)?;
     if let Some(script) = crate::build_script::selected(&project, opts)? {
+        if emit_declaration {
+            ux::note_absent(NO_DECLARATIONS_CUSTOM);
+        }
         return crate::build_script::run(project, opts, &script).await;
     }
     let flags = crate::build_script::script_flags(&project.root);
@@ -300,6 +303,22 @@ pub async fn build_as(opts: &BuildOptions, mode: BuildMode) -> Result<Built> {
     Ok(Built { project, outfile })
 }
 
+const NO_DECLARATIONS_CUSTOM: &str = "--emitDeclaration writes no .d.ts files here: package.json scripts.build runs this build (--built-in uses the SDK pipeline, which writes them)";
+
+/// Why `--emitDeclaration` writes nothing with these flags: the type check
+/// writes the files, and neither a skipped check nor a watcher's does.
+pub fn no_declarations(skip_type_check: bool, watch: bool) -> Option<&'static str> {
+    match (skip_type_check, watch) {
+        (true, _) => Some(
+            "--emitDeclaration writes no .d.ts files with --skip-type-check: the type check writes them",
+        ),
+        (false, true) => Some(
+            "--emitDeclaration writes no .d.ts files with --watch: run build --emitDeclaration once without it",
+        ),
+        (false, false) => None,
+    }
+}
+
 fn check_line(checked: Checked, emit_declaration: bool, took: std::time::Duration) -> String {
     let what = match emit_declaration {
         true => "Type check passed, declarations emitted",
@@ -345,8 +364,7 @@ pub async fn build_single(
     let aliases = esbuild::resolve_aliases(&project)?;
     let externals = split::scene_externals(&project);
     let mut outfiles = Vec::with_capacity(entries.len());
-    for entrypoint in entries {
-        let outfile = entrypoint.with_extension("js");
+    for (entrypoint, outfile) in single_outputs(&project.root, entries)? {
         let started = Instant::now();
         esbuild::bundle(
             &project,
@@ -364,6 +382,30 @@ pub async fn build_single(
         outfiles.push(outfile);
     }
     Ok(outfiles)
+}
+
+/// Each source with the sibling `.js` it bundles to. Two sources that name
+/// one output (`a.ts` and `a.tsx`) are refused before anything is written.
+pub fn single_outputs(root: &Path, entries: Vec<PathBuf>) -> Result<Vec<(PathBuf, PathBuf)>> {
+    let mut by_output = std::collections::HashMap::new();
+    let mut pairs = Vec::with_capacity(entries.len());
+    for entrypoint in entries {
+        let outfile = entrypoint.with_extension("js");
+        if let Some(other) = by_output.insert(outfile.clone(), entrypoint.clone()) {
+            return Err(UserError::new(
+                format!(
+                    "{} and {} would both be written to {}",
+                    ux::rel_to(root, &other),
+                    ux::rel_to(root, &entrypoint),
+                    ux::rel_to(root, &outfile)
+                ),
+                TrySteps::one("narrow the --single pattern to one of them, or rename one"),
+            )
+            .into());
+        }
+        pairs.push((entrypoint, outfile));
+    }
+    Ok(pairs)
 }
 
 /// The `.ts`/`.tsx` files under `root` (never `node_modules`, never `.d.ts`)
@@ -765,6 +807,37 @@ mod tests {
         );
         assert!(found("lib/*.ts").is_empty());
         assert!(single_entrypoints(&t.0, "src/[").is_err());
+    }
+
+    #[test]
+    fn single_sources_that_share_an_output_are_refused() {
+        let root = Path::new("/scene");
+        let at = |rel: &str| root.join(rel);
+        let pairs = single_outputs(root, vec![at("src/a.ts"), at("src/b.tsx")]).unwrap();
+        assert_eq!(pairs[0], (at("src/a.ts"), at("src/a.js")));
+        assert_eq!(pairs[1], (at("src/b.tsx"), at("src/b.js")));
+        let err = single_outputs(root, vec![at("src/a.ts"), at("src/a.tsx")]).unwrap_err();
+        let shown = ux::render(&err, false, false);
+        assert!(
+            shown.contains("src/a.ts and src/a.tsx would both be written to src/a.js"),
+            "{shown}"
+        );
+    }
+
+    #[test]
+    fn emit_declaration_says_when_it_writes_nothing() {
+        assert!(no_declarations(false, false).is_none());
+        assert!(
+            no_declarations(true, false)
+                .unwrap()
+                .contains("--skip-type-check")
+        );
+        assert!(
+            no_declarations(true, true)
+                .unwrap()
+                .contains("--skip-type-check")
+        );
+        assert!(no_declarations(false, true).unwrap().contains("--watch"));
     }
 
     #[test]

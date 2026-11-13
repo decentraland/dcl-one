@@ -283,7 +283,7 @@ impl Slow {
     pub fn start(label: impl Into<String>) -> Self {
         let label = label.into();
         let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        if !stdout_color() {
+        if quiet() || !stdout_color() {
             return Slow { stop, handle: None };
         }
         let s = stop.clone();

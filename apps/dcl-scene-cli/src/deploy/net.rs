@@ -1306,9 +1306,10 @@ pub(super) async fn confirm_world_overwrite(
     Ok(true)
 }
 
+/// The question goes to stderr: stdout is the result's (`--json`, a pipe).
 fn prompt_continue() -> Result<bool> {
-    print!("Continue? (y/N) ");
-    std::io::stdout().flush().ok();
+    eprint!("Continue? (y/N) ");
+    std::io::stderr().flush().ok();
     let mut line = String::new();
     std::io::stdin()
         .read_line(&mut line)

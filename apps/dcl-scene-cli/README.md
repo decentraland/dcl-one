@@ -22,8 +22,10 @@ builds, packs and deploys before the real assets land; `px-template` is a scene 
 exports `initLibrary(engine)` and previews as a scene (`npm run build:lib` = `build --single
 src/index.ts --emitDeclaration`). `--template` unpacks a zip with one top-level folder (a GitHub
 branch archive, say); `--github-repo` fetches the branch archive (`main`, else `master`, or the
-`/tree/<branch>` named) and keeps the `/tree/<branch>/<path>` folder alone. Either way the vendored
-`node_modules` is installed, and dependencies it lacks are named. The `/inspector/*` UI needs
+`/tree/<branch>` named) and keeps the `/tree/<branch>/<path>` folder alone. A download from an
+`https://` URL follows no redirect to `http://`, ends after 30 s of silence, and is refused past
+256 MB or when it unpacks to more than 1 GB; a plain `http://` URL is fetched with a warning. Either
+way the vendored `node_modules` is installed, and dependencies it lacks are named. The `/inspector/*` UI needs
 `npm install --save-dev @dcl/inspector` or `DCL_ONE_INSPECTOR_DIR`. `get-context-files` writes the
 `migrate-smart-items-to-code` skill and downloads `ai-sdk-context` into `dclcontext/`.
 
@@ -37,9 +39,12 @@ dcl-scene-cli build [--dir D] [-p|--production] [-w|--watch] [--ignoreComposite]
 
 `--single GLOB` bundles each matching `.ts`/`.tsx` under the project to a sibling `.js` instead of the
 scene, after one type check; the SDK stays a `require`, as in the scene chunk, so a consuming scene
-bundles one SDK. `--emitDeclaration` has the type check also write `.d.ts` files
+bundles one SDK. Two matches that would write one `.js` (`a.ts` and `a.tsx`) are refused.
+`--emitDeclaration` has the type check also write `.d.ts` files
 (`--emitDeclarationOnly`, into tsconfig's `declarationDir` or `outDir`; TypeScript 6 wants `rootDir`
-set beside them). The check runs the scene's own `typescript`: 5.x, 6.x or 7.x (the Go port); the
+set beside them); with `--watch`, `--skip-type-check` or a custom `scripts.build` it writes none and
+says so. `--watch` applies the `--ignoreComposite` and `--customEntryPoint` of an SDK `scripts.build`,
+as `start` does. The check runs the scene's own `typescript`: 5.x, 6.x or 7.x (the Go port); the
 vendored one is 6.x. A tsconfig TypeScript 6 only
 deprecates (`baseUrl`, say) is checked once more with `--ignoreDeprecations 6.0`, and said so;
 TypeScript 7 has removed those options, and the error's steps name the edit.
@@ -211,7 +216,9 @@ The resource is upstream's `/api/deploy` contract:
   `202` at once (`Location: /api/deploy`, `Preference-Applied: respond-async`, the state as body)
   and the run is followed through `GET`; without it the answer is the final state, or a `400`
   `{message}` when the upload fails. A body that is not JSON, misses fields or signs a stale entity
-  id is `400` before anything runs; a run that already started or ended is `409` with its state.
+  id is `400` before anything runs; a run that already started or ended is `409` with its state,
+  so of two posts at once one gets the `202`. The run is not tied to the request: when the client
+  goes away the deploy still runs to its end, and `GET` tells the result.
   Only this machine's browser may post (the same-origin gate of the signing page).
 - `DELETE /api/deploy` cancels with the token in `X-Deploy-Token` (`403` without it): `202` with the
   state when the run is cancelled (before the signature) or cancelling (the upload is dropped unless
@@ -222,6 +229,9 @@ The resource is upstream's `/api/deploy` contract:
   `description`, `isWorld`, `world`, `deleteScenesFromWorldPayload`, `targetContent`, `multiScene`,
   `skipValidations`, `isPortableExperience`; `landRegistry`, `estateRegistry` and `debug` are null
   and false, there is no chain-side check here); `GET /api/files` lists `[{name, size}]`.
+- The three `GET` routes answer this machine only: `403` to another peer, to the tunnel, and to a
+  request whose `Host` is not a loopback name. `DCL_SCENE_CLI_LINKER_HOST` other than `127.0.0.1`
+  (or `start --allow-remote-deploy`) opens them with the rest.
 
 Differences from upstream: there is no `/api/catalyst-pointers` (the target is already resolved
 when the server starts), `chainId` is ignored, and the same routes serve the preview's own signing
@@ -233,7 +243,9 @@ publishable file under its hash, the entity file under its id (no pointers), and
 `urn:decentraland:entity:<id>` (`?=&baseUrl=<URL>/` appended with `--baseUrl`). `--realmName` also
 writes `<destination>/<NAME>/about`, a realm whose `scenesUrn` is the export and whose comms adapter
 is `--commsAdapter` (default `offline:offline`); serve the folder at `--baseUrl` and an explorer
-joins it by `realm=<baseUrl>/<NAME>`.
+joins it by `realm=<baseUrl>/<NAME>`. `--destination` defaults to the current folder and is refused
+when it is the project folder or a folder above it; a folder inside the project (`--destination out`)
+is fine, and its files stay out of the entity.
 
 ## Reference
 
@@ -248,7 +260,8 @@ time `PLAY_EMBED_DIR` and `DCL_SCENE_CLI_SITE` (the operator's site origin, no d
 
 `--json` anywhere on the line prints the command's result as one JSON document on stdout and
 nothing else there: `export-static` gives `{scenesUrn, destination, entities}` as upstream does,
-`deploy` gives `{entityId, message}`; the other commands print nothing (errors still go to stderr).
+`deploy` gives `{entityId, message}`; the other commands have no result document. Errors, and the
+`Continue? (y/N)` question of a deploy, go to stderr.
 
 `--ci` on `start`, `deploy` and the `world` writes, or `CI` set in the environment, makes the run
 non-interactive: no colours, spinners, re-floated banners, QR codes, prompts or browser windows

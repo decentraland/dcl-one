@@ -59,6 +59,20 @@ pub async fn export_static(opts: &ExportStaticOptions) -> Result<Exported> {
     let destination = dunce::canonicalize(&opts.destination)
         .with_context(|| format!("resolving {}", opts.destination.display()))?;
     let ws = Workspace::load(&opts.dir)?;
+    for project in &ws.projects {
+        let root = dunce::canonicalize(&project.root).unwrap_or_else(|_| project.root.clone());
+        if root.starts_with(&destination) {
+            return Err(UserError::new(
+                format!(
+                    "the destination {} holds the project {}: every file of the scene would be left out of the export",
+                    destination.display(),
+                    root.display()
+                ),
+                TrySteps::one("pass --destination with a folder for the export, for example --destination out"),
+            )
+            .into());
+        }
+    }
     let timestamp = opts.timestamp.unwrap_or_else(deploy::now_ms);
     let mut steps = ux::Steps::new(ws.projects.len() + usize::from(realm_name.is_some()));
     let mut scenes_urn = Vec::new();
@@ -358,6 +372,34 @@ mod tests {
             "the export never lists itself: {files:?}"
         );
         assert!(files.contains(&"bin/index.js"), "{files:?}");
+    }
+
+    /// The default flags: `--dir .` and `--destination .` in a project.
+    #[tokio::test]
+    async fn a_destination_that_holds_the_project_is_refused() {
+        let t = scene("export-static-root");
+        let before = std::fs::read_dir(&t.0).unwrap().count();
+        for destination in [t.0.clone(), t.0.parent().unwrap().to_path_buf()] {
+            let err = export_static(&ExportStaticOptions {
+                dir: t.0.clone(),
+                destination,
+                timestamp: None,
+                realm_name: None,
+                comms_adapter: None,
+                base_url: None,
+                skip_build: true,
+            })
+            .await
+            .unwrap_err();
+            let shown = ux::render(&err, false, false);
+            assert!(shown.contains("holds the project"), "{shown}");
+            assert!(shown.contains("--destination out"), "{shown}");
+        }
+        assert_eq!(
+            std::fs::read_dir(&t.0).unwrap().count(),
+            before,
+            "nothing is written"
+        );
     }
 
     #[tokio::test]

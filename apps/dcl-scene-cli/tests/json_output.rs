@@ -2,7 +2,7 @@
 //! else there, for the two commands that have a result.
 
 use serde_json::Value;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
 const BIN: &str = env!("CARGO_BIN_EXE_dcl-scene-cli");
@@ -30,8 +30,12 @@ impl Drop for Fixture {
 }
 
 fn run(args: &[&str]) -> Output {
+    run_in(&std::env::current_dir().unwrap(), args)
+}
+
+fn run_in(cwd: &Path, args: &[&str]) -> Output {
     let mut cmd = Command::new(BIN);
-    cmd.args(args);
+    cmd.args(args).current_dir(cwd);
     for k in [
         "DCL_PRIVATE_KEY",
         "RUST_LOG",
@@ -92,6 +96,24 @@ fn export_static_reports_the_urns_and_entities_as_upstream_does() {
         destination.join(entity).is_file(),
         "the entity file is at the destination"
     );
+}
+
+/// The default flags in a project folder: the destination is the project,
+/// so the export would hold no file. The command fails and writes nothing.
+#[test]
+fn export_static_with_the_default_flags_is_refused_in_a_project_folder() {
+    let f = Fixture::new("export-default");
+    let out = run_in(&f.0, &["export-static", "--skip-build", "--json"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "{stderr}");
+    assert!(stderr.contains("holds the project"), "{stderr}");
+    assert!(out.stdout.is_empty(), "no result document");
+    let mut left: Vec<_> = std::fs::read_dir(&f.0)
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    left.sort();
+    assert_eq!(left, ["bin", "scene.json"], "nothing is written");
 }
 
 #[test]
