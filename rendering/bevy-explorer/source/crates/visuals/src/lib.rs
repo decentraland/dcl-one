@@ -10,6 +10,7 @@ mod solids;
 mod stars;
 pub mod terrain;
 mod trees;
+pub mod upscale;
 
 use bevy::{
     core_pipeline::dof::{DepthOfField, DepthOfFieldMode},
@@ -90,7 +91,8 @@ impl Plugin for VisualsPlugin {
         .insert_resource(AtmosphereModel::new(NishitaCloud::default()))
         .add_plugins(AtmospherePlugin)
         .add_plugins(SkyEnvmapPlugin)
-        .add_plugins(stars::StarsPlugin);
+        .add_plugins(stars::StarsPlugin)
+        .add_plugins(upscale::UpscalePlugin);
 
         app.add_console_command::<ShadowConsoleCommand, _>(shadow_console_command);
         app.init_resource::<ShadowBiasOverride>();

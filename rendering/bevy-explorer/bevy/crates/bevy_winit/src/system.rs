@@ -83,6 +83,20 @@ pub fn create_windows<F: QueryFilter + 'static>(
             .resolution
             .set_scale_factor_and_apply_to_physical_size(winit_window.scale_factor() as f32);
 
+        // A canvas fitted by its page has its size already: winit reports it as soon as the
+        // window exists, before this entity is registered, so that resize event is dropped.
+        // Adopted here, before the cache, so the window's requested size is never written back
+        // to the canvas as a fixed CSS size, which would stop it following the page.
+        #[cfg(target_arch = "wasm32")]
+        if window.fit_canvas_to_parent {
+            let size = winit_window.inner_size();
+            if size.width > 0 && size.height > 0 {
+                window
+                    .resolution
+                    .set_physical_resolution(size.width, size.height);
+            }
+        }
+
         commands.entity(entity).insert((
             CachedWindow {
                 window: window.clone(),

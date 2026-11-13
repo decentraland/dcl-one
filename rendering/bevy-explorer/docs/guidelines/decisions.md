@@ -17,6 +17,12 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **Emissive strength.** Unity never parses `KHR_materials_emissive_strength`; bevy honours
   it, spec-correctly. Content authored against Unity can glow (the Nekko cat at 65x). Dropping
   the extension is not the fix; the long-term answer is still open.
+- **Render scale compositor.** At scale 1 the world camera draws to the window and carries the
+  UI, at no extra cost. Below it, the world renders to an image that a 2D camera composites onto
+  the window with FSR EASU; bevy's CAS at 0.92 stands in for RCAS; the UI rides the compositor
+  at full resolution; `/screenshot` captures the window. The primary camera always keeps the
+  depth prepass (the jump marker reads it); the normal prepass, and both on texture cameras, only
+  while the avatar outline is on or the camera has SSAO (native only).
 - **Sun shadows keep bevy's default bias.** Unity's `DepthBias` (1.75 or 1.56 texels, times
   URP's soft kernel radius 2.5) is a depth bias, not a normal bias, and carried over as bevy's
   normal bias it offset each lookup about half a metre on Low at 60 m, dropping thin and contact
