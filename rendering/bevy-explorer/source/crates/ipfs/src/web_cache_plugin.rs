@@ -13,7 +13,9 @@ pub struct WebCachePlugin {
     pub preview: bool,
 }
 
-/// A tester's session override of the cap, in bytes; never saved.
+/// A tester's session override of the cap, in bytes; never saved. Only this engine's: the scene
+/// server's frame runs a second engine that still trims to its configured cap, so an override above
+/// it lasts until that engine's next trim.
 #[derive(Resource, Default)]
 struct WebCacheCapOverride(Option<u64>);
 
@@ -59,6 +61,8 @@ impl Plugin for WebCachePlugin {
                 ("Written to the cache this session (MiB)", "writtenMiB"),
                 ("Writes retried after a quota error", "quotaRetries"),
                 ("Trims reported", "trims"),
+                ("Entries evicted this session", "evictedEntriesTotal"),
+                ("Evicted this session (MiB)", "evictedTotalMiB"),
                 ("Uses waiting to be recorded", "pendingUses"),
                 ("Last trim: cap after the quota bound (MiB)", "workerCapMiB"),
                 ("Last trim: origin usage (MiB)", "usageMiB"),
@@ -66,6 +70,10 @@ impl Plugin for WebCachePlugin {
                 ("Last trim: Cache Storage usage (MiB)", "cachesMiB"),
                 ("Last trim: entries evicted", "evictedEntries"),
                 ("Last trim: evicted (MiB)", "evictedMiB"),
+                (
+                    "Last trim: other storage keeps the cache over its cap",
+                    "targetUnreachable",
+                ),
                 (
                     "Last trim: entries ordered by recorded use",
                     "indexedEntries",
