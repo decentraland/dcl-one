@@ -30,6 +30,7 @@ pub fn override_ops() -> Vec<OpDecl> {
         op_leak_tracing_get(),
         op_serialize(),
         op_deserialize(),
+        op_structured_clone(),
         op_eval_context(),
         op_message_port_post_message(),
         op_url_parse(),
@@ -214,6 +215,39 @@ fn op_deserialize<'s>(
     let context = scope.get_current_context();
     if !deserializer.read_header(context).unwrap_or_default() {
         return Err(anyhow::anyhow!("could not deserialize value").into());
+    }
+    Ok(deserializer
+        .read_value(context)
+        .ok_or_else(|| anyhow::anyhow!("could not deserialize value"))?)
+}
+
+// `core.structuredClone` (performance.mark/measure `detail`, stream tees). The original
+// honours the host-object brand on any object and panics on a type it has no deserializer for.
+#[op2(reentrant)]
+fn op_structured_clone<'s>(
+    scope: &mut v8::PinScope<'s, '_>,
+    value: v8::Local<'s, v8::Value>,
+    _deserializers: Option<v8::Local<'s, v8::Object>>,
+) -> Result<v8::Local<'s, v8::Value>, OpError> {
+    let serializer = v8::ValueSerializer::new(scope, Box::new(SceneClone));
+    serializer.write_header();
+    let written = {
+        v8::tc_scope!(let scope, scope);
+        let written = serializer.write_value(scope.get_current_context(), value);
+        if scope.has_caught() || scope.has_terminated() {
+            scope.rethrow();
+            return Ok(v8::undefined(scope).into());
+        }
+        written
+    };
+    if written != Some(true) {
+        bail!("Failed to serialize response");
+    }
+    let bytes = serializer.release();
+    let deserializer = v8::ValueDeserializer::new(scope, Box::new(SceneClone), &bytes);
+    let context = scope.get_current_context();
+    if !deserializer.read_header(context).unwrap_or_default() {
+        bail!("could not deserialize value");
     }
     Ok(deserializer
         .read_value(context)

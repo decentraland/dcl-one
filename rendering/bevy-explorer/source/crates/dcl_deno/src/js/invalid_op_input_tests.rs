@@ -271,6 +271,24 @@ fn structured_clone_refuses_what_it_cannot_copy() {
 }
 
 #[test]
+fn structured_clone_ignores_the_host_object_brand() {
+    run_scene(
+        false,
+        r#"
+        const branded = { [Symbol.for("Deno.core.hostObject")]() { return { type: "x" }; }, a: 1 };
+        const mark = performance.mark("m", { detail: branded });
+        if (mark.detail.a !== 1) { throw new Error("mark detail was not cloned"); }
+        const copy = Deno.core.ops.op_structured_clone(branded, { x: 1 });
+        if (copy.a !== 1) { throw new Error("the clone lost data"); }
+        let threw = false;
+        try { Deno.core.ops.op_structured_clone(new SharedArrayBuffer(1)); } catch { threw = true; }
+        if (!threw) { throw new Error("a shared buffer was cloned"); }
+        "#,
+    )
+    .unwrap();
+}
+
+#[test]
 fn eval_context_reports_errors_and_refuses_host_options() {
     run_scene(
         false,
@@ -696,12 +714,14 @@ fn sweep_ops(super_user: bool, is_server: bool) {
             ["x", 0, throwingArray(), throwingArray()],
             [new Uint8Array(8), trap(), trap()],
             [0, new Uint8Array(8), trap(), trap()],
+            // a branded object reaches structured clone's host-object path
+            [{{ [Symbol.for("Deno.core.hostObject")]() {{ return {{ type: "x" }}; }} }}],
         ];
         const ops = Deno.core.ops;
         const names = Object.keys(ops).sort();
         // deno_core builtins and the overrides are swept with the extension ops
         for (const name of ["op_timer_now", "op_now", "op_time_origin", "op_load_ext_script", "op_eval_context",
-                            "op_serialize", "op_blob_create_part", "op_blob_clone_part", "op_fetch",
+                            "op_serialize", "op_structured_clone", "op_blob_create_part", "op_blob_clone_part", "op_fetch",
                             "op_fetch_send", "op_fetch_promise_is_settled", "op_utf8_to_byte_string"]) {{
             if (!names.includes(name)) throw new Error(`${{name}} is not swept`);
         }}
