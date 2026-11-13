@@ -152,11 +152,19 @@ set -eu
 [[ "$1" = view ]]
 case "$2 $3" in
   '@dcl-regenesislabs/bevy-explorer-web@pr-10 version') printf '%s\n' "${TAG_VERSION:-}" ;;
-  "@dcl-regenesislabs/bevy-explorer-web@$PUBLISHED_VERSION gitHead") printf '%s\n' "$PUBLISHED_SHA" ;;
   *) exit 64 ;;
 esac
 EOF
-chmod +x "$WORK/npm"
+cat > "$WORK/curl" <<'EOF'
+#!/usr/bin/env bash
+set -eu
+url="${*: -1}"
+[ "$url" = "https://cdn.decentraland.org/@dcl-regenesislabs/bevy-explorer-web/$PUBLISHED_VERSION/.deploy-complete.json" ] || exit 22
+if [ -n "${MARKER_BODY+set}" ]; then printf '%s' "$MARKER_BODY"; exit 0; fi
+jq -nc --arg v "$PUBLISHED_VERSION" --arg c "$PUBLISHED_SHA" \
+  '{package:"@dcl-regenesislabs/bevy-explorer-web", version:$v, commit:$c, objectCount:1, kind:"upload"}'
+EOF
+chmod +x "$WORK/npm" "$WORK/curl"
 preview_compose() {
   PATH="$WORK:$PATH" PUBLISHED_VERSION="$VERSION" PUBLISHED_SHA="$1" compose
 }
@@ -169,7 +177,11 @@ check_absent "a newer artifact with another SHA is ignored" build.md 'artifacts/
 TAG_VERSION=0.1.1-2.commit-abc1234 preview_compose "$WEB_SHA"
 check "a newer PR tag does not change the versioned link" build.md "$VERSION/index.html"
 preview_compose "$SPOOF_SHA"
-check_absent "a package with a different full SHA is not linked" build.md '[preview]'
+check_absent "an upload with a different full SHA is not linked" build.md '[preview]'
+MARKER_BODY='' preview_compose "$WEB_SHA"
+check_absent "an empty marker is not linked" build.md '[preview]'
+MARKER_BODY='<html>error</html>' preview_compose "$WEB_SHA"
+check_absent "a non-JSON marker is not linked" build.md '[preview]'
 artifacts "bevy-explorer-web-$WEB_SHA:11" "dcl-regenesislabs-bevy-explorer-web-0.1.1-2.commit-abc1234.tgz:12"
 VERSION=0.1.1-2.commit-abc1234 preview_compose "$WEB_SHA"
 check_absent "a package for a different run is not linked" build.md '[preview]'
