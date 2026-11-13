@@ -170,7 +170,17 @@ async fn active(
     if state.settings.sources.registry.is_empty() {
         return Json(json!([])).into_response();
     }
-    match forward(&state, &original_uri, method, &uri, &headers, body, false).await {
+    match forward(
+        &state,
+        &original_uri,
+        method,
+        &uri,
+        &headers,
+        body,
+        Conditional::Strip,
+    )
+    .await
+    {
         Ok((status, mut out_headers, bytes)) if status == StatusCode::OK => {
             let bytes = match without_denylisted(&bytes, &state.content.denylist) {
                 Some(filtered) => {
@@ -221,6 +231,9 @@ fn pointers_rule(body: &[u8]) -> Result<(), Response> {
         .deserialize(&mut de)
         .and_then(|shape| de.end().map(|()| shape));
     let present = match shape {
+        // `JSON.parse` reads a number beyond `f64` (`1e400`) as an infinity,
+        // which has no `pointers`; serde_json refuses it as a value.
+        Err(_) if is_number(body) => false,
         Err(_) | Ok(Shape::Null) => {
             return Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -263,6 +276,12 @@ fn pointers_given(text: &str) -> bool {
         // as an infinity, as Rust's parser does.
         _ => !is_zero(text),
     }
+}
+
+/// The body is one JSON number, whatever its range.
+fn is_number(body: &[u8]) -> bool {
+    matches!(body.trim_ascii_start().first(), Some(b'-' | b'0'..=b'9'))
+        && serde_json::from_slice::<IgnoredAny>(body).is_ok()
 }
 
 /// A JSON number equal to zero (`-0`, `0.0` and `0e5` included).
@@ -387,16 +406,34 @@ async fn read(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    match forward(&state, &original_uri, method, &uri, &headers, body, true).await {
+    match forward(
+        &state,
+        &original_uri,
+        method,
+        &uri,
+        &headers,
+        body,
+        Conditional::Forward,
+    )
+    .await
+    {
         Ok(answer) => answer.into_response(),
         Err(response) => response,
     }
 }
 
+/// Whether the client's `If-None-Match` and `If-Modified-Since` reach the
+/// backend.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Conditional {
+    Forward,
+    /// For an answer the gateway may rewrite, whose validators would not
+    /// describe what the client receives.
+    Strip,
+}
+
 /// One backend call: its status, the kept headers and the buffered body, or
-/// the gateway's own answer when the call cannot be made or fails. The
-/// client's `If-None-Match` and `If-Modified-Since` go along only when
-/// `conditional`.
+/// the gateway's own answer when the call cannot be made or fails.
 async fn forward(
     state: &Shared,
     original_uri: &Uri,
@@ -404,7 +441,7 @@ async fn forward(
     uri: &Uri,
     headers: &HeaderMap,
     body: Bytes,
-    conditional: bool,
+    conditional: Conditional,
 ) -> Result<(StatusCode, HeaderMap, Vec<u8>), Response> {
     let source = &state.settings.sources.registry;
     if source.is_empty() {
@@ -451,7 +488,8 @@ async fn forward(
         for (name, value) in headers {
             let name = name.as_str();
             if matches!(name, "content-type" | "accept")
-                || (conditional && matches!(name, "if-none-match" | "if-modified-since"))
+                || (conditional == Conditional::Forward
+                    && matches!(name, "if-none-match" | "if-modified-since"))
                 || (native && name.starts_with("x-identity-"))
             {
                 request = request.header(name, value);
@@ -579,6 +617,8 @@ mod tests {
             r#"{"pointers":{"length":1,"length":0}}"#,
             r#"{"pointers":["0,0"],"pointers":[]}"#,
             r#"{"ids":["bafkreiexample"]}"#,
+            "1e400",
+            " -1e400 ",
         ] {
             assert_eq!(status(body), StatusCode::BAD_REQUEST, "{body}");
         }
