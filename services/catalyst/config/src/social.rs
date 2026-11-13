@@ -95,6 +95,24 @@ fn source_body_limit(raw: &str) -> Result<usize, String> {
     Ok(value as usize)
 }
 
+/// Upstream's presence badge defaults (the badges processor's environment),
+/// shared with `badges::presence::Settings::default()`.
+pub mod presence_badges {
+    pub const GRANT_NOTIFICATIONS: bool = true;
+    pub const EARLY_JOIN_LOOKAHEAD_SECONDS: u64 = 21_600;
+    pub const OPEN_VISIT_CHECK_AFTER_SECONDS: u64 = 900;
+    pub const OPEN_VISIT_MAX_AGE_SECONDS: u64 = 86_400;
+    pub const APPLIED_EVENTS_TTL_SECONDS: u64 = 604_800;
+    pub const ABSENT_EXPIRE_AFTER_SECONDS: u64 = 3_600;
+    pub const SWEEP_INTERVAL_SECONDS: u64 = 60;
+    pub const SWEEP_BATCH_SIZE: u32 = 100;
+    pub const PRUNE_BATCH_SIZE: u32 = 1_000;
+    pub const SWEEPER_ENABLED: bool = true;
+    /// The longest a presence duration setting may be (30 days).
+    pub const MAX_SECONDS: u64 = 2_592_000;
+    pub const MAX_BATCH_SIZE: i64 = 100_000;
+}
+
 /// Social: communities, the social RPC, comms, notifications, badges, media and profile images.
 #[derive(Args, Clone)]
 pub struct SocialConfig {
@@ -689,6 +707,48 @@ pub struct SocialConfig {
     #[arg(long, env = "BADGES_PRESENCE_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
     pub badges_presence_enabled: bool,
 
+    /// A presence grant writes its badge_granted notification; false
+    /// grants without one.
+    #[arg(long, env = "BADGES_PRESENCE_GRANT_NOTIFICATIONS", default_value_t = presence_badges::GRANT_NOTIFICATIONS, action = clap::ArgAction::Set)]
+    pub badges_presence_grant_notifications: bool,
+
+    /// A join this long before a badge's window opens is kept (0: none).
+    #[arg(long, env = "BADGES_PRESENCE_EARLY_JOIN_LOOKAHEAD_SECONDS", default_value_t = presence_badges::EARLY_JOIN_LOOKAHEAD_SECONDS, value_parser = clap::value_parser!(u64).range(0..=presence_badges::MAX_SECONDS))]
+    pub badges_presence_early_join_lookahead_seconds: u64,
+
+    /// A visit open this long is checked against the LiveKit occupancy.
+    #[arg(long, env = "BADGES_PRESENCE_OPEN_VISIT_CHECK_AFTER_SECONDS", default_value_t = presence_badges::OPEN_VISIT_CHECK_AFTER_SECONDS, value_parser = clap::value_parser!(u64).range(1..=presence_badges::MAX_SECONDS))]
+    pub badges_presence_open_visit_check_after_seconds: u64,
+
+    /// A connection open longer, or a join-to-leave stretch longer, proves no time.
+    #[arg(long, env = "BADGES_PRESENCE_OPEN_VISIT_MAX_AGE_SECONDS", default_value_t = presence_badges::OPEN_VISIT_MAX_AGE_SECONDS, value_parser = clap::value_parser!(u64).range(1..=presence_badges::MAX_SECONDS))]
+    pub badges_presence_open_visit_max_age_seconds: u64,
+
+    /// How long applied events, pending leaves and absences are kept.
+    #[arg(long, env = "BADGES_PRESENCE_APPLIED_EVENTS_TTL_SECONDS", default_value_t = presence_badges::APPLIED_EVENTS_TTL_SECONDS, value_parser = clap::value_parser!(u64).range(1..=presence_badges::MAX_SECONDS))]
+    pub badges_presence_applied_events_ttl_seconds: u64,
+
+    /// How long a visit unconfirmed by the occupancy waits for a late leave.
+    #[arg(long, env = "BADGES_PRESENCE_ABSENT_EXPIRE_AFTER_SECONDS", default_value_t = presence_badges::ABSENT_EXPIRE_AFTER_SECONDS, value_parser = clap::value_parser!(u64).range(1..=presence_badges::MAX_SECONDS))]
+    pub badges_presence_absent_expire_after_seconds: u64,
+
+    /// Interval of the badges-presence-sweep job.
+    #[arg(long, env = "BADGES_PRESENCE_SWEEP_INTERVAL_SECONDS", default_value_t = presence_badges::SWEEP_INTERVAL_SECONDS, value_parser = clap::value_parser!(u64).range(1..=presence_badges::MAX_SECONDS))]
+    pub badges_presence_sweep_interval_seconds: u64,
+
+    /// Visits the sweeper checks per pass.
+    #[arg(long, env = "BADGES_PRESENCE_SWEEP_BATCH_SIZE", default_value_t = presence_badges::SWEEP_BATCH_SIZE, value_parser = clap::value_parser!(u32).range(1..=presence_badges::MAX_BATCH_SIZE))]
+    pub badges_presence_sweep_batch_size: u32,
+
+    /// Rows pruned per table per batch.
+    #[arg(long, env = "BADGES_PRESENCE_PRUNE_BATCH_SIZE", default_value_t = presence_badges::PRUNE_BATCH_SIZE, value_parser = clap::value_parser!(u32).range(1..=presence_badges::MAX_BATCH_SIZE))]
+    pub badges_presence_prune_batch_size: u32,
+
+    /// false stops only the occupancy checks; the maximum age and the
+    /// pruning still run.
+    #[arg(long, env = "BADGES_PRESENCE_SWEEPER_ENABLED", default_value_t = presence_badges::SWEEPER_ENABLED, action = clap::ArgAction::Set)]
+    pub badges_presence_sweeper_enabled: bool,
+
     // social/media: the autotranslate route (an external engine over the network).
     /// disabled | mock | http | llm; empty = http when TRANSLATE_BACKEND_URL
     /// is set, llm when TRANSLATE_LLM_BASE_URL is, else disabled (503).
@@ -974,6 +1034,33 @@ mod tests {
 
     fn social(pairs: &[(&str, &str)]) -> Result<super::SocialConfig, clap::Error> {
         Config::parse_env_for_tests(BASE.iter().chain(pairs).copied()).map(|c| c.social)
+    }
+
+    #[test]
+    fn presence_badge_settings_are_bounded() {
+        let defaults = social(&[]).unwrap();
+        assert_eq!(
+            defaults.badges_presence_early_join_lookahead_seconds,
+            super::presence_badges::EARLY_JOIN_LOOKAHEAD_SECONDS
+        );
+        assert_eq!(
+            social(&[("BADGES_PRESENCE_EARLY_JOIN_LOOKAHEAD_SECONDS", "0")])
+                .unwrap()
+                .badges_presence_early_join_lookahead_seconds,
+            0
+        );
+        for (name, invalid) in [
+            ("BADGES_PRESENCE_EARLY_JOIN_LOOKAHEAD_SECONDS", "2592001"),
+            (
+                "BADGES_PRESENCE_EARLY_JOIN_LOOKAHEAD_SECONDS",
+                "18446744073709551615",
+            ),
+            ("BADGES_PRESENCE_OPEN_VISIT_MAX_AGE_SECONDS", "0"),
+            ("BADGES_PRESENCE_SWEEP_INTERVAL_SECONDS", "2592001"),
+            ("BADGES_PRESENCE_PRUNE_BATCH_SIZE", "100001"),
+        ] {
+            assert!(social(&[(name, invalid)]).is_err(), "{name}={invalid}");
+        }
     }
 
     #[test]

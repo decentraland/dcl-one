@@ -404,7 +404,37 @@ and port 5461 with the environment (bounded outfits/emote sync from
 | notifications | 1/14 | 4 signed fixtures 401 | `/status` 404 (route unimplemented at the recorded revision); `/unsubscribe/{address}` 404 (unimplemented at the recorded revision; now served, replayed in-process by `notifications::tests::the_unsigned_unsubscribe_capture_replays`); `?limit=5&onlyUnread&from=0` 400 (valueless `onlyUnread` rejected); opt-outs unknown scope 404 vs 400; every auth error body differs ("Unauthenticated: Expired signature" / "Invalid Auth Chain" vs the ADR-44 message pair); preflight 200 with `*` vs 204 with the requested headers |
 | badges | 5/13 | user badges achieved 0 vs 3/5 (empty tables); `badge-tiers` 404 vs 200 empty | `/categories` lists 3 categories, production 5 (Explorer, Collector, Creator, Socializer, Builder); asset URLs: production `https://assets-cdn.decentraland.org/<id>/2d/normal.png`, Catalyst serves `/badges/assets/{path}` under `DEFAULT_ASSET_BASE_URL` `https://badges.decentraland.org`; preflight 200 `*` vs 204 |
 | profile-images | 1/20 | the 19 image fixtures: production is a 301 to the bucket, Catalyst renders in process and answered 404 with no profile entities synced (`SYNC_ENTITY_TYPES=outfits,emote`) | structural: an edge redirect versus a direct `image/png`; `face-bad-cid` 400 vs 301; preflight 204 with every method vs the edge's 301 |
-| camera-reel | 12/21 | `image-*` 404 (photo not in the local table) | `/api/wearables/{item}/images` 404 (camera-reel-service #62 unimplemented at the recorded revision); preflight `OPTIONS /api/users/{address}` 405 (no CORS layer under `/camera-reel-service`); `docs-openapi` 33 schema differences; `unknown-path-404` body "Not Found" vs empty; `user-images-bad-limit` message text |
+| camera-reel | 12/21 | `image-*` 404 (photo not in the local table) | the current answers are recorded in "In-process replay of camera-reel" below |
 
 Logs: `replay-<service>.log` in the run's scratchpad; the node and its
 database were stopped and dropped after the run.
+
+## In-process replay of camera-reel (2026-11-13 20:46 UTC)
+
+`camera-reel/src/tests/captures.rs`, test
+`the_camera_reel_host_answers_as_its_captures`, at revision `189e64ad9`
+with `CATALYST_TEST_DATABASE_URL` set. It mounts the router under
+`/camera-reel-service` as `serve` does and replays all 21 captures through
+`social::test_fixtures::replay` (status, recorded headers, body by the shared
+diff). It seeds the captured photos from the captured bodies: documents,
+place ids, public flag and `created_at` from `dateTime`. Filler rows bring
+the corpus place to its 523 public photos and the item gallery to its 12.
+The shared diff skips `id` and `url` leaves. The test therefore checks the
+ids, their order and the hash URLs of the five photo answers separately.
+
+13 of 21 are identical. The other 8 differ only by the deliberate
+differences in `camera-reel/src/lib.rs` or upstream additions after the
+capture, each listed in the test:
+
+| fixture | difference | reason |
+| --- | --- | --- |
+| `image-redirect`, `image-file-redirect` | 404 `{"message":"image not found"}` (29 B) instead of 307 to the legacy bucket key | images are addressed by blob hash; a photo id or the legacy `{id}-{ts}.jpg` key names no hash |
+| `image-metadata`, `place-images`, `place-images-page2`, `places-images-batch`, `wearable-images` | `url` and `thumbnailUrl` are `<api_url>/api/images/<hash>` instead of `.../api/images/<id>-[thumbnail-]<ts>.jpg` | the same hash addressing; ids, order, counts and every other field are identical |
+| `docs-openapi` | `components.schemas.ScreenRect` and `User.properties.screenRect` extra | added by camera-reel-service `3e8bd0b` (#61) after the capture |
+| `docs-openapi` | `components.schemas.GalleryImageWithPlace` extra | the captured document references this component but never defines it |
+
+`docs::tests::the_spec_is_the_captured_one_plus_the_later_upstream_screen_rect`
+compares the whole document with the capture under these three additions.
+The `ScreenRect` schema follows the `3e8bd0b` struct (four required `float`
+numbers). Its generated text was not compared because the upstream document
+at that revision was not built.
