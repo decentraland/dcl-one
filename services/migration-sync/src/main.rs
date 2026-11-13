@@ -3,7 +3,7 @@ use std::{path::PathBuf, time::Duration};
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
-use dcl_migration_sync::{capture, dispatch, model::Envelope, ops, store};
+use dcl_migration_sync::{capture, dispatch, model::Envelope, ops, player, store, worlds};
 use sqlx::postgres::PgPoolOptions;
 use tokio::io::AsyncReadExt;
 use uuid::Uuid;
@@ -24,6 +24,28 @@ struct Args {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Install explicit player-command capture using a JSON array of world/place/scene bindings.
+    InstallPlayerSource {
+        #[arg(long)]
+        scope_file: PathBuf,
+    },
+    /// Install owner/quota capture for an explicit immutable world and wallet scope.
+    InstallWorldsSource {
+        #[arg(long, required=true, num_args=1..)]
+        world: Vec<String>,
+        #[arg(long, required=true, num_args=1..)]
+        wallet: Vec<String>,
+    },
+    /// Operate the accepted player-storage command stream.
+    Player {
+        #[command(subcommand)]
+        command: LaneCommand,
+    },
+    /// Operate the committed Worlds ownership/quota outcome stream.
+    Worlds {
+        #[command(subcommand)]
+        command: LaneCommand,
+    },
     /// Fail unless capture is fresh, application caught up, and the stream unpaused.
     Check {
         #[arg(long)]
@@ -107,6 +129,147 @@ enum Command {
         #[arg(long)]
         stream: String,
     },
+}
+
+#[derive(Subcommand)]
+enum LaneCommand {
+    /// Verify a preimported baseline at a consistent source boundary; register paused.
+    Bootstrap {
+        #[arg(long)]
+        stream: String,
+    },
+    /// Retain the next source transactions without applying them.
+    Capture {
+        #[arg(long)]
+        stream: String,
+        #[arg(long)]
+        once: bool,
+        #[arg(long,default_value_t=1000,value_parser=clap::value_parser!(u64).range(100..=60000))]
+        poll_ms: u64,
+    },
+    /// Apply captured transactions atomically, stopping at an unknown writer or conflict.
+    Run {
+        #[arg(long)]
+        stream: String,
+        #[arg(long, required = true)]
+        rehearsal: bool,
+        #[arg(long)]
+        once: bool,
+        #[arg(long,default_value_t=1000,value_parser=clap::value_parser!(u64).range(100..=60000))]
+        poll_ms: u64,
+    },
+    Pause {
+        #[arg(long)]
+        stream: String,
+    },
+    Resume {
+        #[arg(long)]
+        stream: String,
+        #[arg(long, required = true)]
+        rehearsal: bool,
+    },
+    Status {
+        #[arg(long)]
+        stream: String,
+    },
+}
+
+async fn execute_lane(pool: &sqlx::PgPool, command: LaneCommand, is_player: bool) -> Result<()> {
+    match command {
+        LaneCommand::Bootstrap { stream } => {
+            let source = source_pool().await?;
+            let result = if is_player {
+                player::bootstrap(&source, pool, &stream).await?
+            } else {
+                worlds::bootstrap(&source, pool, &stream).await?
+            };
+            println!("{}", serde_json::to_string_pretty(&result)?);
+            source.close().await;
+        }
+        LaneCommand::Status { stream } => {
+            let result = if is_player {
+                player::status(pool, &stream).await?
+            } else {
+                worlds::status(pool, &stream).await?
+            };
+            println!("{}", serde_json::to_string_pretty(&result)?);
+        }
+        LaneCommand::Pause { stream } => {
+            if is_player {
+                player::set_paused(pool, &stream, true, false).await?
+            } else {
+                worlds::set_paused(pool, &stream, true, false).await?
+            }
+        }
+        LaneCommand::Resume { stream, rehearsal } => {
+            if is_player {
+                player::set_paused(pool, &stream, false, rehearsal).await?
+            } else {
+                worlds::set_paused(pool, &stream, false, rehearsal).await?
+            }
+        }
+        LaneCommand::Capture {
+            stream,
+            once,
+            poll_ms,
+        } => {
+            let source = source_pool().await?;
+            let run = async {
+                loop {
+                    let captured = if is_player {
+                        player::pump_once(&source, pool, &stream).await?
+                    } else {
+                        worlds::pump_once(&source, pool, &stream).await?
+                    };
+                    if once {
+                        return Ok::<(), anyhow::Error>(());
+                    }
+                    if !captured {
+                        tokio::time::sleep(Duration::from_millis(poll_ms)).await;
+                    }
+                }
+            };
+            tokio::select! { result=run=>result?, result=shutdown_signal()=>{result?;} }
+            source.close().await;
+        }
+        LaneCommand::Run {
+            stream,
+            once,
+            poll_ms,
+            rehearsal,
+        } => {
+            anyhow::ensure!(rehearsal, "explicit rehearsal acknowledgement required");
+            let run = async {
+                loop {
+                    let idle = if is_player {
+                        match player::apply_next(pool, &stream).await? {
+                            player::Outcome::Blocked => {
+                                bail!("player stream blocked; inspect status and source evidence")
+                            }
+                            player::Outcome::Idle => true,
+                            player::Outcome::Applied => false,
+                        }
+                    } else {
+                        match worlds::apply_next(pool, &stream).await? {
+                            worlds::Outcome::Blocked => {
+                                bail!("worlds stream blocked; inspect status and source evidence")
+                            }
+                            worlds::Outcome::Idle => true,
+                            worlds::Outcome::Applied => false,
+                        }
+                    };
+                    if once {
+                        return Ok::<(), anyhow::Error>(());
+                    }
+                    if idle {
+                        tokio::time::sleep(Duration::from_millis(poll_ms)).await;
+                    }
+                }
+            };
+            tokio::select! { result=run=>result?, result=shutdown_signal()=>{result?;} }
+        }
+    }
+    Ok(())
 }
 
 async fn read_envelope(file: &PathBuf) -> Result<Envelope> {
@@ -216,6 +379,36 @@ async fn execute(args: Args) -> Result<()> {
         .await
         .context("connect to migration sync destination")?;
     match args.command {
+        Command::InstallPlayerSource { scope_file } => {
+            let mut bytes = Vec::new();
+            tokio::fs::File::open(scope_file)
+                .await?
+                .take(MAX_ENVELOPE_BYTES + 1)
+                .read_to_end(&mut bytes)
+                .await?;
+            anyhow::ensure!(
+                bytes.len() as u64 <= MAX_ENVELOPE_BYTES,
+                "player scope file exceeds size bound"
+            );
+            let scopes: Vec<player::Scope> = serde_json::from_slice(&bytes)
+                .map_err(|_| anyhow::anyhow!("invalid player scope JSON"))?;
+            let source = source_pool().await?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&player::install(&source, &scopes).await?)?
+            );
+            source.close().await;
+        }
+        Command::InstallWorldsSource { world, wallet } => {
+            let source = source_pool().await?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&worlds::install(&source, &world, &wallet).await?)?
+            );
+            source.close().await;
+        }
+        Command::Player { command } => execute_lane(&pool, command, true).await?,
+        Command::Worlds { command } => execute_lane(&pool, command, false).await?,
         Command::Check {
             stream,
             max_age_seconds,
@@ -555,5 +748,48 @@ mod tests {
         assert!(!diagnostic.contains("example.invalid"));
         assert!(!diagnostic.contains("private"));
         assert!(!diagnostic.is_empty());
+    }
+    #[test]
+    fn player_and_worlds_replay_require_rehearsal() {
+        for lane in ["player", "worlds"] {
+            assert!(
+                Args::try_parse_from([
+                    "sync",
+                    "--database-url",
+                    "postgres://test/db",
+                    lane,
+                    "run",
+                    "--stream",
+                    "pilot"
+                ])
+                .is_err()
+            );
+            assert!(
+                Args::try_parse_from([
+                    "sync",
+                    "--database-url",
+                    "postgres://test/db",
+                    lane,
+                    "run",
+                    "--stream",
+                    "pilot",
+                    "--rehearsal",
+                    "--once"
+                ])
+                .is_ok()
+            );
+            assert!(
+                Args::try_parse_from([
+                    "sync",
+                    "--database-url",
+                    "postgres://test/db",
+                    lane,
+                    "resume",
+                    "--stream",
+                    "pilot"
+                ])
+                .is_err()
+            );
+        }
     }
 }

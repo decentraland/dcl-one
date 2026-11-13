@@ -7,3 +7,6 @@ pub mod store;
 pub mod ops;
 
 pub mod poi;
+
+pub mod player;
+pub mod worlds;

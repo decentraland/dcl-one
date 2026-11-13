@@ -67,19 +67,30 @@ pub async fn normal_runtime_guard(pool: &PgPool) -> anyhow::Result<PgConnection>
     )
     .execute(&mut connection)
     .await?;
-    let exists: bool =
-        sqlx::query_scalar("SELECT to_regclass('migration_sync.streams') IS NOT NULL")
+    for table in [
+        "migration_sync.streams",
+        "migration_sync.player_streams",
+        "migration_sync.worlds_streams",
+    ] {
+        let exists: bool = sqlx::query_scalar("SELECT to_regclass($1) IS NOT NULL")
+            .bind(table)
             .fetch_one(&mut connection)
             .await?;
-    if exists {
-        let registered: bool =
-            sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM migration_sync.streams)")
-                .fetch_one(&mut connection)
-                .await?;
-        anyhow::ensure!(
-            !registered,
-            "normal runtime forbidden on a migration follower database; retire migration ownership before cutover"
-        );
+        if exists {
+            // The table names are fixed repository-owned strings, not operator input.
+            let sql = match table {
+                "migration_sync.streams" => "SELECT EXISTS(SELECT 1 FROM migration_sync.streams)",
+                "migration_sync.player_streams" => {
+                    "SELECT EXISTS(SELECT 1 FROM migration_sync.player_streams)"
+                }
+                _ => "SELECT EXISTS(SELECT 1 FROM migration_sync.worlds_streams)",
+            };
+            let registered: bool = sqlx::query_scalar(sql).fetch_one(&mut connection).await?;
+            anyhow::ensure!(
+                !registered,
+                "normal runtime forbidden on a migration follower database; retire migration ownership before cutover"
+            );
+        }
     }
     Ok(connection)
 }
@@ -117,6 +128,20 @@ mod tests {
             .bind(Uuid::new_v4()).execute(&mut *transaction).await.unwrap();
         transaction.commit().await.unwrap();
         // Paused still means migration ownership, not permission to run jobs.
+        assert!(normal_runtime_guard(&pool).await.is_err());
+    }
+    #[tokio::test]
+    async fn player_and_worlds_registration_each_fence_normal_runtime() {
+        let Some(pool) = crate::db::scratch::isolated_pool(3).await else {
+            return;
+        };
+        sqlx::query("INSERT INTO migration_sync.player_streams(name,generation,baseline,captured,applied) VALUES('player',$1,0,0,0)").bind(Uuid::new_v4()).execute(&pool).await.unwrap();
+        assert!(normal_runtime_guard(&pool).await.is_err());
+        sqlx::query("DELETE FROM migration_sync.player_streams")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO migration_sync.worlds_streams(name,generation,baseline_position,captured_position,applied_position) VALUES('worlds',$1,0,0,0)").bind(Uuid::new_v4()).execute(&pool).await.unwrap();
         assert!(normal_runtime_guard(&pool).await.is_err());
     }
 }
