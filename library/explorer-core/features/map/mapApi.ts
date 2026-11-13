@@ -132,9 +132,11 @@ export interface MapSearchResult {
   total: number
 }
 
+const queryValue = (value: string): string => encodeURIComponent(value).replace(/%20/g, '+')
+
 export function searchQuery(search: MapSearch): string {
   const params = [
-    `search=${search.text.replace(/ /g, '+')}`,
+    `search=${queryValue(search.text)}`,
     `offset=${search.page * SEARCH_PAGE_SIZE}`,
     `limit=${SEARCH_PAGE_SIZE}`,
     `order_by=${search.sort}`,
@@ -255,7 +257,10 @@ export function fixMapPublicReads(data: { pois: Vec2[]; peers: Peer[] } | null):
 export async function fetchPoiParcels(signal?: AbortSignal): Promise<Vec2[]> {
   if (fixedPublicReads != null) return fixedPublicReads.pois
   const res = await fetch(`${serviceUrl('dclLists')}/pois`, { method: 'POST', signal })
-  if (!res.ok) throw new Error(`The points of interest list returned ${res.status}`)
+  if (!res.ok) {
+    await res.body?.cancel()
+    throw new Error(`The points of interest list returned ${res.status}`)
+  }
   const body = (await res.json()) as { data?: unknown }
   const out: Vec2[] = []
   for (const pointer of Array.isArray(body.data) ? body.data : []) {
@@ -278,7 +283,10 @@ export interface Peer {
 export async function fetchPeers(signal?: AbortSignal): Promise<Peer[]> {
   if (fixedPublicReads != null) return fixedPublicReads.peers
   const res = await fetch(`${serviceUrl('archipelagoStats')}/comms/peers`, { signal })
-  if (!res.ok) throw new Error(`The connected players list returned ${res.status}`)
+  if (!res.ok) {
+    await res.body?.cancel()
+    throw new Error(`The connected players list returned ${res.status}`)
+  }
   const body = (await res.json()) as { peers?: unknown }
   const out: Peer[] = []
   for (const peer of Array.isArray(body.peers) ? body.peers : []) {

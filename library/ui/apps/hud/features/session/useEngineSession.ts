@@ -1949,6 +1949,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           fetchedRef.current.delete(msg.request)
           console.error(`[bridge] ${msg.request} failed:`, msg.error)
           if (msg.request === 'saveProfile' && profileInFlightRef.current) settleProfileSave(false)
+          // the map showed the change before the engine took it: read back the home it holds
+          if (msg.request === 'setHomeScene' || msg.request === 'unsetHomeScene') driver.send({ kind: 'getHomeScene' })
           break
         case 'avatarSaveFailed':
           setSaveError(SAVE_FAILED_MESSAGE)

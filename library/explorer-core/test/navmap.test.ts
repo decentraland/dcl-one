@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import type { MapEvent, MapPlace, MapSearch } from '../features/map/mapApi'
 import { homeOf, isHomePlace, createHomeStore, NO_HOME } from '../features/map/home'
-import { createNavigationStore } from '../features/map/navigation'
+import { createNavigationStore, destinationParcel } from '../features/map/navigation'
 import { Navmap, pagination, type NavmapApi } from '../features/map/navmap'
 import { parcelCenter } from '../features/map/mapCoords'
 import { calendarLink, eventSchedule, eventShareLinks, jumpInLink, placeShareLinks, upcomingDates } from '../features/map/shareLinks'
@@ -117,6 +117,54 @@ describe('map search', () => {
     expect(pagination(49, 0)).toEqual({ shown: false, next: false, prev: false })
     expect(pagination(120, 0)).toEqual({ shown: true, next: true, prev: false })
     expect(pagination(120, 2)).toEqual({ shown: true, next: false, prev: true })
+    // a full last page has nothing after it
+    expect(pagination(50, 0)).toEqual({ shown: true, next: false, prev: false })
+    expect(pagination(100, 0)).toEqual({ shown: true, next: true, prev: false })
+    expect(pagination(100, 1)).toEqual({ shown: true, next: false, prev: true })
+    expect(pagination(101, 1)).toEqual({ shown: true, next: true, prev: true })
+  })
+
+  it('leaves a search that is still on its way behind when a place is opened', async () => {
+    let answer: (result: { places: MapPlace[]; total: number }) => void = () => undefined
+    const { nav } = setup({ searchPlaces: vi.fn(() => new Promise<{ places: MapPlace[]; total: number }>((resolve) => (answer = resolve))) })
+    nav.typeText('club')
+    nav.submitSearch()
+    await settle()
+    void nav.selectParcel({ x: 0, y: 0 }, false)
+    await settle()
+    answer({ places: [CLUB], total: 1 })
+    await settle()
+    const s = nav.getSnapshot()
+    expect(s.section).toBe('place')
+    expect(s.searchMarkers).toEqual([])
+    expect(s.results.places).toEqual([])
+    // the place is the only thing to go back from
+    await nav.back()
+    await nav.back()
+    expect(nav.getSnapshot().input.interactable).toBe(true)
+    expect(nav.getSnapshot().results.shown).toBe(false)
+  })
+
+  it('goes back to the list from a place opened while its live badges were still being read', async () => {
+    let answer: (events: MapEvent[]) => void = () => undefined
+    let reads = 0
+    const { nav } = setup({ fetchEventsAt: vi.fn(() => (reads++ === 0 ? new Promise<MapEvent[]>((resolve) => (answer = resolve)) : Promise.resolve([]))) })
+    nav.typeText('club')
+    nav.submitSearch()
+    await settle()
+    expect(nav.getSnapshot().results.places).toHaveLength(3)
+    nav.clickResult(CLUB)
+    await settle()
+    answer([])
+    await settle()
+    expect(nav.getSnapshot().section).toBe('place')
+    await nav.back()
+    await settle()
+    const s = nav.getSnapshot()
+    expect(s.section).toBe('search')
+    expect(s.results.shown).toBe(true)
+    expect(s.results.places).toHaveLength(3)
+    expect(s.searchMarkers.map((m) => m.place.id)).toEqual(['plaza', 'club'])
   })
 
   it('clears the text, the chip and the markers, and closes the panel', async () => {
@@ -137,6 +185,11 @@ describe('map search', () => {
       'search=sugar+club&offset=100&limit=50&order_by=like_score&order=desc&categories=music&with_realms_detail=true&only_sdk7=true'
     )
     expect(searchQuery({ text: '', category: '', favorites: true, sort: 'most_active', page: 0 })).toContain('&only_favorites=true')
+    // what the player typed stays one value
+    const typed = searchQuery({ text: 'a&only_favorites=true #b%c+d', category: '', favorites: false, sort: 'most_active', page: 0 })
+    expect(typed.startsWith('search=a%26only_favorites%3Dtrue+%23b%25c%2Bd&offset=0&')).toBe(true)
+    expect(new URLSearchParams(typed).get('search')).toBe('a&only_favorites=true #b%c+d')
+    expect(new URLSearchParams(typed).has('only_favorites')).toBe(false)
   })
 })
 
@@ -407,6 +460,17 @@ describe('home', () => {
     expect(store.getSnapshot()).toEqual(NO_HOME)
     expect(sent).toEqual([{ parcel: { x: 2, y: 3 } }, { world: 'mansion.dcl.eth' }, null])
   })
+
+  it('holds no home once the engine is gone', () => {
+    const store = createHomeStore()
+    const heard = vi.fn()
+    store.subscribe(heard)
+    store.setTransport(() => undefined)
+    store.set({ parcel: { x: 2, y: 3 } })
+    store.setTransport(null)
+    expect(store.getSnapshot()).toEqual(NO_HOME)
+    expect(heard).toHaveBeenCalledTimes(2)
+  })
 })
 
 describe('navigation', () => {
@@ -416,6 +480,9 @@ describe('navigation', () => {
     expect(store.getSnapshot()).toMatchObject({ parcel: { x: -20, y: 60 }, title: 'Sugar Club (-20, 60)', position: parcelCenter({ x: -20, y: 60 }) })
     store.start(place('big', 'Big', ['5,5', '6,5'], { base_position: '6,5' }))
     expect(store.getSnapshot()?.parcel).toEqual({ x: 6, y: 5 })
+    expect(destinationParcel(CLUB)).toEqual({ x: -20, y: 60 })
+    expect(destinationParcel(place('big', 'Big', ['5,5', '6,5'], { base_position: '6,5' }))).toEqual({ x: 6, y: 5 })
+    expect(destinationParcel(null)).toEqual({ x: 0, y: 0 })
   })
 
   it('ends when the player reaches the destination, and not before', () => {

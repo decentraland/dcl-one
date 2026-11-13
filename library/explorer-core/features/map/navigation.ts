@@ -26,6 +26,10 @@ export interface NavigationStore {
   playerMoved: (position: Vec2) => boolean
 }
 
+export function destinationParcel(place: MapPlace | null): Vec2 {
+  return (place == null ? null : place.positions.length === 1 ? parseParcel(place.positions[0]) : parseParcel(place.base_position)) ?? { x: 0, y: 0 }
+}
+
 export function createNavigationStore(): NavigationStore {
   let destination: Destination | null = null
   let lastSqrMagnitude = 0
@@ -41,7 +45,7 @@ export function createNavigationStore(): NavigationStore {
     },
     getSnapshot: () => destination,
     start: (place) => {
-      const parcel = (place == null ? null : place.positions.length === 1 ? parseParcel(place.positions[0]) : parseParcel(place.base_position)) ?? { x: 0, y: 0 }
+      const parcel = destinationParcel(place)
       commit({ parcel, position: parcelCenter(parcel), title: `${place != null ? place.title : EMPTY_PARCEL_NAME} (${parcel.x}, ${parcel.y})` })
     },
     stop: () => {

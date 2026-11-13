@@ -1,6 +1,7 @@
 // The sea and shores around Genesis City, drawn under the satellite map. One canvas the size of
 // the map's view, redrawn every frame from the camera while the map is open; where the browser
-// gives no WebGL the map's plain background shows instead.
+// gives no WebGL, or takes it back, the map's plain background shows instead. The canvas goes
+// when the map closes, so everything the context holds is given back then.
 
 import { useEffect, useRef } from 'react'
 import type { MapView } from '@explorer-core/features/map/mapZoom'
@@ -23,7 +24,7 @@ function compile(gl: WebGLRenderingContext, type: number, source: string): WebGL
   return shader
 }
 
-function texture(gl: WebGLRenderingContext, unit: number, src: string, mipmaps: boolean): void {
+function texture(gl: WebGLRenderingContext, unit: number, src: string, mipmaps: boolean): { tex: WebGLTexture | null; image: HTMLImageElement } {
   const tex = gl.createTexture()
   gl.activeTexture(gl.TEXTURE0 + unit)
   gl.bindTexture(gl.TEXTURE_2D, tex)
@@ -44,6 +45,7 @@ function texture(gl: WebGLRenderingContext, unit: number, src: string, mipmaps: 
     if (mipmaps) gl.generateMipmap(gl.TEXTURE_2D)
   }
   image.src = src
+  return { tex, image }
 }
 
 export function OceanLayer({ view }: { view: { current: MapView } }): React.JSX.Element {
@@ -57,30 +59,56 @@ export function OceanLayer({ view }: { view: { current: MapView } }): React.JSX.
     if (typeof WebGLRenderingContext === 'undefined') return
     const gl = canvas.getContext('webgl', { alpha: false, antialias: false, powerPreference: 'low-power' })
     if (gl == null || gl.isContextLost()) return
+    const textures: Array<{ tex: WebGLTexture | null; image: HTMLImageElement }> = []
+    let buffer: WebGLBuffer | null = null
+    let frame = 0
     const vertex = compile(gl, gl.VERTEX_SHADER, OCEAN_VERTEX)
     const fragment = compile(gl, gl.FRAGMENT_SHADER, OCEAN_FRAGMENT)
     const program = gl.createProgram()
-    if (vertex == null || fragment == null || program == null) return
+    // the browser took the context back: nothing more is drawn, and the plain background shows
+    const lost = (): void => {
+      cancelAnimationFrame(frame)
+      canvas.hidden = true
+    }
+    const release = (): void => {
+      cancelAnimationFrame(frame)
+      canvas.removeEventListener('webglcontextlost', lost)
+      for (const { tex, image } of textures) {
+        // an image still on its way must not write into a texture that is gone
+        image.onload = null
+        gl.deleteTexture(tex)
+      }
+      gl.deleteBuffer(buffer)
+      gl.deleteProgram(program)
+      gl.deleteShader(vertex)
+      gl.deleteShader(fragment)
+      // the context goes with the canvas; a canvas still in the page is about to be set up again
+      const loser = gl.getExtension('WEBGL_lose_context')
+      setTimeout(() => {
+        if (!canvas.isConnected) loser?.loseContext()
+      }, 0)
+    }
+    if (vertex == null || fragment == null || program == null) return release
     gl.attachShader(program, vertex)
     gl.attachShader(program, fragment)
     gl.linkProgram(program)
     if (gl.getProgramParameter(program, gl.LINK_STATUS) !== true) {
       console.error('[map] the sea shader did not link', gl.getProgramInfoLog(program))
-      return
+      return release
     }
     canvas.hidden = false
+    canvas.addEventListener('webglcontextlost', lost)
     gl.useProgram(program)
 
-    gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer())
+    buffer = gl.createBuffer()
+    gl.bindBuffer(gl.ARRAY_BUFFER, buffer)
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW)
     const position = gl.getAttribLocation(program, 'aPosition')
     gl.enableVertexAttribArray(position)
     gl.vertexAttribPointer(position, 2, gl.FLOAT, false, 0, 0)
 
     // the height and the noise are read at full detail; the ground is mip-mapped
-    texture(gl, 0, OCEAN_ART.height, false)
-    texture(gl, 1, OCEAN_ART.ground, true)
-    texture(gl, 2, OCEAN_ART.noise, false)
+    textures.push(texture(gl, 0, OCEAN_ART.height, false), texture(gl, 1, OCEAN_ART.ground, true), texture(gl, 2, OCEAN_ART.noise, false))
     gl.uniform1i(gl.getUniformLocation(program, 'uHeight'), 0)
     gl.uniform1i(gl.getUniformLocation(program, 'uGround'), 1)
     gl.uniform1i(gl.getUniformLocation(program, 'uNoise'), 2)
@@ -92,7 +120,6 @@ export function OceanLayer({ view }: { view: { current: MapView } }): React.JSX.
     // still water for those who ask for less motion: drawn again only when the camera moves
     const still = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true
     let drawn = ''
-    let frame = 0
     const draw = (now: number): void => {
       frame = requestAnimationFrame(draw)
       const rect = canvas.getBoundingClientRect()
@@ -118,11 +145,7 @@ export function OceanLayer({ view }: { view: { current: MapView } }): React.JSX.
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4)
     }
     frame = requestAnimationFrame(draw)
-    // the context is the canvas's for good, so it is left for a later mount of the same canvas
-    return () => {
-      cancelAnimationFrame(frame)
-      gl.deleteProgram(program)
-    }
+    return release
   }, [view])
 
   return <canvas ref={ref} className={styles.ocean} aria-hidden="true" />

@@ -9,7 +9,7 @@ import { parseParcel, playerMarkerPosition, worldToGrid, type Vec2 } from '@expl
 import { mapLayers } from '@explorer-core/features/map/mapLayersStore'
 import type { EventMarker, PlaceMarker } from '@explorer-core/features/map/mapMarkers'
 import { CAMERA_CENTER_SECONDS, CAMERA_MOVE_SECONDS } from '@explorer-core/features/map/mapZoom'
-import { navigation } from '@explorer-core/features/map/navigation'
+import { destinationParcel, navigation } from '@explorer-core/features/map/navigation'
 import { scenePins, type ScenePin } from '@explorer-core/features/map/scenePins'
 import { Navmap } from '@explorer-core/features/map/navmap'
 import { showToast } from '../../design'
@@ -185,6 +185,12 @@ export function MapPage({
   const placeIsHome = (place: MapPlace, origin: Vec2 | null): boolean =>
     isHomePlace(home, place) || (isRoad(place.title) && origin != null && home.world == null && home.parcel?.x === origin.x && home.parcel.y === origin.y)
 
+  const navigatingTo = (place: MapPlace): boolean => {
+    if (destination == null || isWorldPlace(place)) return false
+    const end = destinationParcel(place)
+    return destination.parcel.x === end.x && destination.parcel.y === end.y
+  }
+
   const p = profile.data
   const openPhoto = photo != null ? photo.photos[photo.index] : undefined
   return (
@@ -267,6 +273,7 @@ export function MapPage({
               view={snap.place}
               referrer={address}
               isHome={placeIsHome(snap.place.place, snap.place.origin)}
+              navigating={navigatingTo(snap.place.place)}
               onPlaceChange={(place) => nav.updatePlace(place)}
               onHome={(on) => snap.place != null && setHome(snap.place.place, snap.place.origin, on)}
               onStartNavigation={() => navigation.start(snap.place?.place ?? null)}

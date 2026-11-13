@@ -4448,6 +4448,34 @@
         "skill-kit-followups": "Consumer skill and kit follow-ups: the skill's plugin script reads boolean and text component properties, skips text layers of nested instances, collects only visible text (a TEXT property only when a visible layer shows it), drops a name two visible texts disagree on and reports it and refuses a node without a main component; design text goes in single quotes, never double quotes; the mapping-only scope and the preflight's expected exit 1 are stated. The kit refuses every conflict (foreign or unreadable skill, newer or unordered version, symlinked .claude or .claude/skills) before it writes, orders versions by semver, hashes paths with / and CRLF as LF with framed entries, and check names install --force for a newer install. resolve --batch reads a relative path from the directory the package's figma script was run in. Figma BOOLEAN properties travel apart from variants as booleanProperties (batch, MCP, --boolean): one the mapping does not read is an unmapped-figma-property warning, one it reads as a variant does not fit, an unread variant still refuses a name match, and usageFor and propTranslation report the booleans given. check reports an install hashed by an earlier kit as stale, not as edited; an unreadable manifest or one from another library's kit is refused without --force.",
         "verified-install": "Verified installation binds lock bytes before cache verification and compares them after every verification and source initialization. Tests reject invalid cache reads through a bypass App, preserve ignored target files and retain both errors and the previous tree when rollback fails."
       }
+    },
+    {
+      "repository": "https://github.com/decentraland/unity-explorer",
+      "revision": "59c3766303b02b8e4f776b5f11d5b97b565c0cb3",
+      "license": {
+        "spdx": "Apache-2.0",
+        "status": "The repository's license. The shader's header attributes two functions, 'hash' and 'noise' by iq, to CC BY-NC-SA 3.0; neither is in the port: the shader calls them only in a branch its USETEXTUREHEIGHT switch compiles out, and the port reads the noise texture instead."
+      },
+      "imported": {
+        "Explorer/Assets/DCL/MapRenderer/OceanShader/MapOcean.shader": "library/ui/apps/hud/features/map/oceanShader.ts (ported to GLSL: the texture-height path with the constants of MapOcean.mat; the procedural height path and its 'hash' and 'noise1' functions are left out)",
+        "Explorer/Assets/DCL/MapRenderer/OceanShader/DCLMap_basecolor2.png": "library/ui/apps/hud/assets/map/ocean/ground.png (unchanged)",
+        "Explorer/Assets/DCL/MapRenderer/OceanShader/DCLMap_height2.png": "library/ui/apps/hud/assets/map/ocean/height.png (unchanged)",
+        "Explorer/Assets/DCL/MapRenderer/OceanShader/OceanNoise.png": "library/ui/apps/hud/assets/map/ocean/noise.png (unchanged)"
+      },
+      "files": {
+        "Explorer/Assets/DCL/MapRenderer/OceanShader/MapOcean.shader": {
+          "sha256": "230f0360beb3fc1fce344aa3db3532417162bd9a5eb66262fc226cc2d59fdf3c"
+        },
+        "library/ui/apps/hud/assets/map/ocean/ground.png": {
+          "sha256": "4d17c5fc6a87f8bb7b971dd557e5925c9a4294fd2678d30235e0aa602b6a78ed"
+        },
+        "library/ui/apps/hud/assets/map/ocean/height.png": {
+          "sha256": "969161ac76e2eb5797b3ca6688e4ba7aa9c592e04c4fe87fc11a78b4ffce86c4"
+        },
+        "library/ui/apps/hud/assets/map/ocean/noise.png": {
+          "sha256": "de293e005d398faea2fe03b886d9332889a63799c4b98ecb060f88588d8eb3ce"
+        }
+      }
     }
   ],
   "publicFoundations": {

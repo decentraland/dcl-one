@@ -456,7 +456,12 @@ describe('map place panel', () => {
     await userEvent.click(await within(panel()).findByRole('button', { name: 'Share' }))
     const menu = within(panel()).getByRole('menu')
     expect(within(menu).getByRole('menuitem', { name: 'Share on X' })).toBeInTheDocument()
-    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Copy Link' }))
+    // the focus stays where the player moved it when something else on the page changes
+    const copy = within(menu).getByRole('menuitem', { name: 'Copy Link' })
+    copy.focus()
+    act(() => scenePins.receive([{ id: 'scene:1', x: 3, y: 3, title: 'Pin', description: '', icon: null }]))
+    expect(copy).toHaveFocus()
+    fireEvent.click(copy)
     expect(writeText).toHaveBeenCalledWith(expect.stringContaining('/jump/?position=-20,60'))
     expect(within(panel()).queryByRole('menu')).not.toBeInTheDocument()
     vi.unstubAllGlobals()
@@ -581,6 +586,72 @@ describe('map navigation', () => {
     await userEvent.click(await within(panel()).findByRole('button', { name: 'start navigation' }))
     await userEvent.click(within(panel()).getByRole('button', { name: 'JUMP IN' }))
     expect(navigation.getSnapshot()).toBeNull()
+  })
+
+  it('offers to start or exit the route by whether one leads to the place', async () => {
+    serve({ search: [CLUB] })
+    renderMap()
+    await search('club')
+    await userEvent.click(await within(panel()).findByRole('button', { name: /Sugar Club/ }))
+    await userEvent.click(await within(panel()).findByRole('button', { name: 'start navigation' }))
+    // the route ending elsewhere than in the panel, as on arrival
+    act(() => navigation.stop())
+    expect(within(panel()).getByRole('button', { name: 'start navigation' })).toBeInTheDocument()
+
+    await userEvent.click(within(panel()).getByRole('button', { name: 'start navigation' }))
+    await userEvent.click(within(panel()).getByRole('button', { name: 'Back' }))
+    await userEvent.click(await within(panel()).findByRole('button', { name: /Sugar Club/ }))
+    expect(await within(panel()).findByRole('button', { name: 'exit navigation' })).toBeInTheDocument()
+  })
+})
+
+describe('map view size', () => {
+  it('follows the size of the view each time the map opens', () => {
+    const watched: Element[] = []
+    const dropped: Element[][] = []
+    class Observer {
+      private readonly seen: Element[] = []
+      observe(el: Element): void {
+        this.seen.push(el)
+        watched.push(el)
+      }
+      unobserve(): void {}
+      disconnect(): void {
+        dropped.push(this.seen)
+      }
+    }
+    vi.stubGlobal('ResizeObserver', Observer)
+    serve()
+    const session = fakeSession()
+    const closed: MapState = { ...session.map, open: false, teleportToPlace: vi.fn(), changeRealm: vi.fn(), toggle: vi.fn() }
+    const rest = { minimap: session.minimap, profile: fakeProfileState(), gallery: session.gallery, onNavigate: vi.fn() }
+    // the page is mounted with the map closed, as the HUD mounts it
+    const { rerender } = render(<MapPage map={closed} {...rest} />)
+    expect(watched).toEqual([])
+    rerender(<MapPage map={{ ...closed, open: true }} {...rest} />)
+    const first = view()
+    expect(watched).toEqual([first])
+
+    rerender(<MapPage map={closed} {...rest} />)
+    expect(dropped).toEqual([[first]])
+    rerender(<MapPage map={{ ...closed, open: true }} {...rest} />)
+    expect(watched).toEqual([first, view()])
+    vi.unstubAllGlobals()
+  })
+})
+
+describe('map live events', () => {
+  it('stops reading them when the page goes', () => {
+    const started = vi.spyOn(globalThis, 'setInterval')
+    const stopped = vi.spyOn(globalThis, 'clearInterval')
+    serve()
+    const session = fakeSession()
+    const map: MapState = { ...session.map, open: true, teleportToPlace: vi.fn(), changeRealm: vi.fn(), toggle: vi.fn() }
+    const { unmount } = render(<MapPage map={map} minimap={session.minimap} profile={fakeProfileState()} gallery={session.gallery} onNavigate={vi.fn()} />)
+    const polls = started.mock.results.filter((_, i) => started.mock.calls[i][1] === 5 * 60 * 1000).map((r) => r.value as unknown)
+    expect(polls).toHaveLength(1)
+    unmount()
+    expect(stopped.mock.calls.map((c) => c[0] as unknown)).toContain(polls[0])
   })
 })
 

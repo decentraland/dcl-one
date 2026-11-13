@@ -2,8 +2,10 @@
 // texture give the land and its shores, and noise-driven waves, highlights and foam move the
 // water. It works in linear light, like the textures and colours it is given, and writes sRGB.
 //
-// The water model this follows credits its 'hash' and 'noise' functions to iq, under the Creative
-// Commons Attribution-NonCommercial-ShareAlike 3.0 Unported License.
+// Where the shader and its three textures come from, and under which license, is recorded in
+// library/ui/upstream.lock.json. Its source attributes a 'hash' and a 'noise' function to iq under
+// the Creative Commons Attribution-NonCommercial-ShareAlike 3.0 Unported License; neither is part
+// of this file: noise is read from the noise texture.
 
 /** Side of the square the sea covers, map units, centred on the map's origin. */
 export const OCEAN_SIZE = 24000

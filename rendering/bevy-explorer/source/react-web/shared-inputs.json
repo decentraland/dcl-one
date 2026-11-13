@@ -5089,11 +5089,11 @@
     },
     {
       "path": "library/explorer-core/features/map/home.ts",
-      "sha256": "3f8495841a463f986ede20551ee9e601ed8420175f840c22afc3b3b45047255e"
+      "sha256": "404530bc2572575ebcb9399f2813a8f67f31f70e01c47512b4a7a6970e2b0486"
     },
     {
       "path": "library/explorer-core/features/map/mapApi.ts",
-      "sha256": "a2b4ac4ffb2f411910bd68f738f4eac65aae0bbeaa84c48c1e0031e2603d9835"
+      "sha256": "f7d7d0cfc9f632d61aba6117009f75d5b0fb0870f4c7853a10b27c76ce09908a"
     },
     {
       "path": "library/explorer-core/features/map/mapCoords.ts",
@@ -5113,11 +5113,11 @@
     },
     {
       "path": "library/explorer-core/features/map/navigation.ts",
-      "sha256": "7bc0eb484469f61541b88c7ab724a3f04a57f1f518b162026c8a3e8e6d9d1f3e"
+      "sha256": "00d6ddff136edbfbeeef426ff00877e43d57926c388494594897fcfa5747a705"
     },
     {
       "path": "library/explorer-core/features/map/navmap.ts",
-      "sha256": "f74c809661d85d1a246d3cef262574ebc80347c799ef45ff8a4960b58c0e07c4"
+      "sha256": "aa565d7e6c15606c5bdffe265cec3ce8b67b8e022d6888bdddd564b055b1a6f4"
     },
     {
       "path": "library/explorer-core/features/map/parcelsCenter.ts",
@@ -5373,7 +5373,7 @@
     },
     {
       "path": "library/explorer-core/test/navmap.test.ts",
-      "sha256": "3cdfd00b23e8db1d9e75beb4ad9e30c448963e2d5894c56bd5d3af4913373331"
+      "sha256": "305050253bcef7ab116bfef0f522f31255b7b216f10ecc9e9d71b5134878b3b8"
     },
     {
       "path": "library/explorer-core/test/outfitRandomizer.test.ts",
@@ -7281,7 +7281,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/map/MapPage.tsx",
-      "sha256": "2938d9e65c7d2e8676337ff244de23150bda39a8bbcf03a025c6442df3a70b58"
+      "sha256": "5d39c1db9c9c62138effcb58c6e48d129fc8df700ab076d5840bf765728403cd"
     },
     {
       "path": "library/ui/apps/hud/features/map/MapToolbar.tsx",
@@ -7289,7 +7289,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/map/OceanLayer.tsx",
-      "sha256": "0128cd28dd763e11e6b3606a70603838580531d1079d648b584dc297ded39173"
+      "sha256": "2e52eb79fc17b0b1358ee394cdd618665e6079c7c059bb47deefc7872194a063"
     },
     {
       "path": "library/ui/apps/hud/features/map/PinsLayer.tsx",
@@ -7309,7 +7309,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/map/oceanShader.ts",
-      "sha256": "f803e4f0fd6a99b1e542a29b44191c265f58d28e4b9554dac0f30511554f6671"
+      "sha256": "53ef7782eb58713a212dc025b7e8f39e0d852aac72fcf2826dc55f8b8bb598c1"
     },
     {
       "path": "library/ui/apps/hud/features/map/panel/EventInfo.tsx",
@@ -7321,7 +7321,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/map/panel/PlaceInfo.tsx",
-      "sha256": "c3fc04344ecbc22150986020c536db0fce8019f6e5008e6a3f79e40e476e7b1c"
+      "sha256": "8d1c6ed501d78386fe2d26b934e887ff0b915c641a4a68813ea58ff1f1b354fb"
     },
     {
       "path": "library/ui/apps/hud/features/map/panel/RightPanel.tsx",
@@ -7337,7 +7337,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/map/panel/ShareMenu.tsx",
-      "sha256": "8281c8cb418d231a2306e3590f35a20854cd6bc18295378227f9724abff15e7d"
+      "sha256": "9725f8c564db46110be2d707a52164d9320ea73a0dfed0e0f36a8cddda946d7a"
     },
     {
       "path": "library/ui/apps/hud/features/map/panel/TextWithLinks.tsx",
@@ -7345,11 +7345,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/map/useMapCamera.ts",
-      "sha256": "7f1eaf022c2e4ff91123a887bcab7fa5c712297d26ff09258294ea4b98007a3d"
+      "sha256": "2e945bf4f8594733907a99c61c76729d34952824206b7505b27a833450be1a52"
     },
     {
       "path": "library/ui/apps/hud/features/map/useMapLayerData.ts",
-      "sha256": "b4d97aec206e229024a330fcff63ba0b07670db47aa22be4d85a1bd5cd79f2ce"
+      "sha256": "7e0ebfb37a214979cb36397e0c6f0ba21c8bf4a9b7efc90c503eaa5cb6b54ecd"
     },
     {
       "path": "library/ui/apps/hud/features/menu/MainMenuShell.module.css",
@@ -7573,7 +7573,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "bc7bc3b5ef36935da2a3a961dbbca89ce557aad25edc75d3d57aac29b88fd5bd"
+      "sha256": "9a22c52a6db2e51dfed5455e2098202052f9cbbebf52a58a3d1d55b0026b6af6"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -7937,7 +7937,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/map.page.test.tsx",
-      "sha256": "62bcbe987d030961d9643fd64e5b419809979b7c1735dff416fad6edc20bbfc7"
+      "sha256": "7cf8baa3524e0c6a66eca178131f248eca3e9a1e614383323f085fe45a601ed0"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/minimap.render.test.tsx",

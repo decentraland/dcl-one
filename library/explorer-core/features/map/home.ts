@@ -48,6 +48,8 @@ export function createHomeStore(): HomeStore {
     },
     setTransport: (transport) => {
       send = transport
+      // without the engine nothing vouches for the home the page last held
+      if (transport == null && home !== NO_HOME) commit(NO_HOME)
     }
   }
 }

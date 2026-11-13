@@ -27,22 +27,30 @@ export function useMapLayerData(shown: boolean, layers: ReadonlySet<MapLayer>, s
   const [peers, setPeers] = useState<Peer[]>([])
   const nearby = useSyncExternalStore(nearbyPlayers.subscribe, nearbyPlayers.getSnapshot)
   const travels = useSyncExternalStore(travelCount.subscribe, travelCount.getSnapshot)
-  const liveStarted = useRef(false)
+  const [liveStarted, setLiveStarted] = useState(false)
   const poisStarted = useRef(false)
 
   const liveOn = shown && layers.has('liveEvents')
   useEffect(() => {
-    if (!liveOn || liveStarted.current) return
-    liveStarted.current = true
+    if (liveOn) setLiveStarted(true)
+  }, [liveOn])
+  // Once started the poll outlives the map being closed, so the markers are current the next
+  // time it opens; it stops with the page.
+  useEffect(() => {
+    if (!liveStarted) return
+    let gone = false
     const read = (): void => {
       fetchLiveEvents()
-        .then((events) => setLiveEvents(liveEventMarkers(events)))
-        .catch(() => setLiveEvents([]))
+        .then((events) => !gone && setLiveEvents(liveEventMarkers(events)))
+        .catch(() => !gone && setLiveEvents([]))
     }
     read()
-    // the poll outlives the map being closed, so the markers are current the next time it opens
-    setInterval(read, LIVE_EVENTS_POLL_MS)
-  }, [liveOn])
+    const timer = setInterval(read, LIVE_EVENTS_POLL_MS)
+    return () => {
+      gone = true
+      clearInterval(timer)
+    }
+  }, [liveStarted])
 
   const poisOn = shown && layers.has('pois')
   useEffect(() => {

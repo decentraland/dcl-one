@@ -197,6 +197,8 @@ export interface PlaceInfoProps {
   /** The sharer's wallet address, put on the links the panel hands out. */
   referrer: string | undefined
   isHome: boolean
+  /** The route the player follows ends at this place. */
+  navigating: boolean
   onPlaceChange: (place: MapPlace) => void
   onHome: (home: boolean) => void
   onStartNavigation: () => void
@@ -206,11 +208,10 @@ export interface PlaceInfoProps {
   onOpenPhoto: (photos: PlacePhoto[], index: number) => void
 }
 
-export function PlaceInfo({ view, referrer, isHome, onPlaceChange, onHome, onStartNavigation, onStopNavigation, onJumpIn, onOpenEvent, onOpenPhoto }: PlaceInfoProps): React.JSX.Element {
+export function PlaceInfo({ view, referrer, isHome, navigating, onPlaceChange, onHome, onStartNavigation, onStopNavigation, onJumpIn, onOpenEvent, onOpenPhoto }: PlaceInfoProps): React.JSX.Element {
   const { place, origin, liveEvent } = view
   const [tab, setTab] = useState<Tab>('overview')
   const [photoCount, setPhotoCount] = useState<number | null>(null)
-  const [navigating, setNavigating] = useState(false)
   const [sharing, setSharing] = useState(false)
   const [imageFailed, setImageFailed] = useState(false)
   // the latest place, for a write that lands after another has changed it
@@ -280,10 +281,7 @@ export function PlaceInfo({ view, referrer, isHome, onPlaceChange, onHome, onSta
               <button
                 type="button"
                 className={`${styles.primaryButton} ${styles.exitNavigation}`}
-                onClick={() => {
-                  setNavigating(false)
-                  onStopNavigation()
-                }}
+                onClick={onStopNavigation}
               >
                 exit navigation
               </button>
@@ -291,10 +289,7 @@ export function PlaceInfo({ view, referrer, isHome, onPlaceChange, onHome, onSta
               <button
                 type="button"
                 className={`${styles.primaryButton} ${styles.startNavigation}`}
-                onClick={() => {
-                  setNavigating(true)
-                  onStartNavigation()
-                }}
+                onClick={onStartNavigation}
               >
                 <MaskIcon src={PANEL_ART.navigation} size={19} />
                 start navigation

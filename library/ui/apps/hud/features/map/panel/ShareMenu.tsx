@@ -9,14 +9,17 @@ import styles from './MapPanel.module.css'
 
 export function ShareMenu({ links, onClose }: { links: ShareLinks; onClose: () => void }): React.JSX.Element {
   const ref = useRef<HTMLDivElement>(null)
+  // the latest `onClose`, so a parent drawing again does not take the focus back to the first item
+  const close = useRef(onClose)
+  close.current = onClose
   useEffect(() => {
     ref.current?.querySelector('button')?.focus()
     const onDown = (e: PointerEvent): void => {
-      if (ref.current != null && !ref.current.contains(e.target as Node)) onClose()
+      if (ref.current != null && !ref.current.contains(e.target as Node)) close.current()
     }
     document.addEventListener('pointerdown', onDown, true)
     return () => document.removeEventListener('pointerdown', onDown, true)
-  }, [onClose])
+  }, [])
   return (
     <div
       ref={ref}

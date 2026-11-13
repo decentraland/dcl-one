@@ -57,6 +57,7 @@ interface DragState {
 
 export function useMapCamera(): MapCamera {
   const elRef = useRef<HTMLDivElement | null>(null)
+  const resizeObserver = useRef<ResizeObserver | null>(null)
   const view = useRef<MapView>({ x: 0, y: 0, ortho: orthoFor(normalizedZoom(DEFAULT_ZOOM_LEVEL)), width: 1920, height: 1010 })
   const zoomValue = useRef(normalizedZoom(DEFAULT_ZOOM_LEVEL))
   const [level, setLevel] = useState(DEFAULT_ZOOM_LEVEL)
@@ -126,29 +127,28 @@ export function useMapCamera(): MapCamera {
     cancelAnimationFrame(inertia.current)
   }, [])
 
+  // The view's element comes and goes with the map, so its size is followed from the ref itself.
   const viewportRef = useCallback(
     (el: HTMLDivElement | null): void => {
+      resizeObserver.current?.disconnect()
+      resizeObserver.current = null
       elRef.current = el
       if (el == null) return
       view.current.width = el.offsetWidth || view.current.width
       view.current.height = el.offsetHeight || view.current.height
       write()
+      if (typeof ResizeObserver === 'undefined') return
+      const observer = new ResizeObserver(() => {
+        if (el.offsetWidth === 0 || el.offsetHeight === 0) return
+        view.current.width = el.offsetWidth
+        view.current.height = el.offsetHeight
+        place(view.current.x, view.current.y)
+      })
+      observer.observe(el)
+      resizeObserver.current = observer
     },
-    [write]
+    [place, write]
   )
-
-  useEffect(() => {
-    const el = elRef.current
-    if (el == null || typeof ResizeObserver === 'undefined') return
-    const observer = new ResizeObserver(() => {
-      if (el.offsetWidth === 0 || el.offsetHeight === 0) return
-      view.current.width = el.offsetWidth
-      view.current.height = el.offsetHeight
-      place(view.current.x, view.current.y)
-    })
-    observer.observe(el)
-    return () => observer.disconnect()
-  }, [place])
 
   useEffect(() => stopMotion, [stopMotion])
 

@@ -534,9 +534,6 @@ pub struct PhotoModeState {
     pub message: String,
 }
 
-/// A profile the engine holds was inserted or replaced: a foreign player's, or the local
-/// player's own. Carries only the address and the new version; a consumer holding an older
-/// version re-reads the profile itself.
 /// A pin a scene put on the map.
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -554,6 +551,9 @@ pub struct MapPinInfo {
     pub icon: Option<String>,
 }
 
+/// A profile the engine holds was inserted or replaced: a foreign player's, or the local
+/// player's own. Carries only the address and the new version; a consumer holding an older
+/// version re-reads the profile itself.
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 #[derive(ts_rs::TS)]

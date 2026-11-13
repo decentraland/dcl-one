@@ -274,11 +274,11 @@ export class Navmap {
   }
 
   private async search(params: SearchParams): Promise<void> {
-    const entry: Entry = { type: 'search', params, result: null, live: null }
-    if (await this.showSearch(entry)) this.push(entry)
+    await this.showSearch({ type: 'search', params, result: null, live: null }, true)
   }
 
-  private async showSearch(entry: Extract<Entry, { type: 'search' }>): Promise<boolean> {
+  /** A `fresh` search enters the history once its places are listed, so a place opened from the list has it to go back to. */
+  private async showSearch(entry: Extract<Entry, { type: 'search' }>, fresh = false): Promise<void> {
     const run = ++this.searchRun
     const { params } = entry
     this.favorites = params.favorites
@@ -304,9 +304,10 @@ export class Navmap {
     } catch {
       entry.result = { places: [], total: 0 }
     }
-    if (run !== this.searchRun) return false
+    if (run !== this.searchRun) return
     const { places, total } = entry.result
     this.set({ results: { ...this.state.results, loading: false, places, total } })
+    if (fresh) this.push(entry)
 
     if (entry.live == null) {
       const bases: Vec2[] = []
@@ -322,13 +323,18 @@ export class Navmap {
       }
       entry.live = live
     }
-    if (run !== this.searchRun) return false
+    if (run !== this.searchRun) return
     this.set({ results: { ...this.state.results, live: entry.live } })
 
     const markers = resultMarkers(places)
     if (params.category != null) this.set({ categoryMarkers: markers, markerCategory: params.category, searchMarkers: [] })
     else this.set({ searchMarkers: markers, categoryMarkers: [] })
-    return true
+  }
+
+  /** A search still on its way no longer lands over what is being opened; one already listed stays. */
+  private supersedeSearch(): void {
+    this.searchRun++
+    if (this.state.results.loading) this.set({ results: NO_RESULTS })
   }
 
   /** The pointer entering or leaving a result. Worlds have no place on the map. */
@@ -344,6 +350,7 @@ export class Navmap {
 
   async selectPlace(place: MapPlace, options: { fromSearch?: boolean; origin?: Vec2 | null; landOnOrigin?: boolean } = {}): Promise<void> {
     const { fromSearch = false, origin = null, landOnOrigin = false } = options
+    this.supersedeSearch()
     if (!fromSearch) this.set({ searchMarkers: [], categoryMarkers: [], resultHover: null, resultSelected: null })
     if (!isWorldPlace(place)) {
       const first = parseParcel(place.positions[0])
@@ -420,6 +427,7 @@ export class Navmap {
   }
 
   async selectEvent(event: MapEvent, place: MapPlace | null = null): Promise<void> {
+    this.supersedeSearch()
     const entry: Entry = { type: 'event', event, place }
     if (await this.showEvent(entry)) this.push(entry)
   }
@@ -465,7 +473,7 @@ export class Navmap {
     if (last == null) return
     if (last.type === 'search') {
       this.searchRun++
-      this.set({ results: { shown: false, loading: false, places: [], live: new Set(), page: 0, total: 0 } })
+      this.set({ results: NO_RESULTS })
     } else if (last.type === 'place') {
       this.placeRun++
       this.setInput({ interactable: true, back: false })
@@ -481,6 +489,8 @@ export class Navmap {
   }
 }
 
+const NO_RESULTS: NavmapSnapshot['results'] = { shown: false, loading: false, places: [], live: new Set(), page: 0, total: 0 }
+
 function toSearch(params: SearchParams): MapSearch {
   return {
     text: params.text,
@@ -493,5 +503,5 @@ function toSearch(params: SearchParams): MapSearch {
 
 /** Whether the list offers paging, and which way it can turn. */
 export function pagination(total: number, page: number): { shown: boolean; next: boolean; prev: boolean } {
-  return { shown: total >= SEARCH_PAGE_SIZE, next: Math.floor(total / SEARCH_PAGE_SIZE) > page, prev: page > 0 }
+  return { shown: total >= SEARCH_PAGE_SIZE, next: (page + 1) * SEARCH_PAGE_SIZE < total, prev: page > 0 }
 }

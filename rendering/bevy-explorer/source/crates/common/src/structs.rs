@@ -579,6 +579,9 @@ pub struct AppConfig {
     /// home was pinned before homes were kept per wallet, or by a guest: the next wallet to sign
     /// in takes that home as its own.
     pub home_account: Option<String>,
+    /// The wallet whose home a guest session is still showing: it stays that wallet's, so the
+    /// next wallet to sign in does not take it. None once the guest pins or unpins a home.
+    pub home_lent_by: Option<String>,
     pub previous_login: Option<PreviousLogin>,
     /// The root key of the benchmark autopilot's local guest (`wallet::local_guest`): it signs each
     /// ephemeral identity, so an expired one is signed again for the same account. Nothing but the
@@ -652,6 +655,7 @@ impl Default for AppConfig {
             home_location: None,
             homes: Default::default(),
             home_account: None,
+            home_lent_by: None,
             previous_login: None,
             guest_root_key: None,
             accepted_terms: None,
@@ -745,6 +749,7 @@ impl AppConfig {
                 },
             );
         }
+        self.home_lent_by = None;
         self.home_realm = Some(realm);
         self.home_location = Some(location);
     }
@@ -754,13 +759,15 @@ impl AppConfig {
         if let Some(account) = &self.home_account {
             self.homes.remove(account);
         }
+        self.home_lent_by = None;
         self.home_realm = None;
         self.home_location = None;
     }
 
     /// Make `account` (a wallet address, or None for a guest) the one whose home the engine
-    /// uses. A wallet with a home gets it back; one without takes a home nobody owns yet, and
-    /// otherwise has none. Returns whether anything changed.
+    /// uses. A wallet with a home gets it back; one without takes a home nobody owns yet (never
+    /// the one a guest session kept on screen for the wallet before it), and otherwise has none.
+    /// Returns whether anything changed.
     pub fn use_home_of(&mut self, account: Option<&str>) -> bool {
         let account = account.map(str::to_lowercase);
         if account == self.home_account {
@@ -768,7 +775,7 @@ impl AppConfig {
         }
         let Some(account) = account else {
             // a guest keeps the home on screen; pinning one no longer touches the wallet's
-            self.home_account = None;
+            self.home_lent_by = self.home_account.take();
             return true;
         };
         match self.homes.get(&account) {
@@ -776,7 +783,10 @@ impl AppConfig {
                 self.home_realm = Some(home.realm.clone());
                 self.home_location = Some(home.location);
             }
-            None if self.home_account.is_none() && self.home_pinned() => {
+            None if self.home_account.is_none()
+                && self.home_lent_by.is_none()
+                && self.home_pinned() =>
+            {
                 self.homes.insert(
                     account.clone(),
                     WalletHome {
@@ -791,6 +801,7 @@ impl AppConfig {
             }
         }
         self.home_account = Some(account);
+        self.home_lent_by = None;
         true
     }
 
@@ -2149,6 +2160,50 @@ mod tests {
         assert_eq!(config.homes[ALICE].location, IVec2::new(1, 1));
         assert!(config.use_home_of(Some(ALICE)));
         assert_eq!(config.home_location(), IVec2::new(1, 1));
+    }
+
+    #[test]
+    fn a_wallet_does_not_take_the_home_a_guest_session_kept_for_another() {
+        let mut config = AppConfig::default();
+        config.use_home_of(Some(ALICE));
+        config.pin_home("alice.dcl.eth".into(), IVec2::new(7, 7));
+        assert!(config.use_home_of(None));
+        assert_eq!(config.home_location(), IVec2::new(7, 7));
+
+        assert!(config.use_home_of(Some(BOB)));
+        assert!(!config.home_pinned());
+        assert!(!config.homes.contains_key(BOB));
+        assert_eq!(config.homes[ALICE].location, IVec2::new(7, 7));
+
+        assert!(config.use_home_of(Some(ALICE)));
+        assert_eq!(config.home_realm.as_deref(), Some("alice.dcl.eth"));
+    }
+
+    #[test]
+    fn a_wallet_takes_the_home_a_guest_pinned() {
+        let mut config = AppConfig::default();
+        config.use_home_of(Some(ALICE));
+        config.pin_home("alice.dcl.eth".into(), IVec2::new(7, 7));
+        config.use_home_of(None);
+        config.pin_home("guest.dcl.eth".into(), IVec2::new(2, 2));
+
+        assert!(config.use_home_of(Some(BOB)));
+        assert_eq!(config.homes[BOB].realm, "guest.dcl.eth");
+        assert_eq!(config.homes[ALICE].realm, "alice.dcl.eth");
+    }
+
+    #[test]
+    fn a_guest_without_a_home_leaves_none_to_take() {
+        let mut config = AppConfig::default();
+        config.use_home_of(Some(ALICE));
+        config.pin_home("alice.dcl.eth".into(), IVec2::new(7, 7));
+        config.use_home_of(None);
+        config.unpin_home();
+
+        assert!(config.use_home_of(Some(BOB)));
+        assert!(!config.home_pinned());
+        assert!(!config.homes.contains_key(BOB));
+        assert_eq!(config.homes[ALICE].location, IVec2::new(7, 7));
     }
 
     #[test]

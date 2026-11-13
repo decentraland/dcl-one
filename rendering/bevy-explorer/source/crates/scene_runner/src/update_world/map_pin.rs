@@ -1,7 +1,10 @@
 // Scene map pins: a scene marks a parcel on the player's map with a title, a description and
 // optionally its own icon. The pins of every running scene are streamed to the system scene,
-// which draws them; a pin goes when its entity or its scene does.
-use bevy::prelude::*;
+// which draws them; a pin goes when its entity or its scene does. What a scene can put there is
+// bounded: so many pins, so much text, and the list goes out a few times a second at most.
+use std::time::Duration;
+
+use bevy::{platform::collections::HashMap, prelude::*};
 
 use common::rpc::RpcStreamSender;
 use dcl_component::{
@@ -15,6 +18,12 @@ use system_bridge::{MapPinInfo, SystemApi};
 use crate::{RendererSceneContext, SceneEntity};
 
 use super::AddCrdtInterfaceExt;
+
+/// The most pins one scene shows; those of its entities past it are left out.
+const MAX_PINS_PER_SCENE: usize = 64;
+const MAX_TITLE_CHARS: usize = 256;
+const MAX_DESCRIPTION_CHARS: usize = 1024;
+const SEND_INTERVAL: Duration = Duration::from_millis(250);
 
 pub struct MapPinPlugin;
 
@@ -41,7 +50,12 @@ impl From<PbMapPin> for MapPin {
     fn from(value: PbMapPin) -> Self {
         let position = value.position.unwrap_or_default();
         let icon = match value.texture.and_then(|texture| texture.tex) {
-            Some(Tex::Texture(texture)) if !texture.src.is_empty() => Some(texture.src),
+            // a plain http url would be mixed content in the page that draws it
+            Some(Tex::Texture(texture))
+                if !texture.src.is_empty() && !texture.src.starts_with("http://") =>
+            {
+                Some(texture.src)
+            }
             _ => None,
         };
         Self {
@@ -50,17 +64,46 @@ impl From<PbMapPin> for MapPin {
                 position.x.round_ties_even() as i32,
                 position.y.round_ties_even() as i32,
             ),
-            title: value.title,
-            description: value.description,
+            title: clip(value.title, MAX_TITLE_CHARS),
+            description: clip(value.description, MAX_DESCRIPTION_CHARS),
             icon,
         }
     }
 }
 
+fn clip(mut text: String, max: usize) -> String {
+    if let Some((end, _)) = text.char_indices().nth(max) {
+        text.truncate(end);
+    }
+    text
+}
+
+/// Each scene's first `MAX_PINS_PER_SCENE` pins by entity, in a stable order.
+fn bounded(mut pins: Vec<(String, u32, MapPinInfo)>) -> Vec<MapPinInfo> {
+    pins.sort_by(|a, b| (&a.0, a.1).cmp(&(&b.0, b.1)));
+    let mut counts = HashMap::<String, usize>::default();
+    pins.into_iter()
+        .filter_map(|(scene, _, pin)| {
+            let count = counts.entry(scene).or_default();
+            *count += 1;
+            (*count <= MAX_PINS_PER_SCENE).then_some(pin)
+        })
+        .collect()
+}
+
+#[derive(Default)]
+struct Sending {
+    dirty: bool,
+    since_sent: Option<Duration>,
+}
+
+#[allow(clippy::too_many_arguments)]
 fn stream_map_pins(
     mut requests: EventReader<SystemApi>,
     mut senders: Local<Vec<RpcStreamSender<Vec<MapPinInfo>>>>,
     mut sent: Local<Vec<MapPinInfo>>,
+    mut sending: Local<Sending>,
+    time: Res<Time<Real>>,
     pins: Query<(&MapPin, &SceneEntity)>,
     changed: Query<(), Changed<MapPin>>,
     mut removed: RemovedComponents<MapPin>,
@@ -76,30 +119,41 @@ fn stream_map_pins(
         .collect::<Vec<_>>();
     senders.retain(|s| !s.is_closed());
 
-    let pins_changed = !changed.is_empty() || removed.read().count() > 0;
-    if pins_changed {
-        let mut current = pins
+    sending.dirty |= !changed.is_empty() || removed.read().count() > 0;
+    sending.since_sent = sending.since_sent.map(|since| since + time.delta());
+    if sending.dirty
+        && sending
+            .since_sent
+            .is_none_or(|since| since >= SEND_INTERVAL)
+    {
+        sending.dirty = false;
+        sending.since_sent = Some(Duration::ZERO);
+        let current = pins
             .iter()
             .filter_map(|(pin, entity)| {
                 let scene = scenes.get(entity.root).ok()?;
                 let icon = pin.icon.as_ref().and_then(|src| {
-                    if src.starts_with("https://") || src.starts_with("http://") {
+                    if src.starts_with("https://") {
                         Some(src.clone())
                     } else {
                         ipfas.ipfs().content_url(src, &scene.hash)
                     }
                 });
-                Some(MapPinInfo {
-                    id: format!("{}:{}", scene.hash, entity.id),
-                    x: pin.parcel.x,
-                    y: pin.parcel.y,
-                    title: pin.title.clone(),
-                    description: pin.description.clone(),
-                    icon,
-                })
+                Some((
+                    scene.hash.to_string(),
+                    u32::from(entity.id.generation) << 16 | u32::from(entity.id.id),
+                    MapPinInfo {
+                        id: format!("{}:{}", scene.hash, entity.id),
+                        x: pin.parcel.x,
+                        y: pin.parcel.y,
+                        title: pin.title.clone(),
+                        description: pin.description.clone(),
+                        icon,
+                    },
+                ))
             })
             .collect::<Vec<_>>();
-        current.sort_by(|a, b| a.id.cmp(&b.id));
+        let current = bounded(current);
         if current != *sent {
             *sent = current;
             for sender in senders.iter() {
@@ -158,5 +212,67 @@ mod tests {
             ..Default::default()
         });
         assert_eq!(empty.icon, None);
+
+        let icon = |src: &str| {
+            MapPin::from(PbMapPin {
+                texture: Some(TextureUnion {
+                    tex: Some(Tex::Texture(Texture {
+                        src: src.into(),
+                        ..Default::default()
+                    })),
+                }),
+                ..Default::default()
+            })
+            .icon
+        };
+        assert_eq!(
+            icon("https://example.com/a.png").as_deref(),
+            Some("https://example.com/a.png")
+        );
+        assert_eq!(icon("http://example.com/a.png"), None);
+    }
+
+    #[test]
+    fn a_pin_keeps_so_much_text() {
+        let pin = MapPin::from(PbMapPin {
+            title: "é".repeat(MAX_TITLE_CHARS + 10),
+            description: "d".repeat(MAX_DESCRIPTION_CHARS + 10),
+            ..Default::default()
+        });
+        assert_eq!(pin.title.chars().count(), MAX_TITLE_CHARS);
+        assert_eq!(pin.description.len(), MAX_DESCRIPTION_CHARS);
+        assert_eq!(clip("short".into(), MAX_TITLE_CHARS), "short");
+    }
+
+    #[test]
+    fn a_scene_shows_so_many_pins() {
+        let pin = |scene: &str, entity: u32| {
+            (
+                scene.to_owned(),
+                entity,
+                MapPinInfo {
+                    id: format!("{scene}:{entity}"),
+                    x: 0,
+                    y: 0,
+                    title: String::new(),
+                    description: String::new(),
+                    icon: None,
+                },
+            )
+        };
+        let mut pins = (0..MAX_PINS_PER_SCENE as u32 + 5)
+            .rev()
+            .map(|entity| pin("busy", entity))
+            .collect::<Vec<_>>();
+        pins.push(pin("quiet", 900));
+        let shown = bounded(pins);
+        assert_eq!(shown.len(), MAX_PINS_PER_SCENE + 1);
+        // the lowest entities stay, whatever order they came in, and another scene is untouched
+        assert_eq!(shown[0].id, "busy:0");
+        assert_eq!(
+            shown[MAX_PINS_PER_SCENE - 1].id,
+            format!("busy:{}", MAX_PINS_PER_SCENE - 1)
+        );
+        assert_eq!(shown[MAX_PINS_PER_SCENE].id, "quiet:900");
     }
 }
