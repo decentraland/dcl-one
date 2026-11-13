@@ -253,9 +253,7 @@ export type PageToScene =
   | GetMapRequest
   | GetHomeSceneRequest
   | GetWelcomeRequest
-  | ExpectLookRequest
   | ShowLookRequest
-  | PreloadLookRequest
   | AcceptWelcomeRequest
   | OpenLegalRequest
   | TeleportRequest
@@ -879,20 +877,6 @@ export interface WelcomeMessage extends WelcomeState {
  *  `acceptWelcome`; before sign-in the stage wears it as a stand-in. */
 export interface ShowLookRequest {
   kind: 'showLook'
-  look: number
-  avatar: AvatarLook
-}
-
-/** A `showLook` is on its way (RANDOMIZE was hit; the page is fetching the look): the lobby stage's
- *  avatar turns away now rather than when the look arrives. */
-export interface ExpectLookRequest {
-  kind: 'expectLook'
-}
-
-/** The look the next RANDOMIZE will show: the stage loads it out of sight once the one on show has
- *  loaded, so the swap is instant. */
-export interface PreloadLookRequest {
-  kind: 'preloadLook'
   look: number
   avatar: AvatarLook
 }

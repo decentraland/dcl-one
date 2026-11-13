@@ -1,15 +1,20 @@
 // The first screen with no stored session: play as a guest, or log in or sign up. A guest gets the
-// name and terms page next (WelcomePage); an account picks how to sign in (LoginSelection).
+// look and name next (NewAccountLook, NewAccountName); an account picks how to sign in (LoginSelection).
 //
 // Laid out on the startup screens' 1920x1080 canvas, scaled to fit.
 import { useEffect } from 'react'
 import { Button } from '../../design'
 import { prefetchPlaces } from '@explorer-core/features/places/placesApi'
 import type { LoginFlow } from '../session/useEngineSession'
-import { pendingLabel } from '../login/LoadingAndLogin'
 import logo from '../../assets/loading/logo-icon.webp'
 import avatars from '../../assets/startup/avatars.webp'
 import styles from './GuestOrSignUp.module.css'
+
+// The kept click's label while the engine boots: the download percent (the long part), then STARTING.
+export function pendingLabel(flow: LoginFlow): string {
+  if (flow.loadStep === 'download') return `DOWNLOADING… ${Math.round(flow.loadProgress)}%`
+  return 'STARTING…'
+}
 
 export function GuestOrSignUp({
   flow,

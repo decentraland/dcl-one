@@ -86,13 +86,11 @@ describe('session domain', () => {
     expect(driver.launches).toHaveLength(1)
   })
 
-  it('jump-in reuses the stored login', async () => {
+  it('a stored login goes in by itself, then the lobby', async () => {
     const h = renderSession({ userId: '0xabc' })
     await waitFor(() => expect(h.session().login.status).toBe('reuse-login-or-new'))
-    act(() => h.session().login.jumpIn())
-    // Jump in signs in and shows the lobby.
-    await waitFor(() => expect(h.session().phase).toBe('lobby'))
     await waitFor(() => expect(h.driver.calls).toContain('jumpIn'))
+    await waitFor(() => expect(h.session().phase).toBe('lobby'))
   })
 
   // A ?realm/?position launch goes straight in — never the Places picker. The /about probe blocks

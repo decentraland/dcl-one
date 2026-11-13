@@ -5,7 +5,30 @@
   overflow: hidden;
   font-family: var(--font-family);
   color: var(--text);
+}
+/* the vignette and its pattern, the whole screen, or left of a new account's avatar column */
+.backdrop {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
   background: var(--loading-vignette);
+}
+.withStage .backdrop {
+  right: auto;
+  width: calc((50% - 86px * var(--ui-scale)));
+}
+/* the avatar's column, 1026 wide and the full height, its centre (where the avatar stands) at x 1387
+   of the 1920 canvas */
+.stage {
+  position: absolute;
+  left: calc(50% - 86px);
+  top: 0;
+  width: 1026px;
+  bottom: 0;
+}
+.stage > * {
+  width: 100%;
+  height: 100%;
 }
 /* A 1920x1080 reference canvas, scaled to fit and grown along the longer axis. */
 .canvas {

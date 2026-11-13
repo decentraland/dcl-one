@@ -11,8 +11,6 @@ import type { PortableInfo, PortableState, SatelliteView } from '@explorer-core/
 import type { AvatarLook } from '@explorer-core/engine/avatarEquip'
 import type { PhotoModeSnapshot, PhotoModeSource, PreviewFocus } from '@explorer-core/engine/protocol'
 import { clickButton, screenViewed, sessionId, track } from '@explorer-core/lib/analytics'
-import { randomDefaultLook } from '@explorer-core/lib/guestName'
-import { fetchStoredProfile, type StoredProfile } from '@explorer-core/features/login/storedProfile'
 import { useStoredProfile } from '../login/useStoredProfile'
 import { inShell, postToShell } from '@explorer-core/lib/shell'
 import { storedLoginType, type LoginType } from '@explorer-core/features/session/sessionAnalytics'
@@ -20,7 +18,7 @@ import type { InteractableArea } from '../../lib/hudInset'
 import type { FatalError } from '@explorer-core/features/error/fatalError'
 import { createLoadingProgress } from '@explorer-core/features/session/loadingProgress'
 import { useConnectivity } from './useConnectivity'
-import { DEFAULT_REALM } from '@hud-host'
+import { DEFAULT_REALM, serviceUrl } from '@hud-host'
 import { provideHudLogin, provideHudLogout, type HudLoginReply, type HudLoginRequest } from '@explorer-core/lib/hudAutomation'
 import { checkRealm, realmCheckMessage } from '@explorer-core/lib/realmCheck'
 import { entryRealm } from '@hud-host'
@@ -834,11 +832,9 @@ const MAX_REVEAL_MS = 1500
 // out, so we only drop the loader once loading has been stably clear for this long.
 const REVEAL_DEBOUNCE_MS = 600
 // how long, back from the auth site, the stored sign-in waits for the catalyst to have the profile
+// How long Verifying waits for a sign-in before giving up.
+const VERIFY_TIMEOUT_MS = 15_000
 const AUTH_PROFILE_WAIT_MS = 30_000
-// the look pending on the stage while RANDOMIZE's fetch is under way (no look number yet)
-const EXPECTED_LOOK = -1
-// how long that fetch is waited for before RANDOMIZE is let go again
-const EXPECTED_LOOK_MS = 15_000
 
 export type LoginStatus =
   | 'loading'
@@ -877,11 +873,12 @@ export interface LoginFlow {
   /** Fresh sign-in: same-domain auth redirect (web), which starts `method` when given, or the engine's
    *  remote-wallet flow (native), which offers every method. */
   startWithAccount: (method?: LoginMethod) => void
-  /** Native fresh sign-in in flight → show the verification panel (code null until it arrives). */
+  /** Native fresh sign-in in flight (the browser is open): the methods screen waits with Cancel. */
   authPending: boolean
-  authCode: string | null
   /** Abort the in-flight native fresh sign-in. */
   cancelLogin: () => void
+  /** Stop a sign-in under way (Cancel on Verifying): the first screen again, the stored sign-in kept. */
+  cancelSignIn: () => void
   /** With no `pick` the welcome page (name and terms) follows; a `pick` is accepted with the terms
    *  once signed in. Before the engine is ready the click is kept (`acceptQueued`) and runs once it is. */
   exploreAsGuest: (pick?: GuestPick) => void
@@ -895,19 +892,6 @@ export interface LoginFlow {
    *  before the engine is ready waits for it (`emailQueued`). */
   verifyEmailCode: (email: string, code: string, signal?: AbortSignal) => Promise<void>
   emailQueued: boolean
-  /** Reuse the stored SSO identity (hand it to the engine). */
-  jumpIn: () => void
-  /** The stored account's profile, for the screens before the engine draws it. */
-  profile: StoredProfile
-  /** The last login failed because the user's profile couldn't be fetched — offer
-   *  resetProfileAndJumpIn as the explicit recovery. */
-  profileFetchFailed: boolean
-  /** Retry the login, continuing with (and deploying) a default profile if the fetch still
-   *  fails. PERMANENTLY REPLACES the account's existing profile — only offered after a
-   *  profile-fetch failure, and the UI must make the consequence clear. */
-  resetProfileAndJumpIn: () => void
-  /** Sign in with a different account → auth site. */
-  useDifferentAccount: () => void
 }
 
 /** The welcome page, shown after sign-in while the terms aren't accepted on this install or the
@@ -921,21 +905,14 @@ export interface WelcomeFlow {
   pending: boolean
   saving: boolean
   error: string | null
-  /** Another of the curated default looks on the avatar, fetched here (deployed on accept). */
-  reroll: () => void
-  /** The curated default look `default<look>`, as fetched, on the stage's avatar: the guest start
-   *  page's pick. */
+  /** A look on the new account's avatar, numbered for the stage to report it shown: the starting look
+   *  it picks, deployed on accept. */
   showLook: (look: number, avatar: AvatarLook) => void
-  /** The look the next RANDOMIZE shows, for the stage to load out of sight meanwhile. */
-  preloadLook: (look: number, avatar: AvatarLook) => void
-  /** A look is on its way to the stage (asked for, not yet shown there): RANDOMIZE waits. */
-  lookPending: boolean
-  /** The look last put on the stage, for a fresh pick never to repeat (it would never show). */
-  lastLook: number | null
-  /** A look is about to be asked for (its fetch is under way): holds RANDOMIZE until `showLook`. */
-  expectLook: () => void
-  /** Accept the terms, and for a new profile deploy it under `name` with the look. */
-  accept: (name?: string) => void
+  /** Accept the terms, and for a new profile deploy it under `name` with the look; `newsletter`
+   *  subscribes the address an email sign-in used. */
+  accept: (name?: string, newsletter?: boolean) => void
+  /** The address this sign-in used, for an email account (the newsletter box); null otherwise. */
+  email: string | null
   /** Open the terms of use or the privacy policy in the browser. */
   openLegal: (doc: 'terms' | 'privacy') => void
 }
@@ -1111,8 +1088,9 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const [queuedGuest, setQueuedGuest] = useState<{ pick: GuestPick | null } | null>(null)
   // an email account's identity, checked, waiting for the engine to take its sign-in
   const [queuedEmail, setQueuedEmail] = useState<AuthIdentity | null>(null)
+  // the address an email sign-in used, for its newsletter box; kept in memory for this sign-in only
+  const [signInEmail, setSignInEmail] = useState<string | null>(null)
   // the look sent to the stage and not yet shown there (null = none)
-  const [pendingLook, setPendingLook] = useState<number | null>(null)
   // The address of the engine's actual reusable previous login (drives "Welcome back").
   const [prevUserId, setPrevUserId] = useState<string | null>(null)
   const account = prevUserId ?? (stored ? rootAddress(stored.identity) : null)
@@ -2251,9 +2229,6 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           setLobbyStageReady(true)
           setAvatarLoaded(true)
           break
-        case 'lookShown':
-          setPendingLook((pending) => (pending === msg.look ? null : pending))
-          break
         case 'welcome': {
           // an answer to an ask from before a sign-out is the signed-out account's: no page of a
           // sign-in since, even one already submitted, and none of its pick. One from a bridge
@@ -2269,7 +2244,9 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
             setHudLoginTick((n) => n + 1)
             if (msg.newProfile && guestPick.current == null) settleHudLogin(new Error('the account has no profile yet: a first login needs --name and --look (/hud_logout, then sign in again with them)'))
           }
-          const chosen: { name?: string } | null = guestPick.current ?? (hudLoginPending.current != null ? {} : null)
+          // An existing account has no terms step: it accepted them where it was made, so they are
+          // answered for it here; only a new account is asked.
+          const chosen: { name?: string } | null = guestPick.current ?? (hudLoginPending.current != null || !msg.newProfile ? {} : null)
           guestPick.current = null
           if (chosen == null || (!msg.terms && !msg.newProfile)) setWelcomePending(false)
           // native, which launches itself, holds a link's world for the terms (src/lib.rs)
@@ -2313,7 +2290,12 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           releaseLinkRef.current()
           termsOk.current = true
           setWelcome(null)
-          if (welcomeRef.current?.newProfile) screenViewed('AUTH_DEPLOY_SUCCESS')
+          if (welcomeRef.current?.newProfile) {
+            screenViewed('AUTH_DEPLOY_SUCCESS')
+            // A new account made here goes straight in, to its home (Genesis Plaza), not to the lobby. A
+            // link's destination was released above; a /hud_login picks its own from the lobby.
+            if (heldDest.current === undefined && welcomeLink.current == null && hudLoginPending.current == null) pickDestinationRef.current(null)
+          }
           welcomeRef.current = null
           break
         }
@@ -3200,6 +3182,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
         setLobby(false)
         setWelcomePending(false)
         guestPick.current = null
+        // the first screen, with Connection Error: nothing there retries the stored sign-in
+        setStatus('sign-in-or-guest')
       })
   }, [])
 
@@ -3316,6 +3300,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   }, [travelFromLobby])
   const releaseLinkRef = useRef(releaseLink)
   releaseLinkRef.current = releaseLink
+  // the welcome page's answer (a new account's accept) picks before pickDestination is declared
+  const pickDestinationRef = useRef<(dest: Destination) => boolean>(() => false)
 
   // Post-jump-in Places picker (or the lobby): choose a destination (or null to skip → home),
   // then leave the picker. A world switches realm now; a parcel is teleported once the avatar spawns.
@@ -3377,6 +3363,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     setTimeout(run, 60)
     return true
   }, [launchEngine, runPendingLogin, travelFromLobby, travelInPlace, settleHudLogin, restoreHudSignIn])
+  pickDestinationRef.current = pickDestination
   // Boot-mode flags (?hud=0 / ?guest=1 / ?systemScene= — see lib/bootMode.ts), captured once
   // per session mount so tests can vary location.search between mounts.
   const boot = useRef(bootMode())
@@ -3803,20 +3790,24 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const logout = useCallback(() => {
+  // Back to the first screen, signed out of the engine. `forget` drops the stored sign-in too (Sign
+  // out); without it (Cancel on Verifying, a sign-in that failed) the next visit still finds it.
+  const signOut = useCallback((forget: boolean) => {
     signOuts.current += 1
     driverRef.current?.logout().catch((e: Error) => console.error('[session] logout failed', e))
-    clearLogins() // drop the same-domain SSO identity for this origin
-    setStored(null)
-    // the refs at once too: a /hud_login in the same task sees the sign-out
-    storedRef.current = null
+    if (forget) {
+      clearLogins() // drop the same-domain SSO identity for this origin
+      setStored(null)
+      // the ref at once too: a /hud_login in the same task sees the sign-out
+      storedRef.current = null
+    }
     pendingLoginType.current = null
     lastLoginType.current = null
     welcomeRef.current = null
     guestPick.current = null
     setQueuedGuest(null)
     setQueuedEmail(null)
-    setPendingLook(null)
+    setSignInEmail(null)
     setStatus('sign-in-or-guest')
     closeAllPanels()
     setPlayerReady(false)
@@ -3895,6 +3886,16 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     portableStates.current = null
     portableToasts.current = false
   }, [closeAllPanels])
+  const logout = useCallback(() => signOut(true), [signOut])
+  // Cancel on Verifying, or a sign-in that took too long (`error`): the first screen, the stored
+  // sign-in kept, and the error shown there.
+  const cancelSignIn = useCallback(
+    (reason?: string) => {
+      signOut(false)
+      setError(reason ?? null)
+    },
+    [signOut]
+  )
 
   // Where the Backpack's avatar shows through, so the lobby under its modal can open the same hole.
   const [avatarPreviewRect, setAvatarPreviewRect] = useState<{ x: number; y: number; width: number; height: number } | null>(null)
@@ -4015,42 +4016,25 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   // a sign-in the HUD went away under is answered with that, not left to the runner's timeout
   useEffect(() => () => settleHudLogin(new Error('the HUD unmounted')), [settleHudLogin])
 
-  // the curated default look on the stage, so RANDOMIZE never repeats it
-  const shownLook = useRef(0)
+  // a look on the new account's avatar (its starting look, deployed on accept)
   const showLook = useCallback((look: number, avatar: AvatarLook) => {
-    shownLook.current = look
-    setPendingLook(look)
     driverRef.current?.send({ kind: 'showLook', look, avatar })
   }, [])
-  // A look is pending from the moment it is asked for, so RANDOMIZE can't be hit again while its
-  // profile is fetched; a fetch that never comes back lets go after a while (timed from the last
-  // ask: an earlier ask's timer must not let a later one go).
-  const expectTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const expectLook = useCallback(() => {
-    setPendingLook(EXPECTED_LOOK)
-    driverRef.current?.send({ kind: 'expectLook' })
-    if (expectTimer.current != null) clearTimeout(expectTimer.current)
-    expectTimer.current = setTimeout(() => setPendingLook((pending) => (pending === EXPECTED_LOOK ? null : pending)), EXPECTED_LOOK_MS)
-  }, [])
-  const preloadLook = useCallback((look: number, avatar: AvatarLook) => driverRef.current?.send({ kind: 'preloadLook', look, avatar }), [])
-  // RANDOMIZE: the page picks and fetches the look (the scene's fetches are signed, and it has no
-  // say in the pick), and the stage wears it; a later pick outruns a slow fetch
-  const rerollLook = useCallback(() => {
-    clickButton('NAME_RANDOMIZE', 'AVATAR_NAMING')
-    expectLook()
-    const look = randomDefaultLook(shownLook.current || undefined)
-    shownLook.current = look
-    void fetchStoredProfile(`default${look}`).then((profile) => {
-      if (profile?.look != null && shownLook.current === look) showLook(look, profile.look)
-    })
-  }, [showLook, expectLook])
   const openLegal = useCallback((doc: 'terms' | 'privacy') => driverRef.current?.send({ kind: 'openLegal', doc }), [])
-  const acceptWelcome = useCallback((name?: string) => {
+  const acceptWelcome = useCallback((name?: string, newsletter?: boolean) => {
     clickButton('LETS_GO', welcomeRef.current?.newProfile ? 'AVATAR_NAMING' : 'WELCOME')
+    // the newsletter opt-in goes with the accept, best effort: the sign-up never waits on it
+    if (newsletter === true && signInEmail != null) {
+      void fetch(`${serviceUrl('builderApi')}/v1/newsletter`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: signInEmail, source: 'auth' })
+      }).catch((e: unknown) => console.error('[welcome] newsletter sign-up failed', e))
+    }
     setWelcomeSaving(true)
     setWelcomeError(null)
     driverRef.current?.send({ kind: 'acceptWelcome', name })
-  }, [])
+  }, [signInEmail])
 
   // The button creates a guest account that persists; ?guest=1 stays a throwaway guest.
   const startGuest = useCallback(
@@ -4093,6 +4077,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     const identity = await driver.emailVerify(email, code)
     // Back while it was checked: the account the shell already keeps is let go, so nothing finds it later
     if (signal?.aborted) return clearLogins()
+    setSignInEmail(email)
     setQueuedEmail(identity)
   }, [])
   useEffect(() => {
@@ -4109,10 +4094,6 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   // Reuse the existing login. The driver picks the path its backend supports (console
   // `/login_identity` for the engine, `loginPrevious` over the bridge).
   const enterStored = useCallback((defaultOnError?: boolean) => submitLogin((d) => d.jumpIn(defaultOnError), 'stored'), [submitLogin])
-  const jumpIn = useCallback(() => {
-    clickButton('lets_go', 'COMEBACK')
-    enterStored()
-  }, [enterStored])
   // A stored session goes straight to the lobby, once per page: the lobby's profile menu is where
   // to sign out or switch accounts.
   const autoEntered = useRef(false)
@@ -4122,16 +4103,6 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     autoEntered.current = true
     enterStored()
   }, [status, submitted, engineReady, enterStored, accountChecking])
-  // The engine tags profile-fetch login failures (vs bad credentials etc.) with this marker —
-  // mirrors PROFILE_FETCH_FAILED in system_bridge. Only then do we offer the destructive reset.
-  const profileFetchFailed = error != null && error.includes('profile fetch failed')
-  // Explicit recovery from an unfetchable/corrupt profile: retry, continuing with a default
-  // profile if it still fails. The engine deploys that default, permanently replacing the
-  // account's server-side profile — the button copy must carry that warning.
-  const resetProfileAndJumpIn = useCallback(() => {
-    clickButton('try_again', 'AUTH_ERROR')
-    enterStored(true)
-  }, [enterStored])
 
   // Fresh sign-in (or signing in with a different account). Web: bounce to the same-domain
   // auth site, which writes the identity back to this origin's localStorage and redirects
@@ -4192,14 +4163,6 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     driverRef.current?.loginCancel().catch(() => {})
   }, [])
 
-  // "Use a different account" shows the sign-in/guest screen (Start with account + Explore as
-  // guest) rather than jumping straight to auth — matching the reference scene, and the only way a
-  // returning user can reach Explore as Guest.
-  const useDifferentAccount = useCallback(() => {
-    if (busy) return
-    clickButton('use_another_account', 'COMEBACK')
-    setStatus('sign-in-or-guest')
-  }, [busy])
 
   // Auto-login (see lib/bootMode.ts): skip the sign-in screen the moment the engine is warm —
   // as a guest (?guest=1, the sites `/discover` embed), or with no React login at all
@@ -4289,6 +4252,16 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       : loaderActive
         ? 'entering'
         : 'world'
+
+  // Verifying your account: signed in to the lobby's held world, waiting for the sign-in and the
+  // account's welcome answer (and an existing account's terms, answered for it). It gives up after
+  // VERIFY_TIMEOUT_MS, back to the first screen with Connection Error, the stored sign-in kept.
+  const verifying = phase === 'welcome' && welcome == null
+  useEffect(() => {
+    if (!verifying) return
+    const id = setTimeout(() => cancelSignIn('verifying timed out'), VERIFY_TIMEOUT_MS)
+    return () => clearTimeout(id)
+  }, [verifying, cancelSignIn])
 
   const connectivity = useConnectivity(driverRef.current, phase === 'world' || phase === 'entering')
   // A /hud_login is answered once the engine took the sign-in and the HUD is past the welcome page
@@ -4597,13 +4570,9 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       pending: welcome == null,
       saving: welcomeSaving,
       error: welcomeError,
-      reroll: rerollLook,
       showLook,
-      preloadLook,
-      lookPending: pendingLook != null,
-      lastLook: shownLook.current || null,
-      expectLook,
       accept: acceptWelcome,
+      email: signInEmail,
       openLegal
     },
     sceneLoading,
@@ -4767,19 +4736,14 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       loadStep,
       startWithAccount,
       authPending: auth != null,
-      authCode: auth?.code ?? null,
       cancelLogin,
+      cancelSignIn: () => cancelSignIn(),
       exploreAsGuest,
       acceptQueued: queuedGuest != null,
       emailAvailable: driverRef.current?.emailSendCode != null && driverRef.current.emailAvailable !== false,
       sendEmailCode,
       verifyEmailCode,
       emailQueued: queuedEmail != null,
-      jumpIn,
-      profile: accountProfile,
-      profileFetchFailed,
-      resetProfileAndJumpIn,
-      useDifferentAccount
     }
   }
 }

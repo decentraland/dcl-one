@@ -6,6 +6,7 @@ import { LogoPattern } from './LogoPattern'
 import { SubmitField } from './SubmitField'
 import { CodeInput } from './CodeInput'
 import { Spinner } from './Spinner'
+import { Checkbox } from './Checkbox'
 import { Skeleton } from './Skeleton'
 import { IconButton } from './IconButton'
 import { VoiceBars } from './VoiceBars'
@@ -740,6 +741,10 @@ function SignInShowcase(): React.JSX.Element {
       <CodeInput value="123456" onChange={() => {}} state="success" disabled />
       <CodeInput value="123456" onChange={() => {}} state="error" disabled />
       <Spinner size={40} variant="chase" />
+      <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+        <Checkbox variant="light" defaultChecked aria-label="light checkbox" />
+        <span>light checkbox (the sign-in screens')</span>
+      </div>
     </div>
   )
 }

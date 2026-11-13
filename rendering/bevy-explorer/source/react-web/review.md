@@ -319,8 +319,10 @@ back as `analyticsSession`). Expectations:
   or a reload does not attribute again; the Google tag gets them from what the shell kept at load.
 - **Sign-in** (`useEngineSession`): with no session the first screen (`features/startup`) is
   ACCOUNT_HOME, its PLAY AS GUEST a PLAY_GUEST click and LOGIN
-  OR SIGNUP a SIGN_IN click; the guest account is created only on that click, and the welcome page
-  (name and terms) follows it, AVATAR_NAMING for a new profile. LOGIN OR SIGNUP opens the methods screen: Google,
+  OR SIGNUP a SIGN_IN click; the guest account is created only on that click. After any sign-in,
+  Verifying shows until the account's welcome answer (an existing account's terms are accepted for
+  it); a new account (AVATAR_NAMING) picks a starting look and a name, deploys on JUMP IN and goes
+  straight in, AUTH_DEPLOY_SUCCESS. LOGIN OR SIGNUP opens the methods screen: Google,
   MetaMask and More options leave for the sign-in page with `?loginMethod=` (SIGN_IN, AUTH_BROWSER_OPEN
   {method}); an email code is sent and checked in the HUD (the web shell or the bridge scene makes
   the thirdweb calls) and its account signs in as fully_registered. COMEBACK (after a failed stored

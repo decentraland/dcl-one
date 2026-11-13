@@ -617,13 +617,6 @@ export function registerAvatarPreview(ctx: Ctx): void {
     applyFraming(framing)
   })
 
-  // The look the next RANDOMIZE shows, loaded on the lobby's standby ahead of it.
-  ctx.on('preloadLook', (msg) => {
-    const shape = shapeOf(msg.avatar)
-    preload = { key: shapeKey(shape), shape, look: msg.look }
-    if (stage === 'lobby') loadOnStandby()
-  })
-
   // The Shop draws its stage around the avatar's window: the same image goes behind the avatar, standing on
   // the floor the image has, so the Backpack's podium steps aside.
   ctx.on('previewStage', (msg) => {

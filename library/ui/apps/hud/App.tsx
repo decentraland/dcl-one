@@ -23,7 +23,6 @@ import { LobbyHome } from './features/lobby/LobbyHome'
 import { VoiceChatPanel } from './features/voiceChat/VoiceChatPanel'
 import { SceneVoiceChatBanner } from './features/voiceChat/SceneVoiceChatBanner'
 import { VoiceChatToasts } from './features/voiceChat/voiceChatToasts'
-import { WelcomePage } from './features/welcome/WelcomePage'
 import { GalleryPage } from './features/gallery/GalleryPage'
 import { Sidebar } from './features/sidebar/Sidebar'
 import { Minimap } from './features/minimap/Minimap'
@@ -420,8 +419,7 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
     <SessionProvider value={session}>
       {rpc && <EngineHost rpc={rpc} />}
       {MODE === 'engine' && <BootProgress flow={session.login} />}
-      {session.phase === 'login' && <StartupFlow flow={session.login} music={loginMusic} />}
-      {session.phase === 'welcome' && <WelcomePage setEngineViewport={session.setEngineViewport} />}
+      {(session.phase === 'login' || session.phase === 'welcome') && <StartupFlow flow={session.login} music={loginMusic} />}
       {session.phase === 'picking' && <PlacesPicker account={discoveryAccount} onPick={session.pickDestination} />}
       {session.phase === 'lobby' && (
         <>

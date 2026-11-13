@@ -36,6 +36,9 @@
   --signin-code-error: #ffd3df; /* the code's slots, refused */
   --signin-incorrect: #ff5757; /* "Incorrect code"'s icon */
   --signin-spinner-1: #ffbc5b; /* the sign-in spinner's arc, first of its three colours */
+  --signin-select: #ff7439; /* a picked starting look's ring, the sign-in checkmarks */
+  --signin-option-hover: #cdcbd1; /* the body type menu's option, hovered */
+  --signin-name-placeholder: #716b7c; /* the new account's name field placeholder */
   --shop-card-hover: rgba(255, 255, 255, 0.2); /* DCL/White20% — the Shop cart's hovered card */
   --pale-black: #43404a; /* DCL/Pale Black — the Shop toast's rim */
   --silver: #a09ba8; /* DCL/Silver — the NAME field's placeholder and suffix, an empty nametag */

@@ -2,11 +2,16 @@
 // state; the player moves between the sign-in screens here). They share one frame: the drifting logo
 // pattern on the purple vignette, laid out on a 1920x1080 canvas scaled to fit, with the footer in its
 // corner. A sign-in that fails shows Connection Error over whichever screen it was started on.
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { LogoPattern } from '../../design'
+import { EngineViewport } from '../engine/EngineViewport'
+import { useSession } from '../session/SessionContext'
+import { NewAccountLook, type LookChoice } from './NewAccountLook'
+import { NewAccountName } from './NewAccountName'
+import { PRESETS } from './presets'
+import { Verifying } from './Verifying'
 import type { LoginMethod } from '@explorer-core/features/auth/sso'
 import type { LoginFlow } from '../session/useEngineSession'
-import { LoadingAndLogin } from '../login/LoadingAndLogin'
 import { GuestOrSignUp } from './GuestOrSignUp'
 import { LoginSelection } from './LoginSelection'
 import { StartupFooter } from './StartupFooter'
@@ -22,8 +27,29 @@ type View =
   | { screen: 'loginSelection'; email: string; emailError: boolean }
   | { screen: 'verificationOtp'; email: string }
 
-export function StartupFlow({ flow, music }: { flow: LoginFlow; music: LoginMusic }): React.JSX.Element {
+export function StartupFlow({
+  flow,
+  music
+}: {
+  flow: LoginFlow
+  music: LoginMusic
+}): React.JSX.Element {
+  const session = useSession()
   const [view, setView] = useState<View>({ screen: 'guestOrSignUp' })
+  // a new account's two steps, and the look it picked (worn by its avatar, deployed with its name)
+  const [step, setStep] = useState<'look' | 'name'>('look')
+  const [look, setLook] = useState<LookChoice>({ body: 'a', slot: 0 })
+  const { showLook } = session.welcome
+  const wear = useCallback(
+    (choice: LookChoice) => {
+      setLook(choice)
+      showLook(
+        (choice.body === 'a' ? 0 : 4) + choice.slot + 1,
+        PRESETS[choice.body][choice.slot].look
+      )
+    },
+    [showLook]
+  )
   // A failed guest sign-in gets the generic Connection Error; a failed account sign-in (the desktop
   // browser sign-in) keeps what went wrong, e.g. that no app on the computer opens Decentraland's
   // sign-in links.
@@ -36,53 +62,129 @@ export function StartupFlow({ flow, music }: { flow: LoginFlow; music: LoginMusi
     return () => abort.abort()
   }, [error])
 
+  // a sign-in that failed starts the screens over
+  useEffect(() => {
+    if (error != null) setView({ screen: 'guestOrSignUp' })
+  }, [error])
+  // a new account's save that failed: Connection Error, on its name screen to try again
+  const welcomeError = session.welcome.error
+  useEffect(() => {
+    if (welcomeError != null) showConnectionError()
+  }, [welcomeError])
+
+  // Signed in: Verifying while the account loads (and an existing account's terms are answered for
+  // it), then a new account's look and name; anyone else goes on to the lobby.
+  if (session.phase === 'welcome') {
+    const welcome = session.welcome
+    if (welcome.pending || !welcome.newProfile)
+      return (
+        <StartupFrame music={music}>
+          <Verifying onCancel={flow.cancelSignIn} />
+        </StartupFrame>
+      )
+    return (
+      <StartupFrame
+        music={music}
+        stage={<EngineViewport region="avatarPreview" report={session.setEngineViewport} />}
+      >
+        {step === 'look' ? (
+          <NewAccountLook
+            initial={look}
+            onShow={wear}
+            onContinue={() => setStep('name')}
+            onBack={session.logout}
+          />
+        ) : (
+          <NewAccountName
+            email={welcome.email}
+            saving={welcome.saving}
+            onJumpIn={(name, newsletter) => welcome.accept(name, newsletter)}
+            onBack={session.logout}
+            onLegal={welcome.openLegal}
+          />
+        )}
+      </StartupFrame>
+    )
+  }
+
   const screen = startupScreen(flow)
   if (screen === 'splash') return <StartupSplash />
-  // the screens not ported yet keep today's panel
-  if (screen === 'existingAccount') return <LoadingAndLogin flow={flow} />
+  // a checked email code, waiting for the engine to take its sign-in
+  if (flow.emailQueued)
+    return (
+      <StartupFrame music={music}>
+        <Verifying />
+      </StartupFrame>
+    )
 
-  const toMethods = (email = '', emailError = false): void => setView({ screen: 'loginSelection', email, emailError })
+  const toMethods = (email = '', emailError = false): void =>
+    setView({ screen: 'loginSelection', email, emailError })
   const signInWith = (method: LoginMethod): void => {
     attempt.current = 'account'
     flow.startWithAccount(method)
   }
 
   // the desktop browser sign-in, under way: the methods screen waits with a spinner and Cancel
-  const current: View = screen === 'browserSignIn' && view.screen !== 'loginSelection' ? { screen: 'loginSelection', email: '', emailError: false } : view
+  const current: View =
+    screen === 'browserSignIn' && view.screen !== 'loginSelection'
+      ? { screen: 'loginSelection', email: '', emailError: false }
+      : view
   return (
-    <div className={styles.root}>
-      <LogoPattern />
+    <StartupFrame music={music}>
+      {current.screen === 'guestOrSignUp' && (
+        <GuestOrSignUp
+          flow={flow}
+          onGuest={() => {
+            attempt.current = 'guest'
+            flow.exploreAsGuest()
+          }}
+          onLogInOrSignUp={() => toMethods()}
+        />
+      )}
+      {current.screen === 'loginSelection' && (
+        <LoginSelection
+          flow={flow}
+          initialEmail={current.email}
+          initialEmailError={current.emailError}
+          inProgress={screen === 'browserSignIn'}
+          onBack={() => setView({ screen: 'guestOrSignUp' })}
+          onEmailSent={(email) => setView({ screen: 'verificationOtp', email })}
+          onMethod={signInWith}
+          onCancel={flow.cancelLogin}
+        />
+      )}
+      {current.screen === 'verificationOtp' && (
+        <VerificationOtp
+          flow={flow}
+          email={current.email}
+          onBack={() => toMethods(current.email)}
+          onInvalidEmail={() => toMethods(current.email, true)}
+        />
+      )}
+    </StartupFrame>
+  )
+}
+
+/** The sign-in screens' frame: the pattern on the vignette and the footer, on the 1920x1080 canvas.
+ *  `stage` is a new account's avatar: the engine draws it in the column on the right, which the
+ *  background leaves clear. */
+function StartupFrame({
+  music,
+  stage,
+  children
+}: {
+  music: LoginMusic
+  stage?: React.ReactNode
+  children: React.ReactNode
+}): React.JSX.Element {
+  return (
+    <div className={`${styles.root} ${stage != null ? styles.withStage : ''}`}>
+      <div className={styles.backdrop}>
+        <LogoPattern />
+      </div>
       <div className={styles.canvas}>
-        {current.screen === 'guestOrSignUp' && (
-          <GuestOrSignUp
-            flow={flow}
-            onGuest={() => {
-              attempt.current = 'guest'
-              flow.exploreAsGuest()
-            }}
-            onLogInOrSignUp={() => toMethods()}
-          />
-        )}
-        {current.screen === 'loginSelection' && (
-          <LoginSelection
-            flow={flow}
-            initialEmail={current.email}
-            initialEmailError={current.emailError}
-            inProgress={screen === 'browserSignIn'}
-            onBack={() => setView({ screen: 'guestOrSignUp' })}
-            onEmailSent={(email) => setView({ screen: 'verificationOtp', email })}
-            onMethod={signInWith}
-            onCancel={flow.cancelLogin}
-          />
-        )}
-        {current.screen === 'verificationOtp' && (
-          <VerificationOtp
-            flow={flow}
-            email={current.email}
-            onBack={() => toMethods(current.email)}
-            onInvalidEmail={() => toMethods(current.email, true)}
-          />
-        )}
+        {stage != null && <div className={styles.stage}>{stage}</div>}
+        {children}
         <StartupFooter music={music} />
       </div>
     </div>

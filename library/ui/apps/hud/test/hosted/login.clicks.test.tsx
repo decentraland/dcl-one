@@ -53,21 +53,18 @@ describe('startup screens', () => {
     expect(screen.getByRole('heading', { name: 'Welcome to Decentraland!' })).toBeInTheDocument()
   })
 
-  it('the splash covers loading and a stored sign-in on its way to the lobby; after a failed sign-in, JUMP IN / USE A DIFFERENT ACCOUNT', async () => {
+  it('the splash covers loading and a stored sign-in on its way to the lobby; a failed one is back on the first screen with Connection Error', async () => {
     const { unmount } = await renderSettled(startup(flow({ status: 'loading' })))
     expect(screen.getByRole('status', { name: 'Loading' })).toBeInTheDocument()
     expect(screen.queryByRole('button')).toBeNull()
     unmount()
     const stored = await renderSettled(startup(flow({ status: 'reuse-login-or-new', account: '0xabc' })))
     expect(screen.getByRole('status', { name: 'Loading' })).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /JUMP INTO DECENTRALAND/i })).toBeNull()
     stored.unmount()
-    const f = flow({ status: 'reuse-login-or-new', account: '0xabc', error: 'Login failed' })
-    await renderSettled(startup(f))
-    await userEvent.click(screen.getByRole('button', { name: /JUMP INTO DECENTRALAND/i }))
-    expect(vi.mocked(f.jumpIn)).toHaveBeenCalledTimes(1)
-    await userEvent.click(screen.getByRole('button', { name: /USE A DIFFERENT ACCOUNT/i }))
-    expect(vi.mocked(f.useDifferentAccount)).toHaveBeenCalledTimes(1)
+    await renderSettled(startup(flow({ status: 'sign-in-or-guest', account: '0xabc', error: 'Login failed' })))
+    expect(screen.getByRole('heading', { name: 'Welcome to Decentraland!' })).toBeInTheDocument()
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByText(/We couldn't connect to the server/)).toBeInTheDocument()
   })
 
   it('the desktop browser sign-in waits on the methods screen, with a spinner and Cancel', async () => {

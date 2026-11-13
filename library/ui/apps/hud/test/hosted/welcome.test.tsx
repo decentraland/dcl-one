@@ -1,10 +1,8 @@
 import { expectConsoleOutput } from '@explorer-core/test/console'
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { LaunchHostOptions } from '@explorer-core/engine/engineRpc'
-import { SessionProvider } from '../../features/session/SessionContext'
-import { WelcomePage } from '../../features/welcome/WelcomePage'
-import { FakeDriver, fakeProfileState, fakeSession, renderSession, type Harness } from '../harness'
+import { FakeDriver, renderSession, type Harness } from '../harness'
 
 // The web engine: launched by the page, which reads the terms state before it does.
 class LaunchRecordingDriver extends FakeDriver {
@@ -49,7 +47,7 @@ describe('welcome page', () => {
   afterEach(() => {
     vi.unstubAllGlobals()
   })
-  it('shows for a new account after sign-in, then the lobby once accepted', async () => {
+  it('shows for a new account after sign-in, then goes straight in (no lobby) once accepted', async () => {
     const h = renderSession(undefined, manual())
     await signIn(h)
     // the lobby waits for the answer, behind the bare stage
@@ -68,9 +66,9 @@ describe('welcome page', () => {
     expect(h.session().welcome.saving).toBe(true)
 
     h.driver.emit({ kind: 'welcomeAccepted', ok: true })
-    await waitFor(() => expect(h.session().phase).toBe('lobby'))
-    // the lobby keeps the world held until a destination is picked
-    expect(h.driver.sentOf('teleport')).toHaveLength(0)
+    // a new account made here skips the lobby: it travels to its home (Genesis Plaza) at once
+    await waitFor(() => expect(h.session().phase).toBe('entering'))
+    expect(h.driver.last('teleport')).toMatchObject({ x: 0, y: 0 })
   })
 
   // The pick's name is a new profile's: were a guest pick ever to land on an account that has
@@ -106,21 +104,9 @@ describe('welcome page', () => {
 
     act(() => h.session().welcome.accept('QuillStonehill'))
     h.driver.emit({ kind: 'welcomeAccepted', ok: true })
-    await waitFor(() => expect(h.session().phase).toBe('lobby'))
+    await waitFor(() => expect(h.session().phase).toBe('entering'))
   })
 
-  it('RANDOMIZE tells the stage a look is coming before fetching it', async () => {
-    const h = renderSession(undefined, manual())
-    await signIn(h)
-    h.driver.emit({ kind: 'welcome', terms: true, newProfile: true })
-    await waitFor(() => expect(h.session().phase).toBe('welcome'))
-    vi.stubGlobal('fetch', async () => new Response(null, { status: 404 }))
-    act(() => h.session().welcome.reroll())
-    expect(h.driver.sentOf('expectLook')).toHaveLength(1)
-    expect(h.session().welcome.lookPending).toBe(true)
-  })
-
-  // ACCEPT AND PLAY before the engine is ready keeps the click, and runs it once the engine is.
   it('runs an ACCEPT AND PLAY clicked before the engine was ready once it is', async () => {
     class BootingDriver extends FakeDriver {
       ready = false
@@ -196,12 +182,10 @@ describe('welcome page', () => {
       const h = renderSession({ userId: null }, manual())
       await signIn(h)
       h.driver.emit({ kind: 'welcome', terms: true, newProfile: false })
-      await waitFor(() => expect(h.session().phase).toBe('welcome'))
-      // an existing profile's name isn't on the page
+      // an existing account has no terms step: they are accepted for it, with no page
+      await waitFor(() => expect(h.driver.last('acceptWelcome')).toEqual({ kind: 'acceptWelcome', name: undefined }))
+      expect(h.session().welcome.newProfile).toBe(false)
       expect(h.driver.sentOf('getProfile')).toHaveLength(0)
-
-      act(() => h.session().welcome.accept())
-      expect(h.driver.last('acceptWelcome')).toEqual({ kind: 'acceptWelcome', name: undefined })
       h.driver.emit({ kind: 'welcomeAccepted', ok: true })
       await waitFor(() => expect(h.session().phase).toBe('entering'))
       expect(h.driver.last('teleport')).toMatchObject({ realm: 'foo.dcl.eth', x: 3, y: 4 })
@@ -215,9 +199,7 @@ describe('welcome page', () => {
       await signIn(h)
       expect(driver.hosts).toEqual([{ holdWorld: true }])
       h.driver.emit({ kind: 'welcome', terms: true, newProfile: false })
-      await waitFor(() => expect(h.session().phase).toBe('welcome'))
-
-      act(() => h.session().welcome.accept())
+      await waitFor(() => expect(h.driver.sentOf('acceptWelcome')).toHaveLength(1))
       h.driver.emit({ kind: 'welcomeAccepted', ok: true })
       await waitFor(() => expect(h.session().phase).toBe('entering'))
       expect(h.driver.last('teleport')).toMatchObject({ x: 10, y: 20 })
@@ -278,59 +260,5 @@ describe('welcome page', () => {
     act(() => h.session().logout())
     await waitFor(() => expect(h.session().phase).toBe('login'))
     expect(h.session().welcome.terms).toBe(false)
-  })
-})
-
-describe('welcome page view', () => {
-  const show = (welcome: { terms: boolean; newProfile: boolean; pending?: boolean }): ReturnType<typeof fakeSession> => {
-    const session = fakeSession()
-    session.welcome = { ...session.welcome, ...welcome }
-    session.profile = fakeProfileState({
-      data: { address: '0x1234', name: 'NovaStarfall#1234', hasClaimedName: false, isGuest: false }
-    })
-    render(
-      <SessionProvider value={session}>
-        <WelcomePage setEngineViewport={session.setEngineViewport} />
-      </SessionProvider>
-    )
-    return session
-  }
-
-  it('shows only the background while the answer is pending', () => {
-    show({ terms: false, newProfile: false, pending: true })
-    expect(screen.queryByRole('region', { name: 'Welcome' })).toBeNull()
-    expect(screen.queryByRole('button')).toBeNull()
-  })
-
-  it('offers only the terms to an existing profile', () => {
-    const session = show({ terms: true, newProfile: false })
-    expect(screen.queryByLabelText('Name')).toBeNull()
-    expect(screen.queryByRole('button', { name: 'RANDOMIZE' })).toBeNull()
-    expect(screen.queryByText(/customize your appearance/)).toBeNull()
-    fireEvent.click(screen.getByRole('button', { name: 'Terms of Use' }))
-    expect(session.welcome.openLegal).toHaveBeenCalledWith('terms')
-    fireEvent.click(screen.getByRole('button', { name: 'ACCEPT AND PLAY' }))
-    expect(session.welcome.accept).toHaveBeenCalledWith(undefined)
-  })
-
-  it('tells a new account its appearance can change once the terms are accepted', () => {
-    show({ terms: true, newProfile: true })
-    expect(screen.getByText('You can freely customize your appearance after accepting the terms.')).toBeInTheDocument()
-  })
-
-  it('names a new profile, without the suffix, and saves the edited name', () => {
-    const session = show({ terms: false, newProfile: true })
-    const field = screen.getByLabelText('Name')
-    expect(field).toHaveValue('NovaStarfall')
-    fireEvent.click(screen.getByRole('button', { name: 'RANDOMIZE' }))
-    expect(session.welcome.reroll).toHaveBeenCalledOnce()
-    // the terms are accepted already, so nothing waits on them
-    expect(screen.queryByText(/customize your appearance/)).toBeNull()
-
-    fireEvent.change(field, { target: { value: 'not valid!' } })
-    expect(screen.getByRole('button', { name: 'PLAY' })).toBeDisabled()
-    fireEvent.change(field, { target: { value: 'Renamed' } })
-    fireEvent.click(screen.getByRole('button', { name: 'PLAY' }))
-    expect(session.welcome.accept).toHaveBeenCalledWith('Renamed')
   })
 })

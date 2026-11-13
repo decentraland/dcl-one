@@ -9,11 +9,10 @@ export type StartupScreen =
   | 'guestOrSignUp'
   /** The desktop browser sign-in in flight, with its Cancel. */
   | 'browserSignIn'
-  /** A stored sign-in that failed: "Welcome back" with Try again or a different account. */
-  | 'existingAccount'
 
 export function startupScreen(flow: Pick<LoginFlow, 'status' | 'authPending' | 'error'>): StartupScreen {
-  if (flow.status === 'sign-in-or-guest' && !flow.authPending) return 'guestOrSignUp'
+  if (flow.authPending) return 'browserSignIn'
+  // a stored sign-in goes in under the splash; one that failed is back on the first screen
   if (flow.status === 'loading' || (flow.status === 'reuse-login-or-new' && flow.error == null)) return 'splash'
-  return flow.authPending ? 'browserSignIn' : 'existingAccount'
+  return 'guestOrSignUp'
 }

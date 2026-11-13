@@ -12,9 +12,9 @@ describe('startupScreen', () => {
     expect(startupScreen({ status: 'sign-in-or-guest', authPending: false, error: 'thirdweb 500' })).toBe('guestOrSignUp')
   })
 
-  it('a stored sign-in goes in under the splash, and only a failure shows Welcome back', () => {
+  it('a stored sign-in goes in under the splash; one that failed is back on the first screen', () => {
     expect(startupScreen({ status: 'reuse-login-or-new', authPending: false, error: null })).toBe('splash')
-    expect(startupScreen({ status: 'reuse-login-or-new', authPending: false, error: 'Login failed' })).toBe('existingAccount')
+    expect(startupScreen({ status: 'reuse-login-or-new', authPending: false, error: 'Login failed' })).toBe('guestOrSignUp')
   })
 
   it("the desktop browser sign-in shows its own panel", () => {
