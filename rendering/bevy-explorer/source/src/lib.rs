@@ -683,12 +683,6 @@ impl DecentralandApp {
             .add_plugins(CommsPlugin)
             .add_plugins(SocialPlugin)
             .add_plugins(BanBlockPlugin)
-            // Keep ImageProcessingPlugin ahead of NftShapePlugin. Bevy gives an image path
-            // without an extension to the last image loader registered, which must stay
-            // NftShapePlugin's ExtendedImageLoader (16-bit conversion, size cap, BC texture
-            // variants); Ktx2Loader, registered before it, then only ever sees `.ktx2` paths.
-            // ExtendedImageLoader also takes `.png`, `.jpg`, `.jpeg` and `.webp` over Bevy's
-            // own ImageLoader, which it wraps.
             .add_plugins(ImageProcessingPlugin)
             .add_plugins(NftShapePlugin)
             .add_plugins(TweenPlugin)
