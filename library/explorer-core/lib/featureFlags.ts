@@ -1,8 +1,11 @@
 // The Explorer's rollout flags: the Unleash application `explorer` as Decentraland's feature-flags
 // service publishes it (`https://feature-flags.<base domain>/explorer.json`). The Unity Explorer reads
-// the same file under the same keys, so one switch in Unleash reaches both clients.
+// the same file; the service has no application of this client's own, so its flags are told apart
+// by name.
 //
-// - Keys arrive as `explorer-<flag>`; the prefix is dropped, so code names a flag as `<flag>`.
+// - This client's flags are named `explorer-bevy-<flag>` in Unleash. Only those are kept, the prefix
+//   dropped, so code names a flag as `<flag>`; every other key in the file is the Unity Explorer's
+//   and is ignored.
 // - `X-Address-Hash` carries a stable anonymous id so gradual rollouts stick to the player: the
 //   landing page's campaign id when the entry url has one, else one minted here and kept in prefs.
 //   The sign-in address is never sent.
@@ -17,8 +20,10 @@ import { launchAnalytics } from './analytics'
 import { getPref, PREF, setPref } from './prefs'
 
 export const FLAGS_APP = 'explorer'
+/** The prefix of this client's flags in the file; keys without it are left out. */
+export const FLAG_PREFIX = `${FLAGS_APP}-bevy-`
 
-/** Every flag the HUD reads, by its name without the `explorer-` prefix. */
+/** Every flag the HUD reads, by its name without the `explorer-bevy-` prefix. */
 export const FLAG = {} as const satisfies Record<string, string>
 
 export type Flag = (typeof FLAG)[keyof typeof FLAG]
@@ -66,22 +71,31 @@ export function featureFlagsUserId(): string {
   return minted
 }
 
-const stripApp = (key: string): string => (key.toLowerCase().startsWith(`${FLAGS_APP}-`) ? key.slice(FLAGS_APP.length + 1) : key)
+/** A key's flag name without the prefix, or null for a key that is not this client's. */
+function ownFlag(key: string): string | null {
+  if (!key.toLowerCase().startsWith(FLAG_PREFIX)) return null
+  const name = key.slice(FLAG_PREFIX.length)
+  return name === '' ? null : name
+}
 
-/** The service's file as kept: each flag on only where it says `true`, each variant by its stripped key. */
+/** This client's part of the service's file: each flag on only where it says `true`, each variant by its name. */
 export function parseFeatureFlags(body: unknown): FeatureFlags {
   const file = (body != null && typeof body === 'object' ? body : {}) as { flags?: unknown; variants?: unknown }
   const flags: Record<string, boolean> = {}
   if (file.flags != null && typeof file.flags === 'object') {
-    for (const [key, value] of Object.entries(file.flags)) flags[stripApp(key)] = value === true
+    for (const [key, value] of Object.entries(file.flags)) {
+      const name = ownFlag(key)
+      if (name != null) flags[name] = value === true
+    }
   }
   const variants: Record<string, FlagVariant> = {}
   if (file.variants != null && typeof file.variants === 'object') {
     for (const [key, raw] of Object.entries(file.variants as Record<string, unknown>)) {
+      const name = ownFlag(key)
       const v = (raw ?? {}) as { name?: unknown; enabled?: unknown; payload?: { type?: unknown; value?: unknown } | null }
-      if (typeof v.name !== 'string') continue
+      if (name == null || typeof v.name !== 'string') continue
       const p = v.payload
-      variants[stripApp(key)] = {
+      variants[name] = {
         name: v.name,
         enabled: v.enabled === true,
         payload: p != null && typeof p.type === 'string' && typeof p.value === 'string' ? { type: p.type, value: p.value } : null
