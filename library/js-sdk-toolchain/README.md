@@ -1,6 +1,6 @@
 # Decentraland SDK Toolchain
 
-[![SDK](https://img.shields.io/npm/v/@dcl-regenesislabs/sdk?label=sdk)](https://www.npmjs.com/package/@dcl-regenesislabs/sdk)
+[![SDK](https://img.shields.io/npm/v/@dcl/sdk?label=sdk)](https://www.npmjs.com/package/@dcl/sdk)
 
 This monorepo contains the core packages for Decentraland's SDK and development tools.
 
@@ -68,33 +68,34 @@ make build
 
 ## Release Process
 
-The packages publish as `@dcl-regenesislabs/*` for now (the `name` fields; the code keeps the
-`@dcl` names). Install them through npm aliases so a scene keeps importing `@dcl/sdk`:
+Two workflows publish `ecs`, `js-runtime`, `react-ecs`, `sdk-commands` and `sdk`;
+`playground-assets` is built and tested but not published. The manifests keep the placeholder
+version `7.0.0`; each run stamps its own.
+
+**PR previews** (`.github/workflows/sdk.yml`). A pull request from this repository publishes what
+it packed as `@dcl-regenesislabs/*` under the shared `pr` dist-tag and comments the install
+command on the PR. The run renames the packages before packing and pins siblings as npm aliases,
+so a scene keeps importing `@dcl/sdk`:
 
 ```bash
 npm install @dcl/sdk@npm:@dcl-regenesislabs/sdk@<version> @dcl/sdk-commands@npm:@dcl-regenesislabs/sdk-commands@<version>
 ```
 
-Every push to `main` that touches the SDK or the protocol publishes `ecs`, `js-runtime`,
-`react-ecs`, `sdk-commands` and `sdk` under the `next` dist-tag (`.github/workflows/sdk.yml`);
-`playground-assets` is built and tested but not published. The version is
-`<base>-<run>.commit-<sha>`, where oddish takes the base from the registry's `latest` of the manifest's name (the placeholder `7.0.0`
-until a release exists under the scope); the manifests' version is never bumped.
+Install the exact version; the tag moves to the last PR published. Those packages are previews
+only: any branch of this repository can publish to them. Fork pull requests publish nothing.
 
-A pull request from this repository publishes the same packages under the shared `pr` dist-tag and
-comments the exact install command on the PR; install that version rather than the tag, which moves
-to the last PR published. The publish runs `main`'s copy of the workflow (`pull_request_target`),
-takes the tarballs the PR's own run packed and never runs the PR's code, so a change to the
-workflow takes effect once merged. Fork pull requests publish nothing.
+**`next` and releases** (`.github/workflows/sdk-release.yml`) publish the `@dcl/*` names. Its
+publish job uses the `npm-release` environment, which only `main` may deploy to, and the `@dcl`
+trusted publishers require that environment, so a branch or a pull request cannot publish them
+whatever its workflow says.
 
-`.github/workflows/sdk.yml` holds all of it: CI, `next`, PR previews and releases. Its publish job
-uses the `npm-release` environment, which only `main` may deploy to, and the npm trusted publishers
-require that environment: a branch or a pull request that edits the workflow cannot publish.
+A push to `main` that touches the SDK or the protocol publishes under `next` as
+`<latest patch+1>-<run>.commit-<sha>` once the `SDK_PUBLISH_NEXT` repository variable is `true`;
+until then it builds and tests only.
 
-Versioned releases are a manual run of the same `SDK` workflow from `main`. The manifests in the
-tree keep their placeholder version; the run stamps the one you give it.
+A versioned release is a manual run from `main`:
 
-1. Run `SDK` from `main` with the `version` to publish, following the
+1. Run `SDK release` from `main` with the `version` to publish, following the
    [version guidelines](https://docs.decentraland.org/creator/releases/version-agreement/); a
    `-rc.1`-style suffix makes a prerelease. The run refuses an existing `sdk-v<version>` tag.
 2. The run builds, tests, stamps the version into `@dcl/sdk` (`make prepare` copies it to the

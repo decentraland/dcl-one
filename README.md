@@ -1,6 +1,6 @@
 # dcl-one
 
-[![SDK](https://img.shields.io/npm/v/@dcl-regenesislabs/sdk?label=sdk)](https://www.npmjs.com/package/@dcl-regenesislabs/sdk)
+[![SDK](https://img.shields.io/npm/v/@dcl/sdk?label=sdk)](https://www.npmjs.com/package/@dcl/sdk)
 
 Decentraland services, web apps and tooling: the source that builds and serves
 the website, sign-in, profiles, Play, the Creator Hub, the protocol and the

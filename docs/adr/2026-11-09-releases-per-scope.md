@@ -23,27 +23,29 @@ from here ([SDK ADR](2026-10-26-sdk-in-dcl-one.md), follow-up 1).
   the previous tag with the same prefix, not over the repository.
 - One dispatcher can later release several scopes from a single run by starting each scope's
   release run.
-- The SDK keeps one workflow, `.github/workflows/sdk.yml`, for CI and every publish, so there is a
-  single file to read and one trusted publisher per package. Its manual run takes the version as an input, as upstream takes
-  it from the release tag, and stamps it into the manifests before packing (the tree keeps a
-  placeholder). It publishes `ecs`, `js-runtime`, `react-ecs`, `sdk-commands` and `sdk` in
-  dependency order through npm trusted publishing (dist-tag `latest`, `rc` for a prerelease
-  version) and releases as `sdk-v<version>` with the tarballs attached; `playground-assets` is
-  built and tested but not published. The SDK embeds the protocol at its commit
-  ([SDK ADR](2026-10-26-sdk-in-dcl-one.md)), so it needs no protocol release; the notes name the
-  `library/protocol` commit it was generated from.
+- The SDK releases from `.github/workflows/sdk-release.yml`, which also publishes `next`; it calls
+  the build jobs of `.github/workflows/sdk.yml`, the SDK's CI, and keeps the publish job in its own
+  file, since npm matches the workflow that was started. Its manual run takes the version as an
+  input, as upstream takes it from the release tag, and stamps it into the manifests before packing
+  (the tree keeps a placeholder). It publishes `ecs`, `js-runtime`, `react-ecs`, `sdk-commands` and
+  `sdk` in dependency order through npm trusted publishing (dist-tag `latest`, `rc` for a
+  prerelease version) and releases as `sdk-v<version>` with the tarballs attached;
+  `playground-assets` is built and tested but not published. The SDK embeds the protocol at its
+  commit ([SDK ADR](2026-10-26-sdk-in-dcl-one.md)), so it needs no protocol release; the notes
+  name the `library/protocol` commit it was generated from.
 
 ## Consequences
 
 - npm trusts a publish by repository, workflow filename and environment, not by branch, and a
-  branch can edit a workflow. So every publish job uses the `npm-release` environment, which only
-  `main` may deploy to (a repository setting), and each SDK package's trusted publishers require
-  it, for `sdk.yml`.
-- PR previews are published by the same workflow on `pull_request_target`: the run uses `main`'s
-  copy of the file and counts as a `main` run, so it passes the environment, while a pull request's
-  edited copy does not. That job only downloads the tarballs the PR's unprivileged run produced, checks
-  they are snapshot versions of the SDK's packages and publishes them under `pr`; it never checks
-  out the PR, and the jobs that do never run on that event. A fork's pull request is skipped.
+  branch can edit a workflow. So the job that publishes `@dcl/*` uses the `npm-release`
+  environment, which only `main` may deploy to (a repository setting), and each package's trusted
+  publisher requires it. The environment is the gate, not the filename.
+- PR previews cannot pass that gate: a pull request's run is not a `main` run, and npm rejects
+  trusted publishing from `pull_request_target`, which GitHub also blocks by default in public
+  repositories. So previews publish from the pull request's own run to separate packages,
+  `@dcl-regenesislabs/*`, whose trusted publishers name `sdk.yml` and no environment. Any branch
+  of this repository can publish anything to those names; nothing should depend on them beyond
+  trying a pull request. A fork's pull request is skipped.
 - SDK and Explorer compatibility is by commit, not by a shared protocol version: a scene built
   with `@dcl/sdk` from a commit assumes the components `library/protocol` had there.
 - The Explorer workflows keep their tag prefixes; moving them to `--latest=false` and the image

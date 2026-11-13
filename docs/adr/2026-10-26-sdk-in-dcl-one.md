@@ -44,24 +44,24 @@ build test prepare`). Its `.github`, agent files and editor configuration were l
   shell, or brew's on a Mac without Rosetta) or a path, resolved to an absolute path. It is not
   `PROTOC`, which prost reads for the Rust crates. CI leaves it unset and uses the SDK's download
   of 3.20.1, so generated code in a PR comes from that version.
-- `.github/workflows/sdk.yml` runs lint, build, test, the CLI smoke test and `prepare` on changes
-  under `library/js-sdk-toolchain` or `library/protocol`. A push to `main` also publishes `ecs`,
+- `.github/workflows/sdk.yml` runs lint, build, test, the CLI smoke test and `prepare` on pull
+  requests that change `library/js-sdk-toolchain` or `library/protocol`.
+  `.github/workflows/sdk-release.yml` calls the same jobs on a push to `main` and publishes `ecs`,
   `js-runtime`, `react-ecs`, `sdk-commands` and `sdk` (`playground-assets` is built and tested, not
-  published) under the `next` dist-tag as `<latest patch+1>-<run>.commit-<sha>` (oddish derives
-  the version from the registry's `latest`; the manifests keep `7.0.0` as upstream does, and
-  `npm publish` ships the tarballs through trusted publishing). A pull request from this
-  repository gets the tarballs its run built published under the shared `pr` dist-tag, one tag for
-  every PR, by `main`'s copy of the same workflow, and a sticky comment names the exact version to
-  install; fork pull requests publish nothing.
+  published) as `@dcl/*` under the `next` dist-tag, as `<latest patch+1>-<run>.commit-<sha>`
+  (oddish derives the version from the registry's `latest`; the manifests keep `7.0.0` as upstream
+  does, and `npm publish` ships the tarballs through trusted publishing). `next` stays off until
+  the `SDK_PUBLISH_NEXT` repository variable is `true`, which waits for the `@dcl` trusted
+  publishers and for upstream to stop publishing it.
   Versioned releases are cut by hand ([releases ADR](2026-11-09-releases-per-scope.md)). The
   manifests name this repository, which trusted publishing requires.
-- The packages publish as `@dcl-regenesislabs/*` until the `@dcl` names can be published from here;
-  switching back is the six `name` fields. The code and the dependency keys keep the `@dcl` names,
-  the build installs siblings under those keys (`@dcl/ecs@file:../ecs`), and `make prepare` pins a
-  sibling as an npm alias (`npm:@dcl-regenesislabs/ecs@<version>`) when its name differs from the
-  key. A scene installs `@dcl/sdk@npm:@dcl-regenesislabs/sdk@<version>` and keeps importing
-  `@dcl/sdk`. oddish reads the dist-tags of the manifest's name, so `next` snapshots under this
-  scope start from the placeholder (`7.0.0-<run>.commit-<sha>`) rather than from `@dcl/sdk@latest`.
+- A pull request from this repository publishes the tarballs its run built as
+  `@dcl-regenesislabs/*` under the shared `pr` dist-tag, one tag for every PR, and a sticky comment
+  names the exact version to install; fork pull requests publish nothing. The run renames the five
+  manifests before packing. The code and the dependency keys keep the `@dcl` names, the build
+  installs siblings under those keys (`@dcl/ecs@file:../ecs`), and `make prepare` pins a sibling as
+  an npm alias (`npm:@dcl-regenesislabs/ecs@<version>`) when its name differs from the key. A scene
+  installs `@dcl/sdk@npm:@dcl-regenesislabs/sdk@<version>` and keeps importing `@dcl/sdk`.
 - Snapshots (`test/snapshots/**`, `playground-assets.api.md`) are regenerated locally
   (`make update-snapshots`) whenever `library/protocol` changes what `@dcl/ecs` generates; the
   snapshot test fails on a stale one (with `UPDATE_SNAPSHOTS` it also rewrites it) and the
@@ -78,11 +78,11 @@ build test prepare`). Its `.github`, agent files and editor configuration were l
 
 ## Follow-ups
 
-1. Releases and `next` are published from here, through a trusted publisher on `sdk.yml`
-   (a new package needs one manual publish before it accepts one); still to do:
-   the `@dcl` names, stop publishing from `decentraland/js-sdk-toolchain`, the
-   rest of the PR tooling (the e2e realm, the playground). The first release notes carry the
-   narrowed types above.
+1. PR previews publish from here. Releases and `next` are wired in `sdk-release.yml` and still
+   need: the `npm-release` environment, a trusted publisher on each `@dcl` package naming that
+   workflow and environment, `SDK_PUBLISH_NEXT` turned on, and `decentraland/js-sdk-toolchain`
+   to stop publishing. Then the rest of the PR tooling (the e2e realm, the playground). The first
+   release notes carry the narrowed types above.
 2. The `auth-server` branch as a dcl-one branch published through a manual `publish-tag` run.
 3. Fold the rest of the SDK's `experimental-bevy` layer (react-ecs scroll and render-to-texture,
    drag events, `setGltfMesh`, …) into `main` here.

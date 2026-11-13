@@ -1,56 +1,36 @@
 name: SDK
-# One file for the SDK's CI and every publish:
-#   pull_request         the PR's copy: lint, build, test, pack. No publish rights.
-#   pull_request_target  main's copy: publishes the tarballs that PR run packed, under the pr dist-tag.
-#   push to main         build, test, publish under next.
-#   workflow_dispatch    from main with a version: publish it and create the sdk-v<version> release.
-# Only runs that count as main can publish: the publish job uses the npm-release environment (main
-# only, a repository setting) and the npm trusted publishers require it. A pull_request_target run
-# counts as main and uses main's copy of this file, so a PR's edits to it publish nothing. That job
-# never checks out or runs the PR's code; any job that does must not run on pull_request_target.
+# The SDK's CI and its PR previews. sdk-release.yml calls the same jobs for next and for releases.
+# A same-repo PR publishes what it packed as @dcl-regenesislabs/* under the pr dist-tag. Those
+# packages are previews only: any branch can publish to them. The @dcl/* names publish only from
+# sdk-release.yml, through an environment a PR run cannot use.
 on:
-  push:
-    branches: [main]
-    paths:
-      - library/js-sdk-toolchain/**
-      - library/protocol/**
-      - .github/workflows/sdk.yml
   pull_request:
     paths:
       - library/js-sdk-toolchain/**
       - library/protocol/**
       - .github/workflows/sdk.yml
-  pull_request_target:
-    paths:
-      - library/js-sdk-toolchain/**
-      - library/protocol/**
-      - .github/workflows/sdk.yml
-  workflow_dispatch:
+      - .github/workflows/sdk-release.yml
+  workflow_call:
     inputs:
       version:
-        description: The version to release the five packages as (e.g. 7.34.0, or 7.34.0-rc.1 for a prerelease)
-        type: string
-        required: true
-      notes:
-        description: Text placed at the top of the release notes (optional)
+        description: The release version to stamp; empty stamps a snapshot version
         type: string
         default: ''
 permissions:
   contents: read
 concurrency:
-  # pull_request_target runs have main as their ref, so the PR number keeps them apart
-  group: sdk-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
-  # a newer push supersedes a PR's runs; main runs finish
-  cancel-in-progress: ${{ startsWith(github.event_name, 'pull_request') }}
+  # a newer push supersedes a PR's run; a run called from sdk-release.yml is never cancelled
+  group: sdk-ci-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
 env:
   # the SDK's make install downloads protoc 3.20.1 for the runner's arch
   CI: true
   # playground-assets is built and tested with the rest but not published
   SDK_PACKAGES: ecs js-runtime react-ecs sdk-commands sdk
+  PREVIEW_SCOPE: '@dcl-regenesislabs'
 jobs:
   lint:
     name: Lint
-    if: github.event_name != 'pull_request_target'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     defaults:
@@ -72,7 +52,6 @@ jobs:
         run: make lint-packages
   build-test:
     name: Build, test, pack
-    if: github.event_name != 'pull_request_target'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     defaults:
@@ -80,24 +59,6 @@ jobs:
         working-directory: library/js-sdk-toolchain
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: The release version is valid and new
-        if: github.event_name == 'workflow_dispatch'
-        env:
-          VERSION: ${{ inputs.version }}
-        run: |
-          if [ "$GITHUB_REF" != refs/heads/main ]; then
-            echo "SDK releases are cut from main, not $GITHUB_REF" >&2
-            exit 1
-          fi
-          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
-            echo "version must be semver without a v prefix, got '$VERSION'" >&2
-            exit 1
-          fi
-          # a version on npm without its tag is a release that stopped midway: the run completes it
-          if git ls-remote --exit-code --tags origin "refs/tags/sdk-v$VERSION" > /dev/null; then
-            echo "sdk-v$VERSION already exists; pick a new version" >&2
-            exit 1
-          fi
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24.16.0
@@ -142,7 +103,7 @@ jobs:
         # <latest patch+1>-<run>.commit-<sha>, after the tests, which expect the placeholder;
         # make prepare copies it to the other packages.
         # Fork PRs keep the placeholder: nothing publishes them.
-        if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)
+        if: inputs.version == '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
         uses: decentraland/oddish-action@a4e98664bf53d4aae1f6d20d1a43ff2c79b555b3 # v1.0.1
         with:
           cwd: ./library/js-sdk-toolchain/packages/@dcl/sdk
@@ -152,10 +113,17 @@ jobs:
           # A PR checkout is a detached merge commit, so oddish cannot read the branch from git.
           BRANCH_NAME: ${{ github.head_ref }}
       - name: Stamp the release version into @dcl/sdk
-        if: github.event_name == 'workflow_dispatch'
+        if: inputs.version != ''
         run: cd packages/@dcl/sdk && npm version "$VERSION" --no-git-tag-version --allow-same-version
         env:
           VERSION: ${{ inputs.version }}
+      - name: Name the PR's packages as previews
+        # make prepare then pins each sibling as an npm alias to its preview name
+        if: github.event_name == 'pull_request'
+        run: |
+          for name in $SDK_PACKAGES; do
+            (cd "packages/@dcl/$name" && npm pkg set name="$PREVIEW_SCOPE/$name")
+          done
       - name: Prepare releasable packages
         run: make prepare
       - name: Packed manifests name no local dependency
@@ -171,180 +139,69 @@ jobs:
           path: library/js-sdk-toolchain/dist/*.tgz
           if-no-files-found: error
           retention-days: 7
-  publish:
-    name: Publish to npm
+  preview:
+    name: Publish the PR preview
     needs: [lint, build-test]
-    # main's push and release publish what this run packed; a same-repo PR's pull_request_target run
-    # publishes what that PR's pull_request run packed (the two jobs above are skipped there)
-    if: >-
-      ${{ !cancelled() && (
-        (github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name == github.repository) ||
-        ((github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
-          && needs.lint.result == 'success' && needs.build-test.result == 'success')
-      ) }}
-    concurrency:
-      group: sdk-publish-${{ github.event.pull_request.number || 'main' }}
-      cancel-in-progress: false
+    # fork PRs publish nothing
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
-    environment: npm-release
+    timeout-minutes: 15
     permissions:
-      actions: read
       pull-requests: write
       id-token: write # npm OIDC trusted publishing — no token secret
-    outputs:
-      scope: ${{ steps.publish.outputs.scope }}
-      version: ${{ steps.publish.outputs.version }}
-    env:
-      GH_TOKEN: ${{ github.token }}
-      GH_REPO: ${{ github.repository }}
-      PR: ${{ github.event.pull_request.number }}
-      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
     steps:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24.16.0
           registry-url: https://registry.npmjs.org
-      - name: Download the tarballs this run packed
-        if: github.event_name != 'pull_request_target'
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: sdk-packages-${{ github.sha }}
           path: dist
-      - name: Wait for the PR's run to pack
-        id: build
-        if: github.event_name == 'pull_request_target'
-        run: |
-          set -euo pipefail
-          # the pull_request run of this workflow for the PR's head commit, from a branch of this repository
-          query=".workflow_runs | map(select(.path == \".github/workflows/sdk.yml\" and .head_repository.full_name == \"$GH_REPO\")) | sort_by(.run_number) | last | select(. != null) | \"\(.id) \(.status)\""
-          for _ in $(seq 1 160); do
-            read -r id status <<< "$(gh api "repos/$GH_REPO/actions/runs?head_sha=$HEAD_SHA&event=pull_request" --jq "$query" || true)"
-            if [ -n "${id:-}" ]; then
-              packed=$(gh api "repos/$GH_REPO/actions/runs/$id/jobs" --jq '.jobs[] | select(.name == "Build, test, pack") | .conclusion // ""' || true)
-              if [ "$packed" = success ]; then echo "run=$id" >> "$GITHUB_OUTPUT"; exit 0; fi
-              if [ -n "$packed" ] || [ "$status" = completed ]; then
-                echo "run $id did not pack the packages ($packed); nothing to publish" >&2
-                exit 1
-              fi
-            fi
-            sleep 30
-          done
-          echo "no finished pull_request run for $HEAD_SHA" >&2
-          exit 1
-      - name: Download the tarballs the PR's run packed
-        if: github.event_name == 'pull_request_target'
-        env:
-          RUN: ${{ steps.build.outputs.run }}
-        run: |
-          set -euo pipefail
-          gh run download "$RUN" --pattern 'sdk-packages-*' --dir downloaded
-          mkdir dist && mv downloaded/*/*.tgz dist/
       - name: Publish in dependency order
         id: publish
-        env:
-          RELEASE: ${{ inputs.version }}
         run: |
           set -euo pipefail
           manifest() { tar -xOf "$1" package/package.json | node -p 'const p = JSON.parse(require("fs").readFileSync(0, "utf8")); p.name + "@" + p.version'; }
-          # the packages' scope (@dcl, or @dcl-regenesislabs while the @dcl names cannot be published from here)
           first=$(manifest ./dist/*-js-runtime-[0-9]*.tgz)
-          scope=${first%%/*}; version=${first##*@}
-          snapshot='^[0-9]+\.[0-9]+\.[0-9]+-[0-9]+\.commit-[0-9a-f]+$'
-          case "$GITHUB_EVENT_NAME" in
-            workflow_dispatch)
-              expected=$RELEASE
-              case "$version" in *-*) tag=rc ;; *) tag=latest ;; esac ;;
-            push) expected=snapshot; tag=next ;;
-            # a PR's tarballs are its own: only a snapshot version goes out, and only under pr
-            *) expected=snapshot; tag='pr' ;;
-          esac
-          if ! [[ "$scope" =~ ^@[a-z0-9-]+$ ]] || { [ "$expected" = snapshot ] && ! [[ "$version" =~ $snapshot ]]; } \
-            || { [ "$expected" != snapshot ] && [ "$version" != "$expected" ]; }; then
-            echo "unexpected package $first (expected version: $expected)" >&2
+          version=${first##*@}
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+-[0-9]+\.commit-[0-9a-f]+$ ]]; then
+            echo "a preview needs a snapshot version, got $first" >&2
             exit 1
           fi
           for name in $SDK_PACKAGES; do
-            tgz=./dist/${scope#@}-$name-$version.tgz
-            if [ "$(manifest "$tgz")" != "$scope/$name@$version" ]; then
-              echo "$tgz is not $scope/$name@$version" >&2
+            tgz=./dist/${PREVIEW_SCOPE#@}-$name-$version.tgz
+            if [ "$(manifest "$tgz")" != "$PREVIEW_SCOPE/$name@$version" ]; then
+              echo "$tgz is not $PREVIEW_SCOPE/$name@$version" >&2
               exit 1
             fi
           done
           # a rerun repeats the version, so packages already on npm are skipped
           for name in $SDK_PACKAGES; do
-            if npm view "$scope/$name@$version" version > /dev/null 2>&1; then
-              echo "$scope/$name@$version is already on npm; skipping"
+            if npm view "$PREVIEW_SCOPE/$name@$version" version > /dev/null 2>&1; then
+              echo "$PREVIEW_SCOPE/$name@$version is already on npm; skipping"
             else
               # ./ keeps npm from reading dist/<file> as a GitHub owner/repo shorthand
-              npm publish "./dist/${scope#@}-$name-$version.tgz" --access public --tag "$tag"
+              npm publish "./dist/${PREVIEW_SCOPE#@}-$name-$version.tgz" --access public --tag pr --registry https://registry.npmjs.org
             fi
           done
-          {
-            echo "scope=$scope"
-            echo "version=$version"
-          } >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
       - name: Comment the install command on the PR
-        if: github.event_name == 'pull_request_target'
         env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           VERSION: ${{ steps.publish.outputs.version }}
-          SCOPE: ${{ steps.publish.outputs.scope }}
         run: |
           set -euo pipefail
           marker='<!-- sdk-preview -->'
           fence="\`\`\`"
-          # another scope installs through npm aliases, so scenes keep importing @dcl/sdk
-          if [ "$SCOPE" = "@dcl" ]; then spec=$VERSION; else spec="npm:$SCOPE/sdk@$VERSION"; fi
-          cli_spec=${spec/\/sdk@/\/sdk-commands@}
-          body=$(printf '%s\n## Test this pull request\n\nSDK packages for %s:\n\n%s\nnpm install @dcl/sdk@%s @dcl/sdk-commands@%s\n%s\n\nThe pr dist-tag points at the last PR preview published, so prefer the exact version.\n' "$marker" "$HEAD_SHA" "$fence" "$spec" "$cli_spec" "$fence")
+          # npm aliases, so scenes keep importing @dcl/sdk
+          body=$(printf '%s\n## Test this pull request\n\nSDK packages for %s:\n\n%s\nnpm install @dcl/sdk@npm:%s/sdk@%s @dcl/sdk-commands@npm:%s/sdk-commands@%s\n%s\n\nThe pr dist-tag points at the last PR preview published, so prefer the exact version.\n' "$marker" "$HEAD_SHA" "$fence" "$PREVIEW_SCOPE" "$VERSION" "$PREVIEW_SCOPE" "$VERSION" "$fence")
           id=$(gh api "repos/$GH_REPO/issues/$PR/comments" --paginate --jq "[.[] | select(.body | startswith(\"$marker\"))][0].id // empty")
           if [ -n "$id" ]; then
             gh api -X PATCH "repos/$GH_REPO/issues/comments/$id" -f body="$body" > /dev/null
           else
             gh api "repos/$GH_REPO/issues/$PR/comments" -f body="$body" > /dev/null
           fi
-  release:
-    name: Create the tag and the release
-    needs: publish
-    if: github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    permissions:
-      contents: write
-    env:
-      VERSION: ${{ needs.publish.outputs.version }}
-      SCOPE: ${{ needs.publish.outputs.scope }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: sdk-packages-${{ github.sha }}
-          path: dist
-      - name: Create the tag and the release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          NOTES: ${{ inputs.notes }}
-        run: |
-          set -euo pipefail
-          previous=$(git tag --list 'sdk-v*' --sort=-v:refname | head -1)
-          {
-            if [ -n "$NOTES" ]; then printf '%s\n\n' "$NOTES"; fi
-            echo "Packages: $(for name in $SDK_PACKAGES; do printf '%s%s/%s@%s%s ' '`' "$SCOPE" "$name" "$VERSION" '`'; done)"
-            echo "Protocol: \`library/protocol\` as of $(git log -1 --format=%h -- library/protocol)."
-            if [ "$SCOPE" != "@dcl" ]; then
-              echo
-              echo "Install through npm aliases so scenes keep importing \`@dcl/sdk\`:"
-              echo
-              echo '```'
-              echo "npm install @dcl/sdk@npm:$SCOPE/sdk@$VERSION @dcl/sdk-commands@npm:$SCOPE/sdk-commands@$VERSION"
-              echo '```'
-            fi
-            echo
-            echo "## Changes${previous:+ since $previous}"
-            git log --format='- %s (%h)' ${previous:+"$previous.."}HEAD -- library/js-sdk-toolchain library/protocol
-          } > notes.md
-          args=(--target "$GITHUB_SHA" --title "SDK $VERSION" --notes-file notes.md --latest=false)
-          case "$VERSION" in *-*) args+=(--prerelease) ;; esac
-          gh release create "sdk-v$VERSION" dist/*.tgz "${args[@]}"
