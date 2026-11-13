@@ -607,12 +607,12 @@ impl SceneRuntime for JsRuntime {
         client_index: u32,
         outbound: tokio::sync::mpsc::Sender<Vec<u8>>,
     ) -> InitState {
-        self.handle.shared.outbound.insert(client_index, outbound);
         let meter = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
         self.handle
             .shared
             .outbound_meters
             .insert(client_index, std::sync::Arc::clone(&meter));
+        self.handle.shared.outbound.insert(client_index, outbound);
         let cfg = *self.handle.shared.config.lock();
         let (start, size) = match cfg.try_range_for_client(client_index) {
             Some(range) => range,
@@ -661,11 +661,12 @@ impl SceneRuntime for JsRuntime {
     }
 
     fn on_client_close(&self, client_index: u32) -> Vec<Vec<u8>> {
+        // Before the close frees the index for a new client.
+        self.handle.shared.outbound.remove(&client_index);
+        self.handle.shared.outbound_meters.remove(&client_index);
         let _ = self.handle.tx.send(Command::ClientClose {
             index: client_index,
         });
-        self.handle.shared.outbound.remove(&client_index);
-        self.handle.shared.outbound_meters.remove(&client_index);
 
         if !self
             .handle

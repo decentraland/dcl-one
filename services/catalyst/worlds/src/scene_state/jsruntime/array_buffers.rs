@@ -1,14 +1,13 @@
 //! ArrayBuffer memory lives outside the V8 heap limit, so each isolate gets
 //! an allocator that counts it against a byte budget. Over budget V8's
 //! allocation fails after its last-resort GC and the scene is stopped, as on
-//! a heap overflow. Buffers the host hands the scene are charged to the same
-//! budget and throw a `RangeError` instead.
+//! a heap overflow (observed for `new ArrayBuffer`, typed arrays and
+//! `transfer`). Buffers the host hands the scene are charged to the same
+//! budget and throw a `RangeError`.
 //!
-//! Some V8 paths treat a failed allocation as fatal (`JSTypedArray::GetBuffer`
-//! materialising an on-heap typed array's buffer), so allocations no larger
-//! than [`ON_HEAP_TYPED_ARRAY_MAX`] always succeed; their count is bounded by
-//! the JS heap, one heap object each. Resizable and growable buffers and
-//! WebAssembly memory bypass the allocator, so [`HARDEN_JS`] removes them.
+//! Resizable and growable buffers and WebAssembly memory bypass the
+//! allocator and this V8 has no flag to turn them off, so [`HARDEN_JS`]
+//! removes them.
 
 use std::alloc::{Layout, alloc, alloc_zeroed, dealloc};
 use std::ffi::c_void;
@@ -17,23 +16,23 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 const ALIGN: usize = 16;
 
-/// V8's `JSTypedArray::kMaxSizeInHeap`.
-pub(super) const ON_HEAP_TYPED_ARRAY_MAX: usize = 64;
-
 /// Runs before the scene: buffers whose memory the allocator never sees are
 /// not constructible (`maxByteLength` is ignored; `resize`,
 /// `SharedArrayBuffer` and `WebAssembly` are gone).
 pub(super) const HARDEN_JS: &str = r#"(function () {
   'use strict';
   var AB = ArrayBuffer;
-  var Fixed = new Proxy(AB, {
+  var construct = Reflect.construct;
+  var define = Object.defineProperty;
+  var handler = Object.freeze({
     construct: function (target, args, newTarget) {
-      return Reflect.construct(target, [args[0]], newTarget);
+      return construct(AB, [args.length > 0 ? args[0] : undefined], newTarget);
     }
   });
-  Object.defineProperty(AB.prototype, 'constructor', { value: Fixed, writable: true, configurable: true });
+  var Fixed = new Proxy(AB, handler);
+  define(AB.prototype, 'constructor', { value: Fixed, writable: false, configurable: false });
   delete AB.prototype.resize;
-  Object.defineProperty(globalThis, 'ArrayBuffer', { value: Fixed, writable: true, configurable: true });
+  define(globalThis, 'ArrayBuffer', { value: Fixed, writable: true, configurable: true });
   delete globalThis.SharedArrayBuffer;
   delete globalThis.WebAssembly;
 })();"#;
@@ -53,10 +52,9 @@ impl ArrayBufferBudget {
     }
 
     fn charge(&self, len: usize) -> bool {
-        let exempt = len <= ON_HEAP_TYPED_ARRAY_MAX;
         self.used
             .try_update(Ordering::SeqCst, Ordering::SeqCst, |used| {
-                used.checked_add(len).filter(|n| exempt || *n <= self.limit)
+                used.checked_add(len).filter(|n| *n <= self.limit)
             })
             .is_ok()
     }

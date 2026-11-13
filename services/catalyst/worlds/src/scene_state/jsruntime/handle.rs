@@ -281,6 +281,36 @@ pub(super) extern "C" fn near_heap_limit_cb(
 
 type OomScene = (Arc<SharedState>, Arc<Watchdog>, String);
 
+/// Scenes whose thread a V8 OOM parked; each keeps its isolate until restart.
+#[derive(Default)]
+struct ParkedScenes(Mutex<Vec<String>>);
+
+impl ParkedScenes {
+    fn add(&self, scene_hash: &str) {
+        self.0.lock().push(scene_hash.to_string());
+    }
+
+    fn count(&self) -> usize {
+        self.0.lock().len()
+    }
+
+    fn contains(&self, scene_hash: &str) -> bool {
+        self.0.lock().iter().any(|s| s == scene_hash)
+    }
+}
+
+static PARKED: ParkedScenes = ParkedScenes(Mutex::new(Vec::new()));
+
+/// Isolates parked by an OOM; they count against the scene cap.
+pub fn parked_isolates() -> usize {
+    PARKED.count()
+}
+
+/// Whether `scene_hash` ran out of memory before; it is not loaded again.
+pub fn is_parked(scene_hash: &str) -> bool {
+    PARKED.contains(scene_hash)
+}
+
 thread_local! {
     static OOM_SCENE: std::cell::RefCell<Option<OomScene>> = const { std::cell::RefCell::new(None) };
 }
@@ -310,11 +340,15 @@ unsafe extern "C" fn scene_oom(location: *const std::ffi::c_char, _details: &v8:
     OOM_SCENE.with(|s| match s.try_borrow().ok().as_deref().and_then(Option::as_ref) {
         Some((shared, watchdog, scene)) => {
             tracing::error!(%scene, %location, "scene isolate out of memory; parking its thread");
+            PARKED.add(scene);
             shared.running.store(false, Ordering::SeqCst);
             shared.slots.clear();
             watchdog.stopped.store(true, Ordering::SeqCst);
         }
-        None => tracing::error!(%location, "V8 out of memory off a scene thread; parking it"),
+        None => {
+            tracing::error!(%location, "V8 out of memory off a scene thread; parking it");
+            PARKED.add("");
+        }
     });
     loop {
         std::thread::park();
@@ -1365,20 +1399,19 @@ mod tests {
     }
 
     #[test]
-    fn a_full_buffer_budget_still_materialises_small_typed_array_buffers() {
-        let limits = RuntimeLimits {
-            js_array_buffer_limit_mb: 8,
-            ..RuntimeLimits::default()
-        };
+    fn a_replaced_reflect_cannot_reach_the_original_array_buffer() {
         assert!(
             scene_reports(
-                "ab-full",
-                "var keep = []; for (var i = 0; i < 8; i++) keep.push(new Uint8Array(1 << 20)); \
-                 var small = []; for (var j = 0; j < 1000; j++) small.push(new Uint8Array(8).buffer); \
-                 ok = small[999].byteLength === 8;",
-                limits,
+                "harden-reflect",
+                "var R = Reflect, AB0; \
+                 Reflect = { construct: function (t, a, n) { AB0 = t; return R.construct(t, a, n); } }; \
+                 var plain = new ArrayBuffer(1); Reflect = R; \
+                 ok = AB0 === undefined && plain.byteLength === 1 \
+                   && new ArrayBuffer(8, { maxByteLength: 64 }).resizable === false \
+                   && Object.getOwnPropertyDescriptor(Object.getPrototypeOf(plain), 'constructor').writable === false;",
+                RuntimeLimits::default(),
             ),
-            "reading .buffer at a full budget neither throws nor aborts"
+            "the proxy trap uses its own Reflect.construct"
         );
     }
 
@@ -1537,5 +1570,119 @@ mod tests {
             .unwrap();
         let frame = wait_for_recv(&mut rx).expect("the early frame is delivered once registered");
         assert_eq!(decode_batch(&frame[1..]), vec![early]);
+    }
+
+    #[test]
+    fn element_setters_cannot_reenter_get_messages() {
+        let js = format!(
+            r#"
+            var EngineApi = require('~system/EngineApi');
+            var clients = {{}};
+            registerScene({CFG_512}, function (ev) {{
+              if (ev.type === 'open') {{ clients[ev.clientId] = ev.client; }}
+            }});
+            var armed = false;
+            module.exports.onUpdate = function (dt) {{
+              for (var id in clients) {{
+                var c = clients[id];
+                if (!armed) {{
+                  armed = true;
+                  Object.defineProperty(Array.prototype, '0', {{
+                    set: function (v) {{ c.getMessages(); EngineApi.crdtGetState(); }},
+                    configurable: true
+                  }});
+                }}
+                var msgs = c.getMessages();
+                EngineApi.crdtGetState();
+                for (var i = 0; i < msgs.length; i++) {{ c.sendCrdtMessage(msgs[i]); }}
+              }}
+            }};
+            "#
+        );
+        let handle = spawn(
+            "setter-reentry".into(),
+            js,
+            "dcl-test".into(),
+            RuntimeLimits::default(),
+            Vec::new(),
+            None,
+        );
+        let (tx, mut rx) = mpsc::channel::<Vec<u8>>(64);
+        let index = connect(&handle, tx);
+        let sent = put(1100, 1, 1, &[3]);
+        for _ in 0..3 {
+            handle
+                .tx
+                .send(Command::ClientCrdt {
+                    index,
+                    body: encode_batch(std::slice::from_ref(&sent)),
+                })
+                .unwrap();
+        }
+        let frame = wait_for_recv(&mut rx).expect("messages still reach the scene");
+        assert_eq!(decode_batch(&frame[1..]), vec![sent]);
+        assert!(handle.shared.running.load(Ordering::SeqCst));
+    }
+
+    /// Runs `body` in `onStart`; true when it set `leaked`, i.e. an
+    /// allocation past the budget succeeded.
+    fn scene_leaks(name: &str, body: &str, limits: RuntimeLimits) -> bool {
+        let batch = encode_batch(&[put(600, 1, 1, &[1])]);
+        let js = format!(
+            r#"
+            var EngineApi = require('~system/EngineApi');
+            module.exports.onStart = function () {{
+              var leaked = false;
+              try {{ {body} }} catch (e) {{}}
+              if (leaked) {{ EngineApi.crdtSendToRenderer({{ data: new Uint8Array({batch:?}) }}); }}
+            }};
+            module.exports.onUpdate = function (dt) {{}};
+            "#
+        );
+        let handle = spawn(name.into(), js, "dcl-test".into(), limits, Vec::new(), None);
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        handle.shared.engine.lock().component_count() == 1
+    }
+
+    #[test]
+    fn no_buffer_path_allocates_past_the_budget() {
+        let limits = RuntimeLimits {
+            js_array_buffer_limit_mb: 1,
+            ..RuntimeLimits::default()
+        };
+        assert!(
+            scene_leaks(
+                "ab-control",
+                "new ArrayBuffer(1 << 19); leaked = true;",
+                limits
+            ),
+            "control: an allocation inside the budget succeeds"
+        );
+        for (name, body) in [
+            ("ab-ctor", "new ArrayBuffer(2 << 20); leaked = true;"),
+            (
+                "ab-transfer",
+                "new ArrayBuffer(1).transfer(2 << 20); leaked = true;",
+            ),
+            (
+                "ab-small",
+                "var keep = [new Uint8Array((1 << 20) - 4096)]; \
+                 for (var j = 0; j < 1000; j++) keep.push(new ArrayBuffer(64)); leaked = true;",
+            ),
+        ] {
+            assert!(
+                !scene_leaks(name, body, limits),
+                "{name} allocated past the budget"
+            );
+        }
+    }
+
+    #[test]
+    fn parked_scenes_are_counted_and_remembered() {
+        let parked = ParkedScenes::default();
+        assert_eq!((parked.count(), parked.contains("a")), (0, false));
+        parked.add("a");
+        parked.add("");
+        assert_eq!((parked.count(), parked.contains("a")), (2, true));
     }
 }

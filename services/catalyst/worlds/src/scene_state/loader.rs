@@ -267,6 +267,9 @@ pub async fn load_or_reload(state: &SceneHostState, key: &SceneKey) -> Result<()
             SceneKey::World(w) => w.display().to_string(),
             _ => state.settings.realm_name.clone(),
         };
+        if super::jsruntime::is_parked(&hash) {
+            bail!("scene {hash} ran out of memory earlier; it is not loaded again until restart");
+        }
         tracing::info!(scene = %name, %hash, "loading with JsRuntime (server-side game.js)");
         let storage = match build_storage_ctx(state, scope).await {
             Some((ctx, task)) => {

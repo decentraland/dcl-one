@@ -441,6 +441,32 @@ impl Settings {
                  SCENE_HOST_STORAGE_DELEGATION; scene storage requests fail closed"
             );
         }
+        for (name, value) in [
+            ("CRDT_MAX_VALUE_BYTES", raw.crdt_max_value_bytes),
+            ("CRDT_MAX_BYTES", raw.crdt_max_bytes),
+            ("CLIENT_INBOUND_MAX_BYTES", raw.client_inbound_max_bytes),
+            ("SCENE_INBOUND_MAX_BYTES", raw.scene_inbound_max_bytes),
+            ("CLIENT_OUTBOUND_MAX_BYTES", raw.client_outbound_max_bytes),
+            ("JS_ARRAY_BUFFER_LIMIT_MB", raw.js_array_buffer_limit_mb),
+        ] {
+            if value == 0 {
+                return Err(anyhow!("{name} must be at least 1"));
+            }
+        }
+        if raw.crdt_max_value_bytes > raw.crdt_max_bytes {
+            return Err(anyhow!("CRDT_MAX_VALUE_BYTES exceeds CRDT_MAX_BYTES"));
+        }
+        // A client must be able to queue at least one frame of the largest size.
+        if raw.client_inbound_max_bytes < raw.ws_max_frame_bytes {
+            return Err(anyhow!(
+                "CLIENT_INBOUND_MAX_BYTES is below WS_MAX_FRAME_BYTES"
+            ));
+        }
+        if raw.scene_inbound_max_bytes < raw.client_inbound_max_bytes {
+            return Err(anyhow!(
+                "SCENE_INBOUND_MAX_BYTES is below CLIENT_INBOUND_MAX_BYTES"
+            ));
+        }
         if admin_token.is_none() {
             tracing::warn!(
                 "SCENE_HOST_ADMIN_TOKEN / SCENE_HOST_DEBUGGING_SECRET unset; the scene admin and reload routes refuse every caller"
@@ -572,7 +598,8 @@ impl SceneHostState {
     pub async fn load(&self, key: &SceneKey) -> anyhow::Result<()> {
         let _guard = self.loads.lock().await;
         let hosted = self.scenes.get(&key.room_key()).is_some();
-        if !hosted && self.scenes.len() >= self.settings.max_scenes {
+        // Isolates parked by an OOM keep their memory, so they hold a slot.
+        if !hosted && self.scenes.len() + jsruntime::parked_isolates() >= self.settings.max_scenes {
             anyhow::bail!(
                 "scene host is full ({} scenes hosted, SCENE_HOST_MAX_SCENES)",
                 self.settings.max_scenes
@@ -843,6 +870,26 @@ mod key_tests {
         );
         raw.authoritative_key = Some("nope".into());
         assert!(Settings::resolve(raw, &http).is_err());
+    }
+
+    #[test]
+    fn byte_limits_are_validated() {
+        let http = Outbound::for_tests();
+        let ok = |tune: fn(&mut RawSettings)| {
+            let mut raw = RawSettings::default();
+            tune(&mut raw);
+            Settings::resolve(raw, &http).is_ok()
+        };
+        assert!(ok(|_| {}));
+        assert!(!ok(|r| r.client_outbound_max_bytes = 0));
+        assert!(!ok(|r| r.js_array_buffer_limit_mb = 0));
+        assert!(!ok(|r| r.crdt_max_value_bytes = r.crdt_max_bytes + 1));
+        assert!(!ok(
+            |r| r.client_inbound_max_bytes = r.ws_max_frame_bytes - 1
+        ));
+        assert!(!ok(
+            |r| r.scene_inbound_max_bytes = r.client_inbound_max_bytes - 1
+        ));
     }
 
     #[test]

@@ -476,6 +476,12 @@ fn flush_outbound(host: &RefCell<HostState>, shared: &SharedState) {
     let mut host = host.borrow_mut();
     let max_bytes = host.client_outbound_max_bytes;
     for (index, ch) in host.clients.iter_mut() {
+        // A closed client's slot may already belong to a new connection.
+        if ch.closed {
+            ch.outbound.clear();
+            ch.outbound_bytes = 0;
+            continue;
+        }
         if ch.outbound.is_empty() {
             continue;
         }
@@ -575,7 +581,7 @@ fn crdt_max_bytes(scope: &mut v8::PinScope) -> usize {
 }
 
 pub(super) fn str<'s>(scope: &mut v8::PinScope<'s, '_>, s: &str) -> v8::Local<'s, v8::String> {
-    v8::String::new(scope, s).unwrap()
+    v8::String::new(scope, s).unwrap_or_else(|| v8::String::empty(scope))
 }
 
 pub(super) fn set_prop(
@@ -594,7 +600,9 @@ fn set_fn(
     name: &str,
     cb: impl v8::MapFnTo<v8::FunctionCallback>,
 ) {
-    let f = v8::Function::new(scope, cb).unwrap();
+    let Some(f) = v8::Function::new(scope, cb) else {
+        return;
+    };
     let k = str(scope, name).into();
     obj.set(scope, k, f.into());
 }
@@ -680,13 +688,15 @@ fn op_crdt_get_state(
     let has = !snap.is_empty();
     let has_v = v8::Boolean::new(scope, has);
     set_prop(scope, result, "hasEntities", has_v.into());
-    let arr = v8::Array::new(scope, if has { 1 } else { 0 });
+    let mut items: Vec<v8::Local<v8::Value>> = Vec::new();
     if has {
         let Some(ua) = make_uint8array(scope, &snap) else {
             return;
         };
-        arr.set_index(scope, 0, ua.into());
+        items.push(ua.into());
     }
+    // Built whole: element setters on Array.prototype never run.
+    let arr = v8::Array::new_with_elements(scope, &items);
     set_prop(scope, result, "data", arr.into());
     rv.set(result.into());
 }
@@ -767,7 +777,9 @@ fn op_empty_promise(
     _args: v8::FunctionCallbackArguments,
     mut rv: v8::ReturnValue,
 ) {
-    let resolver = v8::PromiseResolver::new(scope).unwrap();
+    let Some(resolver) = v8::PromiseResolver::new(scope) else {
+        return;
+    };
     let promise = resolver.get_promise(scope);
     let result = v8::Object::new(scope);
     resolver.resolve(scope, result.into());
@@ -779,7 +791,9 @@ fn op_get_user_data(
     _args: v8::FunctionCallbackArguments,
     mut rv: v8::ReturnValue,
 ) {
-    let resolver = v8::PromiseResolver::new(scope).unwrap();
+    let Some(resolver) = v8::PromiseResolver::new(scope) else {
+        return;
+    };
     let promise = resolver.get_promise(scope);
     let address = HostState::with(scope, |c| {
         c.borrow()
@@ -1302,21 +1316,24 @@ fn op_client_get_messages(
             .map(|ch| ch.inbound.iter().cloned().collect())
             .unwrap_or_default()
     });
-    let arr = v8::Array::new(scope, msgs.len() as i32);
-    for (i, m) in msgs.iter().enumerate() {
+    let mut items: Vec<v8::Local<v8::Value>> = Vec::with_capacity(msgs.len());
+    for m in &msgs {
         // On failure the queue stays as it was for the next call.
         let Some(ua) = make_uint8array(scope, m) else {
             return;
         };
-        arr.set_index(scope, i as u32, ua.into());
+        items.push(ua.into());
     }
+    // Built whole: no element setter can run scene code before the drain.
+    let arr = v8::Array::new_with_elements(scope, &items);
     HostState::with(scope, |c| {
         let mut h = c.borrow_mut();
         let budget = Arc::clone(&h.inbound_budget);
         if let Some(ch) = h.clients.get_mut(&index) {
-            let taken: usize = ch.inbound.drain(..msgs.len()).map(|m| m.len()).sum();
-            ch.inbound_bytes -= taken;
-            budget.release(index, taken, msgs.len());
+            let n = msgs.len().min(ch.inbound.len());
+            let taken: usize = ch.inbound.drain(..n).map(|m| m.len()).sum();
+            ch.inbound_bytes = ch.inbound_bytes.saturating_sub(taken);
+            budget.release(index, taken, n);
         }
     });
     rv.set(arr.into());
