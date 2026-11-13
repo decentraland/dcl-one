@@ -15,7 +15,10 @@
 //
 // Partial, Worlds: the suite's `olavra` is not a world on decentraland.zone, so the world is
 // `DCL_E2E_WORLD` (`pixelpixie.dcl.eth` by default: on zone its scene spans 77,-4 to 80,-2 and
-// spawns at 78,-3); the in-world `/goto` targets `DCL_E2E_WORLD_PARCEL` (80,-2), away from the spawn. `/goto <world>` is the same parse as `/world` (chatCommands.ts)
+// spawns at 78,-3); the in-world `/goto` targets `DCL_E2E_WORLD_PARCEL` (80,-2), away from the spawn.
+// The world's access must let the test accounts in (unrestricted, or them on its allow-list), or the
+// HUD answers "Can't travel there". The arrival is read from `realmName`: a world's `realm` and
+// content origin stay the catalyst's (`https://peer.decentraland.zone`), as its about names that one. `/goto <world>` is the same parse as `/world` (chatCommands.ts)
 // and is not run twice.
 // Partial, Via Map: the suite clicks a scene on the map canvas, which has no addressable parcels.
 // The place comes from a category list instead (nothing asserts zone's live listings as literals),
@@ -138,11 +141,11 @@ scenario(
     const { state } = await startingPoint(explorer, restore)
     await openChat(explorer)
     await submitLine(explorer, `/world ${WORLD}`)
-    const inWorld = await until(() => explorer.worldState(), (now) => now.arrivals > state.arrivals && now.inWorld && now.realm.toLowerCase().includes(WORLD), {
+    const inWorld = await until(() => explorer.worldState(), (now) => now.arrivals > state.arrivals && now.inWorld && now.realmName.toLowerCase() === WORLD, {
       timeoutMs: REALM_TIMEOUT_MS,
       what: `the arrival in ${WORLD}`
     })
-    assert.notEqual(inWorld.realm, state.realm, 'the realm should have changed to the world')
+    assert.notEqual(inWorld.realmName, state.realmName, 'the realm should have changed to the world')
     await hudBack(explorer)
 
     await openChat(explorer)
