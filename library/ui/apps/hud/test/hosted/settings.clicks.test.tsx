@@ -16,6 +16,7 @@ const base = (over: Partial<Setting>): Setting => ({
   value: 0,
   default: 0,
   stepSize: 1,
+  disabled: false,
   ...over
 })
 
@@ -96,6 +97,101 @@ describe('settings panel controls', () => {
       />
     )
     expect(screen.getByRole('tooltip').textContent).toBe('Overall quality.\n\nHigh: prettiest.')
+  })
+})
+
+describe('settings panel disabled controls', () => {
+  it('a disabled select or toggle does not set', async () => {
+    const FPS = base({ name: 'Target Frame Rate', category: 'Performance', namedVariants: [{ name: '30 fps', description: '' }, { name: '60 fps', description: '' }, { name: 'Uncapped', description: '' }], value: 1, default: 1, maxValue: 3, disabled: true })
+    const VSYNC = base({ name: 'VSync', category: 'Performance', namedVariants: [{ name: 'Off', description: '' }, { name: 'On', description: '' }], value: 1, maxValue: 2, disabled: true })
+    const settings: SettingsState = { ...fakeSession().settings, open: true, list: [FPS, VSYNC], set: vi.fn() }
+    render(<SettingsPanel settings={settings} bindings={fakeSession().bindings} profile={fakeProfileState()} onNavigate={vi.fn()} />)
+    const select = screen.getByRole('button', { name: 'Target Frame Rate' })
+    expect(select).toBeDisabled()
+    expect(screen.getByRole('switch', { name: 'VSync' })).toBeDisabled()
+    await userEvent.click(select)
+    expect(vi.mocked(settings.set)).not.toHaveBeenCalled()
+  })
+
+  it('reset skips a negative default', async () => {
+    const RESOLUTION = base({ name: 'Resolution', category: 'Graphics', namedVariants: [{ name: 'Desktop', description: '' }], value: -1, default: -1, maxValue: 1 })
+    const settings: SettingsState = { ...fakeSession().settings, open: true, list: [RESOLUTION, { ...SELECT, category: 'Graphics' }], set: vi.fn() }
+    render(<SettingsPanel settings={settings} bindings={fakeSession().bindings} profile={fakeProfileState()} onNavigate={vi.fn()} />)
+    await userEvent.click(screen.getByRole('button', { name: /Reset all defaults/i }))
+    expect(vi.mocked(settings.set)).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(settings.set)).toHaveBeenCalledWith('quality', 1)
+  })
+
+  it('a disabled slider has no live arrows and does not set', async () => {
+    const FOV = { ...SLIDER, disabled: true }
+    const settings: SettingsState = { ...fakeSession().settings, open: true, list: [FOV], set: vi.fn() }
+    render(<SettingsPanel settings={settings} bindings={fakeSession().bindings} profile={fakeProfileState()} onNavigate={vi.fn()} />)
+    expect(screen.getByRole('slider', { name: 'fov' })).toBeDisabled()
+    for (const name of ['increase', 'decrease']) {
+      const arrow = screen.getByRole('button', { name })
+      expect(arrow).toBeDisabled()
+      await userEvent.click(arrow)
+    }
+    expect(vi.mocked(settings.set)).not.toHaveBeenCalled()
+  })
+
+  it('a field re-renders when its disabled state changes at the same value', () => {
+    const FPS = base({ name: 'Target Frame Rate', category: 'Performance', namedVariants: [{ name: '30 fps', description: '' }, { name: '60 fps', description: '' }], value: 1, maxValue: 2 })
+    // one `set` across renders, as the session gives, so the memo compares only the setting
+    const set = vi.fn()
+    const panel = (list: Setting[]) => <SettingsPanel settings={{ ...fakeSession().settings, open: true, list, set }} bindings={fakeSession().bindings} profile={fakeProfileState()} onNavigate={vi.fn()} />
+    const { rerender } = render(panel([FPS]))
+    expect(screen.getByRole('button', { name: 'Target Frame Rate' })).not.toBeDisabled()
+    rerender(panel([{ ...FPS, disabled: true }]))
+    expect(screen.getByRole('button', { name: 'Target Frame Rate' })).toBeDisabled()
+  })
+
+  it('an open list closes when its field is disabled and stays closed when re-enabled', async () => {
+    const RESOLUTION = base({ name: 'Resolution', category: 'Graphics', namedVariants: [{ name: '2560x1440', description: '' }, { name: '1920x1080', description: '' }], value: 1, maxValue: 2 })
+    const set = vi.fn()
+    const panel = (list: Setting[]) => <SettingsPanel settings={{ ...fakeSession().settings, open: true, list, set }} bindings={fakeSession().bindings} profile={fakeProfileState()} onNavigate={vi.fn()} />
+    const { rerender } = render(panel([RESOLUTION]))
+    await userEvent.click(screen.getByRole('button', { name: 'Resolution' }))
+    expect(screen.getAllByRole('option')).toHaveLength(2)
+    // e.g. Window mode switched to Windowed from the keyboard: no outside mousedown
+    rerender(panel([{ ...RESOLUTION, disabled: true }]))
+    expect(screen.queryByRole('option')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Resolution' })).toHaveAttribute('aria-expanded', 'false')
+    rerender(panel([RESOLUTION]))
+    expect(screen.queryByRole('option')).toBeNull()
+    expect(set).not.toHaveBeenCalled()
+  })
+})
+
+// A run-time list (Resolution: the monitor's fullscreen sizes) can hold a single choice, and holds
+// one greyed-out placeholder until the monitor is read.
+describe('settings panel run-time lists', () => {
+  const RESOLUTION = base({ name: 'Resolution', category: 'Graphics', namedVariants: [{ name: '1366x768', description: '' }], value: 0, default: 0, maxValue: 1 })
+  const panel = (list: Setting[], set = vi.fn()) => <SettingsPanel settings={{ ...fakeSession().settings, open: true, list, set }} bindings={fakeSession().bindings} profile={fakeProfileState()} onNavigate={vi.fn()} />
+
+  it('a single choice is a select, not a slider', async () => {
+    const set = vi.fn()
+    render(panel([RESOLUTION], set))
+    expect(screen.queryByRole('slider')).toBeNull()
+    expect(screen.queryByRole('switch')).toBeNull()
+    await userEvent.click(screen.getByRole('button', { name: 'Resolution' }))
+    await userEvent.click(screen.getByRole('option', { name: '1366x768' }))
+    expect(set).toHaveBeenCalledWith('Resolution', 0)
+  })
+
+  it('the placeholder before the monitor is read is a disabled select', () => {
+    render(panel([{ ...RESOLUTION, namedVariants: [{ name: 'Desktop', description: '' }], value: -1, default: -1 }]))
+    expect(screen.queryByRole('switch')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Resolution' })).toBeDisabled()
+  })
+
+  it('new choices at the same value re-render the options', async () => {
+    const set = vi.fn()
+    const { rerender } = render(panel([RESOLUTION], set))
+    const sizes = [{ name: '2560x1440 (16:9)', description: '' }, { name: '1920x1080 (16:9)', description: '' }]
+    rerender(panel([{ ...RESOLUTION, namedVariants: sizes, maxValue: 2 }], set))
+    await userEvent.click(screen.getByRole('button', { name: 'Resolution' }))
+    expect(screen.getAllByRole('option').map((o) => o.textContent)).toEqual(['2560x1440 (16:9)', '1920x1080 (16:9)'])
   })
 })
 

@@ -14,7 +14,8 @@ describe('settings domain', () => {
     namedVariants: [],
     value: 50,
     default: 80,
-    stepSize: 1
+    stepSize: 1,
+    disabled: false
   }
 
   it('fetches settings every time the panel opens: the engine changes some itself', async () => {

@@ -4,6 +4,9 @@ use bevy_console::ConsoleCommand;
 use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand};
 use serde_json::{Map, Value};
 
+/// Above any monitor's count of fullscreen sizes.
+const LISTED_MAX_INDEX: u8 = 63;
+
 const GROUPS: &[(&str, &str)] = &[
     ("Graphics", "Quality settings"),
     ("Performance", "Performance settings"),
@@ -36,19 +39,20 @@ fn register_group(app: &mut App, settings: &Settings, category: &str, title: &st
                 &s.info,
                 i.to_string(),
                 format!("/debug_settings {category} {i} {{value}}"),
+                s.variants.is_some(),
             )
         })
         .collect();
     let variant_indices: Vec<_> = (0..rows
         .iter()
-        .map(|(s, _, _)| s.named_variants.len())
+        .map(|(s, _, _, _)| s.named_variants.len())
         .max()
         .unwrap_or(0))
         .map(|n| n.to_string())
         .collect();
     let variants: Vec<Vec<_>> = rows
         .iter()
-        .map(|(s, _, _)| {
+        .map(|(s, _, _, _)| {
             s.named_variants
                 .iter()
                 .zip(&variant_indices)
@@ -59,11 +63,18 @@ fn register_group(app: &mut App, settings: &Settings, category: &str, title: &st
     let inputs: Vec<_> = rows
         .iter()
         .zip(&variants)
-        .map(|((s, field, command), options)| DebugInput {
+        .map(|((s, field, command, listed), options)| DebugInput {
             label: &s.name,
             field,
             command,
-            kind: if options.is_empty() {
+            // a listed setting's choices arrive after the panel is built; `quality` checks the index
+            kind: if *listed {
+                DebugInputKind::Number {
+                    min: 0.0,
+                    max: f64::from(LISTED_MAX_INDEX),
+                    step: 1.0,
+                }
+            } else if options.is_empty() {
                 DebugInputKind::Number {
                     min: panel_number(s.min_value, s.step_size),
                     max: panel_number(s.max_value, s.step_size),

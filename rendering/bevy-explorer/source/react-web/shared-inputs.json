@@ -4449,7 +4449,7 @@
     },
     {
       "path": "library/explorer-core/engine/mockBridge.ts",
-      "sha256": "d5694625e312b57229b7ad8f20a4d32506740f9af9b49abd09a474f5250d620b"
+      "sha256": "d3fed4c85413e20e8506d2677e7a560c14c0b80935f025f65ab07edf3d2a8325"
     },
     {
       "path": "library/explorer-core/engine/nameColor.ts",
@@ -5985,7 +5985,7 @@
     },
     {
       "path": "library/ui/apps/hud/design/Select.tsx",
-      "sha256": "9707b850d4a3aa9c0b51846e50ed4e001f202557570667b021acefc745287daa"
+      "sha256": "da1a4f607f9be3fd70d82fba96e7b4b4003fed6843aeb279785c18459f63d89a"
     },
     {
       "path": "library/ui/apps/hud/design/Showcase.tsx",
@@ -6717,7 +6717,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/settings/SettingsPanel.tsx",
-      "sha256": "9127cc0ad001af8d5e7daa63c4e91853e69558a9e54bda580bf6a1b151231fa0"
+      "sha256": "bb9e00f3acc3e5c51284d4b3e00cc0e645192d65093a849581c7ec6715a3bfdd"
     },
     {
       "path": "library/ui/apps/hud/features/shop/ShopPage.module.css",
@@ -6953,7 +6953,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/chatTranslation.test.tsx",
-      "sha256": "7c0f218b77e1e5833b176fab7330ace8b049f42879cc46c51722f022560d2c81"
+      "sha256": "ba73580ddf1181905601704de601f3d9ca220ea9d1b9670ab95c393ee7e985d6"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/clicks.test.tsx",
@@ -7073,7 +7073,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/nearbyVoice.test.tsx",
-      "sha256": "4e127ce17275325573854841912b53133f621b2e42d4e1b81fbca9fc466b898e"
+      "sha256": "3b36e310acf33f652fe0d355361f90ac608bccb76594f80db0b9a66aab3cb97d"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/notifications.clicks.test.tsx",
@@ -7141,11 +7141,11 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/settings.clicks.test.tsx",
-      "sha256": "1bf9477b15d7ed516b2535864e2da67aec91472813c754f0e292a21fb74d5f4e"
+      "sha256": "dd65a1ad00861206353f78baf4b6c47e763fa13ce431989fd25c5921f10abc2e"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/settings.test.tsx",
-      "sha256": "97c4f2ea42d7b00b02e5bc295a56adf8dfc4b524b6db9b2e9e850a0d4ba812ad"
+      "sha256": "0c06ee379654478897edb12e313b1a81715e99bc84585de88da73a0977bc4add"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/shop.test.tsx",
