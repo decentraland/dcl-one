@@ -429,6 +429,7 @@ fn main() -> AppExit {
     }
 
     app.add_systems(PreUpdate, supervisor);
+    app.add_systems(Startup, scene_runner::util::remove_scene_storage);
     #[cfg(unix)]
     {
         shutdown_signal::install();

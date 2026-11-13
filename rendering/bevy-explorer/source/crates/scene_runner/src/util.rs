@@ -39,8 +39,8 @@ impl Plugin for SceneUtilPlugin {
     }
 }
 
-/// Scenes get no persistent storage; removes the folders older builds kept it in. The client app
-/// registers this, not a plugin, so test apps never touch the real user profile.
+/// Scenes get no persistent storage; removes the folders older builds kept it in. The client and
+/// headless apps register this, not a plugin, so test apps never touch the real user profile.
 pub fn remove_scene_storage() {
     let (Some(dirs), Some(pool)) = (platform::project_directories(), IoTaskPool::try_get()) else {
         return;
