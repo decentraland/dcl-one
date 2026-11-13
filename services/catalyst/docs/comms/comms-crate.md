@@ -86,7 +86,11 @@ the repository structure checks. Higher crates implement comms' traits, keeping 
 | `multiplayer-hosting` → gatekeeper / engine | public routes / stdin-stdout JSON lines |
 
 `/ws` limits : `WS_MAX_SOCKETS` (default 3,000, sized by the 10 ms-per-socket
-re-announce sweep's 30 s cadence), beyond it 503 with `Retry-After: 5`; positions coalesce
+re-announce sweep's 30 s cadence), beyond it 503 with `Retry-After: 5`; `WS_MAX_SOCKETS_PER_IP`
+(default 64, 0 unlimited) per client source (IPv4 address or IPv6 /64) attributable through
+`HTTP_TRUSTED_PROXY_CIDRS`, beyond it 429; an unattributable upgrade (a gateway peer outside that
+list, or no `X-Real-IP`) is not counted, logs one warning and increments
+`comms_ws_unattributed_upgrades_total` (registered at 0, exported with the other `comms_` series on `SERVE_METRICS_BIND`); positions coalesce
 for ownership control to one per 500 ms; statistical observations retain every decoded position; a flooding socket closes with 1008; a 64-frame send queue in which a newer
 `island_changed` replaces the queued one and `kicked` is never dropped, full for 10 s closes
 with 1013; undecodable frames 1007; restart closes every socket with 1012.
@@ -412,7 +416,7 @@ as `authoritative-server`):
 - `multiplayer-hosting`, a comms service run as one instance, starts a server on the first joined event for a scene with `authoritativeMultiplayer`, stops it 60 s after the room empties, reconciles against `GET /scene-participants`, keys servers by canonical room and entity hash (a redeploy drains the old one), allows 6 starts per 60 s, and pushes room tokens and 60-minute storage delegations to the engine. Metadata comes from `/content/entities/active` and `/content/contents/{hash}` (5 s timeout, verdict cached per entity hash). `/debug/*` answers only signed fetches from configured admin wallets, otherwise 403; local preview is deferred (503).
 - The runtime is upstream bevy-explorer `headless --orchestrated`, unpatched and keyless, one engine per world. The one engine change left, as an upstream PR: report a room joined only once LiveKit confirms it.
 - Presence, world capacity and the room-empty rule exclude `authoritative-server`.
-- Pulse scene listeners must chain to the authoritative address, scoped to their parcels. Verify this requirement through the private acceptance review.
+- Pulse scene listeners must chain to the authoritative address, scoped to their parcels. Pulse admits a listener handshake only from `AUTHORITATIVE_SERVER_ADDRESS` and any `PULSE_SCENE_LISTENER_WALLETS` (`catalyst secrets init` copies the address into Pulse's file), and refuses every listener with neither; the parcel scope is not yet enforced. Verify this requirement through the private acceptance review.
 
 ## Acceptance evidence
 

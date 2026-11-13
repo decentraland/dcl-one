@@ -239,7 +239,10 @@ def pulse_env(config, certificate, key):
             'PULSE_NATS_URL': nats_url(config),
             # Pulse polls the API's moderator ban snapshot with the token the API checks.
             'COMMS_MODERATOR_TOKEN': config['MODERATOR_TOKEN'],
-            'PULSE_BANS_URL': f'http://127.0.0.1:{config["port"]}/comms-gatekeeper/bans'}
+            'PULSE_BANS_URL': f'http://127.0.0.1:{config["port"]}/comms-gatekeeper/bans',
+            # Scene listeners are admitted only from the stack's authoritative server, when it has one.
+            **({'AUTHORITATIVE_SERVER_ADDRESS': config['AUTHORITATIVE_SERVER_ADDRESS']}
+               if config.get('AUTHORITATIVE_SERVER_ADDRESS') else {})}
 
 
 # Sign-in identifiers the browser receives (public by design, the ones decentraland.org ships): taken from the shell
