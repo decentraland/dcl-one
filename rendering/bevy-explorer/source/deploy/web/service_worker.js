@@ -130,8 +130,13 @@ const CONTENT_CACHE_TOUCH = 'content-cache-touch';
 // recently used first. The browser may drop it at any time; without it, oldest written first.
 const CONTENT_CACHE_INDEX_DB = 'dcl-content-cache-index-v1';
 const CONTENT_CACHE_INDEX_STORE = 'lastUsed';
-// More keys than this in one message are not recorded: the engine sends at most 1024.
+// Only this many keys of a message are looked at: the engine sends at most 1024. A key is an
+// https url of at most this many characters, as the engine builds them.
 const CONTENT_CACHE_TOUCH_MAX = 4096;
+const CONTENT_CACHE_KEY_MAX = 2048;
+// The index is an aid: an operation on it that has not finished by then is given up, so a trim
+// never waits on it and falls back to oldest written first.
+const CONTENT_CACHE_INDEX_TIMEOUT_MS = 5000;
 // Half the origin's quota stays for its other storage (OPFS, IndexedDB).
 const CONTENT_CACHE_QUOTA_SHARE = 0.5;
 // A trim goes down to this share of the cap, so the next one waits for real growth.
@@ -210,11 +215,32 @@ function contentCacheEvictionOrder(requests, lastUsed) {
 function openContentCacheIndex() {
     return new Promise((resolve, reject) => {
         const open = indexedDB.open(CONTENT_CACHE_INDEX_DB, 1);
+        // an open that succeeds after it was given up has nobody to close it
+        const giveUp = (error) => {
+            clearTimeout(timer);
+            open.onsuccess = () => open.result.close();
+            reject(error);
+        };
+        const timer = setTimeout(() => giveUp(new Error('content cache index open timed out')), CONTENT_CACHE_INDEX_TIMEOUT_MS);
         open.onupgradeneeded = () => open.result.createObjectStore(CONTENT_CACHE_INDEX_STORE);
-        open.onsuccess = () => resolve(open.result);
-        open.onerror = () => reject(open.error);
-        open.onblocked = () => reject(new Error('content cache index blocked'));
+        open.onsuccess = () => {
+            clearTimeout(timer);
+            // a page asking for another version must not wait on a connection held for one operation
+            open.result.onversionchange = () => open.result.close();
+            resolve(open.result);
+        };
+        open.onerror = () => giveUp(open.error);
+        open.onblocked = () => giveUp(new Error('content cache index blocked'));
     });
+}
+
+// Gives up on `promise` after CONTENT_CACHE_INDEX_TIMEOUT_MS.
+function withinIndexTimeout(promise) {
+    let timer;
+    const timeout = new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error('content cache index timed out')), CONTENT_CACHE_INDEX_TIMEOUT_MS);
+    });
+    return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
 function finished(transaction) {
@@ -238,7 +264,7 @@ async function readContentCacheUses() {
     try {
         db = await openContentCacheIndex();
         const store = db.transaction(CONTENT_CACHE_INDEX_STORE).objectStore(CONTENT_CACHE_INDEX_STORE);
-        const [keys, times] = await Promise.all([result(store.getAllKeys()), result(store.getAll())]);
+        const [keys, times] = await withinIndexTimeout(Promise.all([result(store.getAllKeys()), result(store.getAll())]));
         return new Map(keys.map((key, i) => [key, times[i]]));
     } catch (e) {
         console.warn('[IPFS Cache Service Worker]: content cache index unavailable, evicting oldest written first', e);
@@ -258,7 +284,7 @@ async function writeContentCacheUses(put, remove) {
         const now = Date.now();
         for (const key of put) store.put(now, key);
         for (const key of remove) store.delete(key);
-        await finished(transaction);
+        await withinIndexTimeout(finished(transaction));
     } finally {
         db.close();
     }
@@ -266,7 +292,9 @@ async function writeContentCacheUses(put, remove) {
 
 async function recordContentCacheUse(keys) {
     if (!Array.isArray(keys)) throw new Error('keys must be an array');
-    const valid = keys.filter((key) => typeof key === 'string').slice(0, CONTENT_CACHE_TOUCH_MAX);
+    const valid = keys
+        .slice(0, CONTENT_CACHE_TOUCH_MAX)
+        .filter((key) => typeof key === 'string' && key.length <= CONTENT_CACHE_KEY_MAX && key.startsWith('https://'));
     await writeContentCacheUses(valid, []);
     return { recorded: valid.length };
 }

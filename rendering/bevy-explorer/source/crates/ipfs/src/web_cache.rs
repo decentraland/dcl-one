@@ -7,9 +7,10 @@
 //! under the url.
 //!
 //! The cache is capped (`effective_cap`). The service worker trims it, least recently used
-//! entries first (oldest written when it has no record of use), when the engine asks through the `__contentCacheTrim` page function
-//! (deploy/web/engine/content_cache.js): after every `trim_interval` bytes written, when the cap
-//! changes, and before retrying a write that failed for quota.
+//! entries first (oldest written when it has no record of use), when the engine asks through
+//! the `__contentCacheTrim` page function (deploy/web/engine/content_cache.js): after every
+//! `trim_interval` bytes written, when the cap changes, and before retrying a write that failed
+//! for quota.
 
 // stand-in origin for shared entries: `.invalid` is reserved, so no server's own entries land here
 const SHARED_ORIGIN: &str = "https://shared.invalid";
@@ -152,7 +153,7 @@ extern "C" {
     fn page_content_cache_touch(keys: &js_sys::Array) -> js_sys::Promise;
 }
 
-// More than this many distinct keys waiting are sent at once, so the set stays small.
+// When this many distinct keys are waiting they are sent at once, so the set stays small.
 const USED_KEYS_FLUSH_AT: usize = 1024;
 
 /// Cache keys read or written since the last flush, each once.
@@ -343,7 +344,11 @@ mod io {
 
     /// Asks the service worker for a trim to the current cap and keeps its report.
     pub async fn request_trim(quota_error: bool) -> Option<TrimReport> {
-        flush_used().await;
+        // posted first, not awaited: the page and the worker keep arrival order, so the trim sees
+        // these uses, and a write waiting on a quota trim never waits on them
+        if let Some(touch) = post_used() {
+            wasm_bindgen_futures::spawn_local(log_unrecorded(touch));
+        }
         let cap = CAP_BYTES.load(Ordering::Relaxed) as f64;
         let reply = JsFuture::from(page_content_cache_trim(cap, quota_error))
             .await
@@ -448,15 +453,29 @@ mod io {
         }
     }
 
-    /// Sends the keys used since the last flush to the service worker's last-use index.
-    pub async fn flush_used() {
+    /// Posts the keys used since the last post to the service worker's last-use index, without
+    /// waiting for its reply.
+    fn post_used() -> Option<js_sys::Promise> {
         let keys = USED.lock().unwrap_or_else(PoisonError::into_inner).take();
         if keys.is_empty() {
-            return;
+            return None;
         }
         let array: js_sys::Array = keys.iter().map(|key| JsValue::from_str(key)).collect();
-        if let Err(e) = JsFuture::from(page_content_cache_touch(&array)).await {
+        Some(page_content_cache_touch(&array))
+    }
+
+    async fn log_unrecorded(touch: js_sys::Promise) {
+        if let Err(e) = JsFuture::from(touch).await {
             bevy::log::debug!("content cache uses not recorded: {e:?}");
+        }
+    }
+
+    /// Sends the keys used since the last flush to the service worker's last-use index. A batch
+    /// that is not delivered is dropped: those entries keep their previous record, or none, which
+    /// ranks them first.
+    pub async fn flush_used() {
+        if let Some(touch) = post_used() {
+            log_unrecorded(touch).await;
         }
     }
 }

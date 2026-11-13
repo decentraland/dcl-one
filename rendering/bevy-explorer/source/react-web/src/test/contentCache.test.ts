@@ -76,6 +76,28 @@ describe('content cache page functions', () => {
     expect(reply).toEqual({ msg: { type: 'content-cache-touch', keys: ['k1', 'k2'] } })
   })
 
+  it('does not hold a quota-error trim behind a touch the worker never answers', async () => {
+    vi.useFakeTimers()
+    const posted: string[] = []
+    const container = {
+      controller: {
+        postMessage(msg: { type: string }) {
+          posted.push(msg.type)
+        }
+      }
+    }
+    const touch = contentCacheTouch(['k1'], container as never)
+    let trimDone = false
+    const trim = contentCacheTrim(100, true, container as never).then(() => (trimDone = true))
+    // both are posted at once, in call order: the worker's queue runs the touch first
+    expect(posted).toEqual(['content-cache-touch', 'content-cache-trim'])
+    await vi.advanceTimersByTimeAsync(5_000)
+    await trim
+    expect(trimDone).toBe(true)
+    await vi.advanceTimersByTimeAsync(25_000)
+    expect(await touch).toBeNull()
+  })
+
   it('installs the page functions', () => {
     const target: Record<string, unknown> = {}
     installContentCachePageFunctions(target as never)

@@ -329,21 +329,28 @@ describe('content cache last use', () => {
     const sw = serviceWorker()
     sw.seed(0)
     sw.seed(1)
-    await sw.touch(['x', entryUrl(0)])
+    await sw.touch(['https://shared.invalid/x', entryUrl(0)])
     await sw.trim({ capBytes: 100 })
     expect(sw.remaining()).toEqual([])
     expect(await recordedKeys(sw.indexedDB as IDBFactory)).toEqual([])
   })
 
-  it('records only strings, and at most 4096', async () => {
+  it('records only short https urls, and at most 4096', async () => {
     const sw = serviceWorker()
-    const some = await sw.touch(['a', 7, null, 'b'])
+    const some = await sw.touch([entryUrl('a'), 7, null, 'b', entryUrl('b'), `https://shared.invalid/${'x'.repeat(3000)}`])
     expect(some.port.postMessage).toHaveBeenCalledWith({ recorded: 2 })
     const bad = await sw.touch('a')
     expect(bad.port.postMessage).toHaveBeenCalledWith({ error: expect.any(String) })
-    const many = await sw.touch(Array.from({ length: 5000 }, (_, i) => `k${i}`))
+    const many = await sw.touch(Array.from({ length: 5000 }, (_, i) => entryUrl(`k${i}`)))
     expect(many.port.postMessage).toHaveBeenCalledWith({ recorded: 4096 })
     expect(await recordedKeys(sw.indexedDB as IDBFactory)).toHaveLength(4096 + 2)
+  })
+
+  it('looks only at the first 4096 keys of a batch', async () => {
+    const sw = serviceWorker()
+    const keys = [...Array.from({ length: 4096 }, () => 7), entryUrl('late')]
+    const { port } = await sw.touch(keys)
+    expect(port.postMessage).toHaveBeenCalledWith({ recorded: 0 })
   })
 
   it('reads no index when a trim finds the cache under its cap', async () => {
@@ -361,5 +368,99 @@ describe('content cache last use', () => {
     const trimmed = sw.trim({ capBytes: 300 })
     await Promise.all([touched, trimmed])
     expect(sw.remaining()).toEqual(['bafkrei0', 'bafkrei3'])
+  })
+})
+
+function neverOpens() {
+  const requests: Record<string, unknown>[] = []
+  return {
+    requests,
+    open() {
+      const request: Record<string, unknown> = {}
+      requests.push(request)
+      return request
+    }
+  }
+}
+
+describe('content cache index that does not answer', () => {
+  it('does not stop a trim: it gives up after 5 s and evicts in write order', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      const factory = neverOpens()
+      const sw = serviceWorker({ indexedDB: factory })
+      for (let n = 0; n < 4; n++) sw.seed(n)
+      const trimmed = sw.trim({ capBytes: 300 })
+      await vi.advanceTimersByTimeAsync(0)
+      let done = false
+      void trimmed.then(() => (done = true))
+      await vi.advanceTimersByTimeAsync(4_999)
+      expect(done).toBe(false)
+      await vi.advanceTimersByTimeAsync(1)
+      // the prune opens the index again and gives up the same way
+      await vi.advanceTimersByTimeAsync(5_000)
+      const { port } = await trimmed
+      expect(sw.remaining()).toEqual(['bafkrei2', 'bafkrei3'])
+      const report = port.postMessage.mock.calls[0][0]
+      expect(report).toMatchObject({ evictedEntries: 2, indexedEntries: 0 })
+      expect(report.error).toBeUndefined()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('closes a connection that opens after the wait was given up', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      const factory = neverOpens()
+      const sw = serviceWorker({ indexedDB: factory })
+      const touched = sw.touch([entryUrl(0)])
+      await vi.advanceTimersByTimeAsync(5_000)
+      expect((await touched).port.postMessage).toHaveBeenCalledWith({ error: expect.any(String) })
+      const close = vi.fn()
+      const request = factory.requests[0] as { onsuccess: () => void; result: unknown }
+      request.result = { close }
+      request.onsuccess()
+      expect(close).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('falls back at once when the open is blocked, and closes it if it opens later', async () => {
+    const factory = neverOpens()
+    const sw = serviceWorker({ indexedDB: factory })
+    for (let n = 0; n < 4; n++) sw.seed(n)
+    const trimmed = sw.trim({ capBytes: 300 })
+    await vi.waitFor(() => expect(factory.requests.length).toBe(1))
+    const request = factory.requests[0] as { onblocked: () => void; onsuccess: () => void; result: unknown }
+    request.onblocked()
+    // the prune's open is blocked too
+    await vi.waitFor(() => expect(factory.requests.length).toBe(2))
+    ;(factory.requests[1] as { onblocked: () => void }).onblocked()
+    await trimmed
+    expect(sw.remaining()).toEqual(['bafkrei2', 'bafkrei3'])
+    const close = vi.fn()
+    request.result = { close }
+    request.onsuccess()
+    expect(close).toHaveBeenCalledTimes(1)
+  })
+
+  it('closes its connection when another page asks for an upgrade', async () => {
+    const factory = neverOpens()
+    const sw = serviceWorker({ indexedDB: factory })
+    const touched = sw.touch([entryUrl(0)])
+    await vi.waitFor(() => expect(factory.requests.length).toBe(1))
+    const request = factory.requests[0] as { onsuccess: () => void; result: Record<string, unknown> }
+    const close = vi.fn()
+    request.result = { close, onversionchange: null, transaction: () => {
+        throw new Error('stop')
+      }
+    }
+    request.onsuccess()
+    expect(typeof request.result.onversionchange).toBe('function')
+    ;(request.result.onversionchange as () => void)()
+    expect(close).toHaveBeenCalled()
+    await touched
   })
 })

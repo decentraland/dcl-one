@@ -53,8 +53,10 @@ sees a `cfg`. Backend functionality that only one caller needs lives next to tha
   `cache_bytes` if lower, and at most half the origin's quota. The service worker trims it,
   least recently used entries first (the engine records reads and writes and sends them to the
   worker every 30 s and before each trim; entries with no record, and every entry if the browser
-  dropped the record, go first, oldest written first), down to 90% of the cap, when the engine
-  asks through the `__contentCacheTrim` page function (`deploy/web/engine/content_cache.js`): at start, after each
+  dropped the record, go first, oldest written first; uses noted in the last 30 s before the tab
+  closes, or in a batch that is not delivered, are not recorded), down to 90% of the cap, when the
+  engine asks through the `__contentCacheTrim` page function
+  (`deploy/web/engine/content_cache.js`): at start, after each
   sixteenth of the cap written (at most 64 MiB), and before retrying a write that failed for quota
   (then it frees at least a quarter, at most once a minute). It never opens another cache. The
   page asks once for persistent storage. The **Web Content Cache** debug section shows the readings;

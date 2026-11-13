@@ -4294,7 +4294,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/contentCache.test.ts",
-      "sha256": "14927e742b544654797c5cf9c7b130d0e56face385c4ae727e49846c4c212ba5"
+      "sha256": "d53939315884fde9fc0d77883cac4011e1fae1e5b6f7f551925fd1df6e840727"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/editorHost.test.tsx",
@@ -4354,7 +4354,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/serviceWorkerContentCache.test.ts",
-      "sha256": "7d5b4be79e6a0b995459839bf2d97b2098247c409aa54592d1c3012f20f4f043"
+      "sha256": "659bc7bbc662c007573629bdd93f368569cb5def3ad20ab58f70d32aa40f423d"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/session.test.tsx",
