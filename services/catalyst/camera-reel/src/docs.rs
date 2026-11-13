@@ -1,6 +1,7 @@
-//! `GET /api/docs/openapi.json` and the Swagger page at `/api/docs/ui`; the
-//! spec is the upstream camera-reel-service one, the page loads its JSON from
-//! the sibling path so it works under any mount prefix.
+//! `GET /api/docs/openapi.json` and the Swagger page at `/api/docs/ui/`
+//! (and any path under it); the spec is the upstream camera-reel-service
+//! one, the page loads its JSON from the sibling path so it works under any
+//! mount prefix.
 
 use axum::Json;
 use axum::http::{StatusCode, header};
@@ -89,7 +90,7 @@ fn openapi_spec() -> Value {
                 "delete": {
                     "tags": ["images"],
                     "operationId": "delete_image",
-                    "parameters": [{ "name": "image_id", "in": "path", "required": true, "schema": { "type": "string" } }],
+                    "parameters": [{ "name": "image_id", "in": "path", "description": "Image database id to delete", "required": true, "schema": { "type": "string" } }],
                     "responses": {
                         "200": { "description": "Image deleted", "content": { "application/json": { "schema": ref_to("UserDataResponse") } } },
                         "403": { "description": "Forbidden" },
@@ -113,6 +114,7 @@ fn openapi_spec() -> Value {
                 "patch": {
                     "tags": ["images"],
                     "operationId": "update_image_visibility",
+                    "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
                     "requestBody": {
                         "description": "Update image visibility",
                         "content": { "application/json": { "schema": ref_to("UpdateVisibility") } },
@@ -144,7 +146,8 @@ fn openapi_spec() -> Value {
                     "parameters": [
                         { "name": "offset", "in": "query", "required": false, "schema": { "type": "integer", "format": "int64", "minimum": 0 } },
                         { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "format": "int64", "minimum": 0 } },
-                        { "name": "compact", "in": "query", "required": false, "schema": { "type": "boolean" } }
+                        { "name": "compact", "in": "query", "required": false, "schema": { "type": "boolean" } },
+                        { "name": "user_address", "in": "path", "required": true, "schema": { "type": "string" } }
                     ],
                     "responses": {
                         "200": { "description": "List images for a given user", "content": { "application/json": { "schema": ref_to("GetImagesResponse") } } },
@@ -159,7 +162,8 @@ fn openapi_spec() -> Value {
                     "operationId": "get_place_images",
                     "parameters": [
                         { "name": "offset", "in": "query", "required": false, "schema": { "type": "integer", "format": "int64", "minimum": 0 } },
-                        { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "format": "int64", "minimum": 0 } }
+                        { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "format": "int64", "minimum": 0 } },
+                        { "name": "place_id", "in": "path", "required": true, "schema": { "type": "string" } }
                     ],
                     "responses": {
                         "200": { "description": "List images for a given place", "content": { "application/json": { "schema": ref_to("GetPlaceImagesResponse") } } },
@@ -231,7 +235,19 @@ fn openapi_spec() -> Value {
                         "userAddress": { "type": "string" },
                         "wearables": { "type": "array", "items": { "type": "string" } },
                         "isGuest": { "type": "boolean" },
-                        "isEmoting": { "type": "boolean", "nullable": true }
+                        "isEmoting": { "type": "boolean", "nullable": true },
+                        "screenRect": ref_to("ScreenRect")
+                    }
+                },
+                "ScreenRect": {
+                    "type": "object",
+                    "description": "Where a visible person stands in the photo, normalized to the image with the origin at its top-left corner. Every field is in 0..=1; x + width and y + height may exceed 1 by up to 1e-4.",
+                    "required": ["x", "y", "width", "height"],
+                    "properties": {
+                        "x": { "type": "number", "format": "float" },
+                        "y": { "type": "number", "format": "float" },
+                        "width": { "type": "number", "format": "float" },
+                        "height": { "type": "number", "format": "float" }
                     }
                 },
                 "Metadata": {
@@ -283,10 +299,11 @@ fn openapi_spec() -> Value {
                 },
                 "Upload": {
                     "type": "object",
-                    "required": ["image", "metadata"],
+                    "required": ["image", "metadata", "is_public"],
                     "properties": {
                         "image": { "type": "string", "format": "binary" },
-                        "metadata": { "type": "string" }
+                        "is_public": { "type": "boolean" },
+                        "metadata": { "type": "string", "format": "binary" }
                     }
                 },
                 "UploadResponse": {
@@ -300,9 +317,9 @@ fn openapi_spec() -> Value {
                 },
                 "UpdateVisibility": {
                     "type": "object",
-                    "required": ["isPublic"],
+                    "required": ["is_public"],
                     "properties": {
-                        "isPublic": { "type": "boolean" }
+                        "is_public": { "type": "boolean" }
                     }
                 },
                 "UserDataResponse": {
@@ -394,4 +411,50 @@ fn openapi_spec() -> Value {
             { "name": "images", "description": "Images management endpoints." }
         ]
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_spec_documents_the_wire_and_every_path_parameter() {
+        let spec = openapi_spec();
+        let schemas = &spec["components"]["schemas"];
+        assert_eq!(
+            schemas["UpdateVisibility"]["required"],
+            json!(["is_public"])
+        );
+        assert_eq!(
+            schemas["Upload"]["required"],
+            json!(["image", "metadata", "is_public"])
+        );
+        assert_eq!(
+            schemas["User"]["properties"]["screenRect"],
+            ref_to("ScreenRect")
+        );
+        assert_eq!(
+            schemas["ScreenRect"]["required"],
+            json!(["x", "y", "width", "height"])
+        );
+        for (path, item) in spec["paths"].as_object().unwrap() {
+            for (method, op) in item.as_object().unwrap() {
+                let declared: Vec<&str> = op["parameters"]
+                    .as_array()
+                    .map(|ps| {
+                        ps.iter()
+                            .filter(|p| p["in"] == "path")
+                            .map(|p| p["name"].as_str().unwrap())
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                for segment in path.split('/') {
+                    if let Some(name) = segment.strip_prefix('{').and_then(|s| s.strip_suffix('}'))
+                    {
+                        assert!(declared.contains(&name), "{method} {path} lacks {name}");
+                    }
+                }
+            }
+        }
+    }
 }

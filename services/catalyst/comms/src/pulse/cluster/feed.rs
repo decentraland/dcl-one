@@ -25,6 +25,7 @@ pub struct CurrentAssignment {
     pub cluster_id: String,
     pub realm: String,
     pub owner_epoch: u64,
+    pub selected_origin: i32,
     pub owner_peer: u32,
     pub registration: Option<std::sync::Arc<std::sync::atomic::AtomicU64>>,
 }
@@ -37,6 +38,7 @@ impl PartialEq for CurrentAssignment {
             &self.cluster_id,
             &self.realm,
             self.owner_epoch,
+            self.selected_origin,
             self.owner_peer,
         ) == (
             &other.wallet,
@@ -44,6 +46,7 @@ impl PartialEq for CurrentAssignment {
             &other.cluster_id,
             &other.realm,
             other.owner_epoch,
+            other.selected_origin,
             other.owner_peer,
         )
     }
@@ -72,9 +75,10 @@ struct RecoveryRecord {
     floor: u64,
     last_pass: u64,
     blocked: bool,
+    legacy_invalidated: bool,
 }
 
-struct AssignmentView {
+pub(crate) struct AssignmentView {
     observed: tokio::time::Instant,
     valid_for: Duration,
     pass: u64,
@@ -83,9 +87,23 @@ struct AssignmentView {
     records: HashMap<String, RecoveryRecord>,
 }
 
+impl AssignmentView {
+    pub(crate) fn invalidate_legacy(&mut self, wallet: &str) {
+        if let Some(record) = self.records.get_mut(wallet)
+            && record
+                .current
+                .as_ref()
+                .is_some_and(|(a, _)| a.selected_origin != 1)
+        {
+            record.legacy_invalidated = true;
+        }
+    }
+}
+
 /// Pulse's nonpersistent authority. Lossy hints never own recovery state.
 pub struct CurrentAssignments {
     incarnation: String,
+    native: crate::pulse::snapshot::NativeCurrent,
     view: Mutex<AssignmentView>,
 }
 
@@ -93,6 +111,7 @@ impl Default for CurrentAssignments {
     fn default() -> Self {
         Self {
             incarnation: uuid::Uuid::new_v4().to_string(),
+            native: Default::default(),
             view: Mutex::new(AssignmentView {
                 observed: tokio::time::Instant::now(),
                 valid_for: Duration::ZERO,
@@ -110,13 +129,46 @@ fn unix_seconds() -> u64 {
 }
 
 impl CurrentAssignments {
+    pub(crate) fn native_current(&self) -> crate::pulse::snapshot::NativeCurrent {
+        self.native.clone()
+    }
+    pub(crate) fn lifecycle_view(&self) -> Option<std::sync::MutexGuard<'_, AssignmentView>> {
+        self.view.lock().ok()
+    }
+
     pub fn replace(
         &self,
         pass: u64,
         valid_for: Duration,
         assignments: Vec<CurrentAssignment>,
     ) -> Vec<PeerClusterSnapshot> {
-        let mut view = self.view.lock().unwrap();
+        self.replace_checked(pass, valid_for, assignments, None)
+    }
+
+    pub(crate) fn replace_checked(
+        &self,
+        pass: u64,
+        valid_for: Duration,
+        assignments: Vec<CurrentAssignment>,
+        control: Option<&Mutex<super::control::ControlPositions>>,
+    ) -> Vec<PeerClusterSnapshot> {
+        let Ok(native) = self.native.lock() else {
+            return Vec::new();
+        };
+        let control = match control {
+            Some(control) => match control.lock() {
+                Ok(guard) => Some(guard),
+                Err(_) => return Vec::new(),
+            },
+            None => None,
+        };
+        let Ok(mut view) = self.view.lock() else {
+            return Vec::new();
+        };
+        let assignments = assignments
+            .into_iter()
+            .filter(|a| selection_live(a, &native, control.as_deref()))
+            .collect::<Vec<_>>();
         view.observed = tokio::time::Instant::now();
         view.valid_for = valid_for;
         view.pass = pass;
@@ -157,7 +209,7 @@ impl CurrentAssignments {
         wallets.sort();
         let mut hints: Vec<_> = departed
             .into_iter()
-            .filter_map(|wallet| self.snapshot(&mut view, &wallet))
+            .filter_map(|wallet| self.snapshot(&mut view, &wallet, &native, control.as_deref()))
             .collect();
         let mut refused = 0;
         for wallet in wallets {
@@ -177,12 +229,17 @@ impl CurrentAssignments {
                         floor: 0,
                         last_pass: pass,
                         blocked: false,
+                        legacy_invalidated: false,
                     },
                 );
             }
             let unchanged =
                 view.records[&wallet].current.as_ref().map(|(a, _)| a) == assignment.as_ref();
-            if unchanged && (assignment.is_none() || !view.records[&wallet].blocked) {
+            if unchanged
+                && (assignment.is_none()
+                    || (!view.records[&wallet].blocked
+                        && !view.records[&wallet].legacy_invalidated))
+            {
                 if assignment.is_some() {
                     view.records.get_mut(&wallet).unwrap().last_pass = pass;
                 }
@@ -228,11 +285,12 @@ impl CurrentAssignments {
                 if let Some(version) = version {
                     record.retained = Some((assignment.clone(), version));
                     record.current = Some((assignment, version));
+                    record.legacy_invalidated = false;
                 } else {
                     record.blocked = true;
                 }
             }
-            if let Some(snapshot) = self.snapshot(&mut view, &wallet) {
+            if let Some(snapshot) = self.snapshot(&mut view, &wallet, &native, control.as_deref()) {
                 hints.push(snapshot);
             }
         }
@@ -248,23 +306,22 @@ impl CurrentAssignments {
         hints
     }
 
-    fn snapshot(&self, view: &mut AssignmentView, wallet: &str) -> Option<PeerClusterSnapshot> {
+    fn snapshot(
+        &self,
+        view: &mut AssignmentView,
+        wallet: &str,
+        native: &HashMap<String, crate::pulse::snapshot::NativeRegistration>,
+        control: Option<&super::control::ControlPositions>,
+    ) -> Option<PeerClusterSnapshot> {
         use prost::Message;
         let record = view.records.get_mut(wallet)?;
-        if record.current.as_ref().is_some_and(|(a, _)| {
-            a.registration.as_ref().is_some_and(|guard| {
-                let live = guard.load(std::sync::atomic::Ordering::SeqCst);
-                live != 0 && live != a.owner_epoch
-            })
-        }) {
-            return None;
-        }
         let active = view.observed.elapsed() < view.valid_for
-            && record.current.as_ref().is_some_and(|(a, _)| {
-                a.registration.as_ref().is_none_or(|guard| {
-                    guard.load(std::sync::atomic::Ordering::SeqCst) == a.owner_epoch
-                })
-            });
+            && !record.blocked
+            && !record.legacy_invalidated
+            && record
+                .current
+                .as_ref()
+                .is_some_and(|(a, _)| selection_live(a, native, control));
         let (assignment, version) = if active {
             record.current.as_ref()?
         } else if !record.pending.is_empty() {
@@ -273,6 +330,9 @@ impl CurrentAssignments {
             return None;
         };
         let mut snapshot = PeerClusterSnapshot {
+            selected_origin: assignment.selected_origin,
+            selected_identity: Some(assignment.owner_epoch),
+            assignment_state: if active { 1 } else { 2 },
             wallet: assignment.wallet.clone(),
             session: assignment.session.clone(),
             cluster_id: assignment.cluster_id.clone(),
@@ -298,13 +358,46 @@ impl CurrentAssignments {
     }
 
     pub fn lookup(&self, wallet: &str, session: &str) -> Option<PeerClusterSnapshot> {
-        let mut view = self.view.lock().unwrap();
-        let snapshot = self.snapshot(&mut view, wallet)?;
+        self.lookup_checked(wallet, session, None)
+    }
+    pub(crate) fn lookup_checked(
+        &self,
+        wallet: &str,
+        session: &str,
+        control: Option<&Mutex<super::control::ControlPositions>>,
+    ) -> Option<PeerClusterSnapshot> {
+        let native = self.native.lock().ok()?;
+        let control = match control {
+            Some(control) => Some(control.lock().ok()?),
+            None => None,
+        };
+        let mut view = self.view.lock().ok()?;
+        let snapshot = self.snapshot(&mut view, wallet, &native, control.as_deref())?;
         (snapshot.session == session).then_some(snapshot)
     }
 
+    #[cfg(test)]
     pub(crate) fn retained_hints(&self, budget: usize) -> Vec<PeerClusterSnapshot> {
-        let mut view = self.view.lock().unwrap();
+        self.retained_hints_checked(budget, None)
+    }
+    pub(crate) fn retained_hints_checked(
+        &self,
+        budget: usize,
+        control: Option<&Mutex<super::control::ControlPositions>>,
+    ) -> Vec<PeerClusterSnapshot> {
+        let Ok(native) = self.native.lock() else {
+            return Vec::new();
+        };
+        let control = match control {
+            Some(control) => match control.lock() {
+                Ok(guard) => Some(guard),
+                Err(_) => return Vec::new(),
+            },
+            None => None,
+        };
+        let Ok(mut view) = self.view.lock() else {
+            return Vec::new();
+        };
         let mut wallets: Vec<_> = view
             .records
             .iter()
@@ -321,15 +414,14 @@ impl CurrentAssignments {
         view.hint_cursor = (start + count) % wallets.len();
         (0..count)
             .filter_map(|offset| {
-                self.snapshot(&mut view, &wallets[(start + offset) % wallets.len()])
+                self.snapshot(
+                    &mut view,
+                    &wallets[(start + offset) % wallets.len()],
+                    &native,
+                    control.as_deref(),
+                )
             })
             .collect()
-    }
-
-    pub(crate) fn registration_identity(&self, wallet: &str) -> Option<(u64, bool)> {
-        let view = self.view.lock().unwrap();
-        let (a, _) = view.records.get(wallet)?.current.as_ref()?;
-        Some((a.owner_epoch, a.registration.is_some()))
     }
 
     pub fn complete(
@@ -337,7 +429,20 @@ impl CurrentAssignments {
         wallet: &str,
         completion: &crate::protocol::pulse::decentraland::pulse::TakeoverCompleted,
     ) -> Option<PeerClusterSnapshot> {
-        let mut view = self.view.lock().unwrap();
+        self.complete_checked(wallet, completion, None)
+    }
+    pub(crate) fn complete_checked(
+        &self,
+        wallet: &str,
+        completion: &crate::protocol::pulse::decentraland::pulse::TakeoverCompleted,
+        control: Option<&Mutex<super::control::ControlPositions>>,
+    ) -> Option<PeerClusterSnapshot> {
+        let native = self.native.lock().ok()?;
+        let control = match control {
+            Some(control) => Some(control.lock().ok()?),
+            None => None,
+        };
+        let mut view = self.view.lock().ok()?;
         let record = view.records.get_mut(wallet)?;
         let index = record
             .pending
@@ -351,7 +456,37 @@ impl CurrentAssignments {
         }
         record.pending.remove(index);
         record.floor = record.floor.max(completion.revoke_before);
-        self.snapshot(&mut view, wallet)
+        self.snapshot(&mut view, wallet, &native, control.as_deref())
+    }
+}
+
+fn selection_live(
+    a: &CurrentAssignment,
+    native: &HashMap<String, crate::pulse::snapshot::NativeRegistration>,
+    control: Option<&super::control::ControlPositions>,
+) -> bool {
+    if a.owner_epoch == 0 {
+        return false;
+    }
+    if a.selected_origin == 1 {
+        native.get(&a.wallet.to_ascii_lowercase()).is_some_and(|r| {
+            r.peer == a.owner_peer
+                && r.session == a.session.to_ascii_lowercase()
+                && r.registration == a.owner_epoch
+        })
+    } else {
+        !native.contains_key(&a.wallet.to_ascii_lowercase())
+            && matches!(a.selected_origin, 2 | 3)
+            && (a.selected_origin != 3 || a.owner_epoch <= i64::MAX as u64)
+            && control.is_none_or(|control| {
+                control.allows_selected(
+                    &a.wallet,
+                    &a.session,
+                    &a.realm,
+                    a.owner_epoch,
+                    a.selected_origin,
+                )
+            })
     }
 }
 
@@ -360,6 +495,10 @@ impl CurrentAssignments {
 const NO_PEER_CAP: u32 = 0;
 
 pub trait ClusterFeedPublisher: Send + Sync {
+    fn current_assignments(&self) -> Option<std::sync::Arc<CurrentAssignments>> {
+        None
+    }
+
     fn control_snapshot(&self) -> ControlSnapshot {
         ControlSnapshot::default()
     }
@@ -415,7 +554,7 @@ pub struct RecordingClusterFeed {
     changes: Mutex<Vec<RecordedChange>>,
     topologies: Mutex<Vec<Vec<(String, usize)>>>,
     active_peers: Mutex<Vec<u32>>,
-    current: CurrentAssignments,
+    current: std::sync::Arc<CurrentAssignments>,
     control: Mutex<ControlSnapshot>,
 }
 
@@ -448,6 +587,9 @@ impl RecordingClusterFeed {
 }
 
 impl ClusterFeedPublisher for RecordingClusterFeed {
+    fn current_assignments(&self) -> Option<std::sync::Arc<CurrentAssignments>> {
+        Some(self.current.clone())
+    }
     fn control_snapshot(&self) -> ControlSnapshot {
         self.control.lock().unwrap().clone()
     }
@@ -514,6 +656,11 @@ pub fn cluster_change(
 
 /// Projects a pass onto archipelago's `IslandStatusMessage`, the shape archipelago-core published.
 pub fn encode_topology(pass: &ClusterPass) -> Result<Vec<u8>, crate::protocol::bus::BusError> {
+    crate::protocol::bus::topology::encode_islands(&topology_message(pass))
+}
+
+/// Complete topology for both the single-frame social feed and chunked statistics.
+pub(super) fn topology_message(pass: &ClusterPass) -> IslandStatusMessage {
     let mut by_id: HashMap<&str, usize> = HashMap::new();
     let mut data: Vec<IslandData> = Vec::with_capacity(pass.clusters.len());
     for cluster in &pass.clusters {
@@ -535,7 +682,7 @@ pub fn encode_topology(pass: &ClusterPass) -> Result<Vec<u8>, crate::protocol::b
             data[index].peers.push(peer.wallet.clone());
         }
     }
-    crate::protocol::bus::topology::encode_islands(&IslandStatusMessage { data })
+    IslandStatusMessage { data }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -908,6 +1055,100 @@ mod tests {
 #[cfg(test)]
 mod current_tests {
     use super::*;
+    #[test]
+    fn native_arrival_departure_without_pass_or_lookup_invalidates_all_legacy_variants() {
+        for origin in [2, 3] {
+            for same_session in [false, true] {
+                for usable in [false, true] {
+                    let current = std::sync::Arc::new(CurrentAssignments::default());
+                    let mut identity = crate::pulse::snapshot::IdentityBoard::new(2);
+                    identity.attach_assignments(current.clone());
+                    let mut previous = assignment("predecessor", 8);
+                    previous.selected_origin = origin;
+                    current.replace(1, Duration::from_secs(2), vec![previous]);
+                    let mut legacy = assignment("legacy", 9);
+                    legacy.selected_origin = origin;
+                    current.replace(2, Duration::from_secs(2), vec![legacy.clone()]);
+                    let before = current.lookup("wallet", "legacy").unwrap();
+                    assert_eq!(before.pending_takeovers.len(), 1);
+                    let potential = current.view.lock().unwrap().records["wallet"]
+                        .potential
+                        .clone();
+                    // `usable` deliberately changes only board/grid availability: registration
+                    // must invalidate before either collection or a lookup can observe it.
+                    let mut board = crate::pulse::snapshot::SnapshotBoard::new(2, 2);
+                    if usable {
+                        board.set_active(1);
+                    }
+                    identity.set_with_session(
+                        1,
+                        "wallet".into(),
+                        if same_session { "legacy" } else { "native" }.into(),
+                    );
+                    identity.remove(1);
+                    let retained = current.lookup("wallet", "legacy").unwrap();
+                    assert_eq!(retained.assignment_state, 2);
+                    assert_eq!(retained.pending_takeovers, before.pending_takeovers);
+                    assert_eq!(retained.token_not_before, before.token_not_before);
+                    assert_eq!(
+                        current.view.lock().unwrap().records["wallet"].potential,
+                        potential
+                    );
+                    let op = retained.pending_takeovers[0].takeover_id.clone();
+                    assert!(
+                        current
+                            .complete(
+                                "wallet",
+                                &crate::protocol::pulse::decentraland::pulse::TakeoverCompleted {
+                                    takeover_id: op,
+                                    revoke_before: 100
+                                }
+                            )
+                            .is_none()
+                    );
+                    assert!(
+                        current.lookup("wallet", "legacy").is_none(),
+                        "cleanup cannot clear native invalidation"
+                    );
+                    current.replace(3, Duration::from_secs(2), vec![legacy.clone()]);
+                    let after = current.lookup("wallet", "legacy").unwrap();
+                    assert_eq!(after.assignment_state, 1);
+                    assert!(after.assignment_version > before.assignment_version);
+                    assert_eq!(after.token_not_before, Some(100));
+                    current.replace(4, Duration::from_secs(2), vec![legacy]);
+                    assert_eq!(
+                        current
+                            .lookup("wallet", "legacy")
+                            .unwrap()
+                            .assignment_version,
+                        after.assignment_version
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn native_current_peer_and_exhausted_legacy_revalidation_never_reauthorize_old_stamps() {
+        let current = std::sync::Arc::new(CurrentAssignments::default());
+        let mut identity = crate::pulse::snapshot::IdentityBoard::new(2);
+        identity.attach_assignments(current.clone());
+        let legacy = assignment("legacy", 9);
+        current.replace(1, Duration::from_secs(2), vec![legacy.clone()]);
+        identity.set_with_session(0, "wallet".into(), "native".into());
+        identity.set_with_session(1, "wallet".into(), "native".into());
+        let mut stale = assignment("native", identity.registration_by_peer(0));
+        stale.selected_origin = 1;
+        current.replace(2, Duration::from_secs(2), vec![stale]);
+        assert!(current.lookup("wallet", "native").is_none());
+        identity.remove(0);
+        assert_eq!(identity.peer_by_wallet("wallet"), Some(1));
+        identity.remove(1);
+        current.view.lock().unwrap().next_version = u64::MAX;
+        current.replace(3, Duration::from_secs(2), vec![legacy]);
+        assert!(current.lookup("wallet", "legacy").is_none());
+        assert_eq!(current.view.lock().unwrap().next_version, u64::MAX);
+    }
     use crate::protocol::pulse::decentraland::pulse::TakeoverCompleted;
 
     #[tokio::test]
@@ -1118,6 +1359,7 @@ mod current_tests {
             realm: "realm".into(),
             cluster_id: "room".into(),
             owner_epoch: epoch,
+            selected_origin: 2,
             owner_peer: 0,
             registration: None,
         }
@@ -1125,11 +1367,13 @@ mod current_tests {
 
     #[tokio::test]
     async fn same_slot_same_strings_registration_replacement_invalidates_before_next_pass() {
-        let current = CurrentAssignments::default();
+        let current = std::sync::Arc::new(CurrentAssignments::default());
         let mut identity = crate::pulse::snapshot::IdentityBoard::new(1);
+        identity.attach_assignments(current.clone());
         identity.set_with_session(0, "wallet".into(), "a".into());
         let mut a = assignment("a", identity.registration_by_peer(0));
         a.registration = Some(identity.registration_guard(0));
+        a.selected_origin = 1;
         current.replace(1, Duration::from_secs(2), vec![a.clone()]);
         let before = current.lookup("wallet", "a").unwrap();
         identity.remove(0);
@@ -1407,7 +1651,8 @@ mod current_tests {
                 session: "0xcd".into(),
                 cluster_id: "C1".into(),
                 realm: "realm".into(),
-                owner_epoch: 0,
+                owner_epoch: 1,
+                selected_origin: 2,
                 owner_peer: 0,
                 registration: None,
             }],
@@ -1431,7 +1676,8 @@ mod current_tests {
             session: "0xCD".into(),
             cluster_id: "C1".into(),
             realm: "realm".into(),
-            owner_epoch: 0,
+            owner_epoch: 1,
+            selected_origin: 2,
             owner_peer: 0,
             registration: None,
         };

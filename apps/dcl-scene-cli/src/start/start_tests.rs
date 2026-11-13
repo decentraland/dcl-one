@@ -2303,3 +2303,100 @@ fn play_site_is_the_first_player_origin_off_this_machine() {
     assert!(!is_local_origin("https://example.org"));
     assert!(is_local_origin("http://[::]:1"));
 }
+
+#[test]
+fn public_url_is_an_http_origin_with_an_optional_prefix() {
+    let public = PublicUrl::parse("https://Preview.Example.com/p/").unwrap();
+    assert_eq!(public.origin(), "https://preview.example.com/p");
+    assert_eq!(
+        PublicUrl::parse("http://example.com:8080")
+            .unwrap()
+            .origin(),
+        "http://example.com:8080"
+    );
+    for bad in [
+        "preview.example.com",
+        "ftp://example.com",
+        "https://example.com/?x=1",
+        "https://example.com/#f",
+        "https://user:pw@example.com",
+    ] {
+        let err = PublicUrl::parse(bad).unwrap_err();
+        assert!(
+            crate::ux::render(&err, false, false)
+                .contains("--public-url https://preview.example.com"),
+            "{bad} must be refused with the form to pass"
+        );
+    }
+}
+
+#[test]
+fn public_url_names_a_request_by_forwarded_host_then_host() {
+    let public = PublicUrl::parse("https://preview.example.com").unwrap();
+    let with = |name: &'static str, value: &'static str| {
+        let mut headers = HeaderMap::new();
+        headers.insert(name, axum::http::HeaderValue::from_static(value));
+        headers
+    };
+    assert!(public.names(&with("host", "preview.example.com")));
+    assert!(public.names(&with("host", "PREVIEW.example.com:443")));
+    assert!(public.names(&with("x-forwarded-host", "preview.example.com")));
+    assert!(!public.names(&with("host", "127.0.0.1:8000")));
+    assert!(!public.names(&with("host", "preview.example.com:8443")));
+    assert!(!public.names(&with("host", "evil-preview.example.com")));
+    let mut proxied = with("host", "preview.example.com");
+    proxied.insert(
+        "x-forwarded-host",
+        axum::http::HeaderValue::from_static("other.example"),
+    );
+    assert!(
+        !public.names(&proxied),
+        "a proxy's forwarded host wins over Host, as it does for every advertised URL"
+    );
+}
+
+/// A warning `start` printed is what `/api/problems` serves and what every
+/// page's banner polls, steps included, until it stops being true.
+#[tokio::test]
+async fn open_problems_are_served_and_drawn_by_the_pages() {
+    let tmp = Tmp::new("problems-route");
+    let st = Arc::new(state(vec![testkit::scene(
+        &tmp.0,
+        "s",
+        &["0,0"],
+        "export {}",
+    )]));
+    let (addr, server) = serve(&st).await;
+    let failed: anyhow::Error = UserError::new(
+        "problems-route build failed",
+        TrySteps::one("fix the errors above"),
+    )
+    .why("src/index.ts:1:1 unexpected token")
+    .into();
+    ux::report_build(&failed);
+
+    let response = fetch(addr, PROBLEMS_PATH).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()["cache-control"], "no-store");
+    let body: Value = response.json().await.unwrap();
+    let mine = body["problems"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["what"] == "problems-route build failed")
+        .expect("the reported problem is open");
+    assert_eq!(mine["topic"], "build");
+    assert_eq!(mine["why"], "src/index.ts:1:1 unexpected token");
+    assert_eq!(mine["steps"], json!(["fix the errors above"]));
+    assert!(body["revision"].as_u64().unwrap() > 0);
+
+    let page = navigate(addr, "/").await.text().await.unwrap();
+    assert!(
+        page.contains(
+            r#"id="preview-problems" class="problems" data-problems-url="/api/problems""#
+        ),
+        "the page names the route its banner polls"
+    );
+    ux::resolve(ux::Topic::Build);
+    server.abort();
+}

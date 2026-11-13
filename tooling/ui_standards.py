@@ -21,6 +21,12 @@ NON_WEB_ROOTS = ('apps/dcl-scene-cli/scripts/', 'apps/dcl-scene-cli/src/template
 # Application entry stylesheets (App.css, index.css, main.css directly in an app's src/) are global by design.
 ENTRY_STYLESHEETS = ('app', 'index', 'main')
 ENTRY_DIRECTORY = re.compile(r'^(?:apps/[^/]+/src|rendering/bevy-explorer/source/react-web/src)/[^/]+$')
+# Files that already broke these rules when a whole project was imported (apps/creator-hub,
+# docs/adr/2026-11-09-creator-hub-in-dcl-one.md). They pass only as the files that change adds;
+# any later change to one is checked like every other file. The list is read from the base revision,
+# so nothing can be added to it after the change that created it, and only that change is exempted
+# (imported_paths).
+IMPORTED = 'tooling/ui-standards-imported.txt'
 ZERO_SHA = re.compile(r'^0+$')
 COMMIT_SHA = re.compile(r'^[0-9a-f]{40}$')
 CSS_IN_JS_MODULE = re.compile(r'^(?:styled-components|@emotion/(?:styled|react|css)|@mui/(?:material/styles|system)/styled|@mui/styled-engine(?:-sc)?)(?:/.*)?$')
@@ -247,6 +253,31 @@ def resolve_base(base):
     return fallback
 
 
+def parse_imported(text):
+    if text is None:
+        return None
+    return frozenset(line.strip() for line in text.splitlines() if line.strip() and not line.startswith('#'))
+
+
+def imported_paths(base_text, current_text):
+    """The import list's exempt paths, and the issues a change to the list raises.
+
+    Only the change that creates the list (none at base) exempts what it lists. Once the list
+    exists, it exempts nothing: a listed path deleted and later re-added is checked like any new
+    file. The list can't grow or be deleted afterwards, since deleting it would let the next change
+    create it again.
+    """
+    base_paths = parse_imported(base_text)
+    current_paths = parse_imported(current_text)
+    if base_paths is None:
+        return current_paths or frozenset(), []
+    if current_paths is None:
+        return frozenset(), [f'{IMPORTED}: the import list can\'t be deleted; empty it instead']
+    if current_paths - base_paths:
+        return frozenset(), [f'{IMPORTED}: paths can\'t be added to the import list']
+    return frozenset(), []
+
+
 def check(base='HEAD', staged=False):
     """List violations in changes from base to the working tree, or to the index when staged."""
     base = resolve_base(base)
@@ -270,13 +301,23 @@ def check(base='HEAD', staged=False):
         except subprocess.CalledProcessError:
             return ''
 
+    def existing(read, name):
+        try:
+            return read(name)
+        except (OSError, subprocess.CalledProcessError):
+            return None
+
+    def at_base(name):
+        return git('show', f'{base}:{name}')
+
     changed = names(diff, '--name-only', '--diff-filter=ACMR', '--end-of-options', base, '--') | untracked
     added = new_files(diff, base) | untracked
-    issues = []
-    for name in sorted(added):
+    exempt, issues = imported_paths(existing(at_base, IMPORTED), existing(current, IMPORTED))
+    imported = exempt & added
+    for name in sorted(added - imported):
         if is_ui_source(name) and is_component_stylesheet(name, tracked):
             issues.append(f'{name}: new component styles must use .module.css')
-    for name in sorted(changed):
+    for name in sorted(changed - imported):
         if not is_ui_source(name) or not name.endswith(SCRIPT_EXTENSIONS):
             continue
         if name in untracked:

@@ -1714,6 +1714,9 @@ mod durable_tests {
             .unwrap();
         let safety = store.snapshot(&wallet).await.unwrap();
         let snapshot = crate::protocol::pulse::decentraland::pulse::PeerClusterSnapshot {
+            selected_origin: 1,
+            selected_identity: Some(1),
+            assignment_state: 1,
             wallet: wallet.clone(),
             session: "0x1111111111111111111111111111111111111111".into(),
             cluster_id: "current".into(),
