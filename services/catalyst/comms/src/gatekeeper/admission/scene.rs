@@ -242,6 +242,7 @@ pub async fn resolve_listing_place_id(
     }
 }
 
+#[derive(Clone)]
 pub struct PlaceInfo {
     pub world: bool,
     pub world_name: Option<String>,
