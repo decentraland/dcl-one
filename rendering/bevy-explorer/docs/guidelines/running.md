@@ -218,7 +218,8 @@ State, in every build:
 - `/chat_history [count]`: the last chat messages sent and received (200 kept), oldest first,
   with the sender's address and `messageId`, and `total` counting every message so far. Commands,
   emote markers and direct messages are left out; `/dm_history` has those.
-- `/voice_state`: the mic (`available`, `enabled`) and, in LiveKit builds, each voice room's state
+- `/voice_state`: the mic (`available`, `enabled`, and `sceneBlocked` while the scene the player
+  stands in turns nearby voice off) and, in LiveKit builds, each voice room's state
   and the addresses speaking.
 - `/nearby_mutes`: the wallets whose nearby voice the account muted (`muted`, the first 32 of
   `count`), the `account` and where its saved list stands (`load`: `idle` signed out, `loading`,

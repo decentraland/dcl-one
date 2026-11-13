@@ -262,15 +262,15 @@ function renderItem(item: Item, i: number, session: EngineSession, snap: Binding
       />
     )
   if (item.kind === 'mic') {
-    const state = !voice.hearing ? 'off' : voice.speaking ? 'speaking' : 'hearing'
+    const state = voice.blocked ? 'blocked' : !voice.hearing ? 'off' : voice.speaking ? 'speaking' : 'hearing'
     return (
       <RailButton
         key="mic"
-        icon={`voice-${state}`}
+        icon={state === 'blocked' ? 'voice-off' : `voice-${state}`}
         size={34}
         label="Nearby Voice"
         data-voice={state}
-        indicator={state !== 'off'}
+        indicator={state !== 'off' && state !== 'blocked'}
         onClick={(e) => voice.onOpen(e.currentTarget)}
       >
         {state === 'speaking' && (
@@ -460,6 +460,7 @@ export function Sidebar({
           speaking={nearby.speaking}
           talking={nearby.talking}
           micAvailable={nearby.micAvailable}
+          blocked={nearby.blocked}
           onSpeakToggle={nearby.toggleSpeak}
           talkKey={keyHintFor(snap, 'Microphone')}
           onClose={closeVoice}

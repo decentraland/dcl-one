@@ -45,6 +45,8 @@ pub(super) fn register(app: &mut App) {
             query: "/nearby_voice",
             fields: &[
                 ("Island connected", "connected"),
+                ("Turned off by the scene", "sceneBlocked"),
+                ("Mic opens refused by the scene", "refusals"),
                 ("Local speaking", "speaking"),
                 ("Remote participants", "participants"),
                 ("Active speakers", "speakerCount"),
@@ -139,6 +141,7 @@ struct NearbyVoice;
 #[allow(clippy::type_complexity)]
 fn nearby_voice(
     mut input: ConsoleCommand<NearbyVoice>,
+    mic: Res<MicState>,
     settings: Res<NearbyPanning>,
     islands: Query<
         Has<Connected>,
@@ -173,7 +176,7 @@ fn nearby_voice(
                 speakers.insert(participant.identity().to_string());
             }
         }
-        input.reply_ok(json!({"connected": islands.iter().any(|connected| connected), "speaking": speaking, "participants": remotes,
+        input.reply_ok(json!({"connected": islands.iter().any(|connected| connected), "sceneBlocked": mic.scene_blocked, "refusals": mic.refusals, "speaking": speaking, "participants": remotes,
             "speakerCount": speakers.len(), "speakers": speakers.into_iter().take(32).collect::<Vec<_>>(), "tracks": tracks.iter().count(),
             "sources": sources.iter().count(), "assigned": sources.iter().filter(|s| s.current_transport.is_some()).count(),
             "spatialize": settings.spatialize, "smooth": settings.smooth, "strength": settings.strength}).to_string());

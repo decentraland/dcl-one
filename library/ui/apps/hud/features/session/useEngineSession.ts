@@ -164,6 +164,8 @@ function memberProfiles(members: CommunityMember[]): Parameters<typeof seedProfi
 const SKYBOX_START_HOURS = 10
 const SKYBOX_DAY_SPEED = 12
 
+const NEARBY_VOICE_RESTRICTION = 'Nearby voice disabled'
+
 // The engine's `/time` reply (day_night.rs timeofday_console_command) ends with
 // "speed <S> (elapsed: <seconds since midnight>)".
 function parseTimeReply(reply: string): { hours: number; speed: number } | null {
@@ -418,6 +420,8 @@ export interface MinimapState {
    *  parcel (the header falls back to "Empty parcel"). Updates as the player crosses into
    *  another scene — unlike the entry overlay's title, which never does. */
   sceneTitle: string
+  /** What the scene the player is standing in turns off, for the header's restrictions list. */
+  restrictions: string[]
   /** The place the player stands in, as Donate names it (a Genesis City parcel or a World); null in a preview,
    *  a local realm or between scenes. */
   donatePlace: DonatePlace | null
@@ -1017,7 +1021,7 @@ export interface EngineSession {
   /** The portable experiences running beside the scene (smart wearables, scene-spawned portables). */
   portables: PortablesState
   editor: EditorHostState
-  mic: { enabled: boolean; available: boolean; toggle: () => void }
+  mic: { enabled: boolean; available: boolean; sceneBlocked: boolean; refusals: number; toggle: () => void }
   /** Saved mutes for nearby voice: lowercased addresses the user hushed, kept per account by the engine. */
   nearbyMutes: { muted: ReadonlySet<string>; set: (address: string, muted: boolean) => void }
   /** Private calls and community streams. */
@@ -1350,7 +1354,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const [skyboxProgressing, setSkyboxProgressingState] = useState(true)
   const [emotes, setEmotes] = useState<Emote[]>([])
   const [emotesOpen, setEmotesOpen] = useState(false)
-  const [mic, setMic] = useState({ enabled: false, available: false })
+  const [mic, setMic] = useState({ enabled: false, available: false, sceneBlocked: false, refusals: 0 })
   const [voiceChatState, setVoiceChatState] = useState<VoiceChatState | null>(null)
   const [activeVoiceChats, setActiveVoiceChats] = useState<ActiveCommunityVoiceChat[]>([])
   const [activeVoiceChatsLoaded, setActiveVoiceChatsLoaded] = useState(false)
@@ -1935,7 +1939,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           setEmotes(msg.emotes)
           break
         case 'mic':
-          setMic({ enabled: msg.enabled, available: msg.available })
+          setMic((m) => ({ enabled: msg.enabled, available: msg.available, sceneBlocked: msg.sceneBlocked === true, refusals: msg.refusals ?? m.refusals }))
           break
         case 'nearbyMutes':
           applyNearbyMuted(new Set(msg.addresses.map((a) => a.toLowerCase())))
@@ -4504,8 +4508,15 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     [mapParcel, mapOpen, toggleMap, teleport, changeRealm, teleportToPlace]
   )
   const minimapSlice = useMemo(
-    () => ({ pose: poseRef, satelliteView, sceneTitle, donatePlace: donatePlaceKey ? (JSON.parse(donatePlaceKey) as DonatePlace) : null, setConfig: setMinimapConfig }),
-    [satelliteView, sceneTitle, donatePlaceKey, setMinimapConfig]
+    () => ({
+      pose: poseRef,
+      satelliteView,
+      sceneTitle,
+      restrictions: mic.sceneBlocked ? [NEARBY_VOICE_RESTRICTION] : [],
+      donatePlace: donatePlaceKey ? (JSON.parse(donatePlaceKey) as DonatePlace) : null,
+      setConfig: setMinimapConfig
+    }),
+    [satelliteView, sceneTitle, mic.sceneBlocked, donatePlaceKey, setMinimapConfig]
   )
 
   return {
@@ -4672,7 +4683,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     worldPassword: { pending: worldPassword, resolve: resolveWorldPassword },
     portables: { list: portables, stop: stopPortable, restart: restartSmartWearable },
     editor: { mode: editorMode, setMode: setEditorMode },
-    mic: { enabled: mic.enabled, available: mic.available, toggle: toggleMic },
+    mic: { enabled: mic.enabled, available: mic.available, sceneBlocked: mic.sceneBlocked, refusals: mic.refusals, toggle: toggleMic },
     nearbyMutes: { muted: nearbyMuted, set: setNearbyMute },
     voiceChat: { state: voiceChatState, active: activeVoiceChats, activeLoaded: activeVoiceChatsLoaded, scene: sceneVoiceChat, guest: profile?.isGuest === true, act: voiceChatAct },
     nav,

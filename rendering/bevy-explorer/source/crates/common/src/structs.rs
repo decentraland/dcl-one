@@ -1246,8 +1246,8 @@ pub struct SceneMeta {
     pub spawn_points: Option<Vec<SpawnPoint>>,
     pub skybox_config: Option<SkyboxConfig>,
     pub authoritative_multiplayer: Option<bool>,
-    /// `featureToggles`: a host scene's switches, of which `portableExperiences` is read
-    /// ([`PortableExperiencesToggle`]). Kept as raw json so a value of another shape never
+    /// `featureToggles`: a host scene's switches, of which `portableExperiences`
+    /// ([`PortableExperiencesToggle`]) and `nearbyVoiceChat` are read. Kept as raw json so a value of another shape never
     /// fails the scene.json.
     pub feature_toggles: Option<serde_json::Value>,
 }
@@ -1261,6 +1261,16 @@ impl SceneMeta {
             .and_then(serde_json::Value::as_str)
             .map(|value| value.parse().unwrap_or_default())
             .unwrap_or_default()
+    }
+
+    /// Whether nearby voice stays on while the player stands in this scene: `nearbyVoiceChat`
+    /// absent, not a string, empty or `enabled` (any case); any other string turns it off.
+    pub fn nearby_voice_chat_enabled(&self) -> bool {
+        self.feature_toggles
+            .as_ref()
+            .and_then(|toggles| toggles.get("nearbyVoiceChat"))
+            .and_then(serde_json::Value::as_str)
+            .is_none_or(|value| value.is_empty() || value.eq_ignore_ascii_case("enabled"))
     }
 }
 
@@ -1286,6 +1296,9 @@ impl std::str::FromStr for PortableExperiencesToggle {
         }
     }
 }
+
+#[derive(Component)]
+pub struct NearbyVoiceDisabled;
 
 pub trait PermissionStrings {
     fn active(&self) -> &str;
@@ -1773,6 +1786,34 @@ pub enum AppError {
 pub struct MicState {
     pub available: bool,
     pub enabled: bool,
+    /// The scene the player stands in turns nearby voice off.
+    #[serde(default)]
+    pub scene_blocked: bool,
+    /// Counts the mic opens the scene refused.
+    #[serde(default)]
+    pub refusals: u32,
+}
+
+impl MicState {
+    /// Leaving the scene does not reopen the mic.
+    pub fn set_scene_blocked(&mut self, blocked: bool) {
+        self.scene_blocked = blocked;
+        if blocked {
+            self.enabled = false;
+        }
+    }
+
+    pub fn refuse(&mut self) {
+        self.refusals = self.refusals.wrapping_add(1);
+    }
+
+    /// Closing the mic is never refused.
+    pub fn request_enabled(&mut self, enabled: bool) {
+        if enabled && self.available && self.scene_blocked {
+            self.refuse();
+        }
+        self.enabled = self.available && !self.scene_blocked && enabled;
+    }
 }
 
 #[derive(Debug, Resource, Default)]
@@ -2047,6 +2088,74 @@ mod tests {
                 avatar: 10,
             }
         );
+    }
+
+    #[test]
+    fn the_mic_stays_closed_after_leaving_a_scene_that_turns_nearby_voice_off() {
+        let mut mic = MicState {
+            available: true,
+            enabled: true,
+            scene_blocked: false,
+            refusals: 0,
+        };
+        mic.set_scene_blocked(true);
+        assert!(mic.scene_blocked && !mic.enabled);
+        mic.set_scene_blocked(false);
+        assert!(!mic.scene_blocked && !mic.enabled);
+    }
+
+    #[test]
+    fn a_scene_that_turns_nearby_voice_off_counts_each_refused_open() {
+        let mut mic = MicState {
+            available: true,
+            enabled: false,
+            scene_blocked: true,
+            refusals: 0,
+        };
+        mic.request_enabled(true);
+        assert!(!mic.enabled);
+        assert_eq!(mic.refusals, 1);
+        mic.request_enabled(false);
+        assert_eq!(mic.refusals, 1, "closing the mic is never refused");
+
+        mic.available = false;
+        mic.request_enabled(true);
+        assert_eq!(mic.refusals, 1, "no mic to refuse");
+
+        mic.available = true;
+        mic.scene_blocked = false;
+        mic.request_enabled(true);
+        assert!(mic.enabled);
+        assert_eq!(mic.refusals, 1);
+    }
+
+    #[test]
+    fn a_scene_turns_nearby_voice_off_with_any_value_but_enabled() {
+        let enabled = |toggles: &str| {
+            let meta: SceneMeta = serde_json::from_str(&format!(
+                r#"{{"main":"index.js","scene":{{"base":"0,0","parcels":["0,0"]}}{toggles}}}"#
+            ))
+            .unwrap();
+            meta.nearby_voice_chat_enabled()
+        };
+        assert!(enabled(""));
+        assert!(enabled(r#","featureToggles":{}"#));
+        assert!(enabled(r#","featureToggles":{"voiceChat":"disabled"}"#));
+        assert!(enabled(r#","featureToggles":{"nearbyVoiceChat":""}"#));
+        assert!(enabled(
+            r#","featureToggles":{"nearbyVoiceChat":"enabled"}"#
+        ));
+        assert!(enabled(
+            r#","featureToggles":{"nearbyVoiceChat":"ENABLED"}"#
+        ));
+        assert!(!enabled(
+            r#","featureToggles":{"nearbyVoiceChat":"disabled"}"#
+        ));
+        assert!(!enabled(r#","featureToggles":{"nearbyVoiceChat":"off"}"#));
+        // values of another shape are ignored rather than failing the scene.json
+        assert!(enabled(r#","featureToggles":{"nearbyVoiceChat":false}"#));
+        assert!(enabled(r#","featureToggles":{"nearbyVoiceChat":1}"#));
+        assert!(enabled(r#","featureToggles":["disabled"]"#));
     }
 
     #[test]

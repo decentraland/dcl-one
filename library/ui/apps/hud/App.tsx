@@ -23,6 +23,7 @@ import { LobbyHome } from './features/lobby/LobbyHome'
 import { VoiceChatPanel } from './features/voiceChat/VoiceChatPanel'
 import { SceneVoiceChatBanner } from './features/voiceChat/SceneVoiceChatBanner'
 import { VoiceChatToasts } from './features/voiceChat/voiceChatToasts'
+import { NearbyVoiceRefusals } from './features/voice/NearbyVoiceRefusals'
 import { WelcomePage } from './features/welcome/WelcomePage'
 import { GalleryPage } from './features/gallery/GalleryPage'
 import { Sidebar } from './features/sidebar/Sidebar'
@@ -576,6 +577,7 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
       <ConnectivityFeedback state={session.connectivity.state} retry={session.connectivity.retry} exit={session.logout} />
       <NotificationToastHost notifications={session.notifications} friends={session.friends} voiceChat={session.voiceChat} chat={session.chat} />
       <VoiceChatToasts />
+      <NearbyVoiceRefusals />
       {/* Crash surface (boot panic / runtime crash / react render crash) — last, so it renders above
           the popup layer. A world-not-found is not a crash and opens as a popup instead (see above). */}
       {crash && <CrashModal error={crash} onReload={session.reload} onDismiss={crash.source === 'runtime' ? session.dismissFatal : undefined} />}
