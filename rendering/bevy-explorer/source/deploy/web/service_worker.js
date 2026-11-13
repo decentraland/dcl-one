@@ -132,16 +132,36 @@ const CONTENT_CACHE_LOW_WATER = 0.9;
 const CONTENT_CACHE_QUOTA_ERROR_KEEP = 0.75;
 // Entries sized (one `match` each) per step while choosing what to evict.
 const CONTENT_CACHE_SIZE_BATCH = 64;
-let contentCacheQueue = Promise.resolve();
+// Requests waiting their turn. One trim at a time: a second request sees what the first left. A
+// quota-error request goes ahead of the regular ones, and a running regular trim stops for it: the
+// engine holds a write until it is answered.
+const contentCacheRequests = [];
+let contentCacheRunning = false;
+
+const contentCacheForcedWaiting = () => contentCacheRequests.some((request) => request.quotaError);
+
+async function runContentCacheRequests() {
+    if (contentCacheRunning) return;
+    contentCacheRunning = true;
+    while (contentCacheRequests.length > 0) {
+        const { capBytes, quotaError, resolve, reject } = contentCacheRequests.shift();
+        await trimContentCache(capBytes, quotaError).then(resolve, reject);
+    }
+    contentCacheRunning = false;
+}
 
 self.addEventListener('message', (event) => {
     const data = event.data;
     if (data?.type !== CONTENT_CACHE_TRIM) return;
     const port = event.ports?.[0];
-    const task = () => trimContentCache(data.capBytes, data.quotaError === true);
-    // one trim at a time: a second request sees what the first left
-    const run = contentCacheQueue.then(task, task);
-    contentCacheQueue = run.catch(() => {});
+    const quotaError = data.quotaError === true;
+    const run = new Promise((resolve, reject) => {
+        const request = { capBytes: data.capBytes, quotaError, resolve, reject };
+        const regular = contentCacheRequests.findIndex((waiting) => !waiting.quotaError);
+        if (quotaError && regular >= 0) contentCacheRequests.splice(regular, 0, request);
+        else contentCacheRequests.push(request);
+    });
+    runContentCacheRequests();
     event.waitUntil(run.then(
         (report) => port?.postMessage(report),
         (e) => port?.postMessage({ error: String(e?.message ?? e) }),
@@ -171,10 +191,13 @@ function pickEvictions(sized, bytesToFree) {
     return { picked, freed };
 }
 
-// The engine stores every entry with Content-Length.
+// The engine stores every entry with Content-Length. The body is then never read: release it.
 async function contentCacheEntrySize(response) {
     const length = Number(response.headers.get('Content-Length'));
-    if (response.headers.has('Content-Length') && Number.isFinite(length)) return length;
+    if (response.headers.has('Content-Length') && Number.isFinite(length)) {
+        response.body?.cancel().catch(() => {});
+        return length;
+    }
     return (await response.blob()).size;
 }
 
@@ -186,22 +209,41 @@ async function trimContentCache(capBytes, quotaError) {
     // only for the report: a browser without it, or one that refuses, must not stop the trim
     const persisted = (await navigator.storage.persisted?.().catch(() => false)) ?? false;
     const { cap, bytesToFree } = contentCacheTarget({ capBytes, quota, cachesUsage, quotaError });
-    const report = { capBytes: cap, usage, quota, cachesUsage, evictedEntries: 0, evictedBytes: 0, persisted };
-    if (bytesToFree <= 0) return report;
+    const report = {
+        capBytes: cap, usage, quota, cachesUsage, evictedEntries: 0, evictedBytes: 0, persisted,
+        targetUnreachable: false, preempted: false,
+    };
+    let toFree = bytesToFree;
+    if (toFree <= 0) return report;
 
     const cache = await caches.open(CACHE_NAME);
     // insertion order: oldest written first (a put over a key moves it to the end)
     const requests = await cache.keys();
-    for (let i = 0; i < requests.length && report.evictedBytes < bytesToFree; i += CONTENT_CACHE_SIZE_BATCH) {
-        const sized = await Promise.all(requests.slice(i, i + CONTENT_CACHE_SIZE_BATCH).map(async (key) => {
+    // Size before deleting: `cachesUsage` also counts other caches (and, without usageDetails, all
+    // storage), which no eviction here reaches.
+    const sized = [];
+    let contentBytes = 0;
+    for (let i = 0; i < requests.length && contentBytes < toFree; i += CONTENT_CACHE_SIZE_BATCH) {
+        if (!quotaError && contentCacheForcedWaiting()) {
+            report.preempted = true;
+            return report;
+        }
+        const batch = await Promise.all(requests.slice(i, i + CONTENT_CACHE_SIZE_BATCH).map(async (key) => {
             const response = await cache.match(key);
             return { key, size: response ? await contentCacheEntrySize(response) : 0 };
         }));
-        const { picked, freed } = pickEvictions(sized, bytesToFree - report.evictedBytes);
-        await Promise.all(picked.map((key) => cache.delete(key)));
-        report.evictedEntries += picked.length;
-        report.evictedBytes += freed;
+        for (const entry of batch) contentBytes += entry.size;
+        sized.push(...batch);
     }
+    if (contentBytes < toFree) {
+        // the whole content cache would not reach the target: hold it to the cap by itself
+        report.targetUnreachable = true;
+        toFree = contentCacheTarget({ capBytes, quota, cachesUsage: contentBytes, quotaError }).bytesToFree;
+    }
+    const { picked, freed } = pickEvictions(sized, toFree);
+    await Promise.all(picked.map((key) => cache.delete(key)));
+    report.evictedEntries = picked.length;
+    report.evictedBytes = freed;
     return report;
 }
 

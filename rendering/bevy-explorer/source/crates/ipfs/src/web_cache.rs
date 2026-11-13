@@ -62,6 +62,12 @@ fn trim_interval(cap: u64) -> u64 {
     (cap / 16).clamp(MIB, TRIM_INTERVAL_MAX)
 }
 
+/// [`trim_interval`] of the lower of the engine's cap and the one the worker last trimmed to: the
+/// worker bounds the cap by the quota, which the engine does not see.
+fn trim_interval_for(engine_cap: u64, worker_cap: u64) -> u64 {
+    trim_interval(engine_cap.min(worker_cap))
+}
+
 /// Whether writing `len` bytes after `before` bytes crosses a multiple of `interval`.
 fn crosses_interval(before: u64, len: u64, interval: u64) -> bool {
     interval > 0 && before / interval != before.saturating_add(len) / interval
@@ -83,6 +89,8 @@ pub struct TrimReport {
     pub evicted_entries: f64,
     pub evicted_bytes: f64,
     pub persisted: bool,
+    /// Evicting all content would not reach the cap: other storage counts toward the usage.
+    pub target_unreachable: bool,
 }
 
 /// The engine side's readings, for the debug panel.
@@ -93,6 +101,9 @@ pub struct WebCacheState {
     pub written_bytes: u64,
     pub quota_retries: u64,
     pub trims: u64,
+    /// Summed over every trim reported this session.
+    pub evicted_entries_total: u64,
+    pub evicted_bytes_total: u64,
     pub last: Option<TrimReport>,
 }
 
@@ -116,6 +127,8 @@ pub fn state_json(state: &WebCacheState) -> serde_json::Value {
         "writtenMiB": mib(state.written_bytes as f64),
         "quotaRetries": state.quota_retries,
         "trims": state.trims,
+        "evictedEntriesTotal": state.evicted_entries_total,
+        "evictedTotalMiB": mib(state.evicted_bytes_total as f64),
         "workerCapMiB": last.map(|r| mib(r.cap_bytes)),
         "usageMiB": last.map(|r| mib(r.usage)),
         "quotaMiB": last.and_then(|r| r.quota.is_finite().then(|| mib(r.quota))),
@@ -123,10 +136,12 @@ pub fn state_json(state: &WebCacheState) -> serde_json::Value {
         "evictedEntries": last.map(|r| r.evicted_entries),
         "evictedMiB": last.map(|r| mib(r.evicted_bytes)),
         "persisted": last.map(|r| r.persisted),
+        "targetUnreachable": last.map(|r| r.target_unreachable),
         "unavailable": {
             "overrideMiB": "No override: the configured cap applies.",
             "workerCapMiB": reason, "usageMiB": reason, "quotaMiB": quota_reason, "cachesMiB": reason,
             "evictedEntries": reason, "evictedMiB": reason, "persisted": reason,
+            "targetUnreachable": reason,
         },
     })
 }
@@ -148,8 +163,8 @@ pub use io::*;
 #[cfg(target_arch = "wasm32")]
 mod io {
     use super::{
-        crosses_interval, forced_trim_allowed, keys, names, page_content_cache_trim, trim_interval,
-        TrimReport, WebCacheState, WEB_CACHE_CAP_BYTES,
+        crosses_interval, forced_trim_allowed, keys, names, page_content_cache_trim,
+        trim_interval_for, TrimReport, WebCacheState, WEB_CACHE_CAP_BYTES,
     };
     use js_sys::Uint8Array;
     use std::sync::{
@@ -282,10 +297,14 @@ mod io {
     // Written from the asset loader and processor workers, which have no `World`; one wasm memory
     // is shared by every worker of an engine instance.
     static CAP_BYTES: AtomicU64 = AtomicU64::new(WEB_CACHE_CAP_BYTES);
+    // the cap of the worker's last report (u64::MAX = none yet)
+    static WORKER_CAP_BYTES: AtomicU64 = AtomicU64::new(u64::MAX);
     static WRITTEN_BYTES: AtomicU64 = AtomicU64::new(0);
     static LAST_FORCED_MS: AtomicU64 = AtomicU64::new(0);
     static QUOTA_RETRIES: AtomicU64 = AtomicU64::new(0);
     static TRIMS: AtomicU64 = AtomicU64::new(0);
+    static EVICTED_ENTRIES: AtomicU64 = AtomicU64::new(0);
+    static EVICTED_BYTES: AtomicU64 = AtomicU64::new(0);
     static LAST_REPORT: Mutex<Option<TrimReport>> = Mutex::new(None);
 
     /// Replaces the body of the entry under `key`.
@@ -312,6 +331,9 @@ mod io {
             .ok()?;
         let report = report_from_js(&reply)?;
         TRIMS.fetch_add(1, Ordering::Relaxed);
+        WORKER_CAP_BYTES.store(report.cap_bytes as u64, Ordering::Relaxed);
+        EVICTED_ENTRIES.fetch_add(report.evicted_entries as u64, Ordering::Relaxed);
+        EVICTED_BYTES.fetch_add(report.evicted_bytes as u64, Ordering::Relaxed);
         *LAST_REPORT.lock().unwrap_or_else(PoisonError::into_inner) = Some(report);
         Some(report)
     }
@@ -324,6 +346,8 @@ mod io {
             written_bytes: WRITTEN_BYTES.load(Ordering::Relaxed),
             quota_retries: QUOTA_RETRIES.load(Ordering::Relaxed),
             trims: TRIMS.load(Ordering::Relaxed),
+            evicted_entries_total: EVICTED_ENTRIES.load(Ordering::Relaxed),
+            evicted_bytes_total: EVICTED_BYTES.load(Ordering::Relaxed),
             last: *LAST_REPORT.lock().unwrap_or_else(PoisonError::into_inner),
         }
     }
@@ -366,7 +390,10 @@ mod io {
     }
 
     fn note_written(len: u64) {
-        let interval = trim_interval(CAP_BYTES.load(Ordering::Relaxed));
+        let interval = trim_interval_for(
+            CAP_BYTES.load(Ordering::Relaxed),
+            WORKER_CAP_BYTES.load(Ordering::Relaxed),
+        );
         let before = WRITTEN_BYTES.fetch_add(len, Ordering::Relaxed);
         if crosses_interval(before, len, interval) {
             wasm_bindgen_futures::spawn_local(async {
@@ -393,6 +420,9 @@ mod io {
             evicted_entries: number("evictedEntries")?,
             evicted_bytes: number("evictedBytes")?,
             persisted: get("persisted").and_then(|v| v.as_bool()).unwrap_or(false),
+            target_unreachable: get("targetUnreachable")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
         })
     }
 }
@@ -467,6 +497,13 @@ mod tests {
     }
 
     #[test]
+    fn trims_follow_the_cap_the_worker_bounded_by_the_quota() {
+        assert_eq!(trim_interval_for(1 << 30, 100 << 20), (100 << 20) / 16);
+        assert_eq!(trim_interval_for(1 << 30, u64::MAX), 64 << 20);
+        assert_eq!(trim_interval_for(50 << 20, 1 << 30), (50 << 20) / 16);
+    }
+
+    #[test]
     fn forced_trims_are_a_minute_apart() {
         assert!(forced_trim_allowed(0, 5));
         assert!(!forced_trim_allowed(1_000, 60_999));
@@ -494,6 +531,7 @@ mod tests {
             last: Some(TrimReport {
                 evicted_bytes: 3.0 * 1048576.0 + 52429.0,
                 persisted: true,
+                target_unreachable: true,
                 ..Default::default()
             }),
             ..Default::default()
@@ -502,6 +540,20 @@ mod tests {
             serde_json::from_str(&state_json(&state).to_string()).unwrap();
         assert_eq!(json["evictedMiB"], 3.1);
         assert_eq!(json["persisted"], true);
+        assert_eq!(json["targetUnreachable"], true);
+    }
+
+    #[test]
+    fn state_sums_the_evictions_of_every_trim() {
+        let state = WebCacheState {
+            evicted_entries_total: 160,
+            evicted_bytes_total: 10 << 20,
+            ..Default::default()
+        };
+        let json: serde_json::Value =
+            serde_json::from_str(&state_json(&state).to_string()).unwrap();
+        assert_eq!(json["evictedEntriesTotal"], 160);
+        assert_eq!(json["evictedTotalMiB"], 10.0);
     }
 
     #[test]

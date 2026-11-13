@@ -42,12 +42,12 @@ function fakeCache(seed: [string, Response][] = []) {
 }
 type FakeCache = ReturnType<typeof fakeCache>
 
-function serviceWorker(options: { quota?: number; usage?: number; usageDetails?: object | null; others?: boolean; persisted?: 'absent' | 'rejects' } = {}) {
+function serviceWorker(options: { quota?: number; usage?: number; usageDetails?: object | null; others?: boolean; otherSize?: number; persisted?: 'absent' | 'rejects' } = {}) {
   const listeners: Record<string, (event: unknown) => void> = {}
   const content = fakeCache()
   const fakes = new Map<string, FakeCache>([[CONTENT_CACHE, content]])
   if (options.others) {
-    for (const name of OTHER_CACHES) fakes.set(name, fakeCache([[`https://editor.invalid/${name}`, entry(1000)]]))
+    for (const name of OTHER_CACHES) fakes.set(name, fakeCache([[`https://editor.invalid/${name}`, entry(options.otherSize ?? 1000)]]))
   }
   const opened: string[] = []
   const caches = {
@@ -96,10 +96,18 @@ function serviceWorker(options: { quota?: number; usage?: number; usageDetails?:
     if (waitUntil.mock.calls.length) await waitUntil.mock.calls[0][0]
     return { port, waitUntil }
   }
+  // like `send`, but does not wait: the replies come in `done`, in the order they were posted
+  const sendAsync = (data: unknown) => {
+    const port = { postMessage: vi.fn((message: unknown) => replies.push({ data, message })) }
+    const waitUntil = vi.fn()
+    listeners.message({ data, ports: [port], waitUntil })
+    return { port, done: waitUntil.mock.calls.length ? (waitUntil.mock.calls[0][0] as Promise<unknown>) : Promise.resolve() }
+  }
+  const replies: { data: unknown; message: any }[] = []
   const seed = (n: number, size = 100, withLength = true) => content.map.set(entryUrl(n), entry(size, withLength))
   const trim = (message: Partial<Message> & { capBytes: unknown }) => send({ type: 'content-cache-trim', ...message })
   const remaining = () => [...content.map.keys()].map((url) => url.replace('https://shared.invalid/', ''))
-  return { pure, send, trim, seed, content, fakes, caches, opened, estimate, remaining }
+  return { pure, send, sendAsync, replies, trim, seed, content, fakes, caches, opened, estimate, remaining }
 }
 
 describe('content cache target', () => {
@@ -151,7 +159,7 @@ describe('content cache trim message', () => {
     const { port } = await sw.trim({ capBytes: 500 })
     expect(sw.remaining()).toEqual(['bafkrei6', 'bafkrei7', 'bafkrei8', 'bafkrei9'])
     expect(port.postMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ evictedEntries: 6, evictedBytes: 600, capBytes: 500 })
+      expect.objectContaining({ evictedEntries: 6, evictedBytes: 600, capBytes: 500, targetUnreachable: false, preempted: false })
     )
   })
 
@@ -243,5 +251,51 @@ describe('content cache trim message', () => {
     expect(port.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({ evictedEntries: 6, persisted: false })
     )
+  })
+
+  it('does not evict content when other storage alone keeps usage over the cap', async () => {
+    const sw = serviceWorker({ others: true })
+    for (let n = 0; n < 10; n++) sw.seed(n)
+    const { port } = await sw.trim({ capBytes: 2000 })
+    expect(sw.remaining()).toHaveLength(10)
+    expect(port.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ cachesUsage: 4000, evictedEntries: 0, evictedBytes: 0, targetUnreachable: true })
+    )
+  })
+
+  it('frees a quarter of the content after a quota error when other storage fills the cap', async () => {
+    const sw = serviceWorker({ others: true })
+    for (let n = 0; n < 10; n++) sw.seed(n)
+    const { port } = await sw.trim({ capBytes: 2000, quotaError: true })
+    expect(sw.remaining()).toHaveLength(7)
+    expect(port.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ evictedEntries: 3, evictedBytes: 300, targetUnreachable: true })
+    )
+  })
+
+  it('cancels the body of an entry sized by its Content-Length', async () => {
+    const sw = serviceWorker()
+    const cancel = vi.fn()
+    for (let n = 0; n < 5; n++) {
+      const body = new ReadableStream({ cancel })
+      sw.content.map.set(entryUrl(n), new Response(body, { headers: { 'Content-Length': '100' } }))
+    }
+    // hand out the stored response itself, so the spy sees the cancel
+    sw.content.match = async (key: string | Request) => sw.content.map.get(keyOf(key))
+    await sw.trim({ capBytes: 100 })
+    expect(cancel).toHaveBeenCalledTimes(5)
+  })
+
+  it('lets a quota-error request run before pending regular trims and stops a running regular one', async () => {
+    const sw = serviceWorker()
+    for (let n = 0; n < 300; n++) sw.seed(n)
+    const first = sw.sendAsync({ type: 'content-cache-trim', capBytes: 1000 })
+    const second = sw.sendAsync({ type: 'content-cache-trim', capBytes: 1000 })
+    const forced = sw.sendAsync({ type: 'content-cache-trim', capBytes: 1000, quotaError: true })
+    await Promise.all([first.done, second.done, forced.done])
+    expect(first.port.postMessage).toHaveBeenCalledWith(expect.objectContaining({ preempted: true, evictedEntries: 0 }))
+    expect(sw.replies.map((r) => (r.data as Message).quotaError === true)).toEqual([false, true, false])
+    expect(forced.port.postMessage).toHaveBeenCalledWith(expect.objectContaining({ preempted: false }))
+    expect(sw.remaining().length * 100).toBeLessThanOrEqual(1000)
   })
 })
