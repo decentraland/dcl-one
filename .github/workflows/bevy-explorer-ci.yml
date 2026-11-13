@@ -812,7 +812,7 @@ jobs:
           package-name: '@dcl-regenesislabs/bevy-explorer-web'
           version: ${{ steps.web.outputs.version }}
           dist-path: rendering/bevy-explorer/source/deploy/web
-          deployment-environments: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && '["zone"]' || '[]' }}
+          deployment-environments: '[]'
       - name: Publish
         id: publish
         continue-on-error: ${{ github.event_name == 'pull_request' }}
@@ -833,6 +833,13 @@ jobs:
           BRANCH_NAME: ${{ github.head_ref }}
           # The package comes from the build job; none of its scripts run beside the publish tokens.
           NPM_CONFIG_IGNORE_SCRIPTS: 'true'
+      - name: Roll out at decentraland.zone/play
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: decentraland/actions/cdn-deploy@c80272b77e7aacba162024f7f4b9c1b0d701f012 # cdn-deploy-v1.0.2
+        with:
+          package-name: '@dcl-regenesislabs/bevy-explorer-web'
+          version: ${{ steps.web.outputs.version }}
+          deployment-environments: '["zone"]'
       - name: Report a failed PR preview
         if: github.event_name == 'pull_request' && (steps.cdn.outcome == 'failure' || steps.publish.outcome == 'failure')
         run: echo '::warning::The PR preview did not publish; see the Upload to the CDN and Publish step logs.'
