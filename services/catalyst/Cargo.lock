@@ -1772,6 +1772,7 @@ dependencies = [
  "dcl-http",
  "flate2",
  "futures",
+ "hashlink",
  "hex",
  "image",
  "ipnet",
