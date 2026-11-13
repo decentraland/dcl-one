@@ -268,6 +268,7 @@ export function fakeSession(): EngineSession {
       loadStep: null,
       startWithAccount: vi.fn(),
       authPending: false,
+      authCode: null,
       cancelLogin: vi.fn(),
       cancelSignIn: vi.fn(),
       exploreAsGuest: vi.fn(),

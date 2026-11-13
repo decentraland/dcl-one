@@ -3,10 +3,8 @@
 import { createEmailIdentity } from '../features/auth/guest'
 import { emailLoginComplete, emailLoginStart, guestSign, type GuestWallet } from '../features/auth/thirdweb'
 import type { AuthIdentity } from '../features/auth/sso'
+import { EMAIL_MAX, EMAIL_PATTERN } from '../features/auth/email'
 
-// The address rule the sign-in screen applies before NEXT, checked again here.
-export const EMAIL_PATTERN = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/
-export const EMAIL_MAX = 100
 const CODE_PATTERN = /^\d{6}$/
 
 function emailParam(params: unknown): string {

@@ -118,14 +118,6 @@ export function StartupFlow({
 
   const screen = startupScreen(flow)
   if (screen === 'splash') return <StartupSplash />
-  // a checked email code, waiting for the engine to take its sign-in
-  if (flow.emailQueued)
-    return (
-      <StartupFrame music={music}>
-        <Verifying />
-      </StartupFrame>
-    )
-
   const toMethods = (email = '', emailError = false): void =>
     setView({ screen: 'loginSelection', email, emailError })
   const signInWith = (method: LoginMethod): void => {

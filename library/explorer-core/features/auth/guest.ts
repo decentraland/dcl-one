@@ -9,7 +9,7 @@ import { personalSign } from '../../shell/sign'
 import type { AuthIdentity } from './sso'
 import { EmailLoginError, GUEST_SESSION_KEY, guestLogin, guestSign, type GuestWallet } from './thirdweb'
 
-/** An email account's sign-in lasts as long as the sign-in page's: 7 days. */
+/** An email account's sign-in from the HUD lasts 7 days; the Sites sign-in page's own lasts 30. */
 export const EMAIL_IDENTITY_LIFETIME_MS = 7 * 24 * 3600 * 1000
 
 const IDENTITY_LIFETIME_MS = 30 * 24 * 3600 * 1000

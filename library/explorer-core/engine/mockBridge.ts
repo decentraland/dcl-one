@@ -897,10 +897,7 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       return
     }
     // no catalyst looks or browser to open in the mock
-    if (msg.kind === 'showLook') {
-      reply({ kind: 'lookShown', look: msg.look })
-      return
-    }
+    if (msg.kind === 'showLook') return
     if (msg.kind === 'openLegal') return
 
     if (msg.kind === 'sendChat') {

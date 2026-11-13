@@ -216,6 +216,10 @@
           "kind": "regular"
         },
         {
+          "name": "email.ts",
+          "kind": "regular"
+        },
+        {
           "name": "guest.ts",
           "kind": "regular"
         },
@@ -1876,6 +1880,10 @@
     {
       "path": "library/ui/apps/hud/assets/startup",
       "entries": [
+        {
+          "name": "LICENSE",
+          "kind": "regular"
+        },
         {
           "name": "NOTICE.md",
           "kind": "regular"
@@ -5009,7 +5017,7 @@
     },
     {
       "path": "library/explorer-core/engine/mockBridge.ts",
-      "sha256": "f8e087c2ef93a92dbaf73ee25f9f4780227580ea53928d006f23f20d004ddad8"
+      "sha256": "009828a3358308a7a5b3a048750a491f16fe0662afd06bb574b0fd13b1b682db"
     },
     {
       "path": "library/explorer-core/engine/mockEvents.ts",
@@ -5037,15 +5045,19 @@
     },
     {
       "path": "library/explorer-core/engine/protocol.ts",
-      "sha256": "a23a590494d7818647d81a30ec06dce6745d43cd55a09fb88da17cded9ef87c3"
+      "sha256": "b135a6e79d533b0f55cbaeab3c27ac4e8ab89f0377fb4161cfcde0ceb83219e0"
     },
     {
       "path": "library/explorer-core/features/auth/authReturn.ts",
       "sha256": "55825b0d385f9a062d16cf7b0937f743cee0132e0fea3a9810ee8d682e3f09cf"
     },
     {
+      "path": "library/explorer-core/features/auth/email.ts",
+      "sha256": "ac28c7fd25acf0a028a77f0feeb7c227e6513b493cc45346f078598f4b8a0476"
+    },
+    {
       "path": "library/explorer-core/features/auth/guest.ts",
-      "sha256": "8978238aa9663e07e2ef6961efe98cbe443accdce23cfad1000e546408c0c6c5"
+      "sha256": "54c5a1d35976cf7aeb25695a6d3f8fd51c7161146887e776f628597099ce00f2"
     },
     {
       "path": "library/explorer-core/features/auth/guestWalletEvent.ts",
@@ -5329,7 +5341,7 @@
     },
     {
       "path": "library/explorer-core/shell/emailLogin.ts",
-      "sha256": "fb3abee50b3c6f2234f82a05ce93b96f94fcb8956eb668f5a5ad1bc373d2e3ff"
+      "sha256": "1ef365ccda7a5322f06a8a60f0aa485b19df925d34583330257e79257d11e7a7"
     },
     {
       "path": "library/explorer-core/shell/googleTag.ts",
@@ -7605,7 +7617,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "97c62404235b9bf8e3a579bd7ddcd63d08d14febec9ff53e1d3bd5b9a4b528b3"
+      "sha256": "47ec41967f54e208d4348844c2794627383a620cc1d98c6afd899413c8554feb"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -7665,11 +7677,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/startup/LoginSelection.module.css",
-      "sha256": "338a2f1c52a70120f62c8cb37aa83fce8cd9ba7da67367e18dda9d9446bffc79"
+      "sha256": "e6b61d48f97435f88c545eed57ea1326bbc40cdb4c19406921ea3b0bbac484c1"
     },
     {
       "path": "library/ui/apps/hud/features/startup/LoginSelection.tsx",
-      "sha256": "14151e4dc236a6a30f3f19b3be24cd69c4ac42fd104ff59c0a59e7601ab62cea"
+      "sha256": "01179ed3e941352611ff862aeef70fd22b89ed34a4ad8736f77393e450b062c7"
     },
     {
       "path": "library/ui/apps/hud/features/startup/NewAccountLook.module.css",
@@ -7701,7 +7713,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/startup/StartupFlow.tsx",
-      "sha256": "4ba7a8da3a7c76875bffbe9698aa998a605b10caa45908078391baae3f8b6e60"
+      "sha256": "01bf325af0486e467501732c7490374405187ddef05a40a71cdcad22c94c9431"
     },
     {
       "path": "library/ui/apps/hud/features/startup/StartupFooter.module.css",
@@ -7869,7 +7881,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/harness.tsx",
-      "sha256": "6c004f252d28112da86f29d71f81728b9c87dc00a9dc31fb6ec402c4076c6614"
+      "sha256": "57fdb5fc46fc70b73f4c79e37205a9b22b75663ddfab33bc772c8508d2ef8a78"
     },
     {
       "path": "library/ui/apps/hud/test/host.ts",
@@ -8005,7 +8017,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/emailSession.test.tsx",
-      "sha256": "b381828d755cdf6b6d09fe893817c6d4f07e7219779103ef0ce99bf24fa5ba63"
+      "sha256": "dbf7297c7173a608570e9d98ed0813750c2895b413620832686ed864cf9850da"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/emotes.clicks.test.tsx",
@@ -8069,7 +8081,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/login.clicks.test.tsx",
-      "sha256": "8e53400aa33ebc0460600592a42a51cd32b348e0701dfb4fc8400e1abdb472f7"
+      "sha256": "70ca43eafa8efb9753c4af92eafa397130a82097e56163ffce81e2980001d644"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/map.clicks.test.tsx",
@@ -8097,7 +8109,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/newAccount.test.tsx",
-      "sha256": "7a4c6b081a3047ea670f99dd46fd46aec222d08e78e4e7d14eb1b0e7574a7309"
+      "sha256": "88a374493a6eeed1f50a4ad4b119f741a0227433ddd9de62a84cb413a16a9ca2"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/notifications.clicks.test.tsx",
@@ -9405,6 +9417,21 @@
     },
     {
       "from": "library/explorer-core/shell/emailLogin.ts",
+      "to": "library/explorer-core/features/auth/email.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/shell/emailLogin.ts",
+      "to": "library/explorer-core/features/auth/email.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/shell/emailLogin.ts",
+      "to": "library/explorer-core/features/auth/email.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/explorer-core/shell/emailLogin.ts",
       "to": "library/explorer-core/features/auth/guest.ts",
       "kind": "native:runtime"
     },
@@ -24540,32 +24567,32 @@
     },
     {
       "from": "library/ui/apps/hud/features/startup/LoginSelection.tsx",
-      "to": "library/explorer-core/features/auth/thirdweb.ts",
+      "to": "library/explorer-core/features/auth/email.ts",
       "kind": "native:runtime"
     },
     {
       "from": "library/ui/apps/hud/features/startup/LoginSelection.tsx",
-      "to": "library/explorer-core/features/auth/thirdweb.ts",
+      "to": "library/explorer-core/features/auth/email.ts",
       "kind": "production:runtime"
     },
     {
       "from": "library/ui/apps/hud/features/startup/LoginSelection.tsx",
-      "to": "library/explorer-core/features/auth/thirdweb.ts",
+      "to": "library/explorer-core/features/auth/email.ts",
       "kind": "test:runtime"
     },
     {
       "from": "library/ui/apps/hud/features/startup/LoginSelection.tsx",
-      "to": "library/explorer-core/shell/emailLogin.ts",
+      "to": "library/explorer-core/features/auth/thirdweb.ts",
       "kind": "native:runtime"
     },
     {
       "from": "library/ui/apps/hud/features/startup/LoginSelection.tsx",
-      "to": "library/explorer-core/shell/emailLogin.ts",
+      "to": "library/explorer-core/features/auth/thirdweb.ts",
       "kind": "production:runtime"
     },
     {
       "from": "library/ui/apps/hud/features/startup/LoginSelection.tsx",
-      "to": "library/explorer-core/shell/emailLogin.ts",
+      "to": "library/explorer-core/features/auth/thirdweb.ts",
       "kind": "test:runtime"
     },
     {
@@ -32491,6 +32518,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/explorer-core/features/auth/authReturn.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/explorer-core/features/auth/email.ts",
       "kind": "type"
     },
     {

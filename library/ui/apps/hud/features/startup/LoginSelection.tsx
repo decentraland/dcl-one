@@ -6,7 +6,7 @@
 // Laid out on the startup screens' canvas, its 1080 rows centred vertically.
 import { useEffect, useRef, useState } from 'react'
 import { Button, MaskIcon, Spinner, SubmitField } from '../../design'
-import { EMAIL_MAX, EMAIL_PATTERN } from '@explorer-core/shell/emailLogin'
+import { EMAIL_MAX, EMAIL_PATTERN } from '@explorer-core/features/auth/email'
 import { emailLoginErrorCode } from '@explorer-core/features/auth/thirdweb'
 import type { LoginMethod } from '@explorer-core/features/auth/sso'
 import type { LoginFlow } from '../session/useEngineSession'
@@ -98,6 +98,14 @@ export function LoginSelection({
       {inProgress ? (
         <div className={styles.inProgress}>
           <Spinner size={40} variant="chase" />
+          {flow.authCode != null && (
+            <>
+              <p className={styles.codeHint}>Verify this code matches the one in your browser:</p>
+              <p className={styles.authCode} aria-label="Sign-in code">
+                {flow.authCode}
+              </p>
+            </>
+          )}
           <Button size="bare" variant="clear" className={styles.cancel} onClick={onCancel}>
             Cancel
           </Button>

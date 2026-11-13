@@ -332,13 +332,13 @@ back as `analyticsSession`). Expectations:
   MetaMask and More options leave for the sign-in page with `?loginMethod=` (SIGN_IN, AUTH_BROWSER_OPEN
   {method}); an email code is sent and checked in the HUD (the web shell or the bridge scene makes
   the thirdweb calls) and its account signs in as fully_registered. COMEBACK (after a failed stored
-  sign-in), ACCOUNT_GUEST_CREATE, AUTH_BROWSER_OPEN, AUTH_SUCCESS {login_type}, AUTH_ERROR {error};
-  clicks lets_go, use_another_account, try_again. `Guest Wallet Creation` wraps the
+  sign-in), ACCOUNT_GUEST_CREATE, AUTH_BROWSER_OPEN, AUTH_SUCCESS {login_type}, AUTH_ERROR
+  {error}. `Guest Wallet Creation` wraps the
   thirdweb guest step (`features/auth/guestWalletEvent.ts`). A stored sign-in with a day or less
   left is forgotten at startup (`getStoredLogin`), so the player gets the first screen and the auth
   site asks for a new sign-in; a run already going keeps its sign-in until it expires.
-- **Welcome / lobby**: WELCOME or AVATAR_NAMING, AUTH_DEPLOY_SUCCESS; clicks LETS_GO,
-  NAME_RANDOMIZE; LOBBY, PLACES_PICKER; clicks JUMP_IN {kind, place_id|event_id}, CUSTOMIZE,
+- **Welcome / lobby**: WELCOME or AVATAR_NAMING, AUTH_DEPLOY_SUCCESS; click LETS_GO (JUMP IN on the
+  name screen); LOBBY, PLACES_PICKER; clicks JUMP_IN {kind, place_id|event_id}, CUSTOMIZE,
   NOTIFICATIONS, CLOSE (`LobbyHome.tsx`).
 - **Loading**: the engine's, not the page's. LOADING_START {position, realm, when}, LOADING_END
   {position, status} and LOADING_TIMEOUT after 90 s follow its own loading screen

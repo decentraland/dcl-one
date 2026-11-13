@@ -937,13 +937,6 @@ export interface SigninStageReadyMessage {
   kind: 'signinStageReady'
 }
 
-/** The look `default<look>` (a `showLook`) is on the lobby stage, loaded and facing front (scene →
- *  page): the next RANDOMIZE can go. */
-export interface LookShownMessage {
-  kind: 'lookShown'
-  look: number
-}
-
 export interface SceneInfoMessage {
   kind: 'sceneInfo'
   title: string
@@ -2268,7 +2261,6 @@ export type SceneToPage =
   | SceneInfoMessage
   | LobbyStageReadyMessage
   | SigninStageReadyMessage
-  | LookShownMessage
   | GalleryMessage
   | GalleryPhotoMessage
   | PermissionRequestMessage

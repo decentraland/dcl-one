@@ -44,6 +44,17 @@ describe('email sign-in session', () => {
     expect(driver.emailCalls).toEqual(['send player@example.com', 'verify player@example.com 123456', 'login 0x00000000000000000000000000000000000e4a11'])
   })
 
+  it("holds a checked code's sign-in a moment, so its screen shows Success before Verifying", async () => {
+    const driver = new EmailDriver()
+    const h = renderSession({ userId: null }, driver)
+    await waitFor(() => expect(h.session().login.status).toBe('sign-in-or-guest'))
+    await act(() => h.session().login.verifyEmailCode('player@example.com', '123456'))
+    expect(h.session().phase).toBe('login')
+    expect(h.session().login.emailQueued).toBe(true)
+    expect(driver.calls).not.toContain('loginEmail')
+    await waitFor(() => expect(driver.calls).toContain('loginEmail'))
+  })
+
   it('a refused code signs nothing in, and a check aborted on the way (Back) comes to nothing', async () => {
     const driver = new EmailDriver()
     const h = renderSession({ userId: null }, driver)

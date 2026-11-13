@@ -39,15 +39,15 @@ export function registerWelcome(ctx: Ctx): void {
   })
   ctx.push(() => {
     if (queuedShow == null) return
-    const { look: n, avatar: look } = queuedShow
+    const { avatar: look } = queuedShow
     queuedShow = null
     if (getPlayer() == null) {
       setStandInLook(look)
-      syncShape(n)
+      syncShape()
       return
     }
     editLook({ bodyShape: look.bodyShape, wearables: look.wearables, eyes: look.eyes, hair: look.hair, skin: look.skin, forceRender: [] })
-    syncShape(n)
+    syncShape()
     sendEquipped(ctx).catch((e: unknown) => {
       console.error('[welcome] equipped', e)
     })

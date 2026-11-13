@@ -156,28 +156,18 @@ let emoteTrigger = 0
 let lastShapeKey = ''
 // The lobby stage swaps between two avatars, one on show and one standing by, so that a new look
 // loads out of sight and the one on show never goes missing: a look wanted on the stage goes on
-// the standby first, and the stage swaps once the engine reports it loaded. The next RANDOMIZE's
-// look is loaded on the standby ahead, once the one on show has loaded, so its swap is instant.
+// the standby first, and the stage swaps once the engine reports it loaded.
 let standbyEntity: Entity | null = null
 let shownKey = ''
 let standbyKey = ''
-// the curated default look numbers behind the keys, for the page (`lookShown`); the requested
-// one is the page's pick, held until the stage takes it up (a shape change without one is an equip)
-let shownLook: number | null = null
-let standbyLook: number | null = null
-let requestedLook: number | null = null
 // the turn under way, and where the avatar on show is facing (YAW_FRONT when still)
 let turn: { entity: Entity; from: number; to: number; t: number } | null = null
 let shownYaw = YAW_FRONT
 // the standby has the wanted look loaded: it takes the stage once the shown one has turned away
 let swapReady = false
-// frames left to wait for the look a RANDOMIZE promised, turned away for it in advance
-let expecting = 0
-let announce: ((look: number) => void) | null = null
-// whether the standby's look was asked for (a RANDOMIZE), as opposed to loaded ahead
+// whether the standby's look was asked for, as opposed to the look that was on show before
 let standbyWanted = false
-let wanted: { key: string; shape: ShapeData; look: number | null } | null = null
-let preload: { key: string; shape: ShapeData; look: number } | null = null
+let wanted: { key: string; shape: ShapeData } | null = null
 let showLoad: LoadWatch | null = null
 let standbyLoad: LoadWatch | null = null
 let shownLoaded = false
@@ -349,12 +339,9 @@ function createPreview(): void {
   lastShapeKey = ''
   shownKey = ''
   standbyKey = ''
-  shownLook = null
-  standbyLook = null
   turn = null
   shownYaw = YAW_FRONT
   swapReady = false
-  expecting = 0
   wanted = null
   standbyWanted = false
   showLoad = null
@@ -405,15 +392,11 @@ function disposePreview(): void {
   podiumEntities = []
   shownKey = ''
   standbyKey = ''
-  shownLook = null
-  standbyLook = null
   turn = null
   shownYaw = YAW_FRONT
   swapReady = false
-  expecting = 0
   wanted = null
   standbyWanted = false
-  preload = null
   showLoad = null
   standbyLoad = null
   shownLoaded = false
@@ -424,56 +407,42 @@ function disposePreview(): void {
 /** Re-read the look into the shape when it changes (a pick from the page, an equip via React →
  *  setAvatar). The Backpack's preview changes in place; the lobby stage loads the new look on its
  *  standby and swaps to it once loaded. */
-export function syncShape(look?: number): void {
-  if (look != null) requestedLook = look
+export function syncShape(): void {
   if (avatarEntity == null) return
   const current = currentLook()
   if (!current?.bodyShape) return
-  const pick = requestedLook
-  requestedLook = null
   const shape = shapeOf(current, previewUrns)
   const key = shapeKey(shape)
   if (key === lastShapeKey) return
   lastShapeKey = key
   if (key === shownKey && stage === 'lobby' && AvatarShape.has(avatarEntity)) {
-    // the look on show again (a RANDOMIZE taken back before its swap): it turns back to the front
+    // the look on show again (a change taken back before its swap): it turns back to the front
     wanted = null
     swapReady = false
     standbyWanted = false
-    expecting = 0
-    if (shownYaw !== YAW_FRONT) startTurn(avatarEntity, shownYaw, YAW_FRONT)
+      if (shownYaw !== YAW_FRONT) startTurn(avatarEntity, shownYaw, YAW_FRONT)
     return
   }
   if (stage !== 'lobby' || standbyEntity == null || !AvatarShape.has(avatarEntity)) {
     setShape(avatarEntity, shape)
     if (stage === 'lobby') {
       shownKey = key
-      shownLook = pick
       shownLoaded = false
       showLoad = watchLoad(avatarEntity)
     }
     return
   }
-  wanted = { key, shape, look: pick }
-  expecting = 0
+  wanted = { key, shape }
   // the avatar on show turns away meanwhile; the new one takes the stage once it has, and is loaded
   if (shownYaw !== YAW_AWAY) startTurn(avatarEntity, shownYaw, YAW_AWAY)
-  // already loaded on the standby (a look loaded ahead, or the one before): on show now if the
-  // shown avatar has already turned away (RANDOMIZE turns it ahead of the look), else once it has
+  // already loaded on the standby (the one before): on show now if the shown avatar has already
+  // turned away, else once it has
   if (key === standbyKey && standbyLoad == null) {
     if (shownYaw === YAW_AWAY && turn == null) swapToStandby()
     else swapReady = true
     return
   }
   loadOnStandby()
-}
-
-/** RANDOMIZE was hit: the avatar on show turns away now, ahead of the look (which the page is still
- *  fetching); it turns back if none comes. */
-export function expectLook(): void {
-  if (stage !== 'lobby' || avatarEntity == null || !AvatarShape.has(avatarEntity) || !shownLoaded) return
-  expecting = LOBBY_LOOK_FRAMES
-  if (shownYaw !== YAW_AWAY && turn?.to !== YAW_AWAY) startTurn(avatarEntity, shownYaw, YAW_AWAY)
 }
 
 function startTurn(entity: Entity, from: number, to: number): void {
@@ -493,29 +462,25 @@ function pollTurn(dt: number): void {
   const done = turn
   turn = null
   if (done.entity !== avatarEntity) return
-  if (done.to === YAW_FRONT && shownLook != null && announce != null) announce(shownLook)
   if (done.to === YAW_AWAY && swapReady) swapToStandby()
   // a look loaded meanwhile (one asked for after the one just shown): turn away for it
   else if (done.to === YAW_FRONT && swapReady) startTurn(done.entity, YAW_FRONT, YAW_AWAY)
 }
 
-// The look wanted on show goes on the standby (unless already there, loaded ahead); the next
-// RANDOMIZE's look goes there once the one on show has loaded and nothing else is wanted, nor on
-// its way (a RANDOMIZE's look, usually the one loaded ahead, must find it there).
+// The look wanted on show goes on the standby, unless already there.
 function loadOnStandby(): void {
   if (standbyEntity == null || standbyLoad != null) return
-  const next = wanted != null && wanted.key !== standbyKey ? wanted : wanted == null && expecting === 0 && preload != null && shownLoaded && preload.key !== standbyKey ? preload : null
+  const next = wanted != null && wanted.key !== standbyKey ? wanted : null
   if (next == null) return
   setShape(standbyEntity, next.shape)
   standbyKey = next.key
-  standbyLook = next.look
   standbyWanted = next === wanted
   standbyLoad = watchLoad(standbyEntity)
 }
 
 // The standby, loaded with the look wanted on show, takes the stage; the avatar that was on show
 // becomes the standby, still wearing its look (a look dropped and replaced in one frame never
-// reports loaded; and a RANDOMIZE back to it then costs nothing).
+// reports loaded; and a change back to it then costs nothing).
 function swapToStandby(): void {
   if (avatarEntity == null || standbyEntity == null) return
   const shown = avatarEntity
@@ -528,9 +493,6 @@ function swapToStandby(): void {
   const wasShown = shownKey
   shownKey = standbyKey
   standbyKey = wasShown
-  const wasShownLook = shownLook
-  shownLook = standbyLook
-  standbyLook = wasShownLook
   standbyWanted = false
   swapReady = false
   if (wanted?.key === shownKey) wanted = null
@@ -541,15 +503,11 @@ function swapToStandby(): void {
 
 function pollStage(dt: number): void {
   pollTurn(dt)
-  if (expecting > 0 && --expecting === 0 && wanted == null && avatarEntity != null && shownYaw !== YAW_FRONT) {
-    startTurn(avatarEntity, shownYaw, YAW_FRONT)
-  }
   if (showLoad != null) {
     pollLoad(showLoad)
     if (showLoad.done) {
       showLoad = null
       shownLoaded = true
-      if (shownLook != null && announce != null) announce(shownLook)
     }
   }
   if (standbyLoad != null) {
@@ -647,9 +605,6 @@ export function registerAvatarPreview(ctx: Ctx): void {
       w.done()
     })
   })
-  announce = (look) => {
-    ctx.send({ kind: 'lookShown', look })
-  }
   ctx.push((dt) => {
     if (stage === 'lobby' && avatarEntity != null) pollStage(dt)
   })

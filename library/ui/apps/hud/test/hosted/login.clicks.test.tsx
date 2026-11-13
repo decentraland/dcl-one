@@ -77,6 +77,15 @@ describe('startup screens', () => {
     expect(vi.mocked(f.cancelLogin)).toHaveBeenCalledTimes(1)
   })
 
+  it("shows the browser sign-in's code once the engine has it, to match against the browser's", async () => {
+    const f = flow({ status: 'sign-in-or-guest', authPending: true })
+    const { rerender } = await renderSettled(startup(f))
+    expect(screen.queryByText(/Verify this code matches/)).toBeNull()
+    rerender(startup({ ...f, authCode: '42' }))
+    expect(screen.getByText(/Verify this code matches the one in your browser/)).toBeInTheDocument()
+    expect(screen.getByLabelText('Sign-in code')).toHaveTextContent('42')
+  })
+
   it('CTAs are disabled while busy', async () => {
     await renderSettled(startup(flow({ status: 'sign-in-or-guest', busy: true })))
     expect(screen.getByRole('button', { name: /PLAY AS GUEST/i })).toBeDisabled()

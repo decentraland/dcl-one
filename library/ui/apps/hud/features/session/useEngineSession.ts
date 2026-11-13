@@ -834,6 +834,8 @@ const REVEAL_DEBOUNCE_MS = 600
 // how long, back from the auth site, the stored sign-in waits for the catalyst to have the profile
 // How long Verifying waits for a sign-in before giving up.
 const VERIFY_TIMEOUT_MS = 15_000
+// how long a checked email code's Success shows before its sign-in starts
+const EMAIL_SUCCESS_MS = 600
 /** The sign-in error a Verifying that gave up leaves: no reason to show the player. */
 export const VERIFY_TIMED_OUT = 'verifying timed out'
 const AUTH_PROFILE_WAIT_MS = 30_000
@@ -877,6 +879,9 @@ export interface LoginFlow {
   startWithAccount: (method?: LoginMethod) => void
   /** Native fresh sign-in in flight (the browser is open): the methods screen waits with Cancel. */
   authPending: boolean
+  /** That sign-in's code, once the engine has it: the browser shows the same one, so the player can
+   *  tell the request they approve there is this one. */
+  authCode: string | null
   /** Abort the in-flight native fresh sign-in. */
   cancelLogin: () => void
   /** Stop a sign-in under way (Cancel on Verifying): the first screen again, the stored sign-in kept. */
@@ -4040,7 +4045,12 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: signInEmail, source: 'auth' })
-      }).catch((e: unknown) => console.error('[welcome] newsletter sign-up failed', e))
+      })
+        .then((res) => {
+          if (!res.ok) console.error('[welcome] newsletter sign-up failed', res.status)
+          return res.body?.cancel()
+        })
+        .catch((e: unknown) => console.error('[welcome] newsletter sign-up failed', e))
     }
     setWelcomeSaving(true)
     setWelcomeError(null)
@@ -4083,10 +4093,14 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     setSignInEmail(email)
     setQueuedEmail(identity)
   }, [])
+  // the code screen shows Success for a moment before the sign-in starts and Verifying takes over
   useEffect(() => {
     if (queuedEmail == null || !engineReady) return
-    setQueuedEmail(null)
-    submitLogin((d) => d.loginEmail?.(queuedEmail) ?? d.loginWithIdentity(queuedEmail), 'fully_registered')
+    const id = setTimeout(() => {
+      setQueuedEmail(null)
+      submitLogin((d) => d.loginEmail?.(queuedEmail) ?? d.loginWithIdentity(queuedEmail), 'fully_registered')
+    }, EMAIL_SUCCESS_MS)
+    return () => clearTimeout(id)
   }, [queuedEmail, engineReady, submitLogin])
   const autoGuest = useCallback(() => submitLogin((d) => d.loginGuest(), 'guest'), [submitLogin])
   // An unattended run signs in with its own identity (the host's `unattendedRun`), never a stored account
@@ -4096,7 +4110,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   )
   // Reuse the existing login. The driver picks the path its backend supports (console
   // `/login_identity` for the engine, `loginPrevious` over the bridge).
-  const enterStored = useCallback((defaultOnError?: boolean) => submitLogin((d) => d.jumpIn(defaultOnError), 'stored'), [submitLogin])
+  const enterStored = useCallback(() => submitLogin((d) => d.jumpIn(), 'stored'), [submitLogin])
   // A stored session goes straight to the lobby, once per page: the lobby's profile menu is where
   // to sign out or switch accounts.
   const autoEntered = useRef(false)
@@ -4740,6 +4754,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       loadStep,
       startWithAccount,
       authPending: auth != null,
+      authCode: auth?.code ?? null,
       cancelLogin,
       cancelSignIn: () => cancelSignIn(),
       exploreAsGuest,

@@ -161,7 +161,7 @@ describe('the session after sign-in', () => {
       'fetch',
       vi.fn(async (url: string, init?: RequestInit) => {
         if (init?.method === 'POST') posts.push({ url, body: String(init.body) })
-        return new Response('{}', { status: 404 })
+        return new Response('{}', { status: 200 })
       })
     )
     class EmailDriver extends FakeDriver {
