@@ -395,6 +395,11 @@ difference not listed here is a gap, not a decision.
   `BLOCKED_WORLD_NAMES` (the configured names alone if none has read since
   start); then the list is read again. Upstream keeps an empty list for an
   hour after a failed fetch.
+- **Gateway rate limits.** Reads (GET, HEAD, OPTIONS) have no rate limit,
+  as upstream. Writes, and the `admin`, `gc` and `reprocess-ab` routes, are
+  limited to 30 requests a second per address (burst 60), answered with
+  nginx's 429; settings uploads also take at most 10 connections per address.
+  Upstream limits none of them.
 
 ## Notifications
 

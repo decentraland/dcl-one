@@ -111,11 +111,10 @@ Files read:
   86400, `Access-Control-Expose-Headers: *` when the handler set none, and `X-Content-Type-Options:
   nosniff` (`shared/src/cors.rs:15-85`). Every route under `/worlds-content-server` carries it,
   the prefix-only reads included (WR-06); the shape is WR-32.
-- **Rate limits.** Upstream applies none to the routes in this file. This tree's gateway limits
-  `/worlds-content-server/(contents|ipfs)/` with `zone=content` (100 r/s, burst 1000) and every other
-  path with the server-wide `zone=read` (30 r/s, burst 60), answering nginx's HTML 429
-  (`infra/gateway/gateway.py:194,367`). The root `/contents/{hashId}` also runs the content server's
-  GET quota (`content/src/lib.rs:773-779`, `content_get_limit`).
+- **Rate limits.** Upstream applies none to the routes in this file, and neither does this tree's
+  gateway for a GET, HEAD or OPTIONS on either mount (WR-37). The root `/contents/{hashId}` is the
+  content server's route, not this file's, and runs its GET quota (`content/src/lib.rs:773-779`,
+  `content_get_limit`).
 - **Writes switch.** `core::router` sits behind `worlds::writes::guard`; with
   `WORLDS_WRITES_ENABLED=false` (the default) `POST /gc` answers 503 `{ok:false, error:"Service
   Unavailable", message}` with `Retry-After: 3600`; `POST /entities/active` stays open
@@ -221,7 +220,7 @@ Upstream: `activeEntitiesHandler` (`src/controllers/handlers/active-entities.ts:
 | Body read | `request.json()`, no content-type check, no body cap (`@dcl/http-server` is built without `maxBodySize`). Invalid or empty JSON throws a `SyntaxError` → 500 `{"error":"Internal Server Error"}`. | Raw bytes, no content-type check, 256 KiB cap (`core/mod.rs:645-648`) under the gateway's 1 MiB (`gateway.py:366`). Invalid JSON → 400 `Invalid request. Request body is not valid` (`active.rs:25-26`) (WR-13, WR-16). |
 | Shape | Not an object, or `pointers` not an array → 400 `{"error":"Bad request","message":"Invalid request. Request body is not valid"}` (`active-entities-handler.spec.ts:17-28`). | Same message and envelope (`active.rs:27-31`). MATCH. |
 | Pointers | Non-empty strings kept; more than 50 → 400 `Maximum 50 pointers allowed per request`; lowercased and deduplicated (`active-entities.ts:17-29`). | Same filter, same cap and message, deduplicated by lowercase key (`active.rs`). A pointer with surrounding whitespace finds nothing; one that is not a `WorldName` (inner whitespace, `/` or a control character) is dropped, which also finds nothing upstream (WR-14). |
-| Deny list | `checkNameDenyList`: first the whole lowercased name against `BLOCKED_WORLD_NAMES` (entries trimmed and lowercased, applied while the remote list is offline), then the name lowercased with its first `.eth` and first `.dcl` removed against the remote list, case-insensitively (`src/adapters/name-deny-list-checker.ts:8-13,45-59`; `active-entities.ts:33-42`, again in `worlds-manager.ts:827-832`). | `BannedNames::allows` checks `BLOCKED_WORLD_NAMES` the same way, then the same normalization over the `banned-names` list (`worlds/src/core/names.rs:31-39,51-54`; source: the explorer-api mirror instead of `DCL_LISTS_URL`), applied in `active.rs:44-53` (WR-35). MATCH while the list reads; a failed read is held five seconds, not an hour (WR-35). |
+| Deny list | `checkNameDenyList`: first the whole lowercased name against `BLOCKED_WORLD_NAMES` (entries trimmed and lowercased, applied while the remote list is offline), then the name lowercased with its first `.eth` and first `.dcl` removed against the remote list, case-insensitively (`src/adapters/name-deny-list-checker.ts:8-13,45-59`; `active-entities.ts:33-42`, again in `worlds-manager.ts:827-832`). | `BannedNames::allows` checks `BLOCKED_WORLD_NAMES` the same way, then the same normalization over the `banned-names` list (`worlds/src/core/names.rs:31-39,51-54`; source: the explorer-api mirror instead of `DCL_LISTS_URL`), applied in `active.rs:44-53` (WR-35). MATCH while the list reads; after a failed read the last list read is held five seconds, not an empty list for an hour (WR-35). |
 | Query | `DISTINCT ON (world_name)` the newest `DEPLOYED` scene, `ORDER BY world_name, created_at DESC`. | The same `DISTINCT ON` over `worlds.world_scenes` (which keeps only live scenes; retired ones move to `worlds.retired_world_scenes`). MATCH. |
 | Body | `[{...entity, id, metadata: {...metadata, owner}}]`: the stored entity's keys in their jsonb order, `id` and `metadata` at their places, `owner` last in `metadata` (`worlds-manager.ts:854-861`). | The same: `entities_for_worlds` reads `entity::text` and writes the members in that order, `id`, `metadata` and `owner` (`null` when the row has none) replaced in place or appended (`worlds/src/core/store.rs` `entities_for_worlds`, `worlds/src/core/active_entity.rs`) (WR-15). MATCH. |
 | Order | `world_name` order. | `world_name` order. MATCH. |
@@ -734,14 +733,20 @@ documented in `docs/worlds-compatibility.md` "Mounts" (WR-23).
       `?limit=1&offset=1`.
     - Severity: none (closed).
 
-37. **WR-37 · reads behind the gateway · rate limits.** Status: MATCH.
+37. **WR-37 · reads behind the gateway · rate limits.** Status: MATCH for reads; writes intended.
     - Upstream: no rate limiter on any route (`src/controllers/routes.ts`, server options
       `src/components.ts:96-107`).
-    - dcl-one: every `/worlds-content-server` location but the deploy, and the settings route on both
-      mounts, names the gateway's `uncounted` zone, whose key is always empty, so nginx counts no
-      request and the server-wide `read` zone does not apply (`infra/gateway/gateway.py`, `UNCOUNTED`).
-      Only `POST /entities` keeps its deploy limits (`worlds-deploy.md`). Pinned by
-      `infra/gateway/tests/test_config.py` `test_worlds_paths_but_the_deploy_are_not_rate_limited`.
+    - dcl-one: the worlds locations (`/worlds-content-server` and its `contents`, `ipfs` and settings
+      routes; on the root mount `/world/`, `/index`, `/worlds` and `/worlds/status`) name the gateway's
+      `worlds` zone instead of the server-wide `read` zone (`infra/gateway/gateway.py`, `WORLDS_LIMIT`).
+      Its key is empty for GET, HEAD and OPTIONS, which nginx does not count, so reads have no limit
+      on either mount. Writes, and `admin`, `gc` and `reprocess-ab` under the prefix, keep the read
+      zone's 30 r/s per address (burst 60); settings uploads also take a 10-connection cap per address,
+      because the gateway buffers their bodies, and `POST /entities` keeps its deploy limits
+      (`worlds-deploy.md`). Listed in `docs/worlds-compatibility.md` ("Gateway rate limits"). Pinned
+      by `infra/gateway/tests/test_config.py`
+      `test_worlds_reads_are_not_rate_limited_but_writes_and_admin_are` and the real-nginx case in
+      `infra/gateway/smoke.py`.
     - Severity: none (closed).
 
 ## Endpoints dcl-one serves in this area that upstream does not

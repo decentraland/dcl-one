@@ -136,8 +136,9 @@ def settings(env, resolv_conf="/etc/resolv.conf"):
     }
 
 
-# A location that names this zone has no rate limit (see the uncounted zone below).
-UNCOUNTED = "limit_req zone=uncounted;"
+# Worlds routes: reads (GET, HEAD, OPTIONS) are not rate-limited, as upstream; writes and
+# the admin routes keep the server-wide read budget (see the worlds zone below).
+WORLDS_LIMIT = "limit_req zone=worlds burst=60 nodelay;"
 
 # First path segments of social's badges router (services/catalyst/social/src/badges/mod.rs).
 BADGES_MOUNTS = ("assets", "badges", "categories", "status", "users")
@@ -255,12 +256,20 @@ def render(table, cfg, mime):
         retry_after = f"add_header Retry-After {retry} always;\n" if retry else ""
         text = json.dumps(body, separators=(",", ":"))
         locations += location(name, json_error + retry_after + f"return {status} '{text}';")
-    # Upstream worlds-content-server limits no route by rate, so every worlds path
-    # but the deploy names the uncounted zone, which replaces the server-wide read zone.
+    # Upstream worlds-content-server limits no route by rate. Every worlds location but the
+    # deploy names the worlds zone, which replaces the server-wide read zone and counts only
+    # writes and admin calls. Settings uploads are buffered here like deploys, so they also
+    # take a per-address connection cap.
     locations += location('~ "^(/worlds-content-server)?/world/[^/]+/settings/*$"', proxy("apis",
-        f"client_max_body_size {WORLDS_SETTINGS_CAP}; {UNCOUNTED}"))
-    locations += location("~ ^/worlds-content-server/(contents|ipfs)/", proxy("apis", UNCOUNTED))
-    locations += pair("/worlds-content-server", "apis", extra=UNCOUNTED)
+        f"client_max_body_size {WORLDS_SETTINGS_CAP}; {WORLDS_LIMIT} "
+        f"limit_conn worlds_uploads {DEPLOY_CONNECTIONS_PER_ADDRESS};"))
+    locations += location("~ ^/worlds-content-server/(contents|ipfs)/", proxy("apis", WORLDS_LIMIT))
+    locations += pair("/worlds-content-server", "apis", extra=WORLDS_LIMIT)
+    # The same routes on the root mount (worlds. and peer. hosts). Root /wallet/ is the
+    # credits alias and root /admin is the operator's, so neither is listed.
+    locations += location('~ "^/world/"', proxy("apis", WORLDS_LIMIT))
+    for path in ("/index", "/worlds", "/worlds/status"):
+        locations += location("= " + path, proxy("apis", WORLDS_LIMIT))
     locations += location("~ ^/comms-gatekeeper/reports/players/[^/]+/evidence/", proxy("apis",
         "client_max_body_size 11m;"))
     locations += location("~ ^(/builder-api)?/v1/(projects/[^/]+/(blobs/[^/]+|manifest|files)|items/[^/]+/files)/*$",
@@ -438,10 +447,15 @@ http {{
     map $storage_trusted $storage_trusted_key {{ 1 $binary_remote_addr; default ""; }}
     limit_req_zone $storage_write_key zone=storage_write:10m rate=30r/s;
     limit_req_zone $storage_trusted_key zone=storage_trusted:10m rate=1000r/s;
-    # Requests with an empty key are not counted: a location that names this zone
-    # is unlimited and no longer inherits the server's read zone.
-    map $host $uncounted_key {{ default ""; }}
-    limit_req_zone $uncounted_key zone=uncounted:1m rate=1r/s;
+    # Requests with an empty key are not counted: worlds reads are not limited, while
+    # writes and the admin routes keep the read zone's rate per address.
+    map "$request_method:$uri" $worlds_limit_key {{
+        default $binary_remote_addr;
+        "~^[^:]+:/worlds-content-server/(admin|gc|reprocess-ab)(/|$)" $binary_remote_addr;
+        "~^(GET|HEAD|OPTIONS):" "";
+    }}
+    limit_req_zone $worlds_limit_key zone=worlds:10m rate=30r/s;
+    limit_conn_zone $worlds_limit_key zone=worlds_uploads:10m;
     limit_req_zone $binary_remote_addr zone=read:10m rate=30r/s;
     limit_req_zone $binary_remote_addr zone=webhook:10m rate={WEBHOOK_RATE}r/s;
     limit_req_zone $content_limit_key zone=content:10m rate=100r/s;

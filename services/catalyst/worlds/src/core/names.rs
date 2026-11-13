@@ -85,10 +85,17 @@ pub struct NameDenyList {
     cache: TtlMap<(), Arc<BannedNames>>,
     /// One list read at a time: callers that miss the memo wait for it instead of each reading.
     reading: tokio::sync::Mutex<()>,
-    /// The last list that read, served again while a read fails.
-    last_read: std::sync::Mutex<Option<Arc<BannedNames>>>,
-    /// When the last read failed and what it answered, kept for [`FAILED_READ_TTL`].
-    failed: std::sync::Mutex<Option<(std::time::Instant, Arc<BannedNames>)>>,
+    fallback: std::sync::Mutex<Fallback>,
+}
+
+/// What a failed read answers.
+struct Fallback {
+    /// The last list that read, with the configured blocks; the blocks alone
+    /// until a read succeeds. It has no age bound: a list read long ago keeps
+    /// refusing its names while reads fail.
+    last_read: Arc<BannedNames>,
+    /// When the last read failed; its answer is kept for [`FAILED_READ_TTL`].
+    failed_at: Option<std::time::Instant>,
 }
 
 impl Default for NameDenyList {
@@ -100,13 +107,20 @@ impl Default for NameDenyList {
 impl NameDenyList {
     /// A checker with `BLOCKED_WORLD_NAMES` (`raw`, see [`BlockedNames::parse`]).
     pub fn new(blocked_world_names: &str) -> Self {
+        let blocked = Arc::new(BlockedNames::parse(blocked_world_names));
         Self {
-            blocked: Arc::new(BlockedNames::parse(blocked_world_names)),
+            fallback: std::sync::Mutex::new(Fallback {
+                last_read: Arc::new(BannedNames::new(blocked.clone(), Vec::new())),
+                failed_at: None,
+            }),
+            blocked,
             cache: TtlMap::bounded(NAME_DENYLIST_TTL, 1),
             reading: tokio::sync::Mutex::new(()),
-            last_read: std::sync::Mutex::new(None),
-            failed: std::sync::Mutex::new(None),
         }
+    }
+
+    fn fallback(&self) -> std::sync::MutexGuard<'_, Fallback> {
+        self.fallback.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     /// The current snapshot, read by one caller at a time. A failed list read
@@ -129,11 +143,11 @@ impl NameDenyList {
         if let Some(cached) = self.cache.get_fresh(&()) {
             return Some(cached);
         }
-        let failed = self.failed.lock().unwrap_or_else(|e| e.into_inner());
-        failed
-            .as_ref()
-            .filter(|(at, _)| at.elapsed() < FAILED_READ_TTL)
-            .map(|(_, held)| held.clone())
+        let fallback = self.fallback();
+        fallback
+            .failed_at
+            .filter(|at| at.elapsed() < FAILED_READ_TTL)
+            .map(|_| fallback.last_read.clone())
     }
 
     fn read<E: std::fmt::Display>(&self, list: Result<Vec<String>, E>) -> Arc<BannedNames> {
@@ -141,23 +155,17 @@ impl NameDenyList {
             Ok(names) => {
                 let fetched = Arc::new(BannedNames::new(self.blocked.clone(), names));
                 self.cache.insert((), fetched.clone());
-                *self.last_read.lock().unwrap_or_else(|e| e.into_inner()) = Some(fetched.clone());
-                *self.failed.lock().unwrap_or_else(|e| e.into_inner()) = None;
+                *self.fallback() = Fallback {
+                    last_read: fetched.clone(),
+                    failed_at: None,
+                };
                 fetched
             }
             Err(e) => {
-                let last = self
-                    .last_read
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .clone();
-                tracing::warn!(error = %e, last_list_held = last.is_some(), "failed to read the name denylist; the last list read and BLOCKED_WORLD_NAMES apply until it reads");
-                let held = last.unwrap_or_else(|| {
-                    Arc::new(BannedNames::new(self.blocked.clone(), Vec::new()))
-                });
-                *self.failed.lock().unwrap_or_else(|e| e.into_inner()) =
-                    Some((std::time::Instant::now(), held.clone()));
-                held
+                tracing::warn!(error = %e, "failed to read the name denylist; the last list read and BLOCKED_WORLD_NAMES apply until it reads");
+                let mut fallback = self.fallback();
+                fallback.failed_at = Some(std::time::Instant::now());
+                fallback.last_read.clone()
             }
         }
     }
@@ -168,8 +176,7 @@ impl NameDenyList {
 
     #[cfg(test)]
     pub fn seed(&self, names: Vec<String>) {
-        self.cache
-            .insert((), Arc::new(BannedNames::new(self.blocked.clone(), names)));
+        self.read(Ok::<_, String>(names));
     }
 }
 
@@ -298,15 +305,14 @@ mod tests {
             .fresh()
             .expect("the blocks alone, for a few seconds");
         assert!(!held.allows("blocked.dcl.eth") && held.allows("banned.dcl.eth"));
-        checker.failed.lock().unwrap().as_mut().unwrap().0 =
-            std::time::Instant::now() - FAILED_READ_TTL;
+        checker.fallback().failed_at = Some(std::time::Instant::now() - FAILED_READ_TTL);
         assert!(checker.fresh().is_none(), "then the list is read again");
         // The next read that succeeds applies the list at once (upstream would
         // serve its cached `[]` until the hour ends).
         let snapshot = checker.read(Ok::<_, String>(vec!["Banned".to_string()]));
         assert!(!snapshot.allows("banned.dcl.eth"));
         assert!(checker.cache.get_fresh(&()).is_some());
-        assert!(checker.failed.lock().unwrap().is_none());
+        assert!(checker.fallback().failed_at.is_none());
     }
 
     /// Best effort: a failed read keeps the last list that read, with the
@@ -324,6 +330,14 @@ mod tests {
         assert!(replaced.allows("banned.dcl.eth") && !replaced.allows("other.dcl.eth"));
         let held = checker.read(Err::<Vec<String>, _>("offline again"));
         assert!(held.allows("banned.dcl.eth") && !held.allows("other.dcl.eth"));
+        // A seeded list is a list that read, as in production.
+        let seeded = NameDenyList::default();
+        seeded.seed(vec!["seeded".to_string()]);
+        assert!(
+            !seeded
+                .read(Err::<Vec<String>, _>("offline"))
+                .allows("seeded.dcl.eth")
+        );
     }
 
     /// "adds configured blocks without replacing the remote denylist".

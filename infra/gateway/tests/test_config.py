@@ -265,21 +265,40 @@ class ConfigurationTest(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertFalse(any("12m" in body for regex, body in regexes if regex.search(path)))
 
-    def test_worlds_paths_but_the_deploy_are_not_rate_limited(self):
+    def test_worlds_reads_are_not_rate_limited_but_writes_and_admin_are(self):
         # Upstream worlds-content-server limits no route by rate (WR-37).
         text, regexes = self.worlds_locations()
-        self.assertIn('map $host $uncounted_key { default ""; }', text)
-        self.assertIn("limit_req_zone $uncounted_key zone=uncounted:1m rate=1r/s;", text)
-        prefix = re.search(r"\nlocation /worlds-content-server/ \{\n(.*?)\n\}", text, re.S)[1]
-        exact = re.search(r"\nlocation = /worlds-content-server \{\n(.*?)\n\}", text, re.S)[1]
-        for body in (prefix, exact):
-            self.assertIn("limit_req zone=uncounted;", body)
+        self.assertIn("limit_req_zone $worlds_limit_key zone=worlds:10m rate=30r/s;", text)
+        key_map = re.search(r'map "\$request_method:\$uri" \$worlds_limit_key \{(.*?)\}', text, re.S)[1]
+        rules = [(re.compile(m[1][1:]), m[2]) for m in re.finditer(r'"(~[^"]+)" (\S+);', key_map)]
+
+        def key(subject):
+            return next((value for regex, value in rules if regex.search(subject)), "$binary_remote_addr")
+        for subject in ["GET:/worlds-content-server/status", "HEAD:/world/w.dcl.eth/about",
+                        "OPTIONS:/worlds-content-server/world/w.dcl.eth/permissions", "GET:/index"]:
+            with self.subTest(subject=subject):
+                self.assertEqual(key(subject), '""')
+        for subject in ["POST:/worlds-content-server/world/w.dcl.eth/permissions/deployment",
+                        "DELETE:/worlds-content-server/entities/w.dcl.eth", "POST:/world/w.dcl.eth/scenes",
+                        "GET:/worlds-content-server/admin/worlds", "POST:/worlds-content-server/gc",
+                        "GET:/worlds-content-server/reprocess-ab"]:
+            with self.subTest(subject=subject):
+                self.assertEqual(key(subject), "$binary_remote_addr")
+        exact = {key: re.search(r"\nlocation " + re.escape(key) + r" \{\n(.*?)\n\}", text, re.S)[1]
+                 for key in ["= /worlds-content-server", "/worlds-content-server/", "= /index", "= /worlds",
+                             "= /worlds/status"]}
+        for name, body in exact.items():
+            with self.subTest(location=name):
+                self.assertIn("limit_req zone=worlds burst=60 nodelay;", body)
         for path in ["/worlds-content-server/contents/bafy", "/worlds-content-server/ipfs/bafy",
-                     "/worlds-content-server/world/w.dcl.eth/settings", "/world/w.dcl.eth/settings"]:
+                     "/worlds-content-server/world/w.dcl.eth/settings", "/world/w.dcl.eth/settings",
+                     "/world/w.dcl.eth/about"]:
             with self.subTest(path=path):
                 body = next(body for regex, body in regexes if regex.search(path))
-                self.assertIn("limit_req zone=uncounted;", body)
+                self.assertIn("limit_req zone=worlds burst=60 nodelay;", body)
                 self.assertNotIn("zone=content", body)
+        settings = next(body for regex, body in regexes if regex.search("/world/w.dcl.eth/settings"))
+        self.assertIn("limit_conn worlds_uploads 10;", settings)
         deploy = next(body for regex, body in regexes if regex.search("/worlds-content-server/entities"))
         self.assertIn("limit_req zone=deploy burst=4 nodelay;", deploy)
 
