@@ -25,7 +25,7 @@ try {
     importScripts('preview_realm.js');
     previewRealm = self.dclPreviewRealm;
 } catch (e) {
-    // keep the worker installable: the page needs its COEP rewrite and X-IPFS cache regardless
+    // keep the worker installable: the page needs its COEP rewrite regardless
     console.warn('[IPFS Cache Service Worker]: preview realm unavailable', e);
 }
 
