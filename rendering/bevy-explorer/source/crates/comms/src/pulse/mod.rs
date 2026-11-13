@@ -19,9 +19,11 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use std::time::Duration;
 
 use alloy_core::primitives::Address;
 use bevy::math::{IVec2, Vec3};
+use bevy::platform::time::Instant;
 use dcl_component::proto_components::{kernel::comms::rfc4, pulse};
 
 pub mod pacing;
@@ -239,6 +241,15 @@ struct Subject {
     /// A displaced update can still be newer than the state we recover. Remember its destination
     /// so recovery requests it after the nearest missing link has been supplied.
     latest_pending_seq: u32,
+    resync_retry: Option<ResyncRetry>,
+}
+
+const RESYNC_RETRY_INITIAL: Duration = Duration::from_secs(1);
+const RESYNC_RETRY_MAX: Duration = Duration::from_secs(5);
+
+struct ResyncRetry {
+    retry_at: Instant,
+    delay: Duration,
 }
 
 impl Subject {
@@ -444,9 +455,11 @@ pub struct PulseDecoder {
     /// Subjects with an outstanding `Resync`. Only sequence progress releases the request gate;
     /// if a newer observed destination is still missing, recovery starts another request from
     /// the advanced baseline. Stale states and equal-sequence emotes preserve the gate. A join,
-    /// leave, `reset` or `resync_not_sent` also releases it. Only held subjects are asked for, so
-    /// no entry outlives its subject.
+    /// leave or `reset` also releases it. Each subject keeps a retry deadline, so a full outbound
+    /// queue or an unanswered request cannot leave a stopped peer stranded. No entry outlives
+    /// its subject.
     pending_resync: HashSet<u32>,
+    resync_now: Instant,
     /// Server ticks are `u32` milliseconds since the Pulse server started, so they roll over after
     /// ~49.7 days of server uptime. The newest raw tick seen, and the number of milliseconds to
     /// add to it (a multiple of 2^32) to keep the emitted timestamps monotonic across rollovers.
@@ -461,6 +474,7 @@ impl PulseDecoder {
             subjects: HashMap::new(),
             wallets: HashMap::new(),
             pending_resync: HashSet::new(),
+            resync_now: Instant::now(),
             newest_tick: None,
             tick_epoch_ms: 0,
         }
@@ -468,6 +482,11 @@ impl PulseDecoder {
 
     /// Decode one server message, advancing per-subject state and emitting downstream events.
     pub fn handle(&mut self, msg: pulse::ServerMessage) -> Vec<PulseEvent> {
+        self.handle_at(msg, Instant::now())
+    }
+
+    fn handle_at(&mut self, msg: pulse::ServerMessage, now: Instant) -> Vec<PulseEvent> {
+        self.resync_now = now;
         use pulse::server_message::Message;
 
         let Some(message) = msg.message else {
@@ -573,6 +592,7 @@ impl PulseDecoder {
                 emote: EmoteTrack::default(),
                 pending_delta: None,
                 latest_pending_seq: full.sequence,
+                resync_retry: None,
             },
         );
         self.pending_resync.remove(&full.subject_id);
@@ -676,6 +696,7 @@ impl PulseDecoder {
         let replayed = subject.replay_pending_delta();
         let tick = subject.last_tick;
         if subject.last_seq > previous_seq {
+            subject.resync_retry = None;
             self.pending_resync.remove(&subject_id);
         }
         let movement = self.to_movement_for(subject_id, replayed);
@@ -779,6 +800,7 @@ impl PulseDecoder {
 
         // Back on track, whether this is the next in line or the reply to the resync.
         self.pending_resync.remove(&delta.subject_id);
+        subject.resync_retry = None;
         subject.apply_delta(&delta);
         subject.replay_pending_delta();
         let tick = subject.last_tick;
@@ -797,8 +819,8 @@ impl PulseDecoder {
     }
 
     /// A response can advance the baseline without reaching the latest observed destination.
-    /// Request that remaining gap from the new baseline. A failed send releases the request
-    /// gate and relies on a later update to retry; there is no timed retry here.
+    /// Request that remaining gap from the new baseline. Its retry deadline survives a rejected
+    /// enqueue or a missing answer, independently of later movement packets.
     fn resync_buffered_delta(&mut self, subject_id: u32) -> Vec<PulseEvent> {
         let Some(subject) = self.subjects.get(&subject_id) else {
             return Vec::new();
@@ -810,17 +832,47 @@ impl PulseDecoder {
         }
     }
 
-    /// The `Resync` for `subject_id` never left (no link, or a full queue), so nothing will answer
-    /// it: the next gap may ask again.
-    pub fn resync_not_sent(&mut self, subject_id: u32) {
-        self.pending_resync.remove(&subject_id);
+    /// Retry unanswered or unqueued requests on the connection's monotonic clock. A late poll
+    /// makes one attempt per subject and schedules from `now`, without catching up missed ticks.
+    pub fn retry_resyncs(&mut self, now: Instant) -> Vec<PulseEvent> {
+        let mut events = Vec::new();
+        let subjects = &mut self.subjects;
+        self.pending_resync.retain(|subject_id| {
+            let Some(subject) = subjects.get_mut(subject_id) else {
+                return false;
+            };
+            if subject.last_seq >= subject.latest_pending_seq {
+                subject.resync_retry = None;
+                return false;
+            }
+            if let Some(retry) = subject.resync_retry.as_mut() {
+                if now >= retry.retry_at {
+                    retry.delay = (retry.delay * 2).min(RESYNC_RETRY_MAX);
+                    retry.retry_at = now + retry.delay;
+                    events.push(PulseEvent::Resync(pulse::ResyncRequest {
+                        subject_id: *subject_id,
+                        known_seq: subject.last_seq,
+                    }));
+                }
+            }
+            true
+        });
+        events
     }
 
     /// A `Resync` for `subject_id`, unless one is already waiting on its answer.
     fn request_resync(&mut self, subject_id: u32, known_seq: u32) -> Vec<PulseEvent> {
+        let Some(subject) = self.subjects.get_mut(&subject_id) else {
+            return Vec::new();
+        };
         if !self.pending_resync.insert(subject_id) {
             return Vec::new();
         }
+        // The deadline survives a full outbound queue as well as an unanswered sent request.
+        subject.resync_retry = Some(ResyncRetry {
+            retry_at: self.resync_now + RESYNC_RETRY_INITIAL,
+            delay: RESYNC_RETRY_INITIAL,
+        });
         vec![PulseEvent::Resync(pulse::ResyncRequest {
             subject_id,
             known_seq,

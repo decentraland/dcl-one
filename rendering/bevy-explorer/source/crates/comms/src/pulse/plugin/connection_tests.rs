@@ -1079,3 +1079,155 @@ fn a_realm_change_while_connected_teleports_with_the_drain() {
     };
     assert_eq!(teleport.realm, "away");
 }
+
+fn begin_resync_gap(session: &mut PulseSession, now: Instant) -> pulse::ResyncRequest {
+    session.decoder.handle_at(
+        pulse::ServerMessage {
+            message: Some(joined(42, W1)),
+        },
+        now,
+    );
+    let events = session.decoder.handle_at(
+        pulse::ServerMessage {
+            message: Some(pulse::server_message::Message::PlayerStateDelta(
+                pulse::PlayerStateDeltaTier0 {
+                    subject_id: 42,
+                    baseline_seq: 1,
+                    new_seq: 2,
+                    ..default()
+                },
+            )),
+        },
+        now,
+    );
+    let [PulseEvent::Resync(request)] = events.as_slice() else {
+        panic!("{events:?}");
+    };
+    request.clone()
+}
+
+#[test]
+fn a_full_send_queue_recovers_through_the_pump_without_inbound_or_game_time_progress() {
+    let mut harness = Harness::player(Connection::Established);
+    let (link, driver) = transport::pulse_channels(1);
+    harness.session_mut().link = Some(link);
+    harness.driver = driver;
+    let start = Instant::now() - Duration::from_secs(2);
+    {
+        let mut session = harness.session_mut();
+        let request = begin_resync_gap(&mut session, start);
+        assert!(session.link.as_mut().unwrap().send(PulseFrame {
+            bytes: Vec::new(),
+            reliability: PulseReliability::Reliable,
+            kind: FrameKind::Control,
+        }));
+        let session = &mut *session;
+        assert!(!send_resync(
+            session.link.as_mut(),
+            &mut session.resyncs,
+            request,
+            0.0
+        ));
+        assert_eq!(
+            session.resyncs.iter().map(|(_, count)| count).sum::<u32>(),
+            0
+        );
+    }
+    harness.driver.outbound.try_recv().unwrap();
+
+    // The real pump has no inbound packet and its game clock remains at zero.
+    harness.pump_at(0.0);
+    let frame = harness.driver.outbound.try_recv().unwrap();
+    assert_eq!(frame.reliability, PulseReliability::Reliable);
+    assert_eq!(frame.kind, FrameKind::Control);
+    assert!(matches!(
+        pulse::ClientMessage::decode(frame.bytes.as_slice())
+            .unwrap()
+            .message,
+        Some(pulse::client_message::Message::Resync(
+            pulse::ResyncRequest {
+                subject_id: 42,
+                known_seq: 0,
+            }
+        ))
+    ));
+    assert_eq!(harness.session().resyncs[0], (0, 1));
+    harness.pump_at(0.0);
+    assert!(harness.sent().is_empty());
+
+    harness.receive(pulse::server_message::Message::PlayerStateFull(
+        pulse::PlayerStateFull {
+            subject_id: 42,
+            sequence: 2,
+            server_tick: 2000,
+            state: Some(pose()),
+        },
+    ));
+    harness.pump_at(0.0);
+    assert!(harness.session().decoder.pending_resync.is_empty());
+    retry_resyncs(
+        &mut harness.session_mut(),
+        Instant::now() + Duration::from_secs(60),
+        0.0,
+    );
+    assert!(harness.sent().is_empty());
+    assert_eq!(harness.session().resyncs[0], (0, 1));
+}
+
+#[test]
+fn an_unanswered_resync_retries_over_the_link_only_when_due() {
+    let (mut session, mut driver) = session_with_link(PulseRole::Listener(ListenerRole::default()));
+    session.state = Connection::Established;
+    let start = Instant::now();
+    let request = begin_resync_gap(&mut session, start);
+    assert!(send_resync(
+        session.link.as_mut(),
+        &mut session.resyncs,
+        request,
+        0.0
+    ));
+    driver.outbound.try_recv().unwrap();
+    retry_resyncs(&mut session, start + Duration::from_millis(999), 0.0);
+    assert!(driver.outbound.try_recv().is_err());
+    retry_resyncs(&mut session, start + Duration::from_secs(1), 0.0);
+    let frame = driver.outbound.try_recv().unwrap();
+    assert!(matches!(
+        pulse::ClientMessage::decode(frame.bytes.as_slice())
+            .unwrap()
+            .message,
+        Some(pulse::client_message::Message::Resync(
+            pulse::ResyncRequest {
+                subject_id: 42,
+                known_seq: 0,
+            }
+        ))
+    ));
+    retry_resyncs(&mut session, start + Duration::from_secs(1), 0.0);
+    assert!(driver.outbound.try_recv().is_err());
+    assert_eq!(session.resyncs[0], (0, 2));
+}
+
+#[test]
+fn retry_polling_waits_for_an_established_connection_and_a_link() {
+    let (mut session, mut driver) = session_with_link(PulseRole::Listener(ListenerRole::default()));
+    let start = Instant::now();
+    begin_resync_gap(&mut session, start);
+    let due = start + Duration::from_secs(1);
+    for state in [
+        Connection::Connecting,
+        Connection::Idle,
+        Connection::AwaitingResponse { timeout_at: 10.0 },
+        Connection::Dead,
+    ] {
+        session.state = state;
+        retry_resyncs(&mut session, due, 0.0);
+        assert!(driver.outbound.try_recv().is_err());
+    }
+    session.state = Connection::Established;
+    let link = session.link.take();
+    retry_resyncs(&mut session, due, 0.0);
+    session.link = link;
+    retry_resyncs(&mut session, due, 0.0);
+    assert!(driver.outbound.try_recv().is_ok());
+    assert_eq!(session.resyncs[0], (0, 1));
+}

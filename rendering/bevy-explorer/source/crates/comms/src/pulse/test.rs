@@ -6,6 +6,224 @@ use super::*;
 const SUBJECT: u32 = 42;
 const WALLET: &str = "0x0000000000000000000000000000000000000001";
 
+fn decoder_with_retry_gap(now: Instant) -> PulseDecoder {
+    let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
+    decoder.handle_at(server_msg(joined(5, (1.0, 2.0, 3.0), 0)), now);
+    let events = decoder.handle_at(delta(SUBJECT, 7, 8, 1500, 5.0), now);
+    assert!(is_one_resync(&events, SUBJECT, 5), "{events:?}");
+    decoder
+}
+
+#[test]
+fn unanswered_resyncs_retry_at_bounded_deadlines_without_inbound_packets() {
+    let now = Instant::now();
+    let mut decoder = decoder_with_retry_gap(now);
+    for seconds in [1, 3, 7, 12, 17, 22] {
+        let deadline = now + Duration::from_secs(seconds);
+        assert!(decoder
+            .retry_resyncs(deadline - Duration::from_nanos(1))
+            .is_empty());
+        let events = decoder.retry_resyncs(deadline);
+        assert!(is_one_resync(&events, SUBJECT, 5), "{events:?}");
+        assert!(decoder.retry_resyncs(deadline).is_empty());
+    }
+}
+
+#[test]
+fn a_late_retry_poll_makes_one_attempt_and_schedules_from_the_current_time() {
+    let now = Instant::now();
+    let mut decoder = decoder_with_retry_gap(now);
+    let later = now + Duration::from_secs(3600);
+    assert!(is_one_resync(&decoder.retry_resyncs(later), SUBJECT, 5));
+    assert!(decoder.retry_resyncs(later).is_empty());
+    assert!(decoder
+        .retry_resyncs(later + Duration::from_millis(1999))
+        .is_empty());
+    assert!(is_one_resync(
+        &decoder.retry_resyncs(later + Duration::from_secs(2)),
+        SUBJECT,
+        5
+    ));
+}
+
+#[test]
+fn stale_and_equal_snapshots_and_duplicate_gaps_preserve_retry_deadlines() {
+    let now = Instant::now();
+    let mut decoder = decoder_with_retry_gap(now);
+    for message in [
+        player_state_full(4, 900, 0.0),
+        player_state_full(5, 1000, 1.0),
+        emote_started(5, 1100, "wave", 1.0),
+        emote_stopped(5, 1200, 1.0),
+        delta(SUBJECT, 7, 8, 1500, 5.0),
+    ] {
+        decoder.handle_at(message, now + Duration::from_millis(900));
+    }
+    assert!(is_one_resync(
+        &decoder.retry_resyncs(now + Duration::from_secs(1)),
+        SUBJECT,
+        5
+    ));
+    for message in [
+        player_state_full(4, 900, 0.0),
+        emote_started(5, 1100, "wave", 1.0),
+        delta(SUBJECT, 7, 8, 1500, 5.0),
+    ] {
+        decoder.handle_at(message, now + Duration::from_secs(2));
+    }
+    assert!(decoder
+        .retry_resyncs(now + Duration::from_millis(2999))
+        .is_empty());
+    assert!(is_one_resync(
+        &decoder.retry_resyncs(now + Duration::from_secs(3)),
+        SUBJECT,
+        5
+    ));
+}
+
+#[test]
+fn sequence_progress_resets_backoff_and_recovery_stops_all_retries() {
+    let now = Instant::now();
+    let mut decoder = decoder_with_retry_gap(now);
+    decoder.retry_resyncs(now + Duration::from_secs(1));
+    let progress_at = now + Duration::from_millis(1500);
+    let events = decoder.handle_at(player_state_full(6, 1400, 4.0), progress_at);
+    assert!(events
+        .iter()
+        .any(|event| matches!(event, PulseEvent::Resync(request) if request.known_seq == 6)));
+    assert!(decoder
+        .retry_resyncs(progress_at + Duration::from_millis(999))
+        .is_empty());
+    assert!(is_one_resync(
+        &decoder.retry_resyncs(progress_at + Duration::from_secs(1)),
+        SUBJECT,
+        6
+    ));
+    let recovered_at = progress_at + Duration::from_millis(1100);
+    decoder.handle_at(player_state_full(7, 1450, 4.0), recovered_at);
+    assert!(decoder.pending_resync.is_empty());
+    assert!(decoder.subjects[&SUBJECT].resync_retry.is_none());
+    assert!(decoder
+        .retry_resyncs(recovered_at + Duration::from_secs(60))
+        .is_empty());
+}
+
+#[test]
+fn a_displaced_delta_destination_keeps_retrying_after_its_payload_is_gone() {
+    let now = Instant::now();
+    let mut decoder = decoder_with_retry_gap(now);
+    decoder.handle_at(delta(SUBJECT, 6, 7, 1400, 4.0), now);
+    let progressed_at = now + Duration::from_millis(100);
+    decoder.handle_at(player_state_full(6, 1300, 3.0), progressed_at);
+    assert!(decoder.subjects[&SUBJECT].pending_delta.is_none());
+    assert_eq!(decoder.subjects[&SUBJECT].last_seq, 7);
+    assert!(is_one_resync(
+        &decoder.retry_resyncs(progressed_at + Duration::from_secs(1)),
+        SUBJECT,
+        7
+    ));
+}
+
+#[test]
+fn retry_deadlines_end_with_the_subject_or_connection_lifetime() {
+    let now = Instant::now();
+    for ending in ["left", "reset", "rejoined", "id-reused", "wallet-replaced"] {
+        let mut decoder = decoder_with_retry_gap(now);
+        match ending {
+            "left" => {
+                decoder.handle_at(
+                    server_msg(pulse::server_message::Message::PlayerLeft(
+                        pulse::PlayerLeft {
+                            subject_id: SUBJECT,
+                        },
+                    )),
+                    now,
+                );
+            }
+            "reset" => {
+                decoder.reset();
+            }
+            "rejoined" => {
+                decoder.handle_at(server_msg(joined(9, (1.0, 2.0, 3.0), 0)), now);
+            }
+            "id-reused" => {
+                let pulse::server_message::Message::PlayerJoined(mut replacement) =
+                    joined(0, (1.0, 2.0, 3.0), 0)
+                else {
+                    unreachable!()
+                };
+                replacement.user_id = "0x0000000000000000000000000000000000000002".to_owned();
+                decoder.handle_at(
+                    server_msg(pulse::server_message::Message::PlayerJoined(replacement)),
+                    now,
+                );
+            }
+            "wallet-replaced" => {
+                let pulse::server_message::Message::PlayerJoined(mut replacement) =
+                    joined(0, (1.0, 2.0, 3.0), 0)
+                else {
+                    unreachable!()
+                };
+                replacement.state.as_mut().unwrap().subject_id = SUBJECT + 1;
+                decoder.handle_at(
+                    server_msg(pulse::server_message::Message::PlayerJoined(replacement)),
+                    now,
+                );
+            }
+            _ => unreachable!(),
+        }
+        assert!(decoder.pending_resync.is_empty(), "{ending}");
+        assert!(
+            decoder
+                .retry_resyncs(now + Duration::from_secs(60))
+                .is_empty(),
+            "{ending}"
+        );
+    }
+}
+
+#[test]
+fn subjects_have_independent_retry_deadlines_and_recovery() {
+    let now = Instant::now();
+    let mut decoder = decoder_with_retry_gap(now);
+    let pulse::server_message::Message::PlayerJoined(mut other) = joined(5, (1.0, 2.0, 3.0), 0)
+    else {
+        unreachable!()
+    };
+    other.user_id = "0x0000000000000000000000000000000000000002".to_owned();
+    other.state.as_mut().unwrap().subject_id = SUBJECT + 1;
+    decoder.handle_at(
+        server_msg(pulse::server_message::Message::PlayerJoined(other)),
+        now,
+    );
+    decoder.handle_at(
+        delta(SUBJECT + 1, 7, 8, 1500, 5.0),
+        now + Duration::from_millis(500),
+    );
+    assert!(is_one_resync(
+        &decoder.retry_resyncs(now + Duration::from_secs(1)),
+        SUBJECT,
+        5
+    ));
+    assert!(is_one_resync(
+        &decoder.retry_resyncs(now + Duration::from_millis(1500)),
+        SUBJECT + 1,
+        5
+    ));
+    decoder.handle_at(
+        player_state_full(7, 1400, 3.0),
+        now + Duration::from_secs(2),
+    );
+    assert!(decoder
+        .retry_resyncs(now + Duration::from_secs(3))
+        .is_empty());
+    assert!(is_one_resync(
+        &decoder.retry_resyncs(now + Duration::from_millis(3500)),
+        SUBJECT + 1,
+        5
+    ));
+}
+
 // Parcel (10, 20) under the default grid: min_x = min_z = -150 - 2 = -152, width = 318.
 // index = (10 - -152) + (20 - -152) * 318 = 162 + 172*318 = 54858. World base = (160, _, 320).
 const PARCEL_INDEX: i32 = 54858;
@@ -854,19 +1072,23 @@ fn reset_clears_the_pending_resyncs() {
     assert!(decoder.pending_resync.is_empty());
 }
 
-/// The plugin could not send the request (its queue was full, or the link gone), so nothing waits
-/// on an answer, and the next gap asks again.
 #[test]
-fn a_resync_that_was_not_sent_is_asked_for_again() {
+fn a_resync_that_was_not_sent_retries_without_new_packets() {
+    let now = Instant::now();
     let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
-    decoder.handle(server_msg(joined(5, (1.0, 2.0, 3.0), 0)));
+    decoder.handle_at(server_msg(joined(5, (1.0, 2.0, 3.0), 0)), now);
 
-    let events = decoder.handle(delta(SUBJECT, 7, 8, 1500, 5.0));
+    let events = decoder.handle_at(delta(SUBJECT, 7, 8, 1500, 5.0), now);
     assert!(is_one_resync(&events, SUBJECT, 5), "{events:?}");
 
-    decoder.resync_not_sent(SUBJECT);
-
-    let events = decoder.handle(delta(SUBJECT, 8, 9, 1600, 5.0));
+    // Drop the initial event, as a full outbound queue would, and keep the request gated.
+    assert!(decoder
+        .handle_at(delta(SUBJECT, 8, 9, 1600, 5.0), now)
+        .is_empty());
+    assert!(decoder
+        .retry_resyncs(now + Duration::from_millis(999))
+        .is_empty());
+    let events = decoder.retry_resyncs(now + Duration::from_secs(1));
     assert!(is_one_resync(&events, SUBJECT, 5), "{events:?}");
 }
 
@@ -1274,19 +1496,26 @@ fn buffered_delta_renews_resync_when_a_delta_does_not_close_the_gap() {
 
 #[test]
 fn buffered_delta_survives_a_stale_full_state_and_an_unsent_resync() {
+    let now = Instant::now();
     let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
-    decoder.handle(server_msg(joined(5, (1.0, 2.0, 3.0), 0)));
-    decoder.handle(delta(SUBJECT, 7, 8, 1700, 5.0));
-    decoder.resync_not_sent(SUBJECT);
-    let stale = decoder.handle(player_state_full(4, 900, 0.0));
+    decoder.handle_at(server_msg(joined(5, (1.0, 2.0, 3.0), 0)), now);
+    decoder.handle_at(delta(SUBJECT, 7, 8, 1700, 5.0), now);
+    let stale = decoder.handle_at(player_state_full(4, 900, 0.0), now);
     assert!(stale.is_empty(), "{stale:?}");
+    assert!(decoder
+        .handle_at(delta(SUBJECT, 7, 8, 1700, 5.0), now)
+        .is_empty());
     assert!(is_one_resync(
-        &decoder.handle(delta(SUBJECT, 7, 8, 1700, 5.0)),
+        &decoder.retry_resyncs(now + Duration::from_secs(1)),
         SUBJECT,
         5
     ));
     approx(
-        only_movement(decoder.handle(player_state_full(7, 1600, 3.0))).position_x,
+        only_movement(decoder.handle_at(
+            player_state_full(7, 1600, 3.0),
+            now + Duration::from_secs(1),
+        ))
+        .position_x,
         165.0,
     );
 }
