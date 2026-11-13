@@ -470,39 +470,39 @@ function Drawer({
 }) {
   const [top, setTop] = useState<number | null>(null)
   const [entryRevealed, setEntryRevealed] = useState(false)
+  const [reducedMotion, setReducedMotion] = useState(false)
   useLayoutEffect(() => {
     if (typeof window.matchMedia !== 'function') return
-    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)')
+    const preference = window.matchMedia('(prefers-reduced-motion: reduce)')
     const onChange = (event: MediaQueryListEvent) => {
-      if (event.matches) {
-        setEntryRevealed(true)
-        if (closingFrom !== null) onExited()
-      }
+      setReducedMotion(event.matches)
+      if (event.matches) setEntryRevealed(true)
     }
-    if (reducedMotion.matches) {
-      setEntryRevealed(true)
-      if (closingFrom !== null) onExited()
-    }
-    reducedMotion.addEventListener('change', onChange)
-    return () => reducedMotion.removeEventListener('change', onChange)
-  }, [closingFrom, onExited])
+    setReducedMotion(preference.matches)
+    if (preference.matches) setEntryRevealed(true)
+    preference.addEventListener('change', onChange)
+    return () => preference.removeEventListener('change', onChange)
+  }, [])
   useLayoutEffect(() => {
     if (closingFrom === null) return
-    setEntryRevealed(true)
-    const animations = panelRef.current?.getAnimations?.() ?? []
-    if (!animations.length) {
-      onExited()
-      return
-    }
     let active = true
     const finish = () => {
-      if (active) onExited()
+      if (!active) return
+      if (typeof window.matchMedia === 'function' && window.matchMedia(DESKTOP_QUERY).matches)
+        onDesktop()
+      else onExited()
     }
-    void Promise.all(animations.map((animation) => animation.finished)).then(finish, finish)
+    if (reducedMotion) finish()
+    else {
+      setEntryRevealed(true)
+      const animations = panelRef.current?.getAnimations?.() ?? []
+      if (!animations.length) finish()
+      else void Promise.all(animations.map((animation) => animation.finished)).then(finish, finish)
+    }
     return () => {
       active = false
     }
-  }, [closingFrom, onExited, panelRef])
+  }, [closingFrom, onExited, onDesktop, panelRef, reducedMotion])
   useLayoutEffect(() => {
     let frame = 0
     const measure = () => {
@@ -653,7 +653,7 @@ export function NavBar({
   const requestDrawerExit = useCallback(() => {
     const panel = drawerPanelRef.current
     const clip = panel ? getComputedStyle(panel).clipPath : 'none'
-    setDrawerClosingFrom(clip === 'none' ? 'inset(0)' : clip)
+    setDrawerClosingFrom((current) => current ?? (clip === 'none' ? 'inset(0)' : clip))
     menuButtonRef.current?.focus({ preventScroll: true })
   }, [])
   const closeDrawer = useCallback(() => {
