@@ -94,7 +94,7 @@ describe('the web shell side', () => {
     localStorage.setItem('single-sign-on-0x0000000000000000000000000000000000000abc', '{}')
     const identity = {
       ephemeralIdentity: { address: '0x00000000000000000000000000000000000000e1', publicKey: '0x04', privateKey: '0x01' },
-      expiration: new Date(Date.now() + 3_600_000).toISOString(),
+      expiration: new Date(Date.now() + 7 * 86_400_000).toISOString(),
       authChain: [
         { type: 'SIGNER', payload: WALLET.toLowerCase(), signature: '' },
         { type: 'ECDSA_EPHEMERAL', payload: 'Decentraland Login', signature: '0xsig' }

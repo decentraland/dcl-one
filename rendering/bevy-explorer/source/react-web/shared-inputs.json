@@ -719,6 +719,10 @@
           "kind": "regular"
         },
         {
+          "name": "storedLogin.test.ts",
+          "kind": "regular"
+        },
+        {
           "name": "utm.test.ts",
           "kind": "regular"
         }
@@ -4776,7 +4780,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/editorHostSigning.test.tsx",
-      "sha256": "4cd0258bc19c4338203421af43914ec83ed7ef25def67cae9aac6323bc234306"
+      "sha256": "3b6fbac384934739c105c45fff4080025921043db32c53cabbc43e5972b0a381"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/editorScene.test.ts",
@@ -4840,7 +4844,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/shellLogin.test.ts",
-      "sha256": "1be19c9535a388f4952f82d86c6bb1c6cdfc83fa301cbcb482a19b24b562a37d"
+      "sha256": "5eacf9c98f6d4dbd08c44a5c1bbb77bbe3bde9631ef31f252d6c5687cc0b6d9e"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/shopQueries.test.tsx",
@@ -5049,7 +5053,7 @@
     },
     {
       "path": "library/explorer-core/features/auth/sso.ts",
-      "sha256": "b161b158fbc9a432b62cd7b4efe86cdd5604c9f90c2efad252df476a32b1e638"
+      "sha256": "dd9816458b10c7a0fe6fc1b243076b46670db037d68fb1e95038f745b37cf28d"
     },
     {
       "path": "library/explorer-core/features/auth/thirdweb.ts",
@@ -5257,7 +5261,7 @@
     },
     {
       "path": "library/explorer-core/lib/hudAutomation.ts",
-      "sha256": "2e273b61372b2d59466164f988e7b9872eed3212bf4c71243e09d4ec347e9b0e"
+      "sha256": "1c21571125f2f49a0db3f113eeea8a863ee71f6a80aa327c0d07519fbfc347ca"
     },
     {
       "path": "library/explorer-core/lib/hudScale.ts",
@@ -5377,7 +5381,7 @@
     },
     {
       "path": "library/explorer-core/test/emailLogin.test.ts",
-      "sha256": "0365d4e634d8e479fb230676431492aa8fec9f275086e6b735a23a009c6e7142"
+      "sha256": "6323e74b252fb2f1ec601145d651c6bf1d78d1cfc8e9530ab5279dc8303546b5"
     },
     {
       "path": "library/explorer-core/test/engineDriver.test.ts",
@@ -5426,6 +5430,10 @@
     {
       "path": "library/explorer-core/test/shellSign.test.ts",
       "sha256": "92a933283be8cc4ca11bb6ae8776ac2deeee17f65a37822499253430ba7dcaa1"
+    },
+    {
+      "path": "library/explorer-core/test/storedLogin.test.ts",
+      "sha256": "1acf0b01313484b46b6bf360097401c7db534aa95cc8fd4c1bfde16e81015b8c"
     },
     {
       "path": "library/explorer-core/test/utm.test.ts",
@@ -7997,7 +8005,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/editorHostShellSigning.test.tsx",
-      "sha256": "598cf23dfc54b59b323b351a4d306a58cd40da9ad36422c7ac7a293486112d76"
+      "sha256": "14fee73fa9917714a440de8d9b1284633c1416b3c95ec2677312913613c48b39"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/emailSession.test.tsx",
@@ -9982,6 +9990,36 @@
     {
       "from": "library/explorer-core/test/shellSign.test.ts",
       "to": "library/explorer-core/shell/sign.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/storedLogin.test.ts",
+      "to": "library/explorer-core/features/auth/sso.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/storedLogin.test.ts",
+      "to": "library/explorer-core/features/auth/sso.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/storedLogin.test.ts",
+      "to": "library/explorer-core/features/auth/sso.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/storedLogin.test.ts",
+      "to": "library/explorer-core/features/auth/thirdweb.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/storedLogin.test.ts",
+      "to": "library/explorer-core/features/auth/thirdweb.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/storedLogin.test.ts",
+      "to": "library/explorer-core/features/auth/thirdweb.ts",
       "kind": "test:runtime"
     },
     {
@@ -32897,6 +32935,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/explorer-core/test/shellSign.test.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/explorer-core/test/storedLogin.test.ts",
       "kind": "type"
     },
     {

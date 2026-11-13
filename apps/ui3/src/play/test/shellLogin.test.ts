@@ -85,7 +85,7 @@ describe('shell login requests', () => {
   })
 
   it('signing with an account replaces the guest', async () => {
-    localStorage.setItem('dcl-guest-identity', JSON.stringify(identity(GUEST, 1)))
+    localStorage.setItem('dcl-guest-identity', JSON.stringify(identity(GUEST, 2)))
     localStorage.setItem(`single-sign-on-${ACCOUNT}`, JSON.stringify(identity(ACCOUNT, 30)))
     localStorage.setItem(`thirdweb_guest_session_id_e1adce863fe287bb6cf0e3fd90bdb77f`, 'session')
     const { request } = await shell()

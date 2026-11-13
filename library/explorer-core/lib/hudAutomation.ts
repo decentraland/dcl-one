@@ -670,9 +670,9 @@ export async function clickAt(x: number, y: number, button: MouseButtonName = 'l
 /**
  * What `/hud_login` asks of the session: sign in with this identity as the page's stored sign-in,
  * the way Jump In reuses one, with a first login's pick, and go where a link's destination would
- * from the lobby. The sign-in stands for the terms the welcome page asks for, as ACCEPT AND PLAY
- * does; a first login (an account with no profile yet) needs the pick, which names the profile
- * it deploys. The session provides the sign-in with `provideHudLogin` while it is mounted.
+ * from the lobby. The sign-in stands for the terms a new account ticks on its name screen; a first
+ * login (an account with no profile yet) needs the pick, which names the profile it deploys, in
+ * place of its look and name screens. The session provides the sign-in with `provideHudLogin` while it is mounted.
  */
 export interface HudLoginRequest {
   identity: AuthIdentity

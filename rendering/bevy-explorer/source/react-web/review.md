@@ -334,7 +334,9 @@ back as `analyticsSession`). Expectations:
   the thirdweb calls) and its account signs in as fully_registered. COMEBACK (after a failed stored
   sign-in), ACCOUNT_GUEST_CREATE, AUTH_BROWSER_OPEN, AUTH_SUCCESS {login_type}, AUTH_ERROR {error};
   clicks lets_go, use_another_account, try_again. `Guest Wallet Creation` wraps the
-  thirdweb guest step (`features/auth/guestWalletEvent.ts`).
+  thirdweb guest step (`features/auth/guestWalletEvent.ts`). A stored sign-in with a day or less
+  left is forgotten at startup (`getStoredLogin`), so the player gets the first screen and the auth
+  site asks for a new sign-in; a run already going keeps its sign-in until it expires.
 - **Welcome / lobby**: WELCOME or AVATAR_NAMING, AUTH_DEPLOY_SUCCESS; clicks LETS_GO,
   NAME_RANDOMIZE; LOBBY, PLACES_PICKER; clicks JUMP_IN {kind, place_id|event_id}, CUSTOMIZE,
   NOTIFICATIONS, CLOSE (`LobbyHome.tsx`).
