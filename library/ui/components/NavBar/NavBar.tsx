@@ -18,7 +18,6 @@ import {
   GeneralDecentralandColor,
   GeneralDownArrow,
   GeneralManaColour,
-  GeneralMenu,
   GeneralPolygonMana
 } from '../../foundations/icons/general'
 import { ShopCredits } from '../../foundations/icons/shop'
@@ -664,7 +663,20 @@ export function NavBar({
           aria-haspopup="dialog"
           onClick={() => setDrawerOpen(true)}
         >
-          <GeneralMenu size={24} aria-hidden="true" />
+          <svg
+            width={24}
+            height={24}
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={2}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+            focusable="false"
+          >
+            <path d="M3 6h18M3 12h18M3 18h18" />
+          </svg>
         </button>
       </div>
       {drawerOpen ? (
