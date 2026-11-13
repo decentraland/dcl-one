@@ -34,15 +34,12 @@ impl TileKey {
     }
 }
 
-/// Bakes stay near the city (~±150 parcels); a tile further out renders empty.
-pub const MAX_BAKE_COORD: i32 = 256;
-
+/// Only tiles overlapping Genesis City are baked; one further out renders empty.
 pub fn within_bake_bounds(tile: &TileKey) -> bool {
-    let extent = 1i32 << tile.level;
-    tile.x + extent > -MAX_BAKE_COORD
-        && tile.x < MAX_BAKE_COORD
-        && tile.y + extent > -MAX_BAKE_COORD
-        && tile.y < MAX_BAKE_COORD
+    let (x0, y0, x1, y1) = crate::shared::parcel::WORLD_BOUNDS;
+    let last = (1i64 << tile.level) - 1;
+    let (x, y) = (i64::from(tile.x), i64::from(tile.y));
+    x <= x1 && x + last >= x0 && y <= y1 && y + last >= y0
 }
 
 impl ImposterKey {
@@ -97,10 +94,16 @@ mod tests {
 
     #[test]
     fn bakes_stay_near_the_city() {
-        for (level, x, y) in [(0, 0, 0), (0, -150, 150), (5, -256, 224)] {
+        for (level, x, y) in [(0, 0, 0), (0, -150, 150), (0, 163, 143), (5, -160, 128)] {
             assert!(within_bake_bounds(&TileKey::new(level, x, y).unwrap()));
         }
-        for (level, x, y) in [(0, 256, 0), (0, 0, -257), (5, 1 << 20, 0)] {
+        for (level, x, y) in [
+            (0, 164, 0),
+            (0, 0, -151),
+            (5, -192, 0),
+            (5, i32::MIN, 0),
+            (5, i32::MAX & !31, i32::MAX & !31),
+        ] {
             assert!(!within_bake_bounds(&TileKey::new(level, x, y).unwrap()));
         }
     }

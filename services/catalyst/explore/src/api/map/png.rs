@@ -21,12 +21,21 @@ use super::render::{Coord, MapView, render_estate_minimap, render_minimap, rende
 /// Renders run on the blocking pool, at most this many at once.
 const MAX_CONCURRENT_RENDERS: usize = 2;
 const RENDER_QUEUE_WAIT: Duration = Duration::from_secs(10);
-/// A centre is clamped to this many parcels from the origin (the map is ~±150).
-const MAX_CENTER_COORD: i32 = 300;
 const MAX_SELECTED: usize = 512;
 
-static RENDERS: LazyLock<tokio::sync::Semaphore> =
-    LazyLock::new(|| tokio::sync::Semaphore::new(MAX_CONCURRENT_RENDERS));
+static RENDERS: LazyLock<Arc<tokio::sync::Semaphore>> =
+    LazyLock::new(|| Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_RENDERS)));
+
+type Flights = parking_lot::Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>;
+
+/// One lock per PNG key being rendered, so concurrent misses render it once.
+static RENDER_FLIGHTS: LazyLock<Flights> = LazyLock::new(Default::default);
+
+fn render_flight(key: &str) -> Arc<tokio::sync::Mutex<()>> {
+    let mut flights = RENDER_FLIGHTS.lock();
+    flights.retain(|_, lock| Arc::strong_count(lock) > 1);
+    flights.entry(key.to_string()).or_default().clone()
+}
 
 /// Owned parcels first, then every parcel carrying the estate id.
 pub fn select_estate_coords(grid: &Grid, estate_id: &str) -> Vec<Coord> {
@@ -90,10 +99,12 @@ fn extract_params(q: &HashMap<String, String>) -> Params {
     }
 }
 
+/// A centre outside Genesis City is moved to its nearest edge.
 fn clamp_center(c: Coord) -> Coord {
+    let (x0, y0, x1, y1) = crate::shared::parcel::WORLD_BOUNDS;
     Coord {
-        x: c.x.clamp(-MAX_CENTER_COORD, MAX_CENTER_COORD),
-        y: c.y.clamp(-MAX_CENTER_COORD, MAX_CENTER_COORD),
+        x: i64::from(c.x).clamp(x0, x1) as i32,
+        y: i64::from(c.y).clamp(y0, y1) as i32,
     }
 }
 
@@ -153,6 +164,17 @@ async fn render_blocking<F>(grid: Arc<Grid>, render: F) -> Result<Vec<u8>, Box<R
 where
     F: FnOnce(&Grid) -> Result<Vec<u8>, Box<Response>> + Send + 'static,
 {
+    render_limited(RENDERS.clone(), grid, render).await
+}
+
+async fn render_limited<F>(
+    renders: Arc<tokio::sync::Semaphore>,
+    grid: Arc<Grid>,
+    render: F,
+) -> Result<Vec<u8>, Box<Response>>
+where
+    F: FnOnce(&Grid) -> Result<Vec<u8>, Box<Response>> + Send + 'static,
+{
     let busy = || {
         Box::new(
             (
@@ -163,12 +185,17 @@ where
                 .into_response(),
         )
     };
-    let Ok(Ok(_permit)) = tokio::time::timeout(RENDER_QUEUE_WAIT, RENDERS.acquire()).await else {
+    let Ok(Ok(permit)) = tokio::time::timeout(RENDER_QUEUE_WAIT, renders.acquire_owned()).await
+    else {
         return Err(busy());
     };
-    tokio::task::spawn_blocking(move || render(&grid))
-        .await
-        .unwrap_or_else(|e| Err(render_error(e.to_string())))
+    // The slot is held by the render itself, even if the request goes away.
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        render(&grid)
+    })
+    .await
+    .unwrap_or_else(|e| Err(render_error(e.to_string())))
 }
 
 async fn cached_png_render<F>(
@@ -186,6 +213,12 @@ where
     let etag = http_cache::etag_for(last, &key);
     if let Some(r) = http_cache::not_modified_etag(headers, last, &etag, max_age, swr) {
         return r;
+    }
+    let flight;
+    let mut _rendering = None;
+    if state.map.cached_png(&key).is_none() {
+        flight = render_flight(&key);
+        _rendering = Some(flight.lock().await);
     }
     let bytes = match state.map.cached_png(&key) {
         Some(b) => b,
@@ -422,13 +455,7 @@ mod tests {
         ]
         .into();
         let p = extract_params(&q);
-        assert_eq!(
-            p.center,
-            Coord {
-                x: MAX_CENTER_COORD,
-                y: -MAX_CENTER_COORD
-            }
-        );
+        assert_eq!(p.center, Coord { x: 163, y: -150 }, "the nearest city edge");
         assert!(p.selected.len() <= MAX_SELECTED, "{}", p.selected.len());
         assert_eq!(
             p.selected
@@ -457,5 +484,48 @@ mod tests {
         })
         .await;
         assert_eq!(out.ok(), Some(vec![1]));
+    }
+
+    #[tokio::test]
+    async fn an_abandoned_render_keeps_its_slot_until_it_finishes() {
+        let grid = Arc::new(Grid::from_tiles(
+            HashMap::new(),
+            0,
+            None,
+            chrono::Utc::now().naive_utc(),
+        ));
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (finish_tx, finish_rx) = std::sync::mpsc::channel::<()>();
+        let renders = Arc::new(tokio::sync::Semaphore::new(1));
+        let request = tokio::spawn(render_limited(renders.clone(), grid, move |_| {
+            started_tx.send(()).unwrap();
+            finish_rx.recv().unwrap();
+            Ok(vec![])
+        }));
+        tokio::task::spawn_blocking(move || started_rx.recv().unwrap())
+            .await
+            .unwrap();
+        request.abort();
+        let _ = request.await;
+        assert_eq!(
+            renders.available_permits(),
+            0,
+            "the aborted request did not free the render's slot"
+        );
+        finish_tx.send(()).unwrap();
+        for _ in 0..200 {
+            if renders.available_permits() == 1 {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        panic!("the slot came back when the render ended");
+    }
+
+    #[test]
+    fn concurrent_png_misses_share_one_render_lock() {
+        let a = render_flight("png-key");
+        assert!(Arc::ptr_eq(&a, &render_flight("png-key")));
+        assert!(!Arc::ptr_eq(&a, &render_flight("png-other")));
     }
 }

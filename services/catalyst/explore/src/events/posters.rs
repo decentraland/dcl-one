@@ -277,11 +277,7 @@ const POSTER_UPLOADS_PER_HOUR: u32 = 30;
 
 static POSTER_UPLOADS: std::sync::LazyLock<crate::rate::WindowLimiter> =
     std::sync::LazyLock::new(|| {
-        crate::rate::WindowLimiter::new(
-            POSTER_UPLOADS_PER_HOUR,
-            std::time::Duration::from_secs(3600),
-            100_000,
-        )
+        crate::rate::WindowLimiter::new(std::time::Duration::from_secs(3600), 100_000)
     });
 
 async fn upload(
@@ -296,7 +292,10 @@ async fn upload(
     state.user_writes()?;
     let signer = state.signer(&headers, method.as_str(), path).await?;
     super::profiles::require_profile(&state.pool, &signer).await?;
-    if !POSTER_UPLOADS.try_acquire(&[signer.to_ascii_lowercase().as_str()]) {
+    if !POSTER_UPLOADS.try_acquire(&[(
+        signer.to_ascii_lowercase().as_str(),
+        POSTER_UPLOADS_PER_HOUR,
+    )]) {
         return Err(ApiError::http(429, "too many poster uploads, retry later"));
     }
     let poster = read_poster(multipart, kind).await?;

@@ -29,27 +29,30 @@ pub const UPLOAD_BODY_LIMIT: usize = 64 << 10;
 const REPORTS_PER_WALLET_PER_HOUR: u32 = 20;
 const REPORTS_PER_NETWORK_PER_HOUR: u32 = 60;
 
-static WALLET_REPORTS: std::sync::LazyLock<WindowLimiter> = std::sync::LazyLock::new(|| {
-    WindowLimiter::new(
-        REPORTS_PER_WALLET_PER_HOUR,
-        std::time::Duration::from_secs(3600),
-        100_000,
-    )
-});
-static NETWORK_REPORTS: std::sync::LazyLock<WindowLimiter> = std::sync::LazyLock::new(|| {
-    WindowLimiter::new(
-        REPORTS_PER_NETWORK_PER_HOUR,
-        std::time::Duration::from_secs(3600),
-        100_000,
-    )
-});
+static REPORTS: std::sync::LazyLock<WindowLimiter> =
+    std::sync::LazyLock::new(|| WindowLimiter::new(std::time::Duration::from_secs(3600), 100_000));
 
-/// Counts one report for the reporter and its network; 429 past either limit.
-fn admit_report(reporter: &str, headers: &HeaderMap) -> Result<(), ApiError> {
-    let ip = crate::shared::client_ip::client_ip(headers);
-    let admitted = WALLET_REPORTS.try_acquire(&[reporter])
-        && (ip.is_empty() || NETWORK_REPORTS.try_acquire(&[ip.as_str()]));
-    if admitted {
+/// The network a report comes from: the TCP peer or a trusted proxy's
+/// `X-Real-IP`, IPv6 by its /64; unknown sources share one key.
+fn report_source(
+    headers: &HeaderMap,
+    peer: Option<std::net::SocketAddr>,
+    trusted_proxies: &[ipnet::IpNet],
+) -> String {
+    crate::shared::client_ip::peer_client_ip(headers, peer, trusted_proxies)
+        .map(|ip| crate::shared::client_ip::source_key(&ip))
+        .unwrap_or_default()
+}
+
+/// Counts one report against the reporter and its network, or neither;
+/// 429 past either limit.
+fn admit_report(reporter: &str, source: &str) -> Result<(), ApiError> {
+    let wallet = format!("w:{}", reporter.to_ascii_lowercase());
+    let network = format!("ip:{source}");
+    if REPORTS.try_acquire(&[
+        (wallet.as_str(), REPORTS_PER_WALLET_PER_HOUR),
+        (network.as_str(), REPORTS_PER_NETWORK_PER_HOUR),
+    ]) {
         Ok(())
     } else {
         Err(ApiError::http(429, "too many reports, retry later"))
@@ -141,14 +144,20 @@ fn public_path<'a>(headers: &'a HeaderMap, route: &'a str) -> &'a str {
 /// `report.post.bad_signature`); the 201 is the router layer's.
 pub async fn post_report(
     State(state): State<SharedState>,
+    peer: Option<axum::Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,
     method: Method,
     OriginalUri(uri): OriginalUri,
     headers: HeaderMap,
     body: Option<Json<Value>>,
 ) -> Result<Json<Value>, ApiError> {
     state.user_writes()?;
+    let source = report_source(
+        &headers,
+        peer.map(|axum::Extension(axum::extract::ConnectInfo(p))| p),
+        &state.settings.trusted_proxy_cidrs,
+    );
     if let Some(Json(env)) = body.as_ref().filter(|Json(v)| catalyst_fed::is_envelope(v)) {
-        return fed_report(&state, &headers, env.clone()).await;
+        return fed_report(&state, &headers, &source, env.clone()).await;
     }
     let reporter = state
         .wkc_signer(&headers, method.as_str(), uri.path())
@@ -164,7 +173,7 @@ pub async fn post_report(
     {
         return Err(ApiError::not_found(format!("Not found place \"{id}\"")));
     }
-    admit_report(&reporter, &headers)?;
+    admit_report(&reporter, &source)?;
     let now = Utc::now();
     let filename = report_filename(&reporter, now.timestamp());
     let token = format!("{:032x}", rand::random::<u128>());
@@ -189,6 +198,7 @@ pub async fn post_report(
 async fn fed_report(
     state: &SharedState,
     headers: &HeaderMap,
+    source: &str,
     body: Value,
 ) -> Result<Json<Value>, ApiError> {
     use crate::fed;
@@ -205,6 +215,7 @@ async fn fed_report(
             "Not found place \"{place_id}\""
         )));
     }
+    admit_report(&signer, source)?;
     let hash = signed.signature_hash();
     let reason = serde_json::to_value(signed.message.reason).unwrap_or_else(|_| json!("other"));
     let logged =
@@ -426,16 +437,53 @@ mod tests {
     /// (fixture report.post.signed_user); the random suffix is this node's.
     #[test]
     fn a_reporter_is_limited_per_hour_and_others_are_not() {
-        let mut headers = HeaderMap::new();
-        headers.insert("x-real-ip", "198.51.100.200".parse().unwrap());
         let wallet = "0xrate-limit-test-wallet";
         for _ in 0..REPORTS_PER_WALLET_PER_HOUR {
-            assert!(admit_report(wallet, &headers).is_ok());
+            assert!(admit_report(wallet, "198.51.100.200").is_ok());
         }
-        assert_eq!(admit_report(wallet, &headers).unwrap_err().status(), 429);
-        let mut other = HeaderMap::new();
-        other.insert("x-real-ip", "198.51.100.201".parse().unwrap());
-        assert!(admit_report("0xrate-limit-test-other", &other).is_ok());
+        assert_eq!(
+            admit_report(wallet, "198.51.100.201").unwrap_err().status(),
+            429,
+            "a wallet is limited on every network"
+        );
+        assert!(admit_report("0xrate-limit-test-other", "198.51.100.201").is_ok());
+    }
+
+    #[test]
+    fn a_network_is_limited_without_spending_the_wallets_it_refuses() {
+        let network = "198.51.100.210";
+        for i in 0..REPORTS_PER_NETWORK_PER_HOUR {
+            assert!(admit_report(&format!("0xnet-test-{i}"), network).is_ok());
+        }
+        let late = "0xnet-test-late";
+        assert_eq!(admit_report(late, network).unwrap_err().status(), 429);
+        for _ in 0..REPORTS_PER_WALLET_PER_HOUR {
+            assert!(
+                admit_report(late, "198.51.100.211").is_ok(),
+                "the refused report did not count against the wallet"
+            );
+        }
+    }
+
+    #[test]
+    fn report_sources_trust_only_listed_proxies_and_group_ipv6() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-real-ip", "198.51.100.7".parse().unwrap());
+        let peer = |s: &str| Some(s.parse::<std::net::SocketAddr>().unwrap());
+        assert_eq!(
+            report_source(&headers, peer("203.0.113.5:1"), &[]),
+            "203.0.113.5"
+        );
+        let proxies = ["203.0.113.0/24".parse().unwrap()];
+        assert_eq!(
+            report_source(&headers, peer("203.0.113.5:1"), &proxies),
+            "198.51.100.7"
+        );
+        assert_eq!(
+            report_source(&headers, peer("[2001:db8:1:2::9]:1"), &[]),
+            "2001:db8:1:2::/64"
+        );
+        assert_eq!(report_source(&headers, None, &[]), "");
     }
 
     #[test]

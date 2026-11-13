@@ -42,8 +42,8 @@ use crate::imposters::zips;
 /// How often the baker looks for markers other processes left.
 const POLL: Duration = Duration::from_secs(5);
 /// A tile baked successfully is not baked again for this long, whatever crc
-/// a later miss asked for.
-const BAKE_COOLDOWN: Duration = Duration::from_secs(3600);
+/// a later miss asked for; short, so a redeployed scene's imposter follows soon.
+const BAKE_COOLDOWN: Duration = Duration::from_secs(600);
 const MAX_RECENT_BAKES: usize = 10_000;
 
 #[derive(Clone, Debug)]
