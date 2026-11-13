@@ -4,7 +4,6 @@ import {
   IoPhoneLandscapeOutline,
   IoSwapHorizontalOutline,
   IoWarningOutline,
-  IoCubeOutline,
 } from 'react-icons/io5';
 import cx from 'classnames';
 import type { Entity } from '@dcl/ecs';
@@ -31,13 +30,12 @@ import type { DropType } from '../../Tree/utils';
 import { UI_DESIGNER_DND_TYPE, type UIDesignerDragItem } from '../shared/dnd';
 import { useUINodeActions } from '../shared/useUINodeActions';
 import { useUINodeTree } from '../shared/useUINodeTree';
-import { WIDGET_ICONS } from '../shared/widget-catalog';
+import { NodeIcon } from '../shared/widget-catalog';
 import { DesktopIcon, EyeIcon, EyeOffIcon, LockIcon, UnlockIcon } from '../icons';
 import { addPlatformBranch, spliceAddWidget, spliceMove, spliceRenameNode } from '../code/store';
 import { PLATFORMS } from '../code/platform-convention';
 import type { CodeUINode } from '../code/types';
 import {
-  classifyNode,
   collectInheritedHidden,
   matchesFilter,
   nodeLabelText,
@@ -143,11 +141,18 @@ const NodeTreeImpl: React.FC<{ filter?: string }> = ({ filter = '' }) => {
     [platform],
   );
   const getIcon = useCallback((n: UINode) => {
-    if (soleComponentRef(n)) return <IoCubeOutline />;
     const cn = n as CodeUINode;
-    if (cn.platformVariant) return <IoSwapHorizontalOutline />;
-    if (cn.platform) return PLATFORM_ICONS[cn.platform];
-    return cn.opaque ? <IoWarningOutline /> : WIDGET_ICONS[classifyNode(n)];
+    if (!soleComponentRef(n)) {
+      if (cn.platformVariant) return <IoSwapHorizontalOutline />;
+      if (cn.platform) return PLATFORM_ICONS[cn.platform];
+      if (cn.opaque) return <IoWarningOutline />;
+    }
+    return (
+      <NodeIcon
+        node={n}
+        fontSize="small"
+      />
+    );
   }, []);
   const isOpen = useCallback(
     (n: UINode) => (term ? true : expanded[n.entity as unknown as number] !== false),

@@ -5,7 +5,7 @@ import { getMobileHudSelected, getSelectedNode } from '../../../redux/ui-designe
 import { Box } from '../../Box';
 import { findCodeNode, useCodeState } from '../code/store';
 import type { CodeUINode } from '../code/types';
-import { GuiGridIcon } from '../shared/widget-icons';
+import { GUIRoot } from '../../Icons/figma';
 import { MobileHudPanel } from './MobileHudPanel';
 import { PropertyPanel } from './PropertyPanel';
 import { CodeVariablesPanel } from './LogicPanel/CodeVariablesPanel';
@@ -94,7 +94,7 @@ const RightPanel: React.FC = () => {
           <>
             {codeState.filename ? (
               <div className="ui-designer-code-gui-header">
-                <GuiGridIcon />
+                <GUIRoot fontSize="inherit" />
                 <span className="ui-designer-code-gui-name">
                   {codeState.filename
                     .split('/')

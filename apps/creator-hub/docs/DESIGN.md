@@ -3232,6 +3232,12 @@ Sizes per place: tree and GUI rows 16 (`fontSize="small"`), the Add Node menu 16
 
 The glyphs are decorative (`aria-hidden`); the label names the row. Figma-side: the rail boards' `GUI` instances draw `NodeType/GUIRoot` at 14 in White whatever the label colour, and the Default board's root "Image" row draws `NodeType/Mobile`; the `<GUIEntries>` rows (16, the label's colour) and the node's own glyph are the spec.
 
+**Decisions**
+
+| Topic | Rule |
+| --- | --- |
+| Full Screen | A placed Full Screen node reads as a Container: `NodeType/Container` and "Container" in the tree and the panel header (user decision). `NodeType/FullScreen` appears only in the Add Node menu and on the bottom-panel cards, as Figma draws it. |
+
 ### ConstraintsIcons — 25 (UI Editor — Icons)
 
 Board PositionConstraints `3486:43963` ("Position Constraints Variants"), 25 rows `3486:44001` (each 424 × 72: a 352 label cell and a 72 × 72 cell holding a 32 × 32 `ConstraintsIcons` instance, e.g. `3486:44077`). In the right panel the preview is drawn 60 × 60 beside the two Constraints dropdowns (Constraints row: h 60, gap 10, padding-right 70; dropdown column gap 6). Read November 12, 2026. Code: inspector `PropertyPanel/AnchorPresetField` and its `icons/` · Creator Hub none.
@@ -4549,6 +4555,7 @@ Code that doesn't follow Figma or these conventions yet. Every row is open: no P
 | 3D Hierarchy | The info triggers (Player, Camera, the scene root: a `div.action-button` around a hover `InfoTooltip`) are not keyboard reachable. Each becomes a `<button>` in the row's roving actions, with the 1px Snow `--focus-ring`, the tooltip on focus as well as hover, and Escape to close. Their accessible names (such as "About Player") are the user's call | `Tree/ActionArea/ActionArea.tsx`, `Hierarchy/` | inspector specialist; names: the user | open |
 | Fill (UI Editor) | The Image source is a "Path" label over a dropdown reading "None", where Fill's Image variant (`3493:163461`) draws a "Search" input (Onix, `Search` 10 glyph, White 40 placeholder) with the round `Link` and `LocalAssets` buttons beside it. The mode control sits on its own row under "Fill", where Figma puts it at the right of the "Fill" label on one h 20 header row. For the #1645 layer | `RightPanel/PropertyPanel/FillField/FillField.tsx` | inspector specialist (#1645) | open |
 | Fill (UI Editor) | Scale Type offers "Cropped", "Sliced" and "Stretched" but no Tiled, which Fill's Decisions record as a scale type with a Tiles X / Y count (user decision). For the #1431 layer | `RightPanel/PropertyPanel/field-configs.constants.ts` (`TEXTURE_MODE_OPTIONS`) | inspector specialist (#1431) | open |
+| BottomPanel2D (UI Editor) | Blocked node cards don't dim: the card's inline `opacity: isDragging ? 0.4 : 1` overrides `.ui-designer-palette-card.disabled { opacity: 0.4 }`, so a blocked card (no GUI yet, or MobileHUD selected) looks enabled. The Blocked tile draws a White 20 glyph and label | `UIDesigner/Palette/Palette.tsx`, `UIDesigner/UIDesigner.css` | inspector specialist (BottomPanel2D layer) | open |
 | LeftPanel2D, HierarchySections (UI Editor) | The rail's search field is not mapped in code, and the rail header (`.ui-designer-rail-header`, 32 tall, 11px / 400 White 50) is drift from HierarchySections | `LeftPanel/LeftPanel.tsx`, `UIDesigner.css` | inspector specialist | open |
 | Toolbar (Viewport Toolbar) | Neither bar has `role="toolbar"` with arrow-key roving focus | `Toolbar/`, `UIDesigner/Toolbar/` | inspector specialist | open |
 | Toolbar, Menu | The snap card (`Gizmos.css`) copies the old `OptionList` shadow literal `0px 3px 5px -1px rgba(0,0,0,.4)` instead of `--menu-shadow`; the CameraModeTooltip paints `#fff` and `rgb(0 0 0 / 40%)` literals (`Toolbar.css`) | `Toolbar/Gizmos/Gizmos.css`, `Toolbar/Toolbar.css` | inspector specialist | open |

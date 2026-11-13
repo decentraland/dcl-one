@@ -13,6 +13,10 @@
   gap: var(--uid-space-1);
 }
 
+.ui-designer-mobile-hud-header svg {
+  font-size: 18px;
+}
+
 .ui-designer-mobile-hud-title {
   font-weight: 600;
 }

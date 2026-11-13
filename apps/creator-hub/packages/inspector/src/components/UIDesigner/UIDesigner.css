@@ -111,6 +111,7 @@
   padding: 10px 14px;
   width: 88px;
   height: 76px;
+  color: rgba(255, 255, 255, 0.75);
   background-color: rgba(255, 255, 255, 0.02);
   transition:
     background-color 80ms linear,
@@ -139,8 +140,7 @@
 }
 
 .ui-designer-bottom-bar .ui-designer-palette-icon {
-  font-size: 22px;
-  color: rgba(255, 255, 255, 0.7);
+  font-size: 20px;
 }
 
 .ui-designer-bottom-bar .ui-designer-palette-label {
@@ -152,7 +152,6 @@
   line-height: 1.2;
   letter-spacing: 0.02em;
   text-align: center;
-  color: rgba(255, 255, 255, 0.75);
 }
 
 .ui-designer-left-rail,

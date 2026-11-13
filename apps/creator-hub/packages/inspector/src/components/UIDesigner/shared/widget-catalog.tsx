@@ -1,21 +1,32 @@
 import React from 'react';
-import { IoScanOutline } from 'react-icons/io5';
 
-import type { UINodeType, WidgetKind, WidgetPreset } from './tree-model';
 import {
-  ButtonIcon,
-  ContainerIcon,
-  DropdownFieldIcon,
-  ImageIcon,
-  InputFieldIcon,
-  LabelFieldIcon,
-} from './widget-icons';
+  Button,
+  Container,
+  Dropdown,
+  FullScreen,
+  Image,
+  Input,
+  Label,
+  Prefab,
+} from '../../Icons/figma';
+import type { IconFontSize } from '../../Icons/figma/SvgIcon';
+import {
+  classifyNode,
+  soleComponentRef,
+  type UINode,
+  type UINodeType,
+  type WidgetKind,
+  type WidgetPreset,
+} from './tree-model';
+
+type NodeTypeIcon = typeof Container;
 
 export interface WidgetDef {
   id: string;
   type: UINodeType;
   label: string;
-  icon: JSX.Element;
+  Icon: NodeTypeIcon;
   keywords?: string[];
   preset?: WidgetPreset;
 }
@@ -34,7 +45,7 @@ export const WIDGET_CATALOG: WidgetCategory[] = [
         id: 'fullscreen',
         type: 'UiEntity',
         label: 'Full Screen',
-        icon: <IoScanOutline />,
+        Icon: FullScreen,
         preset: 'fullscreen',
         keywords: ['root', 'wrapper', 'stretch', 'fill', 'screen', 'full'],
       },
@@ -42,14 +53,14 @@ export const WIDGET_CATALOG: WidgetCategory[] = [
         id: 'UiEntity',
         type: 'UiEntity',
         label: 'Container',
-        icon: <ContainerIcon />,
+        Icon: Container,
         keywords: ['box', 'panel', 'div', 'group', 'layout', 'flex'],
       },
       {
         id: 'image',
         type: 'UiEntity',
         label: 'Image',
-        icon: <ImageIcon />,
+        Icon: Image,
         preset: 'image',
         keywords: ['picture', 'texture', 'sprite', 'photo'],
       },
@@ -62,14 +73,14 @@ export const WIDGET_CATALOG: WidgetCategory[] = [
         id: 'Label',
         type: 'Label',
         label: 'Label',
-        icon: <LabelFieldIcon />,
+        Icon: Label,
         keywords: ['text', 'caption', 'title'],
       },
       {
         id: 'Button',
         type: 'Button',
         label: 'Button',
-        icon: <ButtonIcon />,
+        Icon: Button,
         keywords: ['click', 'action', 'cta'],
       },
     ],
@@ -81,14 +92,14 @@ export const WIDGET_CATALOG: WidgetCategory[] = [
         id: 'Input',
         type: 'Input',
         label: 'Input',
-        icon: <InputFieldIcon />,
+        Icon: Input,
         keywords: ['text field', 'form', 'entry'],
       },
       {
         id: 'Dropdown',
         type: 'Dropdown',
         label: 'Dropdown',
-        icon: <DropdownFieldIcon />,
+        Icon: Dropdown,
         keywords: ['select', 'combo', 'options'],
       },
     ],
@@ -98,8 +109,17 @@ export const WIDGET_CATALOG: WidgetCategory[] = [
 /** Flat list of all widgets, derived from the catalog. */
 export const WIDGET_LIST: WidgetDef[] = WIDGET_CATALOG.flatMap(c => c.items);
 
-/** Widget icons keyed by label (which coincides with the WidgetKind). */
-export const WIDGET_ICONS = Object.fromEntries(WIDGET_LIST.map(w => [w.label, w.icon])) as Record<
+const KIND_ICONS = Object.fromEntries(WIDGET_LIST.map(w => [w.label, w.Icon])) as Record<
   WidgetKind,
-  JSX.Element
+  NodeTypeIcon
 >;
+
+/** A node's NodeType glyph from the icon library: Prefab for a nested GUI, else its widget kind's. */
+export const NodeIcon: React.FC<{ node: UINode; fontSize: IconFontSize }> = ({
+  node,
+  fontSize,
+}) => {
+  const ref = (node as { componentRef?: unknown }).componentRef || soleComponentRef(node);
+  const Icon = ref ? Prefab : KIND_ICONS[classifyNode(node)];
+  return <Icon fontSize={fontSize} />;
+};
