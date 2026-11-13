@@ -24,9 +24,10 @@ const GROUPS: NotificationGroup[] = [
   {
     key: "marketplace",
     label: "Marketplace",
-    description: "Get notifications about your bids, sales, royalties, and rentals.",
+    description: "Get notifications about your bids, sales, royalties, rentals, and favorites on sale.",
     types: [
       ["item_sold", "Item Sold"],
+      ["item_discounted", "Favorite on Sale"],
       ["bid_accepted", "Bid Accepted"],
       ["bid_received", "Bid Received"],
       ["royalties_earned", "Royalties Earned"],
@@ -109,6 +110,7 @@ const GROUPS: NotificationGroup[] = [
 
 const DEFAULT_SETTINGS: Record<string, boolean> = {
   item_sold: true,
+  item_discounted: true,
   bid_accepted: true,
   bid_received: false,
   royalties_earned: true,

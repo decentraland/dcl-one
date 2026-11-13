@@ -128,25 +128,6 @@
   border-radius: 4px;
 }
 
-.shop-credits__balance {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: center;
-  gap: 8px 14px;
-  margin-top: -20px;
-  padding: 10px 16px;
-  border-radius: 8px;
-  background: rgba(21, 21, 21, 0.4);
-  font-size: 14px;
-  line-height: 1.6;
-  color: var(--sc-media);
-}
-
-.shop-credits__balance b {
-  color: var(--sc-white);
-}
-
 .shop-credits__note {
   padding: 10px 16px;
   border-radius: 8px;
@@ -906,9 +887,6 @@
   }
   .shop-credits__inner {
     gap: 32px;
-  }
-  .shop-credits__balance {
-    margin-top: -12px;
   }
   .shop-credits__faq {
     margin-top: 24px;

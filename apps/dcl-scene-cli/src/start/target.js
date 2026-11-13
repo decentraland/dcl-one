@@ -35,7 +35,8 @@
     if (form.action.endsWith('/target/connect')) {
       // Keep the selected destination visible while authorization opens separately.
       form.target = '_blank';
-      setTimeout(() => location.reload(), 3000);
+      const before = document.querySelector('.bar__acct')?.outerHTML;
+      pageRefreshWhen((doc) => doc.getElementById('connect-pending') || doc.querySelector('.bar__acct')?.outerHTML !== before, 300000);
     }
     if (form.matches('.tgt__scene-remove')) {
       event.preventDefault();

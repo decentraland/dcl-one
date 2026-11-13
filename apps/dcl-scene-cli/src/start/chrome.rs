@@ -5,7 +5,42 @@
 use axum::http::header;
 use axum::response::{IntoResponse, Response};
 
-pub(crate) const STYLE: &str = include_str!("landing.css");
+/// The CLI's tokens over ui3: its own few, the `--ui-*` map and the light
+/// scheme. A page outside this server's chrome takes these and [`ui3`].
+pub(crate) const TOKENS: &str = include_str!("tokens.css");
+
+/// The CLI's own sheet: what ui3 has no element for.
+pub(crate) const STYLE: &str = concat!(include_str!("tokens.css"), include_str!("landing.css"));
+
+const UI3_SHEETS: [&str; 3] = [
+    include_str!(concat!(
+        env!("DCL_ONE_ROOT"),
+        "/apps/ui3/src/atoms/primitives.css"
+    )),
+    include_str!(concat!(
+        env!("DCL_ONE_ROOT"),
+        "/apps/ui3/src/atoms/button.css"
+    )),
+    include_str!(concat!(
+        env!("DCL_ONE_ROOT"),
+        "/apps/ui3/src/components/surface.css"
+    )),
+];
+
+/// The ui3 tokens and elements (`.btn`, `.u-*`, `.ui-card`, `.ui-filter`),
+/// emitted ahead of [`STYLE`]. A page is one document with nothing to fetch,
+/// so an `@import` line is dropped.
+pub(crate) fn ui3() -> &'static str {
+    static CSS: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    CSS.get_or_init(|| {
+        UI3_SHEETS
+            .iter()
+            .flat_map(|sheet| sheet.lines())
+            .filter(|line| !line.trim_start().starts_with("@import"))
+            .flat_map(|line| [line, "\n"])
+            .collect()
+    })
+}
 
 pub(crate) fn esc(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
@@ -126,7 +161,7 @@ fn pgnav(prefix: &str, nav: &Nav) -> String {
     out.push_str("</nav>");
     match &nav.account {
         Some(addr) => out.push_str(&format!(
-            r#"<span class="bar__acct bar__acct--split"><a class="bar__cta" href="{href}" title="{full}">{short}</a><form method="post" action="{action}"><input type="hidden" name="token" value="{tok}"><input type="hidden" name="address" value=""><button class="bar__cta" type="submit" title="Disconnect">×</button></form></span>"#,
+            r#"<span class="bar__acct bar__acct--split"><a class="btn btn--secondary btn--sm" href="{href}" title="{full}">{short}</a><form method="post" action="{action}"><input type="hidden" name="token" value="{tok}"><input type="hidden" name="address" value=""><button class="btn btn--secondary btn--sm" type="submit" title="Disconnect">×</button></form></span>"#,
             href = esc(&format!("{prefix}/target")),
             full = esc(addr),
             short = esc(&short_account(addr)),
@@ -134,14 +169,14 @@ fn pgnav(prefix: &str, nav: &Nav) -> String {
             tok = esc(nav.token),
         )),
         None => out.push_str(&format!(
-            r#"<span class="bar__acct bar__acct--split"><button class="bar__cta" id="bar-wallet" type="button" data-wallet>Connect Wallet</button><form method="post" action="{action}"><input type="hidden" name="token" value="{tok}"><button class="bar__cta" type="submit">Connect with DCL</button></form></span>"#,
+            r#"<span class="bar__acct bar__acct--split"><button class="btn btn--secondary btn--sm" id="bar-wallet" type="button" data-wallet>Connect Wallet</button><form method="post" action="{action}"><input type="hidden" name="token" value="{tok}"><button class="btn btn--secondary btn--sm" type="submit">Connect with DCL</button></form></span>"#,
             action = esc(&format!("{prefix}/target/connect")),
             tok = esc(nav.token),
         )),
     }
     if !nav.host.is_empty() {
         out.push_str(&format!(
-            r#"<span class="jn2__host"><span class="bar__dot"></span>{}</span>"#,
+            r#"<span class="u-pill u-pill--default jn2__host"><span class="u-dot u-dot--online"></span>{}</span>"#,
             esc(&nav
                 .host
                 .strip_prefix("127.0.0.1:")
@@ -168,7 +203,7 @@ pub(crate) fn document(
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{t} — dcl-scene-cli preview</title>
-<style>{STYLE}{extra_css}</style>
+<style>{ui3}{STYLE}{extra_css}</style>
 </head>
 <body>
 <a class="skip" href="{skip_to}">{skip_label}</a>
@@ -176,11 +211,13 @@ pub(crate) fn document(
   <div class="bar__mark"><span class="bar__dot"></span>DCL Scene CLI <span id="preview-connection" data-health-url="{health_url}" role="status" aria-live="polite"></span></div>
   {nav}
 </header>
+<div class="page-feedback"><div id="page-errors" role="alert" aria-atomic="true"></div><div id="page-feedback" role="status" aria-live="polite" aria-atomic="true"></div></div>
 {body}
 </body>
 </html>
 "##,
         health_url = esc(&format!("{prefix}/about")),
+        ui3 = ui3(),
         t = esc(title),
         nav = nav.map(|n| pgnav(prefix, n)).unwrap_or_default(),
     )

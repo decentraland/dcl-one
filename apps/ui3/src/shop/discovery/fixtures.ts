@@ -10,18 +10,19 @@ import { createElement, useState, type ReactNode } from "react";
 import { MemoryRouter, Route, Routes } from "react-router";
 
 import type { AuthIdentity } from "../../data/auth/identity";
-import { createShopClient, setShopClient, type ShopClient } from "../api/shop";
+import { createShopClient, type ShopClient } from "@shop/api/shop";
 import { shopCart, type CartStore } from "../cart/store";
-import type { EvmAddress } from "../model/address";
+import type { EvmAddress } from "@shop/model/address";
 import { ShopOfferProvider, missingOfferRoute, type OfferSource } from "../detail/offers";
 import { ShopWalletProvider } from "../wallet/context";
 import type { ShopWalletHost } from "../wallet/session";
-import type { ShopTransport, TransportRequest } from "../api/signer";
-import { BOOK, ITEM, TOKEN } from "../payment/fixtures";
-import type { UnifiedListingRaw } from "./api";
+import type { ShopTransport, TransportRequest } from "@shop/api/signer";
+import { BOOK, ITEM, TOKEN } from "@shop/payment/fixtures";
+import type { UnifiedListingRaw } from "@shop/discovery/api";
 import { resetShopQueries } from "./query";
 import { primeRemoteFlags } from "./lib/remoteFlags";
-import type { RawCollectionItem } from "./lib/catalogItem";
+import type { RawCollectionItem } from "@shop/discovery/lib/catalogItem";
+import { setShopClient } from "../api/host";
 
 export type CatalogScenario = "ok" | "empty" | "error" | "outage" | "loading";
 
@@ -298,7 +299,8 @@ export function catalogTransport(scenario: CatalogScenario = "ok", overrides: Ca
     const answer = answers[path];
     if (answer === undefined) return { status: 404, body: JSON.stringify({ error: `no fixture for ${path}` }) };
     if (scenario === "empty") return { status: 200, body: JSON.stringify(path.endsWith("/suggested") ? { data: [], personalized: false } : { data: [], total: 0 }) };
-    const body = typeof answer === "function" ? (answer as (u: URL) => unknown)(url) : answer;
+    // An answer may be a promise: a test holds a read open to see the page before it lands.
+    const body = await (typeof answer === "function" ? (answer as (u: URL) => unknown)(url) : answer);
     return { status: 200, body: JSON.stringify(body) };
   };
   return Object.assign(transport, { calls });
@@ -330,8 +332,8 @@ export type HarnessProps = {
   children: ReactNode;
   /** The route pattern the page is mounted at (e.g. `/shop/item/:contractAddress/:itemId`). */
   path?: string;
-  /** Where the memory router starts. */
-  entry?: string;
+  /** Where the memory router starts: a path, or a location with its navigation state. */
+  entry?: string | { pathname: string; search?: string; state?: unknown };
   session?: SessionKind;
   scenario?: CatalogScenario;
   overrides?: CatalogAnswers;
@@ -339,8 +341,9 @@ export type HarnessProps = {
   offers?: OfferSource;
   host?: ShopWalletHost;
   cart?: CartStore;
-  /** The feature-flags service's answer (lib/remoteFlags.ts); every rollout flag is off unless named here. */
-  remoteFlags?: Record<string, boolean>;
+  /** The feature-flags service's answer (lib/remoteFlags.ts); every rollout flag is off unless named here. Null
+   * leaves it unanswered, so the page reads the service (a test stubs it). */
+  remoteFlags?: Record<string, boolean> | null;
 };
 
 /**

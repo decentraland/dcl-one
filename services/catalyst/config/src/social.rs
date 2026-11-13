@@ -245,14 +245,6 @@ pub struct SocialConfig {
     )]
     pub friendship_rate_limit_per_pair: f64,
 
-    #[arg(long, env = "AWS_SQS_ENDPOINT")]
-    pub legacy_sqs_endpoint: Option<String>,
-    #[arg(long, env = "AWS_SQS_QUEUE_URL")]
-    pub legacy_sqs_queue_url: Option<String>,
-    #[arg(long, env = "AWS_SNS_ENDPOINT")]
-    pub legacy_sns_endpoint: Option<String>,
-    #[arg(long, env = "AWS_SNS_ARN")]
-    pub legacy_sns_arn: Option<String>,
     /// Optional source Slack producer; supports SLACK_BOT_TOKEN_FILE.
     #[arg(long, env = "SLACK_BOT_TOKEN", hide_env_values = true)]
     pub referral_slack_token: Option<String>,
@@ -425,7 +417,7 @@ pub struct SocialConfig {
     #[arg(long, env = "CATALYRST_SOCIAL_RPC_ADMIN_TOKEN", hide_env_values = true)]
     pub catalyrst_social_rpc_admin_token: Option<String>,
 
-    /// Source CURRENT_VERSION string returned verbatim by social RPC /status.
+    /// Source CURRENT_VERSION string returned verbatim by the social RPC and notifications /status.
     #[arg(long, env = "CURRENT_VERSION")]
     pub social_rpc_current_version: Option<String>,
 
@@ -547,15 +539,33 @@ pub struct SocialConfig {
     #[arg(long, env = "SENDGRID_FROM_EMAIL")]
     pub sendgrid_from_email: Option<String>,
 
+    /// The generic template: outbox deliveries, confirmations and ad-hoc emails; unset records every delivery as skipped.
+    #[arg(long, env = "SENDGRID_NOTIFICATION_TEMPLATE_ID")]
+    pub sendgrid_notification_template_id: Option<String>,
+
+    /// The account confirmation email's own template; unset uses SENDGRID_NOTIFICATION_TEMPLATE_ID.
     #[arg(long, env = "SENDGRID_VALIDATE_EMAIL_TEMPLATE_ID")]
     pub sendgrid_validate_email_template_id: Option<String>,
 
+    /// The credits confirmation email's own template; unset uses SENDGRID_NOTIFICATION_TEMPLATE_ID.
     #[arg(long, env = "SENDGRID_VALIDATE_CREDITS_EMAIL_TEMPLATE_ID")]
     pub sendgrid_validate_credits_email_template_id: Option<String>,
 
-    /// The email channel of the notification outbox; unset records every delivery as skipped.
-    #[arg(long, env = "SENDGRID_NOTIFICATION_TEMPLATE_ID")]
-    pub sendgrid_notification_template_id: Option<String>,
+    /// SendGrid validates notification, confirmation and ad-hoc emails but delivers none (never the code-rendered mail).
+    #[arg(long, env = "SENDGRID_SANDBOX_MODE", default_value_t = false, action = clap::ArgAction::Set)]
+    pub sendgrid_sandbox_mode: bool,
+
+    /// HMAC key of the notification emails' unsubscribe links; unset holds notification emails pending.
+    #[arg(long, env = "SIGNING_KEY", hide_env_values = true)]
+    pub signing_key: Option<String>,
+
+    /// Public notifications origin of the email unsubscribe links.
+    #[arg(
+        long,
+        env = "NOTIFICATIONS_SERVICE_BASE_URL",
+        default_value = "https://notifications.decentraland.org"
+    )]
+    pub notifications_service_base_url: String,
 
     #[arg(
         long,
@@ -570,6 +580,18 @@ pub struct SocialConfig {
         default_value = "https://decentraland.org/marketplace"
     )]
     pub marketplace_base_url: String,
+
+    /// Bearer of POST /notifications/notifications/email; unset refuses it.
+    #[arg(long, env = "NOTIFICATION_SERVICE_TOKEN", hide_env_values = true)]
+    pub notification_service_token: Option<String>,
+
+    /// Governance's bearer of POST /notifications/notifications (`governance_*` types only); unset disables it.
+    #[arg(long, env = "NOTIFICATIONS_GOVERNANCE_TOKEN", hide_env_values = true)]
+    pub notifications_governance_token: Option<String>,
+
+    /// The rewards app's bearer of POST /notifications/notifications (`reward_*` types only); unset disables it.
+    #[arg(long, env = "NOTIFICATIONS_REWARDS_TOKEN", hide_env_values = true)]
+    pub notifications_rewards_token: Option<String>,
 
     /// Cloudflare Turnstile secret for confirm-email; unset turns the check off.
     #[arg(long, env = "TURNSTILE_SECRET_KEY", hide_env_values = true)]
@@ -601,21 +623,70 @@ pub struct SocialConfig {
     )]
     pub notification_delivery_interval_secs: u64,
 
-    // social/badges: the old catalyrst-badges settings (the art is embedded).
-    /// Bearer of the badge grant/revoke routes; unset refuses them.
+    /// Days a producer broadcast stays in every inbox before it is hidden and pruned.
+    #[arg(
+        long,
+        env = "NOTIFICATIONS_BROADCAST_HORIZON_DAYS",
+        default_value_t = 90
+    )]
+    pub notifications_broadcast_horizon_days: u64,
+    /// Pending notification emails idle this long end skipped as expired (default 7 days;
+    /// `0` never expires while SIGNING_KEY is set, other values below an hour are raised to an hour).
+    #[arg(
+        long,
+        env = "NOTIFICATION_DELIVERY_MAX_AGE_SECS",
+        default_value_t = 604_800
+    )]
+    pub notification_delivery_max_age_secs: u64,
+
+    // social/badges.
+    /// Bearer of the badge admin routes (read, grant, revoke); unset refuses them.
     #[arg(long, env = "CATALYRST_BADGES_ADMIN_TOKEN", hide_env_values = true)]
     pub catalyrst_badges_admin_token: Option<String>,
 
+    /// The base every badge asset path resolves against: upstream's CDN, so
+    /// the URLs are upstream's. `<node>/badges/assets` serves BADGES_ASSETS_DIR.
     #[arg(
         long,
         env = "BADGES_PUBLIC_ASSET_BASE_URL",
-        default_value = "https://badges.decentraland.org"
+        default_value = "https://assets-cdn.decentraland.org"
     )]
     pub badges_public_asset_base_url: String,
 
-    /// Files here override the embedded badge art one by one.
+    /// Badge art mirrored from upstream's CDN (`<badge>[/<tier>]/{2d,3d}/...`),
+    /// served at /badges/assets.
     #[arg(long, env = "BADGES_ASSETS_DIR")]
     pub badges_assets_dir: Option<String>,
+
+    /// Run the badge processor (leased: the primary only, and only while
+    /// social writes are enabled): it reads social.client_events,
+    /// content.deployments, the Polygon shop logs and mirrors and the accepted
+    /// referrals, and grants upstream's evaluated badges with their
+    /// badge_granted notifications. Off by default: a node opts in once its
+    /// sources are current (the cursors start at the head when it does).
+    #[arg(long, env = "BADGES_PROCESSOR_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
+    pub badges_processor_enabled: bool,
+
+    /// Rows (or recounted wallets) the badge processor writes per transaction.
+    #[arg(long, env = "BADGES_PROCESSOR_BATCH_SIZE", default_value_t = 200)]
+    pub badges_processor_batch_size: u32,
+
+    /// Upstream's EVENT_PROCESSING_MAX_AGE_IN_SECONDS: the badge processor
+    /// passes, without effect, an event (client event, deployment, sale)
+    /// older than this many seconds by its own time; 0 keeps every event.
+    #[arg(long, env = "BADGES_EVENT_MAX_AGE_SECS", default_value_t = 0)]
+    pub badges_event_max_age_secs: u64,
+
+    /// A deployment the node stored more than this many seconds after its
+    /// entity timestamp is history a syncing node caught up on: the badge
+    /// processor passes it without effect; 0 keeps every deployment.
+    #[arg(long, env = "BADGES_DEPLOYMENT_MAX_LAG_SECS", default_value_t = 86_400)]
+    pub badges_deployment_max_lag_secs: u64,
+    /// Count the gatekeeper's room joins and leaves toward the presence
+    /// badges (social.presence_badges): every process stores the events,
+    /// the leased badges-presence jobs apply them and close lost visits.
+    #[arg(long, env = "BADGES_PRESENCE_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
+    pub badges_presence_enabled: bool,
 
     // social/media: the autotranslate route (an external engine over the network).
     /// disabled | mock | http | llm; empty = http when TRANSLATE_BACKEND_URL
@@ -744,6 +815,36 @@ pub struct SocialConfig {
     /// Empty = `<cache dir>/.render-tmp`.
     #[arg(long, env = "PROFILE_IMAGES_RENDER_WORKDIR", default_value = "")]
     pub profile_images_render_workdir: String,
+
+    /// The Segment destination webhooks (`/events-notifier/forward*`): the
+    /// shared key of the `x-signature` HMAC. Unset, the routes answer 503.
+    #[arg(long, env = "SEGMENT_SIGNING_KEY", hide_env_values = true)]
+    pub segment_signing_key: Option<String>,
+
+    /// Refuse an explorer event whose context fails the soft checks (renderer,
+    /// event type, address, auth-chain shape, realm) instead of only logging them.
+    #[arg(long, env = "FORCE_EXPLORER_CONTEXT_VALIDATION", default_value_t = false, action = clap::ArgAction::Set)]
+    pub force_explorer_context_validation: bool,
+
+    /// The realm name an explorer event must report, with the URL below;
+    /// unset, the realm check is skipped (the notifier outside production).
+    #[arg(long, env = "SEGMENT_EXPECTED_REALM")]
+    pub segment_expected_realm: Option<String>,
+
+    #[arg(long, env = "SEGMENT_EXPECTED_REALM_URL")]
+    pub segment_expected_realm_url: Option<String>,
+
+    /// The Segment project whose `identify` events are the web auth-identify events.
+    #[arg(
+        long,
+        env = "SEGMENT_WEB_PROJECT_ID",
+        default_value = "ncCetmghaPEGFVVa1n8hKY"
+    )]
+    pub segment_web_project_id: String,
+
+    /// Days a `social.client_events` row is kept before the purge deletes it.
+    #[arg(long, env = "CLIENT_EVENTS_RETENTION_DAYS", default_value_t = 30)]
+    pub client_events_retention_days: u32,
 }
 
 /// The Pulse room authority (`comms::gatekeeper`).
@@ -872,6 +973,28 @@ mod tests {
 
     fn social(pairs: &[(&str, &str)]) -> Result<super::SocialConfig, clap::Error> {
         Config::parse_env_for_tests(BASE.iter().chain(pairs).copied()).map(|c| c.social)
+    }
+
+    #[test]
+    fn segment_webhook_settings_default_to_the_notifier_outside_production() {
+        let defaults = social(&[]).unwrap();
+        assert_eq!(defaults.segment_signing_key, None);
+        assert!(!defaults.force_explorer_context_validation);
+        assert_eq!(defaults.segment_expected_realm, None);
+        assert_eq!(defaults.segment_expected_realm_url, None);
+        assert_eq!(defaults.segment_web_project_id, "ncCetmghaPEGFVVa1n8hKY");
+        assert_eq!(defaults.client_events_retention_days, 30);
+        let configured = social(&[
+            ("SEGMENT_SIGNING_KEY", "k"),
+            ("FORCE_EXPLORER_CONTEXT_VALIDATION", "true"),
+            ("SEGMENT_EXPECTED_REALM", "main"),
+            ("CLIENT_EVENTS_RETENTION_DAYS", "7"),
+        ])
+        .unwrap();
+        assert_eq!(configured.segment_signing_key.as_deref(), Some("k"));
+        assert!(configured.force_explorer_context_validation);
+        assert_eq!(configured.segment_expected_realm.as_deref(), Some("main"));
+        assert_eq!(configured.client_events_retention_days, 7);
     }
 
     #[test]

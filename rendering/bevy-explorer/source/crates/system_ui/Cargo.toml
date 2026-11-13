@@ -7,7 +7,7 @@ edition = "2021"
 
 [features]
 inspect = []
-livekit = ["comms/livekit"]
+livekit = ["comms/livekit", "ban_block/livekit"]
 
 [dependencies]
 common = { workspace = true }
@@ -27,6 +27,7 @@ scene_material = { workspace = true }
 world_ui = { workspace = true }
 analytics = { workspace = true }
 social = { workspace = true }
+ban_block = { workspace = true }
 system_bridge = { workspace = true }
 platform = { workspace = true }
 
@@ -46,8 +47,6 @@ anyhow = { workspace = true }
 async-std = { workspace = true }
 chrono = { workspace = true }
 clap = { workspace = true }
-build-time = { workspace = true }
-futures-lite = { workspace = true }
 web-time = { workspace = true }
 copypwasmta = { workspace = true }
 

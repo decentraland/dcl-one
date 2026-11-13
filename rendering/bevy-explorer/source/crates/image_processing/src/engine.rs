@@ -31,6 +31,7 @@ impl Plugin for ImageProcessingPlugin {
     fn build(&self, app: &mut App) {
         app.add_event::<AssetForProcessing>();
         app.add_systems(Update, (check_assets, pipe_events));
+        app.preregister_asset_loader::<crate::ktx2_loader::Ktx2Loader>(&["ktx2"]);
 
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -51,6 +52,11 @@ impl Plugin for ImageProcessingPlugin {
         app.init_resource::<ImgReprocessStats>();
         app.init_resource::<DebugProcessingEnabled>();
         app.add_preview_console_command::<DebugProcessingCommand, _>(toggle_debug_processing);
+    }
+
+    fn finish(&self, app: &mut App) {
+        // after the renderer, which reports the compressed formats the gpu takes
+        app.init_asset_loader::<crate::ktx2_loader::Ktx2Loader>();
     }
 }
 
@@ -94,11 +100,23 @@ struct ImgReprocessStats {
     skip_unknown: usize,
     skip_unhashable: usize,
     skip_shouldnt_cache: usize,
+    skip_variant: usize,
     already_compressed: usize,
     started: usize,
     processed: usize,
     failed: usize,
     swapped: usize,
+}
+
+/// Frees a `.ktx2` transcode the loader stashed when its cache write is not going to happen
+/// (uncacheable or unhashable paths), so the stash holds queued work only. Anything missed here
+/// is evicted by `ktx2_loader::evict_stale_results`.
+fn drop_ktx2_result(ty: ProcessingAssetType, path: &AssetPath) {
+    if matches!(ty, ProcessingAssetType::Ktx2Cache) {
+        if let Ok(mut results) = crate::ktx2_loader::KTX2_RESULTS.lock() {
+            results.remove(&path.to_string());
+        }
+    }
 }
 
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
@@ -113,6 +131,9 @@ fn check_assets(
     mut stats: ResMut<ImgReprocessStats>,
     mut task: Local<Option<Task<(usize, usize, Vec<AssetForProcessing>)>>>,
 ) {
+    // before any early return, so stale transcodes go even when nothing can be cached
+    crate::ktx2_loader::evict_stale_results();
+
     #[cfg(not(target_arch = "wasm32"))]
     let Some(cache_root) = ipfas.ipfs_cache_path() else {
         return;
@@ -138,17 +159,40 @@ fn check_assets(
                 stats.skip_unloaded += 1;
                 continue;
             };
-            if image.is_compressed() {
+            // an abgen variant is not the original's bytes: compressing it, or writing the
+            // result over the original's cache entry, would mix the two
+            if ipfas.ipfs().served_bevy_variant(asset_path.path()) {
+                stats.skip_variant += 1;
+                continue;
+            }
+            // a `.ktx2` loads compressed already; when the loader transcoded it, the dds is
+            // waiting in `KTX2_RESULTS` to be written over the cached ktx2 bytes. a cached
+            // or bc7 ktx2 has nothing waiting and is left as it is
+            let ktx2 = asset_path.label().is_none()
+                && asset_path
+                    .path()
+                    .extension()
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case("ktx2"));
+            if ktx2 {
+                let waiting = crate::ktx2_loader::KTX2_RESULTS
+                    .lock()
+                    .is_ok_and(|results| results.contains_key(&asset_path.to_string()));
+                if !waiting {
+                    stats.already_compressed += 1;
+                    continue;
+                }
+            } else if image.is_compressed() {
                 // skip already processed
                 stats.already_compressed += 1;
                 continue;
             };
-            if image.width() as usize
-                * image.height() as usize
-                * image.texture_descriptor.format.pixel_size()
-                <= 1024
-                || image.height() <= 2 // bc7 requires 4x4 blocks, we won't save anything
-                || image.width() <= 2
+            if !ktx2
+                && (image.width() as usize
+                    * image.height() as usize
+                    * image.texture_descriptor.format.pixel_size()
+                    <= 1024
+                    || image.height() <= 2 // bc7 requires 4x4 blocks, we won't save anything
+                    || image.width() <= 2)
             {
                 stats.skip_tiny += 1;
                 continue;
@@ -160,6 +204,7 @@ fn check_assets(
             }
 
             let (ty, asset_path) = match asset_path.label() {
+                None if ktx2 => (ProcessingAssetType::Ktx2Cache, asset_path.clone_owned()),
                 None => (ProcessingAssetType::Image, asset_path.clone_owned()),
                 Some(label) if label.starts_with("Texture") => (
                     ProcessingAssetType::Gltf,
@@ -179,10 +224,12 @@ fn check_assets(
                 // skip ... ?
                 debug!("skip unknown {asset_path:?}");
                 stats.skip_unknown += 1;
+                drop_ktx2_result(ty, &asset_path);
                 continue;
             };
 
             if paths_processed.contains(&ipfs_path) {
+                // a stashed transcode is kept: it can be the one the queued write is waiting for
                 stats.total -= 1;
                 continue;
             }
@@ -191,6 +238,7 @@ fn check_assets(
             if let Ok(None) = ipfs_path.context_free_hash() {
                 // skip unhashable
                 stats.skip_unhashable += 1;
+                drop_ktx2_result(ty, &asset_path);
                 continue;
             }
 
@@ -198,16 +246,26 @@ fn check_assets(
         }
     }
 
-    // a gltf that fails to load because it is draco-compressed (the loader
-    // rejects the extension by name, and spec-compliant draco files must list
-    // it in extensionsRequired) is run through the processor once, which
-    // decompresses and persists it. the processor independently verifies the
-    // extension against the actual bytes.
+    // a gltf that fails to load because it is draco-compressed or has basisu
+    // textures (the loader rejects the extension by name, and spec-compliant
+    // files without a fallback must list it in extensionsRequired) is run
+    // through the processor once, which decompresses or transcodes and persists
+    // it. the processor independently verifies the extension against the
+    // actual bytes.
     for ev in failed_gltfs.read() {
-        if !format!("{}", ev.error).contains("KHR_draco_mesh_compression") {
+        let error = ev.error.to_string();
+        if !["KHR_draco_mesh_compression", "KHR_texture_basisu"]
+            .iter()
+            .any(|extension| error.contains(extension))
+        {
             continue;
         }
         let asset_path = ev.path.clone();
+        // a failed variant falls back to its original (`ipfs::bevy_variants`), which comes
+        // through here on its own if it fails too
+        if ipfas.ipfs().served_bevy_variant(asset_path.path()) {
+            continue;
+        }
         let Ok(Some(ipfs_path)) = IpfsPath::new_from_path(asset_path.path()) else {
             stats.skip_unknown += 1;
             continue;
@@ -224,7 +282,7 @@ fn check_assets(
         }
 
         stats.total += 1;
-        assets_to_process.push((ProcessingAssetType::DracoGltf, ipfs_path, asset_path));
+        assets_to_process.push((ProcessingAssetType::UnloadableGltf, ipfs_path, asset_path));
     }
 
     if task.is_none() && !assets_to_process.is_empty() {
@@ -242,6 +300,7 @@ fn check_assets(
                 .flat_map(|(ty, ipfs_path, base_path)| {
                     let Some(hash) = ipfs_path.hash(&ctx) else {
                         skip_unhashable += 1;
+                        drop_ktx2_result(ty, &base_path);
                         return None;
                     };
 
@@ -256,14 +315,19 @@ fn check_assets(
                     if ipfs_path.should_cache(&hash) && !loopback {
                         // `hash` comes from the entity json, so it must not steer the path
                         #[cfg(not(target_arch = "wasm32"))]
-                        let cache_path = std::path::Path::new(&cache_root)
+                        let Some(cache_path) = std::path::Path::new(&cache_root)
                             .join_relative(hash)
-                            .map(|p| p.to_string_lossy().into_owned())?;
+                            .map(|p| p.to_string_lossy().into_owned())
+                        else {
+                            drop_ktx2_result(ty, &base_path);
+                            return None;
+                        };
 
                         #[cfg(target_arch = "wasm32")]
                         let Ok(cache_path) = url
                         else {
                             skip_unhashable += 1;
+                            drop_ktx2_result(ty, &base_path);
                             return None;
                         };
 
@@ -274,6 +338,7 @@ fn check_assets(
                         })
                     } else {
                         skip_shouldnt_cache += 1;
+                        drop_ktx2_result(ty, &base_path);
                         None
                     }
                 })
@@ -355,8 +420,10 @@ fn pipe_events(
                     }
                     // the original never loaded, so a plain reload picks up the
                     // repaired cache bytes (no need for the image-swap below)
-                    ProcessingAssetType::DracoGltf => asset_server.reload(req.base_path),
+                    ProcessingAssetType::UnloadableGltf => asset_server.reload(req.base_path),
                     ProcessingAssetType::Image => asset_server.reload(req.base_path),
+                    // the loaded image already is the transcode that was just cached
+                    ProcessingAssetType::Ktx2Cache => (),
                 };
             }
             Err(_) => {

@@ -1,0 +1,62 @@
+.chip {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  height: 42px;
+  padding: 0 14px;
+  gap: 8px;
+  border-radius: var(--r-md);
+  background: var(--surface-light);
+  color: var(--ink-on-light);
+}
+/* The Shop's pills: 10px a side, the selected one 12px on its icon's side. */
+.dark {
+  height: 40px;
+  padding: 0 10px;
+  gap: 6px;
+  border-radius: var(--r-pill);
+  background: var(--white-10);
+  color: var(--text);
+}
+.dark .main {
+  gap: 6px;
+}
+.selected {
+  background: var(--accent);
+  color: var(--text);
+}
+.dark.selected {
+  padding-left: 12px;
+}
+.main {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 100%;
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  font-family: inherit;
+  cursor: pointer;
+}
+.label {
+  font-size: var(--type-16);
+  font-weight: var(--fw-semibold);
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.clear {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  margin-right: -2px;
+  padding: 0;
+  border: 1.5px solid var(--outline-faint);
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--text);
+  cursor: pointer;
+}

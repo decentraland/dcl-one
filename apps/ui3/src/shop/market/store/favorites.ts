@@ -7,9 +7,10 @@
 
 import { useSyncExternalStore } from "react";
 
-import { shopClient, type ShopClient } from "../../api/shop";
+import { type ShopClient } from "@shop/api/shop";
 import { fetchCatalogByIds, type FavoriteItem } from "../lib/catalog";
 import { favoriteKey, fetchFavoriteIds, setFavorite } from "../lib/favorites";
+import { shopClient } from "../../api/host";
 
 const BASE_KEY = "shop-favorites";
 

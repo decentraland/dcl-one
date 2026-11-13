@@ -12,6 +12,7 @@ from pathlib import Path
 import plistlib
 import shutil
 import signal
+import select
 import socket
 import subprocess
 import tempfile
@@ -38,6 +39,14 @@ class DevTest(unittest.TestCase):
             self.addCleanup(p.stop)
         with patch.dict(os.environ, {'FOUNDATION_DEV_PROFILE': 'offline'}):
             self.config = dev.settings(create=True)
+
+    def test_a_dev_stack_starts_with_the_marketplace_override_on_and_keeps_a_developers_own(self):
+        queries = []
+        with patch.object(dev, 'sql', lambda config, query, database='catalyst': queries.append(query) or ''):
+            dev.seed_dev_flags(self.config)
+        self.assertEqual(len(queries), 1)
+        self.assertIn("('dapps', 'dapps-shop-marketplace-features', true)", queries[0])
+        self.assertIn('ON CONFLICT (app, name) DO NOTHING', queries[0])
 
     def test_trades_snapshot_comes_from_a_local_file(self):
         snapshot = self.state / 'trades.sql.gz'
@@ -270,6 +279,15 @@ class DevTest(unittest.TestCase):
         self.assertEqual((program, argv), ('nats-server', dev.nats_argv(self.config)))
         self.assertNotIn('DATABASE_URL', env)
 
+    def test_two_stacks_on_one_machine_do_not_share_the_metrics_exporter(self):
+        env = dev.runtime_env(self.config)
+        self.assertEqual(env['SERVE_METRICS_BIND'], f"127.0.0.1:{self.config['port'] + 1}", "not the binary's default 5006")
+        with socket.socket() as busy:
+            busy.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            busy.bind(('127.0.0.1', self.config['port'] + 1))
+            busy.listen()
+            self.assertFalse(dev.ports_free(self.config['port']), 'a held metrics port is a held block')
+
     def test_a_busy_nats_port_moves_the_stack(self):
         base = self.config['port'] + 400
         if not dev.ports_free(base):
@@ -297,7 +315,7 @@ class DevTest(unittest.TestCase):
                 server.wait()
         self.addCleanup(stop)
         deadline = time.monotonic() + 20
-        while True:
+        for delay in dev.backoff_delays(deadline):
             try:
                 with dev.urllib.request.urlopen(f'http://127.0.0.1:{monitor}/healthz', timeout=1) as response:
                     self.assertEqual(json.loads(response.read()), {'status': 'ok'})
@@ -305,7 +323,9 @@ class DevTest(unittest.TestCase):
             except OSError:
                 self.assertIsNone(server.poll(), 'nats-server exited')
                 self.assertLess(time.monotonic(), deadline, 'nats-server did not answer')
-                time.sleep(.2)
+                time.sleep(min(delay, max(0, deadline - time.monotonic())))
+        else:
+            self.fail('nats-server did not answer')
         with socket.create_connection(('127.0.0.1', client), timeout=5) as sock:
             self.assertTrue(sock.recv(4096).startswith(b'INFO '), 'a NATS client port')
 
@@ -360,7 +380,7 @@ class DevTest(unittest.TestCase):
                 server.wait()
         self.addCleanup(stop)
         deadline = time.monotonic() + 20
-        while True:
+        for delay in dev.backoff_delays(deadline):
             try:
                 with socket.create_connection(('127.0.0.1', signaling), timeout=1) as sock:
                     sock.sendall(b'GET / HTTP/1.0\r\n\r\n')
@@ -369,7 +389,9 @@ class DevTest(unittest.TestCase):
             except OSError:
                 self.assertIsNone(server.poll(), 'livekit-server exited')
                 self.assertLess(time.monotonic(), deadline, 'livekit-server did not answer')
-                time.sleep(.2)
+                time.sleep(min(delay, max(0, deadline - time.monotonic())))
+        else:
+            self.fail('livekit-server did not answer')
 
     def test_persistent_settings_do_not_rotate_secrets(self):
         warning = io.StringIO()
@@ -433,7 +455,8 @@ class DevTest(unittest.TestCase):
                     'MARKETPLACE_TRADE_EVENTS_INDEX_ENABLED', 'CREDITS_USAGE_INDEX_ENABLED'):
             self.assertEqual(env[key], 'false', key)
         # The Shop's catalogue follows the public subgraphs and chain, as `posture show mirror` does.
-        for key in ('MARKETPLACE_MIRRORS_ENABLED', 'MARKETPLACE_NFT_INDEX_ENABLED', 'LAND_AUTHZ_INDEX_ENABLED'):
+        for key in ('MARKETPLACE_MIRRORS_ENABLED', 'MARKETPLACE_NFT_INDEX_ENABLED', 'LAND_AUTHZ_INDEX_ENABLED',
+                    'SHOP_RENTALS_INDEX_ENABLED'):
             self.assertEqual(env[key], 'true', key)
         self.assertTrue(env['MATIC_COLLECTIONS_SUBGRAPH_URL'].startswith('https://'))
         self.assertIn('index', dev.project({**self.config, 'profile': 'mirror'})['processes'])
@@ -459,6 +482,111 @@ class DevTest(unittest.TestCase):
         for key in ('STORAGE_ROOT_FOLDER', 'AB_CDN_CACHE_DIR', 'PROFILE_IMAGES_CACHE_DIR', 'BVIMPOSTERS_STORE_ROOT'):
             self.assertTrue(Path(env[key]).is_relative_to(self.state))
 
+    def test_the_testnet_profile_trades_and_relays_on_amoy(self):
+        env = dev.runtime_env({**self.config, 'profile': 'testnet'})
+        mirror = dev.runtime_env({**self.config, 'profile': 'mirror'})
+        self.assertEqual(env['VITE_SHOP_CHAIN_ID'], '80002')
+        self.assertEqual(env['COLLECTIONS_CHAIN_ID'], '80002')
+        self.assertEqual(env['CONTRACT_ADDRESSES_CHAIN_KEY'], 'amoy')
+        self.assertTrue(env['CONTRACT_ADDRESSES_URL'].startswith('https://'))
+        # On-chain cancels and executions close local trades: the trade-events index walks the testnets.
+        self.assertEqual(env['MARKETPLACE_TRADE_EVENTS_INDEX_ENABLED'], 'true')
+        self.assertEqual((env['MARKETPLACE_INDEX_CHAIN_ID_MATIC'], env['MARKETPLACE_INDEX_CHAIN_ID_ETHEREUM']), ('80002', '11155111'))
+        self.assertEqual(mirror['MARKETPLACE_TRADE_EVENTS_INDEX_ENABLED'], 'false')
+        self.assertNotIn('MARKETPLACE_INDEX_CHAIN_ID_MATIC', mirror)
+        # The NFT index knows mainnet's contracts only, so it does not walk the testnets.
+        self.assertEqual(env['MARKETPLACE_NFT_INDEX_ENABLED'], 'false')
+        self.assertEqual(mirror['MARKETPLACE_NFT_INDEX_ENABLED'], 'true')
+        self.assertEqual((env['SHOP_RENTALS_INDEX_ENABLED'], mirror['SHOP_RENTALS_INDEX_ENABLED']), ('false', 'true'))
+        self.assertIn('decentraland.zone', env['TRADES_SYNC_UPSTREAM_URL'])
+        self.assertIn('decentraland.zone', env['TRANSACTIONS_UPSTREAM_URL'])
+        self.assertTrue(env['RPC_ENDPOINT_POLYGON'].endswith('/amoy'))
+        for key in ('VITE_SHOP_CHAIN_ID', 'COLLECTIONS_CHAIN_ID', 'CONTRACT_ADDRESSES_CHAIN_KEY', 'CONTRACT_ADDRESSES_URL'):
+            self.assertNotIn(key, mirror, key)
+        # MANA settles on Amoy's venues, which the node accepts only with a testnet ETH_NETWORK, the Matic index on
+        # Amoy and Amoy's own endpoint; USD prices convert at the feed and tolerance of Amoy's marketplaces.
+        self.assertEqual(env['ETH_NETWORK'], 'sepolia')
+        self.assertEqual(env['POLYGON_CHAIN_ID'], env['COLLECTIONS_CHAIN_ID'])
+        self.assertNotIn('POLYGON_CHAIN_ID', mirror)
+        self.assertIn('80002=https://', env['TRADE_RPC_URLS'])
+        self.assertEqual(env['MANA_USD_AGGREGATOR_ADDRESS'], '0xdcf00f5f60b62b07e668a84c0cedaf6f453d416e')
+        self.assertEqual(env['USD_PEGGED_ORACLE_MAX_AGE_SECS'], '27')
+        for key in ('MANA_USD_AGGREGATOR_ADDRESS', 'USD_PEGGED_ORACLE_MAX_AGE_SECS'):
+            self.assertNotIn(key, mirror, key)
+        # Otherwise the mirror profile's catalogue passes, against the testnet subgraphs.
+        self.assertEqual(env['MARKETPLACE_MIRRORS_ENABLED'], 'true')
+        self.assertIn('index', dev.project({**self.config, 'profile': 'testnet'})['processes'])
+
+    def test_the_name_simulation_is_off_unless_asked_and_only_on_the_testnet_profile(self):
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop('FOUNDATION_DEV_NAME_SIMULATION', None)
+            self.assertNotIn('VITE_SHOP_NAME_SIMULATION', dev.runtime_env({**self.config, 'profile': 'testnet'}))
+        for asked in ('0', 'true', ''):
+            with patch.dict(os.environ, {'FOUNDATION_DEV_NAME_SIMULATION': asked}):
+                self.assertNotIn('VITE_SHOP_NAME_SIMULATION', dev.runtime_env({**self.config, 'profile': 'testnet'}), asked)
+        with patch.dict(os.environ, {'FOUNDATION_DEV_NAME_SIMULATION': '1', 'VITE_SHOP_NAME_SIMULATION': 'true'}):
+            env = dev.runtime_env({**self.config, 'profile': 'testnet'})
+            self.assertEqual((env['VITE_SHOP_NAME_SIMULATION'], env['VITE_SHOP_CHAIN_ID']), ('true', '80002'))
+            # Never on the mirror profile, which settles on Polygon, even when the shell's environment has it.
+            self.assertNotIn('VITE_SHOP_NAME_SIMULATION', dev.runtime_env({**self.config, 'profile': 'mirror'}))
+
+    def test_the_testnet_profile_settles_credits_on_amoy(self):
+        env = dev.runtime_env({**self.config, 'profile': 'testnet'})
+        mirror = dev.runtime_env({**self.config, 'profile': 'mirror'})
+        # dcl-one's own manager: the settlement gate refuses the shared upstream one (0x8052…2fb3).
+        self.assertEqual(env['CREDITS_MANAGER_CONTRACT'], '0xb65fd692d15c30c3adcacdd5ccf80e1facecfc7c')
+        self.assertNotEqual(env['CREDITS_MANAGER_CONTRACT'], '0x8052a560e6e6ac86eeb7e711a4497f639b322fb3')
+        # The Sites build trusts the same manager.
+        self.assertEqual(env['VITE_SHOP_CREDITS_MANAGER'], env['CREDITS_MANAGER_CONTRACT'])
+        self.assertEqual((env['CREDITS_USAGE_INDEX_ENABLED'], env['CREDITS_MOCK_CARD']), ('true', 'true'))
+        # Its usage index replays from the manager's deployment block, not the shared manager's.
+        self.assertEqual(env['CREDITS_USAGE_START_BLOCK'], '52152027')
+        for key in ('CREDITS_MANAGER_CONTRACT', 'VITE_SHOP_CREDITS_MANAGER', 'CREDITS_MOCK_CARD', 'CREDITS_SIGNER_KEY_FILE', 'CREDITS_USAGE_START_BLOCK'):
+            self.assertNotIn(key, mirror, key)
+        # Without a signer key in the stack's state, nothing signs credits on chain.
+        self.assertEqual(env['CREDITS_ONCHAIN_AUTHORIZE_ENABLED'], 'false')
+        self.assertNotIn('CREDITS_SIGNER_KEY_FILE', env)
+        key = self.state / 'credits-signer.key'
+        key.write_text('  \n')  # empty: the server would read no key, so authorization stays off
+        self.assertEqual(dev.runtime_env({**self.config, 'profile': 'testnet'})['CREDITS_ONCHAIN_AUTHORIZE_ENABLED'], 'false')
+        key.write_text('not a real key')
+        key.chmod(0o644)
+        warning = io.StringIO()
+        with contextlib.redirect_stderr(warning):
+            dev.runtime_env({**self.config, 'profile': 'testnet'})
+        self.assertIn('chmod 600', warning.getvalue())
+        key.chmod(0o600)
+        env = dev.runtime_env({**self.config, 'profile': 'testnet'})
+        self.assertEqual(env['CREDITS_ONCHAIN_AUTHORIZE_ENABLED'], 'true')
+        self.assertEqual(env['CREDITS_SIGNER_KEY_FILE'], str(key))
+        # The file's path is passed, never its contents.
+        self.assertNotIn('not a real key', '\n'.join(env.values()))
+
+    def test_testnet_data_never_shares_a_database_with_another_profile(self):
+        (self.state / 'postgres').mkdir()
+        (self.state / 'postgres' / 'PG_VERSION').write_text('18')
+        def run(*argv):
+            with patch.object(dev.sys, 'argv', ['foundation-dev', *argv]), \
+                    patch.object(dev, 'supervisor_running', return_value=False):
+                return dev.main()
+        with self.assertRaisesRegex(RuntimeError, 'offline profile'):
+            run('profile', 'testnet')
+        self.assertEqual(dev.settings()['profile'], 'offline')
+        run('profile', 'mirror')  # neither is testnet: allowed over existing data
+        self.assertEqual(dev.settings()['profile'], 'mirror')
+        dev.save_json(dev.SETTINGS, {**dev.settings(), 'profile': 'testnet'})
+        with self.assertRaisesRegex(RuntimeError, 'testnet profile'):
+            run('profile', 'mirror')
+        with self.assertRaisesRegex(RuntimeError, 'not a snapshot'), patch.object(dev, 'export_trades_snapshot') as export:
+            run('trades-snapshot', str(self.state / 'out.sql.gz'))
+        export.assert_not_called()
+
+    def test_a_different_profile_in_the_environment_keeps_the_saved_one_and_says_so(self):
+        warning = io.StringIO()
+        with patch.dict(os.environ, {'FOUNDATION_DEV_PROFILE': 'testnet'}), contextlib.redirect_stderr(warning):
+            self.assertEqual(dev.settings(create=True)['profile'], 'offline')
+        self.assertIn('Using saved profile offline', warning.getvalue())
+
     def test_env_names_the_running_stack_for_shell_evaluation(self):
         out = io.StringIO()
         with patch.object(dev.sys, 'argv', ['foundation-dev', 'env']), contextlib.redirect_stdout(out):
@@ -466,6 +594,7 @@ class DevTest(unittest.TestCase):
         values = dict(line.split('=', 1) for line in out.getvalue().splitlines())
         self.assertEqual(values['FOUNDATION_DEV_API_URL'], f"http://127.0.0.1:{self.config['port']}")
         self.assertEqual(values['FOUNDATION_DEV_DATABASE_URL'], dev.database_url(self.config))
+        self.assertEqual(values['FOUNDATION_DEV_STACK_PROFILE'], 'offline')
         result = subprocess.run(['bash', '-c', 'eval "$1"; echo "$FOUNDATION_DEV_SITES_URL"', '-', out.getvalue()],
                                 capture_output=True, text=True, check=True)
         self.assertEqual(result.stdout.strip(), f"http://127.0.0.1:{self.config['port'] + 2}")
@@ -494,7 +623,7 @@ class DevTest(unittest.TestCase):
         # duplicate CREATE DATABASE fails, and migration requires the stamp.
         script = self.state / 'schema-race.py'
         script.write_text(textwrap.dedent('''
-            import importlib.util, pathlib, sys, time
+            import importlib.util, pathlib, sys
             spec = importlib.util.spec_from_file_location('dev', sys.argv[1])
             d = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(d)
@@ -504,7 +633,6 @@ class DevTest(unittest.TestCase):
             def sql(config, query, db='catalyst'):
                 if 'pg_database' in query:
                     exists = database.exists()
-                    time.sleep(.2)
                     return '1' if exists else ''
                 if query == 'CREATE DATABASE catalyst':
                     database.touch(exist_ok=False)
@@ -517,15 +645,40 @@ class DevTest(unittest.TestCase):
             def run(argv, **kwargs):
                 with (d.STATE / 'actions').open('a') as log:
                     log.write(argv[2] + '\\n')
-                time.sleep(.2)
                 stamp.touch()
+            real_flock = d.fcntl.flock
+            def flock(lock, operation):
+                try:
+                    real_flock(lock, operation | d.fcntl.LOCK_NB)
+                except BlockingIOError:
+                    print('blocked', flush=True)
+                    real_flock(lock, operation)
+                print('locked', flush=True)
+                assert sys.stdin.readline().strip() == 'continue'
+            d.fcntl.flock = flock
             d.sql, d.run = sql, run
             d.apply_schema(d.settings(), 'catalyst')
         '''))
-        children = [subprocess.Popen([os.sys.executable, str(script), str(dev.__file__), str(self.state)],
-                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) for _ in range(2)]
-        for child in children:
-            self.addCleanup(lambda child=child: child.poll() is None and child.kill())
+        children = []
+        def start():
+            child = subprocess.Popen([os.sys.executable, str(script), str(dev.__file__), str(self.state)],
+                                     stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            children.append(child)
+            self.addCleanup(lambda: child.poll() is None and child.kill())
+            return child
+        def expect(child, state):
+            self.assertTrue(select.select([child.stdout], [], [], 10)[0], f'child did not reach {state}')
+            self.assertEqual(child.stdout.readline().strip(), state)
+        def release(child):
+            child.stdin.write('continue\n')
+            child.stdin.flush()
+        first = start()
+        expect(first, 'locked')
+        second = start()
+        expect(second, 'blocked')
+        release(first)
+        expect(second, 'locked')
+        release(second)
         for child in children:
             stdout, stderr = child.communicate(timeout=10)
             self.assertEqual(child.returncode, 0, stdout + stderr)
@@ -583,6 +736,62 @@ class DevTest(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, 'api-build failed'):
                 dev.wait_ready(10)
         sleep.assert_not_called()
+
+    def test_wait_narrates_progress_with_the_building_task_output(self):
+        listing = subprocess.CompletedProcess([], 0, json.dumps([
+            {'name': 'api-build', 'status': 'Running', 'is_running': True, 'exit_code': 0},
+            {'name': 'api', 'status': 'Pending', 'is_running': False, 'exit_code': 0},
+        ]))
+        log = self.state / 'api-build.log'
+        log.write_text('previous run\n')
+        def polling(*args, **kwargs):
+            with log.open('a') as output:
+                output.write('   Compiling catalyst-worlds v0.1.0\n')
+            return listing
+        with patch.object(dev, 'pc', side_effect=polling), patch.object(dev, 'PROGRESS_SECONDS', 0), \
+                patch.object(dev.urllib.request, 'urlopen', side_effect=dev.urllib.error.URLError('starting')), \
+                patch.object(dev.time, 'sleep', side_effect=InterruptedError), \
+                contextlib.redirect_stdout(io.StringIO()) as out:
+            with self.assertRaises(InterruptedError):
+                dev.wait_ready(10)
+        self.assertIn('Waiting up to 10s for the API and Sites.', out.getvalue())
+        self.assertIn('running: api-build; waiting to start: api; api-build: Compiling catalyst-worlds v0.1.0',
+                      out.getvalue())
+        self.assertNotIn('previous run', out.getvalue())
+
+    def test_last_line_uses_new_output_and_strips_terminal_sequences(self):
+        log = self.state / 'api-build.log'
+        log.write_text('a previous run with a long stale line\n')
+        position = dev.log_position(log)
+        self.assertEqual(dev.last_line(log, after=position), '')
+        with log.open('a') as output:
+            output.write('\x1b[31mCompiling\x1b[0m\r\x1b]0;build title\x07Finished\x1b[K\n')
+        self.assertEqual(dev.last_line(log, after=position), 'Finished')
+        log.write_text('truncated\n')
+        self.assertEqual(dev.last_line(log, after=position), 'truncated')
+        log.unlink()
+        log.write_text('rotated\n')
+        self.assertEqual(dev.last_line(log, after=position), 'rotated')
+
+    def test_wait_does_not_report_the_previous_builds_last_line(self):
+        (self.state / 'api-build.log').write_text('old build failed\n')
+        listing = subprocess.CompletedProcess([], 0, stdout=json.dumps([
+            {'name': 'api-build', 'is_running': True}]))
+        with patch.object(dev, 'pc', return_value=listing), patch.object(dev, 'PROGRESS_SECONDS', 0), \
+                patch.object(dev.urllib.request, 'urlopen', side_effect=dev.urllib.error.URLError('starting')), \
+                patch.object(dev.time, 'sleep', side_effect=InterruptedError), \
+                contextlib.redirect_stdout(io.StringIO()) as out:
+            with self.assertRaises(InterruptedError):
+                dev.wait_ready(10)
+        self.assertIn('running: api-build', out.getvalue())
+        self.assertNotIn('old build failed', out.getvalue())
+
+    def test_process_compose_commands_carry_a_configuration_directory(self):
+        with patch.object(dev.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0)) as run:
+            dev.pc('process', 'list')
+        env = run.call_args.kwargs['env']
+        self.assertTrue(env['XDG_CONFIG_DIRS'].endswith(f":{self.state / 'xdg'}"))
+        self.assertTrue((self.state / 'xdg/process-compose').is_dir())
 
     def test_first_pass_pending_lists_configured_mirrors_without_a_complete_pass(self):
         status = {'data': {
@@ -677,11 +886,11 @@ class DevTest(unittest.TestCase):
                 dev.pc('up', '--config', str(project), '--disable-dotenv', '--detached', '--tui=false',
                        check=True, capture_output=True, text=True)
                 deadline = time.monotonic() + 10
-                while time.monotonic() < deadline:
+                for delay in dev.backoff_delays(deadline):
                     result = dev.pc('process', 'list', '--output', 'json', capture_output=True, text=True)
                     if result.returncode == 0:
                         break
-                    time.sleep(.1)
+                    time.sleep(min(delay, max(0, deadline - time.monotonic())))
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertTrue((state / 'pc.sock').is_socket())
                 self.assertEqual(json.loads(result.stdout)[0]['name'], 'hold')
@@ -779,14 +988,14 @@ class DevTest(unittest.TestCase):
             process = subprocess.Popen([os.sys.executable, '-c', launch], stdout=log, stderr=log)
             self.addCleanup(lambda: stop(process))
             deadline = time.monotonic() + 30
-            while time.monotonic() < deadline:
+            for delay in dev.backoff_delays(deadline):
                 if process.poll() is not None:
                     self.fail((self.state / 'postgres.log').read_text())
                 try:
                     dev.sql(self.config, 'SELECT 1', 'postgres')
                     return process
                 except subprocess.CalledProcessError:
-                    time.sleep(.1)
+                    time.sleep(min(delay, max(0, deadline - time.monotonic())))
             self.fail('PostgreSQL startup timed out')
         try:
             process = start()

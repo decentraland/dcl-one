@@ -26,7 +26,7 @@ To assign admins, you need to add the **Admin Tools** smart item to your scene.
 
 > [!WARNING]
 > **📔 Note**: Update your scene to use the latest dependencies.
-> 
+>
 > <img src="/docs/creator/images/editor/admin/update-dependencies.webp" alt=" " data-size="original">
 
 
@@ -93,7 +93,7 @@ To enable this, you need to add a **Video Player** smart item to your scene and 
 
 > [!WARNING]
 >     **📔 Note**: An admin can only manage videos that play on the Video Screen smart item, not on screens added via SDK code.
-> 
+>
 >     You can include as many video screens as you want. In general, avoid having more than one different video playing at the same time, as that hurts performance a lot.
 
 
@@ -103,7 +103,7 @@ To enable this, you need to add a **Video Player** smart item to your scene and 
 
 Once the above is configured, admin users in your scene can open the admin panel and select the video tab (via the icon tabs at the top) to control these video screens.
 
-<img src="/docs/.gitbook/assets/video-sources.webp" alt="Scene name" width="300"/>
+<img src="/docs/creator/.gitbook/assets/video-sources.webp" alt="Scene name" width="300"/>
 
 If your scene has multiple independent video screens, the **Screen** dropdown lets you pick which video screen to control. The list displays the names you gave to each video screen on the Admin Tools smart item configuration.
 
@@ -127,7 +127,7 @@ A segmented control at the top of the video section lets you switch between thre
 
 - **DCL Cast**: Use Decentraland's free streaming web app to easily share your camera or screen with other players in the scene, no need to set up streaming software. Presentation controls (Previous, Next, Play video, Stop) are shown inline when a presentation is active.
 
-  <img src="/docs/.gitbook/assets/dcl-cast.webp" alt="DCL Cast" width="300"/>
+  <img src="/docs/creator/.gitbook/assets/dcl-cast.webp" alt="DCL Cast" width="300"/>
 
 - **Stream**: Play a live stream using Decentraland's free streaming infrastructure and a streaming software like OBS or StreamYard.
 
@@ -163,7 +163,7 @@ Banned players will be unable to load your scene or interact with any of its con
 
 > [!WARNING]
 > **📔 Note**: The effects of your ban are immediate and permanent. Once a player is banned, they will remain banned until the ban is lifted. While banned, a player can't see or interact with your scene, can't chat in the Nearby channel while in it, and other players in the scene can't see them.
-> 
+>
 > If a player steps outside your scene's bounds, they are no longer affected by your scene's ban rules and will see banned players once more.
 
 

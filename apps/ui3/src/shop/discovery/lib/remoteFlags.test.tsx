@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import SuggestedForYouRow from "../components/SuggestedForYouRow";
 import { catalogClient, ShopHarness } from "../fixtures";
 import { invalidateShopQueries } from "../query";
-import { fetchRemoteFlags, primeRemoteFlags, refreshRemoteFlags, REMOTE_FLAG, useRemoteFlag } from "./remoteFlags";
+import { fetchRemoteFlags, parseRemoteFlags, primeRemoteFlags, readRemoteFlags, refreshRemoteFlags, REMOTE_FLAG, remoteFlagVariant, useRemoteFlag } from "./remoteFlags";
 
 type FlagsWindow = Window & { __SHOP_FEATURE_FLAGS__?: string };
 
@@ -52,6 +52,56 @@ describe("fetchRemoteFlags", () => {
     (window as FlagsWindow).__SHOP_FEATURE_FLAGS__ = "https://flags.example/";
     await fetchRemoteFlags();
     expect(requested).toEqual(["https://flags.example/dapps.json"]);
+  });
+});
+
+describe("an HTTP error from the flags service", () => {
+  it("refuses with its status, not with a body that fails", async () => {
+    const broken = new ReadableStream({
+      start(controller) {
+        controller.error(new Error("broken error body"));
+      },
+    });
+    answers.push(() => new Response(broken, { status: 503 }));
+    await expect(readRemoteFlags()).rejects.toThrow("feature flags: HTTP 503");
+  });
+
+  it("refuses at once, without waiting on a body that never ends", async () => {
+    answers.push(() => new Response(new ReadableStream({ start() {} }), { status: 503 }));
+    const waiting = new Promise((_, reject) => setTimeout(() => reject(new Error("still waiting on the body")), 200));
+    await expect(Promise.race([readRemoteFlags(), waiting])).rejects.toThrow("feature flags: HTTP 503");
+  });
+});
+
+describe("variants", () => {
+  const LIST = "0x00000000000000000000000000000000000000aa, 0x00000000000000000000000000000000000000bb";
+
+  it("keeps an enabled variant's string payload, as upstream, and nothing of a disabled or non-string one", () => {
+    expect(
+      parseRemoteFlags({
+        flags: { "dapps-shop-my-store": true },
+        variants: {
+          "dapps-shop-my-store": { name: "testers", enabled: true, payload: { type: "string", value: LIST } },
+          "dapps-off": { name: "x", enabled: false, payload: { type: "string", value: "kept-nowhere" } },
+          "dapps-json": { name: "x", enabled: true, payload: { type: "json", value: { a: 1 } } },
+          "dapps-bare": { name: "disabled", enabled: true },
+        },
+      }),
+    ).toEqual({ flags: { "dapps-shop-my-store": true }, variants: { "dapps-shop-my-store": LIST } });
+    expect(parseRemoteFlags(null)).toEqual({ flags: {}, variants: {} });
+    expect(parseRemoteFlags({ flags: null, variants: null })).toEqual({ flags: {}, variants: {} });
+  });
+
+  it("a read publishes the variants with the flags, and a prime holds the ones it is given", async () => {
+    answers.push(json({ flags: { "dapps-shop-my-store": true }, variants: { "dapps-shop-my-store": { enabled: true, payload: { value: LIST } } } }));
+    await refreshRemoteFlags();
+    expect(remoteFlagVariant(REMOTE_FLAG.myStore)).toBe(LIST);
+    primeRemoteFlags({ "dapps-shop-my-store": true });
+    expect(remoteFlagVariant(REMOTE_FLAG.myStore)).toBeNull();
+    primeRemoteFlags({ "dapps-shop-my-store": true }, { "dapps-shop-my-store": LIST });
+    expect(remoteFlagVariant(REMOTE_FLAG.myStore)).toBe(LIST);
+    primeRemoteFlags(null);
+    expect(remoteFlagVariant(REMOTE_FLAG.myStore)).toBeNull();
   });
 });
 

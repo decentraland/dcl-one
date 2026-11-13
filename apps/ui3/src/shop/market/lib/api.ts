@@ -3,7 +3,7 @@
 // Copyright 2020 Metaverse Holdings Ltd. (marketplace), Apache-2.0.
 //
 // The seller and marketplace reads, mapped from the wire onto what the pages render, over the ONE client
-// (api/shop.ts). One deliberate change from upstream's `toMyAsset`: an owned token's open listing is a
+// (@shop/api/shop). One deliberate change from upstream's `toMyAsset`: an owned token's open listing is a
 // RESALE, so its price is kept as the MANA (or USD-pegged) amount the order signed, never converted into
 // a credit price. A 503 unavailable envelope (a route whose indexer has not caught up) is surfaced as
 // `DataUnavailable`, with the missing source, never as an empty page.
@@ -15,9 +15,11 @@ import type { NftResult } from "@catalyst-api/market/NftResult";
 import type { Order } from "@catalyst-api/market/Order";
 import type { Owner } from "@catalyst-api/market/Owner";
 import type { Sale } from "@catalyst-api/market/Sale";
-import { isShopApiError } from "../../api/client";
-import { shopClient, type ShopClient } from "../../api/shop";
-import { parseManaWei, type ManaWei } from "../../model/money";
+import { isShopApiError } from "@shop/api/client";
+import { catalogCategoryParams } from "@shop/discovery/lib/categories";
+import { type ShopClient } from "@shop/api/shop";
+import { parseManaWei, type ManaWei } from "@shop/model/money";
+import { shopClient } from "../../api/host";
 
 export type { Account, Bid, Collection, Order, Owner, Sale };
 
@@ -105,6 +107,8 @@ export type MyAssetsFilters = {
   wearableCategories?: string[];
   emoteCategories?: string[];
   onlyOnSale?: boolean;
+  /** Only what is not listed: the server filters, so every page holds a full page of them. */
+  onlyNotOnSale?: boolean;
   onlyOnRent?: boolean;
   sortBy?: MyAssetsSort;
 };
@@ -120,9 +124,11 @@ export async function fetchMyAssets(owner: string, filters: MyAssetsFilters = {}
     orderDirection: "desc",
     search: filters.search,
     itemRarity: filters.rarities,
-    wearableCategory: filters.wearableCategories,
-    emoteCategory: filters.emoteCategories,
-    isOnSale: filters.onlyOnSale ? "true" : undefined,
+    // One category per read, as the catalog's: a group (Head, Accessories) is its flag, never a list of categories,
+    // which /v1/nfts would narrow to the first.
+    ...catalogCategoryParams(filters.wearableCategories),
+    ...catalogCategoryParams(filters.emoteCategories),
+    isOnSale: filters.onlyOnSale ? "true" : filters.onlyNotOnSale ? "false" : undefined,
     isOnRent: filters.onlyOnRent ? "true" : undefined,
   });
   return { assets: res.data.map(toMyAsset), total: res.total };

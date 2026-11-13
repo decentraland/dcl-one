@@ -140,28 +140,30 @@ CREATE TABLE worlds.world_scenes (
 CREATE INDEX world_scenes_world_name_created_idx
     ON worlds.world_scenes (world_name, created_at DESC);
 
--- A scene's storage collaborators: the lowercased string entries of its
--- `metadata.logsPermissions` array, from the raw JSON text (an entry spelled
--- with escapes never matches; no stored json/jsonb value makes it fail, so it can index json
--- columns that may hold `\u0000`). The storage routes' grant
--- (`storage::has_logs_access`) and `GET /collaborator` compare against it.
-CREATE FUNCTION worlds.logs_permissions(text) RETURNS text[]
+-- A scene's storage collaborators: the string entries of its
+-- `metadata.logsPermissions` array as `JSON.parse` reads them (escapes
+-- decoded), lowercased. An entry carrying an escape PostgreSQL cannot decode
+-- (`\u0000`, a surrogate) is left out, as it names no address; so no stored
+-- json/jsonb value makes it fail, and it can index json columns that may hold
+-- `\u0000`. The storage routes' grant (`storage::has_logs_access`) and
+-- `GET /collaborator` compare against it.
+CREATE FUNCTION worlds.logs_permissions_decoded(text) RETURNS text[]
     LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
     SELECT ARRAY(
-        SELECT lower(btrim(e::text, '"'))
+        SELECT lower(e #>> '{}')
         FROM json_array_elements(CASE WHEN json_typeof($1::json) = 'array' THEN $1::json ELSE '[]'::json END) e
-        WHERE json_typeof(e) = 'string')
+        WHERE json_typeof(e) = 'string' AND e::text !~ '\\u(0000|[dD][89a-fA-F])')
 $$;
 
 -- `GET /collaborator`: the local world scenes listing the signer.
-CREATE INDEX world_scenes_logs_permissions_idx ON worlds.world_scenes
-    USING gin (worlds.logs_permissions((entity #> '{metadata,logsPermissions}')::text))
+CREATE INDEX world_scenes_logs_permissions_decoded_idx ON worlds.world_scenes
+    USING gin (worlds.logs_permissions_decoded((entity #> '{metadata,logsPermissions}')::text))
     WHERE mirror_source IS NULL;
 
 -- `GET /collaborator`: the live Genesis scenes listing the signer (partial on
 -- the predicate the query repeats; overwritten rows leave the index).
-CREATE INDEX deployments_scene_logs_permissions_idx ON content.deployments
-    USING gin (worlds.logs_permissions((entity_metadata -> 'logsPermissions')::text))
+CREATE INDEX deployments_scene_logs_permissions_decoded_idx ON content.deployments
+    USING gin (worlds.logs_permissions_decoded((entity_metadata -> 'logsPermissions')::text))
     WHERE entity_type = 'scene' AND deleter_deployment IS NULL;
 
 -- ── the permission core ────────────────────────────────────────────────────
@@ -220,8 +222,8 @@ CREATE TABLE worlds.world_access_communities (
 CREATE INDEX world_access_communities_community_idx
     ON worlds.world_access_communities (community_id);
 
--- Wallets an operator blocked on this node (the old `blocked` table: the
--- over-storage / platform block the admin routes manage). A blocked wallet
+-- Wallets an operator blocked on this node: the platform block the admin
+-- routes manage (the old `blocked` table is `quota_blocks`). A blocked wallet
 -- is refused every world room join (policy.rs, "blocked"; the old comms
 -- mint's wallet_blocked probe); the old deploy path did not consult it and
 -- neither does can_deploy.
@@ -561,3 +563,146 @@ CREATE TABLE worlds.forward_outbox (
 CREATE INDEX forward_outbox_due_idx ON worlds.forward_outbox USING btree (target, next_attempt_at, id)
     WHERE status IN ('queued', 'sending');
 -- ==== end section: forwarding ====
+
+-- ==== section: world-limits ====
+-- Per-world exceptions to the publish limits (the old WHITELIST_URL
+-- document's `max_parcels` / `max_size_in_mb`, here in bytes); NULL keeps the
+-- node default (MAX_PARCELS, the world or personal-world size cap). Workload:
+-- tens of rows written by an operator, one primary-key probe per publish and
+-- per GET /world/{name}/limits (policy.rs::world_limits). No FK to
+-- worlds.worlds: an exception may be granted before the world's first
+-- publish, and an undeployed world keeps it.
+CREATE TABLE worlds.world_limit_overrides (
+    world_name text NOT NULL,
+    max_parcels integer,
+    max_size_bytes bigint,
+    created_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    updated_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    CONSTRAINT world_limit_overrides_pkey PRIMARY KEY (world_name),
+    CONSTRAINT world_limit_overrides_world_lowercase CHECK (world_name = lower(world_name) AND world_name <> ''),
+    CONSTRAINT world_limit_overrides_max_parcels_check CHECK (max_parcels > 0),
+    CONSTRAINT world_limit_overrides_max_size_check CHECK (max_size_bytes > 0)
+);
+-- ==== end section: world-limits ====
+
+-- ==== section: partial-uploads ====
+-- Partial (multi-request) publishes (`POST /entities` with `partial=true`):
+-- a scene's files arrive over several authenticated batches keyed by the
+-- signed entity id, and the scene goes live (worlds.world_scenes) in the
+-- batch that completes its content. Workload: a handful of live uploads per
+-- node (10 per deployer, 4 per world), each with up to MAX_FILE_COUNT file
+-- rows, written once per batch under advisory locks (deployer, world, the
+-- staging budget); read by entity id per batch, summed per
+-- deployer/world/node at admission, swept by created_at every 5 minutes.
+-- No FK to worlds.worlds or world_scenes: a half-uploaded world must not
+-- create a world row (listings, validity checks); the world name is checked
+-- by the staging validation and again by the publish transaction.
+-- `entity` copies the manifest (its bytes are in the blob store under
+-- entity_id) so the blob collector keeps the content it names. `created_at`
+-- is the first batch's arrival and fixes the upload's lifetime
+-- (PENDING_DEPLOYMENT_TTL); an expired row keeps its slot and bytes charged
+-- until the cleanup job reclaims its files and deletes it. `reserved_bytes`
+-- caches sum(pending_scene_files.size) WHERE charged, rewritten with every
+-- file upsert under the budget lock. `source` is the first batch's client
+-- source key (NULL without a client address), whose live uploads share
+-- MAX_PENDING_BYTES_PER_SOURCE. The publish transaction deletes the row of
+-- any publish of the entity.
+CREATE TABLE worlds.pending_scenes (
+    entity_id text NOT NULL,
+    world_name text NOT NULL,
+    parcels text[] NOT NULL,
+    entity jsonb NOT NULL,
+    deployer text NOT NULL,
+    created_at timestamp without time zone NOT NULL,
+    initialized boolean NOT NULL DEFAULT false,
+    reserved_bytes bigint NOT NULL DEFAULT 0,
+    batches integer NOT NULL DEFAULT 0,
+    source text,
+    CONSTRAINT pending_scenes_pkey PRIMARY KEY (entity_id),
+    CONSTRAINT pending_scenes_world_lowercase CHECK (world_name = lower(world_name) AND world_name <> ''),
+    CONSTRAINT pending_scenes_deployer_lowercase CHECK (deployer = lower(deployer) AND deployer <> ''),
+    CONSTRAINT pending_scenes_reserved_nonneg CHECK (reserved_bytes >= 0),
+    CONSTRAINT pending_scenes_batches_nonneg CHECK (batches >= 0)
+);
+
+-- The expiry sweep and the live/expired cutoffs.
+CREATE INDEX pending_scenes_created_at_idx ON worlds.pending_scenes (created_at);
+-- The per-deployer upload count and byte sums.
+CREATE INDEX pending_scenes_deployer_created_at_idx ON worlds.pending_scenes (deployer, created_at);
+-- The per-world live upload count and staged byte sums.
+CREATE INDEX pending_scenes_world_name_created_at_idx ON worlds.pending_scenes (world_name, created_at);
+
+-- One row per file an upload names or stores: `stored` once this node
+-- holds it for the upload (written by a batch, or already in the store when
+-- the upload started), `written` only when one of the upload's batches
+-- stored it (the expiry cleanup unlinks nothing else), `charged` when its
+-- bytes count toward the staging budgets (false for content published
+-- content already referenced at the upload's start). Publication takes the
+-- scene's file sizes from here.
+CREATE TABLE worlds.pending_scene_files (
+    entity_id text NOT NULL,
+    hash text NOT NULL,
+    size bigint NOT NULL,
+    stored boolean NOT NULL DEFAULT false,
+    written boolean NOT NULL DEFAULT false,
+    charged boolean NOT NULL DEFAULT true,
+    CONSTRAINT pending_scene_files_pkey PRIMARY KEY (entity_id, hash),
+    CONSTRAINT pending_scene_files_size_nonneg CHECK (size >= 0),
+    CONSTRAINT pending_scene_files_entity_fkey FOREIGN KEY (entity_id)
+        REFERENCES worlds.pending_scenes (entity_id) ON DELETE CASCADE
+);
+
+-- The blob collector's `hash = ANY($1)` probe.
+CREATE INDEX pending_scene_files_hash_idx ON worlds.pending_scene_files (hash);
+
+-- The answer a partial publish gave its signer, for an idempotent retry of
+-- the completing batch (COMPLETED_UPLOAD_TTL), kept after a replace or
+-- undeploy. Written by the publish transaction that completes the upload;
+-- any other publish of the entity deletes it. Names no blob.
+CREATE TABLE worlds.completed_scene_uploads (
+    entity_id text NOT NULL,
+    deployer text NOT NULL,
+    world_name text NOT NULL,
+    parcels text[] NOT NULL,
+    creation_timestamp bigint NOT NULL,
+    completed_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    CONSTRAINT completed_scene_uploads_pkey PRIMARY KEY (entity_id)
+);
+
+CREATE INDEX completed_scene_uploads_completed_at_idx ON worlds.completed_scene_uploads (completed_at);
+
+-- Bytes each deployer sent in partial batches in its current fixed
+-- one-minute window (MAX_PARTIAL_UPLOAD_BYTES_PER_MINUTE), retries and
+-- refused batches included; stale windows are pruned by the cleanup job.
+CREATE TABLE worlds.partial_upload_rates (
+    deployer text NOT NULL,
+    window_started timestamp without time zone NOT NULL,
+    bytes bigint NOT NULL,
+    CONSTRAINT partial_upload_rates_pkey PRIMARY KEY (deployer),
+    CONSTRAINT partial_upload_rates_bytes_nonneg CHECK (bytes >= 0)
+);
+-- ==== end section: partial-uploads ====
+
+-- ==== section: world-quota ====
+-- Wallets over their storage allowance (the old `blocked` table): the
+-- block-if-over-quota pass inserts or refreshes `updated_at` every 12 hours
+-- and on demand; an unblock or a pass that no longer refreshes the row
+-- deletes it. `created_at` starts the 2-day grace after which the worlds
+-- the wallet holds (by the live NAME holder) are refused on /about and
+-- comms. Workload:
+-- tens to hundreds of rows; one primary-key probe per /about, comms
+-- admission, wallet stats and deploy, a join from the worlds listing, and a
+-- sweep per pass. Distinct from `blocked_wallets` (a platform-wide visitor
+-- ban) and `worlds.blocked_since` (an operator disable). No FK: the wallet
+-- need not own a worlds row.
+CREATE TABLE worlds.quota_blocks (
+    wallet text NOT NULL,
+    created_at timestamp without time zone NOT NULL,
+    updated_at timestamp without time zone NOT NULL,
+    CONSTRAINT quota_blocks_pkey PRIMARY KEY (wallet),
+    CONSTRAINT quota_blocks_lowercase_address CHECK (wallet ~ '^0x[0-9a-f]{40}$')
+);
+-- A wallet's worlds by stored owner: the storage usage read on every publish,
+-- GET /world/{name}/limits and GET /wallet/{wallet}/stats (core::quota::wallet_usage).
+CREATE INDEX worlds_owner_idx ON worlds.worlds (owner) WHERE owner IS NOT NULL;
+-- ==== end section: world-quota ====

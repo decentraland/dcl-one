@@ -31,10 +31,12 @@ component but computed nothing (parity card K3 SDK media, task `K3 · AudioAnaly
   no second playback path. Pitch and volume are not applied, and a 44.1 kHz clip is analysed at
   44.1 kHz (the band edges are in Hz, so the bands match; the window is 8% longer).
 - A stream (`AudioStream`, the audio of a `VideoPlayer`) is analysed from a single-slot capture
-  the uuav decoder writes on kira's streaming thread (`crates/media/src/uuav/capture.rs`), after
-  Unity's `LastAudioFrameBuffer`: never blocking, a window not taken in time is overwritten,
-  enabled only while an `AudioAnalysis` sits on the entity, nothing captured while the player
-  is not playing.
+  (`crates/media/src/capture.rs`) that the FFmpeg decoder's kira bridge
+  (`crates/media/src/ffmpeg/audio_context.rs`) writes on kira's streaming thread, after Unity's
+  `LastAudioFrameBuffer`: never blocking, a window not taken in time is overwritten, enabled
+  only while an `AudioAnalysis` sits on the entity, nothing captured while the player is not
+  playing. The decoder does not resample, so a stream is analysed at its own sample rate, which
+  the capture records.
 - The whole component is written back, the scene's parameters as received plus the result,
   as Unity's `PutMessage` does; the last values stay while the source is paused. There is no
   frame-time budget: a 2048-point FFT costs microseconds.

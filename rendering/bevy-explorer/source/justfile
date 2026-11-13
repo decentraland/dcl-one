@@ -7,6 +7,9 @@ set positional-arguments
 # the wasm rustflags (+atomics, ...) need nightly; same pin as apps/bevy-explorer/build-web.py
 wasm_toolchain := "nightly-2026-04-15"
 
+# nixos: cef's bundled libvulkan.so.1 can't find the system's vulkan drivers without this
+nixos_vulkan := if path_exists("/run/opengl-driver/share") == "true" { 'XDG_DATA_DIRS="/run/opengl-driver/share:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"' } else { "" }
+
 # build the wasm engine into deploy/web/engine/pkg, then serve the react-web page (which hosts
 # the engine + live bridge-scene preview) and open a browser at the vite dev server.
 wasm: ts-bindings
@@ -23,7 +26,7 @@ wasm: ts-bindings
     cd react-web && npm run dev -- --open
 
 # regenerate the TypeScript bindings for the ~system/BevyExplorerApi boundary from the Rust
-# structs in crates/system_api_types, into react-web/src/engine/generated (+ a barrel index.ts).
+# structs in crates/system_api_types, into library/explorer-core/engine/generated (+ a barrel index.ts).
 ts-bindings:
     {{justfile_directory()}}/scripts/gen-ts-bindings.sh
 
@@ -35,13 +38,17 @@ bundle-native: ts-bindings
     cd react-web && npm run bundle:native
     mkdir -p target && touch target/.bundle-native-stamp
 
-# bundle only if react-web or the Rust structs behind its generated types changed since the last
-# successful bundle
+# bundle only if react-web, its checked shared dependency graph,
+# or the Rust structs behind its generated types changed since the last successful bundle
 _bundle-native-if-stale:
     #!/usr/bin/env sh
     set -eu
     stamp=target/.bundle-native-stamp
-    if [ -f "$stamp" ] && [ -f assets/react-hud/app.html ] \
+    status=0
+    python3 ../../../tooling/hud_shared_inputs.py --root ../../.. --newer-than "$stamp" || status=$?
+    [ "$status" -le 1 ] || exit "$status"
+    if [ "$status" -eq 0 ] \
+       && [ -f "$stamp" ] && [ -f assets/react-hud/app.html ] \
        && [ -f assets/bridge-scene/BevyExplorerUI/about ] \
        && [ -z "$(find react-web crates/system_api_types -name node_modules -prune -o -type f -newer "$stamp" -print | head -n 1)" ]; then
         echo "HUD sources unchanged; skipping bundle (just bundle-native to force)"
@@ -54,20 +61,13 @@ _bundle-native-if-stale:
 native-debug *ARGS: _bundle-native-if-stale
     cargo build --package dcl_deno_ipc
     cargo build --bin decentra-bevy-cef
-    python3 ../../../tooling/uuav/stage-dist.py host target/debug
-    cargo run --bin decentra-bevy -- "$@"
+    {{nixos_vulkan}} cargo run --bin decentra-bevy -- "$@"
 
 # build + run the native app (release) with the CEF react HUD
 native-release *ARGS: _bundle-native-if-stale
     cargo build --release --package dcl_deno_ipc
     cargo build --release --bin decentra-bevy-cef
-    python3 ../../../tooling/uuav/stage-dist.py host target/release
-    cargo run --release --bin decentra-bevy -- "$@"
-
-# stage the UUAV video runtime set (library/uuav/dist, Git LFS) next to the test binaries, which
-# spawn it: run before `cargo test`
-stage-uuav-tests:
-    python3 ../../../tooling/uuav/stage-dist.py host target/debug/deps
+    {{nixos_vulkan}} cargo run --release --bin decentra-bevy -- "$@"
 
 # one-time per machine: fetch the CEF framework. only macos falls back to it at runtime; on linux
 # and windows the loader must find it (LD_LIBRARY_PATH on linux, see readme.md)

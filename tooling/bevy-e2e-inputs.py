@@ -126,6 +126,7 @@ def wait_for_ci(repo, sha, wait_seconds, poll_seconds=DEFAULT_POLL_SECONDS, slee
     """The commit's newest Bevy Explorer / CI pull request run once it has completed (any conclusion).
     None when the commit started no run within START_SECONDS; StillRunning past `wait_seconds`."""
     started = clock()
+    delay = min(2, poll_seconds)
     while True:
         runs = ci_runs_of(repo, sha, ('pull_request',))
         if runs and runs[0]['status'] == 'completed':
@@ -135,7 +136,9 @@ def wait_for_ci(repo, sha, wait_seconds, poll_seconds=DEFAULT_POLL_SECONDS, slee
             return None
         if now - started >= wait_seconds:
             raise StillRunning(runs[0]['id'] if runs else None)
-        sleep(poll_seconds)
+        remaining = min(wait_seconds, START_SECONDS if not runs else wait_seconds) - (now - started)
+        sleep(min(delay, remaining))
+        delay = min(delay * 2, poll_seconds)
 
 
 def against_main(repo, sha, pr, why):

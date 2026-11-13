@@ -5,13 +5,14 @@
 
 ## Context
 
-The Explorer used to play scene video through an in-process FFmpeg 6
-software decoder whose libraries came from Homebrew, apt or a download at
-CI time: nothing shipped was reproducible, every frame crossed the CPU, and
-a demuxer crash took the engine down. UUAV, the player built for the Unity
-Explorer, decodes in hardware out of process, inside a sandbox, with crash
-recovery. Its sources live at `library/uuav` and the Explorer plays every
-scene video and audio stream through it (`crates/media/src/uuav`).
+The Explorer plays scene video through an in-process FFmpeg 6 software
+decoder whose libraries come from Homebrew, apt or a download at CI time:
+nothing shipped is reproducible, every frame crosses the CPU, and a demuxer
+crash takes the engine down. UUAV decodes in hardware out of process,
+inside a sandbox, with crash recovery.
+Its sources now live at `library/uuav`; the Explorer-side integration
+follows in a later change, once it shows frames on every desktop
+platform, Windows included.
 
 ## Decision
 
@@ -47,17 +48,6 @@ scene video and audio stream through it (`crates/media/src/uuav`).
 - The workspace pins its own Rust toolchain (`library/uuav/rust-toolchain.toml`),
   independent of the Explorer's: the helper's bytes must reproduce, the
   client crate builds on whatever stable compiler the host uses.
-- The Explorer links `uuav-client` (its `uuav` feature, on by default) and
-  has no other video decoder: `ffmpeg-next` is gone from its graph. The
-  main world drives each player and polls its state and clock; kira pulls
-  the audio through a blocking decoder paced by the helper's media clock;
-  the render world turns the presented NV12 planes into the player's
-  target image before the gpu images are prepared. macOS wraps the client's
-  Metal planes without a copy; Linux uploads the shared CPU planes every
-  frame.
-- Sources stream directly: a scene content file resolves to its content
-  server url and only http(s) urls are opened, so the sandboxed helper never
-  needs file access and nothing is downloaded first.
 
 ## Consequences
 
@@ -68,22 +58,3 @@ scene video and audio stream through it (`crates/media/src/uuav`).
   located as a sibling of the executable that links the client.
 - Hardware decoding on Linux depends on the distribution's VA driver;
   without one the core decodes in software and says so.
-- Playback is checked end to end, after unity-explorer's UUAV PlayMode
-  suite: the Explorer's e2e `video` scene (`apps/bevy-explorer/e2e/scenes/video`)
-  plays a committed fixture and its spec asserts the player's events, the
-  running clock and the presented frame through the engine, on the web
-  app in the e2e workflow and on the Linux standalone, in software decode,
-  in the scenes workflow. Hardware decode on Linux and macOS, and any
-  frame on Windows, have no CI run.
-- The Explorer's CI, packaging and test runs fetch `library/uuav/dist/**`
-  from LFS and stage it next to the binaries (`tooling/uuav/stage-dist.py`);
-  the FFmpeg packages the runners used to install are gone.
-- Windows shows no video frames yet: the client presents into a D3D11 NV12
-  texture on its own device while the renderer runs on Vulkan or DX12. The
-  path (a shared NT handle into a DX12 renderer, which pins the backend;
-  Vulkan external memory; or a CPU readback as the software fallback) is an
-  open evaluation, marked `TODO(uuav-windows)` in
-  `crates/media/src/uuav/platform_windows.rs`. Audio-only sources and the
-  audio of a video play.
-- Not carried over yet: the playback rate (`AVCommand` has no rate, as
-  before) and DMA-BUF zero-copy on Linux.

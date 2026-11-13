@@ -104,13 +104,13 @@ impl Event {
         let (event, payload) = match event {
             SocialEvent::Friendship(value) => {
                 let mut value = value.clone();
-                if let Some(friendship_update::Update::Request(request)) = value.update.as_mut() {
-                    if let Some(friend) = request.friend.as_mut() {
-                        *friend = FriendProfile {
-                            address: friend.address.clone(),
-                            ..Default::default()
-                        };
-                    }
+                if let Some(friendship_update::Update::Request(request)) = value.update.as_mut()
+                    && let Some(friend) = request.friend.as_mut()
+                {
+                    *friend = FriendProfile {
+                        address: friend.address.clone(),
+                        ..Default::default()
+                    };
                 }
                 (TargetKind::Friendship, encode_proto(&value)?)
             }
@@ -344,17 +344,16 @@ impl Event {
                         exclude,
                         payload,
                     }) = Self::decode_stored(&bytes)
+                        && let Some(update) = decode_proto(&payload)
                     {
-                        if let Some(update) = decode_proto(&payload) {
-                            ctx.pubsub()
-                                .deliver_community_voice(
-                                    ctx.db().pool(),
-                                    scope,
-                                    exclude.as_deref(),
-                                    update,
-                                )
-                                .await;
-                        }
+                        ctx.pubsub()
+                            .deliver_community_voice(
+                                ctx.db().pool(),
+                                scope,
+                                exclude.as_deref(),
+                                update,
+                            )
+                            .await;
                     }
                 }
                 Ok(None) => {
@@ -406,8 +405,10 @@ impl State {
         jobs.spawn("social-event-fanout", move |job| async move {
             let _subscription = subscription;
             let initial_readiness = async {
+                let mut delay = std::time::Duration::from_millis(10);
                 while !bus.is_ready() {
-                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                    tokio::time::sleep(delay).await;
+                    delay = delay.saturating_mul(2).min(std::time::Duration::from_secs(1));
                 }
                 first_ready.store(true, std::sync::atomic::Ordering::Release);
                 // A later outage retains the source's transient pub/sub behavior.

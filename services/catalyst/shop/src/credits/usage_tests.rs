@@ -502,8 +502,8 @@ async fn the_usage_index_resumes_after_a_kill_folds_each_credit_once_and_gates_t
     assert_eq!(status, StatusCode::OK, "{v}");
     assert_eq!(v["credit"]["contract"], contract.as_str());
     assert_eq!(
-        v["maxCreditedValue"], "3060000000000000000",
-        "1.00 USD at 0.5 USD/MANA is 2 MANA; 1.02 buffer, 1.5 headroom"
+        v["maxCreditedValue"], "2040000000000000000",
+        "1.00 USD at 0.5 USD/MANA is 2 MANA; 1.02 buffer, no headroom"
     );
     let (status, _, v) = send(
         &lane,
@@ -568,6 +568,203 @@ async fn the_usage_index_resumes_after_a_kill_folds_each_credit_once_and_gates_t
     .unwrap();
     assert_eq!(pledges, 1, "the stale lane reserved nothing new");
 
+    // A new manager on the chain: a partial replay is still refused and leaves the
+    // cursor alone; a full one (CREDITS_USAGE_REPLAY_FROM_BLOCK = the start, as the
+    // refusal says) rebinds the cursor and indexes the new manager from the start.
+    let new_manager = "0x00000000000000000000000000000000000000bb";
+    let partial = super::usage::UsageIndex::new(
+        credits(),
+        Outbound::for_tests(),
+        super::usage::Settings {
+            replay_from_block: Some(5_000),
+            ..usage_settings(&rpc, chain_id, new_manager, 50)
+        },
+    );
+    let err = partial.run_pass(None, true).await.unwrap_err().to_string();
+    assert!(
+        err.contains("CREDITS_USAGE_REPLAY_FROM_BLOCK=1000"),
+        "{err}"
+    );
+    let before = super::usage::cursor(&pool, chain_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (before.contract.as_str(), before.last_block),
+        (contract.as_str(), 9_990),
+        "the refused replay rewound nothing"
+    );
+    let rebound = super::usage::UsageIndex::new(
+        credits(),
+        Outbound::for_tests(),
+        super::usage::Settings {
+            replay_from_block: Some(1000),
+            ..usage_settings(&rpc, chain_id, new_manager, 50)
+        },
+    );
+    let settlements = || async {
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM credits.usage_settlements")
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+    };
+    let settled = settlements().await;
+    // A rewind whose write fails is not consumed: the same index retries it.
+    sqlx::query(
+        "CREATE FUNCTION credits.refuse_cursor_update() RETURNS trigger LANGUAGE plpgsql \
+         AS $$ BEGIN RAISE EXCEPTION 'cursor write refused by the test'; END $$",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "CREATE TRIGGER refuse_cursor_update BEFORE UPDATE ON credits.usage_index_cursor \
+         FOR EACH ROW EXECUTE FUNCTION credits.refuse_cursor_update()",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let err = format!("{:#}", rebound.run_pass(None, true).await.unwrap_err());
+    assert!(err.contains("cursor write refused by the test"), "{err}");
+    let kept = super::usage::cursor(&pool, chain_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (kept.contract.as_str(), kept.last_block),
+        (contract.as_str(), 9_990),
+        "the failed rewind changed nothing"
+    );
+    sqlx::query("DROP TRIGGER refuse_cursor_update ON credits.usage_index_cursor")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DROP FUNCTION credits.refuse_cursor_update()")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let out = rebound.run_pass(None, true).await.unwrap();
+    assert!(out.published && out.indexed_to == 9_990, "{out:?}");
+    assert_eq!(
+        (out.usages_written, out.consumed, out.failed),
+        (0, 0, 0),
+        "{out:?}: the new manager has no log, and the old one's are not folded as its own"
+    );
+    let after = super::usage::cursor(&pool, chain_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(after.contract, new_manager);
+    assert_eq!(usages().await, 6, "the old manager's rows are kept");
+    assert_eq!(settlements().await, settled, "and nothing new settles");
+
+    // The rewind itself. A manager switch starts the new log exactly at its start,
+    // even when the old cursor stood before it; a same-manager rewind never moves
+    // the cursor forward; a partial rewind leaves another manager's cursor alone.
+    let at = |start_block: u64, manager: &str| super::usage::Settings {
+        start_block,
+        ..usage_settings(&rpc, chain_id, manager, 50)
+    };
+    let row = || async {
+        super::usage::cursor(&pool, chain_id)
+            .await
+            .unwrap()
+            .unwrap()
+    };
+    sqlx::query(
+        "UPDATE credits.usage_index_cursor SET contract = $2, last_block = 2000, \
+         folded_block = NULL, folded_block_time = NULL, folded_at = NULL WHERE chain_id = $1",
+    )
+    .bind(chain_id)
+    .bind(&contract)
+    .execute(&pool)
+    .await
+    .unwrap();
+    assert!(
+        super::usage::begin_replay(&pool, &at(5_000, new_manager), new_manager, 5_000)
+            .await
+            .unwrap()
+    );
+    let r = row().await;
+    assert_eq!(
+        (r.contract.as_str(), r.last_block, r.folded_block),
+        (new_manager, 4_999, None)
+    );
+    assert!(
+        super::usage::begin_replay(&pool, &at(5_000, new_manager), new_manager, 7_000)
+            .await
+            .unwrap()
+    );
+    assert_eq!(
+        row().await.last_block,
+        4_999,
+        "a later rewind on the same manager skips no block"
+    );
+    sqlx::query("UPDATE credits.usage_index_cursor SET last_block = 9000 WHERE chain_id = $1")
+        .bind(chain_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert!(
+        super::usage::begin_replay(&pool, &at(5_000, new_manager), new_manager, 7_000)
+            .await
+            .unwrap()
+    );
+    assert_eq!(
+        row().await.last_block,
+        6_999,
+        "a same-manager rewind goes back to the block asked"
+    );
+    assert!(
+        !super::usage::begin_replay(&pool, &at(5_000, &contract), &contract, 8_000)
+            .await
+            .unwrap()
+    );
+    let r = row().await;
+    assert_eq!(
+        (r.contract.as_str(), r.last_block),
+        (new_manager, 6_999),
+        "a partial rewind for another manager writes nothing"
+    );
+
+    // After the switch, the new manager's fold never releases a credit signed for the
+    // old one: it could have been used on a chain nothing reads any more.
+    sqlx::query(
+        "UPDATE credits.usage_index_cursor SET folded_block = last_block, \
+         folded_block_time = timezone('UTC', now()), folded_at = timezone('UTC', now()) WHERE chain_id = $1",
+    )
+    .bind(chain_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let old_pledge: String = sqlx::query_scalar(
+        "UPDATE credits.authorizations SET expires_at = timezone('UTC', now()) - interval '1 hour' \
+         WHERE address = $1 AND contract = $2 AND status = 'authorized' RETURNING id",
+    )
+    .bind(&w1.address)
+    .bind(&contract)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(credits().expire_stale_authorizations().await.unwrap(), 0);
+    assert_eq!(
+        auth_status(&pool, &old_pledge).await,
+        "authorized",
+        "the old manager's pledge stays held"
+    );
+    sqlx::query("UPDATE credits.authorizations SET contract = $2 WHERE id = $1")
+        .bind(&old_pledge)
+        .bind(new_manager)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        credits().expire_stale_authorizations().await.unwrap(),
+        1,
+        "the same pledge on the indexed manager lapses once folded past its expiry"
+    );
+    assert_eq!(auth_status(&pool, &old_pledge).await, "expired");
+
     db.drop().await;
 }
 
@@ -624,5 +821,189 @@ async fn live_usage_index_over_the_production_manager() {
     );
     assert!(out.published && rows == distinct, "{out:?}");
     assert!(index.ready_at(chrono::Utc::now()).await.is_some());
+    db.drop().await;
+}
+
+/// The job's pass (`UsageIndex::gated_pass`) folds into the ledger, so it writes only while
+/// OPS_WRITES_ENABLED is on and the restore stamps vouch for the node: with the switch off, or
+/// the installed stamps' files missing or stale, it indexes the log and neither folds nor
+/// publishes, and the authorize lane stays closed; fresh stamps fold the same usage and publish.
+#[tokio::test]
+async fn the_usage_pass_folds_and_publishes_only_while_the_switch_and_the_restore_stamps_let_it() {
+    use crate::shared::writes::restore::{
+        lab::{HOUR, StampLab},
+        scoped,
+    };
+    use crate::shared::writes::{PassGate, ops_refusal};
+    let Some(db) = OwnDatabase::create("usage_hold").await else {
+        return;
+    };
+    let pool = db.pool.clone();
+    let chain_id: i64 = 137;
+    let contract = format!("0x{}", &uuid::Uuid::new_v4().simple().to_string()[..32]) + "00000000";
+    let wallet = scratch_wallet();
+    seed_wallet(&pool, &wallet.address, "0", "100").await;
+    let pledge = salt();
+    let later = super::store::now() + chrono::Duration::minutes(10);
+    authorization(&pool, &pledge, &wallet.address, 500, "authorized", later).await;
+    let chain: SharedChain = Arc::new(std::sync::Mutex::new(ChainStub {
+        chain_id,
+        head: 2_000,
+        finalized: 1_990,
+        limit: 1_000,
+        t_base: chrono::Utc::now().timestamp() - 20_000,
+        logs: vec![credit_used_log(
+            &contract,
+            1_500,
+            0,
+            &wallet.address,
+            &pledge,
+            10u128.pow(19),
+            10u128.pow(19),
+        )],
+        get_logs: 0,
+    }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let rpc = format!("http://{}", listener.local_addr().unwrap());
+    let stub = axum::Router::new()
+        .route("/", axum::routing::post(chain_rpc))
+        .with_state(chain.clone());
+    tokio::spawn(async move { axum::serve(listener, stub).await.unwrap() });
+    let index = Arc::new(super::usage::UsageIndex::new(
+        Credits::new(pool.clone()).with_usage_index(chain_id),
+        Outbound::for_tests(),
+        usage_settings(&rpc, chain_id, &contract, 50),
+    ));
+    let gate = Arc::new(PassGate::new(super::usage::JOB_NAME, ops_refusal));
+
+    let out = index.gated_pass(None, &gate, false).await.unwrap();
+    assert!(
+        !out.published && out.indexed_to == 1_990,
+        "switch off: {out:?}"
+    );
+    let missing = StampLab::new();
+    let stale = StampLab::fresh();
+    stale.advance(27 * HOUR);
+    for (why, lab) in [
+        ("stamp files missing", &missing),
+        ("a stale backup", &stale),
+    ] {
+        let out = scoped(lab.stamps.clone(), index.gated_pass(None, &gate, true))
+            .await
+            .unwrap();
+        assert!(!out.published && out.consumed == 0, "{why}: {out:?}");
+    }
+    assert_eq!(
+        auth_status(&pool, &pledge).await,
+        "authorized",
+        "held: the used credit is indexed, not folded"
+    );
+    assert!(index.ready_at(chrono::Utc::now()).await.is_none());
+
+    let fresh = StampLab::fresh();
+    let out = scoped(fresh.stamps.clone(), index.gated_pass(None, &gate, true))
+        .await
+        .unwrap();
+    assert!(out.published && out.consumed == 1, "fresh stamps: {out:?}");
+    assert_eq!(auth_status(&pool, &pledge).await, "consumed");
+    assert!(index.ready_at(chrono::Utc::now()).await.is_some());
+
+    // A held pass says why in the job's report: the switch, or the stamp that holds it.
+    let jobs = crate::jobs::Jobs::new();
+    let stale_backup = StampLab::fresh();
+    stale_backup.advance(27 * HOUR);
+    for (name, writes_enabled, lab) in [
+        ("usage-switch-off", false, StampLab::fresh()),
+        ("usage-stale-backup", true, stale_backup),
+    ] {
+        let (index, gate) = (index.clone(), gate.clone());
+        jobs.spawn(name, move |ctx| async move {
+            scoped(
+                lab.stamps.clone(),
+                index.gated_pass(Some(&ctx), &gate, writes_enabled),
+            )
+            .await
+            .map(|_| ())
+        });
+    }
+    let done = |r: &crate::jobs::JobReport| {
+        matches!(
+            r.state,
+            crate::jobs::JobState::Finished | crate::jobs::JobState::Failed
+        )
+    };
+    let mut reports = jobs.report();
+    for _ in 0..200 {
+        if reports.iter().all(done) {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        reports = jobs.report();
+    }
+    assert!(
+        reports
+            .iter()
+            .all(|r| matches!(r.state, crate::jobs::JobState::Finished)),
+        "both passes finish"
+    );
+    let progress = |name: &str| {
+        reports
+            .iter()
+            .find(|r| r.name == name)
+            .and_then(|r| r.progress.clone())
+            .unwrap_or_default()
+    };
+    let off = progress("usage-switch-off");
+    assert!(
+        off.contains("not folded, not published") && off.contains("OPS_WRITES_ENABLED=false"),
+        "{off}"
+    );
+    let held = progress("usage-stale-backup");
+    assert!(
+        held.contains("held on this node") && held.contains("backup.json"),
+        "{held}"
+    );
+    db.drop().await;
+}
+
+/// `serve` runs the CreditUsed index through `State::spawn_jobs`, beside the other credits
+/// writers and under its restore stamps; `catalyst index` builds no credits state.
+#[tokio::test]
+async fn the_credits_jobs_carry_the_usage_index_when_it_is_configured() {
+    let Some(db) = OwnDatabase::create("usage_jobs").await else {
+        return;
+    };
+    let names = |enabled: bool| {
+        let pool = db.pool.clone();
+        async move {
+            let mut settings = Settings::parse(RawSettings::default()).unwrap();
+            settings.usage = super::usage::Settings {
+                enabled,
+                ..usage_settings(
+                    "http://127.0.0.1:9",
+                    137,
+                    "0x00000000000000000000000000000000000000aa",
+                    1,
+                )
+            };
+            let state: SharedState = Arc::new(State::with_sources(
+                pool,
+                Outbound::for_tests(),
+                settings,
+                Arc::new(super::tests::FakeMarket::default()),
+                Arc::new(MockBroker::configured()),
+                None,
+            ));
+            let jobs = crate::jobs::Jobs::new();
+            state.spawn_jobs(&jobs);
+            let names: Vec<String> = jobs.report().into_iter().map(|j| j.name).collect();
+            jobs.shutdown(std::time::Duration::from_secs(5)).await;
+            names
+        }
+    };
+    let on = names(true).await;
+    assert!(on.iter().any(|n| n == super::usage::JOB_NAME), "{on:?}");
+    let off = names(false).await;
+    assert!(!off.iter().any(|n| n == super::usage::JOB_NAME), "{off:?}");
     db.drop().await;
 }

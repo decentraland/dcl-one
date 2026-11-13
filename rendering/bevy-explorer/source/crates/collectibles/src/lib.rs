@@ -1,6 +1,7 @@
 pub mod base_wearables;
 pub mod emotes;
 pub mod ext;
+pub mod smart_wearables;
 pub mod urn;
 pub mod wearables;
 
@@ -17,7 +18,7 @@ use common::util::TaskExt;
 pub use emotes::*;
 use ipfs::{
     ipfs_path::{IpfsPath, IpfsType},
-    ActiveEntityTask, IpfsAssetServer, IpfsModifier,
+    ActiveEntityTask, ContentMap, IpfsAssetServer, IpfsModifier,
 };
 use serde::Deserialize;
 use urn::CollectibleUrn;
@@ -58,6 +59,10 @@ pub trait CollectibleType: std::fmt::Debug + TypePath + Send + Sync + 'static {
     fn source_collections() -> &'static [&'static str];
     fn extension() -> &'static str;
     fn data_extension() -> &'static str;
+    /// Extra content-path aliases a collectible's collection carries, beside `collectible.{ext}`.
+    fn with_content_aliases(content: ContentMap) -> ContentMap {
+        content
+    }
 }
 
 pub enum PointerResult<T: CollectibleType> {
@@ -321,8 +326,7 @@ pub fn request_collectibles<T: CollectibleType>(
                 debug!("got results: {:?}", entities.len());
 
                 for entity in entities {
-                    let collection = entity
-                        .content
+                    let collection = T::with_content_aliases(entity.content)
                         .with(format!("collectible.{}", T::extension()), entity.id.clone())
                         .with(
                             format!("collectible.{}", T::data_extension()),
@@ -337,6 +341,9 @@ pub fn request_collectibles<T: CollectibleType>(
                         }),
                         entity.metadata.as_ref().map(ToString::to_string),
                     );
+                    // abgen's variants of the wearable's or emote's files, as for a scene: its
+                    // models and textures read as their variants once the manifest is in
+                    ipfas.ipfs().request_bevy_variants(&entity.id);
 
                     let Some(metadata) = entity.metadata else {
                         warn!("no metadata on wearable");
@@ -417,10 +424,14 @@ pub fn request_collectibles<T: CollectibleType>(
 
         if !pointers.is_empty() {
             debug!("requesting: {:?} ({:?})", requested, pointers);
+            // ask the catalyst the entities' files are fetched from (`base_url` above), not the
+            // realm's content server: a realm on another environment resolves the same pointer
+            // to a hash that catalyst doesn't have
             *active_task = Some((
-                ipfas
-                    .ipfs()
-                    .active_entities(ipfs::ActiveEntitiesRequest::Pointers(pointers), None),
+                ipfas.ipfs().active_entities(
+                    ipfs::ActiveEntitiesRequest::Pointers(pointers),
+                    Some(base_wearables::base_url().as_str()),
+                ),
                 requested,
             ));
         }

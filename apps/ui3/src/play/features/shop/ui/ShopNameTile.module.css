@@ -1,0 +1,105 @@
+/* ShopNameTile — the design's NFTItems in its NAMEs variant at the dialogs' 150px: the NAME purple
+   (radius/slot), the shop card's shine border, the mark, the warm and cool glows, the words and the corner
+   flap, each where the design's Item frame puts it. The mark and the words are placed from the tile's
+   centre, the glows and the badge from its corner, the flap by its percentages of the tile. */
+.tile {
+  position: relative;
+  display: block;
+  flex: none;
+  width: 150px;
+  height: 150px;
+  overflow: hidden;
+  border-radius: var(--r-slot);
+  background: var(--name-card-base);
+  isolation: isolate;
+}
+.tile > img,
+.tile > span {
+  position: absolute;
+  max-width: none;
+  pointer-events: none;
+}
+
+/* The shop card's 2.5px shine border (the ItemCard's conic stroke), in the NAMEs variant's grey, laid over
+   the base as the design blends it. */
+.shine {
+  inset: 0;
+  padding: 2.5px;
+  border-radius: inherit;
+  background: conic-gradient(
+    from 220.7deg at 52.74% 52.49%,
+    var(--name-card-shine) 0deg,
+    transparent 131.44deg,
+    transparent 154.86deg,
+    var(--name-card-shine) 180deg,
+    transparent 218.62deg,
+    color-mix(in srgb, var(--name-card-shine) 85.88%, transparent) 308.73deg,
+    var(--name-card-shine) 360deg
+  );
+  mask: linear-gradient(var(--black) 0 0) content-box, linear-gradient(var(--black) 0 0);
+  mask-composite: exclude;
+  -webkit-mask-composite: xor;
+  mix-blend-mode: overlay;
+}
+.mark {
+  left: calc(50% - 0.5px);
+  top: calc(50% - 38.39px);
+  width: 35.187px;
+  height: 35.187px;
+  transform: translate(-50%, -50%);
+}
+.glowWarm {
+  left: -66.11px;
+  top: 2.83px;
+  width: 474.61px;
+  height: 435.45px;
+  transform: rotate(180deg);
+}
+.glowCool {
+  left: -141.31px;
+  top: -149.72px;
+  width: 391.51px;
+  height: 401.65px;
+  transform: rotate(140.08deg);
+}
+.label,
+.domain {
+  color: var(--text);
+  font-weight: var(--fw-semibold);
+  line-height: normal;
+  white-space: nowrap;
+  transform: translate(-50%, -50%);
+}
+.label {
+  left: calc(50% - 1.19px);
+  top: calc(50% + 1.82px);
+  font-size: var(--type-name-card-label);
+}
+.domain {
+  left: calc(50% - 1.54px);
+  top: calc(50% + 31.15px);
+  font-size: var(--type-name-card-domain);
+  opacity: 0.7;
+}
+.flap {
+  inset: -0.21% 62.26% 62.61% 0.01%;
+}
+.flapShadow {
+  inset: 8.46% 75.08% 62.94% 0.01%;
+}
+.flap,
+.flapShadow {
+  width: auto;
+  height: auto;
+}
+.badge {
+  left: 3.12px;
+  top: 4.15px;
+  width: 21.653px;
+  height: 21.653px;
+}
+
+/* The design's NewLabel, as the item tile draws it. */
+.new {
+  composes: new from './ShopItemTile.module.css';
+}

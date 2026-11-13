@@ -363,6 +363,8 @@ fn append_chat_messages(
     mut chats: EventReader<ChatEvent>,
     mut chatbox: Query<&mut ChatBox>,
     users: Query<&UserProfile>,
+    #[cfg(feature = "livekit")] ban_block: ban_block::BanBlock,
+    #[cfg(feature = "livekit")] primary_player: Res<PrimaryPlayerRes>,
 ) {
     let Ok(mut chatbox) = chatbox.single_mut() else {
         return;
@@ -382,6 +384,16 @@ fn append_chat_messages(
             };
             profile.content.eth_address.as_h160()
         };
+
+        #[cfg(feature = "livekit")]
+        if sender.is_some_and(|address| {
+            ban_block.is_blocked_either_way(address)
+                || (ev.channel == "Nearby"
+                    && ev.sender != primary_player.0
+                    && ban_block.is_addr_banned_in_scene(address))
+        }) {
+            continue;
+        }
 
         chatbox.chat_log.send(DisplayChatMessage {
             timestamp: ev.timestamp,
@@ -722,7 +734,10 @@ pub(crate) fn select_chat_tab(
 fn pipe_chats_to_scene(
     mut chat_events: EventReader<ChatEvent>,
     #[cfg(feature = "livekit")] mut dms: EventReader<comms::private_chat::PrivateChatReceived>,
-    #[cfg(feature = "livekit")] social: Res<social::SocialClient>,
+    #[cfg(feature = "livekit")] mut community_chats: EventReader<
+        comms::private_chat::CommunityChatReceived,
+    >,
+    #[cfg(feature = "livekit")] ban_block: ban_block::BanBlock,
     mut requests: EventReader<SystemApi>,
     mut senders: Local<Vec<RpcStreamSender<ChatMessage>>>,
     players: Query<&ForeignPlayer>,
@@ -767,6 +782,20 @@ fn pipe_chats_to_scene(
                 continue;
             };
 
+            // nearby chat from anyone the local user blocked, or who blocked them, is dropped
+            #[cfg(feature = "livekit")]
+            if ban_block.is_blocked_either_way(player_address) {
+                continue;
+            }
+
+            #[cfg(feature = "livekit")]
+            if chat_event.channel == "Nearby"
+                && chat_event.sender != primary_player.0
+                && ban_block.is_addr_banned_in_scene(player_address)
+            {
+                continue;
+            }
+
             let message_id = chat_message_id(player_address, chat_event.timestamp);
             debug!("chat {message_id}: {}", chat_event.message);
             (format!("{player_address:#x}"), message_id)
@@ -782,11 +811,12 @@ fn pipe_chats_to_scene(
         }
     }
 
-    // incoming DMs: the partner is both the sender and the channel; blocked senders are dropped
+    // incoming DMs: the partner is both the sender and the channel; dropped if either side
+    // blocked the other
     #[cfg(feature = "livekit")]
     for dm in dms
         .read()
-        .filter(|dm| !dm_state::blocked_by_me(&social, dm.from))
+        .filter(|dm| !ban_block.is_blocked_either_way(dm.from))
     {
         let partner = format!("{:#x}", dm.from);
         let message_id = chat_message_id(dm.from, dm.timestamp);
@@ -796,6 +826,26 @@ fn pipe_chats_to_scene(
                 sender_address: partner.clone(),
                 message: dm.message.clone(),
                 channel: partner.clone(),
+                message_id: message_id.clone(),
+            });
+        }
+    }
+
+    // incoming community messages: the channel is the community's; dropped if either side
+    // blocked the author (history keeps them, and hides them on read while the block lasts)
+    #[cfg(feature = "livekit")]
+    for chat in community_chats
+        .read()
+        .filter(|chat| !ban_block.is_blocked_either_way(chat.from))
+    {
+        let channel = comms::community_chat::channel_for(&chat.community_id);
+        let message_id = chat_message_id(chat.from, chat.timestamp);
+        debug!("{channel} {message_id}: {}", chat.message);
+        for sender in senders.iter() {
+            let _ = sender.send(ChatMessage {
+                sender_address: format!("{:#x}", chat.from),
+                message: chat.message.clone(),
+                channel: channel.clone(),
                 message_id: message_id.clone(),
             });
         }
@@ -822,7 +872,8 @@ fn emit_user_reactions(
         let Some(from) = wallet.address() else {
             continue;
         };
-        if channel != "Nearby" && channel.as_h160().is_none() {
+        if channel != "Nearby" && comms::community_chat::PrivateChatTarget::parse(channel).is_none()
+        {
             warn!("ignoring reaction in channel {channel:?}");
             continue;
         }
@@ -874,10 +925,12 @@ fn broadcast_nearby_reactions(
     }
 }
 
-/// Every reaction, the local user's included, except from blocked users.
+/// Every reaction, the local user's included, except from blocked users and, in Nearby, from
+/// other players the scene room bans.
 fn pipe_chat_reactions_to_scene(
     mut reactions: EventReader<ChatReactionEvent>,
-    #[cfg(feature = "livekit")] social: Res<social::SocialClient>,
+    #[cfg(feature = "livekit")] ban_block: ban_block::BanBlock,
+    #[cfg(feature = "livekit")] wallet: Res<Wallet>,
     mut requests: EventReader<SystemApi>,
     mut senders: Local<Vec<RpcStreamSender<ChatReactionData>>>,
 ) {
@@ -892,7 +945,11 @@ fn pipe_chat_reactions_to_scene(
 
     for ev in reactions.read() {
         #[cfg(feature = "livekit")]
-        if dm_state::blocked_by_me(&social, ev.from) {
+        if ban_block.is_blocked_either_way(ev.from)
+            || (ev.channel == "Nearby"
+                && Some(ev.from) != wallet.address()
+                && ban_block.is_addr_banned_in_scene(ev.from))
+        {
             continue;
         }
         debug!("reaction {ev:?}");
@@ -910,7 +967,7 @@ fn pipe_chat_reactions_to_scene(
 }
 
 /// `/react <channel> <message id> <emoji> [--remove]` adds or removes a reaction, the same way the
-/// HUD does. The channel is "Nearby" or the DM partner's wallet.
+/// HUD does. The channel is "Nearby", the DM partner's wallet or `community:<id>`.
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/react")]
 struct ReactCommand {

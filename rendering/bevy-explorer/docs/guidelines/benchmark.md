@@ -34,11 +34,12 @@ CI* run, whose artifacts hold the builds ([The workflow](#the-workflow)).
   number or its URL) and optionally `change_sha` (a commit of the pull request; its head by
   default), `base_sha` (a commit on main; by default the newest main build that has each
   artifact) and `runs` (1 to 3). Starting one takes write access.
-- **Optimized builds only.** CI builds every web app with wasm-opt, on pull requests as on main.
-  Setup reads `engine.optimized` from both web apps' `build-info.json` and refuses a run whose
-  change or base build is unoptimized, such as one from a CI run older than this rule. A manual
-  *Bevy Explorer / CI* run on the branch builds the same; its completion starts no benchmark, so
-  start one by hand after it.
+- **Optimized builds only.** CI builds every web app with wasm-opt, on pull requests as on main,
+  unless `BENCHMARK_ENABLED_RUNNERS` is `none`: then a pull request that compiles the engine skips
+  it, while one that reuses main's compiled engine stays optimized. Setup reads `engine.optimized`
+  from both web apps' `build-info.json` and refuses a run whose change or base build is
+  unoptimized, such as one built while the fleet was off. A manual *Bevy Explorer / CI* run on the
+  branch builds optimized; its completion starts no benchmark, so start one by hand after it.
 - **Nothing starts, silently,** for a CI run that failed, built no web app or belongs to no pull
   request, a pull request that is closed or comes from a fork, and a CI run of a commit that is no
   longer the head (the head's own run starts the benchmark). The reason is in the *Inputs* job's
@@ -168,6 +169,7 @@ Treat small GPU differences with caution: in this scene the GPU average is a few
 | Write the CSV | `--csv <path>` | `?perfCsv` (page param): the stream carries the CSV |
 | Write the log | `--log-file <path>`, or `-logFile <path>` | `?perfStream=<same-origin path>` (page param): the log streams there |
 | World | `--realm supportteam.dcl.eth` | `?realm=supportteam.dcl.eth` |
+| Walk in while measuring (by hand only) | `--autopilot-walk-to <x,y>` | — |
 
 The page hands `perfStream` and `perfCsv` to `engine_set_perf_stream(path, csv)` before
 `engine_run` (`src/web.rs`). A launch with no CSV destination is the warm-up.
@@ -187,6 +189,24 @@ launch without `--csv`, then the measured launches interleaved with the other bu
 supportteam.dcl.eth`, where `<build>` is `change_build` or `base_build`. Then write a label into
 `<dir>/runs_on.txt` and run `benchmark report <dir>` ([The runner](#the-runner)). A run that
 leaves no CSV counts as crashed.
+
+A walk-in measures content that loads during play instead of behind the loading backdrop:
+- **How it moves:** with `--autopilot-walk-to <x,y>` (native only), once measuring starts the
+  player moves in a straight line from where it arrived to the centre of that parcel at 6 m/s,
+  facing it, then stands there for the rest of the 90 s.
+- **Where to start:** arrive with `--position` more than the load distance from the target scene,
+  so it loads on the way. Walking never raises the backdrop; only a teleport or a realm change
+  does.
+- **Start on an empty parcel or an SDK7 scene.** The explorer never starts an SDK6 scene (no
+  `runtimeVersion` 7 in its metadata), so a run that arrives inside one never leaves the backdrop
+  and fails at the 300 s arrive timeout.
+- **How the walk is done:** it sets the position on the ground plane each frame
+  (`src/autopilot/walk.rs`), so no wall stops it and every run takes the same path; the physics
+  keeps the height.
+- **Example, into Genesis Plaza** (parcels −3…3, −4…9): `--realm
+  https://realm-provider-ea.decentraland.org/main --position -12,2 --distance 100
+  --autopilot-walk-to 0,2` arrives on an empty parcel 136 m west of it and walks 192 m in,
+  through the SDK7 "Genesis Plaza - Roads".
 
 ## The run
 
@@ -577,7 +597,9 @@ system in `FLEET` (`tooling/benchmark-inputs.py`) and its name in `MACHINES`
 - `BENCHMARK_ENABLED_RUNNERS`: the labels of the laptops that are online, for example
   `intel-i5,apple-m1`. Unset or empty means every laptop, so it can never silently turn the
   benchmark off. The match is a substring check, so any separator works. Clear it when the whole
-  fleet is online.
+  fleet is online. `none`, in any letter case, turns the benchmark off, and pull requests that
+  compile the engine then skip wasm-opt; any other value that names no laptop turns it off and
+  keeps them optimized.
 - `BENCHMARK_RUNS`: measured runs per build, 1 to 3; 3 when unset. A manual run's `runs` overrides
   it.
 - `BENCHMARK_QUEUE_TIMEOUT_MINUTES`: the watchdog's limit, 60 when unset.

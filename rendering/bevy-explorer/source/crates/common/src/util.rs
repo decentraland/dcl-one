@@ -598,7 +598,10 @@ impl SceneSpawnerPlus<'_, '_> {
         }
 
         for scene_ent in self.scene_spawner.iter_instance_entities(instance) {
-            let (maybe_h_mat, maybe_h_mesh) = self.query.get(scene_ent).unwrap();
+            // an entity of the instance may be gone: glTF processing despawns directional lights
+            let Ok((maybe_h_mat, maybe_h_mesh)) = self.query.get(scene_ent) else {
+                continue;
+            };
             if maybe_h_mat.is_some_and(|h| !check_handle(&self.asset_server, h.as_asset_id())) {
                 return false;
             }
@@ -676,6 +679,29 @@ pub fn is_loopback_url(url: &str) -> bool {
     url::Url::parse(url).is_ok_and(|url| url.is_loopback())
 }
 
+/// Replace every `access_token` query value with `REDACTED`, keeping the rest of the text: a
+/// LiveKit room url carries its credential there, and neither scenes nor logs may see it. A value
+/// ends at `&` or at anything that closes it in `Debug` output (a quote, bracket or whitespace), so
+/// this works on a formatted value as well as on a bare url.
+pub fn redact_access_token(text: &str) -> String {
+    const KEY: &str = "access_token=";
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find(KEY) {
+        let (head, tail) = rest.split_at(at + KEY.len());
+        out.push_str(head);
+        out.push_str("REDACTED");
+        let end = tail
+            .find(|c: char| {
+                matches!(c, '&' | '"' | '\'' | ')' | ']' | '}' | ',') || c.is_whitespace()
+            })
+            .unwrap_or(tail.len());
+        rest = &tail[end..];
+    }
+    out.push_str(rest);
+    out
+}
+
 /// True if an IP must never be reachable from scene-controlled requests (SSRF guard):
 /// loopback, private RFC1918, CGNAT, link-local (incl. cloud metadata 169.254.169.254),
 /// unique-local/link-local v6, unspecified, and v4-mapped v6 forms of the above.
@@ -712,8 +738,8 @@ pub fn is_forbidden_ip(ip: &std::net::IpAddr) -> bool {
 /// SSRF guard for scene-controlled URLs (fetch / signedFetch / readFile). Enforces an
 /// http(s)/ws(s) scheme and resolves the host, rejecting if ANY resolved address is
 /// non-public (defeats a literal private IP and static-DNS pointers to internal hosts).
-/// `allow_private` widens the allowance to the local network for local preview only (never
-/// to link-local / metadata). Returns Ok for a public destination.
+/// `allow_private` permits the local network for preview and trusted native system scenes,
+/// while excluding link-local and cloud metadata addresses.
 /// Native-only: it is invoked exclusively from the native request-executing ops; the
 /// wasm/web client relies on the browser's own network sandbox.
 #[cfg(not(target_arch = "wasm32"))]
@@ -737,8 +763,8 @@ pub async fn assert_public_url(url_str: &str, allow_private: bool) -> Result<(),
 
 /// True for addresses on this machine or its local network: loopback and RFC1918 / IPv6
 /// unique-local. Deliberately EXCLUDES link-local (`169.254/16`, `fe80::/10`) so cloud
-/// metadata (`169.254.169.254`) stays unreachable even where local network is permitted
-/// (i.e. preview). This is the set that `allow_private` opens up.
+/// metadata (`169.254.169.254` and `fd00:ec2::254`) stays unreachable even where local
+/// network access is permitted. This is the set that `allow_private` opens up.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn is_private_lan(ip: &std::net::IpAddr) -> bool {
     use std::net::IpAddr;
@@ -748,8 +774,9 @@ pub fn is_private_lan(ip: &std::net::IpAddr) -> bool {
             if let Some(mapped) = v6.to_ipv4_mapped() {
                 return is_private_lan(&IpAddr::V4(mapped));
             }
-            // unique local fc00::/7
-            v6.is_loopback() || (v6.segments()[0] & 0xfe00) == 0xfc00
+            // EC2 metadata has a unique-local IPv6 address.
+            let metadata = [0xfd00, 0xec2, 0, 0, 0, 0, 0, 0x254];
+            v6.is_loopback() || ((v6.segments()[0] & 0xfe00) == 0xfc00 && v6.segments() != metadata)
         }
     }
 }
@@ -880,6 +907,25 @@ impl Curve {
 mod tests {
     use super::*;
 
+    #[test]
+    fn redacts_only_the_access_token() {
+        assert_eq!(
+            redact_access_token("livekit:wss://x/room?access_token=secret&x=1"),
+            "livekit:wss://x/room?access_token=REDACTED&x=1"
+        );
+        assert_eq!(
+            redact_access_token("livekit:wss://x?access_token=secret"),
+            "livekit:wss://x?access_token=REDACTED"
+        );
+        assert_eq!(redact_access_token("livekit:wss://x"), "livekit:wss://x");
+        assert_eq!(
+            redact_access_token(
+                r#"SpawnRoom("livekit:wss://x?access_token=a.b-c") and Some("y?access_token=d")"#
+            ),
+            r#"SpawnRoom("livekit:wss://x?access_token=REDACTED") and Some("y?access_token=REDACTED")"#
+        );
+    }
+
     /// The egress policy hinges on this split: `allow_private` (preview) opens loopback and
     /// the local network, but link-local — including cloud metadata `169.254.169.254` — is
     /// NOT `is_private_lan`, so it stays `is_forbidden_ip` and is refused in every mode.
@@ -898,9 +944,14 @@ mod tests {
 
         // the metadata endpoint: never local network, always forbidden — so a preview
         // `allow_private` skip never reaches it.
-        let meta: IpAddr = "169.254.169.254".parse().unwrap();
-        assert!(!is_private_lan(&meta), "metadata must not be local network");
-        assert!(is_forbidden_ip(&meta), "metadata must stay forbidden");
+        for address in ["169.254.169.254", "::ffff:169.254.169.254", "fd00:ec2::254"] {
+            let meta: IpAddr = address.parse().unwrap();
+            assert!(
+                !is_private_lan(&meta),
+                "{address} must not be local network"
+            );
+            assert!(is_forbidden_ip(&meta), "{address} must stay forbidden");
+        }
 
         // ordinary public address is neither
         let pubip: IpAddr = "8.8.8.8".parse().unwrap();
@@ -923,6 +974,9 @@ mod tests {
         assert!(resolve_public_addrs("192.168.1.1", 80, true).await.is_ok());
         // link-local / metadata: refused in every mode, preview included
         assert!(resolve_public_addrs("169.254.169.254", 80, true)
+            .await
+            .is_err());
+        assert!(resolve_public_addrs("[fd00:ec2::254]", 80, true)
             .await
             .is_err());
     }
@@ -981,6 +1035,17 @@ impl JoinRelativeExt for Path {
         });
         (!escapes).then(|| self.join(rhs))
     }
+}
+
+pub fn watch_send_if_modified<T: PartialEq>(
+    watch: &tokio::sync::watch::Sender<T>,
+    value: T,
+) -> bool {
+    watch.send_if_modified(|old_value| {
+        let diff = old_value != &value;
+        *old_value = value;
+        diff
+    })
 }
 
 #[cfg(test)]

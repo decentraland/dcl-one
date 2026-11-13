@@ -11,7 +11,7 @@ let
   checkout = pkgs.runCommand "foundation-dev-service-fixture" { } ''
     cp -r ${./fixture} $out
     chmod -R u+w $out
-    mkdir -p $out/infra/dev $out/tooling
+    mkdir -p $out/infra/dev $out/tooling $out/library
     cp ${root + /flake.nix} $out/flake.nix
     cp ${root + /flake.lock} $out/flake.lock
     cp ${root + /infra/dev/shell-hook.sh} $out/infra/dev/shell-hook.sh
@@ -111,8 +111,8 @@ pkgs.testers.runNixOSTest {
     with subtest("down stops the service without a restart; up starts it"):
         foundation_dev("down")
         machine.fail("curl -sf http://127.0.0.1:5210/about")
-        machine.sleep(20)
         assert unit("ActiveState") == "inactive", "down must not trigger Restart=on-failure"
+        assert unit("SubState") == "dead", "down must leave the supervisor stopped"
         foundation_dev("up")
         api("two")
 

@@ -45,7 +45,7 @@ another browser calls the real services and is not what is compared.
   every request it makes off its origin is answered from the recording; dcl-one runs as the built
   `apps/sites` tree (`sites-preview.mts`) whose node is a replay of the same recording, so SSR and
   the browser read it too. `/shop-api` paths map to upstream routes through
-  `apps/ui3/src/shop/api/endpoints.ts`. Content pictures are deterministic placeholders of the
+  `library/shop/api/endpoints.ts`. Content pictures are deterministic placeholders of the
   recorded shape (at most 1024 px a side), telemetry is answered empty, WebSockets are closed, and
   nothing reaches the network. The sites preview may connect to loopback only: a server-side module
   that names a production host of its own is refused, and the host is listed with the page as one
@@ -78,6 +78,29 @@ or that went to a host the harness does not know is declared by the page (`unrec
 `state/shop-parity/gate.json` lists the identical ones and the recording they were found on; the gate
 fails when one of them stops being identical. An expectation records a difference, it does not
 approve one: each names the rule or code behind it.
+
+## Signed-in pages
+
+A page with `signedIn` runs signed in as a test wallet on both sides: the shared
+`single-sign-on-<address>` session both apps read, and, for the reference's decentraland-connect, its
+stored injected connection and a `window.ethereum` that answers with the account and forwards every
+other call over the network (where the recording answers it). The wallet's key comes from
+`SHOP_PARITY_WALLET_KEY` (a test wallet's 0x-prefixed key, never committed). Without it a run leaves
+the signed-in pages out, says so once, and compares every other page. The test wallet declines any
+signature or transaction a page asks for (EIP-1193 `4001`), and answers only read calls. The ephemeral key is derived from it, so the same wallet and clock give the same
+session and the same captures.
+
+Pages sign their requests at the fixed clock, which production refuses a minute later. While
+recording, a read (GET or HEAD) a page sent signed is signed again as the same wallet, at the real
+time and with the page's own metadata, before it goes out; every other request still goes out
+unsigned. A write a page signed is never sent: it would change the test wallet's state, so it is
+listed and missed. A fill without the key fails a miss the page signed rather than sending it
+unsigned. A replay answers by method, path, query and body, never by headers, so the signature is
+not part of what is compared, and a URL both a signed-in and a signed-out page read keeps one
+answer: personal fields in it (a `pickedByUser`) read the same on both sides, as everything does.
+
+The session's tests sign with viem, so they live in `test/` and run with `pnpm test` after
+`pnpm install`; the structure check runs `lib/*.test.mts`, which needs nothing installed.
 
 ## Recording
 

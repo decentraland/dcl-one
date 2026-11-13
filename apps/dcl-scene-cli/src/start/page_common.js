@@ -3,16 +3,26 @@ const PAGE_OFFLINE = 'The preview server did not answer';
 const pageToast = (() => {
   let timer;
   return (message, isError, holdMs) => {
-    let el = document.querySelector('.toast');
-    if (!el) {
-      el = document.createElement('div');
-      el.className = 'toast';
-      document.body.appendChild(el);
-    }
-    el.classList.toggle('toast--err', Boolean(isError));
+    const region = document.getElementById(isError ? 'page-errors' : 'page-feedback');
+    const el = document.createElement('div');
+    el.className = 'toast' + (isError ? ' toast--err' : '');
     el.textContent = message;
-    clearTimeout(timer);
-    timer = setTimeout(() => el.remove(), holdMs || (isError ? 6000 : 2200));
+    if (isError) {
+      const origin = document.activeElement;
+      const dismiss = document.createElement('button');
+      dismiss.type = 'button';
+      dismiss.textContent = 'Dismiss';
+      dismiss.addEventListener('click', () => {
+        const focused = el.contains(document.activeElement);
+        region.replaceChildren();
+        if (focused && origin?.isConnected) origin.focus();
+      });
+      el.appendChild(dismiss);
+    } else {
+      clearTimeout(timer);
+      timer = setTimeout(() => region.replaceChildren(), holdMs || 2200);
+    }
+    region.replaceChildren(el);
   };
 })();
 // The run's capability token, when the server put it in the page (a
@@ -74,8 +84,40 @@ const pageRememberWallet = async (address) => {
   });
 })();
 
+const pageWaitFor = async (check, timeoutMs = 60000) => {
+  const deadline = performance.now() + timeoutMs;
+  let delay = 100;
+  for (;;) {
+    const remaining = deadline - performance.now();
+    if (remaining <= 0) throw new Error('The preview did not finish updating. Refresh to try again.');
+    const ready = await check(remaining);
+    if (ready) return ready;
+    const pause = Math.min(delay, Math.max(0, deadline - performance.now()));
+    await new Promise((resolve) => setTimeout(resolve, pause));
+    delay = Math.min(delay * 2, 3000);
+  }
+};
+const pageWaitForDocument = (ready, timeoutMs) => pageWaitFor(async (remaining) => {
+  try {
+    const response = await fetch(location.href, {
+      headers: { accept: 'text/html', ...pageAuthHeaders() },
+      cache: 'no-store', signal: AbortSignal.timeout(Math.max(1, Math.min(4000, Math.floor(remaining)))),
+    });
+    if (!response.ok) return;
+    const doc = parsePage(await response.text());
+    return ready(doc) ? doc : undefined;
+  } catch {}
+}, timeoutMs);
+const pageRefreshWhen = async (ready, timeoutMs) => {
+  try {
+    await pageWaitForDocument(ready, timeoutMs);
+    location.reload();
+  } catch (error) {
+    pageToast(error.message, true);
+  }
+};
 (() => {
-  if (document.getElementById('page-warming')) setTimeout(() => location.reload(), 1200);
+  if (document.getElementById('page-warming')) pageRefreshWhen((doc) => !doc.getElementById('page-warming'));
 })();
 
 // Check the preview itself, independently of wallet and publish requests.

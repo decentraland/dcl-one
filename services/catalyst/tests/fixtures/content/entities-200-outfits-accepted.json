@@ -1,0 +1,24 @@
+{
+  "description": "GET /content/entities/outfits accepts the type (it is an upstream EntityType); nothing is deployed on the pointer, so the answer is an empty list.",
+  "request": {
+    "method": "GET",
+    "path": "/content/entities/outfits",
+    "query": {
+      "pointer": [
+        "0x0000000000000000000000000000000000000000"
+      ]
+    },
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body_json": []
+  },
+  "captured_from": "derived from decentraland/catalyst@a416565 test/integration/controller/entity-type-parsing.spec.ts",
+  "captured_at": "2026-11-04T00:00:00Z",
+  "volatile_paths": []
+}

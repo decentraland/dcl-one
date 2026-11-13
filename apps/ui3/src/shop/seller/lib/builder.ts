@@ -5,7 +5,7 @@
 // item id: a listing and a trade name `blockchainItemId`.
 
 import { catalystBase } from "../../../data/catalyst/client";
-import type { ShopSigner } from "../../api/signer";
+import type { ShopSigner } from "@shop/api/signer";
 
 type RawCollection = {
   id: string;
@@ -29,6 +29,9 @@ type RawItem = {
   is_approved?: boolean;
   total_supply?: string | number;
   created_at?: number | string;
+  /** The node's on-chain rows (`/{address}/items`) send these instead of `created_at` (ms here) and `thumbnail`. */
+  createdAt?: number | null;
+  image?: string | null;
   rarity?: string;
   type?: "wearable" | "emote";
   data?: { category?: string; wearable?: { category?: string }; emote?: { category?: string } };
@@ -147,14 +150,14 @@ function toPublishableItem(raw: RawItem, collection: CreatorCollection, base?: s
     name: raw.name,
     category: categoryOf(raw),
     rarity,
-    thumbnail: fromContents(raw.thumbnail, raw.contents, base) || fromContents("thumbnail.png", raw.contents, base),
+    thumbnail: fromContents(raw.thumbnail, raw.contents, base) || fromContents("thumbnail.png", raw.contents, base) || fromContents(raw.image ?? undefined, undefined, base),
     type: raw.type ?? "wearable",
     isPublished: raw.is_published ?? collection.isPublished,
     isApproved: raw.is_approved ?? collection.isApproved,
     totalSupply: total,
     maxSupply: max,
     remainingSupply: Math.max(0, max - total),
-    createdAt: raw.created_at ? Number(raw.created_at) * 1000 : undefined,
+    createdAt: raw.created_at ? Number(raw.created_at) * 1000 : (raw.createdAt ?? undefined),
     minters: collection.minters,
   };
 }

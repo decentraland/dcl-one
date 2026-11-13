@@ -70,7 +70,7 @@ use self::{
 };
 use dcl_component::ComponentNameRegistry;
 
-mod asset_preload;
+pub mod asset_preload;
 pub mod automatic_testing;
 /// Region decomposition, in `common` so `comms` can reach it too; re-exported here because this is
 /// where it has always lived for callers.
@@ -79,9 +79,11 @@ pub mod gltf_resolver;
 pub mod initialize_scene;
 pub mod load_timing;
 pub mod permissions;
+pub mod portables;
 pub mod primary_entities;
 pub mod renderer_context;
 pub mod scene_partition;
+pub mod scene_spawn_slice;
 mod scene_traffic;
 #[cfg(test)]
 pub mod test;
@@ -98,6 +100,9 @@ pub struct SceneUpdates {
     pub update_deadline: SystemTime,
     pub eligible_jobs: usize,
     pub loop_end_time: Instant,
+    /// The frame length `run_scene_loop` last targeted (vsync refresh rate or the fps target,
+    /// with the session override); None when the target is uncapped (fps 0).
+    pub frame_target: Option<Duration>,
     pub scene_queue: VecDeque<(Entity, FloatOrd)>,
     /// Engine frames since startup (one per `update_scene_priority` run).
     pub frames: u64,
@@ -368,6 +373,7 @@ impl Plugin for SceneRunnerPlugin {
             eligible_jobs: 0,
             scene_queue: Default::default(),
             loop_end_time: Instant::now(),
+            frame_target: None,
             priority_scenes: Default::default(),
             frames: 0,
             skipped_in_flight: 0,
@@ -394,6 +400,7 @@ impl Plugin for SceneRunnerPlugin {
         );
 
         app.add_plugins(SceneLifecyclePlugin);
+        app.add_plugins(portables::PortableExperiencesPlugin);
 
         app.add_systems(
             Update,
@@ -439,6 +446,7 @@ impl Plugin for SceneRunnerPlugin {
             app.add_plugins(LightsPlugin);
         }
         app.add_plugins(AssetPreloadPlugin);
+        app.add_plugins(scene_spawn_slice::SceneSpawnSlicePlugin);
 
         app.add_systems(Update, update_scene_room.in_set(SceneSets::PostLoop));
         app.init_resource::<load_timing::FirstRingTiming>();
@@ -501,7 +509,9 @@ fn run_scene_loop(world: &mut World) {
     let target_end_time = loop_schedule.next_frame_end.clamp(earliest_end, latest_end);
     loop_schedule.next_frame_end = target_end_time + frame_target_duration;
 
-    world.resource_mut::<SceneUpdates>().loop_end_time = target_end_time;
+    let mut updates = world.resource_mut::<SceneUpdates>();
+    updates.loop_end_time = target_end_time;
+    updates.frame_target = (fps != 0.0).then_some(frame_target_duration);
 
     // run at least once to collect updates even if no scenes are eligible
     let mut run_once = false;
@@ -822,7 +832,7 @@ impl ContainingScene<'_, '_> {
     }
 
     // get all scenes along a ray ordered by closest point, together with distance to closest point
-    pub fn get_ray(&self, mut position: Vec3, mut ray: Vec3) -> Vec<(Entity, f32)> {
+    pub fn get_ray(&self, position: Vec3, mut ray: Vec3) -> Vec<(Entity, f32)> {
         // global scenes first
         let mut results: Vec<(Entity, f32)> = self
             .portable_scenes
@@ -841,54 +851,228 @@ impl ContainingScene<'_, '_> {
             ray = ray.normalize() * 1000.0;
         }
 
-        let offset: Vec3 = Vec3::new(ray.x.signum() * 0.01, 0.0, ray.z.signum() * 0.01);
+        let length = ray.length();
+        let dir = ray / length;
+        if !length.is_finite() || length <= 0.0 || !position.is_finite() {
+            return results;
+        }
+        let mut parcel = vec3_to_parcel(position);
 
         loop {
-            let adj_position = position + offset;
+            if let Some(scene) = self.get_parcel_position(parcel_to_vec3(parcel)) {
+                if !results.iter().any(|(ent, _)| *ent == scene) {
+                    results.push((scene, distance));
+                }
+            }
 
-            results.extend(
-                self.get_parcel_position(position)
-                    .map(|parcel| (parcel, distance)),
-            );
-
-            let x_dist = if ray.x < 0.0 {
-                (((adj_position.x / 16.0).floor() * 16.0) - position.x) / ray.x
-            } else if ray.x > 0.0 {
-                (((adj_position.x / 16.0).ceil() * 16.0) - position.x) / ray.x
+            // distance along the ray to the current parcel's far edge on each axis
+            let x_dist = if dir.x > 0.0 {
+                ((parcel.x + 1) as f32 * PARCEL_SIZE - position.x) / dir.x
+            } else if dir.x < 0.0 {
+                (parcel.x as f32 * PARCEL_SIZE - position.x) / dir.x
             } else {
-                999.0
+                f32::INFINITY
             };
-            let z_dist = if ray.z < 0.0 {
-                (((adj_position.z / 16.0).floor() * 16.0) - position.z) / ray.z
-            } else if ray.z > 0.0 {
-                (((adj_position.z / 16.0).ceil() * 16.0) - position.z) / ray.z
+            // parcel y runs along world -z
+            let z_dist = if dir.z > 0.0 {
+                (-parcel.y as f32 * PARCEL_SIZE - position.z) / dir.z
+            } else if dir.z < 0.0 {
+                (-(parcel.y + 1) as f32 * PARCEL_SIZE - position.z) / dir.z
             } else {
-                999.0
+                f32::INFINITY
             };
 
-            let step_fraction = x_dist.min(z_dist);
-            if step_fraction > 1.0 {
+            distance = x_dist.min(z_dist);
+            if distance > length {
                 return results;
             }
 
-            let step = ray * step_fraction;
-            position += step;
-            distance += step.length();
-            ray -= step;
+            if x_dist < z_dist {
+                parcel.x += dir.x.signum() as i32;
+            } else {
+                parcel.y -= dir.z.signum() as i32;
+            }
         }
     }
 }
 
-/// Replace the value of an `access_token` query param with `REDACTED`, preserving
-/// the rest of the adapter string. Used to keep the server-minted LiveKit room
-/// credential out of RealmInfo (which scene JS can read via op_realm_information).
-fn redact_access_token(adapter: &str) -> String {
-    match adapter.split_once("access_token=") {
-        Some((prefix, rest)) => {
-            let tail = rest.find('&').map(|i| &rest[i..]).unwrap_or("");
-            format!("{prefix}access_token=REDACTED{tail}")
+#[cfg(test)]
+mod get_ray_tests {
+    use super::*;
+    use bevy::ecs::system::RunSystemOnce;
+
+    #[test]
+    fn scene_spanning_parcels_is_returned_once() {
+        let mut world = World::new();
+        let a = world.spawn_empty().id();
+        let b = world.spawn_empty().id();
+        // one row of parcels (z in -16..0): scene a on x 0..=2, scene b on x 3..=4
+        let mut pointers = ScenePointers::default();
+        let mut live = LiveScenes::default();
+        for (hash, scene, parcels) in [("a", a, 0..=2), ("b", b, 3..=4)] {
+            live.scenes.insert(hash.to_owned(), scene);
+            for x in parcels {
+                pointers.insert(
+                    IVec2::new(x, 0),
+                    PointerResult::Exists {
+                        hash: hash.to_owned(),
+                        urn: None,
+                    },
+                );
+            }
         }
-        None => adapter.to_owned(),
+        world.insert_resource(pointers);
+        world.insert_resource(live);
+        world.init_resource::<PortableScenes>();
+
+        let rays = world
+            .run_system_once(|containing: ContainingScene| {
+                [
+                    // within scene a, across all three of its parcels
+                    containing.get_ray(Vec3::new(1.0, 1.0, -8.0), Vec3::X * 46.0),
+                    // across all five parcels
+                    containing.get_ray(Vec3::new(1.0, 1.0, -8.0), Vec3::X * 78.0),
+                ]
+            })
+            .unwrap();
+
+        assert_eq!(rays[0], vec![(a, 0.0)]);
+        assert_eq!(rays[1], vec![(a, 0.0), (b, 47.0)]);
+    }
+
+    #[test]
+    fn ray_reports_the_parcel_it_enters_in_every_direction() {
+        let mut world = World::new();
+        let centre = world.spawn_empty().id();
+        let east = world.spawn_empty().id();
+        let south = world.spawn_empty().id();
+        // centre is parcel (0,0) (x 0..16, z -16..0), east is (1,0), south is (0,-1) (z 0..16)
+        let mut pointers = ScenePointers::default();
+        let mut live = LiveScenes::default();
+        for (hash, scene, parcel) in [
+            ("centre", centre, IVec2::new(0, 0)),
+            ("east", east, IVec2::new(1, 0)),
+            ("south", south, IVec2::new(0, -1)),
+        ] {
+            live.scenes.insert(hash.to_owned(), scene);
+            pointers.insert(
+                parcel,
+                PointerResult::Exists {
+                    hash: hash.to_owned(),
+                    urn: None,
+                },
+            );
+        }
+        world.insert_resource(pointers);
+        world.insert_resource(live);
+        world.init_resource::<PortableScenes>();
+
+        // each ray ends inside the parcel it crosses into
+        let rays = world
+            .run_system_once(|containing: ContainingScene| {
+                [
+                    containing.get_ray(Vec3::new(10.0, 1.0, -8.0), Vec3::X * 10.0),
+                    containing.get_ray(Vec3::new(20.0, 1.0, -8.0), Vec3::NEG_X * 10.0),
+                    containing.get_ray(Vec3::new(8.0, 1.0, -10.0), Vec3::Z * 20.0),
+                    containing.get_ray(Vec3::new(8.0, 1.0, 10.0), Vec3::NEG_Z * 20.0),
+                ]
+            })
+            .unwrap();
+
+        assert_eq!(rays[0], vec![(centre, 0.0), (east, 6.0)]);
+        assert_eq!(rays[1], vec![(east, 0.0), (centre, 4.0)]);
+        assert_eq!(rays[2], vec![(centre, 0.0), (south, 10.0)]);
+        assert_eq!(rays[3], vec![(south, 0.0), (centre, 10.0)]);
+    }
+
+    #[test]
+    fn ray_grazing_a_parcel_edge_reports_every_parcel_at_its_entry() {
+        let mut world = World::new();
+        let centre = world.spawn_empty().id();
+        let west = world.spawn_empty().id();
+        let south = world.spawn_empty().id();
+        let south_west = world.spawn_empty().id();
+        let mut pointers = ScenePointers::default();
+        let mut live = LiveScenes::default();
+        for (hash, scene, parcel) in [
+            ("centre", centre, IVec2::new(0, 0)),
+            ("west", west, IVec2::new(-1, 0)),
+            ("south", south, IVec2::new(0, -1)),
+            ("south_west", south_west, IVec2::new(-1, -1)),
+        ] {
+            live.scenes.insert(hash.to_owned(), scene);
+            pointers.insert(
+                parcel,
+                PointerResult::Exists {
+                    hash: hash.to_owned(),
+                    urn: None,
+                },
+            );
+        }
+        world.insert_resource(pointers);
+        world.insert_resource(live);
+        world.init_resource::<PortableScenes>();
+
+        // both rays run within 1.5 cm of the z = 0 edge and cross it at a shallow angle
+        let rays = world
+            .run_system_once(|containing: ContainingScene| {
+                [
+                    // crosses into south after 5 m
+                    containing.get_ray(Vec3::new(1.0, 1.0, -0.005), Vec3::new(14.0, 0.0, 0.014)),
+                    // crosses into west after 8 m, then into south_west after 18 m
+                    containing.get_ray(Vec3::new(8.0, 1.0, -0.0135), Vec3::new(-40.0, 0.0, 0.03)),
+                ]
+            })
+            .unwrap();
+
+        let rounded = |hits: &[(Entity, f32)]| {
+            hits.iter()
+                .map(|(scene, distance)| (*scene, (distance * 100.0).round() / 100.0))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(rounded(&rays[0]), vec![(centre, 0.0), (south, 5.0)]);
+        assert_eq!(
+            rounded(&rays[1]),
+            vec![(centre, 0.0), (west, 8.0), (south_west, 18.0)]
+        );
+    }
+
+    #[test]
+    fn unusable_ray_returns_no_scenes() {
+        let mut world = World::new();
+        let centre = world.spawn_empty().id();
+        let mut pointers = ScenePointers::default();
+        let mut live = LiveScenes::default();
+        live.scenes.insert("centre".to_owned(), centre);
+        pointers.insert(
+            IVec2::new(0, 0),
+            PointerResult::Exists {
+                hash: "centre".to_owned(),
+                urn: None,
+            },
+        );
+        world.insert_resource(pointers);
+        world.insert_resource(live);
+        world.init_resource::<PortableScenes>();
+
+        let origin = Vec3::new(8.0, 1.0, -8.0);
+        let rays = world
+            .run_system_once(move |containing: ContainingScene| {
+                [
+                    // a zero direction, normalized
+                    containing.get_ray(origin, Vec3::ZERO.normalize() * 10.0),
+                    // an infinite max distance
+                    containing.get_ray(origin, Vec3::X * f32::INFINITY),
+                    // a ray whose length overflows
+                    containing.get_ray(origin, Vec3::splat(1e30)),
+                    containing.get_ray(Vec3::NAN, Vec3::X * 10.0),
+                ]
+            })
+            .unwrap();
+
+        for hits in rays {
+            assert_eq!(hits, vec![]);
+        }
     }
 }
 
@@ -896,9 +1080,21 @@ fn redact_access_token(adapter: &str) -> String {
 #[derive(Default)]
 struct RealmInfoCache {
     disconnected: Vec<u8>,
-    connected: Option<(String, Vec<u8>)>,
+    // the client's one scene room, for each scene it carries
+    connected: Option<Vec<u8>>,
     // server mode holds N rooms in ServerSceneRooms (empty on clients), keyed by scene hash
     server: HashMap<String, Vec<u8>>,
+}
+
+impl RealmInfoCache {
+    /// The realm info a scene reads. `connected` is whether the scene room that carries the
+    /// scene is connected: until then `isConnectedSceneRoom` is false.
+    fn for_scene(&self, hash: &str, connected: bool) -> &[u8] {
+        connected
+            .then(|| self.server.get(hash).or(self.connected.as_ref()))
+            .flatten()
+            .unwrap_or(&self.disconnected)
+    }
 }
 
 /// The realm's base url and name as scenes are told them (`PbRealmInfo`).
@@ -927,6 +1123,31 @@ fn dispatch_dt(tick_number: u32, last_sent: f64, now: f64) -> f64 {
         now - last_sent
     } else {
         0.0
+    }
+}
+
+#[cfg(test)]
+mod realm_info_tests {
+    use super::*;
+
+    #[test]
+    fn a_scene_reads_a_connected_room_only_while_one_carries_it() {
+        let client = RealmInfoCache {
+            disconnected: vec![0],
+            connected: Some(vec![1]),
+            server: HashMap::default(),
+        };
+        // dialed, or another scene's room
+        assert_eq!(client.for_scene("bafyscene", false), [0]);
+        assert_eq!(client.for_scene("bafyscene", true), [1]);
+
+        let server = RealmInfoCache {
+            disconnected: vec![0],
+            connected: None,
+            server: HashMap::from_iter([("bafyscene".to_owned(), vec![2])]),
+        };
+        assert_eq!(server.for_scene("bafyscene", false), [0]);
+        assert_eq!(server.for_scene("bafyscene", true), [2]);
     }
 }
 
@@ -962,8 +1183,11 @@ fn send_scene_updates(
     config: Res<AppConfig>,
     window: Query<&Window, With<PrimaryWindow>>,
     realm: Res<CurrentRealm>,
-    data_channel: Res<SceneRoomConnection>,
-    server_rooms: Res<comms::ServerSceneRooms>,
+    (data_channel, server_rooms, scene_rooms): (
+        Res<SceneRoomConnection>,
+        Res<comms::ServerSceneRooms>,
+        comms::scene_rooms::SceneRooms,
+    ),
     scene_realms: Res<comms::global_crdt::SceneRealms>,
     screen_areas: ScreenAreas,
     preview_mode: Res<PreviewMode>,
@@ -1003,12 +1227,12 @@ fn send_scene_updates(
         };
         realm_info_cache.disconnected.clear();
         DclWriter::new(&mut realm_info_cache.disconnected).write(&realm_info);
-        realm_info_cache.connected = data_channel.0.as_ref().map(|(scene, addr, _)| {
+        realm_info_cache.connected = data_channel.0.as_ref().map(|(_, addr, _)| {
             realm_info.room = Some(addr.clone());
             realm_info.is_connected_scene_room = Some(true);
             let mut bytes = Vec::new();
             DclWriter::new(&mut bytes).write(&realm_info);
-            (scene.scene_id.clone(), bytes)
+            bytes
         });
         // Server-mode room adapter is `livekit:...?access_token=<JWT>` minted by the
         // orchestrator for THIS scene. Redact the token: RealmInfo is exposed to scene
@@ -1019,7 +1243,7 @@ fn send_scene_updates(
             .0
             .iter()
             .map(|(hash, (addr, _))| {
-                realm_info.room = Some(redact_access_token(addr));
+                realm_info.room = Some(common::util::redact_access_token(addr));
                 realm_info.is_connected_scene_room = Some(true);
                 // the realm this scene is in, which an orchestrated engine is told per scene —
                 // it is in none itself, so its own name is no answer for any of them
@@ -1109,14 +1333,8 @@ fn send_scene_updates(
     }
 
     // add realm info
-    let realm_bytes = match realm_info_cache.connected.as_ref() {
-        Some((hash, bytes)) if **hash == *context.hash => bytes.as_slice(),
-        _ => realm_info_cache
-            .server
-            .get(&*context.hash)
-            .map(Vec::as_slice)
-            .unwrap_or(realm_info_cache.disconnected.as_slice()),
-    };
+    let connected = scene_rooms.connected(&context.hash);
+    let realm_bytes = realm_info_cache.for_scene(&context.hash, connected);
     context.crdt_store.update_if_different(
         SceneComponentId::REALM_INFO,
         CrdtType::LWW_ANY,

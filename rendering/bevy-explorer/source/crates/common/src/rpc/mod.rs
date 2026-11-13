@@ -4,7 +4,7 @@ mod stream_sender;
 mod tests;
 
 use crate::{
-    profile::SerializedProfile,
+    profile::{CompactProfile, SerializedProfile},
     structs::{EmoteMask, PermissionType},
 };
 use alloy_core::primitives::Address;
@@ -260,9 +260,19 @@ pub enum RpcCall {
     ListPortables {
         response: RpcResultSender<Vec<SpawnResponse>>,
     },
+    /// The calling scene, if it is a portable experience, asks to be unloaded.
+    ExitPortable {
+        response: RpcResultSender<bool>,
+    },
     GetUserData {
         user: Option<String>,
         response: RpcResultSender<Result<SerializedProfile, ()>>,
+    },
+    /// The compact profiles of a list of addresses, in request order; an address that can't
+    /// be resolved is left out.
+    GetCompactProfiles {
+        addresses: Vec<String>,
+        response: RpcResultSender<Vec<CompactProfile>>,
     },
     GetConnectedPlayers {
         response: RpcResultSender<Vec<String>>,
@@ -314,6 +324,14 @@ pub enum RpcCall {
         sender: RpcEventSender,
     },
     SubscribeBinaryBus {
+        sender: RpcStreamSender<(String, Vec<u8>)>,
+    },
+    /// A `CommsApi` topic message, already framed (type byte first), for the scene's room.
+    PublishSceneTopic {
+        data: Vec<u8>,
+    },
+    /// Topic messages addressed to the scene: (sender address, payload after the type byte).
+    SubscribeSceneTopics {
         sender: RpcStreamSender<(String, Vec<u8>)>,
     },
     TestPlan {

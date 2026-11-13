@@ -601,7 +601,13 @@ mod tests {
     #[tokio::test]
     async fn scene_admin_routes_write_the_relations_under_the_scene_signer_gate() {
         let Some(pool) = scratch().await else { return };
-        let state = state_with(pool.clone(), Settings::for_tests());
+        let mut state = state_with(pool.clone(), Settings::for_tests());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        Arc::get_mut(&mut state).unwrap().livekit.api_url =
+            format!("http://{}", listener.local_addr().unwrap());
+        let media =
+            axum::Router::new().fallback(|| async { Json(serde_json::json!({"rooms":[]})) });
+        let media_server = tokio::spawn(async move { axum::serve(listener, media).await.unwrap() });
         let place_id = format!("ToolkitScene{}", tag());
         let world = format!("toolkit-{}.eth", tag());
         seed_world_scene(&pool, &world, &place_id, &["10,20"]).await;
@@ -721,7 +727,7 @@ mod tests {
         assert!(
             state
                 .moderation
-                .is_scene_banned(&place_id, &banned)
+                .is_scene_banned(&format!("{world}:10,20"), &banned)
                 .await
                 .unwrap()
         );
@@ -780,10 +786,11 @@ mod tests {
         assert!(
             !state
                 .moderation
-                .is_scene_banned(&place_id, &banned)
+                .is_scene_banned(&format!("{world}:10,20"), &banned)
                 .await
                 .unwrap()
         );
+        media_server.abort();
     }
 }
 
@@ -1257,11 +1264,67 @@ mod world_mint {
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{body}");
+        // A world without a row is 404 (WCS InvalidWorldError), not a retryable 503.
+        let unknown = world();
+        for path in [
+            format!("/worlds/{}/comms", unknown.display()),
+            format!("/worlds/{}/scenes/bafyany/comms", unknown.display()),
+        ] {
+            let (status, body, _) = post(&app, &visitor, &path, "{}").await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "{path}: {body}");
+            assert_eq!(
+                body["message"],
+                format!("World \"{}\" is invalid or blocked.", unknown.display())
+            );
+        }
+        // Blocked (operator disable): 404 at once.
+        let blocked = world();
+        sqlx::query(
+            "INSERT INTO worlds.worlds (name, blocked_since) VALUES ($1, timezone('UTC', now()))",
+        )
+        .bind(blocked.key())
+        .execute(&pool)
+        .await
+        .unwrap();
+        let blocked_path = format!("/worlds/{}/comms", blocked.display());
+        state.presence.complete_empty_fixture();
+        let (status, body, _) = post(&app, &visitor, &blocked_path, "{}").await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "blocked: {body}");
         let (status, body, _) = post(&app, &visitor, "/get-comms-adapter/scene-x", handshake).await;
         assert_eq!(
             (status, body["message"].as_str().or(body["error"].as_str())),
             (StatusCode::BAD_REQUEST, Some("Invalid room id requested."))
         );
+        // `comms-adapter-handler`: the metadata is checked before the room prefix.
+        let (status, body, _) = post(&app, &visitor, "/get-comms-adapter/scene-x", "{}").await;
+        assert_eq!(
+            (status, body),
+            (
+                StatusCode::BAD_REQUEST,
+                serde_json::json!({"error": "Bad request", "message": "Access denied, invalid metadata"})
+            )
+        );
+        // ... and its unknown world has its own 404 text (comms-adapter-handler.spec.ts).
+        let (status, body, _) = post(
+            &app,
+            &visitor,
+            &format!("/get-comms-adapter/world-{}", unknown.display()),
+            handshake,
+        )
+        .await;
+        assert_eq!(
+            (status, body),
+            (
+                StatusCode::NOT_FOUND,
+                serde_json::json!({
+                    "error": "Not Found",
+                    "message": format!("World \"{}\" was not found.", unknown.display())
+                })
+            )
+        );
+        // A name that cannot be a world is an unknown world, as `isWorldValid` answers it.
+        let (status, body, _) = post(&app, &visitor, "/worlds/%20padded.dcl.eth/comms", "{}").await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
         let (status, _, _) = post(
             &app,
             &visitor,
@@ -1327,20 +1390,75 @@ mod world_mint {
             let (status, _, _) = post(&app, &random_key(), &path, "{}").await;
             assert_eq!(status, StatusCode::UNAUTHORIZED, "{path}: a non-member");
         }
+        // WC-09: the world's access is decided before the scene, so a caller without access
+        // learns nothing about the world's scenes (upstream `assertWorldAccess` first).
+        for missing in ["bafymissing", "not-a-cid"] {
+            let path = format!("/worlds/{}/scenes/{missing}/comms", listed.display());
+            let (status, _, _) = post(&app, &random_key(), &path, "{}").await;
+            assert_eq!(status, StatusCode::UNAUTHORIZED, "{path}: a non-member");
+            let (status, body, _) = post(&app, &visitor, &path, "{}").await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "{path}: a member");
+            assert_eq!(
+                body["message"],
+                format!(
+                    "Scene \"{missing}\" not found in world \"{}\".",
+                    listed.display()
+                )
+            );
+        }
 
         let secret = world();
         let hash = bcrypt::hash("open sesame", 4).unwrap();
         sqlx::query("INSERT INTO worlds.worlds (name, access_type, access_secret_hash) VALUES ($1, 'shared-secret', $2)").bind(secret.key()).bind(&hash).execute(&pool).await.unwrap();
         let path = format!("/worlds/{}/comms", secret.display());
-        for attempt in 0..2 {
-            let (status, _, _) = post(&app, &visitor, &path, r#"{"secret":"wrong"}"#).await;
-            assert_eq!(status, StatusCode::FORBIDDEN, "attempt {attempt}");
+        let refused = format!(
+            "You are not allowed to access world \"{}\".",
+            secret.display()
+        );
+        // `comms-adapter-handler` answers a wrong secret 401 Not Authorized, and a right
+        // one clears the caller's earlier failures (`clearAttempts`).
+        let adapter = format!("/get-comms-adapter/world-{}", secret.display());
+        let wrong_handshake =
+            r#"{"signer":"dcl:explorer","intent":"dcl:explorer:comms-handshake","secret":"wrong"}"#;
+        let right_handshake = r#"{"signer":"dcl:explorer","intent":"dcl:explorer:comms-handshake","secret":"open sesame"}"#;
+        let clearing = random_key();
+        for _ in 0..2 {
+            let (status, body, _) = post(&app, &clearing, &adapter, wrong_handshake).await;
+            assert_eq!(
+                (status, body),
+                (
+                    StatusCode::UNAUTHORIZED,
+                    serde_json::json!({"error": "Not Authorized", "message": refused})
+                )
+            );
         }
-        let (status, _, retry) = post(&app, &visitor, &path, r#"{"secret":"wrong"}"#).await;
+        state.presence.complete_empty_fixture();
+        let (status, body, _) = post(&app, &clearing, &adapter, right_handshake).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        for attempt in 0..3 {
+            let (status, _, _) = post(&app, &clearing, &path, r#"{"secret":"wrong"}"#).await;
+            assert_eq!(
+                status,
+                StatusCode::FORBIDDEN,
+                "attempt {attempt} after the clear"
+            );
+        }
+        let (status, _, _) = post(&app, &clearing, &path, r#"{"secret":"wrong"}"#).await;
+        assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+        // WCS: three wrong secrets answer 403, the next attempt 429.
+        for attempt in 0..3 {
+            let (status, body, _) = post(&app, &visitor, &path, r#"{"secret":"wrong"}"#).await;
+            assert_eq!(status, StatusCode::FORBIDDEN, "attempt {attempt}");
+            assert_eq!(body["error"], refused.as_str(), "InvalidAccessError's text");
+        }
+        // The count lives in Postgres: another replica's state sees it.
+        let replica = Arc::new(mint_state(&pool, Arc::new(Presence::new())));
+        let (status, _, retry) =
+            post(&router(replica), &visitor, &path, r#"{"secret":"wrong"}"#).await;
         assert_eq!(
             (status, retry.as_deref()),
             (StatusCode::TOO_MANY_REQUESTS, Some("60")),
-            "the third wrong secret"
+            "the fourth attempt, on another replica"
         );
         let (status, _, _) = post(&app, &visitor, &path, r#"{"secret":"open sesame"}"#).await;
         assert_eq!(
@@ -1348,6 +1466,16 @@ mod world_mint {
             StatusCode::TOO_MANY_REQUESTS,
             "throttled even with the right secret"
         );
+        // WC-09: the throttle is upstream's first check on a shared-secret world, before the
+        // owner (and, below, the platform ban) is looked at.
+        sqlx::query("UPDATE worlds.worlds SET owner = $2 WHERE name = $1")
+            .bind(secret.key())
+            .bind(address_of(&visitor).as_str())
+            .execute(&pool)
+            .await
+            .unwrap();
+        let (status, _, _) = post(&app, &visitor, &path, "{}").await;
+        assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "a throttled owner");
         let other = random_key();
         state.presence.complete_empty_fixture();
         let (status, body, _) = post(&app, &other, &path, r#"{"secret":"open sesame"}"#).await;
@@ -1366,6 +1494,13 @@ mod world_mint {
         )
         .await;
         assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+        assert_eq!(body["error"], "Access denied, platform-banned user.");
+        let (status, _, _) = post(&app, &visitor, &path, "{}").await;
+        assert_eq!(
+            status,
+            StatusCode::TOO_MANY_REQUESTS,
+            "a throttled platform-banned wallet"
+        );
 
         let crowd = Arc::new(Presence::new());
         for wallet in ["0x01", "0x02"] {
@@ -1390,12 +1525,134 @@ mod world_mint {
             )
             .await
             .unwrap();
-        assert!(
-            unsigned.status() == StatusCode::BAD_REQUEST
-                || unsigned.status() == StatusCode::UNAUTHORIZED,
-            "{}",
-            unsigned.status()
+        assert_eq!(unsigned.status(), StatusCode::BAD_REQUEST);
+        let bytes = axum::body::to_bytes(unsigned.into_body(), 1 << 16)
+            .await
+            .unwrap();
+        // world-comms-handler.spec.ts, comms-adapter-handler.spec.ts: the middleware's body.
+        let adr44 = serde_json::json!({
+            "error": "Invalid Auth Chain",
+            "message": "This endpoint requires a signed fetch request. See ADR-44."
+        });
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&bytes).unwrap(),
+            adr44
         );
+        // The room prefix is checked after the signed fetch.
+        for path in ["/get-comms-adapter/scene-x".to_string(), adapter] {
+            let response = app
+                .clone()
+                .oneshot(Request::post(&path).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{path}");
+            let bytes = axum::body::to_bytes(response.into_body(), 1 << 16)
+                .await
+                .unwrap();
+            assert_eq!(
+                serde_json::from_slice::<serde_json::Value>(&bytes).unwrap(),
+                adr44,
+                "{path}"
+            );
+        }
+        // A malformed link and an expired signature (world-comms-handler.spec.ts).
+        let lobby = format!("/worlds/{}/comms", open.display());
+        let response = app
+            .clone()
+            .oneshot(
+                Request::post(&lobby)
+                    .header("x-identity-auth-chain-0", r#"{"type":"SIGNER"}"#)
+                    .header(
+                        "x-identity-auth-chain-1",
+                        r#"{"type":"ECDSA_PERSONAL_EPHEMERAL"}"#,
+                    )
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let bytes = axum::body::to_bytes(response.into_body(), 1 << 16)
+            .await
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(
+            body["error"],
+            "Invalid chain format: malformed auth link at position 0"
+        );
+        let mut stale = Request::post(&lobby).body(Body::empty()).unwrap();
+        stale
+            .headers_mut()
+            .extend(signed(&other, "post", &lobby, "{}").await);
+        stale
+            .headers_mut()
+            .insert("x-identity-timestamp", "1000".parse().unwrap());
+        let response = app.clone().oneshot(stale).await.unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        let bytes = axum::body::to_bytes(response.into_body(), 1 << 16)
+            .await
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert!(
+            body["error"].as_str().is_some_and(|e| e.starts_with(
+                "Expired signature: signature timestamp: 1000, timestamp expiration: 61000, local timestamp: "
+            )),
+            "{body}"
+        );
+        assert_eq!(body["message"], adr44["message"]);
+    }
+
+    /// A browser explorer preflights the handshake (it carries `x-identity-*`
+    /// headers); upstream's server answers it with its CORS.
+    #[tokio::test]
+    async fn the_mints_answer_a_cors_preflight_at_both_mounts() {
+        let Some(pool) = catalyst::db::scratch::pool(2).await else {
+            return;
+        };
+        let state = Arc::new(mint_state(&pool, Arc::new(Presence::new())));
+        let app = Router::new()
+            .merge(router(state.clone()))
+            .nest("/worlds-content-server", router(state));
+        for route in [
+            "/worlds/w.dcl.eth/comms",
+            "/worlds/w.dcl.eth/scenes/bafyx/comms",
+            "/get-comms-adapter/world-w.dcl.eth",
+        ] {
+            for path in [route.to_string(), format!("/worlds-content-server{route}")] {
+                let response = app
+                    .clone()
+                    .oneshot(
+                        Request::options(&path)
+                            .header("origin", "https://play.decentraland.org")
+                            .header("access-control-request-method", "POST")
+                            .header(
+                                "access-control-request-headers",
+                                "x-identity-auth-chain-0,x-identity-timestamp,x-identity-metadata",
+                            )
+                            .body(Body::empty())
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+                assert!(
+                    response.status().is_success(),
+                    "{path}: {}",
+                    response.status()
+                );
+                let headers = response.headers();
+                assert!(
+                    headers.contains_key("access-control-allow-origin"),
+                    "{path}: {headers:?}"
+                );
+                assert!(
+                    headers["access-control-allow-headers"]
+                        .to_str()
+                        .unwrap()
+                        .contains("x-identity-metadata"),
+                    "{path}"
+                );
+            }
+        }
     }
 
     const NEST: &str = "/worlds-content-server";

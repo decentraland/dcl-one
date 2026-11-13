@@ -6,7 +6,7 @@
 // | Unity test | Scenario | Class |
 // | --- | --- | --- |
 // | AudioAnalysisPlayground (values follow the audio; raw vs log) | audio analysis reaches the scene | Port |
-// | LastAudioFrameBufferShould (one window at a time, drop while unconsumed) | | Gap: engine unit tests (crates/media/src/uuav/capture.rs) |
+// | LastAudioFrameBufferShould (one window at a time, drop while unconsumed) | | Gap: engine unit tests (crates/media/src/capture.rs) |
 // | MediaPlayerComponentAudioFrameBufferShould (capture attached only with an analysis) | audio analysis reaches the scene | Partial: the stream and video rows report values; attach and detach are the debug panel's `captureEnabled` |
 // | The pause keeps the last values (AudioAnalysisSystem skips a paused source) | audio analysis reaches the scene | Port |
 //
@@ -25,7 +25,7 @@ const server = await visualRealm()
 const SESSION: ScenarioOptions['session'] = { realm: server.realm, position: '0,0', signIn: 'guest', windowSize: [960, 540] }
 const SCENARIO_TIMEOUT_MS = 600_000
 const SCENE_LIVE_TIMEOUT_MS = 60_000
-/** Budget for the clips to load and the streams' first open (a helper spawn). */
+/** Budget for the clips to load and the streams' first open. */
 const VALUES_TIMEOUT_MS = 60_000
 /** The scene pauses its log clip at 12 s; sampled after that with a margin. */
 const PAUSE_AT_MS = 14_000

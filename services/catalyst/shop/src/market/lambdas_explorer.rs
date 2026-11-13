@@ -3,7 +3,8 @@
 //! sorted (UCA order, rarest or newest first) and paged in Rust exactly as
 //! the old handler did: the base wearables (content entities), the owner's
 //! on-chain copies (the collections subgraph readers, plus the active escrow
-//! grants of `shop.usage_grants`, the item type from the `items`
+//! grants of `shop.usage_grants` unless `EXPLORER_ESCROW_GRANTS_ENABLED` is
+//! off, as under the mirror posture; the item type from the `items`
 //! mirror, the definitions from the content entities) and the third-party
 //! wearables (`third_party`). The old on-chain leg read the squid's `nft`
 //! table; without the subgraph readers this route answers the unavailable
@@ -19,11 +20,11 @@ use chrono::Utc;
 use serde_json::{Value, json};
 use sqlx::Row;
 
-use crate::content::queries::active_entity_docs_by_pointers;
+use crate::content::queries::{active_entity_docs_by_pointers, retain_non_denylisted};
 use crate::shared::cache::TtlMap;
 use crate::shared::query_params::{
-    MAX_PAGE_SIZE as SHARED_MAX_PAGE_SIZE, NonPositivePolicy, OversizePolicy,
-    parse_pagination_with, parse_query_string, qs_get_array, qs_get_string,
+    JsPagination, MAX_PAGE_SIZE as SHARED_MAX_PAGE_SIZE, parse_pagination_js, parse_query_string,
+    qs_get_array, qs_get_string,
 };
 
 use super::definitions::{
@@ -38,9 +39,6 @@ use super::{MarketplaceState, SharedState, bad_request};
 
 const EXPLORER_CACHE_TTL: Duration = Duration::from_secs(30);
 const EXPLORER_CACHE_MAX_ENTRIES: usize = 50_000;
-/// The most `thirdPartyCollectionId` values one request may give. The old
-/// lambdas took any number; past this the request is refused (400).
-const MAX_THIRD_PARTY_COLLECTION_IDS: usize = 100;
 
 /// `(address, sort, direction, collection types, category, filters)`.
 pub type ExplorerKey = (String, String, String, String, &'static str, String);
@@ -53,8 +51,7 @@ const MAX_PAGE_SIZE: i64 = SHARED_MAX_PAGE_SIZE as i64;
 const VALID_COLLECTION_TYPES: [&str; 3] = ["base-wearable", "on-chain", "third-party"];
 
 struct ExplorerQuery {
-    page_num: i64,
-    page_size: i64,
+    pagination: JsPagination,
     name: Option<String>,
     categories: Vec<String>,
     rarity: Option<String>,
@@ -71,41 +68,28 @@ struct ExplorerQuery {
     third_party_collection_ids: Vec<String>,
 }
 
+/// Validated in lamb2's order (decentraland/lamb2:src/controllers/handlers/explorer-handler.ts:174-195):
+/// `pageSize`, then `rarity` (`createFilters`), then the sort, then
+/// `collectionType`. An empty `name` or `rarity` filters nothing, as a
+/// falsy value does there.
 fn parse_query(
     query: Option<&str>,
     valid_collection_types: &[&str],
 ) -> Result<ExplorerQuery, Box<Response>> {
     let params = parse_query_string(query.unwrap_or(""));
     let get_first = |key: &str| -> Option<String> { qs_get_string(&params, key) };
-    let collection_types: Vec<String> = qs_get_array(&params, "collectionType");
-    if collection_types
-        .iter()
-        .any(|t| !valid_collection_types.contains(&t.as_str()))
-    {
-        return Err(Box::new(bad_request(&format!(
-            "Invalid collection type. Valid types are: {}.",
-            valid_collection_types.join(", ")
-        ))));
-    }
-    let pagination = parse_pagination_with(
-        &params,
-        MAX_PAGE_SIZE,
-        OversizePolicy::Reject,
-        NonPositivePolicy::PassThrough,
-    )
-    .map_err(|e| Box::new(bad_request(&e)))?;
-    let third_party_collection_ids = qs_get_array(&params, "thirdPartyCollectionId");
-    if third_party_collection_ids.len() > MAX_THIRD_PARTY_COLLECTION_IDS {
-        return Err(Box::new(bad_request(&format!(
-            "Too many thirdPartyCollectionId values: at most {MAX_THIRD_PARTY_COLLECTION_IDS}."
-        ))));
-    }
-    let name = get_first("name").map(|n| n.to_lowercase());
+    let pagination =
+        parse_pagination_js(&params, MAX_PAGE_SIZE).map_err(|e| Box::new(bad_request(&e)))?;
+    let name = get_first("name")
+        .map(|n| n.to_lowercase())
+        .filter(|n| !n.is_empty());
     let categories: Vec<String> = qs_get_array(&params, "category")
         .iter()
         .map(|v| v.to_lowercase())
         .collect();
-    let rarity = get_first("rarity").map(|r| r.to_lowercase());
+    let rarity = get_first("rarity")
+        .map(|r| r.to_lowercase())
+        .filter(|r| !r.is_empty());
     if let Some(r) = &rarity {
         validate_rarity(r).map_err(|e| Box::new(bad_request(&e)))?;
     }
@@ -117,6 +101,17 @@ fn parse_query(
         None => default_sort_direction(&sort).to_string(),
     };
     validate_sort(&sort, &direction).map_err(|e| Box::new(bad_request(&e)))?;
+    let collection_types: Vec<String> = qs_get_array(&params, "collectionType");
+    if collection_types
+        .iter()
+        .any(|t| !valid_collection_types.contains(&t.as_str()))
+    {
+        return Err(Box::new(bad_request(&format!(
+            "Invalid collection type. Valid types are: {}.",
+            valid_collection_types.join(", ")
+        ))));
+    }
+    let third_party_collection_ids = qs_get_array(&params, "thirdPartyCollectionId");
     let flag = |key: &str| matches!(get_first(key).as_deref(), Some("true") | Some("1"));
     let network = match get_first("network").as_deref() {
         Some("ETHEREUM") => Some("ETHEREUM"),
@@ -124,8 +119,7 @@ fn parse_query(
         _ => None,
     };
     Ok(ExplorerQuery {
-        page_num: pagination.page_num,
-        page_size: pagination.page_size,
+        pagination,
         name,
         categories,
         rarity,
@@ -171,15 +165,23 @@ struct OwnedItem {
     entity: Value,
     is_base: bool,
     is_third_party: bool,
-    has_date: bool,
+}
+
+impl OwnedItem {
+    /// lamb2's `hasDate`: both transfer times present and non-zero
+    /// (decentraland/lamb2:src/logic/sorting.ts:58-60).
+    fn has_date(&self) -> bool {
+        self.max_transferred_at != 0.0 && self.min_transferred_at != 0.0
+    }
 }
 
 /// One owned copy: `(urn, token id, transferred at (seconds), rarity, price,
-/// subgraph item type)`.
+/// subgraph item type, subgraph category)`.
 type CopyRow = (
     String,
     String,
     i64,
+    Option<String>,
     Option<String>,
     Option<String>,
     Option<String>,
@@ -203,25 +205,33 @@ async fn fetch_owned_items(
                 Some(c.rarity.clone()).filter(|r| !r.is_empty()),
                 Some(c.price.clone()),
                 Some(c.item_type.clone()).filter(|t| !t.is_empty()),
+                Some(c.category.clone()).filter(|t| !t.is_empty()),
             )
         })
         .collect();
-    let grants = sqlx::query(
-        "SELECT urn, COALESCE(token_id, '') AS token_id, extract(epoch FROM granted_at)::bigint AS granted_at \
-         FROM shop.usage_grants WHERE grantee_address = $1 AND status = 'active' AND category = $2 AND unlock_at > $3 \
-         ORDER BY granted_at DESC LIMIT 1000",
-    )
-    .bind(owner.to_lowercase())
-    .bind(category)
-    .bind(Utc::now().naive_utc())
-    .fetch_all(&state.pool)
-    .await
-    .map_err(|e| format!("usage grants: {e}"))?;
+    // lamb2 lists chain-owned tokens only (explorer-handler.ts:74-104):
+    // `EXPLORER_ESCROW_GRANTS_ENABLED`, off under the mirror posture.
+    let grants = if state.settings.explorer_escrow_grants {
+        sqlx::query(
+            "SELECT urn, COALESCE(token_id, '') AS token_id, extract(epoch FROM granted_at)::bigint AS granted_at \
+             FROM shop.usage_grants WHERE grantee_address = $1 AND status = 'active' AND category = $2 AND unlock_at > $3 \
+             ORDER BY granted_at DESC LIMIT 1000",
+        )
+        .bind(owner.to_lowercase())
+        .bind(category)
+        .bind(Utc::now().naive_utc())
+        .fetch_all(&state.pool)
+        .await
+        .map_err(|e| format!("usage grants: {e}"))?
+    } else {
+        Vec::new()
+    };
     for g in &grants {
         rows.push((
             graph::normalize_urn(&g.get::<String, _>("urn")),
             g.get("token_id"),
             g.get("granted_at"),
+            None,
             None,
             None,
             None,
@@ -234,7 +244,7 @@ async fn fetch_owned_items(
 
     let mut grouped: HashMap<String, OwnedItem> = HashMap::new();
     let mut order: Vec<String> = Vec::new();
-    for (urn, token_id, transferred_at, rarity, price, item_type) in rows {
+    for (urn, token_id, transferred_at, rarity, price, item_type, category) in rows {
         let transferred_num = transferred_at as f64;
         let individual = json!({
             "id": format!("{urn}:{token_id}"),
@@ -256,6 +266,11 @@ async fn fetch_owned_items(
                 if existing.item_type.is_none() {
                     existing.item_type = item_type;
                 }
+                if existing.category.is_empty()
+                    && let Some(c) = category
+                {
+                    existing.category = c;
+                }
             }
             None => {
                 order.push(urn.clone());
@@ -268,13 +283,12 @@ async fn fetch_owned_items(
                         item_type,
                         amount: 1,
                         name: String::new(),
-                        category: String::new(),
+                        category: category.unwrap_or_default(),
                         min_transferred_at: transferred_num,
                         max_transferred_at: transferred_num,
                         entity: Value::Null,
                         is_base: false,
                         is_third_party: false,
-                        has_date: true,
                     },
                 );
             }
@@ -286,7 +300,8 @@ async fn fetch_owned_items(
         active_entity_docs_by_pointers(&state.pool, &pointers),
         item_types(state, &order)
     );
-    let docs = docs.map_err(|e| format!("entities: {e}"))?;
+    let mut docs = docs.map_err(|e| format!("entities: {e}"))?;
+    retain_non_denylisted(&mut docs, &state.denylist);
     let mut entity_by_pointer: HashMap<String, Value> = HashMap::new();
     for entity in docs.iter().filter_map(|d| d.to_value()) {
         if let Some(ptrs) = entity.get("pointers").and_then(|p| p.as_array()) {
@@ -305,12 +320,17 @@ async fn fetch_owned_items(
         let Some(entity) = entity_by_pointer.get(&urn.to_lowercase()) else {
             continue;
         };
+        // The category is the source item's, as lamb2 spreads the fetched
+        // element (a v0 emote's entity has none); the entity's when the
+        // subgraph has none (an escrow grant).
         let (name, cat) = extract_name_category(entity, category);
         item.name = name;
-        item.category = cat;
+        if item.category.is_empty() {
+            item.category = cat;
+        }
         item.entity = entity.clone();
         if item.item_type.is_none() {
-            item.item_type = types.get(&urn).cloned();
+            item.item_type = types.get(&urn).filter(|t| !t.is_empty()).cloned();
         }
         items.push(item);
     }
@@ -371,12 +391,13 @@ fn sort_items(items: &mut [OwnedItem], sort: &str, direction: &str) {
     match (sort, direction) {
         ("rarity", dir) => {
             items.sort_by(|a, b| {
-                let ra = rarity_rank(&a.rarity);
-                let rb = rarity_rank(&b.rarity);
-                let has_a = !a.rarity.is_empty() && ra >= 0;
-                let has_b = !b.rarity.is_empty() && rb >= 0;
-                let cmp = match (has_a, has_b) {
-                    (true, true) => rb.cmp(&ra).then_with(|| by_urn(a, b)),
+                // lamb2's `rarestOptional`: any non-empty rarity is rated, an
+                // unknown one ranking below `common`
+                // (decentraland/lamb2:src/logic/sorting.ts:38-52).
+                let cmp = match (!a.rarity.is_empty(), !b.rarity.is_empty()) {
+                    (true, true) => rarity_rank(&b.rarity)
+                        .cmp(&rarity_rank(&a.rarity))
+                        .then_with(|| by_urn(a, b)),
                     (false, false) => by_urn(a, b),
                     (true, false) => std::cmp::Ordering::Less,
                     (false, true) => std::cmp::Ordering::Greater,
@@ -394,7 +415,7 @@ fn sort_items(items: &mut [OwnedItem], sort: &str, direction: &str) {
             items.sort_by(|a, b| {
                 use std::cmp::Ordering;
                 if dir == "DESC" {
-                    match (a.has_date, b.has_date) {
+                    match (a.has_date(), b.has_date()) {
                         (true, true) => b
                             .max_transferred_at
                             .partial_cmp(&a.max_transferred_at)
@@ -405,7 +426,7 @@ fn sort_items(items: &mut [OwnedItem], sort: &str, direction: &str) {
                         (false, true) => Ordering::Greater,
                     }
                 } else {
-                    match (a.has_date, b.has_date) {
+                    match (a.has_date(), b.has_date()) {
                         (true, true) => a
                             .min_transferred_at
                             .partial_cmp(&b.min_transferred_at)
@@ -478,11 +499,10 @@ fn item_to_value(item: &OwnedItem, include_item_type: bool) -> Value {
     );
     obj.insert("name".to_string(), json!(item.name));
     obj.insert("rarity".to_string(), json!(item.rarity));
-    if include_item_type {
-        obj.insert(
-            "itemType".to_string(),
-            json!(item.item_type.clone().unwrap_or_default()),
-        );
+    // Left out when neither the subgraph nor the items mirror knows it, as
+    // lamb2's `itemType: undefined` is.
+    if include_item_type && let Some(item_type) = &item.item_type {
+        obj.insert("itemType".to_string(), json!(item_type));
     }
     obj.insert("category".to_string(), json!(item.category));
     obj.insert("entity".to_string(), item.entity.clone());
@@ -589,7 +609,6 @@ async fn fetch_base_items(state: &MarketplaceState) -> Vec<OwnedItem> {
             entity: bw.entity.clone(),
             is_base: true,
             is_third_party: false,
-            has_date: false,
         })
         .collect()
 }
@@ -608,43 +627,50 @@ fn third_party_item(e: TpwElement) -> OwnedItem {
         entity: e.entity,
         is_base: false,
         is_third_party: true,
-        has_date: false,
     }
 }
 
+/// The provider names `thirdPartyCollectionId` selects, each once, in
+/// first-seen order. As in decentraland/lamb2's explorer handler
+/// (explorer-handler.ts:106-143), each value is cut to its first five parts
+/// and kept when it names a provider
+/// (`urn:decentraland:<network>:collections-thirdparty:<name>`). lamb2
+/// deduplicates the values as strings only, so two distinct values naming
+/// one provider list its wearables twice and the response grows with the
+/// number of values; here a provider is listed once, which keeps the
+/// uncapped value list from multiplying the answer.
+fn third_party_provider_names(collection_ids: &[String]) -> Vec<&str> {
+    let mut seen: HashSet<&str> = HashSet::new();
+    collection_ids
+        .iter()
+        .filter_map(|id| {
+            let cleaned = id.splitn(6, ':').take(5).collect::<Vec<_>>().join(":");
+            if !is_third_party_name_urn(&cleaned) {
+                return None;
+            }
+            id.split(':').nth(4)
+        })
+        .filter(|name| seen.insert(name))
+        .collect()
+}
+
 /// The third-party leg: every provider's wearables, or with
-/// `thirdPartyCollectionId` only those values' providers. As in
-/// decentraland/lamb2's explorer handler, each value is cut to its first
-/// five parts and kept when it names a provider
-/// (`urn:decentraland:<network>:collections-thirdparty:<name>`), and a name
-/// no approved provider has is `Third Party not found`. Each provider is
-/// listed once: the old handler listed one twice when two distinct values
-/// named it. A provider contract that could not be read is left out.
+/// `thirdPartyCollectionId` only the providers it names
+/// ([`third_party_provider_names`]); a name no approved provider has is
+/// `Third Party not found`.
 async fn fetch_third_party_items(
     state: &MarketplaceState,
     owner: &str,
     collection_ids: &[String],
+    on_failure: OnFailure,
 ) -> Result<Vec<OwnedItem>, FetchFailure> {
-    let names: Vec<Option<&str>> = if collection_ids.is_empty() {
-        vec![None]
-    } else {
-        let mut seen: HashSet<&str> = HashSet::new();
-        collection_ids
-            .iter()
-            .filter_map(|id| {
-                let cleaned = id.splitn(6, ':').take(5).collect::<Vec<_>>().join(":");
-                if !is_third_party_name_urn(&cleaned) {
-                    return None;
-                }
-                id.split(':').nth(4)
-            })
-            .filter(|name| seen.insert(name))
-            .map(Some)
-            .collect()
-    };
+    if collection_ids.is_empty() {
+        let found = fetch_all_third_party_wearables(state, owner, None, on_failure).await?;
+        return Ok(found.into_iter().map(third_party_item).collect());
+    }
     let mut items = Vec::new();
-    for name in names {
-        let found = fetch_all_third_party_wearables(state, owner, name, OnFailure::Skip).await?;
+    for name in third_party_provider_names(collection_ids) {
+        let found = fetch_all_third_party_wearables(state, owner, Some(name), on_failure).await?;
         items.extend(found.into_iter().map(third_party_item));
     }
     Ok(items)
@@ -657,16 +683,20 @@ async fn explorer_items(
     category: &'static str,
     valid_collection_types: &[&'static str],
 ) -> Response {
-    if !super::is_valid_eth_address(&addr.to_lowercase()) {
-        return bad_request("Address must be a valid Ethereum address");
-    }
     let q = match parse_query(query, valid_collection_types) {
         Ok(q) => q,
         Err(resp) => return *resp,
     };
+    // lamb2 takes any `:address`; one that is not an Ethereum address owns
+    // nothing, so the on-chain leg asks no reader and is empty (the
+    // third-party leg answers the same, `fetch_all_third_party_wearables`).
+    let owner_valid = super::is_valid_eth_address(&addr.to_lowercase());
     let on_chain_allowed =
         q.collection_types.is_empty() || q.collection_types.iter().any(|t| t == "on-chain");
-    if on_chain_allowed && let Err(envelope) = readers::require_both_collections(state) {
+    if owner_valid
+        && on_chain_allowed
+        && let Err(envelope) = readers::require_both_collections(state)
+    {
         return envelope;
     }
     let addr_lc = addr.to_lowercase();
@@ -683,7 +713,13 @@ async fn explorer_items(
         q.include_amount,
         q.is_smart_wearable,
         q.network.unwrap_or(""),
-        q.third_party_collection_ids.join(","),
+        if q.third_party_collection_ids.is_empty() {
+            String::new()
+        } else {
+            let mut names = third_party_provider_names(&q.third_party_collection_ids);
+            names.sort_unstable();
+            format!("[{}]", names.join(","))
+        },
     );
     let cache_key: ExplorerKey = (
         addr_lc.clone(),
@@ -693,25 +729,26 @@ async fn explorer_items(
         category,
         filter_key,
     );
-    let (page_num, page_size) = (q.page_num, q.page_size);
+    let pagination = q.pagination;
     let valid: Vec<&'static str> = valid_collection_types.to_vec();
     let result = state
         .explorer_cache
         .get_or_fetch(cache_key, || {
-            compute_explorer_items(state, &addr_lc, q, category, &valid)
+            compute_explorer_items(state, &addr_lc, owner_valid, q, category, &valid)
         })
         .await;
     match result {
         Ok(v) => {
             let total = v.get("totalAmount").cloned().unwrap_or_else(|| json!(0));
-            let offset = page_num.saturating_sub(1).saturating_mul(page_size).max(0) as usize;
-            let limit = page_size.max(0) as usize;
             let page: Vec<Value> = v
                 .get("elements")
                 .and_then(|e| e.as_array())
-                .map(|all| all.iter().skip(offset).take(limit).cloned().collect())
+                .map(|all| {
+                    let (start, end) = pagination.slice_range(all.len());
+                    all[start..end].to_vec()
+                })
                 .unwrap_or_default();
-            Json(json!({ "elements": page, "totalAmount": total, "pageNum": page_num, "pageSize": page_size })).into_response()
+            Json(json!({ "elements": page, "totalAmount": total, "pageNum": pagination.page_num, "pageSize": pagination.page_size })).into_response()
         }
         Err(e) => {
             tracing::warn!(error = ?e, address = %addr_lc, category, "explorer backpack reader failed");
@@ -723,6 +760,7 @@ async fn explorer_items(
 async fn compute_explorer_items(
     state: &MarketplaceState,
     addr: &str,
+    owner_valid: bool,
     q: ExplorerQuery,
     category: &'static str,
     valid_collection_types: &[&'static str],
@@ -736,8 +774,8 @@ async fn compute_explorer_items(
         && valid_collection_types.contains(&"base-wearable")
         && (q.collection_types.is_empty()
             || q.collection_types.iter().any(|t| t == "base-wearable"));
-    let on_chain_allowed =
-        q.collection_types.is_empty() || q.collection_types.iter().any(|t| t == "on-chain");
+    let on_chain_allowed = owner_valid
+        && (q.collection_types.is_empty() || q.collection_types.iter().any(|t| t == "on-chain"));
     let third_party_allowed = item_types.is_none()
         && valid_collection_types.contains(&"third-party")
         && (q.collection_types.is_empty() || q.collection_types.iter().any(|t| t == "third-party"));
@@ -761,7 +799,16 @@ async fn compute_explorer_items(
     };
     let third_party_leg = async {
         if third_party_allowed {
-            fetch_third_party_items(state, addr, &q.third_party_collection_ids).await
+            // With the NFT worker, lamb2's path, a holdings read that fails is
+            // its 502 (decentraland/lamb2:src/adapters/elements-fetcher.ts:265-274);
+            // the chain path, which lamb2 has no twin of, leaves out the
+            // contract it could not read and serves the rest.
+            let on_failure = if state.settings.nft_worker_base_url.is_some() {
+                OnFailure::Fail
+            } else {
+                OnFailure::Skip
+            };
+            fetch_third_party_items(state, addr, &q.third_party_collection_ids, on_failure).await
         } else {
             Ok(Vec::new())
         }
@@ -831,7 +878,6 @@ mod tests {
             entity: Value::Null,
             is_base: !has_date,
             is_third_party: false,
-            has_date,
         }
     }
 

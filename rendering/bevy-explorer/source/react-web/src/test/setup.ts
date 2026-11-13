@@ -1,7 +1,8 @@
 import '@testing-library/jest-dom/vitest'
+import 'fake-indexeddb/auto'
 import { afterEach } from 'vitest'
 import { cleanup } from '@testing-library/react'
-import { resetProfileStore } from '../features/session/profileStore'
+import { resetProfileStore } from '@hud/features/session/profileStore'
 
 afterEach(() => {
   cleanup()

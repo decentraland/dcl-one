@@ -17,7 +17,7 @@
 // loader (deploy/web/engine/boot.js), which composes the default realm / worlds prefix for its
 // url sync exactly as the HUD does.
 
-import { SERVICES, type ServiceDef } from '../engine/generated'
+import { SERVICES, type ServiceDef } from '@explorer-core/engine/generated'
 
 // Decentraland's own deployments — the hosting origins we derive from, and the only domains a
 // LINK may point the session at without the UntrustedLaunchGate (lib/launchGate.ts).
@@ -60,33 +60,28 @@ const GATEWAY_PREFIXES: Readonly<Record<string, string>> = {
   'comms-gatekeeper': '/comms-gatekeeper',
   'comms-gatekeeper-local': '/comms-gatekeeper',
   'auth-api': '/auth-api',
-  'asset-bundle-registry': '/asset-bundle-registry',
   storage: '/world-storage',
   rpc: '/rpc',
   'rpc-social-service-ea': '/social-rpc',
   'social-api': '/social-api',
   opensea: '/opensea',
-  reels: '/camera-reel-service',
+  // the site itself: Reels' share page
+  '': '',
   api: '/api',
   'pulse-server': '',
-  // hosts the HUD reaches outside the engine's service table
   'marketplace-api': '/marketplace-api',
   events: '/events',
-  'autotranslate-server': '/autotranslate-server'
+  'autotranslate-server': '/autotranslate-server',
+  'camera-reel-service': '/camera-reel-service',
+  badges: '/badges',
+  notifications: '/notifications',
+  'assets-cdn': '/assets-cdn'
 }
-
-/**
- * A backend host outside the engine's service table (`sub.<base domain>` upstream): on dcl-one its
- * gateway prefix on this origin. `path` is appended as given.
- */
-export function hostUrl(sub: string, path = ''): string {
-  if (BASE_DOMAIN === ONE_GATEWAY_HOST) {
-    const prefix = GATEWAY_PREFIXES[sub]
-    if (prefix == null) throw new Error(`hostUrl: '${sub}' has no gateway prefix`)
-    return `${window.location.origin}${prefix}${path}`
-  }
-  return `https://${sub}.${BASE_DOMAIN}${path}`
-}
+// Services the gateway cannot serve yet, reached on Decentraland's public host instead: abgen's
+// CDN (Bevy variants), whose `/ab-cdn` route serves the asset-bundle CDN and refuses `bevy/` paths
+// (decentraland/dcl-one#631). Behind the gateway they compose from decentraland.org, never from
+// the page's own host, as the engine does (`Gateway::segment` → its default base domain).
+const NOT_THROUGH_GATEWAY: ReadonlySet<string> = new Set(['abgen-cdn'])
 
 /** The domain a url without ?baseDomain= means here: derived from the hosting origin, else this host. */
 export const DEFAULT_BASE_DOMAIN =
@@ -166,7 +161,7 @@ export function serviceUrl(name: string): string {
   const s = service(name)
   const override = SERVICE_OVERRIDES[name]
   if (override != null) return override
-  if (BASE_DOMAIN === ONE_GATEWAY_HOST) {
+  if (BASE_DOMAIN === ONE_GATEWAY_HOST && !NOT_THROUGH_GATEWAY.has(s.sub)) {
     const prefix = GATEWAY_PREFIXES[s.sub]
     if (prefix == null) throw new Error(`serviceUrl: '${name}' (${s.sub}) has no gateway prefix`)
     if (s.value === 'authority') return ONE_GATEWAY_HOST
@@ -174,7 +169,10 @@ export function serviceUrl(name: string): string {
     const scheme = s.value === 'websocket' ? (secure ? 'wss' : 'ws') : secure ? 'https' : 'http'
     return `${scheme}://${ONE_GATEWAY_HOST}${prefix}${s.path}`
   }
-  const host = s.sub === '' ? BASE_DOMAIN : `${s.sub}.${BASE_DOMAIN}`
+  // on the gateway host no ?baseDomain= was given, so an ungated service takes the upstream default
+  const domain =
+    BASE_DOMAIN === ONE_GATEWAY_HOST && NOT_THROUGH_GATEWAY.has(s.sub) ? TRUSTED_BASE_DOMAINS[0] : BASE_DOMAIN
+  const host = s.sub === '' ? domain : `${s.sub}.${domain}`
   return s.value === 'authority' ? host : `${s.scheme}://${host}${s.path}`
 }
 window.__serviceUrl = serviceUrl

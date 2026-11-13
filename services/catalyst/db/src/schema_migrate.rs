@@ -193,6 +193,28 @@ fn upper(w: &str) -> String {
     w.to_ascii_uppercase()
 }
 
+/// `stmt` split at its top-level commas (outside parentheses and quotes).
+fn top_level_comma_parts(stmt: &str) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let (mut depth, mut start, mut quote) = (0i32, 0usize, None::<u8>);
+    for (i, c) in stmt.bytes().enumerate() {
+        match c {
+            _ if quote == Some(c) => quote = None,
+            _ if quote.is_some() => {}
+            b'\'' | b'"' => quote = Some(c),
+            b'(' => depth += 1,
+            b')' => depth -= 1,
+            b',' if depth == 0 => {
+                parts.push(&stmt[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    parts.push(&stmt[start..]);
+    parts
+}
+
 /// `name` qualified with `schema_of`'s schema when it has none.
 fn qualify(name: &str, schema_of: &str) -> String {
     if name.contains('.') {
@@ -412,17 +434,24 @@ pub enum StepStatement {
     /// that name is already on the table (a database whose schema.sql
     /// already declared it, recorded or not).
     AddConstraint { table: String, name: String },
+    /// `CREATE FUNCTION s.name_<hash>(...)`: a hash-named function the
+    /// step's columns call, skipped when the schema already has it (the
+    /// name pins the definition, so it is the same function).
+    CreateFunction { schema: String, name: String },
 }
 
 /// The forms a step may take. Additive only: a step adds a column (with `IF
 /// NOT EXISTS`), a constraint, a default, an enum value, drops a constraint,
-/// a default or a NOT NULL (`IF EXISTS` where the syntax has it), replaces a
-/// function body, comments, or backfills with `UPDATE`. Dropping, renaming or
+/// a default or a NOT NULL (`IF EXISTS` where the syntax has it), creates a
+/// hash-named function (`name_<12 hex digits>`, skipped when present),
+/// replaces a function body, comments, or backfills with `UPDATE`. Dropping, renaming or
 /// retyping a table, column, schema or type, `DELETE`, `TRUNCATE`, `SET NOT
 /// NULL` (fails on rows the step did not backfill) and `DO` blocks are
 /// refused with the reason: those are the explicit data-safe release
 /// procedure, reviewed as their own change, never a step the oneshot runs
-/// on every activation.
+/// on every activation. An `ALTER TABLE` with several actions is taken when
+/// every one is `ADD COLUMN IF NOT EXISTS` (one rewrite of the table for all
+/// of them) and refused when any is another action.
 pub fn classify_step(stmt: &str) -> Result<StepStatement, String> {
     let w = words(stmt);
     let kw: Vec<String> = w.iter().map(|x| upper(x)).collect();
@@ -448,6 +477,25 @@ pub fn classify_step(stmt: &str) -> Result<StepStatement, String> {
                 i += 1;
             }
             let table = at(i);
+            let actions = top_level_comma_parts(stmt);
+            if actions.len() > 1 {
+                let add_column = |ws: &[&str]| {
+                    ws.len() >= 5
+                        && ws
+                            .iter()
+                            .zip(["ADD", "COLUMN", "IF", "NOT", "EXISTS"])
+                            .all(|(word, expected)| upper(word) == expected)
+                };
+                return if add_column(w.get(i + 1..).unwrap_or(&[]))
+                    && actions[1..].iter().all(|a| add_column(&words(a)))
+                {
+                    Ok(StepStatement::Plain)
+                } else {
+                    refuse(
+                        "an ALTER TABLE with several actions is every one ADD COLUMN IF NOT EXISTS (the table is rewritten once for all of them); any other action takes its own statement",
+                    )
+                };
+            }
             let action = (k(i + 1), k(i + 2));
             match action {
                 ("ADD", "COLUMN")
@@ -504,6 +552,17 @@ pub fn classify_step(stmt: &str) -> Result<StepStatement, String> {
             "a step extends an enum with ALTER TYPE ... ADD VALUE IF NOT EXISTS and changes a type in no other way",
         ),
         ("CREATE", "OR") if k(2) == "REPLACE" && k(3) == "FUNCTION" => Ok(StepStatement::Plain),
+        ("CREATE", "FUNCTION") => match at(2).split_once('.') {
+            Some((schema, name)) if hash_named_prefix(name).is_some() => {
+                Ok(StepStatement::CreateFunction {
+                    schema: schema.to_string(),
+                    name: name.to_string(),
+                })
+            }
+            _ => refuse(
+                "a step creates a function only under the hash of its definition (schema.name_<12 hex digits>)",
+            ),
+        },
         ("CREATE", _) => refuse(
             "a step does not create objects: every object of schema.sql the database lacks is created by the object pass that follows the steps",
         ),
@@ -780,14 +839,17 @@ where
 #[derive(Debug, Error)]
 pub enum MigrateError {
     #[error(transparent)]
+    Encoding(#[from] crate::EncodingError),
+    #[error(transparent)]
     Layout(#[from] LayoutError),
     #[error("meta.schema is missing: an empty database takes `catalyst schema apply`, not migrate")]
     NotStamped,
     #[error(
         "the database is stamped {identity:?} version {version}; this binary's schema is {expected_identity:?} \
          version {expected_version}. `schema migrate` only brings a database of the same identity and version up \
-         to this binary's layout; a version change is the explicit data-safe release procedure (deploy/README.md, \
-         Releases), never this command. Nothing was applied."
+         to this binary's layout; a database one version behind takes `schema migrate --release` with every \
+         writer stopped, and any other version change is the explicit data-safe release procedure (DATABASE.md). \
+         Nothing was applied."
     )]
     Incompatible {
         identity: String,
@@ -795,6 +857,13 @@ pub enum MigrateError {
         expected_identity: &'static str,
         expected_version: i32,
     },
+    #[error(
+        "the release to version {version} needs every other session of this database closed (stop every \
+         writer, poller and administrative path first); {count} connected, applications: {applications}. \
+         Nothing was applied.",
+        version = crate::SCHEMA_VERSION
+    )]
+    SessionsConnected { count: usize, applications: String },
     #[error(
         "the database has these tables without columns this binary's schema.sql declares, and no step of \
          schemas/migrations/ adds them: {0}. `schema migrate` only creates missing objects and applies the recorded \
@@ -838,12 +907,38 @@ pub struct Migrated {
     pub steps: Vec<String>,
     /// The objects created, including any explicit step prerequisites, once each.
     pub created: Vec<Object>,
+    /// The views re-created in place (`CREATE OR REPLACE VIEW`).
+    pub views: Vec<Object>,
+    /// The version the run released the database to, when `--release` found it one version behind.
+    pub released: Option<i32>,
 }
 
 impl Migrated {
     pub fn is_empty(&self) -> bool {
-        self.steps.is_empty() && self.created.is_empty()
+        self.released.is_none() && self.steps.is_empty() && self.created.is_empty()
     }
+}
+
+/// A stamp one version behind this binary's: what `RELEASE_SQL` accepts.
+fn release_pending(stamp: &Option<(String, i32)>) -> bool {
+    matches!(stamp, Some((identity, version))
+        if identity == crate::SCHEMA_IDENTITY && *version == crate::SCHEMA_VERSION - 1)
+}
+
+/// The application name of every other client session of this database
+/// (`-` when unset or hidden). PostgreSQL hides `backend_type` (NULL) for a
+/// session of a role the caller is not a member of, unless the caller has
+/// `pg_read_all_stats`; such a row counts as a client session.
+async fn other_sessions(conn: &mut sqlx::PgConnection) -> sqlx::Result<Vec<String>> {
+    sqlx::query_scalar(
+        "SELECT coalesce(nullif(application_name, ''), '-') \
+         FROM pg_stat_activity \
+         WHERE datname = current_database() AND pid <> pg_backend_pid() \
+           AND coalesce(backend_type, 'client backend') = 'client backend' \
+         ORDER BY 1",
+    )
+    .fetch_all(conn)
+    .await
 }
 
 async fn read_stamp(conn: &mut sqlx::PgConnection) -> sqlx::Result<Option<(String, i32)>> {
@@ -945,8 +1040,24 @@ async fn create_missing(
             .await?;
         made.insert(object.clone());
         done.created.push(object.clone());
+    } else if let Some(replace) = view_replacement(sql) {
+        sqlx::raw_sql(sqlx::AssertSqlSafe(replace))
+            .execute(conn)
+            .await?;
+        done.views.push(object.clone());
     }
     Ok(())
+}
+
+/// A `CREATE VIEW` as the `CREATE OR REPLACE VIEW` that brings an existing
+/// view to the layout. A view holds no rows, and PostgreSQL refuses a
+/// replacement that drops, renames or retypes a column, so the run is
+/// additive by construction: a view that needs one of those is a reviewed
+/// release.
+fn view_replacement(sql: &str) -> Option<String> {
+    let w = words(sql);
+    (w.len() > 2 && upper(w[0]) == "CREATE" && upper(w[1]) == "VIEW")
+        .then(|| format!("CREATE OR REPLACE{}", sql.trim_start()[6..].to_owned()))
 }
 
 /// Brings a stamped database of this binary's identity and version up to its
@@ -954,22 +1065,71 @@ async fn create_missing(
 /// (in order, each recorded as it goes), the layout check that rolls
 /// everything back when a column is still missing (including any explicit
 /// canonical receipt prerequisites created for pending 0013), then every object of
-/// `sql` it lacks (and the follow-ups of the ones it creates). Returns what
-/// it did. `sql` and `migrations` are this binary's own texts (`db::SCHEMA_SQL`,
+/// `sql` it lacks (and the follow-ups of the ones it creates); a view it has
+/// is re-created in place, so a column a step added reaches the view. Returns
+/// what it did. `sql` and `migrations` are this binary's own texts (`db::SCHEMA_SQL`,
 /// `db::MIGRATIONS_SQL`), never input.
 pub async fn migrate(pool: &PgPool, sql: &str, migrations: &str) -> Result<Migrated, MigrateError> {
+    migrate_in_one(pool, sql, migrations, None).await
+}
+
+/// `migrate`, preceded by `release` (this binary's `db::RELEASE_SQL`) when the
+/// database is stamped one version behind, all in the same transaction: a
+/// refusal or failure anywhere leaves the database as it was. The release
+/// runs only when no other client session is connected to the database, so
+/// every writer, poller and administrative path is stopped first. A database
+/// already at this binary's version takes the plain `migrate`.
+pub async fn migrate_with_release(
+    pool: &PgPool,
+    sql: &str,
+    migrations: &str,
+    release: &str,
+) -> Result<Migrated, MigrateError> {
+    migrate_in_one(pool, sql, migrations, Some(release)).await
+}
+
+async fn migrate_in_one(
+    pool: &PgPool,
+    sql: &str,
+    migrations: &str,
+    release: Option<&str>,
+) -> Result<Migrated, MigrateError> {
+    crate::require_utf8(pool).await?;
     let steps = parse_steps(migrations);
     let linted = lint_steps(&steps)?;
     let plan = plan(sql)?;
     let mut tx = pool.begin().await?;
-    let stamp = read_stamp(&mut tx).await?;
+    let mut stamp = read_stamp(&mut tx).await?;
+    let mut done = Migrated::default();
+    if let Some(release) = release
+        && release_pending(&stamp)
+    {
+        let mut sessions = other_sessions(&mut tx).await?;
+        if !sessions.is_empty() {
+            let count = sessions.len();
+            sessions.dedup();
+            return Err(MigrateError::SessionsConnected {
+                count,
+                applications: sessions.join(", "),
+            });
+        }
+        // The release backfills and builds indexes; the pool's per-statement
+        // limit is for serving, not for this.
+        sqlx::query("SET LOCAL statement_timeout = 0")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(release.to_owned()))
+            .execute(&mut *tx)
+            .await?;
+        stamp = read_stamp(&mut tx).await?;
+        done.released = Some(crate::SCHEMA_VERSION);
+    }
     check_stamp(stamp.clone())?;
     let version = stamp.expect("checked stamp").1;
     let retired = retired_voice_objects(&mut tx).await?;
     if !retired.is_empty() {
         return Err(MigrateError::RetiredDrift(retired.join(", ")));
     }
-    let mut done = Migrated::default();
     let mut made: HashSet<Object> = HashSet::new();
 
     // 1. the steps, recorded in the ledger (created first on a database
@@ -1014,6 +1174,18 @@ pub async fn migrate(pool: &PgPool, sql: &str, migrations: &str) -> Result<Migra
         for (stmt, kind) in statements {
             if let StepStatement::AddConstraint { table, name } = kind
                 && constraint_exists(&mut tx, table, name).await?
+            {
+                continue;
+            }
+            if let StepStatement::CreateFunction { schema, name } = kind
+                && exists(
+                    &mut tx,
+                    &Object::Function {
+                        schema: schema.clone(),
+                        name: name.clone(),
+                    },
+                )
+                .await?
             {
                 continue;
             }
@@ -1081,8 +1253,16 @@ impl SchemaStatus {
     /// 0: this binary can serve the database as it is. 3: `schema migrate`
     /// has work (steps to apply, objects to create) and nothing stands in
     /// its way. 4: no stamp, another identity or version, a drifted or
-    /// refused step, or a missing column no pending step adds.
+    /// refused step, or a missing column no pending step adds. 5: the
+    /// database is one version behind and `schema migrate --release` takes
+    /// it to this binary's version once every writer is stopped.
     pub fn exit_code(&self) -> i32 {
+        if release_pending(&self.stamp)
+            && self.drifted_steps.is_empty()
+            && self.refused_step.is_none()
+        {
+            return 5;
+        }
         if !self.compatible()
             || !self.drifted_steps.is_empty()
             || self.refused_step.is_some()
@@ -1111,6 +1291,8 @@ impl SchemaStatus {
                 crate::SCHEMA_VERSION,
                 if self.compatible() {
                     "compatible"
+                } else if release_pending(&self.stamp) {
+                    "one version behind (`schema migrate --release` with every writer stopped)"
                 } else {
                     "INCOMPATIBLE (the data-safe release procedure, not migrate)"
                 }
@@ -1162,6 +1344,7 @@ impl SchemaStatus {
             match self.exit_code() {
                 0 => "up to date",
                 3 => "catalyst schema migrate brings it up to date",
+                5 => "catalyst schema migrate --release brings it up to date once every writer is stopped",
                 _ => "not this binary's layout and migrate cannot make it so",
             }
         ));
@@ -1184,10 +1367,10 @@ pub async fn status(
     if let Err(e) = lint_steps(&steps) {
         out.refused_step = Some(e.to_string());
     }
-    if out.stamp.is_some() {
+    if let Some(stamp) = &out.stamp {
         let recorded = recorded_steps(&mut conn).await?;
         for step in &steps {
-            let version = out.stamp.as_ref().expect("stamp exists").1;
+            let version = stamp.1;
             let retired = match step_retired(step, version) {
                 Ok(retired) => retired,
                 Err(error) => {
@@ -1219,7 +1402,10 @@ fn hash_named_prefix(name: &str) -> Option<&str> {
 }
 
 /// Functions in the database named like a hash-named function of the layout
-/// (same schema and prefix, another hash) that the layout does not declare.
+/// (same schema and prefix, another hash) that the layout does not declare
+/// and no column default, generated column or index still calls
+/// (`pg_depend`: a step replaced such a function's body in place, and
+/// dropping it would take the column or the index with it).
 async fn superseded_functions(
     conn: &mut sqlx::PgConnection,
     plan: &[Planned],
@@ -1248,6 +1434,10 @@ async fn superseded_functions(
             "SELECT p.proname::text, format('%I.%I(%s)', n.nspname, p.proname, pg_get_function_identity_arguments(p.oid))
              FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
              WHERE n.nspname = $1 AND starts_with(p.proname, $2 || '_')
+               AND NOT EXISTS (
+                 SELECT 1 FROM pg_catalog.pg_depend d
+                 WHERE d.refclassid = 'pg_catalog.pg_proc'::regclass AND d.refobjid = p.oid
+                   AND d.classid IN ('pg_catalog.pg_attrdef'::regclass, 'pg_catalog.pg_class'::regclass))
              ORDER BY 2",
         )
         .bind(&schema)
@@ -1568,15 +1758,27 @@ mod tests {
     }
 
     #[test]
+    fn a_view_is_replaced_in_place_and_nothing_else_is() {
+        assert_eq!(
+            view_replacement("CREATE VIEW a.v AS\n    SELECT 1;").as_deref(),
+            Some("CREATE OR REPLACE VIEW a.v AS\n    SELECT 1;")
+        );
+        assert!(view_replacement("CREATE TABLE a.t (c int)").is_none());
+        assert!(view_replacement("CREATE MATERIALIZED VIEW a.v AS SELECT 1").is_none());
+    }
+
+    #[test]
     fn a_step_lint_takes_the_additive_forms_and_refuses_the_rest() {
         for ok in [
             "ALTER TABLE a.t ADD COLUMN IF NOT EXISTS c integer NOT NULL DEFAULT 0",
             "ALTER TABLE IF EXISTS a.t ADD COLUMN IF NOT EXISTS c text",
+            "ALTER TABLE IF EXISTS a.t ADD COLUMN IF NOT EXISTS c integer GENERATED ALWAYS AS (CASE WHEN d ~ '^[0-9]{1,3}$' THEN (d)::int END) STORED, ADD COLUMN IF NOT EXISTS e text",
             "ALTER TABLE a.t DROP CONSTRAINT IF EXISTS t_check",
             "ALTER TABLE a.t ALTER COLUMN c SET DEFAULT 1",
             "ALTER TABLE a.t ALTER COLUMN c DROP NOT NULL",
             "ALTER TYPE a.kind ADD VALUE IF NOT EXISTS 'x'",
             "CREATE OR REPLACE FUNCTION a.f() RETURNS int LANGUAGE sql AS $f$ SELECT 1 $f$",
+            "CREATE FUNCTION a.f_47d21316abf2(text) RETURNS int LANGUAGE sql RETURN 1",
             "UPDATE a.t SET c = 1 WHERE c IS NULL",
             "COMMENT ON COLUMN a.t.c IS 'x'",
             "DROP INDEX IF EXISTS a.t_idx",
@@ -1590,8 +1792,25 @@ mod tests {
                 name: "t_c_check".into()
             })
         );
+        assert_eq!(
+            classify_step(
+                "CREATE FUNCTION a.f_47d21316abf2(text) RETURNS int LANGUAGE sql RETURN 1"
+            ),
+            Ok(StepStatement::CreateFunction {
+                schema: "a".into(),
+                name: "f_47d21316abf2".into()
+            })
+        );
         for (bad, why) in [
             ("ALTER TABLE a.t ADD COLUMN c integer", "IF NOT EXISTS"),
+            (
+                "ALTER TABLE IF EXISTS a.t ADD COLUMN IF NOT EXISTS c integer GENERATED ALWAYS AS (CASE WHEN d ~ '^[0-9]{1,3}$' THEN (d)::int END) STORED, ADD COLUMN e text",
+                "several actions",
+            ),
+            (
+                "ALTER TABLE a.t ADD COLUMN IF NOT EXISTS c integer, ADD CONSTRAINT t_c_check CHECK (c >= 0)",
+                "several actions",
+            ),
             ("ALTER TABLE a.t DROP COLUMN c", "never drops a column"),
             ("ALTER TABLE a.t DROP CONSTRAINT t_check", "IF EXISTS"),
             (
@@ -1609,6 +1828,14 @@ mod tests {
             ("DELETE FROM a.t WHERE c = 1", "never deletes"),
             ("TRUNCATE a.t", "never deletes"),
             ("CREATE TABLE a.u (id int)", "does not create"),
+            (
+                "CREATE FUNCTION a.f(text) RETURNS int LANGUAGE sql RETURN 1",
+                "hash of its definition",
+            ),
+            (
+                "CREATE FUNCTION f_47d21316abf2(text) RETURNS int LANGUAGE sql RETURN 1",
+                "hash of its definition",
+            ),
             ("CREATE INDEX IF NOT EXISTS i ON a.t (c)", "does not create"),
             ("DO $$ BEGIN PERFORM 1; END $$", "DO block"),
             (
@@ -1740,6 +1967,49 @@ mod tests {
         assert_eq!(
             found,
             vec![format!("{schema}.unpublish_scene_aaaaaaaaaaaa(text)")]
+        );
+        drop(conn);
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!("DROP SCHEMA {schema} CASCADE")))
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    /// A hash-named function the layout no longer declares stays off the list
+    /// while a generated column, a column default or an index calls it: a step
+    /// replaced its body in place, and dropping it would drop the column.
+    #[tokio::test]
+    async fn status_keeps_hash_named_functions_a_generated_column_or_index_calls() {
+        let Some(pool) = crate::scratch::pool(2).await else {
+            return;
+        };
+        let schema = format!("fns_{}", uuid::Uuid::new_v4().simple());
+        let body = "RETURNS int LANGUAGE sql IMMUTABLE AS $f$ SELECT length($1); $f$";
+        let layout = format!(
+            "CREATE SCHEMA {schema};\nCREATE FUNCTION {schema}.live_until_bbbbbbbbbbbb(text) {body};"
+        );
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+            "{layout}\n\
+             CREATE FUNCTION {schema}.live_until_aaaaaaaaaaaa(text) {body};\n\
+             CREATE FUNCTION {schema}.live_until_cccccccccccc(text) {body};\n\
+             CREATE FUNCTION {schema}.live_until_dddddddddddd(text) {body};\n\
+             CREATE FUNCTION {schema}.live_until_eeeeeeeeeeee(text) {body};\n\
+             CREATE TABLE {schema}.event (\
+               raw text, \
+               live_until int GENERATED ALWAYS AS ({schema}.live_until_aaaaaaaaaaaa(raw)) STORED, \
+               size int DEFAULT {schema}.live_until_cccccccccccc('default'));\n\
+             CREATE INDEX event_live_until_idx ON {schema}.event (({schema}.live_until_dddddddddddd(raw)));"
+        )))
+        .execute(&pool)
+        .await
+        .unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        let found = superseded_functions(&mut conn, &plan(&layout).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(
+            found,
+            vec![format!("{schema}.live_until_eeeeeeeeeeee(text)")]
         );
         drop(conn);
         sqlx::raw_sql(sqlx::AssertSqlSafe(format!("DROP SCHEMA {schema} CASCADE")))

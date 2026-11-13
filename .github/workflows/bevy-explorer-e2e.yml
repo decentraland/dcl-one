@@ -163,12 +163,13 @@ jobs:
           echo 'The scenarios are skipped: the BEVY_E2E_WINDOWS_RUNNER repository variable names no runner.'
           >> "$GITHUB_STEP_SUMMARY"
   # The scenes' CLI, built where the Rust toolchain, the MSVC linker and bash are: a hosted
-  # Windows runner. The GPU image gets the executable. A pull request's run restores the cache
-  # and saves none: only main's code writes it.
+  # Windows runner. The GPU image gets the executable, for the smart wearable fixture of the
+  # InWorld group and the visual scenes of the Visual group. A pull request's run restores the
+  # cache and saves none: only a first attempt that built main's head writes it.
   scene-cli:
     name: dcl-scene-cli (Windows)
     needs: inputs
-    if: needs.inputs.outputs.run == 'true' && vars.BEVY_E2E_WINDOWS_RUNNER != '' && (github.event.inputs.group || 'both') != 'inworld'
+    if: needs.inputs.outputs.run == 'true' && vars.BEVY_E2E_WINDOWS_RUNNER != ''
     runs-on: windows-2025
     timeout-minutes: 30
     permissions:
@@ -185,13 +186,15 @@ jobs:
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10-16
         with:
           toolchain: 1.99.1
+      - name: Prepare the pinned native toolchain for caching
+        run: python apps/bevy-explorer/prepare-native-cache.py
       # The crate is a member of the services/catalyst workspace: cargo builds and caches under
       # that workspace's target.
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: services/catalyst -> target
           key: e2e-scene-cli
-          save-if: ${{ needs.inputs.outputs.pr == '' }}
+          save-if: ${{ needs.inputs.outputs.pr == '' && needs.inputs.outputs.sha == github.sha && github.run_attempt == '1' }}
       - name: Build dcl-scene-cli
         working-directory: services/catalyst
         run: cargo build --release --locked -p dcl-scene-cli
@@ -319,6 +322,22 @@ jobs:
           }
       # The accounts secret is on the two scenario steps alone: never in the environment of the
       # install, the builds, or the report.
+      # The scenes are built with the dcl-scene-cli the scene-cli job built, and served from the
+      # runner: the smart wearable fixture for the InWorld group, the visual scenes for the
+      # Visual group. Without the CLI the InWorld group still runs; its smart wearable scenarios
+      # then fail on the missing fixture, and the Visual group is skipped.
+      - name: Download dcl-scene-cli
+        if: needs.scene-cli.result == 'success'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dcl-scene-cli-windows-${{ needs.inputs.outputs.sha }}
+          path: scene-cli
+      - name: Build the smart wearable fixture
+        if: env.GROUP != 'visual' && needs.scene-cli.result == 'success'
+        env:
+          # A backslash path: build-scenes.ts spawns it through cmd.exe, which reads a `/` as a switch.
+          DCL_SCENE_CLI: ${{ github.workspace }}\scene-cli\dcl-scene-cli.exe
+        run: npm run build-scenes -- smart-wearable
       - name: InWorld scenarios
         id: inworld
         if: env.GROUP != 'visual'
@@ -327,14 +346,6 @@ jobs:
         env:
           DCL_E2E_ACCOUNT_KEYS: ${{ secrets.DCL_E2E_ACCOUNT_KEYS }}
         run: npm run e2e -- --inworld
-      # The visual scenes are built with the dcl-scene-cli the scene-cli job built, and served
-      # from the runner.
-      - name: Download dcl-scene-cli
-        if: env.GROUP != 'inworld' && needs.scene-cli.result == 'success'
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: dcl-scene-cli-windows-${{ needs.inputs.outputs.sha }}
-          path: scene-cli
       - name: Build the visual scenes
         if: env.GROUP != 'inworld' && needs.scene-cli.result == 'success'
         env:
@@ -367,7 +378,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
       - name: Fail when a group failed
-        if: steps.inworld.outcome == 'failure' || steps.visual.outcome == 'failure' || (env.GROUP != 'inworld' && needs.scene-cli.result != 'success')
+        if: steps.inworld.outcome == 'failure' || steps.visual.outcome == 'failure' || needs.scene-cli.result != 'success'
         run: |
           Write-Output "InWorld: ${{ steps.inworld.outcome }}; Visual: ${{ steps.visual.outcome }}; dcl-scene-cli build: ${{ needs.scene-cli.result }}"
           exit 1

@@ -9,8 +9,10 @@ import { renderToPipeableStream } from "react-dom/server";
 
 import { markdownResponse, wantsMarkdown } from "@/data/lib/agent/markdown";
 import { renderAgentMarkdown } from "@/data/lib/agent/dispatch.server";
-import { ensureSid } from "@/core/lib/telemetry/session";
-import { track } from "@/core/lib/telemetry/track";
+import type { RouterContextProvider } from "react-router";
+
+import { requestSession } from "@/core/lib/telemetry/session";
+import { track, withoutSensitiveParams } from "@/core/lib/telemetry/track";
 
 import { applyFrameIsolation } from "./lib/frame-isolation";
 
@@ -21,7 +23,7 @@ export default function handleRequest(
   responseStatusCode: number,
   responseHeaders: Headers,
   routerContext: EntryContext,
-  _loadContext: unknown,
+  loadContext: RouterContextProvider,
 ) {
   const pathname = new URL(request.url).pathname;
   // The Explorer's native Shop runtime descriptor: /shop-native, and /marketplace-native for Explorer
@@ -44,16 +46,21 @@ export default function handleRequest(
   }
   applyFrameIsolation(request, responseHeaders);
 
-  if (responseStatusCode === 404) {
+  const userAgent = request.headers.get("user-agent");
+  const bot = !!userAgent && isbot(userAgent);
+  // A crawler's misses are not a visitor's: no Segment request per scanned path.
+  if (responseStatusCode === 404 && !bot) {
     try {
-      const { sid } = ensureSid(request);
+      // A matched route's request shares the sid its loaders used (the root middleware set it). A URL
+      // that matches no route skips the middleware, so a cookieless visitor's 404 gets a sid of its own.
+      const { sid } = requestSession(request, loadContext);
       const u = new URL(request.url);
       track(
         "page_not_found",
         {
-          path: u.pathname + u.search,
-          referrer: request.headers.get("referer") ?? "",
-          ua: request.headers.get("user-agent") ?? "",
+          path: withoutSensitiveParams(u.pathname + u.search),
+          referrer: withoutSensitiveParams(request.headers.get("referer") ?? ""),
+          ua: userAgent ?? "",
         },
         { sid, story: "sites-error" },
       );
@@ -63,10 +70,9 @@ export default function handleRequest(
 
   return new Promise((resolve, reject) => {
     let shellRendered = false;
-    const userAgent = request.headers.get("user-agent");
 
     const readyOption: keyof RenderToPipeableStreamOptions =
-      (userAgent && isbot(userAgent)) || routerContext.isSpaMode
+      bot || routerContext.isSpaMode
         ? "onAllReady"
         : "onShellReady";
 

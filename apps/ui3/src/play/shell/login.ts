@@ -1,6 +1,6 @@
 // The signed-in identity, kept by the shell for the app (src/lib/shell.ts shellRequest): the app
 // gets the public identity and asks for signatures, and never sees the key.
-import { createGuestIdentity, webGuestBackendFor } from '../features/auth/guest'
+import { createGuestIdentity, webGuestBackendFor } from '@explorer-core/features/auth/guest'
 import {
   clearGuestLogin,
   clearStoredLogins,
@@ -10,8 +10,8 @@ import {
   rootAddress,
   storeGuestLogin,
   type StoredLogin
-} from '../features/auth/sso'
-import { personalSign } from './sign'
+} from '@explorer-core/features/auth/sso'
+import { personalSign } from '@explorer-core/shell/sign'
 
 // The login handed to the app, key included. It is the only one the shell signs with, and once it
 // has signed it is kept for the session, so signing out or in again in another tab doesn't pull it
@@ -19,7 +19,8 @@ import { personalSign } from './sign'
 // read again.
 let held: StoredLogin | null = null
 let pinned = false
-function currentLogin(): StoredLogin | null {
+/** The login the shell holds now, key included: the in-world Shop's buyer (shop/purchase). */
+export function currentLogin(): StoredLogin | null {
   if (!pinned || !held || loginExpired(held)) {
     held = getStoredLogin()
     pinned = false

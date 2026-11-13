@@ -1,4 +1,4 @@
-// from: ui3/src/shop/model/{purchase,settlement,wire}.ts (PurchaseOffer, the serde forms the UI decodes), shop@94584a5c:app/src/lib/payment-options.ts (what a presentation needs: a quote per offered method, the outage per withheld one)
+// from: library/shop/model/{purchase,settlement,wire}.ts (PurchaseOffer, the serde forms the UI decodes), shop@94584a5c:app/src/lib/payment-options.ts (what a presentation needs: a quote per offered method, the outage per withheld one)
 //! The wire of the MANA routes: the quote request (cart lines named by
 //! their authoritative listing, never by a price), the `PurchaseOffer` the
 //! UI's `presentPayment` renders, its MANA execution block (network,
@@ -193,7 +193,7 @@ pub struct ManaExecution {
     pub fingerprint: Option<String>,
 }
 
-/// The server's answer for one line (`ui3/src/shop/model/purchase.ts`).
+/// The server's answer for one line (`library/shop/model/purchase.ts`).
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct PurchaseOffer {
@@ -207,8 +207,21 @@ pub struct PurchaseOffer {
     pub settlement: Vec<SettlementFor>,
     pub available: Option<i64>,
     pub quoted_at: i64,
+    /// The creator coupon the quotes are discounted by, when the sale has
+    /// one: the buyer's settlement must use this coupon, or none of it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub coupon: Option<OfferCoupon>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mana: Option<ManaExecution>,
+}
+
+/// The identity and economics of the coupon an offer was priced with.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct OfferCoupon {
+    pub id: String,
+    pub coupon_address: String,
+    pub discount_ppm: u32,
 }
 
 /// A line that could not be quoted at all: the rule's refusal or the
@@ -298,6 +311,12 @@ pub fn refusal_json(refusal: &Refusal) -> Value {
         Refusal::NegativeDebit { debit } => json!({ "code": "negativeDebit", "debit": debit }),
         Refusal::CreditValueTooLarge { value, cap } => {
             json!({ "code": "creditValueTooLarge", "value": value, "cap": cap })
+        }
+        Refusal::SettlementNeedAboveReference { need, reference } => {
+            json!({ "code": "settlementNeedAboveReference", "need": need, "reference": reference })
+        }
+        Refusal::UnlistedMarketplace { venue } => {
+            json!({ "code": "unlistedMarketplace", "chainId": venue.chain_id, "contract": venue.contract })
         }
     }
 }

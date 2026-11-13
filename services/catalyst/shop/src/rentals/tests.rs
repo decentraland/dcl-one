@@ -470,6 +470,36 @@ async fn an_enabled_write_without_a_chain_is_401_with_the_old_body() {
 }
 
 #[tokio::test]
+async fn a_signed_rental_listing_is_refused_while_the_marketplace_is_off() {
+    let w = wallet();
+    let mut body = creation(&random_token_id(), "");
+    body.signature = sign_listing(&w, &body).await;
+    let doc = creation_json(&body);
+    let path = "/v1/rentals-listings";
+    let market = market_with(None);
+    market.set_marketplace_features(false);
+    for state in [
+        state_over(lazy_pool(), Some(market), true),
+        state_over(lazy_pool(), None, true),
+    ] {
+        // Off, or no marketplace state to read the rollout from: refused after the signature, before any read.
+        let (status, _, out) = send(
+            router(state),
+            "POST",
+            path,
+            signed_headers(&w, "post", path).await,
+            Some(doc.clone()),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{out}");
+        assert!(
+            out.to_string().contains("dapps-shop-marketplace-features"),
+            "{out}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn create_refresh_and_list_over_the_stub_subgraph() {
     let Some(pool) = crate::db::scratch::pool(4).await else {
         return;

@@ -52,7 +52,13 @@
       "path": "ui"
     },
     {
-      "path": "video"
+      "path": "smart-wearable"
+    },
+    {
+      "path": "pointer-targets"
+    },
+    {
+      "path": "raycast-storm"
     },
     {
       "path": "audio"

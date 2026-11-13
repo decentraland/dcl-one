@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { dappsFlags, resetDappsFlags } from "./feature-flags.server";
+import { dappsFlags, dappsFlagsAnswer, resetDappsFlags } from "./feature-flags.server";
 
 const fetchMock = vi.fn();
 
@@ -26,6 +26,20 @@ describe("decentraland.org's rollout flags, read by the server", () => {
     expect(fetchMock).toHaveBeenCalledOnce();
     expect(fetchMock.mock.calls[0]![0]).toBe("https://feature-flags.decentraland.org/dapps.json");
     expect((fetchMock.mock.calls[0]![1] as RequestInit).headers).toEqual({ Referer: "https://decentraland.org/" });
+  });
+
+  it("keeps an enabled variant's string payload with the flags, from the same read", async () => {
+    const list = "0x00000000000000000000000000000000000000aa";
+    answer({
+      flags: { "dapps-shop-my-store": true },
+      variants: {
+        "dapps-shop-my-store": { name: "testers", enabled: true, payload: { type: "string", value: list } },
+        "dapps-off": { name: "x", enabled: false, payload: { type: "string", value: "no" } },
+      },
+    });
+    expect(await dappsFlagsAnswer()).toEqual({ flags: { "dapps-shop-my-store": true }, variants: { "dapps-shop-my-store": list } });
+    expect(await dappsFlags()).toEqual({ "dapps-shop-my-store": true });
+    expect(fetchMock).toHaveBeenCalledOnce();
   });
 
   it("asks as the configured site on another domain", async () => {

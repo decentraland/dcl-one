@@ -1,0 +1,63 @@
+/* The Backpack's 126px tile (design/WearableCard) drawn at the dialogs' 150px. */
+.tile {
+  position: relative;
+  display: block;
+  flex: none;
+  width: 150px;
+  height: 150px;
+  overflow: hidden;
+  border-radius: var(--r-slot);
+  background-position: top center;
+  background-size: 100% auto;
+}
+
+.image {
+  position: absolute;
+  inset: 1px;
+  width: calc(100% - 2px);
+  height: calc(100% - 2px);
+  object-fit: contain;
+  pointer-events: none;
+}
+
+.flap {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 55px;
+  height: 55px;
+  filter: drop-shadow(0 1px 2px var(--scrim-40));
+}
+.flapTint {
+  position: absolute;
+  inset: 0;
+  background: var(--rm);
+  mask: url('@hud/assets/backpack/corner-flap.webp') center / 100% 100% no-repeat;
+}
+.flapIcon {
+  position: absolute;
+  left: 5px;
+  top: 5px;
+  display: flex;
+  color: var(--text);
+}
+
+/* The design's NewLabel: 46×22.5, 6px in from the left, 9px off the bottom. */
+.new {
+  position: absolute;
+  left: 6.25px;
+  top: 118.75px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 46px;
+  height: 22.5px;
+  padding: 0 4.8px;
+  border-radius: calc(var(--r-slot) / 2);
+  background: var(--brand);
+  color: var(--text);
+  font-size: var(--type-15);
+  font-weight: var(--fw-bold);
+  line-height: 1;
+  text-transform: uppercase;
+}

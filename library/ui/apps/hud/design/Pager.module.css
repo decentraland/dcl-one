@@ -1,0 +1,85 @@
+.pager {
+  display: flex;
+  align-items: center;
+  gap: 14.5px;
+}
+.pages {
+  display: flex;
+  gap: 6px;
+}
+.arrow,
+.page {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: var(--r-sm);
+  color: var(--text);
+  font-family: inherit;
+  cursor: pointer;
+  transition: background-color var(--dur-tap) linear;
+}
+.arrow {
+  width: 26px;
+  height: 26px;
+  background: var(--pager-idle);
+}
+.arrow:hover {
+  background: var(--slot-edge);
+}
+.arrow:active {
+  background: var(--scrim-20);
+}
+.next > span {
+  transform: scaleX(-1);
+}
+.page {
+  width: 34px;
+  height: 34px;
+  background: transparent;
+  font-size: var(--type-15);
+  font-weight: var(--fw-semibold);
+}
+.page:hover {
+  background: var(--pager-idle);
+}
+.current,
+.current:hover {
+  background: var(--accent);
+}
+
+/* The Shop's pager: 38px pages, white-washed arrows set off by a spacer, an ellipsis after the window. */
+.shop {
+  gap: 10px;
+}
+.shop .pages {
+  gap: 4px;
+}
+.shop .arrow {
+  border-radius: var(--r-sm);
+  background: var(--divider-strong);
+}
+.shop .arrow:hover {
+  background: var(--tab-hover);
+}
+.shop .page,
+.more {
+  width: 38px;
+  height: 38px;
+}
+.shop .page {
+  border-radius: var(--r-pill);
+}
+.shop .current,
+.shop .current:hover {
+  border-radius: var(--r-control);
+}
+.more {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text);
+  font-size: var(--type-15);
+  font-weight: var(--fw-semibold);
+}

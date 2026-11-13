@@ -4,11 +4,12 @@
 // explorer-automation keeps one client for a whole run. `--test-isolation=none` keeps the spec
 // files in one process.
 import { mkdir, writeFile } from 'node:fs/promises'
+import { createServer } from 'node:net'
 import path from 'node:path'
 import { chromeArgs } from './chrome.ts'
-import type { Console } from './console.ts'
-import { Explorer, type WorldState } from './explorer.ts'
-import { buildAuthIdentity } from './identity.ts'
+import { type Console, ConsoleError, scrubCredentials } from './console.ts'
+import { Explorer, type HudLoginReply, type WorldState } from './explorer.ts'
+import { buildAuthIdentity, newPrivateKey } from './identity.ts'
 import { NativeConsole, spawnNative } from './native.ts'
 import { serveWebApp, type StaticServer } from './serve.ts'
 import { accountKey, describeTarget, readTarget, type Target } from './target.ts'
@@ -16,7 +17,12 @@ import { until } from './wait.ts'
 import { BootError, WebConsole } from './web.ts'
 import { REPORT_DIR } from './paths.ts'
 
-export type SignIn = 'account' | 'guest' | 'none'
+/** How a session signs in: the automation `account`; a `guest`, a fresh account the engine marks
+ *  as one, as the HUD's Continue as guest makes it (it signs, and keeps a profile); an
+ *  `unsigned-guest`, the session-only guest with no signed identity, which the engine's
+ *  `/login_guest` signs in (on the web under a HUD that stays on its start page, so with no world
+ *  of its own; a scene preview's `?guest=1` boot signs in the same guest); or `none`. */
+export type SignIn = 'account' | 'guest' | 'unsigned-guest' | 'none'
 
 export interface OpenOptions {
   /** The realm to boot into; the target's by default. */
@@ -26,6 +32,9 @@ export interface OpenOptions {
   signIn?: SignIn
   /** The first login's profile name (1 to 15 alphanumerics) and curated look. */
   firstLogin?: { name?: string; look?: number }
+  /** More arguments for the standalone this session starts, which make it a separate client;
+   *  an error on the web. */
+  nativeArgs?: string[]
 }
 
 export interface Session {
@@ -49,7 +58,7 @@ function message(error: unknown): string {
 
 function key(target: Target, options: OpenOptions): string {
   const size = options.windowSize ?? target.windowSize
-  return [options.realm ?? target.realm, options.position ?? target.position, size.join('x'), options.signIn ?? 'account'].join('|')
+  return [options.realm ?? target.realm, options.position ?? target.position, size.join('x'), options.signIn ?? 'account', ...(options.nativeArgs ?? [])].join('|')
 }
 
 /** The client for these options, booted on first use. The harness closes every session once the
@@ -82,6 +91,20 @@ export async function openExplorer(options: OpenOptions = {}): Promise<Explorer>
   return (await openSession(options)).explorer
 }
 
+/** Close the session for these options, if one is open: the next scenario that asks for it boots
+ *  it anew. Every client renders while it is open, and they share the GPU. */
+export async function closeSession(options: OpenOptions = {}, target: Target = readTarget()): Promise<void> {
+  const id = key(target, options)
+  const session = sessions.get(id)
+  if (!session) return
+  sessions.delete(id)
+  try {
+    await (await session).close()
+  } catch {
+    // a client that is already gone, or never booted
+  }
+}
+
 export async function closeSessions(): Promise<void> {
   const open = [...sessions.values()]
   sessions.clear()
@@ -107,18 +130,30 @@ export async function closeSessions(): Promise<void> {
 /** A failed boot's evidence in the report: what the page said (`boot-<n>.console.txt`) and how it
  *  looked (`boot-<n>.jpg`), under `report/boot-failures/`; the console's last lines go to the log
  *  as well, where a step timeout can still cut the run off before the report is uploaded. */
-export async function keepBootFailure(boot: number, error: BootError): Promise<void> {
-  const dir = path.join(REPORT_DIR, 'boot-failures')
+export async function keepBootFailure(boot: number, error: BootError, dir = path.join(REPORT_DIR, 'boot-failures')): Promise<void> {
   await mkdir(dir, { recursive: true })
-  await writeFile(path.join(dir, `boot-${boot}.console.txt`), `${error.message}\n\n${error.console.join('\n')}\n`)
+  // the report and the log are public: a line can carry a credential (a room's access token)
+  const lines = error.console.map(scrubCredentials)
+  await writeFile(path.join(dir, `boot-${boot}.console.txt`), `${error.message}\n\n${lines.join('\n')}\n`)
   if (error.screenshot) await writeFile(path.join(dir, `boot-${boot}.jpg`), error.screenshot)
-  const tail = error.console.slice(-20)
-  console.error(`[e2e] the page's console, the last ${tail.length} of ${error.console.length} lines (all of them in ${dir}):\n${tail.join('\n')}`)
+  const tail = lines.slice(-20)
+  console.error(`[e2e] the page's console, the last ${tail.length} of ${lines.length} lines (all of them in ${dir}):\n${tail.join('\n')}`)
 }
 
+/** How long the world is waited for once signed in. */
+export const WORLD_TIMEOUT_MS = 300_000
+
+/** The HUD's world, by the rail's top button: the HUD puts it up once its own phase reaches the
+ *  world, which can come after the engine's. */
+export const WORLD_HUD = { name: 'Sidebar settings', role: 'button' } as const
+
+/** How long the HUD's world is waited for once the engine is in the world. */
+export const HUD_TIMEOUT_MS = 60_000
+
 /** How long a boot may take, the sum of its waits: the web transport's `ready` (300 s), the
- *  sign-in command (120 s) and `enterWorld` (300 s). A scenario's own budget starts after it. */
-export const BOOT_ALLOWANCE_MS = 720_000
+ *  sign-in command (120 s), the world (`WORLD_TIMEOUT_MS`) and the HUD's (`HUD_TIMEOUT_MS`). A
+ *  scenario's own budget starts after it. */
+export const BOOT_ALLOWANCE_MS = 780_000
 
 async function boot(options: OpenOptions, target: Target): Promise<Session> {
   const realm = options.realm ?? target.realm
@@ -127,15 +162,17 @@ async function boot(options: OpenOptions, target: Target): Promise<Session> {
   let console_: Console
   let url: string | undefined
   if (target.transport === 'native') {
-    console_ = await nativeConsole(target, realm, position)
+    console_ = await nativeConsole(target, realm, position, options.nativeArgs)
   } else {
+    if (options.nativeArgs?.length) throw new Error('nativeArgs need DCL_E2E_TRANSPORT=native: the web client takes no service override')
     const base = target.webUrl ?? (await serveApp(target)).url
     const page = new URL(base)
     // No `realm` or `position` on the url: a destination there makes the HUD launch the engine
     // only once a sign-in is submitted on its start page (useEngineSession's url destination),
-    // and the sign-in below goes through the engine's console. Without one the engine launches
-    // at once for a visitor with no session, holding the world; `arrive` then reaches the realm
-    // and the parcel by console.
+    // and the console the sign-in below needs comes up only with the engine (engine.js installs
+    // it once the engine worker runs). Without one the engine launches at once for a visitor
+    // with no session, holding the world; `/hud_login` then signs in through the HUD and goes to
+    // the realm and the parcel from the lobby, as a link's destination would.
     page.searchParams.set('baseDomain', target.baseDomain)
     url = page.toString()
     console_ = await WebConsole.launch({
@@ -148,13 +185,20 @@ async function boot(options: OpenOptions, target: Target): Promise<Session> {
   }
   const explorer = new Explorer(console_)
   try {
-    await signIn(explorer, target, options.signIn ?? 'account', options.firstLogin, target.transport === 'native' ? realm : undefined)
-    if (target.transport === 'web') await arrive(explorer, realm, position)
+    await signIn(explorer, target, options.signIn ?? 'account', options.firstLogin, { realm, position })
+    if (target.transport === 'web' && options.signIn !== 'unsigned-guest') {
+      // the HUD's travel lands there; a realm that ignores the parcel (a world) is corrected by console
+      await arrive(explorer, realm, position)
+      // the engine is in the world before the HUD has put up its own (the rail, and the chat,
+      // which opens with its input focused): a key sent sooner can land in that input
+      await explorer.hud.wait(WORLD_HUD, { timeoutMs: HUD_TIMEOUT_MS })
+    }
   } catch (error) {
-    // a page that opened but never arrived: what it said and how it looks, with the error
+    // a page that opened but never arrived: what it said and how it looks, with the error; the
+    // console with the credentials the sign-in sent replaced, should the page have quoted one
     const evidence = console_ instanceof WebConsole ? await console_.evidence().catch(() => undefined) : undefined
     await explorer.close()
-    if (evidence) throw new BootError(message(error), evidence.console, evidence.screenshot)
+    if (evidence) throw new BootError(message(error), evidence.console.map((line) => explorer.redactSecrets(line)), evidence.screenshot)
     throw error
   }
   return {
@@ -176,22 +220,81 @@ function serveApp(target: Target): Promise<StaticServer> {
   return webServer
 }
 
-async function nativeConsole(target: Target, realm: string, position: string): Promise<Console> {
+async function nativeConsole(target: Target, realm: string, position: string, extra: string[] = []): Promise<Console> {
   const { bin, port, token, args } = target.native
-  if (token && !bin) return new NativeConsole({ port, token })
+  if (token && !bin) {
+    if (extra.length > 0) throw new Error('a running standalone cannot take arguments: set DCL_E2E_NATIVE_BIN to start one')
+    return new NativeConsole({ port, token })
+  }
   if (!bin) throw new Error('set DCL_E2E_NATIVE_BIN (an automation build to start) or DCL_E2E_NATIVE_PORT and DCL_E2E_NATIVE_TOKEN (a running one)')
-  return spawnNative({ bin, port, token, args: ['--realm', realm, '--position', position, ...args] })
+  const automationPort = extra.length > 0 ? await freePort() : port
+  return spawnNative({ bin, port: automationPort, token, args: ['--realm', realm, '--position', position, ...args, ...extra] })
 }
 
-/** Sign in, then wait for the world as `enterWorld` does: `Jump In` when the HUD offers it, or
- *  `heldRealm` asked for through the console when the world is held and no `Jump In` exists. */
-export async function signIn(explorer: Explorer, target: Target, mode: SignIn, firstLogin: { name?: string; look?: number } = {}, heldRealm?: string): Promise<WorldState> {
+/** A loopback port nothing is listening on right now. */
+function freePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const probe = createServer()
+    probe.once('error', reject)
+    probe.listen(0, '127.0.0.1', () => {
+      const address = probe.address()
+      const port = typeof address === 'object' && address ? address.port : 0
+      probe.close(() => (port ? resolve(port) : reject(new Error('no free port'))))
+    })
+  })
+}
+
+/** Sign in and wait for the world. On the web the sign-in goes through the HUD (`/hud_login`):
+ *  the engine's own `/login_identity` leaves the HUD on its start page with the world held, as
+ *  the HUD derives its phase from its own flow. The HUD then goes to `destination` from the lobby,
+ *  which releases the hold; a guest is a fresh account the engine marks as one, as the HUD's own
+ *  guest is. The standalone signs in by console at its `--realm` and `--position`, and waits for
+ *  the world as `enterWorld` does. */
+export async function signIn(
+  explorer: Explorer,
+  target: Target,
+  mode: SignIn,
+  firstLogin: { name?: string; look?: number } = {},
+  destination: { realm: string; position: string } = { realm: target.realm, position: target.position }
+): Promise<WorldState> {
+  const pick = { name: firstLogin.name ?? 'e2etester', look: firstLogin.look ?? 1 }
+  if (target.transport === 'web' && mode === 'unsigned-guest') {
+    // the engine's own guest: the HUD keeps its start page and the world stays held, which is all
+    // a reading of the engine's sign-in needs
+    await explorer.loginGuest()
+    return explorer.worldState()
+  }
+  if (target.transport === 'web' && mode !== 'none') {
+    const identity = buildAuthIdentity(mode === 'account' ? accountKey(target) : newPrivateKey())
+    let reply: HudLoginReply
+    try {
+      reply = await explorer.hudLogin(identity, { ...pick, guest: mode === 'guest', ...destination })
+    } catch (error) {
+      // a web app whose HUD predates the command: the page has none to run, so the engine
+      // answers. No falling back to /login_identity, which leaves the HUD on its start page.
+      if (error instanceof ConsoleError && error.output.includes('Command not recognized')) {
+        throw new Error(
+          'the web app under test has no /hud_login: its HUD predates the sign-in through it, or no test runner hook (window.__dclTrustedInput) was there when the page installed its commands; serve a build that has it (DCL_E2E_WEB_APP or DCL_E2E_WEB_URL) under the web driver',
+          { cause: error }
+        )
+      }
+      throw error
+    }
+    // a destination the HUD did not take (its lobby's pick did not go out) is known now, not
+    // after the world's wait
+    if (reply.phase !== 'entering' && reply.phase !== 'world') {
+      throw new Error(`the HUD did not take the destination ${destination.realm} at ${destination.position}: it answered the sign-in in phase ${reply.phase}`)
+    }
+    // a first login deploys its new profile: the catalyst's window starts here
+    explorer.profileDeployed()
+    return explorer.waitInWorld(WORLD_TIMEOUT_MS)
+  }
   if (mode === 'account') {
-    await explorer.loginIdentity(buildAuthIdentity(accountKey(target)), { name: firstLogin.name ?? 'e2etester', look: firstLogin.look ?? 1 })
-  } else if (mode === 'guest') {
+    await explorer.loginIdentity(buildAuthIdentity(accountKey(target)), pick)
+  } else if (mode === 'guest' || mode === 'unsigned-guest') {
     await explorer.loginGuest()
   }
-  return enterWorld(explorer, undefined, heldRealm)
+  return enterWorld(explorer, WORLD_TIMEOUT_MS)
 }
 
 /** `x,y` as a parcel. */
@@ -219,35 +322,17 @@ export async function arrive(explorer: Explorer, realm: string, position: string
   return explorer.teleport(x, y)
 }
 
-/** How long a held, realm-connected world is left to its HUD before the console is asked for the
- *  realm: a `Jump In` that mounts within it wins. */
-export const HELD_GRACE_MS = 5000
-
-/** Wait for the world. Until it comes, one action at most: `Jump In` is pressed once the HUD
- *  offers it as actionable; otherwise, with `heldRealm`, `/changerealm <heldRealm>` is sent once
- *  the state has been signed in, held and realm-connected for `heldGraceMs` with no `Jump In`.
- *  The path taken is logged. */
-export async function enterWorld(explorer: Explorer, timeoutMs = 300_000, heldRealm?: string, heldGraceMs = HELD_GRACE_MS): Promise<WorldState> {
+/** Wait for the world, pressing the lobby's `Jump In` when it offers one (the standalone's). */
+export async function enterWorld(explorer: Explorer, timeoutMs = WORLD_TIMEOUT_MS): Promise<WorldState> {
   let jumped = false
-  let heldSince: number | undefined
   return until(
     async () => {
       const state = await explorer.worldState()
       if (state.inWorld || jumped) return state
       const jump = await explorer.hud.find({ name: 'Jump In', role: 'button', index: 0 }).catch(() => undefined)
       if (jump?.actionable) {
-        console.error('[e2e] entering the world through the HUD Jump In')
         await explorer.hud.click({ name: 'Jump In', role: 'button', index: 0 })
         jumped = true
-      } else if (heldRealm && state.signedIn && state.worldHeld && state.realmConnected) {
-        heldSince ??= Date.now()
-        if (Date.now() - heldSince >= heldGraceMs) {
-          console.error(`[e2e] no Jump In after ${heldGraceMs} ms of a held world: asking the console for ${heldRealm}`)
-          await explorer.run(`/changerealm ${heldRealm}`)
-          jumped = true
-        }
-      } else {
-        heldSince = undefined
       }
       return state
     },

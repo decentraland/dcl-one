@@ -13,7 +13,22 @@ jobs:
         with:
           fetch-depth: 0
       - name: Install ripgrep
-        run: sudo apt-get update && sudo apt-get install -y ripgrep
+        run: |
+          set -euo pipefail
+          ripgrep_version=15.1.0
+          ripgrep_archive="ripgrep-${ripgrep_version}-x86_64-unknown-linux-musl"
+          ripgrep_dir="$RUNNER_TEMP/ripgrep-${ripgrep_version}"
+          mkdir -p "$ripgrep_dir"
+          curl --fail --location --retry 2 --connect-timeout 15 --max-time 60 \
+            --output "$ripgrep_dir/ripgrep.tar.gz" \
+            "https://github.com/BurntSushi/ripgrep/releases/download/${ripgrep_version}/${ripgrep_archive}.tar.gz"
+          printf '%s  %s\n' \
+            '1c9297be4a084eea7ecaedf93eb03d058d6faae29bbc57ecdaf5063921491599' \
+            "$ripgrep_dir/ripgrep.tar.gz" | sha256sum --check --strict
+          tar --extract --gzip --file "$ripgrep_dir/ripgrep.tar.gz" \
+            --directory "$ripgrep_dir" --strip-components=1 "$ripgrep_archive/rg"
+          "$ripgrep_dir/rg" --version
+          printf '%s\n' "$ripgrep_dir" >> "$GITHUB_PATH"
       - name: Validate the ownership catalogue
         run: python3 tooling/owners.py --check
       - name: Validate the single proto source
@@ -31,11 +46,25 @@ jobs:
         if: success() || failure()
         with:
           node-version: 24
-      # No install: the tests import nothing outside Node, this tool and apps/ui3's endpoint map.
+      - name: Test shared asynchronous utilities
+        if: success() || failure()
+        run: node --test library/async/*.test.mts
       - name: Test the shop parity harness
         if: success() || failure()
         working-directory: tooling/shop-parity
         run: node --test lib/*.test.mts
+      - name: Test shop parity readiness and wallet fixtures
+        if: success() || failure()
+        working-directory: tooling/shop-parity
+        run: |
+          npx --yes pnpm@11.27.0 install --frozen-lockfile --ignore-scripts
+          node --test test/*.test.mts
+      - name: Test shop trade journey helpers
+        if: success() || failure()
+        working-directory: tooling/shop-trade-journey
+        run: |
+          npx --yes pnpm@11.27.0 install --frozen-lockfile --ignore-scripts
+          node --test lib/*.test.mts
   # Advisory until its default-branch run history supports required-check promotion.
   social-service-contracts:
     runs-on: ubuntu-26.04

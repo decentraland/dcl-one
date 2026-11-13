@@ -1898,7 +1898,12 @@ async fn collect(state: &CommunitiesState) -> anyhow::Result<Value> {
             break;
         }
         removed += dropped.len() as i64;
-        let held = crate::storage::gc::referenced_among(&state.pool, &dropped).await?;
+        let held = crate::storage::gc::referenced_among(
+            &state.pool,
+            crate::storage::gc::Pins::new(&state.storage, &[]),
+            &dropped,
+        )
+        .await?;
         for cid in dropped.iter().filter(|c| !held.contains(*c)) {
             let registered_again: bool = sqlx::query_scalar(
                 "SELECT EXISTS (SELECT 1 FROM social.community_contents WHERE cid = $1)",
@@ -2465,6 +2470,10 @@ mod tests {
             .await
             .unwrap();
 
+        let blocker: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+            .fetch_one(&mut *ban)
+            .await
+            .unwrap();
         let join = env(
             &joiner,
             CommunityJoin {
@@ -2476,7 +2485,10 @@ mod tests {
             let (app, joiner) = (app.clone(), joiner.clone());
             tokio::spawn(async move { send(&app, &joiner, "POST", &path, &join).await })
         };
-        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        assert!(crate::shared::test_wait::until(async || {
+            sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE wait_event_type='Lock' AND $1=ANY(pg_blocking_pids(pid)))")
+                .bind(blocker).fetch_one(&pool).await.unwrap()
+        }).await);
         assert!(
             !joining.is_finished(),
             "the join waits for the membership lock"

@@ -1,3 +1,4 @@
+import { RouterContextProvider } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { track } from "@/core/lib/telemetry/track";
@@ -17,11 +18,11 @@ beforeEach(() => {
   vi.mocked(track).mockReset();
   vi.mocked(loadShopPage).mockReset().mockImplementation(async (page) => ({
     status: page === "notFound" ? 404 : 200,
-    data: { page, seo: { title: "Pirate Hat", description: "A hat.", noindex: page === "notFound" }, queries: [[["shop-item", C, "7"], { name: "Pirate Hat" }, 1]] },
+    data: { page, seo: { title: "Pirate Hat", description: "A hat.", noindex: page === "notFound" }, queries: [[["shop-item", C, "7", "primary"], { name: "Pirate Hat" }, 1]] },
   }));
 });
 
-const args = (url: string, params: Record<string, string> = {}) => ({ request: new Request(`https://sites.test${url}`), params, context: {} }) as never;
+const args = (url: string, params: Record<string, string> = {}) => ({ request: new Request(`https://sites.test${url}`), params, context: new RouterContextProvider() }) as never;
 
 async function thrown(fn: () => unknown): Promise<Response> {
   try {

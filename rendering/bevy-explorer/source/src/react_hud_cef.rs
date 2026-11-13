@@ -37,7 +37,7 @@ use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use bevy::ui::FocusPolicy;
-use bevy::window::{CursorGrabMode, PrimaryWindow, WindowResized};
+use bevy::window::{CursorGrabMode, PrimaryWindow};
 use cef_offscreen::prelude::{
     Browsers, CefOffscreenPlugin, CefWebviewUri, HostEmitEvent, JsEmitEventPlugin, RenderTexture,
     WebviewSize,
@@ -45,11 +45,14 @@ use cef_offscreen::prelude::{
 use common::rpc::{RpcResultReceiver, RpcResultSender, RpcStreamSender};
 use common::structs::{OutOfWorld, PrimaryUser};
 use input_manager::{InputPriorities, MouseInteractionComponent};
+use scene_runner::update_scene::synthetic_pointer::SyntheticPointer;
 use std::collections::BTreeMap;
+use std::time::Instant;
 use system_bridge::{SystemApi, SystemBridge};
 
 // The HUD's console commands (`/hud_*`), registered in every native build with the HUD.
 mod automation;
+mod diagnostics;
 
 pub struct ReactHudCefPlugin {
     /// The boot realm when it is an explicit destination. Injected into the page URL as ?realm= —
@@ -93,6 +96,7 @@ impl Plugin for ReactHudCefPlugin {
             JsEmitEventPlugin::<PageEnvelope>::default(),
         ));
         app.add_plugins(automation::HudAutomationPlugin);
+        diagnostics::register(app);
         app.add_systems(Startup, spawn_hud);
         app.add_systems(
             Update,
@@ -112,6 +116,10 @@ impl Plugin for ReactHudCefPlugin {
         // handles the Ctrl equivalents itself on other platforms.
         #[cfg(target_os = "macos")]
         app.add_systems(Update, translate_edit_shortcuts);
+        app.add_systems(
+            Update,
+            hide_hud_for_photo_capture.in_set(common::sets::SceneSets::RestrictedActions),
+        );
         app.add_observer(on_page_envelope);
     }
 }
@@ -124,6 +132,21 @@ struct PageEnvelope(serde_json::Value);
 /// Marker for the fullscreen UI node displaying the HUD texture.
 #[derive(Component)]
 struct HudUiNode;
+
+/// The HUD texture is part of the window, so it is hidden for the frame a photo is read from.
+fn hide_hud_for_photo_capture(
+    capturing: Query<(), With<camera_reel::CapturingPhoto>>,
+    mut hud: Query<&mut Visibility, With<HudUiNode>>,
+) {
+    let visibility = if capturing.is_empty() {
+        Visibility::Inherited
+    } else {
+        Visibility::Hidden
+    };
+    for mut hud in &mut hud {
+        hud.set_if_neq(visibility);
+    }
+}
 
 #[derive(Resource)]
 struct ReactHudCef {
@@ -218,27 +241,35 @@ fn spawn_hud(
     url.push_str(&urlencoding::encode(&analytics.common().session_id));
     // A non-default --base-domain reaches the HUD the same way it reaches the web page: as the
     // ?baseDomain= param the page composes all its backend fetch hosts from.
-    if common::base_domain::get() != common::base_domain::DEFAULT {
+    let image_base = common::base_domain::profile_image_base();
+    if image_base.is_some() || common::base_domain::get() != common::base_domain::DEFAULT {
         url.push_str(if url.contains('?') { "&" } else { "?" });
         url.push_str("baseDomain=");
         url.push_str(&urlencoding::encode(common::base_domain::get()));
+    }
+    if let Some(base) = image_base {
+        url.push_str("&nativeProfileImageBase=");
+        url.push_str(&urlencoding::encode(&base));
     }
     // and so does each explicit service override the HUD has a param for (it resolves its own
     // service urls); a native-only service is not in its table, so it would land in the page's
     // unrecognised-parameter dialog
     for service in common::base_domain::Service::all().filter(|s| s.has_web_param()) {
-        if let Some(override_url) = common::base_domain::service_override(service) {
+        if let Some(override_url) = common::base_domain::public_endpoint_override(service) {
             url.push_str(if url.contains('?') { "&" } else { "?" });
             url.push_str(&service.param());
             url.push('=');
-            url.push_str(&urlencoding::encode(override_url));
+            url.push_str(&urlencoding::encode(&override_url));
         }
     }
 
-    let (w, h) = windows
+    let size = windows
         .single()
-        .map(|w| (w.width(), w.height()))
-        .unwrap_or((1280.0, 720.0));
+        .map(WebviewSize::from)
+        .unwrap_or(WebviewSize {
+            logical: Vec2::new(1280.0, 720.0),
+            scale_factor: 1.0,
+        });
 
     // Placeholder until the first CEF paint arrives (update_hud_texture replaces it wholesale).
     let image = images.add(Image::new_fill(
@@ -254,9 +285,7 @@ fn spawn_hud(
     ));
 
     info!("[react-hud-cef] loading {url}");
-    let hud = commands
-        .spawn((CefWebviewUri::new(url), WebviewSize(Vec2::new(w, h))))
-        .id();
+    let hud = commands.spawn((CefWebviewUri::new(url), size)).id();
 
     commands.spawn((
         HudUiNode,
@@ -294,12 +323,13 @@ fn spawn_hud(
     });
 }
 
-// Copy each CEF OSR paint into the HUD image (BGRA, logical-pixel sized — the buffer is 1:1 with
-// WebviewSize). RenderAssetUsages::all() keeps the CPU copy that route_mouse alpha-tests.
+// Copy the CEF paint in device pixels. RenderAssetUsages::all() keeps the CPU copy
+// that route_mouse alpha-tests.
 fn update_hud_texture(
     mut er: EventReader<RenderTexture>,
     state: Option<Res<ReactHudCef>>,
     mut images: ResMut<Assets<Image>>,
+    mut stats: ResMut<diagnostics::HudPaintStats>,
 ) {
     let Some(state) = state else { return };
     for tex in er.read() {
@@ -309,14 +339,15 @@ fn update_hud_texture(
         let Some(image) = images.get_mut(&state.image) else {
             continue;
         };
-        if image.width() == 1 {
+        if image.width() != tex.width || image.height() != tex.height {
             info!(
-                "[react-hud-cef] first paint: {}x{} ({} bytes)",
+                "[react-hud-cef] paint buffer: {}x{} ({} bytes)",
                 tex.width,
                 tex.height,
                 tex.buffer.len()
             );
         }
+        let started_at = Instant::now();
         *image = Image::new(
             Extent3d {
                 width: tex.width,
@@ -328,12 +359,14 @@ fn update_hud_texture(
             TextureFormat::Bgra8UnormSrgb,
             RenderAssetUsages::all(),
         );
+        stats.record(tex, started_at, started_at.elapsed());
     }
 }
 
-// Alpha of the HUD texture at a logical-pixel position; the texture maps 1:1 onto the window.
-fn hud_alpha_at(image: &Image, pos: Vec2) -> u8 {
+// Match the fullscreen image's mapping even while CEF is repainting after a resize.
+fn hud_alpha_at(image: &Image, window_uv: Vec2) -> u8 {
     let (w, h) = (image.width() as usize, image.height() as usize);
+    let pos = window_uv * image.size().as_vec2();
     let (x, y) = (pos.x as usize, pos.y as usize);
     if x >= w || y >= h {
         return 0;
@@ -348,6 +381,32 @@ fn hud_alpha_at(image: &Image, pos: Vec2) -> u8 {
 
 // Click cadence for CEF's click_count (2 = word select, 3 = paragraph select): with no OS window
 // under the webview, multi-click detection is the host's job.
+#[cfg(test)]
+mod hit_tests {
+    use super::*;
+
+    #[test]
+    fn samples_the_painted_pixel_at_fractional_dpi() {
+        // A 2×2 logical viewport at 150% has a 3×3 paint buffer. Only its
+        // bottom-right device pixel covers the world.
+        let mut pixels = vec![0; 3 * 3 * 4];
+        pixels[35] = 255;
+        let image = Image::new(
+            Extent3d {
+                width: 3,
+                height: 3,
+                depth_or_array_layers: 1,
+            },
+            TextureDimension::D2,
+            pixels,
+            TextureFormat::Bgra8UnormSrgb,
+            RenderAssetUsages::all(),
+        );
+        assert_eq!(hud_alpha_at(&image, Vec2::splat(0.75)), 255);
+        assert_eq!(hud_alpha_at(&image, Vec2::splat(0.25)), 0);
+    }
+}
+
 #[derive(Default)]
 struct MultiClick {
     button: Option<MouseButton>,
@@ -360,7 +419,9 @@ struct MultiClick {
 // full document like on web — outside-clicks defocus text fields, :hover tracks the real cursor);
 // what the ENGINE receives is gated per-pixel — an opaque HUD pixel under the cursor blocks world
 // input (via Interaction on the fullscreen node). While pointer-locked (camera mouse-look) there
-// is no cursor and the engine keeps everything.
+// is no cursor and the engine keeps everything. While a synthetic aim drives the pointer
+// (`/hover_entity`, `/click_entity`), its presses are meant for the aimed entity, not for the page
+// under the OS cursor, so button presses and releases are not forwarded (motion still is).
 #[allow(clippy::too_many_arguments)]
 fn route_mouse(
     state: Option<ResMut<ReactHudCef>>,
@@ -373,6 +434,7 @@ fn route_mouse(
     time: Res<Time>,
     mut clicks: Local<MultiClick>,
     mut commands: Commands,
+    synthetic: Option<Res<SyntheticPointer>>,
 ) {
     let Some(mut state) = state else { return };
     let Ok(window) = windows.single() else {
@@ -386,7 +448,11 @@ fn route_mouse(
     };
 
     let over = cursor
-        .and_then(|c| images.get(&state.image).map(|img| hud_alpha_at(img, c)))
+        .and_then(|c| {
+            images
+                .get(&state.image)
+                .map(|img| hud_alpha_at(img, c / window.size()))
+        })
         .is_some_and(|alpha| alpha > 8);
 
     if over != state.over_ui {
@@ -411,7 +477,13 @@ fn route_mouse(
 
     let Some(cursor) = cursor else { return };
     browsers.send_mouse_move(&state.hud, buttons.get_pressed(), cursor, false);
-    for button in [MouseButton::Left, MouseButton::Right, MouseButton::Middle] {
+    let aimed = synthetic.is_some_and(|synthetic| synthetic.0.is_some());
+    let routed: &[MouseButton] = if aimed {
+        &[]
+    } else {
+        &[MouseButton::Left, MouseButton::Right, MouseButton::Middle]
+    };
+    for &button in routed {
         if buttons.just_pressed(button) {
             let now = time.elapsed_secs_f64();
             // same button, quick succession, near-stationary -> next multi-click step
@@ -866,25 +938,17 @@ fn player_ready(
     state.player_ready_sent = true;
 }
 
-// Track window resizes: update the webview size (bevy_cef pushes WasResized to CEF). The HUD's
-// own geometry (--ui-scale, the engine cutout rects) is NOT pushed from here — it is keyed off
-// UiCanvasInformation, which the bridge scene reports on every platform; see
-// react-web/src/lib/uiCanvasStore.ts.
+// Track both logical size and DPI. Moving between monitors can change only the latter.
 fn resize_hud(
-    mut resized: EventReader<WindowResized>,
     state: Option<Res<ReactHudCef>>,
     windows: Query<&Window, With<PrimaryWindow>>,
     mut webviews: Query<&mut WebviewSize>,
 ) {
-    if resized.is_empty() {
-        return;
-    }
-    resized.clear();
     let (Some(state), Ok(window)) = (state, windows.single()) else {
         return;
     };
     if let Ok(mut ws) = webviews.get_mut(state.hud) {
-        ws.0 = Vec2::new(window.width(), window.height());
+        ws.set_if_neq(WebviewSize::from(window));
     }
 }
 

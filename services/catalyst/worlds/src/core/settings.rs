@@ -3,12 +3,17 @@
 //! shared upload budgets; a thumbnail must be a real raster image.
 
 use std::collections::HashMap;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use axum::Json;
-use axum::extract::{Multipart, OriginalUri, Path, State};
-use axum::http::{HeaderMap, Uri};
+use axum::body::Body;
+use axum::extract::{FromRequest, Multipart, OriginalUri, Path, Request, State};
+use axum::http::{StatusCode, header};
+use axum::response::{IntoResponse, Response};
 use bytes::BytesMut;
+use futures::StreamExt;
 use serde_json::{Value, json};
 
 use crate::comms::world_identity::Parcel;
@@ -16,6 +21,7 @@ use crate::policy::Permission;
 use crate::shared::identity::PermissionDecision;
 use crate::shared::signed_fetch::SignedPath;
 
+use super::SharedState;
 use super::auth::{map_auth_error_api, require_verified};
 use super::http::ApiError;
 use super::permissions::parse_world;
@@ -24,7 +30,7 @@ use super::settings_policy::{
     TITLE_MIN_LENGTH, VALID_RATINGS, detect_image_format, storable_skybox_time, text_len,
 };
 use super::store::{self, WorldSettingsRow, WorldSettingsUpdate};
-use super::{SharedState, upload_limits};
+use super::upload_limits::{self, too_large};
 
 const MIN_PARCEL_COORDINATE: i32 = -150;
 const MAX_PARCEL_COORDINATE: i32 = 150;
@@ -50,50 +56,112 @@ pub const MAX_SETTINGS_UPLOAD_WIRE_BYTES: usize = MAX_SETTINGS_UPLOAD_BYTES + 10
 
 const _: () = assert!(MAX_SETTINGS_UPLOAD_WIRE_BYTES >= MAX_SETTINGS_UPLOAD_BYTES);
 
+/// A settings refusal. Upstream's handlers answer their own `{error:
+/// <message>}` for a field that fails validation (400), a signer without the
+/// right (403) and a world without settings (404); everything before the
+/// handler (signed fetch, multipart parser, upload budgets) answers the
+/// worlds envelope.
+#[derive(Debug)]
+pub enum SettingsError {
+    Handler { status: StatusCode, message: String },
+    Api(ApiError),
+}
+
+impl SettingsError {
+    fn invalid(message: impl Into<String>) -> Self {
+        Self::Handler {
+            status: StatusCode::BAD_REQUEST,
+            message: message.into(),
+        }
+    }
+}
+
+impl From<ApiError> for SettingsError {
+    fn from(e: ApiError) -> Self {
+        Self::Api(e)
+    }
+}
+
+impl IntoResponse for SettingsError {
+    fn into_response(self) -> Response {
+        match self {
+            Self::Handler { status, message } => {
+                (status, Json(json!({ "error": message }))).into_response()
+            }
+            Self::Api(e) => e.into_response(),
+        }
+    }
+}
+
+/// `UnauthorizedError`'s text (`logic/settings/errors.ts`).
+pub const NOT_ALLOWED_MESSAGE: &str =
+    "Unauthorized. You do not have permission to update settings for this world.";
+
+/// The fields upstream's parser lets repeat (`repeatableFields`), and the
+/// catalyst-only list field.
+const REPEATABLE_FIELDS: [&str; 2] = ["categories", "preview_wearable_urns"];
+
 /// GET /world/{world_name}/settings
 pub async fn get_world_settings(
     State(state): State<SharedState>,
     Path(world_name): Path<String>,
-) -> Result<Json<Value>, ApiError> {
+) -> Result<Json<Value>, SettingsError> {
     let world = parse_world(&world_name)?;
     let settings = store::get_world_settings(&state.pool, &world)
         .await?
-        .ok_or_else(|| ApiError::not_found(format!("World \"{world_name}\" not found.")))?;
+        .ok_or_else(|| SettingsError::Handler {
+            status: StatusCode::NOT_FOUND,
+            message: format!("World \"{world_name}\" not found or has no settings configured."),
+        })?;
     Ok(Json(settings_json(&settings)))
 }
 
+/// Upstream's `toSnakeCaseSettings`: a NULL or empty text column and NULL
+/// categories are left out, not `null`. `realm_name_override` and
+/// `preview_wearable_urns` are this node's own.
 fn settings_json(s: &WorldSettingsRow) -> Value {
-    json!({
-        "title": s.title,
-        "description": s.description,
-        "content_rating": s.content_rating,
-        "spawn_coordinates": s.spawn_coordinates,
+    let mut v = json!({
         "skybox_time": s.skybox_time,
-        "categories": s.categories,
         "single_player": s.single_player,
         "show_in_places": s.show_in_places,
-        "thumbnail_hash": s.thumbnail_hash,
         "access_type": s.access_type,
         "realm_name_override": s.realm_name_override,
         "preview_wearable_urns": s.preview_wearable_urns,
         "settings_version": s.settings_version,
-    })
+    });
+    let text = [
+        ("title", &s.title),
+        ("description", &s.description),
+        ("content_rating", &s.content_rating),
+        ("spawn_coordinates", &s.spawn_coordinates),
+        ("thumbnail_hash", &s.thumbnail_hash),
+    ];
+    for (key, value) in text {
+        if let Some(value) = value.as_deref().filter(|t| !t.is_empty()) {
+            v[key] = json!(value);
+        }
+    }
+    if let Some(categories) = &s.categories {
+        v["categories"] = json!(categories);
+    }
+    v
 }
 
-/// PUT /world/{world_name}/settings
+/// PUT /world/{world_name}/settings. The body is read only after the signed
+/// fetch, so an unsigned request of any content type gets the signed-fetch
+/// refusal, as upstream's middleware order gives.
 pub async fn update_world_settings(
     State(state): State<SharedState>,
     Path(world_name): Path<String>,
     OriginalUri(original): OriginalUri,
-    uri: Uri,
-    headers: HeaderMap,
-    multipart: Multipart,
-) -> Result<Json<Value>, ApiError> {
+    request: Request,
+) -> Result<Json<Value>, SettingsError> {
     let world = parse_world(&world_name)?;
+    let headers = request.headers().clone();
     let auth = require_verified(
         &headers,
         "put",
-        &SignedPath::from_uris(&original, &uri),
+        &SignedPath::from_uris(&original, request.uri()),
         &[],
         state.eip1654.as_deref(),
     )
@@ -102,21 +170,27 @@ pub async fn update_world_settings(
     let signer = auth.signer;
     let limits = &state.settings.upload_limits;
 
-    match upload_limits::declared_content_length(&headers) {
+    let declared = match upload_limits::declared_content_length(&headers) {
         upload_limits::DeclaredContentLength::Invalid => {
-            return Err(ApiError::bad_request(
-                upload_limits::INVALID_CONTENT_LENGTH_MESSAGE,
-            ));
+            return Err(
+                ApiError::bad_request(upload_limits::INVALID_CONTENT_LENGTH_MESSAGE).into(),
+            );
         }
         upload_limits::DeclaredContentLength::Bytes(len)
             if len > MAX_SETTINGS_UPLOAD_WIRE_BYTES as u64 =>
         {
-            return Err(ApiError::bad_request(
-                upload_limits::PAYLOAD_TOO_LARGE_MESSAGE,
-            ));
+            return Err(too_large(upload_limits::PAYLOAD_TOO_LARGE_MESSAGE).into());
         }
-        _ => {}
-    }
+        upload_limits::DeclaredContentLength::Bytes(len) => Some(len),
+        upload_limits::DeclaredContentLength::Absent => None,
+    };
+    let _source = upload_limits::admit_source(
+        &headers,
+        limits,
+        "world-settings",
+        MAX_SETTINGS_UPLOAD_BYTES as u64,
+    )
+    .map_err(|_| ApiError::too_many(upload_limits::SOURCE_LIMIT_MESSAGE, 5))?;
     let _slot =
         upload_limits::try_acquire_upload_slot(limits.max_concurrent_uploads).ok_or_else(|| {
             tracing::warn!(
@@ -129,8 +203,11 @@ pub async fn update_world_settings(
     let mut bytes_lease = upload_limits::reserve_in_flight();
     let mut files_lease = upload_limits::reserve_in_flight_files();
 
+    let received = Arc::new(AtomicU64::new(0));
+    let multipart = read_multipart(request, received.clone()).await?;
+    let timeout_ms = limits.multipart_upload_timeout_ms;
     let (mut input, thumbnail) = tokio::time::timeout(
-        Duration::from_millis(limits.multipart_upload_timeout_ms),
+        Duration::from_millis(timeout_ms),
         parse_multipart(
             multipart,
             limits.max_in_flight_upload_bytes,
@@ -142,10 +219,14 @@ pub async fn update_world_settings(
     .await
     .map_err(|_| {
         tracing::warn!(
-            timeout_ms = limits.multipart_upload_timeout_ms,
+            timeout_ms,
             "PUT /world/:world_name/settings: multipart upload timed out"
         );
-        ApiError::RequestTimeout(upload_limits::MULTIPART_TIMEOUT_MESSAGE.to_string())
+        ApiError::RequestTimeout(describe_upload_timeout(
+            timeout_ms,
+            received.load(Ordering::Relaxed),
+            declared,
+        ))
     })??;
 
     let timeout_ms = limits.deployment_processing_timeout_ms;
@@ -153,12 +234,12 @@ pub async fn update_world_settings(
         let authorized = match state.policy.is_owner(&world, &signer).await {
             PermissionDecision::Allowed => true,
             PermissionDecision::Refused(crate::shared::identity::AuthorityNotEstablished::RefusedLacksAuthority { .. }) => {
-                state.policy.has_world_wide_permission(&world, Permission::Deployment, &signer).await?
+                state.policy.has_world_wide_permission(&world, Permission::Deployment, &signer).await.map_err(ApiError::from)?
             }
-            PermissionDecision::Refused(undetermined) => return Err(ApiError::from(undetermined)),
+            PermissionDecision::Refused(undetermined) => return Err(ApiError::from(undetermined).into()),
         };
         if !authorized {
-            return Err(ApiError::forbidden("You are not authorized to update the settings of this world."));
+            return Err(SettingsError::Handler { status: StatusCode::FORBIDDEN, message: NOT_ALLOWED_MESSAGE.to_string() });
         }
         if let Some(bytes) = thumbnail {
             let hash = crate::auth::hash_bytes_v1(&bytes);
@@ -169,7 +250,13 @@ pub async fn update_world_settings(
                 .map_err(|e| ApiError::internal(format!("failed to store thumbnail: {e}")))?;
             input.thumbnail_hash = Some(hash);
         }
-        let (settings, _old_spawn) = store::update_world_settings(&state.pool, &world, &signer, &input).await?;
+        // The two spawn refusals are the store's only 400s: upstream's `ValidationError`s.
+        let (settings, _old_spawn) = store::update_world_settings(&state.pool, &world, &signer, &input)
+            .await
+            .map_err(|e| match e.is_bad_request() {
+                true => SettingsError::invalid(e.public_message()),
+                false => e.into(),
+            })?;
         Ok(Json(json!({ "message": "World settings updated successfully", "settings": settings_json(&settings) })))
     })
     .await
@@ -177,6 +264,72 @@ pub async fn update_world_settings(
         tracing::warn!(timeout_ms, "PUT /world/:world_name/settings: settings processing timed out");
         ApiError::RequestTimeout(format!("Deployment processing exceeded the {timeout_ms}ms deadline."))
     })?
+}
+
+/// The multipart reader over the body, counting the bytes received for the
+/// timeout message. A refused content type answers busboy 1.6.0's text, as
+/// upstream's parser does.
+async fn read_multipart(request: Request, received: Arc<AtomicU64>) -> Result<Multipart, ApiError> {
+    let content_type = request
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .map(|v| String::from_utf8_lossy(v.as_bytes()).into_owned());
+    let Some(content_type) = content_type else {
+        return Err(ApiError::bad_request("Missing Content-Type"));
+    };
+    let media = content_type
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+    if media != "multipart/form-data" {
+        return Err(ApiError::bad_request(format!(
+            "Unsupported content type: {content_type}"
+        )));
+    }
+    let (parts, body) = request.into_parts();
+    let counted = Body::from_stream(body.into_data_stream().inspect(move |chunk| {
+        if let Ok(chunk) = chunk {
+            received.fetch_add(chunk.len() as u64, Ordering::Relaxed);
+        }
+    }));
+    Multipart::from_request(Request::from_parts(parts, counted), &())
+        .await
+        .map_err(|_| ApiError::bad_request("Multipart: Boundary not found"))
+}
+
+/// upstream `formatBytes`.
+fn format_bytes(bytes: u64) -> String {
+    const KIB: f64 = 1024.0;
+    let b = bytes as f64;
+    if b < KIB {
+        format!("{bytes} bytes")
+    } else if b < KIB * KIB {
+        format!("{:.1} KiB", b / KIB)
+    } else if b < KIB * KIB * KIB {
+        format!("{:.1} MiB", b / (KIB * KIB))
+    } else {
+        format!("{:.1} GiB", b / (KIB * KIB * KIB))
+    }
+}
+
+/// upstream `describeUploadTimeout` (`controllers/multipart/errors.ts`).
+pub(super) fn describe_upload_timeout(
+    timeout_ms: u64,
+    received: u64,
+    declared: Option<u64>,
+) -> String {
+    let seconds = timeout_ms as f64 / 1000.0;
+    let got = match declared {
+        Some(d) => format!("{} of {}", format_bytes(received), format_bytes(d)),
+        None => format_bytes(received),
+    };
+    let rate = received as f64 / 1024.0 / seconds;
+    format!(
+        "The upload did not finish within {seconds} s: received {got} (about {rate:.1} KiB/s). \
+         Retry on a faster connection or send smaller batches."
+    )
 }
 
 fn account_settings_bytes(
@@ -193,9 +346,9 @@ fn account_settings_bytes(
         max_in_flight_bytes,
     ) {
         Ok(()) => Ok(()),
-        Err(upload_limits::PayloadAccountError::PayloadTooLarge) => Err(ApiError::bad_request(
-            upload_limits::PAYLOAD_TOO_LARGE_MESSAGE,
-        )),
+        Err(upload_limits::PayloadAccountError::PayloadTooLarge) => {
+            Err(too_large(upload_limits::PAYLOAD_TOO_LARGE_MESSAGE))
+        }
         Err(upload_limits::PayloadAccountError::BudgetExhausted) => {
             tracing::warn!(
                 total_bytes,
@@ -218,8 +371,9 @@ async fn parse_multipart(
     max_in_flight_files: u64,
     bytes_lease: &mut upload_limits::InFlightBytesGuard,
     files_lease: &mut upload_limits::InFlightFilesGuard,
-) -> Result<(WorldSettingsUpdate, Option<Vec<u8>>), ApiError> {
+) -> Result<(WorldSettingsUpdate, Option<Vec<u8>>), SettingsError> {
     let mut fields: HashMap<String, Vec<String>> = HashMap::new();
+    let mut seen: HashMap<String, bool> = HashMap::new();
     let mut thumbnail: Option<Vec<u8>> = None;
     let mut total_bytes: usize = 0;
     let mut total_files: u64 = 0;
@@ -230,10 +384,11 @@ async fn parse_multipart(
         let mut field = match multipart.next_field().await {
             Ok(Some(f)) => f,
             Ok(None) => break,
+            Err(e) if e.status() == StatusCode::PAYLOAD_TOO_LARGE => {
+                return Err(too_large(upload_limits::PAYLOAD_TOO_LARGE_MESSAGE).into());
+            }
             Err(e) => {
-                return Err(ApiError::bad_request(format!(
-                    "Invalid multipart form: {e}"
-                )));
+                return Err(ApiError::bad_request(format!("Invalid multipart form: {e}")).into());
             }
         };
         let name = field.name().unwrap_or("").to_string();
@@ -241,7 +396,16 @@ async fn parse_multipart(
 
         part_count += 1;
         if part_count > upload_limits::MAX_MULTIPART_PARTS {
-            return Err(ApiError::bad_request(upload_limits::TOO_MANY_PARTS_MESSAGE));
+            return Err(too_large(upload_limits::TOO_MANY_PARTS_MESSAGE).into());
+        }
+        // A name seen before is refused unless both are fields of a repeatable name.
+        match seen.insert(name.clone(), is_file) {
+            Some(was_file)
+                if is_file || was_file || !REPEATABLE_FIELDS.contains(&name.as_str()) =>
+            {
+                return Err(ApiError::bad_request(format!("Duplicate form field '{name}'")).into());
+            }
+            _ => {}
         }
 
         if is_file {
@@ -252,9 +416,9 @@ async fn parse_multipart(
                     max = max_in_flight_files,
                     "PUT /world/:world_name/settings shed: aggregate in-flight upload-file budget exceeded"
                 );
-                return Err(ApiError::UploadShed(
-                    upload_limits::FILES_SHED_MESSAGE.to_string(),
-                ));
+                return Err(
+                    ApiError::UploadShed(upload_limits::FILES_SHED_MESSAGE.to_string()).into(),
+                );
             }
             total_files += 1;
             let mut buf = BytesMut::new();
@@ -262,9 +426,10 @@ async fn parse_multipart(
                 match field.chunk().await {
                     Ok(Some(chunk)) => {
                         if buf.len().saturating_add(chunk.len()) > MAX_SETTINGS_UPLOAD_BYTES {
-                            return Err(ApiError::bad_request(
+                            return Err(too_large(
                                 "An uploaded file exceeds the maximum allowed size.",
-                            ));
+                            )
+                            .into());
                         }
                         account_settings_bytes(
                             &mut total_bytes,
@@ -275,17 +440,21 @@ async fn parse_multipart(
                         buf.extend_from_slice(&chunk);
                     }
                     Ok(None) => break,
+                    Err(e) if e.status() == StatusCode::PAYLOAD_TOO_LARGE => {
+                        return Err(too_large(upload_limits::PAYLOAD_TOO_LARGE_MESSAGE).into());
+                    }
                     Err(e) => {
                         return Err(ApiError::bad_request(format!(
                             "Failed to read file data: {e}"
-                        )));
+                        ))
+                        .into());
                     }
                 }
             }
             let data = buf.freeze();
             if name == "thumbnail" {
                 if data.len() > MAX_THUMBNAIL_BYTES {
-                    return Err(ApiError::bad_request(format!(
+                    return Err(SettingsError::invalid(format!(
                         "Invalid thumbnail: size {} bytes exceeds maximum of {MAX_THUMBNAIL_BYTES} bytes (1MB).",
                         data.len()
                     )));
@@ -295,9 +464,10 @@ async fn parse_multipart(
         } else {
             field_count += 1;
             if field_count > upload_limits::MAX_MULTIPART_FIELDS {
-                return Err(ApiError::bad_request(
-                    upload_limits::TOO_MANY_FIELDS_MESSAGE,
-                ));
+                return Err(too_large(upload_limits::too_many_fields_message(
+                    upload_limits::MAX_MULTIPART_FIELDS,
+                ))
+                .into());
             }
             let mut buf = BytesMut::new();
             loop {
@@ -306,9 +476,11 @@ async fn parse_multipart(
                         if buf.len().saturating_add(chunk.len())
                             > upload_limits::MAX_MULTIPART_FIELD_VALUE_BYTES
                         {
-                            return Err(ApiError::bad_request(
-                                upload_limits::PAYLOAD_TOO_LARGE_MESSAGE,
-                            ));
+                            return Err(too_large(format!(
+                                "Field '{name}' is too large. The maximum allowed size per field is {} bytes.",
+                                upload_limits::MAX_MULTIPART_FIELD_VALUE_BYTES
+                            ))
+                            .into());
                         }
                         account_settings_bytes(
                             &mut total_bytes,
@@ -319,8 +491,13 @@ async fn parse_multipart(
                         buf.extend_from_slice(&chunk);
                     }
                     Ok(None) => break,
+                    Err(e) if e.status() == StatusCode::PAYLOAD_TOO_LARGE => {
+                        return Err(too_large(upload_limits::PAYLOAD_TOO_LARGE_MESSAGE).into());
+                    }
                     Err(e) => {
-                        return Err(ApiError::bad_request(format!("Invalid form field: {e}")));
+                        return Err(
+                            ApiError::bad_request(format!("Invalid form field: {e}")).into()
+                        );
                     }
                 }
             }
@@ -340,7 +517,7 @@ async fn parse_multipart(
             } else {
                 &title
             };
-            return Err(ApiError::bad_request(format!(
+            return Err(SettingsError::invalid(format!(
                 "Invalid title: {shown}. Expected between {TITLE_MIN_LENGTH} and {TITLE_MAX_LENGTH} characters."
             )));
         }
@@ -354,7 +531,7 @@ async fn parse_multipart(
             } else {
                 &description
             };
-            return Err(ApiError::bad_request(format!(
+            return Err(SettingsError::invalid(format!(
                 "Invalid description: {shown}. Expected between {DESCRIPTION_MIN_LENGTH} and {DESCRIPTION_MAX_LENGTH} characters."
             )));
         }
@@ -363,7 +540,7 @@ async fn parse_multipart(
 
     if let Some(rating) = first_defined(&fields, "content_rating") {
         if !VALID_RATINGS.contains(&rating.as_str()) {
-            return Err(ApiError::bad_request(format!(
+            return Err(SettingsError::invalid(format!(
                 "Invalid content rating: {rating}. Expected one of: {}",
                 VALID_RATINGS.join(", ")
             )));
@@ -373,7 +550,7 @@ async fn parse_multipart(
 
     if let Some(spawn) = first_defined(&fields, "spawn_coordinates") {
         if parse_coordinate(&spawn).is_none() {
-            return Err(ApiError::bad_request(format!(
+            return Err(SettingsError::invalid(format!(
                 "Invalid spawnCoordinates format: \"{spawn}\"."
             )));
         }
@@ -386,7 +563,7 @@ async fn parse_multipart(
             None
         } else {
             let time = value.trim().parse::<f64>().ok().and_then(storable_skybox_time).ok_or_else(|| {
-                ApiError::bad_request(format!("Invalid skybox_time: {value}. Expected an integer between {} and {}, or null.", i32::MIN, i32::MAX))
+                SettingsError::invalid(format!("Invalid skybox_time: {value}. Expected an integer between {} and {}, or null.", i32::MIN, i32::MAX))
             })?;
             Some(time)
         };
@@ -400,7 +577,7 @@ async fn parse_multipart(
         } else {
             let name = value.trim().to_string();
             if !is_valid_realm_name(&name) {
-                return Err(ApiError::bad_request(format!(
+                return Err(SettingsError::invalid(format!(
                     "Invalid realm_name_override: \"{name}\". Expected 1-{REALM_NAME_MAX_LENGTH} printable characters with no whitespace or \"/\", or null."
                 )));
             }
@@ -414,7 +591,7 @@ async fn parse_multipart(
             input.categories = Some(Vec::new());
         } else {
             if values.len() > MAX_CATEGORIES {
-                return Err(ApiError::bad_request(format!(
+                return Err(SettingsError::invalid(format!(
                     "Invalid categories: {} items. Expected at most {MAX_CATEGORIES}",
                     values.len()
                 )));
@@ -429,7 +606,7 @@ async fn parse_multipart(
             Some(Vec::new())
         } else {
             if values.len() > MAX_PREVIEW_WEARABLES {
-                return Err(ApiError::bad_request(format!(
+                return Err(SettingsError::invalid(format!(
                     "Invalid preview_wearable_urns: {} items. Expected at most {MAX_PREVIEW_WEARABLES}",
                     values.len()
                 )));
@@ -447,13 +624,13 @@ async fn parse_multipart(
 
     if let Some(bytes) = &thumbnail {
         if bytes.len() > MAX_THUMBNAIL_BYTES {
-            return Err(ApiError::bad_request(format!(
+            return Err(SettingsError::invalid(format!(
                 "Invalid thumbnail: size {} bytes exceeds maximum of {MAX_THUMBNAIL_BYTES} bytes (1MB).",
                 bytes.len()
             )));
         }
         if detect_image_format(bytes).is_none() {
-            return Err(ApiError::bad_request(
+            return Err(SettingsError::invalid(
                 "Invalid thumbnail: expected a PNG, JPEG, GIF or WebP image.",
             ));
         }
@@ -518,6 +695,17 @@ mod tests {
         assert_eq!(v["show_in_places"], serde_json::json!(true));
         assert_eq!(v["settings_version"], serde_json::json!(0));
         assert!(v["access_type"].is_null());
+        // `toSnakeCaseSettings` leaves NULL text and categories out.
+        for key in [
+            "title",
+            "description",
+            "content_rating",
+            "spawn_coordinates",
+            "thumbnail_hash",
+            "categories",
+        ] {
+            assert!(v.get(key).is_none(), "{key} is absent: {v}");
+        }
 
         let v = settings_json(&WorldSettingsRow {
             single_player: true,
@@ -532,19 +720,28 @@ mod tests {
         assert_eq!(v["access_type"], serde_json::json!("unrestricted"));
     }
 
-    fn bad_request_message(err: ApiError) -> String {
+    /// A handler 400, `{error: <message>}`.
+    fn bad_request_message(err: SettingsError) -> String {
         match err {
-            ApiError::Http {
-                status: 400,
+            SettingsError::Handler {
+                status: StatusCode::BAD_REQUEST,
                 message,
             } => message,
-            other => panic!("expected BadRequest, got {other:?}"),
+            other => panic!("expected a validation 400, got {other:?}"),
+        }
+    }
+
+    /// A parser refusal in the worlds envelope: its status and message.
+    fn parser_refusal(err: SettingsError) -> (u16, String) {
+        match err {
+            SettingsError::Api(e) => (e.status(), e.public_message()),
+            other => panic!("expected a parser refusal, got {other:?}"),
         }
     }
 
     async fn parse_settings_form(
         parts: &[(&str, Option<&str>, &str)],
-    ) -> Result<WorldSettingsUpdate, ApiError> {
+    ) -> Result<WorldSettingsUpdate, SettingsError> {
         let multipart = multipart_from(parts).await;
         let mut bytes_lease = upload_limits::reserve_in_flight();
         let mut files_lease = upload_limits::reserve_in_flight_files();
@@ -649,8 +846,11 @@ mod tests {
         .await
         .expect_err("oversized field must be rejected");
         assert_eq!(
-            bad_request_message(err),
-            upload_limits::PAYLOAD_TOO_LARGE_MESSAGE
+            parser_refusal(err),
+            (
+                413,
+                "Field 'description' is too large. The maximum allowed size per field is 1048576 bytes.".to_string()
+            )
         );
         assert!(bytes_lease.reserved() <= upload_limits::MAX_MULTIPART_FIELD_VALUE_BYTES as u64);
     }
@@ -666,21 +866,30 @@ mod tests {
             .await
             .expect_err("101st field must be rejected");
         assert_eq!(
-            bad_request_message(err),
-            upload_limits::TOO_MANY_FIELDS_MESSAGE
+            parser_refusal(err),
+            (
+                413,
+                "The multipart request has too many fields. The maximum allowed is 100."
+                    .to_string()
+            )
         );
     }
 
     #[tokio::test]
     async fn parse_multipart_rejects_more_than_the_parts_limit() {
-        let parts: Vec<(&str, Option<&str>, &str)> =
-            vec![("f", Some("a.bin"), ""); upload_limits::MAX_MULTIPART_PARTS + 1];
+        let names: Vec<String> = (0..=upload_limits::MAX_MULTIPART_PARTS)
+            .map(|i| format!("f{i}"))
+            .collect();
+        let parts: Vec<(&str, Option<&str>, &str)> = names
+            .iter()
+            .map(|n| (n.as_str(), Some("a.bin"), ""))
+            .collect();
         let err = parse_settings_form(&parts)
             .await
             .expect_err("part 10101 must be rejected");
         assert_eq!(
-            bad_request_message(err),
-            upload_limits::TOO_MANY_PARTS_MESSAGE
+            parser_refusal(err),
+            (413, upload_limits::TOO_MANY_PARTS_MESSAGE.to_string())
         );
     }
 
@@ -752,5 +961,69 @@ mod tests {
         assert!(input.show_in_places.is_none());
         assert!(!input.categories_provided);
         assert!(input.categories.is_none());
+    }
+
+    #[test]
+    fn settings_json_keeps_set_values_and_drops_empty_text() {
+        let v = settings_json(&WorldSettingsRow {
+            title: Some("A World".into()),
+            description: Some(String::new()),
+            categories: Some(Vec::new()),
+            ..Default::default()
+        });
+        assert_eq!(v["title"], "A World");
+        assert!(v.get("description").is_none());
+        assert_eq!(
+            v["categories"],
+            serde_json::json!([]),
+            "an empty list is kept"
+        );
+    }
+
+    /// `multipart/middleware.ts` `rejectIfDuplicate`: only `categories` repeats
+    /// (and this node's `preview_wearable_urns`).
+    #[tokio::test]
+    async fn a_repeated_form_field_is_refused() {
+        for parts in [
+            vec![("title", None, "One World"), ("title", None, "Two World")],
+            vec![
+                ("thumbnail", Some("a.png"), "x"),
+                ("thumbnail", Some("b.png"), "y"),
+            ],
+            vec![("title", None, "One World"), ("title", Some("t.txt"), "x")],
+            vec![
+                ("categories", None, "art"),
+                ("categories", Some("c.txt"), "x"),
+            ],
+        ] {
+            let name = parts[0].0;
+            let err = parse_settings_form(&parts).await.expect_err("a repeat");
+            assert_eq!(
+                parser_refusal(err),
+                (400, format!("Duplicate form field '{name}'"))
+            );
+        }
+        let input =
+            parse_settings_form(&[("categories", None, "art"), ("categories", None, "game")])
+                .await
+                .expect("categories repeat");
+        assert_eq!(
+            input.categories,
+            Some(vec!["art".to_string(), "game".into()])
+        );
+    }
+
+    #[test]
+    fn the_timeout_message_is_upstreams() {
+        assert_eq!(
+            describe_upload_timeout(300_000, 2_048, Some(4_096)),
+            "The upload did not finish within 300 s: received 2.0 KiB of 4.0 KiB (about 0.0 KiB/s). Retry on a faster connection or send smaller batches."
+        );
+        assert_eq!(
+            describe_upload_timeout(1_500, 512, None),
+            "The upload did not finish within 1.5 s: received 512 bytes (about 0.3 KiB/s). Retry on a faster connection or send smaller batches."
+        );
+        assert_eq!(format_bytes(5 * 1024 * 1024), "5.0 MiB");
+        assert_eq!(format_bytes(3 * 1024 * 1024 * 1024), "3.0 GiB");
     }
 }

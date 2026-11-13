@@ -1,8 +1,8 @@
 // The editor package's super-user scene (features/editorHost/host/editorScene.ts): with a pinned
 // entity id the page spawns only bytes that hash to it, and serves them itself.
 import { afterAll, describe, expect, it, vi } from 'vitest'
-import { contentCid } from '../features/editorHost/host/cid'
-import { loadEditor, type DclEditorHostV1, type EditorHostDeps } from '../features/editorHost/host/host'
+import { contentCid } from '@explorer-core/features/editorHost/host/cid'
+import { loadEditor, type DclEditorHostV1, type EditorHostDeps } from '@explorer-core/features/editorHost/host/host'
 import { PAGE_DIR } from '../lib/publicUrl'
 
 const utf8 = (text: string): Uint8Array<ArrayBuffer> => new TextEncoder().encode(text)
@@ -39,6 +39,7 @@ describe('editor scene', () => {
     const deps: EditorHostDeps = {
       busSession: '',
       defaultRealm: '',
+      features: { experimental: false, advanced: false },
       engineConsole: async () => '',
       identity: () => ({ address: null, isGuest: true }),
       login: async () => null,

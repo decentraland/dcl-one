@@ -10,8 +10,10 @@ import { httpOrUndef, profileKey } from './profile'
 import { retextChatBubble, setChatBubble } from './nametags'
 import { relay } from '../system-helpers'
 import type { Ctx } from '../bridge'
-import type { NearbyMember } from '../../../src/engine/protocol'
-import { mentionName, mentionsName } from '../../../src/engine/mention'
+import type { NearbyMember } from '@explorer-core/engine/protocol'
+import { mentionName, mentionsName } from '@explorer-core/engine/mention'
+import { communityIdOf } from '@explorer-core/engine/communityChannel'
+import { communityName } from './communities'
 
 // The local player's claimed-name flag, from the engine's profile (unknown until it loads).
 let selfClaimed: boolean | undefined
@@ -40,8 +42,10 @@ export function registerChat(ctx: Ctx): void {
     if (m.message.indexOf('␑') === 0) return // engine control message
     ctx.send({ kind: 'chat', chat: { sender: m.sender_address, message: m.message, channel: m.channel, messageId: m.message_id } })
     // Pop the speech bubble under this sender's nametag (world-space, engine-positioned). Not for
-    // DMs (a wallet channel): those are private.
+    // DMs (a wallet channel): those are private. A community message's bubble names the community.
+    const community = communityIdOf(m.channel)
     if (m.channel === 'Nearby') setChatBubble(m.sender_address, m.message, mentionsMe(m.message), m.message_id)
+    else if (community != null) setChatBubble(m.sender_address, m.message, mentionsMe(m.message), m.message_id, communityName(community) ?? 'Community')
   })
 
   relay('chatReaction', async () => await BevyApi.getChatReactionStream(), (r) => {

@@ -186,6 +186,52 @@ fn selection_validates_scripts_and_preserves_scaffold_aliases() {
 }
 
 #[test]
+fn upstream_build_scripts_are_the_built_in_build() {
+    let s = Scene::new("sdk-commands build");
+    assert!(build_script::command(&s.0).unwrap().is_none());
+    assert_eq!(
+        build_script::script_flags(&s.0),
+        build_script::ScriptFlags::default()
+    );
+    for script in [
+        "npx sdk-commands build --production",
+        "npx @dcl/sdk-commands build -p",
+        "pnpm exec sdk-commands build --production --skip-install",
+        "yarn sdk-commands build -p",
+        "npx @dcl/sdk-commands@7.33.0 build -p",
+    ] {
+        s.script(script);
+        assert!(build_script::command(&s.0).unwrap().is_none(), "{script}");
+        assert!(build_script::script_flags(&s.0).production, "{script}");
+    }
+    s.script(
+        "sdk-commands build --ignoreComposite --customEntryPoint --single src/other.ts --watch",
+    );
+    let flags = build_script::script_flags(&s.0);
+    assert!(flags.ignore_composite && flags.custom_entry_point && !flags.production);
+    assert_eq!(
+        flags.ignored,
+        vec!["--single".to_string(), "--watch".to_string()]
+    );
+    for script in [
+        "sdk-commands build && cp bin/index.js dist/",
+        "sdk-commands deploy",
+        "esbuild src/index.ts --outfile=bin/index.js",
+        "node build.js",
+    ] {
+        s.script(script);
+        assert_eq!(
+            build_script::command(&s.0).unwrap().as_deref(),
+            Some(script)
+        );
+        assert_eq!(
+            build_script::script_flags(&s.0),
+            build_script::ScriptFlags::default()
+        );
+    }
+}
+
+#[test]
 fn cli_recursion_reports_override_and_preserves_output() {
     let s = Scene::new("\"$SDK_TEST_BIN\" build");
     let output = Command::new(env!("CARGO_BIN_EXE_dcl-scene-cli"))

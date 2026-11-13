@@ -71,3 +71,40 @@ fn steep_ground_has_no_trees() {
         .flat_map(|x| (-6..=6).map(move |y| IVec2::new(x, y)))
         .all(|parcel| placement(parcel, |_| true, steep).is_none()));
 }
+
+#[test]
+fn tree_wind_stills_the_shared_material_and_brings_the_wind_back() {
+    let mut app = App::new();
+    app.init_resource::<Assets<TreeMaterial>>()
+        .init_resource::<TreeWind>()
+        .add_systems(Update, apply_tree_wind);
+    let material = app
+        .world_mut()
+        .resource_mut::<Assets<TreeMaterial>>()
+        .add(ExtendedMaterial {
+            base: StandardMaterial::default(),
+            extension: TreeWindSettings { settings: WIND },
+        });
+    app.insert_resource(TreeAssets {
+        meshes: Vec::new(),
+        bounds: Vec::new(),
+        material: material.clone(),
+    });
+    let settings = |app: &App| {
+        app.world()
+            .resource::<Assets<TreeMaterial>>()
+            .get(&material)
+            .unwrap()
+            .extension
+            .settings
+    };
+
+    app.update();
+    assert_eq!(settings(&app), WIND);
+    app.world_mut().resource_mut::<TreeWind>().0 = false;
+    app.update();
+    assert_eq!(settings(&app), Vec4::ZERO);
+    app.world_mut().resource_mut::<TreeWind>().0 = true;
+    app.update();
+    assert_eq!(settings(&app), WIND);
+}

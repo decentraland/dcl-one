@@ -6,6 +6,7 @@
 
 pub mod attendees;
 pub mod categories;
+pub mod foundation;
 pub mod handlers;
 pub(crate) mod hooks;
 mod metadata;
@@ -14,13 +15,14 @@ pub mod moderation;
 pub mod notifications;
 pub mod posters;
 pub mod profiles;
-mod recurrence;
+pub(crate) mod recurrence;
 pub mod schedules;
 pub mod sitemap;
 pub mod v1;
 pub mod writes;
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use chrono::{DateTime, NaiveDateTime, Utc};
 use serde::Serialize;
@@ -30,6 +32,14 @@ use sqlx::PgPool;
 use crate::sanitize::{sanitize_asset_url, sanitize_event_description, validate_event_url};
 use crate::shared::errors::ApiError;
 
+/// The JSON form of every date the events routes answer: upstream serialised
+/// node `Date`s (`Date#toJSON`: millisecond precision and `Z`,
+/// `2026-01-01T00:00:00.000Z`). chrono's serializer drops a zero fraction
+/// (`2026-01-01T00:00:00Z`), so the record structs serialise through here.
+/// Fixtures `events.create.minimal_success`,
+/// `events.create.recurrent_success_dates_capped`,
+/// `events.patch.owner_basic_fields`.
+pub(crate) use crate::json_date;
 #[derive(Debug, Clone, Serialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export, export_to = "events/"))]
 pub struct EventRecord {
@@ -39,19 +49,25 @@ pub struct EventRecord {
     #[cfg_attr(feature = "ts", ts(type = "string | null"))]
     pub image_vertical: Option<Value>,
     pub description: Option<String>,
+    /// Present (null included) only for the owner's view and the admin
+    /// bearer's answers (`Event/model.ts:478-480`, `admin.ts:37-42,100-102`).
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "ts", ts(optional))]
-    pub contact: Option<String>,
+    #[cfg_attr(feature = "ts", ts(optional, type = "string | null"))]
+    pub contact: Option<Option<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "ts", ts(optional))]
-    pub details: Option<String>,
+    #[cfg_attr(feature = "ts", ts(optional, type = "string | null"))]
+    pub details: Option<Option<String>>,
     #[cfg_attr(feature = "ts", ts(type = "string | null"))]
+    #[serde(serialize_with = "json_date::serialize_opt")]
     pub start_at: Option<DateTime<Utc>>,
     #[cfg_attr(feature = "ts", ts(type = "string | null"))]
+    #[serde(serialize_with = "json_date::serialize_opt")]
     pub finish_at: Option<DateTime<Utc>>,
     #[cfg_attr(feature = "ts", ts(type = "string | null"))]
+    #[serde(serialize_with = "json_date::serialize_opt")]
     pub next_start_at: Option<DateTime<Utc>>,
     #[cfg_attr(feature = "ts", ts(type = "string | null"))]
+    #[serde(serialize_with = "json_date::serialize_opt")]
     pub next_finish_at: Option<DateTime<Utc>>,
     #[cfg_attr(feature = "ts", ts(type = "number | null"))]
     pub duration: Option<i64>,
@@ -85,8 +101,10 @@ pub struct EventRecord {
     #[cfg_attr(feature = "ts", ts(type = "number | null"))]
     pub recurrent_count: Option<i64>,
     #[cfg_attr(feature = "ts", ts(type = "string | null"))]
+    #[serde(serialize_with = "json_date::serialize_opt")]
     pub recurrent_until: Option<DateTime<Utc>>,
     #[cfg_attr(feature = "ts", ts(type = "Array<string>"))]
+    #[serde(serialize_with = "json_date::serialize_vec")]
     pub recurrent_dates: Vec<DateTime<Utc>>,
     pub categories: Vec<String>,
     pub schedules: Vec<String>,
@@ -101,8 +119,10 @@ pub struct EventRecord {
     pub community_id: Option<String>,
     pub featured_item: Option<String>,
     #[cfg_attr(feature = "ts", ts(type = "string | null"))]
+    #[serde(serialize_with = "json_date::serialize_opt")]
     pub created_at: Option<DateTime<Utc>>,
     #[cfg_attr(feature = "ts", ts(type = "string | null"))]
+    #[serde(serialize_with = "json_date::serialize_opt")]
     pub updated_at: Option<DateTime<Utc>>,
     pub approved_by: Option<String>,
     pub rejected_by: Option<String>,
@@ -111,13 +131,41 @@ pub struct EventRecord {
     pub deleted_by_admin: bool,
     pub deleted_by: Option<String>,
     #[cfg_attr(feature = "ts", ts(type = "string | null"))]
+    #[serde(serialize_with = "json_date::serialize_opt")]
     pub deleted_at: Option<DateTime<Utc>>,
     pub deleted_reason: Option<String>,
+    /// dcl-one's own column; the `/api` answers drop it (upstream's record
+    /// never had it), the `/v1` ones keep it. The contract types it
+    /// `string | null` optional, as the web fixtures write it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional = nullable))]
     pub previous_place_id: Option<String>,
+    /// Always an array when `with_connected_users` was asked
+    /// (`getEventList.ts:317-323`).
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub connected_addresses: Option<Vec<String>>,
 }
+
+impl EventRecord {
+    /// The record as upstream's `/api` routes answered it: no
+    /// `previous_place_id`.
+    pub fn api_shape(mut self) -> Self {
+        self.previous_place_id = None;
+        self
+    }
+
+    /// `contact`/`details` revealed, as `toPublic` does for the owner and for
+    /// the admin bearer's `adminServiceProfile(event.user)`.
+    fn reveal_private(&mut self, raw: &Value) {
+        self.contact = Some(raw_str(raw, "contact"));
+        self.details = Some(raw_str(raw, "details"));
+    }
+}
+
+/// `MAX_EVENT_RECURRENT` (`Event/types.ts:98`): the next occurrences a
+/// record carries; the stored series stays bounded by `recurrence`.
+pub const MAX_EVENT_RECURRENT: usize = 10;
 
 #[derive(Debug, Clone, Serialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export, export_to = "events/"))]
@@ -125,8 +173,10 @@ pub struct EventCategoryRecord {
     pub name: String,
     pub active: bool,
     #[cfg_attr(feature = "ts", ts(type = "string"))]
+    #[serde(serialize_with = "json_date::serialize")]
     pub created_at: DateTime<Utc>,
     #[cfg_attr(feature = "ts", ts(type = "string"))]
+    #[serde(serialize_with = "json_date::serialize")]
     pub updated_at: DateTime<Utc>,
     #[cfg_attr(feature = "ts", ts(type = "Record<string, unknown>"))]
     pub i18n: serde_json::Map<String, Value>,
@@ -139,6 +189,7 @@ pub struct EventAttendeeRecord {
     pub user: String,
     pub user_name: Option<String>,
     #[cfg_attr(feature = "ts", ts(type = "string"))]
+    #[serde(serialize_with = "json_date::serialize")]
     pub created_at: DateTime<Utc>,
 }
 
@@ -152,13 +203,17 @@ pub struct ScheduleRecord {
     pub theme: Option<String>,
     pub background: Vec<String>,
     #[cfg_attr(feature = "ts", ts(type = "string | null"))]
+    #[serde(serialize_with = "json_date::serialize_opt")]
     pub active_since: Option<DateTime<Utc>>,
     #[cfg_attr(feature = "ts", ts(type = "string | null"))]
+    #[serde(serialize_with = "json_date::serialize_opt")]
     pub active_until: Option<DateTime<Utc>>,
     pub active: bool,
     #[cfg_attr(feature = "ts", ts(type = "string | null"))]
+    #[serde(serialize_with = "json_date::serialize_opt")]
     pub created_at: Option<DateTime<Utc>>,
     #[cfg_attr(feature = "ts", ts(type = "string | null"))]
+    #[serde(serialize_with = "json_date::serialize_opt")]
     pub updated_at: Option<DateTime<Utc>>,
 }
 
@@ -174,6 +229,7 @@ pub struct EventsComponent {
     pool: PgPool,
     rewrite_domain: Option<String>,
     events_asset_base_url: String,
+    pub foundation: Arc<foundation::Foundation>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -202,7 +258,12 @@ pub struct EventListFilters {
     pub rejected: Option<bool>,
     pub approved: Option<bool>,
     pub deleted: Option<bool>,
+    /// The admin bearer's list (`getEventListRoute`, `index.ts:40-47`):
+    /// `approved`/`rejected`/`deleted` filters honoured, rejected rows
+    /// included by default (`include_rejected`).
     pub admin: bool,
+    /// `include_rejected` (`getEventList.ts:170`): only the admin bearer.
+    pub include_rejected: bool,
     pub only_attendee: bool,
     pub owner: bool,
     pub include_own: bool,
@@ -267,23 +328,35 @@ impl EventsComponent {
             pool,
             rewrite_domain,
             events_asset_base_url,
+            foundation: Arc::new(foundation::Foundation::default()),
+        }
+    }
+
+    /// The record options of a read: the asset rewrite, the recurrence
+    /// window and the foundation names, refreshed when stale.
+    async fn view(&self, max_dates: usize) -> RecordView<'_> {
+        self.foundation.refresh_if_stale(&self.pool).await;
+        RecordView {
+            rewrite_domain: self.rewrite_domain.as_deref(),
+            events_asset_base_url: &self.events_asset_base_url,
+            max_dates,
+            foundation: self.foundation.snapshot(),
         }
     }
 
     fn destination_clause(ids: &[String], binds: &mut Vec<EventBind>) -> String {
         let ids: Vec<String> = ids.iter().map(|d| d.to_lowercase()).collect();
         let p = next_placeholder(binds, EventBind::TextArray(ids));
-        format!(
-            "(lower(raw->>'place_id') = ANY({p}) \
-             OR (COALESCE((raw->>'world')::boolean, false) IS TRUE \
-             AND lower(raw->>'server') = ANY({p})))"
-        )
+        format!("(place_id_lower = ANY({p}) OR (world IS TRUE AND server_lower = ANY({p})))")
     }
 
     fn build_where(f: &EventListFilters, binds: &mut Vec<EventBind>) -> String {
         let mut sql = String::from(" WHERE 1=1");
         let now = Utc::now();
-        let nf = EFF_NEXT_FINISH_SQL;
+        // The stored `live_until` (schema_functions.rs EVENT_LIVE_UNTIL) passes
+        // `now` exactly when the effective finish, `EFF_NEXT_START_SQL` plus
+        // the duration, passes it; a partial index serves the open events.
+        let nf = "live_until";
         let ns = EFF_NEXT_START_SQL;
 
         let is_owner = f.owner;
@@ -331,8 +404,8 @@ impl EventsComponent {
             sql.push_str(" AND highlighted IS TRUE");
         }
         match f.world {
-            Some(true) => sql.push_str(" AND COALESCE((raw->>'world')::boolean, false) IS TRUE"),
-            Some(false) => sql.push_str(" AND COALESCE((raw->>'world')::boolean, false) IS FALSE"),
+            Some(true) => sql.push_str(" AND world IS TRUE"),
+            Some(false) => sql.push_str(" AND world IS FALSE"),
             None => {}
         }
         match f.recurrent {
@@ -356,7 +429,14 @@ impl EventsComponent {
 
         let mut by_destination: Vec<String> = Vec::new();
         if !f.places_ids.is_empty() {
-            by_destination.push(Self::destination_clause(&f.places_ids, binds));
+            // `e.place_id = ANY($ids)` (`Event/model.ts:268-270`), the ids
+            // verbatim; the folded column only narrows through its index.
+            let lower = f.places_ids.iter().map(|d| d.to_lowercase()).collect();
+            let pl = next_placeholder(binds, EventBind::TextArray(lower));
+            let pe = next_placeholder(binds, EventBind::TextArray(f.places_ids.clone()));
+            by_destination.push(format!(
+                "(place_id_lower = ANY({pl}) AND raw->>'place_id' = ANY({pe}))"
+            ));
         }
         if let Some(c) = &f.community_id {
             let pc = next_placeholder(binds, EventBind::Text(c.clone()));
@@ -380,10 +460,9 @@ impl EventsComponent {
         }
 
         if let Some(s) = &f.search {
+            // A positive cover-density rank of an `&`-joined query is a match.
             let p = next_placeholder(binds, EventBind::Text(to_tsquery(s)));
-            sql.push_str(&format!(
-                " AND ts_rank_cd({TEXTSEARCH_EXPR}, to_tsquery('english', {p})) > 0"
-            ));
+            sql.push_str(&format!(" AND textsearch @@ to_tsquery('english', {p})"));
         }
 
         let own_viewer = f
@@ -391,19 +470,22 @@ impl EventsComponent {
             .as_deref()
             .filter(|_| !f.include_unapproved && f.include_own);
         if let (false, Some(u)) = (is_owner, own_viewer) {
+            // model.ts:183-190: `rejected IS FALSE` applies to every list but
+            // the owner's and the admin bearer's; :238-241 then widens
+            // `approved` to the viewer's own rows. A signed viewer lists their
+            // pending events, never their rejected ones (only `owner=true`
+            // does).
             let p = next_placeholder(binds, EventBind::Text(u.to_lowercase()));
             sql.push_str(&format!(
-                " AND ((approved IS TRUE AND COALESCE((raw->>'rejected')::boolean, false) IS FALSE) \
-                 OR lower(user_creator) = {p})"
+                " AND rejected IS FALSE AND (approved IS TRUE OR lower(user_creator) = {p})"
             ));
         } else if !is_owner {
-            match (f.include_unapproved, f.rejected) {
-                (_, Some(true)) => {
-                    sql.push_str(" AND COALESCE((raw->>'rejected')::boolean, false) IS TRUE")
-                }
-                (_, Some(false)) | (false, None) => {
-                    sql.push_str(" AND COALESCE((raw->>'rejected')::boolean, false) IS FALSE")
-                }
+            // model.ts:184-191: `rejected` filter, else `include_rejected`
+            // (the admin bearer) or `rejected IS FALSE` (everyone else,
+            // permission wallets included).
+            match (f.include_rejected, f.rejected) {
+                (_, Some(true)) => sql.push_str(" AND rejected IS TRUE"),
+                (_, Some(false)) | (false, None) => sql.push_str(" AND rejected IS FALSE"),
                 (true, None) => {}
             }
             match (f.include_unapproved, f.approved) {
@@ -448,35 +530,35 @@ impl EventsComponent {
         let total = if with_total {
             match rows.first() {
                 Some(r) => r.total_count,
-                None if f.offset > 0 || f.limit <= 0 => self.count_only(f).await,
+                None if f.offset > 0 || f.limit <= 0 => self.count_only(f).await?,
                 None => 0,
             }
         } else {
             0
         };
         let user = f.user.as_deref();
+        let view = self
+            .view(if f.with_recurrent_dates {
+                FULL_RECURRENCE_WINDOW
+            } else {
+                MAX_EVENT_RECURRENT
+            })
+            .await;
         let records = rows
             .into_iter()
-            .map(|r| {
-                event_row_to_record(
-                    r,
-                    user,
-                    self.rewrite_domain.as_deref(),
-                    &self.events_asset_base_url,
-                )
-            })
+            .map(|r| event_row_to_record(r, user, &view))
             .collect();
         Ok((records, total))
     }
 
-    async fn count_only(&self, f: &EventListFilters) -> i64 {
+    async fn count_only(&self, f: &EventListFilters) -> Result<i64, ApiError> {
         let mut cbinds: Vec<EventBind> = Vec::new();
         let count_sql = count_only_sql(f, &mut cbinds);
         let mut cq = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(count_sql));
         for b in &cbinds {
             cq = bind_one_scalar(cq, b);
         }
-        cq.fetch_one(&self.pool).await.unwrap_or(0)
+        Ok(cq.fetch_one(&self.pool).await?)
     }
 
     pub async fn get(&self, event_id: &str) -> Result<Option<EventRecord>, ApiError> {
@@ -486,13 +568,26 @@ impl EventsComponent {
         .bind(event_id)
         .fetch_optional(&self.pool)
         .await?;
+        let view = self.view(MAX_EVENT_RECURRENT).await;
+        Ok(row.map(|r| event_row_to_record(r, None, &view)))
+    }
+
+    /// The admin bearer's view (`admin.ts:37-42,100-102`, `index.ts:26-36`:
+    /// `adminServiceProfile(event.user)`): `contact` and `details` present,
+    /// `attending` false (no viewer).
+    pub async fn get_for_admin(&self, event_id: &str) -> Result<Option<EventRecord>, ApiError> {
+        let row = sqlx::query_as::<_, EventRow>(sqlx::AssertSqlSafe(format!(
+            "SELECT {EVENT_COLUMNS} FROM explore.event WHERE id = $1"
+        )))
+        .bind(event_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        let view = self.view(MAX_EVENT_RECURRENT).await;
         Ok(row.map(|r| {
-            event_row_to_record(
-                r,
-                None,
-                self.rewrite_domain.as_deref(),
-                &self.events_asset_base_url,
-            )
+            let raw = r.raw.clone();
+            let mut record = event_row_to_record(r, None, &view);
+            record.reveal_private(&raw);
+            record
         }))
     }
 
@@ -513,32 +608,25 @@ impl EventsComponent {
         .bind(viewer.to_lowercase())
         .fetch_optional(&self.pool)
         .await?;
-        Ok(row.map(|r| {
-            event_row_to_record(
-                r,
-                Some(viewer),
-                self.rewrite_domain.as_deref(),
-                &self.events_asset_base_url,
-            )
-        }))
+        let view = self.view(MAX_EVENT_RECURRENT).await;
+        Ok(row.map(|r| event_row_to_record(r, Some(viewer), &view)))
     }
 
+    /// `GET /api/events/attending` (`Event/model.ts:461-480`,
+    /// `getAttending`): every event that has not finished, not rejected and
+    /// not deleted, pending ones of other creators included, each with the
+    /// viewer's `attending` flag; no limit. Fixture
+    /// `events.get_events_attending.signed`.
     pub async fn attending(&self, user: &str) -> Result<Vec<EventRecord>, ApiError> {
         let user_lc = user.to_lowercase();
         let rows = sqlx::query_as::<_, EventRow>(sqlx::AssertSqlSafe(attending_sql()))
             .bind(&user_lc)
             .fetch_all(&self.pool)
             .await?;
+        let view = self.view(MAX_EVENT_RECURRENT).await;
         Ok(rows
             .into_iter()
-            .map(|r| {
-                event_row_to_record(
-                    r,
-                    Some(&user_lc),
-                    self.rewrite_domain.as_deref(),
-                    &self.events_asset_base_url,
-                )
-            })
+            .map(|r| event_row_to_record(r, Some(&user_lc), &view))
             .collect())
     }
 
@@ -547,24 +635,17 @@ impl EventsComponent {
         let columns = list_event_columns(false);
         let rows = sqlx::query_as::<_, EventRow>(sqlx::AssertSqlSafe(format!(
             "SELECT {columns} FROM explore.event \
-             WHERE approved IS NOT TRUE \
-                OR COALESCE((raw->>'rejected')::boolean, false) IS TRUE \
+             WHERE approved IS NOT TRUE OR rejected IS TRUE \
              ORDER BY next_start_at DESC NULLS LAST, id ASC \
              LIMIT $1"
         )))
         .bind(limit)
         .fetch_all(&self.pool)
         .await?;
+        let view = self.view(MAX_EVENT_RECURRENT).await;
         Ok(rows
             .into_iter()
-            .map(|r| {
-                event_row_to_record(
-                    r,
-                    None,
-                    self.rewrite_domain.as_deref(),
-                    &self.events_asset_base_url,
-                )
-            })
+            .map(|r| event_row_to_record(r, None, &view))
             .collect())
     }
 
@@ -614,7 +695,7 @@ impl EventsComponent {
             out.entry(key).or_insert(NextEvent {
                 id: ev.id,
                 name,
-                next_start_at: next_start_at.to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+                next_start_at: json_date::wire(&next_start_at.and_utc()),
             });
         }
         Ok(out)
@@ -635,8 +716,7 @@ impl EventsComponent {
         let mut binds: Vec<EventBind> = Vec::new();
         let where_sql = Self::build_where(&f, &mut binds);
         let sql = format!(
-            "SELECT id, name, raw->>'place_id' AS place_id, raw->>'server' AS server, \
-                    COALESCE((raw->>'world')::boolean, false) AS world, \
+            "SELECT id, name, raw->>'place_id' AS place_id, raw->>'server' AS server, world, \
                     {EFF_NEXT_START_SQL} AS next_start_at \
              FROM explore.event{where_sql} \
              ORDER BY {EFF_NEXT_START_SQL} ASC NULLS LAST, id ASC LIMIT 2500"
@@ -656,7 +736,9 @@ struct EventAt {
     place_id: Option<String>,
     server: Option<String>,
     world: bool,
-    next_start_at: Option<DateTime<Utc>>,
+    /// The effective next start, a UTC instant stored without a zone like
+    /// the columns it derives from.
+    next_start_at: Option<chrono::NaiveDateTime>,
 }
 
 /// The keys a caller asked for, matched case-insensitively: a place by its
@@ -732,8 +814,9 @@ fn attendance_sql(user: &str) -> String {
 // Effective next_start_at still uses the complete series, before projection.
 fn list_event_columns(include_dates: bool) -> String {
     let date_limit = if include_dates { 1000 } else { 100 };
+    // The stored instants are UTC timestamps; the wire form carries the zone.
     let dates = format!(
-        "COALESCE((SELECT jsonb_agg(upcoming.starts_at ORDER BY upcoming.starts_at) \
+        "COALESCE((SELECT jsonb_agg(upcoming.starts_at AT TIME ZONE 'UTC' ORDER BY upcoming.starts_at) \
          FROM (SELECT d.starts_at FROM ({VALID_RECURRENCE_DATES_SQL}) d \
            WHERE d.starts_at + COALESCE(duration_ms,0) * interval '1 millisecond' > now() \
            ORDER BY d.starts_at LIMIT {date_limit}) upcoming),'[]'::jsonb)"
@@ -743,27 +826,23 @@ fn list_event_columns(include_dates: bool) -> String {
     ))
 }
 
-const NOT_DELETED_SQL: &str = " AND (raw->>'deleted_by_user') IS DISTINCT FROM 'true' \
-     AND (raw->>'deleted_by_admin') IS DISTINCT FROM 'true'";
+/// `deleted` is `deleted_by_user = 'true' OR deleted_by_admin = 'true'` of the
+/// raw document, stored (schemas/10_explore.sql).
+const NOT_DELETED_SQL: &str = " AND deleted IS FALSE";
 
-const DELETED_ONLY_SQL: &str = " AND ((raw->>'deleted_by_user') = 'true' \
-     OR (raw->>'deleted_by_admin') = 'true')";
+const DELETED_ONLY_SQL: &str = " AND deleted IS TRUE";
 
 /// The effective next occurrence, upstream's `calculateNextRecurrentDates`
 /// as its cron leaves the stored column: the stored `next_start_at` while its
 /// occurrence has not finished (an occurrence the creator's edit dropped from
 /// `recurrent_dates` keeps running), else the first recurrence that has not
-/// finished, else the last recurrence, else the snapshot columns. `now()` and
-/// the recurrence strings are timestamptz, so the snapshot columns (UTC
-/// timestamps) join them under the pool's UTC session.
+/// finished, else the last recurrence, else the snapshot columns. The
+/// recurrence instants are the stored `recurrence_dates` (UTC timestamps,
+/// schema explore.recurrence_dates); they join `now()` under the pool's UTC
+/// session.
 macro_rules! valid_recurrence_dates_sql {
     () => {
-        "SELECT parsed.starts_at FROM ( \
-           SELECT CASE WHEN pg_input_is_valid(value,'timestamp with time zone') \
-             THEN value::timestamptz END AS starts_at \
-           FROM jsonb_array_elements_text(CASE WHEN jsonb_typeof(raw->'recurrent_dates')='array' \
-             THEN raw->'recurrent_dates' ELSE '[]'::jsonb END) \
-         ) parsed WHERE parsed.starts_at IS NOT NULL AND isfinite(parsed.starts_at)"
+        "SELECT d.starts_at FROM unnest(recurrence_dates) AS d(starts_at)"
     };
 }
 const VALID_RECURRENCE_DATES_SQL: &str = valid_recurrence_dates_sql!();
@@ -784,14 +863,6 @@ macro_rules! eff_next_start_sql {
 
 const EFF_NEXT_START_SQL: &str = eff_next_start_sql!();
 
-/// `next_finish_at` is the effective start plus the duration (upstream's
-/// `Time(next_start_at).add(duration)`).
-const EFF_NEXT_FINISH_SQL: &str = concat!(
-    "(",
-    eff_next_start_sql!(),
-    ") + COALESCE(duration_ms, 0) * interval '1 millisecond'"
-);
-
 fn next_start_order_by(order: SortOrder) -> String {
     let dir = match order {
         SortOrder::Asc => "ASC",
@@ -800,24 +871,27 @@ fn next_start_order_by(order: SortOrder) -> String {
     format!(" ORDER BY {EFF_NEXT_START_SQL} {dir} NULLS LAST, id ASC")
 }
 
+/// `Event/model.ts:470-477`: `finish_at > now() AND rejected IS FALSE AND
+/// deleted_by_user IS FALSE AND deleted_by_admin IS FALSE`, the attendance
+/// a LEFT JOIN flag; dcl-one orders by the next occurrence for a stable page.
 fn attending_sql() -> String {
     let attending = attendance_sql("$1");
     let columns = list_event_columns(false);
     format!(
-        "SELECT {columns}, true AS viewer_attending FROM explore.event \
-         WHERE {EFF_NEXT_FINISH_SQL} > now() \
-           AND COALESCE((raw->>'rejected')::boolean, false) IS FALSE \
-           AND (raw->>'deleted_by_user') IS DISTINCT FROM 'true' \
-           AND (raw->>'deleted_by_admin') IS DISTINCT FROM 'true' \
-           AND {attending} \
+        "SELECT {columns}, {attending} AS viewer_attending FROM explore.event \
+         WHERE live_until > now() AND rejected IS FALSE AND deleted IS FALSE \
          ORDER BY {EFF_NEXT_START_SQL} ASC NULLS LAST, id ASC"
     )
 }
 
+/// `Event/model.ts:35-48` (`textsearch`): name 'A', user_name 'B',
+/// estate_name 'B', description 'C'.
+/// The stored `textsearch` of explore.event (schemas/10_explore.sql pins it).
+#[cfg(test)]
 const TEXTSEARCH_EXPR: &str = "(setweight(to_tsvector('english', coalesce(name,'')), 'A') || \
      setweight(to_tsvector('english', coalesce(raw->>'user_name','')), 'B') || \
      setweight(to_tsvector('english', coalesce(raw->>'estate_name','')), 'B') || \
-     setweight(to_tsvector('english', coalesce(description,'')), 'D'))";
+     setweight(to_tsvector('english', coalesce(description,'')), 'C'))";
 
 fn to_tsquery(input: &str) -> String {
     let terms: Vec<String> = input
@@ -847,15 +921,16 @@ fn next_placeholder(binds: &mut Vec<EventBind>, bind: EventBind) -> String {
     format!("${}", binds.len())
 }
 
-/// Assemble the paginated list query. When `with_total`, the pre-LIMIT row count rides along as
-/// `count(*) OVER() AS total_count` -- same semantics as a separate `count(*)` over the same
-/// WHERE, no extra bind parameters, and it changes ONLY the select list.
+/// Assemble the paginated list query: a `page` CTE sorts, counts and cuts the keys, and the
+/// columns are read for the page alone. When `with_total`, the pre-LIMIT row count rides along
+/// as `count(*) OVER() AS total_count` on the keys -- same semantics as a separate `count(*)`
+/// over the same WHERE, no extra bind parameters.
 fn build_list_sql(f: &EventListFilters, with_total: bool, binds: &mut Vec<EventBind>) -> String {
     let where_sql = EventsComponent::build_where(f, binds);
-    let extra = if with_total {
-        ", count(*) OVER() AS total_count"
+    let (window, extra) = if with_total {
+        (", count(*) OVER() AS total_count", ", page.total_count")
     } else {
-        ""
+        ("", "")
     };
     let viewer = match &f.user {
         Some(u) => {
@@ -871,7 +946,7 @@ fn build_list_sql(f: &EventListFilters, with_total: bool, binds: &mut Vec<EventB
             "DESC"
         };
         let p = next_placeholder(binds, EventBind::Text(to_tsquery(s)));
-        format!(" ORDER BY ts_rank_cd({TEXTSEARCH_EXPR}, to_tsquery('english', {p})) {dir}, id ASC")
+        format!(" ORDER BY ts_rank_cd(textsearch, to_tsquery('english', {p})) {dir}, id ASC")
     } else {
         next_start_order_by(f.order)
     };
@@ -881,8 +956,10 @@ fn build_list_sql(f: &EventListFilters, with_total: bool, binds: &mut Vec<EventB
         .clamp(0, if f.with_recurrent_dates { 25 } else { 500 });
     let lim_p = next_placeholder(binds, EventBind::Int64(limit));
     let off_p = next_placeholder(binds, EventBind::Int64(f.offset.max(0)));
+    // The page CTE sorts, counts and cuts the keys; the columns are read for the page alone.
     format!(
-        "SELECT {columns}{extra}{viewer} FROM explore.event{where_sql}{order_clause} LIMIT {lim_p} OFFSET {off_p}"
+        "WITH page AS (SELECT id{window} FROM explore.event{where_sql}{order_clause} LIMIT {lim_p} OFFSET {off_p}) \
+         SELECT {columns}{extra}{viewer} FROM explore.event JOIN page USING (id){order_clause}"
     )
 }
 
@@ -934,12 +1011,25 @@ fn rewrite_asset_url(url: &str, domain: Option<&str>) -> String {
         .unwrap_or_else(|| url.to_string())
 }
 
+/// `with_recurrent_dates` on `/v1/events`: the stored window instead of
+/// upstream's ten.
+pub const FULL_RECURRENCE_WINDOW: usize = 1000;
+
+/// What a read projects a row with.
+struct RecordView<'a> {
+    rewrite_domain: Option<&'a str>,
+    events_asset_base_url: &'a str,
+    max_dates: usize,
+    foundation: foundation::Names,
+}
+
 fn event_row_to_record(
     r: EventRow,
     verified_viewer: Option<&str>,
-    rewrite_domain: Option<&str>,
-    events_asset_base_url: &str,
+    view: &RecordView<'_>,
 ) -> EventRecord {
+    let rewrite_domain = view.rewrite_domain;
+    let events_asset_base_url = view.events_asset_base_url;
     let raw = &r.raw;
     let start_at = r.start_at.map(|n| n.and_utc());
     let finish_at = r.finish_at.map(|n| n.and_utc());
@@ -997,6 +1087,43 @@ fn event_row_to_record(
             .or(start_at),
     };
     let next_finish_at = next_start_at.map(|d| d + occurrence_span);
+    // `futureRecurrentDates` (`Event/utils.ts:191-233`): the next
+    // `MAX_EVENT_RECURRENT` occurrences that have not ended, else the start
+    // (`calculateRecurrentProperties`, `:436-438`).
+    let projected_dates: Vec<DateTime<Utc>> = {
+        let mut dates: Vec<DateTime<Utc>> = recurrent_dates
+            .iter()
+            .copied()
+            .filter(|d| *d + occurrence_span > now)
+            .take(view.max_dates)
+            .collect();
+        if dates.is_empty() {
+            dates.extend(start_at);
+        }
+        // `EventModel.build` (`Event/model.ts:138-140`) puts the start first
+        // when the stored series no longer begins with it.
+        if let Some(start) = start_at.filter(|s| dates.first() != Some(s)) {
+            dates.insert(0, start);
+        }
+        dates
+    };
+    // `calculateRecurrentProperties` (`Event/utils.ts:426-432`): a recurrent
+    // event ends when the last of its next `MAX_EVENT_RECURRENT` occurrences
+    // ends, re-rolled by upstream's cron as they pass; the node stores the
+    // whole series, so the served value is projected the same way.
+    let finish_at = if r.recurrent {
+        recurrent_dates
+            .iter()
+            .copied()
+            .filter(|d| *d + occurrence_span > now)
+            .take(MAX_EVENT_RECURRENT)
+            .last()
+            .or(start_at)
+            .map(|d| d + occurrence_span)
+            .or(finish_at)
+    } else {
+        finish_at
+    };
     let live = match (next_start_at, duration) {
         (Some(ns), Some(d)) => now >= ns && now < ns + chrono::Duration::milliseconds(d),
         _ => raw.get("live").and_then(|v| v.as_bool()).unwrap_or(false),
@@ -1036,8 +1163,8 @@ fn event_row_to_record(
             .description
             .or_else(|| raw_str(raw, "description"))
             .map(|d| sanitize_event_description(&d)),
-        contact: owner_view.then(|| raw_str(raw, "contact")).flatten(),
-        details: owner_view.then(|| raw_str(raw, "details")).flatten(),
+        contact: owner_view.then(|| raw_str(raw, "contact")),
+        details: owner_view.then(|| raw_str(raw, "details")),
         start_at,
         finish_at,
         next_start_at,
@@ -1051,8 +1178,12 @@ fn event_row_to_record(
         y,
         server,
         url,
+        user_name: foundation::display_name(
+            &view.foundation,
+            user.as_deref(),
+            raw_str(raw, "user_name"),
+        ),
         user,
-        user_name: raw_str(raw, "user_name"),
         estate_id: raw_str(raw, "estate_id"),
         estate_name,
         scene_name,
@@ -1074,15 +1205,16 @@ fn event_row_to_record(
             .get("recurrent_month_mask")
             .and_then(|v| v.as_i64())
             .unwrap_or(0),
+        // `calculateRecurrentProperties` defaults the interval to 1 (`utils.ts:389`).
         recurrent_interval: raw
             .get("recurrent_interval")
             .and_then(|v| v.as_i64())
-            .unwrap_or(0),
+            .unwrap_or(1),
         recurrent_setpos: raw.get("recurrent_setpos").and_then(|v| v.as_i64()),
         recurrent_monthday: raw.get("recurrent_monthday").and_then(|v| v.as_i64()),
         recurrent_count: raw.get("recurrent_count").and_then(|v| v.as_i64()),
         recurrent_until: parse_dt(raw.get("recurrent_until")),
-        recurrent_dates,
+        recurrent_dates: projected_dates,
         categories: str_list("categories"),
         schedules: str_list("schedules"),
         total_attendees: (raw
@@ -1147,7 +1279,61 @@ fn parse_dt(v: Option<&Value>) -> Option<DateTime<Utc>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_view(rewrite_domain: Option<&'static str>) -> RecordView<'static> {
+        RecordView {
+            rewrite_domain,
+            events_asset_base_url: "https://events.decentraland.org",
+            max_dates: MAX_EVENT_RECURRENT,
+            foundation: Arc::new(std::collections::HashSet::new()),
+        }
+    }
     use serde_json::json;
+
+    /// The feed's live and next lookups decode the effective next start, a
+    /// `timestamp without time zone` like the columns it derives from.
+    #[tokio::test]
+    async fn live_and_next_events_at_a_place_decode_the_stored_instants() {
+        let Some(pool) = crate::db::scratch::pool(2).await else {
+            return;
+        };
+        let run = uuid::Uuid::new_v4().simple().to_string();
+        let place = format!("place-{run}");
+        let now = Utc::now();
+        for (name, start) in [
+            ("live", now - chrono::Duration::minutes(30)),
+            ("next", now + chrono::Duration::hours(3)),
+        ] {
+            sqlx::query(
+                "INSERT INTO explore.event (id, name, start_at, next_start_at, duration_ms, approved, raw) \
+                 VALUES ($1, $2, $3, $3, 7200000, true, $4)",
+            )
+            .bind(format!("ev-{run}-{name}"))
+            .bind(name)
+            .bind(start.naive_utc())
+            .bind(json!({ "approved": true, "place_id": place.to_uppercase() }))
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        let component =
+            EventsComponent::new(pool.clone(), None, "https://events.decentraland.org".into());
+        let live = component
+            .live_event_names(std::slice::from_ref(&place))
+            .await
+            .unwrap();
+        assert_eq!(live.get(&place), Some(&Some("live".to_string())));
+        let next = component
+            .next_events(std::slice::from_ref(&place))
+            .await
+            .unwrap();
+        assert_eq!(next.get(&place).map(|e| e.name.as_str()), Some("next"));
+        sqlx::query("DELETE FROM explore.event WHERE id LIKE $1")
+            .bind(format!("ev-{run}-%"))
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
 
     #[tokio::test]
     async fn event_connected_users_uses_shared_rooms_and_deduplicates_locations() {
@@ -1174,20 +1360,17 @@ mod tests {
             event_row_to_record(
                 row_with(json!({"x":10,"y":20}), None, None),
                 None,
-                None,
-                "https://events.decentraland.org",
+                &test_view(None),
             ),
             event_row_to_record(
                 row_with(json!({"x":10,"y":20}), None, None),
                 None,
-                None,
-                "https://events.decentraland.org",
+                &test_view(None),
             ),
             event_row_to_record(
                 row_with(json!({"world":true,"server":"MyWorld.DCL.eth"}), None, None),
                 None,
-                None,
-                "https://events.decentraland.org",
+                &test_view(None),
             ),
         ];
         super::handlers::fill_connected(&mut events, &live).await;
@@ -1217,18 +1400,21 @@ mod tests {
         let mut events = vec![event_row_to_record(
             row_with(json!({"x":10,"y":20}), None, None),
             None,
-            None,
-            "https://events.decentraland.org",
+            &test_view(None),
         )];
         let unknown = std::sync::Arc::new(crate::places::live::Live::new(pool.clone()));
         unknown.set_participants(std::sync::Arc::new(Fixed(None)));
         super::handlers::fill_connected(&mut events, &unknown).await;
-        assert_eq!(events[0].connected_addresses, None);
-        assert!(
+        assert_eq!(
+            events[0].connected_addresses,
+            Some(vec![]),
+            "getEventList.ts:317-323: an unknown room is still an array"
+        );
+        assert_eq!(
             serde_json::to_value(&events[0])
                 .unwrap()
-                .get("connected_addresses")
-                .is_none()
+                .get("connected_addresses"),
+            Some(&json!([]))
         );
         let empty = std::sync::Arc::new(crate::places::live::Live::new(pool));
         empty.set_participants(std::sync::Arc::new(Fixed(Some(vec![]))));
@@ -1236,8 +1422,20 @@ mod tests {
         assert_eq!(events[0].connected_addresses, Some(vec![]));
     }
 
-    const DELETED_USER_CLAUSE: &str = "(raw->>'deleted_by_user') IS DISTINCT FROM 'true'";
-    const DELETED_ADMIN_CLAUSE: &str = "(raw->>'deleted_by_admin') IS DISTINCT FROM 'true'";
+    const SCHEMA: &str = include_str!(concat!(env!("DCL_ONE_ROOT"), "/schemas/10_explore.sql"));
+
+    fn squeezed(sql: &str) -> String {
+        sql.split_whitespace().collect::<Vec<_>>().join(" ")
+    }
+
+    /// The event table stores the vector this module searched by expression.
+    #[test]
+    fn the_schema_stores_the_event_textsearch() {
+        let column = squeezed(&format!(
+            "textsearch tsvector NOT NULL GENERATED ALWAYS AS ({TEXTSEARCH_EXPR}) STORED"
+        ));
+        assert!(squeezed(SCHEMA).contains(&column), "{column}");
+    }
 
     fn row_with(raw: Value, start_at: Option<DateTime<Utc>>, duration_ms: Option<i64>) -> EventRow {
         EventRow {
@@ -1304,8 +1502,7 @@ mod tests {
         let rec = event_row_to_record(
             row_with(raw.clone(), None, None),
             None,
-            Some("interconnected.online"),
-            "https://events.decentraland.org",
+            &test_view(Some("interconnected.online")),
         );
         assert_eq!(
             rec.image.as_deref(),
@@ -1317,12 +1514,7 @@ mod tests {
                 "https://events-assets-099ac00.interconnected.online/poster/v.webp".into()
             ))
         );
-        let rec = event_row_to_record(
-            row_with(raw, None, None),
-            None,
-            None,
-            "https://events.decentraland.org",
-        );
+        let rec = event_row_to_record(row_with(raw, None, None), None, &test_view(None));
         assert_eq!(
             rec.image.as_deref(),
             Some("https://events-assets-099ac00.decentraland.org/poster/d2dfb36b6a012314.jpg")
@@ -1336,17 +1528,11 @@ mod tests {
         let rec = event_row_to_record(
             row_with(json!({ "featured_item": urn }), None, None),
             None,
-            None,
-            "https://events.decentraland.org",
+            &test_view(None),
         );
         assert_eq!(rec.featured_item.as_deref(), Some(urn));
         for absent in [json!({}), json!({ "featured_item": null })] {
-            let rec = event_row_to_record(
-                row_with(absent, None, None),
-                None,
-                None,
-                "https://events.decentraland.org",
-            );
+            let rec = event_row_to_record(row_with(absent, None, None), None, &test_view(None));
             assert_eq!(rec.featured_item, None);
         }
     }
@@ -1365,8 +1551,7 @@ mod tests {
             };
             let mut binds = Vec::new();
             let sql = EventsComponent::build_where(&f, &mut binds);
-            assert!(sql.contains(DELETED_USER_CLAUSE), "{list:?}: {sql}");
-            assert!(sql.contains(DELETED_ADMIN_CLAUSE), "{list:?}: {sql}");
+            assert!(sql.contains(" AND deleted IS FALSE"), "{list:?}: {sql}");
         }
         let f = EventListFilters {
             creator: Some("0xABC".into()),
@@ -1424,12 +1609,14 @@ mod tests {
         assert!(sql.ends_with(DELETED_ONLY_SQL), "{sql}");
     }
 
+    /// The date filters read the stored occurrence columns, never the
+    /// mirrored next_start_at alone.
     #[test]
     fn date_filters_use_recomputed_occurrences() {
-        for list in [
-            EventListType::Active,
-            EventListType::Live,
-            EventListType::Upcoming,
+        for (list, start) in [
+            (EventListType::Active, false),
+            (EventListType::Live, true),
+            (EventListType::Upcoming, true),
         ] {
             let f = EventListFilters {
                 list,
@@ -1437,14 +1624,24 @@ mod tests {
             };
             let mut binds = Vec::new();
             let sql = EventsComponent::build_where(&f, &mut binds);
-            assert!(sql.contains("recurrent_dates"), "{list:?}: {sql}");
+            assert!(sql.contains(" AND live_until > $1"), "{list:?}: {sql}");
+            assert_eq!(
+                sql.contains("unnest(recurrence_dates)"),
+                start,
+                "{list:?}: {sql}"
+            );
         }
-        assert!(attending_sql().contains("recurrent_dates"));
+        let attending = attending_sql();
+        assert!(
+            attending
+                .contains("WHERE live_until > now() AND rejected IS FALSE AND deleted IS FALSE")
+        );
+        assert!(attending.contains("unnest(recurrence_dates)"));
     }
 
-    const PUBLIC_ONLY_CLAUSE: &str =
-        " AND COALESCE((raw->>'rejected')::boolean, false) IS FALSE AND approved IS TRUE";
-    const APPROVED_OR_MINE_CLAUSE: &str = " AND ((approved IS TRUE AND COALESCE((raw->>'rejected')::boolean, false) IS FALSE) OR lower(user_creator) = ";
+    const PUBLIC_ONLY_CLAUSE: &str = " AND rejected IS FALSE AND approved IS TRUE";
+    const APPROVED_OR_MINE_CLAUSE: &str =
+        " AND rejected IS FALSE AND (approved IS TRUE OR lower(user_creator) = ";
 
     #[test]
     fn a_signed_viewer_sees_their_own_pending_events_and_an_admin_list_is_unfiltered() {
@@ -1516,12 +1713,13 @@ mod tests {
         );
     }
 
-    const DESTINATION_CLAUSE: &str = "(lower(raw->>'place_id') = ANY($1) \
-     OR (COALESCE((raw->>'world')::boolean, false) IS TRUE \
-     AND lower(raw->>'server') = ANY($1)))";
+    const DESTINATION_CLAUSE: &str =
+        "(place_id_lower = ANY($1) OR (world IS TRUE AND server_lower = ANY($1)))";
+
+    const PLACE_IDS_CLAUSE: &str = "(place_id_lower = ANY($1) AND raw->>'place_id' = ANY($2))";
 
     #[test]
-    fn a_world_event_matches_by_its_world_for_place_ids_and_destinations() {
+    fn place_ids_match_verbatim_and_destinations_by_their_world_too() {
         let f = EventListFilters {
             list: EventListType::All,
             places_ids: vec!["P1".into(), "My-World.dcl.eth".into()],
@@ -1529,12 +1727,13 @@ mod tests {
         };
         let mut binds = Vec::new();
         let sql = EventsComponent::build_where(&f, &mut binds);
-        assert!(
-            sql.contains(&format!(" AND ({DESTINATION_CLAUSE})")),
-            "{sql}"
-        );
+        assert!(sql.contains(&format!(" AND ({PLACE_IDS_CLAUSE})")), "{sql}");
         assert!(
             matches!(&binds[0], EventBind::TextArray(ids) if ids == &["p1", "my-world.dcl.eth"]),
+            "{binds:?}"
+        );
+        assert!(
+            matches!(&binds[1], EventBind::TextArray(ids) if ids == &["P1", "My-World.dcl.eth"]),
             "{binds:?}"
         );
 
@@ -1547,7 +1746,7 @@ mod tests {
         let mut binds = Vec::new();
         let sql = EventsComponent::build_where(&with_community, &mut binds);
         assert!(
-            sql.contains(&format!(" AND ({DESTINATION_CLAUSE} OR community_id = $2)")),
+            sql.contains(&format!(" AND ({PLACE_IDS_CLAUSE} OR community_id = $3)")),
             "{sql}"
         );
 
@@ -1584,14 +1783,23 @@ mod tests {
         assert_eq!(binds_t.len(), binds_f.len());
         assert_eq!(
             sql_t,
-            sql_f.replacen(
-                &format!("SELECT {} FROM explore.event", list_event_columns(false)),
-                &format!(
-                    "SELECT {}, count(*) OVER() AS total_count FROM explore.event",
-                    list_event_columns(false)
-                ),
-                1,
-            )
+            sql_f
+                .replacen(
+                    "SELECT id FROM explore.event",
+                    "SELECT id, count(*) OVER() AS total_count FROM explore.event",
+                    1,
+                )
+                .replacen(
+                    &format!(
+                        "SELECT {} FROM explore.event JOIN page",
+                        list_event_columns(false)
+                    ),
+                    &format!(
+                        "SELECT {}, page.total_count FROM explore.event JOIN page",
+                        list_event_columns(false)
+                    ),
+                    1,
+                )
         );
         let mut wbinds: Vec<EventBind> = Vec::new();
         let where_out = EventsComponent::build_where(&f, &mut wbinds);
@@ -1599,6 +1807,52 @@ mod tests {
         assert_eq!(
             count_only_sql(&f, &mut cbinds),
             format!("SELECT count(*) FROM explore.event{where_out}")
+        );
+    }
+
+    /// `Date#toJSON`: a whole-second date keeps its `.000` and `Z`
+    /// (`events.create.minimal_success`: `recurrent_dates`, `finish_at`,
+    /// `next_start_at`, `next_finish_at`; `events.patch.owner_basic_fields`:
+    /// `start_at`), whatever form the stored row holds.
+    #[test]
+    fn record_dates_serialize_in_the_old_json_form() {
+        let raw = json!({
+            "recurrent_dates": ["2031-01-01T00:00:00+00:00"],
+            "updated_at": "2026-01-01T00:00:00.5Z",
+        });
+        let rec = event_row_to_record(
+            row_with(
+                raw,
+                Some("2031-01-01T00:00:00Z".parse().unwrap()),
+                Some(3_600_000),
+            ),
+            None,
+            &test_view(None),
+        );
+        let json = serde_json::to_value(&rec).unwrap();
+        assert_eq!(json["start_at"], "2031-01-01T00:00:00.000Z");
+        assert_eq!(json["finish_at"], "2031-01-01T01:00:00.000Z");
+        assert_eq!(json["next_start_at"], "2031-01-01T00:00:00.000Z");
+        assert_eq!(json["next_finish_at"], "2031-01-01T01:00:00.000Z");
+        assert_eq!(json["recurrent_dates"], json!(["2031-01-01T00:00:00.000Z"]));
+        assert_eq!(json["updated_at"], "2026-01-01T00:00:00.500Z");
+        assert_eq!(json["created_at"], Value::Null);
+        assert_eq!(
+            serde_json::to_value(ScheduleRecord {
+                id: "s".into(),
+                name: "s".into(),
+                description: None,
+                image: None,
+                theme: None,
+                background: vec![],
+                active_since: Some("2026-01-01T00:00:00Z".parse().unwrap()),
+                active_until: None,
+                active: true,
+                created_at: None,
+                updated_at: None,
+            })
+            .unwrap()["active_since"],
+            "2026-01-01T00:00:00.000Z"
         );
     }
 
@@ -1619,8 +1873,7 @@ mod tests {
                 Some(7_200_000),
             ),
             None,
-            None,
-            "https://events.decentraland.org",
+            &test_view(None),
         );
         assert_eq!(
             rec.next_start_at.map(|d| d.timestamp()),
@@ -1637,8 +1890,7 @@ mod tests {
         let rec = event_row_to_record(
             row_with(raw, Some(started), Some(7_200_000)),
             None,
-            None,
-            "https://events.decentraland.org",
+            &test_view(None),
         );
         assert_eq!(
             rec.next_start_at.map(|d| d.timestamp()),
@@ -1654,8 +1906,7 @@ mod tests {
         let rec = event_row_to_record(
             row_with(raw, Some(past), Some(7_200_000)),
             None,
-            None,
-            "https://events.decentraland.org",
+            &test_view(None),
         );
         assert_eq!(
             rec.next_start_at.map(|d| d.timestamp()),
@@ -1672,8 +1923,7 @@ mod tests {
         let rec = event_row_to_record(
             row_with(raw, Some(past), Some(7_200_000)),
             None,
-            None,
-            "https://events.decentraland.org",
+            &test_view(None),
         );
         assert_eq!(
             rec.next_start_at.map(|d| d.timestamp()),
@@ -1700,10 +1950,7 @@ mod tests {
         assert_eq!(sql.matches("lower(user_creator)").count(), 1, "{sql}");
         assert!(sql.contains("lower(user_creator) = $1"), "{sql}");
         assert!(!sql.contains("approved IS TRUE"), "{sql}");
-        assert!(
-            !sql.contains("COALESCE((raw->>'rejected')::boolean, false) IS FALSE"),
-            "{sql}"
-        );
+        assert!(!sql.contains("rejected IS FALSE"), "{sql}");
         assert!(matches!(binds.first(), Some(EventBind::Text(u)) if u.as_str() == "0xabc"));
 
         let f = EventListFilters {
@@ -1712,10 +1959,7 @@ mod tests {
         };
         let mut binds = Vec::new();
         let sql = EventsComponent::build_where(&f, &mut binds);
-        assert!(
-            sql.contains("approved IS TRUE")
-                && sql.contains("COALESCE((raw->>'rejected')::boolean, false) IS FALSE")
-        );
+        assert!(sql.contains("approved IS TRUE") && sql.contains("rejected IS FALSE"));
 
         let f = EventListFilters {
             owner: true,
@@ -1759,12 +2003,37 @@ mod tests {
     }
 
     #[test]
+    fn a_running_series_serves_its_start_before_the_next_occurrences() {
+        let now = Utc::now();
+        let base = DateTime::from_timestamp(now.timestamp(), 0).unwrap();
+        let start = base - chrono::Duration::days(7);
+        let next = [
+            base + chrono::Duration::days(7),
+            base + chrono::Duration::days(14),
+        ];
+        let series: Vec<String> = [start, next[0], next[1]]
+            .iter()
+            .map(|d| d.to_rfc3339())
+            .collect();
+        let mut row = row_with(
+            json!({"recurrent": true, "recurrent_dates": series}),
+            Some(start),
+            Some(7_200_000),
+        );
+        row.recurrent = true;
+        let rec = event_row_to_record(row, None, &test_view(None));
+        // `EventModel.build` (`Event/model.ts:138-140`): the start, then the
+        // occurrences that have not ended.
+        assert_eq!(rec.recurrent_dates, vec![start, next[0], next[1]]);
+    }
+
+    #[test]
     fn record_sanitizes_descriptions_urls_and_images() {
         let mut row = row_with(json!({}), None, None);
         row.description = Some(
             "Join <link=\"file:///etc/passwd\">here</link> or <link=\"https://decentraland.org\">our site</link>".into(),
         );
-        let rec = event_row_to_record(row, None, None, "https://events.decentraland.org");
+        let rec = event_row_to_record(row, None, &test_view(None));
         assert_eq!(
             rec.description.as_deref(),
             Some("Join here or <link=\"https://decentraland.org\">our site</link>")
@@ -1773,12 +2042,7 @@ mod tests {
         let raw = json!({
             "description": format!("<a href=\"smb://attacker/share\">x</a> <link=\"http://{metadata_ip}/\">y</link>")
         });
-        let rec = event_row_to_record(
-            row_with(raw, None, None),
-            None,
-            None,
-            "https://events.decentraland.org",
-        );
+        let rec = event_row_to_record(row_with(raw, None, None), None, &test_view(None));
         assert_eq!(rec.description.as_deref(), Some("x y"));
 
         let raw = json!({
@@ -1786,12 +2050,7 @@ mod tests {
             "image": "http://127.0.0.1/poster.png",
             "image_vertical": "javascript:alert(1)",
         });
-        let rec = event_row_to_record(
-            row_with(raw, None, None),
-            None,
-            None,
-            "https://events.decentraland.org",
-        );
+        let rec = event_row_to_record(row_with(raw, None, None), None, &test_view(None));
         assert_eq!((rec.url, rec.image, rec.image_vertical), (None, None, None));
 
         let raw = json!({
@@ -1799,12 +2058,7 @@ mod tests {
             "image": "https://decentraland.org/poster.png",
             "image_vertical": "/poster/bafabc123",
         });
-        let rec = event_row_to_record(
-            row_with(raw, None, None),
-            None,
-            None,
-            "https://events.decentraland.org",
-        );
+        let rec = event_row_to_record(row_with(raw, None, None), None, &test_view(None));
         assert_eq!(rec.url.as_deref(), Some("https://decentraland.org/events"));
         assert_eq!(
             rec.image.as_deref(),
@@ -1829,7 +2083,7 @@ mod tests {
             place_id: place_id.map(String::from),
             server: server.map(String::from),
             world,
-            next_start_at: Some(Utc::now()),
+            next_start_at: Some(Utc::now().naive_utc()),
         }
     }
 

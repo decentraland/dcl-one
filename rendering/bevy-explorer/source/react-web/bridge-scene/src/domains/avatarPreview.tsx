@@ -13,10 +13,10 @@ import { Color4, Quaternion, Vector3 } from '@dcl/sdk/math'
 import { getPlayer } from '@dcl/sdk/players'
 import type { Entity } from '@dcl/ecs'
 import type { Ctx } from '../bridge'
-import type { PreviewFocus } from '../../../src/engine/protocol'
+import { PREVIEW_MAX_ZOOM, type PreviewFocus } from '@explorer-core/engine/protocol'
 import { currentLook } from './avatarDraft'
-import type { AvatarLook } from '../../../src/engine/avatarEquip'
-import { BACKDROP_EDGE_FADE, FLOOR, FLOOR_SHADE_STOPS, backdropRect, floorShadeAt } from '../../../src/engine/lobbyStage'
+import type { AvatarLook } from '@explorer-core/engine/avatarEquip'
+import { BACKDROP_EDGE_FADE, FLOOR, FLOOR_SHADE_STOPS, backdropRect, floorShadeAt } from '@explorer-core/engine/lobbyStage'
 import { BevyApi } from '../bevy-api'
 
 type Rect = { x: number; y: number; width: number; height: number }
@@ -43,6 +43,9 @@ const FRAMING: Record<PreviewFocus, { range: number; centerY: number }> = {
   bottom: { range: 3.96, centerY: 1.15 },
   shoes: { range: 3.03, centerY: 0.35 }
 }
+// The Shop's whole body in its 573×942 window, as the design draws it: the avatar ~751px tall, its feet on
+// the stage's floor logo (~970px down the screen). The Shop frames nothing else.
+const SHOP_FRAMING = { range: 4.9, centerY: 1.84 }
 const FOCUS_SECONDS = 0.6
 const CAMERA_PITCH = 12
 const CAMERA_DISTANCE = 8
@@ -58,6 +61,9 @@ const THUMBNAIL_SIZE = 480
 const LOBBY_BASE = Color4.create(FLOOR.r / 255, FLOOR.g / 255, FLOOR.b / 255, 1)
 const LOBBY_BACKDROP = 'images/lobby-background.jpg'
 const LOBBY_VIGNETTE = 'images/lobby-vignette.png'
+// The Shop's stage (the HUD's assets/shop/stage.jpg, the same file): drawn behind the avatar where the page
+// says it draws it, so the avatar's window in the page shows no seam.
+const SHOP_STAGE = 'images/shop-stage.jpg'
 const LOBBY_SHADE_FROM = FLOOR_SHADE_STOPS[0][0]
 const LOBBY_SHADE_BAND_PX = 4
 const LOBBY_TARGET_Y = 0.8
@@ -117,6 +123,10 @@ const DISPOSE_FRAMES = 2
 let avatarEntity: Entity | null = null
 let cameraEntity: Entity | null = null
 let podiumEntities: Entity[] = []
+// The Shop's stage image on screen (previewStage), in place of the backdrop bands and the podium.
+let shopStage: Rect | null = null
+// Bumped for every emote the Shop plays: the engine plays a trigger whose timestamp is new.
+let emoteTrigger = 0
 let lastShapeKey = ''
 // The lobby stage swaps between two avatars, one on show and one standing by, so that a new look
 // loads out of sight and the one on show never goes missing: a look wanted on the stage goes on
@@ -179,6 +189,10 @@ let framing = FRAMING.body
 let framingFrom = FRAMING.body
 let framingTo = FRAMING.body
 let framingT = 1
+// The page's zoom over the framing in use (previewZoom), and how far the view's centre has moved up (metres) to
+// keep the height the page zoomed toward in place: 1 and 0 are the framing as it is.
+let zoom = 1
+let zoomShift = 0
 // Non-persisting preview override (selecting an item in the Backpack): when set, the preview
 // avatar wears these urns instead of the player's actual equipped set. null = no override.
 let previewUrns: string[] | null = null
@@ -305,6 +319,7 @@ function createPreview(): void {
   avatarEntity = a
   cameraEntity = c
   podiumEntities = podium
+  if (shopStage != null) showPodium(false)
   lastShapeKey = ''
   shownKey = ''
   standbyKey = ''
@@ -370,6 +385,8 @@ function disposePreview(): void {
   showLoad = null
   standbyLoad = null
   shownLoaded = false
+  zoom = 1
+  zoomShift = 0
 }
 
 /** Re-read the look into the shape when it changes (a pick from the page, an equip via React →
@@ -565,7 +582,7 @@ export function registerAvatarPreview(ctx: Ctx): void {
 
   // The Backpack's selected category: ease the camera to frame that part of the avatar.
   ctx.on('previewFocus', (msg) => {
-    if (stage !== 'backpack') return
+    if (stage !== 'backpack' || shopStage != null) return
     const to = FRAMING[msg.focus] ?? FRAMING.body
     if (to === framingTo) return
     framingFrom = framing
@@ -607,6 +624,45 @@ export function registerAvatarPreview(ctx: Ctx): void {
     if (stage === 'lobby') loadOnStandby()
   })
 
+  // The Shop draws its stage around the avatar's window: the same image goes behind the avatar, standing on
+  // the floor the image has, so the Backpack's podium steps aside.
+  ctx.on('previewStage', (msg) => {
+    shopStage = msg.rect
+    showPodium(shopStage == null)
+    framing = framingFrom = framingTo = shopStage != null ? SHOP_FRAMING : FRAMING.body
+    framingT = 1
+    applyFraming(framing)
+  })
+
+  // The page's drag over the preview turns the avatar, and its wheel zooms the camera: the page drives both,
+  // as the drag-lock (onMouseDragLocked below) doesn't reach the preview in every host. Both are the preview's
+  // (the Backpack's, the Shop's) alone: a late one never turns or zooms the lobby's avatar.
+  ctx.on('previewRotate', (msg) => {
+    if (stage !== 'backpack') return
+    turnAvatar(msg.degrees)
+  })
+  ctx.on('previewZoom', (msg) => {
+    if (stage !== 'backpack') return
+    const next = Math.min(PREVIEW_MAX_ZOOM, Math.max(1, Number.isFinite(msg.zoom) ? msg.zoom : 1))
+    const anchor = Number.isFinite(msg.anchor) ? Math.min(1, Math.max(0, msg.anchor)) : 0.5
+    // The height under the anchor stays where it is: the same share of the view above the centre, before and after.
+    const above = 0.5 - anchor
+    const height = framing.centerY + shiftWithin(framing, zoom, zoomShift) + (framing.range / zoom) * above
+    zoomShift = shiftWithin(framing, next, height - (framing.range / next) * above - framing.centerY)
+    zoom = next
+    applyFraming(framing)
+  })
+
+  // The Shop's emote try-on: played once on the preview avatar, again for every ask; null stops it (an
+  // empty trigger on a scene's avatar is the engine's stop).
+  ctx.on('previewEmote', (msg) => {
+    if (avatarEntity == null) return
+    const shape = AvatarShape.getMutableOrNull(avatarEntity)
+    if (shape == null) return
+    shape.expressionTriggerId = msg.urn ?? ''
+    shape.expressionTriggerTimestamp = ++emoteTrigger
+  })
+
   // Selecting an item in the Backpack previews it on the avatar without persisting (null reverts).
   ctx.on('previewAvatar', (msg) => {
     previewUrns = msg.urns
@@ -634,11 +690,27 @@ export async function waitFrames(frames: number): Promise<void> {
   })
 }
 
-function applyFraming(f: { range: number; centerY: number }): void {
+function showPodium(visible: boolean): void {
+  if (stage !== 'backpack') return
+  podiumEntities.forEach((e, i) => {
+    const layer = PODIUM_LAYERS[i]
+    Transform.getMutable(e).scale = visible ? Vector3.create(layer.scale, layer.height, layer.scale) : Vector3.Zero()
+  })
+}
+
+// A zoomed view's centre moves at most as far as keeps it inside the framing it zooms (none at zoom 1).
+function shiftWithin(f: { range: number }, z: number, shift: number): number {
+  const room = (f.range - f.range / z) / 2
+  return Math.max(-room, Math.min(room, shift))
+}
+
+// The framing on the camera, zoomed `z` times with its centre moved `shift` up (the page's zoom unless told
+// otherwise), the view kept inside the framing.
+function applyFraming(f: { range: number; centerY: number }, z: number = zoom, shift: number = zoomShift): void {
   if (cameraEntity == null || stage !== 'backpack') return
   const cam = TextureCamera.getMutableOrNull(cameraEntity)
-  if (cam?.mode?.$case === 'orthographic') cam.mode.orthographic.verticalRange = f.range
-  Transform.getMutable(cameraEntity).position = Vector3.create(8, f.centerY + PITCH_DROP, 8 - CAMERA_DISTANCE)
+  if (cam?.mode?.$case === 'orthographic') cam.mode.orthographic.verticalRange = f.range / z
+  Transform.getMutable(cameraEntity).position = Vector3.create(8, f.centerY + shiftWithin(f, z, shift) + PITCH_DROP, 8 - CAMERA_DISTANCE)
 }
 
 /** The preview avatar, whole body, facing forward, without the podium, as a PNG data URL — or null
@@ -649,7 +721,8 @@ export async function captureAvatarThumbnail(): Promise<string | null> {
   const rotation = Transform.get(avatar).rotation
   Transform.getMutable(avatar).rotation = FACING
   framingT = 1
-  applyFraming(FRAMING.body)
+  // The whole body, whatever the page has zoomed to.
+  applyFraming(FRAMING.body, 1, 0)
   const podium = podiumEntities
   podium.forEach((e) => { Transform.getMutable(e).scale = Vector3.Zero() })
   try {
@@ -664,20 +737,21 @@ export async function captureAvatarThumbnail(): Promise<string | null> {
       Transform.getMutable(avatar).rotation = rotation
       if (framingT >= 1) framing = framingTo
       applyFraming(framing)
-      podium.forEach((e, i) => {
-        const layer = PODIUM_LAYERS[i]
-        Transform.getMutable(e).scale = Vector3.create(layer.scale, layer.height, layer.scale)
-      })
+      showPodium(shopStage == null)
     }
   }
 }
 
 function rotateAvatar(): void {
-  if (avatarEntity == null) return
   const pointer = PrimaryPointerInfo.getOrNull(engine.RootEntity)
   const deltaX = pointer?.screenDelta?.x ?? 0
-  if (deltaX === 0) return
-  const qY = Quaternion.fromAngleAxis(deltaX * ROTATION_FACTOR, Vector3.create(0, 1, 0))
+  if (deltaX !== 0) turnAvatar(deltaX * ROTATION_FACTOR)
+}
+
+// Turns the preview avatar `degrees` about its vertical axis.
+function turnAvatar(degrees: number): void {
+  if (avatarEntity == null || !Number.isFinite(degrees) || degrees === 0) return
+  const qY = Quaternion.fromAngleAxis(degrees, Vector3.create(0, 1, 0))
   const cur = Transform.get(avatarEntity).rotation
   Transform.getMutable(avatarEntity).rotation = Quaternion.multiply(
     Quaternion.create(cur.x, cur.y, cur.z, cur.w),
@@ -737,17 +811,25 @@ export function renderAvatarPreview(): ReactEcs.JSX.Element | null {
     >
       {/* Framed two-tone backdrop + avatar, positioned at the React cutout rect. */}
       <UiEntity
-        uiTransform={{ positionType: 'absolute', position: { left: r.x, top: r.y }, width: r.width, height: r.height }}
+        uiTransform={{ positionType: 'absolute', position: { left: r.x, top: r.y }, width: r.width, height: r.height, overflow: 'hidden' }}
         uiBackground={{ color: BACKDROP_BOTTOM }}
       >
-        {/* The page's left-column purple, as thin bands so it reads as a smooth gradient. */}
-        {BACKDROP_BANDS.map((color, i) => (
+        {shopStage != null ? (
+          // The Shop's stage, placed as the page places it: its window into it shows the same pixels.
           <UiEntity
-            key={i}
-            uiTransform={{ positionType: 'absolute', position: { top: `${(i * 100) / BACKDROP_BANDS.length}%` }, width: '100%', height: `${100 / BACKDROP_BANDS.length + 0.5}%` }}
-            uiBackground={{ color }}
+            uiTransform={{ positionType: 'absolute', position: { left: shopStage.x - r.x, top: shopStage.y - r.y }, width: shopStage.width, height: shopStage.height }}
+            uiBackground={{ texture: { src: SHOP_STAGE }, textureMode: 'stretch' }}
           />
-        ))}
+        ) : (
+          // The page's left-column purple, as thin bands so it reads as a smooth gradient.
+          BACKDROP_BANDS.map((color, i) => (
+            <UiEntity
+              key={i}
+              uiTransform={{ positionType: 'absolute', position: { top: `${(i * 100) / BACKDROP_BANDS.length}%` }, width: '100%', height: `${100 / BACKDROP_BANDS.length + 0.5}%` }}
+              uiBackground={{ color }}
+            />
+          ))
+        )}
         {/* Avatar — camera resolution matches the rect aspect, so a 1:1 fill never distorts.
             Drag over it to rotate (the engine drag-lock passes through React's transparent cutout). */}
         <UiEntity

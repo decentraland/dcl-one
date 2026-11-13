@@ -34,8 +34,12 @@ fn resolution_error(error: ResolveError) -> ApiError {
 
 pub(super) struct Context<'a> {
     pub place: PlaceLookup<'a>,
+    /// Where this scene's bans live; stable across a world scene's redeploys.
+    pub ban_key: crate::access::SceneBanKey,
     pub rooms: Vec<String>,
     pub place_title: String,
+    /// The world and current scene a world-scene ban also reaches replaced rooms of.
+    pub world_scene: Option<(WorldName, SceneId)>,
 }
 
 impl<'a> Context<'a> {
@@ -168,6 +172,7 @@ impl<'a> Context<'a> {
                 .collect(),
             base_position: Some(current_deployment.base.canonical()),
         };
+        let ban_key = current.ban_key().ok_or_else(invalid)?;
         let mut rooms = Vec::new();
         if state.livekit.configured {
             if let Some(world) = realm.world() {
@@ -175,8 +180,13 @@ impl<'a> Context<'a> {
             }
             rooms.push(current.room);
         }
+        let world_scene = realm
+            .world()
+            .map(|world| (world.clone(), deployment.scene_id.clone()));
         Ok(Self {
+            world_scene,
             place: PlaceLookup::resolved(state, deployment.scene_id.as_str(), info),
+            ban_key,
             rooms,
             place_title: current_deployment
                 .title
@@ -185,6 +195,50 @@ impl<'a> Context<'a> {
                 .cloned()
                 .unwrap_or_else(|| format!("Place at {}", current_deployment.base.canonical())),
         })
+    }
+
+    /// The live rooms of scenes this world scene replaced (still mintable a
+    /// bounded window) that its ban reaches. Refuse an incomplete inventory before
+    /// accepting the durable ban/removal write.
+    pub async fn replaced_scene_rooms(&self, state: &CommsState) -> Result<Vec<String>, ApiError> {
+        let Some((world, current)) = self.world_scene.as_ref() else {
+            return Ok(Vec::new());
+        };
+        if !state.livekit.configured {
+            return Ok(Vec::new());
+        }
+        let rooms = match crate::gatekeeper::admission::scene::live_world_rooms(state, world).await
+        {
+            Ok(rooms) => rooms,
+            Err(error) => {
+                tracing::warn!(%error, world = %world, "replaced scene rooms not listed; refusing incomplete moderation inventory");
+                return Err(service_unavailable(
+                    "Scene room inventory unavailable; retry the moderation request.",
+                ));
+            }
+        };
+        let mut out = Vec::new();
+        for room in rooms {
+            let Some((_, scene)) = crate::rooms::decode_world_scene_room(&room) else {
+                continue;
+            };
+            if &scene == current || self.rooms.contains(&room) {
+                continue;
+            }
+            match state.scenes.replaced_world_scene(world, &scene).await {
+                Ok(Some(replaced)) if replaced.ban_keys(world).contains(&self.ban_key) => {
+                    out.push(room)
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    tracing::warn!(%error, room = %room, "replaced scene unresolved; refusing incomplete moderation inventory");
+                    return Err(service_unavailable(
+                        "Scene room inventory unavailable; retry the moderation request.",
+                    ));
+                }
+            }
+        }
+        Ok(out)
     }
 
     pub fn check_selectors(&self, input: &Input) -> Result<(), ApiError> {
@@ -202,56 +256,6 @@ impl<'a> Context<'a> {
             }
         }
         Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::gatekeeper::moderation::test_support::{StubBanStatus, state};
-    use crate::interfaces::test_support::{StubPolicy, StubScenes};
-    use crate::rooms::{ActiveDeployment, ResolvedRoom};
-    use crate::world_identity::SceneNamespace;
-    use std::sync::Arc;
-
-    #[tokio::test]
-    async fn title_is_exact_deployment_display_data_with_resolved_base_fallback() {
-        for (title, expected) in [
-            (Some("Exact Scene B"), "Exact Scene B"),
-            (None, "Place at 1,1"),
-            (Some(""), "Place at 1,1"),
-        ] {
-            let world = WorldName::parse("title.dcl.eth").unwrap();
-            let realm = RealmId::World(world.clone());
-            let scene = SceneId::parse("SceneB").unwrap();
-            let base = Parcel::parse("1,1").unwrap();
-            let resolved = ResolvedRoom {
-                room: crate::rooms::worlds_service_scene_room(&world, &scene),
-                realm: realm.clone(),
-                scene_id: Some(scene.clone()),
-                deployment: Some(ActiveDeployment {
-                    scene_id: scene,
-                    title: title.map(String::from),
-                    parcels: [base].into_iter().collect(),
-                    base,
-                    namespace: SceneNamespace::new(&realm, base, None),
-                    local: true,
-                }),
-            };
-            let mut state = state(StubPolicy::default(), StubBanStatus::default());
-            state.scenes = Arc::new(StubScenes {
-                room: Ok(resolved),
-                scene: Ok(None),
-            });
-            let context = Context::resolve(
-                &state,
-                &serde_json::json!({"realmName":"title.dcl.eth","sceneId":"SceneB","parcel":"1,1"}),
-            )
-            .await
-            .unwrap();
-            assert_eq!(context.place.place_id(), "SceneB");
-            assert_eq!(context.place_title, expected);
-        }
     }
 }
 
@@ -313,5 +317,55 @@ impl Input {
 
     pub fn name<'a>(&'a self, key: &str) -> Option<&'a str> {
         self.body.get(key).and_then(Value::as_str)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gatekeeper::moderation::test_support::{StubBanStatus, state};
+    use crate::interfaces::test_support::{StubPolicy, StubScenes};
+    use crate::rooms::{ActiveDeployment, ResolvedRoom};
+    use crate::world_identity::SceneNamespace;
+    use std::sync::Arc;
+
+    #[tokio::test]
+    async fn title_is_exact_deployment_display_data_with_resolved_base_fallback() {
+        for (title, expected) in [
+            (Some("Exact Scene B"), "Exact Scene B"),
+            (None, "Place at 1,1"),
+            (Some(""), "Place at 1,1"),
+        ] {
+            let world = WorldName::parse("title.dcl.eth").unwrap();
+            let realm = RealmId::World(world.clone());
+            let scene = SceneId::parse("SceneB").unwrap();
+            let base = Parcel::parse("1,1").unwrap();
+            let resolved = ResolvedRoom {
+                room: crate::rooms::worlds_service_scene_room(&world, &scene),
+                realm: realm.clone(),
+                scene_id: Some(scene.clone()),
+                deployment: Some(ActiveDeployment {
+                    scene_id: scene,
+                    title: title.map(String::from),
+                    parcels: [base].into_iter().collect(),
+                    base,
+                    namespace: SceneNamespace::new(&realm, base, None),
+                    local: true,
+                }),
+            };
+            let mut state = state(StubPolicy::default(), StubBanStatus::default());
+            state.scenes = Arc::new(StubScenes {
+                room: Ok(resolved),
+                scene: Ok(None),
+            });
+            let context = Context::resolve(
+                &state,
+                &serde_json::json!({"realmName":"title.dcl.eth","sceneId":"SceneB","parcel":"1,1"}),
+            )
+            .await
+            .unwrap();
+            assert_eq!(context.place.place_id(), "SceneB");
+            assert_eq!(context.place_title, expected);
+        }
     }
 }

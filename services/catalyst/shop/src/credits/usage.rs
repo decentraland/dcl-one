@@ -385,16 +385,22 @@ pub async fn ensure_cursor(
     Ok(row)
 }
 
+/// Advances the cursor of `contract`'s log. A cursor rebound to another
+/// manager meanwhile is not this pass's: no row matches, and the window's
+/// transaction rolls back.
 pub async fn set_cursor(
     conn: &mut PgConnection,
     chain_id: i64,
+    contract: &str,
     block: i64,
 ) -> Result<(), sqlx::Error> {
     let updated = sqlx::query(
-        "UPDATE credits.usage_index_cursor SET last_block = $2, updated_at = timezone('UTC', now()) WHERE chain_id = $1",
+        "UPDATE credits.usage_index_cursor SET last_block = $2, updated_at = timezone('UTC', now()) \
+         WHERE chain_id = $1 AND contract = $3",
     )
     .bind(chain_id)
     .bind(block)
+    .bind(contract)
     .execute(conn)
     .await?;
     if updated.rows_affected() != 1 {
@@ -403,26 +409,32 @@ pub async fn set_cursor(
     Ok(())
 }
 
-/// Rewinds durably before a repair scan: `last_block` never moves forward
-/// here and the publish marker clears at once (the authorize lane closes
-/// until the repaired history is folded); a rewind to the start block
-/// records the full replay [`mark_folded`] requires, and may switch managers.
+/// Rewinds durably before a repair scan, and clears the publish marker at
+/// once (the authorize lane closes until the repaired history is folded).
+/// On the same manager `last_block` never moves forward, so no gap is
+/// skipped. A rewind to the start block records the full replay
+/// [`mark_folded`] requires and may switch managers: the new manager's log
+/// then starts exactly at `from`, wherever the old one's cursor stood. A
+/// partial rewind never touches another manager's cursor. Returns whether
+/// the cursor row was written.
 pub async fn begin_replay(
     pool: &PgPool,
     settings: &Settings,
     contract: &str,
     from: u64,
-) -> Result<(), sqlx::Error> {
+) -> Result<bool, sqlx::Error> {
     let full = from <= settings.start_block;
-    sqlx::query(
-        "INSERT INTO credits.usage_index_cursor (chain_id, contract, last_block, full_replay_started) \
+    let written = sqlx::query(
+        "INSERT INTO credits.usage_index_cursor AS c (chain_id, contract, last_block, full_replay_started) \
          VALUES ($1, $2, $3, $4) \
          ON CONFLICT (chain_id) DO UPDATE SET \
-             last_block = LEAST(credits.usage_index_cursor.last_block, EXCLUDED.last_block), \
+             last_block = CASE WHEN c.contract = EXCLUDED.contract \
+                 THEN LEAST(c.last_block, EXCLUDED.last_block) ELSE EXCLUDED.last_block END, \
              folded_block = NULL, folded_block_time = NULL, folded_at = NULL, \
-             full_replay_started = credits.usage_index_cursor.full_replay_started OR EXCLUDED.full_replay_started, \
-             contract = CASE WHEN EXCLUDED.full_replay_started THEN EXCLUDED.contract ELSE credits.usage_index_cursor.contract END, \
-             updated_at = timezone('UTC', now())",
+             full_replay_started = c.full_replay_started OR EXCLUDED.full_replay_started, \
+             contract = EXCLUDED.contract, \
+             updated_at = timezone('UTC', now()) \
+         WHERE c.contract = EXCLUDED.contract OR EXCLUDED.full_replay_started",
     )
     .bind(settings.chain_id)
     .bind(contract)
@@ -430,7 +442,7 @@ pub async fn begin_replay(
     .bind(full)
     .execute(pool)
     .await?;
-    Ok(())
+    Ok(written.rows_affected() == 1)
 }
 
 /// Publishes a completed fold on the row whose `last_block` is the block
@@ -438,17 +450,19 @@ pub async fn begin_replay(
 pub async fn mark_folded(
     pool: &PgPool,
     chain_id: i64,
+    contract: &str,
     through: BlockRef,
     now: DateTime<Utc>,
 ) -> Result<bool, sqlx::Error> {
     let updated = sqlx::query(
         "UPDATE credits.usage_index_cursor SET folded_block = last_block, folded_block_time = $3, folded_at = $4 \
-         WHERE chain_id = $1 AND last_block = $2 AND full_replay_started",
+         WHERE chain_id = $1 AND last_block = $2 AND full_replay_started AND contract = $5",
     )
     .bind(chain_id)
     .bind(through.number as i64)
     .bind(through.time)
     .bind(now.naive_utc())
+    .bind(contract)
     .execute(pool)
     .await?;
     Ok(updated.rows_affected() == 1)
@@ -649,7 +663,7 @@ impl UsageIndex {
             }
             let mut tx = self.pool.begin().await?;
             let written = insert_usages(&mut tx, chain_id, &usages).await?;
-            set_cursor(&mut tx, chain_id, upper as i64).await?;
+            set_cursor(&mut tx, chain_id, contract, upper as i64).await?;
             tx.commit().await?;
             outcome.usages_written += written;
             outcome.indexed_to = upper as i64;
@@ -674,13 +688,39 @@ impl UsageIndex {
         Ok(())
     }
 
+    /// The `credits-usage-index` job's pass ([`super::State::spawn_jobs`]):
+    /// [`Self::run_pass`], folding only when `gate` lets this pass write. The
+    /// gate is asked as the pass starts, so `OPS_WRITES_ENABLED` and the
+    /// restore stamps the process installed decide each pass; a held pass
+    /// reports why in the job's progress (the switch, or which stamp).
+    pub(super) async fn gated_pass(
+        &self,
+        ctx: Option<&JobContext>,
+        gate: &crate::shared::writes::PassGate,
+        writes_enabled: bool,
+    ) -> anyhow::Result<PassOutcome> {
+        let refusal = gate.check(writes_enabled);
+        let outcome = self.run_pass(ctx, refusal.is_none()).await?;
+        if let (Some(refusal), Some(ctx)) = (&refusal, ctx) {
+            ctx.progress(format!(
+                "indexed to {}; not folded, not published: {}",
+                outcome.indexed_to,
+                refusal.message(
+                    "operator-plane",
+                    crate::shared::writes::WRITES_DISABLED_MESSAGE
+                )
+            ));
+        }
+        Ok(outcome)
+    }
+
     /// One pass: replay if asked, catch up to the finalized block under the
     /// request budget, fold the new usages, publish when still at the head.
     /// With `fold_enabled` false (`OPS_WRITES_ENABLED` off or held by the
     /// restore stamps: the fold debits the ledger) the pass indexes the log
     /// and stops before the fold, so nothing is published and the authorize
     /// lane stays closed.
-    pub async fn run_pass(
+    pub(super) async fn run_pass(
         &self,
         ctx: Option<&JobContext>,
         fold_enabled: bool,
@@ -704,13 +744,33 @@ impl UsageIndex {
             }
             self.chain_checked.store(true, Ordering::Relaxed);
         }
-        let mut row = ensure_cursor(&self.pool, settings, contract).await?;
-        if let Some(from) = settings.replay_from_block
-            && !self.replay_requested.swap(true, Ordering::SeqCst)
-        {
+        // The replay counts as done only once its rewind is durable: a failed
+        // write leaves it requested, and the next pass tries again.
+        let replay = settings
+            .replay_from_block
+            .filter(|_| !self.replay_requested.load(Ordering::SeqCst));
+        // A full replay rebinds the cursor to this manager, so it runs before the
+        // check that refuses a cursor indexed from another one; a partial replay
+        // never rewinds another manager's cursor.
+        let full = replay.filter(|&from| from <= settings.start_block);
+        if let Some(from) = full {
             begin_replay(&self.pool, settings, contract, from)
                 .await
                 .context("beginning the replay")?;
+            self.replay_requested.store(true, Ordering::SeqCst);
+        }
+        let mut row = ensure_cursor(&self.pool, settings, contract).await?;
+        if let Some(from) = replay {
+            if full.is_none() {
+                let written = begin_replay(&self.pool, settings, contract, from)
+                    .await
+                    .context("beginning the replay")?;
+                anyhow::ensure!(
+                    written,
+                    "the usage cursor was rebound to another manager during the replay"
+                );
+                self.replay_requested.store(true, Ordering::SeqCst);
+            }
             row = cursor(&self.pool, settings.chain_id)
                 .await?
                 .context("cursor row after the replay rewind")?;
@@ -787,9 +847,10 @@ impl UsageIndex {
         } else {
             block_at(&rpc, target).await.context("the target block")?
         };
-        outcome.published = mark_folded(&self.pool, settings.chain_id, through, Utc::now())
-            .await
-            .context("publishing the fold")?;
+        outcome.published =
+            mark_folded(&self.pool, settings.chain_id, contract, through, Utc::now())
+                .await
+                .context("publishing the fold")?;
         if !outcome.published {
             tracing::warn!(
                 chain_id = settings.chain_id,
@@ -811,10 +872,17 @@ impl UsageIndex {
 /// configured the chain time it has folded through (never a pledge whose
 /// expiry the chain has not been read past; `-infinity` before a first
 /// fold). Spliced into the sweep statements with the chain as `$chain`.
+///
+/// The fold only speaks for its own manager's log. A credit signed for
+/// another manager (`credits.authorizations.contract`, kept from before a
+/// manager switch) is bounded by `-infinity`: no sweep releases it, since
+/// nothing reads the chain it could have been used on. It stays held until
+/// it is settled against that manager's log or released by hand.
 pub(crate) fn expiry_bound_sql(now_param: &str, chain_param: &str) -> String {
     format!(
         "LEAST({now_param}, CASE WHEN {chain_param}::bigint IS NULL THEN {now_param} ELSE \
-         COALESCE((SELECT folded_block_time FROM credits.usage_index_cursor WHERE chain_id = {chain_param}::bigint), \
+         COALESCE((SELECT c.folded_block_time FROM credits.usage_index_cursor c WHERE c.chain_id = {chain_param}::bigint \
+                   AND (credits.authorizations.contract IS NULL OR c.contract = credits.authorizations.contract)), \
                   '-infinity'::timestamp) END)"
     )
 }

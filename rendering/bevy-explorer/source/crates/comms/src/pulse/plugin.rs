@@ -435,6 +435,14 @@ impl Announcement {
 }
 
 impl PulseSession {
+    /// Watchdog input: authenticated multiplayer health and intentional/terminal suspension.
+    pub(crate) fn connectivity(&self) -> (bool, bool) {
+        (
+            matches!(self.state, Connection::Established),
+            matches!(self.state, Connection::Paused | Connection::Dead),
+        )
+    }
+
     fn connection_enabled(&self, no_render: bool) -> Result<bool, &'static str> {
         if no_render || common::structs::server_mode() {
             return Err("Only a graphical player client can control the Pulse connection");
@@ -915,9 +923,10 @@ fn pump_pulse(
     let in_world = in_world(&player);
 
     // Version to announce in the handshake — our connect-time profile announce on Pulse. 0 until the
-    // profile loads; the periodic announce (`profile::mod`) corrects it once available.
+    // profile loads; the periodic announce (`profile::mod`) corrects it once available. Like that
+    // announce, never an edit still deploying.
     let profile_version = profile
-        .and_then(|p| p.profile.as_ref().map(|p| p.version as i32))
+        .and_then(|p| p.peer_profile().map(|p| p.version as i32))
         .unwrap_or(0);
 
     drain_status(session, &sinks, now);

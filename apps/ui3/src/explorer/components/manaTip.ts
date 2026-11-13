@@ -1,24 +1,19 @@
 import { encodeFunctionData, isAddress, parseUnits, toHex } from "viem";
 
 import type { Eip1193Provider } from "../../data/auth/wallet";
-import { getJSON } from "../../data/catalyst/client";
+import { getJSON, sendSignedJSON, type SendOpts } from "../../data/catalyst/client";
+import { forwardUntil, TRANSFER_ABI } from "@explorer-core/features/donate/tip";
 import type { PaymentsConfig } from "@catalyst-api/economy/PaymentsConfig";
 
 const MANA_DECIMALS = 18;
 export const PAYMENTS_CONFIG_PATH = "/v1/payments/config";
-
-const TRANSFER_ABI = [
-  {
-    type: "function",
-    name: "transfer",
-    stateMutability: "nonpayable",
-    inputs: [
-      { name: "to", type: "address" },
-      { name: "amount", type: "uint256" },
-    ],
-    outputs: [{ name: "", type: "bool" }],
-  },
-] as const;
+export const TIP_FORWARD_PATH = "/events-notifier/forward-blockchain";
+const TIP_FORWARD_TIMEOUT_MS = 10_000;
+// How long a tip keeps waiting to be mined and forwarded while the page is open.
+export const TIP_DELIVERY_WINDOW_MS = 15 * 60_000;
+const RECEIPT_POLL_MS = 4_000;
+const POLYGON_CHAIN_IDS = new Set([137, 80002]);
+const TX_HASH_RE = /^0x[0-9a-fA-F]{64}$/;
 
 const AMOUNT_RE = /^\d+(\.\d+)?$/;
 
@@ -94,4 +89,57 @@ export async function sendManaTip(provider: Eip1193Provider, opts: SendManaTipOp
     throw new Error("The wallet returned no transaction hash.");
   }
   return hash;
+}
+
+// The server only verifies Polygon MANA transfers, signed by the tipping wallet.
+export function shouldForwardTip(opts: { target: TipTarget; hash: string; from: string; signer?: string | null }): boolean {
+  return POLYGON_CHAIN_IDS.has(opts.target.chainId)
+    && TX_HASH_RE.test(opts.hash)
+    && !!opts.signer
+    && opts.signer.toLowerCase() === opts.from.toLowerCase();
+}
+
+export async function forwardTip(transactionHash: string, opts: SendOpts = {}): Promise<void> {
+  await sendSignedJSON(TIP_FORWARD_PATH, {
+    timeoutMs: TIP_FORWARD_TIMEOUT_MS,
+    ...opts,
+    method: "POST",
+    body: { type: "tip-received", transactionHash },
+  });
+}
+
+export type TipDelivery = "notified" | "reverted" | "refused" | "gave-up";
+
+export type TipDeliveryOpts = {
+  forward?: (transactionHash: string) => Promise<void>;
+  sleep?: (ms: number) => Promise<void>;
+  now?: () => number;
+  windowMs?: number;
+};
+
+const realSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Waits for the tip's receipt through the wallet, then forwards it, retrying
+ * retryable failures with backoff until the window closes. Never throws.
+ */
+export async function deliverTip(provider: Eip1193Provider, hash: string, opts: TipDeliveryOpts = {}): Promise<TipDelivery> {
+  const forward = opts.forward ?? ((tx: string) => forwardTip(tx));
+  const sleep = opts.sleep ?? realSleep;
+  const now = opts.now ?? Date.now;
+  const deadline = now() + (opts.windowMs ?? TIP_DELIVERY_WINDOW_MS);
+  for (;;) {
+    let status: unknown;
+    try {
+      const receipt = (await provider.request({ method: "eth_getTransactionReceipt", params: [hash] })) as { status?: unknown } | null;
+      status = receipt?.status;
+    } catch {
+      // A failed read is not a revert: keep polling.
+    }
+    if (status === "0x1") break;
+    if (status === "0x0") return "reverted";
+    if (now() + RECEIPT_POLL_MS > deadline) return "gave-up";
+    await sleep(RECEIPT_POLL_MS);
+  }
+  return forwardUntil(hash, forward, { sleep, now, deadline });
 }

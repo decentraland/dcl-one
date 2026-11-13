@@ -1,50 +1,63 @@
 #!/usr/bin/env python3
 """Select Explorer jobs from their inputs and validate image-producing runs."""
 import argparse
+import importlib.util
 import json
 import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = '.github/workflows/bevy-explorer-ci.yml'
 SOURCE = 'rendering/bevy-explorer/source/'
 SCENES_WORKFLOW = '.github/workflows/bevy-explorer-scenes.yml'
+SCENE_SUITE = 'apps/bevy-explorer/scene-tests.txt'
+SNAPSHOT_SCENES = ('52,-62', '52,-64', '52,-66')
 PRODUCERS = {'web': 'Web engine, HUD and bridge scene', 'headless': 'Headless Smoke'}
 LANES = ('clippy', 'test', 'headless', 'web')
 NATIVE_JOBS = {'Test Suite (ubuntu-24.04)', 'Test Suite (windows-2025)', 'Test Suite (macos-15)'}
-INPUTS = ('rendering/bevy-explorer/source', 'library/vendor/rusty_enet', 'tooling/dev-regressions*', 'library/protocol/proto', 'apps/bevy-explorer',
-          'library/uuav/uuav-client', 'library/uuav/uuav-ipc', 'library/uuav/dist', 'tooling/uuav',
-          'apps/dcl-scene-cli',
-          'tooling/bevy-ci.py', 'tooling/bevy-http2-test.mjs', 'tooling/play-artifact.py', 'tooling/tests/test_play_*.py',
-          'tooling/tests/test_bevy_*.py', WORKFLOW, SCENES_WORKFLOW,
+GATEWAY_HUD_INPUTS = ('apps/ui3/src/play/lib/baseDomain.ts',
+                      'library/explorer-core/engine/generated/serviceTable.ts')
+# Sources the web HUD compiles from library/: the ones tooling/play-artifact.py fingerprints with it.
+_ARTIFACT = importlib.util.spec_from_file_location('play_artifact', Path(__file__).with_name('play-artifact.py'))
+_artifact = importlib.util.module_from_spec(_ARTIFACT)
+_ARTIFACT.loader.exec_module(_artifact)
+# The flake's tool packages (bevy-tools: protoc, taplo and wasm-pack for the Linux lanes; bevy-ffmpeg
+# for the macOS Test Suite) and the action that delivers them; Windows, headless packaging and
+# scenes run install-protoc.py instead.
+TOOLS_INPUTS = ('flake.nix', 'flake.lock', 'infra/packages/default.nix', 'infra/packages/tools.nix', '.github/actions/bevy-explorer-tools')
+INPUTS = ('rendering/bevy-explorer/source', 'rendering/bevy-explorer/bevy', 'library/vendor/rusty_enet', 'tooling/dev-regressions*', 'library/protocol/proto', 'apps/bevy-explorer',
+          'infra/gateway', *GATEWAY_HUD_INPUTS, *TOOLS_INPUTS,
+          'tooling/bevy-ci.py', 'tooling/hud_shared_inputs.py', 'tooling/ci_paths.py', 'tooling/bevy-mtimes.py', 'tooling/play-artifact.py', 'tooling/tests/test_play_*.py',
+          'tooling/tests/test_bevy_*.py', 'tooling/tests/test_hud_shared_inputs.py', 'tooling/tests/hud_manifest_fixture.py', 'tooling/tests/hud_manifest_invalid_cases.json', 'tooling/tests/check_hud_manifest_nix.py', WORKFLOW, SCENES_WORKFLOW,
           '.github/workflows/bevy-explorer-images.yml',
           '.github/workflows/bevy-explorer-headless.yml',
           '.github/workflows/bevy-explorer-headless-build.yml',
           'tooling/ci-publication.py', '.cargo', 'rust-toolchain*')
-# Paths of the end-to-end suite that select the scenes lane: the inputs of the video playback
-# steps in bevy-explorer-scenes.yml. The run loads every visual spec before it filters, so the
-# whole folder is an input.
-SCENES_E2E_INPUTS = ('apps/bevy-explorer/e2e/scenes/', 'apps/bevy-explorer/e2e/driver/',
-                     'apps/bevy-explorer/e2e/scripts/', 'apps/bevy-explorer/e2e/specs/visual/',
-                     'apps/bevy-explorer/e2e/package.json', 'apps/bevy-explorer/e2e/package-lock.json')
 # Web files that the Test Suite's harness tests read: the benchmark runner's
 # (rendering/bevy-explorer/source/local-harness/benchmark/tests) and the web driver's
 # (local-harness/web-driver), which loads the HUD's test commands into Chrome. A change to one is
 # also an input of the Test Suite.
 HARNESS_WEB_READS = ('rendering/bevy-explorer/source/deploy/web/engine/perf_stream.js',
-                     'rendering/bevy-explorer/source/react-web/src/features/auth/sso.ts',
-                     'rendering/bevy-explorer/source/react-web/src/lib/hudAutomation.ts')
+                     'rendering/bevy-explorer/source/react-web/src/shell/localGuest.ts',
+                     'library/explorer-core/lib/hudAutomation.ts')
 IMAGES_INPUTS = (
     'flake.*',
     'rendering/bevy-explorer/source/**',
-    'rendering/bevy-explorer/upstream.lock.json',
+    'rendering/bevy-explorer/bevy/**',
     'apps/bevy-explorer/build-web.py',
-    'apps/bevy-explorer/install-*.py',
+    'apps/bevy-explorer/install-*',
     '.github/workflows/bevy-explorer-ci.yml',
+    '.github/actions/bevy-explorer-tools/**',
     'tooling/fetch-play.py',
+    'tooling/bevy-ci.py',
     'tooling/play-artifact.py',
+    'tooling/hud_shared_inputs.py',
+    'tooling/tests/hud_manifest_fixture.py',
+    'tooling/tests/hud_manifest_invalid_cases.json',
+    'tooling/tests/check_hud_manifest_nix.py',
     'tooling/tests/test_play_*.py',
     'rust-toolchain*',
     'infra/packages/**',
@@ -57,6 +70,7 @@ IMAGES_INPUTS = (
     'apps/ui3/**',
     'tooling/image-*',
     'tooling/ci-publication.py',
+    'tooling/ci_paths.py',
     'tooling/tests/test_ci_publication.py',
     'tooling/tests/test_image_publish.py',
     '.github/workflows/apis-sites-images.yml',
@@ -78,14 +92,35 @@ APP_INPUTS = {
     'Makefile': ('web', 'headless'),
     # Each producer has its own build script; web edits must not rebuild headless.
     'build-web.py': ('web',),
+    'install-web-tools.py': ('web',),
     'build-headless.py': ('headless',),
     'install-linux-deps.py': (*LANES, 'scenes'),
+    'install-tools.sh': (*LANES, 'native-matrix'),
     'prepare-native-cache.py': ('clippy', 'test', 'headless', 'native-matrix', 'scenes'),
+    'scene-tests.txt': ('scenes',),
 }
 
 
 def git(*args):
     return subprocess.check_output(['git', *args], cwd=ROOT, text=True, env={**os.environ, 'GIT_GLOB_PATHSPECS': '1'})
+
+
+def tested_base(merge, pr_head, fallback):
+    """GitHub tests a PR as `Merge <head> into <base tip>`; pull_request.base.sha goes stale when only main moves."""
+    try:
+        header = subprocess.run(['git', 'cat-file', 'commit', merge], cwd=ROOT, capture_output=True,
+                                check=True, timeout=60).stdout.decode(errors='replace').split('\n\n', 1)[0]
+    except (OSError, subprocess.SubprocessError):
+        return fallback
+    parents = [line.split()[1] for line in header.splitlines() if line.startswith('parent ')]
+    return parents[0] if len(parents) == 2 and parents[1] == pr_head else fallback
+
+
+def event_pr_head():
+    try:
+        return json.loads(Path(os.environ['GITHUB_EVENT_PATH']).read_text())['pull_request']['head']['sha']
+    except (KeyError, OSError, TypeError, ValueError):
+        return None
 
 
 def api(path):
@@ -184,12 +219,31 @@ def locked_packages(rev):
         return None
 
 
+def changed_inputs(base, head, inputs):
+    spec = importlib.util.spec_from_file_location('ci_paths', Path(__file__).with_name('ci_paths.py'))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    changed = git('diff', '--name-only', '--no-renames', '-z', base, head, '--', *inputs).split('\0')
+    removed = git('diff', '--name-only', '--no-renames', '--diff-filter=D', '-z',
+                  base, head, '--', *inputs).split('\0')
+    removed = module.matching_paths(removed, ('**/*.md', *('!' + path for path in module.PROSE_TREES)))
+    return set(module.non_documentation(filter(None, changed))) | set(removed)
+
+
 def select(base, head):
     ensure_commit(base)
     ensure_commit(head)
-    paths = set(filter(None, git('diff', '--name-only', '--no-renames', '-z', base, head,
-                                 '--', *INPUTS).split('\0')))
+    shared = _artifact.shared_inputs.input_hashes(ROOT, head)
+    bootstrap = False
+    try:
+        previous = _artifact.shared_inputs.input_hashes(ROOT, base)
+    except _artifact.shared_inputs.ManifestError:
+        previous, bootstrap = {}, True
+    shared_paths = set(shared) | set(previous)
+    paths = changed_inputs(base, head, (*INPUTS, *(':(literal)' + path for path in sorted(shared_paths | set(HARNESS_WEB_READS)))))
     selected = dict.fromkeys((*LANES, 'native-matrix', 'scenes'), False)
+    if bootstrap:
+        selected['web'] = True
     for path in paths:
         if path == SCENES_WORKFLOW:
             affected = ('scenes',)
@@ -200,18 +254,29 @@ def select(base, head):
             affected = (*LANES, 'native-matrix')
         elif path == '.github/workflows/bevy-explorer-images.yml':
             affected = ('web', 'headless')
-        elif path == 'tooling/bevy-http2-test.mjs':
-            affected = ('test',)
-        elif path == 'tooling/play-artifact.py':
+        elif path in ('tooling/play-artifact.py', 'tooling/hud_shared_inputs.py'):
             affected = ('web',)
-        elif path.startswith(('tooling/tests/test_bevy_', 'tooling/tests/test_play_')):
+        elif path in TOOLS_INPUTS or path.startswith('.github/actions/bevy-explorer-tools/'):
+            # The Linux lanes compile with the flake's protoc and build the web engine with its
+            # wasm-pack; the macOS Test Suite, in the native matrix, links the flake's ffmpeg; scenes
+            # install protoc with install-protoc.py.
+            affected = (*LANES, 'native-matrix')
+        elif path.startswith(('tooling/tests/test_bevy_', 'tooling/tests/test_play_')) or path in (
+                'tooling/tests/test_hud_shared_inputs.py', 'tooling/tests/hud_manifest_fixture.py',
+                'tooling/tests/hud_manifest_invalid_cases.json', 'tooling/tests/check_hud_manifest_nix.py'):
             # The always-run source job executes these tests; they aren't build inputs.
             affected = ()
+        elif path.startswith('infra/gateway/') or path in GATEWAY_HUD_INPUTS:
+            # The Linux Test Suite compares Explorer and HUD routing with the nginx map.
+            affected = ('test',)
         elif path in HARNESS_WEB_READS:
             # The web lane builds and tests these files; the Test Suite runs the harness tests,
             # which read them (the sender the benchmark runner's receiver must accept, the guest's
             # root-key name its reset page keeps, the HUD commands the web driver gives real input).
             affected = ('web', 'test')
+        elif path in shared_paths and not path.startswith(SOURCE):
+            # Shared library inputs are web-only; owned source keeps its existing lane rules.
+            affected = ('web',)
         elif path.startswith(('rendering/bevy-explorer/source/react-web/',
                               'rendering/bevy-explorer/source/deploy/web/')):
             # These are runtime web assets, not inputs to Cargo's native tests
@@ -221,13 +286,9 @@ def select(base, head):
             # Launcher/package assembly cannot affect web or graphical/native tests.
             # Keep the headless build/smoke; main also packages all four platforms.
             affected = ('headless',)
-        elif path.startswith(SCENES_E2E_INPUTS) or path.startswith('apps/dcl-scene-cli/'):
-            # The scenes, the driver, the runner scripts, the visual specs, the package files and
-            # the CLI that builds the scenes select the scenes lane.
-            affected = ('scenes',)
         elif path.startswith('apps/bevy-explorer/e2e/'):
-            # The rest of the end-to-end suite drives a built client; its own workflow
-            # (bevy-explorer-e2e.yml) checks it and runs it against the web app this workflow built.
+            # The end-to-end suite drives a built client; its own workflow (bevy-explorer-e2e.yml)
+            # checks it and runs it against the web app this workflow built.
             affected = ()
         elif path.startswith('apps/bevy-explorer/') and path.removeprefix('apps/bevy-explorer/') in APP_INPUTS:
             affected = APP_INPUTS[path.removeprefix('apps/bevy-explorer/')]
@@ -266,6 +327,9 @@ def plan(event, base, head, repo):
         if event not in ('pull_request', 'local'):
             raise ValueError('Unknown event')
         return select(base, head)
+    except _artifact.shared_inputs.ManifestError as exc:
+        print(_artifact.shared_inputs.validation_message(exc), file=sys.stderr)
+        raise
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as exc:
         print(f'Conservative full build: {exc}')
         return full_selection('Comparison unavailable; full run')
@@ -279,9 +343,72 @@ def scenes_plan(event, base, head):
             raise ValueError('Unknown graphical event')
         selected = select(base, head)
         return {'scenes': selected['scenes'], 'sha': head, 'reason': selected['reason']}
+    except _artifact.shared_inputs.ManifestError as exc:
+        print(_artifact.shared_inputs.validation_message(exc), file=sys.stderr)
+        raise
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as exc:
         print(f'Conservative graphical run: {exc}')
         return {'scenes': True, 'sha': head, 'reason': 'Comparison unavailable; run graphical tests'}
+
+
+def scene_suite(suite):
+    """The --test_scenes argument: each scene's parcel, then the failures it allows."""
+    scenes = []
+    for line in (ROOT / SCENE_SUITE).read_text().splitlines():
+        if not line or line.startswith('#'):
+            continue
+        parcel, *allowed = line.split('/')
+        if (not re.fullmatch(r'-?[0-9]+,-?[0-9]+', parcel) or ';' in line
+                or any(not name or name != name.strip() for name in allowed)):
+            raise ValueError(f'Malformed scene suite line: {line!r}')
+        scenes.append(line)
+    if suite == 'snapshots':
+        scenes = [scene for scene in scenes if scene.split('/')[0] in SNAPSHOT_SCENES]
+    if not scenes:
+        raise ValueError(f'Empty {suite} scene suite')
+    return ';'.join(scenes)
+
+
+def unescape(text):
+    """The text of a Rust `{:?}` string literal body."""
+    escapes = {'n': '\n', 'r': '\r', 't': '\t', '0': '\0'}
+    return re.sub(r'\\u\{([0-9a-fA-F]+)\}|\\(.)',
+                  lambda m: chr(int(m[1], 16)) if m[1] else escapes.get(m[2], m[2]), text)
+
+
+def scene_summary(suite, outcome, log):
+    """One step-summary line: assertion counts, failures the suite does not list, listed ones
+    that pass again, and that acceptance stays open while any failure is listed."""
+    log = re.sub(r'\x1b\[[0-9;]*[A-Za-z]', '', log)
+    verdicts = re.findall(r'automatic_testing: test .*: (true|false) \[[0-9]+ remaining\]', log)
+    passed, failed = verdicts.count('true'), verdicts.count('false')
+    # The runner prints its failure block only when it reaches the end of the suite. The block
+    # omits failures from scenes outside the suite, which the runner discards.
+    finished = 'all tests passed!' in log or 'some tests failed:' in log
+    failures = {(parcel, unescape(name)): expected == 'true' for parcel, name, expected in
+                re.findall(r'"\[\((-?[0-9]+,-?[0-9]+)\) : (.*)\]",\n\s*".*",\n\s*(true|false),', log)}
+    listed = {(scene.split('/')[0], name) for scene in scene_suite(suite).split(';')
+              for name in scene.split('/')[1:]}
+    unexpected = sorted(f'({parcel}) {name}' for (parcel, name), expected in failures.items() if not expected)
+    stale = sorted(f'({parcel}) {name}' for parcel, name in listed - failures.keys()) if finished else []
+    discarded = failed - len(failures) if finished else 0
+    text = (f'Graphical scene tests ({suite}): **{outcome}**. '
+            f'{passed} assertion{"s" if passed != 1 else ""} passed, {failed - discarded} failed')
+    if not verdicts:
+        text += '; no assertion ran, see the scene-test log artifact'
+    elif not finished:
+        text += f'; the run stopped before its end, so which failures `{SCENE_SUITE}` lists is not determined'
+    elif failed - discarded:
+        text += f'; {len(failures) - len(unexpected)} of them are listed in `{SCENE_SUITE}`, so graphical acceptance stays open'
+    else:
+        text += '; graphical acceptance holds for this suite' if not listed else f'; `{SCENE_SUITE}` still lists failures'
+    if discarded:
+        text += f'; the runner discarded {discarded} failure{"s" if discarded != 1 else ""} outside the suite'
+    if unexpected:
+        text += '. Not listed: ' + ', '.join(unexpected)
+    if stale:
+        text += '. Listed but passing, remove them: ' + ', '.join(stale)
+    return text + '. Only the full suite establishes graphical acceptance; see the scene-test log artifact.\n'
 
 
 def image_matrix(products):
@@ -314,7 +441,7 @@ def consumer_changed(base, head, consumer):
         raise ValueError('Unknown publication consumer')
     ensure_commit(base)
     ensure_commit(head)
-    return bool(git('diff', '--name-only', '--no-renames', base, head, '--', *IMAGES_INPUTS))
+    return bool(changed_inputs(base, head, IMAGES_INPUTS))
 
 
 def consumer_plan(event, base, head, repo):
@@ -336,7 +463,7 @@ def consumer_plan(event, base, head, repo):
             raise ValueError('Unknown image selection event')
         ensure_commit(base)
         ensure_commit(head)
-        changed = git('diff', '--name-only', '--no-renames', base, head, '--', *IMAGES_INPUTS)
+        changed = changed_inputs(base, head, IMAGES_INPUTS)
         return {'images': bool(changed), 'reason': 'Image consumer inputs changed' if changed else 'Image consumer inputs unchanged'}
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as exc:
         print(f'Conservative image build: {exc}')
@@ -373,19 +500,34 @@ def write_outputs(values):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('command', choices=('plan', 'source', 'scenes-plan', 'consumer-plan'))
+    parser.add_argument('command', choices=('plan', 'source', 'scenes-plan', 'consumer-plan',
+                                            'scene-suite', 'scene-summary'))
     parser.add_argument('--consumer', choices=('images', 'headless'))
     parser.add_argument('--base', default=os.environ.get('BASE_SHA', ''))
     parser.add_argument('--head', default=os.environ.get('GITHUB_SHA', 'HEAD'))
+    parser.add_argument('--suite', choices=('full', 'snapshots'), default='full')
+    parser.add_argument('--outcome', default='')
+    parser.add_argument('--log', default='scene-tests.log')
     args = parser.parse_args()
+    if args.command == 'scene-suite':
+        print(scene_suite(args.suite))
+        return
+    if args.command == 'scene-summary':
+        log = Path(args.log).read_text() if Path(args.log).exists() else ''
+        print(scene_summary(args.suite, args.outcome, log), end='')
+        return
     if args.command != 'source':
         head = git('rev-parse', args.head).strip()
         event = os.environ.get('GITHUB_EVENT_NAME', 'local')
+        base = args.base
+        if event == 'pull_request':
+            base = tested_base(head, event_pr_head(), args.base)
+            print(f'Comparing with {base} (BASE_SHA {args.base or "unset"})')
         if args.command == 'consumer-plan':
-            write_outputs(consumer_plan(event, args.base, head, os.environ.get('GH_REPO', '')))
+            write_outputs(consumer_plan(event, base, head, os.environ.get('GH_REPO', '')))
             return
-        result = (scenes_plan(event, args.base, head) if args.command == 'scenes-plan' else
-                  plan(event, args.base, head, os.environ.get('GH_REPO', '')))
+        result = (scenes_plan(event, base, head) if args.command == 'scenes-plan' else
+                  plan(event, base, head, os.environ.get('GH_REPO', '')))
         write_outputs(result)
     else:
         repo, run_id = os.environ['GH_REPO'], os.environ['SOURCE_RUN']

@@ -1,13 +1,15 @@
-//! Local DM history: every DM sent or received, and every reaction to one, is stored per account
-//! and read back per partner, reactions folded onto their DMs.
+//! Local DM and community chat history: every DM or community message sent or received, and
+//! every reaction to one, is stored per account and read back per conversation (a partner's
+//! wallet or `community:<id>`), reactions folded onto their messages.
 //! Storage is the platform crate's (encrypted files on native, IndexedDB on web). Nothing here
 //! talks to a server, and which conversations the HUD shows is the HUD's business.
 //!
 //! Store operations run one at a time, in order: a history read answers with every DM that was
 //! emitted before it, including the one that made the HUD ask.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
+use ban_block::{BanBlock, Blocks};
 use bevy::{
     prelude::*,
     tasks::{IoTaskPool, Task},
@@ -20,16 +22,14 @@ use common::{
 };
 use comms::{
     chat_reaction::{chat_message_id, ChatReactionEvent},
+    community_chat::{channel_for, PrivateChatTarget, CHANNEL_PREFIX},
     global_crdt::ChatEvent,
-    private_chat::PrivateChatReceived,
+    private_chat::{CommunityChatReceived, PrivateChatReceived},
 };
 use console::PendingConsoleResponses;
 use platform::{DmHistoryEntry, DmHistoryReaction};
-use social::SocialClient;
 use system_bridge::{DmHistoryEntryData, DmReactionData, SystemApi};
 use wallet::Wallet;
-
-use super::dm_state::blocked_by_me;
 
 enum DmStoreOp {
     Append {
@@ -40,13 +40,31 @@ enum DmStoreOp {
     Read {
         account: String,
         partner: String,
+        /// Authors left out of the answer: for a community, everyone blocked either way when the
+        /// read was asked for. Empty for a DM, whose stored thread is shown as it is.
+        hidden: HashSet<String>,
         sender: RpcResultSender<Vec<DmHistoryEntryData>>,
     },
     Delete {
         account: String,
         partner: String,
     },
+    /// Keeps the last `keep` messages of a conversation and the reactions to them, within the
+    /// last `keep_records` records.
+    Trim {
+        account: String,
+        partner: String,
+        keep: usize,
+        keep_records: usize,
+    },
 }
+
+/// The most messages a community's history keeps, with the reactions to them: what the HUD shows
+/// of a conversation (`MAX_CHAT_LINES`). A DM history is not trimmed.
+const MAX_COMMUNITY_HISTORY: usize = 200;
+/// The most records (messages and reactions) a community's history keeps: reactions alone would
+/// otherwise grow it without a new message ever moving the message cut.
+const MAX_COMMUNITY_RECORDS: usize = 1000;
 
 /// Pending store operations and the one in flight.
 #[derive(Resource, Default)]
@@ -70,6 +88,7 @@ impl DmStoreOp {
             DmStoreOp::Read {
                 account,
                 partner,
+                hidden,
                 sender,
             } => {
                 let entries = match platform::dm_history_read(&account, &partner).await {
@@ -79,14 +98,51 @@ impl DmStoreOp {
                         Vec::new()
                     }
                 };
-                sender.send(fold_reactions(entries));
+                sender.send(visible_history(entries, &hidden));
             }
             DmStoreOp::Delete { account, partner } => {
                 if let Err(e) = platform::dm_history_delete(&account, &partner).await {
                     warn!("failed to delete dm history with {partner}: {e}");
                 }
             }
+            DmStoreOp::Trim {
+                account,
+                partner,
+                keep,
+                keep_records,
+            } => {
+                if let Err(e) =
+                    platform::dm_history_trim(&account, &partner, keep, keep_records).await
+                {
+                    warn!("failed to trim history of {partner}: {e}");
+                }
+            }
         }
+    }
+}
+
+/// The stored history without `hidden` authors' messages and reactions, reactions folded. A
+/// reaction to a hidden message drops out with it.
+fn visible_history(
+    mut entries: Vec<DmHistoryEntry>,
+    hidden: &HashSet<String>,
+) -> Vec<DmHistoryEntryData> {
+    entries.retain(|entry| !hidden.contains(&entry.from));
+    fold_reactions(entries)
+}
+
+/// Everyone the local user blocked or who blocked them, as history stores authors.
+fn blocked_authors(ban_block: &BanBlock) -> HashSet<String> {
+    match ban_block.blocks() {
+        Blocks::Live {
+            blocked,
+            blocked_by,
+        } => blocked
+            .iter()
+            .chain(blocked_by.iter())
+            .map(|address| format!("{address:#x}"))
+            .collect(),
+        Blocks::Unavailable { .. } => HashSet::new(),
     }
 }
 
@@ -160,24 +216,33 @@ fn now_unix() -> f64 {
         .as_secs_f64()
 }
 
-fn normalize(address: &str) -> Option<String> {
-    address.as_h160().map(|a| format!("{a:#x}"))
+/// The store key of a conversation: the partner's wallet in lowercase hex, or a community's
+/// channel; `None` for a channel that is neither (Nearby, System).
+pub fn history_key(channel: &str) -> Option<String> {
+    match PrivateChatTarget::parse(channel)? {
+        PrivateChatTarget::Dm(address) => Some(format!("{address:#x}")),
+        PrivateChatTarget::Community(id) => Some(channel_for(&id)),
+    }
 }
 
-/// Stores every DM sent or received, and every reaction to one, under the local account, except
-/// from blocked senders.
+/// Stores every DM or community message sent or received, and every reaction to one, under the
+/// local account. DMs and DM reactions from anyone blocked either way are not stored, since a DM
+/// history is never trimmed; community messages and reactions all are, and are hidden on read.
+#[allow(clippy::too_many_arguments)]
 pub fn record_dms(
     mut chats: EventReader<ChatEvent>,
     mut received: EventReader<PrivateChatReceived>,
+    mut community_received: EventReader<CommunityChatReceived>,
     mut reactions: EventReader<ChatReactionEvent>,
     player: Query<Entity, With<PrimaryUser>>,
     wallet: Res<Wallet>,
-    social: Res<SocialClient>,
+    ban_block: BanBlock,
     mut store: ResMut<DmStore>,
 ) {
     let Some(account) = wallet.address().map(|a| format!("{a:#x}")) else {
         chats.clear();
         received.clear();
+        community_received.clear();
         reactions.clear();
         return;
     };
@@ -188,7 +253,7 @@ pub fn record_dms(
         if Some(ev.sender) != player {
             continue;
         }
-        let Some(partner) = normalize(&ev.channel) else {
+        let Some(partner) = history_key(&ev.channel) else {
             continue;
         };
         entries.push((
@@ -203,7 +268,7 @@ pub fn record_dms(
         ));
     }
     for dm in received.read() {
-        if blocked_by_me(&social, dm.from) {
+        if ban_block.is_blocked_either_way(dm.from) {
             continue;
         }
         let partner = format!("{:#x}", dm.from);
@@ -218,13 +283,25 @@ pub fn record_dms(
             },
         ));
     }
+    for chat in community_received.read() {
+        entries.push((
+            channel_for(&chat.community_id),
+            DmHistoryEntry {
+                from: format!("{:#x}", chat.from),
+                message: chat.message.clone(),
+                received_at: now_unix(),
+                sent_at: Some(chat.timestamp),
+                reaction: None,
+            },
+        ));
+    }
     for ev in reactions.read() {
-        if blocked_by_me(&social, ev.from) {
-            continue;
-        }
-        let Some(partner) = normalize(&ev.channel) else {
+        let Some(partner) = history_key(&ev.channel) else {
             continue;
         };
+        if !partner.starts_with(CHANNEL_PREFIX) && ban_block.is_blocked_either_way(ev.from) {
+            continue;
+        }
         entries.push((
             partner,
             DmHistoryEntry {
@@ -241,11 +318,24 @@ pub fn record_dms(
         ));
     }
 
+    // a community's history is trimmed behind the frame's appends, once per community
+    let mut communities = Vec::<String>::new();
     for (partner, entry) in entries {
+        if partner.starts_with(CHANNEL_PREFIX) && !communities.contains(&partner) {
+            communities.push(partner.clone());
+        }
         store.queue.push_back(DmStoreOp::Append {
             account: account.clone(),
             partner,
             entry,
+        });
+    }
+    for partner in communities {
+        store.queue.push_back(DmStoreOp::Trim {
+            account: account.clone(),
+            partner,
+            keep: MAX_COMMUNITY_HISTORY,
+            keep_records: MAX_COMMUNITY_RECORDS,
         });
     }
 }
@@ -253,24 +343,34 @@ pub fn record_dms(
 pub fn handle_dm_history_requests(
     mut requests: EventReader<SystemApi>,
     wallet: Res<Wallet>,
+    ban_block: BanBlock,
     mut store: ResMut<DmStore>,
 ) {
     for request in requests.read() {
         match request {
             SystemApi::GetDmHistory(partner, sender) => {
                 let sender = sender.clone();
-                let (Some(account), Some(partner)) = (wallet.address(), normalize(partner)) else {
+                let (Some(account), Some(partner)) = (wallet.address(), history_key(partner))
+                else {
                     sender.send(Vec::new());
                     continue;
+                };
+                // the read runs on the IO pool, so it takes the block lists as they are now
+                let hidden = if partner.starts_with(CHANNEL_PREFIX) {
+                    blocked_authors(&ban_block)
+                } else {
+                    HashSet::new()
                 };
                 store.queue.push_back(DmStoreOp::Read {
                     account: format!("{account:#x}"),
                     partner,
+                    hidden,
                     sender,
                 });
             }
             SystemApi::DeleteDmHistory(partner) => {
-                let (Some(account), Some(partner)) = (wallet.address(), normalize(partner)) else {
+                let (Some(account), Some(partner)) = (wallet.address(), history_key(partner))
+                else {
                     continue;
                 };
                 store.queue.push_back(DmStoreOp::Delete {
@@ -283,7 +383,8 @@ pub fn handle_dm_history_requests(
     }
 }
 
-/// `/dm_history <address> [count]` prints the last `count` (default 20) stored DMs with a partner.
+/// `/dm_history <address|community:<id>> [count]` prints the last `count` (default 20) stored
+/// messages of a conversation.
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/dm_history")]
 pub struct DmHistoryCommand {
@@ -318,7 +419,7 @@ pub fn dm_history(
     );
 }
 
-/// `/dm_delete <address>` deletes the stored DMs with a partner.
+/// `/dm_delete <address|community:<id>>` deletes a conversation's stored messages.
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/dm_delete")]
 pub struct DmDeleteCommand {
@@ -329,5 +430,79 @@ pub fn dm_delete(mut input: ConsoleCommand<DmDeleteCommand>, mut events: EventWr
     if let Some(Ok(command)) = input.take() {
         events.write(SystemApi::DeleteDmHistory(command.address));
         input.reply_ok("");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
+
+    use alloy_core::primitives::Address;
+    use comms::chat_reaction::chat_message_id;
+    use platform::{DmHistoryEntry, DmHistoryReaction};
+
+    use super::{history_key, visible_history};
+
+    fn message(from: &str, sent_at: f64, text: &str) -> DmHistoryEntry {
+        DmHistoryEntry {
+            from: from.to_owned(),
+            message: text.to_owned(),
+            received_at: sent_at,
+            sent_at: Some(sent_at),
+            reaction: None,
+        }
+    }
+
+    fn reaction(from: &str, message_id: &str, emoji: &str) -> DmHistoryEntry {
+        DmHistoryEntry {
+            from: from.to_owned(),
+            message: String::new(),
+            received_at: 0.0,
+            sent_at: None,
+            reaction: Some(DmHistoryReaction {
+                message_id: message_id.to_owned(),
+                emoji: emoji.to_owned(),
+                remove: false,
+            }),
+        }
+    }
+
+    #[test]
+    fn a_hidden_authors_messages_and_reactions_are_left_out_of_a_read() {
+        let me = Address::repeat_byte(1);
+        let blocked = Address::repeat_byte(2);
+        let (me_key, blocked_key) = (format!("{me:#x}"), format!("{blocked:#x}"));
+        let entries = vec![
+            message(&me_key, 1.0, "hi"),
+            message(&blocked_key, 2.0, "hello"),
+            // the blocked author reacts to my message, and I react to theirs
+            reaction(&blocked_key, &chat_message_id(me, 1.0), "👍"),
+            reaction(&me_key, &chat_message_id(blocked, 2.0), "❤️"),
+        ];
+
+        let shown = visible_history(entries.clone(), &HashSet::new());
+        assert_eq!(shown.len(), 2);
+        assert_eq!(shown[0].reactions.len(), 1);
+        assert_eq!(shown[1].reactions.len(), 1);
+
+        let shown = visible_history(entries, &HashSet::from([blocked_key]));
+        assert_eq!(shown.len(), 1);
+        assert_eq!(shown[0].message, "hi");
+        assert!(shown[0].reactions.is_empty());
+    }
+
+    #[test]
+    fn conversations_are_keyed_by_wallet_or_community_channel() {
+        assert_eq!(
+            history_key("0xABCDEFABCDEFABCDEFABCDEFABCDEFABCDEFABCD").as_deref(),
+            Some("0xabcdefabcdefabcdefabcdefabcdefabcdefabcd")
+        );
+        assert_eq!(
+            history_key("community:ABC-1").as_deref(),
+            Some("community:abc-1")
+        );
+        assert_eq!(history_key("Nearby"), None);
+        assert_eq!(history_key("System"), None);
+        assert_eq!(history_key("community:"), None);
     }
 }

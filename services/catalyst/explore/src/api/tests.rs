@@ -32,6 +32,9 @@ struct Mock {
     denylist: Mutex<Vec<Value>>,
     flags: Mutex<Value>,
     flags_etag: Mutex<String>,
+    /// The `events` application's document (`events.json`), the one
+    /// `events::foundation` reads.
+    events_flags: Mutex<Value>,
     entities: Mutex<Vec<Value>>,
     profiles: Mutex<Vec<Value>>,
     tiles: Mutex<Value>,
@@ -94,6 +97,13 @@ fn mock() -> Arc<Mock> {
             json!({"flags": {"explorer-alfa-minimum-requirements": true, "explorer-feature-a": false}, "variants": {"explorer-variant": {"name": "v", "enabled": true}}}),
         ),
         flags_etag: Mutex::new("\"flags-1\"".into()),
+        events_flags: Mutex::new(json!({
+            "flags": {"events-decentraland-foundation-addresses": true},
+            "variants": {"events-decentraland-foundation-addresses": {
+                "name": "addresses", "enabled": true,
+                "payload": {"type": "json", "value": "[\"0xF0000000000000000000000000000000000000F0\"]"}
+            }}
+        })),
         entities: Mutex::new(vec![
             entity("bafyscene", &["0,0", "0,1"]),
             entity("bafyother", &["5,5"]),
@@ -145,6 +155,20 @@ async fn serve_mock(mock: Arc<Mock>) -> SocketAddr {
         )
             .into_response()
     }
+    async fn events_flags(AxState(m): AxState<Arc<Mock>>, headers: HeaderMap) -> Response {
+        m.hit("events-flags");
+        if headers.get(header::REFERER).and_then(|v| v.to_str().ok())
+            != Some("https://decentraland.org")
+        {
+            return (StatusCode::OK, Json(json!({"flags": {}, "variants": {}}))).into_response();
+        }
+        (
+            StatusCode::OK,
+            [(header::ETAG, "\"events-flags-1\"")],
+            Json(m.events_flags.lock().clone()),
+        )
+            .into_response()
+    }
     async fn entities(
         AxState(m): AxState<Arc<Mock>>,
         Query(q): Query<HashMap<String, String>>,
@@ -177,6 +201,15 @@ async fn serve_mock(mock: Arc<Mock>) -> SocketAddr {
             .cloned()
             .collect();
         Json(Value::Array(docs))
+    }
+    async fn versions(
+        AxState(m): AxState<Arc<Mock>>,
+        Query(q): Query<HashMap<String, String>>,
+        Json(body): Json<Value>,
+    ) -> Json<Value> {
+        m.hit("entities/versions");
+        m.bodies.lock().push(json!({"body":body,"query":q}));
+        Json(json!([]))
     }
     async fn profiles(AxState(m): AxState<Arc<Mock>>, Json(body): Json<Value>) -> Json<Value> {
         m.hit("profiles");
@@ -267,7 +300,9 @@ async fn serve_mock(mock: Arc<Mock>) -> SocketAddr {
         .route("/banned-names", post(banned))
         .route("/denylist.json", get(denylist))
         .route("/explorer.json", get(flags))
+        .route("/events.json", get(events_flags))
         .route("/entities/active", post(entities))
+        .route("/entities/versions", post(versions))
         .route("/profiles", post(profiles))
         .route("/profiles/metadata", post(profiles_metadata))
         .route("/v2/tiles/info", get(tiles_info))
@@ -338,7 +373,6 @@ async fn node_without_db(settings: Settings) -> Node {
         pool,
         http: crate::http::Outbound::for_tests(),
         content,
-        registry: registry::Cache::new(),
         denylist: Default::default(),
         flags: feature_flags::Snapshot::default(),
         map: map::MapState::new(),
@@ -349,7 +383,7 @@ async fn node_without_db(settings: Settings) -> Node {
         opensea: opensea::Runtime::default(),
         auth_api: auth_api::AuthApiState::default(),
         runtime_config: runtime_config::RuntimeConfigState::default(),
-        onboarding: onboarding::OnboardingState::default(),
+        onboarding: Arc::default(),
         eip1654: std::sync::OnceLock::new(),
     });
     Node { state, _tmp: tmp }
@@ -743,10 +777,10 @@ async fn ab_cdn_reads_through_once_and_serves_the_cached_object_after() {
     );
 }
 
-/// With no registry or asset-bundle CDN configured (an island, or a bare
-/// node) neither reader sends a request: the registry knows nothing and
-/// every object is this node's own. Blank used to fall back to
-/// decentraland.org, and an empty source built a relative URL (502).
+/// With no Registry or asset-bundle CDN configured (an island, or a bare
+/// node) neither reader sends a request: the boot entity reads know no
+/// converted entity, the other Registry reads are unavailable and every
+/// object is this node's own.
 #[tokio::test]
 async fn no_registry_or_cdn_source_reads_nothing_upstream() {
     let config = crate::config::Config::parse_for_tests(&[
@@ -784,14 +818,14 @@ async fn no_registry_or_cdn_source_reads_nothing_upstream() {
         .await;
         assert_eq!((status, body), (StatusCode::OK, json!([])), "{path}");
     }
-    let (status, body) = call_json(
+    let (status, _) = call_json(
         &app,
-        "POST",
-        "/asset-bundle-registry/profiles",
-        Some(json!({"ids": ["0xc9c29ab98e6bc42015985165a11153f564e9f8c2"]})),
+        "GET",
+        "/asset-bundle-registry/entities/status/bafy",
+        None,
     )
     .await;
-    assert_eq!((status, body), (StatusCode::OK, json!([])));
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
     let (status, _, _) = call(&app, "GET", "/ab-cdn/v49/assets/bafy_mac", None).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert!(mock.hits.lock().is_empty(), "{:?}", mock.hits.lock());
@@ -1037,168 +1071,147 @@ async fn feature_flags_serve_the_embedded_full_set_before_the_first_pass() {
 }
 
 #[tokio::test]
-async fn registry_entities_are_cached_per_pointer_including_misses() {
+async fn registry_gateway_preserves_queries_and_never_caches_native_reads() {
     let mock = mock();
     let addr = serve_mock(mock.clone()).await;
     let node = node_without_db(Settings::for_tests(sources_at(addr))).await;
     let app = router(node.state.clone());
-    let path = "/asset-bundle-registry/entities/active";
-
+    for operation in ["active", "versions"] {
+        let path = format!("/asset-bundle-registry/entities/{operation}?world_name=Foo.dcl.eth");
+        for _ in 0..2 {
+            let (status, _) =
+                call_json(&app, "POST", &path, Some(json!({"pointers":["0,0"]}))).await;
+            assert_eq!(status, StatusCode::OK);
+        }
+        assert_eq!(mock.hits(&format!("entities/{operation}")), 2);
+        assert_eq!(
+            mock.bodies.lock().last().unwrap()["query"]["world_name"],
+            "Foo.dcl.eth"
+        );
+    }
+    mock.entities.lock().clear();
     let (status, docs) = call_json(
         &app,
         "POST",
-        path,
-        Some(json!({"pointers": ["0,0", "0,1"]})),
+        "/asset-bundle-registry/entities/active",
+        Some(json!({"pointers":["0,0"]})),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(
-        docs.as_array().unwrap().len(),
-        1,
-        "one entity for two of its pointers"
+        docs,
+        json!([]),
+        "native changes must be visible immediately"
     );
-    assert_eq!(docs[0]["id"], "bafyscene");
-    assert_eq!(
-        key_set(&docs[0]),
-        [
-            "bundles",
-            "content",
-            "deployer",
-            "id",
-            "metadata",
-            "pointers",
-            "status",
-            "timestamp",
-            "type",
-            "versions"
-        ]
-        .into_iter()
-        .map(String::from)
-        .collect()
-    );
-    assert_eq!(mock.hits("entities/active"), 1);
+}
 
-    let (_, again) = call_json(
-        &app,
-        "POST",
-        path,
-        Some(json!({"pointers": ["0,1", "0,0"]})),
-    )
-    .await;
-    assert_eq!(again, docs);
-    assert_eq!(
-        mock.hits("entities/active"),
-        1,
-        "both pointers answered from the cache"
-    );
-
-    let (_, mixed) = call_json(
-        &app,
-        "POST",
-        path,
-        Some(json!({"pointers": ["0,0", "9,9"]})),
-    )
-    .await;
-    assert_eq!(mixed.as_array().unwrap().len(), 1);
-    assert_eq!(
-        mock.hits("entities/active"),
-        2,
-        "only the miss goes upstream"
-    );
-    let last = mock.bodies.lock().last().cloned().unwrap();
-    assert_eq!(last["body"]["pointers"], json!(["9,9"]));
-
-    let (_, none) = call_json(&app, "POST", path, Some(json!({"pointers": ["9,9"]}))).await;
-    assert_eq!(none, json!([]));
-    assert_eq!(
-        mock.hits("entities/active"),
-        2,
-        "an absent pointer is cached as absent"
-    );
-
-    let (_, by_id) = call_json(&app, "POST", path, Some(json!({"ids": ["bafyother"]}))).await;
-    assert_eq!(by_id[0]["pointers"], json!(["5,5"]));
-    assert_eq!(mock.hits("entities/active"), 3);
-
-    let (_, world) = call_json(
-        &app,
-        "POST",
-        &format!("{path}?world_name=Foo.dcl.eth"),
-        Some(json!({"pointers": ["0,0"]})),
-    )
-    .await;
-    assert_eq!(world[0]["id"], "bafyscene");
-    assert_eq!(
-        mock.hits("entities/active"),
-        4,
-        "a world is its own pointer namespace"
-    );
-    assert_eq!(
-        mock.bodies.lock().last().unwrap()["query"]["world_name"],
-        "Foo.dcl.eth"
-    );
-
-    for bad in [
-        json!({}),
-        json!({"pointers": []}),
-        json!({"pointers": ["0,0"], "ids": ["x"]}),
+#[test]
+fn registry_backend_is_native_only_on_loopback() {
+    use registry::Backend;
+    for native in [
+        "http://127.0.0.1:5147",
+        "https://127.0.0.2:5147",
+        "http://[::1]:5147",
+        "http://localhost:5147/",
     ] {
-        let (status, _) = call_json(&app, "POST", path, Some(bad)).await;
-        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(
+            matches!(Backend::parse(native).unwrap(), Backend::Native(_)),
+            "{native}"
+        );
     }
-    let too_many: Vec<String> = (0..1001).map(|i| format!("{i},0")).collect();
-    let (status, _) = call_json(&app, "POST", path, Some(json!({"pointers": too_many}))).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    // Same-network hosts are not the local runtime: they take the source guard.
+    for upstream in [
+        "https://asset-bundle-registry.decentraland.org",
+        "http://10.0.0.5:5147",
+        "http://[fd00::1]:5147",
+        "http://catalyst-abgen:5147",
+    ] {
+        assert!(
+            matches!(Backend::parse(upstream).unwrap(), Backend::Upstream(_)),
+            "{upstream}"
+        );
+    }
+    for bad in [
+        "ftp://127.0.0.1/",
+        "http://user:pw@127.0.0.1/",
+        "http://127.0.0.1/?token=x",
+        "http://127.0.0.1/#x",
+        "not a url",
+    ] {
+        assert!(Backend::parse(bad).is_err(), "{bad}");
+    }
+}
+
+/// A read queues for a backend slot instead of failing at once, and is
+/// refused only when none frees up within the wait.
+#[tokio::test]
+async fn registry_reads_wait_briefly_for_a_backend_slot() {
+    use tokio::sync::Semaphore;
+    let permits = Semaphore::new(1);
+    let held = permits.acquire().await.unwrap();
+    assert!(
+        registry::slot(&permits, Duration::from_millis(20))
+            .await
+            .is_none()
+    );
+    let waiting = registry::slot(&permits, Duration::from_secs(2));
+    let release = async {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        drop(held);
+    };
+    let (permit, ()) = tokio::join!(waiting, release);
+    assert!(permit.is_some());
+}
+
+/// Startup validation accepts the local runtime over http or https and a
+/// public Registry, and names the variable when it refuses one.
+#[test]
+fn registry_source_validates_at_startup_and_names_the_variable() {
+    let mut settings = Settings::for_tests(Sources::defaults());
+    settings.allow_private_sources = false;
+    settings.public_url = "https://gateway.example.org".into();
+    for ok in [
+        "http://127.0.0.1:5147",
+        "https://127.0.0.1:5147",
+        "http://localhost:5147",
+        "https://asset-bundle-registry.decentraland.org",
+    ] {
+        let mut s = settings.clone();
+        s.sources.registry = ok.into();
+        s.validate().unwrap_or_else(|e| panic!("{ok}: {e:#}"));
+    }
+    for bad in [
+        "http://10.0.0.5:5147",
+        "http://catalyst-abgen:5147",
+        "http://user:pw@127.0.0.1:5147",
+        "https://gateway.example.org/asset-bundle-registry",
+    ] {
+        let mut s = settings.clone();
+        s.sources.registry = bad.into();
+        let err = format!("{:#}", s.validate().unwrap_err());
+        assert!(err.contains("EXPLORER_REGISTRY_SOURCE_URL"), "{bad}: {err}");
+    }
 }
 
 #[tokio::test]
-async fn registry_profiles_are_matched_by_address_and_cached() {
+async fn registry_profiles_are_composed_from_the_shared_profile_service() {
     let mock = mock();
     let addr = serve_mock(mock.clone()).await;
     let node = node_without_db(Settings::for_tests(sources_at(addr))).await;
     let app = router(node.state.clone());
-    let path = "/asset-bundle-registry/profiles";
-
-    let (status, docs) = call_json(&app, "POST", path, Some(json!({"ids": ["0xC9C29AB98E6BC42015985165A11153F564E9F8C2", "0x0000000000000000000000000000000000000009"]}))).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(docs.as_array().unwrap().len(), 1);
-    assert_eq!(docs[0]["avatars"][0]["name"], "Ryumi");
-    assert_eq!(
-        docs[0]["timestamp"], "1790276949479",
-        "the registry's string timestamp is served as is"
-    );
-    assert_eq!(mock.hits("profiles"), 1);
-
-    let (_, again) = call_json(
-        &app,
-        "POST",
-        path,
-        Some(json!({"ids": ["0xc9c29ab98e6bc42015985165a11153f564e9f8c2"]})),
-    )
-    .await;
-    assert_eq!(again, docs);
-    let (_, unknown) = call_json(
-        &app,
-        "POST",
-        path,
-        Some(json!({"ids": ["0x0000000000000000000000000000000000000009"]})),
-    )
-    .await;
-    assert_eq!(unknown, json!([]));
-    assert_eq!(
-        mock.hits("profiles"),
-        1,
-        "known and unknown addresses are both cached"
-    );
-
-    let (status, _) = call_json(&app, "POST", path, Some(json!({"ids": []}))).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    for path in ["/profiles", "/profiles/metadata"] {
+        let (status, _, _) = call(
+            &app,
+            "POST",
+            &format!("/asset-bundle-registry{path}"),
+            Some(json!({"ids": []})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+    assert!(mock.hits.lock().is_empty());
     let (status, st) = call_json(&app, "GET", "/asset-bundle-registry/status", None).await;
     assert_eq!(status, StatusCode::OK);
-    let (health_status, health) =
-        call_json(&app, "GET", "/asset-bundle-registry/health", None).await;
-    assert_eq!(health_status, StatusCode::OK);
-    assert_eq!(health, json!({"status": "ok"}));
     assert_eq!(
         key_set(&st["data"]),
         ["commitHash", "currentTime", "version"]
@@ -1208,69 +1221,6 @@ async fn registry_profiles_are_matched_by_address_and_cached() {
     );
 }
 
-/// `/profiles/metadata` answers upstream's projection (`pointer`, no
-/// `avatars`): a document is matched to its address by `pointer`, so a known
-/// profile is not dropped as address-less and the answer is not `[]`.
-#[tokio::test]
-async fn registry_profile_metadata_is_matched_by_pointer_and_cached() {
-    let mock = mock();
-    let addr = serve_mock(mock.clone()).await;
-    let node = node_without_db(Settings::for_tests(sources_at(addr))).await;
-    let app = router(node.state.clone());
-    let path = "/asset-bundle-registry/profiles/metadata";
-
-    let (status, docs) = call_json(&app, "POST", path, Some(json!({"ids": ["0xC9C29AB98E6BC42015985165A11153F564E9F8C2", "0x0000000000000000000000000000000000000009"]}))).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(
-        docs.as_array().unwrap().len(),
-        1,
-        "the known profile's metadata row is served"
-    );
-    assert_eq!(
-        key_set(&docs[0]),
-        ["hasClaimedName", "name", "pointer", "thumbnailUrl"]
-            .into_iter()
-            .map(String::from)
-            .collect()
-    );
-    assert_eq!(
-        docs[0]["pointer"],
-        "0xc9c29ab98e6bc42015985165a11153f564e9f8c2"
-    );
-    assert_eq!(docs[0]["name"], "Ryumi");
-    assert_eq!(mock.hits("profiles/metadata"), 1);
-
-    let (_, again) = call_json(
-        &app,
-        "POST",
-        path,
-        Some(json!({"ids": ["0xc9c29ab98e6bc42015985165a11153f564e9f8c2"]})),
-    )
-    .await;
-    assert_eq!(again, docs);
-    let (_, unknown) = call_json(
-        &app,
-        "POST",
-        path,
-        Some(json!({"ids": ["0x0000000000000000000000000000000000000009"]})),
-    )
-    .await;
-    assert_eq!(unknown, json!([]), "an address the registry has no row for");
-    assert_eq!(
-        mock.hits("profiles/metadata"),
-        1,
-        "known and unknown addresses are both cached"
-    );
-    assert_eq!(
-        mock.hits("profiles"),
-        0,
-        "the metadata variant never asks for the full profile"
-    );
-}
-
-/// The district documents of `api.decentraland.org` (`/v2/districts[/{id}]`,
-/// `/v2/addresses/{address}/contributions`) are served from the embedded
-/// upstream data, without a grid mirror pass.
 #[tokio::test]
 async fn map_district_documents_are_served_from_the_embedded_upstream_data() {
     let node = node_without_db(Settings::for_tests(sources_at(
@@ -1345,13 +1295,7 @@ async fn registry_upstream_failure_is_a_502_not_a_short_answer() {
     )
     .await;
     assert_eq!(status, StatusCode::BAD_GATEWAY);
-    assert!(
-        body["error"]
-            .as_str()
-            .unwrap()
-            .contains("asset-bundle registry upstream"),
-        "{body}"
-    );
+    assert!(body["message"] == "Registry service unavailable", "{body}");
 }
 
 #[tokio::test]
@@ -1732,6 +1676,58 @@ async fn feature_flags_mirror_sends_the_referer_applies_overrides_and_uses_the_e
     db.teardown().await;
 }
 
+/// Review architecture-1 explore-change-4: the pass also mirrors the
+/// `events` document, so `events::foundation` reads a real row.
+#[tokio::test]
+async fn feature_flags_mirror_stores_the_events_document_for_the_foundation_names() {
+    let Some(db) = scratch_database().await else {
+        return;
+    };
+    let mock = mock();
+    let addr = serve_mock(mock.clone()).await;
+    let node = node_with_db(Settings::for_tests(sources_at(addr)), db.pool.clone()).await;
+    let (jobs, ctx) = job_ctx().await;
+
+    feature_flags::run_pass(&node.state, &ctx).await.unwrap();
+    assert_eq!(
+        mock.hits("events-flags"),
+        1,
+        "the referer-gated events document"
+    );
+    let (stored, etag): (Value, Option<String>) =
+        sqlx::query_as("SELECT document, etag FROM explore_api.feature_flags WHERE app = 'events'")
+            .fetch_one(&db.pool)
+            .await
+            .unwrap();
+    assert_eq!(stored, *mock.events_flags.lock());
+    assert_eq!(etag.as_deref(), Some("\"events-flags-1\""));
+
+    let foundation = crate::events::foundation::Foundation::default();
+    foundation.refresh_if_stale(&db.pool).await;
+    assert_eq!(
+        crate::events::foundation::display_name(
+            &foundation.snapshot(),
+            Some("0xf0000000000000000000000000000000000000f0"),
+            Some("Alice".into())
+        ),
+        Some(crate::events::foundation::FOUNDATION_NAME.into())
+    );
+    let (explorer,): (Value,) =
+        sqlx::query_as("SELECT document FROM explore_api.feature_flags WHERE app = 'explorer'")
+            .fetch_one(&db.pool)
+            .await
+            .unwrap();
+    assert!(
+        explorer["variants"]
+            .get("events-decentraland-foundation-addresses")
+            .is_none(),
+        "the two documents stay apart"
+    );
+
+    jobs.shutdown(Duration::from_secs(1)).await;
+    db.teardown().await;
+}
+
 #[tokio::test]
 async fn dapps_flags_refresh_preserves_the_audience_and_last_good_document() {
     let Some(db) = scratch_database().await else {
@@ -2003,7 +1999,7 @@ async fn map_grid_mirror_persists_the_grid_resumes_after_restart_and_gates_downl
 
 /// One bounded run of every mirror pass and reader against the real upstreams
 /// (`cargo test --lib live_upstream -- --ignored --nocapture`): one 38 MB grid
-/// download, three small documents, two registry calls. Prints the `/mirrors`
+/// download and three small documents. Registry uses the local runtime. Prints the `/mirrors`
 /// report; the freshness evidence in tests/README.md comes from here.
 #[tokio::test]
 #[ignore]
@@ -2050,26 +2046,6 @@ async fn live_upstream_passes_complete_and_the_boot_routes_answer() {
     assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
     let (_, tiles) = call_json(&app, "GET", "/api/v2/tiles?x1=0&x2=0&y1=0&y2=0", None).await;
     assert_eq!(tiles["data"]["0,0"]["name"], "Genesis Plaza");
-    let (status, docs) = call_json(
-        &app,
-        "POST",
-        "/asset-bundle-registry/entities/active",
-        Some(json!({"pointers": ["0,0"]})),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(docs[0]["type"], "scene");
-    assert!(docs[0]["bundles"].is_object());
-    let (status, profiles) = call_json(
-        &app,
-        "POST",
-        "/asset-bundle-registry/profiles",
-        Some(json!({"ids": ["0xc9c29ab98e6bc42015985165a11153f564e9f8c2"]})),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    assert!(profiles[0]["avatars"].is_array());
-
     let (_, report) = call_json(&app, "GET", "/mirrors", None).await;
     println!("{}", serde_json::to_string_pretty(&report).unwrap());
     println!(
@@ -2161,4 +2137,242 @@ async fn blank_sources_spawn_no_mirror_and_read_no_builtin_upstream() {
     let names: BTreeSet<String> = jobs.report().into_iter().map(|r| r.name).collect();
     assert!(names.iter().all(|n| !n.ends_with("-mirror")), "{names:?}");
     jobs.shutdown(Duration::from_secs(5)).await;
+}
+
+#[tokio::test]
+async fn registry_native_routes_preserve_wire_contract_and_replace_untrusted_original_path() {
+    use axum::http::{Method, Uri};
+    async fn echo(
+        method: Method,
+        uri: Uri,
+        headers: HeaderMap,
+        body: axum::body::Bytes,
+    ) -> Response {
+        (
+            StatusCode::ACCEPTED,
+            [("cache-control", "no-store"), ("retry-after", "3")],
+            Json(json!({
+                "method":method.as_str(), "uri":uri.to_string(),
+                "body":String::from_utf8(body.to_vec()).unwrap(),
+                "authorization":headers.get("authorization").is_some(),
+                "identity":headers.get("x-identity-auth-chain-0").unwrap().to_str().unwrap(),
+                "timestamp":headers.get("x-identity-timestamp").unwrap().to_str().unwrap(),
+                "metadata":headers.get("x-identity-metadata").unwrap().to_str().unwrap(),
+                "original":headers.get("x-original-path").unwrap().to_str().unwrap(),
+                "contentType":headers.get("content-type").unwrap().to_str().unwrap(),
+            })),
+        )
+            .into_response()
+    }
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(axum::serve(listener, Router::new().fallback(echo)).into_future());
+    let node = node_without_db(Settings::for_tests(sources_at(addr))).await;
+    let app = router(node.state);
+    for (method, path) in [
+        ("POST", "/entities/active"),
+        ("POST", "/entities/versions"),
+        ("GET", "/entities/status"),
+        ("GET", "/entities/status/bafytest"),
+        ("GET", "/worlds/Test.dcl.eth/manifest"),
+        ("GET", "/denylist"),
+        ("GET", "/queues/status"),
+    ] {
+        let path_and_query = format!("{path}?world_name=A%2Bb.dcl.eth&x=1&x=2");
+        let public = format!("/asset-bundle-registry{path_and_query}");
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(method)
+                    .uri(&public)
+                    .header("content-type", "application/json")
+                    .header("authorization", "Bearer operator-test")
+                    .header("x-identity-auth-chain-0", "signed-chain")
+                    .header("x-identity-timestamp", "1700000000000")
+                    .header("x-identity-metadata", "{}")
+                    .header("x-original-path", "/forged-path")
+                    .body(Body::from(r#"{ "unchanged": true }"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::ACCEPTED, "{method} {path}");
+        assert_eq!(response.headers()["cache-control"], "no-store");
+        assert_eq!(response.headers()["retry-after"], "3");
+        let body: Value = serde_json::from_slice(
+            &axum::body::to_bytes(response.into_body(), 4096)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(body["method"], method);
+        assert_eq!(body["uri"], path_and_query);
+        assert_eq!(body["original"], format!("/asset-bundle-registry{path}"));
+        assert_eq!(body["body"], r#"{ "unchanged": true }"#);
+        assert_eq!(
+            body["authorization"], false,
+            "the admin bearer never leaves the host"
+        );
+        assert_eq!(body["identity"], "signed-chain");
+        assert_eq!(body["timestamp"], "1700000000000");
+        assert_eq!(body["metadata"], "{}");
+        assert_eq!(body["contentType"], "application/json");
+    }
+    let (status, _, _) = call(&app, "POST", "/asset-bundle-registry/not-a-route", None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    // Registry writes stay behind the ops console.
+    for (method, path) in [
+        ("POST", "/denylist/bafytest"),
+        ("DELETE", "/denylist/bafytest"),
+        ("POST", "/queues/retry"),
+        ("POST", "/queues/pause"),
+        ("POST", "/queues/resume"),
+        ("POST", "/registry"),
+        ("DELETE", "/flush-cache"),
+    ] {
+        let (status, _, _) =
+            call(&app, method, &format!("/asset-bundle-registry{path}"), None).await;
+        assert!(
+            matches!(
+                status,
+                StatusCode::NOT_FOUND | StatusCode::METHOD_NOT_ALLOWED
+            ),
+            "{method} {path}: {status}"
+        );
+    }
+    // Percent-encoded dot segments must never escape an enumerated route
+    // when the outbound URL parser normalizes them.
+    for path in [
+        "/asset-bundle-registry/entities/status/%2e%2e",
+        "/asset-bundle-registry/worlds/%2e%2e/manifest",
+    ] {
+        let (status, _, _) = call(&app, "GET", path, None).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{path}");
+    }
+    let (status, _, _) = call(
+        &app,
+        "DELETE",
+        "/asset-bundle-registry/entities/active",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
+    server.abort();
+}
+
+/// The Registry gateway is opt-in: `ABGEN_ADMIN_URL` (the ops console's
+/// runtime) does not select it, since an abgen without native Registry
+/// state cannot answer these routes.
+#[test]
+fn registry_source_is_only_the_explicit_variable() {
+    let config = crate::config::Config::parse_for_tests(&[
+        "catalyst",
+        "--database-url",
+        "postgres:///catalyst",
+        "--abgen-admin-url",
+        "http://127.0.0.1:5147",
+    ])
+    .unwrap();
+    assert_eq!(Sources::from_config(&config).registry, "");
+    let config = crate::config::Config::parse_for_tests(&[
+        "catalyst",
+        "--database-url",
+        "postgres:///catalyst",
+        "--abgen-admin-url",
+        "http://127.0.0.1:5147",
+        "--explorer-registry-source-url",
+        "http://localhost:5150/",
+    ])
+    .unwrap();
+    assert_eq!(
+        Sources::from_config(&config).registry,
+        "http://localhost:5150"
+    );
+}
+
+/// A public Registry receives the request only: no signed-fetch headers, no
+/// asserted original path, no bearer.
+#[tokio::test]
+async fn registry_upstream_gets_no_identity_or_path_assertion() {
+    async fn echo(headers: HeaderMap) -> Json<Value> {
+        let names: Vec<String> = headers.keys().map(|k| k.to_string()).collect();
+        Json(json!(names))
+    }
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(axum::serve(listener, Router::new().fallback(echo)).into_future());
+    // An IPv4-mapped address is not loopback to the classifier, so this is
+    // the upstream path (tests allow private sources).
+    let sources = Sources {
+        registry: format!("http://[::ffff:127.0.0.1]:{}", addr.port()),
+        ..sources_at(addr)
+    };
+    let node = node_without_db(Settings::for_tests(sources)).await;
+    let app = router(node.state);
+    let response = app
+        .oneshot(
+            Request::get("/asset-bundle-registry/entities/status/bafy")
+                .header("authorization", "Bearer operator-test")
+                .header("x-identity-auth-chain-0", "signed-chain")
+                .header("x-original-path", "/forged")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let names: Vec<String> = serde_json::from_slice(
+        &axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    for header in [
+        "authorization",
+        "x-identity-auth-chain-0",
+        "x-original-path",
+    ] {
+        assert!(!names.iter().any(|n| n == header), "{header}: {names:?}");
+    }
+    server.abort();
+}
+
+#[tokio::test]
+async fn registry_native_failures_are_preserved_without_following_redirects() {
+    async fn response(Query(q): Query<HashMap<String, String>>) -> Response {
+        let status = StatusCode::from_u16(q["status"].parse().unwrap()).unwrap();
+        (
+            status,
+            [
+                ("content-type", "application/problem+json"),
+                ("location", "http://127.0.0.1:1/never-follow"),
+            ],
+            r#"{"error":"native failure"}"#,
+        )
+            .into_response()
+    }
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server =
+        tokio::spawn(axum::serve(listener, Router::new().fallback(response)).into_future());
+    let mut node = node_without_db(Settings::for_tests(sources_at(addr))).await;
+    // The production pool normally follows redirects; the Registry adapter
+    // must explicitly suppress them for this request only.
+    Arc::get_mut(&mut node.state).unwrap().http =
+        crate::http::Outbound::new(crate::http::HttpClientCfg::serve(4)).unwrap();
+    let app = router(node.state);
+    for status in [307, 400, 401, 403, 404, 429, 500, 503] {
+        let (actual, headers, body) = call(
+            &app,
+            "POST",
+            &format!("/asset-bundle-registry/entities/active?status={status}"),
+            Some(json!({"pointers":["0,0"]})),
+        )
+        .await;
+        assert_eq!(actual.as_u16(), status);
+        assert_eq!(headers["content-type"], "application/problem+json");
+        assert_eq!(body, br#"{"error":"native failure"}"#);
+    }
+    server.abort();
 }

@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { NOTIFICATIONS_PREFIX } from "../bases";
 import { catalystBase, getJSON, signedGetJSON } from "../client";
 import type { GetOptions } from "../client";
 import { apiOkOf } from "../envelope";
@@ -100,6 +101,7 @@ export const NOTIFICATION_GROUPS: Group[] = [
     label: "Marketplace",
     types: [
       "item_sold",
+      "item_discounted",
       "bid_accepted",
       "bid_received",
       "royalties_earned",
@@ -161,6 +163,9 @@ export const NOTIFICATION_GROUPS: Group[] = [
 
 type WriteChannel = { email: boolean; in_app: boolean };
 
+/** The node nests the notifications routes under `/notifications`; nothing serves a root `/subscription`. */
+export const SUBSCRIPTION_PATH = `${NOTIFICATIONS_PREFIX}/subscription`;
+
 const UNREADABLE_SETTINGS_MESSAGE =
   "We couldn't read your current notification settings, so nothing was changed. Try again in a moment.";
 
@@ -171,7 +176,7 @@ export function buildSubscriptionCommit(
     const identity = typeof identitySource === "function" ? identitySource() : identitySource;
     if (!identity) throw new Error("Sign in to manage email notifications.");
 
-    const current = await signedGetJSON<unknown>("/subscription", {
+    const current = await signedGetJSON<unknown>(SUBSCRIPTION_PATH, {
       identity,
       signal,
     });
@@ -207,13 +212,15 @@ export function buildSubscriptionCommit(
       message_type: messageType,
     };
 
-    const res = await signedFetch(identity, `${catalystBase()}/subscription`, {
+    const res = await signedFetch(identity, `${catalystBase()}${SUBSCRIPTION_PATH}`, {
       method: "PUT",
       metadata: {},
       headers: { accept: "application/json", "content-type": "application/json" },
       body: JSON.stringify(body),
       signal,
     });
+    // The reply is not used; release it so the connection is not held until garbage collection.
+    await res.body?.cancel();
     if (!res.ok) {
       throw new Error(`Subscription update returned ${res.status}.`);
     }

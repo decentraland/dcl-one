@@ -28,9 +28,12 @@ import { Color4, Vector3 } from '@dcl/sdk/math'
 import { getPlayer, onEnterScene, onLeaveScene } from '@dcl/sdk/players'
 import { ReactEcsRenderer } from '@dcl/sdk/react-ecs'
 import type { Entity } from '@dcl/ecs'
-import { isSpeaking } from './voice'
+import { isSpeaking, isSpeakingInCall } from './voice'
+import { isHushed } from './nearbyMutes'
 import { fetchProfile } from './profile'
-import { userNameColor } from '../../../src/engine/nameColor'
+import { BevyApi } from '../bevy-api'
+import { relay } from '../system-helpers'
+import { userNameColor } from '@explorer-core/engine/nameColor'
 
 // unity-explorer colours (CommonStyles.uss): solid pill + border, white-40% wallet id.
 const PILL_BG = Color4.create(22 / 255, 21 / 255, 24 / 255, 1) // --dcl-color-shadow #161518
@@ -81,6 +84,17 @@ function VoiceBadge(): ReactEcs.JSX.Element {
     </UiEntity>
   )
 }
+// Takes the speaking badge's place for a player whose nearby voice the user muted.
+const HUSHED_RED = Color4.fromHexString('#FF2D55FF')
+
+function HushedBadge(): ReactEcs.JSX.Element {
+  return (
+    <UiEntity
+      uiTransform={{ width: BADGE, height: BADGE, margin: { left: GAP } }}
+      uiBackground={{ textureMode: 'stretch', texture: { src: 'images/icon-hushed.png' }, color: HUSHED_RED }}
+    />
+  )
+}
 const BORDER = 2
 
 // FIXED world size for the pill — the previous SDK scene used a constant (2,1,1) scale and never
@@ -113,15 +127,22 @@ const MSG_GAP = 2
 const MSG_TRUNCATE = 100
 const MENTION_BORDER = Color4.create(1, 45 / 255, 85 / 255, 1) // brand #ff2d55
 const TRANSLATED_ICON = 26 // beside a message the HUD translated
+// A community message's bubble names the community on a row ABOVE the name: 12px to the name's
+// 16px, white at 70%, upper-left, one line. The SDK's text has no ellipsis, so the name is cut
+// by length.
+const COMMUNITY_FONT = Math.round((FONT * 12) / 16)
+const COMMUNITY_COLOR = Color4.create(1, 1, 1, 0.7)
+const COMMUNITY_TRUNCATE = 28
 
-type Bubble = { message: string; mention: boolean; ttl: number; messageId: string; translated: boolean }
+type Bubble = { message: string; mention: boolean; ttl: number; messageId: string; translated: boolean; community?: string }
 const bubbles = new Map<string, Bubble>() // lowercased address → its live bubble
 
-/** Show (or refresh) a player's chat bubble. Called by the chat domain for each incoming message. */
-export function setChatBubble(address: string, message: string, mention: boolean, messageId: string): void {
+/** Show (or refresh) a player's chat bubble. Called by the chat domain for each incoming message;
+ *  `community` names the community a community message was said in. */
+export function setChatBubble(address: string, message: string, mention: boolean, messageId: string, community?: string): void {
   const text = message.trim()
   if (address === '' || text === '') return
-  bubbles.set(address.toLowerCase(), { message: text, mention, ttl: BUBBLE_TTL, messageId, translated: false })
+  bubbles.set(address.toLowerCase(), { message: text, mention, ttl: BUBBLE_TTL, messageId, translated: false, community })
 }
 
 /** Show a bubble's message in other words (its translation) and start its time again, if it is still
@@ -177,11 +198,26 @@ function nameColor(userId: string, name: string, claimed: boolean): Color4 {
 // it resolves so the badge / discriminator don't flicker on first sight.
 const claimedCache = new Map<string, { name: string; claimed: boolean }>()
 const pendingClaimed = new Map<string, string>()
+// Bumped when the engine reports a new profile version for a player: their next frame re-reads it,
+// so a colour change (which keeps the same name) reaches the tag too. A read started before the
+// bump is dropped, as it may hold the previous colour.
+const profileGeneration = new Map<string, number>()
+function forgetProfile(address: string): void {
+  const key = canon(address)
+  profileGeneration.set(key, (profileGeneration.get(key) ?? 0) + 1)
+  for (const userId of [...claimedCache.keys(), ...pendingClaimed.keys()]) {
+    if (canon(userId) !== key) continue
+    claimedCache.delete(userId)
+    pendingClaimed.delete(userId)
+  }
+}
 function resolveClaimed(userId: string, name: string): void {
   if (claimedCache.get(userId)?.name === name || pendingClaimed.get(userId) === name) return
   pendingClaimed.set(userId, name)
+  const generation = profileGeneration.get(canon(userId)) ?? 0
   fetchProfile(userId)
     .then((av) => {
+      if ((profileGeneration.get(canon(userId)) ?? 0) !== generation) return
       const claimed = av?.hasClaimedName ?? !name.includes('#')
       claimedCache.set(userId, { name, claimed })
       const nc = av?.nameColor
@@ -190,7 +226,9 @@ function resolveClaimed(userId: string, name: string): void {
     })
     // Settle on the heuristic rather than leave the entry empty: Tag asks every frame, so an
     // unresolvable profile would otherwise be re-requested every frame.
-    .catch(() => claimedCache.set(userId, { name, claimed: !name.includes('#') }))
+    .catch(() => {
+      if ((profileGeneration.get(canon(userId)) ?? 0) === generation) claimedCache.set(userId, { name, claimed: !name.includes('#') })
+    })
     .finally(() => {
       if (pendingClaimed.get(userId) === name) pendingClaimed.delete(userId)
     })
@@ -233,6 +271,12 @@ function tagElement(userId: string): () => ReactEcs.JSX.Element | null {
           }}
           uiBackground={{ color: PILL_BG }}
         >
+          {bubble?.community != null && (
+            <UiEntity
+              uiTransform={{ alignSelf: 'flex-start', maxWidth: BUBBLE_MAX_W }}
+              uiText={{ value: truncateMessage(bubble.community, COMMUNITY_TRUNCATE), fontSize: COMMUNITY_FONT, color: COMMUNITY_COLOR, textAlign: 'top-left' }}
+            />
+          )}
           <UiEntity uiTransform={{ flexDirection: 'row', alignItems: 'center' }}>
             <UiEntity uiText={{ value, fontSize: FONT, color: nameColor(userId, name, isClaimed), textAlign: 'middle-center' }} />
             {isClaimed && (
@@ -241,7 +285,7 @@ function tagElement(userId: string): () => ReactEcs.JSX.Element | null {
                 uiBackground={{ textureMode: 'stretch', texture: { src: 'images/icon-verified.png' } }}
               />
             )}
-            {isSpeaking(userId) && <VoiceBadge />}
+            {isSpeaking(userId) && (isHushed(userId) && !isSpeakingInCall(userId) ? <HushedBadge /> : <VoiceBadge />)}
           </UiEntity>
           {bubble != null && (
             <UiEntity uiTransform={{ flexDirection: 'row', alignItems: 'center', margin: { top: MSG_GAP } }}>
@@ -327,6 +371,9 @@ const initFlag = globalThis as { __bevyNametagsStarted?: boolean }
 export function initNametags(): void {
   if (initFlag.__bevyNametagsStarted === true) return // never stack the systems twice
   initFlag.__bevyNametagsStarted = true
+  // Any player's profile changing (yours included, e.g. a name colour picked on the passport)
+  // makes their tag re-read it.
+  relay('nametagProfile', async () => await BevyApi.getProfileChangedStream(), (ev) => forgetProfile(ev.address))
   console.log('[nametags] BUILD=pool+showhide+self')
 
   // THE POOL: one entity per wallet, created on first sight and kept FOREVER (never destroyed — entity
@@ -449,7 +496,8 @@ export function initNametags(): void {
     const present = new Set<string>()
     for (const [, data] of engine.getEntitiesWith(PlayerIdentityData)) if (data.address !== '') present.add(canon(data.address))
     if (meKey != null) present.add(meKey) // our own avatar is always present (no PlayerIdentityData for self)
-    for (const key of [...shown]) {
+    const shownKeys = [...shown]
+    for (const key of shownKeys) {
       if (present.has(key)) { absent.set(key, 0) }
       else {
         const n = (absent.get(key) ?? 0) + 1

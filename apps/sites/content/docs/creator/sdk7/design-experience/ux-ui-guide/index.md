@@ -108,11 +108,11 @@ TouchScreenControls.hideAll()
 TouchScreenControls.hideJoystick()
 
 // restore them when the panel closes
-TouchScreenControls.showAll()
+TouchScreenControls.showDefault()
 TouchScreenControls.showJoystick()
 ```
 
-These helpers do nothing on desktop, so you can call them unconditionally. See [On-screen Controls](/docs/creator/sdk7/interactivity/touch-screen-controls/).
+`showDefault()` puts back the set a scene starts with: jump, pointer and primary. Use `showAll()` only if your scene really wants all eight buttons on screen. Both need SDK 7.32.0 or later; on older SDKs all eight buttons show by default and `showAll()` is the only restore. These helpers do nothing on desktop, so you can call them unconditionally. See [On-screen Controls](/docs/creator/sdk7/interactivity/touch-screen-controls/).
 
 Always keep a grid in mind and use it as your main criteria when spatially organizing your UI. If you are working on a scene where a HUD is needed, you can start by putting all the consumables together (e.g. currency, food, life), and on the other side stockables such as tools or weapons. Try to be consistent about the grid metrics and padding. Make the feedback for every player action clear.
 
@@ -170,6 +170,14 @@ Use motion to provide feedback and lead the way when needed. Motion helps player
 
 <figure><img src="/docs/creator/images/media/ux-glow.webp" alt="Adding glow" width="300"><figcaption><p>Use particles, scale, or fading margins to make things stand out</p></figcaption></figure>
 
+#### Avoid flashing effects
+
+Flashing lights, strobes and fast brightness or color changes can trigger seizures in people with photosensitive epilepsy. This includes pulsing emissive materials, flickering lights, full-screen UI flashes and videos.
+
+* Keep any flashing to **3 flashes per second or fewer**, following the [WCAG "Three Flashes or Below Threshold"](https://www.w3.org/WAI/WCAG22/Understanding/three-flashes-or-below-threshold.html) guideline.
+* Keep flashing areas small, and avoid saturated red and large, high-contrast flashes that fill the screen.
+* If your scene relies on intense effects, like club strobes, lightning or damage flashes, add an option in the scene to turn them off or tone them down.
+
 ### Writing and content structure
 
 UI text can make interfaces more usable and gives players more confidence in their actions. Always make UI text as concise as possible. Players are there to play, not to read. Any text that seems too long won’t be read by most players.
@@ -202,3 +210,5 @@ Make sure players can tell which objects are interactive and which aren't. When 
 ### 3rd person camera
 
 Players can switch between 1st and 3rd person camera at any time by hitting the ‘V’ key. Design your scene so interactions work comfortably in both modes: for example, small click targets are harder to hit in 3rd person. Your scene can read the player's current camera mode, or force a specific one in an area, see [Camera](/docs/creator/sdk7/3d-essentials/camera/).
+
+The 3rd person camera also changes how big a room needs to be. Interiors built at real-world dimensions feel cramped on screen, see [Build interiors larger than real life](/docs/creator/sdk7/design-experience/design-games/#build-interiors-larger-than-real-life).

@@ -8,6 +8,11 @@ const Color3Schema = z
 
 const nullableStr = z.string().nullish();
 
+// Lambdas sends these unset Avatar fields as an explicit null;
+// reading null as undefined keeps their optional types. The key stays present.
+const absentWhenNull = <T extends z.ZodType>(schema: T) =>
+  schema.nullish().transform((v) => v ?? undefined).optional();
+
 const LinkSchema = z.object({
   title: nullableStr,
   url: nullableStr,
@@ -22,10 +27,9 @@ const AvatarInfoSchema = z
     hair: z.object({ color: Color3Schema.required() }).nullish(),
     eyes: z.object({ color: Color3Schema.required() }).nullish(),
     wearables: z.array(z.string()).nullish(),
-    snapshots: z
-      .object({ face256: z.string().optional(), body: z.string().optional() })
-      .passthrough()
-      .optional(),
+    snapshots: absentWhenNull(
+      z.object({ face256: z.string().optional(), body: z.string().optional() }).passthrough(),
+    ),
   })
   .passthrough();
 
@@ -35,19 +39,19 @@ export const AvatarSchema = z
   .object({
     name: nullableStr,
     hasClaimedName: z.boolean().nullish(),
-    nameColor: z.union([Color3Schema, z.string()]).optional(),
+    nameColor: absentWhenNull(z.union([Color3Schema, z.string()])),
     description: nullableStr,
-    links: z.array(LinkSchema).optional(),
-    country: z.string().optional(),
-    gender: z.string().optional(),
-    pronouns: z.string().optional(),
-    relationshipStatus: z.string().optional(),
-    sexualOrientation: z.string().optional(),
-    language: z.string().optional(),
-    profession: z.string().optional(),
+    links: absentWhenNull(z.array(LinkSchema)),
+    country: nullableStr,
+    gender: nullableStr,
+    pronouns: nullableStr,
+    relationshipStatus: nullableStr,
+    sexualOrientation: nullableStr,
+    language: nullableStr,
+    profession: nullableStr,
     birthdate: z.number().nullish(),
-    realName: z.string().optional(),
-    hobbies: z.string().optional(),
+    realName: nullableStr,
+    hobbies: nullableStr,
     ethAddress: z.string().optional(),
     userId: z.string().optional(),
     avatar: AvatarInfoSchema.optional(),

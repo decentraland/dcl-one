@@ -397,7 +397,7 @@ impl Credits {
             format!("credit-used:{}:{}:{}", c.salt, c.block_number, c.log_index)
         };
         let spent = match self
-            .spend_in_tx(&mut tx, &address, &amount, &key, Some(&key))
+            .settle_in_tx(&mut tx, &address, &amount, &key, Some(&key))
             .await
         {
             Ok(spent) => spent,
@@ -664,10 +664,63 @@ impl Revoker {
     }
 }
 
+/// How often the settlement job reports the processing orders past
+/// [`super::orders::REPORT_PROCESSING_AFTER`]: daily, not on every pass.
+pub(super) const REPORT_STALE_PROCESSING_EVERY: Duration = Duration::from_secs(24 * 3600);
+
+/// The settlement job's report of processing orders that outlived their
+/// payment's delay: an error log, at most once per `every`, so the order
+/// nothing else will move reaches a person without a line every pass. The
+/// limit is held in memory, per process: a restart, or another replica
+/// taking over the job's lease, reports again at its first pass.
+#[derive(Default)]
+pub(super) struct StaleProcessingReport {
+    last: std::sync::Mutex<Option<std::time::Instant>>,
+}
+
+impl StaleProcessingReport {
+    /// What it counted when the report was due and the count succeeded;
+    /// `None` when it was not due yet, or the count failed (retried next pass).
+    pub(super) async fn run(
+        &self,
+        credits: &Credits,
+        every: Duration,
+    ) -> Option<super::orders::StaleProcessing> {
+        let due = {
+            let last = self.last.lock().unwrap_or_else(|e| e.into_inner());
+            last.is_none_or(|at| at.elapsed() >= every)
+        };
+        if !due {
+            return None;
+        }
+        let stale = match credits
+            .stale_processing_orders(super::orders::REPORT_PROCESSING_AFTER)
+            .await
+        {
+            Ok(stale) => stale,
+            Err(e) => {
+                tracing::warn!(error = %e, "could not count the pack orders still processing");
+                return None;
+            }
+        };
+        *self.last.lock().unwrap_or_else(|e| e.into_inner()) = Some(std::time::Instant::now());
+        if stale.count > 0 {
+            tracing::error!(
+                count = stale.count,
+                oldest_order = stale.oldest_order.as_deref().unwrap_or(""),
+                "pack orders still processing long after their session completed: their payment's outcome event was likely lost; check each payment at Stripe"
+            );
+        }
+        Some(stale)
+    }
+}
+
 /// The `credits-settlement` job: every `interval`, the pack-order abandon
 /// sweep and, with a revoker, the revocation pass; both write local
 /// authority, so neither runs while `OPS_WRITES_ENABLED` is off, and a pass
-/// is skipped while the restore stamps hold the operator plane.
+/// is skipped while the restore stamps hold the operator plane. Each pass
+/// also reports, daily, the processing orders nothing moved
+/// ([`settlement_job_pass`]).
 pub fn spawn_settlement_job(
     jobs: &Jobs,
     credits: Credits,
@@ -687,6 +740,7 @@ pub fn spawn_settlement_job(
         );
     }
     let gate = Arc::new(PassGate::new(JOB_NAME, ops_refusal));
+    let report = Arc::new(StaleProcessingReport::default());
     jobs.spawn_periodic_leased(
         JOB_NAME,
         PeriodicCfg::every(interval)
@@ -696,19 +750,41 @@ pub fn spawn_settlement_job(
             let credits = credits.clone();
             let revoker = revoker.clone();
             let gate = gate.clone();
+            let report = report.clone();
             async move {
-                settlement_pass(
+                settlement_job_pass(
                     &credits,
                     revoker.as_deref(),
                     &gate,
                     writes_enabled,
                     Some(&ctx),
+                    &report,
                 )
                 .await
                 .map(|_| ())
             }
         },
     );
+}
+
+/// One pass of the settlement job: [`settlement_pass`], then the daily
+/// report. The report only reads, so a pass that failed (its sweep, or its
+/// revocations) still runs it: an order stuck processing is not silenced by
+/// another failure. A pass the restore stamps held skips it, as it skips
+/// every write: this node does not speak for the ledger yet.
+pub(super) async fn settlement_job_pass(
+    credits: &Credits,
+    revoker: Option<&Revoker>,
+    gate: &PassGate,
+    writes_enabled: bool,
+    ctx: Option<&JobContext>,
+    report: &StaleProcessingReport,
+) -> anyhow::Result<bool> {
+    let ran = settlement_pass(credits, revoker, gate, writes_enabled, ctx).await;
+    if !matches!(ran, Ok(false)) {
+        report.run(credits, REPORT_STALE_PROCESSING_EVERY).await;
+    }
+    ran
 }
 
 /// One settlement pass; `false` when `gate` held it and nothing was written.

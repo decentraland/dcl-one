@@ -46,8 +46,8 @@ signature.
 **On web, the HUD never touches `localStorage`.** The app page and the sandbox workers share an
 origin with the shell page that holds the key. The first `localStorage` read loads the origin's
 whole storage area into the app process, where scene code runs. `app.html` throws on any access
-in shell mode; HUD preferences go through `src/lib/prefs.ts` (IndexedDB). Only the shell
-(`src/shell/main.ts` and the sign-in code it owns) may read it. The same reasoning applies to
+in shell mode; HUD preferences go through `library/explorer-core/lib/prefs.ts` (IndexedDB). Only the shell
+(each host's shell, such as `react-web/src/shell/main.ts`, and the sign-in code it owns) may read it. The same reasoning applies to
 anything secret: it must not be in the app process at all.
 
 **On native, never `Path::join` or `PathBuf::push` with a component from outside.** Content
@@ -66,6 +66,34 @@ system scene. A capability the server can never legitimately use (opening a URL,
 clipboard, anything that touches the host OS or a page) must be excluded from the headless build
 at code level, not merely denied by the permissions table: a config-driven deny is one edit away
 from being an allow. The scene promise still gets answered, with a denial.
+
+**On the scene server every hosted scene is a portable.** `reconcile_scene_rooms` (in
+`src/bin/headless.rs`) re-inserts any wanted scene missing from `PortableScenes`, so a
+scene-callable path that adds or removes portables (`spawn`, `kill`, `exit`) refuses in
+`server_mode()` and answers the promise with a denial; otherwise a tenant scene restarts itself
+in a loop on the shared engine.
+
+**Every scene asks through one permission path: the stored rules, then the per-use prompt.**
+A new kind of scene or portable (a smart wearable, say) resolves there too, with no gate that
+answers first from a manifest or an up-front grant; the per-use prompt shows the player what is
+asked each time. Fetch and WebSocket go through that path on native, where `dcl_deno` asks
+`Fetch` and `Websocket` per use (`crates/dcl_deno/src/js/fetch/mod.rs`,
+`crates/dcl_deno/src/js/websocket.rs`); on web they are deliberately ungated, because scene code
+there can always reach the page's raw `fetch`, so a check on them would be bypassable.
+
+## Network capabilities
+
+Use the existing engine-assigned scene identity and the transport's Rust address policy when
+granting scene network access. Verify that the dialled addresses are checked, including
+addresses selected after a redirect where the transport follows redirects. Keep link-local
+and metadata addresses blocked. State the scope for each transport and platform in the
+[running guide](running.md).
+
+For signed service routing, verify the path the destination actually checks against the real
+proxy rewrite. Reject paths whose interpretation can shift the request to another service
+during URL normalisation or proxy decoding. Validate untrusted path parameters as single
+segments before building the URI. Backends may trust a forwarded path only on a connection
+from a trusted proxy that overwrites the client-supplied header.
 
 ## Scene signed fetch
 

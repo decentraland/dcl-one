@@ -1,0 +1,301 @@
+/* ShopItemCard — the design system's ExplorerShopCard. A 203px dark card (Transparencies/Black 40,
+   radius/lg) holds the ItemCard thumbnail and the info below it. --rarity / --rarity-light (from
+   data-rarity, tokens.css: the design system's Rarities) tint the glow, the shine, the flap and the label.
+   The ring sits 4px off the card, 4px wide, as the component's 8px frame draws it on hover and selection. */
+.card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  border-radius: var(--r-lg);
+  background: var(--black-40);
+  /* The thumbnail and the info are clipped to the card's radius; the ring is the ::after, outside it. */
+  isolation: isolate;
+}
+.card::after {
+  content: '';
+  position: absolute;
+  inset: -8px;
+  z-index: 3;
+  padding: 4px;
+  border-radius: var(--r-xl);
+  background: linear-gradient(180deg, var(--brand) 0%, var(--lavender) 100%);
+  mask: linear-gradient(var(--black) 0 0) content-box, linear-gradient(var(--black) 0 0);
+  mask-composite: exclude;
+  -webkit-mask-composite: xor;
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease-out);
+  pointer-events: none;
+}
+.card:hover::after,
+.card:has(:focus-visible)::after,
+.selected::after {
+  opacity: 1;
+}
+
+/* The whole tile selects; the actions sit above it. */
+.hit {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  padding: 0;
+  border: none;
+  border-radius: var(--r-lg);
+  background: none;
+  cursor: pointer;
+}
+.hit:focus-visible {
+  outline: none;
+}
+
+/* ItemCard: Brand/Purple under two radial glows, the rarity's Light from the top left and the rarity from
+   the bottom right (exotic uses its Light for both), and a 2.5px shine border of the Light on the rim. */
+.thumb {
+  --glow: var(--rarity);
+  position: relative;
+  z-index: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  aspect-ratio: 1;
+  overflow: hidden;
+  border-radius: var(--r-lg);
+  background:
+    radial-gradient(78% 78% at 8% 4%, var(--rarity-light) 0%, transparent 100%),
+    radial-gradient(100% 100% at 70% 68%, var(--glow) 0%, transparent 100%),
+    var(--brand-purple);
+}
+[data-rarity='exotic'] > .thumb {
+  --glow: var(--rarity-light);
+}
+.thumb::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  padding: 2.5px;
+  border-radius: inherit;
+  background: conic-gradient(
+    from 220.7deg at 52.74% 52.49%,
+    var(--rarity-light) 0deg,
+    transparent 131.44deg,
+    transparent 154.86deg,
+    var(--rarity-light) 180deg,
+    color-mix(in srgb, var(--rarity-light) 50%, transparent) 218.62deg,
+    color-mix(in srgb, var(--rarity-light) 50%, transparent) 308.73deg,
+    var(--rarity-light) 360deg
+  );
+  mask: linear-gradient(var(--black) 0 0) content-box, linear-gradient(var(--black) 0 0);
+  mask-composite: exclude;
+  -webkit-mask-composite: xor;
+  pointer-events: none;
+}
+.image {
+  width: 92%;
+  height: 92%;
+  object-fit: contain;
+  pointer-events: none;
+}
+/* The CategoryFlap: the rarity's solid corner (45×45, its diagonal rounded at both ends) with its 20%
+   Shadow along that edge, and the category glyph 4px in. It keeps its size in its corner. */
+.flap {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 3;
+  width: 45.28px;
+  height: 45.12px;
+  padding: 4px 0 0 4px;
+  color: var(--ink-95);
+}
+.flap::before,
+.flap::after {
+  content: '';
+  position: absolute;
+  pointer-events: none;
+}
+.flap::before {
+  inset: 0;
+  background: var(--rarity);
+  mask: url('../../../assets/shop/card/flap.svg') no-repeat 0 0 / 100% 100%;
+}
+.flap::after {
+  left: 0;
+  top: 10.17px;
+  width: 29.9px;
+  height: 34.32px;
+  background: url('../../../assets/shop/card/flap-shadow.svg') no-repeat 0 0 / 100% 100%;
+}
+.flapIcon {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  width: 16px;
+  height: 16px;
+}
+.discount {
+  position: absolute;
+  left: 6px;
+  bottom: 6px;
+  z-index: 3;
+  padding: 2px 6px;
+  border-radius: var(--r-sm);
+  background: var(--error-text);
+  color: var(--brand);
+  font-size: var(--type-12);
+  font-weight: var(--fw-semibold);
+}
+
+/* Info: 16px in, 8px between its rows; 113px high, so the card is the design's 316px in every state. */
+.info {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 113px;
+  padding: 16px;
+}
+.name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.5;
+  font-size: var(--type-14);
+  font-weight: var(--fw-semibold);
+  color: var(--text);
+}
+.creator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+/* ProfilePic at 20: Transparencies/White 60 at 1.429px around the snapshot. */
+.face {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border: 1.429px solid var(--ink-6);
+  border-radius: var(--r-pill);
+  background: var(--white-10);
+  object-fit: cover;
+}
+.creatorName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.5;
+  font-size: var(--type-12);
+  color: var(--text);
+}
+.meta,
+.actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+/* RarityLabel: label/xs-caps in the rarity on a 20% tint of it, radius/xs, space/4 × space/8. */
+.rarity {
+  padding: 4px 8px;
+  border-radius: var(--r-xs);
+  background: color-mix(in srgb, var(--rarity) 20%, transparent);
+  color: var(--rarity);
+  line-height: 1.25;
+  letter-spacing: 0.5px;
+  font-size: var(--type-12);
+  font-weight: var(--fw-semibold);
+  text-transform: uppercase;
+}
+/* Price: the 16px coin, 4px, then body/md-strong. */
+.price {
+  display: inline-flex;
+  align-items: center;
+  line-height: 1.5;
+  font-size: var(--type-16);
+  font-weight: var(--fw-semibold);
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.price > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Hover or keyboard focus (a click's focus leaves a selected card as the design draws it): the name stays
+   on top and the actions (40px) sit at the bottom of the same 113px. */
+.actions {
+  position: relative;
+  z-index: 2;
+  display: none;
+  height: 40px;
+}
+.actions > * {
+  flex: 1;
+}
+.hasActions:hover .info,
+.hasActions:has(:focus-visible) .info {
+  justify-content: space-between;
+}
+.hasActions:hover .creator,
+.hasActions:has(:focus-visible) .creator,
+.hasActions:hover .meta,
+.hasActions:has(:focus-visible) .meta {
+  display: none;
+}
+.hasActions:hover .actions,
+.hasActions:has(:focus-visible) .actions {
+  display: flex;
+}
+
+/* Loading: the design's card, the thumbnail and two bars (179×20 and 140×14, radius/full) in the
+   Skeleton's purple: a Brand/Purple band sweeping over Brand/Purple Dark, 1.5s linear, looping. */
+.skeleton {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: var(--r-lg);
+  background: var(--black-40);
+}
+.sheen {
+  background: linear-gradient(90deg, var(--brand-purple-dark) 0%, var(--brand-purple) 50%, var(--brand-purple-dark) 100%);
+  background-size: 300% 100%;
+  animation: skeleton-sweep 1.5s linear infinite;
+}
+.skeletonTile {
+  flex: none;
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: var(--r-lg);
+}
+.skeletonInfo {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 113px;
+  padding: 16px;
+}
+.skeletonBar {
+  flex: none;
+  width: 179px;
+  height: 20px;
+  border-radius: var(--r-pill);
+}
+.skeletonBarShort {
+  width: 140px;
+  height: 14px;
+}
+@keyframes skeleton-sweep {
+  from {
+    background-position-x: 100%;
+  }
+  to {
+    background-position-x: 0%;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sheen {
+    animation: none;
+  }
+}

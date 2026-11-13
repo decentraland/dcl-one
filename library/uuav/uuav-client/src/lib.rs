@@ -1161,15 +1161,11 @@ pub unsafe extern "C" fn uuav_player_open_media_async(
         Err(_) => return ResultFFI::error("url is not valid UTF-8"),
     };
 
-    // new media, new info: drop the cached one until the helper re-announces, and a
-    // presentation failure of the previous media with it (under the video lock, so a render
-    // event still presenting the previous media cannot set it again afterwards)
+    // new media, new info: drop the cached one until the helper re-announces
     if let Some(client) = CLIENT.load().as_ref()
         && let Some(mirror) = client.mirror(player_id)
     {
         mirror.media_info.store(None);
-        let _presenting = mirror.video.lock();
-        mirror.present_failed.store(false, Ordering::Release);
     }
     // buffered audio belongs to the previous media
     clear_jitter_ring(player_id);
@@ -1232,9 +1228,7 @@ pub extern "C" fn uuav_player_state(player_id: PlayerId) -> UUAVState {
         }
         Lifecycle::Failed | Lifecycle::ShutDown => UUAVState::UUAV_ERROR,
         Lifecycle::Running => {
-            if mirror.present_failed.load(Ordering::Acquire) {
-                UUAVState::UUAV_ERROR
-            } else if mirror.awaiting_snapshot.load(Ordering::Acquire)
+            if mirror.awaiting_snapshot.load(Ordering::Acquire)
                 || (mirror.helper_id().is_none() && has_media)
             {
                 // restored/created player the fresh helper has not
@@ -1513,6 +1507,20 @@ pub extern "C" fn uuav_player_get_rate(player_id: PlayerId) -> f64 {
 
 // ---- video -------------------------------------------------------------
 
+pub fn uuav_player_progress(player_id: PlayerId) -> Option<(f64, u64)> {
+    let state = CLIENT.load();
+    let client = state.as_ref()?;
+    let mirror = client.mirror(player_id)?;
+    if client.lifecycle.get() != Lifecycle::Running
+        || mirror.awaiting_snapshot.load(Ordering::Acquire)
+    {
+        return None;
+    }
+    let time = mirror.state.load().as_ref()?.update.media_time?;
+    let frames = mirror.video.lock().ok()?.presented_frames;
+    Some((time, frames))
+}
+
 // The render-event signature: host-agnostic, one `i32` player id
 pub type UUAVRenderEvent = extern "C" fn(event_id: i32);
 
@@ -1535,22 +1543,12 @@ extern "C" fn uuav_render_event(event_id: i32) {
         let Ok(mut video) = mirror.video.lock() else {
             return;
         };
-        let frames_before = video.frames();
         match video.present(&client.unity) {
-            Ok(ack) => {
-                // only a frame that presented ends the failure: a render event with nothing
-                // new to show returns Ok as well
-                if video.frames() != frames_before {
-                    mirror.present_failed.store(false, Ordering::Release);
-                }
-                ack
-            }
+            Ok(ack) => ack,
             Err(e) => {
-                if !mirror.present_failed.swap(true, Ordering::AcqRel) {
-                    client
-                        .sinks
-                        .on_player_error(Some(player_id), &format!("present failed: {e:#}"));
-                }
+                client
+                    .sinks
+                    .on_player_error(Some(player_id), &format!("present failed: {e:#}"));
                 return;
             }
         }
@@ -1590,51 +1588,6 @@ pub unsafe extern "C" fn uuav_player_get_video_texture(
                 .lock()
                 .map_err(|_| "video state is poisoned".to_owned())?
                 .texture_ptr(plane)
-        }),
-    )
-}
-
-/// What the host presents from, read in one call.
-///
-/// The plane pointers of `uuav_player_get_video_texture`, the size the
-/// planes were created for and a count of the frames presented so far. The
-/// size is the decoded frame's, even-rounded; the stream header behind
-/// `uuav_player_get_video_size` can disagree with it on an odd-sized or a
-/// resolution-switching stream, and the planes hold exactly this many
-/// bytes. `frames` stays put while nothing new was published.
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct PresentedVideo {
-    pub plane0: *const c_void,
-    pub plane1: *const c_void,
-    pub width: u32,
-    pub height: u32,
-    pub frames: u64,
-}
-
-// Fails until the first presented frame, like `uuav_player_get_video_texture`.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn uuav_player_get_presented_video(
-    player_id: PlayerId,
-    out_video: *mut PresentedVideo,
-) -> ResultFFI {
-    write_out(
-        out_video,
-        with_mirror(player_id, |_, mirror| {
-            let video = mirror
-                .video
-                .lock()
-                .map_err(|_| "video state is poisoned".to_owned())?;
-            let (width, height) = video
-                .presented_size()
-                .ok_or_else(|| "video texture is not available yet".to_owned())?;
-            Ok(PresentedVideo {
-                plane0: video.texture_ptr(0)?,
-                plane1: video.texture_ptr(1)?,
-                width,
-                height,
-                frames: video.frames(),
-            })
         }),
     )
 }

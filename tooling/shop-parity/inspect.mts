@@ -33,7 +33,8 @@ try {
   await page.goto(new URL(spec ? pagePath(spec, targets) : target, servers.origins[side]).href, { waitUntil: "load" });
   if (spec?.setup) await spec.setup(page, side, targets);
   await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => {});
-  await page.waitForTimeout(1000);
+  if (spec) await page.locator(spec.ready[side]).first().waitFor({ timeout: 20_000 });
+  await page.evaluate(() => document.fonts.ready.then(() => undefined));
   console.log(JSON.stringify(await page.evaluate(expr), null, 1));
 } finally {
   await browser?.close();

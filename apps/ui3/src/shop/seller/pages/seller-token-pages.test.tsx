@@ -1,11 +1,11 @@
-import { act, fireEvent, screen } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import { decodeFunctionData, type Hex } from "viem";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { CHAIN } from "../../model/chain";
-import { BOOK } from "../../payment/fixtures";
+import { CHAIN } from "@shop/model/chain";
+import { BOOK } from "@shop/payment/fixtures";
 import { MANA, nftRow } from "../../market/fixtures";
-import { COLLECTION_V2_ABI, ERC20_ABI, ERC721_ABI, latestOffChainMarketplace, MARKETPLACE_ABI, manaToken } from "../../market/lib/contracts";
+import { COLLECTION_V2_ABI, ERC20_ABI, ERC721_ABI, latestOffChainMarketplace, MARKETPLACE_ABI, manaToken } from "@shop/market/lib/contracts";
 import { createManaListing } from "../../market/lib/trades";
 import { fakeChain, fakeWallet, type FakeRoute } from "../../market/testing";
 import { mountShop } from "../../market/testHarness";
@@ -89,17 +89,17 @@ describe("List a token for sale: a resale, MANA only", () => {
     expect(decodeFunctionData({ abi: MARKETPLACE_ABI, data: decodeFunctionData({ abi: MARKETPLACE_ABI, data: relayed[0]! }).args![1] as Hex }).functionName).toBe("cancelSignature");
   });
 
-  it("strangers and web2 sessions get no form; a node without resales says so", async () => {
+  it("strangers get no form; web2 sessions and a node without resales never reach the page (market/access.tsx)", async () => {
     const wallet = fakeWallet();
     const view = mountShop({ path: `/shop/token/${BOOK.collection}/105313/sell`, who: "web3", wallet, routes: [nfts(nftRow({ tokenId: "105313", name: "x", owner: BOOK.reseller }))] });
     expect(await screen.findByTestId("shop-not-owner")).toBeInTheDocument();
     view.unmount();
     const web2 = mountShop({ path: `/shop/token/${BOOK.collection}/105313/sell`, who: "web2", wallet, routes: [nfts(nftRow({ tokenId: "105313", name: "x", owner: wallet.address }))] });
-    expect(await screen.findByTestId("shop-wallet-required")).toBeInTheDocument();
+    await waitFor(() => expect(web2.router.state.location.pathname).toBe("/shop/overview"));
     web2.unmount();
     setShopCapabilities({ secondarySales: false });
-    mountShop({ path: `/shop/token/${BOOK.collection}/105313/sell`, who: "web3", wallet, routes: [nfts(nftRow({ tokenId: "105313", name: "x", owner: wallet.address }))] });
-    expect(await screen.findByTestId("shop-resales-off")).toBeInTheDocument();
+    const off = mountShop({ path: `/shop/token/${BOOK.collection}/105313/sell`, who: "web3", wallet, routes: [nfts(nftRow({ tokenId: "105313", name: "x", owner: wallet.address }))] });
+    await waitFor(() => expect(off.router.state.location.pathname).toBe("/shop/overview"));
   });
 });
 
@@ -132,11 +132,11 @@ describe("Remove from sale", () => {
     expect(screen.getByRole("button", { name: "Confirm" })).toBeDisabled();
   });
 
-  it("signed out: the Marketplace's sign-in page, on both sell and cancel", async () => {
+  it("signed out, sell and cancel are not drawn: a visitor without a web3 session goes to the overview", async () => {
     const view = mountShop({ path: `/shop/token/${BOOK.collection}/105313/cancel`, who: "signedOut" });
-    expect(await screen.findByTestId("shop-signin-gate")).toHaveTextContent("Get Started");
+    await waitFor(() => expect(view.router.state.location.pathname).toBe("/shop/overview"));
     view.unmount();
-    mountShop({ path: `/shop/token/${BOOK.collection}/105313/sell`, who: "signedOut" });
-    expect(await screen.findByTestId("shop-signin-gate")).toHaveTextContent("Get Started");
+    const sell = mountShop({ path: `/shop/token/${BOOK.collection}/105313/sell`, who: "signedOut" });
+    await waitFor(() => expect(sell.router.state.location.pathname).toBe("/shop/overview"));
   });
 });

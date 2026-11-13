@@ -44,7 +44,7 @@ engine.addSystem(getPlayerPosition)
 
 > [!WARNING]
 > **📔 Note**: Avoid referring to the `engine.PlayerEntity` or the `engine.CameraEntity` on the initial scene loading, because that can result in errors if the entities are not initialized yet. To avoid this problem, use these inside the `main()` function, or on a function indirectly called by `main()`. You can also encapsulate the behavior in an async [`executeTask` block](/docs/creator/sdk7/programming-patterns/async-functions/#the-executetask-function).
-> 
+>
 > Another option is to refer to these entities inside a system. There they will always be available, because the first execution of the system is called once the scene is already properly initialized.
 
 
@@ -65,7 +65,7 @@ for (const [entity, data, transform] of engine.getEntitiesWith(
 
 The code above iterates over all entities with a `Transform` and a `PlayerIdentityData` component, and logs their data. You can use this same method to get any of the available data of all players.
 
-See [Event listeners](/docs/creator/sdk7/interactivity/event-listeners/#player-locks-or-unlocks-cursor) to learn how to detect and react when new players join into the scene.
+See [Event listeners](/docs/creator/sdk7/interactivity/event-listeners/#player-enters-or-leaves-scene) to learn how to detect and react when new players join into the scene.
 
 ## Get player data
 
@@ -247,6 +247,7 @@ Instead of using `getPlayer()`, you can read data directly from a series of comp
   * `skinColor`: Player skin color as a `Color3`
   * `eyesColor`: Player eye color as a `Color3`
   * `hairColor`: Player hair color as a `Color3`
+  * `talking`: _true_ while the player is speaking in voice chat, _false_ when they're silent, _undefined_ when the client reports no voice activity for them. See [Detect when a player is speaking](#detect-when-a-player-is-speaking).
 * `AvatarEquippedData`: The list of equipped wearables and emotes.
   * `wearableUrns`: The list of wearables that the player currently has equipped.
   * `emoteUrns`: The list of emotes that the player currently has equipped in the quick access wheel.
@@ -269,6 +270,49 @@ for (const [entity, data, base, attach, transform] of engine.getEntitiesWith(
 
 > [!WARNING]
 > **📔 Note**: All of these components are read-only. You cannot change their values from the scene.
+
+
+## Detect when a player is speaking
+
+Read `talking` on the `AvatarBase` component to know whether someone is talking in voice chat right now. It works for the player running the scene and for every other player nearby.
+
+```ts
+import { AvatarBase, engine } from '@dcl/sdk/ecs'
+
+// log every time the local player starts or stops speaking
+AvatarBase.onChange(engine.PlayerEntity, (base) => {
+	console.log('talking: ', base?.talking)
+})
+```
+
+`talking` has three states, not two:
+
+| Value | Meaning |
+| --- | --- |
+| `true` | The player is speaking right now. |
+| `false` | The player is not speaking. |
+| `undefined` | The client isn't reporting voice activity for this player, for example because nearby voice chat is off. |
+
+That third state matters: `undefined` means "no data", not "silent". Check for it explicitly rather than treating any non-`true` value as quiet.
+
+```ts
+import { AvatarBase, engine, PlayerIdentityData } from '@dcl/sdk/ecs'
+
+function whoIsSpeaking() {
+	for (const [player, base] of engine.getEntitiesWith(AvatarBase)) {
+		if (base.talking === undefined) continue // no voice data for this player
+		if (base.talking) console.log(`${base.name} is speaking`)
+	}
+}
+
+engine.addSystem(whoIsSpeaking)
+```
+
+To put a marker over a speaking player's head, attach it with [`AvatarAttach`](/docs/creator/sdk7/3d-essentials/entity-positioning/#attach-to-other-players) using the address from `PlayerIdentityData`. Don't parent your entity to the player's entity: that doesn't work, and the marker ends up at the scene origin.
+
+
+> [!WARNING]
+> **📔 Note**: `AvatarBase.talking` reports real voice chat activity and you can't write to it. It is a different thing from `AvatarShape.talking`, which is a flag your scene sets to draw green voice bars next to an [NPC avatar](/docs/creator/sdk7/interactivity/avatars/npc-avatars/) you created.
 
 
 ## Get Portable Experiences
@@ -381,7 +425,7 @@ Knowing the camera mode can be very useful to fine-tune the mechanics of your sc
 
 > [!WARNING]
 > **📔 Note**: Avoid referring to the `engine.CameraEntity` on the initial scene loading, because that can result in errors if the entities are not initialized yet. To avoid this problem, use these inside the `main()` function, or on a function indirectly called by `main()`. You can also encapsulate the behavior in an async [`executeTask` block](/docs/creator/sdk7/programming-patterns/async-functions/#the-executetask-function).
-> 
+>
 > Another option is to refer to this entity inside a system. It will always be available, because the first execution of the system is called once the scene is already properly initialized.
 
 
@@ -407,7 +451,7 @@ You can also force the player's cursor state by writing to the `isPointerLocked`
 
 > [!WARNING]
 > **📔 Note**: Avoid referring to the `engine.CameraEntity` on the initial scene loading, because that can result in errors if the entities are not initialized yet. To avoid this problem, use these inside the `main()` function, or on a function indirectly called by `main()`. You can also encapsulate the behavior in an async [`executeTask` block](/docs/creator/sdk7/programming-patterns/async-functions/#the-executetask-function).
-> 
+>
 > Another option is to refer to the entity inside a system. It will always be available, because the first execution of the system is called once the scene is already properly initialized.
 
 
@@ -433,7 +477,7 @@ engine.addSystem(CursorSystem)
 
 The `PrimaryPointerInfo` component returns an object with the following properties:
 
-* `screenCoordinates`: _(Vector2)_ The position of the cursor in the scene, expressed in pixels. The origin is the bottom left corner of the screen. When the cursor is locked, this reports the center of the screen.
+* `screenCoordinates`: _(Vector2)_ The position of the cursor in the scene, expressed in pixels. The origin is the top left corner of the screen, with `y` growing downwards — the same coordinate space as `UiTransform` and `UiCanvasInformation`. When the cursor is locked, this reports the center of the screen.
 * `screenDelta`: _(Vector2)_ The change in the position of the cursor since the last frame, expressed in pixels. See [Mouse Movement](/docs/creator/sdk7/interactivity/mouse-movement/) for details and examples.
 * `worldRayDirection`: _(Vector3)_ A vector that represents the direction of the ray from the camera to the cursor. The origin is the camera position. Use this to calculate the position of the cursor in the world.
 * `pointerType`: 0 for `none`, 1 for `mouse`

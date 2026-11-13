@@ -110,6 +110,49 @@ pub struct WorldsConfig {
     )]
     pub worlds_personal_world_max_size_bytes: u64,
 
+    /// Parcels a world scene may span unless `worlds.world_limit_overrides` says otherwise.
+    #[arg(long, env = "MAX_PARCELS", default_value_t = 4, value_parser = clap::value_parser!(u32).range(1..))]
+    pub max_parcels: u32,
+
+    /// Publish and own ENS (`*.eth`) worlds, their holder read on chain over ETH_RPC_URL.
+    #[arg(long, env = "ALLOW_ENS_DOMAINS", default_value_t = false, action = clap::ArgAction::Set)]
+    pub allow_ens_domains: bool,
+
+    /// Size cap of an ENS world, MiB, unless `worlds.world_limit_overrides` says otherwise.
+    #[arg(long, env = "ENS_MAX_SIZE", default_value_t = 36, value_parser = clap::value_parser!(u32).range(1..=300))]
+    pub ens_max_size: u32,
+
+    /// Pause between passes of the job that rewrites `worlds.owner` from the name authority.
+    #[arg(
+        long,
+        env = "WORLDS_OWNER_RECONCILE_INTERVAL_SECS",
+        default_value_t = 12 * 3600,
+        value_parser = clap::value_parser!(u64).range(60..)
+    )]
+    pub worlds_owner_reconcile_interval_secs: u64,
+
+    /// Wallets a world's access allow-list may hold (1..=10,000; 0 would refuse every addition).
+    #[arg(
+        long,
+        env = "ACCESS_MAX_WALLETS",
+        default_value_t = 1000,
+        value_parser = clap::value_parser!(u32).range(1..=10_000)
+    )]
+    pub access_max_wallets: u32,
+
+    /// Communities a world's access allow-list may hold (1..=1,000; 0 would refuse every addition).
+    #[arg(
+        long,
+        env = "ACCESS_MAX_COMMUNITIES",
+        default_value_t = 50,
+        value_parser = clap::value_parser!(u32).range(1..=1_000)
+    )]
+    pub access_max_communities: u32,
+
+    /// Entries a deployed entity's `content` may list, at most the 10,000 file parts a deploy may upload.
+    #[arg(long, env = "MAX_FILE_COUNT", default_value_t = 10_000, value_parser = clap::value_parser!(u32).range(1..=10_000))]
+    pub max_file_count: u32,
+
     /// Deploy payload bytes buffered at once across every upload (>= one 350 MiB deploy).
     #[arg(
         long,
@@ -124,6 +167,11 @@ pub struct WorldsConfig {
     #[arg(long, env = "MAX_IN_FLIGHT_UPLOAD_FILES", default_value_t = 40_000)]
     pub max_in_flight_upload_files: u64,
 
+    /// How long a replaced or undeployed world scene stays resolvable for
+    /// scene comms and its content stays out of the blob collector (7 days).
+    #[arg(long, env = "SCENE_EVICTION_TTL_MS", default_value_t = 604_800_000)]
+    pub scene_eviction_ttl_ms: u64,
+
     #[arg(long, env = "MULTIPART_UPLOAD_TIMEOUT_MS", default_value_t = 300_000)]
     pub multipart_upload_timeout_ms: u64,
 
@@ -134,8 +182,47 @@ pub struct WorldsConfig {
     )]
     pub deployment_processing_timeout_ms: u64,
 
+    // PENDING_DEPLOYMENT_TTL, MAX_PENDING_DEPLOYMENTS_PER_DEPLOYER, MAX_PENDING_BYTES_PER_DEPLOYER,
+    // MAX_PENDING_BYTES and MAX_PARTIAL_UPLOAD_BYTES_PER_MINUTE are read from `content`.
+    /// How often expired partial uploads are cleaned up, ms.
+    #[arg(
+        long,
+        env = "PARTIAL_UPLOAD_CLEANUP_INTERVAL_MS",
+        default_value_t = 300_000
+    )]
+    pub partial_upload_cleanup_interval_ms: u64,
+
+    /// Live partial uploads per world; one deployer may hold all but one of them.
+    #[arg(long, env = "MAX_PENDING_DEPLOYMENTS_PER_WORLD", default_value_t = 4)]
+    pub max_pending_deployments_per_world: u64,
+
+    /// Staged content bytes per world, as a multiple of the world's scene size cap.
+    #[arg(long, env = "PENDING_BYTES_PER_WORLD_FACTOR", default_value_t = 2)]
+    pub pending_bytes_per_world_factor: u64,
+
+    /// Staged bytes the live uploads started from one client source may hold
+    /// (>= MAX_PENDING_BYTES_PER_DEPLOYER).
+    #[arg(
+        long,
+        env = "MAX_PENDING_BYTES_PER_SOURCE",
+        default_value_t = 4_294_967_296
+    )]
+    pub max_pending_bytes_per_source: u64,
+
+    /// How long a completed partial upload answers its retried final batch, ms.
+    #[arg(long, env = "COMPLETED_UPLOAD_TTL", default_value_t = 86_400_000)]
+    pub completed_upload_ttl: u64,
+
+    /// The Builder whose `/worlds?tab=dcl` page world notifications link to.
+    #[arg(
+        long,
+        env = "BUILDER_URL",
+        default_value = "https://decentraland.org/builder"
+    )]
+    pub builder_url: String,
+
     /// 64 hex characters (or ENCRYPTION_KEY_FILE): the AES-256-GCM key of the
-    /// env values; unset, the `/env` routes answer 503 and the rest serve.
+    /// env values. Required: `serve` refuses to start without it.
     #[arg(long, env = "ENCRYPTION_KEY", hide_env_values = true)]
     pub encryption_key: Option<String>,
 
@@ -143,10 +230,11 @@ pub struct WorldsConfig {
     #[arg(long, env = "AUTHORIZED_ADDRESSES", default_value = "")]
     pub authorized_addresses: String,
 
-    /// The per-process storage memo, disabled by default on every node.
-    /// Enable only with a single storage-serving process; no cross-process invalidation exists.
-    #[arg(long, env = "STORAGE_CACHE_ENABLED", action = clap::ArgAction::Set)]
-    pub storage_cache_enabled: Option<bool>,
+    /// The per-process LRU of single storage values: on unless exactly
+    /// `false`. Another process's write is seen after at most
+    /// STORAGE_CACHE_TTL_SECONDS (no cross-process invalidation).
+    #[arg(long, env = "STORAGE_CACHE_ENABLED")]
+    pub storage_cache_enabled: Option<String>,
 
     #[arg(long, env = "STORAGE_CACHE_TTL_SECONDS", default_value_t = 60)]
     pub storage_cache_ttl_seconds: u64,
@@ -211,12 +299,21 @@ pub struct WorldsConfig {
     #[arg(long, env = "EXPORT_SCENE_COOLDOWN_SECONDS", default_value_t = 10)]
     pub export_scene_cooldown_seconds: u64,
 
+    /// Seconds from an export's admission before its stream is aborted.
     #[arg(long, env = "EXPORT_TIMEOUT_SECONDS", default_value_t = 120)]
     pub export_timeout_seconds: u64,
 
     /// Cap on an export's raw (uncompressed) bytes.
     #[arg(long, env = "EXPORT_MAX_SIZE_BYTES", default_value_t = 524_288_000)]
     pub export_max_size_bytes: u64,
+
+    /// Milliseconds each export statement may run (`statement_timeout`; 0 disables it).
+    #[arg(
+        long,
+        env = "PG_COMPONENT_STREAM_QUERY_TIMEOUT",
+        default_value_t = 120_000
+    )]
+    pub pg_component_stream_query_timeout: u64,
 
     // worlds/scene_state: the authoritative SDK7 scene host (the old
     // catalyrst-scene-state; V8 isolates in this process).
@@ -339,8 +436,15 @@ pub struct WorldsConfig {
     pub handshake_timeout: u64,
 
     /// The wallet denylist document; unset disarms the external denylist.
+    /// `NODE_POSTURE=mirror` defaults it to Decentraland's, as upstream's
+    /// `DENYLIST_JSON_URL` defaults.
     #[arg(long, env = "DENY_LIST_URL")]
     pub deny_list_url: Option<String>,
+
+    /// Upstream worlds-content-server's name for `DENY_LIST_URL`, read when
+    /// that one is unset or empty.
+    #[arg(long, env = "DENYLIST_JSON_URL", hide = true)]
+    pub denylist_json_url: Option<String>,
 
     /// The NATS broker `serve` (comms' one link) and `catalyst pulse` meet on; unset, no island is ever delivered.
     #[arg(long, env = "NATS_URL")]
@@ -374,9 +478,25 @@ pub struct WorldsConfig {
     #[arg(long, env = "MAX_USERS_PER_WORLD", default_value_t = 100)]
     pub max_users_per_world: i64,
 
+    /// Wrong shared secrets a caller may present per world and minute before the mints answer 429.
+    #[arg(
+        long,
+        env = "SHARED_SECRET_MAX_ATTEMPTS_PER_MINUTE",
+        default_value_t = 3
+    )]
+    pub shared_secret_max_attempts_per_minute: u32,
+
     /// The deployment audience clients sign for /ws/v4; unset leaves the v4 control authority unavailable.
     #[arg(long, env = "ARCHIPELAGO_CONTROL_V4_AUDIENCE")]
     pub archipelago_control_v4_audience: Option<String>,
+}
+
+impl WorldsConfig {
+    /// The wallet denylist document: `DENY_LIST_URL`, else `DENYLIST_JSON_URL`.
+    pub fn deny_list(&self) -> Option<String> {
+        crate::config::Config::non_empty(&self.deny_list_url)
+            .or_else(|| crate::config::Config::non_empty(&self.denylist_json_url))
+    }
 }
 
 /// The worlds federation: the peer file and its caps.
@@ -409,8 +529,9 @@ mod tests {
     }
 
     #[test]
-    fn storage_cache_flag_accepts_explicit_boolean_values() {
-        for (value, expected) in [("true", true), ("false", false)] {
+    fn storage_cache_flag_keeps_any_string_for_the_exact_false_check() {
+        // Upstream reads it as a string; only `false` disables (Settings::resolve).
+        for value in ["true", "false", "off", "0"] {
             let config = parse(&[
                 "catalyst",
                 "--database-url",
@@ -419,18 +540,82 @@ mod tests {
                 value,
             ])
             .unwrap();
-            assert_eq!(config.worlds.storage_cache_enabled, Some(expected));
+            assert_eq!(config.worlds.storage_cache_enabled.as_deref(), Some(value));
         }
-        assert!(
-            parse(&[
-                "catalyst",
-                "--database-url",
-                "postgres://localhost/test",
-                "--storage-cache-enabled",
-                "off"
-            ])
-            .is_err()
+    }
+
+    #[test]
+    fn export_settings_accept_zero_like_upstream() {
+        let config = parse(&[
+            "x",
+            "--database-url",
+            "postgres:///c",
+            "--export-timeout-seconds",
+            "0",
+            "--export-max-concurrent-per-pod",
+            "0",
+            "--pg-component-stream-query-timeout",
+            "0",
+        ])
+        .unwrap();
+        assert_eq!(
+            (
+                config.worlds.export_timeout_seconds,
+                config.worlds.export_max_concurrent_per_pod,
+                config.worlds.pg_component_stream_query_timeout
+            ),
+            (0, 0, 0)
         );
+    }
+
+    #[test]
+    fn max_file_count_is_capped_at_the_deploy_file_parts() {
+        let with = |v: &str| {
+            parse(&[
+                "x",
+                "--database-url",
+                "postgres:///c",
+                "--max-file-count",
+                v,
+            ])
+        };
+        assert_eq!(with("10000").unwrap().worlds.max_file_count, 10_000);
+        assert!(with("10001").is_err());
+        assert!(with("0").is_err());
+    }
+
+    #[test]
+    fn access_allow_list_caps_keep_the_upstream_defaults_within_a_range() {
+        let with = |flag: &str, v: &str| parse(&["x", "--database-url", "postgres:///c", flag, v]);
+        let defaults = parse(&["x", "--database-url", "postgres:///c"]).unwrap();
+        assert_eq!(
+            (
+                defaults.worlds.access_max_wallets,
+                defaults.worlds.access_max_communities
+            ),
+            (1000, 50)
+        );
+        assert_eq!(
+            with("--access-max-wallets", "10000")
+                .unwrap()
+                .worlds
+                .access_max_wallets,
+            10_000
+        );
+        assert_eq!(
+            with("--access-max-communities", "1000")
+                .unwrap()
+                .worlds
+                .access_max_communities,
+            1_000
+        );
+        for (flag, over) in [
+            ("--access-max-wallets", "10001"),
+            ("--access-max-communities", "1001"),
+        ] {
+            assert!(with(flag, "0").is_err(), "{flag} 0");
+            assert!(with(flag, over).is_err(), "{flag} {over}");
+        }
     }
 
     #[test]
@@ -462,6 +647,34 @@ mod tests {
                 c.worlds.deployment_processing_timeout_ms
             ),
             (4_294_967_296, 40, 40_000, 300_000, 300_000)
+        );
+        let w = &c.worlds;
+        assert_eq!(
+            (
+                c.content.pending_deployment_ttl_ms,
+                w.partial_upload_cleanup_interval_ms,
+                c.content.max_pending_deployments_per_deployer,
+                w.max_pending_deployments_per_world,
+                w.pending_bytes_per_world_factor,
+                c.content.max_pending_bytes_per_deployer,
+                w.max_pending_bytes_per_source,
+                c.content.max_pending_bytes,
+                c.content.max_partial_upload_bytes_per_minute,
+                w.completed_upload_ttl
+            ),
+            (
+                3_600_000,
+                300_000,
+                10,
+                4,
+                2,
+                1_073_741_824,
+                4_294_967_296,
+                53_687_091_200,
+                536_870_912,
+                86_400_000
+            ),
+            "worlds-content-server's .env.default"
         );
         assert!(c.worlds.encryption_key.is_none());
         assert_eq!(c.worlds.authorized_addresses, "");
@@ -501,9 +714,10 @@ mod tests {
                 c.worlds.export_max_concurrent_per_pod,
                 c.worlds.export_scene_cooldown_seconds,
                 c.worlds.export_timeout_seconds,
-                c.worlds.export_max_size_bytes
+                c.worlds.export_max_size_bytes,
+                c.worlds.pg_component_stream_query_timeout
             ),
-            (1, 5, 10, 120, 524_288_000)
+            (1, 5, 10, 120, 524_288_000, 120_000)
         );
         assert!(
             !c.worlds.scene_host_enabled
@@ -566,7 +780,7 @@ mod tests {
             (60_000, 10_000)
         );
         assert!(
-            c.worlds.deny_list_url.is_none()
+            c.worlds.deny_list().is_none()
                 && c.worlds.nats_url.is_none()
                 && c.worlds.archipelago_control_v4_audience.is_none()
         );

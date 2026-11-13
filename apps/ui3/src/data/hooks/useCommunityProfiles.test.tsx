@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderHook, waitFor } from "@testing-library/react";
-import { afterEach, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, test, vi } from "vitest";
 import { fetchCommunityProfiles, useCommunityProfiles } from "./useCommunityProfiles";
 
 const first = "0x1111111111111111111111111111111111111111";
@@ -33,6 +33,13 @@ test("preserves member rows when profiles are unavailable", async () => {
   expect(result.current[0]).toMatchObject({ memberAddress: first, name: "", profilePictureUrl: "" });
 });
 
+test("keeps a name whose profile leaves its passport fields null, as the Catalyst serves an unfilled one", async () => {
+  const unfilled = { country: null, gender: null, pronouns: null, relationshipStatus: null, sexualOrientation: null, language: null, profession: null, realName: null, hobbies: null };
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify([{ avatars: [{ ethAddress: first, name: "MetaWolf", hasClaimedName: false, ...unfilled }] }])));
+  const profiles = await fetchCommunityProfiles([first]);
+  expect(profiles[first]).toMatchObject({ name: "MetaWolf", claimed: false });
+});
+
 test("reads every profile of a batch even when one carries a null birthdate or an unreadable shape", async () => {
   vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify([
     { avatars: [{ ethAddress: first, name: "First member", birthdate: null }] },
@@ -43,4 +50,18 @@ test("reads every profile of a batch even when one carries a null birthdate or a
   expect(profiles[first]?.name).toBe("First member");
   expect(profiles[second]?.name).toBe("Second member");
   expect(profiles["0x3333333333333333333333333333333333333333"]).toBeUndefined();
+});
+
+describe("when fetching community member profiles", () => {
+  describe("and a member's profile sends links, nameColor and snapshots as null", () => {
+    beforeEach(() => {
+      vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify([
+        { avatars: [{ ethAddress: first, name: "ExampleMember", hasClaimedName: true, links: null, nameColor: null, avatar: { snapshots: null } }] },
+      ])));
+    });
+
+    it("should keep the member's name and claim with no picture", async () => {
+      await expect(fetchCommunityProfiles([first])).resolves.toEqual({ [first]: { name: "ExampleMember", picture: null, claimed: true } });
+    });
+  });
 });

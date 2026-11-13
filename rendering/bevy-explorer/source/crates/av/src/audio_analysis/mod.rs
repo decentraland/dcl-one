@@ -2,8 +2,8 @@
 //! entity plays, written back to the scene whenever a new window of it has been heard, after
 //! unity-explorer's `AudioAnalysisSystem` (`Explorer/Assets/DCL/SDKComponents/AudioAnalysis`).
 //! A clip (`AudioSource`) is analysed from its decoded frames at the instance's position; a
-//! stream (`AudioStream`, the audio of a `VideoPlayer`) from the window the uuav decoder captures
-//! while an analysis sits on the entity. The maths is [`dsp`], the port of the Unity library.
+//! stream (`AudioStream`, the audio of a `VideoPlayer`) from the window the FFmpeg decoder
+//! captures while an analysis sits on the entity. The maths is [`dsp`], the port of the Unity library.
 
 pub mod dsp;
 mod fft;
@@ -54,7 +54,7 @@ impl Plugin for AudioAnalysisPlugin {
         app.add_observer(analysis_removed);
         #[cfg(not(feature = "html"))]
         app.add_systems(PostUpdate, analyse_audio_clips);
-        #[cfg(feature = "uuav")]
+        #[cfg(feature = "ffmpeg")]
         {
             app.add_observer(sinks_inserted::<crate::AudioStream>);
             app.add_observer(sinks_inserted::<crate::VideoPlayer>);
@@ -139,7 +139,7 @@ fn analyse(
 fn analysis_added(
     trigger: Trigger<OnAdd, AudioAnalysis>,
     mut commands: Commands,
-    #[cfg(feature = "uuav")] sinks: Query<(
+    #[cfg(feature = "ffmpeg")] sinks: Query<(
         Option<&crate::AVSinks<crate::AudioStream>>,
         Option<&crate::AVSinks<crate::VideoPlayer>>,
     )>,
@@ -148,7 +148,7 @@ fn analysis_added(
     commands
         .entity(entity)
         .try_insert(AudioAnalysisState::default());
-    #[cfg(feature = "uuav")]
+    #[cfg(feature = "ffmpeg")]
     if let Ok((audio, video)) = sinks.get(entity) {
         set_capture(audio, video, true);
     }
@@ -158,20 +158,20 @@ fn analysis_added(
 fn analysis_removed(
     trigger: Trigger<OnRemove, AudioAnalysis>,
     mut commands: Commands,
-    #[cfg(feature = "uuav")] sinks: Query<(
+    #[cfg(feature = "ffmpeg")] sinks: Query<(
         Option<&crate::AVSinks<crate::AudioStream>>,
         Option<&crate::AVSinks<crate::VideoPlayer>>,
     )>,
 ) {
     let entity = trigger.target();
     commands.entity(entity).try_remove::<AudioAnalysisState>();
-    #[cfg(feature = "uuav")]
+    #[cfg(feature = "ffmpeg")]
     if let Ok((audio, video)) = sinks.get(entity) {
         set_capture(audio, video, false);
     }
 }
 
-#[cfg(feature = "uuav")]
+#[cfg(feature = "ffmpeg")]
 fn set_capture(
     audio: Option<&crate::AVSinks<crate::AudioStream>>,
     video: Option<&crate::AVSinks<crate::VideoPlayer>>,
@@ -191,7 +191,7 @@ fn set_capture(
 
 /// A player's sinks arrived on an entity that already asks for an analysis: capture from the
 /// first chunk.
-#[cfg(feature = "uuav")]
+#[cfg(feature = "ffmpeg")]
 fn sinks_inserted<T: crate::AVPlayer>(
     trigger: Trigger<OnInsert, crate::AVSinks<T>>,
     sinks: Query<&crate::AVSinks<T>, With<AudioAnalysis>>,
@@ -254,8 +254,8 @@ fn analyse_audio_clips(
 }
 
 /// A stream is analysed from the window its decoder captured since the last one, at the
-/// helper's rate; nothing is captured while the player is not playing.
-#[cfg(feature = "uuav")]
+/// stream's own rate; nothing is captured while the player is not playing.
+#[cfg(feature = "ffmpeg")]
 fn analyse_audio_streams<T: crate::AVPlayer>(
     mut analysed: Query<(
         &ContainerEntity,
@@ -270,7 +270,8 @@ fn analyse_audio_streams<T: crate::AVPlayer>(
         let Some(sink) = sinks.audio_sink() else {
             continue;
         };
-        if !sink.capture.take_window(&mut state.window) {
+        let sample_rate = sink.capture.sample_rate();
+        if sample_rate == 0 || !sink.capture.take_window(&mut state.window) {
             continue;
         }
         let Ok(mut context) = scenes.get_mut(container.root) else {
@@ -278,7 +279,7 @@ fn analyse_audio_streams<T: crate::AVPlayer>(
         };
         analyse(
             &mut state,
-            media::SAMPLE_RATE,
+            sample_rate,
             &analysis.0,
             &mut context,
             container.container_id,
@@ -287,7 +288,7 @@ fn analyse_audio_streams<T: crate::AVPlayer>(
 }
 
 /// Whether the entity's player captures for analysis right now, for the debug panel.
-#[cfg(feature = "uuav")]
+#[cfg(feature = "ffmpeg")]
 pub fn capture_enabled(
     audio: Option<&crate::AVSinks<crate::AudioStream>>,
     video: Option<&crate::AVSinks<crate::VideoPlayer>>,

@@ -121,12 +121,12 @@ pub async fn list(
 
 // ── the content lane's routes (`CATALYRST_CONTENT_ADMIN_TOKEN`) ─────────────
 
-fn content_admin(state: &SharedState, headers: &HeaderMap) -> Result<(), Response> {
+fn content_admin(state: &SharedState, headers: &HeaderMap) -> Result<(), Box<Response>> {
     crate::auth::admin_bearer::check(state.settings.admin_token.get(), headers).map_err(|refusal| {
-        json_error(
+        Box::new(json_error(
             StatusCode::from_u16(refusal.http_status()).unwrap_or(StatusCode::FORBIDDEN),
             "Not authorized",
-        )
+        ))
     })
 }
 
@@ -142,7 +142,7 @@ pub async fn get_forward(
     Path(entity_id): Path<String>,
 ) -> Response {
     if let Err(refused) = content_admin(&state, &headers) {
-        return refused;
+        return *refused;
     }
     match status_of(&state.pool, &CONTENT_LANE, &entity_id).await {
         Ok(Some(record)) => Json(record).into_response(),
@@ -161,7 +161,7 @@ pub async fn list_forwards(
     Query(q): Query<ListQuery>,
 ) -> Response {
     if let Err(refused) = content_admin(&state, &headers) {
-        return refused;
+        return *refused;
     }
     let status = match q.status() {
         Ok(status) => status,
@@ -183,7 +183,7 @@ pub async fn retry_forward(
     Path(entity_id): Path<String>,
 ) -> Response {
     if let Err(refused) = content_admin(&state, &headers) {
-        return refused;
+        return *refused;
     }
     if let Some(refused) = crate::writes::refuse_switch(&state) {
         return refused;

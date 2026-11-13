@@ -70,7 +70,7 @@ The skills include the full migration playbook, so the AI will:
 
 Once the migration pass finishes, preview the scene and play through it.
 
-- In the Creator Hub, click **Preview**.
+- In the Creator Hub, click **Play**.
 - From the command line, run `npm run start`.
 
 As you test, look for:

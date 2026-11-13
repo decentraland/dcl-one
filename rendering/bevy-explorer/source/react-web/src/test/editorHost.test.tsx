@@ -1,22 +1,24 @@
+import { expectConsoleOutput } from '@explorer-core/test/console'
 // The scene editor host (features/editorHost): the page offers Create only where an editor is
 // available, loads it only when the Create page opens, and what it hands the editor keeps the
 // engine on a short leash. What it signs for the editor is in editorHostSigning.test.tsx.
 import { describe, it, expect, vi } from 'vitest'
-import { act, render, renderHook, screen } from '@testing-library/react'
-import { ToastHost } from '../design'
+import { act, renderHook, screen } from '@testing-library/react'
+import { ToastHost } from '@hud/design'
 import userEvent from '@testing-library/user-event'
-import { editorOffered, EditorOffered } from '../features/editorHost/config'
-import { CreatePage } from '../features/editorHost/CreatePage'
-import EditorHost, { useEditorHost } from '../features/editorHost/EditorHost'
-import { type DclEditorHostV1, type EditorPackage } from '../features/editorHost/host/host'
-import { editorEntry, editorSource } from '../features/editorHost/source'
-import type { EngineSession } from '../features/session/useEngineSession'
-import { MainMenuShell } from '../features/menu/MainMenuShell'
-import { Sidebar } from '../features/sidebar/Sidebar'
-import { bridgeChannelName, type Envelope } from '../engine/protocol'
+import { editorFeatures, editorOffered, PINNED_EDITOR } from '@explorer-core/features/editorHost/config'
+import { EditorOffered } from '@hud/features/editorHost/EditorOffered'
+import { CreatePage } from '@hud/features/editorHost/CreatePage'
+import EditorHost, { useEditorHost } from '@hud/features/editorHost/EditorHost'
+import { type DclEditorHostV1, type EditorPackage } from '@explorer-core/features/editorHost/host/host'
+import { editorEntry, editorSource } from '@explorer-core/features/editorHost/source'
+import type { EngineSession } from '@hud/features/session/useEngineSession'
+import { MainMenuShell } from '@hud/features/menu/MainMenuShell'
+import { Sidebar } from '@hud/features/sidebar/Sidebar'
+import { bridgeChannelName, type Envelope } from '@explorer-core/engine/protocol'
 import { PAGE_DIR } from '../lib/publicUrl'
-import { pending, sessionId } from '../lib/analytics'
-import { fakeSession } from './harness'
+import { pending, sessionId } from '@explorer-core/lib/analytics'
+import { renderSettled, fakeSession } from '@hud/test/harness'
 
 type HostWindow = Window & {
   __dclEditorHost?: DclEditorHostV1
@@ -38,7 +40,27 @@ describe('editor host', () => {
     ['an untrusted host', 'evil.example'],
     ['a lookalike of an allowed host', 'decentraland.zone.evil.example']
   ])('has no editor on %s', (_, hostname) => {
-    expect(editorOffered(hostname)).toBe(false)
+    expect(editorOffered(hostname, '?editor-features=experimental,advanced')).toBe(false)
+  })
+
+  it('offers the editor on a released host only to an entry url with editor-features=experimental', () => {
+    for (const hostname of ['decentraland.zone', 'decentraland.org']) {
+      expect(editorOffered(hostname, '')).toBe(false)
+      expect(editorOffered(hostname, '?editor')).toBe(false)
+      expect(editorOffered(hostname, '?editor-features=advanced')).toBe(false)
+      expect(editorOffered(hostname, '?editor&editor-features=experimental')).toBe(true)
+      expect(editorOffered(hostname, '?editor-features=advanced,%20experimental')).toBe(true)
+    }
+    expect(editorOffered('localhost', '')).toBe(true)
+  })
+
+  it('reads the features from the entry url, and nothing it does not name', () => {
+    expect(editorFeatures('')).toEqual({ experimental: false, advanced: false })
+    expect(editorFeatures('?editor-features=experimental')).toEqual({ experimental: true, advanced: false })
+    expect(editorFeatures('?editor-features=experimental,advanced')).toEqual({ experimental: true, advanced: true })
+    expect(editorFeatures('?editor-features=advanced-ish&editor=advanced')).toEqual({ experimental: false, advanced: false })
+    // repeated, and in any case
+    expect(editorFeatures('?editor-features=advanced&editor-features=Experimental')).toEqual({ experimental: true, advanced: true })
   })
 
   it('reads the project and the local service overrides from the entry url', async () => {
@@ -107,6 +129,23 @@ describe('editor host', () => {
     expect(asked).toEqual([`${registry}/next`, `${registry}/latest`, `${registry}/latest`, `${registry}/latest`])
   })
 
+  it('runs the pinned version on org: checked against its hash, and no tag from the url', async () => {
+    const asked: string[] = []
+    vi.stubGlobal('fetch', async (url: string) => {
+      asked.push(url)
+      return Response.json({ version: '0.3.17-1.commit-abc1234' })
+    })
+    const source = await editorSource('?editor&editor-tag=next', 'decentraland.org', PAGE_DIR, 'decentraland.org')
+    vi.unstubAllGlobals()
+    expect(asked).toEqual([])
+    expect(source).toMatchObject({
+      base: PINNED_EDITOR!.base,
+      editorJsIntegrity: expect.stringMatching(/^sha384-/),
+      editorSceneEntity: PINNED_EDITOR!.editorSceneEntity
+    })
+    expect(source!.base).toMatch(/^https:\/\/cdn\.jsdelivr\.net\/npm\/@dcl-regenesislabs\/web-editor@\d+\.\d+\.\d+\/$/)
+  })
+
   it('offers Create in the rail and the menu top bar only where an editor is available; both open the Create page', async () => {
     const navigate = vi.fn()
     const s = fakeSession()
@@ -118,11 +157,11 @@ describe('editor host', () => {
         </MainMenuShell>
       </>
     )
-    const plain = render(surfaces)
+    const plain = await renderSettled(surfaces)
     expect(screen.queryAllByRole('button', { name: /Create/ })).toEqual([])
     plain.unmount()
 
-    render(<EditorOffered.Provider value>{surfaces}</EditorOffered.Provider>)
+    await renderSettled(<EditorOffered.Provider value>{surfaces}</EditorOffered.Provider>)
     const [rail, topBar] = screen.getAllByRole('button', { name: /Create/ })
     await userEvent.click(rail)
     expect(s.create.toggle).toHaveBeenCalledTimes(1)
@@ -131,6 +170,7 @@ describe('editor host', () => {
   })
 
   it('loads nothing until the Create page opens; mounts the home in its body, and keeps the engine to preview realms', async () => {
+    expectConsoleOutput('error', [['[create] the editor home failed', new Error('the editor package failed to load')]])
     const synced = vi.fn()
     w.set_url_params = synced
     // the preview realm: no scene server for this scene
@@ -160,7 +200,7 @@ describe('editor host', () => {
         </>
       )
     }
-    const view = render(<Page s={session} />)
+    const view = await renderSettled(<Page s={session} />)
     expect(scripts()).toEqual([])
     expect(w.__dclEditorHost).toBeUndefined()
 
@@ -264,6 +304,8 @@ describe('editor host', () => {
   it("runs an authoritative preview's scene server beside the client, one at a time, until the preview is left", async () => {
     const { result } = renderHook(() => useEditorHost('', session))
     await act(async () => void result.current!.load().catch(() => {}))
+    // an entry url without editor-features: the editor shows the assistant alone
+    expect(host().features).toEqual({ advanced: false })
     const bridge = new BroadcastChannel(bridgeChannelName())
     bridge.onmessage = ({ data }: MessageEvent<Envelope>) => {
       const msg = data.msg
@@ -317,9 +359,9 @@ describe('editor host', () => {
     vi.unstubAllGlobals()
   })
 
-  it('keeps the Create page over the travel back to scenes', () => {
+  it('keeps the Create page over the travel back to scenes', async () => {
     const travelling: EngineSession = { ...session, phase: 'entering', create: { ...session.create, open: true } }
-    render(<EditorHost session={travelling} entrySearch="" onNavigate={vi.fn()} />)
+    await renderSettled(<EditorHost session={travelling} entrySearch="" onNavigate={vi.fn()} />)
     expect(document.getElementById('dcl-editor-home')).toBeInTheDocument()
   })
 })

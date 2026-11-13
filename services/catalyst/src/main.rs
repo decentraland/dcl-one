@@ -4,7 +4,7 @@ use anyhow::Context;
 use clap::{Parser, Subcommand};
 
 use catalyst::config::Config;
-use catalyst::{builder, content, db, explore, http, ops, storage};
+use catalyst::{builder, comms, content, db, explore, http, ops, storage};
 use catalyst_config::posture;
 
 #[cfg(not(target_env = "msvc"))]
@@ -58,6 +58,11 @@ enum Command {
         #[command(subcommand)]
         command: CommunitiesCommand,
     },
+    /// Explore (places, events) operator commands.
+    Explore {
+        #[command(subcommand)]
+        command: ExploreCommand,
+    },
     /// The secrets a self-contained host mints for itself (deploy/README.md, "Secrets").
     Secrets {
         #[command(subcommand)]
@@ -87,6 +92,27 @@ enum PostureCommand {
         #[arg(value_parser = ["mirror", "island", "journey"])]
         name: String,
         keys: Vec<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum ExploreCommand {
+    /// Import upstream's `user_likes` export as the ground truth of the like
+    /// rates: one JSON object a line, as `psql "$OLD_PLACES_DB" -Atc "COPY
+    /// (SELECT row_to_json(l) FROM user_likes l) TO STDOUT"` writes it. Each
+    /// row becomes a like fact with `source = 'upstream'` and its voting
+    /// power at vote time; a wallet that already voted on this node keeps
+    /// its local fact. Each entity is settled and recounted in its own
+    /// transaction, once: a later export adds nothing to a settled entity, so
+    /// export after the old service stops taking votes. A malformed line
+    /// imports nothing. Prints the outcome as JSON. Not behind
+    /// DATA_WRITES_ENABLED: an import is operator data.
+    ImportLikes {
+        #[arg(long, env = "DATABASE_URL", hide_env_values = true)]
+        database_url: String,
+        /// The export; `-` reads standard input.
+        #[arg(long)]
+        file: String,
     },
 }
 
@@ -247,6 +273,13 @@ enum SchemaCommand {
     Migrate {
         #[arg(long, env = "DATABASE_URL", hide_env_values = true)]
         database_url: String,
+        /// On a database one schema version behind, first run the embedded
+        /// release (schemas/releases/v3-private-voice-pending.sql) in the
+        /// same transaction. Refused while any other session is connected
+        /// to the database: stop every writer first. No effect on a database
+        /// already at this binary's version.
+        #[arg(long)]
+        release: bool,
     },
     /// Compare a database with this binary's layout without changing it:
     /// the meta.schema stamp against this binary's identity and version, the
@@ -254,10 +287,15 @@ enum SchemaCommand {
     /// columns missing. Exit 0 when serve can run on it as it is, 3 when
     /// `schema migrate` brings it up to date, 4 when it cannot (no stamp,
     /// another identity or version, a drifted or refused step, a missing
-    /// column no step adds).
+    /// column no step adds), 5 when it is one version behind and
+    /// `schema migrate --release` takes it up once every writer is stopped.
     Status {
         #[arg(long, env = "DATABASE_URL", hide_env_values = true)]
         database_url: String,
+        /// Write the exit code to this file and exit 0 instead, for a
+        /// container without a shell whose next step reads the verdict.
+        #[arg(long)]
+        exit_code_file: Option<PathBuf>,
     },
     /// Print the schema this binary applies (schema/*.sql rendered in name
     /// order), for `psql -f` on a lab database or a diff against another
@@ -273,7 +311,7 @@ enum SchemaCommand {
     /// dev build's with the commit build's before the dev build migrates the
     /// database the two share.
     Layout,
-    /// Print this binary's content write-path functions as idempotent
+    /// Print this binary's content and admission functions as idempotent
     /// `CREATE OR REPLACE FUNCTION` statements, for an administrative role
     /// to apply to a database created before them:
     /// `catalyst schema functions | psql "$ADMIN_DSN"`.
@@ -342,7 +380,11 @@ async fn run() -> anyhow::Result<()> {
             Ok(())
         }
         Command::Schema {
-            command: SchemaCommand::Migrate { database_url },
+            command:
+                SchemaCommand::Migrate {
+                    database_url,
+                    release,
+                },
         } => {
             tracing_subscriber::fmt().with_target(false).init();
             let pool = db::connect_pool(
@@ -354,8 +396,20 @@ async fn run() -> anyhow::Result<()> {
             )
             .await
             .context("connecting to DATABASE_URL")?;
-            let done = catalyst::schema_migrate::migrate(&pool, db::SCHEMA_SQL, db::MIGRATIONS_SQL)
-                .await?;
+            let done = if release {
+                catalyst::schema_migrate::migrate_with_release(
+                    &pool,
+                    db::SCHEMA_SQL,
+                    db::MIGRATIONS_SQL,
+                    db::RELEASE_SQL,
+                )
+                .await?
+            } else {
+                catalyst::schema_migrate::migrate(&pool, db::SCHEMA_SQL, db::MIGRATIONS_SQL).await?
+            };
+            if let Some(version) = done.released {
+                println!("schema migrate: released the database to version {version}");
+            }
             if done.is_empty() {
                 println!("schema migrate: the database has every object of this binary's schema");
             } else {
@@ -375,7 +429,11 @@ async fn run() -> anyhow::Result<()> {
             Ok(())
         }
         Command::Schema {
-            command: SchemaCommand::Status { database_url },
+            command:
+                SchemaCommand::Status {
+                    database_url,
+                    exit_code_file,
+                },
         } => {
             let pool = db::connect_pool(
                 &database_url,
@@ -390,6 +448,11 @@ async fn run() -> anyhow::Result<()> {
                 catalyst::schema_migrate::status(&pool, db::SCHEMA_SQL, db::MIGRATIONS_SQL).await?;
             for line in status.lines() {
                 println!("schema status: {line}");
+            }
+            if let Some(path) = exit_code_file {
+                std::fs::write(&path, format!("{}\n", status.exit_code()))
+                    .with_context(|| format!("writing {}", path.display()))?;
+                return Ok(());
             }
             std::process::exit(status.exit_code());
         }
@@ -416,6 +479,10 @@ async fn run() -> anyhow::Result<()> {
             command: SchemaCommand::Functions,
         } => {
             print!("{}", content::land_publish::content_functions_sql(true));
+            print!(
+                "{}",
+                comms::gatekeeper::admission::functions::social_functions_sql(true)
+            );
             Ok(())
         }
         Command::Builder {
@@ -447,6 +514,33 @@ async fn run() -> anyhow::Result<()> {
             }
         }
         Command::Pulse => catalyst::comms::pulse::run_from_env().await,
+        Command::Explore {
+            command: ExploreCommand::ImportLikes { database_url, file },
+        } => {
+            use std::io::BufRead;
+            tracing_subscriber::fmt().with_target(false).init();
+            let pool = db::connect_pool(
+                &database_url,
+                &db::PoolSettings {
+                    max_connections: 2,
+                    ..Default::default()
+                },
+            )
+            .await
+            .context("connecting to DATABASE_URL")?;
+            db::bootstrap(&pool).await?;
+            let reader: Box<dyn BufRead> = if file == "-" {
+                Box::new(std::io::BufReader::new(std::io::stdin()))
+            } else {
+                Box::new(std::io::BufReader::new(
+                    std::fs::File::open(&file).with_context(|| format!("opening {file}"))?,
+                ))
+            };
+            let out =
+                explore::places::interactions::import_upstream_likes(&pool, reader.lines()).await?;
+            println!("{}", serde_json::to_string(&out)?);
+            Ok(())
+        }
         Command::Communities {
             command:
                 CommunitiesCommand::Mirror {

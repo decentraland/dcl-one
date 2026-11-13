@@ -4,15 +4,12 @@
 // embedding page's to set, never a link's) and this page's own switches — the user-facing ones
 // with a line of doc each so the dialog can show what IS accepted, the internal ones just known.
 
-import { WEB_PARAMS } from '../engine/generated'
-import { ANALYTICS_SESSION_PARAM, isAttributionParam } from './analytics'
+import { AUTH_RETURN_PARAM } from '@explorer-core/features/auth/authReturn'
+import type { AcceptedParam } from '@explorer-core/hostContract'
+import { WEB_PARAMS } from '@explorer-core/engine/generated'
+import { ANALYTICS_SESSION_PARAM, isAttributionParam } from '@explorer-core/lib/analytics'
 
-export interface AcceptedParam {
-  name: string
-  doc: string
-  /** who consumes it: the engine (via the table) or this page */
-  reader: 'engine' | 'page'
-}
+export type { AcceptedParam } from '@explorer-core/hostContract'
 
 // The page's own user-facing params — read by App / bootMode, never handed to the engine.
 const PAGE_PARAMS: Record<string, string> = {
@@ -24,9 +21,6 @@ const PAGE_PARAMS: Record<string, string> = {
 }
 
 const WORLD_NAME = /^[a-z0-9-]+$/
-
-/** On the url the auth site returns to (features/auth/sso): the sign-in just happened. */
-export const AUTH_RETURN_PARAM = 'signedIn'
 
 /** The realm a link names: `realm`, else `world`, a name under `.dcl.eth` given bare or in full.
  *  Anything else as a world (a url, another ens) is no destination. */
@@ -45,14 +39,20 @@ const INTERNAL_PARAMS = [
   'hud',
   'mock',
   'showcase',
+  // `shop=old`: the catalogue page the in-world Shop replaced, while it is retired (`shop=new`, the old
+  // switch, is still accepted)
+  'shop',
   'gate',
   'nogate',
+  // forces the integrated-GPU guide (features/gate/IntegratedGpuGuide.tsx) for a look at it
+  'gpuGuide',
   'bundled',
   'simerror',
   'simhover',
   'previousLogin',
   'perm',
   'worldpw',
+  'mockportables',
   ANALYTICS_SESSION_PARAM,
   AUTH_RETURN_PARAM
 ]

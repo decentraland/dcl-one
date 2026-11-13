@@ -20,7 +20,10 @@ use dcl_component::{
     SceneComponentId,
 };
 use dcl_types::interface::{ComponentPosition, CrdtType};
-use ipfs::ipfs_path::{IpfsPath, IpfsType};
+use ipfs::{
+    ipfs_path::{IpfsPath, IpfsType},
+    IpfsAssetServer,
+};
 
 use crate::{
     asset_preload::AssetLoad,
@@ -64,15 +67,26 @@ pub(crate) struct PreloadedAsset {
 #[derive(Component)]
 pub(crate) struct LoadingPreloadedAsset;
 
+/// A glb an `AssetLoad` holds, by scene and content hash. Avatar animation loads a scene's clips
+/// by content hash, a different asset path from the scene's file path, so it plays a preloaded
+/// clip through this.
+#[derive(Component)]
+pub struct PreloadedGltf {
+    pub scene_hash: String,
+    pub content_hash: String,
+    pub handle: Handle<Gltf>,
+}
+
 fn asset_load_on_insert(
     trigger: Trigger<OnInsert, AssetLoad>,
     mut commands: Commands,
     asset_loads: Query<(&AssetLoad, Option<&ContainerEntity>)>,
     mut renderer_scene_contexts: Query<&mut RendererSceneContext>,
-    asset_server: Res<AssetServer>,
+    ipfas: IpfsAssetServer,
     timestamp: Res<MonotonicTimestamp<PbAssetLoadLoadingState>>,
     no_render_app: Option<Res<NoRenderApp>>,
 ) {
+    let asset_server = ipfas.asset_server();
     let entity = trigger.target();
 
     let Ok((asset_load, maybe_container_entity)) = asset_loads.get(entity) else {
@@ -101,30 +115,33 @@ fn asset_load_on_insert(
         // would strip `include_source` (and the render asset usages) from any
         // GltfContainer sharing the file
         let lower_file_path = file_path.to_lowercase();
+        let mut preloaded = commands.spawn((PreloadedAssetOf(entity), LoadingPreloadedAsset));
         let handle = if lower_file_path.ends_with(".glb") || lower_file_path.ends_with(".gltf") {
-            asset_server
-                .load_with_settings::<Gltf, GltfLoaderSettings>(
-                    PathBuf::from(&ipfs_path),
-                    scene_gltf_loader_settings(
-                        RenderAssetTransferPriority::Priority(0),
-                        no_render_app.is_some(),
-                    ),
-                )
-                .untyped()
+            let gltf = asset_server.load_with_settings::<Gltf, GltfLoaderSettings>(
+                PathBuf::from(&ipfs_path),
+                scene_gltf_loader_settings(
+                    RenderAssetTransferPriority::Priority(0),
+                    no_render_app.is_some(),
+                ),
+            );
+            let content_hash = ipfs_path.hash(&ipfas.ipfs().context.blocking_read());
+            if let Some(content_hash) = content_hash {
+                preloaded.insert(PreloadedGltf {
+                    scene_hash: renderer_scene_context.hash.to_string(),
+                    content_hash,
+                    handle: gltf.clone(),
+                });
+            }
+            gltf.untyped()
         } else {
             asset_server
                 .load_untyped(PathBuf::from(&ipfs_path))
                 .untyped()
         };
-
-        commands.spawn((
-            PreloadedAsset {
-                file_path: file_path.to_owned(),
-                handle,
-            },
-            PreloadedAssetOf(entity),
-            LoadingPreloadedAsset,
-        ));
+        preloaded.insert(PreloadedAsset {
+            file_path: file_path.to_owned(),
+            handle,
+        });
 
         let event = PbAssetLoadLoadingState {
             current_state: LoadingState::Loading as i32,
@@ -158,19 +175,25 @@ fn asset_load_on_replace(
         entity, container_entity.root, asset_load.assets
     );
 
-    commands.entity(entity).queue_handled(
-        |mut entity: EntityWorldMut| {
+    // Fails when the entity is being despawned; nothing to do then.
+    commands
+        .entity(entity)
+        .queue_silenced(|mut entity: EntityWorldMut| {
             entity.despawn_related::<Preloader>();
-        },
-        // This might happen on despawn, and if it is the case, just leave it be
-        bevy::ecs::error::ignore,
-    );
+        });
 }
 
+/// Reports each asset's load state once. A loaded glb stays held until its `AssetLoad` goes, so
+/// avatar animation can play it; other assets are dropped once loaded, as is a failed one.
 fn verify_preload_state(
     mut commands: Commands,
     preloaded_assets: Populated<
-        (Entity, &PreloadedAsset, &PreloadedAssetOf),
+        (
+            Entity,
+            &PreloadedAsset,
+            &PreloadedAssetOf,
+            Has<PreloadedGltf>,
+        ),
         With<LoadingPreloadedAsset>,
     >,
     asset_loads: Query<&ContainerEntity, With<AssetLoad>>,
@@ -178,7 +201,7 @@ fn verify_preload_state(
     asset_server: Res<AssetServer>,
     timestamp: Res<MonotonicTimestamp<PbAssetLoadLoadingState>>,
 ) {
-    for (entity, preloaded_asset, preloaded_asset_of) in preloaded_assets.into_inner() {
+    for (entity, preloaded_asset, preloaded_asset_of, is_gltf) in preloaded_assets.into_inner() {
         let Ok(container_entity) = asset_loads.get(preloaded_asset_of.get()) else {
             debug_panic!("Could not get the AssetLoad of a PreloadedAsset.");
         };
@@ -203,7 +226,14 @@ fn verify_preload_state(
                     container_entity.container_id,
                     &event,
                 );
-                commands.entity(entity).despawn();
+                // Holding is only safe for glbs: every glb consumer shares one set of loader
+                // settings (`scene_gltf_loader_settings`). Other types don't (a material sets its
+                // own sampler on each texture), so a held image would pin the default settings.
+                if is_gltf {
+                    commands.entity(entity).remove::<LoadingPreloadedAsset>();
+                } else {
+                    commands.entity(entity).despawn();
+                }
             }
             Some(RecursiveDependencyLoadState::Failed(err)) => {
                 let loading_state = match err.as_ref() {

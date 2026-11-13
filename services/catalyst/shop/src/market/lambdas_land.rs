@@ -16,27 +16,30 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use chrono::Utc;
 use serde_json::{Value, json};
-use sqlx::Row;
+use sqlx::postgres::PgRow;
+use sqlx::{PgConnection, Row};
 
 use crate::land_authz::{ESTATE_REGISTRY_MAINNET, LAND_REGISTRY_MAINNET};
+use crate::shared::http_util::{fetcher_error, lambdas_internal_error};
 use crate::shared::query_params::{
-    MAX_PAGE_SIZE, NonPositivePolicy, OversizePolicy, Pagination, parse_pagination_with,
-    parse_query_string,
+    JsPagination, MAX_PAGE_SIZE, NonPositivePolicy, OversizePolicy, Pagination,
+    parse_pagination_with, parse_query_string,
 };
 
-use super::chain_walk::{ChainNet, INDEXER_NFT, ready_cursor};
+use super::chain_walk::{ChainNet, INDEXER_NFT, cursor, is_ready, ready_cursor};
 use super::graph::{self, OwnedLand};
 use super::nft_index::DCL_REGISTRAR;
-use super::nft_reads::land_ready;
-use super::{SharedState, Source, bad_request, internal_server_error, unavailable};
+use super::nft_reads::land_snapshot;
+use super::{SharedState, Source, bad_request, unavailable};
 
-/// The land routes' pagination: an oversized page clamps to 1000, a
-/// non-positive page or size to 1.
-fn parse_pagination(req: &Request) -> (i64, i64) {
+/// `/genesis-parcels`' pagination: a page over `max` clamps to it, a
+/// non-positive page or size to 1. `/lands` pages as lamb2 does
+/// ([`JsPagination`], no maximum: `paginationObject(url, Number.MAX_VALUE)`).
+fn parse_pagination(req: &Request, max: i64) -> (i64, i64) {
     let params = parse_query_string(req.uri().query().unwrap_or(""));
     let p = parse_pagination_with(
         &params,
-        MAX_PAGE_SIZE as i64,
+        max,
         OversizePolicy::Clamp,
         NonPositivePolicy::ClampToOne,
     )
@@ -66,10 +69,24 @@ async fn nft_index_ready(pool: &sqlx::PgPool) -> bool {
         .is_some()
 }
 
+/// [`nft_index_ready`] on the caller's connection: the land snapshot a
+/// LAND read already holds, so the check takes no second connection from the
+/// pool and sees the state the read does. A database error is an error, not
+/// an index that is not ready.
+async fn nft_index_ready_on(conn: &mut PgConnection) -> Result<bool, sqlx::Error> {
+    Ok(cursor(conn, INDEXER_NFT, ChainNet::Ethereum)
+        .await?
+        .is_some_and(|c| is_ready(&c, Utc::now())))
+}
+
 /// The owner's parcels and estates, newest transfer first (the old
 /// `transferred_at DESC`): each with its LAND data (name, description) and
 /// its open legacy order's price, the image the squid stored (the map
-/// service's parcel or estate PNG, under `LAND_IMAGE_BASE_URL`).
+/// service's parcel or estate PNG, under `LAND_IMAGE_BASE_URL`). The price
+/// is the marketplace subgraph's `activeOrder.price`: the latest legacy
+/// order while it is neither sold nor cancelled, also once it expired or
+/// its seller sold the LAND elsewhere (the subgraph's `transferred` status;
+/// captured 2026-11-04).
 const USER_LANDS_SQL: &str = "\
 SELECT ld.name, tr.token_address AS contract_address, tr.token_id::text AS token_id, \
        CASE WHEN tr.token_address = $4 THEN 'parcel' ELSE 'estate' END AS category, \
@@ -78,7 +95,7 @@ SELECT ld.name, tr.token_address AS contract_address, tr.token_id::text AS token
 FROM land_authz.token_right tr \
 LEFT JOIN shop.land_data ld ON ld.token_address = tr.token_address AND ld.token_id = tr.token_id \
 LEFT JOIN shop.nft_order o ON o.network = 'ethereum' AND o.contract_address = tr.token_address AND o.token_id = tr.token_id \
-      AND o.status = 'open' AND o.expires_at > $6 AND o.seller = tr.owner \
+      AND o.status = 'open' \
 LEFT JOIN LATERAL (SELECT e.block_number, e.log_index FROM land_authz.authz_event e \
                    WHERE e.token_address = tr.token_address AND e.token_id = tr.token_id AND e.kind = 'transfer' \
                    ORDER BY e.block_number DESC, e.log_index DESC LIMIT 1) moved ON true \
@@ -87,6 +104,15 @@ ORDER BY moved.block_number DESC NULLS LAST, moved.log_index DESC NULLS LAST, tr
 LIMIT $2 OFFSET $3";
 
 const USER_LANDS_COUNT_SQL: &str = "SELECT count(*) FROM land_authz.token_right tr WHERE tr.token_address IN ($2, $3) AND tr.owner = $1";
+
+async fn user_lands_count(conn: &mut PgConnection, owner: &str) -> Result<i64, sqlx::Error> {
+    sqlx::query_scalar(USER_LANDS_COUNT_SQL)
+        .bind(owner)
+        .bind(LAND_REGISTRY_MAINNET)
+        .bind(ESTATE_REGISTRY_MAINNET)
+        .fetch_one(conn)
+        .await
+}
 
 fn land_image(
     base: &str,
@@ -126,45 +152,39 @@ fn land_element(base: &str, land: &OwnedLand) -> Value {
     if let Some(p) = &land.price {
         obj["price"] = json!(p);
     }
-    if let Some(img) = land_image(base, &land.category, &land.token_id, land.x, land.y) {
+    let image = land
+        .image
+        .clone()
+        .or_else(|| land_image(base, &land.category, &land.token_id, land.x, land.y));
+    if let Some(img) = image {
         obj["image"] = json!(img);
     }
     obj
 }
 
-fn lands_page(base: &str, lands: &[OwnedLand], page_size: i64, page_num: i64) -> Response {
-    let offset = page_offset(page_num, page_size).max(0) as usize;
-    let elements: Vec<Value> = lands
+fn lands_page(base: &str, lands: &[OwnedLand], page: JsPagination) -> Response {
+    let elements: Vec<Value> = lands[page.range(lands.len())]
         .iter()
-        .skip(offset)
-        .take(page_size.max(0) as usize)
         .map(|l| land_element(base, l))
         .collect();
-    Json(json!({ "elements": elements, "totalAmount": lands.len() as i64, "pageNum": page_num, "pageSize": page_size })).into_response()
+    Json(json!({ "elements": elements, "totalAmount": lands.len() as i64, "pageNum": page.page_num, "pageSize": page.page_size })).into_response()
 }
 
 /// The owner's lands from the marketplace subgraph, paged here (the reader
 /// holds the whole holding for 30 s, so `totalAmount` is the same count the
-/// index path reports).
+/// index path reports). A failed reader answers the owner's last good list,
+/// as lamb2 does (`graph::owned_lands_or_stale`), else lamb2's 502.
 async fn user_lands_from_reader(
     state: &SharedState,
+    requested: &str,
     owner: &str,
-    page_size: i64,
-    page_num: i64,
+    page: JsPagination,
 ) -> Response {
-    match graph::owned_lands(&state.index, owner).await {
-        Ok(lands) => lands_page(
-            &state.settings.land_image_base_url,
-            &lands,
-            page_size,
-            page_num,
-        ),
+    match graph::owned_lands_or_stale(&state.index, owner).await {
+        Ok(lands) => lands_page(&state.settings.land_image_base_url, &lands, page),
         Err(e) => {
             tracing::warn!(owner = %owner, error = %e, "marketplace LAND reader failed");
-            unavailable(
-                Source::MarketplaceSubgraph,
-                "the marketplace LAND reader did not answer",
-            )
+            fetcher_error(requested)
         }
     }
 }
@@ -176,12 +196,30 @@ pub async fn user_lands(
     Path(addr): Path<String>,
     req: Request,
 ) -> Response {
-    let (page_size, page_num) = parse_pagination(&req);
+    let params = parse_query_string(req.uri().query().unwrap_or(""));
+    let page = match JsPagination::parse(&params, i64::MAX) {
+        Ok(p) => p,
+        Err(msg) => return bad_request(&msg),
+    };
     let owner = addr.to_lowercase();
-    let land_ready = land_ready(&state.pool).await;
-    if !land_ready || !nft_index_ready(&state.pool).await {
+    // The nft index check, the count and the page all read the land
+    // snapshot: one connection, one state.
+    let mut land = land_snapshot(&state.pool).await;
+    let land_ready = land.is_some();
+    let nft_ready = match land.as_mut() {
+        Some(snapshot) => match nft_index_ready_on(&mut snapshot.tx).await {
+            Ok(ready) => ready,
+            Err(e) => {
+                tracing::error!(error = %e, "user lands: cannot read the nft index cursor");
+                return lambdas_internal_error();
+            }
+        },
+        None => false,
+    };
+    // A snapshot that will not be read is released before any fallback.
+    let Some(mut land) = land.filter(|_| nft_ready) else {
         if state.settings.marketplace_subgraph_url.is_some() {
-            return user_lands_from_reader(&state, &owner, page_size, page_num).await;
+            return user_lands_from_reader(&state, &addr, &owner, page).await;
         }
         if !land_ready {
             return land_index_unavailable();
@@ -190,32 +228,40 @@ pub async fn user_lands(
             Source::NftIndex,
             "LAND names, descriptions and orders read the ethereum nft index, which is not published yet",
         );
-    }
+    };
+    // A negative bound counts from the end of the list: its length first.
+    let (offset, limit, counted) = match page.sql_window() {
+        Some((offset, limit)) => (offset, limit, None),
+        None => match user_lands_count(&mut land.tx, &owner).await {
+            Ok(total) => {
+                let r = page.range(total.max(0) as usize);
+                (r.start as i64, r.len() as i64, Some(total))
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "user lands count failed");
+                return lambdas_internal_error();
+            }
+        },
+    };
     let rows = match sqlx::query(USER_LANDS_SQL)
         .bind(&owner)
-        .bind(page_size)
-        .bind(page_offset(page_num, page_size))
+        .bind(limit)
+        .bind(offset)
         .bind(LAND_REGISTRY_MAINNET)
         .bind(ESTATE_REGISTRY_MAINNET)
-        .bind(Utc::now().timestamp_millis())
-        .fetch_all(&state.pool)
+        .fetch_all(&mut *land.tx)
         .await
     {
         Ok(rows) => rows,
         Err(e) => {
             tracing::error!(error = %e, "user lands query failed");
-            return internal_server_error();
+            return lambdas_internal_error();
         }
     };
-    let total: i64 = match rows.first() {
-        Some(r) => r.get("total"),
-        None => sqlx::query_scalar(USER_LANDS_COUNT_SQL)
-            .bind(&owner)
-            .bind(LAND_REGISTRY_MAINNET)
-            .bind(ESTATE_REGISTRY_MAINNET)
-            .fetch_one(&state.pool)
-            .await
-            .unwrap_or(0),
+    let total: i64 = match (counted, rows.first()) {
+        (Some(total), _) => total,
+        (None, Some(r)) => r.get("total"),
+        (None, None) => user_lands_count(&mut land.tx, &owner).await.unwrap_or(0),
     };
     let base = &state.settings.land_image_base_url;
     let elements: Vec<Value> = rows
@@ -228,17 +274,22 @@ pub async fn user_lands(
                 name: r.get("name"),
                 x: r.get("x"),
                 y: r.get("y"),
+                // `parse_land_data` stores an empty and a missing
+                // description alike (NULL), so a data record answers `""`.
                 description: r.get::<bool, _>("has_data").then(|| {
-                    r.get::<Option<String>, _>("description")
-                        .unwrap_or_default()
+                    Some(
+                        r.get::<Option<String>, _>("description")
+                            .unwrap_or_default(),
+                    )
                 }),
                 price: r.get("price"),
+                image: None,
                 transferred_at: 0,
             };
             land_element(base, &land)
         })
         .collect();
-    Json(json!({ "elements": elements, "totalAmount": total, "pageNum": page_num, "pageSize": page_size })).into_response()
+    Json(json!({ "elements": elements, "totalAmount": total, "pageNum": page.page_num, "pageSize": page.page_size })).into_response()
 }
 
 /// Every Genesis parcel owned directly or through an owned estate: a parcel
@@ -263,6 +314,38 @@ SELECT (SELECT count(*) FROM land_authz.token_right tr WHERE tr.token_address = 
         JOIN land_authz.token_right p ON p.token_address = $2 AND p.token_id = el.land_token_id \
         WHERE e.token_address = $3 AND e.owner = $1 AND p.x IS NOT NULL)";
 
+/// One page of `owner`'s Genesis parcels and their total, on the land
+/// snapshot the caller checked ([`land_snapshot`]): both legs read one state,
+/// so the estate leg never joins these registries' estates to another
+/// registry's links.
+pub(crate) async fn genesis_parcels_page(
+    conn: &mut PgConnection,
+    owner: &str,
+    limit: i64,
+    offset: i64,
+) -> Result<(Vec<PgRow>, i64), sqlx::Error> {
+    let rows = sqlx::query(GENESIS_PARCELS_SQL)
+        .bind(owner)
+        .bind(LAND_REGISTRY_MAINNET)
+        .bind(ESTATE_REGISTRY_MAINNET)
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(&mut *conn)
+        .await?;
+    let total: i64 = match rows.first() {
+        Some(r) => r.get("total"),
+        None => {
+            sqlx::query_scalar(GENESIS_PARCELS_COUNT_SQL)
+                .bind(owner)
+                .bind(LAND_REGISTRY_MAINNET)
+                .bind(ESTATE_REGISTRY_MAINNET)
+                .fetch_one(&mut *conn)
+                .await?
+        }
+    };
+    Ok((rows, total))
+}
+
 /// `GET /lambdas/users/{address}/genesis-parcels`: an ownership list, not a
 /// claim about delegated deployment permissions.
 pub async fn user_genesis_parcels(
@@ -274,40 +357,23 @@ pub async fn user_genesis_parcels(
     if !super::is_valid_eth_address(&owner) {
         return bad_request("Address must be a valid Ethereum address");
     }
-    if !land_ready(&state.pool).await {
+    let Some(mut land) = land_snapshot(&state.pool).await else {
         return land_index_unavailable();
-    }
-    let (page_size, page_num) = parse_pagination(&req);
-    let rows = match sqlx::query(GENESIS_PARCELS_SQL)
-        .bind(&owner)
-        .bind(LAND_REGISTRY_MAINNET)
-        .bind(ESTATE_REGISTRY_MAINNET)
-        .bind(page_size)
-        .bind(page_offset(page_num, page_size))
-        .fetch_all(&state.pool)
-        .await
+    };
+    let (page_size, page_num) = parse_pagination(&req, MAX_PAGE_SIZE as i64);
+    let (rows, total) = match genesis_parcels_page(
+        &mut land.tx,
+        &owner,
+        page_size,
+        page_offset(page_num, page_size),
+    )
+    .await
     {
-        Ok(rows) => rows,
+        Ok(page) => page,
         Err(err) => {
             tracing::warn!(owner = %owner, error = %err, "owned Genesis parcels lookup failed");
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
-    };
-    let total: i64 = match rows.first() {
-        Some(r) => r.get("total"),
-        None => match sqlx::query_scalar::<_, i64>(GENESIS_PARCELS_COUNT_SQL)
-            .bind(&owner)
-            .bind(LAND_REGISTRY_MAINNET)
-            .bind(ESTATE_REGISTRY_MAINNET)
-            .fetch_one(&state.pool)
-            .await
-        {
-            Ok(total) => total,
-            Err(err) => {
-                tracing::warn!(owner = %owner, error = %err, "owned Genesis parcels count failed");
-                return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-            }
-        },
     };
     let elements: Vec<Value> = rows
         .iter()
@@ -332,15 +398,18 @@ pub async fn name_owner(State(state): State<SharedState>, Path(name): Path<Strin
         Ok(Some(owner)) => Json(json!({"owner":owner.as_str()})).into_response(),
         Ok(None) => StatusCode::NOT_FOUND.into_response(),
         Err(NameOwnerError::Unavailable(source, message)) => unavailable(source, message),
+        Err(NameOwnerError::Fetcher(name)) => fetcher_error(&name),
         Err(NameOwnerError::Store(error)) => {
             tracing::error!(%error, "name owner query failed");
-            internal_server_error()
+            lambdas_internal_error()
         }
     }
 }
 
 enum NameOwnerError {
     Unavailable(Source, &'static str),
+    /// The marketplace subgraph failed for this (normalized) name: lamb2's 502.
+    Fetcher(String),
     Store(String),
 }
 
@@ -351,7 +420,7 @@ async fn read_name_owner(
     name: &str,
     ready: bool,
 ) -> Result<Option<crate::shared::identity::Address>, NameOwnerError> {
-    let normalized = name.to_lowercase();
+    let normalized = name.trim().to_lowercase();
     let dcl_name = normalized.strip_suffix(".dcl.eth").unwrap_or(&normalized);
     if !ready {
         if state.settings.marketplace_subgraph_url.is_none() {
@@ -367,10 +436,7 @@ async fn read_name_owner(
             Ok(None) => Ok(None),
             Err(e) => {
                 tracing::warn!(name = %dcl_name, error = %e, "marketplace names reader failed");
-                Err(NameOwnerError::Unavailable(
-                    Source::MarketplaceSubgraph,
-                    "the marketplace names reader did not answer",
-                ))
+                Err(NameOwnerError::Fetcher(dcl_name.to_string()))
             }
         };
     }
@@ -410,6 +476,9 @@ impl crate::comms::interfaces::NameOwnerReader for super::MarketplaceState {
             .await
             .map_err(|error| match error {
                 NameOwnerError::Unavailable(_, message) => message.to_string(),
+                NameOwnerError::Fetcher(name) => {
+                    format!("the marketplace names reader did not answer for {name}")
+                }
                 NameOwnerError::Store(error) => error,
             })
     }
@@ -456,14 +525,21 @@ mod tests {
     }
 
     #[test]
-    fn pages_clamp_like_the_other_land_routes() {
+    fn pages_clamp_to_the_route_maximum() {
         let req = |q: &str| {
             Request::get(format!("/x?{q}"))
                 .body(axum::body::Body::empty())
                 .unwrap()
         };
-        assert_eq!(parse_pagination(&req("pageSize=5000&pageNum=0")), (1000, 1));
-        assert_eq!(parse_pagination(&req("pageSize=10&pageNum=3")), (10, 3));
+        let genesis = MAX_PAGE_SIZE as i64;
+        assert_eq!(
+            parse_pagination(&req("pageSize=5000&pageNum=0"), genesis),
+            (1000, 1)
+        );
+        assert_eq!(
+            parse_pagination(&req("pageSize=10&pageNum=3"), genesis),
+            (10, 3)
+        );
         assert_eq!(page_offset(3, 10), 20);
     }
 }

@@ -41,6 +41,7 @@ import { creatorHubMeta } from "@/core/lib/seo/creator-hub-meta";
 
 import type { Route } from "./+types/create.storage";
 import type { StoryId } from "@/core/lib/telemetry/story-id";
+import { useMarketplaceHere } from "@/data/lib/shop/marketplace-access";
 
 export const meta = () => creatorHubMeta("Storage");
 
@@ -61,7 +62,7 @@ const FALLBACK: PageDefaults = {
   variant: "storage-dashboard",
 };
 
-export async function loader({ request }: Route.LoaderArgs) {
+export async function loader({ request, context }: Route.LoaderArgs) {
   const url = new URL(request.url);
   const address =
     url.searchParams.get("address")?.trim() || readWallet(request) || undefined;
@@ -72,7 +73,7 @@ export async function loader({ request }: Route.LoaderArgs) {
   const quotaOpen = url.searchParams.get("quota") === "1";
 
   const [{ sid, wrap }, d] = await Promise.all([
-    pageLoader(request,  FALLBACK),
+    pageLoader(request, context,  FALLBACK),
     loadWorldsStorage(address, { signal: request.signal }).catch(
     () => null,
   ),
@@ -192,6 +193,8 @@ export default function CreatorHubWorldsStorage({
 }
 
 function WorldsStorageView({ data: d }: { data: LoaderData }) {
+  // Buying LAND is the Shop's Marketplace: the quota's LAND link only for a visitor who has it.
+  const marketplace = useMarketplaceHere();
   const [, setSearchParams] = useSearchParams();
   const { identity } = useAuth();
   const revalidator = useRevalidator();
@@ -247,7 +250,7 @@ function WorldsStorageView({ data: d }: { data: LoaderData }) {
         maxAllowedSpace: String(d.stats.maxAllowedSpace),
       }}
       manaHref="https://account.decentraland.org/"
-      landHref="/shop/lands"
+      landHref={marketplace ? "/shop/lands" : undefined}
       nameHref="/create/claim-name"
       learnMoreHref={WORLDS_DOCS_HREF}
       onClose={() => setParams({ quota: "" })}

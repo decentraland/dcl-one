@@ -6,7 +6,7 @@
 //! flow is untouched.
 
 use crate::platform::UnityDevice;
-use anyhow::{Context as _, Result, anyhow, ensure};
+use anyhow::{Context as _, Result, anyhow};
 use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
 use objc2_core_foundation::CFRetained;
@@ -20,16 +20,6 @@ use std::os::raw::c_void;
 use uuav_ipc::mach_channel::SurfaceTag;
 
 type Texture = Retained<ProtocolObject<dyn MTLTexture>>;
-
-/// Pixels a generation may announce: 4096 x 4096, DCI 4K and a little more.
-/// The helper is the untrusted side of this channel and its dimensions size
-/// what this side allocates or wraps per slot, so a frame past this is
-/// refused before anything is allocated.
-const MAX_PIXELS: u64 = 4096 * 4096;
-
-/// Largest edge a generation may announce; the helper is the untrusted side
-/// of this channel.
-const MAX_DIMENSION: u32 = 16_384;
 
 const SLOTS: usize = 3;
 const PLANES: usize = 2;
@@ -89,10 +79,9 @@ pub struct PlayerVideo {
     /// Newest (generation, slot) the helper finished writing.
     published: Option<(u32, u8)>,
     presented: Option<(u32, u8)>,
+    pub(crate) presented_frames: u64,
     /// Ack the render event owes the helper after wrapping a generation.
     ack_due: Option<u32>,
-    /// Frames blitted into the presentation planes.
-    frames: u64,
 }
 
 // Metal textures and IOSurfaces are free-threaded; everything here is
@@ -211,23 +200,8 @@ impl PlayerVideo {
 
         blit_slot(unity, sources, planes)?;
         self.presented = Some((generation, slot));
-        self.frames = self.frames.wrapping_add(1);
+        self.presented_frames = self.presented_frames.saturating_add(1);
         Ok(ack)
-    }
-
-    /// The size the presentation planes were created for, once the first
-    /// frame was presented: the decoded frame's (even-rounded), which the
-    /// stream header behind the state update need not match.
-    pub fn presented_size(&self) -> Option<(u32, u32)> {
-        self.presentation
-            .as_ref()
-            .map(|planes| (planes.width, planes.height))
-    }
-
-    /// Frames copied into the presentation planes so far; unchanged while
-    /// nothing new was published.
-    pub const fn frames(&self) -> u64 {
-        self.frames
     }
 
     fn ensure_presentation(&mut self, unity: &UnityDevice, width: u32, height: u32) -> Result<()> {
@@ -259,17 +233,6 @@ fn wrap_generation(unity: &UnityDevice, pending: &PendingGen) -> Result<ActiveGe
     let (width, height) = pending
         .dims
         .ok_or_else(|| anyhow!("generation has no dims"))?;
-    // the macOS helper announces the stream's size unrounded (the Linux one
-    // rounds it, video_linux.rs); NV12 presents the even extent the surfaces hold
-    let (width, height) = (width & !1, height & !1);
-    ensure!(
-        (2..=MAX_DIMENSION).contains(&width) && (2..=MAX_DIMENSION).contains(&height),
-        "helper announced an unpresentable size {width}x{height}"
-    );
-    ensure!(
-        u64::from(width).saturating_mul(u64::from(height)) <= MAX_PIXELS,
-        "helper announced {width}x{height}, past the {MAX_PIXELS} pixel cap"
-    );
 
     let wrap_slot =
         |slot: &[Option<CFRetained<IOSurfaceRef>>; PLANES]| -> Result<[Texture; PLANES]> {
@@ -279,10 +242,6 @@ fn wrap_generation(unity: &UnityDevice, pending: &PendingGen) -> Result<ActiveGe
             let uv = slot[1]
                 .as_ref()
                 .ok_or_else(|| anyhow!("missing UV surface"))?;
-            // the surfaces must hold the frame the dims describe, in the plane's own
-            // layout: the blit reads the announced extent out of them
-            check_surface("Y", y, width as usize, height as usize, 1)?;
-            check_surface("UV", uv, (width / 2) as usize, (height / 2) as usize, 2)?;
             Ok([
                 wrap_surface(unity, y, MTLPixelFormat::R8Unorm)?,
                 wrap_surface(unity, uv, MTLPixelFormat::RG8Unorm)?,
@@ -299,43 +258,6 @@ fn wrap_generation(unity: &UnityDevice, pending: &PendingGen) -> Result<ActiveGe
             wrap_slot(&pending.surfaces[2])?,
         ],
     })
-}
-
-/// Refuses a surface that does not hold `width` x `height` elements of
-/// `bytes_per_element` bytes: the helper is the untrusted side, and a
-/// surface with enough pixels in another layout, or a short row or
-/// allocation, would be read past by the blit.
-fn check_surface(
-    plane: &str,
-    surface: &IOSurfaceRef,
-    width: usize,
-    height: usize,
-    bytes_per_element: usize,
-) -> Result<()> {
-    ensure!(
-        surface.width() >= width && surface.height() >= height,
-        "{plane} surface {}x{} is smaller than the announced {width}x{height}",
-        surface.width(),
-        surface.height()
-    );
-    ensure!(
-        surface.bytes_per_element() == bytes_per_element,
-        "{plane} surface has {} bytes per element, not {bytes_per_element}",
-        surface.bytes_per_element()
-    );
-    let row = width.saturating_mul(bytes_per_element);
-    ensure!(
-        surface.bytes_per_row() >= row,
-        "{plane} surface rows of {} bytes are shorter than {row}",
-        surface.bytes_per_row()
-    );
-    let needed = surface.bytes_per_row().saturating_mul(height);
-    ensure!(
-        surface.alloc_size() >= needed,
-        "{plane} surface allocation of {} bytes is shorter than {needed}",
-        surface.alloc_size()
-    );
-    Ok(())
 }
 
 /// Client-side `MTLTexture` view over a whole single-plane shared surface.

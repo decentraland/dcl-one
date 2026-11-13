@@ -17,7 +17,6 @@ use common::{
     },
     util::ModifyComponentExt,
 };
-use serde::{Deserialize, Serialize};
 use serde_json::json;
 use system_bridge::{SystemApi, VoiceMessage};
 use tokio::sync::{broadcast, mpsc, oneshot};
@@ -38,7 +37,8 @@ use dcl_types::{
 
 use crate::{
     chat_reaction::{canonical_message_id, received_emoji, ChatReactionEvent},
-    profile::ProfileMetaCache,
+    scene_rooms::SceneRooms,
+    scene_topics::SceneTopicRouter,
     Transport,
 };
 
@@ -108,8 +108,15 @@ impl Plugin for GlobalCrdtPlugin {
         app.init_resource::<VoiceMessageStreams>();
 
         app.add_event::<EmoteLifecycleEvent>();
-        app.add_systems(Update, process_transport_updates);
-        app.add_systems(Update, despawn_players);
+        app.add_systems(
+            Update,
+            (
+                retire_unhealthy_sockets,
+                process_transport_updates,
+                despawn_players,
+            )
+                .chain(),
+        );
         app.init_resource::<PlayerLanguage>();
         // a server has no local player, so no language to report
         if !common::structs::server_mode() {
@@ -171,7 +178,6 @@ pub enum PlayerMessage {
     /// — it exists so a transport can say "they are here" without waiting for them to send data.
     /// Transports that learn about joins should emit it; `PlayerLeft` is the counterpart.
     Joined,
-    MetaData(String),
     PlayerData(rfc4::packet::Message),
     /// Pulse-decoded movement, delivered natively rather than as an rfc4 `Movement` packet (those
     /// are no longer supported). Boxed because the decoder already hands us a `Box`. `teleport` marks
@@ -211,7 +217,6 @@ impl std::fmt::Debug for PlayerMessage {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let var_name = match self {
             Self::Joined => f.write_str("Joined"),
-            Self::MetaData(arg0) => f.debug_tuple("MetaData").field(arg0).finish(),
             Self::PlayerData(arg0) => f.debug_tuple("PlayerData").field(arg0).finish(),
             Self::Movement {
                 movement,
@@ -600,11 +605,6 @@ impl LocalAudioSource {
     }
 }
 
-#[derive(Serialize, Deserialize, Component, Clone, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct ForeignMetaData {
-    pub lambdas_endpoint: String,
-}
 /// A positional update for a foreign player from the Pulse-decoded movement stream. Position only;
 /// scene-driven animation travels separately as [`PlayerSceneAnimEvent`].
 #[derive(Event)]
@@ -835,10 +835,14 @@ pub fn process_transport_updates(
     mut string_senders: Local<HashMap<String, RpcEventSender>>,
     mut binary_senders: Local<HashMap<String, RpcStreamSender<(String, Vec<u8>)>>>,
     mut subscribers: EventReader<RpcCallEvent>,
-    mut profile_meta_cache: ResMut<ProfileMetaCache>,
     mut duplicate_chat_filter: Local<HashMap<Entity, f64>>,
     mut remote_anim: Local<RemoteAnimState>,
-    (discard_player_updates, transports): (Res<DiscardPlayerUpdates>, Query<(), With<Transport>>),
+    (discard_player_updates, transports, scene_rooms, mut scene_topics): (
+        Res<DiscardPlayerUpdates>,
+        Query<Option<&crate::room_connection::ConnectionHealth>, With<Transport>>,
+        SceneRooms,
+        SceneTopicRouter,
+    ),
 ) {
     // gather any event receivers
     for ev in subscribers.read() {
@@ -878,7 +882,10 @@ pub fn process_transport_updates(
                     }
                     // queued before its transport was despawned: registering a dead transport
                     // would hold the player forever, as nothing can remove it again
-                    if !transports.contains(update.transport_id) {
+                    if !transports
+                        .get(update.transport_id)
+                        .is_ok_and(|health| health.is_none_or(|health| health.is_connected()))
+                    {
                         debug!(
                             "dropping update from {} on despawned transport {}",
                             update.address, update.transport_id
@@ -961,14 +968,6 @@ pub fn process_transport_updates(
                     match update.message {
                         // presence only — registering the transport above was the whole point
                         PlayerMessage::Joined => (),
-                        PlayerMessage::MetaData(str) => {
-                            if let Ok(meta) = serde_json::from_str::<ForeignMetaData>(&str) {
-                                debug!("foreign player metadata: {scene_id:?}: {meta:?}");
-                                profile_meta_cache
-                                    .0
-                                    .insert(update.address, meta.lambdas_endpoint);
-                            }
-                        }
                         PlayerMessage::AudioStreamAvailable { transport } => {
                             // pass through
                             debug!("{transport} available for {entity}!");
@@ -1044,8 +1043,11 @@ pub fn process_transport_updates(
                             process_messagebus(
                                 scene,
                                 address,
+                                update.transport_id,
                                 &mut string_senders,
                                 &mut binary_senders,
+                                &scene_rooms,
+                                &mut scene_topics,
                             );
                         }
                         PlayerMessage::PlayerData(Message::Voice(_)) => (),
@@ -1198,8 +1200,11 @@ pub fn process_transport_updates(
                             process_messagebus(
                                 scene,
                                 update.address,
+                                update.transport_id,
                                 &mut string_senders,
                                 &mut binary_senders,
+                                &scene_rooms,
+                                &mut scene_topics,
                             );
                         }
                         // a server resolving a guest profile asks the guest directly — the
@@ -1343,8 +1348,11 @@ fn resolve_remote_anim(
 fn process_messagebus(
     mut scene: rfc4::Scene,
     address: String,
+    transport: Entity,
     string_senders: &mut HashMap<String, RpcStreamSender<String>>,
     binary_senders: &mut HashMap<String, RpcStreamSender<(String, Vec<u8>)>>,
+    scene_rooms: &SceneRooms,
+    scene_topics: &mut SceneTopicRouter,
 ) {
     if scene.data.is_empty() {
         warn!("empty scene message");
@@ -1360,6 +1368,10 @@ fn process_messagebus(
             scene.data.remove(0);
             CommsMessageType::Binary
         }
+        c if c == CommsMessageType::CommsData as u8 => {
+            scene.data.remove(0);
+            CommsMessageType::CommsData
+        }
         _ => CommsMessageType::String,
     };
 
@@ -1367,6 +1379,17 @@ fn process_messagebus(
         "messagebus received from {} to scene {}: [{:?}] `{:?}`",
         address, scene.scene_id, comms_type, scene.data
     );
+
+    if !scene_rooms.carries(transport, &scene.scene_id) {
+        debug!(
+            "dropping message for scene {} from {address}: not its scene room",
+            scene.scene_id
+        );
+        if matches!(comms_type, CommsMessageType::CommsData) {
+            scene_topics.drop_without_room();
+        }
+        return;
+    }
 
     match comms_type {
         CommsMessageType::String => {
@@ -1385,6 +1408,29 @@ fn process_messagebus(
                 let _ = sender.send((address, scene.data));
             }
         }
+        CommsMessageType::CommsData => {
+            scene_topics.deliver(&scene.scene_id, address, scene.data);
+        }
+    }
+}
+
+/// Socket retry owners survive disconnection; their peer memberships do not.
+/// LiveKit and Pulse already withdraw their rosters through their protocol events.
+fn retire_unhealthy_sockets(
+    health: Query<&crate::room_connection::ConnectionHealth>,
+    mut players: Query<&mut ForeignPlayer>,
+    mut audio: Query<&mut ForeignAudioSource>,
+) {
+    let connected = |entity: &Entity| {
+        health
+            .get(*entity)
+            .map_or(true, |health| health.is_connected())
+    };
+    for mut player in &mut players {
+        player.transports.retain(connected);
+    }
+    for mut audio in &mut audio {
+        audio.available_transports.retain(connected);
     }
 }
 
@@ -1453,6 +1499,10 @@ fn remove_transport_from_foreign_audio_source(
 fn handle_foreign_audio(
     transports: Query<(Entity, &Transport)>,
     mut q: Query<(&mut ForeignAudioSource, &ForeignPlayer)>,
+    #[cfg(feature = "livekit")] call_rooms: Query<
+        &crate::livekit::participant::ParticipantIndex,
+        With<crate::voice_chat::VoiceRoom>,
+    >,
 ) {
     let transports = transports
         .iter()
@@ -1460,6 +1510,25 @@ fn handle_foreign_audio(
         .collect::<HashMap<_, _>>();
 
     for (mut source, player) in q.iter_mut() {
+        // a call's peers are heard flat through the call, not spatially as well
+        #[cfg(feature = "livekit")]
+        let in_call_with = call_rooms.iter().any(|index| {
+            index.contains_key(&crate::livekit::participant::ParticipantIndex::key(
+                &format!("{:#x}", player.address),
+            ))
+        });
+        #[cfg(not(feature = "livekit"))]
+        let in_call_with = false;
+        if in_call_with {
+            if let Some(current) = source.current_transport.take() {
+                if let Some(control) = transports.get(&current) {
+                    let _ = control.try_send(ChannelControl::VoiceUnsubscribe(player.address));
+                }
+                source.audio_receiver = None;
+            }
+            continue;
+        }
+
         let prev_available = source.available_transports.clone();
         let prev_transport = source.current_transport;
 
@@ -1603,7 +1672,6 @@ mod tests {
         let mut app = App::new();
         app.init_resource::<Time>();
         app.init_resource::<DiscardPlayerUpdates>();
-        app.init_resource::<ProfileMetaCache>();
         app.add_event::<RpcCallEvent>();
         app.add_event::<ProfileEvent>();
         app.add_event::<PlayerPositionEvent>();
@@ -1611,7 +1679,17 @@ mod tests {
         app.add_event::<EmoteLifecycleEvent>();
         app.add_event::<ChatEvent>();
         app.add_event::<ChatReactionEvent>();
-        app.add_systems(Update, (process_transport_updates, despawn_players).chain());
+        crate::scene_rooms::test_support::init_scene_rooms(&mut app);
+        app.add_plugins(crate::scene_topics::SceneTopicsRoutingPlugin);
+        app.add_systems(
+            Update,
+            (
+                retire_unhealthy_sockets,
+                process_transport_updates,
+                despawn_players,
+            )
+                .chain(),
+        );
         app.add_observer(remove_transport_from_foreign_players);
         let context = app.world_mut().spawn(GlobalCrdtState::new(None)).id();
         (app, context)
@@ -1643,6 +1721,167 @@ mod tests {
                 .into(),
             )
             .unwrap();
+    }
+
+    fn queue_scene_message(
+        app: &mut App,
+        context: Entity,
+        transport: Entity,
+        address: Address,
+        data: Vec<u8>,
+    ) {
+        app.world()
+            .get::<GlobalCrdtState>(context)
+            .unwrap()
+            .get_sender()
+            .try_send(
+                PlayerUpdate {
+                    transport_id: transport,
+                    message: PlayerMessage::PlayerData(Message::Scene(rfc4::Scene {
+                        scene_id: "bafyscene".to_owned(),
+                        data,
+                    })),
+                    address,
+                }
+                .into(),
+            )
+            .unwrap();
+    }
+
+    /// Subscribes a scene with `hash` to the message bus and to topic messages.
+    fn subscribe_scene(
+        app: &mut App,
+        hash: &str,
+    ) -> (
+        common::rpc::RpcStreamReceiver<String>,
+        common::rpc::RpcStreamReceiver<(String, Vec<u8>)>,
+    ) {
+        let (bus, bus_rx) = RpcStreamSender::<String>::channel();
+        let (topics, topics_rx) = RpcStreamSender::<(String, Vec<u8>)>::channel();
+        let scene = app.world_mut().spawn_empty().id();
+        let origin = || RpcOrigin::Scene {
+            entity: scene,
+            hash: hash.into(),
+        };
+        app.world_mut().send_event(RpcCallEvent {
+            origin: origin(),
+            call: RpcCall::SubscribeMessageBus { sender: bus },
+        });
+        app.world_mut().send_event(RpcCallEvent {
+            origin: origin(),
+            call: RpcCall::SubscribeSceneTopics { sender: topics },
+        });
+        app.update();
+        (bus_rx, topics_rx)
+    }
+
+    const TOPIC_MESSAGE: [u8; 5] = [3, 1, 0, b't', b'x'];
+    const BUS_MESSAGE: [u8; 3] = [1, b'h', b'i'];
+
+    #[test]
+    fn scene_messages_reach_the_scene_on_its_own_room_only() {
+        use crate::scene_rooms::test_support::spawn_server_room;
+        let (mut app, context) = presence_app();
+        let peer = Address::repeat_byte(0xab);
+        let (own, _) = spawn_server_room(&mut app, "bafyscene", context);
+        let (other, _) = spawn_server_room(&mut app, "bafyother", context);
+        for room in [own, other] {
+            queue_joined(&mut app, context, room, peer);
+        }
+        app.update();
+        let (mut bus_rx, mut topics_rx) = subscribe_scene(&mut app, "bafyscene");
+
+        // another scene's room carries nothing for this scene
+        queue_scene_message(&mut app, context, other, peer, TOPIC_MESSAGE.to_vec());
+        queue_scene_message(&mut app, context, other, peer, BUS_MESSAGE.to_vec());
+        app.update();
+        assert!(topics_rx.try_recv().is_err());
+        assert!(bus_rx.try_recv().is_err());
+
+        queue_scene_message(&mut app, context, own, peer, TOPIC_MESSAGE.to_vec());
+        queue_scene_message(&mut app, context, own, peer, BUS_MESSAGE.to_vec());
+        app.update();
+        assert_eq!(
+            topics_rx.try_recv().unwrap(),
+            (format!("{peer:#x}"), vec![1, 0, b't', b'x'])
+        );
+        assert!(topics_rx.try_recv().is_err());
+        // the topic message is not taken for a message bus string
+        assert!(bus_rx.try_recv().unwrap().contains("hi"));
+        assert!(bus_rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn a_transport_that_is_not_the_scene_room_delivers_no_scene_messages() {
+        use crate::scene_rooms::test_support::spawn_client_room;
+        let (mut app, context) = presence_app();
+        let peer = Address::repeat_byte(0xab);
+        let island = spawn_transport(&mut app, context);
+        let (room, _) = spawn_client_room(&mut app, "bafyscene", context);
+        queue_joined(&mut app, context, island, peer);
+        queue_joined(&mut app, context, room, peer);
+        app.update();
+        let (mut bus_rx, mut topics_rx) = subscribe_scene(&mut app, "bafyscene");
+
+        queue_scene_message(&mut app, context, island, peer, TOPIC_MESSAGE.to_vec());
+        queue_scene_message(&mut app, context, island, peer, BUS_MESSAGE.to_vec());
+        app.update();
+        assert!(topics_rx.try_recv().is_err());
+        assert!(bus_rx.try_recv().is_err());
+
+        queue_scene_message(&mut app, context, room, peer, TOPIC_MESSAGE.to_vec());
+        queue_scene_message(&mut app, context, room, peer, BUS_MESSAGE.to_vec());
+        app.update();
+        assert!(topics_rx.try_recv().is_ok());
+        assert!(bus_rx.try_recv().is_ok());
+    }
+
+    #[test]
+    fn a_shared_room_delivers_to_a_scene_other_than_the_one_it_was_dialed_for() {
+        use crate::scene_rooms::test_support::{local_preview, spawn_client_room};
+        let (mut app, context) = presence_app();
+        let peer = Address::repeat_byte(0xab);
+        let (room, _) = spawn_client_room(&mut app, "bafyroom", context);
+        queue_joined(&mut app, context, room, peer);
+        app.update();
+        let (mut bus_rx, mut topics_rx) = subscribe_scene(&mut app, "bafyscene");
+
+        queue_scene_message(&mut app, context, room, peer, TOPIC_MESSAGE.to_vec());
+        queue_scene_message(&mut app, context, room, peer, BUS_MESSAGE.to_vec());
+        app.update();
+        assert!(
+            topics_rx.try_recv().is_err() && bus_rx.try_recv().is_err(),
+            "isolated rooms carry only their own scene"
+        );
+
+        local_preview(&mut app);
+        queue_scene_message(&mut app, context, room, peer, TOPIC_MESSAGE.to_vec());
+        queue_scene_message(&mut app, context, room, peer, BUS_MESSAGE.to_vec());
+        app.update();
+        assert!(topics_rx.try_recv().is_ok());
+        assert!(bus_rx.try_recv().is_ok());
+    }
+
+    #[test]
+    fn topic_messages_over_the_size_limit_are_dropped() {
+        use crate::scene_rooms::test_support::spawn_client_room;
+        let (mut app, context) = presence_app();
+        let peer = Address::repeat_byte(0xab);
+        let (room, _) = spawn_client_room(&mut app, "bafyscene", context);
+        queue_joined(&mut app, context, room, peer);
+        app.update();
+        let (_bus_rx, mut topics_rx) = subscribe_scene(&mut app, "bafyscene");
+
+        let mut at_limit = vec![3, 1, 0, b't'];
+        at_limit.resize(dcl_types::MAX_TOPIC_MESSAGE_BYTES, b'd');
+        let mut over_limit = at_limit.clone();
+        over_limit.push(b'd');
+        queue_scene_message(&mut app, context, room, peer, over_limit);
+        queue_scene_message(&mut app, context, room, peer, at_limit);
+        app.update();
+        let (_, payload) = topics_rx.try_recv().unwrap();
+        assert_eq!(payload.len(), dcl_types::MAX_TOPIC_MESSAGE_BYTES - 1);
+        assert!(topics_rx.try_recv().is_err());
     }
 
     /// Each foreign player's presence set.
@@ -1679,5 +1918,33 @@ mod tests {
         app.world_mut().despawn(gone);
         app.update();
         assert!(foreign_players(&mut app).is_empty());
+    }
+
+    #[test]
+    fn disconnected_socket_retires_presence_without_removing_other_room_memberships() {
+        let (mut app, context) = presence_app();
+        let peer = Address::repeat_byte(0xab);
+        let socket = spawn_transport(&mut app, context);
+        let other = spawn_transport(&mut app, context);
+        let health = crate::room_connection::ConnectionHealth::default();
+        health.connected();
+        app.world_mut().entity_mut(socket).insert(health.clone());
+        queue_joined(&mut app, context, socket, peer);
+        app.update();
+        queue_joined(&mut app, context, other, peer);
+        app.update();
+        health.disconnected();
+        queue_joined(&mut app, context, socket, peer);
+        queue_joined(&mut app, context, socket, Address::repeat_byte(0xcd));
+        app.update();
+        assert_eq!(foreign_players(&mut app), vec![HashSet::from_iter([other])]);
+        assert!(app.world().get::<Transport>(socket).is_some());
+        health.connected();
+        queue_joined(&mut app, context, socket, peer);
+        app.update();
+        assert_eq!(
+            foreign_players(&mut app),
+            vec![HashSet::from_iter([other, socket])]
+        );
     }
 }

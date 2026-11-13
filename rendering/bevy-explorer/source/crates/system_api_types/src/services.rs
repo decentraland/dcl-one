@@ -29,8 +29,8 @@ pub enum Service {
     AuthApi,
     /// The sign-in web page the browser is sent to
     AuthPage,
-    /// Asset-bundle registry: profile lookups
-    AssetBundleRegistry,
+    /// Asset-bundle generator CDN: Bevy variants
+    AbgenCdn,
     /// World storage (storage delegation signing)
     Storage,
     /// Ethereum json-rpc websocket
@@ -41,10 +41,24 @@ pub enum Service {
     SocialApi,
     /// OpenSea api (NftShape metadata)
     Opensea,
-    /// Reels (camera reel photos) — HUD only
+    /// Reels: the site's share page a camera-reel photo links to — HUD only
     Reels,
     /// Map tile api — HUD only
     MapApi,
+    /// Camera-reel api: user, community and place photos — HUD only
+    CameraReel,
+    /// Events api — HUD only
+    Events,
+    /// Badges api — HUD only
+    Badges,
+    /// Notifications api — HUD only
+    Notifications,
+    /// Assets CDN: community thumbnails — HUD only
+    AssetsCdn,
+    /// Marketplace api: item listings — HUD only
+    MarketplaceApi,
+    /// Chat translation (a LibreTranslate) — HUD only
+    Autotranslate,
     /// Pulse comms server — an authority, `host[:port]`; the port defaults per platform
     PulseServer,
 }
@@ -75,14 +89,21 @@ impl Service {
             Service::PreviewGatekeeper => ("https", "comms-gatekeeper-local", ""),
             Service::AuthApi => ("https", "auth-api", ""),
             Service::AuthPage => ("https", "", "/auth"),
-            Service::AssetBundleRegistry => ("https", "asset-bundle-registry", ""),
+            Service::AbgenCdn => ("https", "abgen-cdn", ""),
             Service::Storage => ("https", "storage", ""),
             Service::EthereumRpc => ("wss", "rpc", ""),
             Service::SocialRpc => ("wss", "rpc-social-service-ea", ""),
             Service::SocialApi => ("https", "social-api", ""),
             Service::Opensea => ("https", "opensea", ""),
-            Service::Reels => ("https", "reels", ""),
+            Service::Reels => ("https", "", "/reels"),
             Service::MapApi => ("https", "api", ""),
+            Service::CameraReel => ("https", "camera-reel-service", ""),
+            Service::Events => ("https", "events", ""),
+            Service::Badges => ("https", "badges", ""),
+            Service::Notifications => ("https", "notifications", ""),
+            Service::AssetsCdn => ("https", "assets-cdn", ""),
+            Service::MarketplaceApi => ("https", "marketplace-api", ""),
+            Service::Autotranslate => ("https", "autotranslate-server", ""),
             Service::PulseServer => ("", "pulse-server", ""),
         }
     }
@@ -99,7 +120,7 @@ impl Service {
             Service::PreviewGatekeeper => "preview_gatekeeper",
             Service::AuthApi => "auth_api",
             Service::AuthPage => "auth_page",
-            Service::AssetBundleRegistry => "asset_bundle_registry",
+            Service::AbgenCdn => "abgen_cdn",
             Service::Storage => "storage",
             Service::EthereumRpc => "ethereum_rpc",
             Service::SocialRpc => "social_rpc",
@@ -107,6 +128,13 @@ impl Service {
             Service::Opensea => "opensea",
             Service::Reels => "reels",
             Service::MapApi => "map_api",
+            Service::CameraReel => "camera_reel",
+            Service::Events => "events",
+            Service::Badges => "badges",
+            Service::Notifications => "notifications",
+            Service::AssetsCdn => "assets_cdn",
+            Service::MarketplaceApi => "marketplace_api",
+            Service::Autotranslate => "autotranslate",
             Service::PulseServer => "pulse_server",
         }
     }
@@ -182,10 +210,10 @@ pub struct ServiceOverrides {
     #[arg(long, value_name = "url", help_heading = HELP_HEADING)]
     pub auth_page: Option<String>,
 
-    /// Asset-bundle registry; absent = `https://asset-bundle-registry.<base>` (custom domains
-    /// only: org and zone profiles use the registry of the profile's own environment)
+    /// Asset-bundle generator CDN (Bevy variants); absent =
+    /// `https://abgen-cdn.<base>`
     #[arg(long, value_name = "url", help_heading = HELP_HEADING)]
-    pub asset_bundle_registry: Option<String>,
+    pub abgen_cdn: Option<String>,
 
     /// World storage; absent = `https://storage.<base>`. https only: an http instance is never
     /// signed for (the delegation claim must not go out in cleartext)
@@ -208,13 +236,41 @@ pub struct ServiceOverrides {
     #[arg(long, value_name = "url", help_heading = HELP_HEADING)]
     pub opensea: Option<String>,
 
-    /// Reels (camera reel) api, used by the HUD; absent = `https://reels.<base>`
+    /// Share page a camera-reel photo links to, used by the HUD; absent = `https://<base>/reels`
     #[arg(long, value_name = "url", help_heading = HELP_HEADING)]
     pub reels: Option<String>,
 
     /// Map tile api, used by the HUD; absent = `https://api.<base>`
     #[arg(long, value_name = "url", help_heading = HELP_HEADING)]
     pub map_api: Option<String>,
+
+    /// Camera-reel api, used by the HUD; absent = `https://camera-reel-service.<base>`
+    #[arg(long, value_name = "url", help_heading = HELP_HEADING)]
+    pub camera_reel: Option<String>,
+
+    /// Events api, used by the HUD; absent = `https://events.<base>`
+    #[arg(long, value_name = "url", help_heading = HELP_HEADING)]
+    pub events: Option<String>,
+
+    /// Badges api, used by the HUD; absent = `https://badges.<base>`
+    #[arg(long, value_name = "url", help_heading = HELP_HEADING)]
+    pub badges: Option<String>,
+
+    /// Notifications api, used by the HUD; absent = `https://notifications.<base>`
+    #[arg(long, value_name = "url", help_heading = HELP_HEADING)]
+    pub notifications: Option<String>,
+
+    /// Assets CDN (community thumbnails), used by the HUD; absent = `https://assets-cdn.<base>`
+    #[arg(long, value_name = "url", help_heading = HELP_HEADING)]
+    pub assets_cdn: Option<String>,
+
+    /// Marketplace api, used by the HUD; absent = `https://marketplace-api.<base>`
+    #[arg(long, value_name = "url", help_heading = HELP_HEADING)]
+    pub marketplace_api: Option<String>,
+
+    /// Chat translation, used by the HUD; absent = `https://autotranslate-server.<base>`
+    #[arg(long, value_name = "url", help_heading = HELP_HEADING)]
+    pub autotranslate: Option<String>,
 
     /// Pulse comms server, `host` or `host:port` (no port = the platform's: 7777 ENet on native,
     /// 7743 WebTransport on web); absent = `pulse-server.<base>`
@@ -233,7 +289,7 @@ impl ServiceOverrides {
             Service::PreviewGatekeeper => &self.preview_gatekeeper,
             Service::AuthApi => &self.auth_api,
             Service::AuthPage => &self.auth_page,
-            Service::AssetBundleRegistry => &self.asset_bundle_registry,
+            Service::AbgenCdn => &self.abgen_cdn,
             Service::Storage => &self.storage,
             Service::EthereumRpc => &self.ethereum_rpc,
             Service::SocialRpc => &self.social_rpc,
@@ -241,6 +297,13 @@ impl ServiceOverrides {
             Service::Opensea => &self.opensea,
             Service::Reels => &self.reels,
             Service::MapApi => &self.map_api,
+            Service::CameraReel => &self.camera_reel,
+            Service::Events => &self.events,
+            Service::Badges => &self.badges,
+            Service::Notifications => &self.notifications,
+            Service::AssetsCdn => &self.assets_cdn,
+            Service::MarketplaceApi => &self.marketplace_api,
+            Service::Autotranslate => &self.autotranslate,
             Service::PulseServer => &self.pulse_server,
         }
         .as_deref()

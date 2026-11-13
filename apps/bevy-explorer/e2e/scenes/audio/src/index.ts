@@ -23,7 +23,7 @@ import { setupVisualTest } from './visual-test-setup'
  *
  *   - `clip` (log mode) and `clip raw` (raw mode): the looping 20 s tone as an AudioSource.
  *   - `stream`: the same tone streamed from the scene's content as an AudioStream.
- *   - `video`: the video scene's fixture as a VideoPlayer (its audio is the same tone).
+ *   - `video`: a solid red video with the same tone (`assets/video/red_tone.mp4`) as a VideoPlayer.
  *
  * Two boxes take clicks: `pause / resume` toggles the log clip's `playing`, `detach` removes
  * its `AudioAnalysis`. The scene also pauses the log clip by itself at PAUSE_AT_S, so a run

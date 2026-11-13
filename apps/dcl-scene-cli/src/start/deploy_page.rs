@@ -18,7 +18,9 @@ use super::deploy_status::{
     self, Dest, LiveStatus, Remote, RemoteScene, RemoteState, ago, cache_get, cache_put,
     cached_status, lock, payload_drawer, plural, resolve_dest, split_size,
 };
-use super::{AppState, cross_origin_refusal, forwarded_prefix, remote_peer};
+use super::{
+    AppState, cross_origin_refusal, forwarded_prefix, rebound_origin_refusal, remote_peer,
+};
 use crate::deploy::{self, MainBundle};
 use crate::scene::Project;
 use axum::Json;
@@ -94,19 +96,13 @@ pub(super) const PAGE_CSS: &str = "
 .wl__d { color: var(--ink-6); font-size: var(--fs-13); min-width: 0; }
 .files__more > summary { cursor: pointer; padding: var(--s-2-5) 0; color: var(--ink-6); font-size: var(--fs-13); border-top: 1px solid var(--line); }
 .dep__err { white-space: pre; max-height: 24rem; overflow: auto; }
-.panel--ok { border-color: var(--success); }
+.panel--ok { --ui-border: var(--success); }
 .panel--ok > h2 { color: var(--success); }
 .dep__ok { color: var(--success); }
 .jn #run-status .panel--ok { border-top-color: var(--success); background: var(--success-fill, var(--fill-1)); }
 .dep__wait { display: flex; flex-direction: column; align-items: center; gap: var(--s-3); padding: var(--s-6) 0; text-align: center; }
-.jn #run-status .panel { border: 0; border-top: 1px solid var(--line); border-radius: 0; background: var(--fill-1); }
+.jn #run-status .panel { border-top: 1px solid var(--line); background: var(--fill-1); }
 .jn #run-status { display: flex; flex-direction: column; }
-.spin {
-  width: 28px; height: 28px; border-radius: var(--r-pill);
-  border: 3px solid var(--fill-4); border-top-color: var(--brand);
-  animation: dep-spin .9s linear infinite;
-}
-@keyframes dep-spin { to { transform: rotate(360deg); } }
 ";
 
 /// How long a walk answers for. The route is unauthenticated and the walk is
@@ -305,6 +301,11 @@ async fn cached_preview(st: &AppState, project: &Project) -> Arc<PreviewResult> 
 
 /// A CLI publish hosting itself on this server: the signer is live from the
 /// first request, and the run slot says so.
+/// The CLI run this server signs for, while one is adopted.
+pub(super) fn cli_signer(st: &AppState) -> Option<Arc<crate::linker::LinkerState>> {
+    signer_slot(st).clone()
+}
+
 pub(super) fn adopt_cli_signing(st: &AppState, signer: Arc<crate::linker::LinkerState>) {
     let target = signer.target_content().to_string();
     *signer_slot(st) = Some(signer);
@@ -314,9 +315,12 @@ pub(super) fn adopt_cli_signing(st: &AppState, signer: Arc<crate::linker::Linker
     });
 }
 
-pub(super) fn finish_cli_signing(st: &AppState, outcome: &anyhow::Result<String>) {
+pub(super) fn finish_cli_signing(
+    st: &AppState,
+    outcome: &anyhow::Result<crate::linker::Published>,
+) {
     let state = match outcome {
-        Ok(message) => RunState::Done(message.clone()),
+        Ok(published) => RunState::Done(published.message.clone()),
         Err(error) => RunState::Failed(format!("{error:#}")),
     };
     finish(st, 0, state);
@@ -697,6 +701,8 @@ fn launch(st: Arc<AppState>, root: PathBuf, id: u64) {
         target_content: None,
         sign_key: None,
         skip_build: false,
+        skip_validations: false,
+        force_upload: false,
         dry_run: st.deploy_dry_run,
         timestamp: None,
         entity_out: None,
@@ -709,11 +715,13 @@ fn launch(st: Arc<AppState>, root: PathBuf, id: u64) {
         quiet: true,
         host_signer,
         identity,
+        programmatic: false,
+        deploy_token: None,
     };
     tokio::spawn(async move {
         let handle = tokio::spawn(async move { deploy::deploy(&opts).await });
         let state = match handle.await {
-            Ok(Ok(message)) => RunState::Done(message),
+            Ok(Ok(published)) => RunState::Done(published.message),
             Ok(Err(e)) => {
                 let rendered = crate::ux::render(&e, false, false);
                 let rendered = rendered
@@ -804,14 +812,17 @@ pub(super) async fn preflight(
 /// for the same wallet instead of fanning out a second time beside it.
 async fn rights_after_warm(st: &AppState, dest: &Dest, address: &str) -> Arc<Rights> {
     let key = format!("rights|{address}|{}", dest.headline);
-    for _ in 0..150 {
+    let deadline = Instant::now() + Duration::from_secs(15);
+    let mut delay = Duration::from_millis(25);
+    loop {
         if let Some(hit) = deploy_rights::rights_peek(&st.deploy.rights, dest, address) {
             return hit;
         }
-        if !warm_slot(st).contains(&key) {
+        if !warm_slot(st).contains(&key) || Instant::now() >= deadline {
             break;
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        tokio::time::sleep(delay.min(deadline.saturating_duration_since(Instant::now()))).await;
+        delay = delay.saturating_mul(2).min(Duration::from_millis(500));
     }
     deploy_rights::cached_rights(&st.deploy.rights, dest, address).await
 }
@@ -831,15 +842,26 @@ async fn reviewed_remote(st: &AppState, dest: &Dest) -> Arc<LiveStatus> {
 }
 
 /// The gate every signing route shares: the wallet signs on the hosting
-/// machine, so only a same-origin loopback peer that is not a tunnel replay
-/// reaches the signer — unless --allow-remote-deploy opened it up.
-fn signing_blocked(st: &AppState, peer: SocketAddr, headers: &HeaderMap) -> Option<Response> {
+/// machine, so only a same-origin loopback peer that is not a tunnel replay,
+/// from a page on a loopback origin (a rebound domain agrees with `Host` but
+/// is not one), reaches the signer — unless --allow-remote-deploy opened it up.
+pub(super) fn signing_blocked(
+    st: &AppState,
+    peer: SocketAddr,
+    headers: &HeaderMap,
+) -> Option<Response> {
     if remote_peer(st.allow_remote_deploy, peer, headers) {
         return Some(forbidden(
             "signing happens on the machine hosting this preview",
         ));
     }
-    cross_origin_refusal(headers).map(forbidden)
+    if let Some(why) = cross_origin_refusal(headers) {
+        return Some(forbidden(why));
+    }
+    if st.allow_remote_deploy {
+        return None;
+    }
+    rebound_origin_refusal(headers).map(forbidden)
 }
 
 /// `POST /deploy/sign` — the one signing endpoint; its panel is
@@ -1145,6 +1167,7 @@ fn spawn_connect_poll(
 ) {
     tokio::spawn(async move {
         let deadline = Instant::now() + CONNECT_WINDOW;
+        let mut delay = Duration::from_millis(250);
         let outcome = loop {
             if Instant::now() >= deadline {
                 break Err("the sign-in expired \u{2014} connect again".to_string());
@@ -1165,7 +1188,8 @@ fn spawn_connect_poll(
                     break Err(format!("the relay refused the wait (HTTP {status})"));
                 }
             }
-            tokio::time::sleep(Duration::from_secs(2)).await;
+            tokio::time::sleep(delay.min(deadline.saturating_duration_since(Instant::now()))).await;
+            delay = delay.saturating_mul(2).min(Duration::from_secs(5));
         };
         match outcome {
             Ok(()) => *connect_slot(&st) = None,
@@ -1621,7 +1645,7 @@ fn publishing_body(p: &deploy::ProgressState) -> String {
         _ => "The wallet answered. Uploading\u{2026}".to_string(),
     };
     format!(
-        "<div class=\"dep__wait\"><div class=\"spin\" role=\"status\" aria-label=\"publishing\"></div>\
+        "<div class=\"dep__wait\"><div class=\"u-spinner\" role=\"status\" aria-label=\"publishing\"></div>\
          <p class=\"note\">{}</p></div>",
         esc(&line)
     )
@@ -1650,7 +1674,7 @@ fn run_panel_for(
             (
                 "Publishing",
                 format!(
-                    "<div class=\"dep__wait\"><div class=\"spin\" role=\"status\" aria-label=\"building\"></div>\
+                    "<div class=\"dep__wait\"><div class=\"u-spinner\" role=\"status\" aria-label=\"building\"></div>\
                      <p class=\"note\">Building \u{2014} running for {}s. The wallet hand-off appears here once \
                      the build finishes; nothing uploads until your wallet answers.</p></div>",
                     r.started.elapsed().as_secs()
@@ -1748,7 +1772,7 @@ fn target_css() -> &'static str {
 fn cannot_package(section: &str, scene_title: &str, why: &str, root: &Path) -> String {
     format!(
         r#"<main class="dash"><section id="{section}" class="sec">
-              <div class="panel"><h2>{title}</h2><span class="note">This scene cannot be
+              <div class="panel ui-card"><h2>{title}</h2><span class="note">This scene cannot be
               packaged yet: {why}</span></div></section></main>"#,
         title = esc(scene_title),
         why = esc(&scrub_paths(why, root))
@@ -1808,7 +1832,7 @@ async fn scene_page(
             &prefix,
             active,
             &format!(
-                r#"<main class="dash"><section id="{active}" class="sec"><div class="panel">
+                r#"<main class="dash"><section id="{active}" class="sec"><div class="panel ui-card">
               <span class="note">{nothing}</span>
             </div></section></main>"#
             ),
@@ -1926,7 +1950,7 @@ fn scrub_paths(msg: &str, root: &Path) -> String {
 
 fn warn(title: &str, body: String) -> String {
     format!(
-        r#"<div class="panel panel--warn"><h2>{}</h2><span class="note">{body}</span></div>"#,
+        r#"<div class="panel panel--warn ui-card"><h2>{}</h2><span class="note">{body}</span></div>"#,
         esc(title)
     )
 }
@@ -2100,7 +2124,7 @@ fn upload_panel(p: &deploy::DeployPreview, status: &LiveStatus) -> String {
             bytes as f64 / total_bytes as f64 * 100.0
         };
         format!(
-            r#"<div class="tgt__reuse" role="meter" aria-label="{label}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{percent:.1}"><span style="width:{percent:.1}%"></span></div>"#
+            r#"<div class="u-progress" role="meter" aria-label="{label}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{percent:.1}"><span style="width:{percent:.1}%"></span></div>"#
         )
     };
     let upload = datum(
@@ -2129,12 +2153,12 @@ fn foot(prefix: &str, tok: &str, print: &str, blocked: Option<&str>, phase: Phas
     }
     let actions = match phase {
         Phase::Done(Some(jump)) => format!(
-            r#"<a class="jn__cta" href="{}">Jump in</a>
-          <button class="knob__go" type="submit">Publish again</button>"#,
+            r#"<a class="btn btn--primary btn--lg jn__cta" href="{}">Jump in</a>
+          <button class="btn btn--secondary btn--md knob__go" type="submit">Publish again</button>"#,
             esc(jump)
         ),
-        Phase::Done(None) => r#"<button class="jn__cta" type="submit">Publish again</button>"#.to_string(),
-        _ => r#"<button class="jn__cta" type="submit">Publish</button>
+        Phase::Done(None) => r#"<button class="btn btn--primary btn--lg jn__cta" type="submit">Publish again</button>"#.to_string(),
+        _ => r#"<button class="btn btn--primary btn--lg jn__cta" type="submit">Publish</button>
           <span class="note">Publish signs with your connected session, or asks your wallet for a signature.
             You can also run <code>dcl-scene-cli deploy</code> in the scene folder.</span>"#
             .to_string(),
@@ -2253,7 +2277,7 @@ fn card(
         ),
     };
     format!(
-        r#"<div class="jn">
+        r#"<div class="ui-card jn">
       <div class="jn2__head"><div class="jn2__title">
         <h2>{title} → {headline}</h2>
         <span class="jn__hint">{parcels} parcel{ps} · {payload} · {state_word}{verdict} — <a href="{prefix_esc}/target">review the target</a></span></div></div>
@@ -2297,13 +2321,13 @@ fn connect_col(head: &str, note: &str, prefix: &str, tok: &str) -> String {
 /// `data-wallet`, inert without one) and the Decentraland sign-in form.
 pub(super) fn connect_buttons(prefix: &str, tok: &str) -> String {
     format!(
-        r#"<span class="bar__acct--split tgt__connect"><button class="bar__cta" type="button" data-wallet>Connect Wallet</button><form method="post" action="{action}"><input type="hidden" name="token" value="{tok}"><button class="bar__cta" type="submit">Connect with DCL</button></form></span>"#,
+        r#"<span class="bar__acct--split tgt__connect"><button class="btn btn--secondary btn--sm" type="button" data-wallet>Connect Wallet</button><form method="post" action="{action}"><input type="hidden" name="token" value="{tok}"><button class="btn btn--secondary btn--sm" type="submit">Connect with DCL</button></form></span>"#,
         action = esc(&format!("{prefix}/target/connect")),
         tok = esc(tok),
     )
 }
 
-const HELP_ACTION: &str = r#"<a class="jn__cta" href="https://docs.decentraland.org/creator/scene-editor/publish/publish-scene" target="_blank" rel="noopener">Publishing guide <span aria-hidden="true">↗</span></a>"#;
+const HELP_ACTION: &str = r#"<a class="btn btn--primary btn--lg jn__cta" href="https://docs.decentraland.org/creator/scene-editor/publish/publish-scene" target="_blank" rel="noopener">Publishing guide <span aria-hidden="true">↗</span></a>"#;
 
 /// Guides under [`DOCS`], shown as their path.
 const DOCS: &str = "https://docs.decentraland.org/";
@@ -2381,7 +2405,7 @@ fn account_row(rights: Option<&Rights>, connect: Option<&Connect>) -> String {
         }) => {
             format!(
                 r#"<div class="jn2__noterow tgt__addr" id="connect-pending"><span class="knob__k">Account</span>
-          <span class="note">Authorize the connection on the page that opened — this page follows along. <a class="knob__go" href="{url_esc}">Reopen the authorize page</a></span>
+          <span class="note">Authorize the connection on the page that opened — this page follows along. <a class="btn btn--secondary btn--md knob__go" href="{url_esc}">Reopen the authorize page</a></span>
           <noscript><meta http-equiv="refresh" content="3"></noscript></div>"#,
                 url_esc = esc(url),
             )
@@ -2405,7 +2429,7 @@ const TARGET_SCRIPT: &str = concat!(
     include_str!("page_common.js"),
     include_str!("target.js"),
     r#"(() => {
-  if (document.getElementById('connect-pending')) setTimeout(() => location.reload(), 3000);
+  if (document.getElementById('connect-pending')) pageRefreshWhen((doc) => !doc.getElementById('connect-pending'), 300000);
 })();"#
 );
 
@@ -2413,7 +2437,7 @@ const TARGET_SCRIPT: &str = concat!(
 /// parcels on Genesis City).
 fn point_form(prefix: &str, tok: &str, world: &str, label: &str) -> String {
     format!(
-        r#"<form method="post" action="{prefix_esc}/target/point"><input type="hidden" name="token" value="{tok_esc}"><input type="hidden" name="world" value="{world_esc}"><button class="deep__copy" type="submit">{label}</button></form>"#,
+        r#"<form method="post" action="{prefix_esc}/target/point"><input type="hidden" name="token" value="{tok_esc}"><input type="hidden" name="world" value="{world_esc}"><button class="btn btn--secondary btn--sm" type="submit">{label}</button></form>"#,
         prefix_esc = esc(prefix),
         tok_esc = esc(tok),
         world_esc = esc(world),
@@ -2424,7 +2448,7 @@ fn point_form(prefix: &str, tok: &str, world: &str, label: &str) -> String {
 /// Direct coordinate entry moves the whole footprint without a picker mode.
 fn base_form(prefix: &str, tok: &str, dest: &Dest) -> String {
     format!(
-        r#"<div class="tgt__base-row"><span class="knob__k">Base parcel</span><form class="tgt__base" method="post" action="{prefix_esc}/target/base"><input type="hidden" name="token" value="{tok_esc}"><input name="base" value="{base_esc}" aria-label="base parcel x,y" spellcheck="false" autocomplete="off"><button class="deep__copy" type="submit">Move</button></form></div>"#,
+        r#"<div class="tgt__base-row"><span class="knob__k">Base parcel</span><form class="tgt__base" method="post" action="{prefix_esc}/target/base"><input type="hidden" name="token" value="{tok_esc}"><input name="base" value="{base_esc}" aria-label="base parcel x,y" spellcheck="false" autocomplete="off"><button class="btn btn--secondary btn--sm" type="submit">Move</button></form></div>"#,
         prefix_esc = esc(prefix),
         tok_esc = esc(tok),
         base_esc = esc(&dest.base_pointer),
@@ -2485,7 +2509,7 @@ fn your_worlds(prefix: &str, tok: &str, dest: &Dest, rights: Option<&Rights>) ->
             bits.push("Collaborator · deployment permission".into());
         }
         let action = if target {
-            r#"<span class="tgt__badge">Current target</span>"#.to_string()
+            r#"<span class="u-pill u-pill--default">Current target</span>"#.to_string()
         } else {
             point_form(prefix, tok, &w.name, "Select World")
         };
@@ -2736,7 +2760,7 @@ fn target_card(
         r#"<span class="tgt__blocked">Deploy blocked — resolve rights below</span>"#.to_string()
     } else {
         format!(
-            r#"<a class="jn__cta" href="{}/deploy">{} <span aria-hidden="true">→</span></a>"#,
+            r#"<a class="btn btn--primary btn--lg jn__cta" href="{}/deploy">{} <span aria-hidden="true">→</span></a>"#,
             esc(prefix),
             "Deploy"
         )
@@ -2865,7 +2889,7 @@ fn target_card(
         },
         if world.is_some() {
             format!(
-                r#"{}<div class="tgt__management">{}{}</div>"#,
+                r#"{}<details class="tgt__manage"><summary>Manage placement, entrance and World replacement</summary><div class="tgt__management">{}{}</div></details>"#,
                 multiscene_pane(dest, status, prefix, tok),
                 col("Upload", &upload_panel(p, status)),
                 col(
@@ -2885,7 +2909,7 @@ fn target_card(
         tab("help", "Help", false)
     );
     format!(
-        r#"<div class="jn tgt" data-target-kind="{target_kind}">
+        r#"<div class="ui-card jn tgt" data-target-kind="{target_kind}">
       {addr}
       <fieldset class="knob knob--tabs"><legend class="knob__k u-sr-only">Browse publishing destinations</legend><div class="jn2__tabs">{tabs}</div></fieldset>
       <div class="tgt__pane tgt__pane--world">{world_pane}</div>
@@ -2984,11 +3008,11 @@ fn history_rows_pane(history: &[PastRun]) -> String {
                 None => String::new(),
             };
             let tone = match h.outcome.as_str() {
-                "published" => "ok",
-                "failed" => "failed",
-                _ => "neutral",
+                "published" => "online",
+                "failed" => "accent",
+                _ => "default",
             };
-            format!(r#"<div class="tgt__history-row"><div class="tgt__history-head"><span class="tgt__history-age">{}</span><span class="tgt__history-target">{}{}</span><span class="tgt__history-status tgt__history-status--{tone}">{}</span></div>{detail}</div>"#,
+            format!(r#"<div class="tgt__history-row"><div class="tgt__history-head"><span class="tgt__history-age">{}</span><span class="tgt__history-target">{}{}</span><span class="u-pill u-pill--{tone}">{}</span></div>{detail}</div>"#,
                 esc(&ago(h.at_ms, deploy::now_ms())), esc(&h.target), esc(&by), esc(&h.outcome))
 
         })
@@ -3063,7 +3087,7 @@ fn after_map(remote: &RemoteState, ours: &[(i64, i64)], base: (i64, i64)) -> Str
         }
         let overview = format!("{} {} {width} {height}", xs.0 - pad, -ys.1 - 1 - pad);
         let mut controls = format!(
-            r#"<button type="button" class="deep__copy" data-map-viewbox="{overview}" aria-pressed="true">Overview</button>"#
+            r#"<button type="button" class="tgt__view" data-map-viewbox="{overview}" aria-pressed="true">Overview</button>"#
         );
         let mut labels = String::new();
         for coords in remote
@@ -3078,7 +3102,7 @@ fn after_map(remote: &RemoteState, ours: &[(i64, i64)], base: (i64, i64)) -> Str
             let (x, y) = coords[0];
             let (x0, x1) = span(coords.iter().map(|p| p.0));
             let (y0, y1) = span(coords.iter().map(|p| p.1));
-            controls.push_str(&format!(r#"<button type="button" class="deep__copy" data-map-viewbox="{} {} {} {}" aria-pressed="false">{x},{y}</button>"#,x0-2,-y1-3,x1-x0+5,y1-y0+5));
+            controls.push_str(&format!(r#"<button type="button" class="tgt__view" data-map-viewbox="{} {} {} {}" aria-pressed="false">{x},{y}</button>"#,x0-2,-y1-3,x1-x0+5,y1-y0+5));
             labels.push_str(&format!(r##"<a href="#world-scene-{x}-{y}"><text x="{x}" y="{}" font-size="{font}">{x},{y}</text></a>"##, -y as f64+font));
         }
         return format!(
@@ -3185,7 +3209,7 @@ fn multiscene_pane(dest: &Dest, status: &LiveStatus, prefix: &str, tok: &str) ->
             .and_then(dcl_auth::pointer::parse_pointer)
             .is_some_and(|p| coords.contains(&p));
         let entrance_badge = if entrance {
-            r#"<span class="tgt__badge">World entrance</span>"#
+            r#"<span class="u-pill u-pill--default">World entrance</span>"#
         } else {
             ""
         };
@@ -3198,7 +3222,7 @@ fn multiscene_pane(dest: &Dest, status: &LiveStatus, prefix: &str, tok: &str) ->
             String::new()
         } else {
             format!(
-                r#"<details class="tgt__remove"><summary>Remove scene</summary><p>Remove this {parcels}-parcel scene at {coordinate}? Other scenes will stay.</p><form class="tgt__scene-remove" method="post" action="{}/target/scene/remove"><input type="hidden" name="token" value="{}"><input type="hidden" name="world" value="{}"><input type="hidden" name="coordinate" value="{coordinate}"><input type="hidden" name="world_revision" value="{revision}"><button type="submit" class="deep__copy">Remove scene at {coordinate}</button><p class="note" role="status"></p></form></details>"#,
+                r#"<details class="tgt__remove"><summary>Remove scene</summary><p>Remove this {parcels}-parcel scene at {coordinate}? Other scenes will stay.</p><form class="tgt__scene-remove" method="post" action="{}/target/scene/remove"><input type="hidden" name="token" value="{}"><input type="hidden" name="world" value="{}"><input type="hidden" name="coordinate" value="{coordinate}"><input type="hidden" name="world_revision" value="{revision}"><button type="submit" class="btn btn--secondary btn--sm">Remove scene at {coordinate}</button><p class="note" role="status"></p></form></details>"#,
                 esc(prefix),
                 esc(tok),
                 esc(w)
@@ -3286,7 +3310,7 @@ fn replacement_revision(remote: &Remote) -> Option<String> {
 
 fn world_entrance_form(prefix: &str, tok: &str, world: &str, base: &str) -> String {
     format!(
-        r#"<form class="tgt__entrance" method="post" action="{}/target/entrance"><input type="hidden" name="token" value="{}"><input type="hidden" name="world" value="{}"><input type="hidden" name="base" value="{}"><button class="deep__copy" type="submit">Make {} the entrance</button><p class="note" role="status"></p></form>"#,
+        r#"<form class="tgt__entrance" method="post" action="{}/target/entrance"><input type="hidden" name="token" value="{}"><input type="hidden" name="world" value="{}"><input type="hidden" name="base" value="{}"><button class="btn btn--secondary btn--sm" type="submit">Make {} the entrance</button><p class="note" role="status"></p></form>"#,
         esc(prefix),
         esc(tok),
         esc(world),
@@ -3333,7 +3357,7 @@ fn world_actions(prefix: &str, tok: &str, dest: &Dest, status: &LiveStatus, prin
     let revision = replacement_revision(&status.remote).unwrap_or_default();
     let replacement = match rows {
         Some(rows) => format!(
-            r#"<details class="tgt__replacement"><summary>Replace the entire World with this scene</summary><p>This removes the World's existing scenes and publishes only this project's {} parcels at base {}.</p><ul>{rows}</ul><p class="note">Removal happens before upload. If upload fails, removed scenes are not restored automatically. Keep their projects to publish them again. The wallet may ask for two signatures: one for publication and one for removal.</p><form method="post" action="{}/deploy"><input type="hidden" name="token" value="{}"><input type="hidden" name="fingerprint" value="{}"><input type="hidden" name="world_revision" value="{revision}"><label><input type="checkbox" name="replace_world" value="{}" required> Remove the existing scenes in {} and replace them with this project</label><button class="knob__go" type="submit">Replace World and publish</button></form></details>"#,
+            r#"<details class="tgt__replacement"><summary>Replace the entire World with this scene</summary><p>This removes the World's existing scenes and publishes only this project's {} parcels at base {}.</p><ul>{rows}</ul><p class="note">Removal happens before upload. If upload fails, removed scenes are not restored automatically. Keep their projects to publish them again. The wallet may ask for two signatures: one for publication and one for removal.</p><form method="post" action="{}/deploy"><input type="hidden" name="token" value="{}"><input type="hidden" name="fingerprint" value="{}"><input type="hidden" name="world_revision" value="{revision}"><label><input type="checkbox" name="replace_world" value="{}" required> Remove the existing scenes in {} and replace them with this project</label><button class="btn btn--secondary btn--md knob__go" type="submit">Replace World and publish</button></form></details>"#,
             coords.len(),
             esc(&dest.base_pointer),
             esc(prefix),

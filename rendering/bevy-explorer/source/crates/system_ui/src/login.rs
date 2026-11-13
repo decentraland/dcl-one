@@ -16,8 +16,8 @@ use common::{
     rpc::{RpcResultReceiver, RpcResultSender},
     sets::SceneSets,
     structs::{
-        ActiveDialog, AppConfig, ChainLink, CurrentRealm, DialogPermit, PreviewMode, PreviousLogin,
-        SystemAudio, WorldHold, ZOrder, TERMS_VERSION,
+        ActiveDialog, AppConfig, ChainLink, CurrentRealm, PreviewMode, PreviousLogin, SystemAudio,
+        WorldHold, ZOrder, TERMS_VERSION,
     },
     util::{TaskCompat, TaskExt},
 };
@@ -39,12 +39,14 @@ use wallet::{
     Wallet,
 };
 
-use crate::version_check::check_update;
+#[path = "client_login.rs"]
+mod client_login;
 
 pub struct LoginPlugin;
 
 impl Plugin for LoginPlugin {
     fn build(&self, app: &mut App) {
+        client_login::register(app);
         app.add_event::<LoginType>().add_systems(
             Update,
             (
@@ -75,7 +77,6 @@ fn login(
     dui: Res<DuiRegistry>,
     active_dialog: Res<ActiveDialog>,
     mut motd_shown: Local<bool>,
-    mut update_check: Local<Option<bevy::tasks::Task<Option<(String, String)>>>>,
     mut bridge: EventWriter<SystemApi>,
     native_active: Res<NativeUi>,
     config: Res<AppConfig>,
@@ -85,55 +86,22 @@ fn login(
     }
 
     if !*motd_shown {
-        // don't block the main thread on the github release check
-        let task = update_check.get_or_insert_with(|| IoTaskPool::get().spawn(check_update()));
-        let Some(update) = task.complete() else {
+        let Some(permit) = active_dialog.try_acquire() else {
             return;
         };
-        *update_check = None;
-        let permit = active_dialog.try_acquire().unwrap();
-
-        if let Some((desc, url)) = update {
-            let components = commands
-                .spawn_template(
-                    &dui,
-                    "update-available",
-                    DuiProps::new()
-                        .with_prop("download", url)
-                        .with_prop("body", desc)
-                        .with_prop("buttons", vec![DuiButton::new_enabled("Ok", (|mut commands: Commands, dui: Res<DuiRegistry>, mut permit: Query<&mut DialogPermit>| {
-                            let mut permit = permit.single_mut().unwrap();
-                            let permit = permit.take();
-                            let components = commands
-                                .spawn_template(
-                                    &dui,
-                                    "motd",
-                                    DuiProps::default()
-                                        .with_prop("buttons", vec![DuiButton::new_enabled("Ok", close_ui_happy)]),
-                                )
-                                .unwrap();
-                            commands.entity(components.root).try_insert((permit, ZOrder::Login.default()));
-                        }).pipe(close_ui_happy))]),
-                )
-                .unwrap();
-            commands
-                .entity(components.root)
-                .try_insert((permit, ZOrder::Login.default()));
-        } else {
-            let components = commands
-                .spawn_template(
-                    &dui,
-                    "motd",
-                    DuiProps::default().with_prop(
-                        "buttons",
-                        vec![DuiButton::new_enabled("Ok", close_ui_happy)],
-                    ),
-                )
-                .unwrap();
-            commands
-                .entity(components.root)
-                .try_insert((permit, ZOrder::Login.default()));
-        }
+        let components = commands
+            .spawn_template(
+                &dui,
+                "motd",
+                DuiProps::default().with_prop(
+                    "buttons",
+                    vec![DuiButton::new_enabled("Ok", close_ui_happy)],
+                ),
+            )
+            .unwrap();
+        commands
+            .entity(components.root)
+            .try_insert((permit, ZOrder::Login.default()));
         *motd_shown = true;
         return;
     }
@@ -305,21 +273,15 @@ fn update_profile_for_realm(
 ) {
     if realm.is_changed() && !wallet.is_guest() {
         if let Some(address) = wallet.address() {
-            *task = Some(IoTaskPool::get().spawn_compat(get_remote_profile(
-                address,
-                ipfas.ipfs().clone(),
-                None,
-            )));
+            *task = Some(
+                IoTaskPool::get().spawn_compat(get_remote_profile(address, ipfas.ipfs().clone())),
+            );
         }
     }
 
     if let Some(mut t) = task.take() {
         match t.complete() {
-            Some(Ok(Some(profile))) => {
-                current_profile.profile = Some(profile);
-                current_profile.is_deployed = true;
-                current_profile.deploy_held = false;
-            }
+            Some(Ok(Some(profile))) => current_profile.adopt_server_profile(profile),
             Some(Ok(None)) | Some(Err(_)) => {
                 // keep existing profile
             }
@@ -395,7 +357,6 @@ async fn get_profile_with_retry(
     address: Address,
     ipfs: std::sync::Arc<IpfsIo>,
     default_on_error: bool,
-    endpoint: Option<String>,
 ) -> Result<Option<UserProfile>, String> {
     const ATTEMPTS: u32 = 5;
     let mut last_error = String::default();
@@ -403,7 +364,7 @@ async fn get_profile_with_retry(
         if attempt > 0 {
             async_std::task::sleep(std::time::Duration::from_secs(2)).await;
         }
-        match get_remote_profile(address, ipfs.clone(), endpoint.clone()).await {
+        match get_remote_profile(address, ipfs.clone()).await {
             Ok(maybe_profile) => return Ok(maybe_profile),
             Err(e) => last_error = e.to_string(),
         }
@@ -428,9 +389,8 @@ async fn login_profile(
     ipfs: std::sync::Arc<IpfsIo>,
     default_on_error: bool,
     pick: Option<NewAccountPick>,
-    endpoint: Option<String>,
 ) -> Result<LoginProfile, String> {
-    match get_profile_with_retry(root_address, ipfs.clone(), default_on_error, endpoint).await? {
+    match get_profile_with_retry(root_address, ipfs.clone(), default_on_error).await? {
         Some(profile) => Ok(LoginProfile::Deployed(profile)),
         None => Ok(LoginProfile::New(
             new_account_profile(root_address, ipfs, pick).await,
@@ -628,6 +588,7 @@ fn process_login_bridge(
     >,
     mut wallet: ResMut<Wallet>,
     mut segment_config: ResMut<SegmentConfig>,
+    mut login_events: ResMut<client_login::ClientLoginDelivery>,
     mut current_profile: ResMut<CurrentUserProfile>,
     mut window: Query<&mut Window, With<PrimaryWindow>>,
     mut config: ResMut<AppConfig>,
@@ -637,11 +598,8 @@ fn process_login_bridge(
 ) {
     for ev in e.read().cloned() {
         match ev {
-            SystemApi::CheckForUpdate(rpc_result_sender) => IoTaskPool::get()
-                .spawn(async move {
-                    rpc_result_sender.send(check_update().await);
-                })
-                .detach(),
+            // Desktop packages have no published update feed.
+            SystemApi::CheckForUpdate(sender) => sender.send(None),
             SystemApi::MOTD(rpc_result_sender) => {
                 rpc_result_sender.send("".to_owned());
             }
@@ -664,7 +622,7 @@ fn process_login_bridge(
             // the account can only change while the world is held (the lobby): once in
             // world, comms and scenes are bound to the wallet that entered
             SystemApi::LoginPrevious(_, sender)
-            | SystemApi::LoginWithIdentity(_, _, _, _, _, sender)
+            | SystemApi::LoginWithIdentity(_, _, _, _, sender)
                 if account_locked(&wallet, &world_hold) =>
             {
                 sender.send(Err(ACCOUNT_LOCKED.to_owned()));
@@ -708,8 +666,7 @@ fn process_login_bridge(
                     } = previous_login;
 
                     let profile =
-                        match login_profile(root_address, ipfs, default_on_error, None, None).await
-                        {
+                        match login_profile(root_address, ipfs, default_on_error, None).await {
                             Ok(profile) => profile,
                             Err(e) => {
                                 rpc_result_sender.send(Err(e));
@@ -757,8 +714,7 @@ fn process_login_bridge(
                         };
 
                     let profile =
-                        match login_profile(root_address, ipfs, default_on_error, None, None).await
-                        {
+                        match login_profile(root_address, ipfs, default_on_error, None).await {
                             Ok(profile) => profile,
                             Err(e) => {
                                 result_sender.send(Err(e));
@@ -781,7 +737,6 @@ fn process_login_bridge(
                 default_on_error,
                 guest_account,
                 pick,
-                profiles,
                 rpc_result_sender,
             ) => {
                 // The web page already holds a signed AuthIdentity (read from localStorage,
@@ -798,9 +753,7 @@ fn process_login_bridge(
                     };
 
                     let profile =
-                        match login_profile(root_address, ipfs, default_on_error, pick, profiles)
-                            .await
-                        {
+                        match login_profile(root_address, ipfs, default_on_error, pick).await {
                             Ok(profile) => profile,
                             Err(e) => {
                                 rpc_result_sender.send(Err(e));
@@ -846,7 +799,7 @@ fn process_login_bridge(
                             return Err(());
                         }
                     };
-                    let profile = match login_profile(root_address, ipfs, false, None, None).await {
+                    let profile = match login_profile(root_address, ipfs, false, None).await {
                         Ok(profile) => profile,
                         Err(e) => {
                             rpc_result_sender.send(Err(e));
@@ -865,6 +818,7 @@ fn process_login_bridge(
             }
             SystemApi::LoginGuest => {
                 *login_task = None;
+                login_events.pause();
                 wallet.finalize_as_guest();
                 segment_config.update_identity(format!("{:#x}", wallet.address().unwrap()), true);
                 current_profile.profile = Some(UserProfile {
@@ -878,16 +832,19 @@ fn process_login_bridge(
                 });
                 current_profile.is_deployed = true;
                 current_profile.deploy_held = false;
+                current_profile.revert_to = None;
             }
             SystemApi::LoginCancel => {
                 *login_task = None;
             }
             SystemApi::Logout => {
                 *login_task = None;
+                login_events.pause();
                 wallet.disconnect();
                 segment_config.reset_identity();
                 current_profile.profile = None;
                 current_profile.deploy_held = false;
+                current_profile.revert_to = None;
             }
             _ => (),
         }
@@ -927,6 +884,7 @@ fn process_login_bridge(
                         );
                     }
                 }
+                login_events.completed(&wallet);
                 segment_config
                     .update_identity(format!("{:#x}", wallet.address().unwrap()), guest_account);
                 let (profile, deployed) = match profile {
@@ -937,6 +895,7 @@ fn process_login_bridge(
                 current_profile.is_deployed = deployed;
                 // held, the host shows its welcome page, which deploys the new profile
                 current_profile.deploy_held = !deployed && world_hold.is_some();
+                current_profile.revert_to = None;
 
                 sender.send(Ok(()));
             }
@@ -944,6 +903,7 @@ fn process_login_bridge(
             None => *login_task = Some(task),
         }
     }
+    login_events.drive(&wallet);
 }
 
 #[cfg(test)]

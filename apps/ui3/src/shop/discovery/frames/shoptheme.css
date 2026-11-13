@@ -29,8 +29,10 @@
 @font-face { font-family: "Inter"; src: url("/fonts/Inter-v20-latin-ext.woff2") format("woff2"); font-style: normal; font-weight: 700; font-display: swap; unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF; }
 @font-face { font-family: "Inter"; src: url("/fonts/Inter-v20-latin.woff2") format("woff2"); font-style: normal; font-weight: 700; font-display: swap; unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
 
+/* `[data-shop-tokens]`: a Shop surface portaled outside the chrome (Buy now's dialog) keeps the same tokens. */
 .shop-chrome,
-.site-layout:has(.shop-chrome) {
+.site-layout:has(.shop-chrome),
+[data-shop-tokens] {
   --shop-text: #161518;
   --shop-muted: #716b7c;
   --shop-muted-1: #5e5b67;
@@ -47,8 +49,17 @@
   --shop-field-border: #c6bcd7;
   --shop-field-bottom-washed: #3c1556;
   --shop-overlay: rgba(0, 0, 0, 0.4);
+  --shop-modal-tile: #3f1365;
+  --shop-success: #34ce74;
+  --shop-warning: #f48221;
+  --shop-white: #ffffff;
   --shop-glass: rgba(255, 255, 255, 0.2);
+  --shop-glass-strong: rgba(255, 255, 255, 0.3);
   --shop-glass-faint: rgba(255, 255, 255, 0.1);
+  --shop-flare-amber: #ffbc5b;
+  --shop-flare: linear-gradient(157.44deg, #ffbc5b 0%, #ff2d55 50.52%, #c640cd 100%);
+  /* The warm wash behind a warning or a notice in the checkout dialogs. */
+  --shop-warning-wash: rgba(255, 162, 90, 0.3);
   --shop-card-line: rgba(160, 155, 168, 0.25);
   --shop-buy-btn: linear-gradient(180.93deg, #ff7439 2.82%, #ff2d55 97.47%);
   --shop-cerise: linear-gradient(135deg, #ff2d55 0%, #c640cd 100%);
@@ -66,7 +77,7 @@
   --shop-loading-wash-faint: rgba(143, 66, 219, 0.3);
   --shop-field: radial-gradient(61.64% 109.58% at 50% 54.49%, #952dc6 0%, #7c27a8 25%, #642089 50%, #4b1a6b 75%, #32134c 100%);
   --shop-gutter: 54px;
-  --shop-nav-h: 92px;
+  --shop-nav-h: var(--native-site-header-h, 92px);
   --shop-sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 
   --ui-canvas: #32134c;
@@ -90,20 +101,22 @@
   --font-sans: var(--shop-sans);
   --brand: #ff2d55;
   --on-brand: #fcfcfc;
-  --site-header-h: var(--shop-nav-h);
+  --site-header-h: var(--native-site-header-h, var(--shop-nav-h));
   --site-nav-bg: transparent;
   --site-nav-line: transparent;
 }
 
 @media (max-width: 991px) {
   .shop-chrome,
-  .site-layout:has(.shop-chrome) {
-    --shop-nav-h: 64px;
+  .site-layout:has(.shop-chrome),
+  [data-shop-tokens] {
+    --shop-nav-h: var(--native-site-header-h, 64px);
   }
 }
 @media (max-width: 768px) {
   .shop-chrome,
-  .site-layout:has(.shop-chrome) {
+  .site-layout:has(.shop-chrome),
+  [data-shop-tokens] {
     --shop-gutter: 16px;
   }
 }

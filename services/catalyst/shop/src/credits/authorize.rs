@@ -116,6 +116,16 @@ pub enum ReserveRefusal {
     TooManyLive {
         balance_cents: i64,
     },
+    /// The key is an operation's and its row holds other lines.
+    OperationReused,
+}
+
+/// The authorization a key already reserved, and the lines its operation
+/// asked for (`None` for a key that names no operation).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PriorAuthorization {
+    pub id: String,
+    pub request_digest: Option<String>,
 }
 
 impl From<ReserveRefusal> for ApiError {
@@ -126,6 +136,9 @@ impl From<ReserveRefusal> for ApiError {
             }
             ReserveRefusal::TooManyLive { .. } => ApiError::conflict(
                 "Too many purchases in progress. Complete or cancel them before starting another one.",
+            ),
+            ReserveRefusal::OperationReused => ApiError::conflict(
+                "This purchase was already authorized for other items. Start a new purchase.",
             ),
         }
     }
@@ -203,6 +216,7 @@ impl Credits {
         self.reserve_group(
             &group,
             idempotency_key,
+            None,
             LegacyColumns {
                 trade_id: a.trade_id,
                 contract_address: a.contract_address,
@@ -223,11 +237,13 @@ impl Credits {
         &self,
         g: &NewGroup<'_>,
         idempotency_key: &str,
+        request_digest: Option<&str>,
     ) -> Result<Result<ReserveOutcome, ReserveRefusal>, ApiError> {
         let first = g.lines.first();
         self.reserve_group(
             g,
             idempotency_key,
+            request_digest,
             LegacyColumns {
                 trade_id: first.and_then(|l| l.trade_id.as_deref()),
                 contract_address: first.and_then(|l| l.contract_address.as_deref()),
@@ -237,25 +253,70 @@ impl Credits {
         .await
     }
 
+    /// What [`Self::reserve_credit_group`] would refuse for `address` asking
+    /// `charged_cents`, read without a lock: lets a caller refuse before
+    /// paying for an external read (the marketplace feed). The reservation
+    /// stays the arbiter; this only answers early what it would answer later.
+    pub async fn would_refuse(
+        &self,
+        address: &str,
+        charged_cents: i64,
+    ) -> Result<Option<ReserveRefusal>, ApiError> {
+        let (balance_cents, held, live): (i64, i64, i64) = sqlx::query_as(
+            "SELECT COALESCE((SELECT floor(available * $2::numeric)::bigint FROM credits.wallets WHERE address = $1), 0), \
+                    COALESCE(SUM(usd_cents), 0)::bigint, count(*)::bigint \
+             FROM credits.authorizations \
+             WHERE address = $1 AND status IN ('authorized', 'retired')",
+        )
+        .bind(address)
+        .bind(UsdCents::CENTS_PER_CREDIT)
+        .fetch_one(&self.pool)
+        .await?;
+        let spendable = (balance_cents - held).max(0);
+        Ok(if live >= MAX_LIVE_CREDITS_PER_WALLET {
+            Some(ReserveRefusal::TooManyLive {
+                balance_cents: spendable,
+            })
+        } else if charged_cents > balance_cents - held {
+            Some(ReserveRefusal::Insufficient {
+                balance_cents: spendable,
+                required_cents: charged_cents,
+            })
+        } else {
+            None
+        })
+    }
+
     async fn reserve_group(
         &self,
         g: &NewGroup<'_>,
         idempotency_key: &str,
+        request_digest: Option<&str>,
         legacy: LegacyColumns<'_>,
     ) -> Result<Result<ReserveOutcome, ReserveRefusal>, ApiError> {
         let mut tx = self.pool.begin().await?;
 
-        let available_cents: Option<i64> =
-            sqlx::query_scalar("SELECT floor(available * $2::numeric)::bigint FROM credits.wallets WHERE address = $1 FOR UPDATE")
-                .bind(g.address)
-                .bind(UsdCents::CENTS_PER_CREDIT)
-                .fetch_optional(&mut *tx)
-                .await?;
-        let balance_cents = available_cents.unwrap_or(0);
+        let wallet = sqlx::query(
+            "SELECT floor(available * $2::numeric)::bigint AS available_cents, \
+                    is_blocked_for_claiming AS blocked \
+             FROM credits.wallets WHERE address = $1 FOR UPDATE",
+        )
+        .bind(g.address)
+        .bind(UsdCents::CENTS_PER_CREDIT)
+        .fetch_optional(&mut *tx)
+        .await?;
+        if wallet.as_ref().is_some_and(|w| w.get::<bool, _>("blocked")) {
+            return Err(ApiError::forbidden(
+                "wallet is blocked from the credits program",
+            ));
+        }
+        let balance_cents = wallet
+            .map(|w| w.get::<i64, _>("available_cents"))
+            .unwrap_or(0);
 
         let row = sqlx::query(
             "WITH prior AS ( \
-                 SELECT id, amount_wei::text AS amount_wei, usd_cents, expires_at \
+                 SELECT id, amount_wei::text AS amount_wei, usd_cents, expires_at, request_digest \
                  FROM credits.authorizations WHERE idempotency_key = $10::text \
              ), live AS ( \
                  SELECT COALESCE(SUM(usd_cents), 0)::bigint AS held, count(*)::bigint AS n \
@@ -264,15 +325,17 @@ impl Credits {
              ), ins AS ( \
                  INSERT INTO credits.authorizations \
                      (id, address, usd_cents, amount_wei, trade_id, contract_address, item_id, source, status, \
-                      expires_at, idempotency_key, chain_id, contract, credit_hash, quoted_cents, oracle_rate, oracle_decimals) \
+                      expires_at, idempotency_key, chain_id, contract, credit_hash, quoted_cents, oracle_rate, oracle_decimals, \
+                      request_digest) \
                  SELECT $1::text, $2::text, $3::bigint, $4::numeric, $5::text, $6::text, $7::text, $8::text, 'authorized', \
                         $9::timestamp, $10::text, NULLIF($12::bigint, 0), NULLIF($13::text, ''), NULLIF($14::text, ''), \
-                        $15::bigint, NULLIF($16::text, '')::numeric, NULLIF($17::smallint, 0) \
+                        $15::bigint, NULLIF($16::text, '')::numeric, NULLIF($17::smallint, 0), $19::text \
                  FROM live l \
                  WHERE NOT EXISTS (SELECT 1 FROM prior) AND $3::bigint <= $11::bigint - l.held AND l.n < $18::bigint \
                  RETURNING id \
              ) \
              SELECT p.id AS prior_id, p.amount_wei AS prior_wei, p.usd_cents AS prior_cents, p.expires_at AS prior_expires, \
+                    p.request_digest AS prior_digest, \
                     l.held, l.n, EXISTS (SELECT 1 FROM ins) AS inserted \
              FROM live l LEFT JOIN prior p ON TRUE",
         )
@@ -294,10 +357,18 @@ impl Credits {
         .bind(g.oracle_rate)
         .bind(g.oracle_decimals)
         .bind(MAX_LIVE_CREDITS_PER_WALLET)
+        .bind(request_digest)
         .fetch_one(&mut *tx)
         .await?;
 
         if let Some(prior_id) = row.get::<Option<String>, _>("prior_id") {
+            // An operation's retry replays its row only for the lines it asked for.
+            if request_digest.is_some()
+                && row.get::<Option<String>, _>("prior_digest").as_deref() != request_digest
+            {
+                tx.rollback().await?;
+                return Ok(Err(ReserveRefusal::OperationReused));
+            }
             tx.commit().await?;
             return Ok(Ok(ReserveOutcome {
                 id: prior_id,
@@ -466,6 +537,24 @@ impl Credits {
         .execute(&self.pool)
         .await?;
         Ok(res.rows_affected() as i64)
+    }
+
+    /// The authorization `address` already reserved under `idempotency_key`,
+    /// if any. The key is derived from the signer, and the address is
+    /// checked too, so no other wallet finds the row.
+    pub async fn authorization_for_key(
+        &self,
+        idempotency_key: &str,
+        address: &str,
+    ) -> Result<Option<PriorAuthorization>, ApiError> {
+        let row: Option<(String, Option<String>)> = sqlx::query_as(
+            "SELECT id, request_digest FROM credits.authorizations WHERE idempotency_key = $1 AND address = $2",
+        )
+        .bind(idempotency_key)
+        .bind(address)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.map(|(id, request_digest)| PriorAuthorization { id, request_digest }))
     }
 
     pub async fn get_authorization(&self, id: &str) -> Result<Option<AuthorizationRow>, ApiError> {

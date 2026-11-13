@@ -98,6 +98,11 @@ type FetchEventsParams = {
   with_connected_users?: boolean;
   limit?: number;
   offset?: number;
+  /** A parcel as "x,y". */
+  position?: string;
+  world_names?: string;
+  /** False keeps World events out of a Genesis City parcel lookup. */
+  world?: boolean;
 };
 
 const EventListEnvelope = apiOkOf(
@@ -130,7 +135,9 @@ async function fetchEventRows(
   params: FetchEventsParams,
   opts: GetOptions,
 ): Promise<{ rows: (Event | null)[]; total: number; copy: CopyStamp | null }> {
-  const raw = await getJSON<unknown>(eventsApiPath("get", "/api/events"), {
+  // `/v1/events`: the strict `/api/events` schema (upstream's `additionalProperties: false`)
+  // refuses `recurrent`, which this site sends; the v1 list keeps the same envelope.
+  const raw = await getJSON<unknown>(eventsApiPath("get", "/v1/events"), {
     ...opts,
     query: {
       list: params.list,
@@ -141,6 +148,9 @@ async function fetchEventRows(
       with_connected_users: params.with_connected_users,
       limit: params.limit,
       offset: params.offset,
+      position: params.position,
+      world_names: params.world_names,
+      world: params.world,
     },
   });
   const copy = readCopy(raw);

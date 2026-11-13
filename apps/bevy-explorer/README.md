@@ -7,9 +7,33 @@ workspace and `target/`); artifacts go to this app's ignored `dist/`.
 
 Prerequisites: the [Explorer README](../../rendering/bevy-explorer/source/readme.md)'s platform
 libraries, Rust, protoc, Node 24, npm. Web also needs `nightly-2026-04-15` with `rust-src` and
-`wasm32-unknown-unknown`, and wasm-pack 0.15.0; desktop needs the pinned CEF and the UUAV
-video runtime set (`library/uuav/dist/<target>`, Git LFS: `git lfs pull --include 'library/uuav/dist/**'`),
-which `tooling/uuav/stage-dist.py` copies next to the binary that spawns it.
+`wasm32-unknown-unknown`, and wasm-pack (CI takes 0.15.1 from the flake's `bevy-tools` package);
+desktop needs FFmpeg and the pinned CEF.
+
+CI uses `build-web.py --shared-build`: Cargo compiles the engine and scene runtime together,
+then the lockfile-matched wasm-bindgen emits two separate modules. `install-web-tools.py`
+checks the release archives' SHA-256 and the binding generator's version against Cargo.lock.
+Optimized builds retain the release compilation settings and run wasm-opt. Unoptimized PR
+builds use 16 codegen units; the larger modules trade download size for compilation speed.
+Linux web CI takes protoc, clang 21, pkg-config and ALSA/udev development outputs from
+the flake's cached `bevy-web-tools` package and installs no apt build dependencies. Its
+pkg-config search path points to that package. Native Linux packaging retains distribution
+libraries to preserve Ubuntu 22.04 tarball compatibility.
+
+Package installation overlaps compilation, and each command reports its elapsed time. Native
+build-tool thread pools default to at most 16 threads; `RAYON_NUM_THREADS` overrides that cap.
+Portable bridge exports resolve their relative content URL against the served realm, including
+when the app is mounted under a gateway path. CDN publication reuses the compiled scene.
+
+The bridge denies dependency lifecycle scripts explicitly. The SDK hook launches another
+package manager, esbuild uses its installed platform binary, and protobufjs's hook only
+checks version conventions. The SDK build and static export validate these installations.
+The production bridge bundle runs the pinned Oxlint correctness checks with warnings treated
+as errors. The SDK's runtime packages stay pinned; its CLI uses the patched esbuild and the
+maintained hashing 1.x implementation. Hash fixtures preserve the pinned SDK's byte and stream
+content identifiers, while existing hashing 3.x consumers remain unchanged. The bridge's
+`.dclrc` disables CLI analytics. Failure-path HUD tests assert their exact console diagnostics;
+unexpected messages still fail those tests.
 
 ```sh
 make web          # engine WASM, scene WASM, sandbox guard, HUD tests, bridge scene -> dist/web
@@ -25,9 +49,16 @@ Native dev loop: in the source directory, `just setup-cef`, then `just native-re
 Importing into Sites (production requires the main CI artifact):
 [Explorer integration](../../rendering/bevy-explorer/README.md#native-builds-and-hud-updates).
 
+Windows CI caches the pinned sccache executable separately from compiler results. Cache setup
+is optional; only a successful setup enables the compiler wrapper. The guarded stats step
+records cache results, while the action's unconditional post-job annotations are disabled.
+A download outage therefore falls back to direct compilation without skipping tests.
+
 CI caches WASM outputs in `.cache/bevy-engine`; a restore that fails its identity, inventory or
-checksum check fails the build. Native CI uses Rust 1.99.1 and `protoc` 26.1; see
-the current measurement evidence in the task report before claiming time savings.
+checksum check fails the build. Native CI uses Rust 1.99.1 and `protoc` 36.2: Linux takes it from the
+flake's `bevy-tools` package (`install-tools.sh` checks the major), Windows and macOS install the
+release archive `install-protoc.py` pins. See the current measurement evidence in the task report
+before claiming time savings.
 
 Analytics: every environment reports to one Segment source, keyed by `BEVY_SEGMENT_WRITE_KEY` (a
 repository variable; unset, the engine keeps the key it shared with the mobile client). Every event
@@ -97,12 +128,18 @@ over 12000 characters, re-reads to confirm the write and collapses duplicate com
 (`upsert-ci-status.sh`). The scripts' tests (`test-*.sh`, against a stubbed `gh`) run in CI's
 *Integration guards*.
 
-Image and headless publishers run on successful main CI completion. They verify the source
-repository, workflow, SHA, attempt, complete platform matrix and artifacts before publishing.
-The launcher takes its version from all four platform packages, never the callback run ID.
-Unrelated newer commits do not supersede a component's release. Any failed consumer build
-also fails the coordinated run and prevents automatic publication; graphical acceptance is
-still a separate verdict. The standalone manual build/release entrypoints remain available.
+On main, a new push does not cancel a running CI run: it waits, replacing any run already waiting,
+so each completed run tests every earlier commit. A manual dispatch or re-run on main also waits
+and can replace a waiting push; to re-test main, push or dispatch rather than re-running an older
+run. A pull request push replaces that pull request's running run. Image and headless publishers
+run on successful main CI completion. They verify the source repository, workflow, SHA, attempt,
+complete platform matrix and artifacts before publishing. The launcher takes its version from all
+four platform packages, never the callback run ID. An APIs + Sites or headless release is
+superseded only by a newer main run that changed that component and succeeded or was re-run (an
+earlier attempt may have published); a newer first attempt still waiting or failed does not. Any
+failed consumer build also fails the coordinated run and prevents automatic publication; graphical
+acceptance is still a separate verdict. The standalone manual build/release entrypoints remain
+available.
 
 For timing queries, image jobs now appear under `Bevy Explorer / CI` as `APIs + Sites / build (...)`;
 non-Linux package jobs use `Headless packages / build (...)`. Linux package compilation is the
@@ -110,7 +147,12 @@ non-Linux package jobs use `Headless packages / build (...)`. Linux package comp
 Graphical tests do not run automatically on PRs or block builds; check their verdict and
 readiness (evidence supplied for the task) before claiming graphical acceptance. Manual dispatch accepts a
 chosen ref; use `--ref main` for main validation. The default `full` suite runs all 14 scenes;
-`snapshots` selects three diagnostic scenes and cannot establish acceptance.
+`snapshots` selects three diagnostic scenes and cannot establish acceptance. `scene-tests.txt`
+lists every scene and the assertions it currently allows to fail (`tooling/bevy-ci.py scene-suite`
+turns it into the runner's `--test_scenes` argument); a run passes only when every failure is
+listed, so a new failure still fails main. The step summary (`scene-summary`) reports the counts,
+unlisted failures and listed assertions that pass again, which should then be removed. Graphical
+acceptance holds while the list is empty.
 
 The graphical job has a 100-minute limit; scene execution has 20 minutes, leaving time to upload
 logs and captures. Same-ref runs are serialized without cancelling the active run. Pushes compare
@@ -121,8 +163,11 @@ The harness retains player simulation but renders only 256×256 snapshot windows
 unused sky cubemap. Native UI is hidden and the background clock is frozen; scene lighting and
 scene-authored time overrides remain active. Captures wait for completed render frames without
 pending shader pipelines. Native video textures are held until GPU readback, then queued updates
-resume. References keep their CPU pixels; invalid images fail comparison. References, thresholds
-and allowed failures are unchanged; see measurements (evidence supplied for the task).
+resume. References keep their CPU pixels; invalid images fail comparison. The embedded references
+(`crates/assets/src/assets/images/screenshots`) are this runner's own captures with the native UI
+hidden; independent runs agree above 0.99999, well inside the scenes' 0.9995 threshold. After an
+intended rendering change, regenerate a reference from the run's scene-test artifact: save
+`<name>.png_output.png` as `<name>.png.png` (the runner writes a missing reference there itself).
 
 ## Naming and publication
 
@@ -142,7 +187,7 @@ replays can overwrite tags. Desktop/headless `publish` creates a prerelease tagg
 
 | Package | Published by | Contents |
 | --- | --- | --- |
-| `@dcl-regenesislabs/bevy-explorer-web` | `bevy-explorer-ci.yml`, web job | `deploy/web` addressed to `https://cdn.decentraland.org/<package>/<version>` |
+| `@dcl-regenesislabs/bevy-explorer-web` | `bevy-explorer-ci.yml`, `publish-web` job | The web job's `deploy/web`, addressed to `https://cdn.decentraland.org/<package>/<version>` |
 | `@dcl-regenesislabs/bevy-headless-server` + `-darwin-arm64`, `-darwin-x64`, `-linux-x64`, `-win32-x64` | `bevy-explorer-headless.yml`, `publish` job | Launcher, engine and `dcl_deno_ipc` sidecar |
 
 `decentraland/oddish-action` stamps `0.1.0-<run id>.commit-<sha>`: `next` from main, `latest` from a
@@ -150,10 +195,14 @@ manual headless run on main, a chosen `publish-tag` from a branch. npm trusted p
 of the six names must list `decentraland/dcl-one` and its workflow on npmjs.com. The CDN upload needs
 `GITLAB_CDN_DEPLOYER_TOKEN` and `GITLAB_CDN_DEPLOYER_URL`. Retry with "re-run failed jobs".
 
-Same-repo PRs publish under the `pr-<n>` dist-tag, which the CI status *Build* section links; a PR publish failure does not
-fail the build, and closing the PR removes the tag (the trusted publisher needs "npm dist-tag"). The
-automatic rollout takes only the `next` version, so `publish-tag` builds need "Manual CDN rollout". Before
-archiving `decentraland/bevy-explorer`, verify one `next` of each package and re-adapt
+Same-repo PRs publish under the `pr-<n>` dist-tag. The CI status *Build* section links the exact
+package version for the run after checking its npm commit against the web checkout SHA. It uses the
+PR tag to look up the version if the run lacks a usable package artifact or was dispatched manually.
+A PR publish failure does not fail the build, and closing the PR removes the tag (the trusted
+publisher needs "npm dist-tag"). A `pr-<n>` version is for testing only, never for a rollout;
+while `BENCHMARK_ENABLED_RUNNERS` is `none`, a PR that compiles the engine also skips wasm-opt. The
+automatic rollout takes only the `next` version, so `publish-tag` builds need "Manual CDN rollout".
+Before archiving `decentraland/bevy-explorer`, verify one `next` of each package and re-adapt
 `apps/ui3/src/play`.
 
 ## Container runtime
