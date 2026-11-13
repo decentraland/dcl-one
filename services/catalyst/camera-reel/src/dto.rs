@@ -1,7 +1,7 @@
 //! The wire shapes of camera-reel-service (`library/catalyst-api/camera-reel`
-//! was generated from the old crate's `ts` feature, which this package does
-//! not carry). `Image.url`/`thumbnailUrl` are rendered from the stored hashes
-//! by [`super::db`] as `<api_url>/api/images/<hash>`.
+//! is generated from them by the `ts` feature). `Image.url`/`thumbnailUrl`
+//! are rendered from the stored hashes by [`super::db`] as
+//! `<api_url>/api/images/<hash>`.
 
 use serde::{Deserialize, Serialize};
 
@@ -109,6 +109,55 @@ pub struct User {
     pub is_guest: bool,
     #[serde(default)]
     pub is_emoting: Option<bool>,
+    /// Omitted rather than written as `null`, so a photo whose client does
+    /// not report it keeps the shape it always had.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub screen_rect: Option<ScreenRect>,
+}
+
+/// Where a visible person stands in the photo, normalised to the image with
+/// the origin at its top-left corner, as the explorer measures it when the
+/// shot is taken. Every field is in `0..=1`; `x + width` and `y + height`
+/// may pass 1 by up to [`SCREEN_RECT_EDGE_TOLERANCE`].
+#[derive(Deserialize, Serialize, Debug, Default, Clone, Copy, PartialEq)]
+#[cfg_attr(
+    feature = "ts",
+    derive(ts_rs::TS),
+    ts(export, export_to = "camera-reel/")
+)]
+pub struct ScreenRect {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+}
+
+/// Slack for `x + width` and `y + height`: the explorer clamps the rect to
+/// the image, and the sum of two clamped floats can land a hair past 1.
+pub const SCREEN_RECT_EDGE_TOLERANCE: f32 = 1e-4;
+
+impl ScreenRect {
+    /// Whether the rect is a rectangle of the image. An upload with any
+    /// other rect is refused: a number too large for an `f32` parses as
+    /// infinity and would be stored as `null`.
+    pub fn is_valid(&self) -> bool {
+        [self.x, self.y, self.width, self.height]
+            .iter()
+            .all(|v| v.is_finite() && (0.0..=1.0).contains(v))
+            && self.x + self.width <= 1.0 + SCREEN_RECT_EDGE_TOLERANCE
+            && self.y + self.height <= 1.0 + SCREEN_RECT_EDGE_TOLERANCE
+    }
+}
+
+impl Metadata {
+    /// Every visible person's `screenRect`, when present, is valid.
+    pub fn screen_rects_are_valid(&self) -> bool {
+        self.visible_people
+            .iter()
+            .filter_map(|person| person.screen_rect)
+            .all(|rect| rect.is_valid())
+    }
 }
 
 impl From<DbImage> for Image {
