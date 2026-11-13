@@ -71,43 +71,7 @@ describe('welcome page', () => {
     expect(h.driver.last('teleport')).toMatchObject({ x: 0, y: 0 })
   })
 
-  // The pick's name is a new profile's: were a guest pick ever to land on an account that has
-  // its profile (which `loginPersistentGuest` never does, as it creates a guest each time), the
-  // page would be answered without the name, as its own accept is, rather than rename it.
-  it("answers the page without the pick's name for an account that has its profile", async () => {
-    const h = renderSession({ userId: null }, manual())
-    await waitFor(() => expect(h.session().login.status).toBe('sign-in-or-guest'))
-    act(() => h.session().login.exploreAsGuest({ name: 'QuillStonehill', look: 7 }))
-    await waitFor(() => expect(h.driver.sentOf('getWelcome')).toHaveLength(1))
-    h.driver.emit({ kind: 'welcome', terms: true, newProfile: false })
-    await waitFor(() => expect(h.driver.sentOf('acceptWelcome')).toEqual([{ kind: 'acceptWelcome' }]))
-  })
-
-  // The guest start page took the name, the look and the terms before the account existed: the
-  // sign-in carried the name and the look, so the page is answered, with the name so the new
-  // profile deploys.
-  it("answers the page for the guest start page's pick, and shows it only if that save fails", async () => {
-    const h = renderSession({ userId: null }, manual())
-    await waitFor(() => expect(h.session().login.status).toBe('sign-in-or-guest'))
-    // nothing is created until ACCEPT AND PLAY
-    expect(h.driver.calls.filter((c) => /login/i.test(c) && c !== 'getPreviousLogin')).toEqual([])
-    act(() => h.session().login.exploreAsGuest({ name: 'QuillStonehill', look: 7 }))
-    await waitFor(() => expect(h.driver.sentOf('getWelcome')).toHaveLength(1))
-
-    h.driver.emit({ kind: 'welcome', terms: true, newProfile: true })
-    await waitFor(() => expect(h.driver.last('acceptWelcome')).toEqual({ kind: 'acceptWelcome', name: 'QuillStonehill' }))
-    expect(h.session().welcome.pending).toBe(true)
-    h.driver.emit({ kind: 'welcomeAccepted', ok: false, error: 'failed to deploy to server.' })
-    await waitFor(() => expect(h.session().welcome.error).toBe('failed to deploy to server.'))
-    expect(h.session().welcome.pending).toBe(false)
-    expect(h.session().phase).toBe('welcome')
-
-    act(() => h.session().welcome.accept('QuillStonehill'))
-    h.driver.emit({ kind: 'welcomeAccepted', ok: true })
-    await waitFor(() => expect(h.session().phase).toBe('entering'))
-  })
-
-  it('runs an ACCEPT AND PLAY clicked before the engine was ready once it is', async () => {
+  it('runs a PLAY AS GUEST clicked before the engine was ready once it is', async () => {
     class BootingDriver extends FakeDriver {
       ready = false
       engineReady(): boolean {
@@ -122,7 +86,7 @@ describe('welcome page', () => {
     const h = renderSession({ userId: null }, driver)
     await waitFor(() => expect(h.session().login.status).toBe('sign-in-or-guest'))
     expect(h.session().login.engineReady).toBe(false)
-    act(() => h.session().login.exploreAsGuest({ name: 'QuillStonehill', look: 7 }))
+    act(() => h.session().login.exploreAsGuest())
     expect(h.session().login.acceptQueued).toBe(true)
     expect(driver.calls.filter((c) => /login|launch/i.test(c) && c !== 'getPreviousLogin')).toEqual([])
     driver.ready = true
@@ -131,7 +95,7 @@ describe('welcome page', () => {
     expect(driver.calls).toContain('launch')
   })
 
-  // A failed guest sign-in must not hand its name to the account signed in next on the page.
+  // A failed guest sign-in leaves nothing for the account signed in next on the page: it gets its own page.
   it('shows the page to an account signed in after a failed guest sign-in', async () => {
     expectConsoleOutput('error', [['[login] post-launch login failed:', new Error('guest wallet unavailable')]])
     class FailingGuestNative extends FakeDriver {
@@ -146,7 +110,7 @@ describe('welcome page', () => {
     driver.welcome = null
     const h = renderSession({ userId: null }, driver)
     await waitFor(() => expect(h.session().login.status).toBe('sign-in-or-guest'))
-    act(() => h.session().login.exploreAsGuest({ name: 'QuillStonehill', look: 7 }))
+    act(() => h.session().login.exploreAsGuest())
     await waitFor(() => expect(h.session().login.error).toBe('guest wallet unavailable'))
 
     act(() => h.session().login.startWithAccount())

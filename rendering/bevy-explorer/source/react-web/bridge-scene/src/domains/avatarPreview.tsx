@@ -142,7 +142,7 @@ let region: Region = 'avatarPreview'
 
 let rect: Rect | null = null
 // Frames until a closed region's stage is dropped: a page handing the stage to the next one (the
-// guest start page to the lobby, say) closes its region and the next opens its own straight after,
+// lobby to the Backpack, say) closes its region and the next opens its own straight after,
 // and the stage, with its loaded avatar, must survive that.
 let disposeIn = 0
 const DISPOSE_FRAMES = 2
@@ -613,8 +613,8 @@ export function registerAvatarPreview(ctx: Ctx): void {
         cam.height = res.height
       }
     }
-    // told again for a stage carried over (the guest start page's into the lobby, the lobby's
-    // back to it on logout): the page taking it over may have put its stand-in back up
+    // told again for a stage carried over (the Backpack's back to the lobby): the page taking it
+    // over may have put its stand-in back up
     if (stage === 'lobby') {
       announceLobbyStage(ctx).catch((e) => {
         console.error('[avatarPreview] lobby stage', e)

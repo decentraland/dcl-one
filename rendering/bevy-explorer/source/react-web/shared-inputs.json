@@ -529,10 +529,6 @@
           "kind": "regular"
         },
         {
-          "name": "guestName.ts",
-          "kind": "regular"
-        },
-        {
           "name": "holeClip.ts",
           "kind": "regular"
         },
@@ -1880,6 +1876,10 @@
     {
       "path": "library/ui/apps/hud/assets/startup",
       "entries": [
+        {
+          "name": "NOTICE.md",
+          "kind": "regular"
+        },
         {
           "name": "apple.png",
           "kind": "regular"
@@ -4512,7 +4512,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/avatarDraft.ts",
-      "sha256": "a5d2aa00bd530208e6348b1de17c24df318ad9446dbb34023feed9103950ac33"
+      "sha256": "f7bd876f153075954844844d8ba045510c9d77179928430847a6e772a6425ac3"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/collections.ts",
@@ -5252,16 +5252,12 @@
       "sha256": "d5007c71e38887a98d656ac7204350d543fafca81ec8eab7e7cb5e1923d97889"
     },
     {
-      "path": "library/explorer-core/lib/guestName.ts",
-      "sha256": "dec3f4d6b75f685fab289a0884a0208620d7f2ec961e94f3ab0888c4a42e4d3f"
-    },
-    {
       "path": "library/explorer-core/lib/holeClip.ts",
       "sha256": "fef63354a1ea28d390fcc14cf53fad51636122a3753a463fb0de313b87bef94e"
     },
     {
       "path": "library/explorer-core/lib/hudAutomation.ts",
-      "sha256": "1c21571125f2f49a0db3f113eeea8a863ee71f6a80aa327c0d07519fbfc347ca"
+      "sha256": "d74fca9c9c8b36bac1bfcf512b65724749b8690df5d03e2357bf58214723ebbd"
     },
     {
       "path": "library/explorer-core/lib/hudScale.ts",
@@ -7609,7 +7605,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "b4cbf2a3a713fe5f84ec296b9075fe656d92d46c10ff527cac419c73a983511d"
+      "sha256": "97c62404235b9bf8e3a579bd7ddcd63d08d14febec9ff53e1d3bd5b9a4b528b3"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -8217,7 +8213,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/welcome.test.tsx",
-      "sha256": "a4a3ba8763f6d29474263bae57eb3f96bceed4e945ee01f4a61df0d43bca59f9"
+      "sha256": "8f229ff69b3f39a21afc4074020c3e20c2399d5d2dcdf91749cfd4fe25d42fc3"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/worldAccess.test.tsx",
@@ -32755,11 +32751,6 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/explorer-core/lib/gpu.ts",
-      "kind": "type"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
-      "to": "library/explorer-core/lib/guestName.ts",
       "kind": "type"
     },
     {

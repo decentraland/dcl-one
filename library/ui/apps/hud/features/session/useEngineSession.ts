@@ -881,9 +881,9 @@ export interface LoginFlow {
   cancelLogin: () => void
   /** Stop a sign-in under way (Cancel on Verifying): the first screen again, the stored sign-in kept. */
   cancelSignIn: () => void
-  /** With no `pick` the welcome page (name and terms) follows; a `pick` is accepted with the terms
-   *  once signed in. Before the engine is ready the click is kept (`acceptQueued`) and runs once it is. */
-  exploreAsGuest: (pick?: GuestPick) => void
+  /** PLAY AS GUEST: a new guest account, then its look and name screens. Before the engine is ready the
+   *  click is kept (`acceptQueued`) and runs once it is. */
+  exploreAsGuest: () => void
   acceptQueued: boolean
   /** This page can sign in with an email code (the driver makes the thirdweb calls). */
   emailAvailable: boolean
@@ -1086,11 +1086,11 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const storedRef = useRef<StoredLogin | null>(null)
   storedRef.current = stored
   const welcomeRef = useRef<{ terms: boolean; newProfile: boolean } | null>(null)
-  // The guest start page's pick went in with the sign-in, and its ACCEPT AND PLAY already accepted
-  // the terms, so the welcome page is answered instead of shown.
+  // A /hud_login's pick (name and look) went in with its sign-in and stands for the new account's
+  // look, name and terms screens, so the welcome page is answered instead of shown.
   const guestPick = useRef<GuestPick | null>(null)
-  // ACCEPT AND PLAY clicked before the engine was ready: runs once it is
-  const [queuedGuest, setQueuedGuest] = useState<{ pick: GuestPick | null } | null>(null)
+  // PLAY AS GUEST clicked before the engine was ready: runs once it is
+  const [queuedGuest, setQueuedGuest] = useState(false)
   // an email account's identity, checked, waiting for the engine to take its sign-in
   const [queuedEmail, setQueuedEmail] = useState<AuthIdentity | null>(null)
   // the address an email sign-in used, for its newsletter box; kept in memory for this sign-in only
@@ -2292,7 +2292,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
             setWelcomeError(msg.error ?? 'Saving failed')
             // a /hud_login ends here, on the page that shows the error
             settleHudLogin(new Error(`accepting the welcome page failed: ${msg.error ?? 'Saving failed'}`))
-            // the guest start page's accept failed: the welcome page shows, with the error
+            // an accept answered for the player (a /hud_login's pick) failed: the page shows, with the error
             if (welcomeRef.current != null) setWelcome((w) => w ?? welcomeRef.current)
             break
           }
@@ -3241,8 +3241,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   }, [engineReady])
 
   // A visitor with no session gets the engine the moment it is ready, holding the world, with no
-  // sign-in: the guest start page's stage then shows the live avatar instead of a snapshot, and
-  // ACCEPT AND PLAY only has the sign-in left to run (submitLogin sees launchedRef). A link's
+  // sign-in, so PLAY AS GUEST or a sign-in from the first screen only has the sign-in left to run
+  // (submitLogin sees launchedRef). A link's
   // destination and the auto-login boots launch for themselves.
   useEffect(() => {
     const driver = driverRef.current
@@ -3814,7 +3814,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     lastLoginType.current = null
     welcomeRef.current = null
     guestPick.current = null
-    setQueuedGuest(null)
+    setQueuedGuest(false)
     setQueuedEmail(null)
     setSignInEmail(null)
     setStatus('sign-in-or-guest')
@@ -3923,8 +3923,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   }, [])
 
   // engine_run briefly blocks the main thread, so the lobby (or the loader) paints first and the
-  // launch runs behind it (the guest start page's early launch, above, is the one that runs under
-  // an interactive screen). On failure, back to sign-in.
+  // launch runs behind it (the first screen's early launch, above, is the one that runs under an
+  // interactive screen). On failure, back to sign-in.
   const submitLogin = useCallback(
     (loginCall: (driver: LoginDriver) => Promise<unknown>, loginType: LoginType | 'stored' | null): boolean => {
       const driver = driverRef.current
@@ -3941,7 +3941,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       // friends work but no scene loads until a destination is picked (which releases it).
       setLobby(true)
       setWelcomePending(welcomeShown())
-      // an engine launched for the guest start page keeps its stage, avatar and all, into the lobby
+      // an engine launched under the first screen keeps its stage, avatar and all, into the lobby
       if (!launchedRef.current) setLobbyStageReady(false)
       setBusy(true)
       busyRef.current = true
@@ -4048,32 +4048,24 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   }, [signInEmail])
 
   // The button creates a guest account that persists; ?guest=1 stays a throwaway guest.
-  const startGuest = useCallback(
-    (pick?: GuestPick) => {
-      const persistent = driverRef.current?.loginPersistentGuest != null
-      guestPick.current = pick ?? null
-      if (!submitLogin((d) => d.loginPersistentGuest?.(pick) ?? d.loginGuest(), 'guest')) guestPick.current = null
-      else if (persistent) screenViewed('ACCOUNT_GUEST_CREATE')
-    },
-    [submitLogin]
-  )
-  const exploreAsGuest = useCallback(
-    (pick?: GuestPick) => {
-      if (pick != null) clickButton('LETS_GO', 'AVATAR_NAMING')
-      else clickButton('PLAY_GUEST', 'ACCOUNT_HOME')
-      // before the engine is ready the click is kept, and runs once it is (the effect below)
-      if (!engineReady && driverRef.current != null) {
-        setQueuedGuest({ pick: pick ?? null })
-        return
-      }
-      startGuest(pick)
-    },
-    [engineReady, startGuest]
-  )
+  const startGuest = useCallback(() => {
+    const persistent = driverRef.current?.loginPersistentGuest != null
+    guestPick.current = null
+    if (submitLogin((d) => d.loginPersistentGuest?.() ?? d.loginGuest(), 'guest') && persistent) screenViewed('ACCOUNT_GUEST_CREATE')
+  }, [submitLogin])
+  const exploreAsGuest = useCallback(() => {
+    clickButton('PLAY_GUEST', 'ACCOUNT_HOME')
+    // before the engine is ready the click is kept, and runs once it is (the effect below)
+    if (!engineReady && driverRef.current != null) {
+      setQueuedGuest(true)
+      return
+    }
+    startGuest()
+  }, [engineReady, startGuest])
   useEffect(() => {
-    if (queuedGuest == null || !engineReady) return
-    setQueuedGuest(null)
-    startGuest(queuedGuest.pick ?? undefined)
+    if (!queuedGuest || !engineReady) return
+    setQueuedGuest(false)
+    startGuest()
   }, [queuedGuest, engineReady, startGuest])
   // Email sign-in (features/startup): the code is checked before anything signs in, so a wrong one is
   // told on its screen; the checked account then signs in like any other, once the engine can take it.
@@ -4751,7 +4743,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       cancelLogin,
       cancelSignIn: () => cancelSignIn(),
       exploreAsGuest,
-      acceptQueued: queuedGuest != null,
+      acceptQueued: queuedGuest,
       emailAvailable: driverRef.current?.emailSendCode != null && driverRef.current.emailAvailable !== false,
       sendEmailCode,
       verifyEmailCode,

@@ -738,7 +738,7 @@ function decodeIdentity(encoded: string): AuthIdentity {
 }
 
 const LOGIN_USAGE = '/hud_login <identity> [--name <name> --look <n>] [--guest] [--default-on-error] [--realm <realm>] [--position <x,y>]'
-/** The curated default looks a new account can wear, `default1` to `default<n>` (lib/guestName.ts). */
+/** The curated default looks a new account can wear, `default1` to `default<n>`. */
 const CURATED_LOOKS = 160
 
 /** The text after `/hud_login`: the encoded identity, then its flags. */
