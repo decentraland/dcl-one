@@ -921,7 +921,8 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
             .with_land_operators(land_operators)
             .with_land_authz(Some(land.clone()))
             .with_max_parcels(config.worlds.max_parcels)
-            .with_ens(ens, i64::from(config.worlds.ens_max_size) * 1024 * 1024),
+            .with_ens(ens, i64::from(config.worlds.ens_max_size) * 1024 * 1024)
+            .with_name_deny_list(worlds.names.clone()),
     );
     worlds.attach_policy(policy.clone());
     // A world read-through holds each mirrored scene's signer to this policy and shares the
@@ -1764,6 +1765,24 @@ fn forwarder(
     Ok(Some(forwarder))
 }
 
+/// The asset-bundle converter `POST /reprocess-ab` hands world scenes to: the
+/// abgen runtime at `ABGEN_ADMIN_URL`, which must be a loopback address (the
+/// operator console's rule). Unset, the route answers 500.
+fn reprocess_converter(
+    config: &Config,
+    http_client: &http::Outbound,
+) -> anyhow::Result<Option<worlds::core::reprocess::Converter>> {
+    let Some(url) = Config::non_empty(&config.admin.abgen_admin_url) else {
+        return Ok(None);
+    };
+    let abgen =
+        ops::admin::console::Abgen::parse(&url, None, http_client).context("ABGEN_ADMIN_URL")?;
+    Ok(Some(worlds::core::reprocess::Converter::new(
+        abgen.base(),
+        http_client.raw().clone(),
+    )))
+}
+
 /// The stage-5 worlds states: the product surface (publish, permissions,
 /// settings, presence, operator routes), the world/player/env storage, the
 /// authoritative scene host (behind `SCENE_HOST_ENABLED`) and the worlds
@@ -1872,6 +1891,7 @@ async fn worlds_states(
             ))),
             &config.worlds.builder_url,
         ))
+        .with_converter(reprocess_converter(config, http_client)?)
         .with_forwarder(forwarder(
             "WORLDS_FORWARD_UPSTREAM_URL",
             config.worlds.worlds_forward_upstream_url.as_deref(),
@@ -2262,7 +2282,12 @@ mod registry_mount_tests {
             Outbound::for_tests(),
             crate::shop::market::Settings::for_tests(),
         ));
-        let app = registry_profiles(market).merge(crate::explore::api::router(api));
+        // `serve` merges both halves into an app with a fallback of its own
+        // (the content 404); the Registry prefix keeps the gateway's.
+        let app = axum::Router::new()
+            .fallback(|| async { (StatusCode::IM_A_TEAPOT, "app fallback") })
+            .merge(registry_profiles(market))
+            .merge(crate::explore::api::router(api));
         for (method, path, body, expected) in [
             (
                 "POST",
@@ -2314,6 +2339,92 @@ mod registry_mount_tests {
                 expected,
                 "{method} {path}"
             );
+        }
+        // The gateway half's status-check probes, and the Registry's own CORS
+        // preflight on a route of each half.
+        for (path, expected) in [
+            ("/asset-bundle-registry/health/live", "alive"),
+            (
+                "/asset-bundle-registry/health/ready",
+                crate::shared::health::SERVER_PASS,
+            ),
+            (
+                "/asset-bundle-registry/health/startup",
+                crate::shared::health::SERVER_PASS,
+            ),
+        ] {
+            let response = app
+                .clone()
+                .oneshot(Request::get(path).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "{path}");
+            let body = to_bytes(response.into_body(), 1 << 20).await.unwrap();
+            assert_eq!(body.as_ref(), expected.as_bytes(), "{path}");
+        }
+        for path in [
+            "/asset-bundle-registry/profiles/metadata",
+            "/asset-bundle-registry/entities/active",
+            // A path neither half routes: the gateway half's fallback.
+            "/asset-bundle-registry/nope",
+        ] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method("OPTIONS")
+                        .uri(path)
+                        .header("origin", "https://example.org")
+                        .header("access-control-request-method", "POST")
+                        .header("access-control-request-headers", "content-type")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::NO_CONTENT, "{path}");
+            let headers = response.headers();
+            assert_eq!(headers["access-control-allow-origin"], "*", "{path}");
+            assert_eq!(
+                headers["access-control-allow-methods"], "GET,HEAD,OPTIONS,DELETE,POST,PUT",
+                "{path}"
+            );
+            assert_eq!(
+                headers["access-control-allow-headers"], "content-type",
+                "{path}"
+            );
+            assert_eq!(headers["access-control-max-age"], "86400", "{path}");
+        }
+        for (path, status, body, origin) in [
+            (
+                "/asset-bundle-registry/nope",
+                StatusCode::NOT_FOUND,
+                "Not found",
+                Some("*"),
+            ),
+            ("/nope", StatusCode::IM_A_TEAPOT, "app fallback", None),
+        ] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::get(path)
+                        .header("origin", "https://example.org")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), status, "{path}");
+            assert_eq!(
+                response
+                    .headers()
+                    .get("access-control-allow-origin")
+                    .map(|value| value.to_str().unwrap()),
+                origin,
+                "{path}"
+            );
+            let bytes = to_bytes(response.into_body(), 1 << 20).await.unwrap();
+            assert_eq!(bytes.as_ref(), body.as_bytes(), "{path}");
         }
         let _ = std::fs::remove_dir_all(&files);
     }

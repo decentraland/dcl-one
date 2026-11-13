@@ -446,6 +446,13 @@ pub struct WorldsConfig {
     #[arg(long, env = "DENYLIST_JSON_URL", hide = true)]
     pub denylist_json_url: Option<String>,
 
+    /// Comma-separated full world names refused as the DAO name deny list
+    /// refuses a name (upstream's `BLOCKED_WORLD_NAMES`): each entry trimmed
+    /// and lowercased, compared with the whole lowercased name, and applied
+    /// even while that list cannot be read.
+    #[arg(long, env = "BLOCKED_WORLD_NAMES", default_value = "")]
+    pub blocked_world_names: String,
+
     /// The NATS broker `serve` (comms' one link) and `catalyst pulse` meet on; unset, no island is ever delivered.
     #[arg(long, env = "NATS_URL")]
     pub nats_url: Option<String>,
@@ -565,6 +572,24 @@ mod tests {
                 config.worlds.pg_component_stream_query_timeout
             ),
             (0, 0, 0)
+        );
+    }
+
+    #[test]
+    fn blocked_world_names_defaults_empty_and_keeps_the_raw_list() {
+        let defaults = parse(&["x", "--database-url", "postgres:///c"]).unwrap();
+        assert_eq!(defaults.worlds.blocked_world_names, "");
+        let config = parse(&[
+            "x",
+            "--database-url",
+            "postgres:///c",
+            "--blocked-world-names",
+            " Blocked.dcl.eth, , other.eth",
+        ])
+        .unwrap();
+        assert_eq!(
+            config.worlds.blocked_world_names,
+            " Blocked.dcl.eth, , other.eth"
         );
     }
 
