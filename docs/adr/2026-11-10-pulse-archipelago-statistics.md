@@ -73,11 +73,20 @@ Connector observations carry a Pulse incarnation and a Pulse-issued generation.
 On its first authenticated local observation, a connector obtains that incarnation
 through the correlated statistics control capability, requests a candidate grant,
 then confirms its exact random challenge. Pulse retains one active generation and
-cursor plus one candidate, rather than a lifetime set of connector UUIDs. A checked
+cursor, the latest outgoing one, plus one candidate, rather than a lifetime set of
+connector UUIDs. A checked
 monotonic counter issues generations; exhaustion fails closed. Beginning a candidate
 does not replace the active writer, and an overwritten candidate cannot confirm.
-Confirmation is idempotent without resetting the cursor. Old generations cannot
-publish or confirm after handover; old-incarnation controls and events are rejected
+Confirmation is idempotent without resetting the cursor. After a handover the
+outgoing generation keeps its cursor until the next one, so the most recent
+outgoing connector's heartbeats and disconnects still apply, as upstream Stats
+takes every connector's events. The retiring slot has no time limit. Only one
+outgoing generation drains: after A→B→C, A's events are rejected while A still has
+sockets, and its wallets stay in the population until they heartbeat through C or
+Pulse restarts. As upstream, a disconnect from the draining connector also removes
+a wallet that has already reconnected through the active one, until that wallet's
+next heartbeat restores it. Older generations cannot publish, and no outgoing
+generation can confirm again. Old-incarnation controls and events are rejected
 after Pulse restart. This is a writer fence, not leader election or peer expiry.
 Pulse records rejected observations in one counter without producer or reason
 labels. This exposes malformed, stale or fenced input without per-event warnings,
