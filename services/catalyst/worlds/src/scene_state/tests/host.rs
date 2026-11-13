@@ -402,7 +402,16 @@ async fn join(
     key: &str,
     metadata: &str,
 ) -> Option<(Ws, Vec<u8>)> {
-    let path = format!("/scene-state/ws/{}", world.display());
+    join_name(addr, world.display(), key, metadata).await
+}
+
+async fn join_name(
+    addr: std::net::SocketAddr,
+    name: &str,
+    key: &str,
+    metadata: &str,
+) -> Option<(Ws, Vec<u8>)> {
+    let path = format!("/scene-state/ws/{name}");
     let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://{addr}{path}"))
         .await
         .unwrap();
@@ -1084,7 +1093,7 @@ async fn the_sweep_unloads_scenes_left_without_clients() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_world_wide_budget_bounds_shared_secret_attempts_from_every_source() {
+async fn another_sources_failed_secrets_never_refuse_a_correct_one() {
     let Some(h) = host(false).await else { return };
     let world = world_name();
     let hash = bcrypt::hash("open sesame", 4).unwrap();
@@ -1097,7 +1106,7 @@ async fn a_world_wide_budget_bounds_shared_secret_attempts_from_every_source() {
     seed_scene(
         &h.state,
         &world,
-        "bafyWideSecret",
+        "bafySourceSecret",
         "",
         None,
         "0,0",
@@ -1106,31 +1115,169 @@ async fn a_world_wide_budget_bounds_shared_secret_attempts_from_every_source() {
     )
     .await;
     let addr = serve(h.state.clone()).await;
-    let world_wide = crate::comms::gatekeeper::admission::world_mint::SecretThrottle {
-        pool: &h.state.pool,
-        max_attempts: crate::scene_state::ws::WORLD_SECRET_MAX_ATTEMPTS,
-        world: world.key(),
-        subject: "scene-host:*",
-    };
     let now = chrono::Utc::now().naive_utc();
-    for _ in 0..crate::scene_state::ws::WORLD_SECRET_MAX_ATTEMPTS {
-        world_wide.reserve(now).await.unwrap().unwrap();
+    for source in ["203.0.113.7", "2001:db8::1"] {
+        let other = crate::comms::gatekeeper::admission::world_mint::SecretThrottle {
+            pool: &h.state.pool,
+            max_attempts: h.state.secret_max_attempts,
+            world: world.key(),
+            subject: source,
+        };
+        while other.reserve(now).await.unwrap().is_some() {}
     }
-    assert!(
-        join(addr, &world, VISITOR_KEY, r#"{"secret":"open sesame"}"#)
-            .await
-            .is_none(),
-        "a fresh source cannot guess once the world's budget is spent"
-    );
-    sqlx::query("UPDATE social.world_secret_attempts SET window_start=timezone('UTC',now())-interval '61 seconds' WHERE world_name=$1")
-        .bind(world.key())
-        .execute(&h.state.pool)
-        .await
-        .unwrap();
+    // Same /64 as an exhausted source: the shared source key limits it too.
+    let neighbour = crate::comms::gatekeeper::admission::world_mint::SecretThrottle {
+        pool: &h.state.pool,
+        max_attempts: h.state.secret_max_attempts,
+        world: world.key(),
+        subject: "2001:db8::ffff",
+    };
+    assert!(neighbour.reserve(now).await.unwrap().is_none());
     assert!(
         join(addr, &world, VISITOR_KEY, r#"{"secret":"open sesame"}"#)
             .await
             .is_some(),
-        "the right secret admits once the window passes"
+        "a source with budget left is admitted whatever other sources spent"
     );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_client_admitted_across_an_idle_unload_joins_a_hosted_scene() {
+    let Some(h) = host_tuned(false, None, |raw| raw.idle_unload_secs = 1).await else {
+        return;
+    };
+    let world = world_name();
+    seed_world(&h.state.pool, &world, None, AccessType::Unrestricted).await;
+    seed_scene(
+        &h.state,
+        &world,
+        "bafyIdleRace",
+        "",
+        None,
+        "0,0",
+        &["0,0"],
+        false,
+    )
+    .await;
+    h.state.load(&SceneKey::World(world.clone())).await.unwrap();
+    let before = h.state.scenes.get(world.key()).unwrap();
+    let addr = serve(h.state.clone()).await;
+
+    // Upgraded while hosted; the scene is unloaded before the auth frame lands.
+    let path = format!("/scene-state/ws/{}", world.display());
+    let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://{addr}{path}"))
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(1200)).await;
+    assert_eq!(h.state.unload_idle().await, 1);
+    ws.send(WsMessage::Binary(
+        auth_frame(VISITOR_KEY, &path, "{}").into(),
+    ))
+    .await
+    .unwrap();
+    let first = tokio::time::timeout(Duration::from_secs(5), ws.next())
+        .await
+        .expect("an answer within 5 s");
+    assert!(
+        matches!(first, Some(Ok(WsMessage::Binary(ref b))) if b.first() == Some(&(MessageType::Init as u8))),
+        "{first:?}"
+    );
+    let hosted = h.state.scenes.get(world.key()).expect("hosted again");
+    assert!(
+        !Arc::ptr_eq(&before, &hosted),
+        "the unloaded scene is not reused"
+    );
+    assert_eq!(
+        hosted.clients().len(),
+        1,
+        "the client is in the hosted scene"
+    );
+}
+
+/// A Genesis deployment on `parcels`, with `authoritativeMultiplayer` when `opt_in`.
+async fn seed_genesis(h: &Host, parcels: &[String], opt_in: bool) -> String {
+    let id = format!("bafyG{}", Uuid::new_v4().simple());
+    let code_hash = store(&h.state, b"").await;
+    let mut metadata =
+        serde_json::json!({ "main": "bin/game.js", "scene": { "base": parcels[0] } });
+    if opt_in {
+        metadata["authoritativeMultiplayer"] = true.into();
+    }
+    let dep_id: i32 = sqlx::query_scalar(
+        "INSERT INTO content.deployments (deployer_address, version, entity_type, entity_id, entity_metadata, entity_timestamp, entity_pointers, local_timestamp, auth_chain) \
+         VALUES ('0x0', 'v3', 'scene', $1, $2::json, timezone('UTC', now()), $3, timezone('UTC', now()), '[]'::json) RETURNING id",
+    )
+    .bind(&id)
+    .bind(metadata)
+    .bind(parcels.to_vec())
+    .fetch_one(&h.state.pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO content.content_files (deployment, content_hash, key) VALUES ($1, $2, 'bin/game.js')")
+        .bind(dep_id)
+        .bind(&code_hash)
+        .execute(&h.state.pool)
+        .await
+        .unwrap();
+    for p in parcels {
+        sqlx::query("INSERT INTO content.active_pointers (pointer, entity_id) VALUES ($1, $2)")
+            .bind(p)
+            .bind(&id)
+            .execute(&h.state.pool)
+            .await
+            .unwrap();
+    }
+    id
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_genesis_parcel_autoloads_its_scene_only_when_it_opts_in() {
+    let Some(h) = host(false).await else { return };
+    let x = 40_000 + (Uuid::new_v4().as_u128() % 10_000) as i32;
+    let (on, off) = (
+        vec![format!("{x},3"), format!("{x},4")],
+        vec![format!("{x},5")],
+    );
+    let id = seed_genesis(&h, &on, true).await;
+    seed_genesis(&h, &off, false).await;
+    let addr = serve(h.state.clone()).await;
+
+    let _first = join_name(addr, &on[1], VISITOR_KEY, "{}")
+        .await
+        .expect("an opted-in Genesis scene autoloads by parcel");
+    let _second = join_name(addr, &on[0], VISITOR_KEY, "{}")
+        .await
+        .expect("another parcel of it joins the same host");
+    assert_eq!(h.state.scenes.len(), 1);
+    assert_eq!(h.state.scenes.get(&id).unwrap().clients().len(), 2);
+
+    let path = format!("/scene-state/ws/{}", off[0]);
+    let refused = tokio_tungstenite::connect_async(format!("ws://{addr}{path}")).await;
+    assert!(
+        matches!(&refused, Err(tokio_tungstenite::tungstenite::Error::Http(r)) if r.status() == 404),
+        "a Genesis scene without the flag is not autoloaded"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_full_host_answers_503_before_the_upgrade() {
+    let Some(h) = host_tuned(false, None, |raw| raw.max_scenes = 1).await else {
+        return;
+    };
+    let (first, second) = (world_name(), world_name());
+    for (world, id) in [(&first, "bafyFull1"), (&second, "bafyFull2")] {
+        seed_world(&h.state.pool, world, None, AccessType::Unrestricted).await;
+        seed_scene(&h.state, world, id, "", None, "0,0", &["0,0"], false).await;
+    }
+    let addr = serve(h.state.clone()).await;
+    let (_ws, _) = join(addr, &first, VISITOR_KEY, "{}")
+        .await
+        .expect("the first scene fits");
+    let path = format!("/scene-state/ws/{}", second.display());
+    let refused = tokio_tungstenite::connect_async(format!("ws://{addr}{path}")).await;
+    assert!(
+        matches!(&refused, Err(tokio_tungstenite::tungstenite::Error::Http(r)) if r.status() == 503),
+        "{refused:?}"
+    );
+    assert!(h.state.scenes.get(second.key()).is_none());
 }

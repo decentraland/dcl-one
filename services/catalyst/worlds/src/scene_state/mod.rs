@@ -142,7 +142,8 @@ impl SceneKey {
     }
 
     /// The name a hosted scene is registered under (one per world, one per
-    /// Genesis scene id, one per parcel).
+    /// Genesis scene id; a parcel names its own key until
+    /// [`SceneHostState::canonical_key`] resolves it to the scene id).
     pub fn room_key(&self) -> String {
         match self {
             Self::Local => LOCAL_SCENE_NAME.to_string(),
@@ -238,7 +239,8 @@ pub struct RawSettings {
     /// redeploy sweep.
     pub sweep_interval_secs: u64,
     /// `SCENE_HOST_IDLE_UNLOAD_SECS` (300; 0 disables): the sweep unloads a
-    /// scene that has had no client for this long.
+    /// scene that has had no client for this long, including one loaded by
+    /// the admin or reload routes.
     pub idle_unload_secs: u64,
 }
 
@@ -571,19 +573,31 @@ impl SceneHostState {
         load_or_reload(self, &key).await
     }
 
-    /// Loads `key` for an admitted client unless it is already hosted; only
-    /// a scene that sets `authoritativeMultiplayer` is loaded this way.
-    pub async fn autoload(&self, key: &SceneKey) -> anyhow::Result<Arc<scene::Scene>> {
-        let key = self.canonical_key(key).await;
+    /// Adds an admitted client to the scene hosting `identity`'s deployment,
+    /// under the load lock so an idle unload cannot strand it. A scene that is
+    /// no longer hosted is loaded again only if it sets
+    /// `authoritativeMultiplayer`; a different deployment now hosted under
+    /// the key refuses the join (the client was admitted for the old one).
+    pub async fn join<R>(
+        &self,
+        identity: &scene::SceneIdentity,
+        add: impl FnOnce(&Arc<scene::Scene>) -> R,
+    ) -> anyhow::Result<(Arc<scene::Scene>, R)> {
+        let key = &identity.key;
         let _guard = self.loads.lock().await;
-        if let Some(scene) = self.scenes.get(&key.room_key()) {
-            return Ok(scene);
-        }
-        self.ensure_capacity(&key)?;
-        loader::load_scene(self, &key, true).await?;
-        self.scenes
-            .get(&key.room_key())
-            .ok_or_else(|| anyhow!("{key} was not hosted after loading"))
+        let scene = match self.scenes.get(&key.room_key()) {
+            Some(scene) if scene.identity.scene_id() == identity.scene_id() => scene,
+            Some(_) => anyhow::bail!("{key} was redeployed while the client was admitted"),
+            None => {
+                self.ensure_capacity(key)?;
+                loader::load_scene(self, key, true).await?;
+                self.scenes
+                    .get(&key.room_key())
+                    .ok_or_else(|| anyhow!("{key} was not hosted after loading"))?
+            }
+        };
+        let added = add(&scene);
+        Ok((scene, added))
     }
 
     fn ensure_capacity(&self, key: &SceneKey) -> anyhow::Result<()> {
@@ -598,11 +612,12 @@ impl SceneHostState {
     }
 
     /// Unloads every scene other than the local one that has had no client
-    /// for the idle timeout.
-    pub fn unload_idle(&self) -> usize {
+    /// for the idle timeout, under the load lock joins take.
+    pub async fn unload_idle(&self) -> usize {
         let Some(timeout) = self.settings.idle_unload else {
             return 0;
         };
+        let _guard = self.loads.lock().await;
         let mut unloaded = 0;
         for scene in self.scenes.all() {
             let key = scene.identity.key.clone();
@@ -693,7 +708,7 @@ impl SceneHostState {
     /// connected client and kick the refused.
     pub async fn sweep(&self) -> SweepSummary {
         let mut summary = SweepSummary {
-            unloaded: self.unload_idle(),
+            unloaded: self.unload_idle().await,
             ..SweepSummary::default()
         };
         for scene in self.scenes.all() {

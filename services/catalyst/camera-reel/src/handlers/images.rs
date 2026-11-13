@@ -31,6 +31,24 @@ pub const MAX_DECODE_ALLOC_BYTES: u64 = 128 * 1024 * 1024;
 /// Decodes run off the async workers, a few at a time.
 static DECODES: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
 
+/// Runs `work` on the blocking pool holding a `permits` permit until it
+/// finishes, even when the caller is dropped first.
+pub(crate) async fn decode_with<T: Send + 'static>(
+    permits: &'static tokio::sync::Semaphore,
+    work: impl FnOnce() -> T + Send + 'static,
+) -> Result<T, ApiError> {
+    let permit = permits
+        .acquire()
+        .await
+        .map_err(|_| ApiError::Internal("decoder unavailable".to_string()))?;
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        work()
+    })
+    .await
+    .map_err(|_| ApiError::Internal("couldn't create thumbnail".to_string()))
+}
+
 pub async fn upload_image(
     State(state): State<SharedState>,
     OriginalUri(uri): OriginalUri,
@@ -215,16 +233,8 @@ async fn finalize_upload(
         )));
     }
 
-    let thumbnail = {
-        let _permit = DECODES
-            .acquire()
-            .await
-            .map_err(|_| ApiError::Internal("decoder unavailable".to_string()))?;
-        let bytes = image_bytes.clone();
-        tokio::task::spawn_blocking(move || thumbnail_of(&bytes, declared))
-            .await
-            .map_err(|_| ApiError::Internal("couldn't create thumbnail".to_string()))??
-    };
+    let bytes = image_bytes.clone();
+    let thumbnail = decode_with(&DECODES, move || thumbnail_of(&bytes, declared)).await??;
 
     let new_image = NewImage {
         id: Uuid::new_v4(),

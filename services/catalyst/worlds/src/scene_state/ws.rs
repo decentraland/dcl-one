@@ -22,11 +22,6 @@ use super::protocol::{MessageType, decode_message, encode_init_message, encode_m
 use super::scene::{Scene, SceneIdentity};
 use super::{SceneHostState, SceneKey, SharedState, loader};
 
-/// Shared-secret attempts per world per window from every source together,
-/// on top of the per-source budget.
-pub const WORLD_SECRET_MAX_ATTEMPTS: u32 = 30;
-const WORLD_SECRET_SUBJECT: &str = "scene-host:*";
-
 /// What a socket joins: a hosted scene, or one loaded once the client is admitted.
 enum Target {
     Hosted(Arc<Scene>),
@@ -190,6 +185,7 @@ async fn handle_socket(
 ) {
     let (mut sink, mut stream) = socket.split();
     let identity = target.identity().clone();
+    drop(target);
     let name = identity.key.room_key();
 
     let auth = tokio::time::timeout(state.settings.auth_timeout, async {
@@ -249,20 +245,6 @@ async fn handle_socket(
                 return;
             }
         };
-        let world_throttle = crate::comms::gatekeeper::admission::world_mint::SecretThrottle {
-            subject: WORLD_SECRET_SUBJECT,
-            max_attempts: WORLD_SECRET_MAX_ATTEMPTS,
-            ..throttle
-        };
-        let world_reservation = match world_throttle.reserve(now).await {
-            Ok(Some(reservation)) => reservation,
-            _ => {
-                tracing::info!(scene = %name, "world-wide shared-secret attempt budget spent");
-                throttle.settle(false, reservation).await;
-                let _ = sink.close().await;
-                return;
-            }
-        };
         admission = admit(
             state,
             &identity,
@@ -272,9 +254,12 @@ async fn handle_socket(
             now,
         )
         .await;
-        let invalid = matches!(admission, Err(AdmissionRefused::InvalidSecret));
-        throttle.settle(invalid, reservation).await;
-        world_throttle.settle(invalid, world_reservation).await;
+        throttle
+            .settle(
+                matches!(admission, Err(AdmissionRefused::InvalidSecret)),
+                reservation,
+            )
+            .await;
     }
     let grant = match admission {
         Ok(grant) => grant,
@@ -285,20 +270,21 @@ async fn handle_socket(
         }
     };
 
-    let scene = match target {
-        Target::Hosted(scene) => scene,
-        Target::Autoload(identity) => match state.autoload(&identity.key).await {
-            Ok(scene) => scene,
-            Err(e) => {
-                tracing::info!(scene = %name, error = %e, "autoload refused");
-                let _ = sink.close().await;
-                return;
-            }
-        },
-    };
-
     let (tx, mut rx) = mpsc::channel::<Vec<u8>>(state.settings.limits.client_outbound_max.max(1));
-    let (client, init) = scene.add_client_admitted(authed.signer.as_str().to_string(), tx, grant);
+    let address = authed.signer.as_str().to_string();
+    let joined = state
+        .join(&identity, |scene| {
+            scene.add_client_admitted(address, tx, grant)
+        })
+        .await;
+    let (scene, (client, init)) = match joined {
+        Ok(joined) => joined,
+        Err(e) => {
+            tracing::info!(scene = %name, error = %e, "join refused");
+            let _ = sink.close().await;
+            return;
+        }
+    };
     let index = client.index;
 
     if init.size == 0 {

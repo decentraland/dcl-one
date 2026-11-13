@@ -2908,3 +2908,30 @@ async fn a_full_account_is_refused_before_the_image_is_decoded() {
     );
     s.done().await;
 }
+
+#[tokio::test]
+async fn a_dropped_upload_keeps_its_decode_permit_until_the_decode_ends() {
+    static PERMITS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
+    let (release, wait) = std::sync::mpsc::channel::<()>();
+    let task = tokio::spawn(crate::handlers::images::decode_with(&PERMITS, move || {
+        let _ = wait.recv();
+    }));
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while PERMITS.available_permits() != 0 {
+        assert!(Instant::now() < deadline, "the decode never started");
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    task.abort();
+    let _ = task.await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert_eq!(
+        PERMITS.available_permits(),
+        0,
+        "the running decode still holds its permit"
+    );
+    release.send(()).unwrap();
+    while PERMITS.available_permits() != 1 {
+        assert!(Instant::now() < deadline, "the permit came back");
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+}
