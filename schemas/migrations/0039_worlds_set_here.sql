@@ -9,7 +9,9 @@
 -- known; the mirror records the name's holder at its next pass as it. An
 -- owner who explicitly set `unrestricted` here cannot be told from the
 -- default and is not marked: the mirror then copies the source's access,
--- which can only restrict that world.
+-- which can only restrict that world. The old mirror wrote `skybox_time` and
+-- `single_player` itself, so an owner's edit of only those is not marked
+-- either, and the source's values apply.
 ALTER TABLE IF EXISTS worlds.worlds
     ADD COLUMN IF NOT EXISTS access_set_here boolean NOT NULL DEFAULT false,
     ADD COLUMN IF NOT EXISTS access_set_by text,

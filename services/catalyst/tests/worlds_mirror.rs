@@ -1918,6 +1918,7 @@ async fn an_owner_edit_here_is_kept_while_that_owner_holds_the_name() {
         &node.pool,
         &WorldName::parse(world).unwrap(),
         &Address::parse(seller).unwrap(),
+        Some(&Address::parse(seller).unwrap()),
         &WorldSettingsUpdate {
             title: Some("Mine".into()),
             ..WorldSettingsUpdate::default()

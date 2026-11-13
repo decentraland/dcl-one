@@ -5,8 +5,10 @@
 //! chains are open-ended (`X-Identity-Auth-Chain-N` grows with delegation and
 //! EIP-1654 links), so any enumerated list is a ceiling that breaks login.
 //! Decision 2026-07-31 (transparent-front cutover); the cors fixtures assert it.
-//! [`HttpServerCors`] is the rule of the routes that answer CORS as an
-//! upstream `@dcl/http-server` service does.
+//! [`HttpServerCors`] is the `@dcl/http-server` rule of three surfaces: the
+//! Registry gateway, the social API and `/lambdas/`. The content routes keep
+//! their own `content_cors` (`content/src/routing.rs`), which also exposes
+//! headers and is not covered by it.
 
 use axum::body::Body;
 use axum::extract::Request;

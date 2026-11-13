@@ -1914,13 +1914,16 @@ pub async fn get_world_settings(
 /// One locked transaction: the row (`FOR UPDATE`) plus, when a spawn is being
 /// set, the world's bounding rectangle; the upsert, bumping the version only
 /// when a versioned settings column is in the patch. A patch to a setting the
-/// worlds mirror copies marks the row `settings_set_here` by `owner`, so the
-/// mirror keeps the owner's settings while `owner` holds the name
+/// worlds mirror copies marks the row `settings_set_here` by `set_by`, the
+/// name's holder (a collaborator's edit is the holder's too; `None` when the
+/// holder is unknown, and the mirror then takes the holder of its next pass),
+/// so the mirror keeps those settings while that holder holds the name
 /// ([`mirror_keeps_local`]). Returns the row and the previous spawn.
 pub async fn update_world_settings(
     pool: &PgPool,
     world: &WorldName,
     owner: &Address,
+    set_by: Option<&Address>,
     input: &WorldSettingsUpdate,
 ) -> Result<(WorldSettingsRow, Option<String>), ApiError> {
     let mut tx = pool.begin().await?;
@@ -1995,7 +1998,7 @@ pub async fn update_world_settings(
                realm_name_override, preview_wearable_urns, settings_set_here, settings_set_by
            )
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8::text[], COALESCE($9, false), COALESCE($10, true), $11, $14, $16::text[],
-                   $18, CASE WHEN $18 THEN $2 END)
+                   $18, CASE WHEN $18 THEN $19 END)
            ON CONFLICT (name) DO UPDATE SET
              title = COALESCE(EXCLUDED.title, w.title),
              description = COALESCE(EXCLUDED.description, w.description),
@@ -2036,6 +2039,7 @@ pub async fn update_world_settings(
     .bind(&input.preview_wearable_urns)
     .bind(input.preview_wearable_urns_provided)
     .bind(mirrored_setting_patch)
+    .bind(set_by)
     .fetch_one(&mut *tx)
     .await?;
 

@@ -2443,6 +2443,7 @@ async fn settings_version_tracks_settings_writes() {
         &f.pool,
         &world,
         &owner,
+        Some(&owner),
         &WorldSettingsUpdate {
             title: Some("Owner Title".into()),
             ..Default::default()
@@ -2458,6 +2459,7 @@ async fn settings_version_tracks_settings_writes() {
         &f.pool,
         &world,
         &owner,
+        Some(&owner),
         &WorldSettingsUpdate {
             spawn_coordinates: Some("0,1".into()),
             ..Default::default()
@@ -2489,9 +2491,15 @@ async fn settings_spawn_validation_runs_inside_the_update_transaction() {
     };
 
     let spawnless = world_name();
-    let err = store::update_world_settings(&f.pool, &spawnless, &owner, &spawn_update("0,0"))
-        .await
-        .expect_err("a world without scenes cannot take a spawn");
+    let err = store::update_world_settings(
+        &f.pool,
+        &spawnless,
+        &owner,
+        Some(&owner),
+        &spawn_update("0,0"),
+    )
+    .await
+    .expect_err("a world without scenes cannot take a spawn");
     assert!(bad_request(err).contains("has no deployed scenes"));
     assert!(
         store::get_world(&f.pool, &spawnless)
@@ -2513,9 +2521,10 @@ async fn settings_spawn_validation_runs_inside_the_update_transaction() {
     )
     .await
     .unwrap();
-    let err = store::update_world_settings(&f.pool, &world, &owner, &spawn_update("5,5"))
-        .await
-        .expect_err("a spawn outside the world shape is refused");
+    let err =
+        store::update_world_settings(&f.pool, &world, &owner, Some(&owner), &spawn_update("5,5"))
+            .await
+            .expect_err("a spawn outside the world shape is refused");
     assert!(bad_request(err).contains("must be within the world shape rectangle"));
     assert_eq!(
         store::get_world_settings(&f.pool, &world)
@@ -2527,7 +2536,7 @@ async fn settings_spawn_validation_runs_inside_the_update_transaction() {
         Some("0,0")
     );
     let (updated, old_spawn) =
-        store::update_world_settings(&f.pool, &world, &owner, &spawn_update("0,1"))
+        store::update_world_settings(&f.pool, &world, &owner, Some(&owner), &spawn_update("0,1"))
             .await
             .expect("in-shape spawn");
     assert_eq!(updated.spawn_coordinates.as_deref(), Some("0,1"));
@@ -5248,6 +5257,40 @@ async fn a_settings_thumbnail_is_stored_only_for_an_authorized_writer() {
     let updated = put_settings(&f, &world, &owner, &parts, 200).await;
     assert_eq!(updated["settings"]["thumbnail_hash"], json!(hash));
     assert!(f.storage.exist(&hash).await.unwrap());
+}
+
+/// A settings edit is recorded for the name's holder, also when a collaborator with world-wide
+/// deployment makes it, so the mirror keeps it while that holder holds the name.
+#[tokio::test]
+async fn a_collaborators_settings_edit_is_marked_for_the_holder() {
+    let Some(f) = fixture().await else { return };
+    let (owner, collaborator) = (Wallet::random(), Wallet::random());
+    let world = owned_world(&f, &owner).await;
+    store::grant_addresses_world_wide_permission(
+        &f.pool,
+        &world,
+        Permission::Deployment,
+        std::slice::from_ref(&collaborator.address),
+        None,
+    )
+    .await
+    .unwrap();
+    put_settings(
+        &f,
+        &world,
+        &collaborator,
+        &[("title", None, b"Theirs")],
+        200,
+    )
+    .await;
+    let marked: (bool, Option<String>) = sqlx::query_as(
+        "SELECT settings_set_here, settings_set_by FROM worlds.worlds WHERE name = $1",
+    )
+    .bind(world.key())
+    .fetch_one(&f.pool)
+    .await
+    .unwrap();
+    assert_eq!(marked, (true, Some(owner.address.as_str().to_string())));
 }
 
 /// The body is read after the signed fetch: an unsigned request of any

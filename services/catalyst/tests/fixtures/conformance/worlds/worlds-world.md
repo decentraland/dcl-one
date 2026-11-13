@@ -777,8 +777,11 @@ tree, and orders by name (upstream: group order). `owner` is `null` for worlds w
       writes `title`, `description`, `content_rating` (one of `RP`, `E`, `T`, `A`, `R`), `categories` (the first
       20), `show_in_places`, `single_player`, `skybox_time` (`null` clears) and `thumbnail_hash`
       (`WorldSettingsCopy`, `apply_settings` in `mirror.rs`). An owner's `PUT /world/{name}/settings` here that
-      changes one of these marks the row `settings_set_here` by that owner, and no pass replaces those settings
-      while that owner holds the name as this node's own owner lookup says; after a NAME transfer the source's
+      changes one of these marks the row `settings_set_here` for the name's holder (a collaborator's edit too), and
+      no pass replaces those settings while that holder holds the name as this node's own owner lookup says. The
+      mark covers the whole group: once the owner edits a setting here, this node keeps all of them as they are
+      and the source's later edits to the others are not copied, so one owner's settings never mix with the
+      source's; after a NAME transfer the source's
       settings apply again (`store::mirror_keeps_local`, worlds-permissions.md WP-21). `settings_version` takes the
       source's counter and never goes back: a row ahead of its source (bumped by earlier ingests) moves one past
       its own value when a copied column changes. No answer, a refusal or a body that is not an object leaves
