@@ -587,8 +587,8 @@ impl SceneHostState {
         self.scenes.get(&self.canonical_key(key).await.room_key())
     }
 
-    /// Loads (or reloads) `key` under the load lock and the scene cap. A
-    /// reload of an already hosted scene never counts against the cap.
+    /// Loads (or reloads) `key` under its key's load lock and the scene cap.
+    /// A reload reserves a slot too, for the time its old scene is down.
     pub async fn load(&self, key: &SceneKey) -> anyhow::Result<()> {
         let key = self.canonical_key(key).await;
         let lock = self.load_lock(&key);
@@ -604,8 +604,8 @@ impl SceneHostState {
         Arc::clone(locks.entry(key.room_key()).or_default())
     }
 
-    /// Holds a place under the scene cap for a load of `key` that is not
-    /// hosted yet, until the returned guard drops.
+    /// Holds a place under the scene cap for a load of `key` until the
+    /// returned guard drops; a reload of a hosted `key` is never refused.
     fn reserve_slot(&self, key: &SceneKey) -> anyhow::Result<SlotReservation<'_>> {
         let _membership = self.loads.membership.lock();
         let loading = &self.loads.loading;
@@ -772,7 +772,7 @@ impl SceneHostState {
                         continue;
                     }
                     tracing::info!(scene = %scene.identity.key, %address, %reason, "admission revoked; closing the socket");
-                    if scene.remove_client_if(client.index, &client.address) {
+                    if scene.remove_connection(client.index, client.id) {
                         kicked += 1;
                     }
                 }
@@ -832,7 +832,7 @@ impl SceneHostState {
                     }
                     Err(reason) => {
                         tracing::info!(scene = %key, %address, %reason, "admission revoked; closing the socket");
-                        if scene.remove_client_if(client.index, &client.address) {
+                        if scene.remove_connection(client.index, client.id) {
                             summary.kicked += 1;
                         }
                     }

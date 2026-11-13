@@ -1334,16 +1334,20 @@ async fn a_reload_at_the_cap_keeps_its_slot() {
         seed_world(&h.state.pool, world, None, AccessType::Unrestricted).await;
         seed_scene(&h.state, world, id, "", None, "0,0", &["0,0"], false).await;
     }
-    h.state.load(&SceneKey::World(first.clone())).await.unwrap();
-    h.state
-        .load(&SceneKey::World(first.clone()))
-        .await
-        .expect("a reload of a hosted scene fits at the cap");
-    let err = h
+    let (first_key, second_key) = (SceneKey::World(first.clone()), SceneKey::World(second));
+    h.state.load(&first_key).await.unwrap();
+
+    // Mid-reload: the slot is reserved and the old scene is already down.
+    let reload = h
         .state
-        .load(&SceneKey::World(second.clone()))
-        .await
-        .unwrap_err();
-    assert!(err.to_string().contains("full"), "{err}");
-    assert_eq!(h.state.scenes.len(), 1);
+        .reserve_slot(&first_key)
+        .expect("a reload at the cap is allowed");
+    h.state.remove_hosted(&first_key.room_key());
+    assert!(h.state.scenes.is_empty());
+    assert!(
+        h.state.reserve_slot(&second_key).is_err(),
+        "another scene cannot take the reloading scene's slot"
+    );
+    drop(reload);
+    assert!(h.state.reserve_slot(&second_key).is_ok());
 }

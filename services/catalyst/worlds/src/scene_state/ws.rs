@@ -289,7 +289,7 @@ async fn handle_socket(
 
     if init.size == 0 {
         tracing::error!(scene = %scene.name, index, address = %authed.signer, "no entity range available; refusing the connection");
-        scene.remove_client(index);
+        scene.remove_connection(index, client.id);
         let _ = sink.close().await;
         return;
     }
@@ -301,7 +301,7 @@ async fn handle_socket(
         init.reserved_local_entities,
     );
     if sink.send(Message::Binary(init_frame.into())).await.is_err() {
-        scene.remove_client(index);
+        scene.remove_connection(index, client.id);
         return;
     }
     tracing::info!(scene = %scene.name, index, address = %authed.signer, ?grant, "ws authenticated");
@@ -342,6 +342,7 @@ async fn handle_socket(
         }
     }
 
-    scene.remove_client(index);
+    // A kicked connection's index may already belong to someone else.
+    scene.remove_connection(index, client.id);
     tracing::debug!(scene = %scene.name, index, "ws closed");
 }
