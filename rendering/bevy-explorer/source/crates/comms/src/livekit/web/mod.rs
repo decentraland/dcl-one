@@ -383,7 +383,7 @@ static NEXT_REQUEST_ID: AtomicU32 = AtomicU32::new(1);
 /// Engine-side: requests awaiting their [`Reply`].
 static PENDING: LazyLock<DashMap<RequestId, oneshot::Sender<Reply>>> = LazyLock::new(DashMap::new);
 /// Engine-side: a room's event queue (the receiver is what [`Room::connect`] returns) and the
-/// metadata the page last reported for it, shared with the room's [`Room`].
+/// metadata the page last reported for it.
 struct RoomChannel {
     events: mpsc::UnboundedSender<RoomEvent>,
     metadata: Arc<Mutex<String>>,
