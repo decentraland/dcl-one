@@ -331,6 +331,8 @@ jobs:
         run: node --test local-harness/web-driver/driver.test.mjs
       - name: Test scene signed fetch
         run: node --test crates/dcl_js/src/modules/SignedFetch.test.cjs
+      - name: Test scene topic messaging
+        run: node --test crates/dcl_js/src/modules/CommsApi.test.cjs
       - name: Test LiveKit browser bindings
         run: node --test crates/comms/livekit_web_bindings.test.mjs
       - name: Build the benchmark runner

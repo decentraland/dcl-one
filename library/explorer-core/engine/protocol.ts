@@ -198,6 +198,7 @@ export type PageToScene =
   | TriggerEmoteRequest
   | EquipEmoteRequest
   | SetMicRequest
+  | SetNearbyMuteRequest
   | GetWearablesRequest
   | CatalogQueryRequest
   | EquipRequest
@@ -368,6 +369,19 @@ export interface VoiceActivityMessage {
   kind: 'voiceActivity'
   address: string
   active: boolean
+}
+
+/** The wallets whose nearby voice the user muted (lowercased), whole on every change (scene → page). */
+export interface NearbyMutesMessage {
+  kind: 'nearbyMutes'
+  addresses: string[]
+}
+
+/** Mute ("Hush") or unmute ("Hear") a wallet's nearby voice (page → scene). */
+export interface SetNearbyMuteRequest {
+  kind: 'setNearbyMute'
+  address: string
+  muted: boolean
 }
 
 // ---- voice chat: private calls and community streams ----------------------
@@ -2221,6 +2235,7 @@ export type SceneToPage =
   | CommunityBrowseMessage
   | CommunityMessage
   | VoiceActivityMessage
+  | NearbyMutesMessage
   | CommunityActionFailedMessage
   | CommunitySaveResultMessage
   | CommunityPlaceOptionsMessage

@@ -220,6 +220,10 @@ State, in every build:
   emote markers and direct messages are left out; `/dm_history` has those.
 - `/voice_state`: the mic (`available`, `enabled`) and, in LiveKit builds, each voice room's state
   and the addresses speaking.
+- `/nearby_mutes`: the wallets whose nearby voice the account muted (`muted`, the first 32 of
+  `count`), the `account` and where its saved list stands (`load`: `idle` signed out, `loading`,
+  `loaded`, `failed`). `/nearby_mute on|off <address>` mutes or unmutes one, as the profile
+  menu's Hush and Hear do, and saves it on the social service.
 - `/connectivity_state`: `connectionLost`, `probing`, `everConnected`, `suppressed` and `rooms`
   (`scope`, `state`, `retryAt`). Scope names identify realm, scene or private chat rooms without
   adapter URLs or credentials. `/connectivity_retry` requests immediate recovery and a new

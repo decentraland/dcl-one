@@ -159,6 +159,20 @@ describe('Explorer', () => {
     assert.equal(state.call?.peer, '0xabc')
   })
 
+  test('nearbyMute sends the switch then the address, and nearbyMutes reads the list', async () => {
+    const fake = new FakeConsole({
+      nearby_mute: 'Muted',
+      nearby_mutes: JSON.stringify({ account: '0xme', load: 'loaded', count: 1, muted: ['0xabc'], unavailable: { account: 'Not signed in' } })
+    })
+    const explorer = new Explorer(fake)
+    await explorer.nearbyMute('0xabc', true)
+    await explorer.nearbyMute('0xabc', false)
+    assert.deepEqual(fake.lines, ['/nearby_mute on 0xabc', '/nearby_mute off 0xabc'])
+    const mutes = await explorer.nearbyMutes()
+    assert.equal(mutes.load, 'loaded')
+    assert.deepEqual(mutes.muted, ['0xabc'])
+  })
+
   test('photoMode and takePhoto parse the JSON replies and wait for the mode', async () => {
     let active = false
     const fake = new FakeConsole({
