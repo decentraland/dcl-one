@@ -76,6 +76,78 @@ fn cancel_handles_are_capped_and_print_does_not_reach_stdout() {
     run_scene(false, r#"Deno.core.print("x".repeat(10000), true);"#).unwrap();
 }
 
+/// An index accessor on the array prototypes would run inside deno_core's rejection drain.
+#[test]
+fn prototype_index_accessors_are_refused() {
+    for is_server in [false, true] {
+        run_scene(
+            is_server,
+            r#"
+            const attempts = {
+                defineProperty: () => Object.defineProperty(Array.prototype, "0", { set() {}, configurable: true }),
+                numberKey: () => Object.defineProperty(Object.prototype, 5, { get() {}, configurable: true }),
+                defineProperties: () => Object.defineProperties(Array.prototype, { 1: { set() {}, configurable: true } }),
+                defineSetter: () => Array.prototype.__defineSetter__("2", () => {}),
+                defineGetter: () => Object.prototype.__defineGetter__(3, () => {}),
+                setPrototypeOf: () => Object.setPrototypeOf(Array.prototype, { set 0(v) {} }),
+                protoAssign: () => { Array.prototype.__proto__ = { set 0(v) {} }; },
+            };
+            for (const [name, attempt] of Object.entries(attempts)) {
+                let threw = false;
+                try { attempt(); } catch (e) { threw = e instanceof TypeError; }
+                if (!threw) { throw new Error(`${name} was allowed`); }
+            }
+            if (Reflect.defineProperty(Array.prototype, "0", { set() {}, configurable: true })) {
+                throw new Error("Reflect.defineProperty was allowed");
+            }
+            if (Reflect.setPrototypeOf(Array.prototype, {})) { throw new Error("Reflect.setPrototypeOf was allowed"); }
+            // named keys, other objects and plain index writes still work
+            Object.defineProperty(Array.prototype, "extra", { value: 1, configurable: true });
+            Object.defineProperties(Object.prototype, { extra2: { value: 2, configurable: true } });
+            Object.defineProperty([], "0", { get() { return 1; } });
+            Object.setPrototypeOf({}, null);
+            Array.prototype[3] = 1;
+            delete Array.prototype[3];
+            "#,
+        )
+        .unwrap();
+    }
+}
+
+/// Rejections still drain once the scene has tried to put a setter in the drain's path.
+#[test]
+fn a_rejection_drain_runs_no_scene_setter() {
+    let (mut runtime, _) = create_runtime(false, false, Default::default());
+    {
+        let state = runtime.op_state();
+        let mut state = state.borrow_mut();
+        state.put(context(true));
+        state.put(dcl_types::SceneResourceCounters::default());
+        state.put(Vec::<dcl_types::SceneLogMessage>::default());
+        state.put(dcl_types::SceneElapsedTime(0.0));
+    }
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let _guard = rt.enter();
+    runtime
+        .execute_script(
+            "<test>",
+            r#"
+            try {
+                Object.defineProperty(Array.prototype, "0", { set() { Promise.reject(1); }, configurable: true });
+            } catch {}
+            setTimeout(() => Promise.reject(0), 0);
+            setTimeout(() => { globalThis.__done = true; }, 5);
+            "#,
+        )
+        .unwrap();
+    rt.block_on(runtime.run_event_loop(Default::default()))
+        .unwrap();
+    assert_eq!(eval_string(&mut runtime, "String(globalThis.__done)"), "true");
+}
+
 #[test]
 fn op_panic_is_refused() {
     assert_refused(r#"Deno.core.ops.op_panic("x")"#, "not available");
