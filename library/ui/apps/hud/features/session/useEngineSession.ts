@@ -7,7 +7,7 @@ import { hoverKey, proximityKey } from '@explorer-core/engine/pointerKeys'
 import type { LoginDriver, NewAccountPick } from '@explorer-core/engine/driver'
 import type { LaunchHostOptions } from '@explorer-core/engine/engineRpc'
 import { recordVisit } from '@explorer-core/features/lobby/lobbyApi'
-import type { SatelliteView } from '@explorer-core/engine/generated'
+import type { PortableInfo, PortableState, SatelliteView } from '@explorer-core/engine/generated'
 import type { AvatarLook } from '@explorer-core/engine/avatarEquip'
 import type { PhotoModeSnapshot, PhotoModeSource, PreviewFocus } from '@explorer-core/engine/protocol'
 import { clickButton, screenViewed, sessionId, track } from '@explorer-core/lib/analytics'
@@ -31,6 +31,7 @@ import { emitFriendEvent } from '@explorer-core/features/friends/friendEvents'
 import { toastFriendOnline, toastFriendResult } from '../friends/friendToasts'
 import { clearNotificationToasts, queueNotificationToasts } from '../notifications/NotificationToast'
 import { clearRewardPopups, queueRewardPopups } from '../rewards/RewardPopup'
+import { portableKey, toastPortableChanges } from '../portables/portableToasts'
 import { bootMode, IN_WORLD_SHOP, unattendedRun } from '@hud-host'
 import { notificationTimeMs } from '@explorer-core/lib/notificationTime'
 import { isCancelKey, isEditableTarget, setBindingsSnapshot, useBindingsSnapshot } from '../../lib/bindingLabels'
@@ -54,6 +55,8 @@ import { EDITOR_BUILD } from '@explorer-core/features/editorHost/config'
 import { editorEntry } from '@explorer-core/features/editorHost/source'
 import { hudActsOn, type EditorHudMode } from '@explorer-core/features/editorHost/hudMode'
 import { streamHere } from '../voiceChat/streamHere'
+import { donatePlaceOf, donateSceneKey } from '@explorer-core/features/donate/place'
+import type { DonatePlace } from '@explorer-core/hostContract'
 import type {
   AvatarColorTarget,
   AppNotification,
@@ -415,6 +418,9 @@ export interface MinimapState {
    *  parcel (the header falls back to "Empty parcel"). Updates as the player crosses into
    *  another scene — unlike the entry overlay's title, which never does. */
   sceneTitle: string
+  /** The place the player stands in, as Donate names it (a Genesis City parcel or a World); null in a preview,
+   *  a local realm or between scenes. */
+  donatePlace: DonatePlace | null
   /** Relay the current style/rotation/zoom to the scene. Only the Camera style needs the
    *  engine; on the DOM styles the scene disposes its TextureCamera. */
   setConfig: (config: { style: MinimapStyle; rotation: MinimapRotation; visibleMeters: number }) => void
@@ -630,6 +636,15 @@ export interface WorldPasswordState {
   pending: WorldPasswordRequestMessage | null
   /** Answer the prompt: the password, or null to give up (the travel is refused). */
   resolve: (password: string | null) => void
+}
+
+export interface PortablesState {
+  /** The portables the engine lists, tagged by kind: never the HUD's own scene or a startup portable. */
+  list: PortableInfo[]
+  /** Stop a listed portable by its scene hash (`/stop_portable`). */
+  stop: (hash: string) => void
+  /** Start a stopped smart wearable again (`/smart_wearable restart`). */
+  restart: (urn: string) => void
 }
 
 export type ChatLine = ChatMessage & {
@@ -999,6 +1014,8 @@ export interface EngineSession {
   permissions: PermissionsState
   /** The password prompt for a password-protected world being travelled to. */
   worldPassword: WorldPasswordState
+  /** The portable experiences running beside the scene (smart wearables, scene-spawned portables). */
+  portables: PortablesState
   editor: EditorHostState
   mic: { enabled: boolean; available: boolean; toggle: () => void }
   /** Private calls and community streams. */
@@ -1390,6 +1407,10 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const poseRef = useRef<PlayerPose>({ x: 0, z: 0, yaw: 0, camYaw: 0 })
   const [satelliteView, setSatelliteView] = useState<SatelliteView | null>(null)
   const [sceneTitle, setSceneTitle] = useState('')
+  // Kept as its key, so a scene report for the same place leaves the minimap's state as it was.
+  const [donatePlaceKey, setDonatePlaceKey] = useState<string | null>(null)
+  /** The scene (realm and hash) Donate's place was last taken from. */
+  const donateSceneRef = useRef<string | null>(null)
   const [placesOpen, setPlacesOpen] = useState(false)
   // The lobby reopened in-world: over the running world, under the panels it opens.
   const [lobbyOpen, setLobbyOpen] = useState(false)
@@ -1425,6 +1446,15 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   // dismissed prompt asks again; an "Always …" answer is the engine's stored rule from here on).
   const answeredPermissions = useRef(new Map<string, boolean | null>())
   const [worldPassword, setWorldPassword] = useState<WorldPasswordRequestMessage | null>(null)
+  const [portables, setPortables] = useState<PortableInfo[]>([])
+  // Each portable's last reported state, for the change toasts (null: no list yet). Toasts start
+  // once the player is in world from a known baseline: the list the player arrived with, or the
+  // first list after arriving, so logging in wearing several smart wearables does not burst toasts.
+  const portableStates = useRef<Map<string, PortableState> | null>(null)
+  const portableToasts = useRef(false)
+  // Stop/Restart lines the HUD ran itself: their console reply is not echoed into the chat (the
+  // list's toast says what happened); a typed /stop_portable or /smart_wearable command still is.
+  const ownConsoleCommands = useRef<string[]>([])
   const chatId = useRef(0)
   // when each conversation last pinged, per kind of ping
   const pingAtRef = useRef<Map<string, number>>(new Map())
@@ -1510,6 +1540,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           if (msg.name === 'playerReady') {
             playerReadyRef.current = true
             setPlayerReady(true)
+            portableToasts.current = portableStates.current != null
             bootPollStop.current = true // world reached → stop watching for a boot panic
             // The bridge pushes bindings at registration, but that can race the page's channel
             // subscription — re-request now that both ends are up (shortcut hints need them).
@@ -2118,7 +2149,13 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           setMapParcel((prev) => (prev.x === px && prev.y === py ? prev : { x: px, y: py }))
           break
         }
-        case 'consoleReply':
+        case 'consoleReply': {
+          const own = ownConsoleCommands.current.indexOf([msg.command, ...msg.args].join(' '))
+          if (own >= 0) {
+            ownConsoleCommands.current.splice(own, 1)
+            if (!msg.ok) showToast(formatConsoleReply(msg.command, msg.args, msg.output), { tone: 'error' })
+            break
+          }
           // Command feedback: a local "DCL System" line, never broadcast (same shape as pushSystemMessage).
           setMessages((prev) =>
             [
@@ -2127,6 +2164,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
             ].slice(-MAX_CHAT_LINES)
           )
           break
+        }
         case 'realmInfo':
           setSatelliteView(msg.satelliteView)
           break
@@ -2213,6 +2251,16 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
         case 'sceneInfo':
           setSceneTitle(msg.title)
           setScenePlace(msg.parcel == null ? null : { parcel: `${msg.parcel.x},${msg.parcel.y}`, realm: msg.realm ?? '' })
+          {
+            // Donate's place changes with the scene, not with each parcel crossed inside it (the bridge reports
+            // every parcel), so the host is asked once per scene; a parcel with no scene names none.
+            const sceneKey = donateSceneKey(msg)
+            if (sceneKey !== donateSceneRef.current) {
+              donateSceneRef.current = sceneKey
+              const place = sceneKey ? donatePlaceOf(msg) : null
+              setDonatePlaceKey(place ? JSON.stringify(place) : null)
+            }
+          }
           // Leaving a scene forgets its visit answers (a neighbour's are kept until the player leaves
           // that one); the used permissions and the badge are the current scene's only.
           if (msg.scene !== currentScene.current) {
@@ -2282,6 +2330,16 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
         case 'worldPasswordWithdrawn':
           setWorldPassword(null)
           break
+        case 'portables': {
+          const before = portableStates.current
+          portableStates.current = new Map(msg.portables.map((p) => [portableKey(p), p.state]))
+          if (playerReadyRef.current) {
+            if (portableToasts.current && before != null) toastPortableChanges(before, msg.portables)
+            portableToasts.current = true
+          }
+          setPortables(msg.portables)
+          break
+        }
       }
     })
 
@@ -2967,6 +3025,12 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     },
     []
   )
+  const ownConsoleCommand = useCallback((command: string, args: string[]) => {
+    ownConsoleCommands.current.push([command, ...args].join(' '))
+    driverRef.current?.send({ kind: 'consoleCommand', command, args })
+  }, [])
+  const stopPortable = useCallback((hash: string) => ownConsoleCommand('stop_portable', [hash]), [ownConsoleCommand])
+  const restartSmartWearable = useCallback((urn: string) => ownConsoleCommand('smart_wearable', ['restart', urn]), [ownConsoleCommand])
   const resolveWorldPassword = useCallback((password: string | null) => {
     setWorldPassword((p) => {
       if (p == null) return p
@@ -3148,6 +3212,10 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     // afterwards would leave the world loaded under the sign-in screen
     if (lobbyRef.current && busyRef.current) return false
     setDestinationPicked(true) // flip to the loading overlay first
+    // and the boot bar stops waiting on the lobby's stage: a pick before the stage reported (a
+    // stored session's stage is only built after its sign-in) leaves it unreported. It stays set if
+    // the travel fails back to the lobby: the bar has gone by then.
+    setAvatarLoaded(true)
     if (lobbyRef.current) {
       travelFromLobby(dest)
       return true
@@ -3673,6 +3741,9 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     setDmLines({})
     setChatUnread(0)
     setNearbyUnread(0)
+    setPortables([])
+    portableStates.current = null
+    portableToasts.current = false
   }, [closeAllPanels])
 
   // Where the Backpack's avatar shows through, so the lobby under its modal can open the same hole.
@@ -4332,8 +4403,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     [mapParcel, mapOpen, toggleMap, teleport, changeRealm, teleportToPlace]
   )
   const minimapSlice = useMemo(
-    () => ({ pose: poseRef, satelliteView, sceneTitle, setConfig: setMinimapConfig }),
-    [satelliteView, sceneTitle, setMinimapConfig]
+    () => ({ pose: poseRef, satelliteView, sceneTitle, donatePlace: donatePlaceKey ? (JSON.parse(donatePlaceKey) as DonatePlace) : null, setConfig: setMinimapConfig }),
+    [satelliteView, sceneTitle, donatePlaceKey, setMinimapConfig]
   )
 
   return {
@@ -4498,6 +4569,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       resolve: resolvePermission
     },
     worldPassword: { pending: worldPassword, resolve: resolveWorldPassword },
+    portables: { list: portables, stop: stopPortable, restart: restartSmartWearable },
     editor: { mode: editorMode, setMode: setEditorMode },
     mic: { enabled: mic.enabled, available: mic.available, toggle: toggleMic },
     voiceChat: { state: voiceChatState, active: activeVoiceChats, activeLoaded: activeVoiceChatsLoaded, scene: sceneVoiceChat, guest: profile?.isGuest === true, act: voiceChatAct },

@@ -1044,12 +1044,7 @@ fn reconcile_scene_rooms(
         {
             portables.insert(
                 scene_id.clone(),
-                PortableSource {
-                    pid: wanted.urn.clone(),
-                    parent_scene: None,
-                    ens: None,
-                    super_user: false,
-                },
+                PortableSource::new(wanted.urn.clone(), None, None, false),
             );
         }
         if matches!(wanted.credential, RoomCredential::Unminted) {
@@ -1126,12 +1121,7 @@ fn reconcile_scene_rooms(
         if !portables.contains_key(scene_id) {
             portables.insert(
                 scene_id.clone(),
-                PortableSource {
-                    pid: wanted.urn.clone(),
-                    parent_scene: None,
-                    ens: None,
-                    super_user: false,
-                },
+                PortableSource::new(wanted.urn.clone(), None, None, false),
             );
         }
     }

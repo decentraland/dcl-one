@@ -10,7 +10,7 @@ export type ChromeAuth = {
   onSignIn?: () => void;
   onSignOut?: () => void;
   onSwitchAccount?: () => void;
-  fetchNotifications?: () => Promise<unknown>;
+  fetchNotifications?: (signal?: AbortSignal) => Promise<unknown>;
 };
 
 const LOGGED_OUT: ChromeAuth = {

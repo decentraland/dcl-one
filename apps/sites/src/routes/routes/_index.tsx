@@ -70,7 +70,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
     position: (n: number, total: number) => `Slide ${n} of ${total}`,
   };
   return (
-    <SitesChrome active="play" overlayNav>
+    <SitesChrome active="play" overlayNav headerSurface="overlay">
       <main>
         <Hero
           title="Close the Feed. Come Hang Out."
