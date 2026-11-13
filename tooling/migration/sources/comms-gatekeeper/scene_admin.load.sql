@@ -26,7 +26,8 @@ BEGIN
 END $$;
 
 -- Upstream records no revocation time; a revoked grant gets its grant time.
-INSERT INTO social.scene_admins (place_id, admin_address, added_by, added_at, active, removed_at)
+-- A node grant or revocation newer than the upstream grant wins.
+INSERT INTO social.scene_admins AS t (place_id, admin_address, added_by, added_at, active, removed_at)
 SELECT DISTINCT ON (m.target_id, admin_address) m.target_id, admin_address, added_by, added_at AT TIME ZONE 'UTC', active,
        CASE WHEN active THEN NULL ELSE added_at AT TIME ZONE 'UTC' END
 FROM stage s JOIN migration_scene_admin_identity m ON m.source_id=s.place_id
@@ -35,6 +36,7 @@ ON CONFLICT (place_id, admin_address) DO UPDATE
 SET added_by = EXCLUDED.added_by,
     added_at = EXCLUDED.added_at,
     active = EXCLUDED.active,
-    removed_at = EXCLUDED.removed_at;
+    removed_at = EXCLUDED.removed_at
+WHERE COALESCE(t.removed_at, t.added_at) <= EXCLUDED.added_at;
 
 DROP TABLE migration_scene_admin_identity;

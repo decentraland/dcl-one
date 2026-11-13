@@ -90,6 +90,7 @@ class CommsMigrationCases:
                 ('first','11111111-1111-4111-8111-111111111111','0x' || repeat('a',40),'earliest',1000),
                 ('later','33333333-3333-4333-8333-333333333333','0x' || repeat('a',40),'later',2000);
         ''')
+        self.mark_parents_completed(db, 'comms-gatekeeper')
         with mock.patch.dict(os.environ, {'COMMS_GATEKEEPER_DATABASE_URL': self.url(src),
                                          'TARGET_DATABASE_URL': self.url(db)}):
             for step in ('scene_admin', 'scene_ban'):
@@ -100,3 +101,134 @@ class CommsMigrationCases:
                          'genesis-entity\tt\tactive')
         self.assertEqual(self.sql(db, 'SELECT place_id, banned_by FROM social.scene_bans;').strip(),
                          'genesis-entity\tearliest')
+
+    # ── re-runs keep moderation and credential changes made on the node ──
+
+    def comms_rows(self, step, columns, rows):
+        stage = f'CREATE TEMP TABLE stage({columns}) ON COMMIT DROP; INSERT INTO stage VALUES {rows};\n'
+        return 'BEGIN;\n' + stage + self.comms_load(step) + '\nCOMMIT;'
+
+    USER_BAN_COLUMNS = ('id uuid, banned_address text, banned_by text, reason text, custom_message text, '
+                        'banned_device_id text, banned_at timestamptz, expires_at timestamptz, '
+                        'lifted_at timestamptz, lifted_by text, created_at timestamptz')
+
+    def user_ban_row(self, id_, lifted=None):
+        lifted_at, lifted_by = (f"'{lifted}'", "'upstream'") if lifted else ('NULL', 'NULL')
+        return (f"('{id_}','0x{'b' * 40}','mod','spam',NULL,NULL,'2026-01-01Z',NULL,"
+                f"{lifted_at},{lifted_by},'2026-01-01Z')")
+
+    def test_comms_user_ban_rerun_keeps_a_lift_made_on_the_node(self):
+        db = self.catalyst_db('comms_user_ban_lift')
+        ban = '44444444-4444-4444-8444-444444444444'
+        self.sql(db, self.comms_rows('user_ban', self.USER_BAN_COLUMNS, self.user_ban_row(ban)))
+        self.sql(db, f"UPDATE social.user_bans SET lifted_at = '2026-02-01', lifted_by = 'node' WHERE id = '{ban}';")
+        self.sql(db, self.comms_rows('user_ban', self.USER_BAN_COLUMNS, self.user_ban_row(ban)))
+        self.assertEqual(self.sql(db, 'SELECT lifted_at, lifted_by FROM social.user_bans;').strip(),
+                         '2026-02-01 00:00:00\tnode')
+
+    def test_comms_user_ban_rerun_applies_an_upstream_lift(self):
+        db = self.catalyst_db('comms_user_ban_upstream_lift')
+        ban = '44444444-4444-4444-8444-444444444444'
+        self.sql(db, self.comms_rows('user_ban', self.USER_BAN_COLUMNS, self.user_ban_row(ban)))
+        self.sql(db, self.comms_rows('user_ban', self.USER_BAN_COLUMNS, self.user_ban_row(ban, '2026-03-01Z')))
+        self.assertEqual(self.sql(db, 'SELECT lifted_at, lifted_by FROM social.user_bans;').strip(),
+                         '2026-03-01 00:00:00\tupstream')
+
+    def scene_admin_run(self, db, added_at, active):
+        stage = ("CREATE TEMP TABLE stage(place_id text, admin_address text, added_by text, added_at timestamptz, "
+                 "active boolean) ON COMMIT DROP;\n"
+                 f"INSERT INTO stage VALUES ('11111111-1111-4111-8111-111111111111','0x{'a' * 40}','operator',"
+                 f"'{added_at}',{'true' if active else 'false'});\n")
+        self.sql(db, 'BEGIN;\n' + stage + self.comms_load('scene_admin') + '\nCOMMIT;')
+
+    def scene_admin_state(self, db):
+        return self.sql(db, "SELECT active, added_at, COALESCE(removed_at::text, '-') FROM social.scene_admins;").strip()
+
+    def test_comms_scene_admin_rerun_keeps_a_revocation_made_on_the_node(self):
+        db = self.comms_fixture()
+        self.scene_admin_run(db, '2026-01-01Z', True)
+        self.sql(db, "UPDATE social.scene_admins SET active = false, removed_at = '2026-02-01';")
+        self.scene_admin_run(db, '2026-01-01Z', True)
+        self.assertEqual(self.scene_admin_state(db), 'f\t2026-01-01 00:00:00\t2026-02-01 00:00:00')
+
+    def test_comms_scene_admin_rerun_keeps_a_grant_made_on_the_node(self):
+        db = self.comms_fixture()
+        self.scene_admin_run(db, '2026-01-01Z', False)
+        self.sql(db, "UPDATE social.scene_admins SET active = true, removed_at = NULL, added_at = '2026-02-01';")
+        self.scene_admin_run(db, '2026-01-01Z', False)
+        self.assertEqual(self.scene_admin_state(db), 't\t2026-02-01 00:00:00\t-')
+
+    def test_comms_scene_admin_rerun_applies_upstream_changes_newer_than_the_node(self):
+        db = self.comms_fixture()
+        self.scene_admin_run(db, '2026-01-01Z', True)
+        self.scene_admin_run(db, '2026-01-01Z', False)
+        self.assertEqual(self.scene_admin_state(db), 'f\t2026-01-01 00:00:00\t2026-01-01 00:00:00')
+        self.sql(db, "UPDATE social.scene_admins SET removed_at = '2026-02-01';")
+        self.scene_admin_run(db, '2026-03-01Z', True)
+        self.assertEqual(self.scene_admin_state(db), 't\t2026-03-01 00:00:00\t-')
+
+    STREAM_COLUMNS = ('id uuid, place_id text, streaming_url text, streaming_key text, ingress_id text, room_id text, '
+                      'generated_by text, created_at timestamptz, expiration_time timestamptz, streaming boolean, '
+                      'streaming_start_time timestamptz, streaming_state_version bigint, '
+                      'streaming_checked_at timestamptz, active boolean, cleanup_pending boolean, '
+                      'cleanup_expired boolean')
+
+    def stream_row(self, id_, created_at, active=True, streaming=False, version=0):
+        return (f"('{id_}','place','rtmp://x','key-{id_[:4]}','ingress-{id_[:4]}','room','0x{'c' * 40}',"
+                f"'{created_at}',NULL,{str(streaming).lower()},NULL,{version},NULL,{str(active).lower()},false,false)")
+
+    def node_credential(self, db, id_, created_at):
+        self.sql(db, "INSERT INTO social.scene_stream_access (id, place_id, streaming_url, streaming_key, ingress_id, "
+                     f"generated_by, created_at) VALUES ('{id_}','place','rtmp://x','node-key','node-ingress',"
+                     f"'0x{'c' * 40}','{created_at}');")
+
+    def stream_state(self, db):
+        return self.sql(db, 'SELECT left(id::text, 4), active FROM social.scene_stream_access ORDER BY id;').strip()
+
+    def cleanups(self, db):
+        return self.sql(db, 'SELECT left(access_id::text, 4), ingress_id, notification_kind IS NULL '
+                            'FROM social.scene_stream_cleanup ORDER BY access_id;').strip()
+
+    def test_comms_stream_access_rerun_keeps_a_credential_the_node_retired(self):
+        db = self.catalyst_db('comms_stream_retired')
+        upstream, node = '55555555-5555-4555-8555-555555555555', '66666666-6666-4666-8666-666666666666'
+        self.sql(db, self.comms_rows('scene_stream_access', self.STREAM_COLUMNS,
+                                     self.stream_row(upstream, '2026-01-01Z', streaming=True)))
+        self.sql(db, f"UPDATE social.scene_stream_access SET active = false, streaming = false WHERE id = '{upstream}';")
+        self.node_credential(db, node, '2026-02-01')
+        self.sql(db, self.comms_rows('scene_stream_access', self.STREAM_COLUMNS,
+                                     self.stream_row(upstream, '2026-01-01Z', streaming=True)))
+        self.assertEqual(self.stream_state(db), '5555\tf\n6666\tt')
+        self.assertEqual(self.sql(db, f"SELECT streaming FROM social.scene_stream_access WHERE id = '{upstream}';")
+                         .strip(), 'f')
+        self.assertEqual(self.cleanups(db), '')
+
+    def test_comms_stream_access_retiring_an_older_node_credential_queues_its_ingress_cleanup(self):
+        db = self.catalyst_db('comms_stream_retire_cleanup')
+        node, upstream = '66666666-6666-4666-8666-666666666666', '55555555-5555-4555-8555-555555555555'
+        self.node_credential(db, node, '2026-01-01')
+        self.sql(db, self.comms_rows('scene_stream_access', self.STREAM_COLUMNS,
+                                     self.stream_row(upstream, '2026-02-01Z')))
+        self.assertEqual(self.stream_state(db), '5555\tt\n6666\tf')
+        self.assertEqual(self.cleanups(db), '6666\tnode-ingress\tt')
+
+    def test_comms_stream_access_keeps_a_newer_node_credential_and_cleans_the_superseded_import(self):
+        db = self.catalyst_db('comms_stream_newer_node')
+        node, upstream = '66666666-6666-4666-8666-666666666666', '55555555-5555-4555-8555-555555555555'
+        self.node_credential(db, node, '2026-03-01')
+        for _ in range(2):
+            self.sql(db, self.comms_rows('scene_stream_access', self.STREAM_COLUMNS,
+                                         self.stream_row(upstream, '2026-02-01Z')))
+        self.assertEqual(self.stream_state(db), '5555\tf\n6666\tt')
+        self.assertEqual(self.cleanups(db), '5555\tingress-5555\tt')
+
+    def test_comms_stream_access_rerun_keeps_newer_node_streaming_state(self):
+        db = self.catalyst_db('comms_stream_version')
+        upstream = '55555555-5555-4555-8555-555555555555'
+        self.sql(db, self.comms_rows('scene_stream_access', self.STREAM_COLUMNS,
+                                     self.stream_row(upstream, '2026-01-01Z', version=1)))
+        self.sql(db, "UPDATE social.scene_stream_access SET streaming = true, streaming_state_version = 5;")
+        self.sql(db, self.comms_rows('scene_stream_access', self.STREAM_COLUMNS,
+                                     self.stream_row(upstream, '2026-01-01Z', version=1)))
+        self.assertEqual(self.sql(db, 'SELECT streaming, streaming_state_version FROM social.scene_stream_access;')
+                         .strip(), 't\t5')
