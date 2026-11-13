@@ -226,6 +226,11 @@ impl Scratch {
             .execute(self.db().pool())
             .await
             .unwrap();
+        sqlx::query("DELETE FROM camera_reel.photo_events WHERE user_address = ANY($1)")
+            .bind(&self.owners)
+            .execute(self.db().pool())
+            .await
+            .unwrap();
         sqlx::query("DELETE FROM camera_reel.withheld_blobs WHERE hash = ANY($1)")
             .bind(&self.hashes)
             .execute(self.db().pool())
@@ -3459,6 +3464,165 @@ async fn upload_checks_the_cap_first_then_the_form_as_upstream() {
             StatusCode::FORBIDDEN,
             json!({ "reason": "maxLimitReached", "message": "you have reached the limit of 1 max images" })
         )
+    );
+    s.done().await;
+}
+
+async fn events_of(s: &Scratch, owner: &str) -> Vec<crate::events::PhotoEvent> {
+    crate::events::read_after(s.db().pool(), 0, i64::MAX)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|e| e.user_address == owner.to_lowercase())
+        .collect()
+}
+
+#[tokio::test]
+async fn uploads_and_visibility_changes_record_the_upstream_photo_events() {
+    let mut settings = Settings::new(API_URL);
+    settings.writes_enabled = true;
+    let Some(mut s) = scratch(settings).await else {
+        return;
+    };
+    let w = wallet();
+    let owner = s.owner(&w.address);
+    let place = Uuid::new_v4().to_string();
+    let path = format!("{PREFIX}/api/images");
+
+    // A refused upload records nothing.
+    let (body, ct) = multipart(
+        &png(8, 8, 5),
+        "image/png",
+        &metadata_with_rect(
+            &owner,
+            json!({ "x": 2.0, "y": 0.0, "width": 0.1, "height": 0.1 }),
+        ),
+        Some(false),
+    );
+    let headers = signed_headers(&w, "post", &path, true).await;
+    let (status, _, _) = send(s.app(), "POST", &path, headers, Some((body, &ct))).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(events_of(&s, &owner).await.is_empty());
+
+    // A private upload: photo-taken, as upstream publishes it for any photo.
+    let mut metadata = metadata_with_rect(
+        &owner,
+        json!({ "x": 0.25, "y": 0.5, "width": 0.25, "height": 0.5 }),
+    );
+    metadata["placeId"] = json!(place);
+    metadata["visiblePeople"][0]["isEmoting"] = Value::Null;
+    let (body, ct) = multipart(&png(8, 8, 6), "image/png", &metadata, Some(false));
+    let headers = signed_headers(&w, "post", &path, true).await;
+    let (status, _, resp) = send(s.app(), "POST", &path, headers, Some((body, &ct))).await;
+    assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&resp));
+    let id = json_of(&resp)["image"]["id"].as_str().unwrap().to_string();
+    let events = events_of(&s, &owner).await;
+    assert_eq!(events.len(), 1);
+    let taken = &events[0];
+    assert_eq!(taken.kind, "photo-taken");
+    assert_eq!(taken.photo_id.to_string(), id);
+    let timestamp = taken.payload["timestamp"].as_i64().unwrap();
+    assert!((chrono::Utc::now().timestamp() - timestamp).abs() < 60);
+    assert_eq!(
+        taken.payload,
+        json!({
+            "type": "camera",
+            "subType": "photo-taken",
+            "key": id,
+            "timestamp": timestamp,
+            "metadata": {
+                "sceneId": "Genesis Plaza",
+                "realm": "main",
+                "userAddress": owner.to_lowercase(),
+                "isPublic": false,
+                "photoId": id,
+                "placeId": place,
+                "users": [{ "address": "0x7949f9f239d1a0816ce5eb364a1f588ae9cc1bf5", "isEmoting": false }]
+            }
+        })
+    );
+
+    // Visibility: a change records photo-privacy-changed; a no-op and a stranger's request do not.
+    let vis = format!("{PREFIX}/api/images/{id}/visibility");
+    let flip = |public: bool| json!({ "is_public": public }).to_string().into_bytes();
+    for (who, public, expected) in [
+        (&w, true, StatusCode::OK),
+        (&w, true, StatusCode::OK),
+        (&wallet(), false, StatusCode::FORBIDDEN),
+    ] {
+        let headers = signed_headers(who, "patch", &vis, true).await;
+        let (status, _, _) = send(
+            s.app(),
+            "PATCH",
+            &vis,
+            headers,
+            Some((flip(public), "application/json")),
+        )
+        .await;
+        assert_eq!(status, expected);
+    }
+    let events = events_of(&s, &owner).await;
+    assert_eq!(events.len(), 2, "{events:?}");
+    let changed = &events[1];
+    assert!(changed.id > taken.id);
+    assert_eq!(changed.kind, "photo-privacy-changed");
+    let timestamp = changed.payload["timestamp"].as_i64().unwrap();
+    assert_eq!(
+        changed.payload,
+        json!({
+            "type": "camera",
+            "subType": "photo-privacy-changed",
+            "key": id,
+            "timestamp": timestamp,
+            "metadata": { "photoId": id, "userAddress": owner.to_lowercase(), "isPublic": true }
+        })
+    );
+    let after = crate::events::read_after(s.db().pool(), taken.id, 1)
+        .await
+        .unwrap();
+    assert_eq!(after.len(), 1, "the limit holds");
+    assert!(after[0].id > taken.id, "strictly after the cursor");
+    s.done().await;
+}
+
+#[tokio::test]
+async fn retention_deletes_only_events_past_thirty_days() {
+    let Some(mut s) = scratch(Settings::new(API_URL)).await else {
+        return;
+    };
+    let owner = s.owner(&random_address());
+    let payload = json!({ "type": "camera" });
+    let mut ids = Vec::new();
+    for days in [45, 31, 29, 0] {
+        let id: i64 = sqlx::query_scalar(
+            "INSERT INTO camera_reel.photo_events (kind, photo_id, user_address, payload, created_at) \
+             VALUES ('photo-taken', $1, $2, $3, now() - make_interval(days => $4)) RETURNING id",
+        )
+        .bind(Uuid::new_v4())
+        .bind(owner.to_lowercase())
+        .bind(&payload)
+        .bind(days)
+        .fetch_one(s.db().pool())
+        .await
+        .unwrap();
+        ids.push((days, id));
+    }
+    let deleted =
+        crate::events::delete_expired(s.db().pool(), chrono::Utc::now() - crate::events::RETENTION)
+            .await
+            .unwrap();
+    assert!(deleted >= 2);
+    let left: Vec<i64> = events_of(&s, &owner)
+        .await
+        .into_iter()
+        .map(|e| e.id)
+        .collect();
+    assert_eq!(
+        left,
+        ids.iter()
+            .filter(|(days, _)| *days < 30)
+            .map(|(_, id)| *id)
+            .collect::<Vec<_>>()
     );
     s.done().await;
 }

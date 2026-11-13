@@ -463,8 +463,9 @@ impl Database {
         Ok(count.map(|c| c as u64))
     }
 
-    /// Blob I/O finishes before this transaction. The marker, local receipt and
-    /// all attached communities' counters either commit together or remain due.
+    /// Blob I/O finishes before this transaction. The marker, local receipt,
+    /// all attached communities' counters and the `photo-taken` event
+    /// ([`crate::events`]) either commit together or remain due.
     pub async fn publish_ranking(&self, id: Uuid) -> Result<(), sqlx::Error> {
         self.publish_ranking_before(id, None).await
     }
@@ -493,19 +494,27 @@ impl Database {
                 .execute(&mut *tx)
                 .await?;
         }
-        let row: Option<(String, NaiveDateTime)> = sqlx::query_as(
-            "UPDATE camera_reel.images SET ranking_published=true WHERE id=$1 AND NOT ranking_published RETURNING COALESCE(place_id,''),created_at")
+        let row: Option<(String, NaiveDateTime, String, bool, Json<Metadata>)> = sqlx::query_as(
+            "UPDATE camera_reel.images SET ranking_published=true WHERE id=$1 AND NOT ranking_published RETURNING COALESCE(place_id,''),created_at,user_address,is_public,metadata")
             .bind(id).fetch_optional(&mut *tx).await?;
-        if let Some((place, occurred_at)) = row
-            && !place.is_empty()
-        {
-            crate::social::communities::ranking::record_photo(
-                &mut tx,
-                &id.to_string(),
-                &place,
-                occurred_at,
-            )
-            .await?;
+        if let Some((place, occurred_at, owner, is_public, Json(metadata))) = row {
+            if !place.is_empty() {
+                crate::social::communities::ranking::record_photo(
+                    &mut tx,
+                    &id.to_string(),
+                    &place,
+                    occurred_at,
+                )
+                .await?;
+            }
+            let payload = crate::events::photo_taken(
+                id,
+                is_public,
+                &metadata,
+                occurred_at.and_utc().timestamp(),
+            );
+            crate::events::record(&mut *tx, crate::events::PHOTO_TAKEN, id, &owner, &payload)
+                .await?;
         }
         tx.commit().await
     }
@@ -616,7 +625,9 @@ impl Database {
     }
 
     /// `None`: no such image. `Some(false)`: not the owner's, unchanged.
-    /// `Some(true)`: owned, and now at `is_public` (a no-op when it already was).
+    /// `Some(true)`: owned, and now at `is_public` (a no-op when it already
+    /// was). A change records `photo-privacy-changed` ([`crate::events`]) in
+    /// the same statement; a no-op records nothing.
     pub async fn set_image_visibility(
         &self,
         id: &str,
@@ -626,6 +637,13 @@ impl Database {
         let Ok(id) = Uuid::parse_str(id) else {
             return Ok(None);
         };
+        let owner = owner.to_lowercase();
+        let payload = crate::events::photo_privacy_changed(
+            id,
+            &owner,
+            is_public,
+            chrono::Utc::now().timestamp(),
+        );
         sqlx::query_scalar::<_, bool>(
             "WITH target AS ( \
                  SELECT user_address FROM camera_reel.images WHERE id = $1 \
@@ -633,12 +651,17 @@ impl Database {
                  UPDATE camera_reel.images SET is_public = $3 \
                  WHERE id = $1 AND user_address = $2 AND is_public <> $3 \
                  RETURNING id \
+             ), ev AS ( \
+                 INSERT INTO camera_reel.photo_events (kind, photo_id, user_address, payload) \
+                 SELECT $4, id, $2, $5 FROM upd \
              ) \
              SELECT user_address = $2 FROM target",
         )
         .bind(id)
-        .bind(owner.to_lowercase())
+        .bind(&owner)
         .bind(is_public)
+        .bind(crate::events::PHOTO_PRIVACY_CHANGED)
+        .bind(Json(&payload))
         .fetch_optional(&self.pool)
         .await
     }

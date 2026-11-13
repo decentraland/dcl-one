@@ -23,6 +23,17 @@
 //! JSON body rejections are actix's plain-text 400/413 ([`extract`]); a path
 //! or method no route serves is an empty 404.
 //!
+//! Photo events: camera-reel-service published `photo-taken` and
+//! `photo-privacy-changed` to SNS; here the domains call each other in
+//! process, with no broker. Each event is recorded, with the upstream body,
+//! in the outbox `camera_reel.photo_events` ([`events`]) in the transaction
+//! of the change it reports. The community photo counts that
+//! social-service-ea derived from `photo-taken` are applied directly in the
+//! upload's finalising transaction (`social::communities::ranking::record_photo`);
+//! the credits program reads the outbox for its photo goals once it has one
+//! (today `shop::credits` has no goals program). `photo-privacy-changed`
+//! has no consumer.
+//!
 //! Authorization contracts kept exactly: an upload's `metadata.userAddress`
 //! must be the signer (and the row's CHECK holds the pair together);
 //! private rows are listed only to their owner (an unverifiable chain reads
@@ -107,6 +118,7 @@ pub mod cors;
 pub mod db;
 pub mod docs;
 pub mod dto;
+pub mod events;
 pub mod extract;
 pub mod handlers;
 pub mod http;

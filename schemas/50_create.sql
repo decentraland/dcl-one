@@ -581,4 +581,30 @@ CREATE INDEX images_wearable_items_idx ON camera_reel.images
     USING gin (camera_reel.image_wearable_items(metadata))
     WHERE is_public AND review_status <> 'rejected';
 
+-- The photo events camera-reel-service published to SNS, recorded for
+-- in-process consumers instead (append-only outbox; camera_reel::events).
+-- Workload: one insert per finalised upload (`photo-taken`, in the
+-- transaction that sets images.ranking_published) and one per visibility
+-- change (`photo-privacy-changed`, in the statement that changes it), so
+-- writes follow the upload rate. Reads: each consumer pages `id > $cursor
+-- ORDER BY id LIMIT n` (the primary key) and keeps its cursor in its own
+-- schema; the outbox holds no consumer state and rows are never updated.
+-- Retention: the fleet-wide `camera-photo-events-retention` job deletes rows
+-- older than 30 days in bounded batches by `created_at` (the second index),
+-- so the table holds about 30 days of events. `payload` is the upstream
+-- event body `{type, subType, key, timestamp, metadata}`; `photo_id` names
+-- an images row as a fact (no FK: the photo may be deleted later).
+CREATE TABLE camera_reel.photo_events (
+    id bigint GENERATED ALWAYS AS IDENTITY,
+    kind text NOT NULL,
+    photo_id uuid NOT NULL,
+    user_address text NOT NULL,
+    payload jsonb NOT NULL,
+    created_at timestamp with time zone NOT NULL DEFAULT now(),
+    CONSTRAINT photo_events_pkey PRIMARY KEY (id),
+    CONSTRAINT photo_events_kind_check CHECK (kind IN ('photo-taken', 'photo-privacy-changed')),
+    CONSTRAINT photo_events_user_address_lowercase_check CHECK (user_address = lower(user_address)),
+    CONSTRAINT photo_events_payload_object_check CHECK (jsonb_typeof(payload) = 'object')
+);
+CREATE INDEX photo_events_created_at_idx ON camera_reel.photo_events (created_at);
 -- ==== end section: camera_reel ====
