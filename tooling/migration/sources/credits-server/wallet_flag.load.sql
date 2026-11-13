@@ -1,6 +1,14 @@
 -- Imported flags carry this source; flags raised on the node carry another
 -- and are never touched here.
 -- Upstream unflag deletes its row, so an imported flag missing upstream goes.
+DO $empty$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM stage)
+     AND EXISTS (SELECT 1 FROM credits.wallet_flags WHERE source = 'credits-server:multi-account') THEN
+    RAISE EXCEPTION 'credits-server/wallet_flag: upstream lists no flags but imported ones exist; refusing to delete them all (wrong source database?)';
+  END IF;
+END $empty$;
+
 DELETE FROM credits.wallet_flags f
 WHERE f.source = 'credits-server:multi-account'
   AND NOT EXISTS (SELECT 1 FROM stage s WHERE s.address = f.address);

@@ -6,10 +6,19 @@ BEGIN
     END IF;
 END $$;
 
+DO $empty$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM stage) AND EXISTS (SELECT 1 FROM dcl_migration.world_permission_loaded) THEN
+    RAISE EXCEPTION 'worlds-content-server/world_permission: upstream lists no grants but imported ones are recorded; refusing to delete them all (wrong source database?)';
+  END IF;
+END $empty$;
+
 -- The stage is every upstream deployment/streaming grant (a `whole` step).
--- dcl_migration.world_permission_loaded holds the timestamps this step last
--- wrote per grant: a target row still holding them is the import's; any
--- other row was granted or edited on the node and is never touched.
+-- dcl_migration.world_permission_loaded holds the timestamps and parcel set
+-- this step last wrote per grant: a target row still holding both is the
+-- import's; any other row was granted or edited on the node (widening a grant
+-- to the whole world clears its parcels without touching updated_at) and is
+-- never touched.
 CREATE TEMP TABLE wcs_grant AS
 SELECT s.world_name, s.permission, s.address, s.parcels,
        s.created_at AT TIME ZONE 'UTC' AS created_at, s.updated_at AT TIME ZONE 'UTC' AS updated_at,
@@ -17,7 +26,12 @@ SELECT s.world_name, s.permission, s.address, s.parcels,
            -- the node revoked this same upstream grant: stays revoked
            WHEN t.world_name IS NULL AND l.created_at = s.created_at AT TIME ZONE 'UTC' THEN 'skip'
            WHEN t.world_name IS NULL THEN 'write'
-           WHEN (t.created_at, t.updated_at) = (l.created_at, l.updated_at) THEN 'write'
+           WHEN (t.created_at, t.updated_at) = (l.created_at, l.updated_at)
+                AND (l.parcels IS NULL OR l.parcels = ARRAY(
+                    SELECT p.parcel COLLATE "C" FROM worlds.world_permission_parcels p
+                    WHERE p.world_name = t.world_name AND p.permission = t.permission AND p.address = t.address
+                    ORDER BY 1))
+               THEN 'write'
            -- an identical row imported before provenance was recorded
            WHEN l.world_name IS NULL
                 AND (t.created_at, t.updated_at) = (s.created_at AT TIME ZONE 'UTC', s.updated_at AT TIME ZONE 'UTC')
@@ -37,6 +51,10 @@ DELETE FROM worlds.world_permissions t
 USING dcl_migration.world_permission_loaded l
 WHERE t.world_name = l.world_name AND t.permission = l.permission AND t.address = l.address
   AND (t.created_at, t.updated_at) = (l.created_at, l.updated_at)
+  AND (l.parcels IS NULL OR l.parcels = ARRAY(
+      SELECT p.parcel COLLATE "C" FROM worlds.world_permission_parcels p
+      WHERE p.world_name = t.world_name AND p.permission = t.permission AND p.address = t.address
+      ORDER BY 1))
   AND NOT EXISTS (SELECT 1 FROM stage s
                   WHERE s.world_name = l.world_name AND s.permission = l.permission AND s.address = l.address);
 
@@ -67,13 +85,16 @@ CROSS JOIN LATERAL unnest(g.parcels) x
 WHERE g.action = 'write'
 ON CONFLICT DO NOTHING;
 
-INSERT INTO dcl_migration.world_permission_loaded AS l (world_name, permission, address, created_at, updated_at)
-SELECT g.world_name, g.permission, g.address, g.created_at, g.updated_at
+INSERT INTO dcl_migration.world_permission_loaded AS l
+    (world_name, permission, address, created_at, updated_at, parcels)
+SELECT g.world_name, g.permission, g.address, g.created_at, g.updated_at,
+       ARRAY(SELECT x COLLATE "C" FROM unnest(g.parcels) x ORDER BY 1)
 FROM wcs_grant g
 WHERE g.action = 'write'
 ON CONFLICT (world_name, permission, address) DO UPDATE SET
     created_at = EXCLUDED.created_at,
-    updated_at = EXCLUDED.updated_at;
+    updated_at = EXCLUDED.updated_at,
+    parcels = EXCLUDED.parcels;
 
 DO $kept$ DECLARE n bigint; BEGIN
   SELECT count(*) INTO n FROM wcs_grant WHERE action = 'skip';

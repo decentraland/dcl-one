@@ -182,6 +182,67 @@ class SocialMigrationCases:
         self.assertEqual(self.sql(tgt, f"SELECT count(*) FROM social.community_members WHERE member_address = '{banned}';")
                          .strip(), '1')
 
+    def test_when_upstream_lifts_a_ban_the_node_reapplied_it_should_keep_the_node_ban(self):
+        src, tgt = self.social_ea_dbs()
+        owner, banned = self.wallet('a'), self.wallet('b')
+        self.social_ea_community(src, owner)
+        self.sql(src, f"""INSERT INTO community_members VALUES ('{self.SOCIAL_COMMUNITY}', '{owner}', 'owner', '2026-01-01');
+            INSERT INTO community_bans VALUES
+            ('{self.SOCIAL_COMMUNITY}', '{banned}', '{owner}', '2026-01-02', NULL, true, NULL, NULL);""")
+        steps = ('communities', 'community_members', 'community_bans')
+        self.social_ea_run(*steps)
+        # Lifted and banned again on the node: the re-ban refreshes banned_at.
+        self.sql(tgt, f"""UPDATE social.community_bans SET active = true, banned_at = '2026-02-01',
+              unbanned_by = NULL, unbanned_at = NULL WHERE banned_address = '{banned}';""")
+        self.sql(src, f"UPDATE community_bans SET active = false, unbanned_by = '{owner}', unbanned_at = '2026-01-03';")
+        self.social_ea_run(*steps)
+        self.assertEqual(self.sql(tgt, 'SELECT active FROM social.community_bans;').strip(), 't')
+
+    def test_when_upstream_holds_a_lifted_ban_the_node_created_itself_it_should_keep_the_node_ban(self):
+        src, tgt = self.social_ea_dbs()
+        owner, banned = self.wallet('a'), self.wallet('b')
+        self.social_ea_community(src, owner)
+        self.sql(src, f"""INSERT INTO community_members VALUES ('{self.SOCIAL_COMMUNITY}', '{owner}', 'owner', '2026-01-01');""")
+        self.social_ea_run('communities', 'community_members')
+        self.sql(tgt, f"""INSERT INTO social.community_bans (community_id, banned_address, banned_by, active, banned_at)
+            VALUES ('{self.SOCIAL_COMMUNITY}', '{banned}', '{owner}', true, '2026-02-01');""")
+        self.sql(src, f"""INSERT INTO community_bans VALUES
+            ('{self.SOCIAL_COMMUNITY}', '{banned}', '{owner}', '2026-01-02', NULL, false, '{owner}', '2026-01-03');""")
+        self.social_ea_run('community_bans')
+        self.assertEqual(self.sql(tgt, 'SELECT active, banned_at FROM social.community_bans;').strip(),
+                         't\t2026-02-01 00:00:00')
+
+    def test_when_the_node_bans_a_wallet_upstream_lists_as_member_it_should_not_re_add_it(self):
+        src, tgt = self.social_ea_dbs()
+        owner, member = self.wallet('a'), self.wallet('b')
+        self.social_ea_community(src, owner)
+        self.sql(src, f"""INSERT INTO community_members VALUES
+            ('{self.SOCIAL_COMMUNITY}', '{owner}', 'owner', '2026-01-01'),
+            ('{self.SOCIAL_COMMUNITY}', '{member}', 'member', '2026-01-01');""")
+        self.social_ea_run('communities', 'community_members')
+        self.sql(tgt, f"""DELETE FROM social.community_members WHERE member_address = '{member}';
+            INSERT INTO social.community_bans (community_id, banned_address, banned_by, active, banned_at)
+            VALUES ('{self.SOCIAL_COMMUNITY}', '{member}', '{owner}', true, '2026-02-01');""")
+        self.sql(src, f"UPDATE community_members SET joined_at = '2026-03-01' WHERE member_address = '{member}';")
+        self.social_ea_run('community_members')
+        self.assertEqual(self.sql(tgt, 'SELECT member_address FROM social.community_members;').strip(), owner)
+
+    def test_when_upstream_transfers_ownership_and_the_old_owner_leaves_it_should_drop_the_old_owner(self):
+        src, tgt = self.social_ea_dbs()
+        owner, heir = self.wallet('a'), self.wallet('b')
+        self.social_ea_community(src, owner)
+        self.sql(src, f"""INSERT INTO community_members VALUES
+            ('{self.SOCIAL_COMMUNITY}', '{owner}', 'owner', '2026-01-01'),
+            ('{self.SOCIAL_COMMUNITY}', '{heir}', 'member', '2026-01-01');""")
+        steps = ('communities', 'community_members')
+        self.social_ea_run(*steps)
+        self.sql(src, f"""UPDATE communities SET owner_address = '{heir}', updated_at = '2026-02-01';
+            UPDATE community_members SET role = 'owner' WHERE member_address = '{heir}';
+            DELETE FROM community_members WHERE member_address = '{owner}';""")
+        self.social_ea_run(*steps)
+        self.assertEqual(self.sql(tgt, 'SELECT member_address, role FROM social.community_members;').strip(),
+                         f'{heir}\towner')
+
     def test_when_a_batch_resolves_a_request_and_carries_its_replacement_it_should_keep_the_replacement(self):
         src, tgt = self.social_ea_dbs()
         owner, wallet, other = self.wallet('a'), self.wallet('b'), self.wallet('c')

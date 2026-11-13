@@ -1,6 +1,6 @@
 -- A ban the node lifted or re-applied since this source last wrote it (its
--- state no longer matches dcl_migration.social_community_ban_loaded) stays
--- the node's.
+-- state or banned_at no longer matches dcl_migration.social_community_ban_loaded)
+-- stays the node's, as does an unrecorded ban unless it already equals upstream's.
 WITH owned AS (
     SELECT s.*
     FROM stage s
@@ -9,8 +9,13 @@ WITH owned AS (
       ON l.community_id = s.community_id AND l.banned_address = s.banned_address
     LEFT JOIN social.community_bans t
       ON t.community_id = s.community_id AND t.banned_address = s.banned_address
-    WHERE l.community_id IS NULL OR t.community_id IS NULL
-       OR (t.active, t.unbanned_at) IS NOT DISTINCT FROM (l.active, l.unbanned_at)
+    WHERE t.community_id IS NULL
+       OR (l.community_id IS NULL
+           AND (t.banned_at, t.active, t.unbanned_at) IS NOT DISTINCT FROM
+               (s.banned_at AT TIME ZONE 'UTC', s.active, s.unbanned_at AT TIME ZONE 'UTC'))
+       OR (l.community_id IS NOT NULL
+           AND (t.active, t.unbanned_at) IS NOT DISTINCT FROM (l.active, l.unbanned_at)
+           AND (l.banned_at IS NULL OR t.banned_at = l.banned_at))
 ), written AS (
     INSERT INTO social.community_bans AS t
         (community_id, banned_address, banned_by, banned_at, reason, active, unbanned_by, unbanned_at)
@@ -24,13 +29,15 @@ WITH owned AS (
         active = EXCLUDED.active,
         unbanned_by = EXCLUDED.unbanned_by,
         unbanned_at = EXCLUDED.unbanned_at
-    RETURNING community_id, banned_address, active, unbanned_at
+    RETURNING community_id, banned_address, active, unbanned_at, banned_at
 )
-INSERT INTO dcl_migration.social_community_ban_loaded AS l (community_id, banned_address, active, unbanned_at)
-SELECT community_id, banned_address, active, unbanned_at FROM written
+INSERT INTO dcl_migration.social_community_ban_loaded AS l
+    (community_id, banned_address, active, unbanned_at, banned_at)
+SELECT community_id, banned_address, active, unbanned_at, banned_at FROM written
 ON CONFLICT (community_id, banned_address) DO UPDATE SET
     active = EXCLUDED.active,
-    unbanned_at = EXCLUDED.unbanned_at;
+    unbanned_at = EXCLUDED.unbanned_at,
+    banned_at = EXCLUDED.banned_at;
 
 -- The node's invariant: an actively banned wallet has no member row. Only
 -- where the ban is in force on the node (a node unban keeps a rejoined

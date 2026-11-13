@@ -154,15 +154,17 @@ CREATE TABLE IF NOT EXISTS dcl_migration.badge_catalog_loaded (
     fingerprint text NOT NULL
 );
 -- What world_permission wrote per grant; a grant revoked upstream is deleted only while the node
--- row still holds these timestamps.
+-- row still holds these timestamps and parcels (sorted; NULL: recorded before parcels were).
 CREATE TABLE IF NOT EXISTS dcl_migration.world_permission_loaded (
     world_name text NOT NULL,
     permission text NOT NULL,
     address text NOT NULL,
     created_at timestamp NOT NULL,
     updated_at timestamp NOT NULL,
+    parcels text[],
     PRIMARY KEY (world_name, permission, address)
 );
+ALTER TABLE dcl_migration.world_permission_loaded ADD COLUMN IF NOT EXISTS parcels text[];
 -- What the social-service-ea loads last wrote per key: a target row that no longer matches was
 -- changed on the node and is kept, a recorded row the node removed is not re-added, and the
 -- reconcile loads delete only recorded rows upstream no longer holds.
@@ -196,11 +198,19 @@ CREATE TABLE IF NOT EXISTS dcl_migration.social_community_ban_loaded (
     banned_address text NOT NULL,
     active boolean NOT NULL,
     unbanned_at timestamp,
+    banned_at timestamp,
     PRIMARY KEY (community_id, banned_address)
 );
+ALTER TABLE dcl_migration.social_community_ban_loaded ADD COLUMN IF NOT EXISTS banned_at timestamp;
 CREATE TABLE IF NOT EXISTS dcl_migration.social_community_post_loaded (
     id uuid PRIMARY KEY,
     content text NOT NULL
+);
+-- The has_started_program the wallet import last wrote; a wallet that no longer matches started
+-- the program on the node.
+CREATE TABLE IF NOT EXISTS dcl_migration.credit_wallet_loaded (
+    address text PRIMARY KEY,
+    has_started_program boolean NOT NULL
 );
 RESET client_min_messages;
 """

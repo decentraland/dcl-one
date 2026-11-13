@@ -24,20 +24,34 @@ LEFT JOIN dcl_migration.social_community_member_loaded l
   ON l.community_id = s.community_id AND l.member_address = s.member_address
 LEFT JOIN social.community_members t
   ON t.community_id = s.community_id AND t.member_address = s.member_address
-WHERE l.community_id IS NULL
-   OR (t.community_id IS NOT NULL AND (t.role, t.joined_at) = (l.role, l.joined_at))
-   OR (t.community_id IS NULL AND l.joined_at < s.joined_at AT TIME ZONE 'UTC');
+WHERE (l.community_id IS NULL
+       OR (t.community_id IS NOT NULL AND (t.role, t.joined_at) = (l.role, l.joined_at))
+       OR (t.community_id IS NULL AND l.joined_at < s.joined_at AT TIME ZONE 'UTC'))
+  -- the node's invariant: an actively banned wallet has no member row
+  AND (s.member_address = c.owner_address OR NOT EXISTS (
+      SELECT 1 FROM social.community_bans b
+      WHERE b.community_id = s.community_id AND b.banned_address = s.member_address AND b.active));
 
 -- Keeps the one-owner index: an owner row the node holds for a wallet that no
--- longer owns the community is demoted before the new owner row lands.
-UPDATE social.community_members t
+-- longer owns the community is demoted before the new owner row lands. An
+-- imported owner row is recorded as demoted, so it goes below if upstream no
+-- longer lists that wallet.
+WITH demoted AS (
+    UPDATE social.community_members t
+    SET role = 'member'
+    FROM social.communities c
+    WHERE c.id = t.community_id
+      AND t.role = 'owner'
+      AND t.member_address <> c.owner_address
+      AND EXISTS (SELECT 1 FROM community_member_owned o
+                  WHERE o.community_id = t.community_id AND o.role = 'owner')
+    RETURNING t.community_id, t.member_address, t.joined_at
+)
+UPDATE dcl_migration.social_community_member_loaded l
 SET role = 'member'
-FROM social.communities c
-WHERE c.id = t.community_id
-  AND t.role = 'owner'
-  AND t.member_address <> c.owner_address
-  AND EXISTS (SELECT 1 FROM community_member_owned o
-              WHERE o.community_id = t.community_id AND o.role = 'owner');
+FROM demoted d
+WHERE l.community_id = d.community_id AND l.member_address = d.member_address
+  AND l.role = 'owner' AND l.joined_at = d.joined_at;
 
 WITH written AS (
     INSERT INTO social.community_members AS t (community_id, member_address, role, joined_at)

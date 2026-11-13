@@ -72,6 +72,9 @@ SELECT s.id, s.place_id, s.ingress_id,
 FROM stage s
 JOIN migration_stream_access_active a ON a.id = s.id
 WHERE (s.cleanup_pending AND NOT s.active) OR (s.active AND NOT a.active AND NOT a.present)
-ON CONFLICT (access_id) DO NOTHING;
+-- An intent the retirement above just wrote, unclaimed, takes upstream's expiry notice.
+ON CONFLICT (access_id) DO UPDATE SET notification_kind = EXCLUDED.notification_kind
+WHERE social.scene_stream_cleanup.notification_kind IS NULL AND EXCLUDED.notification_kind IS NOT NULL
+  AND social.scene_stream_cleanup.claim_token IS NULL;
 
 DROP TABLE migration_stream_access_active;

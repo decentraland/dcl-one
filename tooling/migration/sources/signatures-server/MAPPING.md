@@ -28,7 +28,8 @@ LAND/Estate rentals listings.
   including its listing tenant/lessor. Periods load only when the parent
   signature and update timestamp match the extracted parent version.
 - Skipped: a signature that the node holds under another id, and a second
-  `open` listing for an asset (the node allows one open listing per asset).
+  `open` listing for an asset (the node allows one open listing per asset;
+  of two in one batch, the latest `updated_at` lands).
   Periods of skipped listings are skipped too. Listings leaving `open` are
   closed before any insert, so a batch carrying both a cancelled listing and
   its open replacement lands the replacement.

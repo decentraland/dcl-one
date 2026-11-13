@@ -40,7 +40,10 @@ longer matches the record was changed on the node (a settings change or reset, a
 re-ban, a role change, an edited post) and is left alone. A recorded row the node removed (a
 kick, an unblock, a deleted post) is not re-added, unless upstream's row is newer (a later
 join, block or mute). Blocks and mutes keep the newer timestamp. Rows imported before these
-records existed are recorded on the next run.
+records existed are recorded on the next run. A ban record includes `banned_at`, which a node
+re-ban refreshes; a ban with no record is the node's unless it already equals upstream's. A
+wallet the node actively bans is never added as a member, and an imported owner the load
+demotes after an upstream transfer is removed when upstream no longer lists it.
 
 Upstream deletes rows on unblock, unmute, kick, leave and post deletion. `community_members`
 and the `*_reconcile` steps read the whole upstream set and delete the imported rows it no

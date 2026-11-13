@@ -428,6 +428,51 @@ async fn ban_rows_carry_millisecond_banned_at_and_the_friendship_status() {
 }
 
 #[tokio::test]
+async fn banning_again_after_a_lift_records_a_new_ban() {
+    let Some(rig) = Rig::new(Settings::for_tests()).await else {
+        return;
+    };
+    let (owner, earlier, member) = (wallet(), wallet(), wallet());
+    let c = rig.community(&owner, false).await;
+    rig.member(c, &member, "member").await;
+    sqlx::query(
+        "INSERT INTO social.community_bans (community_id, banned_address, banned_by, banned_at, active, unbanned_by, unbanned_at) \
+         VALUES ($1, $2, $3, '2025-01-01', false, $3, '2025-01-02')",
+    )
+    .bind(c)
+    .bind(&member.address)
+    .bind(&earlier.address)
+    .execute(&rig.pool)
+    .await
+    .unwrap();
+    let (status, v) = hit(
+        &rig.app,
+        Case::new(
+            "post",
+            format!("/v1/communities/{c}/members/{}/bans", member.address),
+        )
+        .signed(&owner)
+        .await,
+    )
+    .await;
+    assert!(status.is_success(), "{status}: {v}");
+    let (active, by, fresh): (bool, String, bool) = sqlx::query_as(
+        "SELECT active, banned_by, banned_at > '2025-01-02' FROM social.community_bans \
+         WHERE community_id = $1 AND banned_address = $2",
+    )
+    .bind(c)
+    .bind(&member.address)
+    .fetch_one(&rig.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        (active, by.as_str(), fresh),
+        (true, owner.address.as_str(), true)
+    );
+    rig.finish();
+}
+
+#[tokio::test]
 async fn a_signed_detail_says_whether_the_community_hosts_a_live_event() {
     let Some(rig) = Rig::new(Settings::for_tests()).await else {
         return;

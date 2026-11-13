@@ -73,6 +73,26 @@ class WorldsMigrationCases:
         self.sql(db, self.permission_stage() + load)
         self.assertEqual(self.sql(db, f"SELECT count(*) FROM worlds.world_permissions WHERE address = '{b}';").strip(), '1')
 
+    def test_world_permissions_keep_a_grant_the_owner_widened_to_the_whole_world(self):
+        db = self.permission_fixture()
+        load = self.migration_sql('worlds-content-server', 'world_permission', 'load')
+        self.sql(db, "INSERT INTO public.world_permission_parcels VALUES (1, '1,2');")
+        self.sql(db, self.permission_stage() + load)
+        # The node's world-wide grant path clears the parcels and leaves updated_at alone.
+        self.sql(db, 'DELETE FROM worlds.world_permission_parcels;')
+        self.sql(db, self.permission_stage() + load)
+        self.assertEqual(self.sql(db, 'SELECT count(*) FROM worlds.world_permission_parcels;').strip(), '0')
+
+    def test_world_permissions_refuse_an_empty_upstream_when_grants_were_imported(self):
+        from tooling.tests import migration_harness as harness
+        db = self.permission_fixture()
+        load = self.migration_sql('worlds-content-server', 'world_permission', 'load')
+        self.sql(db, self.permission_stage() + load)
+        self.sql(db, 'DELETE FROM public.world_permissions;')
+        with self.assertRaisesRegex(harness.migrate.MigrationError, 'refusing to delete'):
+            self.sql(db, 'BEGIN;\n' + self.permission_stage() + load + '\nCOMMIT;')
+        self.assertEqual(self.sql(db, 'SELECT count(*) FROM worlds.world_permissions;').strip(), '1')
+
     def world_fixture(self, name):
         from tooling.tests import migration_harness as harness
         db = self.catalyst_db(name)

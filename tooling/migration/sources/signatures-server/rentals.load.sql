@@ -1,6 +1,6 @@
 -- Upstream ids kept. Skipped: a signature the node holds under another id,
 -- an asset the previous step did not land, and a second open listing of an
--- asset (the node's one-open-per-asset rule).
+-- asset (the node's one-open-per-asset rule; within a batch the latest wins).
 
 -- Listings leaving `open` first, so the open-per-asset check below sees them
 -- closed when the same batch carries their open replacement.
@@ -25,6 +25,11 @@ WHERE NOT EXISTS (SELECT 1 FROM signatures.rentals r WHERE r.signature = s.signa
         SELECT 1 FROM signatures.rentals r
         WHERE r.contract_address = s.contract_address AND r.token_id = s.token_id
           AND r.status = 'open' AND r.id <> s.id))
+  -- two open listings of one asset in this batch: only the latest lands
+  AND NOT (s.status = 'open' AND EXISTS (
+        SELECT 1 FROM stage o
+        WHERE o.contract_address = s.contract_address AND o.token_id = s.token_id
+          AND o.status = 'open' AND (o.updated_at, o.id) > (s.updated_at, s.id)))
 ON CONFLICT (id) DO UPDATE
    SET expiration = EXCLUDED.expiration, nonces = EXCLUDED.nonces,
        rental_contract_address = EXCLUDED.rental_contract_address, status = EXCLUDED.status,

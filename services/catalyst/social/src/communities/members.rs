@@ -1046,7 +1046,8 @@ pub async fn ban_member(
             "INSERT INTO social.community_bans (community_id, banned_address, banned_by, active, banned_at) \
              VALUES ($1, $2, $3, TRUE, timezone('UTC', now())) \
              ON CONFLICT (community_id, banned_address) DO UPDATE \
-               SET active = TRUE, unbanned_by = NULL, unbanned_at = NULL",
+               SET active = TRUE, banned_by = EXCLUDED.banned_by, banned_at = EXCLUDED.banned_at, \
+                   unbanned_by = NULL, unbanned_at = NULL",
         )
         .bind(uuid)
         .bind(&target)

@@ -1,18 +1,20 @@
 """Financial cutover guards, flags, purchases, rentals and favorites lists."""
 import contextlib
 import io
+import os
+import unittest.mock
+
+from tooling.tests.migration_harness import ROOT, migrate
 
 
 class FinancialMigrationCases:
     def financial_step(self, source, name):
-        from tooling.tests.test_migration import migrate
         return next(s for s in migrate.load_source(migrate.SOURCES / source).steps if s.name == name)
 
     def financial_stage(self, step):
         return 'CREATE TEMP TABLE stage (' + ', '.join(f'"{n}" {t}' for n, t in step.columns) + ');\n'
 
     def test_when_credit_liability_or_payment_facts_are_unresolved_it_should_block_cutover(self):
-        from tooling.tests.test_migration import migrate
         folder = migrate.SOURCES / 'credits-server'
         db = self.fresh_db('financial_fix_guard')
         self.sql(db, '''
@@ -47,7 +49,6 @@ class FinancialMigrationCases:
         self.sql(db, 'CREATE TEMP TABLE stage AS ' + extract + ';' + load)
 
     def test_when_rental_parent_is_newer_it_should_preserve_listing_and_periods(self):
-        from tooling.tests.test_migration import migrate, ROOT
         db = self.fresh_db('financial_fix_rentals')
         folder = migrate.SOURCES / 'signatures-server'
         self.sql(db, (ROOT / 'schemas/32_signatures.sql').read_text())
@@ -88,7 +89,8 @@ class FinancialMigrationCases:
     def credits_load(self, db, step_name, rows):
         step = self.financial_step('credits-server', step_name)
         inserts = ''.join(f'INSERT INTO stage VALUES ({row});\n' for row in rows)
-        self.sql(db, 'BEGIN;\n' + self.financial_stage(step) + inserts + step.load.read_text() + '\nCOMMIT;\n')
+        self.sql(db, migrate.CHECKPOINT_DDL + 'BEGIN;\n' + self.financial_stage(step) + inserts + step.load.read_text()
+                 + '\nCOMMIT;\n')
 
     def test_when_upstream_flags_a_wallet_it_should_import_only_live_multi_account_flags(self):
         db = self.fresh_db('credits_flag_extract')
@@ -135,6 +137,33 @@ class FinancialMigrationCases:
         self.credits_load(db, 'wallet_flag', [row.format(a=lifted).replace('2026-01-01', '2026-03-01')])
         self.assertIn(lifted, self.sql(db, flags))
 
+    def test_when_a_wallet_started_the_program_on_the_node_it_should_keep_it(self):
+        db = self.catalyst_db('credits_wallet_node_started')
+        started, opted = '0x' + 'a' * 40, '0x' + 'b' * 40
+        self.credits_load(db, 'wallet', [f"'{started}', false, '2025-01-01', '2026-01-01'",
+                                         f"'{opted}', true, '2025-01-01', '2026-01-01'"])
+        self.sql(db, f"UPDATE credits.wallets SET has_started_program = true WHERE address = '{started}';\n")
+        # Upstream: the first still has not started; the second opts out.
+        self.credits_load(db, 'wallet', [f"'{started}', false, '2025-01-01', '2026-01-01'",
+                                         f"'{opted}', false, '2025-01-01', '2026-02-01'"])
+        self.assertEqual(self.sql(db, 'SELECT address, has_started_program FROM credits.wallets ORDER BY 1;\n')
+                         .strip().splitlines(), [f'{started}\tt', f'{opted}\tf'])
+
+    def test_when_a_wallet_started_on_the_node_before_any_import_it_should_keep_it(self):
+        db = self.catalyst_db('credits_wallet_node_first')
+        address = '0x' + 'c' * 40
+        self.sql(db, f"INSERT INTO credits.wallets (address, has_started_program) VALUES ('{address}', true);\n")
+        self.credits_load(db, 'wallet', [f"'{address}', false, '2025-01-01', '2026-01-01'"])
+        self.assertEqual(self.sql(db, 'SELECT has_started_program FROM credits.wallets;\n').strip(), 't')
+
+    def test_when_upstream_lists_no_flags_it_should_refuse_to_delete_every_imported_one(self):
+        db = self.catalyst_db('credits_wallet_flags_empty')
+        address = '0x' + 'a' * 40
+        self.credits_load(db, 'wallet_flag', [f"'{address}', '203.0.113.1', ARRAY['{address}'], '2026-01-01'"])
+        with self.assertRaisesRegex(migrate.MigrationError, 'refusing to delete'):
+            self.credits_load(db, 'wallet_flag', [])
+        self.assertEqual(self.sql(db, 'SELECT count(*) FROM credits.wallet_flags;\n').strip(), '1')
+
     def test_when_the_ledger_creates_a_wallet_it_should_not_have_started_the_program(self):
         db = self.catalyst_db('credits_ledger_wallet')
         address = '0x' + 'd' * 40
@@ -159,7 +188,6 @@ class FinancialMigrationCases:
     # ── signatures-server: one open listing per asset ──
 
     def test_when_a_batch_cancels_a_listing_and_carries_its_open_replacement_it_should_land_both(self):
-        from tooling.tests.test_migration import migrate, ROOT
         db = self.fresh_db('financial_rental_replace')
         self.sql(db, (ROOT / 'schemas/32_signatures.sql').read_text())
         self.sql(db, '''INSERT INTO signatures.rental_assets(contract_address,token_id,nft_id,network,chain_id,
@@ -180,6 +208,86 @@ class FinancialMigrationCases:
                          [f'{old}\tcancelled', f'{new}\topen'])
         self.assertEqual(self.sql(db, 'SELECT count(*) FROM signatures.rental_listings;\n').strip(), '2')
 
+    def test_when_a_batch_carries_two_open_listings_of_one_asset_it_should_land_the_latest(self):
+        db = self.fresh_db('financial_rental_two_open')
+        self.sql(db, (ROOT / 'schemas/32_signatures.sql').read_text())
+        self.sql(db, '''INSERT INTO signatures.rental_assets(contract_address,token_id,nft_id,network,chain_id,
+                category,search_text,nft_created_at,nft_updated_at,fetched_at)
+            VALUES ('asset',1,'asset','ethereum',1,'parcel','','2026-01-01','2026-01-01','2026-01-01');''')
+        stage = self.financial_stage(self.financial_step('signatures-server', 'rentals'))
+        load = (migrate.SOURCES / 'signatures-server/rentals.load.sql').read_text()
+        first, second = '11111111-1111-1111-1111-111111111111', '33333333-3333-3333-3333-333333333333'
+
+        def row(rental_id, signature, updated):
+            return (f"INSERT INTO stage VALUES ('{rental_id}','asset',1,'ethereum',1,'2027-01-01',ARRAY['0','0','0'],"
+                    f"'{signature}','contract','open','target',NULL,NULL,'2026-01-01','{updated}',NULL,'lessor',NULL);")
+        self.sql(db, stage + row(first, 'sig-1', '2026-01-01') + row(second, 'sig-2', '2026-02-01') + load)
+        self.assertEqual(self.sql(db, 'SELECT id FROM signatures.rentals;\n').strip(), second)
+
+    # ── marketplace-server: trades and coupons ──
+
+    MARKETPLACE_SCHEMA = '''
+        CREATE SCHEMA marketplace;
+        CREATE TABLE marketplace.trades (id uuid, network text, chain_id int, signature text, hashed_signature text,
+            checks jsonb, signer text, type text, expires_at timestamp, effective_since timestamp, contract text,
+            created_at timestamp);
+        CREATE TABLE marketplace.trade_assets (id uuid, trade_id uuid, direction text, asset_type smallint,
+            contract_address text, beneficiary text, extra text, created_at timestamp);
+        CREATE TABLE marketplace.trade_assets_erc20 (asset_id uuid, amount numeric);
+        CREATE TABLE marketplace.trade_assets_erc721 (asset_id uuid, token_id text);
+        CREATE TABLE marketplace.trade_assets_item (asset_id uuid, item_id text);
+        CREATE TABLE marketplace.coupons (id uuid, network text, chain_id int, signer text, signature text,
+            hashed_signature text, state_key text, coupon_manager text, coupon_address text, checks jsonb,
+            discount_type smallint, discount_ppm int, root text, collections text[], effective_since timestamp,
+            expires_at timestamp, created_at timestamp);
+        CREATE TABLE marketplace.coupon_state (coupon_id uuid, uses int, cancelled boolean, revoked boolean,
+            checked_at timestamp);
+    '''
+
+    def test_when_importing_marketplace_rows_it_should_promote_mirrored_trades_and_keep_newer_coupon_state(self):
+        src, tgt = self.fresh_db('marketplace_src'), self.catalyst_db('marketplace_tgt')
+        self.sql(src, self.MARKETPLACE_SCHEMA)
+        trade, coupon = '11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222'
+        sent, received = '33333333-3333-4333-8333-333333333333', '44444444-4444-4444-8444-444444444444'
+        signer, contract = '0x' + 'a' * 40, '0x' + 'b' * 40
+        self.sql(src, f"""
+            INSERT INTO marketplace.trades VALUES ('{trade}', 'polygon', 137, '0xABC', '0xDEF', '{{}}',
+              '{signer.upper().replace('0X', '0x')}', 'public_item_order', '2027-01-01', '2026-01-01', 'c', '2026-01-02');
+            INSERT INTO marketplace.trade_assets VALUES
+              ('{sent}', '{trade}', 'sent', 1, '{contract}', NULL, '0x', '2026-01-02'),
+              ('{received}', '{trade}', 'received', 4, '{contract}', '{signer}', '', '2026-01-02');
+            INSERT INTO marketplace.trade_assets_erc20 VALUES ('{sent}', 1000000000000000000);
+            INSERT INTO marketplace.trade_assets_item VALUES ('{received}', '7');
+            INSERT INTO marketplace.coupons VALUES ('{coupon}', 'polygon', 137, '{signer}', '0x01', '0x02', '0x03',
+              '{contract}', '{contract}', '{{}}', 1, 100000, '0x04', ARRAY['{contract}'], '2026-01-01', '2027-01-01',
+              '2026-01-01');
+            INSERT INTO marketplace.coupon_state VALUES ('{coupon}', 3, false, false, '2026-01-05');""")
+        # The trades mirror already copied the trade, with assets under its own ids; the node read the
+        # coupon later than upstream did.
+        self.sql(tgt, f"""
+            INSERT INTO shop.trades (id, network, chain_id, signature, hashed_signature, checks, signer, type,
+              expires_at, effective_since, created_at, mirrored_from, mirrored_at)
+            VALUES ('{trade}', 'polygon', 137, '0xabc', '0xdef', '{{}}', '{signer}', 'public_item_order',
+              '2027-01-01', '2026-01-01', '2026-01-02', 'upstream', '2026-01-03');
+            INSERT INTO shop.trade_assets (trade_id, direction, asset_type, contract_address)
+              VALUES ('{trade}', 'sent', 1, '{contract}');""")
+        env = {'MARKETPLACE_SERVER_DATABASE_URL': self.url(src), 'TARGET_DATABASE_URL': self.url(tgt)}
+        with unittest.mock.patch.dict(os.environ, env):
+            code, out = self.migrate('run', 'marketplace-server', '--step', 'trades', '--step', 'coupons',
+                                     sources_dir=migrate.SOURCES)
+            self.assertEqual(code, 0, out)
+            self.sql(tgt, f"INSERT INTO shop.coupon_state VALUES ('{coupon}', 5, false, false, '2026-02-01');")
+            code, out = self.migrate('run', 'marketplace-server', '--step', 'coupon_state', sources_dir=migrate.SOURCES)
+            self.assertEqual(code, 0, out)
+        self.assertEqual(self.sql(tgt, 'SELECT signature, signer, mirrored_from IS NULL FROM shop.trades;').strip(),
+                         f'0xabc\t{signer}\tt')
+        self.assertEqual(self.sql(tgt, 'SELECT a.id, a.extra, e.amount, i.item_id FROM shop.trade_assets a '
+                                       'LEFT JOIN shop.trade_assets_erc20 e ON e.asset_id = a.id '
+                                       'LEFT JOIN shop.trade_assets_item i ON i.asset_id = a.id ORDER BY a.id;')
+                         .strip().splitlines(),
+                         [f'{sent}\t\t1000000000000000000\t', f'{received}\t\t\t7'])
+        self.assertEqual(self.sql(tgt, 'SELECT uses FROM shop.coupon_state;').strip(), '5')
+
     # ── marketplace-favorites-server: lists ──
 
     def favorites_load(self, db, step_name, rows):
@@ -187,7 +295,8 @@ class FinancialMigrationCases:
         inserts = ''.join(f'INSERT INTO stage VALUES ({row});\n' for row in rows)
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
-            self.sql(db, 'BEGIN;\n' + self.financial_stage(step) + inserts + step.load.read_text() + '\nCOMMIT;\n')
+            self.sql(db, migrate.CHECKPOINT_DDL + 'BEGIN;\n' + self.financial_stage(step) + inserts + step.load.read_text()
+                 + '\nCOMMIT;\n')
         return err.getvalue()
 
     def test_when_the_node_edited_a_list_later_it_should_keep_its_fields_and_grants(self):

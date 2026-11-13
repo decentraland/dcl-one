@@ -212,6 +212,16 @@ class CommsMigrationCases:
         self.assertEqual(self.stream_state(db), '5555\tt\n6666\tf')
         self.assertEqual(self.cleanups(db), '6666\tnode-ingress\tt')
 
+    def test_comms_stream_access_retiring_an_expired_import_keeps_the_expiry_notice(self):
+        db = self.catalyst_db('comms_stream_retire_expired')
+        old, new = '55555555-5555-4555-8555-555555555555', '77777777-7777-4777-8777-777777777777'
+        self.sql(db, self.comms_rows('scene_stream_access', self.STREAM_COLUMNS, self.stream_row(old, '2026-01-01Z')))
+        expired = self.stream_row(old, '2026-01-01Z', active=False)[:-len('false,false)')] + 'true,true)'
+        self.sql(db, self.comms_rows('scene_stream_access', self.STREAM_COLUMNS,
+                                     self.stream_row(new, '2026-02-01Z') + ',' + expired))
+        self.assertEqual(self.sql(db, 'SELECT left(access_id::text, 4), notification_kind '
+                                      'FROM social.scene_stream_cleanup;').strip(), '5555\tstreaming_key_expired')
+
     def test_comms_stream_access_keeps_a_newer_node_credential_and_cleans_the_superseded_import(self):
         db = self.catalyst_db('comms_stream_newer_node')
         node, upstream = '66666666-6666-4666-8666-666666666666', '55555555-5555-4555-8555-555555555555'
