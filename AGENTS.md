@@ -31,7 +31,7 @@ Code that serves none of these deliverables is removed, not kept for reference:
 2. What's On and discovery (places, events, map);
 3. `/play`: Explorer (`rendering/bevy-explorer`), HUD (`apps/ui3/src/play`), desktop packaging (`apps/bevy-explorer`);
 4. `/shop`: Marketplace and Store merged;
-5. `/create`: Creator Hub, web and `apps/creator-hub`;
+5. `/create`: Creator Hub, web and the desktop workspace `apps/creator-hub` (Electron app, `@dcl/inspector`, `@dcl/asset-packs`);
 6. `apps/dcl-scene-cli`: the `@dcl/sdk-commands` rewrite;
 7. `/docs`: the docs.decentraland.org rewrite;
 8. page-coherence scripts (`apps/sites/scripts`);
@@ -76,6 +76,8 @@ Code that serves none of these deliverables is removed, not kept for reference:
   - Only the gatekeeper holds the LiveKit key, mints/verifies the relay admission proof and applies live room policy; it owns cleanup receipts and acknowledges retained takeovers.
   - Pulse runs in its own process unless a load measurement shows the loop is unaffected in-process.
   - The connector is part of the gatekeeper (local calls); Pulse and `serve` share the NATS subjects in `comms::protocol::bus`.
+  - Pulse alone owns the legacy Archipelago statistics population, independently of native ownership and without peer expiry. The connector forwards authenticated heartbeat/disconnect observations; its retained room assignments serve enforcement only. `comms::stats` supplies read-only complete snapshots to HTTP, content/about/realms and the presence archive; one archive pass retains one snapshot across content I/O. Hot scenes use serve's existing content pool and shared content denylist before projection and top-100 selection; `CONTENT_URL` supplies thumbnails. Preserve the accepted [local source semantics](docs/adr/2026-11-12-stats-local-content-source.md) when changing enrichment.
+  - The root owns Stats configured route compilation on the pinned embedded V8; comms owns the fallible async matcher interface. Preserve the pre-worker initialization and lifetime-wide unsafe preparation contract, and retain one owned admission permit inside submitted blocking work through native teardown ([ADR](docs/adr/2026-11-12-stats-configured-matcher.md)).
   - Only the primary `serve` (`FLEET_JOBS_ENABLED`) serves `/ws` and the island subscriber.
   - Social replicas derive online status from Pulse's wallet topology over NATS; every `serve` recovers room occupancy through the gatekeeper's LiveKit adapter; presence owns observations, source age and public/admission projections.
 - `storage`: the shared hash-addressed blob store.

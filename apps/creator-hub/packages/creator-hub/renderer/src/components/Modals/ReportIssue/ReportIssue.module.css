@@ -1,0 +1,130 @@
+/*
+ * Each rule is scoped under `.form`, so it outranks the one-class styles of the shared pieces it
+ * builds on (`FieldError`, `FieldTitle`, `FormTextInput`, `ExternalLink`), whichever loads last.
+ */
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.form .label {
+  font-family: var(--font-family);
+  font-optical-sizing: none;
+  font-size: var(--type-h6-semi-size);
+  font-weight: var(--type-h6-semi-weight);
+  line-height: normal;
+  letter-spacing: var(--type-h6-semi-letter-spacing);
+}
+
+.form .contactHint {
+  font-family: var(--font-family);
+  font-optical-sizing: none;
+  font-size: var(--type-h7-regular-size);
+  font-weight: var(--type-h7-regular-weight);
+  line-height: normal;
+  letter-spacing: var(--type-h7-regular-letter-spacing);
+  color: var(--palette-neutral-softWhite);
+}
+
+.form .hint {
+  color: var(--dcl-silver);
+  font-size: 0.875rem;
+  line-height: normal;
+}
+
+.form .logsOption {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.form .helpLink {
+  align-self: flex-start;
+  color: var(--brand);
+  font-size: 0.875rem;
+  font-weight: 600;
+  line-height: normal;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+}
+
+.form .helpLink:focus-visible {
+  outline: 2px solid var(--palette-info-light);
+  outline-offset: 2px;
+}
+
+.form .description.description:global(.MuiInputBase-multiline) {
+  padding: 14px 6px 14px 16px;
+}
+
+.form .description textarea {
+  box-sizing: border-box;
+  height: 140px;
+  min-height: 140px;
+  max-height: max(140px, calc(100vh - 794px));
+  padding-right: 4px;
+  overflow-y: auto;
+  resize: vertical;
+}
+
+@media (max-height: 900px) {
+  .form .description textarea {
+    max-height: max(140px, calc(100vh - 714px));
+  }
+}
+
+.form .description textarea::-webkit-scrollbar {
+  width: 12px;
+}
+
+.form .description textarea::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.form .description textarea::-webkit-scrollbar-thumb {
+  border: 1px solid transparent;
+  background-clip: padding-box;
+  background-color: var(--scrollbar-thumb);
+  box-shadow: inset 0 0 0 1px var(--scrollbar-thumb-border);
+  border-radius: var(--r-pill);
+}
+
+.form .description textarea::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+.form .description textarea::-webkit-resizer {
+  background: linear-gradient(
+      to bottom right,
+      transparent 44%,
+      var(--dcl-silver) 44% 56%,
+      transparent 56% 77%,
+      var(--dcl-silver) 77% 89%,
+      transparent 89%
+    )
+    right bottom / 6px 6px no-repeat;
+}
+
+.form .errorLine svg {
+  flex-shrink: 0;
+  width: 12px;
+  height: 12px;
+}
+
+.form .counter {
+  font-family: var(--font-family);
+  font-optical-sizing: none;
+  font-size: var(--type-h8-regular-size);
+  font-weight: var(--type-h8-regular-weight);
+  line-height: normal;
+  letter-spacing: var(--type-h8-regular-letter-spacing);
+  color: var(--palette-neutral-softWhite);
+  font-variant-numeric: tabular-nums;
+}
+
+.form .counter[data-state="over"] {
+  color: var(--error);
+}

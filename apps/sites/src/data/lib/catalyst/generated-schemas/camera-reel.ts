@@ -12,6 +12,7 @@ import type { Location } from "@catalyst-api/camera-reel/Location";
 import type { Metadata } from "@catalyst-api/camera-reel/Metadata";
 import type { PlaceDataResponse } from "@catalyst-api/camera-reel/PlaceDataResponse";
 import type { Scene } from "@catalyst-api/camera-reel/Scene";
+import type { ScreenRect } from "@catalyst-api/camera-reel/ScreenRect";
 import type { UploadResponse } from "@catalyst-api/camera-reel/UploadResponse";
 import type { User } from "@catalyst-api/camera-reel/User";
 import type { UserDataResponse } from "@catalyst-api/camera-reel/UserDataResponse";
@@ -50,12 +51,20 @@ export const SceneSchema = z.object({
   location: LocationSchema,
 });
 
+export const ScreenRectSchema = z.object({
+  x: z.number(),
+  y: z.number(),
+  width: z.number(),
+  height: z.number(),
+});
+
 export const UserSchema = z.object({
   userName: z.string(),
   userAddress: z.string(),
   wearables: z.array(z.string()),
   isGuest: z.boolean(),
   isEmoting: z.boolean().nullable(),
+  screenRect: ScreenRectSchema.optional(),
 });
 
 export const MetadataSchema = z.object({
@@ -125,6 +134,7 @@ export type _AssertLocation = Assert<Mutual<Location, z.infer<typeof LocationSch
 export type _AssertMetadata = Assert<Mutual<Metadata, z.infer<typeof MetadataSchema>>>;
 export type _AssertPlaceDataResponse = Assert<Mutual<PlaceDataResponse, z.infer<typeof PlaceDataResponseSchema>>>;
 export type _AssertScene = Assert<Mutual<Scene, z.infer<typeof SceneSchema>>>;
+export type _AssertScreenRect = Assert<Mutual<ScreenRect, z.infer<typeof ScreenRectSchema>>>;
 export type _AssertUploadResponse = Assert<Mutual<UploadResponse, z.infer<typeof UploadResponseSchema>>>;
 export type _AssertUser = Assert<Mutual<User, z.infer<typeof UserSchema>>>;
 export type _AssertUserDataResponse = Assert<Mutual<UserDataResponse, z.infer<typeof UserDataResponseSchema>>>;
