@@ -1,0 +1,220 @@
+// The service worker's upkeep of the content cache: on a `content-cache-trim` message it deletes
+// the oldest-written entries of `ipfs-path-cache-v2` while the cache is over its cap, and touches
+// no other cache.
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+import { describe, expect, it, vi } from 'vitest'
+
+const CONTENT_CACHE = 'ipfs-path-cache-v2'
+const OTHER_CACHES = ['dcl-editor-preview-v1', 'dcl-editor-scene-v1', 'dcl-editor-storage-v1']
+
+type Message = { type: string; capBytes?: unknown; quotaError?: boolean }
+type Pure = {
+  contentCacheTarget: (input: { capBytes: number; quota: number; cachesUsage: number; quotaError: boolean }) => {
+    cap: number
+    bytesToFree: number
+  }
+  pickEvictions: (sized: { key: string; size: number }[], bytesToFree: number) => { picked: string[]; freed: number }
+}
+
+const entryUrl = (n: number | string) => `https://shared.invalid/bafkrei${n}`
+
+function entry(size: number, withLength = true) {
+  const headers: Record<string, string> = withLength ? { 'Content-Length': String(size) } : {}
+  return new Response('x'.repeat(size), { headers })
+}
+
+const keyOf = (key: string | Request) => (typeof key === 'string' ? key : key.url)
+
+// the spec's cache: insertion ordered, a put removes the old item and appends the new one
+function fakeCache(seed: [string, Response][] = []) {
+  const map = new Map<string, Response>(seed)
+  return {
+    map,
+    keys: async () => [...map.keys()].map((url) => new Request(url)),
+    match: async (key: string | Request) => map.get(keyOf(key))?.clone(),
+    delete: async (key: string | Request) => map.delete(keyOf(key)),
+    put: async (key: string | Request, res: Response) => {
+      map.delete(keyOf(key))
+      map.set(keyOf(key), res)
+    }
+  }
+}
+type FakeCache = ReturnType<typeof fakeCache>
+
+function serviceWorker(options: { quota?: number; usage?: number; usageDetails?: object | null; others?: boolean } = {}) {
+  const listeners: Record<string, (event: unknown) => void> = {}
+  const content = fakeCache()
+  const fakes = new Map<string, FakeCache>([[CONTENT_CACHE, content]])
+  if (options.others) {
+    for (const name of OTHER_CACHES) fakes.set(name, fakeCache([[`https://editor.invalid/${name}`, entry(1000)]]))
+  }
+  const opened: string[] = []
+  const caches = {
+    open: vi.fn(async (name: string) => {
+      opened.push(name)
+      let cache = fakes.get(name)
+      if (!cache) fakes.set(name, (cache = fakeCache()))
+      return cache
+    })
+  }
+  const cachesUsage = () => {
+    let total = 0
+    for (const cache of fakes.values()) {
+      for (const response of cache.map.values()) total += Number(response.headers.get('Content-Length') ?? 0)
+    }
+    return total
+  }
+  const estimate = vi.fn(async () => ({
+    usage: options.usage ?? cachesUsage(),
+    quota: options.quota ?? 1e9,
+    ...(options.usageDetails === null ? {} : { usageDetails: options.usageDetails ?? { caches: cachesUsage() } })
+  }))
+  const navigator = { storage: { estimate, persisted: async () => false } }
+  const self = {
+    addEventListener: (type: string, fn: (event: unknown) => void) => (listeners[type] = fn),
+    registration: { scope: 'https://play.example/' }
+  }
+  const source = readFileSync(resolve(__dirname, '../../../deploy/web/service_worker.js'), 'utf8')
+  const load = new Function(
+    'self',
+    'caches',
+    'fetch',
+    'console',
+    'navigator',
+    source + '\nreturn { contentCacheTarget, pickEvictions };'
+  ) as (...args: unknown[]) => Pure
+  const pure = load(self, caches, vi.fn(), { log: vi.fn(), warn: vi.fn() }, navigator)
+
+  const send = async (data: unknown) => {
+    const port = { postMessage: vi.fn() }
+    const waitUntil = vi.fn()
+    listeners.message({ data, ports: [port], waitUntil })
+    if (waitUntil.mock.calls.length) await waitUntil.mock.calls[0][0]
+    return { port, waitUntil }
+  }
+  const seed = (n: number, size = 100, withLength = true) => content.map.set(entryUrl(n), entry(size, withLength))
+  const trim = (message: Partial<Message> & { capBytes: unknown }) => send({ type: 'content-cache-trim', ...message })
+  const remaining = () => [...content.map.keys()].map((url) => url.replace('https://shared.invalid/', ''))
+  return { pure, send, trim, seed, content, fakes, caches, opened, estimate, remaining }
+}
+
+describe('content cache target', () => {
+  it('has nothing to free under the cap', () => {
+    const { pure } = serviceWorker()
+    expect(pure.contentCacheTarget({ capBytes: 1000, quota: 1e9, cachesUsage: 1000, quotaError: false })).toEqual({
+      cap: 1000,
+      bytesToFree: 0
+    })
+  })
+
+  it('frees down to 90% of the cap when over it', () => {
+    const { pure } = serviceWorker()
+    expect(pure.contentCacheTarget({ capBytes: 1000, quota: 1e9, cachesUsage: 1200, quotaError: false }).bytesToFree).toBe(300)
+  })
+
+  it('caps at half the quota', () => {
+    const { pure } = serviceWorker()
+    expect(pure.contentCacheTarget({ capBytes: 1000, quota: 1000, cachesUsage: 600, quotaError: false })).toEqual({
+      cap: 500,
+      bytesToFree: 150
+    })
+  })
+
+  it('frees a quarter after a quota error even under the cap', () => {
+    const { pure } = serviceWorker()
+    expect(pure.contentCacheTarget({ capBytes: 1000, quota: 1e9, cachesUsage: 400, quotaError: true }).bytesToFree).toBe(100)
+  })
+})
+
+describe('eviction choice', () => {
+  it('takes the leading entries until enough is freed', () => {
+    const { pure } = serviceWorker()
+    const sized = [
+      { key: 'a', size: 50 },
+      { key: 'b', size: 50 },
+      { key: 'c', size: 50 }
+    ]
+    expect(pure.pickEvictions(sized, 60)).toEqual({ picked: ['a', 'b'], freed: 100 })
+    expect(pure.pickEvictions(sized, 0)).toEqual({ picked: [], freed: 0 })
+    expect(pure.pickEvictions(sized, 1000).picked).toEqual(['a', 'b', 'c'])
+  })
+})
+
+describe('content cache trim message', () => {
+  it('evicts the oldest-written entries until the cache is under the cap', async () => {
+    const sw = serviceWorker()
+    for (let n = 0; n < 10; n++) sw.seed(n)
+    const { port } = await sw.trim({ capBytes: 500 })
+    expect(sw.remaining()).toEqual(['bafkrei6', 'bafkrei7', 'bafkrei8', 'bafkrei9'])
+    expect(port.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ evictedEntries: 6, evictedBytes: 600, capBytes: 500 })
+    )
+  })
+
+  it('moves an entry written again to the newest end', async () => {
+    const sw = serviceWorker()
+    for (let n = 0; n < 3; n++) sw.seed(n)
+    await sw.content.put(entryUrl(0), entry(100))
+    await sw.trim({ capBytes: 250 })
+    expect(sw.remaining()).toEqual(['bafkrei2', 'bafkrei0'])
+  })
+
+  it('does not open the cache when under the cap', async () => {
+    const sw = serviceWorker()
+    sw.seed(0)
+    const { port } = await sw.trim({ capBytes: 1000 })
+    expect(sw.caches.open).not.toHaveBeenCalled()
+    expect(port.postMessage).toHaveBeenCalledWith(expect.objectContaining({ evictedEntries: 0 }))
+  })
+
+  it('never opens or changes another cache', async () => {
+    const sw = serviceWorker({ others: true })
+    for (let n = 0; n < 5; n++) sw.seed(n)
+    await sw.trim({ capBytes: 10 })
+    expect(sw.remaining()).toEqual([])
+    expect(new Set(sw.opened)).toEqual(new Set([CONTENT_CACHE]))
+    for (const name of OTHER_CACHES) expect(sw.fakes.get(name)!.map.size).toBe(1)
+  })
+
+  it('sizes an entry without Content-Length by its body', async () => {
+    const sw = serviceWorker({ usage: 1000, usageDetails: { caches: 1000 } })
+    sw.seed(0, 300, false)
+    sw.seed(1)
+    sw.seed(2)
+    // the worker is told the cache holds 1000 bytes against a cap of 100
+    const { port } = await sw.trim({ capBytes: 100 })
+    expect(port.postMessage).toHaveBeenCalledWith(expect.objectContaining({ evictedEntries: 3, evictedBytes: 500 }))
+  })
+
+  it('answers a bad cap with an error and keeps serving later trims', async () => {
+    const sw = serviceWorker()
+    for (let n = 0; n < 4; n++) sw.seed(n)
+    const bad = await sw.trim({ capBytes: 'big' })
+    expect(bad.port.postMessage).toHaveBeenCalledWith({ error: expect.any(String) })
+    const good = await sw.trim({ capBytes: 200 })
+    expect(good.port.postMessage).toHaveBeenCalledWith(expect.objectContaining({ evictedEntries: 3, evictedBytes: 300 }))
+  })
+
+  it('ignores other messages', async () => {
+    const sw = serviceWorker()
+    const { waitUntil } = await sw.send({ type: 'something-else' })
+    expect(sw.estimate).not.toHaveBeenCalled()
+    expect(waitUntil).not.toHaveBeenCalled()
+  })
+
+  it('trims a cache that is under its cap after a quota error', async () => {
+    const sw = serviceWorker()
+    for (let n = 0; n < 4; n++) sw.seed(n)
+    const { port } = await sw.trim({ capBytes: 1000, quotaError: true })
+    expect(sw.remaining()).toEqual(['bafkrei1', 'bafkrei2', 'bafkrei3'])
+    expect(port.postMessage).toHaveBeenCalledWith(expect.objectContaining({ evictedEntries: 1, evictedBytes: 100 }))
+  })
+
+  it('reads Cache Storage usage from usageDetails, and 0 when it is left out', async () => {
+    const sw = serviceWorker({ usage: 5000, usageDetails: {} })
+    for (let n = 0; n < 3; n++) sw.seed(n)
+    const { port } = await sw.trim({ capBytes: 1000 })
+    expect(port.postMessage).toHaveBeenCalledWith(expect.objectContaining({ cachesUsage: 0, evictedEntries: 0 }))
+  })
+})

@@ -120,6 +120,90 @@ async function servePreviewRealm(request, clientId) {
     return previewRealm.handle(request, PREVIEW_ROOT, cache, storage, client);
 }
 
+// The content cache's upkeep: the engine asks with a `content-cache-trim` message
+// (engine/content_cache.js) after it has written enough, when its cap changes, and after a write
+// failed for quota. The trim runs here, off the engine's threads, and only ever opens CACHE_NAME.
+const CONTENT_CACHE_TRIM = 'content-cache-trim';
+// Half the origin's quota stays for its other storage (OPFS, IndexedDB).
+const CONTENT_CACHE_QUOTA_SHARE = 0.5;
+// A trim goes down to this share of the cap, so the next one waits for real growth.
+const CONTENT_CACHE_LOW_WATER = 0.9;
+// After a quota error, keep at most this share of the cache, even under the cap.
+const CONTENT_CACHE_QUOTA_ERROR_KEEP = 0.75;
+// Entries sized (one `match` each) per step while choosing what to evict.
+const CONTENT_CACHE_SIZE_BATCH = 64;
+let contentCacheQueue = Promise.resolve();
+
+self.addEventListener('message', (event) => {
+    const data = event.data;
+    if (data?.type !== CONTENT_CACHE_TRIM) return;
+    const port = event.ports?.[0];
+    const task = () => trimContentCache(data.capBytes, data.quotaError === true);
+    // one trim at a time: a second request sees what the first left
+    const run = contentCacheQueue.then(task, task);
+    contentCacheQueue = run.catch(() => {});
+    event.waitUntil(run.then(
+        (report) => port?.postMessage(report),
+        (e) => port?.postMessage({ error: String(e?.message ?? e) }),
+    ));
+});
+
+// How much to free. `cachesUsage` is the origin's Cache Storage usage; `quota` bounds the cap.
+function contentCacheTarget({ capBytes, quota, cachesUsage, quotaError }) {
+    const cap = Math.max(0, Math.min(capBytes, Math.floor(quota * CONTENT_CACHE_QUOTA_SHARE)));
+    let bytesToFree = cachesUsage > cap ? cachesUsage - Math.floor(cap * CONTENT_CACHE_LOW_WATER) : 0;
+    if (quotaError) {
+        const keep = Math.floor(Math.min(cap, cachesUsage) * CONTENT_CACHE_QUOTA_ERROR_KEEP);
+        bytesToFree = Math.max(bytesToFree, cachesUsage - keep);
+    }
+    return { cap, bytesToFree };
+}
+
+// The leading entries of `sized` ({ key, size }, eviction order) that free `bytesToFree`.
+function pickEvictions(sized, bytesToFree) {
+    const picked = [];
+    let freed = 0;
+    for (const { key, size } of sized) {
+        if (freed >= bytesToFree) break;
+        picked.push(key);
+        freed += size;
+    }
+    return { picked, freed };
+}
+
+// The engine stores every entry with Content-Length.
+async function contentCacheEntrySize(response) {
+    const length = Number(response.headers.get('Content-Length'));
+    if (response.headers.has('Content-Length') && Number.isFinite(length)) return length;
+    return (await response.blob()).size;
+}
+
+async function trimContentCache(capBytes, quotaError) {
+    if (!(typeof capBytes === 'number' && capBytes >= 0)) throw new Error('capBytes must be a non-negative number');
+    const { usage = 0, quota = Infinity, usageDetails } = await navigator.storage.estimate();
+    // usageDetails leaves out a storage system with no usage
+    const cachesUsage = usageDetails ? (usageDetails.caches ?? 0) : usage;
+    const persisted = await navigator.storage.persisted();
+    const { cap, bytesToFree } = contentCacheTarget({ capBytes, quota, cachesUsage, quotaError });
+    const report = { capBytes: cap, usage, quota, cachesUsage, evictedEntries: 0, evictedBytes: 0, persisted };
+    if (bytesToFree <= 0) return report;
+
+    const cache = await caches.open(CACHE_NAME);
+    // insertion order: oldest written first (a put over a key moves it to the end)
+    const requests = await cache.keys();
+    for (let i = 0; i < requests.length && report.evictedBytes < bytesToFree; i += CONTENT_CACHE_SIZE_BATCH) {
+        const sized = await Promise.all(requests.slice(i, i + CONTENT_CACHE_SIZE_BATCH).map(async (key) => {
+            const response = await cache.match(key);
+            return { key, size: response ? await contentCacheEntrySize(response) : 0 };
+        }));
+        const { picked, freed } = pickEvictions(sized, bytesToFree - report.evictedBytes);
+        await Promise.all(picked.map((key) => cache.delete(key)));
+        report.evictedEntries += picked.length;
+        report.evictedBytes += freed;
+    }
+    return report;
+}
+
 /**
  * Fetches a page and sets its isolation headers. The app (app.html: HUD + engine) gets
  * Document-Isolation-Policy, which makes it cross-origin isolated (SharedArrayBuffer) in a process
