@@ -44,11 +44,17 @@ pub(crate) fn evict_stale_results() {
 const DDS_MAGIC: &[u8] = b"DDS ";
 
 /// The dds to build the image from, and whether it is a fresh transcode to stash for the cache
-/// write: a cached dds as it is, or the ktx2 transcoded to a dds.
+/// write: a cached dds as it is, a BC texture variant unwrapped, or the ktx2 transcoded to a dds.
 fn prepare(bytes: Vec<u8>) -> anyhow::Result<(Vec<u8>, bool)> {
     if bytes.starts_with(DDS_MAGIC) {
         // a previous load's transcode, written over the ktx2 bytes in the cache
         return Ok((bytes, false));
+    }
+    // a BC texture variant (`ipfs::bevy_variants`): unwrapped, never transcoded or stashed,
+    // since its cache entry is the variant's, not this path's. A BC ktx2 that does not unwrap
+    // (a scene's own, say) goes on to the transcoder as before
+    if let Some(Ok(dds)) = ipfs::bevy_variants::ktx2::bc_ktx2_dds(&bytes) {
+        return Ok((dds, false));
     }
     let dds = crate::processor::transcode_ktx2(&bytes)
         .map_err(|e| anyhow::anyhow!("ktx2 transcode failed: {e:?}"))?;

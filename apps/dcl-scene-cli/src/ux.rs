@@ -14,6 +14,59 @@ pub fn verbose() -> bool {
     VERBOSE.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+static CI: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// `--ci`, or `CI` set in the environment: a log is being written, not a
+/// terminal driven. No colours, spinners, re-floated banners or QR codes;
+/// nothing prompts, nothing opens a browser.
+pub fn set_ci(on: bool) {
+    CI.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn ci() -> bool {
+    CI.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// `CI` as the hosted runners set it: any value but empty, `0` or `false`.
+pub fn ci_env() -> bool {
+    ci_env_from(std::env::var_os("CI"))
+}
+
+fn ci_env_from(raw: Option<std::ffi::OsString>) -> bool {
+    raw.is_some_and(|v| {
+        let v = v.to_string_lossy();
+        let v = v.trim();
+        !(v.is_empty() || v == "0" || v.eq_ignore_ascii_case("false"))
+    })
+}
+
+static QUIET: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// `deploy --programmatic`: stdout belongs to the lines a program parses, so
+/// no narration, steps or banners reach it; errors still go to stderr.
+pub fn set_quiet(on: bool) {
+    QUIET.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn quiet() -> bool {
+    QUIET.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+static JSON: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// `--json`: the command's result is one JSON document on stdout and nothing
+/// else is, so it implies [`quiet`].
+pub fn set_json(on: bool) {
+    JSON.store(on, std::sync::atomic::Ordering::Relaxed);
+    if on {
+        set_quiet(true);
+    }
+}
+
+pub fn json() -> bool {
+    JSON.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 static CUSTOM_BUILD_NOTE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 
 /// `start --no-build-note`: a preview rebuild through package.json scripts.build is not
@@ -86,7 +139,7 @@ impl std::error::Error for UserError {
 }
 
 fn color_allowed(is_tty: bool) -> bool {
-    is_tty && std::env::var_os("NO_COLOR").is_none()
+    is_tty && !ci() && std::env::var_os("NO_COLOR").is_none()
 }
 
 fn stderr_color() -> bool {
@@ -189,7 +242,7 @@ impl Steps {
         Steps {
             total,
             next: 1,
-            silent: false,
+            silent: quiet(),
         }
     }
 
@@ -230,7 +283,7 @@ impl Slow {
     pub fn start(label: impl Into<String>) -> Self {
         let label = label.into();
         let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        if !stdout_color() {
+        if quiet() || !stdout_color() {
             return Slow { stop, handle: None };
         }
         let s = stop.clone();
@@ -383,8 +436,11 @@ fn stamp_gutter(last: &mut String, now: String) -> String {
 
 /// Every printed line goes through here, so the re-float can count them.
 fn emit(line: String) {
+    if quiet() {
+        return;
+    }
     println!("{line}");
-    if !in_session() {
+    if !in_session() || ci() {
         return;
     }
     let n = SINCE_FLOAT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
@@ -681,6 +737,19 @@ fn loc_file(line: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ci_is_any_value_but_empty_zero_or_false() {
+        assert!(!ci_env_from(None));
+        assert!(!ci_env_from(Some("".into())));
+        assert!(!ci_env_from(Some(" ".into())));
+        assert!(!ci_env_from(Some("0".into())));
+        assert!(!ci_env_from(Some("false".into())));
+        assert!(!ci_env_from(Some("FALSE".into())));
+        assert!(ci_env_from(Some("1".into())));
+        assert!(ci_env_from(Some("true".into())));
+        assert!(ci_env_from(Some("github".into())));
+    }
 
     #[test]
     fn a_refloat_needs_both_the_lines_and_the_quiet() {
