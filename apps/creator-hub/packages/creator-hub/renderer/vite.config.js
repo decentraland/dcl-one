@@ -44,6 +44,8 @@ const config = {
   },
   test: {
     environment: 'happy-dom',
+    // CSS modules are injected into the test document, so a spec can read their computed styles.
+    css: { include: /\.module\.css$/ },
     setupFiles: ['./tests/setupTests.ts'],
     include: ['./src/**/*.{test,spec}.{js,mjs,cjs,ts,mts,cts,jsx,tsx}'],
   },

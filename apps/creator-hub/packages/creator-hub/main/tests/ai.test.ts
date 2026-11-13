@@ -56,11 +56,11 @@ import {
   isClaudeDesktopInstalled,
   nvmBinDirs,
   parseShellPath,
-  redactSecrets,
   signInRequiredMessage,
   turnOutcome,
   usableBin,
 } from '../src/modules/ai';
+import { redactSecrets } from '../src/modules/redact';
 
 const PROJECT = '/home/user/scene';
 
