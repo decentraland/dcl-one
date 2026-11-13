@@ -70,6 +70,11 @@ pub fn cluster_lookup_submitted() {
     counter!(CLUSTER_LOOKUP_REPLIES).increment(1);
 }
 
+/// Refused observations are visible without per-producer labels or acknowledgments.
+pub fn statistics_observation_rejected() {
+    counter!("pulse_statistics_observations_rejected_total").increment(1);
+}
+
 const NATS_PUBLISHED: &str = "pulse_nats_published_total";
 const NATS_PUBLISH_FAILED: &str = "pulse_nats_publish_failed_total";
 const NATS_DROPPED: &str = "pulse_nats_dropped_total";

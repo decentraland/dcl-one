@@ -265,16 +265,70 @@ async fn a_scene_uploaded_in_batches_is_published_by_its_last_batch() {
     require_test_db!(Some(node) = Node::new("roundtrip", Limits::default()).await);
     let router = node.router();
     let signer = PrivateKeySigner::random();
-    let scene = make_scene(&signer, &[b"partial-a", b"partial-b"], "scene").await;
+    let mut scene = make_scene(&signer, &[b"partial-a", b"partial-b"], "scene").await;
+    let raw = String::from_utf8(scene.bytes.to_vec()).unwrap().replacen(
+        "\"metadata\":{",
+        "\"metadata\":{\"extra\":{\"z\":9007199254740993,\"a\":18446744073709551615},",
+        1,
+    );
+    scene.bytes = Bytes::from(raw);
+    scene.id = hash_bytes_v1(&scene.bytes);
+    scene.chain = chain_for(&signer, &scene.id).await;
     let (a, b) = (scene.files[0].clone(), scene.files[1].clone());
 
     let (status, _, body) = send(&router, &scene, &scene.chain, vec![entity_file(&scene), a]).await;
     assert_eq!(status, StatusCode::ACCEPTED, "{body}");
     assert_eq!(body, json!({ "missing": [b.0.clone()] }));
 
+    // Reconstruct application state from pending receipts and the original stored entity.
+    drop(router);
+    let state = Arc::new(ContentState::new(
+        node.state.pool.clone(),
+        node.state.settings.clone(),
+        node.state.storage.clone(),
+    ));
+    state.sync.set_state(SyncState::Syncing);
+    let deployer =
+        WriteDeployer::with_optional_eip1654(state.pool.clone(), state.storage.clone(), None)
+            .with_denylist(state.denylist.clone());
+    assert!(state.attach_writes(true, Arc::new(deployer)));
+    let router = build_router(state.clone());
+
+    state.denylist.operator_insert(&b.0);
+    let (status, _, _) = send(&router, &scene, &scene.chain, vec![b.clone()]).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let committed: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM content.deployments WHERE entity_id=$1")
+            .bind(&scene.id)
+            .fetch_one(&state.pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        committed, 0,
+        "a content refusal at completion cannot publish"
+    );
+    assert_eq!(pending_rows(&state.pool, &scene.id).await, 1);
+    state.denylist.operator_remove(&b.0);
+
     let (status, _, body) = send(&router, &scene, &scene.chain, vec![b]).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     let created = body["creationTimestamp"].as_i64().expect("a timestamp");
+    let metadata: String = sqlx::query_scalar(
+        "SELECT entity_metadata::text FROM content.deployments WHERE entity_id=$1",
+    )
+    .bind(&scene.id)
+    .fetch_one(&node.state.pool)
+    .await
+    .unwrap();
+    assert!(
+        metadata.starts_with(
+            r#"{"v":{"extra":{"z":9007199254740993,"a":18446744073709551615},"scene":"#
+        )
+    );
+    assert_eq!(
+        node.state.storage.retrieve(&scene.id).await.unwrap(),
+        Some(scene.bytes.clone())
+    );
 
     let req = Request::post("/content/entities/active")
         .header(header::CONTENT_TYPE, "application/json")

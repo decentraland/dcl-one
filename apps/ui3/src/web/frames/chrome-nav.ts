@@ -1,9 +1,12 @@
 import { createContext, useContext } from "react";
 import type { ComponentPropsWithRef, ComponentType, MouseEvent } from "react";
+import type { DclTopBarProps } from "./DclTopBar";
 
 export type ChromeNavigate = (href: string) => boolean | void | Promise<void>;
 
 type ChromeNav = {
+  TopBar?: ComponentType<DclTopBarProps>;
+  headerLayout?: "native";
   navigate?: ChromeNavigate;
   Link?: ComponentType<ComponentPropsWithRef<"a">>;
 };

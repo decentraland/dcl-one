@@ -109,6 +109,29 @@ describe('untrustedLaunchParams', () => {
     }
   })
 
+  it('gates a Bevy variants service outside decentraland.org/.zone', () => {
+    window.history.replaceState(null, '', '/?bevyVariants=https://abgen.decentraland.zone')
+    try {
+      expect(untrustedLaunchParams({ native: false })).toEqual([])
+    } finally {
+      // `off` only turns the default service off: nothing to warn about
+      window.history.replaceState(null, '', '/?bevyVariants=off')
+    }
+    try {
+      expect(untrustedLaunchParams({ native: false })).toEqual([])
+    } finally {
+      window.history.replaceState(null, '', '/?bevyVariants=http://localhost:5147')
+    }
+    try {
+      const [p, ...rest] = untrustedLaunchParams({ native: false })
+      expect(rest).toEqual([])
+      expect(p.name).toBe('bevyVariants')
+      expect(p.warning).toMatch(/textures and models/)
+    } finally {
+      window.history.replaceState(null, '', '/')
+    }
+  })
+
   it('gates a per-service url override outside decentraland.org/.zone, native exempt', () => {
     window.history.replaceState(null, '', '/?places=https://places.decentraland.zone&catalyst=http://localhost:3000')
     try {
