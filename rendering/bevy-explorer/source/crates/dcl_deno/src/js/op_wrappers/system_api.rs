@@ -12,10 +12,10 @@ use system_bridge::{
     BlockingStatusData, ChatMessage, ChatReactionData, CommunityMemberConnectivityData,
     CommunityVoiceUpdate, ConnectivitySnapshot, DmHistoryEntryData, DmUserStateData,
     FriendConnectivityEvent, FriendData, FriendRequestData, FriendStatusData,
-    FriendshipEventUpdate, HomeScene, HoverEvent, LiveSceneInfo, PermanentPermissionItem,
-    PermissionRequestEvent, PhotoModeState, PortableInfo, ProfileChangedEvent, ProximityEvent,
-    SatelliteView, SceneLoadingUi, SetAvatarData, VoiceChatAction, VoiceChatState, VoiceMessage,
-    WelcomeState, WorldAccessEvent,
+    FriendshipEventUpdate, HomeScene, HoverEvent, LiveSceneInfo, LobbyStage,
+    PermanentPermissionItem, PermissionRequestEvent, PhotoModeState, PortableInfo,
+    ProfileChangedEvent, ProximityEvent, SatelliteView, SceneLoadingUi, SetAvatarData,
+    VoiceChatAction, VoiceChatState, VoiceMessage, WelcomeState, WorldAccessEvent,
 };
 
 // list of op declarations
@@ -44,6 +44,7 @@ pub fn ops(super_user: bool) -> Vec<OpDecl> {
             op_live_scene_info(),
             op_get_home_scene(),
             op_set_home_scene(),
+            op_set_lobby_stage(),
             op_get_service_urls(),
             op_get_welcome(),
             op_accept_terms(),
@@ -320,6 +321,11 @@ pub async fn op_get_satellite_view(
     state: Rc<RefCell<OpState>>,
 ) -> Result<Option<SatelliteView>, anyhow::Error> {
     dcl_js::system_api::op_get_satellite_view(state).await
+}
+
+#[op2]
+pub fn op_set_lobby_stage(state: Rc<RefCell<OpState>>, #[serde] stage: Option<LobbyStage>) {
+    dcl_js::system_api::op_set_lobby_stage(state, stage);
 }
 
 #[op2]

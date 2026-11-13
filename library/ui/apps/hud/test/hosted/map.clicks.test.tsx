@@ -50,5 +50,8 @@ describe('map page', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'JUMP IN' }))
     expect(vi.mocked(map.teleportToPlace)).toHaveBeenCalledWith(10, -5)
     expect(vi.mocked(map.toggle)).toHaveBeenCalledTimes(1)
+    // the map closes before the jump: a jump from the startup lobby closes every page itself, and a
+    // toggle after it would reopen the map
+    expect(vi.mocked(map.toggle).mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(map.teleportToPlace).mock.invocationCallOrder[0])
   })
 })

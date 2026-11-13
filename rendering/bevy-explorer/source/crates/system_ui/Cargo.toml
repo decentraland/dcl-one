@@ -15,6 +15,7 @@ comms = { workspace = true }
 dcl_types = { workspace = true }
 dcl_component = { workspace = true }
 scene_runner = { workspace = true }
+texture_camera = { workspace = true }
 ipfs = { workspace = true }
 ui_core = { workspace = true }
 avatar = { workspace = true }
@@ -51,3 +52,10 @@ web-time = { workspace = true }
 copypwasmta = { workspace = true }
 
 shlex = "1"
+
+[dev-dependencies]
+# the embedded shaders, for the GPU shader test
+assets = { workspace = true, features = ["test-support"] }
+# present only to enable the naga_oil `override_any` feature in a per-crate test build, as the
+# root crate does for the app (see [workspace.dependencies]); not referenced from Rust
+naga_oil = { workspace = true }

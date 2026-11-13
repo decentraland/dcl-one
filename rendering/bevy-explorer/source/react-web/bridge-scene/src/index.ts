@@ -31,6 +31,7 @@ import { registerNotifications } from './domains/notifications'
 import { registerSettings } from './domains/settings'
 import { registerCommunities } from './domains/communities'
 import { registerGallery } from './domains/gallery'
+import { registerLobby } from './domains/lobby'
 import { registerWorld } from './domains/world'
 import { registerVoice } from './domains/voice'
 import { registerVoiceChat } from './domains/voiceChat'
@@ -75,6 +76,7 @@ export function main(): void {
     registerSettings(ctx)
     registerCommunities(ctx)
     registerGallery(ctx)
+    registerLobby(ctx)
     registerWorld(ctx)
     registerPointer(ctx)
     registerProximity(ctx)

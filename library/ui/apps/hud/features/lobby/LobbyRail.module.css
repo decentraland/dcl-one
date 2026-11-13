@@ -1,0 +1,113 @@
+/* The lobby rail: a strip of cards sliding inside its viewport, and under it the 42px pager band (the
+   pill 10px under the cards). */
+.rail {
+  display: flex;
+  flex-direction: column;
+}
+.viewport {
+  position: relative;
+  flex: 1 1 auto;
+  overflow: hidden;
+  touch-action: pan-y;
+}
+.strip {
+  position: absolute;
+  inset: 0 auto 0 0;
+  display: flex;
+  gap: var(--rail-gap, 8px);
+  transition: transform var(--lobby-dur-snap) ease-out;
+}
+.strip > * {
+  flex: none;
+}
+.instant .strip {
+  transition: none;
+}
+.pager {
+  position: relative;
+  flex: none;
+  height: 32px;
+  margin-top: var(--rail-pager-gap, 10px);
+}
+.pill {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 2px;
+  border-radius: 16px;
+  background: transparent;
+  transition: background-color var(--lobby-dur-arrow) ease-out;
+}
+.rail:hover .pill,
+.rail:focus-within .pill {
+  background: var(--lobby-black-60);
+}
+.arrow {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 14px;
+  background: var(--lobby-white-10);
+  color: var(--lobby-snow);
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity var(--lobby-dur-arrow) ease-out,
+    background-color var(--lobby-dur-press) ease-out;
+}
+.rail:hover .arrow,
+.rail:focus-within .arrow {
+  opacity: 1;
+}
+.arrow:hover {
+  background: var(--lobby-white-20);
+}
+.arrow:active {
+  background: var(--lobby-white-10);
+}
+.arrow:focus-visible,
+.dot:focus-visible {
+  outline: 2px solid var(--lobby-snow);
+  outline-offset: 2px;
+}
+.dots {
+  display: flex;
+  align-items: center;
+  margin: 0 6px;
+}
+.dot {
+  width: 14px;
+  height: 14px;
+  margin: 0 4px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: var(--lobby-white-20);
+  cursor: pointer;
+  transition:
+    width var(--lobby-dur-outline) ease-out,
+    background-color var(--lobby-dur-outline) ease-out;
+}
+.dot:hover {
+  background: var(--lobby-white-60);
+}
+.dotSelected,
+.dotSelected:hover {
+  width: 40px;
+  background: var(--lobby-accent);
+}
+@media (prefers-reduced-motion: reduce) {
+  .strip,
+  .dot,
+  .arrow,
+  .pill {
+    transition: none;
+  }
+}

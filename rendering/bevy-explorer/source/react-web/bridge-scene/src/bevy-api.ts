@@ -26,6 +26,7 @@ import type {
   HoverEvent,
   HomeScene,
   LiveSceneInfo,
+  LobbyStage,
   PermanentPermissionItem,
   PermissionRequestEvent,
   PhotoModeState,
@@ -143,6 +144,10 @@ export type PermissionUsedRaw = {
 
 export type BevyApiInterface = {
   getHomeScene: () => Promise<HomeScene>
+  /** Build the lobby's 3D stage around the preview avatar on its camera layer; null takes it down. */
+  setLobbyStage?: (stage: LobbyStage | null) => Promise<void>
+  /** Close the client. */
+  quit?: () => void
   /** What the welcome page must show for the signed-in account (all false when the host shows none). */
   getWelcome?: () => Promise<WelcomeState>
   /** The welcome page's accept: records the terms for this install. A held new profile deploys with

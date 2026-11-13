@@ -8,7 +8,7 @@
 // The preview wears the Backpack's look (./avatarDraft), which equipping edits, so equipping in the
 // Backpack reflects here before anything is deployed. Mounted via ReactEcsRenderer in index.ts.
 import ReactEcs, { UiEntity } from '@dcl/react-ecs'
-import { AssetLoadLoadingState, AvatarShape, CameraLayer, CameraLayers, Material, MaterialTransparencyMode, MeshRenderer, PrimaryPointerInfo, TextureCamera, Transform, engine } from '@dcl/sdk/ecs'
+import { AssetLoadLoadingState, AvatarShape, CameraLayer, CameraLayers, Material, MeshRenderer, PrimaryPointerInfo, TextureCamera, Transform, engine } from '@dcl/sdk/ecs'
 import { Color4, Quaternion, Vector3 } from '@dcl/sdk/math'
 import { getPlayer } from '@dcl/sdk/players'
 import type { Entity } from '@dcl/ecs'
@@ -16,7 +16,7 @@ import type { Ctx } from '../bridge'
 import { PREVIEW_MAX_ZOOM, type PreviewFocus } from '@explorer-core/engine/protocol'
 import { currentLook } from './avatarDraft'
 import type { AvatarLook } from '@explorer-core/engine/avatarEquip'
-import { BACKDROP_EDGE_FADE, FLOOR, FLOOR_SHADE_STOPS, backdropRect, floorShadeAt } from '@explorer-core/engine/lobbyStage'
+import { LOBBY_STAGE_PRESETS } from '@explorer-core/engine/lobbyStage'
 import { BevyApi } from '../bevy-api'
 
 type Rect = { x: number; y: number; width: number; height: number }
@@ -56,21 +56,17 @@ const ROTATION_FACTOR = -0.5
 const FACING = Quaternion.fromEulerDegrees(0, 180, 0)
 const THUMBNAIL_SIZE = 480
 
-// The lobby stage: the avatar full-screen over the stage backdrop, camera 1 m above a target
-// 0.8 m over the feet, 6 m back, 26.2° vertical field of view.
-const LOBBY_BASE = Color4.create(FLOOR.r / 255, FLOOR.g / 255, FLOOR.b / 255, 1)
-const LOBBY_BACKDROP = 'images/lobby-background.jpg'
-const LOBBY_VIGNETTE = 'images/lobby-vignette.png'
-// The Shop's stage (the HUD's assets/shop/stage.jpg, the same file): drawn behind the avatar where the page
-// says it draws it, so the avatar's window in the page shows no seam.
-const SHOP_STAGE = 'images/shop-stage.jpg'
-const LOBBY_SHADE_FROM = FLOOR_SHADE_STOPS[0][0]
-const LOBBY_SHADE_BAND_PX = 4
+// The lobby stage: the avatar full-screen in the engine's 3D stage (setLobbyStage), camera 1 m
+// above a target 0.8 m over the feet, 6 m back, 26.2° vertical field of view.
 const LOBBY_TARGET_Y = 0.8
 const LOBBY_CAMERA_RISE = 1
 const LOBBY_CAMERA_DISTANCE = 6
 const LOBBY_FOV = (26.2 * Math.PI) / 180
-const LOBBY_SHADOW = Color4.create(0, 0, 0, 0.65)
+// The avatar's feet in this scene's coordinates, where the engine builds the stage around it.
+const LOBBY_FEET = { x: 8, y: 0, z: 8 }
+// The Shop's stage (the HUD's assets/shop/stage.jpg, the same file): drawn behind the avatar where the page
+// says it draws it, so the avatar's window in the page shows no seam.
+const SHOP_STAGE = 'images/shop-stage.jpg'
 // Frames to let the stage and the avatar's first look settle before the page drops its stand-in,
 // and how long to wait for an avatar to load at all.
 const LOBBY_SETTLE_FRAMES = 45
@@ -88,31 +84,22 @@ const YAW_BACK = 0
 const LOADING_NOT_FOUND = 2
 const LOADING_FINISHED_WITH_ERROR = 3
 const LOADING_FINISHED = 4
-
-// The backdrop's bottom edge fading into the floor, as abutting bands offset from that edge.
-const EDGE_FADE = Array.from({ length: BACKDROP_EDGE_FADE / LOBBY_SHADE_BAND_PX }, (_, i) => ({
-  top: i * LOBBY_SHADE_BAND_PX,
-  height: LOBBY_SHADE_BAND_PX,
-  color: Color4.create(FLOOR.r / 255, FLOOR.g / 255, FLOOR.b / 255, (i + 0.5) / (BACKDROP_EDGE_FADE / LOBBY_SHADE_BAND_PX))
-}))
-
-// The floor shade as abutting whole-pixel bands, rebuilt only when the screen height changes.
-let shadeBands: { height: number; bands: Array<{ top: number; height: number; color: Color4 }> } = { height: -1, bands: [] }
-function floorShade(height: number): Array<{ top: number; height: number; color: Color4 }> {
-  if (shadeBands.height === height) return shadeBands.bands
-  const from = Math.floor(height * LOBBY_SHADE_FROM)
-  const bands = []
-  for (let top = from; top < height; top += LOBBY_SHADE_BAND_PX) {
-    const h = Math.min(LOBBY_SHADE_BAND_PX, height - top)
-    const alpha = floorShadeAt((top + h / 2) / height)
-    bands.push({ top, height: h, color: Color4.create(FLOOR.r / 255, FLOOR.g / 255, FLOOR.b / 255, alpha) })
-  }
-  shadeBands = { height, bands }
-  return bands
-}
+// The lobby avatar's idle life: a greeting once it is on show, a flavour emote every so often,
+// and a cheer when the player's look changes.
+const INTRO_EMOTE = 'wave'
+const FLAVOUR_EMOTES = ['wave', 'fistpump', 'dab']
+const FLAVOUR_SECONDS: [number, number] = [8, 20]
+const LOOK_CHANGED_EMOTE = 'fistpump'
 
 type Stage = 'backpack' | 'lobby'
 let stage: Stage = 'backpack'
+// The lobby stage's look, as the page last named it, and whether the engine's stage is up.
+let stagePreset: string = LOBBY_STAGE_PRESETS[0].id
+let stageUp = false
+// The lobby avatar's idle emotes are the lobby page's alone (not its stand-ins' pages).
+let idleEmotes = false
+let flavourIn = 0
+let greeted = false
 
 let rect: Rect | null = null
 // Frames until a closed region's stage is dropped: a page handing the stage to the next one (the
@@ -128,6 +115,8 @@ let shopStage: Rect | null = null
 // Bumped for every emote the Shop plays: the engine plays a trigger whose timestamp is new.
 let emoteTrigger = 0
 let lastShapeKey = ''
+// A new look just took the stage: the avatar cheers once it faces the camera.
+let cheerPending = false
 // The lobby stage swaps between two avatars, one on show and one standing by, so that a new look
 // loads out of sight and the one on show never goes missing: a look wanted on the stage goes on
 // the standby first, and the stage swaps once the engine reports it loaded. The next RANDOMIZE's
@@ -273,9 +262,9 @@ function createPreview(): void {
     Transform.create(standby, { position: Vector3.create(8, 0, 8), rotation: FACING, scale: Vector3.One() })
     standbyEntity = standby
   }
-  // Podium under the avatar (preview layer only), the parity backpack's platform;
-  // the lobby stands it on a soft blob shadow instead.
-  const podium = lobby ? [lobbyShadow()] : PODIUM_LAYERS.map((layer) => {
+  // Podium under the avatar (preview layer only), the parity backpack's platform; the lobby's
+  // podium is the engine stage's.
+  const podium = lobby ? [] : PODIUM_LAYERS.map((layer) => {
     const e = engine.addEntity()
     MeshRenderer.setCylinder(e, 1, 1)
     Material.setPbrMaterial(e, { albedoColor: layer.color, metallic: 0, roughness: 0.6 })
@@ -286,8 +275,8 @@ function createPreview(): void {
 
   CameraLayer.create(c, {
     layer: LAYER,
-    // the lobby stage has a key light; the Backpack is lit flat
-    directionalLight: lobby,
+    // the Backpack is lit flat; the lobby's engine stage brings its own key light
+    directionalLight: false,
     showAvatars: false,
     showSkybox: false,
     showFog: false,
@@ -319,6 +308,7 @@ function createPreview(): void {
   avatarEntity = a
   cameraEntity = c
   podiumEntities = podium
+  if (lobby) showStage()
   if (shopStage != null) showPodium(false)
   lastShapeKey = ''
   shownKey = ''
@@ -353,16 +343,54 @@ async function announceLobbyStage(ctx: Ctx): Promise<void> {
   if (current()) ctx.send({ kind: 'lobbyStageReady' })
 }
 
-function lobbyShadow(): Entity {
-  const e = engine.addEntity()
-  MeshRenderer.setCylinder(e, 1, 1)
-  Material.setPbrMaterial(e, { albedoColor: LOBBY_SHADOW, metallic: 0, roughness: 1, transparencyMode: MaterialTransparencyMode.MTM_ALPHA_BLEND })
-  CameraLayers.create(e, { layers: [LAYER] })
-  Transform.create(e, { position: Vector3.create(8, -0.005, 8), scale: Vector3.create(0.7, 0.01, 0.7) })
-  return e
+// Ask the engine for the lobby's 3D stage around the avatar, in the look the page named.
+function showStage(): void {
+  stageUp = true
+  greeted = false
+  flavourIn = nextFlavour()
+  BevyApi.setLobbyStage?.({ preset: stagePreset, layer: LAYER, feet: LOBBY_FEET }).catch((e) => {
+    console.error('[avatarPreview] lobby stage', e)
+  })
+}
+
+function hideStage(): void {
+  if (!stageUp) return
+  stageUp = false
+  BevyApi.setLobbyStage?.(null).catch((e) => {
+    console.error('[avatarPreview] lobby stage', e)
+  })
+}
+
+function nextFlavour(): number {
+  return FLAVOUR_SECONDS[0] + Math.random() * (FLAVOUR_SECONDS[1] - FLAVOUR_SECONDS[0])
+}
+
+// Play an emote on the avatar on show (a new timestamp replays the same one).
+function playEmote(urn: string): void {
+  if (avatarEntity == null) return
+  const shape = AvatarShape.getMutableOrNull(avatarEntity)
+  if (shape == null) return
+  shape.expressionTriggerId = urn
+  shape.expressionTriggerTimestamp = ++emoteTrigger
+}
+
+// The lobby avatar's idle life, while its look is on show and facing the camera.
+function pollEmotes(dt: number): void {
+  if (!idleEmotes || !shownLoaded || turn != null) return
+  if (!greeted) {
+    greeted = true
+    playEmote(INTRO_EMOTE)
+    flavourIn = nextFlavour()
+    return
+  }
+  flavourIn -= dt
+  if (flavourIn > 0) return
+  flavourIn = nextFlavour()
+  playEmote(FLAVOUR_EMOTES[Math.floor(Math.random() * FLAVOUR_EMOTES.length)])
 }
 
 function disposePreview(): void {
+  hideStage()
   if (avatarEntity != null) engine.removeEntity(avatarEntity)
   if (standbyEntity != null) engine.removeEntity(standbyEntity)
   if (cameraEntity != null) engine.removeEntity(cameraEntity)
@@ -462,6 +490,13 @@ function pollTurn(dt: number): void {
   turn = null
   if (done.entity !== avatarEntity) return
   if (done.to === YAW_FRONT && shownLook != null && announce != null) announce(shownLook)
+  if (done.to === YAW_FRONT && cheerPending) {
+    cheerPending = false
+    if (idleEmotes && greeted) {
+      playEmote(LOOK_CHANGED_EMOTE)
+      flavourIn = nextFlavour()
+    }
+  }
   if (done.to === YAW_AWAY && swapReady) swapToStandby()
   // a look loaded meanwhile (one asked for after the one just shown): turn away for it
   else if (done.to === YAW_FRONT && swapReady) startTurn(done.entity, YAW_FRONT, YAW_AWAY)
@@ -505,6 +540,7 @@ function swapToStandby(): void {
   shownLoaded = true
   shownYaw = YAW_BACK
   startTurn(standby, YAW_BACK, YAW_FRONT)
+  cheerPending = true
 }
 
 function pollStage(dt: number): void {
@@ -557,6 +593,14 @@ export function registerAvatarPreview(ctx: Ctx): void {
       return
     }
     disposeIn = 0
+    if (nextStage === 'lobby') {
+      idleEmotes = msg.idleEmotes === true
+      const preset = msg.stagePreset ?? stagePreset
+      if (preset !== stagePreset) {
+        stagePreset = preset
+        if (stageUp) showStage()
+      }
+    }
     // the same region again (a page re-reporting its viewport) leaves the stage as it is
     const same = rect != null && rect.x === msg.rect.x && rect.y === msg.rect.y && rect.width === msg.rect.width && rect.height === msg.rect.height && dpr === (msg.dpr ?? 1)
     rect = msg.rect
@@ -604,7 +648,10 @@ export function registerAvatarPreview(ctx: Ctx): void {
     ctx.send({ kind: 'lookShown', look })
   }
   ctx.push((dt) => {
-    if (stage === 'lobby' && avatarEntity != null) pollStage(dt)
+    if (stage === 'lobby' && avatarEntity != null) {
+      pollStage(dt)
+      pollEmotes(dt)
+    }
   })
   ctx.push((dt) => {
     if (framingT >= 1 || cameraEntity == null || stage !== 'backpack') return
@@ -638,8 +685,8 @@ export function registerAvatarPreview(ctx: Ctx): void {
   // as the drag-lock (onMouseDragLocked below) doesn't reach the preview in every host. Both are the preview's
   // (the Backpack's, the Shop's) alone: a late one never turns or zooms the lobby's avatar.
   ctx.on('previewRotate', (msg) => {
-    if (stage !== 'backpack') return
-    turnAvatar(msg.degrees)
+    if (stage === 'lobby') turnLobbyAvatar(msg.degrees)
+    else turnAvatar(msg.degrees)
   })
   ctx.on('previewZoom', (msg) => {
     if (stage !== 'backpack') return
@@ -656,11 +703,7 @@ export function registerAvatarPreview(ctx: Ctx): void {
   // The Shop's emote try-on: played once on the preview avatar, again for every ask; null stops it (an
   // empty trigger on a scene's avatar is the engine's stop).
   ctx.on('previewEmote', (msg) => {
-    if (avatarEntity == null) return
-    const shape = AvatarShape.getMutableOrNull(avatarEntity)
-    if (shape == null) return
-    shape.expressionTriggerId = msg.urn ?? ''
-    shape.expressionTriggerTimestamp = ++emoteTrigger
+    playEmote(msg.urn ?? '')
   })
 
   // Selecting an item in the Backpack previews it on the avatar without persisting (null reverts).
@@ -748,6 +791,14 @@ function rotateAvatar(): void {
   if (deltaX !== 0) turnAvatar(deltaX * ROTATION_FACTOR)
 }
 
+// The lobby avatar turns by the page's drag, unless a look is changing; its yaw is the one the
+// look changes turn from, so a drag is never undone.
+function turnLobbyAvatar(degrees: number): void {
+  if (avatarEntity == null || turn != null || !Number.isFinite(degrees) || degrees === 0) return
+  shownYaw = YAW_FRONT + ((((shownYaw - YAW_FRONT + degrees) % 360) + 540) % 360) - 180
+  Transform.getMutable(avatarEntity).rotation = Quaternion.fromEulerDegrees(0, shownYaw, 0)
+}
+
 // Turns the preview avatar `degrees` about its vertical axis.
 function turnAvatar(degrees: number): void {
   if (avatarEntity == null || !Number.isFinite(degrees) || degrees === 0) return
@@ -760,39 +811,12 @@ function turnAvatar(degrees: number): void {
 }
 
 function renderLobbyStage(r: Rect, camera: Entity): ReactEcs.JSX.Element {
-  const backdrop = backdropRect(r.width, r.height)
+  // the engine's stage is opaque over the whole frame, so the camera's image is the lobby's
   return (
     <UiEntity
       uiTransform={{ positionType: 'absolute', position: { left: r.x, top: r.y }, width: r.width, height: r.height, overflow: 'hidden' }}
-      uiBackground={{ color: LOBBY_BASE }}
-    >
-      <UiEntity
-        uiTransform={{ positionType: 'absolute', position: { left: backdrop.left, top: backdrop.top }, width: backdrop.width, height: backdrop.height }}
-        uiBackground={{ texture: { src: LOBBY_BACKDROP }, textureMode: 'stretch' }}
-      />
-      {EDGE_FADE.map((band) => (
-        <UiEntity
-          key={`edge${band.top}`}
-          uiTransform={{ positionType: 'absolute', position: { left: 0, top: backdrop.top + backdrop.height - BACKDROP_EDGE_FADE + band.top }, width: '100%', height: band.height }}
-          uiBackground={{ color: band.color }}
-        />
-      ))}
-      {floorShade(Math.round(r.height)).map((band) => (
-        <UiEntity
-          key={band.top}
-          uiTransform={{ positionType: 'absolute', position: { left: 0, top: band.top }, width: '100%', height: band.height }}
-          uiBackground={{ color: band.color }}
-        />
-      ))}
-      <UiEntity
-        uiTransform={{ positionType: 'absolute', width: '100%', height: '100%' }}
-        uiBackground={{ texture: { src: LOBBY_VIGNETTE }, textureMode: 'stretch' }}
-      />
-      <UiEntity
-        uiTransform={{ positionType: 'absolute', width: '100%', height: '100%' }}
-        uiBackground={{ videoTexture: { videoPlayerEntity: camera }, textureMode: 'stretch' }}
-      />
-    </UiEntity>
+      uiBackground={{ videoTexture: { videoPlayerEntity: camera }, textureMode: 'stretch' }}
+    />
   )
 }
 

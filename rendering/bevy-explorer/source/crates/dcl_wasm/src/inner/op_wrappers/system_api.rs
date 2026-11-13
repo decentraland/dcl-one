@@ -197,6 +197,12 @@ pub async fn op_get_satellite_view(state: &WorkerContext) -> Result<JsValue, Was
 }
 
 #[wasm_bindgen]
+pub fn op_set_lobby_stage(state: &WorkerContext, stage: JsValue) {
+    serde_parse!(stage);
+    dcl_js::system_api::op_set_lobby_stage(state.rc(), stage);
+}
+
+#[wasm_bindgen]
 pub fn op_set_home_scene(state: &WorkerContext, realm: String, parcel: JsValue) {
     serde_parse!(parcel);
     dcl_js::system_api::op_set_home_scene(state.rc(), realm, parcel);

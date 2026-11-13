@@ -63,7 +63,7 @@ export function GuestStartPage({ flow }: { flow: LoginFlow }): React.JSX.Element
       <div className={lobbyStyles.stage}>
         <EngineViewport region="lobby" report={session.setEngineViewport} />
       </div>
-      <StandInStage hidden={session.lobbyStageReady} body={body} />
+      <StandInStage hidden={session.lobbyStageReady} body={body} preset={session.lobbyStage.preset} />
       <ControlButton
         variant="solid"
         shape="circle"

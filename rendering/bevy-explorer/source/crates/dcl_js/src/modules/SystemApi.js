@@ -249,6 +249,10 @@ module.exports.getHomeScene = async function() {
 //   realm: string, // about_url (e.g. `realm-provider.decentraland.org/main`)
 //   parcel: Vector2,
 // }
+module.exports.setLobbyStage = async function(stage) {
+    Deno.core.ops.op_set_lobby_stage(stage ?? null)
+}
+
 module.exports.setHomeScene = async function(args) {
     await Deno.core.ops.op_set_home_scene(args.realm, args.parcel)
 }

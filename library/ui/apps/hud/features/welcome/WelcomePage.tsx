@@ -49,7 +49,7 @@ export function WelcomePage({
         <div className={lobbyStyles.stage}>
           <EngineViewport region="lobby" report={setEngineViewport} />
         </div>
-        <StandInStage hidden={session.lobbyStageReady} />
+        <StandInStage hidden={session.lobbyStageReady} preset={session.lobbyStage.preset} />
       </div>
     )
   }
@@ -59,7 +59,7 @@ export function WelcomePage({
       <div className={lobbyStyles.stage}>
         <EngineViewport region="lobby" report={setEngineViewport} />
       </div>
-      <StandInStage hidden={session.lobbyStageReady} body={stored.body} />
+      <StandInStage hidden={session.lobbyStageReady} body={stored.body} preset={session.lobbyStage.preset} />
 
       <header className={lobbyStyles.header}>
         <img className={lobbyStyles.logo} src={logo} alt="Decentraland" />

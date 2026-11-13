@@ -68,6 +68,9 @@ import { useTipEmote } from './features/donate/useDonate'
 const loadEditorHost = () => lazy(() => import('./features/editorHost/EditorHost'))
 let EditorHost = /* @__PURE__ */ loadEditorHost()
 
+/** The menu pages the startup lobby opens: where a destination can be found, and the player's own. */
+const STARTUP_LOBBY_PAGES = ['backpack', 'settings', 'communities', 'map', 'places', 'events', 'gallery', 'profile']
+
 const params = new URLSearchParams(location.search)
 // MOCK (?mock=1): UI only, no engine, fake bridge (?previousLogin=1 → returning user).
 // ENGINE (default): real engine in a same-document canvas (EngineHost — no iframe) + super-user bridge scene.
@@ -369,8 +372,9 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
   // Top-nav navigation between the full-screen menu pages (Settings/Backpack/Map)
   // and the Communities panel. Each toggle is mutually exclusive.
   const goToMenuPage = (page: string): void => {
-    // the startup lobby mounts only the Backpack; other pages wait for the world
-    if (session.phase === 'lobby' && page !== 'backpack') return
+    // the startup lobby opens the pages a destination can be found in (a pick there starts the world
+    // there); the Shop, the editor and the in-world lobby wait for the world
+    if (session.phase === 'lobby' && !STARTUP_LOBBY_PAGES.includes(page)) return
     if (page === 'lobby') session.lobbyPage.toggle()
     else if (page === 'settings') session.settings.toggle()
     else if (page === 'backpack') session.backpack.toggle()
@@ -385,6 +389,44 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
     // opens the full passport (same as for other users), not the small profile card.
     else if (page === 'profile') viewMyProfile()
   }
+
+  // The pages the startup lobby can open (shared with the in-world mounts below).
+  const discoveryPages = (
+    <>
+      <SurfaceBoundary name="Settings" open={session.settings.open} onCrash={session.closeAllPanels}>
+        <SettingsPanel settings={session.settings} bindings={session.bindings} profile={session.profile} lobbyStage={session.lobbyStage} onNavigate={goToMenuPage} />
+      </SurfaceBoundary>
+      <SurfaceBoundary name="Communities" open={session.communities.open} onCrash={session.closeAllPanels}>
+        <CommunitiesPage communities={session.communities} profile={session.profile} voiceChat={session.voiceChat} onNavigate={goToMenuPage} />
+      </SurfaceBoundary>
+      <SurfaceBoundary name="Map" open={session.map.open} onCrash={session.closeAllPanels}>
+        <MapPage map={session.map} profile={session.profile} onNavigate={goToMenuPage} />
+      </SurfaceBoundary>
+      <SurfaceBoundary name="Places" open={session.places.open} onCrash={session.closeAllPanels}>
+        <PlacesPage
+          account={discoveryAccount}
+          places={session.places}
+          profile={session.profile}
+          onNavigate={goToMenuPage}
+          onTeleport={(x, y) => session.map.teleportToPlace(x, y)}
+          onVisitWorld={(realm) => session.map.changeRealm(realm)}
+        />
+      </SurfaceBoundary>
+      <SurfaceBoundary name="Events" open={session.events.open} onCrash={session.closeAllPanels}>
+        <EventsPage
+          events={session.events}
+          profile={session.profile}
+          onNavigate={goToMenuPage}
+          onTeleport={(x, y) => session.map.teleportToPlace(x, y)}
+          onVisitWorld={(realm) => session.map.changeRealm(realm)}
+        />
+      </SurfaceBoundary>
+      <SurfaceBoundary name="Gallery" open={session.gallery.open} onCrash={session.closeAllPanels}>
+        <GalleryPage gallery={session.gallery} profile={session.profile} onNavigate={goToMenuPage} onTeleport={(x, y) => session.map.teleport(x, y)} onViewProfile={(u) => openPassport(u.address)} />
+      </SurfaceBoundary>
+    </>
+  )
+
 
   // A full-screen MainMenuShell page is open (covers the whole HUD).
   const pageOpen =
@@ -435,6 +477,7 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
           <SurfaceBoundary name="Backpack" open={session.backpack.open} onCrash={session.closeAllPanels}>
             <BackpackPage backpack={session.backpack} emotes={session.emotes} profile={session.profile} onNavigate={goToMenuPage} setEngineViewport={session.setEngineViewport} initialTab={backpackTab} modal />
           </SurfaceBoundary>
+          {discoveryPages}
         </>
       )}
       {session.phase === 'entering' && editorMode === 'off' && !session.create.open && (
@@ -480,9 +523,6 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
           <SurfaceBoundary name="Friends" open={session.friends.open} onCrash={session.closeAllPanels}>
             <FriendsPanel friends={session.friends} onMessage={session.chat.openConversation} />
           </SurfaceBoundary>
-          <SurfaceBoundary name="Settings" open={session.settings.open} onCrash={session.closeAllPanels}>
-            <SettingsPanel settings={session.settings} bindings={session.bindings} profile={session.profile} onNavigate={goToMenuPage} />
-          </SurfaceBoundary>
           <SurfaceBoundary name="Profile" open={session.profile.open} onCrash={session.closeAllPanels}>
             <ProfilePanel profile={session.profile} />
           </SurfaceBoundary>
@@ -504,36 +544,7 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
           <SurfaceBoundary name="Backpack" open={session.backpack.open} onCrash={session.closeAllPanels}>
             <BackpackPage backpack={session.backpack} emotes={session.emotes} profile={session.profile} onNavigate={goToMenuPage} setEngineViewport={session.setEngineViewport} initialTab={backpackTab} modal={session.lobbyPage.open} />
           </SurfaceBoundary>
-          <SurfaceBoundary name="Communities" open={session.communities.open} onCrash={session.closeAllPanels}>
-            <CommunitiesPage
-              communities={session.communities}
-              profile={session.profile}
-              voiceChat={session.voiceChat}
-              onNavigate={goToMenuPage}
-            />
-          </SurfaceBoundary>
-          <SurfaceBoundary name="Map" open={session.map.open} onCrash={session.closeAllPanels}>
-            <MapPage map={session.map} profile={session.profile} onNavigate={goToMenuPage} />
-          </SurfaceBoundary>
-          <SurfaceBoundary name="Places" open={session.places.open} onCrash={session.closeAllPanels}>
-            <PlacesPage
-              account={discoveryAccount}
-              places={session.places}
-              profile={session.profile}
-              onNavigate={goToMenuPage}
-              onTeleport={(x, y) => session.map.teleportToPlace(x, y)}
-              onVisitWorld={(realm) => session.map.changeRealm(realm)}
-            />
-          </SurfaceBoundary>
-          <SurfaceBoundary name="Events" open={session.events.open} onCrash={session.closeAllPanels}>
-            <EventsPage
-              events={session.events}
-              profile={session.profile}
-              onNavigate={goToMenuPage}
-              onTeleport={(x, y) => session.map.teleportToPlace(x, y)}
-              onVisitWorld={(realm) => session.map.changeRealm(realm)}
-            />
-          </SurfaceBoundary>
+          {discoveryPages}
           <SurfaceBoundary
             name="Shop"
             open={session.shop.open}
@@ -543,15 +554,6 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
             }}
           >
             <host.ShopPage session={session} onNavigate={goToMenuPage} mock={MODE === 'mock'} />
-          </SurfaceBoundary>
-          <SurfaceBoundary name="Gallery" open={session.gallery.open} onCrash={session.closeAllPanels}>
-            <GalleryPage
-              gallery={session.gallery}
-              profile={session.profile}
-              onNavigate={goToMenuPage}
-              onTeleport={(x, y) => session.map.teleport(x, y)}
-              onViewProfile={(u) => openPassport(u.address)}
-            />
           </SurfaceBoundary>
         </EditorOffered.Provider>
       )}

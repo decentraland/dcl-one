@@ -254,18 +254,73 @@
   --type-name-card-domain: 16.24px; /* the NAME card art's "DCL.ETH" */
   --h2-tracking: -0.5px; /* the design's typography/h2 (Inter Semi Bold 60) */
 
-  /* Lobby cards. Translucent values are measured on screen against the parity capture, not
-     copied from layout alphas (those blend in linear space). */
+  /* The lobby, at its 1920×1080 canvas. Translucent whites and blacks are the design's percentages:
+     the browser blends in sRGB as the design does. */
+  --lobby-margin: 50px;
+  --lobby-widget-inset: 10px;
+  --lobby-grid-margin: 40px;
+  --lobby-grid-top: 97px;
+  --lobby-bottom-margin: 26px;
+  --lobby-cell: 114px;
+  --lobby-gutter: 2px;
+  --lobby-card-fill: rgba(20, 20, 26, 0.9);
+  --lobby-card-bone: rgb(20, 20, 26);
+  --lobby-white-1: rgba(255, 255, 255, 0.01);
+  --lobby-white-2: rgba(255, 255, 255, 0.02);
+  --lobby-white-5: rgba(255, 255, 255, 0.05);
+  --lobby-white-6: rgba(255, 255, 255, 0.06);
+  --lobby-white-10: rgba(255, 255, 255, 0.1);
+  --lobby-white-20: rgba(255, 255, 255, 0.2);
+  --lobby-white-40: rgba(255, 255, 255, 0.4);
+  --lobby-white-60: rgba(255, 255, 255, 0.6);
+  --lobby-white-70: rgba(255, 255, 255, 0.7);
+  --lobby-white-80: rgba(255, 255, 255, 0.8);
+  --lobby-black-40: rgba(0, 0, 0, 0.4);
+  --lobby-black-55: rgba(0, 0, 0, 0.55);
+  --lobby-black-60: rgba(0, 0, 0, 0.6);
+  --lobby-black-80: rgba(0, 0, 0, 0.8);
+  --lobby-black-95: rgba(0, 0, 0, 0.95);
+  --lobby-button-hover: rgba(90, 90, 90, 0.55);
+  --lobby-snow: rgb(252, 252, 252);
+  --lobby-silver: rgb(160, 155, 168);
+  --lobby-shadow: rgb(22, 21, 24);
+  --lobby-subtitle: rgb(207, 205, 212);
+  --lobby-grip: rgb(113, 107, 124);
+  --lobby-accent: rgb(255, 45, 85);
+  --lobby-accent-hover: rgb(255, 77, 111);
+  --lobby-accent-pressed: rgb(200, 35, 67);
+  --lobby-accent-tint: rgb(255, 230, 235);
+  --lobby-view-all-arrow: rgb(204, 29, 44);
+  --lobby-outline-to: rgb(198, 64, 205);
+  --lobby-live-red: rgb(255, 0, 0);
+  --lobby-online-green: rgb(48, 205, 0);
+  --lobby-status-online: rgb(52, 206, 119);
+  --lobby-status-away: rgb(255, 162, 90);
+  --lobby-friend-hover: rgb(37, 33, 42);
+  --lobby-menu-border: rgb(34, 33, 36);
+  --lobby-menu-separator: rgb(42, 41, 44);
+  --lobby-menu-pressed: rgb(45, 42, 51);
+  --lobby-remove-hover: rgb(43, 42, 46);
+  --lobby-drop-valid: rgb(52, 206, 119);
+  --lobby-drop-valid-edge: rgba(52, 206, 119, 0.5);
+  --lobby-drop-valid-fill: rgba(52, 206, 119, 0.1);
+  --lobby-drop-invalid-edge: rgba(255, 45, 85, 0.5);
+  --lobby-drop-invalid-fill: rgba(255, 45, 85, 0.1);
+  --lobby-modal-drop-fill: rgba(14, 40, 27, 0.9);
+  --lobby-text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
+  --lobby-gradient-tint: rgba(0, 0, 0, 0.6);
+  --lobby-image-rest: rgb(230, 230, 230);
+  --lobby-dur-press: 100ms;
+  --lobby-dur-arrow: 150ms;
+  --lobby-dur-outline: 200ms;
+  --lobby-dur-snap: 250ms;
+  --lobby-dur-thumb: 300ms;
+  --lobby-dur-edit: 150ms;
+
+  /* The welcome and guest start pages' panel over the stage. */
   --lobby-card: rgba(20, 20, 26, 0.84);
-  --lobby-pill: rgb(22, 21, 24);
-  --lobby-online: rgb(48, 205, 0);
-  --lobby-live: rgb(255, 0, 0);
   --lobby-ink: rgb(252, 252, 252);
   --lobby-ink-dim: rgb(191, 191, 199);
-  --lobby-tooltip: rgba(0, 0, 0, 0.7);
-  /* titles set semibold with a faux-bold flag, ~11% wider than plain bold */
-  --lobby-title-tracking: 0.068em;
-  --lobby-skeleton: linear-gradient(90deg, rgba(143, 66, 219, 0.35), rgba(143, 66, 219, 0.7), rgba(143, 66, 219, 0.35));
   --header-btn: var(--black);
   --header-btn-hover: rgb(31, 31, 31);
   --header-btn-ring: rgba(255, 255, 255, 0.18); /* measured: rgb(46,46,46) over black */

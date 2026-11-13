@@ -55,6 +55,35 @@ describe('lobby session regressions', () => {
     await waitFor(() => expect(h.session().phase).toBe('world'))
   })
 
+  it('picks where the world starts from a page opened over the startup lobby', async () => {
+    const h = renderSession()
+    await waitFor(() => expect(h.session().login.status).toBe('sign-in-or-guest'))
+    act(() => h.session().login.exploreAsGuest())
+    await waitFor(() => expect(h.session().phase).toBe('lobby'))
+    await waitFor(() => expect(h.session().login.busy).toBe(false))
+
+    act(() => h.session().map.toggle())
+    expect(h.session().map.open).toBe(true)
+    act(() => h.session().map.teleport(5, 6))
+    expect(h.session().map.open).toBe(false)
+    expect(h.session().phase).toBe('entering')
+    expect(h.driver.last('teleport')).toMatchObject({ x: 5, y: 6 })
+  })
+
+  it('changes realm into a world from a page opened over the startup lobby', async () => {
+    const h = renderSession()
+    await waitFor(() => expect(h.session().login.status).toBe('sign-in-or-guest'))
+    act(() => h.session().login.exploreAsGuest())
+    await waitFor(() => expect(h.session().phase).toBe('lobby'))
+    await waitFor(() => expect(h.session().login.busy).toBe(false))
+
+    act(() => h.session().places.toggle())
+    act(() => h.session().map.changeRealm('mana.dcl.eth'))
+    expect(h.session().places.open).toBe(false)
+    expect(h.session().phase).toBe('entering')
+    expect(h.driver.last('changeRealm')).toMatchObject({ realm: 'mana.dcl.eth' })
+  })
+
   it.each(['my-home.dcl.eth', DEFAULT_REALM])('waits for the native home response and returns to its saved parcel in %s', async (realm) => {
     const h = renderSession()
     await enterAsGuest(h)

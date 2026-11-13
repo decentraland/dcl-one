@@ -153,6 +153,12 @@ export const WEB_PARAMS: WebParam[] = [
     "doc": "Chat translation, used by the HUD; absent = `https://autotranslate-server.<base>`"
   },
   {
+    "name": "archipelagoStats",
+    "kind": "string",
+    "delivery": "resolved",
+    "doc": "Archipelago statistics (where online players are), used by the HUD; absent = `https://archipelago-ea-stats.<base>`"
+  },
+  {
     "name": "pulseServer",
     "kind": "string",
     "delivery": "resolved",

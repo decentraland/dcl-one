@@ -150,6 +150,13 @@ export const SERVICES: ServiceDef[] = [
     "path": ""
   },
   {
+    "name": "archipelagoStats",
+    "value": "http",
+    "scheme": "https",
+    "sub": "archipelago-ea-stats",
+    "path": ""
+  },
+  {
     "name": "pulseServer",
     "value": "authority",
     "scheme": "",

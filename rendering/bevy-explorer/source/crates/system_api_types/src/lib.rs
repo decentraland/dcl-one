@@ -163,6 +163,19 @@ pub struct HomeScene {
     pub parcel: Vector2,
 }
 
+/// The lobby's 3D stage, drawn around the system scene's preview avatar for the camera that
+/// renders the scene's `layer`.
+#[derive(Serialize, Deserialize, Clone, Debug, ts_rs::TS)]
+#[ts(export)]
+pub struct LobbyStage {
+    /// The look's id, as the HUD's Settings lists it; an unknown id shows the first look.
+    pub preset: String,
+    /// The system scene's camera layer the preview camera and avatar render on.
+    pub layer: u32,
+    /// The avatar's feet, in the system scene's coordinates.
+    pub feet: Vector3,
+}
+
 /// What the welcome page must show for the signed-in account.
 #[derive(Serialize, Deserialize, Clone, Debug, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]

@@ -181,11 +181,18 @@ these by hand (or have an agent drive the Chrome extension against a live world)
       place of the green speaking bars, and nothing when they are quiet; Hear brings the bars back.
       The same player talking in a private call or community stream with you, which the mute leaves
       audible, shows the green bars.
-- [ ] **Lobby stage** (`bridge-scene/src/domains/avatarPreview.tsx`, lobby region): after sign-in the
-      page's stand-in (backdrop + snapshot) crossfades to the engine stage with the live avatar centred;
+- [ ] **Lobby stage** (`crates/system_ui/src/lobby_stage`, `bridge-scene/src/domains/avatarPreview.tsx`,
+      lobby region): after sign-in the page's stand-in (the chosen look's backdrop + snapshot)
+      crossfades to the engine's 3D stage: backdrop, floor dissolving into it, podium, props, mist,
+      dust and vignette around the live avatar, which waves, plays an idle emote every 8–20 s and
+      turns when dragged. Settings → Lobby switches the look at once (Halloween 2026, Game World).
       Customize opens the Backpack modal with the avatar through its hole and hands the stage back on
       close; Jump In loads the world (the hold is released) and a failed trip returns to the lobby.
-      The `lobby` baseline only shows the stand-in (mock has no engine).
+- [ ] **Lobby page** (`features/lobby`): the widgets sit on the four corner grids as the stored layout
+      says; edit mode (the pencil) frames them, drags them with the others making room, lists the
+      ones off the grids in Customize Lobby, and Save keeps the layout across a reload while Cancel,
+      Back and Escape drop the changes. From the startup lobby, Map, Places, Events and Go to pick
+      where the world starts.
 
 ---
 
@@ -318,7 +325,13 @@ back as `analyticsSession`). Expectations:
   thirdweb guest step (`features/auth/guestWalletEvent.ts`).
 - **Welcome / lobby**: WELCOME or AVATAR_NAMING, AUTH_DEPLOY_SUCCESS; clicks LETS_GO,
   NAME_RANDOMIZE; LOBBY, PLACES_PICKER; clicks JUMP_IN {kind, place_id|event_id}, CUSTOMIZE,
-  NOTIFICATIONS, CLOSE (`LobbyHome.tsx`).
+  NOTIFICATIONS, CLOSE (`LobbyHome.tsx`). The lobby's own events, named as the Unity explorer
+  reports them so both clients' lobby data reads alike (`features/lobby/lobbyAnalytics.ts`):
+  `lobby_opened` and `lobby_closed` {source,
+  is_startup, duration_sec}; `place_card_clicked` and `place_jumped_in` {place_id, place_name,
+  place_coords, highlighted, from_section}; `event_card_clicked` and `event_jumped_in` {event_id,
+  event_name, event_coords, highlighted, from_section}; `jump_to_friend_clicked` {receiver_id,
+  friend_position}; `places_section_opened`, `events_section_opened`.
 - **Loading**: the engine's, not the page's. LOADING_START {position, realm, when}, LOADING_END
   {position, status} and LOADING_TIMEOUT after 90 s follow its own loading screen
   (`crates/analytics/src/loading.rs`), the one `sceneLoading` mirrors here.

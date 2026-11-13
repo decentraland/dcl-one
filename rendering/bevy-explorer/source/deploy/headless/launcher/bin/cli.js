@@ -62,6 +62,7 @@ function translate(argv) {
     // the per-service url overrides (crates/system_api_types/src/services.rs — the
     // Service::field names, kebab-cased); keep in sync when a service is added
     '--abgen-cdn': true,
+    '--archipelago-stats': true,
     '--assets-cdn': true,
     '--auth-api': true,
     '--auth-page': true,

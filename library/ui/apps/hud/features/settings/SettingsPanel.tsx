@@ -7,8 +7,10 @@ import { memo, useMemo, useState } from 'react'
 import { Select, Slider, Tabs, Toggle, Tooltip, showConfirm } from '../../design'
 import { MainMenuShell } from '../menu/MainMenuShell'
 import type { Setting } from '@explorer-core/engine/protocol'
-import type { BindingsState, ProfileState, SettingsState } from '../session/useEngineSession'
+import type { BindingsState, EngineSession, ProfileState, SettingsState } from '../session/useEngineSession'
 import { KeyBindingsTab } from './KeyBindingsTab'
+import { LobbyStageTab } from './LobbyStageTab'
+import { LOBBY_STAGE_PRESETS } from '@explorer-core/engine/lobbyStage'
 import { clearAutoTranslate, setAutoTranslateDefault } from '@explorer-core/features/chat/translation'
 import { useTranslationPrefs } from '../chat/useTranslation'
 import { PING_MODES, clearPingMode, setPingDefault, usePingPrefs, type PingMode } from '../chat/ping'
@@ -19,6 +21,7 @@ import styles from './SettingsPanel.module.css'
 const KEY_BINDINGS_TAB = 'Key Bindings'
 // The HUD's own chat settings (translation, the notification ping) join the engine's in this tab.
 const CHAT_TAB = 'Chat'
+const LOBBY_TAB = 'Lobby'
 
 function humanize(s: string): string {
   return s.replace(/[_-]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
@@ -132,15 +135,18 @@ export function SettingsPanel({
   settings,
   bindings,
   profile,
+  lobbyStage,
   onNavigate
 }: {
   settings: SettingsState
   bindings: BindingsState
   profile: ProfileState
+  /** The lobby stage's look, which the Lobby tab picks. */
+  lobbyStage: EngineSession['lobbyStage']
   onNavigate: (page: string) => void
 }): React.JSX.Element | null {
   const categories = useMemo(
-    () => [...new Set([...settings.list.map((s) => s.category), CHAT_TAB]), KEY_BINDINGS_TAB],
+    () => [...new Set([...settings.list.map((s) => s.category), CHAT_TAB, LOBBY_TAB]), KEY_BINDINGS_TAB],
     [settings.list]
   )
   const [tab, setTab] = useState<string | null>(null)
@@ -159,6 +165,7 @@ export function SettingsPanel({
       return
     }
     items.forEach((s) => settings.set(s.name, s.default))
+    if (activeTab === LOBBY_TAB) lobbyStage.set({ preset: LOBBY_STAGE_PRESETS[0].id })
     if (activeTab === CHAT_TAB) {
       setAutoTranslateDefault(false)
       clearAutoTranslate()
@@ -189,6 +196,8 @@ export function SettingsPanel({
       <div className={styles.card}>
         {activeTab === KEY_BINDINGS_TAB ? (
           <KeyBindingsTab bindings={bindings} />
+        ) : activeTab === LOBBY_TAB ? (
+          <LobbyStageTab preset={lobbyStage.preset} onPick={(preset) => lobbyStage.set({ preset })} />
         ) : items.length === 0 && activeTab !== CHAT_TAB ? (
           <div className={styles.empty}>No settings available.</div>
         ) : (

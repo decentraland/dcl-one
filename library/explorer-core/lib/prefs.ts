@@ -18,6 +18,8 @@ export const PREF = {
   chatClosedCommunities: 'chat.communities.closed',
   chatKnownCommunities: 'chat.communities.known',
   lobbyRecents: 'lobby.recentPlaces',
+  lobbyLayout: 'lobby.layout',
+  lobbyStagePreset: 'lobby.stagePreset',
   minimapPlaces: 'dcl-minimap-places',
   minimapStyle: 'dcl-minimap-style',
   minimapRotation: 'dcl-minimap-rotation',

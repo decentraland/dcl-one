@@ -1512,6 +1512,22 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       })
       return
     }
+    if (msg.kind === 'getLobbyEvents') {
+      const at = (minutes: number): string => new Date(Date.now() + minutes * 60_000).toISOString()
+      reply({
+        kind: 'lobbyEvents',
+        events: [
+          { id: 'mock-live', name: 'Mock Live Party', user_name: 'Mojito', x: 0, y: 0, live: true, start_at: at(-30), next_start_at: at(-30), connected_addresses: ['0x1', '0x2'] },
+          { id: 'mock-soon', name: 'Mock Tower Smash Arena', user_name: 'Razzor', x: 10, y: 10, live: false, start_at: at(40), next_start_at: at(40), next_finish_at: at(100), attending: false }
+        ]
+      })
+      return
+    }
+    if (msg.kind === 'setEventInterest') {
+      reply({ kind: 'eventInterest', id: msg.id, interested: msg.interested, ok: true })
+      return
+    }
+    if (msg.kind === 'quit') return
     if (msg.kind === 'deleteGalleryPhoto') {
       const i = mockGallery.findIndex((p) => p.id === msg.id)
       if (i >= 0) mockGallery.splice(i, 1)

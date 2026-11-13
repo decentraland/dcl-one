@@ -1,0 +1,172 @@
+/* The lobby's profile menu: a 370px panel under the top bar's profile, over a backdrop that closes it. */
+.menu {
+  position: absolute;
+  inset: 0;
+}
+.backdrop {
+  position: absolute;
+  inset: 0;
+}
+.panel {
+  position: absolute;
+  top: 81px;
+  right: var(--lobby-margin);
+  box-sizing: border-box;
+  width: 370px;
+  padding: 20px 20px 0;
+  border: 1px solid var(--lobby-menu-border);
+  border-radius: var(--r-lg);
+  background: var(--lobby-shadow);
+  overflow: hidden;
+}
+.withClose {
+  right: 106px;
+}
+.identity {
+  display: flex;
+  align-items: center;
+}
+.picture {
+  flex: none;
+  box-sizing: border-box;
+  width: 72px;
+  height: 72px;
+  border: 3px solid var(--lobby-white-20);
+  border-radius: 36px;
+  background: var(--white) center / cover no-repeat;
+}
+.texts {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin-left: 16px;
+  display: flex;
+  flex-direction: column;
+}
+.nameRow {
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+}
+.name {
+  min-width: 0;
+  font-size: var(--type-22);
+  font-weight: var(--fw-semibold);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.verified {
+  flex: none;
+  margin-left: 6px;
+}
+.caption {
+  margin-top: 2px;
+  font-size: var(--type-15);
+  color: var(--lobby-silver);
+}
+.addressRow {
+  position: relative;
+  display: flex;
+  align-items: center;
+  margin-top: 2px;
+}
+.address {
+  font-size: var(--type-15);
+  color: var(--lobby-snow);
+}
+.copy {
+  display: grid;
+  place-items: center;
+  margin-left: 10px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--lobby-silver);
+  cursor: pointer;
+  transition: color var(--lobby-dur-press);
+}
+.copy:hover {
+  color: var(--lobby-snow);
+}
+.copy:active {
+  color: var(--lobby-silver);
+}
+.copied {
+  position: absolute;
+  left: 100%;
+  top: 50%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  margin-left: 6px;
+  padding: 0 10px;
+  border-radius: var(--r-sm);
+  background: var(--lobby-shadow);
+  font-size: var(--type-12);
+  color: var(--lobby-snow);
+  white-space: nowrap;
+  transform: translateY(-50%);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--lobby-dur-thumb);
+}
+.copiedShown {
+  opacity: 1;
+}
+.separator {
+  height: 1px;
+  margin: 12px -20px;
+  background: var(--lobby-menu-separator);
+}
+.separatorIdentity {
+  margin-top: 24px;
+}
+.item {
+  display: flex;
+  align-items: center;
+  width: calc(100% + 24px);
+  height: 46px;
+  margin: 0 -12px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--r-md);
+  background: none;
+  color: var(--lobby-snow);
+  font-family: inherit;
+  cursor: pointer;
+  transition: background-color var(--lobby-dur-press);
+}
+.item:hover,
+.item:focus-visible {
+  background: var(--lobby-menu-border);
+  outline: none;
+}
+.item:active {
+  background: var(--lobby-menu-pressed);
+}
+.itemLabel {
+  margin-left: 12px;
+  font-size: 17px;
+  font-weight: var(--fw-semibold);
+}
+.footer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 38px;
+  margin: 12px -20px 0;
+  padding: 0 20px;
+  background: var(--lobby-menu-border);
+}
+.link {
+  margin: 0 26px;
+  font-size: var(--type-14);
+  color: var(--lobby-silver);
+  text-decoration: none;
+  transition: color var(--lobby-dur-press);
+}
+.link:hover,
+.link:focus-visible {
+  color: var(--lobby-snow);
+}

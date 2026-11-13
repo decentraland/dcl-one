@@ -331,8 +331,10 @@ export function MapPage({
     setQuery('')
   }
   const visitWorld = (w: World): void => {
-    map.changeRealm(w.world_name)
+    // close first: a pick from the startup lobby closes every page itself, and a toggle after it
+    // would reopen the map over the world
     map.toggle()
+    map.changeRealm(w.world_name)
   }
   const askVisitWorld = (w: World): void => {
     closeVisitRef.current = openWorldVisit({
@@ -343,8 +345,8 @@ export function MapPage({
   }
   const jumpTo = (pl: Place): void => {
     const [x, y] = pl.base_position.split(',').map(Number)
-    map.teleportToPlace(x, y)
     map.toggle()
+    map.teleportToPlace(x, y)
   }
 
   // The whole menu overlay is rendered inside `transform: scale(--ui-scale)` (DPI scaling),

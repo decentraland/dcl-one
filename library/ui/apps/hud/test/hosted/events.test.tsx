@@ -50,7 +50,7 @@ describe('events', () => {
     serveEvents([parcel, world])
     const onTeleport = vi.fn()
     const onVisitWorld = vi.fn()
-    const events = { open: true, toggle: vi.fn() }
+    const events = { open: true, toggle: vi.fn(), section: 'live' as const, openAt: vi.fn() }
     render(<EventsPage events={events} profile={fakeProfileState()} onNavigate={vi.fn()} onTeleport={onTeleport} onVisitWorld={onVisitWorld} />)
     await userEvent.click(await screen.findByRole('button', { name: 'Plaza party' }))
     expect(onTeleport).toHaveBeenCalledWith(-9, 12)
@@ -61,7 +61,7 @@ describe('events', () => {
 
   it('shows the failure with a Retry that reloads', async () => {
     serveEvents('down', [parcel])
-    render(<EventsPage events={{ open: true, toggle: vi.fn() }} profile={fakeProfileState()} onNavigate={vi.fn()} onTeleport={vi.fn()} onVisitWorld={vi.fn()} />)
+    render(<EventsPage events={{ open: true, toggle: vi.fn(), section: 'live', openAt: vi.fn() }} profile={fakeProfileState()} onNavigate={vi.fn()} onTeleport={vi.fn()} onVisitWorld={vi.fn()} />)
     expect(await screen.findByText("Couldn't load events")).toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: 'Retry' }))
     expect(await screen.findByRole('button', { name: 'Plaza party' })).toBeInTheDocument()
@@ -75,14 +75,14 @@ describe('events', () => {
       },
       [parcel, world]
     )
-    render(<EventsPage events={{ open: true, toggle: vi.fn() }} profile={fakeProfileState()} onNavigate={vi.fn()} onTeleport={vi.fn()} onVisitWorld={vi.fn()} />)
+    render(<EventsPage events={{ open: true, toggle: vi.fn(), section: 'live', openAt: vi.fn() }} profile={fakeProfileState()} onNavigate={vi.fn()} onTeleport={vi.fn()} onVisitWorld={vi.fn()} />)
     expect(await within(await screen.findByRole('button', { name: 'Plaza party' })).findByText('11')).toBeInTheDocument()
     expect(within(screen.getByRole('button', { name: 'Galaga night' })).getByText('3')).toBeInTheDocument()
   })
 
   it('shows the events when presence answers with HTML or never answers', async () => {
     servePresence({ hotScenes: 'html', liveData: 'hang' }, [parcel, world])
-    render(<EventsPage events={{ open: true, toggle: vi.fn() }} profile={fakeProfileState()} onNavigate={vi.fn()} onTeleport={vi.fn()} onVisitWorld={vi.fn()} />)
+    render(<EventsPage events={{ open: true, toggle: vi.fn(), section: 'live', openAt: vi.fn() }} profile={fakeProfileState()} onNavigate={vi.fn()} onTeleport={vi.fn()} onVisitWorld={vi.fn()} />)
     expect(await screen.findByRole('button', { name: 'Plaza party' })).toBeInTheDocument()
     expect(screen.queryByText("Couldn't load events")).not.toBeInTheDocument()
   })

@@ -1,256 +1,843 @@
-/* Lobby cards, at the parity sizes on the 1920×1080 canvas. */
-.thumb {
+/* The lobby's cards, on the 1920×1080 canvas. A card's clickable surface is its full-size cover
+   button; its badges, Jump In and actions sit over it. */
+
+.cover {
   position: absolute;
   inset: 0;
-  overflow: hidden;
-  border-radius: var(--r-lg);
-  background: var(--lobby-card);
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
 }
-.thumb img {
+.cover:focus-visible,
+.jumpIn:focus-visible,
+.action:focus-visible,
+.join:focus-visible,
+.view:focus-visible {
+  outline: 2px solid var(--lobby-snow);
+  outline-offset: 2px;
+}
+
+/* ---- pictures ---- */
+.zoomThumb,
+.landingThumb {
+  position: absolute;
+  inset: 0;
+  transition: transform var(--lobby-dur-thumb) ease-out;
+}
+.thumbImage {
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
   object-fit: cover;
-  display: block;
-  animation: imgIn var(--dur-mid) linear;
 }
-@keyframes imgIn {
-  from {
-    opacity: 0;
-  }
+.thumbSkeleton {
+  position: absolute;
+  inset: 0;
+  background: var(--lobby-card-bone) linear-gradient(90deg, transparent 0%, var(--lobby-white-10) 50%, transparent 100%) no-repeat;
+  background-size: 200% 100%;
+  opacity: 0;
+  transition: opacity var(--lobby-dur-thumb) ease-out;
+  animation: shimmer 1.4s linear infinite;
 }
-.skeleton {
-  background: var(--lobby-skeleton) 0 0 / 200% 100%;
-  animation: shimmer var(--dur-shimmer) linear infinite;
+.thumbSkeletonShown {
+  opacity: 1;
+  transition: none;
 }
 @keyframes shimmer {
+  from {
+    background-position: 150% 0;
+  }
   to {
-    background-position: -200% 0;
+    background-position: -50% 0;
   }
 }
+
+/* The dark fade under a card's text: 52px in, then flat. */
+.gradient {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0) 0,
+    rgba(0, 0, 0, 0.11) 8px,
+    rgba(0, 0, 0, 0.357) 16px,
+    rgba(0, 0, 0, 0.62) 24px,
+    rgba(0, 0, 0, 0.816) 32px,
+    rgba(0, 0, 0, 0.922) 40px,
+    rgba(0, 0, 0, 0.961) 48px,
+    rgba(0, 0, 0, 0.965) 52px,
+    rgba(0, 0, 0, 0.965) 100%
+  );
+  transition: height var(--lobby-dur-thumb) ease-out;
+}
+
+/* The gradient ring a hovered card wears 6px out: 2px thick, the accent at the top to violet below. */
+.outline {
+  position: absolute;
+  inset: -6px;
+  padding: 2px;
+  border-radius: 22px;
+  background: linear-gradient(to bottom, var(--lobby-accent), var(--lobby-outline-to));
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  -webkit-mask-composite: xor;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--lobby-dur-outline) ease-out;
+}
+
+/* ---- badges ---- */
 .badges {
   position: absolute;
-  top: 12px;
-  left: 12px;
   display: flex;
-  gap: 6px;
-  height: 28px;
-}
-.counter,
-.liveBadge {
-  display: inline-flex;
   align-items: center;
-  gap: 4px;
-  height: 28px;
-  padding: 4px 6px;
+  height: 26px;
+  pointer-events: none;
+}
+.badges > * {
+  pointer-events: auto;
+}
+.online {
+  display: flex;
+  align-items: center;
+  height: 26px;
+  margin-right: 6px;
+  padding: 0 6px;
   border-radius: var(--r-sm);
-  background: var(--lobby-pill);
-  color: var(--lobby-ink);
-  font-size: var(--type-14);
-  font-weight: var(--fw-semibold);
-  box-sizing: border-box;
+  background: var(--lobby-shadow);
 }
 .onlineDot {
   width: 8px;
   height: 8px;
-  border-radius: 50%;
-  background: var(--lobby-online);
+  margin-right: 4px;
+  border-radius: 4px;
+  background: var(--lobby-online-green);
 }
-.liveBadge {
-  padding: 4px 8px 4px 6px;
-  background: var(--lobby-live);
-  font-size: var(--type-12);
-  font-weight: var(--fw-bold);
-  text-transform: uppercase;
+.onlineIcon {
+  margin-right: 4px;
+  color: var(--lobby-snow);
+}
+.onlineCount {
+  font-size: var(--type-14);
+  font-weight: var(--fw-semibold);
+  color: var(--lobby-snow);
+}
+.friendsRow {
+  display: flex;
+  align-items: center;
+  height: 26px;
+}
+.friendPicture {
+  box-sizing: border-box;
+  width: 26px;
+  height: 26px;
+  border: 2px solid var(--lobby-white-40);
+  border-radius: 13px;
+  background: var(--white) center / 140% no-repeat;
+}
+.overlapping {
+  margin-left: -8px;
+}
+.friendsOverflow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 26px;
+  min-width: 26px;
+  padding: 0 6px;
+  border-radius: 13px;
+  background: var(--lobby-shadow);
+  font-size: var(--type-14);
+  font-weight: var(--fw-semibold);
+  color: var(--lobby-snow);
 }
 
-/* Landing hero 520×300, and the live event card 358×214 (same text layout). */
-.landing,
-.liveEvent {
-  position: relative;
-  width: 520px;
-  height: 300px;
-  border-radius: var(--r-lg);
-  color: var(--white);
-}
-.liveEvent {
-  display: block;
-  width: 358px;
-  height: 214px;
+/* ---- Jump In ---- */
+.jumpIn {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   padding: 0;
   border: 0;
-  background: none;
-  font: inherit;
-  text-align: left;
+  border-radius: 6px;
+  background: var(--lobby-accent);
+  box-shadow: 0 2px 2px rgba(0, 0, 0, 0.05);
+  color: var(--lobby-snow);
+  font-family: inherit;
+  font-weight: var(--fw-bold, 700);
   cursor: pointer;
+  transition: background-color var(--lobby-dur-press);
 }
-.liveEvent:disabled {
+.jumpIn:hover {
+  background: var(--lobby-accent-hover);
+}
+.jumpIn:active {
+  background: var(--lobby-accent-pressed);
+}
+.jumpIn:disabled {
+  opacity: 0.5;
   cursor: default;
 }
-.liveEvent:focus-visible,
-.friend:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
+.jumpInLarge {
+  height: 46px;
+  font-size: var(--type-16);
 }
-.landingTitle {
+.jumpInLarge .jumpInText {
+  margin-right: 8px;
+}
+.jumpInSmall {
+  height: 40px;
+  font-size: var(--type-14);
+}
+.jumpInSmall .jumpInText {
+  margin-right: 6px;
+}
+
+/* ---- landing ---- */
+.landing {
+  position: relative;
+  width: 442px;
+  height: 248px;
+}
+.landing:hover .outline {
+  opacity: 1;
+}
+.landingBody {
   position: absolute;
-  left: 16px;
-  right: 174px;
-  bottom: 42px;
-  height: 30px;
-  font-size: var(--type-22);
-  font-weight: var(--fw-bold);
-  letter-spacing: var(--lobby-title-tracking);
-  line-height: 30px;
-  white-space: nowrap;
+  inset: 0;
+  box-sizing: border-box;
+  border: 1px solid var(--lobby-white-10);
+  border-radius: var(--r-lg);
+  background: var(--lobby-card-fill);
   overflow: hidden;
 }
-.liveEvent .landingTitle {
-  right: 16px;
+.landingThumb {
+  filter: brightness(0.9);
+  transition:
+    transform var(--lobby-dur-thumb) ease-out,
+    filter var(--lobby-dur-thumb) ease-out;
 }
-.landingCreator {
+.landing:hover .landingThumb {
+  transform: scale(1.05);
+  filter: none;
+}
+.static .landingBody {
+  background: rgba(16, 16, 20, 0.45);
+}
+.static:hover .outline {
+  opacity: 0;
+}
+.static:hover .landingThumb {
+  transform: none;
+  filter: brightness(0.9);
+}
+.landingGradient {
+  height: 140px;
+}
+.landingBadges {
+  top: 20px;
+  left: 20px;
+}
+.landingFooter {
   position: absolute;
-  left: 16px;
-  right: 174px;
-  bottom: 16px;
-  height: 22px;
-  font-size: var(--type-14);
-  line-height: 22px;
-  color: var(--lobby-ink-dim);
+  left: 21px;
+  right: 21px;
+  bottom: 84px;
+  display: flex;
+  align-items: center;
+  height: 24px;
+  pointer-events: none;
+}
+.homeIcon {
+  margin-right: 10px;
+  color: var(--lobby-snow);
+}
+.landingTitle {
+  min-width: 0;
+  font-size: var(--type-20);
+  font-weight: var(--fw-semibold);
+  color: var(--lobby-snow);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.landingJump {
-  position: absolute;
-  right: 16px;
-  bottom: 16px;
+.landingJumpIn {
+  left: 21px;
+  right: 21px;
+  bottom: 22px;
 }
 
-/* Place card 280×165: the header shrinks 110→86 on hover as JUMP IN replaces the creator. */
-.place {
+/* ---- place ---- */
+.place,
+.community {
   position: relative;
-  width: 280px;
-  height: 165px;
+  box-sizing: border-box;
+  width: 256px;
+  height: 146px;
+  border: 1px solid var(--lobby-white-10);
   border-radius: var(--r-lg);
-  background: var(--lobby-card);
-  color: var(--white);
+  background: var(--lobby-card-fill);
   overflow: hidden;
 }
-.placeWide {
-  width: 358px;
+.narrow {
+  width: 215px;
 }
-.placeHeader {
-  position: absolute;
-  inset: 0 0 auto;
-  height: 110px;
-  transition: height var(--dur-mid) var(--ease-outquad);
+.place:hover .zoomThumb,
+.liveEvent:hover .zoomThumb,
+.upcoming:hover .zoomThumb,
+.community:hover .zoomThumb,
+.photo:hover .zoomThumb {
+  transform: scale(1.05);
+}
+.placeGradient {
+  height: 100px;
+}
+.place:hover .placeGradient {
+  height: 132px;
+}
+.placeBadges {
+  top: 12px;
+  left: 12px;
 }
 .placeFooter {
   position: absolute;
-  inset: auto 0 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  box-sizing: border-box;
   height: 55px;
-  transition: height var(--dur-mid) var(--ease-outquad);
+  padding: 8px 10px 0;
+  pointer-events: none;
+  transition: height var(--lobby-dur-thumb) ease-out;
 }
-.place:hover .placeHeader,
-.place:focus-within .placeHeader {
-  height: 86px;
-}
-.place:hover .placeFooter,
-.place:focus-within .placeFooter {
-  height: 79px;
+.place:hover .placeFooter {
+  height: 87px;
 }
 .placeTitle {
-  position: absolute;
-  top: 8px;
-  left: 10px;
-  right: 10px;
-  height: 20px;
-  font-size: var(--type-14);
-  font-weight: var(--fw-bold);
-  letter-spacing: var(--lobby-title-tracking);
-  line-height: 20px;
+  display: block;
+  height: 24px;
+  margin-bottom: 2px;
+  font-size: var(--type-18);
+  font-weight: var(--fw-semibold);
+  line-height: 24px;
+  color: var(--white);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .placeCreator {
-  position: absolute;
-  top: 30px;
-  left: 10px;
-  right: 10px;
+  display: block;
   height: 16px;
   font-size: var(--type-11);
   line-height: 16px;
-  color: var(--lobby-ink-dim);
+  color: var(--lobby-subtitle);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  transition: opacity var(--dur-mid) var(--ease-outquad);
+  transition: opacity var(--lobby-dur-thumb) ease-out;
 }
-.placeJump {
-  position: absolute;
-  left: 8px;
-  right: 8px;
+.place:hover .placeCreator {
+  opacity: 0;
+}
+.placeJumpIn {
+  left: 7px;
+  right: 7px;
   bottom: 8px;
   opacity: 0;
-  transition: opacity var(--dur-mid) var(--ease-outquad);
+  transition:
+    opacity var(--lobby-dur-thumb) ease-out,
+    background-color var(--lobby-dur-press);
 }
-.place:hover .placeCreator,
-.place:focus-within .placeCreator {
-  opacity: 0;
-}
-.place:hover .placeJump,
-.place:focus-within .placeJump {
+.place:hover .placeJumpIn,
+.placeJumpIn:focus-visible {
   opacity: 1;
 }
 
-/* Friend card 124×132. */
-.friend {
+/* ---- live event ---- */
+.liveEvent {
   position: relative;
+  width: 326px;
+  height: 199px;
+}
+.liveShadow {
+  position: absolute;
+  inset: 0;
+  border-radius: var(--r-lg);
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.35);
+}
+.liveBody {
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
+  border: 1px solid var(--lobby-white-10);
+  border-radius: var(--r-lg);
+  background: var(--lobby-card-fill);
+  overflow: hidden;
+}
+.liveGradient {
+  height: 100px;
+}
+.liveEvent:hover .liveGradient {
+  height: 124px;
+}
+.liveBadges {
+  top: 16px;
+  left: 16px;
+}
+.liveBadge {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 26px;
+  margin-right: 6px;
+  padding: 0 8px 0 6px;
+  border-radius: var(--r-sm);
+  background: var(--lobby-live-red);
+  font-size: var(--type-12);
+  font-weight: var(--fw-bold, 700);
+  color: var(--lobby-snow);
+}
+.liveTitle {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: 42px;
+  height: 30px;
+  display: flex;
+  align-items: flex-end;
+  font-size: var(--type-18);
+  font-weight: var(--fw-semibold);
+  color: var(--white);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  transition: bottom var(--lobby-dur-thumb) ease-out;
+}
+.liveEvent:hover .liveTitle {
+  bottom: 66px;
+}
+.liveHost {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: 16px;
+  height: 22px;
+  font-size: var(--type-14);
+  line-height: 22px;
+  color: var(--lobby-subtitle);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  transition: opacity var(--lobby-dur-thumb) ease-out;
+}
+.liveEvent:hover .liveHost {
+  opacity: 0;
+}
+.liveJumpIn {
+  left: 16px;
+  right: 16px;
+  bottom: 16px;
+  height: 40px;
+  opacity: 0;
+  transition:
+    opacity var(--lobby-dur-thumb) ease-out,
+    background-color var(--lobby-dur-press);
+}
+.liveEvent:hover .liveJumpIn,
+.liveJumpIn:focus-visible {
+  opacity: 1;
+}
+
+/* ---- upcoming event ---- */
+.upcoming {
+  position: relative;
+  box-sizing: border-box;
+  width: 326px;
+  height: 139px;
+  border: 1px solid var(--lobby-white-10);
+  border-radius: var(--r-lg);
+  background: var(--lobby-black-60);
+  overflow: hidden;
+}
+.upcomingThumbFrame {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 136px;
+  border-radius: var(--r-lg);
+  overflow: hidden;
+}
+.upcoming .zoomThumb {
+  transition-duration: var(--lobby-dur-outline);
+}
+.upcomingInfo {
+  position: absolute;
+  left: 20px;
+  top: 31px;
+  width: 148px;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  width: 124px;
-  height: 132px;
-  padding: 10px 0 0;
-  box-sizing: border-box;
-  border: 0;
-  border-radius: var(--r-lg);
-  background: var(--lobby-card);
-  font: inherit;
-  cursor: pointer;
+  pointer-events: none;
 }
-.friendName {
-  display: flex;
-  align-items: center;
-  gap: 3px;
-  margin-top: 4px;
-  max-width: 112px;
-  height: 20px;
-  font-size: var(--type-12);
+.upcomingTexts {
+  transition: transform var(--lobby-dur-outline) ease-out;
+}
+.upcoming:hover .upcomingTexts {
+  transform: translateY(-13px);
+}
+.upcomingTitle {
+  display: block;
+  height: 19px;
+  font-size: var(--type-16);
   font-weight: var(--fw-semibold);
-  line-height: 20px;
-}
-.friendName span {
+  line-height: 19px;
+  color: var(--lobby-snow);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.friendWhere {
+.upcomingHostRow {
+  display: flex;
+  align-items: center;
+  height: 14px;
+  margin-top: 2px;
+  transition: opacity var(--lobby-dur-outline) ease-out;
+}
+.upcoming:hover .upcomingHostRow {
+  opacity: 0;
+}
+.upcomingHostPrefix,
+.upcomingHost {
+  font-size: var(--type-13);
+  color: var(--lobby-white-70);
+  white-space: nowrap;
+}
+.upcomingHostPrefix {
+  margin-right: 3px;
+}
+.upcomingHost {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.schedule {
+  align-self: flex-start;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  box-sizing: border-box;
+  height: 24px;
+  margin-top: 14px;
+  padding: 2px 4px;
+  border-radius: var(--r-xs);
+  background: var(--lobby-white-10);
+  color: var(--lobby-snow);
+  transition: transform var(--lobby-dur-outline) ease-out;
+}
+.upcoming:hover .schedule {
+  transform: translateY(-33px);
+}
+.scheduleText {
+  font-size: var(--type-14);
+  font-weight: var(--fw-semibold);
+}
+.actions {
   position: absolute;
-  left: 6px;
-  right: 6px;
-  bottom: 10px;
-  height: 16px;
+  left: 20px;
+  bottom: 19px;
+  display: flex;
+  gap: 8px;
+  opacity: 0;
+  transition: opacity var(--lobby-dur-outline) ease-out;
+}
+.upcoming:hover .actions,
+.actions:focus-within {
+  opacity: 1;
+}
+.action {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-control);
+  background: var(--lobby-white-10);
+  cursor: pointer;
+  transition: background-color var(--lobby-dur-press);
+}
+.action:hover {
+  background: var(--lobby-white-20);
+}
+
+/* ---- friend ---- */
+.friend {
+  position: relative;
+  width: 103px;
+  height: 117px;
+  border-radius: var(--r-md);
+  background: var(--lobby-black-60);
+  transition: background-color var(--lobby-dur-press);
+}
+.friend:hover {
+  background: var(--lobby-friend-hover);
+}
+.friendPictureLarge {
+  position: absolute;
+  top: 12px;
+  left: 31px;
+  box-sizing: border-box;
+  width: 40px;
+  height: 40px;
+  border: 3px solid var(--lobby-white-40);
+  border-radius: 20px;
+  background: var(--white) center / cover no-repeat;
+  pointer-events: none;
+}
+.presence {
+  position: absolute;
+  top: 10px;
+  left: 62px;
+  box-sizing: border-box;
+  width: 10px;
+  height: 10px;
+  border: 2px solid var(--lobby-shadow);
+  border-radius: 5px;
+  background: var(--lobby-silver);
+  pointer-events: none;
+}
+.online .presence {
+  background: var(--lobby-status-online);
+}
+.away .presence {
+  background: var(--lobby-status-away);
+}
+.friendName {
+  position: absolute;
+  top: 58px;
+  left: 10px;
+  right: 10px;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 3px;
-  color: var(--lobby-ink-dim);
-  font-size: var(--type-11);
+  height: 17px;
+  overflow: hidden;
+  pointer-events: none;
 }
-.friendWhere span {
+.friendNameText {
+  min-width: 0;
+  font-size: var(--type-14);
+  font-weight: var(--fw-semibold);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.walletTag {
+  flex: none;
+  margin-left: 2px;
+  font-size: var(--type-14);
+  color: var(--lobby-snow);
+}
+.verified {
+  flex: none;
+  margin-left: 2px;
+}
+.friendLocation {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  top: 81px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 18px;
+  overflow: hidden;
+  pointer-events: none;
+}
+.locationIcon {
+  margin-right: 2px;
+  color: var(--lobby-silver);
+}
+.friendLocationText {
+  min-width: 0;
+  font-size: var(--type-12);
+  color: var(--lobby-subtitle);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.join {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 12px;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: var(--lobby-accent);
+  color: var(--lobby-snow);
+  cursor: pointer;
+  transition: background-color var(--lobby-dur-press);
+}
+.joinable:hover .join,
+.join:focus-visible {
+  display: flex;
+}
+.joinable:hover .friendLocation {
+  display: none;
+}
+.join:hover {
+  background: var(--lobby-accent-hover);
+}
+.join:active {
+  background: var(--lobby-accent-pressed);
+}
+.joinText {
+  font-size: var(--type-10);
+  font-weight: var(--fw-semibold);
+}
+
+/* ---- community ---- */
+.communityGradient {
+  height: 100px;
+}
+.community:hover .communityGradient {
+  height: 146px;
+}
+.communityFooter {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  box-sizing: border-box;
+  height: 60px;
+  padding: 0 16px 16px;
+  pointer-events: none;
+  transition: height var(--lobby-dur-thumb) ease-out;
+}
+.community:hover .communityFooter {
+  height: 104px;
+}
+.communityTitle {
+  display: block;
+  height: 24px;
+  margin-bottom: 4px;
+  font-size: var(--type-18);
+  font-weight: var(--fw-semibold);
+  line-height: 24px;
+  color: var(--white);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.membersRow {
+  display: flex;
+  align-items: center;
+  height: 16px;
+}
+.visibilityIcon {
+  margin-right: 4px;
+  color: var(--lobby-subtitle);
+}
+.membersText {
+  flex: none;
+  font-size: var(--type-12);
+  color: var(--lobby-subtitle);
+}
+.members {
+  flex: 0 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.separator {
+  flex: none;
+  width: 1px;
+  height: 10px;
+  margin: 0 6px;
+  background: var(--lobby-white-60);
+}
+.view {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: 16px;
+  height: 36px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: var(--lobby-white-1);
+  color: var(--lobby-snow);
+  font-family: inherit;
+  font-size: var(--type-14);
+  font-weight: var(--fw-semibold);
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity var(--lobby-dur-thumb) ease-out,
+    background-color var(--lobby-dur-press);
+}
+.community:hover .view,
+.view:focus-visible {
+  opacity: 1;
+}
+.view:hover {
+  background: var(--lobby-white-10);
+}
+.view:active {
+  background: var(--lobby-white-2);
+}
+
+/* ---- gallery photo ---- */
+.photo {
+  position: relative;
+  width: 256px;
+  height: 146px;
+}
+.photoOutline {
+  border-radius: 0;
+}
+.photo:hover .photoOutline {
+  opacity: 1;
+}
+.photoBody {
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
+  border: 1px solid var(--lobby-white-10);
+  background: var(--lobby-card-fill);
+  overflow: hidden;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .zoomThumb,
+  .landingThumb,
+  .gradient,
+  .placeFooter,
+  .communityFooter,
+  .liveTitle,
+  .upcomingTexts,
+  .schedule,
+  .outline,
+  .thumbSkeleton {
+    transition: none;
+    animation: none;
+  }
 }

@@ -72,6 +72,7 @@ const GATEWAY_PREFIXES: Readonly<Record<string, string>> = {
   'marketplace-api': '/marketplace-api',
   events: '/events',
   'autotranslate-server': '/autotranslate-server',
+  'archipelago-ea-stats': '/archipelago-ea-stats',
   'camera-reel-service': '/camera-reel-service',
   badges: '/badges',
   notifications: '/notifications',

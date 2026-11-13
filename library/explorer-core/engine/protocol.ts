@@ -265,6 +265,9 @@ export type PageToScene =
   | EngineViewportRequest
   | InteractableAreaMessage
   | GetGalleryRequest
+  | GetLobbyEventsRequest
+  | SetEventInterestRequest
+  | QuitRequest
   | SetPhotoModeRequest
   | TakePhotoRequest
   | GetGalleryPhotoRequest
@@ -1174,6 +1177,11 @@ export interface EngineViewportRequest {
    *  what turns it into the physical pixels the scene should actually render — without it a
    *  render target has to assume the worst display and oversample everywhere else. */
   dpr?: number
+  /** The lobby's stage look (`lobbyStage.ts` LOBBY_STAGE_PRESETS id); lobby region only. */
+  stagePreset?: string
+  /** The lobby page's avatar greets, plays an idle emote now and then and cheers at a new look;
+   *  lobby region only (the pages that borrow the stage leave it still). */
+  idleEmotes?: boolean
 }
 
 /**
@@ -1724,6 +1732,62 @@ export interface GalleryPhotoMeta {
   people?: GalleryPerson[]
 }
 
+/** An event from the events service as the lobby reads it (signed, with its connected users). */
+export interface LobbyEvent {
+  id: string
+  name: string
+  image?: string | null
+  description?: string | null
+  x: number
+  y: number
+  server?: string | null
+  world?: boolean
+  live?: boolean
+  highlighted?: boolean
+  start_at: string
+  finish_at?: string
+  next_start_at?: string | null
+  next_finish_at?: string | null
+  total_attendees?: number
+  user_name?: string | null
+  /** The signed-in player marked it interested. */
+  attending?: boolean
+  /** The wallets in the event's scene now. */
+  connected_addresses?: string[] | null
+  place_id?: string | null
+}
+
+/** Close the client (the native one: the web page has nothing to close to). */
+export interface QuitRequest {
+  kind: 'quit'
+}
+
+/** The lobby's events, read signed so each carries whether the player marked it interested. */
+export interface GetLobbyEventsRequest {
+  kind: 'getLobbyEvents'
+}
+
+/** The events service's list with its connected users, or null when the read failed. */
+export interface LobbyEventsMessage {
+  kind: 'lobbyEvents'
+  events: LobbyEvent[] | null
+}
+
+/** Mark an event interested (or not) for the signed-in player. */
+export interface SetEventInterestRequest {
+  kind: 'setEventInterest'
+  id: string
+  interested: boolean
+}
+
+/** Whether the mark took; on failure `interested` is what the event still is. */
+export interface EventInterestMessage {
+  kind: 'eventInterest'
+  id: string
+  interested: boolean
+  ok: boolean
+}
+
 export interface GetGalleryRequest {
   kind: 'getGallery'
 }
@@ -2266,6 +2330,8 @@ export type SceneToPage =
   | LobbyStageReadyMessage
   | LookShownMessage
   | GalleryMessage
+  | LobbyEventsMessage
+  | EventInterestMessage
   | GalleryPhotoMessage
   | PermissionRequestMessage
   | PermissionWithdrawnMessage

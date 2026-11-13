@@ -31,6 +31,7 @@ function renderPanel(): SettingsState {
   const settings: SettingsState = { ...fakeSession().settings, open: true, list: [TOGGLE, SLIDER, SELECT, DESCRIBED, FLOAT], set: vi.fn() }
   render(
     <SettingsPanel
+      lobbyStage={{ preset: 'halloween-2026', set: vi.fn() }}
       settings={settings}
       bindings={fakeSession().bindings}
       profile={fakeProfileState()}
@@ -89,6 +90,7 @@ describe('settings panel controls', () => {
     cleanup()
     render(
       <SettingsPanel
+        lobbyStage={{ preset: 'halloween-2026', set: vi.fn() }}
         settings={{ ...settings, list: [{ ...SELECT, value: 2 }] }}
         bindings={fakeSession().bindings}
         profile={fakeProfileState()}
@@ -105,7 +107,7 @@ describe('settings panel unset controls', () => {
   it('a select with a negative value is disabled and does not set', async () => {
     const UNSET = base({ name: 'dm_privacy', category: 'chat', namedVariants: [{ name: 'Everyone', description: '' }, { name: 'Only friends', description: '' }], value: -1, default: 0, maxValue: 2 })
     const settings: SettingsState = { ...fakeSession().settings, open: true, list: [UNSET], set: vi.fn() }
-    render(<SettingsPanel settings={settings} bindings={fakeSession().bindings} profile={fakeProfileState()} onNavigate={vi.fn()} />)
+    render(<SettingsPanel lobbyStage={{ preset: 'halloween-2026', set: vi.fn() }} settings={settings} bindings={fakeSession().bindings} profile={fakeProfileState()} onNavigate={vi.fn()} />)
     // two named choices that are not off/on show their names, not a switch
     expect(screen.queryByRole('switch', { name: 'dm_privacy' })).toBeNull()
     const select = screen.getByRole('button', { name: 'dm_privacy' })

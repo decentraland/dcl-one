@@ -46,7 +46,11 @@ export function EventsPage({
   onTeleport: (x: number, y: number) => void
   onVisitWorld: (realm: string) => void
 }): React.JSX.Element | null {
-  const [section, setSection] = useState<EventsList>('live')
+  const [section, setSection] = useState<EventsList>(events.section)
+  // opened again on another tab (the lobby's VIEW ALL)
+  useEffect(() => {
+    if (events.open) setSection(events.section)
+  }, [events.open, events.section])
   const [list, setList] = useState<DclEvent[]>([])
   const [headcounts, setHeadcounts] = useState<LiveHeadcounts | null>(null)
   const [loading, setLoading] = useState(true)
