@@ -666,6 +666,9 @@ mod markup_tests {
             ("<#ff0000>red", "red"),
             ("<<b>link=x>click", "click"),
             ("Plain title", "Plain title"),
+            ("Plaza <b>", "Plaza"),
+            ("<size=9> Tagged </size>", "Tagged"),
+            (" Untagged ", " Untagged "),
             ("5 < 10, I <3 it", "5 < 10, I <3 it"),
             ("a > b", "a > b"),
         ] {
@@ -910,18 +913,27 @@ pub fn sanitize_event_description(description: &str) -> String {
 
 /// Plain text for names and titles, which keep no markup at all: every `<…>`
 /// span is dropped to a fixed point, so no rich-text tag (link, size, colour)
-/// survives. Fails closed like [`sanitize_markup_description`].
+/// survives. Fails closed like [`sanitize_markup_description`]. Text that
+/// lost a tag is trimmed, so no edge space is left where the tag was.
 pub fn strip_all_markup(text: &str) -> String {
     let mut current = text.to_owned();
     for _ in 0..MAX_SANITIZE_PASSES {
         let next = strip_tag_spans(&current);
         if next == current {
-            return current;
+            return trim_if_stripped(text, current);
         }
         current = next;
     }
     current.retain(|c| !matches!(c, '<' | '>'));
-    current
+    trim_if_stripped(text, current)
+}
+
+fn trim_if_stripped(original: &str, stripped: String) -> String {
+    if stripped.len() == original.len() {
+        stripped
+    } else {
+        stripped.trim().to_owned()
+    }
 }
 
 fn strip_tag_spans(text: &str) -> String {
