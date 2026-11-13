@@ -29,7 +29,7 @@ const USAGE = `Usage:
   dcl-figma key-guard [--range <base>..<head> | --no-range] [--no-worktree] [--path <dir>]...
   dcl-figma probe
   dcl-figma install foundations|components [--source snapshot] [--out <private-stage>]
-  dcl-figma sync [--out <dir>] [--developer [--apply-retirements]]
+  dcl-figma sync [--out <dir>] [--developer [--apply-retirements | --prune-preview]]
   dcl-figma diff [--source snapshot|rest] [--out <dir>]
   dcl-figma retire --page-id <id> [--component-id <id>] --reason <text> [--name <text>]
   dcl-figma guard --base <dir> [--staged <dir>] [--captured <id,...>] [--run-kind automated|developer] [--library-only]
@@ -117,6 +117,7 @@ async function main(argv: string[]): Promise<number> {
       'library-only': { type: 'boolean' },
       'foundations-captured': { type: 'boolean' },
       'apply-retirements': { type: 'boolean' },
+      'prune-preview': { type: 'boolean' },
       'node-id': { type: 'string' },
       name: { type: 'string' },
       variant: { type: 'string', multiple: true },
@@ -130,6 +131,8 @@ async function main(argv: string[]): Promise<number> {
     }
   })
   const [command] = positionals
+  if (values['prune-preview'] && command !== 'sync')
+    throw new Error('--prune-preview applies only to sync')
   if (values['mapping-only'] && command !== 'resolve' && command !== 'check-mappings')
     throw new Error('--mapping-only applies only to resolve and check-mappings')
   if (values.text && command !== 'resolve') throw new Error('--text applies only to resolve')
@@ -337,7 +340,8 @@ async function main(argv: string[]): Promise<number> {
       source: sourceKind(values.source),
       outDir: values.out,
       developer: values.developer,
-      applyRetirements: values['apply-retirements']
+      applyRetirements: values['apply-retirements'],
+      prunePreview: values['prune-preview']
     }
     const report = await (command === 'sync' ? runSync : runDiff)(app, options)
     print(report)

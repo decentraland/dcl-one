@@ -3,62 +3,62 @@ import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import process from 'node:process'
 import { build } from 'vite'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { findBrowser, openSession } from '../figma/review/scripts/capture-browser.mjs'
 import { releaseHarness } from './release-harness'
+import { nativeNavBarCases } from './consumer/navbar-bounds-cases'
 
-// Every NavBar combination, rendered by the built Review in Chromium at its captured size: no descendant may extend
-// past the root's box. A CSS gap under space-between distribution used to push the controls out of the nav.
 const root = path.resolve(import.meta.dirname, '..')
-const review = path.join(root, 'figma/review')
-// The folder the Review is served from, named apart so no path-shaped literal of it is spelled out here.
-const FOLDER = 'dcl-ui-review'
-// Every NavBar combination in the built catalog, so a variant added later is measured too.
-const catalog = JSON.parse(
-  await readFile(path.join(review, 'src/review/catalog.json'), 'utf8')
-) as {
-  components: { name: string; variants: unknown[] }[]
-}
-const VARIANTS = catalog.components.find((component) => component.name === 'NavBar')!.variants
-  .length
-const TOLERANCE = 1
-
-const types: Record<string, string> = {
+const page = '/test/consumer/navbar-bounds.html'
+const tolerance = 1
+const mime: Record<string, string> = {
   '.html': 'text/html',
   '.js': 'text/javascript',
   '.css': 'text/css',
-  '.json': 'application/json',
   '.svg': 'image/svg+xml',
   '.woff2': 'font/woff2'
 }
-
 let scratch: string
 let server: Server
 let origin: string
 let session: Awaited<ReturnType<typeof openSession>>
-
+async function evaluate<T>(expression: string): Promise<T> {
+  const result = (await session.send('Runtime.evaluate', {
+    expression,
+    awaitPromise: true,
+    returnByValue: true
+  })) as {
+    result: { value: T }
+    exceptionDetails?: { text: string; exception?: { description?: string } }
+  }
+  if (result.exceptionDetails)
+    throw new Error(result.exceptionDetails.exception?.description ?? result.exceptionDetails.text)
+  return result.result.value
+}
 beforeAll(async () => {
-  scratch = await mkdtemp(path.join(tmpdir(), 'navbar-bounds-'))
+  scratch = await mkdtemp(path.join(tmpdir(), 'native-navbar-bounds-'))
   const outDir = path.join(scratch, 'out')
   await build({
-    configFile: path.join(review, 'review.vite.config.ts'),
-    base: '/',
+    configFile: false,
+    root,
     logLevel: 'silent',
-    build: { outDir, emptyOutDir: true }
+    build: { outDir, emptyOutDir: true, rolldownOptions: { input: path.join(root, page) } }
   })
   server = createServer((request, response) => {
     void (async () => {
-      let file = path.join(
+      const file = path.resolve(
         outDir,
-        decodeURIComponent(new URL(request.url ?? '/', 'http://localhost').pathname)
+        '.' + decodeURIComponent(new URL(request.url ?? '/', 'http://fixture.invalid').pathname)
       )
-      if (!file.startsWith(outDir)) return void response.writeHead(403).end()
+      if (file !== outDir && !file.startsWith(outDir + path.sep))
+        return void response.writeHead(403).end()
       try {
-        if ((await stat(file)).isDirectory()) file = path.join(file, 'index.html')
+        if (!(await stat(file)).isFile()) return void response.writeHead(404).end()
         response
-          .writeHead(200, { 'content-type': types[path.extname(file)] ?? 'text/plain' })
+          .writeHead(200, {
+            'content-type': mime[path.extname(file)] ?? 'application/octet-stream'
+          })
           .end(await readFile(file))
       } catch {
         response.writeHead(404).end()
@@ -73,66 +73,126 @@ beforeAll(async () => {
       process.env.CHROME_PATH,
       '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
       '/usr/bin/google-chrome',
-      '/usr/bin/chromium',
-      '/usr/bin/chromium-browser'
+      '/usr/bin/chromium-browser',
+      '/usr/bin/chromium'
     ])
   )
   await session.send('Page.enable')
 }, 300_000)
-
-// Setup can fail before the server or browser exist (a Vite build failure); release only what started.
 afterAll(() => releaseHarness({ session, server, scratch }))
-
+async function openCase(id: string, width: number) {
+  await session.send('Emulation.setDeviceMetricsOverride', {
+    width,
+    height: 900,
+    deviceScaleFactor: 1,
+    mobile: false
+  })
+  await session.navigate(`${origin}${page}?case=${encodeURIComponent(id)}`)
+  await evaluate(
+    `new Promise((resolve,reject)=>{const start=Date.now();const poll=()=>{if(!document.querySelector('#native-bounds-root>nav'))return Date.now()-start>15000?reject(Error('Native NavBar missing')):setTimeout(poll,25);document.fonts.ready.then(()=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))};poll()})`
+  )
+}
+async function click(selector: string) {
+  const point = await evaluate<{ x: number; y: number }>(
+    `(()=>{const el=document.querySelector(${JSON.stringify(selector)});if(!el)throw Error('Control missing');const b=el.getBoundingClientRect();return{x:b.x+b.width/2,y:b.y+b.height/2}})()`
+  )
+  for (const type of ['mousePressed', 'mouseReleased'])
+    await session.send('Input.dispatchMouseEvent', {
+      type,
+      button: 'left',
+      clickCount: 1,
+      ...point
+    })
+  await evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))')
+}
+async function key(value: string, code: number) {
+  for (const type of ['keyDown', 'keyUp'])
+    await session.send('Input.dispatchKeyEvent', {
+      type,
+      key: value,
+      code: value,
+      windowsVirtualKeyCode: code
+    })
+  await evaluate('new Promise(resolve=>requestAnimationFrame(resolve))')
+}
 type Bounds = {
   width: number
   height: number
   overflow: { name: string; right: number; bottom: number }[]
 }
-
-async function measure(variant: number): Promise<Bounds> {
-  await session.navigate(`${origin}/${FOLDER}/?audit=1&component=NavBar&variant=${variant}`)
-  const { result, exceptionDetails } = (await session.send('Runtime.evaluate', {
-    expression: `new Promise((resolve, reject) => {
-      const started = Date.now()
-      const poll = () => {
-        const root = document.querySelector('#audit-render')?.firstElementChild
-        if (!root) return Date.now() - started > 15000 ? reject(new Error('Rendered root missing')) : setTimeout(poll, 50)
-        document.fonts.ready.then(() => requestAnimationFrame(() => requestAnimationFrame(() => {
-          const box = root.getBoundingClientRect()
-          const overflow = [...root.querySelectorAll('*')].map((element) => {
-            const r = element.getBoundingClientRect()
-            return { name: element.getAttribute('data-n') || element.tagName, right: r.right - box.right, bottom: r.bottom - box.bottom, left: box.left - r.left, top: box.top - r.top, w: r.width, h: r.height }
-          }).filter((item) => item.w > 0 && item.h > 0 && (item.right > ${TOLERANCE} || item.bottom > ${TOLERANCE} || item.left > ${TOLERANCE} || item.top > ${TOLERANCE}))
-          resolve({ width: box.width, height: box.height, overflow: overflow.map(({ name, right, bottom }) => ({ name, right, bottom })) })
-        })))
-      }
-      poll()
-    })`,
-    awaitPromise: true,
-    returnByValue: true
-  })) as {
-    result: { value: Bounds }
-    exceptionDetails?: { text: string; exception?: { description?: string } }
-  }
-  // A variant that throws while rendering must report its own error, not a missing measurement.
-  if (exceptionDetails)
-    throw new Error(exceptionDetails.exception?.description ?? exceptionDetails.text)
-  return result.value
-}
-
-describe('every NavBar combination in the built Review', () => {
-  it('should find the NavBar combinations in the catalog', () => {
-    expect(VARIANTS).toBeGreaterThan(0)
-  })
-
-  it.each(Array.from({ length: VARIANTS }, (_, index) => index))(
-    'variant %i keeps every descendant inside its root box',
-    async (variant) => {
-      const bounds = await measure(variant)
-      expect(session.runtimeErrors).toEqual([])
-      expect(bounds.width).toBeGreaterThan(0)
-      expect(bounds.overflow).toEqual([])
-    },
-    60_000
+async function bounds(selector: string, vertical = true): Promise<Bounds> {
+  return evaluate(
+    `(()=>{const root=document.querySelector(${JSON.stringify(selector)});if(!root)throw Error('Bounds root missing');const box=root.getBoundingClientRect();const overflow=[...root.querySelectorAll('*')].map(el=>{const b=el.getBoundingClientRect(),s=getComputedStyle(el);return{name:el.getAttribute('aria-label')||el.tagName,right:b.right-box.right,bottom:b.bottom-box.bottom,left:box.left-b.left,top:box.top-b.top,w:b.width,h:b.height,visible:s.visibility!=='hidden'&&s.display!=='none'}}).filter(el=>el.visible&&el.w>0&&el.h>0&&(el.right>${tolerance}||el.left>${tolerance}${vertical ? `||el.top>${tolerance}||el.bottom>${tolerance}` : ''}));return{width:box.width,height:box.height,overflow}})()`
   )
+}
+describe('native public NavBar bounds, independently of captured Review selection', () => {
+  it('should cover every native auth, surface and balance mode plus app composition', () => {
+    expect(nativeNavBarCases).toHaveLength(18)
+    expect(new Set(nativeNavBarCases.map((value) => value.id)).size).toBe(18)
+  })
+  for (const width of [390, 768, 1024, 1440])
+    it.each(nativeNavBarCases)(
+      '$id keeps closed-header descendants inside their root at ' + width + 'px',
+      async (example) => {
+        await openCase(example.id, width)
+        const result = await bounds('#native-bounds-root>nav')
+        expect(result.width).toBeGreaterThan(0)
+        expect(result.height).toBeGreaterThan(0)
+        expect(result.overflow).toEqual([])
+        expect(session.runtimeErrors).toEqual([])
+      },
+      60_000
+    )
+  for (const width of [390, 768])
+    it(
+      'should keep the composed drawer inside the viewport and preserve keyboard containment at ' +
+        width +
+        'px',
+      async () => {
+        await openCase('in-composition', width)
+        await click('button[aria-label="Open menu"]')
+        expect(await evaluate('!!document.activeElement?.closest(\'[role="dialog"]\')')).toBe(true)
+        const result = await bounds('[role="dialog"]', false)
+        expect(result.overflow).toEqual([])
+        expect(
+          await evaluate(
+            `(()=>{const b=document.querySelector('[role="dialog"]').getBoundingClientRect();return b.left>=-1&&b.top>=-1&&b.right<=innerWidth+1&&b.bottom<=innerHeight+1})()`
+          )
+        ).toBe(true)
+        for (let i = 0; i < 12; i++) {
+          await key('Tab', 9)
+          expect(await evaluate('!!document.activeElement?.closest(\'[role="dialog"]\')')).toBe(
+            true
+          )
+        }
+        await key('Escape', 27)
+        expect(await evaluate('document.querySelector(\'[role="dialog"]\')===null')).toBe(true)
+        expect(await evaluate('document.activeElement?.getAttribute("aria-label")')).toBe(
+          'Open menu'
+        )
+        expect(session.runtimeErrors).toEqual([])
+      },
+      60_000
+    )
+  it('should bound native section and account popups by the viewport and return focus on Escape', async () => {
+    await openCase('in-solid-3', 1440)
+    for (const selector of [
+      'button[aria-controls]:not([aria-label])',
+      'button[aria-label="Account: Ada"]'
+    ]) {
+      await click(selector)
+      expect(
+        await evaluate(
+          `(()=>{const el=document.querySelector(${JSON.stringify(selector)});const panel=document.getElementById(el.getAttribute('aria-controls'));if(!panel||panel.hidden)return false;const b=panel.getBoundingClientRect();return b.width>0&&b.left>=-1&&b.right<=innerWidth+1&&b.top>=-1&&b.bottom<=innerHeight+1})()`
+        )
+      ).toBe(true)
+      await key('Escape', 27)
+      expect(
+        await evaluate(
+          `document.activeElement===document.querySelector(${JSON.stringify(selector)})`
+        )
+      ).toBe(true)
+    }
+    expect(session.runtimeErrors).toEqual([])
+  }, 60_000)
 })

@@ -274,7 +274,10 @@ function verifyStages(run: Run, p: Paths): Record<string, () => Stage> {
       )
       const passed = /Tests\s+(\d+) passed/.exec(result.stdout)?.[1]
       if (result.code !== 0 || !passed) fail('the NavBar bounds build check failed')
-      return { name: 'navbar-bounds', detail: `Fresh gallery build passes ${passed} bounds checks` }
+      return {
+        name: 'navbar-bounds',
+        detail: `Fresh public NavBar build passes ${passed} bounds checks`
+      }
     },
     install: () => {
       for (const target of ['foundations', 'components', 'foundations', 'components'])

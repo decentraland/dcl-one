@@ -1,3 +1,4 @@
+import { runPreviewCleanup } from './preview-cleanup.js'
 import { runRetirementSync } from './retirement-sync.js'
 import path from 'node:path'
 import { createApp, type App, type AppOptions, type SourceKind } from './app-context.js'
@@ -19,6 +20,7 @@ type SyncOptions = {
   capturedPageIds?: readonly string[]
   foundationsCaptured?: boolean
   applyRetirements?: boolean
+  prunePreview?: boolean
   // Ledger the assets this sync stops generating. Only live capture sets it: its guard validates the
   // ledger against the real base before anything is published. Any other sync leaves them `removed`.
   ledgerOrphans?: boolean
@@ -29,6 +31,7 @@ type SyncReport = {
   diff: FileDiff
   summary: GenerateResult['summary']
   retired?: string[]
+  pruned?: string[]
   // Ledgered assets removed after their committed orphan entries were authorized for draining.
   drained?: string[]
   // Ledger entries removed while preserving asset bytes because the assets are used again.
@@ -48,6 +51,12 @@ async function runSync(app: App, options: SyncOptions): Promise<SyncReport> {
   if (options.source !== 'snapshot')
     throw new Error(
       'sync writes tracked files and reads only the verified fetch-source cache; use diff to compare against the live file'
+    )
+  if (options.prunePreview && !options.developer)
+    throw new Error('Preview cleanup is a developer action: pass --developer')
+  if (options.prunePreview && options.applyRetirements)
+    throw new Error(
+      'Preview selection cleanup and permanent retirement cleanup are separate operations'
     )
   if (options.applyRetirements && !options.developer)
     throw new Error('Applying retirements is a developer action: pass --developer')
@@ -80,6 +89,11 @@ async function runSync(app: App, options: SyncOptions): Promise<SyncReport> {
     )
 
   const generated = await generateAll(source, {}, app.config)
+  if (options.prunePreview) {
+    if (outDir !== (await canonicalPath(path.join(root, GENERATED))))
+      throw new Error('Preview cleanup requires the repository generated directory')
+    return runPreviewCleanup(app, generated)
+  }
   if (options.applyRetirements) {
     if (outDir !== (await canonicalPath(path.join(root, GENERATED))))
       throw new Error(

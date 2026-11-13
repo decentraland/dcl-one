@@ -508,7 +508,7 @@ describe('when the real port stages run against canned command output', () => {
         'Fresh diff reports 0 added, 0 changed, 0 removed and no ledger issues'
       )
       expect(record.checks['navbar-bounds'].detail).toBe(
-        'Fresh gallery build passes 19 bounds checks'
+        'Fresh public NavBar build passes 19 bounds checks'
       )
       expect(record.checks.install.detail).toBe(
         'Private and canonical installs reproduce 1 foundation and 1 component files with no-op repeats'
