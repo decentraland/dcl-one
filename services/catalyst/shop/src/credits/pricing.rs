@@ -121,6 +121,8 @@ pub struct ListingRow {
     pub price_wei: String,
     /// The listing's owner, who is paid when it fills.
     pub seller: String,
+    /// A v3 listing's beneficiary, paid instead of the seller when set.
+    pub payee: Option<String>,
 }
 
 /// The catalogue, the order book, the trade book and the MANA spot, as the
@@ -264,6 +266,7 @@ impl Market for LocalMarket {
                 trade_id: o.trade_id,
                 price_wei: o.price,
                 seller: o.owner,
+                payee: o.payee,
             })
             .collect())
     }
@@ -590,11 +593,11 @@ impl Pricing {
         &self,
         collection: &str,
         item_id: &str,
-        buyer: Option<&str>,
+        buyer: &str,
     ) -> Result<Option<OpenOrder>, ApiError> {
         let pairs = [(collection.to_ascii_lowercase(), item_id.to_string())];
         let listings = self
-            .fetch_open_listings_batch(&pairs, ORDER_SCAN_MAX_PAGES, false, buyer)
+            .fetch_open_listings_batch(&pairs, ORDER_SCAN_MAX_PAGES, false, Some(buyer))
             .await?;
         Ok(listings
             .get(&pairs[0])
@@ -773,8 +776,13 @@ pub fn select_cheapest_listing(
 ) -> Option<OpenListing> {
     let mut best: Option<(u128, OpenListing)> = None;
     for o in orders {
-        // Credits never pay a wallet for its own listing.
-        if buyer.is_some_and(|b| o.seller.eq_ignore_ascii_case(b)) {
+        // Credits never pay a wallet for its own listing, as seller or payee.
+        if buyer.is_some_and(|b| {
+            o.seller.eq_ignore_ascii_case(b)
+                || o.payee
+                    .as_deref()
+                    .is_some_and(|p| p.eq_ignore_ascii_case(b))
+        }) {
             continue;
         }
         let is_v2 = o
@@ -1008,6 +1016,7 @@ mod tests {
             trade_id: trade.map(str::to_string),
             price_wei: price.into(),
             seller: SELLER.into(),
+            payee: None,
         }
     }
 

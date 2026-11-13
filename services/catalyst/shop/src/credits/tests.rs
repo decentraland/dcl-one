@@ -95,6 +95,7 @@ impl FakeMarket {
             trade_id: None,
             price_wei: price_wei.to_string(),
             seller: "0x5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e".to_string(),
+            payee: None,
         });
         self
     }
@@ -5346,8 +5347,6 @@ async fn checkout_refuses_an_item_created_by_the_buyer() {
     }
 }
 
-/// A cart line never fills from the buyer's own listing: the selection falls
-/// back to the next one, and refuses when only the buyer's own is open.
 /// A cart line priced from a trade that pays the buyer is refused, whoever signed it.
 #[tokio::test]
 async fn a_cart_trade_paying_the_buyer_is_refused() {
@@ -5387,6 +5386,8 @@ async fn a_cart_trade_paying_the_buyer_is_refused() {
     );
 }
 
+/// A cart line never fills from the buyer's own listing: the selection falls
+/// back to the next one, and refuses when only the buyer's own is open.
 #[tokio::test]
 async fn checkout_skips_the_buyers_own_listing() {
     let Some(pool) = pool().await else { return };
@@ -5436,6 +5437,91 @@ async fn checkout_skips_the_buyers_own_listing() {
         ),
         "no listing but the buyer's own: refused"
     );
+
+    // A cheaper listing that pays the buyer (its beneficiary) is skipped too.
+    let mut pays_buyer = market_for_checkout()
+        .with_listing(COLLECTION, "1000000000000000000")
+        .with_listing(COLLECTION, "2000000000000000000");
+    pays_buyer.orders[0].payee = Some(seller.address.to_uppercase().replace("0X", "0x"));
+    let picked = basis(pays_buyer, seller.address.clone()).await.unwrap();
+    assert_eq!(picked.basis_wei, "2000000000000000000");
+
+    // The fill-time pick of an unpinned secondary row skips them as well.
+    let state = state_with(
+        pool.clone(),
+        StateCfg::default(),
+        own_first(),
+        MockBroker::configured(),
+    );
+    let order = state
+        .pricing
+        .fetch_open_order(COLLECTION, "4", &seller.address)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(order.price_wei, "2000000000000000000");
+}
+
+/// An operator's recovery of a top-up (any case in the key) is booked as a
+/// purchase under the claim's own key, so the claim replays it.
+#[tokio::test]
+async fn a_recovered_top_up_is_a_purchase_the_claim_replays() {
+    let Some(pool) = pool().await else { return };
+    let wallet = scratch_wallet();
+    let state = test_state(
+        pool.clone(),
+        StateCfg {
+            admin_token: Some("s3cret"),
+            ..StateCfg::default()
+        },
+    );
+    let app = app(state);
+    let mut bearer = HeaderMap::new();
+    bearer.insert(header::AUTHORIZATION, "Bearer s3cret".parse().unwrap());
+    let hash = format!("0x{}", uuid::Uuid::new_v4().simple().to_string().repeat(2));
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        "/credits/admin/credits/grant",
+        bearer.clone(),
+        Some(json!({ "address": wallet.address, "amount": "40", "idempotencyKey": format!("MANA-TOPUP:{}", hash.to_uppercase().replace("0X", "0x")) })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    let kinds = ledger_kinds(&pool, &wallet.address).await;
+    assert!(
+        kinds.iter().any(|(kind, _, _)| kind == "purchase"),
+        "booked as a purchase: {kinds:?}"
+    );
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        "/credits/admin/credits/grant",
+        bearer,
+        Some(json!({ "address": wallet.address, "amount": "40", "idempotencyKey": "mana-topup:0x12" })),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "a malformed hash is refused: {v}"
+    );
+    let (status, body) = call(
+        &app,
+        &wallet,
+        "post",
+        "/credits/topup/mana",
+        &[],
+        Some(json!({ "txHash": hash })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        body["creditsGranted"], "40",
+        "the claim replays the recovery"
+    );
+    assert_eq!(available(&pool, &wallet.address).await, "40");
+    cleanup(&pool, &wallet.address).await;
 }
 
 #[tokio::test]

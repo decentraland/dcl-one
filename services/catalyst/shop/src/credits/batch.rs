@@ -506,14 +506,20 @@ fn refuse_own_sale(
     index: usize,
     seller: EvmAddress,
 ) -> Result<(), AuthorizeError> {
-    if let Session::Web3 { wallet } | Session::Web2 { account: wallet } = session
-        && wallet == seller
-    {
+    if pays_buyer(session, seller) {
         return Err(AuthorizeError::Api(ApiError::forbidden(format!(
-            "items[{index}]: credits cannot buy an item from the buyer's own wallet"
+            "items[{index}]: {OWN_SALE}"
         ))));
     }
     Ok(())
+}
+
+/// The refusal of a line that would pay the buyer's own wallet.
+pub(crate) const OWN_SALE: &str = "credits cannot buy an item from the buyer's own wallet";
+
+/// Whether paying `payee` pays the signed-in buyer.
+pub(crate) fn pays_buyer(session: Session, payee: EvmAddress) -> bool {
+    matches!(session, Session::Web3 { wallet } | Session::Web2 { account: wallet } if wallet == payee)
 }
 
 /// One line's authoritative facts from the mirrors and the decoded order,

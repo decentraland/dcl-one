@@ -63,8 +63,24 @@ fn validate_tx_hash(raw: &str) -> Result<String, ApiError> {
     Ok(s.to_lowercase())
 }
 
+/// The grant idempotency-key prefix of a MANA top-up; the transaction hash follows.
+pub const MANA_TOPUP_KEY_PREFIX: &str = "mana-topup:";
+
 fn topup_idempotency_key(tx_hash_lowercase: &str) -> String {
-    format!("mana-topup:{tx_hash_lowercase}")
+    format!("{MANA_TOPUP_KEY_PREFIX}{tx_hash_lowercase}")
+}
+
+/// An operator's key for recovering a top-up: `Some(canonical key)` when it
+/// names one (prefix in any case, a valid hash), the same key a claim uses.
+pub fn recovered_topup_key(key: &str) -> Option<Result<String, ApiError>> {
+    let prefix = key.get(..MANA_TOPUP_KEY_PREFIX.len())?;
+    if !prefix.eq_ignore_ascii_case(MANA_TOPUP_KEY_PREFIX) {
+        return None;
+    }
+    Some(
+        validate_tx_hash(&key[MANA_TOPUP_KEY_PREFIX.len()..])
+            .map(|hash| topup_idempotency_key(&hash)),
+    )
 }
 
 /// Which confirmed MANA transfers a top-up credits.

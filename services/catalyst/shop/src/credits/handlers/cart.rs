@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use super::prices::QuoteCache;
 use super::signer_from;
 use crate::credits::SharedState;
+use crate::credits::batch::{OWN_SALE, pays_buyer, trade_payees};
 use crate::credits::checkout::{CartItemRow, CartLine, CartView, CheckoutIdemRow, RepricedLine};
 use crate::credits::errors::ApiError;
 use crate::credits::pricing::{
@@ -47,13 +48,12 @@ pub(crate) async fn rule_line(
         },
         BasisKind::Trade { trade_id } => match state.pricing.fetch_trade(trade_id).await? {
             TradeLookup::Open(trade) => {
-                // The listing's seller is skipped at selection; its payees are checked here.
-                if let Session::Web3 { wallet } | Session::Web2 { account: wallet } = session
-                    && crate::credits::batch::trade_payees(&trade).contains(&wallet)
+                // Selection skips the buyer's listings; this backs it on the signed trade.
+                if trade_payees(&trade)
+                    .into_iter()
+                    .any(|p| pays_buyer(session, p))
                 {
-                    return Err(ApiError::forbidden(
-                        "credits cannot pay the buyer's own wallet for a listing",
-                    ));
+                    return Err(ApiError::forbidden(OWN_SALE));
                 }
                 guards::credits::Kind::Trade { trade }
             }
@@ -441,7 +441,7 @@ pub async fn checkout(
                 .eq_ignore_ascii_case(signer.as_str())
         {
             return Err(ApiError::forbidden(format!(
-                "credits cannot buy {}:{} from its creator's own wallet",
+                "{}:{}: {OWN_SALE}",
                 line.collection, line.item_id
             )));
         }

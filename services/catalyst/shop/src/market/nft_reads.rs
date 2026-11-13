@@ -801,6 +801,7 @@ fn row_to_result(
         chain_id: network.chain_id(),
         issued_id: r.get("issued_text"),
         trade_id: Some(String::new()),
+        payee: None,
     });
     let nft = Nft {
         active_order_id: order.as_ref().map(|o| o.id.clone()),
