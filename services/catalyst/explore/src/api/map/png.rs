@@ -192,7 +192,10 @@ fn renderer_busy() -> Box<Response> {
     Box::new(
         (
             StatusCode::SERVICE_UNAVAILABLE,
-            [(header::RETRY_AFTER, "5")],
+            [
+                (header::RETRY_AFTER, "5"),
+                (header::CACHE_CONTROL, "no-store"),
+            ],
             "map renderer busy",
         )
             .into_response(),
@@ -219,23 +222,30 @@ where
     let mut _rendering = None;
     if state.map.cached_png(&key).is_none() {
         flight = render_flight(&key);
-        // Waiting behind another render of this key has the same deadline.
+        // Waiting behind another render of this key has its own deadline,
+        // before the render queue's.
         match tokio::time::timeout(RENDER_QUEUE_WAIT, flight.lock()).await {
             Ok(guard) => _rendering = Some(guard),
-            Err(_) => {
-                let mut resp = *renderer_busy();
-                http_cache::apply(&mut resp, last, max_age, swr);
-                return resp;
-            }
+            Err(_) => match state.map.cached_png(&key) {
+                Some(bytes) => {
+                    let mut resp = png_response(bytes);
+                    http_cache::apply_etag(&mut resp, last, &etag, max_age, swr);
+                    return resp;
+                }
+                None => return *renderer_busy(),
+            },
         }
     }
     let bytes = match state.map.cached_png(&key) {
         Some(b) => b,
         None => {
             let Some(grid) = state.map.snapshot() else {
-                let mut resp = (StatusCode::SERVICE_UNAVAILABLE, "Not ready").into_response();
-                http_cache::apply(&mut resp, last, max_age, swr);
-                return resp;
+                return (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    [(header::CACHE_CONTROL, "no-store")],
+                    "Not ready",
+                )
+                    .into_response();
             };
             match render_blocking(grid, render).await {
                 Ok(b) => {
@@ -244,7 +254,15 @@ where
                     b
                 }
                 Err(mut resp) => {
-                    http_cache::apply(&mut resp, last, max_age, swr);
+                    // A transient failure must not be cached downstream.
+                    if resp.status().is_server_error() {
+                        resp.headers_mut().insert(
+                            header::CACHE_CONTROL,
+                            axum::http::HeaderValue::from_static("no-store"),
+                        );
+                    } else {
+                        http_cache::apply(&mut resp, last, max_age, swr);
+                    }
                     return *resp;
                 }
             }
@@ -536,5 +554,73 @@ mod tests {
         let a = render_flight("png-key");
         assert!(Arc::ptr_eq(&a, &render_flight("png-key")));
         assert!(!Arc::ptr_eq(&a, &render_flight("png-other")));
+    }
+
+    fn small_grid() -> Grid {
+        Grid::from_tiles(HashMap::new(), 1, None, chrono::Utc::now().naive_utc())
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_waiter_past_its_deadline_answers_an_uncached_503() {
+        let state = crate::api::tests_support::state_without_db().await;
+        state.map.set(small_grid());
+        let key = "busy-test".to_string();
+        let flight = render_flight(&key);
+        let _held = flight.lock().await;
+        let resp = cached_png_render(&state, &HeaderMap::new(), key, 60, 60, |_| Ok(vec![1])).await;
+        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(resp.headers()[header::CACHE_CONTROL], "no-store");
+        assert_eq!(resp.headers()[header::RETRY_AFTER], "5");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_waiter_past_its_deadline_serves_a_png_stored_meanwhile() {
+        let state = crate::api::tests_support::state_without_db().await;
+        state.map.set(small_grid());
+        let key = "stored-meanwhile".to_string();
+        let flight = render_flight(&key);
+        let held = flight.lock().await;
+        let waiter = {
+            let state = state.clone();
+            let key = key.clone();
+            tokio::spawn(async move {
+                cached_png_render(&state, &HeaderMap::new(), key, 60, 60, |_| Ok(vec![9])).await
+            })
+        };
+        tokio::task::yield_now().await;
+        state.map.store_png(key, Arc::new(vec![7]));
+        let resp = waiter.await.unwrap();
+        drop(held);
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn a_node_without_a_grid_answers_an_uncached_503() {
+        let state = crate::api::tests_support::state_without_db().await;
+        let resp = cached_png_render(&state, &HeaderMap::new(), "no-grid".into(), 60, 60, |_| {
+            Ok(vec![1])
+        })
+        .await;
+        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(resp.headers()[header::CACHE_CONTROL], "no-store");
+    }
+
+    #[tokio::test]
+    async fn a_failed_render_is_not_cached_but_a_missing_estate_is() {
+        let state = crate::api::tests_support::state_without_db().await;
+        state.map.set(small_grid());
+        let failed = cached_png_render(&state, &HeaderMap::new(), "fail".into(), 60, 60, |_| {
+            Err(render_error("boom".into()))
+        })
+        .await;
+        assert_eq!(failed.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(failed.headers()[header::CACHE_CONTROL], "no-store");
+        let missing =
+            cached_png_render(&state, &HeaderMap::new(), "missing".into(), 60, 60, |_| {
+                Err(Box::new(StatusCode::NOT_FOUND.into_response()))
+            })
+            .await;
+        assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+        assert_ne!(missing.headers()[header::CACHE_CONTROL], "no-store");
     }
 }

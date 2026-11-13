@@ -42,23 +42,41 @@ fn report_source(
     peer: Option<std::net::SocketAddr>,
     trusted_proxies: &[ipnet::IpNet],
 ) -> Option<String> {
+    report_source_with(headers, peer, trusted_proxies, &UNTRUSTED_PROXY_WARNED)
+}
+
+static UNTRUSTED_PROXY_WARNED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+fn report_source_with(
+    headers: &HeaderMap,
+    peer: Option<std::net::SocketAddr>,
+    trusted_proxies: &[ipnet::IpNet],
+    warned: &std::sync::atomic::AtomicBool,
+) -> Option<String> {
     use crate::shared::client_ip::{distinct_client_ip, is_internal, is_trusted_proxy};
     if let Some(p) = peer.map(|p| p.ip().to_canonical())
         && !is_trusted_proxy(p, trusted_proxies)
         && is_internal(p)
         && headers.contains_key("x-real-ip")
     {
-        warn_untrusted_proxy_once(p);
+        warn_untrusted_proxy_once(p, warned);
     }
-    distinct_client_ip(headers, peer, trusted_proxies)
-        .map(|ip| crate::shared::client_ip::source_key(&ip))
+    let ip = distinct_client_ip(headers, peer, trusted_proxies)?;
+    // A trusted proxy forwarding a private address names no one client.
+    if ip
+        .parse::<std::net::IpAddr>()
+        .is_ok_and(crate::shared::client_ip::is_internal)
+    {
+        return None;
+    }
+    Some(crate::shared::client_ip::source_key(&ip))
 }
 
 /// Once per process, as content warns for deploys.
-fn warn_untrusted_proxy_once(peer: std::net::IpAddr) {
-    use std::sync::atomic::{AtomicBool, Ordering};
-    static WARNED: AtomicBool = AtomicBool::new(false);
-    if !WARNED.load(Ordering::Relaxed) && !WARNED.swap(true, Ordering::Relaxed) {
+fn warn_untrusted_proxy_once(peer: std::net::IpAddr, warned: &std::sync::atomic::AtomicBool) {
+    use std::sync::atomic::Ordering;
+    if !warned.load(Ordering::Relaxed) && !warned.swap(true, Ordering::Relaxed) {
         tracing::warn!(
             %peer,
             "place reports: a private or loopback peer forwards X-Real-IP but is not in \
@@ -511,6 +529,26 @@ mod tests {
             None,
             "an unlisted private gateway gives no shared bucket"
         );
+        assert_eq!(
+            report_source(&HeaderMap::new(), peer("10.0.0.5:1"), &proxies),
+            None,
+            "a trusted proxy without X-Real-IP names no client"
+        );
+        let mut internal = HeaderMap::new();
+        internal.insert("x-real-ip", "172.17.0.3".parse().unwrap());
+        assert_eq!(
+            report_source(&internal, peer("10.0.0.5:1"), &proxies),
+            None,
+            "a forwarded private address names no client"
+        );
+        let warned = std::sync::atomic::AtomicBool::new(false);
+        report_source_with(&HeaderMap::new(), peer("10.0.0.5:1"), &[], &warned);
+        assert!(
+            !warned.load(std::sync::atomic::Ordering::Relaxed),
+            "no warning without X-Real-IP"
+        );
+        report_source_with(&headers, peer("10.0.0.5:1"), &[], &warned);
+        assert!(warned.load(std::sync::atomic::Ordering::Relaxed));
         assert_eq!(
             report_source(&headers, peer("[2001:db8:1:2::9]:1"), &[]).as_deref(),
             Some("2001:db8:1:2::/64")
