@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
-import { TabsBar } from './TabsBar'
+import { TabsBar, type TabsBarProps } from './TabsBar'
 const items = [
   { id: 'overview', label: 'Overview', href: '#overview' },
   { id: 'campaign', label: 'Campaign', href: '#campaign', hiddenOnMobile: true }
@@ -28,10 +28,25 @@ describe('when a captured page composition owns route and control placement', ()
       expect(document.querySelector('[data-region="controls"]')).toBeInTheDocument()
     }
   )
-  it('should attach explicit mobile visibility to the item rather than matching its label', () => {
-    render(<TabsBar page="create" items={items} activeId="campaign" />)
+  it('should hide only inactive mobile routes and retain the controlled current page', () => {
+    const { rerender } = render(<TabsBar page="create" items={items} activeId="overview" />)
     expect(screen.getByRole('link', { name: 'Campaign' }).closest('li')).toHaveAttribute(
       'data-mobile-hidden'
+    )
+    rerender(<TabsBar page="create" items={items} activeId="campaign" />)
+    expect(screen.getByRole('link', { name: 'Campaign' }).closest('li')).not.toHaveAttribute(
+      'data-mobile-hidden'
+    )
+  })
+  it.each([
+    { id: 'bad', label: undefined, href: '#valid' },
+    { id: 'bad', label: 12, href: '#valid' },
+    { id: 'bad', label: 'Named', href: undefined },
+    { id: 'bad', label: 'Named', href: 12 }
+  ])('should reject untyped malformed route data with its public configuration error', (item) => {
+    const invalid = [item] as unknown as TabsBarProps['items']
+    expect(() => render(<TabsBar items={invalid} activeId="bad" />)).toThrow(
+      'TabsBar routes require a non-empty label and href'
     )
   })
   it('should preserve zero and empty control values without substituting sample balances', () => {

@@ -56,6 +56,7 @@ describe('when sections are routes', () => {
         })
       )
     ).toBe(true)
+    expect(fireEvent.click(link, { button: 1 })).toBe(true)
     expect(fireEvent.contextMenu(link)).toBe(true)
     expect(onSelect).not.toHaveBeenCalled()
   })

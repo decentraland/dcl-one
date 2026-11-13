@@ -45,7 +45,7 @@ const shop: TabsBarProps = {
   search: <input aria-label="Search" />,
   actions: <button>Cart</button>
 }
-// @ts-expect-error Shop composition requires explicit caller-owned controls.
+// @ts-expect-error Shop requires explicit keys; their contents may be empty or loading.
 const missingShopControls: TabsBarProps = { page: 'shop', items, activeId: 'news' }
 // @ts-expect-error Create does not have a captured search/actions row.
 const unexpectedCreateControl: TabsBarProps = {
@@ -57,3 +57,11 @@ const unexpectedCreateControl: TabsBarProps = {
 // @ts-expect-error Source page choices are explicit.
 const inventedPage: TabsBarProps = { page: 'profile', items, activeId: 'news' }
 export const pageFixtures = { shop, missingShopControls, unexpectedCreateControl, inventedPage }
+
+export const emptyShop: TabsBarProps = {
+  page: 'shop',
+  items,
+  activeId: 'news',
+  search: undefined,
+  actions: null
+}

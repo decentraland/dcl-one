@@ -2,14 +2,16 @@
 import { describe, expect, it } from 'vitest'
 import { productionBrowser } from './production-browser.helpers'
 const browser = productionBrowser('test/consumer/tabsbar-browser.tsx')
-async function navigate(page: string, width: number) {
+async function navigate(page: string, width: number, activeId?: string) {
   await browser.session.send('Emulation.setDeviceMetricsOverride', {
     width,
     height: 900,
     deviceScaleFactor: 1,
     mobile: false
   })
-  await browser.session.navigate(browser.origin + '?page=' + page)
+  await browser.session.navigate(
+    browser.origin + '?page=' + page + (activeId ? '&active=' + activeId : '')
+  )
   await browser.evaluate(
     '(async()=>{for(let n=0;n<100&&!document.querySelector("nav");n++)await new Promise(r=>setTimeout(r,20));await document.fonts.ready})()'
   )
@@ -106,24 +108,19 @@ describe('when the viewport crosses a shared foundation breakpoint', () => {
     await browser.session.send('Runtime.evaluate', {
       expression: 'document.getElementById("outside").focus()'
     })
-    await browser.session.send('Input.dispatchKeyEvent', {
-      type: 'keyDown',
-      key: 'Tab',
-      code: 'Tab',
-      windowsVirtualKeyCode: 9,
-      modifiers: 8
-    })
-    await browser.session.send('Input.dispatchKeyEvent', {
-      type: 'keyUp',
-      key: 'Tab',
-      code: 'Tab',
-      windowsVirtualKeyCode: 9,
-      modifiers: 0
-    })
-    // Search/sort are last in document order, so target the route with its native focus API next.
-    const focused = await browser.evaluate<{ visible: boolean; outline: string }>(
-      `(()=>{const a=[...document.querySelectorAll('nav a')].at(-1);a.focus();const r=a.getBoundingClientRect(),p=a.closest('ul').getBoundingClientRect();return{visible:r.right<=p.right+1&&r.left>=p.left-1,outline:getComputedStyle(a).outlineStyle}})()`
+    await tab(true)
+    await tab(true)
+    await tab(true)
+    const focused = await browser.evaluate<{
+      active: boolean
+      visible: boolean
+      outline: string
+      scrollbar: string
+    }>(
+      `(()=>{const a=[...document.querySelectorAll('nav a')].at(-1);const r=a.getBoundingClientRect(),p=a.closest('ul').getBoundingClientRect();return{active:document.activeElement===a,visible:r.right<=p.right+1&&r.left>=p.left-1,outline:getComputedStyle(a).outlineStyle,scrollbar:getComputedStyle(a.closest('ul'),'::-webkit-scrollbar').display}})()`
     )
+    expect(focused.active).toBe(true)
+    expect(focused.scrollbar).toBe('none')
     expect(focused.visible).toBe(true)
     expect(focused.outline).toBe('solid')
   })
@@ -199,3 +196,17 @@ for (const page of ['create', 'shop', 'learn'])
         expect(backward).toEqual(path.slice(0, -1).reverse())
       })
   })
+
+describe('when the current route is normally hidden on mobile', () => {
+  it('should keep the active route visible, named and reachable by native Tab', async () => {
+    await navigate('shop', 390, '1')
+    expect(
+      await browser.evaluate(
+        `(()=>{const a=document.querySelector('[aria-current="page"]'),r=a.getBoundingClientRect();return r.width>0&&r.height>=44&&a.getAttribute('href')==='#1'})()`
+      )
+    ).toBe(true)
+    await tab()
+    await tab()
+    expect(await focusName()).toBe('#1')
+  })
+})

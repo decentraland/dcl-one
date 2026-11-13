@@ -21,7 +21,9 @@ const items = labels.map((label, index) => ({
 function App() {
   const [query, setQuery] = useState('')
   const [count, setCount] = useState(0)
-  const [activeId, setActiveId] = useState('0')
+  const [activeId, setActiveId] = useState(
+    new URLSearchParams(location.search).get('active') ?? '0'
+  )
   const common = { items, activeId, onSelect: setActiveId, label: 'Fixture sections' }
   return (
     <main className={styles.canvas}>

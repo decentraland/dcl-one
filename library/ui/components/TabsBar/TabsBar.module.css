@@ -26,6 +26,9 @@
     scrollbar-width: none;
     scroll-padding-inline: var(--dcl-space-16);
   }
+  .list::-webkit-scrollbar {
+    display: none;
+  }
   .item {
     flex: none;
   }
