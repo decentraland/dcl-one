@@ -420,6 +420,7 @@ struct Upload {
     content_length: Option<usize>,
     body: Vec<u8>,
     outcome: String,
+    concurrent: String,
     left_a_stream: bool,
 }
 
@@ -430,6 +431,11 @@ fn upload(setup: &str) -> Upload {
 }
 
 fn upload_from(is_server: bool, setup: &str) -> Upload {
+    upload_stalled(is_server, Duration::ZERO, setup)
+}
+
+/// As `upload_from`, with the server holding its reply for `stall` after the body.
+fn upload_stalled(is_server: bool, stall: Duration, setup: &str) -> Upload {
     use std::io::{BufRead, BufReader, Read, Write};
     use std::net::TcpListener;
 
@@ -453,6 +459,7 @@ fn upload_from(is_server: bool, setup: &str) -> Upload {
         }
         let mut body = vec![0u8; content_length.unwrap_or(0)];
         reader.read_exact(&mut body).unwrap();
+        std::thread::sleep(stall);
         let reply = format!("{} {}", body.len(), body.iter().map(|b| *b as u64).sum::<u64>());
         write!(
             reader.get_mut(),
@@ -542,6 +549,7 @@ fn upload_from(is_server: bool, setup: &str) -> Upload {
         content_length,
         body,
         outcome: eval_string(&mut runtime, "String(globalThis.outcome)"),
+        concurrent: eval_string(&mut runtime, "String(globalThis.concurrent)"),
         left_a_stream,
     }
 }
@@ -604,6 +612,78 @@ fn a_server_scene_upload_is_capped() {
     let buffered = upload_from(true, "const body = new Uint8Array(11 * 1024 * 1024);");
     assert!(buffered.outcome.contains("exceeds"), "{}", buffered.outcome);
     assert_eq!(buffered.content_length, None, "the server received a request");
+}
+
+/// An upload's bytes stay charged to the stream budget until it is sent, so a stream
+/// read while the server has not answered cannot take them.
+#[test]
+fn an_upload_holds_its_budget_until_sent() {
+    let upload = upload_stalled(
+        true,
+        Duration::from_secs(2),
+        r#"
+        const ops = Deno.core.ops;
+        let left = 6;
+        const body = new ReadableStream({
+            pull(controller) {
+                if (left-- > 0) { controller.enqueue(new Uint8Array(1024 * 1024).fill(1)); } else { controller.close(); }
+            },
+        });
+        globalThis.concurrent = "pending";
+        setTimeout(async () => {
+            const rid = ops.op_readable_stream_resource_allocate();
+            const sink = ops.op_readable_stream_resource_get_sink(rid);
+            const fill = async () => {
+                const chunk = new Uint8Array(1024 * 1024);
+                for (let i = 0; i < 6; i++) {
+                    if (!(await ops.op_readable_stream_resource_write_buf(sink, chunk))) return;
+                }
+                ops.op_readable_stream_resource_close(sink);
+            };
+            const [read] = await Promise.allSettled([ops.op_read_all(rid), fill()]);
+            globalThis.concurrent = read.status === "fulfilled" ? String(read.value.length) : String(read.reason);
+            Deno.core.close(rid);
+        }, 500);
+        "#,
+    );
+    assert_eq!(upload.outcome, format!("{0} {0}", 6 * 1024 * 1024));
+    assert!(upload.concurrent.contains("budget"), "{}", upload.concurrent);
+}
+
+/// An empty buffer reads nothing and leaves the stream's data in place.
+#[test]
+fn op_read_into_an_empty_buffer_reads_nothing() {
+    let (mut runtime, _) = create_runtime(false, false, "test-empty-read", false, Default::default());
+    runtime.op_state().borrow_mut().put(context(false));
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let _guard = rt.enter();
+    runtime
+        .execute_script(
+            "<test>",
+            r#"
+            const o = Deno.core.ops;
+            const r = o.op_readable_stream_resource_allocate();
+            const s = o.op_readable_stream_resource_get_sink(r);
+            o.op_readable_stream_resource_write_sync(s, new Uint8Array([1]));
+            (async () => {
+                const empty = await o.op_read(r, new Uint8Array(0));
+                const buf = new Uint8Array(1);
+                const one = await o.op_read(r, buf);
+                globalThis.__read = `${empty} ${one} ${buf[0]}`;
+            })().catch((e) => { globalThis.__read = String(e); });
+            "#,
+        )
+        .unwrap();
+    rt.block_on(async {
+        tokio::time::timeout(Duration::from_secs(10), runtime.run_event_loop(Default::default()))
+            .await
+            .expect("the read did not settle")
+    })
+    .unwrap();
+    assert_eq!(eval_string(&mut runtime, "String(globalThis.__read)"), "0 1 1");
 }
 
 /// Buffers reach serde_v8 without their prototype, so no scene getter runs while an op

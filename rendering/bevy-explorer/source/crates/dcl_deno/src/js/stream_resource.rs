@@ -122,6 +122,10 @@ impl Channel {
     }
 
     fn read(&mut self, limit: usize) -> Result<BufView, AnyError> {
+        // an empty buffer reads nothing; a chunk would overflow it in read_byob
+        if limit == 0 {
+            return Ok(BufView::empty());
+        }
         let Some(mut chunk) = self.chunks.pop_front() else {
             return match self.error.take() {
                 Some(error) => Err(error),
@@ -129,7 +133,7 @@ impl Channel {
             };
         };
         if chunk.len() > limit {
-            let head = chunk.split_to(limit.max(1));
+            let head = chunk.split_to(limit);
             self.chunks.push_front(chunk);
             chunk = head;
         }
