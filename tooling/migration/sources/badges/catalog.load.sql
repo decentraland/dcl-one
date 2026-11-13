@@ -6,7 +6,9 @@
 -- tier's steps in criteria_steps. Assets are upstream's paths relative to
 -- its CDN_HOST (<badge>[/<tier slot>]/{2d,3d}/...), which the node resolves
 -- against its public asset base; a tiered badge has none of its own, as
--- upstream. `migrate.py blobs badges` mirrors the art they name.
+-- upstream. `migrate.py blobs badges` mirrors the art they name. A presence
+-- badge upstream refuses to serve (tiered, or its steps differ from its
+-- configuration's) is imported unpublished.
 --
 -- The publication columns and criteria_steps come with the badge catalog
 -- schema; on a schema without them a non-empty batch stops instead of
@@ -16,6 +18,7 @@ DECLARE
   lacking text;
   n bigint;
   kept text;
+  refused_id text;
 BEGIN
   SELECT string_agg(c, ', ' ORDER BY c) INTO lacking
   FROM unnest(ARRAY['criteria_steps', 'published_at', 'archived_at', 'created_at']) c
@@ -30,10 +33,26 @@ BEGIN
 
   CREATE TEMP TABLE catalog_badge ON COMMIT DROP AS
   SELECT s.id, s.name, s.category, s.description, s.published_at, s.archived_at, s.created_at, s.tiers,
-         r.steps AS root_steps, r.steps IS NULL AS is_tier
+         r.steps AS root_steps, r.steps IS NULL AS is_tier,
+         -- Upstream's catalog reader leaves out a presence badge that is not a
+         -- single badge asking for its configuration's steps; the ids are its
+         -- BADGE_EVALUATORS with an observer, tiers or an import of its own.
+         s.presence AND s.id <> ALL (ARRAY['dclcitizen', 'epic_ensemble', 'regally_rare', 'legendary_look',
+                                           'mythic_model', 'unique_unicorn', 'exotic_elegance', 'open_for_business',
+                                           'traveler', 'profile_pro', 'emotionista', 'fashionista',
+                                           'event_enthusiast', 'moves_master', 'social_butterfly',
+                                           'vertical_voyager', 'walkabout_wanderer', 'land_architect',
+                                           'emote_creator', 'wearable_designer', 'referral'])
+           AND (jsonb_array_length(s.tiers) <> 1 OR r.steps IS NULL
+                OR r.steps IS DISTINCT FROM COALESCE(s.presence_steps, r.steps)) AS refused
   FROM stage s
   LEFT JOIN LATERAL (SELECT (t ->> 'steps')::integer AS steps FROM jsonb_array_elements(s.tiers) t
                      WHERE t ->> 'asset_slot' = 'root' LIMIT 1) r ON true;
+
+  FOR refused_id IN SELECT id FROM catalog_badge WHERE refused AND published_at IS NOT NULL ORDER BY id LOOP
+    RAISE NOTICE 'badges/catalog: badge % not published: its presence configuration does not match a single badge '
+                 'with the same steps', refused_id;
+  END LOOP;
 
   CREATE TEMP TABLE catalog_tier ON COMMIT DROP AS
   SELECT b.id AS badge_id, u ->> 'tier_id' AS tier_id, u ->> 'name' AS tier_name, u ->> 'description' AS description,
@@ -58,7 +77,8 @@ BEGIN
       (id, name, description, category, is_tier, assets, criteria_steps, published_at, archived_at, created_at)
   SELECT b.id, b.name, b.description, b.category, b.is_tier,
          COALESCE(a.assets, '{}'::jsonb),
-         b.root_steps, b.published_at AT TIME ZONE 'UTC', b.archived_at AT TIME ZONE 'UTC',
+         b.root_steps, CASE WHEN NOT b.refused THEN b.published_at AT TIME ZONE 'UTC' END,
+         b.archived_at AT TIME ZONE 'UTC',
          b.created_at AT TIME ZONE 'UTC'
   FROM catalog_badge b
   LEFT JOIN catalog_assets a ON a.dir = b.id AND NOT b.is_tier
@@ -78,7 +98,7 @@ BEGIN
                           EXCLUDED.criteria_steps, EXCLUDED.published_at, EXCLUDED.archived_at, EXCLUDED.created_at);
   GET DIAGNOSTICS n = ROW_COUNT;
   RAISE NOTICE 'badges/catalog: upserted % badges (% not published or archived)', n,
-    (SELECT count(*) FROM catalog_badge WHERE published_at IS NULL OR archived_at IS NOT NULL);
+    (SELECT count(*) FROM catalog_badge WHERE published_at IS NULL OR archived_at IS NOT NULL OR refused);
 
   -- A badge's tiers are exactly upstream's: the seed's other tiers of the
   -- badge, any tier rows of a single badge, and rows whose position moved

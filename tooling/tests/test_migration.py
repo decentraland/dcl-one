@@ -1622,6 +1622,41 @@ class AgainstPostgres(CommsMigrationCases, SocialMigrationCases, WorldsMigration
                                        'FROM social.presence_badges;\n').strip(),
                          'stay_fest\tscene\t10,-20\t\t1793491200\t1793577600\tstay\t600\t1793318400')
 
+    def test_when_a_presence_configuration_does_not_match_its_badge_it_should_skip_it_and_report_it(self):
+        src, tgt = self.badges_dbs()
+        t = self.T0
+        self.sql(src, textwrap.dedent(f"""
+            INSERT INTO badge_definitions (id, name, category, description, has_3d, published_at, created_at) VALUES
+              ('visit_fest', 'Visit Fest', 'Explorer', 'Visited', true, to_timestamp({t} / 1000.0),
+               to_timestamp(({t} + 6) / 1000.0)),
+              ('tier_fest', 'Tier Fest', 'Explorer', 'Stayed', true, to_timestamp({t} / 1000.0),
+               to_timestamp(({t} + 7) / 1000.0));
+            INSERT INTO badge_tiers VALUES
+              ('visit_fest', 'visit-fest-root', 1, 'Visit Fest', 'Visited', 3, 'root'),
+              {self.tiered('tier_fest', [('starter', 600), ('bronze', 1200)])};
+            INSERT INTO presence_badges (badge_id, location_kind, world_name, window_start, window_end, mode,
+                                         required_seconds) VALUES
+              ('visit_fest', 'world', 'fest.dcl.eth', '2026-11-01', '2026-11-02', 'visit', 0),
+              ('tier_fest', 'world', 'fest.dcl.eth', '2026-11-01', '2026-11-02', 'stay', 600),
+              ('dclcitizen', 'world', 'fest.dcl.eth', '2026-11-01', '2026-11-02', 'visit', 0);
+        """))
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            code, out = self.migrate('run', 'badges', '--step', 'catalog', '--step', 'presence_badge',
+                                     sources_dir=migrate.SOURCES)
+        self.assertEqual(code, 0, out + err.getvalue())
+        self.assertEqual(self.sql(tgt, 'SELECT badge_id FROM social.presence_badges;\n').split(), ['stay_fest'])
+        self.assertEqual(self.sql(tgt, "SELECT id, published_at IS NOT NULL FROM social.badge_definitions "
+                                       "WHERE id IN ('dclcitizen', 'visit_fest', 'tier_fest') ORDER BY id;\n")
+                         .splitlines(), ['dclcitizen\tt', 'tier_fest\tf', 'visit_fest\tf'])
+        notices = err.getvalue()
+        for notice in ('badges/catalog: badge tier_fest not published', 'badges/catalog: badge visit_fest not published',
+                       'skipped the presence configuration of dclcitizen: it has an observer',
+                       'skipped the presence configuration of tier_fest: it is not a single badge asking for 600 steps',
+                       'skipped the presence configuration of visit_fest: it is not a single badge asking for 1 steps'):
+            self.assertIn(notice, notices)
+        self.assertNotIn('badge dclcitizen not published', notices)
+
     def test_when_importing_progress_it_should_keep_the_document_partial_steps_and_archived_badges(self):
         src, tgt = self.badges_dbs()
         w1, w2 = self.wallet('1'), self.wallet('2')
@@ -1643,6 +1678,26 @@ class AgainstPostgres(CommsMigrationCases, SocialMigrationCases, WorldsMigration
         ])
         self.assertEqual(self.sql(tgt, 'SELECT tier_id FROM social.user_achieved_tiers ORDER BY 1;\n').split(),
                          ['emotionista-bronze', 'emotionista-starter'])
+
+    def test_when_progress_has_malformed_addresses_or_unknown_tiers_it_should_report_what_it_skips(self):
+        src, tgt = self.badges_dbs()
+        w1, w2 = self.wallet('1'), self.wallet('2')
+        self.progress(src, 'not-a-wallet', 'dclcitizen', {'steps': 1}, completed=1, updated=1)
+        for w in (w1, w2):
+            self.progress(src, w, 'emotionista', {'steps': 1},
+                          tiers=[('emotionista-starter', 10), ('emotionista-gold', 20)], updated=30)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            code, out = self.migrate('run', 'badges', sources_dir=migrate.SOURCES)
+        self.assertEqual(code, 0, out + err.getvalue())
+        notices = err.getvalue()
+        self.assertIn('badges/user_progress: skipped 1 rows of malformed addresses', notices)
+        self.assertIn('badges/user_progress: skipped achieved tiers not in the catalog: emotionista/emotionista-gold (2)',
+                      notices)
+        self.assertNotIn('not-a-wallet', notices)
+        self.assertEqual(self.sql(tgt, 'SELECT address, tier_id FROM social.user_achieved_tiers ORDER BY 1;\n')
+                         .splitlines(), [f'{w1}\temotionista-starter', f'{w2}\temotionista-starter'])
+        self.assertEqual(self.count(tgt, 'social.user_badge_progress'), 2)
 
     def test_when_a_wallet_has_rows_in_two_cases_it_should_merge_them(self):
         src, tgt = self.badges_dbs()

@@ -66,6 +66,17 @@ tables, so every imported badge is served with no code change.
 visit or minimum stay), copied verbatim with upstream's column names and
 types for the node's presence consumer.
 
+Upstream's catalog reader refuses a configuration it cannot serve, and so
+does the import, with a notice per badge:
+
+- on a badge with an observer, a tiered handler or an import of its own
+  (upstream fails to start): the configuration is skipped, the badge is
+  imported as usual for its own evaluator;
+- on a badge that is not a single badge whose root tier asks for the
+  configuration's steps (`required_seconds` of a `stay`, 1 for a `visit`;
+  upstream leaves the badge out of its catalog): the configuration is
+  skipped and the catalog step imports the badge unpublished.
+
 ## Columns
 
 - `progress`: upstream's document verbatim: `steps` plus each evaluator's
@@ -79,6 +90,9 @@ types for the node's presence consumer.
 - `last_completed_tier_id`: the highest-ordinal imported tier.
 - `user_achieved_tiers.completed_at`: the tier's own `completed_at`, else the
   badge's, else `updated_at`. Single badges have no tier rows.
+- Skipped with a notice: rows whose address is not a `0x` wallet (counted),
+  rows of badges not in the catalog (counted), and achieved tiers not in the
+  catalog (listed by badge and tier id with their row counts).
 - `granted_by`/`granted_at`: NULL (event-consumer writes). Rows the console
   granted on the node keep their provenance.
 

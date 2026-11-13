@@ -29,6 +29,8 @@ columns = [
   { name = "published_at", type = "timestamptz" },
   { name = "archived_at", type = "timestamptz" },
   { name = "created_at", type = "timestamptz" },
+  { name = "presence", type = "boolean" },
+  { name = "presence_steps", type = "integer" },
   { name = "tiers", type = "jsonb" },
 ]
 

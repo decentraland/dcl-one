@@ -33,6 +33,7 @@ DO $progress$
 DECLARE
   lacking text;
   n bigint;
+  unknown text;
 BEGIN
   SELECT string_agg(c, ', ' ORDER BY c) INTO lacking
   FROM (VALUES ('user_badge_progress', 'progress'), ('badge_definitions', 'criteria_steps')) v(t, c)
@@ -45,8 +46,14 @@ BEGIN
     RETURN;
   END IF;
 
+  SELECT count(*) INTO n FROM stage st WHERE NOT COALESCE(st.address ~ '^0x[0-9a-f]{40}$', false);
+  IF n > 0 THEN
+    RAISE NOTICE 'badges/user_progress: skipped % rows of malformed addresses', n;
+  END IF;
+
   SELECT count(*) INTO n FROM stage st
-  WHERE NOT EXISTS (SELECT 1 FROM social.badge_definitions d WHERE d.id = st.badge_id);
+  WHERE st.address ~ '^0x[0-9a-f]{40}$'
+    AND NOT EXISTS (SELECT 1 FROM social.badge_definitions d WHERE d.id = st.badge_id);
   IF n > 0 THEN
     RAISE NOTICE 'badges/user_progress: skipped % rows of badges not in the catalog', n;
   END IF;
@@ -54,7 +61,8 @@ BEGIN
   CREATE TEMP TABLE progress_row ON COMMIT DROP AS
   SELECT st.*, d.is_tier, d.criteria_steps
   FROM stage st
-  JOIN social.badge_definitions d ON d.id = st.badge_id;
+  JOIN social.badge_definitions d ON d.id = st.badge_id
+  WHERE st.address ~ '^0x[0-9a-f]{40}$';
 
   CREATE TEMP TABLE progress_src ON COMMIT DROP AS
   SELECT r.address, r.badge_id, bool_or(r.is_tier) AS is_tier, max(r.criteria_steps) AS criteria_steps,
@@ -74,6 +82,18 @@ BEGIN
            FROM jsonb_each(p.progress) k
            WHERE jsonb_typeof(k.value) = 'array'), '{}'::jsonb)
    WHERE p.spellings > 1 AND jsonb_typeof(p.progress) = 'object';
+
+  SELECT string_agg(format('%s/%s (%s)', badge_id, tier_id, holders), ', ' ORDER BY badge_id, tier_id) INTO unknown
+  FROM (SELECT r.badge_id, e ->> 'tier_id' AS tier_id, count(*) AS holders
+        FROM progress_row r
+        CROSS JOIN LATERAL jsonb_array_elements(
+            CASE WHEN jsonb_typeof(r.achieved_tiers) = 'array' THEN r.achieved_tiers ELSE '[]'::jsonb END) e
+        WHERE r.is_tier
+          AND NOT EXISTS (SELECT 1 FROM social.badge_tiers t WHERE t.badge_id = r.badge_id AND t.tier_id = e ->> 'tier_id')
+        GROUP BY 1, 2) u;
+  IF unknown IS NOT NULL THEN
+    RAISE NOTICE 'badges/user_progress: skipped achieved tiers not in the catalog: %', unknown;
+  END IF;
 
   CREATE TEMP TABLE progress_tier ON COMMIT DROP AS
   SELECT r.address, r.badge_id, t.tier_id, t.ordinal,

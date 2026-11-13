@@ -1,9 +1,9 @@
 -- Aggregate wallet spellings before pagination: every batch and incremental
--- walk sees the complete state of each selected wallet/badge pair.
+-- walk sees the complete state of each selected wallet/badge pair. Malformed
+-- addresses are skipped (and counted) by the load.
 WITH rows AS (
     SELECT p.*, lower(p.user_address) AS address
     FROM user_progress p
-    WHERE lower(p.user_address) ~ '^0x[0-9a-f]{40}$'
 ), grouped AS (
     SELECT address, badge_id, min(user_address) AS source_address,
            max(updated_at) AS updated_at, min(completed_at) AS completed_at,
