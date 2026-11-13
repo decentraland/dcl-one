@@ -387,11 +387,11 @@ impl IpfsIo {
                         .unwrap()
                         .connect_failed += 1;
                 }
-                // the bytes behind a content hash never change, so a server that says the url is wrong
-                // says so for the rest of the session
+                // the bytes behind a content hash never change, so a server that says the url is
+                // wrong says so for the rest of the session; preview always asks again
                 let session = match (&e, &cache_key) {
                     (platform::FetchError::Status(status, _), Some(CacheKey::Content(_)))
-                        if failed_remotes::is_definitive(*status) =>
+                        if !self.is_preview && failed_remotes::is_definitive(*status) =>
                     {
                         Some(*status)
                     }

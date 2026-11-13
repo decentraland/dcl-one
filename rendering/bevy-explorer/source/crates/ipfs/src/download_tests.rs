@@ -669,6 +669,76 @@ async fn a_preview_client_asks_again_for_a_missing_file_at_once() {
             assert!(read_missing(&io, &server, &path).await.is_err());
         }
         assert_eq!(io.request_metrics.attempts.load(Ordering::Relaxed), 2);
+        assert_eq!(io.failed_remotes.lock().unwrap().session_len(), 0);
+    })
+    .await
+    .expect("preview did not ask again");
+}
+
+#[tokio::test]
+async fn a_preview_client_does_not_keep_a_content_failure_for_the_session() {
+    timeout(LIMIT, async {
+        let mut io = ipfs();
+        Arc::get_mut(&mut io).unwrap().is_preview = true;
+        let server = Server::start().await;
+        let key = CacheKey::Content("bafkmissing".into());
+        fail_shared(&io, &server, "missing", key, "404 Not Found").await;
+        let mut failed = io.failed_remotes.lock().unwrap();
+        assert_eq!(failed.session_len(), 0);
+        assert_eq!(
+            failed.repeat(&server.url("missing"), Instant::now()),
+            Some(Repeat::Recent)
+        );
+    })
+    .await
+    .expect("preview kept a session failure");
+}
+
+fn seed_session_404(io: &Arc<IpfsIo>, server: &Server) {
+    let url = format!(
+        "http://{}/contents/{MISSING}",
+        server.0.local_addr().unwrap()
+    );
+    io.failed_remotes.lock().unwrap().record(
+        url,
+        Some(reqwest::StatusCode::NOT_FOUND),
+        Instant::now(),
+    );
+}
+
+#[tokio::test]
+async fn a_session_failure_is_answered_by_read_without_a_request() {
+    timeout(LIMIT, async {
+        let io = ipfs();
+        let server = Server::start().await;
+        let path = loopback_realm(&io, &server).await;
+        seed_session_404(&io, &server);
+        let error = io.read(&path).await.map(|_| ()).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("404 Not Found earlier this session"),
+            "{error}"
+        );
+        assert!(timeout(Duration::from_millis(200), server.0.accept())
+            .await
+            .is_err());
+        assert_eq!(io.request_metrics.attempts.load(Ordering::Relaxed), 0);
+    })
+    .await
+    .expect("a session failure was not answered from memory");
+}
+
+#[tokio::test]
+async fn a_preview_client_ignores_a_session_failure() {
+    timeout(LIMIT, async {
+        let mut io = ipfs();
+        Arc::get_mut(&mut io).unwrap().is_preview = true;
+        let server = Server::start().await;
+        let path = loopback_realm(&io, &server).await;
+        seed_session_404(&io, &server);
+        assert!(read_missing(&io, &server, &path).await.is_err());
+        assert_eq!(io.request_metrics.attempts.load(Ordering::Relaxed), 1);
     })
     .await
     .expect("preview did not ask again");
