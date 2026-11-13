@@ -196,7 +196,7 @@ fn install_metrics(raw: &str) -> anyhow::Result<comms::metrics::PrometheusHandle
 /// final isolate teardown; an arbitrary preexisting runtime is not supported.
 pub async fn serve(
     mut config: Config,
-    prepared: crate::metrics_matcher::PreparedStats,
+    mut prepared: crate::metrics_matcher::PreparedStats,
 ) -> anyhow::Result<()> {
     config.node.init_tracing();
     let metrics_handle = install_metrics(&config.node.serve_metrics_bind)?;
@@ -237,6 +237,9 @@ pub async fn serve(
         storage.clone(),
         sync_status.clone(),
     ));
+    // Hot-scene thumbnails name the server the scenes are read from: this node's
+    // content (`CONTENT_URL` when set), as upstream Stats uses one URL for both.
+    prepared.settings.content_url = content.settings.content_public_url.clone();
 
     // ONE outbound client: peer sync and the RPC validator use it as is
     // (`raw`), every mirror and upstream reader through the guard.
@@ -986,7 +989,6 @@ pub async fn serve(
         &config,
         &pool,
         &http_client,
-        &content,
         &market,
         comms_settings,
         &policy,
@@ -2060,7 +2062,6 @@ async fn comms_states(
     config: &Config,
     pool: &sqlx::PgPool,
     http_client: &http::Outbound,
-    content: &Arc<content::ContentState>,
     market: &Arc<shop::market::MarketplaceState>,
     comms_settings: comms::gatekeeper::Settings,
     policy: &Arc<worlds::policy::Policy>,
@@ -2075,16 +2076,13 @@ async fn comms_states(
     use crate::comms::interfaces::AccessPolicy;
 
     let non_empty = Config::non_empty;
-    let archipelago_settings = archipelago::Settings::resolve(
-        archipelago::config::RawSettings {
-            max_sockets: config.worlds.ws_max_sockets,
-            handshake_timeout_ms: config.worlds.handshake_timeout,
-            deny_list_url: config.worlds.deny_list(),
-            island_changed_dedup_ms: config.worlds.island_changed_dedup_ms,
-            commit_hash: config.node.commit_hash.clone(),
-        },
-        &content.settings.content_public_url,
-    );
+    let archipelago_settings = archipelago::Settings::resolve(archipelago::config::RawSettings {
+        max_sockets: config.worlds.ws_max_sockets,
+        handshake_timeout_ms: config.worlds.handshake_timeout,
+        deny_list_url: config.worlds.deny_list(),
+        island_changed_dedup_ms: config.worlds.island_changed_dedup_ms,
+        commit_hash: config.node.commit_hash.clone(),
+    });
 
     let social_directory = Arc::new(social::comms_directory::Directory::new(pool.clone()));
     let gatekeeper = comms::gatekeeper::CommsState::new(

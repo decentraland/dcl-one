@@ -45,6 +45,7 @@ pub mod test_support {
 pub struct Settings {
     pub metrics_path: String,
     pub metrics_bearer_token: Option<String>,
+    /// Base of `/hot-scenes` thumbnails. Serve sets it to this node's content URL.
     pub content_url: String,
 }
 impl Default for Settings {

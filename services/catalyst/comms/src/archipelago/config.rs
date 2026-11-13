@@ -64,8 +64,6 @@ pub struct Settings {
     pub cluster: ClusterConfig,
     pub server: ServerConfig,
     pub auth: AuthConfig,
-    /// The content server clients fetch thumbnails from (`/hot-scenes`).
-    pub content_base_url: String,
     pub commit_hash: String,
 }
 
@@ -86,9 +84,8 @@ pub struct RawSettings {
 }
 
 impl Settings {
-    /// The checked settings from `Config`'s values and the content URL from the content
-    /// settings.
-    pub fn resolve(raw: RawSettings, content_base_url: &str) -> Self {
+    /// The checked settings from `Config`'s values.
+    pub fn resolve(raw: RawSettings) -> Self {
         let mut auth = AuthConfig::default();
         if raw.handshake_timeout_ms > 0 {
             auth.handshake_timeout_ms = raw.handshake_timeout_ms;
@@ -105,7 +102,6 @@ impl Settings {
             cluster: ClusterConfig::default(),
             server,
             auth,
-            content_base_url: content_base_url.trim_end_matches('/').to_string(),
             commit_hash: raw.commit_hash.unwrap_or_default(),
         }
     }
@@ -116,16 +112,14 @@ impl Settings {
             cluster: ClusterConfig::default(),
             server: ServerConfig::default(),
             auth: AuthConfig::default(),
-            content_base_url: String::new(),
             commit_hash: "deadbeef".into(),
         }
     }
 
     /// The connector environment names: `HANDSHAKE_TIMEOUT`,
     /// `DENY_LIST_URL`, `ISLAND_CHANGED_DEDUP_MS` and
-    /// `COMMIT_HASH`; the content URL comes from the content settings, and LiveKit and the
-    /// broker (`NATS_URL`) are the gatekeeper's.
-    pub fn from_env(content_base_url: &str) -> anyhow::Result<Self> {
+    /// `COMMIT_HASH`; LiveKit and the broker (`NATS_URL`) are the gatekeeper's.
+    pub fn from_env() -> anyhow::Result<Self> {
         let mut auth = AuthConfig::default();
         if let Ok(v) = env::var("HANDSHAKE_TIMEOUT") {
             match v.trim().parse::<u64>() {
@@ -156,7 +150,6 @@ impl Settings {
             cluster: ClusterConfig::default(),
             server,
             auth,
-            content_base_url: content_base_url.trim_end_matches('/').to_string(),
             commit_hash: env::var("COMMIT_HASH").unwrap_or_default(),
         })
     }
