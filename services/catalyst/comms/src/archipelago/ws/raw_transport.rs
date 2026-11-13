@@ -676,7 +676,11 @@ mod tests {
             assert!(socket.next().await.unwrap().is_err());
             assert!(SinkExt::flush(&mut socket).await.is_err());
             let mut bytes = [0; 16];
-            assert!(futures::poll!(client.read(&mut bytes)).is_pending());
+            {
+                let read = client.read(&mut bytes);
+                tokio::pin!(read);
+                assert!(futures::poll!(read.as_mut()).is_pending());
+            }
             drop(socket);
             task.abort();
         }
@@ -737,7 +741,11 @@ mod tests {
             allowance.store(usize::MAX, Ordering::SeqCst);
             assert_eq!(state.sockets.available_permits(), capacity - 1);
             let mut bytes = [0; 16];
-            assert!(futures::poll!(client.read(&mut bytes)).is_pending());
+            {
+                let read = client.read(&mut bytes);
+                tokio::pin!(read);
+                assert!(futures::poll!(read.as_mut()).is_pending());
+            }
             drop(socket);
             wait_until(|| state.sockets.available_permits() == capacity).await;
             assert_eq!(signal.take_activity(), None);
