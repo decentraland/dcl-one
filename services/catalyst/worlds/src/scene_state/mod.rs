@@ -453,6 +453,14 @@ impl Settings {
                 return Err(anyhow!("{name} must be at least 1"));
             }
         }
+        // getMessages copies a client's whole queue, crdtGetState the whole snapshot.
+        if raw.js_array_buffer_limit_mb.saturating_mul(1024 * 1024)
+            < raw.client_inbound_max_bytes.max(raw.crdt_max_bytes)
+        {
+            return Err(anyhow!(
+                "JS_ARRAY_BUFFER_LIMIT_MB is below CLIENT_INBOUND_MAX_BYTES or CRDT_MAX_BYTES"
+            ));
+        }
         if raw.crdt_max_value_bytes > raw.crdt_max_bytes {
             return Err(anyhow!("CRDT_MAX_VALUE_BYTES exceeds CRDT_MAX_BYTES"));
         }
@@ -535,6 +543,9 @@ pub struct SceneHostState {
     /// The jobs' root token once `spawn_jobs` ran: every per-scene delegation
     /// renewal loop stops with it, not only when its scene is dropped.
     shutdown: std::sync::OnceLock<tokio_util::sync::CancellationToken>,
+    /// Keys whose scene was parked by a V8 OOM: not loaded again, redeploys
+    /// included, until restart.
+    parked_keys: parking_lot::Mutex<std::collections::HashSet<String>>,
 }
 
 pub type SharedState = Arc<SceneHostState>;
@@ -577,6 +588,7 @@ impl SceneHostState {
             eip1654,
             loads: tokio::sync::Mutex::new(()),
             shutdown: std::sync::OnceLock::new(),
+            parked_keys: parking_lot::Mutex::new(std::collections::HashSet::new()),
         })
     }
 
@@ -597,15 +609,39 @@ impl SceneHostState {
     /// reload of an already hosted scene never counts against the cap.
     pub async fn load(&self, key: &SceneKey) -> anyhow::Result<()> {
         let _guard = self.loads.lock().await;
+        self.retire_parked();
         let hosted = self.scenes.get(&key.room_key()).is_some();
-        // Isolates parked by an OOM keep their memory, so they hold a slot.
-        if !hosted && self.scenes.len() + jsruntime::parked_isolates() >= self.settings.max_scenes {
+        // Isolates parked by an OOM keep their memory, so they hold a slot,
+        // reloads included.
+        let others = self.scenes.len() - usize::from(hosted);
+        if others + jsruntime::parked_isolates() >= self.settings.max_scenes {
             anyhow::bail!(
                 "scene host is full ({} scenes hosted, SCENE_HOST_MAX_SCENES)",
                 self.settings.max_scenes
             );
         }
         load_or_reload(self, key).await
+    }
+
+    /// Unloads every scene an OOM parked and refuses its key from then on;
+    /// its isolate is counted by `parked_isolates` instead.
+    pub fn retire_parked(&self) -> usize {
+        let mut retired = 0;
+        for scene in self.scenes.all() {
+            if jsruntime::is_parked(&scene.scene_hash()) {
+                let key = scene.identity.key.clone();
+                self.parked_keys.lock().insert(key.room_key());
+                tracing::error!(scene = %key, "scene ran out of memory; unloaded and not loaded again until restart");
+                self.unload(&key);
+                retired += 1;
+            }
+        }
+        retired
+    }
+
+    /// Whether an OOM parked the scene under `room_key` since start.
+    pub fn is_key_parked(&self, room_key: &str) -> bool {
+        self.parked_keys.lock().contains(room_key)
     }
 
     /// Stops hosting `key`: every client is kicked and the runtime dropped.
@@ -683,7 +719,10 @@ impl SceneHostState {
     /// (or unload one that lost it), then re-run admission for every
     /// connected client and kick the refused.
     pub async fn sweep(&self) -> SweepSummary {
-        let mut summary = SweepSummary::default();
+        let mut summary = SweepSummary {
+            unloaded: self.retire_parked(),
+            ..SweepSummary::default()
+        };
         for scene in self.scenes.all() {
             let key = scene.identity.key.clone();
             match loader::current_scene_id(self, &key).await {
@@ -883,6 +922,9 @@ mod key_tests {
         assert!(ok(|_| {}));
         assert!(!ok(|r| r.client_outbound_max_bytes = 0));
         assert!(!ok(|r| r.js_array_buffer_limit_mb = 0));
+        assert!(!ok(
+            |r| r.js_array_buffer_limit_mb = r.crdt_max_bytes / (1024 * 1024) - 1
+        ));
         assert!(!ok(|r| r.crdt_max_value_bytes = r.crdt_max_bytes + 1));
         assert!(!ok(
             |r| r.client_inbound_max_bytes = r.ws_max_frame_bytes - 1

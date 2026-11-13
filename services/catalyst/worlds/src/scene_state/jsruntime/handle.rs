@@ -1626,22 +1626,41 @@ mod tests {
 
     /// Runs `body` in `onStart`; true when it set `leaked`, i.e. an
     /// allocation past the budget succeeded.
-    fn scene_leaks(name: &str, body: &str, limits: RuntimeLimits) -> bool {
-        let batch = encode_batch(&[put(600, 1, 1, &[1])]);
+    /// Runs `body` in `onStart`: `(leaked, stopped)`, where `leaked` means an
+    /// allocation past the budget succeeded and `stopped` that the scene was
+    /// terminated rather than finishing `onStart`.
+    fn scene_leaks_with(name: &str, body: &str, limits: RuntimeLimits) -> (bool, bool) {
+        let mark = |e: u32| encode_batch(&[put(e, 1, 1, &[1])]);
+        let (started, leaked, finished) = (mark(601), mark(600), mark(602));
         let js = format!(
             r#"
             var EngineApi = require('~system/EngineApi');
+            function mark(b) {{ EngineApi.crdtSendToRenderer({{ data: new Uint8Array(b) }}); }}
             module.exports.onStart = function () {{
+              mark({started:?});
               var leaked = false;
               try {{ {body} }} catch (e) {{}}
-              if (leaked) {{ EngineApi.crdtSendToRenderer({{ data: new Uint8Array({batch:?}) }}); }}
+              if (leaked) {{ mark({leaked:?}); }}
+              mark({finished:?});
             }};
             module.exports.onUpdate = function (dt) {{}};
             "#
         );
         let handle = spawn(name.into(), js, "dcl-test".into(), limits, Vec::new(), None);
-        std::thread::sleep(std::time::Duration::from_millis(500));
-        handle.shared.engine.lock().component_count() == 1
+        let has = |e: u32| {
+            decode_batch(&handle.shared.snapshot.lock())
+                .iter()
+                .any(|m| m.entity() == e)
+        };
+        assert!(
+            wait_for(|| has(601) && (has(602) || !handle.shared.running.load(Ordering::SeqCst))),
+            "{name}: onStart never ran"
+        );
+        (has(600), !has(602))
+    }
+
+    fn scene_leaks(name: &str, body: &str, limits: RuntimeLimits) -> bool {
+        scene_leaks_with(name, body, limits).0
     }
 
     #[test]
@@ -1670,11 +1689,29 @@ mod tests {
                  for (var j = 0; j < 1000; j++) keep.push(new ArrayBuffer(64)); leaked = true;",
             ),
         ] {
+            let parked_before = super::parked_isolates();
+            let (leaked, stopped) = scene_leaks_with(name, body, limits);
+            assert!(!leaked, "{name} allocated past the budget");
+            assert!(stopped, "{name}: going over the budget stops the scene");
             assert!(
-                !scene_leaks(name, body, limits),
-                "{name} allocated past the budget"
+                !super::is_parked(name) && super::parked_isolates() == parked_before,
+                "{name}: the stop is the heap-limit termination, not an OOM park"
             );
         }
+    }
+
+    #[test]
+    fn a_coerced_length_never_runs_scene_code_in_the_native_constructor() {
+        assert!(
+            scene_reports(
+                "harden-coerce",
+                "var calls = 0; \
+                 var len = { valueOf: function () { calls++; return 8; } }; \
+                 ok = new ArrayBuffer(len).byteLength === 8 && calls === 1;",
+                RuntimeLimits::default(),
+            ),
+            "the length is converted once, by the trap"
+        );
     }
 
     #[test]

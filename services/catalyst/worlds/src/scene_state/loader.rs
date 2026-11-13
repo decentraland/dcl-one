@@ -193,6 +193,9 @@ pub async fn from_local(path: &str) -> Result<String> {
 /// scene first too).
 pub async fn load_or_reload(state: &SceneHostState, key: &SceneKey) -> Result<()> {
     let name = key.room_key();
+    if state.is_key_parked(&name) {
+        bail!("{name} ran out of memory earlier; it is not loaded again until restart");
+    }
     if let Some(prev) = state.scenes.remove(&name) {
         tracing::info!(scene = %name, "stopping existing scene");
         prev.kick_all();

@@ -1,9 +1,10 @@
 //! ArrayBuffer memory lives outside the V8 heap limit, so each isolate gets
 //! an allocator that counts it against a byte budget. Over budget V8's
-//! allocation fails after its last-resort GC and the scene is stopped, as on
-//! a heap overflow (observed for `new ArrayBuffer`, typed arrays and
-//! `transfer`). Buffers the host hands the scene are charged to the same
-//! budget and throw a `RangeError`.
+//! allocation fails; its last-resort GC then reports the heap limit, the
+//! near-heap-limit callback terminates the scene and the scene thread exits
+//! normally (not parked; pinned by `no_buffer_path_allocates_past_the_budget`).
+//! Buffers the host hands the scene are charged to the same budget and throw
+//! a `RangeError`.
 //!
 //! Resizable and growable buffers and WebAssembly memory bypass the
 //! allocator and this V8 has no flag to turn them off, so [`HARDEN_JS`]
@@ -26,7 +27,9 @@ pub(super) const HARDEN_JS: &str = r#"(function () {
   var define = Object.defineProperty;
   var handler = Object.freeze({
     construct: function (target, args, newTarget) {
-      return construct(AB, [args.length > 0 ? args[0] : undefined], newTarget);
+      // Coerced here, so no scene code runs inside the native constructor.
+      var length = args.length > 0 ? +args[0] : undefined;
+      return construct(AB, [length], newTarget);
     }
   });
   var Fixed = new Proxy(AB, handler);
