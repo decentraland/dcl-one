@@ -53,6 +53,9 @@ import { EDITOR_BUILD } from '@explorer-core/features/editorHost/config'
 import { editorEntry } from '@explorer-core/features/editorHost/source'
 import { hudActsOn, type EditorHudMode } from '@explorer-core/features/editorHost/hudMode'
 import { streamHere } from '../voiceChat/streamHere'
+import { resolveMapApi, setMapApiTransport } from '@explorer-core/features/map/mapApi'
+import { homeOf, homeStore } from '@explorer-core/features/map/home'
+import { nearbyPlayers, scenePins, travelCount } from '@explorer-core/features/map/scenePins'
 import type {
   AvatarColorTarget,
   AppNotification,
@@ -1448,6 +1451,18 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     driverRef.current = driver
     // The profile store asks the engine itself for any address it's shown and doesn't hold.
     setProfileRequester((address, extras) => driver.send({ kind: 'getUserProfile', address, extras }))
+    // The map's signed reads and writes go out through the bridge scene.
+    setMapApiTransport((id, request) => driver.send({ kind: 'mapApi', id, request }))
+    nearbyPlayers.setTransport((on) => driver.send({ kind: 'watchMapPlayers', on }))
+    homeStore.setTransport((change) =>
+      driver.send(
+        change == null
+          ? { kind: 'unsetHomeScene' }
+          : 'world' in change
+            ? { kind: 'setHomeScene', realm: change.world, parcel: { x: 0, y: 0 } }
+            : { kind: 'setHomeScene', realm: DEFAULT_REALM, parcel: change.parcel }
+      )
+    )
 
     // The engine's answer to the profile save in flight, or the bridge failing to handle it (then no
     // answer ever comes, so it counts as a failure rather than leaving every later save queued).
@@ -1512,6 +1527,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
             // The bridge pushes bindings at registration, but that can race the page's channel
             // subscription — re-request now that both ends are up (shortcut hints need them).
             driver.send({ kind: 'getBindings' })
+            // The home is the signed-in wallet's, so it is read once that wallet is in the world.
+            driver.send({ kind: 'getHomeScene' })
             if (pendingParcel.current != null) {
               driver.send({ kind: 'teleport', ...pendingParcel.current })
               pendingParcel.current = null
@@ -2130,8 +2147,10 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           break
         case 'homeScene':
           setHome({ realm: msg.realm === DEFAULT_REALM ? null : msg.realm, parcel: `${msg.parcel.x},${msg.parcel.y}` })
+          homeStore.receive(homeOf(msg, DEFAULT_REALM))
           break
         case 'travelResult':
+          if (msg.ok) travelCount.traveled()
           if (msg.travelId !== travelSeq.current) break
           setTravellingTo(null)
           if (!msg.ok) {
@@ -2237,6 +2256,15 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
             }
           }
           break
+        case 'mapApiResult':
+          resolveMapApi(msg)
+          break
+        case 'mapPins':
+          scenePins.receive(msg.pins)
+          break
+        case 'mapPlayers':
+          nearbyPlayers.receive(msg.players)
+          break
         case 'gallery':
           setGalleryPhotos([...msg.photos].sort((a, b) => photoTime(b.dateTime) - photoTime(a.dateTime)))
           setGalleryStorage({ current: msg.current, max: msg.max })
@@ -2311,6 +2339,9 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
 
     return () => {
       off()
+      setMapApiTransport(null)
+      homeStore.setTransport(null)
+      nearbyPlayers.setTransport(null)
       driver.dispose()
       driverRef.current = null
     }

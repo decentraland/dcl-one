@@ -509,7 +509,7 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
             />
           </SurfaceBoundary>
           <SurfaceBoundary name="Map" open={session.map.open} onCrash={session.closeAllPanels}>
-            <MapPage map={session.map} profile={session.profile} onNavigate={goToMenuPage} />
+            <MapPage map={session.map} minimap={session.minimap} profile={session.profile} gallery={session.gallery} onNavigate={goToMenuPage} />
           </SurfaceBoundary>
           <SurfaceBoundary name="Places" open={session.places.open} onCrash={session.closeAllPanels}>
             <PlacesPage

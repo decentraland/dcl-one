@@ -203,6 +203,11 @@ pub fn op_set_home_scene(state: &WorkerContext, realm: String, parcel: JsValue) 
 }
 
 #[wasm_bindgen]
+pub fn op_unset_home_scene(state: &WorkerContext) {
+    dcl_js::system_api::op_unset_home_scene(state.rc());
+}
+
+#[wasm_bindgen]
 pub async fn op_get_system_action_stream(state: &WorkerContext) -> u32 {
     dcl_js::system_api::op_get_system_action_stream(state.rc()).await
 }
@@ -473,6 +478,24 @@ pub async fn op_read_photo_mode_stream(
                 .unwrap()
         })
         .map_err(WasmError::from)
+}
+
+#[wasm_bindgen]
+pub async fn op_get_map_pins_stream(state: &WorkerContext) -> u32 {
+    dcl_js::system_api::op_get_map_pins_stream(state.rc()).await
+}
+
+#[wasm_bindgen]
+pub async fn op_read_map_pins_stream(
+    state: &WorkerContext,
+    rid: u32,
+) -> Result<JsValue, WasmError> {
+    let pins = dcl_js::system_api::op_read_map_pins_stream(state.rc(), rid).await;
+    pins.map(|v| {
+        v.serialize(&serde_wasm_bindgen::Serializer::json_compatible())
+            .unwrap()
+    })
+    .map_err(WasmError::from)
 }
 
 #[wasm_bindgen]

@@ -29,6 +29,8 @@ import { registerNotifications } from './domains/notifications'
 import { registerSettings } from './domains/settings'
 import { registerCommunities } from './domains/communities'
 import { registerGallery } from './domains/gallery'
+import { registerMapApi } from './domains/mapApi'
+import { registerMapPins } from './domains/mapPins'
 import { registerWorld } from './domains/world'
 import { registerVoice } from './domains/voice'
 import { registerVoiceChat } from './domains/voiceChat'
@@ -70,6 +72,8 @@ export function main(): void {
     registerSettings(ctx)
     registerCommunities(ctx)
     registerGallery(ctx)
+    registerMapApi(ctx)
+    registerMapPins(ctx)
     registerWorld(ctx)
     registerPointer(ctx)
     registerProximity(ctx)

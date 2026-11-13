@@ -37,7 +37,7 @@ export const PAGES: Record<PageName, Page> = {
   settings: { key: 'KeyP', rail: 'Settings', tab: 'Settings [ P ]', marker: { name: 'Settings', role: 'heading' } },
   places: { key: 'KeyZ', rail: 'Places', tab: 'Places [ Z ]', marker: { name: 'Places sections', role: 'tablist' } },
   events: { rail: 'Events', tab: 'Events', marker: { name: 'Events sections', role: 'tablist' } },
-  map: { key: 'KeyM', tab: 'Map [ M ]', marker: { name: 'Search places & worlds', role: 'textbox' } }
+  map: { key: 'KeyM', tab: 'Map [ M ]', marker: { name: 'Search', role: 'textbox' } }
 }
 
 export const PAGE_OPEN_TIMEOUT_MS = 20_000

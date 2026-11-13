@@ -18,7 +18,7 @@ use system_bridge::{
     BlockingStatusData, ChatMessage, ChatReactionData, CommunityMemberConnectivityData,
     CommunityVoiceUpdate, DmHistoryEntryData, DmUserStateData, FriendConnectivityEvent, FriendData,
     FriendRequestData, FriendStatusData, FriendshipEventUpdate, HomeScene, HoverEvent,
-    LiveSceneInfo, PermanentPermissionItem, PermissionRequestEvent, PhotoModeState,
+    LiveSceneInfo, MapPinInfo, PermanentPermissionItem, PermissionRequestEvent, PhotoModeState,
     ProfileChangedEvent, ProximityEvent, SatelliteView, SceneLoadingUi, SetAvatarData,
     SetPermanentPermission, SetSinglePermission, SystemApi, VoiceChatAction, VoiceChatState,
     VoiceMessage, WelcomeState, WorldAccessEvent,
@@ -425,7 +425,19 @@ pub fn op_set_home_scene(state: Rc<RefCell<impl State>>, realm: String, parcel: 
     state
         .borrow_mut()
         .borrow_mut::<SuperUserScene>()
-        .send(SystemApi::SetHomeScene(HomeScene { realm, parcel }))
+        .send(SystemApi::SetHomeScene(HomeScene {
+            realm,
+            parcel,
+            pinned: true,
+        }))
+        .unwrap();
+}
+
+pub fn op_unset_home_scene(state: Rc<RefCell<impl State>>) {
+    state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::UnsetHomeScene)
         .unwrap();
 }
 
@@ -1021,6 +1033,26 @@ pub async fn op_read_profile_changed_stream(
     state: Rc<RefCell<impl State>>,
     rid: u32,
 ) -> Result<Option<ProfileChangedEvent>, anyhow::Error> {
+    Ok(read_stream(state, rid).await)
+}
+
+pub async fn op_get_map_pins_stream(state: Rc<RefCell<impl State>>) -> u32 {
+    let (sx, rx) = RpcStreamSender::channel();
+    let rid = open_stream(&mut *state.borrow_mut(), rx);
+
+    state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::GetMapPinsStream(sx))
+        .unwrap();
+
+    rid
+}
+
+pub async fn op_read_map_pins_stream(
+    state: Rc<RefCell<impl State>>,
+    rid: u32,
+) -> Result<Option<Vec<MapPinInfo>>, anyhow::Error> {
     Ok(read_stream(state, rid).await)
 }
 

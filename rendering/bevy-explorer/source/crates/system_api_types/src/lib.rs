@@ -85,6 +85,9 @@ pub struct LiveSceneInfo {
 pub struct HomeScene {
     pub realm: String,
     pub parcel: Vector2,
+    /// The player pinned this home; false when it is the default standing in for one.
+    #[serde(default)]
+    pub pinned: bool,
 }
 
 /// What the welcome page must show for the signed-in account.
@@ -458,6 +461,23 @@ pub struct PhotoModeState {
 /// A profile the engine holds was inserted or replaced: a foreign player's, or the local
 /// player's own. Carries only the address and the new version; a consumer holding an older
 /// version re-reads the profile itself.
+/// A pin a scene put on the map.
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[derive(ts_rs::TS)]
+#[ts(export)]
+pub struct MapPinInfo {
+    /// Unique among the pins of every running scene.
+    pub id: String,
+    /// The parcel the pin stands on.
+    pub x: i32,
+    pub y: i32,
+    pub title: String,
+    pub description: String,
+    /// The pin's own icon, as a url; None draws the default pin.
+    pub icon: Option<String>,
+}
+
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 #[derive(ts_rs::TS)]

@@ -1,0 +1,248 @@
+/* The map's fixed furniture, laid out on the 1920x1010 reference the page is drawn at. */
+
+/* ---- toolbar ---- */
+.toolbar {
+  position: absolute;
+  left: 10px;
+  bottom: 10px;
+  width: 45px;
+  height: 231px;
+  border-radius: 13px;
+  background: var(--map-toolbar);
+}
+.tool,
+.zoomButton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  border: none;
+  background: var(--white);
+  color: var(--map-ink);
+  cursor: pointer;
+  transition: background-color var(--dur-tap) linear;
+}
+.tool {
+  position: absolute;
+  left: 3.5px;
+  border-radius: var(--r-md);
+}
+.tool:hover,
+.zoomButton:hover {
+  background: var(--map-button-hover);
+}
+.tool:active,
+.zoomButton:active {
+  background: var(--map-button-press);
+}
+.tool:focus-visible,
+.zoomButton:focus-visible,
+.category:focus-visible,
+.mapType:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+.toolLayers {
+  bottom: 188.5px;
+}
+.toolHome {
+  bottom: 134px;
+}
+.toolPlayer {
+  bottom: 88px;
+}
+.zoom {
+  position: absolute;
+  left: 3.5px;
+  bottom: 3.5px;
+  width: 38px;
+  height: 76px;
+  border-radius: var(--r-md);
+  overflow: hidden;
+}
+.zoomButton:disabled {
+  color: var(--ink-muted);
+  cursor: default;
+}
+.zoomButton:disabled:hover {
+  background: var(--white);
+}
+.minus {
+  width: 14px;
+  height: 3px;
+  border-radius: 1px;
+  background: currentColor;
+}
+
+/* ---- Layers panel ---- */
+.layers {
+  position: absolute;
+  left: 64px;
+  bottom: 13px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 280px;
+  padding: 15px 20px 25px 16px;
+  border-radius: var(--r-md);
+  background: var(--text);
+  box-shadow: var(--map-shadow);
+  color: var(--map-ink);
+}
+.layersTitle,
+.layersHeading {
+  margin: 0;
+  font-weight: var(--fw-semibold);
+  line-height: 1.21;
+}
+.layersTitle {
+  font-size: var(--type-16);
+}
+.layersHeading {
+  color: var(--ink-muted);
+  font-size: var(--type-15);
+}
+.layersHeadingLarge {
+  font-size: var(--type-16);
+}
+.layersSection {
+  display: flex;
+  flex-direction: column;
+  gap: 8.75px;
+  padding: 4px 0;
+}
+.layersMapType {
+  gap: 14.7px;
+  padding: 4px 0 22px;
+}
+.layersRule {
+  width: 100%;
+  height: 0.5px;
+  margin: 0;
+  border: none;
+  background: var(--map-rule);
+}
+.layerRow {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-height: 28px;
+}
+.layerIcon {
+  width: 28px;
+  height: 28px;
+  object-fit: contain;
+}
+.layerLabel {
+  width: 164px;
+  font-size: var(--type-16);
+  font-weight: var(--fw-semibold);
+  line-height: 28px;
+}
+.mapTypes {
+  display: flex;
+  justify-content: space-around;
+}
+.mapType {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 104px;
+  height: 60px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  font-family: inherit;
+  cursor: pointer;
+}
+.mapTypeIcon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 60px;
+  height: 60px;
+  border: 3px solid transparent;
+  border-radius: 19px;
+}
+.mapTypeIcon img {
+  width: 50px;
+  height: 50px;
+  border-radius: var(--r-md);
+}
+.mapTypeOn {
+  border-color: var(--accent);
+}
+.mapTypeLabel {
+  position: absolute;
+  top: 60px;
+  font-size: var(--type-14);
+  font-weight: var(--fw-semibold);
+  line-height: 22px;
+}
+
+/* ---- category chips ---- */
+.categories {
+  position: absolute;
+  top: 5px;
+  left: 5px;
+  right: 480px;
+  height: 52px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+.categoryRow {
+  display: flex;
+  gap: 6.2px;
+  width: max-content;
+  padding: 10px 5.3px 0;
+}
+.category {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 41.3px;
+  padding: 0 8.7px;
+  border: none;
+  border-radius: var(--r-pill);
+  background: var(--text);
+  box-shadow: 0 3px 5px var(--black-30);
+  color: var(--map-ink);
+  font-family: inherit;
+  cursor: pointer;
+  transition: filter var(--dur-tap) linear;
+}
+.category:hover {
+  background: var(--map-chip-hover);
+}
+.category:active {
+  background: var(--map-button-press);
+}
+.categoryOn,
+.categoryOn:hover,
+.categoryOn:active {
+  background: var(--accent);
+  color: var(--text);
+}
+.categoryIcon {
+  width: 22px;
+  height: 22px;
+}
+.categoryLabel {
+  font-size: var(--type-15);
+  font-weight: var(--fw-bold);
+  line-height: 1.21;
+  text-transform: uppercase;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tool,
+  .zoomButton,
+  .category {
+    transition: none;
+  }
+}

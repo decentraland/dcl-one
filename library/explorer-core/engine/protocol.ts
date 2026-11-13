@@ -11,6 +11,7 @@ import type {
   Color3,
   CommunityVoiceStatus,
   HomeScene,
+  MapPinInfo,
   SatelliteView,
   SceneLoadingUi,
   VoiceChatAction,
@@ -242,6 +243,8 @@ export type PageToScene =
   | PlayUiSoundRequest
   | GetMapRequest
   | GetHomeSceneRequest
+  | SetHomeSceneRequest
+  | UnsetHomeSceneRequest
   | GetWelcomeRequest
   | ExpectLookRequest
   | ShowLookRequest
@@ -260,6 +263,8 @@ export type PageToScene =
   | EngineViewportRequest
   | InteractableAreaMessage
   | GetGalleryRequest
+  | MapApiRequestMessage
+  | WatchMapPlayersRequest
   | SetPhotoModeRequest
   | TakePhotoRequest
   | GetGalleryPhotoRequest
@@ -835,6 +840,18 @@ export interface GetHomeSceneRequest {
 
 export interface HomeSceneMessage extends HomeScene {
   kind: 'homeScene'
+}
+
+/** Pin a home for the signed-in wallet: a parcel of `realm` (answered with `homeScene`). */
+export interface SetHomeSceneRequest {
+  kind: 'setHomeScene'
+  realm: string
+  parcel: { x: number; y: number }
+}
+
+/** Leave the signed-in wallet without a pinned home (answered with `homeScene`). */
+export interface UnsetHomeSceneRequest {
+  kind: 'unsetHomeScene'
 }
 
 /** What the welcome page must show for the signed-in account (answered with `welcome`). */
@@ -1724,6 +1741,64 @@ export interface DeleteGalleryPhotoRequest {
   id: string
 }
 
+/** One of the full-screen map's requests the engine signs as the player. The page builds the
+ *  query; the scene picks the service, signs and sends. */
+export type MapApiRequest =
+  /** The places covering these `x,y` parcels. */
+  | { op: 'places'; positions: string[] }
+  /** A destinations search; `query` is the request's query string. */
+  | { op: 'destinations'; query: string }
+  /** An events read; `query` is the request's query string. */
+  | { op: 'events'; query: string }
+  /** Like (true), dislike (false) or clear (null) the player's vote on a place. */
+  | { op: 'placeLike'; id: string; like: boolean | null }
+  | { op: 'placeFavorite'; id: string; favorite: boolean }
+  /** Add the player to, or remove them from, an event's attendees. */
+  | { op: 'eventAttend'; id: string; attending: boolean }
+  /** A page of the photos taken at a place. */
+  | { op: 'placePhotos'; id: string; offset: number; limit: number }
+
+export interface MapApiRequestMessage {
+  kind: 'mapApi'
+  /** Echoed in the answer. */
+  id: number
+  request: MapApiRequest
+}
+
+/** The service's answer to a `mapApi` request: its parsed body, or why there is none. */
+export interface MapApiResultMessage {
+  kind: 'mapApiResult'
+  id: number
+  ok: boolean
+  data?: unknown
+  error?: string
+}
+
+/** The pins scenes put on the map (scene → page): the whole set, each time it changes. */
+export interface MapPinsMessage {
+  kind: 'mapPins'
+  pins: MapPinInfo[]
+}
+
+/** Another player the engine has in the world, in world metres. */
+export interface MapPlayer {
+  address: string
+  x: number
+  z: number
+}
+
+/** The page's map starts or stops showing the other players; while it does the scene reports them. */
+export interface WatchMapPlayersRequest {
+  kind: 'watchMapPlayers'
+  on: boolean
+}
+
+/** The players near enough for the engine to hold (scene → page), while the page watches. */
+export interface MapPlayersMessage {
+  kind: 'mapPlayers'
+  players: MapPlayer[]
+}
+
 /** An owned wearable (backpack catalog item). */
 export interface Wearable {
   urn: string
@@ -2233,6 +2308,9 @@ export type SceneToPage =
   | LobbyStageReadyMessage
   | LookShownMessage
   | GalleryMessage
+  | MapApiResultMessage
+  | MapPinsMessage
+  | MapPlayersMessage
   | GalleryPhotoMessage
   | PermissionRequestMessage
   | PermissionWithdrawnMessage

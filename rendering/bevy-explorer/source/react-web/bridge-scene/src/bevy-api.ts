@@ -25,6 +25,7 @@ import type {
   HoverEvent,
   HomeScene,
   LiveSceneInfo,
+  MapPinInfo,
   PermanentPermissionItem,
   PermissionRequestEvent,
   PhotoModeState,
@@ -105,6 +106,7 @@ export type SystemHoverEvent = HoverEvent
 export type Vec3 = Vector3
 export type SystemProximityEvent = ProximityEvent
 export type { PhotoModeState }
+export type { MapPinInfo }
 
 // Global engine input actions. `action` is the SystemAction variant name (e.g. 'Cancel' = Escape,
 // 'Map', 'Chat'); `pressed` is press vs release. Emitted authoritatively by the engine even while it
@@ -141,6 +143,10 @@ export type PermissionUsedRaw = {
 
 export type BevyApiInterface = {
   getHomeScene: () => Promise<HomeScene>
+  /** Pin a home for the signed-in wallet. */
+  setHomeScene: (home: { realm: string; parcel: { x: number; y: number } }) => Promise<void>
+  /** Leave the signed-in wallet without a pinned home. */
+  unsetHomeScene: () => Promise<void>
   /** What the welcome page must show for the signed-in account (all false when the host shows none). */
   getWelcome?: () => Promise<WelcomeState>
   /** The welcome page's accept: records the terms for this install. A held new profile deploys with
@@ -180,6 +186,8 @@ export type BevyApiInterface = {
   getSceneLoadingUIStream: () => Promise<AsyncIterable<SceneLoadingState>>
   getAnalyticsEventStream: () => Promise<AsyncIterable<AnalyticsEvent>>
   getHoverStream: () => Promise<AsyncIterable<SystemHoverEvent>>
+  /** Every running scene's map pins: the whole set now, and again each time it changes. */
+  getMapPinsStream: () => Promise<AsyncIterable<MapPinInfo[]>>
   getProximityStream: () => Promise<AsyncIterable<SystemProximityEvent>>
   /** Photo mode (the camera reel's in-world camera): its state whenever it changes. Optional:
    *  absent on runtimes whose SystemApi predates it. */

@@ -44,6 +44,7 @@ pub mod fonts;
 pub mod gltf_container;
 mod glyph_sdf;
 pub mod lights;
+pub mod map_pin;
 pub mod material;
 pub mod mesh_collider;
 pub mod mesh_renderer;
@@ -189,6 +190,7 @@ impl Plugin for SceneOutputPlugin {
         app.add_plugins(AnimatorPlugin);
         if !headless {
             app.add_plugins(BillboardPlugin);
+            app.add_plugins(map_pin::MapPinPlugin);
         }
         app.add_plugins(RaycastPlugin);
         if !headless {

@@ -36,6 +36,8 @@ import { applyProfileEdit } from './profileEdit'
 import { mentionName } from './mention'
 import type { Color3 } from './generated/index'
 import { GENESIS_SATELLITE_VIEW } from '../features/map/atlas'
+import { fixMapPublicReads } from '../features/map/mapApi'
+import { MOCK_NEARBY_PLAYERS, MOCK_PEERS, MOCK_PINS, MOCK_POIS, mockMapApi } from './mockMap'
 import { DEFAULT_REALM } from '@hud-host'
 
 const badgeImg = (seed: string): string => `https://picsum.photos/seed/${seed}/96/96`
@@ -400,6 +402,9 @@ let running: (() => void) | null = null
 export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
   if (running) return running
   const o = { ...DEFAULTS, ...opts }
+  fixMapPublicReads({ pois: MOCK_POIS, peers: MOCK_PEERS })
+  // Stateful so a home pinned from the map is the home the lobby and the map then show.
+  let mockHome = { realm: DEFAULT_REALM, parcel: { x: 0, y: 0 }, pinned: false }
   // Stateful so markNotificationsRead persists across reopens (like the real service).
   const mockNow = 1_700_000_000_000
   // Shapes mirror the real notifications service: friendship notifications carry the other user
@@ -845,6 +850,7 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     // Answered before the simulated latency: the page holds everything else until this lands.
     if (msg.kind === 'hello') {
       reply({ kind: 'bridgeReady' })
+      reply({ kind: 'mapPins', pins: MOCK_PINS })
       if (playerSpawned) reply({ kind: 'event', name: 'playerReady' })
       return
     }
@@ -852,7 +858,30 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     await wait(o.latency)
 
     if (msg.kind === 'getHomeScene') {
-      reply({ kind: 'homeScene', realm: DEFAULT_REALM, parcel: { x: 0, y: 0 } })
+      reply({ kind: 'homeScene', ...mockHome })
+      return
+    }
+    if (msg.kind === 'setHomeScene') {
+      mockHome = { realm: msg.realm, parcel: msg.parcel, pinned: true }
+      reply({ kind: 'homeScene', ...mockHome })
+      return
+    }
+    if (msg.kind === 'unsetHomeScene') {
+      mockHome = { realm: DEFAULT_REALM, parcel: { x: 0, y: 0 }, pinned: false }
+      reply({ kind: 'homeScene', ...mockHome })
+      return
+    }
+
+    if (msg.kind === 'watchMapPlayers') {
+      if (msg.on) reply({ kind: 'mapPlayers', players: MOCK_NEARBY_PLAYERS })
+      return
+    }
+    if (msg.kind === 'mapApi') {
+      try {
+        reply({ kind: 'mapApiResult', id: msg.id, ok: true, data: mockMapApi(msg.request) })
+      } catch (e) {
+        reply({ kind: 'mapApiResult', id: msg.id, ok: false, error: e instanceof Error ? e.message : String(e) })
+      }
       return
     }
 

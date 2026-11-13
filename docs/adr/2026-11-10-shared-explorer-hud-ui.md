@@ -70,6 +70,6 @@ the HUD artifact's inputs and CI selection include both (the computed
 `rendering/bevy-explorer/source/react-web/shared-inputs.json` contract). Sites runs this same HUD, so
 the separate review of a Sites copy against the Explorer's, and its lock hash, are retired.
 The Explorer client team owns both folders. Server reads live in the core and their React hooks in the
-UI (for example `features/events/eventsApi.ts` and `useLiveEventCount.ts`); two components still
-fetch directly (`components/WorldVisitModal.tsx`, `features/map/MapPage.tsx`); the in-world Shop's UI imports `apps/ui3/src/shop`, so it
+UI (for example `features/events/eventsApi.ts` and `useLiveEventCount.ts`); one component still
+fetches directly (`components/WorldVisitModal.tsx`); the in-world Shop's UI imports `apps/ui3/src/shop`, so it
 stays in `/play` until those imports are in `library/`.

@@ -12,7 +12,7 @@ use system_bridge::{
     BlockingStatusData, ChatMessage, ChatReactionData, CommunityMemberConnectivityData,
     CommunityVoiceUpdate, DmHistoryEntryData, DmUserStateData, FriendConnectivityEvent, FriendData,
     FriendRequestData, FriendStatusData, FriendshipEventUpdate, HomeScene, HoverEvent,
-    LiveSceneInfo, PermanentPermissionItem, PermissionRequestEvent, PhotoModeState,
+    LiveSceneInfo, MapPinInfo, PermanentPermissionItem, PermissionRequestEvent, PhotoModeState,
     ProfileChangedEvent, ProximityEvent, SatelliteView, SceneLoadingUi, SetAvatarData,
     VoiceChatAction, VoiceChatState, VoiceMessage, WelcomeState, WorldAccessEvent,
 };
@@ -43,6 +43,7 @@ pub fn ops(super_user: bool) -> Vec<OpDecl> {
             op_live_scene_info(),
             op_get_home_scene(),
             op_set_home_scene(),
+            op_unset_home_scene(),
             op_get_service_urls(),
             op_get_welcome(),
             op_accept_terms(),
@@ -85,6 +86,8 @@ pub fn ops(super_user: bool) -> Vec<OpDecl> {
             op_set_world_password(),
             op_get_profile_changed_stream(),
             op_read_profile_changed_stream(),
+            op_get_map_pins_stream(),
+            op_read_map_pins_stream(),
             op_get_scene_loading_ui_stream(),
             op_read_scene_loading_ui_stream(),
             op_get_analytics_event_stream(),
@@ -319,6 +322,11 @@ pub fn op_set_home_scene(
     #[serde] parcel: Vector2,
 ) {
     dcl_js::system_api::op_set_home_scene(state, realm, parcel);
+}
+
+#[op2(fast)]
+pub fn op_unset_home_scene(state: Rc<RefCell<OpState>>) {
+    dcl_js::system_api::op_unset_home_scene(state);
 }
 
 #[op2(async)]
@@ -595,6 +603,20 @@ pub async fn op_read_profile_changed_stream(
     rid: u32,
 ) -> Result<Option<ProfileChangedEvent>, deno_core::anyhow::Error> {
     dcl_js::system_api::op_read_profile_changed_stream(state, rid).await
+}
+
+#[op2(async)]
+pub async fn op_get_map_pins_stream(state: Rc<RefCell<OpState>>) -> u32 {
+    dcl_js::system_api::op_get_map_pins_stream(state).await
+}
+
+#[op2(async)]
+#[serde]
+pub async fn op_read_map_pins_stream(
+    state: Rc<RefCell<OpState>>,
+    rid: u32,
+) -> Result<Option<Vec<MapPinInfo>>, deno_core::anyhow::Error> {
+    dcl_js::system_api::op_read_map_pins_stream(state, rid).await
 }
 
 #[op2(async)]

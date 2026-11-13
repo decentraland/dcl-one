@@ -75,7 +75,9 @@ const GATEWAY_PREFIXES: Readonly<Record<string, string>> = {
   'camera-reel-service': '/camera-reel-service',
   badges: '/badges',
   notifications: '/notifications',
-  'assets-cdn': '/assets-cdn'
+  'assets-cdn': '/assets-cdn',
+  'dcl-lists': '/dcl-lists',
+  'archipelago-ea-stats': '/archipelago-ea-stats'
 }
 
 /** The domain a url without ?baseDomain= means here: derived from the hosting origin, else this host. */
