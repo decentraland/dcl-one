@@ -234,6 +234,42 @@ async fn identity(source: &PgPool, target: &PgPool) -> Result<()> {
     assert_eq!(owner(target).await?, A);
     Ok(())
 }
+async fn lock_timeout(source: &PgPool, target: &PgPool) -> Result<()> {
+    start(source, target).await?;
+    sqlx::query("UPDATE worlds SET owner=$1 WHERE name=$2")
+        .bind(B)
+        .bind(WORLD)
+        .execute(source)
+        .await?;
+    assert!(worlds::pump_once(source, target, "worlds").await?);
+    let mut holder = target.begin().await?;
+    sqlx::query("SELECT owner FROM worlds.worlds WHERE name=$1 FOR UPDATE")
+        .bind(WORLD)
+        .execute(&mut *holder)
+        .await?;
+    let options = target
+        .connect_options()
+        .as_ref()
+        .clone()
+        .options([("lock_timeout", "50ms")]);
+    let limited = PgPool::connect_with(options).await?;
+    let error = worlds::apply_next(&limited, "worlds")
+        .await
+        .expect_err("locked world must time out");
+    assert!(error.downcast_ref::<sqlx::Error>().is_some());
+    assert_eq!(state(target).await?["applied_position"], 0);
+    assert!(state(target).await?["error_code"].is_null());
+    assert_eq!(state(target).await?["paused"], false);
+    holder.rollback().await?;
+    assert_eq!(
+        worlds::apply_next(&limited, "worlds").await?,
+        Outcome::Applied
+    );
+    assert_eq!(owner(target).await?, B);
+    limited.close().await;
+    Ok(())
+}
+
 async fn fencing(source: &PgPool, target: &PgPool) -> Result<()> {
     install(source).await?;
     // An active normal-runtime guard prevents registration; no partial state.
@@ -296,7 +332,7 @@ async fn worlds_outcomes_preserve_commits_deletes_and_scope() -> Result<()> {
     };
     let options = PgConnectOptions::from_str(&url)?;
     let mut admin = PgConnection::connect_with(&options).await?;
-    for scenario in 0..4 {
+    for scenario in 0..5 {
         let source_db = format!("worlds_source_{}", Uuid::new_v4().simple());
         let target_db = format!("worlds_target_{}", Uuid::new_v4().simple());
         for name in [&source_db, &target_db] {
@@ -314,7 +350,8 @@ async fn worlds_outcomes_preserve_commits_deletes_and_scope() -> Result<()> {
                 0 => behavior(&source, &target).await,
                 1 => conflict(&source, &target).await,
                 2 => identity(&source, &target).await,
-                _ => fencing(&source, &target).await,
+                3 => fencing(&source, &target).await,
+                _ => lock_timeout(&source, &target).await,
             }
         }
         .await;

@@ -457,7 +457,14 @@ pub async fn apply_next(target: &PgPool, stream: &str) -> Result<Outcome> {
         for change in changes { apply_change(&mut tx,stream,change).await?; }
         Ok(())
     }.await;
-    if result.is_err() {
+    if let Err(error) = result {
+        // Database execution failure is not evidence of a conflicting business
+        // fact. Roll back and retry the same head (lock timeout, deadlock,
+        // serialization failure and lost connection must not poison a stream).
+        if error.downcast_ref::<sqlx::Error>().is_some() {
+            tx.rollback().await?;
+            return Err(error);
+        }
         sqlx::query("ROLLBACK TO SAVEPOINT worlds_apply")
             .execute(&mut *tx)
             .await?;

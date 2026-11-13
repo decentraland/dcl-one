@@ -14,11 +14,12 @@ Source transactions above 1,000 changes or 1 MiB stop capture before progress ad
 
 Use the existing worker's `MIGRATION_SYNC_SOURCE_DATABASE_URL` and `MIGRATION_SYNC_DATABASE_URL` secret environment variables. The CLI integration exposes installation and the `worlds` command group; consult `dcl-migration-sync --help` and `dcl-migration-sync worlds --help` for argument names.
 
-1. Stop normal target services, jobs, indexers and old binaries. The common migration startup lock fences current binaries, not arbitrary SQL or older releases.
-2. Run `catalyst schema migrate` with the target administrative role. `72_worlds_migration.sql` introduces only new objects, which the additive schema migrator creates; it changes no existing business table.
-3. Install `source/worlds.sql` through the worker's source installation operation with the explicit world/wallet allowlists. Installation is one source transaction; repeating it requires exactly the same scope. Do not run raw installation SQL against an existing capture schema.
-4. Complete the initial Worlds migration. Bootstrap verifies exact source/target owners and quota timestamps at a consistent source boundary and registers a paused stream. It does not overwrite existing target business facts. If concurrent writes prevent an exact match, quiesce source writers for the initial import/bootstrap; do not force a mismatched cursor.
-5. Start capture with read-only source credentials. Resume target application with `--rehearsal`. Keep normal target jobs/providers off throughout coexistence. Status reports baseline/capture/apply positions, pause state, blocker and source contact age.
+1. Quiesce all source writers before installation. Deploy the Worlds content integration with `MIGRATION_WORLDS_CAPTURE_ENABLED=true` on every source replica before resuming any writes; it takes the capture lock before native row/deployment locks. Mixed old/new lock ordering can deadlock. Custom transactions that lock source world rows must acquire `pg_advisory_xact_lock(179321,2)` first.
+2. Stop normal target services, jobs, indexers and old binaries. The common migration startup lock fences current binaries, not arbitrary SQL or older releases.
+3. Run `catalyst schema migrate` with the target administrative role. `72_worlds_migration.sql` introduces only new objects, which the additive schema migrator creates; it changes no existing business table.
+4. Install `source/worlds.sql` through the worker's source installation operation with the explicit world/wallet allowlists. Installation is one source transaction; repeating it requires exactly the same scope. Do not run raw installation SQL against an existing capture schema.
+5. Complete the initial Worlds migration. Bootstrap verifies exact source/target owners and quota timestamps at a consistent source boundary and registers a paused stream. It does not overwrite existing target business facts. If concurrent writes prevent an exact match, quiesce source writers for the initial import/bootstrap; do not force a mismatched cursor.
+6. Start capture with read-only source credentials. Resume target application with `--rehearsal`. Keep normal target jobs/providers off throughout coexistence. Status reports baseline/capture/apply positions, pause state, blocker and source contact age.
 
 With credentials supplied by the supervisor, a bounded example is:
 
