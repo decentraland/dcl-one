@@ -4,7 +4,7 @@
 //! an admin reset all end the connection rather than muting it.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 use dashmap::DashMap;
 use parking_lot::Mutex;
@@ -17,8 +17,13 @@ use crate::rooms::ActiveDeployment;
 use crate::scene_state::SceneKey;
 use crate::scene_state::runtime::SceneRuntime;
 
+/// Connection ids are never reused, unlike entity-range indices.
+static NEXT_CLIENT_ID: AtomicU64 = AtomicU64::new(1);
+
 pub struct Client {
     pub index: u32,
+    /// This connection, as opposed to whichever holds `index` later.
+    pub id: u64,
     /// Lowercase wallet address (the verified SIGNER).
     pub address: String,
 
@@ -46,6 +51,7 @@ pub struct Client {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClientInfo {
     pub index: u32,
+    pub id: u64,
     pub address: String,
     pub grant: Option<AccessGrant>,
 }
@@ -82,6 +88,10 @@ pub struct Scene {
     pub runtime: Arc<dyn SceneRuntime>,
     clients: DashMap<u32, Arc<Client>>,
 
+    /// When the last client left (or the scene loaded with none). Held while
+    /// `clients` changes, so the two never disagree.
+    empty_since: Mutex<Option<std::time::Instant>>,
+
     renewal: Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
 
@@ -101,6 +111,7 @@ impl Scene {
             identity,
             runtime,
             clients: DashMap::new(),
+            empty_since: Mutex::new(Some(std::time::Instant::now())),
             renewal: Mutex::new(renewal),
         }
     }
@@ -113,6 +124,15 @@ impl Scene {
         self.clients.len()
     }
 
+    /// How long the scene has had no clients, `None` while any is connected.
+    pub fn idle_for(&self) -> Option<std::time::Duration> {
+        let since = self.empty_since.lock();
+        if !self.clients.is_empty() {
+            return None;
+        }
+        since.map(|since| since.elapsed())
+    }
+
     /// Every connected client, in index order.
     pub fn clients(&self) -> Vec<ClientInfo> {
         let mut out: Vec<ClientInfo> = self
@@ -120,6 +140,7 @@ impl Scene {
             .iter()
             .map(|e| ClientInfo {
                 index: *e.key(),
+                id: e.value().id,
                 address: e.value().address.clone(),
                 grant: e.value().grant,
             })
@@ -147,6 +168,7 @@ impl Scene {
         let init = self.runtime.on_client_open(index, tx.clone());
         let client = Arc::new(Client {
             index,
+            id: NEXT_CLIENT_ID.fetch_add(1, Ordering::Relaxed),
             address,
             tx,
             start: init.start,
@@ -154,7 +176,10 @@ impl Scene {
             cancel: CancellationToken::new(),
             grant,
         });
+        let mut since = self.empty_since.lock();
         self.clients.insert(index, Arc::clone(&client));
+        *since = None;
+        drop(since);
         (client, init)
     }
 
@@ -174,38 +199,56 @@ impl Scene {
     }
 
     pub fn remove_client(&self, index: u32) {
-        if let Some((_, client)) = self.clients.remove(&index) {
-            client.cancel.cancel();
-        }
+        self.remove_matching(index, |_| true);
+    }
 
+    /// Removes connection `id` if it still holds `index`: a decision made
+    /// across an await never removes a newer connection given the same index.
+    pub fn remove_connection(&self, index: u32, id: u64) -> bool {
+        self.remove_matching(index, |c| c.id == id)
+    }
+
+    fn remove_matching(&self, index: u32, matches: impl FnOnce(&Client) -> bool) -> bool {
+        let mut since = self.empty_since.lock();
+        let Some((_, client)) = self.clients.remove_if(&index, |_, c| matches(c)) else {
+            return false;
+        };
+        client.cancel.cancel();
+        if self.clients.is_empty() {
+            since.get_or_insert_with(std::time::Instant::now);
+        }
+        drop(since);
+
+        // Only the removal that took the client tells the runtime.
         for body in self.runtime.on_client_close(index) {
             let frame = crate::scene_state::runtime::frame_crdt(&body);
             self.broadcast(&frame, index);
         }
+        true
     }
 
     pub fn kick_all(&self) -> usize {
-        let indices: Vec<u32> = self.clients.iter().map(|e| *e.key()).collect();
-        let n = indices.len();
-        for index in indices {
-            self.remove_client(index);
-        }
-        n
+        let held: Vec<(u32, u64)> = self
+            .clients
+            .iter()
+            .map(|e| (*e.key(), e.value().id))
+            .collect();
+        held.into_iter()
+            .filter(|(index, id)| self.remove_connection(*index, *id))
+            .count()
     }
 
     /// Removes every connection `address` holds on this scene.
     pub fn kick_address(&self, address: &str) -> usize {
-        let indices: Vec<u32> = self
+        let held: Vec<(u32, u64)> = self
             .clients
             .iter()
             .filter(|e| e.value().address.eq_ignore_ascii_case(address))
-            .map(|e| *e.key())
+            .map(|e| (*e.key(), e.value().id))
             .collect();
-        let n = indices.len();
-        for index in indices {
-            self.remove_client(index);
-        }
-        n
+        held.into_iter()
+            .filter(|(index, id)| self.remove_connection(*index, *id))
+            .count()
     }
 
     pub fn snapshot(&self) -> Vec<u8> {
@@ -421,11 +464,33 @@ mod tests {
             scene.clients(),
             vec![ClientInfo {
                 index: b.index,
+                id: b.id,
                 address: b.address.clone(),
                 grant: None
             }]
         );
         assert_eq!(scene.kick_all(), 1);
         assert!(b.cancel.is_cancelled());
+    }
+
+    #[test]
+    fn a_stale_removal_never_kicks_the_client_now_at_that_index() {
+        let scene = Scene::new(
+            "localScene",
+            Arc::new(RelayRuntime::new("h", ServerTransportConfig::default())),
+        );
+        let (tx, _rx) = mpsc::channel(16);
+        let (old, _) = scene.add_client(
+            "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
+            tx.clone(),
+        );
+        scene.remove_client(old.index);
+        // The same wallet reconnecting: only the connection id tells them apart.
+        let (new, _) = scene.add_client("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(), tx);
+        assert_eq!(new.index, old.index, "the index is reused");
+        assert!(!scene.remove_connection(old.index, old.id));
+        assert!(!new.cancel.is_cancelled());
+        assert!(scene.remove_connection(new.index, new.id));
+        assert!(new.cancel.is_cancelled());
     }
 }

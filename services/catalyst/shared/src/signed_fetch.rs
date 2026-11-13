@@ -156,14 +156,15 @@ pub fn extract_auth_chain(headers: &HeaderMap) -> Result<AuthChain, SignedFetchE
     Ok(core::extract_auth_chain(headers, UnsignedLinks::Malformed)?)
 }
 
-/// A millisecond timestamp header is fresh when `(now - signed_at).abs() <=
-/// window_secs`; a non-numeric one is rejected rather than skipping the window.
-pub fn check_symmetric_skew(
+/// A millisecond timestamp header is fresh when it is at most `window_secs`
+/// old and at most `min(window_secs, MAX_FUTURE_SKEW_SECS)` ahead; a
+/// non-numeric one is rejected rather than skipping the window.
+pub fn check_timestamp_window(
     timestamp: &str,
     now: i64,
     window_secs: i64,
 ) -> Result<(), SignedFetchError> {
-    Ok(core::check_symmetric_skew(timestamp, now, window_secs)?)
+    Ok(core::check_timestamp_window(timestamp, now, window_secs)?)
 }
 
 /// Unparseable or non-object metadata is refused before anything is verified;
@@ -238,7 +239,7 @@ pub async fn require_signer_at(
     let chain = extract_auth_chain(headers)?;
     let ts = core::timestamp_or_zero(header_str(headers, AUTH_TIMESTAMP_HEADER));
     let now = chrono::Utc::now().timestamp();
-    check_symmetric_skew(ts, now, FIVE_MINUTES)?;
+    check_timestamp_window(ts, now, FIVE_MINUTES)?;
 
     let metadata_raw = header_str(headers, AUTH_METADATA_HEADER).unwrap_or("{}");
     let metadata = parse_metadata(metadata_raw)?;

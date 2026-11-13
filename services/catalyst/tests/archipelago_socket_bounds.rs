@@ -741,7 +741,7 @@ async fn clean_peer_close_echoes_exact_reason_and_ends_tcp_at_each_application_s
                 socket
                     .send(packet(client_packet::Message::ChallengeRequest(
                         ChallengeRequestMessage {
-                            address: "0x0000000000000000000000000000000000000001".into(),
+                            address: "0x0000000000000000000000000000000000000101".into(),
                         },
                     )))
                     .await
@@ -1115,7 +1115,7 @@ async fn pending_contract(port: u16, delegated: bool) -> (Socket, String, String
     pending_contract_as(
         port,
         delegated,
-        "0x0000000000000000000000000000000000000001".into(),
+        "0x0000000000000000000000000000000000000101".into(),
         PrivateKeySigner::random(),
     )
     .await
@@ -1130,7 +1130,7 @@ async fn pending_contract_as(
     let (mut socket, _) = tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}/ws"))
         .await
         .unwrap();
-    let address = "0x0000000000000000000000000000000000000001".to_string();
+    let address = "0x0000000000000000000000000000000000000101".to_string();
     socket
         .send(packet(client_packet::Message::ChallengeRequest(
             ChallengeRequestMessage { address: claim },
@@ -1248,7 +1248,7 @@ async fn local_registration_follows_successful_completion_and_preserves_other_de
                 let (socket, _, session, _, _) = pending_contract_as(
                     port,
                     true,
-                    "0x0000000000000000000000000000000000000001".into(),
+                    "0x0000000000000000000000000000000000000101".into(),
                     if index == 0 || same_session {
                         device.clone()
                     } else {
@@ -1260,7 +1260,7 @@ async fn local_registration_follows_successful_completion_and_preserves_other_de
                 sockets.push(socket);
                 sessions.push(session);
             }
-            let address = "0x0000000000000000000000000000000000000001";
+            let address = "0x0000000000000000000000000000000000000101";
             assert_eq!(state.registry.authenticated_count(), 0);
             validator.gates[order[0]].add_permits(1);
             assert!(matches!(
@@ -1623,7 +1623,7 @@ async fn baseline_v4_authentication_is_not_exposed() {
     // Echoing a protocol name does not enable extended offer or typed-auth fields.
     // ChallengeRequest.address followed by the reserved ConnectionOffer tag.
     let mut challenge = vec![0x0a, 42];
-    challenge.extend_from_slice(b"0x0000000000000000000000000000000000000001");
+    challenge.extend_from_slice(b"0x0000000000000000000000000000000000000101");
     challenge.extend_from_slice(&[0x12, 0]);
     let mut frame = vec![0x0a, challenge.len() as u8];
     frame.extend(challenge);
@@ -1771,7 +1771,7 @@ async fn source_contract_challenge_has_32_random_bytes() {
         socket
             .send(packet(client_packet::Message::ChallengeRequest(
                 ChallengeRequestMessage {
-                    address: "0x0000000000000000000000000000000000000001".into(),
+                    address: "0x0000000000000000000000000000000000000101".into(),
                 },
             )))
             .await
@@ -1828,7 +1828,7 @@ async fn source_contract_text_data_uses_the_same_protobuf_decoder() {
         .unwrap();
     let Message::Binary(bytes) = packet(client_packet::Message::ChallengeRequest(
         ChallengeRequestMessage {
-            address: "0x0000000000000000000000000000000000000001".into(),
+            address: "0x0000000000000000000000000000000000000101".into(),
         },
     )) else {
         unreachable!()
@@ -1903,7 +1903,7 @@ async fn source_contract_negotiates_first_offered_protocol_without_selecting_aut
         socket
             .send(packet(client_packet::Message::ChallengeRequest(
                 ChallengeRequestMessage {
-                    address: "0x0000000000000000000000000000000000000001".into(),
+                    address: "0x0000000000000000000000000000000000000101".into(),
                 },
             )))
             .await
@@ -1951,7 +1951,7 @@ async fn source_contract_inbound_message_limit_is_16_kib() {
             .unwrap();
         let Message::Binary(bytes) = packet(client_packet::Message::ChallengeRequest(
             ChallengeRequestMessage {
-                address: "0x0000000000000000000000000000000000000001".into(),
+                address: "0x0000000000000000000000000000000000000101".into(),
             },
         )) else {
             unreachable!()
