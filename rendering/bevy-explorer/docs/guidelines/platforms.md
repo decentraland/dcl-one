@@ -56,7 +56,9 @@ sees a `cfg`. Backend functionality that only one caller needs lives next to tha
   sixteenth of the cap written (at most 64 MiB), and before retrying a write that failed for quota
   (then it frees at least a quarter, at most once a minute). It never opens another cache. The
   page asks once for persistent storage. The **Web Content Cache** debug section shows the readings;
-  in preview mode it can override the cap for the session.
+  in preview mode it can override the cap for the session. The scene server's frame runs a second
+  engine that asks for its own configured cap, so an override above that lasts only until its
+  next trim.
 - **Two GPUs: Chrome takes the low-power one.** On a laptop with integrated and discrete GPUs,
   Chrome's WebGPU renders on the integrated one while native wgpu takes the discrete one: on one
   laptop the same web build ran much slower (measurements (evidence supplied for the task)).
