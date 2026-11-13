@@ -3,12 +3,11 @@
 // not import view bindings: importing such a module breaks the override ("can't find function
 // shadows::fetch_directional_shadow for redirection"), so callers pass in the cascade far bound.
 
-// SHADOW_OPACITY: how dark the sun's cast shadows are on the world.
-// 1.0 = full black shadows (bevy default), 0.0 = no shadow at all.
-// overriding the shadow fetch lifts the shadow value toward "lit" inside the
-// single pbr lighting pass, so shadows become partial instead of fully
-// occluding the sun — no second lighting evaluation needed.
-const SHADOW_OPACITY: f32 = 0.65;
+// SHADOW_OPACITY: how much of the sun a cast shadow blocks: 1.0 = all of it, 0.0 = none.
+// unity: the sun's shadow strength is 1 (`Main.unity`) and the Trilight ambient alone fills the
+// shadow in. Below 1 the shadow lets that share of the sun through, its specular highlight
+// included, and a highlight inside a shadow reads as wet or metallic.
+const SHADOW_OPACITY: f32 = 1.0;
 
 // Beyond the furthest shadow cascade bevy returns "fully lit" (shadow = 1.0),
 // which pops hard at the shadow-distance edge. Instead, fade toward a partial-
