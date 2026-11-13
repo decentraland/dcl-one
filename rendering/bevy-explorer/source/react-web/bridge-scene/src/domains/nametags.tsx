@@ -28,7 +28,7 @@ import { Color4, Vector3 } from '@dcl/sdk/math'
 import { getPlayer, onEnterScene, onLeaveScene } from '@dcl/sdk/players'
 import { ReactEcsRenderer } from '@dcl/sdk/react-ecs'
 import type { Entity } from '@dcl/ecs'
-import { isSpeaking } from './voice'
+import { isSpeaking, isSpeakingInCall } from './voice'
 import { isHushed } from './nearbyMutes'
 import { fetchProfile } from './profile'
 import { BevyApi } from '../bevy-api'
@@ -285,7 +285,7 @@ function tagElement(userId: string): () => ReactEcs.JSX.Element | null {
                 uiBackground={{ textureMode: 'stretch', texture: { src: 'images/icon-verified.png' } }}
               />
             )}
-            {isSpeaking(userId) && (isHushed(userId) ? <HushedBadge /> : <VoiceBadge />)}
+            {isSpeaking(userId) && (isHushed(userId) && !isSpeakingInCall(userId) ? <HushedBadge /> : <VoiceBadge />)}
           </UiEntity>
           {bubble != null && (
             <UiEntity uiTransform={{ flexDirection: 'row', alignItems: 'center', margin: { top: MSG_GAP } }}>

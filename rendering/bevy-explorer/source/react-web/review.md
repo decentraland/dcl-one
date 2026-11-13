@@ -176,9 +176,11 @@ these by hand (or have an agent drive the Chrome extension against a live world)
       community chat by a player standing nearby shows as their bubble with the community's name on
       a smaller, dimmer, left-aligned row above their name, cut short with an ellipsis (and over
       your own head for your own); a Nearby message shows no such row, and a DM no bubble at all.
-- [ ] **Hushed badge** (`bridge-scene/src/domains/{nearbyMutes,nametags}.*`): while a player whose
+- [ ] **Hushed badge** (`bridge-scene/src/domains/{nearbyMutes,voice,nametags}.*`): while a player whose
       nearby voice you muted (profile menu, Hush) is talking, their tag shows the red hushed icon in
       place of the green speaking bars, and nothing when they are quiet; Hear brings the bars back.
+      The same player talking in a private call or community stream with you, which the mute leaves
+      audible, shows the green bars.
 - [ ] **Lobby stage** (`bridge-scene/src/domains/avatarPreview.tsx`, lobby region): after sign-in the
       page's stand-in (backdrop + snapshot) crossfades to the engine stage with the live avatar centred;
       Customize opens the Backpack modal with the avatar through its hole and hands the stage back on
