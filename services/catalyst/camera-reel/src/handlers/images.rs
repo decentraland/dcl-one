@@ -5,7 +5,7 @@ use tokio::time::Instant;
 
 use axum::Json;
 use axum::body::Body;
-use axum::extract::{Multipart, OriginalUri, Path, State};
+use axum::extract::{FromRequest, Multipart, OriginalUri, Path, Request, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use base64::Engine as _;
@@ -59,10 +59,25 @@ pub async fn upload_image(
         .require_auth(&headers, "post", &signed_path(&uri, "/api/images"))
         .await?;
 
+    // Upstream refuses a full gallery before reading the form; the insert
+    // below stays the race-safe authority. A failed count reads as 0, as
+    // upstream's does.
+    let max_images = state.settings.max_images_per_user;
+    let count = state
+        .db
+        .get_user_images_count(address.as_str(), false)
+        .await
+        .unwrap_or(0);
+    if count >= max_images {
+        return Err(max_limit_reached(max_images));
+    }
+
+    // The first of a repeated field wins, as upstream's form reader keeps it.
     let mut image_bytes: Option<Bytes> = None;
     let mut image_content_type: Option<String> = None;
+    let mut image_file_name: Option<String> = None;
     let mut metadata_bytes: Option<Bytes> = None;
-    let mut is_public = false;
+    let mut is_public: Option<bool> = None;
 
     while let Some(field) = multipart
         .next_field()
@@ -70,8 +85,9 @@ pub async fn upload_image(
         .map_err(|e| ApiError::BadRequest(format!("invalid multipart: {e}")))?
     {
         match field.name() {
-            Some("image") => {
+            Some("image") if image_bytes.is_none() => {
                 image_content_type = field.content_type().map(|s| s.to_string());
+                image_file_name = field.file_name().map(|s| s.to_string());
                 let data = field
                     .bytes()
                     .await
@@ -81,19 +97,26 @@ pub async fn upload_image(
                 }
                 image_bytes = Some(data);
             }
-            Some("metadata") => {
+            Some("metadata") if metadata_bytes.is_none() => {
                 let data = field
                     .bytes()
                     .await
                     .map_err(|e| ApiError::BadRequest(format!("invalid metadata field: {e}")))?;
                 metadata_bytes = Some(data);
             }
-            Some("is_public") => {
+            Some("is_public") if is_public.is_none() => {
                 let text = field
                     .text()
                     .await
                     .map_err(|e| ApiError::BadRequest(format!("invalid is_public field: {e}")))?;
-                is_public = text.trim().parse::<bool>().unwrap_or(false);
+                // Exactly `true` or `false`, as upstream's `Text<bool>` parses it.
+                is_public = Some(match text.as_str() {
+                    "true" => true,
+                    "false" => false,
+                    _ => {
+                        return Err(ApiError::BadRequest("invalid is_public field".to_string()));
+                    }
+                });
             }
             _ => {
                 let _ = field.bytes().await;
@@ -114,12 +137,21 @@ pub async fn upload_image(
     finalize_upload(
         &state,
         address.as_str(),
-        image_bytes,
-        image_content_type,
-        metadata,
-        is_public,
+        Upload {
+            image_bytes,
+            image_content_type,
+            image_file_name,
+            metadata,
+            is_public: is_public.unwrap_or(false),
+        },
     )
     .await
+}
+
+fn max_limit_reached(max_images: u64) -> ApiError {
+    ApiError::MaxLimitReached(format!(
+        "you have reached the limit of {max_images} max images"
+    ))
 }
 
 #[derive(serde::Deserialize)]
@@ -153,10 +185,13 @@ pub async fn upload_image_json(
     finalize_upload(
         &state,
         address.as_str(),
-        image_bytes,
-        Some(req.content_type),
-        req.metadata,
-        req.is_public,
+        Upload {
+            image_bytes,
+            image_content_type: Some(req.content_type),
+            image_file_name: None,
+            metadata: req.metadata,
+            is_public: req.is_public,
+        },
     )
     .await
 }
@@ -197,14 +232,37 @@ async fn store_blob(storage: &Storage, hash: &str, data: Bytes) -> Result<(), St
     storage.store(hash, data).await
 }
 
+struct Upload {
+    image_bytes: Bytes,
+    image_content_type: Option<String>,
+    /// The multipart part's file name; the JSON route has none.
+    image_file_name: Option<String>,
+    metadata: Metadata,
+    is_public: bool,
+}
+
+/// The checks in upstream's order after the metadata parses: every
+/// `screenRect` valid, the signer is the metadata's `userAddress`, a png or
+/// jpeg that decodes, a file name without a path separator; then the row
+/// (the limit's authority), the blobs and the ranking.
 async fn finalize_upload(
     state: &SharedState,
     address: &str,
-    image_bytes: Bytes,
-    image_content_type: Option<String>,
-    metadata: Metadata,
-    is_public: bool,
+    upload: Upload,
 ) -> Result<Response, ApiError> {
+    let Upload {
+        image_bytes,
+        image_content_type,
+        image_file_name,
+        metadata,
+        is_public,
+    } = upload;
+    if !metadata.screen_rects_are_valid() {
+        tracing::warn!("refused an upload with an invalid screen rect");
+        return Err(ApiError::BadRequest("invalid metadata".to_string()));
+    }
+    // Case-insensitive: upstream compares against the lowercase signer
+    // exactly, so it refuses a checksummed `userAddress` this accepts.
     if !metadata.user_address.eq_ignore_ascii_case(address) {
         return Err(ApiError::BadRequest("invalid user address".to_string()));
     }
@@ -217,7 +275,7 @@ async fn finalize_upload(
         _ => return Err(ApiError::BadRequest("unsupported content type".to_string())),
     };
 
-    // A full account is refused before paying for the decode; the insert below stays the gate.
+    // JSON uploads too are refused at the cap before the decode; the insert stays the gate.
     let max_images = state.settings.max_images_per_user;
     let owned = state
         .db
@@ -228,13 +286,18 @@ async fn finalize_upload(
             ApiError::Internal("failed to store image metadata".to_string())
         })?;
     if owned >= max_images {
-        return Err(ApiError::MaxLimitReached(format!(
-            "you have reached the limit of {max_images} max images"
-        )));
+        return Err(max_limit_reached(max_images));
     }
 
     let bytes = image_bytes.clone();
     let thumbnail = decode_with(&DECODES, move || thumbnail_of(&bytes, declared)).await??;
+
+    if image_file_name
+        .as_deref()
+        .is_some_and(|name| name.contains('/') || name.contains('\\'))
+    {
+        return Err(ApiError::BadRequest("invalid file name".to_string()));
+    }
 
     let new_image = NewImage {
         id: Uuid::new_v4(),
@@ -255,24 +318,17 @@ async fn finalize_upload(
             tracing::error!("failed to store image metadata: {e}");
             ApiError::Internal("failed to store image metadata".to_string())
         })?
-        .ok_or_else(|| {
-            ApiError::MaxLimitReached(format!(
-                "you have reached the limit of {max_images} max images"
-            ))
-        })?;
+        .ok_or_else(|| max_limit_reached(max_images))?;
 
     let stored = async {
-        store_blob(&state.storage, &new_image.image_hash, image_bytes)
-            .await
-            .map_err(|e| ApiError::Internal(format!("failed to store image: {e}")))?;
-        store_blob(&state.storage, &new_image.thumbnail_hash, thumbnail)
-            .await
-            .map_err(|e| ApiError::Internal(format!("failed to store thumbnail: {e}")))
+        store_blob(&state.storage, &new_image.image_hash, image_bytes).await?;
+        store_blob(&state.storage, &new_image.thumbnail_hash, thumbnail).await
     }
     .await;
-    if let Err(err) = stored {
+    if let Err(error) = stored {
+        tracing::error!(%error, image_id = %new_image.id, "failed to upload image");
         let _ = state.db.delete_image(new_image.id).await;
-        return Err(err);
+        return Err(ApiError::Internal("failed to upload image".to_string()));
     }
 
     // PhotoTaken's counter handler is best-effort upstream. Retain the false
@@ -560,12 +616,15 @@ async fn delete_image_row(
     Ok(deleted)
 }
 
+/// The signature is checked before the body is read, so an unsigned
+/// request is 401 whatever its body; a body that is not `{"is_public": bool}`
+/// JSON is then upstream's plain-text 400.
 pub async fn update_image_visibility(
     State(state): State<SharedState>,
     OriginalUri(uri): OriginalUri,
     headers: HeaderMap,
     Path(image_id): Path<String>,
-    Json(update): Json<UpdateVisibility>,
+    request: Request,
 ) -> Result<Response, ApiError> {
     let address = state
         .require_auth(
@@ -574,6 +633,10 @@ pub async fn update_image_visibility(
             &signed_path(&uri, format!("/api/images/{image_id}/visibility")),
         )
         .await?;
+    let update = match crate::extract::Json::<UpdateVisibility>::from_request(request, &()).await {
+        Ok(crate::extract::Json(update)) => update,
+        Err(rejection) => return Ok(rejection),
+    };
 
     let owned = state
         .db

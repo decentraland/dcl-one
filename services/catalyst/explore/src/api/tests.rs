@@ -2192,7 +2192,7 @@ async fn registry_native_routes_preserve_wire_contract_and_replace_untrusted_ori
                     .header("x-identity-timestamp", "1700000000000")
                     .header("x-identity-metadata", "{}")
                     .header("x-original-path", "/forged-path")
-                    .body(Body::from(r#"{ "unchanged": true }"#))
+                    .body(Body::from(r#"{ "pointers": ["0,0"], "unchanged": true }"#))
                     .unwrap(),
             )
             .await
@@ -2209,7 +2209,10 @@ async fn registry_native_routes_preserve_wire_contract_and_replace_untrusted_ori
         assert_eq!(body["method"], method);
         assert_eq!(body["uri"], path_and_query);
         assert_eq!(body["original"], format!("/asset-bundle-registry{path}"));
-        assert_eq!(body["body"], r#"{ "unchanged": true }"#);
+        assert_eq!(
+            body["body"],
+            r#"{ "pointers": ["0,0"], "unchanged": true }"#
+        );
         assert_eq!(
             body["authorization"], false,
             "the admin bearer never leaves the host"
@@ -2375,4 +2378,135 @@ async fn registry_native_failures_are_preserved_without_following_redirects() {
         assert_eq!(body, br#"{"error":"native failure"}"#);
     }
     server.abort();
+}
+
+fn abr_capture(name: &str) -> Value {
+    let path = format!(
+        "{}/services/catalyst/tests/fixtures/conformance/content-lambdas/captures/abr/{name}",
+        env!("DCL_ONE_ROOT")
+    );
+    serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+}
+
+/// The boot reads apply the Registry's pointer rule before any backend call,
+/// with and without a source: `ids` is not read, an absent or empty
+/// `pointers` is the captured 400 (keys in the Registry's order), a body
+/// that is not JSON the http-commons 500, and the pointers are not capped.
+#[tokio::test]
+async fn registry_boot_reads_take_the_registry_pointer_rule() {
+    let mock = mock();
+    let addr = serve_mock(mock.clone()).await;
+    let empty = Sources {
+        registry: String::new(),
+        ..sources_at(addr)
+    };
+    let captured = [
+        ("/entities/active", abr_capture("AB-4-empty-pointers.json")),
+        (
+            "/entities/versions",
+            abr_capture("AB-11-missing-pointers.json"),
+        ),
+    ];
+    for sources in [sources_at(addr), empty] {
+        let node = node_without_db(Settings::for_tests(sources)).await;
+        let app = router(node.state.clone());
+        for (path, capture) in &captured {
+            let path = format!("/asset-bundle-registry{path}");
+            for body in [
+                r#"{}"#,
+                r#"{"pointers":[]}"#,
+                r#"{"pointers":null}"#,
+                r#"{"pointers":""}"#,
+                r#"{"ids":["bafkreiexample"]}"#,
+            ] {
+                let response = app
+                    .clone()
+                    .oneshot(
+                        Request::post(&path)
+                            .header("content-type", "application/json")
+                            .body(Body::from(body))
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+                assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{path} {body}");
+                assert_eq!(response.headers()["content-type"], "application/json");
+                let bytes = axum::body::to_bytes(response.into_body(), 1024)
+                    .await
+                    .unwrap();
+                let parsed: Value = serde_json::from_slice(&bytes).unwrap();
+                assert_eq!(parsed, capture["response"]["body"], "{path} {body}");
+                // The Registry's key order and the captured length.
+                assert_eq!(
+                    bytes.as_ref(),
+                    br#"{"ok":false,"message":"No pointers provided"}"#
+                );
+                assert_eq!(
+                    bytes.len().to_string(),
+                    capture["response"]["headers"]["content-length"]
+                        .as_str()
+                        .unwrap()
+                );
+            }
+            for body in ["", "{"] {
+                let response = app
+                    .clone()
+                    .oneshot(Request::post(&path).body(Body::from(body)).unwrap())
+                    .await
+                    .unwrap();
+                assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+                let bytes = axum::body::to_bytes(response.into_body(), 1024)
+                    .await
+                    .unwrap();
+                assert_eq!(bytes.as_ref(), br#"{"error":"Internal Server Error"}"#);
+            }
+            let many: Vec<String> = (0..1001).map(|i| format!("{i},0")).collect();
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::post(&path)
+                        .header("content-type", "application/json")
+                        .body(Body::from(json!({ "pointers": many }).to_string()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "{path}");
+        }
+    }
+    // Only the two admitted reads (one per path, with a source) reached it.
+    assert_eq!(mock.hits("entities/active"), 1);
+    assert_eq!(mock.hits("entities/versions"), 1);
+}
+
+/// `POST /entities/active` drops a backend entity whose id is on this node's
+/// content denylist, leaving the other entities' bytes (content and
+/// asset-bundle fields) as received.
+#[tokio::test]
+async fn registry_active_entities_leave_out_the_content_denylist() {
+    let mock = mock();
+    let addr = serve_mock(mock.clone()).await;
+    let entity = |id: &str, pointer: &str| {
+        json!({"id": id, "type": "scene", "timestamp": "1791215990965",
+            "deployer": "0x0000000000000000000000000000000000000b02",
+            "pointers": [pointer], "content": [], "metadata": {},
+            "status": "complete",
+            "bundles": {"assets": {"mac": "complete", "windows": "complete", "webgl": "pending"}}})
+    };
+    let kept = entity("bafkreikept", "1,1");
+    let listed = entity("bafkreilisted", "2,2");
+    *mock.entities.lock() = vec![kept.clone(), listed.clone()];
+    let node = node_without_db(Settings::for_tests(sources_at(addr))).await;
+    let app = router(node.state.clone());
+    let request = Some(json!({"pointers": ["1,1", "2,2"]}));
+    let path = "/asset-bundle-registry/entities/active";
+    let (status, all) = call_json(&app, "POST", path, request.clone()).await;
+    assert_eq!((status, all), (StatusCode::OK, json!([kept, listed])));
+    node.state.content.denylist.add("bafkreilisted");
+    let (status, _, bytes) = call(&app, "POST", path, request.clone()).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(bytes, serde_json::to_vec(&json!([kept])).unwrap());
+    node.state.content.denylist.add("bafkreikept");
+    let (status, rest) = call_json(&app, "POST", path, request).await;
+    assert_eq!((status, rest), (StatusCode::OK, json!([])));
 }

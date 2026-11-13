@@ -782,9 +782,13 @@ jobs:
     if: needs.build-deploy-web.outputs.publish == 'true'
     name: Publish the web package
     runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.web.outputs.version }}
     permissions:
       id-token: write
       contents: read
+      deployments: write
+      statuses: write
     steps:
       # oddish reads the commit from git; the artifact is written over the checkout's deploy/web.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -798,6 +802,19 @@ jobs:
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
+      - name: Read the stamped version
+        id: web
+        run: echo "version=$(node -p "require('./rendering/bevy-explorer/source/deploy/web/package.json').version")" >> "$GITHUB_OUTPUT"
+      # Before Publish: a re-run cannot republish the npm version, and the upload skips a version already on the CDN.
+      - name: Upload to the CDN
+        id: cdn
+        continue-on-error: ${{ github.event_name == 'pull_request' }}
+        uses: decentraland/actions/cdn-deploy@c80272b77e7aacba162024f7f4b9c1b0d701f012 # cdn-deploy-v1.0.2
+        with:
+          package-name: '@dcl-regenesislabs/bevy-explorer-web'
+          version: ${{ steps.web.outputs.version }}
+          dist-path: rendering/bevy-explorer/source/deploy/web
+          deployment-environments: '[]'
       - name: Publish
         id: publish
         continue-on-error: ${{ github.event_name == 'pull_request' }}
@@ -809,8 +826,6 @@ jobs:
           access: public
           # npm refuses provenance for a private repository.
           provenance: false
-          gitlab-token: ${{ secrets.GITLAB_CDN_DEPLOYER_TOKEN }}
-          gitlab-pipeline-url: ${{ secrets.GITLAB_CDN_DEPLOYER_URL }}
           # oddish only publishes from main (-> next) or from a branch it is told about;
           # both inputs are empty on push, leaving that behaviour unchanged.
           custom-tag: ${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || inputs.publish-tag }}
@@ -821,13 +836,39 @@ jobs:
           # The package comes from the build job; none of its scripts run beside the publish tokens.
           NPM_CONFIG_IGNORE_SCRIPTS: 'true'
       - name: Report a failed PR preview
-        if: github.event_name == 'pull_request' && steps.publish.outcome == 'failure'
-        run: echo '::warning::The PR preview did not publish; see the Publish step log.'
-    # A PR preview never fails the run; oddish waits up to about 50 minutes for the registry.
+        if: github.event_name == 'pull_request' && (steps.cdn.outcome == 'failure' || steps.publish.outcome == 'failure')
+        run: echo '::warning::The PR preview did not publish; see the Upload to the CDN and Publish step logs.'
+    # A PR preview never fails the run.
     continue-on-error: ${{ github.event_name == 'pull_request' }}
     timeout-minutes: 60
     needs:
       - build-deploy-web
+  rollout-web:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    name: Roll out at decentraland.zone/play
+    runs-on: ubuntu-24.04
+    permissions:
+      id-token: write
+      contents: read
+      deployments: write
+      statuses: write
+    # Shared with bevy-explorer-rollout-manual.yml, which writes the same record outside the broker's lease.
+    concurrency:
+      group: bevy-explorer-cdn-rollout
+      cancel-in-progress: false
+    steps:
+      # cdn-deploy needs Node 22 or newer on PATH.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - uses: decentraland/actions/cdn-deploy@c80272b77e7aacba162024f7f4b9c1b0d701f012 # cdn-deploy-v1.0.2
+        with:
+          package-name: '@dcl-regenesislabs/bevy-explorer-web'
+          version: ${{ needs.publish-web.outputs.version }}
+          deployment-environments: '["zone"]'
+    timeout-minutes: 10
+    needs:
+      - publish-web
   headless-packages:
     name: Headless packages
     needs: [source, changes]
