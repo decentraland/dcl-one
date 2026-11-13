@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "components": [
+    {
+      "name": "asset-packs::Placeholder",
+      "data": {
+        "0": {
+          "json": {
+            "src": "{assetPath}/ambient_sound.glb"
+          }
+        }
+      }
+    },
+    {
+      "name": "core-schema::Name",
+      "data": {
+        "0": {
+          "json": {
+            "value": "Ambient_Town"
+          }
+        }
+      }
+    },
+    {
+      "name": "core::AudioSource",
+      "data": {
+        "0": {
+          "json": {
+            "audioClipUrl": "{assetPath}/Town.mp3",
+            "playing": true,
+            "loop": true,
+            "volume": 1,
+            "global": true
+          }
+        }
+      }
+    }
+  ]
+}

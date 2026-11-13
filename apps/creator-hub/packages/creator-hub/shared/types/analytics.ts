@@ -1,0 +1,208 @@
+export type Events = {
+  'Open Editor': {
+    version: string;
+  };
+  'Install Creator Hub': {
+    version: string;
+  };
+  'Update Creator Hub': {
+    version: string;
+    previous_version: string;
+  };
+  'Scene created': {
+    projectType: 'github-repo';
+    url: string;
+    project_id: string;
+  };
+  'Create Project': {
+    project_id: string;
+    project_name: string;
+    template: string;
+    rows: number;
+    cols: number;
+  };
+  'Open Project': {
+    project_id: string;
+    project_name: string;
+  };
+  'Save Project Success': {
+    project_id: string;
+    project_name: string;
+  };
+  'Preview Scene': {
+    project_id: string;
+  };
+  'Publish Scene': {
+    project_id: string;
+    target: string;
+    targetContent: string;
+  };
+  'Execute Scene Deployment': {
+    project_id: string;
+    scene_size: number;
+    file_count: number;
+    base_parcel: string;
+    parcels: string[];
+    is_world: boolean;
+    world_name?: string;
+    existing_world_scenes: Array<{
+      entity_id: string;
+      parcels: string[];
+      size: number;
+    }>;
+  };
+  'Open Code': undefined;
+  'Worlds Your Storage Modal Action': {
+    action: string;
+  };
+  'Manage Worlds External Action': {
+    action: string;
+  };
+  'Add World Permissions': {
+    world_name: string;
+    wallet_address: string;
+    permission_name: string;
+  };
+  'Remove World Permissions': {
+    world_name: string;
+    wallet_address: string;
+    permission_name: string;
+  };
+  'Add Collaborator Parcel Permissions': {
+    world_name: string;
+    wallet_address: string;
+    permission_name: string;
+    parcels_count: number;
+  };
+  'Remove Collaborator Parcel Permissions': {
+    world_name: string;
+    wallet_address: string;
+    permission_name: string;
+    parcels_count: number;
+  };
+  'Update World Settings': {
+    world_name: string;
+    world_settings: object;
+    changed_fields: {
+      title: boolean;
+      description: boolean;
+      thumbnail: boolean;
+      content_rating: boolean;
+      categories: boolean;
+    };
+    scenes_list: Array<{
+      entityId: string;
+      deployer: string;
+      parcels_count: number;
+      size: string;
+      created_at: string;
+    }>;
+  };
+  'Unpublish World Scene': {
+    world_name: string;
+    scene_coord: string;
+  };
+  'Unpublish Entire World': {
+    world_name: string;
+  };
+  'Sign In Action': {
+    method: 'deeplink';
+  };
+  'Sign In Blocked': {
+    method: 'deeplink';
+    reason: 'offline' | 'max_attempts';
+  };
+  'Sign In Dapp Opened': {
+    method: 'deeplink';
+  };
+  'Sign In Copy URL Action': {
+    method: 'deeplink';
+  };
+  'Sign In Completed': {
+    method: 'deeplink';
+  };
+  'Sign Out Action': undefined;
+  'Use Bevy Renderer': {
+    project_id: string;
+  };
+  'AI Chat Opened': {
+    project_id: string;
+  };
+  'AI Turn Started': {
+    project_id: string;
+    provider: string;
+    model: string;
+  };
+  'AI Turn Completed': {
+    project_id: string;
+    provider: string;
+    model: string;
+    ok: boolean;
+    duration_ms: number;
+    tool_count: number;
+    mutations: number;
+  };
+  'Creator Fund Join Clicked': {
+    signed_in: boolean;
+  };
+  'Creator Fund Eligibility Checked': {
+    result: 'eligible' | 'ineligible' | 'error';
+    reasons?: string[];
+  };
+  'Creator Fund Terms Accepted': {
+    terms_version: number;
+    flow: 'join' | 'reaccept';
+  };
+  'Creator Fund Terms Declined': {
+    terms_version: number | null;
+    flow: 'join' | 'reaccept';
+    via: 'not_now' | 'close' | 'escape';
+  };
+  'Creator Fund Contact Submitted': {
+    ok: boolean;
+    status?: number;
+  };
+  'Creator Fund Joined': {
+    terms_version: number;
+  };
+  'Creator Fund Contact Support': {
+    source: 'check_failed' | 'snackbar' | 'menu';
+  };
+  'Creator Fund Viewed': {
+    state: 'signed_out' | 'not_joined' | 'joined' | 'suspended';
+  };
+  'Creator Fund Read Terms': {
+    source: 'landing' | 'snackbar' | 'menu';
+  };
+  'Creator Fund Program Opened': {
+    source: 'menu';
+  };
+  'Creator Fund Program Rules Opened': {
+    source: 'menu';
+  };
+  'Creator Fund Tab Viewed': {
+    tab: 'home' | 'leaderboard' | 'my_places' | 'payouts';
+  };
+  'Creator Fund Cycle Changed': {
+    tab: 'leaderboard' | 'my_places';
+    cycle_id: number | 'all';
+  };
+  'Creator Fund Jump In': {
+    rank: number;
+    place_id: string;
+  };
+  'Creator Fund Empty State Action': {
+    action: 'create_scene' | 'start_from_template' | 'open_scene';
+  };
+  'Creator Fund Email Verification Started': undefined;
+  'Creator Fund Email Code Submitted': {
+    result: 'verified' | 'incorrect' | 'expired' | 'locked';
+  };
+  'Creator Fund Payout Wallet Saved': {
+    action: 'add' | 'edit';
+    ok: boolean;
+  };
+  'Creator Fund Transaction Viewed': undefined;
+  'Creator Fund Banner Clicked': undefined;
+  'Creator Fund Banner Dismissed': undefined;
+};
