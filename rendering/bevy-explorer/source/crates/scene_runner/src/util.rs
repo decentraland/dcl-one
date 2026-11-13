@@ -36,22 +36,25 @@ impl Plugin for SceneUtilPlugin {
         app.add_console_command::<ReloadCommand, _>(reload_command);
         rapid_reload::register(app);
         app.add_systems(Update, (console_relay, handle_preview_command));
-        app.add_systems(Startup, remove_scene_storage);
     }
 }
 
-// Scenes get no persistent storage; remove the folder older builds kept it in.
-fn remove_scene_storage() {
-    // headless test apps run without task pools
+/// Scenes get no persistent storage; removes the folders older builds kept it in. The client app
+/// registers this, not a plugin, so test apps never touch the real user profile.
+pub fn remove_scene_storage() {
     let (Some(dirs), Some(pool)) = (platform::project_directories(), IoTaskPool::try_get()) else {
         return;
     };
-    let folder = dirs.data_local_dir().join("LocalStorage");
+    // `LocalStorage_delete` is left by an interrupted `/clear_store` of those builds.
+    let folders =
+        ["LocalStorage", "LocalStorage_delete"].map(|name| dirs.data_local_dir().join(name));
     pool.spawn(async move {
-        match std::fs::remove_dir_all(&folder) {
-            Ok(()) => info!("removed scene storage at {folder:?}"),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => warn!("could not remove scene storage at {folder:?}: {e}"),
+        for folder in folders {
+            match std::fs::remove_dir_all(&folder) {
+                Ok(()) => info!("removed scene storage at {folder:?}"),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => warn!("could not remove scene storage at {folder:?}: {e}"),
+            }
         }
     })
     .detach();

@@ -265,6 +265,7 @@ mod tests {
                 r: 0.5,
                 g: 0.5,
                 b: 0.5,
+                a: 1.0,
             },
         };
         OutfitSlotData {
@@ -327,9 +328,9 @@ mod tests {
                     "slot": 1,
                     "outfit": {
                         "bodyShape": "urn:decentraland:off-chain:base-avatars:BaseFemale",
-                        "eyes": {"color": {"r": 0.5, "g": 0.5, "b": 0.5}},
-                        "hair": {"color": {"r": 0.5, "g": 0.5, "b": 0.5}},
-                        "skin": {"color": {"r": 0.5, "g": 0.5, "b": 0.5}},
+                        "eyes": {"color": {"r": 0.5, "g": 0.5, "b": 0.5, "a": 1.0}},
+                        "hair": {"color": {"r": 0.5, "g": 0.5, "b": 0.5, "a": 1.0}},
+                        "skin": {"color": {"r": 0.5, "g": 0.5, "b": 0.5, "a": 1.0}},
                         "wearables": [],
                         "forceRender": []
                     }
@@ -337,6 +338,17 @@ mod tests {
                 "namesForExtraSlots": []
             })
         );
+    }
+
+    #[test]
+    fn a_color_without_alpha_reads_as_opaque() {
+        let color: OutfitColor =
+            serde_json::from_value(serde_json::json!({"r": 0.1, "g": 0.2, "b": 0.3})).unwrap();
+        assert_eq!(color.a, 1.0);
+        let kept: OutfitColor =
+            serde_json::from_value(serde_json::json!({"r": 0.1, "g": 0.2, "b": 0.3, "a": 0.5}))
+                .unwrap();
+        assert_eq!(kept.a, 0.5);
     }
 
     fn png_url(extra: usize) -> String {
