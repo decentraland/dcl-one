@@ -19,10 +19,9 @@
         {
           "path": "deno_fetch/21_formdata.js",
           "upstream_sha256": "0a557fb5e81be7f6b00c2a71d50bb0a6451ee98f590b52e0bee225f9f5068b20",
-          "sha256": "653b44fae7687b1143fbba988377a0631f29cc91085fc5e1822114b53b21cf86",
+          "sha256": "43475ed7b95b63967f7aec016f105dd763dbd1a2fc060a483103c97f5a528156",
           "changes": [
-            "Load Headers from ext:deno_fetch/20_headers.js instead of reading the global",
-            "A File made from a Blob takes lastModified from the coarsened 2 ms clock"
+            "Load Headers from ext:deno_fetch/20_headers.js instead of reading the global"
           ]
         },
         {

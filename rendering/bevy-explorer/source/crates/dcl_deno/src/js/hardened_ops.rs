@@ -340,7 +340,7 @@ fn op_serialize<'s>(
     }
     match written {
         Some(true) => Ok(serializer.release().into()),
-        _ => Err(anyhow::anyhow!("Failed to serialize response").into()),
+        _ => Err(super::errors::type_error("Failed to serialize response").into()),
     }
 }
 
@@ -384,7 +384,7 @@ fn op_structured_clone<'s>(
         written
     };
     if written != Some(true) {
-        bail!("Failed to serialize response");
+        return Err(super::errors::type_error("Failed to serialize response").into());
     }
     let bytes = serializer.release();
     let deserializer = v8::ValueDeserializer::new(scope, Box::new(SceneClone), &bytes);
@@ -859,8 +859,8 @@ fn op_encoding_decode_single<'s>(
 }
 
 // Scenes share a process, so the clocks they read are coarsened against timing side channels:
-// these ops, `Date`, `Temporal.Now`, `Intl.DateTimeFormat` and `File` in init.js, and
-// 21_formdata.js, which repeat the 2 ms. Only the authoritative server holds this: a client
+// these ops, and `Date`, `Temporal.Now`, `Intl.DateTimeFormat` and `File` in init.js, which
+// repeats the 2 ms. Only the authoritative server holds this: a client
 // scene keeps `Deno` and its primordials, which read the native clock.
 const CLOCK_GRANULARITY: std::time::Duration = std::time::Duration::from_millis(2);
 const CLOCK_GRANULARITY_MS: f64 = 2.0;

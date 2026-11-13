@@ -1,6 +1,5 @@
 // Copyright 2018-2026 the Deno authors. MIT license.
-// Modified from deno_fetch 0.284.0: `Headers` is loaded rather than read from the global, and
-// a File made from a Blob takes its lastModified from the scenes' 2 ms clock.
+// Modified from deno_fetch 0.284.0: `Headers` is loaded rather than read from the global.
 
 (function () {
 const { core, primordials } = __bootstrap;
@@ -16,7 +15,6 @@ const {
   ArrayPrototypePush,
   ArrayPrototypeSlice,
   ArrayPrototypeSplice,
-  DateNow,
   MapPrototypeGet,
   MapPrototypeHas,
   MapPrototypeSet,
@@ -57,12 +55,7 @@ function createEntry(name, value, filename) {
     ObjectPrototypeIsPrototypeOf(BlobPrototype, value) &&
     !ObjectPrototypeIsPrototypeOf(FilePrototype, value)
   ) {
-    // CLOCK_GRANULARITY in hardened_ops.rs
-    const now = DateNow();
-    value = new File([value], "blob", {
-      type: value.type,
-      lastModified: now - (now % 2),
-    });
+    value = new File([value], "blob", { type: value.type });
   }
   if (
     ObjectPrototypeIsPrototypeOf(FilePrototype, value) &&
