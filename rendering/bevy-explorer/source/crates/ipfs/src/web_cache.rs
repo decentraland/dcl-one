@@ -6,8 +6,8 @@
 //! are checked against the hash (`content_hash`), and under that hash; a url's response goes
 //! under the url.
 //!
-//! The cache is capped (`effective_cap`). The service worker trims it, oldest-written entries
-//! first, when the engine asks through the `__contentCacheTrim` page function
+//! The cache is capped (`effective_cap`). The service worker trims it, least recently used
+//! entries first (oldest written when it has no record of use), when the engine asks through the `__contentCacheTrim` page function
 //! (deploy/web/engine/content_cache.js): after every `trim_interval` bytes written, when the cap
 //! changes, and before retrying a write that failed for quota.
 
@@ -83,6 +83,8 @@ pub struct TrimReport {
     pub evicted_entries: f64,
     pub evicted_bytes: f64,
     pub persisted: bool,
+    /// Entries the worker ordered by recorded use; `None` when it did not enumerate the cache.
+    pub indexed_entries: Option<f64>,
 }
 
 /// The engine side's readings, for the debug panel.
@@ -94,6 +96,7 @@ pub struct WebCacheState {
     pub quota_retries: u64,
     pub trims: u64,
     pub last: Option<TrimReport>,
+    pub pending_uses: usize,
 }
 
 fn mib(bytes: f64) -> f64 {
@@ -123,10 +126,13 @@ pub fn state_json(state: &WebCacheState) -> serde_json::Value {
         "evictedEntries": last.map(|r| r.evicted_entries),
         "evictedMiB": last.map(|r| mib(r.evicted_bytes)),
         "persisted": last.map(|r| r.persisted),
+        "pendingUses": state.pending_uses,
+        "indexedEntries": last.and_then(|r| r.indexed_entries),
         "unavailable": {
             "overrideMiB": "No override: the configured cap applies.",
             "workerCapMiB": reason, "usageMiB": reason, "quotaMiB": quota_reason, "cachesMiB": reason,
             "evictedEntries": reason, "evictedMiB": reason, "persisted": reason,
+            "indexedEntries": "No trim has enumerated the cache yet: it has stayed under its cap.",
         },
     })
 }
@@ -140,6 +146,35 @@ extern "C" {
     /// report, or null when no worker answered.
     #[wasm_bindgen::prelude::wasm_bindgen(js_name = "__contentCacheTrim")]
     fn page_content_cache_trim(cap_bytes: f64, quota_error: bool) -> js_sys::Promise;
+
+    /// deploy/web/engine/content_cache.js: records `keys` (cache key urls) as used now.
+    #[wasm_bindgen::prelude::wasm_bindgen(js_name = "__contentCacheTouch")]
+    fn page_content_cache_touch(keys: &js_sys::Array) -> js_sys::Promise;
+}
+
+// More than this many distinct keys waiting are sent at once, so the set stays small.
+const USED_KEYS_FLUSH_AT: usize = 1024;
+
+/// Cache keys read or written since the last flush, each once.
+#[derive(Default)]
+struct UsedKeys(std::collections::HashSet<String>);
+
+impl UsedKeys {
+    /// Notes `key`; true when the set is full and should be flushed.
+    fn note(&mut self, key: &str) -> bool {
+        if !self.0.contains(key) {
+            self.0.insert(key.to_owned());
+        }
+        self.0.len() >= USED_KEYS_FLUSH_AT
+    }
+
+    fn take(&mut self) -> Vec<String> {
+        self.0.drain().collect()
+    }
+
+    fn len(&self) -> usize {
+        self.0.len()
+    }
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -148,8 +183,9 @@ pub use io::*;
 #[cfg(target_arch = "wasm32")]
 mod io {
     use super::{
-        crosses_interval, forced_trim_allowed, keys, names, page_content_cache_trim, trim_interval,
-        TrimReport, WebCacheState, WEB_CACHE_CAP_BYTES,
+        crosses_interval, forced_trim_allowed, keys, names, page_content_cache_touch,
+        page_content_cache_trim, trim_interval, TrimReport, UsedKeys, WebCacheState,
+        WEB_CACHE_CAP_BYTES,
     };
     use js_sys::Uint8Array;
     use std::sync::{
@@ -184,6 +220,7 @@ mod io {
     pub async fn find(cache: &Cache, url: &str) -> Result<(String, Response), JsValue> {
         for key in keys(url).ok_or("not a url")? {
             if let Some(response) = get(cache, &key).await? {
+                note_used(&key);
                 return Ok((key, response));
             }
         }
@@ -287,6 +324,7 @@ mod io {
     static QUOTA_RETRIES: AtomicU64 = AtomicU64::new(0);
     static TRIMS: AtomicU64 = AtomicU64::new(0);
     static LAST_REPORT: Mutex<Option<TrimReport>> = Mutex::new(None);
+    static USED: std::sync::LazyLock<Mutex<UsedKeys>> = std::sync::LazyLock::new(Default::default);
 
     /// Replaces the body of the entry under `key`.
     pub async fn put(cache: &Cache, key: &str, old: &Response, data: &[u8]) -> Result<(), JsValue> {
@@ -305,6 +343,7 @@ mod io {
 
     /// Asks the service worker for a trim to the current cap and keeps its report.
     pub async fn request_trim(quota_error: bool) -> Option<TrimReport> {
+        flush_used().await;
         let cap = CAP_BYTES.load(Ordering::Relaxed) as f64;
         let reply = JsFuture::from(page_content_cache_trim(cap, quota_error))
             .await
@@ -325,6 +364,7 @@ mod io {
             quota_retries: QUOTA_RETRIES.load(Ordering::Relaxed),
             trims: TRIMS.load(Ordering::Relaxed),
             last: *LAST_REPORT.lock().unwrap_or_else(PoisonError::into_inner),
+            pending_uses: USED.lock().unwrap_or_else(PoisonError::into_inner).len(),
         }
     }
 
@@ -344,6 +384,7 @@ mod io {
             other => other,
         };
         if result.is_ok() {
+            note_used(key);
             note_written(len as u64);
         }
         result
@@ -393,7 +434,30 @@ mod io {
             evicted_entries: number("evictedEntries")?,
             evicted_bytes: number("evictedBytes")?,
             persisted: get("persisted").and_then(|v| v.as_bool()).unwrap_or(false),
+            indexed_entries: number("indexedEntries"),
         })
+    }
+
+    fn note_used(key: &str) {
+        let full = USED
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .note(key);
+        if full {
+            wasm_bindgen_futures::spawn_local(flush_used());
+        }
+    }
+
+    /// Sends the keys used since the last flush to the service worker's last-use index.
+    pub async fn flush_used() {
+        let keys = USED.lock().unwrap_or_else(PoisonError::into_inner).take();
+        if keys.is_empty() {
+            return;
+        }
+        let array: js_sys::Array = keys.iter().map(|key| JsValue::from_str(key)).collect();
+        if let Err(e) = JsFuture::from(page_content_cache_touch(&array)).await {
+            bevy::log::debug!("content cache uses not recorded: {e:?}");
+        }
     }
 }
 
@@ -537,5 +601,51 @@ mod tests {
         let json: serde_json::Value =
             serde_json::from_str(&state_json(&state).to_string()).unwrap();
         assert_eq!(json["quotaMiB"], 2.0);
+    }
+
+    #[test]
+    fn a_key_used_twice_is_sent_once() {
+        let mut used = UsedKeys::default();
+        used.note("a");
+        used.note("a");
+        used.note("b");
+        let mut keys = used.take();
+        keys.sort();
+        assert_eq!(keys, ["a", "b"]);
+        assert_eq!(used.len(), 0);
+    }
+
+    #[test]
+    fn the_set_asks_for_a_flush_when_full() {
+        let mut used = UsedKeys::default();
+        for n in 0..USED_KEYS_FLUSH_AT - 1 {
+            assert!(!used.note(&n.to_string()));
+        }
+        assert!(used.note("last"));
+    }
+
+    #[test]
+    fn state_counts_waiting_uses_and_reports_ordered_entries() {
+        let state = WebCacheState {
+            pending_uses: 3,
+            last: Some(TrimReport {
+                indexed_entries: Some(7.0),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let json: serde_json::Value =
+            serde_json::from_str(&state_json(&state).to_string()).unwrap();
+        assert_eq!(json["pendingUses"], 3);
+        assert_eq!(json["indexedEntries"], 7.0);
+
+        let state = WebCacheState {
+            last: Some(TrimReport::default()),
+            ..Default::default()
+        };
+        let json: serde_json::Value =
+            serde_json::from_str(&state_json(&state).to_string()).unwrap();
+        assert!(json["indexedEntries"].is_null());
+        assert!(json["unavailable"]["indexedEntries"].is_string());
     }
 }
