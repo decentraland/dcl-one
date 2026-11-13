@@ -66,7 +66,12 @@ impl Plugin for TerrainPlugin {
             .add_systems(
                 PostUpdate,
                 (
-                    (snap_while_loading, sync, ease, (update_texture, player_height))
+                    (
+                        snap_while_loading,
+                        sync,
+                        ease,
+                        (update_texture, player_height),
+                    )
                         .chain()
                         .in_set(TerrainSet)
                         .before(PostUpdateSets::ColliderUpdate),
