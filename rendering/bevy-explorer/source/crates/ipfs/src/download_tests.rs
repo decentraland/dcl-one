@@ -501,6 +501,8 @@ async fn shared_downloads_keep_arrival_order_when_workers_poll_in_reverse() {
     .expect("shared downloads did not finish in FIFO order");
 }
 
+// Pins the request builder that native and web share, not the web branch: this module only builds
+// on native, so a header added again under `cfg(target_arch = "wasm32")` would not turn it red.
 #[tokio::test]
 async fn a_cacheable_download_does_not_ask_the_service_worker_to_look_in_its_cache() {
     timeout(LIMIT, async {
