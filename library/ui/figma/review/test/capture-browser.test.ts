@@ -101,6 +101,13 @@ describe('when a capture receives a termination signal', () => {
 
 // Ported from figma-design-system f63bb11 (the launch flag only).
 describe('when a capture launches its browser', () => {
+  it('should initialize a deterministic desktop pointer on headless hosts', () => {
+    assert.ok(
+      browserArgs('/tmp/profile').includes(
+        '--blink-settings=primaryHoverType=2,availableHoverTypes=2,primaryPointerType=4,availablePointerTypes=4'
+      )
+    )
+  })
   it('should turn off Brave canvas farbling, so a screenshot always measures the same', () => {
     assert.ok(browserArgs('/tmp/profile').includes('--disable-features=BraveFarbling'))
   })
@@ -394,6 +401,26 @@ describe('when a real page navigates', () => {
   })
   const evaluate = (expression: string) => session.evaluate(expression)
 
+  it('should capture touch devices and restore desktop defaults for the next document', async () => {
+    const media = () =>
+      evaluate(
+        `({hover:matchMedia('(hover:hover)').matches,fine:matchMedia('(pointer:fine)').matches,coarse:matchMedia('(pointer:coarse)').matches,touch:navigator.maxTouchPoints})`
+      )
+    await session.navigate(`${origin}/first`)
+    assert.deepEqual(await media(), { hover: true, fine: true, coarse: false, touch: 0 })
+    try {
+      await session.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 1 })
+      assert.deepEqual(await media(), { hover: false, fine: false, coarse: true, touch: 1 })
+      await session.navigate(`${origin}/second`)
+      assert.deepEqual(await media(), { hover: false, fine: false, coarse: true, touch: 1 })
+    } finally {
+      await session.send('Emulation.setTouchEmulationEnabled', { enabled: false })
+    }
+    assert.equal(await evaluate('navigator.maxTouchPoints'), 0)
+    // Touch disable restores host media; a new capture document applies the configured defaults.
+    await session.navigate(`${origin}/first`)
+    assert.deepEqual(await media(), { hover: true, fine: true, coarse: false, touch: 0 })
+  })
   it('should resolve navigate only after the document a script redirect lands on has loaded', async () => {
     await session.navigate(`${origin}/redirect`)
     assert.equal(session.loading, false)

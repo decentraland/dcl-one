@@ -142,6 +142,8 @@ class WorkflowSetupTest(unittest.TestCase):
             return any(path == root or path.startswith(root + '/') for root in roots)
 
         for path in ('library/ui/index.ts',
+                     'library/ui/content.helpers.ts',
+                     'library/ui/link.helpers.ts',
                      'library/ui/css-modules.d.ts',
                      'library/ui/components/NavBar/NavBar.tsx',
                      'library/ui/components/NavBar/NavBar.module.css',

@@ -1,0 +1,126 @@
+@layer dcl.reset, dcl.foundations, dcl.components;
+@layer dcl.components {
+  .root {
+    composes: text6c6162656c2f6d642d63617073 from '../../foundations/typography/text-styles.module.css';
+    position: relative;
+    --tab-underline: transparent;
+    --tab-underline-offset: 0px;
+    background-image: linear-gradient(var(--tab-underline), var(--tab-underline));
+    background-repeat: no-repeat;
+    background-size: 100% 4px;
+    background-position: left 0 bottom var(--tab-underline-offset);
+    box-sizing: border-box;
+    display: inline-grid;
+    flex: none;
+    align-items: center;
+    min-height: 64px;
+    padding: 0;
+    color: var(--dcl-neutrals-silver);
+    line-height: 19.36px;
+    letter-spacing: normal;
+    text-decoration: none;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+  .root[aria-current='page'] {
+    color: var(--dcl-neutrals-white);
+    --tab-underline: var(--dcl-primary-primary);
+    font-size: var(--dcl-font-size-button-lg);
+    font-weight: 700;
+    line-height: 18.75px;
+    letter-spacing: 0.5px;
+  }
+  .root:focus-visible {
+    outline: 2px solid currentColor;
+    outline-offset: 2px;
+  }
+  @media (hover: hover) and (min-width: 768px) {
+    .root:hover {
+      color: var(--dcl-neutrals-white);
+      font-size: var(--dcl-font-size-button-lg);
+      font-weight: 700;
+      line-height: 18.75px;
+      letter-spacing: 0.5px;
+    }
+    .root:not([aria-current='page']):hover {
+      --tab-underline: var(--dcl-transparencies-white-10);
+    }
+  }
+  @media (max-width: 767px) {
+    .root {
+      min-height: 44px;
+      --tab-underline-offset: 9px;
+      align-items: flex-start;
+      padding-top: var(--dcl-space-8);
+      font-size: var(--dcl-font-size-label-xs-caps);
+      font-weight: 600;
+      line-height: 14.52px;
+    }
+    .root[aria-current='page'] {
+      color: var(--dcl-neutrals-snow);
+      font-size: var(--dcl-font-size-label-xs-caps);
+      font-weight: 600;
+      line-height: 15px;
+    }
+  }
+}
+
+@layer dcl.components {
+  /* Overlapping intrinsic text measurements reserve the widest supported state. */
+  .root::before,
+  .root::after {
+    content: attr(data-label);
+    visibility: hidden;
+    grid-area: 1 / 1;
+  }
+  .root::after {
+    font-size: var(--dcl-font-size-button-lg);
+    font-weight: 700;
+    line-height: 18.75px;
+    letter-spacing: 0.5px;
+  }
+  .root::before {
+    font-size: var(--dcl-font-size-label-md-caps);
+    font-weight: 600;
+    line-height: 19.36px;
+    letter-spacing: normal;
+  }
+  .root[aria-current='page']::before {
+    font-size: var(--dcl-font-size-button-lg);
+    font-weight: 700;
+    line-height: 18.75px;
+    letter-spacing: 0.5px;
+  }
+  .label {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  @media (max-width: 767px) {
+    .root::before,
+    .root::after {
+      font-size: var(--dcl-font-size-label-xs-caps);
+      font-weight: 600;
+      line-height: 14.52px;
+    }
+    .root::after {
+      letter-spacing: normal;
+    }
+    .root[aria-current='page']::after {
+      letter-spacing: 0.5px;
+    }
+    .root[aria-current='page']::before {
+      font-size: var(--dcl-font-size-label-xs-caps);
+      font-weight: 600;
+      line-height: 15px;
+    }
+    .label {
+      top: var(--dcl-space-8);
+      transform: none;
+    }
+  }
+}
