@@ -74,8 +74,10 @@ Responses preserve status, body, content type, cache directives, validators,
 gateway; they do not establish native worker readiness. Every path under the
 prefix, routed by either half or not, answers the Registry's CORS: a 204
 preflight with origin `*`, its method list, the requested headers and a one-day
-max-age. The existing gateway
-routes Registry traffic to Catalyst, so no additional Nginx upstream or new
+max-age. Behind `infra/gateway`, a response without
+`Access-Control-Allow-Origin`, such as the answer to a request without
+`Origin`, gets `Access-Control-Allow-Origin: *` from the gateway. The existing
+gateway routes Registry traffic to Catalyst, so no additional Nginx upstream or new
 service is introduced here, and this change does not select an abgen release.
 
 The alternative of retaining an external Registry cache would duplicate the

@@ -23,7 +23,7 @@ use std::sync::LazyLock;
 use std::time::Duration;
 
 use axum::extract::{OriginalUri, Request, State};
-use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, Uri, header};
+use axum::http::{HeaderMap, Method, StatusCode, Uri};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -72,53 +72,22 @@ async fn not_found() -> Response {
     (StatusCode::NOT_FOUND, "Not found").into_response()
 }
 
-/// The methods the Registry's `createServerComponent` lists (`components.ts`).
-const CORS_METHODS: &str = "GET,HEAD,OPTIONS,DELETE,POST,PUT";
+/// The Registry's CORS: `@dcl/http-server` with the methods its
+/// `createServerComponent` lists and `maxAge: 86400` (`components.ts`),
+/// captured as `captures/abr/AB-12-preflight.json`
+/// ([`crate::shared::cors::HttpServerCors`]).
+const CORS: crate::shared::cors::HttpServerCors = crate::shared::cors::HttpServerCors {
+    methods: Some("GET,HEAD,OPTIONS,DELETE,POST,PUT"),
+    max_age: "86400",
+    nosniff: false,
+    preflight_echoes_request: false,
+};
 
-/// The Registry's CORS (`@dcl/http-server` `cors.js` with `methods` and
-/// `maxAge: 86400`, captured as `captures/abr/AB-12-preflight.json`): every
-/// `OPTIONS` is a 204 preflight with origin `*`, the listed methods, the
-/// requested headers reflected (`Vary: Access-Control-Request-Headers`) and
-/// a one-day max-age; any other response gets origin `*` only when the
-/// request carries an `Origin`, and never exposed headers.
+/// The Registry's CORS ([`CORS`]): every `OPTIONS` is a 204 preflight with
+/// origin `*`, with or without `Origin`; any other response gets origin `*`
+/// only when the request carries an `Origin`, and never exposed headers.
 pub async fn cors(req: Request, next: Next) -> Response {
-    if req.method() == Method::OPTIONS {
-        let mut response = StatusCode::NO_CONTENT.into_response();
-        let h = response.headers_mut();
-        h.insert(
-            header::ACCESS_CONTROL_ALLOW_ORIGIN,
-            HeaderValue::from_static("*"),
-        );
-        h.insert(
-            header::ACCESS_CONTROL_ALLOW_METHODS,
-            HeaderValue::from_static(CORS_METHODS),
-        );
-        h.insert(
-            header::VARY,
-            HeaderValue::from_static("Access-Control-Request-Headers"),
-        );
-        if let Some(requested) = req
-            .headers()
-            .get(header::ACCESS_CONTROL_REQUEST_HEADERS)
-            .filter(|value| !value.is_empty())
-        {
-            h.insert(header::ACCESS_CONTROL_ALLOW_HEADERS, requested.clone());
-        }
-        h.insert(
-            header::ACCESS_CONTROL_MAX_AGE,
-            HeaderValue::from_static("86400"),
-        );
-        return response;
-    }
-    let has_origin = req.headers().contains_key(header::ORIGIN);
-    let mut response = next.run(req).await;
-    if has_origin {
-        response.headers_mut().insert(
-            header::ACCESS_CONTROL_ALLOW_ORIGIN,
-            HeaderValue::from_static("*"),
-        );
-    }
-    response
+    CORS.run(req, next).await
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -478,6 +447,51 @@ mod tests {
                 to_bytes(response.into_body(), 1024).await.unwrap().as_ref(),
                 unknown["response"]["body"].as_str().unwrap().as_bytes()
             );
+        }
+    }
+
+    /// `@dcl/http-server` answers every `OPTIONS` as a preflight: without
+    /// `Origin` it still sends origin `*` (`cors.js` `configureOrigin`), and
+    /// without `Access-Control-Request-Headers` it keeps the `Vary` and sends
+    /// no `Allow-Headers` (`configureAllowedHeaders`).
+    #[tokio::test]
+    async fn registry_preflight_without_origin_or_requested_headers() {
+        let app = app().await;
+        let path = "/asset-bundle-registry/entities/active";
+        for (headers, allow_headers) in [
+            (
+                vec![
+                    ("access-control-request-method", "POST"),
+                    ("access-control-request-headers", "content-type"),
+                ],
+                Some("content-type"),
+            ),
+            (
+                vec![
+                    ("origin", "https://example.org"),
+                    ("access-control-request-method", "POST"),
+                ],
+                None,
+            ),
+            (vec![], None),
+        ] {
+            let response = send(&app, "OPTIONS", path, &headers).await;
+            assert_eq!(response.status(), StatusCode::NO_CONTENT, "{headers:?}");
+            let h = response.headers();
+            assert_eq!(h["access-control-allow-origin"], "*", "{headers:?}");
+            assert_eq!(
+                h["access-control-allow-methods"], "GET,HEAD,OPTIONS,DELETE,POST,PUT",
+                "{headers:?}"
+            );
+            assert_eq!(h["vary"], "Access-Control-Request-Headers", "{headers:?}");
+            assert_eq!(h["access-control-max-age"], "86400", "{headers:?}");
+            assert_eq!(
+                h.get("access-control-allow-headers")
+                    .map(|value| value.to_str().unwrap()),
+                allow_headers,
+                "{headers:?}"
+            );
+            assert!(h.get("access-control-allow-credentials").is_none());
         }
     }
 
