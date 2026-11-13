@@ -65,11 +65,17 @@ jobs:
         continue-on-error: true
         run: make build
       - name: Test
+        id: test
         run: make test
         env:
           # as upstream: the snapshot test rewrites a stale .crdt in place and still fails on it,
           # so the artifact below carries what to commit
           UPDATE_SNAPSHOTS: true
+      - name: Test SDK init in isolation
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && (steps.test.outcome == 'success' || steps.test.outcome == 'failure') }}
+        run: node_modules/.bin/jest --detectOpenHandles --forceExit --colors --runTestsByPath test/sdk-commands/blackbox/init.spec.ts
+        env:
+          SDK_INIT_FIXTURE: isolated
       - name: Upload the regenerated API report and snapshots
         # what a local `make update-snapshots` would commit, for a reviewer or an author without the toolchain
         if: always()
