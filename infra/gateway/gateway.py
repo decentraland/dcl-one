@@ -12,6 +12,9 @@ import subprocess
 # `MAX_SETTINGS_UPLOAD_WIRE_BYTES`); a worlds test pins them.
 WORLDS_DEPLOY_CAP = "360m"
 WORLDS_SETTINGS_CAP = "12m"
+# The badges backfill body (social badges `MAX_BACKFILL_BODY_BYTES`); a
+# gateway test pins it.
+BADGES_BACKFILL_CAP = "64m"
 # The content server's `POST /entities` route limit at the default field
 # count (`max_deployment_body_bytes`: 200 MiB of files and fields plus
 # multipart framing), rounded up, so its own 413 is the one a client meets.
@@ -272,6 +275,11 @@ def render(table, cfg, mime):
         locations += location("= " + path, proxy("apis", WORLDS_LIMIT))
     locations += location("~ ^/comms-gatekeeper/reports/players/[^/]+/evidence/", proxy("apis",
         "client_max_body_size 11m;"))
+    # Both badges host forms reach this already rewritten under /badges. The admin
+    # check is a bearer token the app reads after nginx buffers the body, so
+    # concurrent uploads are capped as on the deploy routes.
+    locations += location('~ "^/badges/badges/[^/]+/backfill$"', proxy("apis",
+        f"client_max_body_size {BADGES_BACKFILL_CAP}; {uploads}"))
     locations += location("~ ^(/builder-api)?/v1/(projects/[^/]+/(blobs/[^/]+|manifest|files)|items/[^/]+/files)/*$",
                           proxy("apis", "client_max_body_size 21m;"))
     locations += location('~ "^/explorer/0x[0-9a-fA-F]{40}/(wearables|emotes)$"', proxy("apis"))
