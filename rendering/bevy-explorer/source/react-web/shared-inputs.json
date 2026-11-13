@@ -6549,7 +6549,7 @@
     },
     {
       "path": "library/ui/apps/hud/design/Button.module.css",
-      "sha256": "4f2cbc4a6b79d48e3b699cb0bcd833c49b3eaf192b81e2f222daf5ce09c94d25"
+      "sha256": "7ba9f72c7b4e2f32f9f5f115057ee4bef28be65e4c4ae83fac2c11e32982f2f0"
     },
     {
       "path": "library/ui/apps/hud/design/Button.tsx",
@@ -7685,7 +7685,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/startup/StartupBack.module.css",
-      "sha256": "37c51325e27f33bb9dbf64a68dd5f9732e9e07f9163d8f75cf52f2620c48171a"
+      "sha256": "dbe308b42d6d8d219ae3c0eee7835d8579d9aba4aaf6a16c5041212e0ac6d153"
     },
     {
       "path": "library/ui/apps/hud/features/startup/StartupBack.tsx",
@@ -7813,7 +7813,7 @@
     },
     {
       "path": "library/ui/apps/hud/styles/tokens.css",
-      "sha256": "f98d1bafabcf10c1db381c195542541ec635bf47b20d5f713ab8de33bb1e81d1"
+      "sha256": "df99bce256a73d654a94a89e6d301dd03969fb97a25a964de52ebf95795c22c8"
     },
     {
       "path": "library/ui/apps/hud/test/avatar.test.tsx",
