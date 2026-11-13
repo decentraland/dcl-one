@@ -94,6 +94,37 @@ export function installCefNativeBridge(): void {
   })
 }
 
+const downloads = new Map<string, (ok: boolean) => void>()
+let hearsDownloads = false
+
+/** How the native download of `url` ended (the engine's CEF download handler reports each one), or
+ *  false when nothing is heard within `timeoutMs`. Call it before starting the download. Null when
+ *  window.cef is absent. */
+export function cefDownloadOutcome(url: string, timeoutMs: number): Promise<boolean> | null {
+  const cef = cefApi()
+  if (cef == null) return null
+  if (!hearsDownloads) {
+    hearsDownloads = true
+    cef.listen('download', (payload) => {
+      try {
+        const r = (typeof payload === 'string' ? JSON.parse(payload) : payload) as { url?: string; ok?: boolean }
+        if (typeof r.url === 'string') downloads.get(r.url)?.(r.ok === true)
+      } catch {
+        /* malformed report; the wait times out */
+      }
+    })
+  }
+  return new Promise((resolve) => {
+    const settle = (ok: boolean): void => {
+      clearTimeout(timer)
+      downloads.delete(url)
+      resolve(ok)
+    }
+    const timer = setTimeout(() => settle(false), timeoutMs)
+    downloads.set(url, settle)
+  })
+}
+
 // The HUD's stored values (lib/prefs). Natively the engine keeps them: CEF's profile is per client
 // and deleted when it exits. Null when window.cef is absent.
 export function cefPrefs(): { load: () => Promise<Record<string, string>>; set: (key: string, value: string) => void } | null {

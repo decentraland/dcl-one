@@ -390,7 +390,10 @@ Expectations:
   it only on your own passport, and making a photo private there drops it at once (back in place if
   the write fails). It is portaled with `--ui-scale`, opens below-right of the ⋮ and flips or clamps
   at the screen edges: check it visually near the edges. On native, Download needs the engine's CEF
-  download handler (`crates/cef_offscreen`), which saves to the Downloads folder.
+  download handler (`crates/cef_offscreen`): it saves to `Downloads` under the home folder and
+  reports how each save ended, and the toast waits for that report. Share on X on native asks the
+  bridge scene to open the post in the user's browser (`openExternalUrl`, `https:` only); on web
+  it opens a tab.
 - Tests: in `library/ui/apps/hud/test/`, `hosted/gallery.test.tsx` (the session calls),
   `hosted/gallery.page.test.tsx` (paging, failures, the menu and its actions),
   `profile.passport.test.tsx` (passport photos) and `reelGrid.test.tsx` (rows, virtualization, menu

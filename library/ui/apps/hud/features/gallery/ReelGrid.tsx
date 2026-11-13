@@ -3,6 +3,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { AnchoredMenu, Button, MaskIcon, type ContextMenuItem } from '../../design'
 import { photoTime } from '../session/useEngineSession'
+import { useOptionalSession } from '../session/SessionContext'
 import type { GalleryPhoto } from '@explorer-core/engine/protocol'
 import { copyReelLink, downloadReel, shareReelToX } from './reelActions'
 import menuVerticalIcon from '../../assets/camera-reel/menu-vertical.png'
@@ -272,6 +273,7 @@ function ReelMenu({
   onClose: () => void
 }): React.JSX.Element {
   const [isPublic, setIsPublic] = useState(photo.isPublic === true)
+  const openExternalUrl = useOptionalSession()?.openExternalUrl
   const icon = (src: string): React.JSX.Element => <MaskIcon src={src} size={18} />
   const items: ContextMenuItem[] = [
     {
@@ -286,7 +288,7 @@ function ReelMenu({
       }
     },
     { kind: 'separator' },
-    { label: 'Share on X', icon: icon(shareIcon), onClick: () => shareReelToX(photo.id) },
+    { label: 'Share on X', icon: icon(shareIcon), onClick: () => shareReelToX(photo.id, openExternalUrl) },
     { label: 'Copy Link', icon: icon(linkIcon), onClick: () => copyReelLink(photo.id) },
     { label: 'Download', icon: icon(downloadIcon), onClick: () => void downloadReel(photo.url) }
   ]

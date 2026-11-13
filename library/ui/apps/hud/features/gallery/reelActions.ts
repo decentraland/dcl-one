@@ -1,5 +1,6 @@
 import { showConfirm, showToast } from '../../design'
-import { serviceUrl } from '@hud-host'
+import { isNativeHud, serviceUrl } from '@hud-host'
+import { cefDownloadOutcome } from '@explorer-core/lib/cefNativeBridge'
 
 export const REEL_MESSAGES = {
   shareToX: 'Happening right now in @decentraland.\n\nCome hang out 👋\n\n',
@@ -13,6 +14,9 @@ export const REEL_MESSAGES = {
 
 const TOAST_MS = 3000
 const TOAST_KEY = 'camera-reel'
+const NATIVE_DOWNLOAD_TIMEOUT_MS = 30_000
+
+export type OpenExternalUrl = (url: string) => Promise<boolean>
 
 export function reelToast(text: string, tone: 'default' | 'error' = 'default'): void {
   showToast(text, { duration: TOAST_MS, tone, key: TOAST_KEY })
@@ -26,11 +30,13 @@ export function shareToXUrl(id: string): string {
   return `https://x.com/intent/post?text=${encodeURIComponent(REEL_MESSAGES.shareToX)}&url=${encodeURIComponent(reelLink(id))}`
 }
 
-/** The intent url is also copied, so the post can be pasted where the browser can't open it; no toast. */
-export function shareReelToX(id: string): void {
+/** The intent url is also copied, so the post can be pasted where the browser can't open it; no
+ *  toast. The native HUD has no browser tabs of its own, so there the engine opens the url. */
+export function shareReelToX(id: string, openExternal?: OpenExternalUrl): void {
   const url = shareToXUrl(id)
   void navigator.clipboard?.writeText(url).catch(() => undefined)
-  window.open(url, '_blank', 'noopener')
+  if (isNativeHud() && openExternal != null) void openExternal(url)
+  else window.open(url, '_blank', 'noopener')
 }
 
 export function copyReelLink(id: string): void {
@@ -55,7 +61,7 @@ export function reelFileName(url: string): string {
 }
 
 /** Fetched first: a cross-origin link's `download` is ignored, so the browser would open the image
- *  instead of saving it. */
+ *  instead of saving it. On native the engine saves the file, so the toast waits for its report. */
 export async function downloadReel(url: string): Promise<void> {
   try {
     const res = await fetch(url)
@@ -65,6 +71,7 @@ export async function downloadReel(url: string): Promise<void> {
       throw new Error(`HTTP ${res.status}`)
     }
     const href = URL.createObjectURL(await res.blob())
+    const saved = cefDownloadOutcome(href, NATIVE_DOWNLOAD_TIMEOUT_MS)
     const a = document.createElement('a')
     a.href = href
     a.download = reelFileName(url)
@@ -72,7 +79,13 @@ export async function downloadReel(url: string): Promise<void> {
     document.body.appendChild(a)
     a.click()
     a.remove()
-    setTimeout(() => URL.revokeObjectURL(href), 1000)
+    if (saved == null) {
+      setTimeout(() => URL.revokeObjectURL(href), 1000)
+    } else {
+      const ok = await saved
+      URL.revokeObjectURL(href)
+      if (!ok) throw new Error('the engine did not save the file')
+    }
     reelToast(REEL_MESSAGES.downloaded)
   } catch (e) {
     console.warn('[gallery] download failed', e)

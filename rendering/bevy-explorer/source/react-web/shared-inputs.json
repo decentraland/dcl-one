@@ -3555,6 +3555,10 @@
           "kind": "regular"
         },
         {
+          "name": "reelActions.test.ts",
+          "kind": "regular"
+        },
+        {
           "name": "reelGrid.test.tsx",
           "kind": "regular"
         },
@@ -4187,7 +4191,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/session.ts",
-      "sha256": "a335e94255e00de0a0401a9a6f13553538ac309ac1ad75eae3b20da99f747098"
+      "sha256": "73db032c3ec12ec403a52e0b07698152f41158b5722d4a22616800e077c09ca2"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/urns.ts",
@@ -4383,7 +4387,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeSession.test.ts",
-      "sha256": "4b376514a743d34c422d953ccd5bf44d0da275d754640c3df2544d920a2ac358"
+      "sha256": "809082502001ff082e036dea2e02552fceaff138811d99ac8c93ec56f8a0e92e"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeVoice.test.ts",
@@ -4632,7 +4636,7 @@
     },
     {
       "path": "library/explorer-core/engine/mockBridge.ts",
-      "sha256": "7637f88bb4b391aab2c11e45c93fc9cc739454ff8acef0ed8829b02130b9a347"
+      "sha256": "f6b5c0bcd217a4621f7df31bde78e1802fe051b2a9f5b300f77b3637c3ade16f"
     },
     {
       "path": "library/explorer-core/engine/nameColor.ts",
@@ -4656,7 +4660,7 @@
     },
     {
       "path": "library/explorer-core/engine/protocol.ts",
-      "sha256": "90792ccd54cf69c7056f87a55cde9da221c4731bd1869b801e187ffc082b88dd"
+      "sha256": "339d0afde4e961e19f0b3115033c0f96a112428f33baf7e4492b2729ff5ce1fe"
     },
     {
       "path": "library/explorer-core/features/auth/authReturn.ts",
@@ -4852,7 +4856,7 @@
     },
     {
       "path": "library/explorer-core/lib/cefNativeBridge.ts",
-      "sha256": "7d433a71802ec9bf8fab7cc3b3810b4cca53ce673c59c2758c0875298fd8af19"
+      "sha256": "efb8ef0d978efd79f96cd0a39e9f41224b2379ee7dafa687d4431ec3508a5a7e"
     },
     {
       "path": "library/explorer-core/lib/coiServiceWorker.ts",
@@ -6652,7 +6656,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/gallery/PhotoDetail.tsx",
-      "sha256": "2805ccec69c8de788f863f55346f438da2e6bf987577c4455cc749eecac00ce8"
+      "sha256": "b50127e5098179c882ad32a86ccb17b6f18865156803a78449053548c7a322b7"
     },
     {
       "path": "library/ui/apps/hud/features/gallery/ReelGrid.module.css",
@@ -6660,7 +6664,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/gallery/ReelGrid.tsx",
-      "sha256": "3191ea8d1fbc80f7dce3d433016ebf0234fe6f1efd7a713c28fc1ef85717b5f2"
+      "sha256": "03952873ede9ec0dbf4f76d806653cf549e60418ae9a295ad0ec1e4d377bd024"
     },
     {
       "path": "library/ui/apps/hud/features/gallery/publicReels.ts",
@@ -6668,7 +6672,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/gallery/reelActions.ts",
-      "sha256": "a81bb82755bf42065923f4518711d63b788eaa5283afb5928c50e0c3c55aa08f"
+      "sha256": "8bfce88a41c540d34257372d1c5f35ba10d814d152272c4c838fc2375ee7bb26"
     },
     {
       "path": "library/ui/apps/hud/features/gallery/useOwnReelActions.ts",
@@ -6988,7 +6992,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "95ed78e9a72bd5b3bed8a01834bd94255e0f147fc68c21f69da3494a89b36feb"
+      "sha256": "6a31ad7d0955d5dd886c22bc1b9ce11e7aceebc5568bcac163665adddfc8ad93"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -7164,7 +7168,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/harness.tsx",
-      "sha256": "1ebf18a762a735b10d531aca88a65c76d852ddf5e31a3c3acd6dc676f6a23a01"
+      "sha256": "d8e7ec3c883ef010d53b18e36a3d79bcf7ec28a04d9d3b6ab92911443f1be8eb"
     },
     {
       "path": "library/ui/apps/hud/test/host.ts",
@@ -7545,6 +7549,10 @@
     {
       "path": "library/ui/apps/hud/test/rail.test.tsx",
       "sha256": "c11b80d25b1efcb2ab186025c3f7ab71c1a668ff31180ce8a5545c47752e25ea"
+    },
+    {
+      "path": "library/ui/apps/hud/test/reelActions.test.ts",
+      "sha256": "06445f991f1326f87d2186edb1a848dcdd46ad6d18b2670ab2f84593b167f599"
     },
     {
       "path": "library/ui/apps/hud/test/reelGrid.test.tsx",
@@ -17612,6 +17620,21 @@
     },
     {
       "from": "library/ui/apps/hud/features/gallery/PhotoDetail.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PhotoDetail.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PhotoDetail.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PhotoDetail.tsx",
       "to": "library/ui/apps/hud/features/session/useEngineSession.ts",
       "kind": "native:runtime"
     },
@@ -17762,6 +17785,21 @@
     },
     {
       "from": "library/ui/apps/hud/features/gallery/ReelGrid.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/ReelGrid.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/ReelGrid.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/ReelGrid.tsx",
       "to": "library/ui/apps/hud/features/session/useEngineSession.ts",
       "kind": "native:runtime"
     },
@@ -17773,6 +17811,21 @@
     {
       "from": "library/ui/apps/hud/features/gallery/ReelGrid.tsx",
       "to": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/reelActions.ts",
+      "to": "library/explorer-core/lib/cefNativeBridge.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/reelActions.ts",
+      "to": "library/explorer-core/lib/cefNativeBridge.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/reelActions.ts",
+      "to": "library/explorer-core/lib/cefNativeBridge.ts",
       "kind": "test:runtime"
     },
     {
@@ -28441,6 +28494,36 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/apps/hud/test/reelActions.test.ts",
+      "to": "library/explorer-core/test/console.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/reelActions.test.ts",
+      "to": "library/explorer-core/test/console.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/reelActions.test.ts",
+      "to": "library/explorer-core/test/console.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/reelActions.test.ts",
+      "to": "library/ui/apps/hud/features/gallery/reelActions.ts",
+      "kind": "native:dynamic"
+    },
+    {
+      "from": "library/ui/apps/hud/test/reelActions.test.ts",
+      "to": "library/ui/apps/hud/features/gallery/reelActions.ts",
+      "kind": "production:dynamic"
+    },
+    {
+      "from": "library/ui/apps/hud/test/reelActions.test.ts",
+      "to": "library/ui/apps/hud/features/gallery/reelActions.ts",
+      "kind": "test:dynamic"
+    },
+    {
       "from": "library/ui/apps/hud/test/reelGrid.test.tsx",
       "to": "library/ui/apps/hud/design/index.ts",
       "kind": "native:runtime"
@@ -31578,6 +31661,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/test/rail.test.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/test/reelActions.test.ts",
       "kind": "type"
     },
     {

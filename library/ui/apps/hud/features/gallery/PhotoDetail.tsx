@@ -12,6 +12,7 @@ import { Avatar, Button } from '../../design'
 import { useWindowKeyDown } from '../../lib/useWindowKeyDown'
 import { registerCancelLayer } from '@explorer-core/lib/cancelLayers'
 import { photoTime } from '../session/useEngineSession'
+import { useOptionalSession } from '../session/SessionContext'
 import type { GalleryPhoto, GalleryPhotoMeta } from '@explorer-core/engine/protocol'
 import type { ChatUser } from '../chat/ProfileCardPresentation'
 import { copyReelLink, downloadReel, shareReelToX } from './reelActions'
@@ -63,6 +64,7 @@ export function PhotoDetail({
   onViewPerson?: (user: ChatUser) => void
 }): React.JSX.Element {
   const photo = photos[index]
+  const openExternalUrl = useOptionalSession()?.openExternalUrl
   const hasPrev = index > 0
   const hasNext = index < photos.length - 1
 
@@ -133,7 +135,7 @@ export function PhotoDetail({
           <Button size="sm" variant="ghost" onClick={() => copyReelLink(photo.id)}>
             <Glyph d={ICON.link} /> Copy link
           </Button>
-          <Button size="sm" variant="ghost" onClick={() => shareReelToX(photo.id)}>
+          <Button size="sm" variant="ghost" onClick={() => shareReelToX(photo.id, openExternalUrl)}>
             <Glyph d={ICON.share} /> Share
           </Button>
           {isSelf && onDelete && (

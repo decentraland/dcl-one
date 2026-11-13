@@ -1,13 +1,16 @@
-use crate::core::prelude::IntoString;
+use crate::core::prelude::{IntoString, PROCESS_MESSAGE_HOST_EMIT};
 use bevy::log::{info, warn};
 use cef::rc::{Rc, RcImpl};
 use cef::{
     BeforeDownloadCallback, Browser, CefString, DownloadItem, DownloadItemCallback,
     ImplBeforeDownloadCallback, ImplBrowser, ImplDownloadHandler, ImplDownloadItem, ImplFrame,
-    WrapDownloadHandler, sys,
+    ImplListValue, ImplProcessMessage, ProcessId, WrapDownloadHandler, process_message_create, sys,
 };
 use std::os::raw::c_int;
 use std::path::{Path, PathBuf};
+
+/// The id of the host event that tells the page how a download ended: `{ url, ok }`.
+pub const DOWNLOAD_EVENT: &str = "download";
 
 /// Only a `blob:` url of the page's own origin is saved, so an embedded frame can't write files.
 ///
@@ -61,24 +64,31 @@ impl ImplDownloadHandler for DownloadHandlerBuilder {
     ) -> c_int {
         let url = url.map(|u| u.to_string()).unwrap_or_default();
         let page = browser
+            .as_deref()
             .and_then(|b| b.main_frame())
             .map(|f| f.url().into_string())
             .unwrap_or_default();
         let allowed = is_own_blob(&url, &page);
         if !allowed {
             warn!("[cef] download refused: {url}");
+            report(browser.as_deref(), &url, false);
         }
         allowed as c_int
     }
 
     fn on_before_download(
         &self,
-        _browser: Option<&mut Browser>,
-        _download_item: Option<&mut DownloadItem>,
+        browser: Option<&mut Browser>,
+        download_item: Option<&mut DownloadItem>,
         suggested_name: Option<&CefString>,
         callback: Option<&mut BeforeDownloadCallback>,
     ) -> c_int {
         let (Some(callback), Some(dir)) = (callback, downloads_dir()) else {
+            warn!("[cef] download has no folder to save to");
+            let url = download_item
+                .map(|i| i.url().into_string())
+                .unwrap_or_default();
+            report(browser.as_deref(), &url, false);
             // Default handling, which for this embedding cancels the download.
             return 0;
         };
@@ -90,18 +100,18 @@ impl ImplDownloadHandler for DownloadHandlerBuilder {
 
     fn on_download_updated(
         &self,
-        _browser: Option<&mut Browser>,
+        browser: Option<&mut Browser>,
         download_item: Option<&mut DownloadItem>,
         _callback: Option<&mut DownloadItemCallback>,
     ) {
         let Some(item) = download_item else { return };
+        let url = item.url().into_string();
         if item.is_complete() != 0 {
             info!("[cef] downloaded {}", item.full_path().into_string());
+            report(browser.as_deref(), &url, true);
         } else if item.is_canceled() != 0 || item.is_interrupted() != 0 {
-            warn!(
-                "[cef] download did not finish: {}",
-                item.url().into_string()
-            );
+            warn!("[cef] download did not finish: {url}");
+            report(browser.as_deref(), &url, false);
         }
     }
 
@@ -111,8 +121,29 @@ impl ImplDownloadHandler for DownloadHandlerBuilder {
     }
 }
 
+fn report(browser: Option<&Browser>, url: &str, ok: bool) {
+    if let Some(frame) = browser.and_then(|b| b.main_frame())
+        && let Some(mut message) = process_message_create(Some(&PROCESS_MESSAGE_HOST_EMIT.into()))
+        && let Some(arguments) = message.argument_list()
+    {
+        let event = serde_json::json!({ "url": url, "ok": ok }).to_string();
+        arguments.set_string(0, Some(&DOWNLOAD_EVENT.into()));
+        arguments.set_string(1, Some(&event.as_str().into()));
+        frame.send_process_message(
+            ProcessId::from(cef_dll_sys::cef_process_id_t::PID_RENDERER),
+            Some(&mut message),
+        );
+    }
+}
+
 fn downloads_dir() -> Option<PathBuf> {
-    directories::UserDirs::new().and_then(|d| d.download_dir().map(Path::to_path_buf))
+    let dir = downloads_under(directories::UserDirs::new()?.home_dir());
+    std::fs::create_dir_all(&dir).ok()?;
+    Some(dir)
+}
+
+fn downloads_under(home: &Path) -> PathBuf {
+    home.join("Downloads")
 }
 
 fn origin(url: &str) -> Option<&str> {
@@ -170,6 +201,14 @@ mod tests {
         assert!(!is_own_blob("blob:https://evil.example/1234", page));
         assert!(!is_own_blob("https://cdn.example/photo.jpg", page));
         assert!(!is_own_blob("blob:cef://localhost/1234", ""));
+    }
+
+    #[test]
+    fn saves_under_the_home_folder() {
+        assert_eq!(
+            downloads_under(Path::new("/home/ada")),
+            Path::new("/home/ada/Downloads")
+        );
     }
 
     #[test]

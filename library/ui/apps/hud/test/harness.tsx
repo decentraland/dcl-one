@@ -250,6 +250,7 @@ export function fakeSession(): EngineSession {
       act: vi.fn()
     },
     nav: vi.fn(),
+    openExternalUrl: vi.fn(async () => true),
     setEngineViewport: vi.fn(),
     setInteractableArea: vi.fn(),
     logout: vi.fn(),

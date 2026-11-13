@@ -89,6 +89,7 @@ import type {
   GalleryPhoto,
   GalleryPhotoMeta,
   GalleryWriteMessage,
+  ExternalUrlOpenedMessage,
   HoverAction,
   MinimapRotation,
   MinimapStyle,
@@ -845,7 +846,7 @@ export const BRIDGE_CALL_TIMEOUT_MS = 30_000
 // camera-reel-service deletes the photo and its thumbnail from S3 in turn, up to 15 s each.
 export const GALLERY_DELETE_TIMEOUT_MS = 60_000
 
-type BridgeReply = GalleryMessage | GalleryWriteMessage
+type BridgeReply = GalleryMessage | GalleryWriteMessage | ExternalUrlOpenedMessage
 
 export type LoginStatus =
   | 'loading'
@@ -1045,6 +1046,8 @@ export interface EngineSession {
   voiceChat: VoiceChatSession
   /** Trigger a sidebar nav action in the scene (open menu/popup, emotes, mic). */
   nav: (action: NavAction) => void
+  /** Open an `https:` url in the user's browser through the engine; resolves whether it opened. */
+  openExternalUrl: (url: string) => Promise<boolean>
   /** Report (or clear) the screen rect where the scene should render an engine view. */
   setEngineViewport: (
     region: 'map' | 'avatarPreview' | 'lobby',
@@ -2343,7 +2346,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           }
           break
         case 'gallery':
-        case 'galleryWrite': {
+        case 'galleryWrite':
+        case 'externalUrlOpened': {
           const resolve = bridgePendingRef.current.get(msg.requestId)
           bridgePendingRef.current.delete(msg.requestId)
           resolve?.(msg)
@@ -2987,6 +2991,10 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
         ? { ok: false, photos: [], total: 0, max: 0 }
         : { ok: msg.ok, photos: msg.photos, total: msg.current, max: msg.max, received: msg.received }
     },
+    [bridgeCall]
+  )
+  const openExternalUrl = useCallback(
+    async (url: string): Promise<boolean> => (await bridgeCall('externalUrlOpened', (requestId) => ({ kind: 'openExternalUrl', requestId, url })))?.ok === true,
     [bridgeCall]
   )
   const setGalleryPhotoPublic = useCallback(
@@ -4741,6 +4749,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     nearbyMutes: { muted: nearbyMuted, set: setNearbyMute },
     voiceChat: { state: voiceChatState, active: activeVoiceChats, activeLoaded: activeVoiceChatsLoaded, scene: sceneVoiceChat, guest: profile?.isGuest === true, act: voiceChatAct },
     nav,
+    openExternalUrl,
     setEngineViewport,
     setInteractableArea,
     logout,

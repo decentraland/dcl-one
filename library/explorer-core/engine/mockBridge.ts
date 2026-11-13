@@ -922,6 +922,10 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       return
     }
     if (msg.kind === 'expectLook' || msg.kind === 'preloadLook' || msg.kind === 'openLegal') return
+    if (msg.kind === 'openExternalUrl') {
+      reply({ kind: 'externalUrlOpened', requestId: msg.requestId, ok: true })
+      return
+    }
 
     if (msg.kind === 'sendChat') {
       // Echo the local player's message back (the engine would broadcast it); a DM is stored first.

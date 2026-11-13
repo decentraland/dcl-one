@@ -253,6 +253,7 @@ export type PageToScene =
   | PreloadLookRequest
   | AcceptWelcomeRequest
   | OpenLegalRequest
+  | OpenExternalUrlRequest
   | TeleportRequest
   | ChangeRealmRequest
   | MinimapConfigRequest
@@ -903,6 +904,20 @@ export interface AcceptWelcomeRequest {
 export interface OpenLegalRequest {
   kind: 'openLegal'
   doc: 'terms' | 'privacy'
+}
+
+/** Open an `https:` url in the user's browser (the scene's openExternalUrl, which works from the
+ *  native HUD too). Answered by an ExternalUrlOpenedMessage. */
+export interface OpenExternalUrlRequest {
+  kind: 'openExternalUrl'
+  requestId: number
+  url: string
+}
+
+export interface ExternalUrlOpenedMessage {
+  kind: 'externalUrlOpened'
+  requestId: number
+  ok: boolean
 }
 
 export interface WelcomeAcceptedMessage {
@@ -2288,6 +2303,7 @@ export type SceneToPage =
   | HomeSceneMessage
   | WelcomeMessage
   | WelcomeAcceptedMessage
+  | ExternalUrlOpenedMessage
   | PlayerPoseMessage
   | RealmInfoMessage
   | SceneInfoMessage
