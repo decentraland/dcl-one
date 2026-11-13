@@ -1199,16 +1199,24 @@ async fn a_world_is_published_hosted_joined_voiced_revoked_persisted_and_pulsed(
     // 8. Pulse's cluster feed reaches archipelago over NATS (engine.islands,
     //    engine.discovery); the same wallet heartbeating into archipelago's
     //    socket shows on /hot-scenes over a seeded Genesis scene at 40,-20.
-    sqlx::query(
+    let (deployment,): (i32,) = sqlx::query_as(
         "INSERT INTO content.deployments (deployer_address, version, entity_type, entity_id, entity_metadata, entity_timestamp, entity_pointers, local_timestamp, auth_chain) \
-         VALUES ('0x0000000000000000000000000000000000000001', 'v3', 'scene', $1, $2, timezone('UTC', now()), $3, timezone('UTC', now()), '[]'::json)",
+         VALUES ('0x0000000000000000000000000000000000000001', 'v3', 'scene', $1, $2, timezone('UTC', now()), $3, timezone('UTC', now()), '[]'::json) RETURNING id",
     )
     .bind("bafkreiacceptancegenesis")
-    .bind(sqlx::types::Json(json!({ "display": { "title": "genesis plaza stub" }, "scene": { "base": "40,-20", "parcels": ["40,-20"] } })))
+    .bind(sqlx::types::Json(json!({ "display": { "title": "genesis plaza stub", "navmapThumbnail": "thumb.png" }, "scene": { "base": "40,-20", "parcels": ["40,-20"] } })))
     .bind(vec!["40,-20".to_string()])
-    .execute(&pool)
+    .fetch_one(&pool)
     .await
     .unwrap();
+    // The world's own thumbnail file: the node's blob store holds it, so the
+    // content route serves it.
+    sqlx::query("INSERT INTO content.content_files (deployment, content_hash, key) VALUES ($1, $2, 'thumb.png')")
+        .bind(deployment)
+        .bind(&thumb_hash)
+        .execute(&pool)
+        .await
+        .unwrap();
     sqlx::query("INSERT INTO content.active_pointers (pointer, entity_id, entity_type) VALUES ('40,-20', 'bafkreiacceptancegenesis', 'scene')")
         .execute(&pool)
         .await
@@ -1228,6 +1236,29 @@ async fn a_world_is_published_hosted_joined_voiced_revoked_persisted_and_pulsed(
         },
     )
     .await;
+    // The thumbnail names this node's content, the server the scene was read from,
+    // at a path this node serves.
+    let (_, hot) = http.get("/archipelago-ea-stats/hot-scenes").await;
+    let scene = hot
+        .as_array()
+        .and_then(|scenes| {
+            scenes
+                .iter()
+                .find(|s| s["id"] == "bafkreiacceptancegenesis")
+        })
+        .unwrap_or_else(|| panic!("{hot}"));
+    let thumbnail = format!(
+        "http://127.0.0.1:{}/content/contents/{thumb_hash}",
+        rig.port
+    );
+    assert_eq!(scene["thumbnail"], json!(thumbnail), "{hot}");
+    let served = http.http.get(&thumbnail).send().await.unwrap();
+    assert_eq!(served.status().as_u16(), 200, "GET {thumbnail}");
+    assert_eq!(
+        served.bytes().await.unwrap().as_ref(),
+        PNG_1X1,
+        "GET {thumbnail}"
+    );
     let (status, peers) = http
         .get(&format!(
             "/archipelago-ea-stats/comms/peers?id={}",
