@@ -287,6 +287,17 @@ class Connections(unittest.TestCase):
     def test_when_quoting_a_literal_it_should_double_single_quotes(self):
         self.assertEqual(migrate.literal("it's"), "'it''s'")
 
+    def test_when_psql_exits_before_reading_the_extract_it_should_report_it_and_clean_up(self):
+        proc = unittest.mock.Mock(returncode=2)
+        proc.stdin.write.side_effect = BrokenPipeError
+        proc.wait.return_value = 2
+        proc.poll.return_value = 2
+        step = migrate.load_source(write_source(Path(self.enterContext(tempfile.TemporaryDirectory())))).steps[0]
+        with unittest.mock.patch.object(migrate.subprocess, 'Popen', return_value=proc):
+            with self.assertRaisesRegex(migrate.MigrationError, 'psql exited 2'):
+                migrate.ExtractStream(step, 'postgres://127.0.0.1/x', 'SELECT 1;')
+        proc.stdout.close.assert_called_once()
+
 
 class AfterOrder(unittest.TestCase):
     def setUp(self):
@@ -386,6 +397,19 @@ class Walks(unittest.TestCase):
                                 walk_rows=10)
         walk = self.plan(self.watermarked, cp, since_last=True)
         self.assertEqual((walk.cursor, walk.fresh, walk.rows), (cp.cursor, False, 10))
+
+    def test_when_the_last_watermark_is_infinity_it_should_reread_from_the_walk_start(self):
+        cp = migrate.Checkpoint(cursor=['infinity', '1'], walk_started_at='2026-02-01T00:00:00Z',
+                                completed_at='2026-02-01T01:00:00Z',
+                                last_completed_walk_started_at='2026-02-01T00:00:00Z')
+        self.assertEqual(self.plan(self.watermarked, cp).since, '2026-01-31T23:50:00Z')
+
+    def test_when_the_last_watermark_is_before_the_common_era_it_should_walk_everything(self):
+        cp = migrate.Checkpoint(cursor=['0044-03-15 00:00:00+00 BC', '1'], walk_started_at='2026-02-01T00:00:00Z',
+                                completed_at='2026-02-01T01:00:00Z',
+                                last_completed_walk_started_at='2026-02-01T00:00:00Z')
+        walk = self.plan(self.watermarked, cp)
+        self.assertEqual((walk.since, walk.cursor, walk.fresh), (None, None, True))
 
     def test_when_a_step_has_no_watermark_it_should_rescan_after_completing(self):
         cp = migrate.Checkpoint(cursor=['T9'], walk_started_at='2026-02-01T00:00:00Z', completed_at='2026-02-01T00:01:00Z')
@@ -1082,6 +1106,47 @@ class AgainstPostgres(CommsMigrationCases, SocialMigrationCases, WorldsMigration
         code, _ = self.migrate('run', 'toy', '--step', 'tags', '--batch-size', '4', sources_dir=sources)
         self.assertEqual(code, 1)
         self.assertLess(self.count(tgt, 'app.tags'), 30)
+
+    def test_when_a_resumed_walk_repeats_the_committed_key_it_should_stop(self):
+        sources, src, tgt = self.toy()
+        self.sql(tgt, "ALTER TABLE app.tags ADD CONSTRAINT stop_here CHECK (name <> 't13');\n")
+        self.assertEqual(self.migrate('run', 'toy', '--step', 'tags', '--batch-size', '4', sources_dir=sources)[0], 1)
+        self.sql(tgt, 'ALTER TABLE app.tags DROP CONSTRAINT stop_here;\n')
+        self.sql(src, "ALTER TABLE tags DROP CONSTRAINT tags_pkey;\nINSERT INTO tags VALUES ('t12', 99);\n")
+        code, out = self.migrate('run', 'toy', '--step', 'tags', '--batch-size', '4', sources_dir=sources)
+        self.assertEqual(code, 1, out)
+        self.assertEqual(self.count(tgt, 'app.tags'), 4)
+
+    def test_when_keys_are_equal_but_render_differently_it_should_stop(self):
+        sources, src, _ = self.toy()
+        numeric = {**FILES, 'tags.extract.sql': 'SELECT name, n FROM tags\n',
+                   'source.toml': MANIFEST.replace('key = ["name"]', 'key = ["k"]').replace(
+                       '{ name = "name", type = "text" }, { name = "n", type = "integer" }',
+                       '{ name = "k", type = "numeric" }, { name = "name", type = "text" }, '
+                       '{ name = "n", type = "integer" }')}
+        numeric['tags.extract.sql'] = 'SELECT k, name, n FROM tags\n'
+        numeric['tags.load.sql'] = 'INSERT INTO app.tags SELECT name, n FROM stage ON CONFLICT DO NOTHING;\n'
+        num_dir = self.tmp / 'numeric'
+        if not num_dir.exists():
+            write_source(num_dir, numeric)
+        self.sql(src, "ALTER TABLE tags ADD COLUMN k numeric;\nUPDATE tags SET k = n;\n"
+                      "UPDATE tags SET k = 1.00 WHERE name = 't2';\nUPDATE tags SET k = 1.0 WHERE name = 't1';\n")
+        code, out = self.migrate('run', 'toy', '--step', 'tags', sources_dir=num_dir)
+        self.assertEqual(code, 1, out)
+
+    def test_when_the_source_database_sets_session_timeouts_it_should_not_cut_the_walk(self):
+        sources, src, tgt = self.toy()
+        slow = {**FILES, 'things.extract.sql': "SELECT id, title, updated_at AT TIME ZONE 'UTC' AS updated_at"
+                                               " FROM things CROSS JOIN (SELECT pg_sleep(0.5)) AS s\n"}
+        slow_dir = self.tmp / 'slow'
+        if not slow_dir.exists():
+            write_source(slow_dir, slow)
+        real = self.db_name(src)
+        self.sql('postgres', f"ALTER DATABASE {real} SET statement_timeout = '200ms';\n"
+                             f"ALTER DATABASE {real} SET transaction_timeout = '200ms';\n")
+        code, out = self.migrate('run', 'toy', '--step', 'things', sources_dir=slow_dir)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.count(tgt, 'app.things'), 250)
 
     def test_when_the_source_fails_mid_walk_it_should_not_complete_the_walk(self):
         sources, src, tgt = self.toy()

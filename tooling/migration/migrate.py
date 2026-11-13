@@ -480,18 +480,25 @@ def connection_env(url, read_only=False, extra_options=()):
 
 @dataclasses.dataclass(frozen=True)
 class Timeouts:
-    """Session limits, in milliseconds (0: none). The extract stream gets no statement timeout:
-    it stays open for the whole walk."""
+    """Session limits, in milliseconds (0: none). The extract stream stays open for the whole walk, so
+    it overrides any role or database statement, idle or transaction timeout with none."""
     lock_ms: int = 60_000
     statement_ms: int = 1_800_000
 
     @property
     def source(self):
-        return (f'-c lock_timeout={self.lock_ms}',)
+        return (f'-c lock_timeout={self.lock_ms}', '-c statement_timeout=0',
+                '-c idle_in_transaction_session_timeout=0')
 
     @property
     def target(self):
         return (f'-c lock_timeout={self.lock_ms}', f'-c statement_timeout={self.statement_ms}')
+
+
+# transaction_timeout exists from Postgres 17; a startup option naming it fails on older servers.
+SOURCE_SESSION = ('\\set QUIET on\n'
+                  "DO $$ BEGIN IF current_setting('server_version_num')::int >= 170000 THEN"
+                  " PERFORM set_config('transaction_timeout', '0', false); END IF; END $$;\n")
 
 
 def psql_args(extra=()):
@@ -646,7 +653,13 @@ def plan_walk(step, checkpoint, *, since, since_last, overlap, restart):
     # stamped below either (a slow commit, a lagging app clock) is read again within `overlap`.
     starts = [parse_timestamp(checkpoint.last_completed_walk_started_at or checkpoint.walk_started_at)]
     if checkpoint.cursor:
-        starts.append(parse_timestamp(str(checkpoint.cursor[0])))
+        mark = str(checkpoint.cursor[0])
+        try:
+            starts.append(parse_timestamp(mark))
+        except MigrationError:
+            # infinity or a year past 9999 sorts above the walk start; -infinity or BC needs a full walk.
+            if mark.startswith('-') or mark.endswith(' BC'):
+                return Walk(None, None, None, 0, True, f'full walk (watermark {mark} has no ISO form)')
     since = iso(min(starts) - overlap)
     how = 'since last' if since_last else 'catching up'
     return Walk(since, None, None, 0, True, f'{how}: since {since} (last walk minus overlap)')
@@ -654,24 +667,37 @@ def plan_walk(step, checkpoint, *, since, since_last, overlap, restart):
 
 # ── a step's batches ────────────────────────────────────────────────────────
 
-def extract_sql(step, walk_since, cursor):
-    """The walk's one COPY: every row past `cursor`, in cursor order, in a single snapshot. Text
-    format keeps one row per line (newlines in values are escaped), so batches split on lines."""
+def extract_sql(step, walk_since, cursor, flagged=True):
+    """The walk's one COPY: every row from `cursor` on, in cursor order, in a single snapshot. Text
+    format keeps one row per line (newlines in values are escaped), so batches split on lines.
+
+    A trailing flag compares keys in SQL, not as text: `d` repeats the previous row's key, `c` is
+    the committed cursor row itself (skipped), `n` is any other row. Unflagged, it reads past
+    `cursor` with no flag column.
+    """
     extract = strip_sql_comments(step.extract.read_text()).strip()
     cols = ', '.join(f'e.{ident(c)}' for c, _ in step.columns)
     conditions = []
+    order = ', '.join(f'e.{ident(c)}' for c in step.cursor)
+    key = f'ROW({order})' if len(step.cursor) > 1 else order
+    at_cursor = 'false'
     if cursor is not None:
         if len(cursor) != len(step.cursor):
             raise MigrationError(f'{step.source}/{step.name}: stored cursor {cursor} does not match {step.cursor};'
                                  ' rerun with --restart')
-        left = ', '.join(f'e.{ident(c)}' for c in step.cursor)
         right = ', '.join(literal(v) for v in cursor)
-        conditions.append(f'({left}) > ({right})' if len(cursor) > 1 else f'{left} > {right}')
+        right = f'ROW({right})' if len(cursor) > 1 else right
+        conditions.append(f'{key} {">=" if flagged else ">"} {right}')
+        at_cursor = f'{key} = {right}'
     if walk_since is not None:
         conditions.append(f'e.{ident(step.watermark)} >= {literal(walk_since)}::timestamptz')
     where = f' WHERE {" AND ".join(conditions)}' if conditions else ''
-    order = ', '.join(f'e.{ident(c)}' for c in step.cursor)
-    return f'COPY (SELECT {cols} FROM (\n{extract}\n) AS e{where} ORDER BY {order}) TO STDOUT;\n'
+    if not flagged:
+        return SOURCE_SESSION + f'COPY (SELECT {cols} FROM (\n{extract}\n) AS e{where} ORDER BY {order}) TO STDOUT;\n'
+    flag = (f"CASE WHEN row_number() OVER w > 1 AND {key} = lag({key}) OVER w THEN 'd'"
+            f" WHEN {at_cursor} THEN 'c' ELSE 'n' END")
+    return (SOURCE_SESSION + f'COPY (SELECT {cols}, {flag} FROM (\n{extract}\n) AS e{where}'
+            f' WINDOW w AS (ORDER BY {order}) ORDER BY {order}) TO STDOUT;\n')
 
 
 class ExtractStream:
@@ -679,14 +705,11 @@ class ExtractStream:
 
     Every full batch is a prefix of the ordered snapshot, so it can commit while the rest still
     streams; the last (short) batch commits only after psql exits cleanly, so a source failing
-    mid-stream never ends a walk early. Adjacent rows with one cursor mean the key is not unique.
+    mid-stream never ends a walk early. A repeated key (see `extract_sql`) means it is not unique.
     """
 
     def __init__(self, step, url, sql, options=()):
         self.step = step
-        names = [c for c, _ in step.columns]
-        self.key_at = [names.index(c) for c in step.cursor]
-        self.previous = None
         self.err = tempfile.TemporaryFile()
         try:
             self.proc = subprocess.Popen(psql_args(['-f', '-']), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -694,8 +717,16 @@ class ExtractStream:
         except FileNotFoundError as e:
             self.err.close()
             raise MigrationError('psql is not on PATH') from e
-        self.proc.stdin.write(sql.encode())
-        self.proc.stdin.close()
+        try:
+            self.proc.stdin.write(sql.encode())
+            self.proc.stdin.close()
+        except BrokenPipeError:
+            # psql exited before reading the query (bad credentials, unreachable host).
+            try:
+                self.finish()
+                raise MigrationError(f'psql exited {self.proc.returncode} before reading the extract')
+            finally:
+                self.__exit__()
 
     def __enter__(self):
         return self
@@ -723,13 +754,14 @@ class ExtractStream:
                 if line:
                     raise MigrationError(f'{self.step.source}/{self.step.name}: extract ended mid-row')
                 break
-            fields = line[:-1].split(b'\t')
-            key = [fields[i] for i in self.key_at]
-            if key == self.previous:
+            tab = line.rindex(b'\t')
+            flag = line[tab + 1:-1]
+            if flag == b'd':
                 raise MigrationError(f'{self.step.source}/{self.step.name}: two extract rows share one cursor'
                                      f' ({", ".join(self.step.cursor)}); the key must be unique')
-            self.previous = key
-            fh.write(line)
+            if flag == b'c':
+                continue
+            fh.write(line[:tab] + b'\n')
             n += 1
         return n
 
@@ -744,7 +776,7 @@ def null_check(step):
 
 
 def camera_extract_sql(step, since, cursor):
-    sql = extract_sql(step, since, cursor)
+    sql = extract_sql(step, since, cursor, flagged=False)
     suffix = 'TO STDOUT;\n'
     assert sql.endswith(suffix)
     return sql[:-len(suffix)] + 'TO STDOUT WITH (FORMAT csv);\n'

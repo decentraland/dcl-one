@@ -9,7 +9,7 @@ dry-run and re-import behavior identical for every source; per-source scripts
 would each re-implement them.
 
 It reads from the sources (sessions are read-only) and writes only to the
-target. It needs `psql` (PostgreSQL 15 or later) and Python 3.11 or later
+target. It needs `psql` and libpq 16 or later (`sslrootcert=system`) and Python 3.11 or later
 (`tomllib`), nothing else; `blobs --from-s3` also needs `boto3`.
 
 Out of scope: the Catalyst content servers (`content.*` comes from peer sync),
@@ -149,7 +149,7 @@ Options of `run`:
 | `--restart` | Ignores the stored checkpoint and starts the step over. |
 | `--batch-size N` | Rows per batch (default 5000). |
 | `--lock-timeout DURATION` | Gives up waiting for a lock after this long, on the source and the target (default `1m`, `0s` never). |
-| `--statement-timeout DURATION` | Cancels a target statement after this long (default `30m`, `0s` never). The source extract has none: it stays open for the whole walk. |
+| `--statement-timeout DURATION` | Cancels a target statement after this long (default `30m`, `0s` never). The source extract stays open for the whole walk, so it runs with no statement, idle-in-transaction or transaction timeout, whatever the role or database sets. |
 | `--work-dir DIR` | Where batches, and a dry run's whole extracts, are staged (default: the system temp directory). |
 | `--skip-unconfigured` | Skips sources whose database variable is unset (with `all`). |
 | `--storage-root DIR` | The node's storage root (default `STORAGE_ROOT_FOLDER`), required by runs of steps whose rows name blobs. |
@@ -181,12 +181,13 @@ Database errors are printed terse, without the failing row; `--verbose-errors`
 Each step is a keyset walk over its extract query, ordered by its cursor:
 `(watermark, key...)` when the step has a watermark, `(key...)` otherwise.
 A walk runs one
-`COPY (SELECT * FROM (<extract>) e [WHERE <cursor> > <checkpoint>] [AND e.<watermark> >= <since>] ORDER BY <cursor>) TO STDOUT`
+`COPY (SELECT * FROM (<extract>) e [WHERE <cursor> >= <checkpoint>] [AND e.<watermark> >= <since>] ORDER BY <cursor>) TO STDOUT`
 on the source, so the extract is evaluated once, in one snapshot, and the
 stream is cut into batches on the client. Each batch:
 
-1. takes the next `--batch-size` rows of the stream (two adjacent rows with
-   the same cursor stop the run: the key is not unique);
+1. takes the next `--batch-size` rows of the stream, skipping the committed
+   checkpoint row a resumed walk reads again (two rows with an equal cursor,
+   compared in SQL, stop the run: the key is not unique);
 2. in one target transaction: creates the temporary table `stage` with the
    manifest's columns, copies the batch into it, runs the step's `load` SQL
    and records the batch's last cursor in `dcl_migration.checkpoint`;
@@ -203,7 +204,9 @@ interrupted walk after the last committed cursor. A step whose walk reaches
 the end is marked complete; the next `run` re-reads from the earlier of that
 walk's start and its last watermark, minus `--overlap`, so a row stamped
 before the last read but committed after it is not lost. Loads are idempotent,
-so the overlap only re-applies rows. A step without a watermark re-scans fully
+so the overlap only re-applies rows. A last watermark with no ISO form
+(`infinity`, a year past 9999) is ignored; `-infinity` or a BC date makes the
+next run walk the whole step. A step without a watermark re-scans fully
 on every run.
 
 A source's `after` sources run first in the same run, or must have completed
