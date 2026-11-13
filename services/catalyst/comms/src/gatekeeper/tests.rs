@@ -2839,6 +2839,9 @@ async fn the_island_feed_needs_no_switch() {
 
     #[async_trait::async_trait]
     impl NatsBus for Recorded {
+        async fn statistics_control(&self, payload: Vec<u8>) -> Result<Vec<u8>, RequestError> {
+            self.bus.statistics_control(payload).await
+        }
         fn is_enabled(&self) -> bool {
             self.bus.is_enabled()
         }

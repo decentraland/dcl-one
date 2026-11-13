@@ -3,6 +3,8 @@
 //! staging budgets) and the blob collector keeping a pending upload's files.
 
 use axum::http::HeaderMap;
+use futures::FutureExt;
+use tokio::sync::Notify;
 
 use super::super::partial::{self, PartialUploadLimits};
 use super::*;
@@ -1387,6 +1389,71 @@ async fn insert_world(f: &Fixture, world: &WorldName) {
         .unwrap();
 }
 
+async fn reached_stage(stage: &Notify) {
+    tokio::time::timeout(std::time::Duration::from_secs(15), stage.notified())
+        .await
+        .expect("the request did not reach its expected upload stage");
+}
+
+async fn pause_reservation<T>(
+    after_owner: bool,
+    reached: Arc<Notify>,
+    resume: Arc<Notify>,
+    request: impl std::future::Future<Output = T>,
+) -> T {
+    if after_owner {
+        partial::AFTER_OWNER_LOOKUP
+            .scope((reached, resume), request)
+            .await
+    } else {
+        partial::AFTER_UPSERT
+            .scope((reached, resume), request)
+            .await
+    }
+}
+
+fn assert_same_completion(a: &Value, b: &Value, world: &WorldName) {
+    let created = a["creationTimestamp"]
+        .as_i64()
+        .expect("a completion has an integer creation timestamp");
+    assert!(created > 0, "{a}");
+    let message = a["message"]
+        .as_str()
+        .expect("a completion has a deployment message");
+    assert!(
+        message.starts_with(&format!(
+            "Your scene was deployed to World \"{}\" at parcels: 0,0!",
+            world.key()
+        )),
+        "{a}"
+    );
+    assert_eq!(b["creationTimestamp"], created);
+    assert_eq!(b["message"], message);
+}
+
+async fn assert_one_completion(f: &Fixture, u: &Upload, world: &WorldName) {
+    assert_eq!(
+        deployed_entity_ids(&f.pool, world).await,
+        vec![u.entity_id.clone()]
+    );
+    let receipts: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM worlds.completed_scene_uploads WHERE entity_id = $1",
+    )
+    .bind(&u.entity_id)
+    .fetch_one(&f.pool)
+    .await
+    .unwrap();
+    assert_eq!(receipts, 1);
+    assert_eq!(pending_count(&f.pool, &u.entity_id).await, 0);
+    let files: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM worlds.pending_scene_files WHERE entity_id = $1")
+            .bind(&u.entity_id)
+            .fetch_one(&f.pool)
+            .await
+            .unwrap();
+    assert_eq!(files, 0);
+}
+
 #[tokio::test]
 async fn two_replicas_completing_one_entity_publish_it_once() {
     let Some(f) = fixture().await else { return };
@@ -1395,7 +1462,7 @@ async fn two_replicas_completing_one_entity_publish_it_once() {
     insert_world(&f, &world).await;
     expect_batch(&f.app, &u, Batch::of(&owner, true, &[]), 202).await;
 
-    // Both completing batches reach their publish and wait on the world row.
+    // Both exact requests pass upsert, and one reaches publish, before releasing the world row.
     let mut held = f.pool.begin().await.unwrap();
     sqlx::query("SELECT 1 FROM worlds.worlds WHERE name = $1 FOR UPDATE")
         .bind(world.key())
@@ -1403,24 +1470,170 @@ async fn two_replicas_completing_one_entity_publish_it_once() {
         .await
         .unwrap();
     let holder = backend_pid(&mut held).await;
+    let a_upsert = Arc::new(Notify::new());
+    let b_upsert = Arc::new(Notify::new());
+    let a_resume = Arc::new(Notify::new());
+    let b_resume = Arc::new(Notify::new());
     let (a, b, ()) = tokio::join!(
-        partial::REPLICA.scope("a", send(&f.app, &u, Batch::of(&owner, false, &[0]))),
-        partial::REPLICA.scope("b", send(&f.app, &u, Batch::of(&owner, false, &[0]))),
+        partial::AFTER_UPSERT.scope(
+            (a_upsert.clone(), a_resume.clone()),
+            partial::REPLICA.scope("a", send(&f.app, &u, Batch::of(&owner, false, &[0])))
+        ),
+        partial::AFTER_UPSERT.scope(
+            (b_upsert.clone(), b_resume.clone()),
+            partial::REPLICA.scope("b", send(&f.app, &u, Batch::of(&owner, false, &[0])))
+        ),
         async {
-            let first = blocked_by(&f.pool, holder, "SELECT owner FROM worlds.worlds", 1).await;
-            // The second queues behind the first: on the row, or on an advisory lock (the world's
-            // publish lock, the wallet's quota lock, or the store lock behind a collector).
-            let row_or_lock = ["SELECT owner FROM worlds.worlds", "pg_advisory_xact_lock"];
-            waiting_on(&f.pool, first[0], &row_or_lock, true, 1).await;
+            reached_stage(&a_upsert).await;
+            reached_stage(&b_upsert).await;
+            a_resume.notify_one();
+            b_resume.notify_one();
+            blocked_by(&f.pool, holder, "SELECT owner FROM worlds.worlds", 1).await;
             held.commit().await.unwrap();
         },
     );
     assert_eq!((a.0.as_u16(), b.0.as_u16()), (200, 200), "{} {}", a.2, b.2);
-    assert_eq!(
-        deployed_entity_ids(&f.pool, &world).await,
-        vec![u.entity_id.clone()]
-    );
-    assert_eq!(pending_count(&f.pool, &u.entity_id).await, 0);
+    assert_same_completion(&a.2, &b.2, &world);
+    assert_one_completion(&f, &u, &world).await;
+}
+
+#[tokio::test]
+async fn a_completion_consumed_after_upsert_replays_before_reservation() {
+    for after_owner in [false, true] {
+        let Some(f) = fixture().await else { return };
+        let (world, owner) = owned(&f).await;
+        let u = upload(&world, 1);
+        expect_batch(&f.app, &u, Batch::of(&owner, true, &[]), 202).await;
+        let reached = Arc::new(Notify::new());
+        let resume = Arc::new(Notify::new());
+        let b_publish = Arc::new(Notify::new());
+
+        let (b, (a, received_bytes)) = tokio::join!(
+            partial::PUBLISH_REACHED.scope(
+                b_publish.clone(),
+                pause_reservation(
+                    after_owner,
+                    reached.clone(),
+                    resume.clone(),
+                    partial::REPLICA.scope("b", send(&f.app, &u, Batch::of(&owner, false, &[0]))),
+                )
+            ),
+            async {
+                reached_stage(&reached).await;
+                let a = partial::REPLICA
+                    .scope("a", send(&f.app, &u, Batch::of(&owner, false, &[0])))
+                    .await;
+                assert_eq!(a.0, StatusCode::OK, "{}", a.2);
+                assert_one_completion(&f, &u, &world).await;
+                // Keep the rate assertion within one window; rollover has its own tests.
+                let received_bytes: i64 = sqlx::query_scalar(
+                    "UPDATE worlds.partial_upload_rates SET window_started = timezone('UTC', now()) \
+                     WHERE deployer = $1 RETURNING bytes",
+                )
+                .bind(owner.address.as_str())
+                .fetch_one(&f.pool)
+                .await
+                .unwrap();
+                resume.notify_one();
+                (a, received_bytes)
+            },
+        );
+        assert_eq!(b.0, StatusCode::OK, "{}", b.2);
+        assert_same_completion(&a.2, &b.2, &world);
+        assert!(
+            b_publish.notified().now_or_never().is_none(),
+            "the losing request must replay without another publish"
+        );
+        assert_one_completion(&f, &u, &world).await;
+        let charged: i64 =
+            sqlx::query_scalar("SELECT bytes FROM worlds.partial_upload_rates WHERE deployer = $1")
+                .bind(owner.address.as_str())
+                .fetch_one(&f.pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            charged,
+            received_bytes
+                + if after_owner {
+                    u.files[0].1.len() as i64
+                } else {
+                    0
+                },
+            "an already-received batch retains its independent rate charge; a missing owner never reaches charging"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_reservation_disappearance_without_a_receipt_is_refused() {
+    reservation_disappearance(DisappearedUpload::NoReceipt).await;
+}
+
+#[tokio::test]
+async fn a_reservation_disappearance_with_an_expired_receipt_is_refused() {
+    reservation_disappearance(DisappearedUpload::ExpiredReceipt).await;
+}
+
+#[tokio::test]
+async fn a_reservation_disappearance_with_another_signers_receipt_is_refused() {
+    reservation_disappearance(DisappearedUpload::OtherSignersReceipt).await;
+}
+
+enum DisappearedUpload {
+    NoReceipt,
+    ExpiredReceipt,
+    OtherSignersReceipt,
+}
+
+/// Remove the pending row at the reservation boundary, with no live publication to replay.
+async fn reservation_disappearance(outcome: DisappearedUpload) {
+    for after_owner in [false, true] {
+        let Some(f) = fixture().await else { return };
+        let (world, owner) = owned(&f).await;
+        let u = upload(&world, 1);
+        expect_batch(&f.app, &u, Batch::of(&owner, true, &[]), 202).await;
+        let reached = Arc::new(Notify::new());
+        let resume = Arc::new(Notify::new());
+        let ((status, _, body), ()) = tokio::join!(
+            pause_reservation(
+                after_owner,
+                reached.clone(),
+                resume.clone(),
+                send(&f.app, &u, Batch::of(&owner, false, &[0]))
+            ),
+            async {
+                reached_stage(&reached).await;
+                if !matches!(outcome, DisappearedUpload::NoReceipt) {
+                    let other = Wallet::random();
+                    let signer = if matches!(outcome, DisappearedUpload::OtherSignersReceipt) {
+                        &other
+                    } else {
+                        &owner
+                    };
+                    completed_elsewhere(&f.pool, &u, signer, &world).await;
+                    if matches!(outcome, DisappearedUpload::ExpiredReceipt) {
+                        sqlx::query("UPDATE worlds.completed_scene_uploads SET completed_at = completed_at - interval '2 days' WHERE entity_id = $1")
+                        .bind(&u.entity_id).execute(&f.pool).await.unwrap();
+                    }
+                } else {
+                    sqlx::query("DELETE FROM worlds.pending_scenes WHERE entity_id = $1")
+                        .bind(&u.entity_id)
+                        .execute(&f.pool)
+                        .await
+                        .unwrap();
+                }
+                resume.notify_one();
+            },
+        );
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert_eq!(
+            body["message"],
+            "Upload no longer exists; resend its manifest."
+        );
+        assert!(body.get("creationTimestamp").is_none(), "{body}");
+        assert!(deployed_entity_ids(&f.pool, &world).await.is_empty());
+        assert_eq!(pending_count(&f.pool, &u.entity_id).await, 0);
+    }
 }
 
 #[tokio::test]

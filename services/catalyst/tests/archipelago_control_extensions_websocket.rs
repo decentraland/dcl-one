@@ -62,7 +62,28 @@ impl Server {
         available: bool,
         handshake_timeout_ms: Option<u64>,
     ) -> Self {
+        Self::with_validator(pool, available, handshake_timeout_ms, None).await
+    }
+
+    async fn with_validator(
+        pool: sqlx::PgPool,
+        available: bool,
+        handshake_timeout_ms: Option<u64>,
+        validator: Option<Arc<dyn catalyst::auth::Eip1654Validator>>,
+    ) -> Self {
+        Self::with_policy(pool, available, handshake_timeout_ms, validator, None, None).await
+    }
+
+    async fn with_policy(
+        pool: sqlx::PgPool,
+        available: bool,
+        handshake_timeout_ms: Option<u64>,
+        validator: Option<Arc<dyn catalyst::auth::Eip1654Validator>>,
+        deny_url: Option<String>,
+        bans: Option<Arc<dyn catalyst::comms::gatekeeper::moderation::BanStatus>>,
+    ) -> Self {
         let mut settings = Settings::for_tests();
+        settings.auth.deny_list_url = deny_url;
         if let Some(timeout) = handshake_timeout_ms {
             settings.auth.handshake_timeout_ms = timeout;
         }
@@ -94,6 +115,10 @@ impl Server {
             .ok()
             .expect("unshared gatekeeper");
         gatekeeper.pool = pool;
+        gatekeeper.eip1654 = validator;
+        if let Some(bans) = bans {
+            gatekeeper.bans = bans;
+        }
         let config = catalyst::comms::gatekeeper::admission::cluster::ClusterConfig {
             control_v4_audience: Some("test-realm".into()),
             nats_url: Some("nats://fixture".into()),
@@ -113,7 +138,14 @@ impl Server {
             .attach_island_subscriber_for_tests(&subscriber);
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("ws://{}/ws", listener.local_addr().unwrap());
-        let app = catalyst::comms::archipelago::mounts(state.clone(), true).stats;
+        let app = catalyst::comms::archipelago::mounts(
+            state.clone(),
+            true,
+            Default::default(),
+            catalyst::comms::stats::http::test_support::matcher(),
+            std::sync::Arc::new(catalyst::content::Denylist::default()),
+        )
+        .stats;
         let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         Self {
             url,
@@ -148,6 +180,9 @@ impl Server {
             })
             .unwrap_or(1);
         let snapshot = catalyst::comms::protocol::pulse::decentraland::pulse::PeerClusterSnapshot {
+            selected_origin: 1,
+            selected_identity: Some(1),
+            assignment_state: 1,
             wallet: owner.address.clone(),
             session: owner.session.clone(),
             cluster_id: room.strip_prefix("island-").unwrap_or(room).into(),
@@ -319,6 +354,109 @@ async fn admit_legacy(socket: &mut Socket, wallet: &PrivateKeySigner) {
     assert_eq!(welcome.encoded_len(), 44);
 }
 
+#[tokio::test]
+async fn fenced_completed_assignment_peer_close_echoes_then_releases_exact_owner() {
+    use catalyst::comms::archipelago::control_v4::{AssignmentPayload, LaneKey};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let Some(fixture) = Fixture::new().await else {
+        return;
+    };
+    let server = Server::start(&fixture).await;
+    let wallet: PrivateKeySigner =
+        "0000000000000000000000000000000000000000000000000000000000000001"
+            .parse()
+            .unwrap();
+    let address = format!("{:#x}", wallet.address());
+    let mut socket = server.connect().await;
+    admit_legacy(&mut socket, &wallet).await;
+    let owner = current_owner(&server, &fixture, &wallet).await;
+    let lane = LaneKey::parse("realm").unwrap();
+    server
+        .state
+        .control_v4
+        .publish_assignment(
+            &owner,
+            &lane,
+            AssignmentPayload {
+                island_id: "island-close".into(),
+                connection_string: "fixture-credential".into(),
+                from_island_id: None,
+                peers: Default::default(),
+                pulse_admission: Some(server.stamp(&owner, "island-close").await),
+                token_expires_at_unix: None,
+            },
+        )
+        .await
+        .unwrap();
+    let Some(pb::server_packet::Message::IslandChanged(assignment)) =
+        receive(&mut socket).await.message
+    else {
+        panic!("complete authorized assignment expected")
+    };
+    assert_eq!(assignment.conn_str, "fixture-credential");
+    let tokio_tungstenite::MaybeTlsStream::Plain(tcp) = socket.get_mut() else {
+        panic!("plaintext")
+    };
+    let at = std::time::Instant::now();
+    let close = [
+        0x88, 0x88, 1, 2, 3, 4, 2, 0xea, 0x65, 0x61, 0x6f, 0x61, 0x66, 0x60,
+    ];
+    eprintln!(
+        "CLOSE_FENCED client={close:02x?} at_us={}",
+        at.elapsed().as_micros()
+    );
+    tcp.write_all(&close).await.unwrap();
+    let mut received = vec![];
+    tokio::time::timeout(Duration::from_secs(7), tcp.read_to_end(&mut received))
+        .await
+        .unwrap()
+        .unwrap();
+    eprintln!(
+        "CLOSE_FENCED server={received:02x?} eof_at_us={}",
+        at.elapsed().as_micros()
+    );
+    assert_eq!(received, b"\x88\x08\x03\xe8fenced");
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while server.state.registry.has_any_peer(&address)
+            || server.state.sockets.available_permits()
+                != server.state.settings.server.max_sockets as usize
+            || server.state.handlers.available_permits()
+                != server.state.settings.server.max_sockets as usize
+        {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(
+        server
+            .state
+            .control_v4
+            .snapshot(&owner, &lane)
+            .await
+            .is_err()
+    );
+    assert!(server.state.enforcement.island_of(&address).is_none());
+    let disconnects = || {
+        use catalyst::comms::protocol::bus::statistics::{
+            Event, OBSERVATIONS_SUBJECT, Observation,
+        };
+        server.bus.published().iter().filter(|(subject, payload)| {
+            subject == OBSERVATIONS_SUBJECT && Observation::decode(payload).is_some_and(|observation| matches!(observation.event, Event::Disconnect { address: wallet } if wallet == address))
+        }).count()
+    };
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while disconnects() == 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(disconnects(), 1);
+    drop((socket, server));
+    fixture.finish().await;
+}
+
 async fn legacy_barrier(socket: &mut Socket, token: u8) {
     socket
         .send(Message::Ping(vec![token].into()))
@@ -412,7 +550,8 @@ async fn configured_legacy_heartbeat_reaches_real_pulse_clustering_over_nats() {
     );
     let grids = RealmSpatialGrids::new(SPATIAL_GRID_CELL_SIZE, 8);
     let board = SnapshotBoard::new(8, 4);
-    let identity = IdentityBoard::new(8);
+    let mut identity = IdentityBoard::new(8);
+    tracker.bind_identity(&mut identity);
     let client = async_nats::connect(broker.url()).await.unwrap();
     let snapshot = tokio::time::timeout(Duration::from_secs(12), async {
         loop {
@@ -659,11 +798,10 @@ async fn legacy_heartbeat_authority_deadline_never_publishes_an_unverified_posit
             .any(|record| record.position.is_some())
     );
     assert!(
-        server
-            .state
-            .peers
-            .peer(&format!("{:#x}", wallet.address()))
-            .is_none()
+        server.bus.published().iter().any(|(subject, bytes)| subject
+            == catalyst::comms::protocol::bus::statistics::OBSERVATIONS_SUBJECT
+            && catalyst::comms::protocol::bus::statistics::Observation::decode(bytes).is_some()),
+        "authenticated statistics observations do not acquire ownership"
     );
     drop(held);
     drop(socket);
@@ -1089,6 +1227,20 @@ async fn common_endpoint_keeps_legacy_bytes_heartbeats_and_invalid_input_bounds(
         return;
     };
     let server = Server::start(&fixture).await;
+    let last_control = || {
+        server
+            .bus
+            .published()
+            .iter()
+            .filter(|(subject, _)| {
+                subject == catalyst::comms::protocol::bus::control_position::SUBJECT
+            })
+            .filter_map(|(_, bytes)| {
+                catalyst::comms::protocol::bus::control_position::ControlPosition::decode(bytes)
+            })
+            .filter_map(|record| record.position)
+            .last()
+    };
     let wallet = PrivateKeySigner::random();
     let legacy_wallet = PrivateKeySigner::random();
     let mut legacy = server.connect().await;
@@ -1152,14 +1304,8 @@ async fn common_endpoint_keeps_legacy_bytes_heartbeats_and_invalid_input_bounds(
         send(&mut current, &heartbeat).await;
     }
     legacy_barrier(&mut current, 1).await;
-    let address = format!("{:#x}", wallet.address());
     tokio::time::timeout(Duration::from_secs(3), async {
-        while !server
-            .state
-            .peers
-            .peer(&address)
-            .is_some_and(|peer| peer.position == [1.0, 2.0, 3.0])
-        {
+        while !last_control().is_some_and(|position| position == [1.0, 2.0, 3.0]) {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     })
@@ -1169,7 +1315,7 @@ async fn common_endpoint_keeps_legacy_bytes_heartbeats_and_invalid_input_bounds(
     send(&mut current, &position(3.0, None)).await;
     legacy_barrier(&mut current, 2).await;
     tokio::time::timeout(Duration::from_secs(3), async {
-        while server.state.peers.peer(&address).unwrap().position[0] != 3.0 {
+        while last_control().unwrap()[0] != 3.0 {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     })
@@ -1185,14 +1331,14 @@ async fn common_endpoint_keeps_legacy_bytes_heartbeats_and_invalid_input_bounds(
     tokio::time::resume();
     legacy_barrier(&mut current, 3).await;
     assert_eq!(
-        server.state.peers.peer(&address).unwrap().position,
+        last_control().unwrap(),
         [3.0, 2.0, 3.0],
         "consumed invalid realms and non-finite positions cannot replace the current sample"
     );
     send(&mut current, &position(4.0, None)).await;
     legacy_barrier(&mut current, 4).await;
     tokio::time::timeout(Duration::from_secs(3), async {
-        while server.state.peers.peer(&address).unwrap().position[0] != 4.0 {
+        while last_control().unwrap()[0] != 4.0 {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     })
@@ -1274,7 +1420,25 @@ async fn pulse_stamp_rejects_stale_sql_visibility_after_commit_wait_without_chan
                 panic!("unchanged identity across a fresh pass must deliver")
             };
             assert_eq!(packet.conn_str, "old-credential");
+            assert_eq!(
+                server
+                    .state
+                    .enforcement
+                    .island_of(&owner.address)
+                    .as_deref(),
+                Some("island-stamp-current"),
+                "fenced assignment records moderation room before any heartbeat"
+            );
             assert!(packet.assignment_context.is_none());
+            server.state.enforcement.kick_peer(&owner.address, "banned");
+            assert!(matches!(
+                receive(&mut ws).await.message,
+                Some(pb::server_packet::Message::Kicked(_))
+            ));
+            assert!(
+                server.state.enforcement.island_of(&owner.address).is_none(),
+                "moderation retires a configured pre-heartbeat assignment"
+            );
         } else {
             assert!(
                 tokio::time::timeout(Duration::from_millis(2400), ws.next())
@@ -1327,6 +1491,524 @@ async fn pulse_stamp_rejects_stale_sql_visibility_after_commit_wait_without_chan
         }
         drop(ws);
     }
+    drop(server);
+    fixture.finish().await;
+}
+
+#[tokio::test]
+async fn contract_authentication_preserves_configured_owner_fences() {
+    struct Valid;
+    #[async_trait::async_trait]
+    impl catalyst::auth::Eip1654Validator for Valid {
+        fn fresh_validator(&self) -> Option<&dyn catalyst::auth::Eip1654Validator> {
+            Some(self)
+        }
+        async fn validate_signature(
+            &self,
+            _: &str,
+            _: &[u8],
+            _: &[u8],
+        ) -> Result<bool, catalyst::auth::AuthError> {
+            Ok(true)
+        }
+    }
+    let Some(fixture) = Fixture::new().await else {
+        return;
+    };
+    let server =
+        Server::with_validator(fixture.pool.clone(), true, None, Some(Arc::new(Valid))).await;
+    let wallet = PrivateKeySigner::random();
+    let (mut delayed, old_challenge) = legacy_open(&server, &wallet).await;
+    let (mut current, new_challenge) = legacy_open(&server, &wallet).await;
+    let signed = |challenge: &str| {
+        packet(0, pb::client_packet::Message::SignedChallenge(pb::SignedChallengeMessage {
+        auth_chain_json: serde_json::json!([
+            {"type":"SIGNER", "payload":format!("{:#x}", wallet.address()), "signature":""},
+            {"type":"ECDSA_EIP_1654_SIGNED_ENTITY", "payload":challenge, "signature":"0x1234"}
+        ]).to_string()
+    }))
+    };
+    send(&mut current, &signed(&new_challenge)).await;
+    assert!(matches!(
+        receive(&mut current).await.message,
+        Some(pb::server_packet::Message::Welcome(_))
+    ));
+    let before = current_owner(&server, &fixture, &wallet).await;
+    send(&mut delayed, &signed(&old_challenge)).await;
+    assert!(matches!(
+        receive(&mut delayed).await.message,
+        Some(pb::server_packet::Message::Kicked(_))
+    ));
+    let after = current_owner(&server, &fixture, &wallet).await;
+    assert_eq!((before.session, before.epoch), (after.session, after.epoch));
+    catalyst::comms::archipelago::shutdown(&server.state).await;
+    drop((current, delayed, server));
+    fixture.finish().await;
+}
+
+#[tokio::test]
+async fn historical_contract_authentication_keeps_verified_principal_and_configured_fences() {
+    struct Historical {
+        starts: std::sync::Mutex<Vec<i64>>,
+    }
+    #[async_trait::async_trait]
+    impl catalyst::auth::Eip1654Validator for Historical {
+        fn fresh_validator(&self) -> Option<&dyn catalyst::auth::Eip1654Validator> {
+            Some(self)
+        }
+        async fn validate_signature(
+            &self,
+            _: &str,
+            _: &[u8],
+            _: &[u8],
+        ) -> Result<bool, catalyst::auth::AuthError> {
+            Ok(false)
+        }
+        async fn verification_time_block(
+            &self,
+            started: i64,
+        ) -> Result<u64, catalyst::auth::AuthError> {
+            self.starts.lock().unwrap().push(started);
+            Ok(4)
+        }
+        async fn validate_signature_at_block(
+            &self,
+            _: &str,
+            _: &[u8],
+            _: &[u8],
+            block: u64,
+        ) -> Result<bool, catalyst::auth::AuthError> {
+            assert_eq!(block, 4);
+            Ok(true)
+        }
+    }
+    let fixture = Fixture::new()
+        .await
+        .expect("mandatory disposable PostgreSQL fixture");
+    let validator = Arc::new(Historical {
+        starts: std::sync::Mutex::new(Vec::new()),
+    });
+    let server = Server::with_validator(
+        fixture.pool.clone(),
+        true,
+        None,
+        Some(Arc::new(catalyst::auth::ValidationCache::new(
+            validator.clone(),
+        ))),
+    )
+    .await;
+    let claim = PrivateKeySigner::random();
+    let principal = PrivateKeySigner::random();
+    let address = format!("{:#x}", principal.address());
+    let (mut old, old_nonce) = legacy_open(&server, &claim).await;
+    let (mut current, new_nonce) = legacy_open(&server, &claim).await;
+    let signed = |nonce: &str| {
+        packet(
+            0,
+            pb::client_packet::Message::SignedChallenge(pb::SignedChallengeMessage {
+                auth_chain_json: serde_json::json!([
+                    {"type":"SIGNER","payload":address,"signature":""},
+                    {"type":"ECDSA_EIP_1654_SIGNED_ENTITY","payload":nonce,"signature":"0x1234"}
+                ])
+                .to_string(),
+            }),
+        )
+    };
+    send(&mut current, &signed(&new_nonce)).await;
+    let Some(pb::server_packet::Message::Welcome(welcome)) = receive(&mut current).await.message
+    else {
+        panic!("historical signature welcome expected")
+    };
+    assert_eq!(welcome.peer_id, address);
+    let before = current_owner(&server, &fixture, &principal).await;
+    assert_eq!(before.session, address);
+    send(&mut old, &signed(&old_nonce)).await;
+    assert!(matches!(
+        receive(&mut old).await.message,
+        Some(pb::server_packet::Message::Kicked(_))
+    ));
+    let after = current_owner(&server, &fixture, &principal).await;
+    assert_eq!((before.session, before.epoch), (after.session, after.epoch));
+    let claimed_rows: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM social.archipelago_v4_assignments WHERE owner_address = $1",
+    )
+    .bind(format!("{:#x}", claim.address()))
+    .fetch_one(&fixture.pool)
+    .await
+    .unwrap();
+    assert_eq!(claimed_rows, 0);
+    assert!(
+        !server
+            .state
+            .registry
+            .has_any_peer(&format!("{:#x}", claim.address()))
+    );
+    assert_eq!(validator.starts.lock().unwrap().len(), 2);
+    catalyst::comms::archipelago::shutdown(&server.state).await;
+    drop((current, old, server));
+    fixture.finish().await;
+}
+
+#[tokio::test]
+async fn configured_verified_principal_owns_sql_and_preserves_exact_release() {
+    struct Valid;
+    #[async_trait::async_trait]
+    impl catalyst::auth::Eip1654Validator for Valid {
+        fn fresh_validator(&self) -> Option<&dyn catalyst::auth::Eip1654Validator> {
+            Some(self)
+        }
+        async fn validate_signature(
+            &self,
+            _: &str,
+            _: &[u8],
+            _: &[u8],
+        ) -> Result<bool, catalyst::auth::AuthError> {
+            Ok(true)
+        }
+    }
+    let fixture = Fixture::new()
+        .await
+        .expect("mandatory disposable PostgreSQL fixture");
+    let server =
+        Server::with_validator(fixture.pool.clone(), true, None, Some(Arc::new(Valid))).await;
+    for contract in [false, true] {
+        for delegated in [false, true] {
+            let claim = PrivateKeySigner::random();
+            let wallet = PrivateKeySigner::random();
+            let device = if delegated {
+                PrivateKeySigner::random()
+            } else {
+                wallet.clone()
+            };
+            let principal = format!("{:#x}", wallet.address());
+            let session = format!("{:#x}", device.address());
+            let claim_address = format!("{:#x}", claim.address());
+            let mut sockets = Vec::new();
+            let mut owners = Vec::new();
+            for _ in 0..2 {
+                let (mut socket, nonce) = legacy_open(&server, &claim).await;
+                if contract {
+                    let mut links = vec![
+                        serde_json::json!({"type":"SIGNER", "payload":principal, "signature":""}),
+                    ];
+                    if delegated {
+                        links.push(serde_json::json!({"type":"ECDSA_EIP_1654_EPHEMERAL", "payload":format!("Decentraland Login\nEphemeral address: {session}\nExpiration: 2099-12-31T00:00:00.000Z"), "signature":"0x1234"}));
+                    }
+                    links.push(if delegated {
+                        serde_json::json!({"type":"ECDSA_SIGNED_ENTITY", "payload":nonce, "signature":device.sign_message_sync(nonce.as_bytes()).unwrap().to_string()})
+                    } else {
+                        serde_json::json!({"type":"ECDSA_EIP_1654_SIGNED_ENTITY", "payload":nonce, "signature":"0x1234"})
+                    });
+                    send(
+                        &mut socket,
+                        &packet(
+                            0,
+                            pb::client_packet::Message::SignedChallenge(
+                                pb::SignedChallengeMessage {
+                                    auth_chain_json: serde_json::to_string(&links).unwrap(),
+                                },
+                            ),
+                        ),
+                    )
+                    .await;
+                } else {
+                    legacy_sign(&mut socket, &wallet, &device, &nonce).await;
+                }
+                let Some(pb::server_packet::Message::Welcome(welcome)) =
+                    receive(&mut socket).await.message
+                else {
+                    panic!("verified principal welcome expected")
+                };
+                assert_eq!(welcome.peer_id, principal);
+                assert!(!server.state.registry.has_any_peer(&claim_address));
+                assert!(server.state.registry.has_any_peer(&principal));
+                let owner = current_owner(&server, &fixture, &wallet).await;
+                assert_eq!(owner.session, session);
+                let claimed_rows: i64 = sqlx::query_scalar("SELECT count(*) FROM social.archipelago_v4_assignments WHERE owner_address = $1").bind(&claim_address).fetch_one(&fixture.pool).await.unwrap();
+                assert_eq!(claimed_rows, 0);
+                send(
+                    &mut socket,
+                    &packet(
+                        0,
+                        pb::client_packet::Message::Heartbeat(pb::Heartbeat {
+                            position: Some(common::Position {
+                                x: 1.,
+                                y: 2.,
+                                z: 3.,
+                            }),
+                            desired_room: None,
+                            sample_sequence: None,
+                        }),
+                    ),
+                )
+                .await;
+                legacy_barrier(&mut socket, 8).await;
+                drained(&server).await;
+                assert!(server.bus.published().iter().any(|(subject, payload)| subject == catalyst::comms::protocol::bus::control_position::SUBJECT && catalyst::comms::protocol::bus::control_position::ControlPosition::decode(payload).is_some_and(|position| position.wallet == principal && position.session == session && position.epoch == owner.epoch && position.position == Some([1., 2., 3.]))));
+                owners.push(owner);
+                sockets.push(socket);
+            }
+            assert!(owners[1].epoch > owners[0].epoch);
+            let _ = sockets[0].close(None).await;
+            tokio::time::timeout(Duration::from_secs(3), async {
+                while server.state.handlers.available_permits()
+                    != server.state.settings.server.max_sockets as usize - 1
+                {
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                }
+            })
+            .await
+            .unwrap();
+            let still_current = current_owner(&server, &fixture, &wallet).await;
+            assert_eq!(still_current.epoch, owners[1].epoch);
+            assert_eq!(still_current.session, session);
+            assert!(
+                server
+                    .state
+                    .control_v4
+                    .snapshot(
+                        &owners[1],
+                        &catalyst::comms::archipelago::control_v4::LaneKey::parse("realm").unwrap()
+                    )
+                    .await
+                    .is_ok(),
+                "old cleanup cannot expire the current owner"
+            );
+            assert!(server.state.registry.has_any_peer(&principal));
+            sockets[1].close(None).await.unwrap();
+            tokio::time::timeout(Duration::from_secs(3), async {
+                while server.state.registry.has_any_peer(&principal) {
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                }
+            })
+            .await
+            .unwrap();
+            assert!(
+                !server
+                    .bus
+                    .published()
+                    .iter()
+                    .any(|(subject, payload)| subject.contains(&claim_address)
+                        || String::from_utf8_lossy(payload).contains(&claim_address))
+            );
+            assert!(
+                !server
+                    .bus
+                    .requested()
+                    .iter()
+                    .any(|(subject, payload)| subject.contains(&claim_address)
+                        || String::from_utf8_lossy(payload).contains(&claim_address))
+            );
+        }
+    }
+    catalyst::comms::archipelago::shutdown(&server.state).await;
+    drop(server);
+    fixture.finish().await;
+}
+
+#[tokio::test]
+async fn configured_claim_and_principal_policy_denials_never_claim_sql() {
+    let fixture = Fixture::new()
+        .await
+        .expect("mandatory disposable PostgreSQL fixture");
+    for denied in ["claim", "principal", "ban"] {
+        let claim = PrivateKeySigner::random();
+        let wallet = PrivateKeySigner::random();
+        let address_a = format!("{:#x}", claim.address());
+        let address_b = format!("{:#x}", wallet.address());
+        let denied_wallet = if denied == "claim" {
+            address_a.clone()
+        } else if denied == "principal" {
+            address_b.clone()
+        } else {
+            String::new()
+        };
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/deny", listener.local_addr().unwrap());
+        let app = axum::Router::new().route(
+            "/deny",
+            axum::routing::get(move || {
+                let address = denied_wallet.clone();
+                async move { axum::Json(serde_json::json!({"users":[{"wallet":address}]})) }
+            }),
+        );
+        let deny_task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let bans =
+            catalyst::comms::gatekeeper::moderation::test_support::StubBanStatus(Ok((denied
+                == "ban")
+                .then_some(catalyst::comms::access::Ban::Platform)));
+        let server = Server::with_policy(
+            fixture.pool.clone(),
+            true,
+            None,
+            None,
+            Some(url),
+            Some(Arc::new(bans)),
+        )
+        .await;
+        let mut socket = if denied == "claim" {
+            let mut socket = server.connect().await;
+            send(
+                &mut socket,
+                &packet(
+                    0,
+                    pb::client_packet::Message::ChallengeRequest(pb::ChallengeRequestMessage {
+                        address: address_a.clone(),
+                    }),
+                ),
+            )
+            .await;
+            socket
+        } else {
+            let (mut socket, nonce) = legacy_open(&server, &claim).await;
+            legacy_sign(&mut socket, &wallet, &wallet, &nonce).await;
+            socket
+        };
+        if denied == "ban" {
+            assert!(matches!(
+                receive(&mut socket).await.message,
+                Some(pb::server_packet::Message::Kicked(_))
+            ));
+        }
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while let Some(Ok(message)) = socket.next().await {
+                assert!(
+                    !matches!(message, Message::Binary(_)),
+                    "policy denial must never welcome or assign"
+                );
+                if matches!(message, Message::Close(_)) {
+                    break;
+                }
+            }
+        })
+        .await
+        .unwrap();
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while server.state.handlers.available_permits()
+                != server.state.settings.server.max_sockets as usize
+            {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .unwrap();
+        let claims: i64 = sqlx::query_scalar("SELECT count(*) FROM social.archipelago_v4_assignments WHERE owner_address = $1 OR owner_address = $2").bind(&address_a).bind(&address_b).fetch_one(&fixture.pool).await.unwrap();
+        assert_eq!(claims, 0);
+        assert_eq!(server.state.registry.authenticated_count(), 0);
+        assert_eq!(server.state.challenges.pending(), 0);
+        assert!(server.bus.published().is_empty());
+        assert!(server.bus.requested().is_empty());
+        catalyst::comms::archipelago::shutdown(&server.state).await;
+        drop(server);
+        deny_task.abort();
+    }
+    fixture.finish().await;
+}
+
+#[tokio::test]
+async fn configured_distinct_sessions_share_the_realm_owner_row() {
+    let fixture = Fixture::new()
+        .await
+        .expect("mandatory disposable PostgreSQL fixture");
+    let server = Server::start(&fixture).await;
+    let wallet = PrivateKeySigner::random();
+    let devices = [PrivateKeySigner::random(), PrivateKeySigner::random()];
+    let (mut first, nonce) = legacy_open(&server, &wallet).await;
+    legacy_sign(&mut first, &wallet, &devices[0], &nonce).await;
+    assert!(matches!(
+        receive(&mut first).await.message,
+        Some(pb::server_packet::Message::Welcome(_))
+    ));
+    let original = current_owner(&server, &fixture, &wallet).await;
+    let (mut second, nonce) = legacy_open(&server, &wallet).await;
+    legacy_sign(&mut second, &wallet, &devices[1], &nonce).await;
+    assert!(matches!(
+        receive(&mut second).await.message,
+        Some(pb::server_packet::Message::Welcome(_))
+    ));
+    let current = current_owner(&server, &fixture, &wallet).await;
+    assert!(current.epoch > original.epoch);
+    assert_ne!(current.session, original.session);
+    assert_eq!(current.session, format!("{:#x}", devices[1].address()));
+    assert!(
+        matches!(
+            receive(&mut first).await.message,
+            Some(pb::server_packet::Message::Kicked(_))
+        ),
+        "configured signaling sessions contend for the wallet-wide realm owner"
+    );
+    let _ = first.close(None).await;
+    let after = current_owner(&server, &fixture, &wallet).await;
+    assert_eq!(after.epoch, current.epoch);
+    assert_eq!(after.session, current.session);
+    second.close(None).await.unwrap();
+    catalyst::comms::archipelago::shutdown(&server.state).await;
+    drop(server);
+    fixture.finish().await;
+}
+
+#[tokio::test]
+async fn configured_close_during_claim_can_commit_before_receive() {
+    use tokio::io::AsyncReadExt;
+    let fixture = Fixture::new()
+        .await
+        .expect("mandatory disposable PostgreSQL fixture");
+    let server = Server::start(&fixture).await;
+    let wallet = PrivateKeySigner::random();
+    let address = format!("{:#x}", wallet.address());
+    let (mut socket, nonce) = legacy_open(&server, &wallet).await;
+    sqlx::query("INSERT INTO social.island_admission_fences(wallet) VALUES ($1)")
+        .bind(&address)
+        .execute(&fixture.pool)
+        .await
+        .unwrap();
+    let mut held = fixture.pool.begin().await.unwrap();
+    sqlx::query("SELECT 1 FROM social.island_admission_fences WHERE wallet = $1 FOR UPDATE")
+        .bind(&address)
+        .fetch_one(&mut *held)
+        .await
+        .unwrap();
+    legacy_sign(&mut socket, &wallet, &wallet, &nonce).await;
+    tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            let waiting: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock' AND query LIKE '%social.island_admission_fences%')").fetch_one(&fixture.pool).await.unwrap();
+            if waiting { break; }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    }).await.expect("claim reached the actual SQL wallet lock");
+    assert!(!server.state.registry.has_any_peer(&address));
+    socket.close(None).await.unwrap();
+    // SQL claim completion precedes consumption of pending transport input.
+    held.commit().await.unwrap();
+    let tokio_tungstenite::MaybeTlsStream::Plain(tcp) = socket.get_mut() else {
+        panic!("loopback plaintext expected")
+    };
+    let mut bytes = Vec::new();
+    tokio::time::timeout(Duration::from_secs(5), tcp.read_to_end(&mut bytes))
+        .await
+        .unwrap()
+        .unwrap();
+    eprintln!("CONFIGURED_CLAIM_CLOSE bytes={bytes:02x?}");
+    assert!(
+        !bytes.is_empty(),
+        "transport eventually completes its terminal handling"
+    );
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while server.state.handlers.available_permits()
+            != server.state.settings.server.max_sockets as usize
+        {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(!server.state.registry.has_any_peer(&address));
+    let committed: i64 = sqlx::query_scalar("SELECT count(*) FROM social.archipelago_v4_assignments WHERE owner_address = $1 AND lane_key = 'realm'").bind(&address).fetch_one(&fixture.pool).await.unwrap();
+    assert_eq!(
+        committed, 1,
+        "Close does not cancel an already dispatched SQL claim"
+    );
+    catalyst::comms::archipelago::shutdown(&server.state).await;
     drop(server);
     fixture.finish().await;
 }

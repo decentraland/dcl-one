@@ -191,7 +191,13 @@ fn install_metrics(raw: &str) -> anyhow::Result<comms::metrics::PrometheusHandle
     Ok(handle)
 }
 
-pub async fn serve(mut config: Config) -> anyhow::Result<()> {
+/// Run with Stats prepared before creating workers. The unsafe preparation
+/// contract applies through every route clone, canceled blocking operation and
+/// final isolate teardown; an arbitrary preexisting runtime is not supported.
+pub async fn serve(
+    mut config: Config,
+    prepared: crate::metrics_matcher::PreparedStats,
+) -> anyhow::Result<()> {
     config.node.init_tracing();
     let metrics_handle = install_metrics(&config.node.serve_metrics_bind)?;
     tracing::info!("{}", catalyst_config::posture::startup_line(&config));
@@ -997,7 +1003,7 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
 
     match about_comms {
         Some(about) => {
-            about.attach_core(comms_stage.archipelago.clone());
+            about.attach_core(comms_stage.archipelago.statistics.clone());
             about.spawn_jobs(&jobs, http_client.raw().clone());
             tracing::info!(adapter = %about.settings.fixed_adapter, sfu_probe = %about.sfu.target(), "/about advertises comms");
             content.attach_about_comms(about);
@@ -1139,7 +1145,12 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
             config.presence.presence_retention_days,
         ),
         presence::sources::ModuleSources::new(
-            comms_stage.archipelago.clone(),
+            comms_stage.archipelago.statistics.clone(),
+            Arc::new(comms::stats::content::Content {
+                pool: pool.clone(),
+                denylist: content.denylist.clone(),
+            }),
+            prepared.settings.content_url.clone(),
             comms_stage.gatekeeper.clone(),
             stage5.core.clone(),
         ),
@@ -1371,10 +1382,17 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     // presence archive under /presence, the paths the sites call. The
     // connector answers at the root and under /archipelago-ea-stats; its
     // socket routes only on the primary.
-    let socket_restart = comms_stage.archipelago.restart.clone();
-    let socket_drain = comms_stage.archipelago.sockets.clone();
-    let socket_cap = comms_stage.archipelago.settings.server.max_sockets;
-    let archipelago = crate::comms::archipelago::mounts(comms_stage.archipelago, primary);
+    let connector_shutdown = comms_stage.archipelago.clone();
+    let connector_lifecycle = comms_stage.archipelago.clone();
+    let (statistics_settings, statistics_matcher) = prepared.into_parts();
+    let archipelago = crate::comms::archipelago::mounts(
+        comms_stage.archipelago,
+        primary,
+        statistics_settings,
+        statistics_matcher,
+        content.denylist.clone(),
+    );
+    let statistics = archipelago.statistics.clone();
     let blobs = content.clone();
     let app = content::build_router(content)
         .merge(shop::market::router(market.clone()))
@@ -1415,8 +1433,11 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         .nest("/events", explore::router(explore))
         .merge(worlds::app_router(worlds, blobs, &stage5))
         .merge(live_presence_routes(live_presence, stage5.writes_enabled))
-        .merge(archipelago.root)
-        .nest("/archipelago-ea-stats", archipelago.stats)
+        .merge(if primary {
+            comms::archipelago::socket_router(connector_lifecycle.clone())
+        } else {
+            axum::Router::new()
+        })
         .merge(explore::api::router(explorer_api))
         // The gatekeeper's mounts, where `social::router` held them: the Pulse
         // room authority, the world comms mints and the LiveKit webhook (the
@@ -1488,13 +1509,18 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     // their case, and its `Allow` list on a 405 (also under
     // /worlds-content-server/). Other paths pass untouched.
     let app = content::routing::upstream_routing(app);
-    // The old executable trimmed trailing slashes outside its router
-    // (`/api/events/` is what the explorer requests), so the layer wraps the
-    // finished app rather than any one router.
-    let app = tower_http::normalize_path::NormalizePath::trim_trailing_slash(app);
+    let app = comms::stats::http::mount_services(
+        app,
+        statistics,
+        archipelago.stats,
+        archipelago.connector,
+    );
     let listener = tokio::net::TcpListener::bind(&addr)
         .await
         .with_context(|| format!("binding {addr} (HTTP_SERVER_HOST + HTTP_SERVER_PORT)"))?;
+    connector_lifecycle
+        .started
+        .store(true, std::sync::atomic::Ordering::Release);
     let shutdown = shutdown_signal();
     tracing::info!(%addr, "catalyst listening");
     let shutdown_jobs = jobs.clone();
@@ -1506,23 +1532,10 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     )
     .with_graceful_shutdown(async move {
         shutdown.await;
-        socket_restart.cancel();
-        // Workers first, so cursors and batches settle while the listener
-        // still answers; then the listener drains.
+        comms::archipelago::shutdown(&connector_shutdown).await;
         let aborted = shutdown_jobs.shutdown(JOBS_SHUTDOWN_TIMEOUT).await;
         if !aborted.is_empty() {
             tracing::warn!(?aborted, "jobs aborted at shutdown");
-        }
-        // Upgraded WebSockets outlive their HTTP requests. Wait for the writers themselves,
-        // whose permits cover a 5s in-flight frame plus a 5s terminal message and 5s close.
-        match tokio::time::timeout(
-            Duration::from_secs(16),
-            socket_drain.acquire_many_owned(socket_cap),
-        )
-        .await
-        {
-            Ok(Ok(_writers_stopped)) => {}
-            _ => tracing::warn!("socket writer drain exceeded its shutdown budget"),
         }
         tracing::info!("workers stopped; closing the listener");
     })

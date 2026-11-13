@@ -1588,6 +1588,7 @@ dependencies = [
  "url",
  "urlencoding",
  "uuid",
+ "v8",
  "web-transport-quinn",
 ]
 
