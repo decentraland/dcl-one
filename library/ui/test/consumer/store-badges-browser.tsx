@@ -9,7 +9,7 @@ const store = {
   label: android ? 'Get it on Google Play' : 'Download on the App Store',
   href: android
     ? 'https://play.google.com/store/apps/details?id=org.decentraland.godotexplorer'
-    : 'https://apps.apple.com/app/decentraland/id1644311303'
+    : 'https://apps.apple.com/app/apple-store/id6478403840?pt=126284288&ct=Decentraland%20Home%20iOS&mt=8'
 }
 const actions = {
   primary: {
