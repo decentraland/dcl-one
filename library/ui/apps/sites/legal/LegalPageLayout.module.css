@@ -1,0 +1,187 @@
+/* The Sites legal document page, from shared text styles and tokens only. Source Sites
+   (LegalPage.styled.ts at cfdfa1a5) values the foundations do not define are mapped to the nearest
+   shared style (Architect ruling; reversible if the owner wants exact source typography). */
+
+.page {
+  display: flex;
+  justify-content: center;
+  padding: var(--dcl-space-32) var(--dcl-space-16) var(--dcl-space-48);
+  color: var(--dcl-text-primary);
+}
+
+/* Accepted layout gap: source caps the layout at 1140px with a 220px sidebar; no layout-width token. */
+.grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--dcl-space-24);
+  width: 100%;
+  max-width: 1140px;
+}
+
+.sidebar {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: var(--dcl-space-4);
+}
+
+.sidebarLink {
+  composes: text626f64792f736d2d7374726f6e67 from '../../../foundations/typography/text-styles.module.css';
+  display: flex;
+  align-items: center;
+  gap: var(--dcl-space-8);
+  padding: var(--dcl-space-4) var(--dcl-space-8);
+  color: var(--dcl-text-primary);
+  text-decoration: none;
+}
+
+.sidebarLink:hover,
+.sidebarLink[aria-current='page'] {
+  color: var(--dcl-action-primary);
+}
+
+.sidebarLink:focus-visible,
+.content a:focus-visible {
+  outline: 2px solid var(--dcl-neutrals-snow);
+  outline-offset: 2px;
+  border-radius: var(--dcl-radius-xs);
+}
+
+/* Fixed geometry: the glyph renders at 20px, as source. */
+.sidebarIcon {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+}
+
+.content {
+  min-width: 0;
+}
+
+.title {
+  composes: text68656164696e672f32 from '../../../foundations/typography/text-styles.module.css';
+  margin: 0 0 var(--dcl-space-24);
+}
+
+.toc {
+  composes: text626f64792f6d64 from '../../../foundations/typography/text-styles.module.css';
+  margin: 0 0 var(--dcl-space-24);
+  padding: 0;
+  list-style: none;
+}
+
+/* Source indents a nested entry by its depth. */
+.toc > li {
+  padding-bottom: var(--dcl-space-8);
+  padding-left: calc(var(--legal-toc-depth, 0) * var(--dcl-space-16));
+}
+
+.toc a {
+  color: var(--dcl-text-primary);
+  text-decoration: none;
+}
+
+.toc a:hover {
+  text-decoration: underline;
+}
+
+/* A hash link lands the target clear of the sticky navbar (92px tall from desktop up). */
+.section,
+.h2,
+.h3,
+.h4 {
+  scroll-margin-top: calc(var(--dcl-space-96) + var(--dcl-space-4));
+}
+
+.h2 {
+  composes: text68656164696e672f34 from '../../../foundations/typography/text-styles.module.css';
+  margin: var(--dcl-space-32) 0 var(--dcl-space-8);
+}
+
+.h3,
+.h4 {
+  composes: text68656164696e672f35 from '../../../foundations/typography/text-styles.module.css';
+  margin: var(--dcl-space-32) 0 var(--dcl-space-8);
+}
+
+.p {
+  composes: text626f64792f6d64 from '../../../foundations/typography/text-styles.module.css';
+  margin: 0 0 var(--dcl-space-24);
+}
+
+.list {
+  margin: 0 0 var(--dcl-space-24);
+  padding-left: var(--dcl-space-24);
+}
+
+.list li {
+  margin-bottom: var(--dcl-space-8);
+}
+
+.listItem {
+  composes: text626f64792f6d64 from '../../../foundations/typography/text-styles.module.css';
+}
+
+.link {
+  color: var(--dcl-action-primary);
+  text-decoration: none;
+}
+
+.link:hover {
+  text-decoration: underline;
+}
+
+/* Source renders this link as its primary contained button. Its text contrast on the primary colour
+   is under the open B4 contrast gate; using the tokens does not settle it. */
+.cta {
+  composes: text627574746f6e2f6d64 from '../../../foundations/typography/text-styles.module.css';
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--dcl-space-8) var(--dcl-space-24);
+  border-radius: var(--dcl-radius-sm);
+  background: var(--dcl-action-primary);
+  color: var(--dcl-text-on-action);
+  text-decoration: none;
+}
+
+.cta:hover {
+  background: var(--dcl-action-primary-hover);
+}
+
+.cta:focus-visible {
+  outline: 2px solid var(--dcl-neutrals-snow);
+  outline-offset: 2px;
+}
+
+/* breakpoints.desktop in foundations/layout (custom properties cannot be media conditions).
+   Production shows the narrow layout up to this width (768 included). */
+@media (min-width: 1024px) {
+  /* Production's text starts 160px from the page top under an overlaying navbar; here the 92px
+     navbar takes its own space. */
+  .page {
+    padding: var(--dcl-space-64) var(--dcl-space-24) var(--dcl-space-64);
+  }
+
+  .title {
+    font-size: var(--dcl-font-size-heading-1);
+  }
+
+  .grid {
+    grid-template-columns: 220px minmax(0, 1fr);
+    gap: var(--dcl-space-48);
+  }
+
+  .sidebar {
+    flex-direction: column;
+    flex-wrap: nowrap;
+    gap: 0;
+    align-self: start;
+  }
+
+  .sidebarLink {
+    gap: var(--dcl-space-12);
+    padding: var(--dcl-space-12) 0;
+    font-size: var(--dcl-font-size-body-md-strong);
+  }
+}

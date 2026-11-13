@@ -36,8 +36,7 @@ use crate::{
             plugin::LivekitTrackPlugin, Camera as LivekitSourceCamera, LivekitTrack, Publishing,
             ScreenshareVideo as LivekitSourceScreenshare, Video,
         },
-        ConnectionAvailability, LivekitChannelControl, LivekitNetworkMessage, LivekitRuntime,
-        LivekitTransport, StartLivekit,
+        ConnectionAvailability, LivekitRuntime, LivekitTransport, StartLivekit,
     },
     voice_chat::{state::Input as VoiceInput, CallMic, VoiceInputs},
     SceneRoom, Transport, TransportType,
@@ -74,7 +73,14 @@ impl Plugin for LivekitPlugin {
         app.add_plugins(LivekitParticipantPlugin);
         app.add_plugins(LivekitTrackPlugin);
 
-        app.add_systems(Update, (start_livekit, verify_player_update_tasks));
+        app.add_systems(
+            Update,
+            (
+                reset_identity_policy,
+                start_livekit,
+                verify_player_update_tasks,
+            ),
+        );
         // on the web the page plays voice (livekit-client), and the engine worker has no audio
         // output; a headless app plays nothing, so opens no audio device
         #[cfg(not(target_arch = "wasm32"))]
@@ -99,6 +105,17 @@ impl Plugin for LivekitPlugin {
     }
 }
 
+fn reset_identity_policy(
+    wallet: Res<wallet::Wallet>,
+    mut identity: Local<Option<alloy_core::primitives::Address>>,
+    mut availability: ResMut<NextState<ConnectionAvailability>>,
+) {
+    if wallet.is_changed() && *identity != wallet.address() {
+        *identity = wallet.address();
+        availability.set(ConnectionAvailability::Available);
+    }
+}
+
 /// Holds [`LivekitRuntime`]s, so on the web it is non-send like them (see `runtime.rs`).
 #[derive(Default, Deref, DerefMut)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(Resource))]
@@ -114,33 +131,82 @@ pub(super) struct PlayerUpdateTask {
     pub task: JoinHandle<Result<(), mpsc::error::SendError<NetworkUpdate>>>,
 }
 
-fn start_livekit(mut commands: Commands, mut room_events: EventReader<StartLivekit>) {
+fn start_livekit(
+    mut commands: Commands,
+    mut room_events: EventReader<StartLivekit>,
+    mut existing: Query<&mut LivekitTransport>,
+) {
     for ev in room_events.read() {
+        if crate::adapter::livekit_credentials(&ev.address).is_err() {
+            warn!("invalid or insecure LiveKit adapter");
+            continue;
+        }
+        let Ok(mut entity) = commands.get_entity(ev.entity) else {
+            continue;
+        };
+        if let Ok(mut transport) = existing.get_mut(ev.entity) {
+            transport.address.clone_from(&ev.address);
+            entity.try_remove::<super::room::Connecting>();
+            entity.try_insert(super::room::Connecting);
+            continue;
+        }
         info!("starting livekit protocol");
-        let (sender, receiver) = tokio::sync::mpsc::channel(1000);
-        let (control_sender, control_receiver) = tokio::sync::mpsc::channel(128);
+        let (components, sender, control_sender) =
+            super::standalone_room_components(ev.address.clone());
 
         // No connect-time profile announce here — `profile::mod` periodically announces the version
         // over PRIMARY (Pulse + websocket dev server), and the Pulse handshake carries the
         // connect-time version. Peers reach this transport for guest profile request/response by
         // picking a profile-capable transport at request time, not off any announcement of ours.
 
-        commands.entity(ev.entity).try_insert((
-            Transport {
+        entity.try_insert((
+            components,
+            super::RoomSender {
+                sender: sender.clone(),
+                control: control_sender.clone(),
+            },
+        ));
+        if let Some(context) = ev.context {
+            entity.try_insert(Transport {
                 transport_type: TransportType::Livekit,
                 sender,
                 control: Some(control_sender),
-                context: ev.context,
-            },
-            LivekitTransport {
-                address: ev.address.to_owned(),
-                retries: 0,
-            },
-            LivekitChannelControl {
-                receiver: control_receiver,
-            },
-            LivekitNetworkMessage { receiver },
-        ));
+                context,
+            });
+        }
+    }
+}
+
+#[cfg(test)]
+mod stale_start_tests {
+    use super::*;
+
+    #[derive(Resource)]
+    struct Departing(Entity);
+
+    #[test]
+    fn adapter_start_after_queued_despawn_is_harmless() {
+        let mut app = App::new();
+        let owner = app.world_mut().spawn_empty().id();
+        app.insert_resource(Departing(owner))
+            .add_event::<StartLivekit>()
+            .add_systems(
+                Update,
+                (
+                    |mut commands: Commands, departing: Res<Departing>| {
+                        commands.entity(departing.0).despawn();
+                    },
+                    start_livekit,
+                )
+                    .chain_ignore_deferred(),
+            );
+        app.world_mut().send_event(StartLivekit {
+            entity: owner,
+            address: "wss://example.org?access_token=test".into(),
+            context: None,
+        });
+        app.update();
+        assert!(app.world().get_entity(owner).is_err());
     }
 }
 

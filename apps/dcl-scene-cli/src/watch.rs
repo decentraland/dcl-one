@@ -11,28 +11,147 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
-/// A batch closes after `QUIET` without an event (a save is several events a
-/// few ms apart), and no later than `DEBOUNCE` after the first.
+/// A batch closes `QUIET` after its last event (a save is several events a few
+/// ms apart), and no later than `DEBOUNCE` after the first. Once the writer is
+/// known to be done with every file in the batch (it closed the file, or
+/// renamed the finished file into place), `SETTLE` is enough: the wait that is
+/// left only gathers the other files of the same save.
 const QUIET: Duration = Duration::from_millis(20);
+const SETTLE: Duration = Duration::from_millis(4);
 const DEBOUNCE: Duration = Duration::from_millis(100);
 
+/// What the watcher's thread tells the batcher.
+#[derive(Debug)]
+enum Seen {
+    /// The path changed: it joins the batch, and its writer may not be done.
+    Changed(PathBuf),
+    /// The path's writer is done with it. Linux reports this (close after
+    /// write, rename into place); elsewhere a batch only ever closes on
+    /// `QUIET`.
+    Settled(PathBuf),
+}
+
+fn seen(event: notify::Event) -> Vec<Seen> {
+    use notify::EventKind;
+    use notify::event::{AccessKind, AccessMode, ModifyKind, RenameMode};
+    match event.kind {
+        EventKind::Access(AccessKind::Close(AccessMode::Write)) => {
+            event.paths.into_iter().map(Seen::Settled).collect()
+        }
+        EventKind::Access(_) => Vec::new(),
+        EventKind::Modify(ModifyKind::Name(RenameMode::To | RenameMode::Both)) => {
+            let landed = event.paths.last().cloned();
+            event
+                .paths
+                .into_iter()
+                .map(Seen::Changed)
+                .chain(landed.map(Seen::Settled))
+                .collect()
+        }
+        _ => event.paths.into_iter().map(Seen::Changed).collect(),
+    }
+}
+
+/// The next batch of relevant paths, `None` once the watcher is gone.
+async fn next_batch_from(
+    rx: &mut mpsc::UnboundedReceiver<Seen>,
+    root: &Path,
+) -> Option<Vec<PathBuf>> {
+    loop {
+        let mut batch = Vec::new();
+        // Paths in the batch whose writer has not been seen to finish.
+        let mut open: Vec<PathBuf> = Vec::new();
+        let mut take = |seen: Seen, batch: &mut Vec<PathBuf>| match seen {
+            Seen::Changed(p) => {
+                if is_relevant(root, &p) {
+                    if !open.contains(&p) {
+                        open.push(p.clone());
+                    }
+                    batch.push(p);
+                }
+                !batch.is_empty() && open.is_empty()
+            }
+            Seen::Settled(p) => {
+                open.retain(|o| o != &p);
+                !batch.is_empty() && open.is_empty()
+            }
+        };
+        let mut settled = take(rx.recv().await?, &mut batch);
+        let deadline = tokio::time::Instant::now() + DEBOUNCE;
+        loop {
+            let wait = if settled { SETTLE } else { QUIET };
+            let until = deadline.min(tokio::time::Instant::now() + wait);
+            match tokio::time::timeout_at(until, rx.recv()).await {
+                Ok(Some(seen)) => settled = take(seen, &mut batch),
+                Ok(None) => return (!batch.is_empty()).then_some(batch),
+                Err(_) => break,
+            }
+        }
+        if !batch.is_empty() {
+            return Some(batch);
+        }
+    }
+}
+
 pub struct FsWatcher {
-    _watcher: notify::RecommendedWatcher,
-    rx: mpsc::UnboundedReceiver<PathBuf>,
+    _watcher: std::sync::Arc<std::sync::Mutex<notify::RecommendedWatcher>>,
+    rx: mpsc::UnboundedReceiver<Seen>,
     root: PathBuf,
 }
 
+fn watch_error(path: &Path, e: notify::Error) -> anyhow::Error {
+    UserError::new(
+        format!(
+            "could not watch {} for changes (system watch limit reached?)",
+            path.display()
+        ),
+        TrySteps::one("raise the limit: sudo sysctl fs.inotify.max_user_watches=524288")
+            .and("or run dcl-scene-cli start --no-watch"),
+    )
+    .caused_by(e)
+    .into()
+}
+
+/// The relevant files already under `dir`, for a directory that appeared
+/// with files in it before its watch was in place.
+fn relevant_files(root: &Path, dir: &Path, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        match entry.file_type() {
+            Ok(t) if t.is_dir() => relevant_files(root, &path, out),
+            Ok(_) if is_relevant(root, &path) => out.push(path),
+            _ => {}
+        }
+    }
+}
+
 impl FsWatcher {
+    /// Watches the root's own entries and, recursively, each of its
+    /// directories that can hold scene input. The ones [`is_relevant`] drops
+    /// whole (`node_modules`, `bin`, dot-directories) are never walked: an
+    /// installed `node_modules` is thousands of directories, and a watch on
+    /// each is what a start would otherwise wait for.
     pub fn new(root: &Path) -> Result<Self> {
-        let (tx, rx) = mpsc::unbounded_channel::<PathBuf>();
+        let (tx, rx) = mpsc::unbounded_channel::<Seen>();
+        let (dirs_tx, dirs_rx) = std::sync::mpsc::channel::<PathBuf>();
+        let events = tx.clone();
+        let top = root.to_path_buf();
         let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
-            if let Ok(event) = res {
-                if matches!(event.kind, notify::EventKind::Access(_)) {
-                    return;
+            let Ok(event) = res else { return };
+            if matches!(
+                event.kind,
+                notify::EventKind::Create(_)
+                    | notify::EventKind::Modify(notify::event::ModifyKind::Name(_))
+            ) {
+                for path in event.paths.iter().filter(|p| p.parent() == Some(&top)) {
+                    let _ = dirs_tx.send(path.clone());
                 }
-                for path in event.paths {
-                    let _ = tx.send(path);
-                }
+            }
+            for seen in seen(event) {
+                let _ = events.send(seen);
             }
         })
         .map_err(|e| {
@@ -47,21 +166,49 @@ impl FsWatcher {
                 .caused_by(e),
             )
         })?;
-        watcher.watch(root, RecursiveMode::Recursive).map_err(|e| {
-            anyhow::Error::from(
-                UserError::new(
-                    format!(
-                        "could not watch {} for changes (system watch limit reached?)",
-                        root.display()
-                    ),
-                    TrySteps::one(
-                        "raise the limit: sudo sysctl fs.inotify.max_user_watches=524288",
-                    )
-                    .and("or run dcl-scene-cli start --no-watch"),
-                )
-                .caused_by(e),
-            )
-        })?;
+        watcher
+            .watch(root, RecursiveMode::NonRecursive)
+            .map_err(|e| watch_error(root, e))?;
+        for entry in std::fs::read_dir(root).into_iter().flatten().flatten() {
+            let path = entry.path();
+            if holds_scene_input(root, &path) {
+                watcher
+                    .watch(&path, RecursiveMode::Recursive)
+                    .map_err(|e| watch_error(&path, e))?;
+            }
+        }
+        let watcher = std::sync::Arc::new(std::sync::Mutex::new(watcher));
+        // A directory that appears at the root later is watched from its own
+        // thread: the watcher's callback cannot add a watch, and the batcher
+        // is not polled while a build runs. The thread ends with the watcher,
+        // whose callback holds the only sender.
+        let weak = std::sync::Arc::downgrade(&watcher);
+        let top = root.to_path_buf();
+        std::thread::spawn(move || {
+            while let Ok(dir) = dirs_rx.recv() {
+                if !holds_scene_input(&top, &dir) {
+                    continue;
+                }
+                let Some(watcher) = weak.upgrade() else {
+                    return;
+                };
+                let watched = watcher
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .watch(&dir, RecursiveMode::Recursive);
+                drop(watcher);
+                if let Err(e) = watched {
+                    ux::report_watch(&watch_error(&dir, e));
+                    continue;
+                }
+                let mut found = Vec::new();
+                relevant_files(&top, &dir, &mut found);
+                for path in found {
+                    let _ = tx.send(Seen::Changed(path.clone()));
+                    let _ = tx.send(Seen::Settled(path));
+                }
+            }
+        });
         Ok(Self {
             _watcher: watcher,
             rx,
@@ -70,32 +217,23 @@ impl FsWatcher {
     }
 
     pub async fn next_batch(&mut self) -> Option<Vec<PathBuf>> {
-        loop {
-            let first = self.rx.recv().await?;
-            let mut batch = Vec::new();
-            if is_relevant(&self.root, &first) {
-                batch.push(first);
-            }
-            let deadline = tokio::time::Instant::now() + DEBOUNCE;
-            let mut quiet_until = tokio::time::Instant::now() + QUIET;
-            loop {
-                let until = deadline.min(quiet_until);
-                match tokio::time::timeout_at(until, self.rx.recv()).await {
-                    Ok(Some(p)) => {
-                        if is_relevant(&self.root, &p) {
-                            batch.push(p);
-                        }
-                        quiet_until = tokio::time::Instant::now() + QUIET;
-                    }
-                    Ok(None) => return (!batch.is_empty()).then_some(batch),
-                    Err(_) => break,
-                }
-            }
-            if !batch.is_empty() {
-                return Some(batch);
-            }
-        }
+        next_batch_from(&mut self.rx, &self.root).await
     }
+}
+
+/// Root entries whose whole subtree [`is_relevant`] drops.
+fn ignored_at_root(name: &str) -> bool {
+    name.starts_with('.') || matches!(name, "node_modules" | "bin")
+}
+
+/// A directory directly under `root` that can hold scene input.
+fn holds_scene_input(root: &Path, path: &Path) -> bool {
+    path.parent() == Some(root)
+        && path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| !ignored_at_root(n))
+        && path.is_dir()
 }
 
 pub fn is_relevant(root: &Path, path: &Path) -> bool {
@@ -103,7 +241,7 @@ pub fn is_relevant(root: &Path, path: &Path) -> bool {
         return false;
     };
     let first = rel.components().next().and_then(|c| c.as_os_str().to_str());
-    if first.is_some_and(|f| f.starts_with('.') || matches!(f, "node_modules" | "bin")) {
+    if first.is_some_and(ignored_at_root) {
         return false;
     }
     // Agent CLI configuration at the root is not scene input; the scene assistant writes and
@@ -241,7 +379,7 @@ impl WatchSession {
             let main = match Project::load(&project.root).and_then(|p| p.main_output()) {
                 Ok(main) => project.root.join(main),
                 Err(e) => {
-                    ux::report_watch(&e);
+                    ux::report_build(&e);
                     continue;
                 }
             };
@@ -254,6 +392,7 @@ impl WatchSession {
                 }
                 continue;
             }
+            let _attempt = ux::build_attempt();
             // Reload package.json and scene.json on every build. Never fall back
             // to a built-in build when a script reports a failure.
             let narrated = BuildOptions {
@@ -268,7 +407,7 @@ impl WatchSession {
                 ux::note_clocked(format!("\u{25b8} custom build: {script}"));
             }
             let started = std::time::Instant::now();
-            match build::build(&narrated).await {
+            match build::build_as(&narrated, build::BuildMode::Preview).await {
                 Ok(built) => {
                     ux::note_clocked(format!(
                         "\u{21bb} rebuilt {}",
@@ -276,7 +415,7 @@ impl WatchSession {
                     ));
                     notify(ReloadEvent::Scene)
                 }
-                Err(e) => ux::report_watch(&e),
+                Err(e) => ux::report_build(&e),
             }
         }
         Ok(())
@@ -356,7 +495,7 @@ impl BuiltinWatchSession {
 
     fn rewrite_loader_stub(&self) {
         if let Err(e) = self.loader.write() {
-            ux::report_watch(&e);
+            ux::report_build(&e);
         }
     }
 
@@ -391,7 +530,7 @@ impl BuiltinWatchSession {
                 match crate::build_script::command(&self.project.root) {
                     Ok(script) => script.is_some(),
                     Err(e) => {
-                        ux::report_watch(&e);
+                        ux::report_build(&e);
                         continue;
                     }
                 }
@@ -415,7 +554,7 @@ impl BuiltinWatchSession {
                         return Box::pin(session.run(fs, notify)).await;
                     }
                     Err(e) => {
-                        ux::report_watch(&e);
+                        ux::report_build(&e);
                         continue;
                     }
                 }
@@ -434,6 +573,7 @@ impl BuiltinWatchSession {
             if paths.is_empty() {
                 continue;
             }
+            let _attempt = ux::build_attempt();
             let started = Instant::now();
             self.follow_mp_flag(&paths);
             let composites_changed = match regenerate_composites(
@@ -445,7 +585,7 @@ impl BuiltinWatchSession {
             .await
             {
                 Err(e) => {
-                    ux::report_watch(&watch_regen_error(
+                    ux::report_build(&watch_regen_error(
                         e,
                         "composite rebuild failed \u{2014} watching continues",
                     ));
@@ -464,7 +604,7 @@ impl BuiltinWatchSession {
                 refresh_sdk_chunk_cli(&self.project, &mut self.split, composites_changed).await;
             }
             if let Err(e) = esbuild::bundle(&self.project, &self.es_opts).await {
-                ux::report_watch(&e);
+                ux::report_build(&e);
                 continue;
             }
             tracing::info!(
@@ -484,7 +624,7 @@ impl BuiltinWatchSession {
                     self.rewrite_loader_stub();
                 }
                 Ok(_) => {}
-                Err(e) => ux::report_watch(&e),
+                Err(e) => ux::report_build(&e),
             }
             ux::note_clocked(format!(
                 "\u{21bb} rebuilt {} ({})",
@@ -541,7 +681,7 @@ async fn regenerate_composites(
         }
     }
     if let Err(e) = crate::data_layer::regenerate_main_crdt(&project.root, ignore_composite).await {
-        ux::report_watch(&e);
+        ux::report_build(&e);
     }
     Ok(Some(generated.max_composite_entity))
 }
@@ -556,14 +696,14 @@ async fn refresh_sdk_chunk_cli(project: &Project, sp: &mut SplitState, composite
         return;
     }
     if let Err(e) = split::write_generated(project, &sp.generated_dir) {
-        ux::report_watch(&watch_regen_error(
+        ux::report_build(&watch_regen_error(
             e,
             "sdk runtime entry rebuild failed \u{2014} watching continues",
         ));
         return;
     }
-    match esbuild::bundle(project, &sp.sdk_opts).await {
-        Ok(()) => {
+    match crate::sdk_cache::bundle(project, &sp.sdk_opts).await {
+        Ok(_) => {
             sp.registry = keys;
             sp.script_utils = script_utils;
             tracing::info!(
@@ -575,14 +715,244 @@ async fn refresh_sdk_chunk_cli(project: &Project, sp: &mut SplitState, composite
                 ux::rel_to(&project.root, &sp.sdk_opts.outfile)
             ));
         }
-        Err(e) => ux::report_watch(&e),
+        Err(e) => ux::report_build(&e),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{is_relevant, partition_batch};
-    use std::path::Path;
+    use super::{
+        DEBOUNCE, FsWatcher, QUIET, SETTLE, Seen, is_relevant, next_batch_from, partition_batch,
+        seen,
+    };
+    use std::path::{Path, PathBuf};
+    use std::time::Duration;
+    use tokio::sync::mpsc;
+    use tokio::time::Instant;
+
+    const ROOT: &str = "/proj";
+
+    fn at(rel: &str) -> PathBuf {
+        Path::new(ROOT).join(rel)
+    }
+
+    fn changed(rel: &str) -> Seen {
+        Seen::Changed(at(rel))
+    }
+
+    fn settled(rel: &str) -> Seen {
+        Seen::Settled(at(rel))
+    }
+
+    /// Feeds `script` (a pause, then what the watcher saw) on the paused
+    /// clock and returns every batch with the time it closed at.
+    async fn batches(script: Vec<(u64, Seen)>) -> Vec<(Duration, Vec<PathBuf>)> {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let started = Instant::now();
+        tokio::spawn(async move {
+            for (pause, seen) in script {
+                tokio::time::sleep(Duration::from_millis(pause)).await;
+                tx.send(seen).unwrap();
+            }
+            // The watcher outlives the save: a closed channel would end the
+            // batch at once and hide the window under test.
+            tokio::time::sleep(Duration::from_secs(10)).await;
+        });
+        let mut out = Vec::new();
+        while let Some(batch) = next_batch_from(&mut rx, Path::new(ROOT)).await {
+            out.push((started.elapsed(), batch));
+        }
+        out
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_closed_file_builds_after_the_settle_window() {
+        let got = batches(vec![
+            (0, changed("src/index.ts")),
+            (0, changed("src/index.ts")),
+            (0, settled("src/index.ts")),
+        ])
+        .await;
+        assert_eq!(got.len(), 1, "{got:?}");
+        assert_eq!(got[0].0, SETTLE);
+    }
+
+    /// An editor that moves the old file aside, writes the new one and drops
+    /// the backup: one save, one rebuild, although the file is briefly gone.
+    #[tokio::test(start_paused = true)]
+    async fn a_save_in_several_steps_is_one_batch() {
+        let got = batches(vec![
+            (0, changed("src/index.ts")),
+            (0, changed("src/index.ts~")),
+            (0, settled("src/index.ts~")),
+            (15, changed("src/index.ts")),
+            (2, changed("src/index.ts")),
+            (1, settled("src/index.ts")),
+            (1, changed("src/index.ts~")),
+        ])
+        .await;
+        assert_eq!(got.len(), 1, "{got:?}");
+        assert_eq!(got[0].0, Duration::from_millis(19) + SETTLE);
+    }
+
+    /// Write to a temporary name, rename over the source.
+    #[tokio::test(start_paused = true)]
+    async fn an_atomic_save_is_one_batch() {
+        let renamed = notify::Event::new(notify::EventKind::Modify(
+            notify::event::ModifyKind::Name(notify::event::RenameMode::Both),
+        ))
+        .add_path(at("src/.index.ts.swp"))
+        .add_path(at("src/index.ts"));
+        let mut script = vec![
+            (0, changed("src/.index.ts.swp")),
+            (0, settled("src/.index.ts.swp")),
+            (3, changed("src/.index.ts.swp")),
+            (0, changed("src/index.ts")),
+            (0, settled("src/index.ts")),
+        ];
+        script.extend(seen(renamed).into_iter().map(|s| (0, s)));
+        let got = batches(script).await;
+        assert_eq!(got.len(), 1, "{got:?}");
+        assert_eq!(got[0].0, Duration::from_millis(3) + SETTLE);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn files_saved_together_are_one_batch() {
+        let got = batches(vec![
+            (0, changed("src/a.ts")),
+            (0, settled("src/a.ts")),
+            (3, changed("src/b.ts")),
+            (10, changed("src/b.ts")),
+            (0, settled("src/b.ts")),
+            (2, changed("scene.json")),
+            (0, settled("scene.json")),
+        ])
+        .await;
+        assert_eq!(got.len(), 1, "{got:?}");
+        assert_eq!(got[0].1.len(), 4);
+    }
+
+    /// Without a close or rename to go by (macOS, Windows, a file still being
+    /// written) the quiet window alone closes the batch, as it always did.
+    #[tokio::test(start_paused = true)]
+    async fn an_open_file_waits_out_the_quiet_window() {
+        let got = batches(vec![
+            (0, changed("src/a.ts")),
+            (15, changed("src/a.ts")),
+            (15, changed("src/a.ts")),
+        ])
+        .await;
+        assert_eq!(got.len(), 1, "{got:?}");
+        assert_eq!(got[0].0, Duration::from_millis(30) + QUIET);
+
+        let got = batches(vec![
+            (0, changed("src/a.ts")),
+            (0, settled("src/a.ts")),
+            (2, changed("src/b.ts")),
+        ])
+        .await;
+        assert_eq!(got.len(), 1, "{got:?}");
+        assert_eq!(got[0].0, Duration::from_millis(2) + QUIET);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_stream_of_events_still_closes_at_the_debounce() {
+        let got = batches((0..40).map(|_| (10, changed("assets/big.glb"))).collect()).await;
+        assert!(got.len() > 1, "{got:?}");
+        assert_eq!(got[0].0, Duration::from_millis(10) + DEBOUNCE);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_close_alone_starts_nothing() {
+        let got = batches(vec![
+            (0, settled("src/a.ts")),
+            (0, changed("README.md")),
+            (0, settled("README.md")),
+            (50, changed("src/a.ts")),
+            (0, settled("src/a.ts")),
+        ])
+        .await;
+        assert_eq!(got.len(), 1, "{got:?}");
+        assert_eq!(got[0].0, Duration::from_millis(50) + SETTLE);
+        assert_eq!(got[0].1, vec![at("src/a.ts")]);
+    }
+
+    #[test]
+    fn reads_are_not_changes_and_a_close_after_write_settles() {
+        use notify::event::{AccessKind, AccessMode};
+        let on = |kind| seen(notify::Event::new(kind).add_path(at("src/a.ts")));
+        assert!(on(notify::EventKind::Access(AccessKind::Open(AccessMode::Any))).is_empty());
+        assert!(
+            on(notify::EventKind::Access(AccessKind::Close(
+                AccessMode::Read
+            )))
+            .is_empty()
+        );
+        assert!(matches!(
+            on(notify::EventKind::Access(AccessKind::Close(
+                AccessMode::Write
+            )))[..],
+            [Seen::Settled(_)]
+        ));
+        assert!(matches!(
+            on(notify::EventKind::Remove(notify::event::RemoveKind::File))[..],
+            [Seen::Changed(_)]
+        ));
+    }
+
+    async fn next(fs: &mut FsWatcher) -> Option<Vec<PathBuf>> {
+        tokio::time::timeout(Duration::from_secs(5), fs.next_batch())
+            .await
+            .ok()
+            .flatten()
+    }
+
+    /// The real watcher: one write is one batch, and what lands in the
+    /// directories that are not watched starts none.
+    #[tokio::test]
+    async fn one_write_to_a_source_is_one_batch() {
+        let dir = crate::scene::Tmp::new("watch-one-write");
+        dir.write("src/index.ts", "export {}");
+        dir.write("node_modules/pkg/index.js", "");
+        dir.write(".dcl-one/entrypoint.ts", "");
+        let root = dir.0.canonicalize().unwrap();
+        let mut fs = FsWatcher::new(&root).unwrap();
+        std::fs::write(root.join("node_modules/pkg/index.js"), "1").unwrap();
+        std::fs::write(root.join(".dcl-one/entrypoint.ts"), "1").unwrap();
+        std::fs::write(root.join("src/index.ts"), "export const a = 1").unwrap();
+        let mut batch = next(&mut fs).await.expect("the write");
+        batch.dedup();
+        assert_eq!(batch, vec![root.join("src/index.ts")]);
+        let more = tokio::time::timeout(Duration::from_millis(300), fs.next_batch()).await;
+        assert!(more.is_err(), "a second batch for one write: {more:?}");
+    }
+
+    /// A directory made at the root after the start is watched like the ones
+    /// found there, including the files it arrived with.
+    #[tokio::test]
+    async fn a_directory_added_at_the_root_is_watched() {
+        let dir = crate::scene::Tmp::new("watch-new-dir");
+        dir.write("scene.json", "{}");
+        let root = dir.0.canonicalize().unwrap();
+        let mut fs = FsWatcher::new(&root).unwrap();
+        std::fs::create_dir_all(root.join("assets/models")).unwrap();
+        std::fs::write(root.join("assets/models/tree.glb"), "glb").unwrap();
+        let first = next(&mut fs).await.expect("the new directory's file");
+        assert!(
+            first.contains(&root.join("assets/models/tree.glb")),
+            "{first:?}"
+        );
+        while tokio::time::timeout(Duration::from_millis(300), fs.next_batch())
+            .await
+            .is_ok()
+        {}
+        std::fs::write(root.join("assets/models/rock.glb"), "glb").unwrap();
+        let later = next(&mut fs).await.expect("a later write in it");
+        assert!(
+            later.contains(&root.join("assets/models/rock.glb")),
+            "{later:?}"
+        );
+    }
 
     #[test]
     fn partition_batch_flags_missing_models_as_removed() {

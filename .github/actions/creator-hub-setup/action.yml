@@ -1,0 +1,79 @@
+name: Setup workspace
+description: Setup Node, restore node_modules cache, and optionally cache protoc / Playwright / Electron.
+
+inputs:
+  node-version:
+    description: Node version
+    required: false
+    default: '24'
+  cache-protoc:
+    description: Cache the protoc binary downloaded by `make install-protoc`
+    required: false
+    default: 'false'
+  cache-playwright:
+    description: Cache Playwright browsers
+    required: false
+    default: 'false'
+  cache-electron:
+    description: Cache Electron binaries (~/.cache/electron, ~/.cache/electron-builder)
+    required: false
+    default: 'false'
+
+outputs:
+  node-modules-cache-hit:
+    description: Whether the node_modules cache was restored
+    value: ${{ steps.cache-node-modules.outputs.cache-hit }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      with:
+        node-version: ${{ inputs.node-version }}
+        cache: 'npm'
+        cache-dependency-path: apps/creator-hub/package-lock.json
+
+    - name: Cache node_modules
+      id: cache-node-modules
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          apps/creator-hub/node_modules
+          apps/creator-hub/packages/*/node_modules
+          apps/creator-hub/packages/inspector/agents/bevy/node_modules
+          apps/creator-hub/packages/creator-hub/.electron-vendors.cache.json
+        key: ${{ runner.os }}-nodemodules-${{ hashFiles('apps/creator-hub/package-lock.json', 'apps/creator-hub/packages/inspector/agents/bevy/package-lock.json', '.github/actions/creator-hub-setup/action.yml') }}
+        restore-keys: |
+          ${{ runner.os }}-nodemodules-
+
+    - name: Read protoc version from Makefile
+      id: protoc-version
+      if: inputs.cache-protoc == 'true'
+      shell: bash
+      working-directory: apps/creator-hub
+      run: echo "version=$(make get-protobuf-version)" >> "$GITHUB_OUTPUT"
+
+    - name: Cache protoc
+      if: inputs.cache-protoc == 'true'
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: apps/creator-hub/node_modules/.bin/protobuf
+        key: ${{ runner.os }}-protoc-${{ steps.protoc-version.outputs.version }}
+
+    - name: Cache Playwright browsers
+      if: inputs.cache-playwright == 'true'
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ runner.os == 'Linux' && '~/.cache/ms-playwright' || runner.os == 'macOS' && '~/Library/Caches/ms-playwright' || '~\AppData\Local\ms-playwright' }}
+        key: ${{ runner.os }}-playwright-${{ hashFiles('apps/creator-hub/package-lock.json') }}
+        restore-keys: |
+          ${{ runner.os }}-playwright-
+
+    - name: Cache Electron
+      if: inputs.cache-electron == 'true'
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          ${{ runner.os == 'Linux' && '~/.cache/electron' || runner.os == 'macOS' && '~/Library/Caches/electron' || '~\AppData\Local\electron\Cache' }}
+          ${{ runner.os == 'Linux' && '~/.cache/electron-builder' || runner.os == 'macOS' && '~/Library/Caches/electron-builder' || '~\AppData\Local\electron-builder\Cache' }}
+        key: ${{ runner.os }}-electron-${{ hashFiles('apps/creator-hub/package-lock.json', 'apps/creator-hub/packages/creator-hub/package.json') }}

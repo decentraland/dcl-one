@@ -108,39 +108,43 @@ const ROOT_SNIFF_BYTES: u64 = 32;
 
 /// The worlds mount's Content-Type for `key`'s file cut at `end` (`ranged` when that is the
 /// window a ranged GET sniffs), and the head read for it, with the reader positioned after it.
+/// No head means the reader's position is unknown, so a whole GET reads the head again.
 ///
 /// `file-type`'s answer, with two deliberate differences from worlds-content-server
 /// (services/catalyst/docs/worlds-compatibility.md): XML is `application/octet-stream`, since this
 /// mount shares the node's origin and a browser runs the scripts of an XHTML or SVG document; and
 /// a head that opens a JSON object or array is `application/json`. A storage fault while sniffing
-/// answers `application/octet-stream`, as upstream's catch does. Content is immutable by key, so
-/// an answer is kept and later reads of the file skip the sniff.
+/// answers `application/octet-stream`, as upstream's catch does, and no head, so a HEAD or ranged
+/// GET answers without reading the file again. Content is immutable by key, so an answer is kept
+/// and later reads of the file skip the sniff.
 async fn worlds_content_type(
     state: &ContentState,
     key: &str,
     opened: &mut OpenedContent,
     end: u64,
     ranged: bool,
-) -> AppResult<(&'static str, Bytes)> {
+) -> AppResult<(&'static str, Option<Bytes>)> {
     let cache_key = (key.to_string(), ranged);
     if let Some(mime) = state.worlds_sniffed.lock().get(&cache_key).copied() {
-        return Ok((mime, Bytes::new()));
+        return Ok((mime, Some(Bytes::new())));
     }
     let mut window = Window::new(opened, end);
-    let detected = file_type(&mut window).await;
-    let head = window.into_head().await?;
-    let mime = match detected {
-        Ok(Some("application/xml")) => "application/octet-stream",
-        Ok(Some(mime)) => mime,
-        Ok(None) if looks_like_json(&head) => "application/json",
-        Ok(None) => "application/octet-stream",
+    let detected = match file_type(&mut window).await {
+        Ok(detected) => detected,
         Err(error) => {
             tracing::warn!(key, %error, "worlds content sniff failed; answering octet-stream");
-            return Ok(("application/octet-stream", head));
+            return Ok(("application/octet-stream", None));
         }
     };
+    let head = window.into_head().await?;
+    let mime = match detected {
+        Some("application/xml") => "application/octet-stream",
+        Some(mime) => mime,
+        None if looks_like_json(&head) => "application/json",
+        None => "application/octet-stream",
+    };
     state.worlds_sniffed.lock().insert(cache_key, mime);
-    Ok((mime, head))
+    Ok((mime, Some(head)))
 }
 
 /// A head that opens a JSON object or array, after an optional UTF-8 BOM.
@@ -302,12 +306,12 @@ async fn serve(
             worlds_content_type(&state, &key, &mut opened, total, false).await?
         } else {
             let head = opened.read_range(0, ROOT_SNIFF_BYTES - 1).await?;
-            (detect_content_type(&head), head)
+            (detect_content_type(&head), Some(head))
         };
         set_content_type(&mut base_headers, mime);
         head
     } else {
-        Bytes::new()
+        Some(Bytes::new())
     };
 
     if method == Method::HEAD {
@@ -331,6 +335,11 @@ async fn serve(
         return Ok(response);
     }
 
+    // After a failed sniff the reader may be anywhere: replay the body from its start.
+    let head = match head {
+        Some(head) => head,
+        None => opened.read_range(0, SAMPLE - 1).await?,
+    };
     let mut response = Response::builder()
         .status(StatusCode::OK)
         .body(opened.into_body(head))

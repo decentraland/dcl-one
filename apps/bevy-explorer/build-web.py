@@ -19,9 +19,26 @@ artifact = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(artifact)
 
 
+def git_bash():
+    # `bash` on a Windows PATH is often WSL's launcher (System32). Git for Windows' own bash sits at
+    # <root>/bin/bash.exe, which puts Git's tools on PATH; `git --exec-path` is under <root>.
+    exec_path = subprocess.run(('git', '--exec-path'), capture_output=True, text=True, check=True).stdout
+    for parent in Path(exec_path.strip()).parents:
+        if (parent / 'bin/bash.exe').is_file():
+            return str(parent / 'bin/bash.exe')
+    raise SystemExit('Git Bash not found: install Git for Windows (scripts/gen-ts-bindings.sh needs bash)')
+
+
+def executable(name):
+    # Windows starts npm (npm.cmd) only by its full path, not by the bare name.
+    if os.name != 'nt':
+        return name
+    return git_bash() if name == 'bash' else shutil.which(name) or name
+
+
 def run(*args, cwd=SOURCE, env=None):
     started = time.monotonic()
-    subprocess.run(args, cwd=cwd, env=env, check=True)
+    subprocess.run((executable(str(args[0])), *args[1:]), cwd=cwd, env=env, check=True)
     print(f'{" ".join(map(str, args))}: {time.monotonic() - started:.1f}s', flush=True)
 
 

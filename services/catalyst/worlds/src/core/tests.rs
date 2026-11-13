@@ -107,15 +107,35 @@ async fn fixture_full(
     settings: Settings,
 ) -> Option<Fixture> {
     let pool = crate::db::scratch::pool(8).await?;
-    Some(fixture_on_pool(pool, personal, forward_to, ens, settings).await)
+    Some(fixture_on_pool(pool, personal, forward_to, ens, settings, "").await)
 }
 
+/// A fixture on its own scratch database whose name deny list blocks
+/// `blocked_world_names` (`BLOCKED_WORLD_NAMES`).
+async fn fixture_blocking(blocked_world_names: &str) -> Option<Fixture> {
+    let pool = crate::db::scratch::pool(8).await?;
+    Some(
+        fixture_on_pool(
+            pool,
+            PersonalWorldsPolicy::disabled(),
+            None,
+            None,
+            test_settings(),
+            blocked_world_names,
+        )
+        .await,
+    )
+}
+
+/// `blocked_world_names`: `BLOCKED_WORLD_NAMES` of the one name deny list the
+/// policy and the core share.
 async fn fixture_on_pool(
     pool: PgPool,
     personal: PersonalWorldsPolicy,
     forward_to: Option<&str>,
     ens: Option<(Arc<crate::ens::EnsResolver>, i64)>,
     settings: Settings,
+    blocked_world_names: &str,
 ) -> Fixture {
     let (market, names) = index_with_names().await;
     let dir = std::env::temp_dir().join(format!(
@@ -124,7 +144,9 @@ async fn fixture_on_pool(
         Uuid::new_v4().simple()
     ));
     let storage = Arc::new(Storage::from_config(&dir).await.unwrap());
-    let mut policy = Policy::new(pool.clone(), personal, Some(market.clone()));
+    let mut policy = Policy::new(pool.clone(), personal, Some(market.clone())).with_name_deny_list(
+        Arc::new(super::names::NameDenyList::new(blocked_world_names)),
+    );
     if let Some((resolver, cap)) = ens {
         policy = policy.with_ens(Some(resolver), cap);
     }
@@ -2421,6 +2443,7 @@ async fn settings_version_tracks_settings_writes() {
         &f.pool,
         &world,
         &owner,
+        Some(&owner),
         &WorldSettingsUpdate {
             title: Some("Owner Title".into()),
             ..Default::default()
@@ -2436,6 +2459,7 @@ async fn settings_version_tracks_settings_writes() {
         &f.pool,
         &world,
         &owner,
+        Some(&owner),
         &WorldSettingsUpdate {
             spawn_coordinates: Some("0,1".into()),
             ..Default::default()
@@ -2467,9 +2491,15 @@ async fn settings_spawn_validation_runs_inside_the_update_transaction() {
     };
 
     let spawnless = world_name();
-    let err = store::update_world_settings(&f.pool, &spawnless, &owner, &spawn_update("0,0"))
-        .await
-        .expect_err("a world without scenes cannot take a spawn");
+    let err = store::update_world_settings(
+        &f.pool,
+        &spawnless,
+        &owner,
+        Some(&owner),
+        &spawn_update("0,0"),
+    )
+    .await
+    .expect_err("a world without scenes cannot take a spawn");
     assert!(bad_request(err).contains("has no deployed scenes"));
     assert!(
         store::get_world(&f.pool, &spawnless)
@@ -2491,9 +2521,10 @@ async fn settings_spawn_validation_runs_inside_the_update_transaction() {
     )
     .await
     .unwrap();
-    let err = store::update_world_settings(&f.pool, &world, &owner, &spawn_update("5,5"))
-        .await
-        .expect_err("a spawn outside the world shape is refused");
+    let err =
+        store::update_world_settings(&f.pool, &world, &owner, Some(&owner), &spawn_update("5,5"))
+            .await
+            .expect_err("a spawn outside the world shape is refused");
     assert!(bad_request(err).contains("must be within the world shape rectangle"));
     assert_eq!(
         store::get_world_settings(&f.pool, &world)
@@ -2505,7 +2536,7 @@ async fn settings_spawn_validation_runs_inside_the_update_transaction() {
         Some("0,0")
     );
     let (updated, old_spawn) =
-        store::update_world_settings(&f.pool, &world, &owner, &spawn_update("0,1"))
+        store::update_world_settings(&f.pool, &world, &owner, Some(&owner), &spawn_update("0,1"))
             .await
             .expect("in-shape spawn");
     assert_eq!(updated.spawn_coordinates.as_deref(), Some("0,1"));
@@ -3335,6 +3366,7 @@ async fn a_community_closure_rechecks_livekit_when_its_queue_insert_fails() {
             None,
             None,
             test_settings(),
+            "",
         )
         .await;
         community_closure_with_failed_queue_insert(f).await;
@@ -3500,9 +3532,15 @@ async fn allow_list_edits_are_guarded_updates() {
     };
 
     assert_eq!(
-        store::modify_allow_list_access(&f.pool, &world, caps, AllowListEdit::AddWallet(&abc))
-            .await
-            .unwrap(),
+        store::modify_allow_list_access(
+            &f.pool,
+            &world,
+            &owner,
+            caps,
+            AllowListEdit::AddWallet(&abc)
+        )
+        .await
+        .unwrap(),
         AllowListEditOutcome::NotAllowList
     );
     store::store_access_for_owner(&f.pool, &world, &owner, &AccessSetting::Unrestricted)
@@ -3510,9 +3548,15 @@ async fn allow_list_edits_are_guarded_updates() {
         .unwrap();
     assert_eq!(version().await, 1);
     assert_eq!(
-        store::modify_allow_list_access(&f.pool, &world, caps, AllowListEdit::AddWallet(&abc))
-            .await
-            .unwrap(),
+        store::modify_allow_list_access(
+            &f.pool,
+            &world,
+            &owner,
+            caps,
+            AllowListEdit::AddWallet(&abc)
+        )
+        .await
+        .unwrap(),
         AllowListEditOutcome::NotAllowList
     );
 
@@ -3529,40 +3573,76 @@ async fn allow_list_edits_are_guarded_updates() {
     .unwrap();
     assert_eq!(version().await, 2);
     assert_eq!(
-        store::modify_allow_list_access(&f.pool, &world, caps, AllowListEdit::AddWallet(&abc))
-            .await
-            .unwrap(),
+        store::modify_allow_list_access(
+            &f.pool,
+            &world,
+            &owner,
+            caps,
+            AllowListEdit::AddWallet(&abc)
+        )
+        .await
+        .unwrap(),
         AllowListEditOutcome::Applied,
         "presence still counts as a write"
     );
     assert_eq!(
-        store::modify_allow_list_access(&f.pool, &world, caps, AllowListEdit::AddWallet(&def))
-            .await
-            .unwrap(),
+        store::modify_allow_list_access(
+            &f.pool,
+            &world,
+            &owner,
+            caps,
+            AllowListEdit::AddWallet(&def)
+        )
+        .await
+        .unwrap(),
         AllowListEditOutcome::Applied
     );
     assert_eq!(
-        store::modify_allow_list_access(&f.pool, &world, caps, AllowListEdit::AddCommunity(c1))
-            .await
-            .unwrap(),
+        store::modify_allow_list_access(
+            &f.pool,
+            &world,
+            &owner,
+            caps,
+            AllowListEdit::AddCommunity(c1)
+        )
+        .await
+        .unwrap(),
         AllowListEditOutcome::Applied
     );
     assert_eq!(
-        store::modify_allow_list_access(&f.pool, &world, caps, AllowListEdit::AddCommunity(c2))
-            .await
-            .unwrap(),
+        store::modify_allow_list_access(
+            &f.pool,
+            &world,
+            &owner,
+            caps,
+            AllowListEdit::AddCommunity(c2)
+        )
+        .await
+        .unwrap(),
         AllowListEditOutcome::Applied
     );
     assert_eq!(
-        store::modify_allow_list_access(&f.pool, &world, caps, AllowListEdit::RemoveWallet(&abc))
-            .await
-            .unwrap(),
+        store::modify_allow_list_access(
+            &f.pool,
+            &world,
+            &owner,
+            caps,
+            AllowListEdit::RemoveWallet(&abc)
+        )
+        .await
+        .unwrap(),
         AllowListEditOutcome::Applied
     );
     assert_eq!(
-        store::modify_allow_list_access(&f.pool, &world, caps, AllowListEdit::RemoveCommunity(c1))
-            .await
-            .unwrap(),
+        store::modify_allow_list_access(
+            &f.pool,
+            &world,
+            &owner,
+            caps,
+            AllowListEdit::RemoveCommunity(c1)
+        )
+        .await
+        .unwrap(),
         AllowListEditOutcome::Applied
     );
     assert_eq!(version().await, 8);
@@ -3599,27 +3679,46 @@ async fn allow_list_edits_are_guarded_updates() {
     let last = Wallet::random().address;
     let too_many = Wallet::random().address;
     assert_eq!(
-        store::modify_allow_list_access(&f.pool, &world, caps, AllowListEdit::AddWallet(&last))
-            .await
-            .unwrap(),
-        AllowListEditOutcome::Applied
-    );
-    assert_eq!(
-        store::modify_allow_list_access(&f.pool, &world, caps, AllowListEdit::AddWallet(&too_many))
-            .await
-            .unwrap(),
-        AllowListEditOutcome::CapExceeded
-    );
-    assert_eq!(
-        store::modify_allow_list_access(&f.pool, &world, caps, AllowListEdit::AddWallet(&last))
-            .await
-            .unwrap(),
+        store::modify_allow_list_access(
+            &f.pool,
+            &world,
+            &owner,
+            caps,
+            AllowListEdit::AddWallet(&last)
+        )
+        .await
+        .unwrap(),
         AllowListEditOutcome::Applied
     );
     assert_eq!(
         store::modify_allow_list_access(
             &f.pool,
             &world,
+            &owner,
+            caps,
+            AllowListEdit::AddWallet(&too_many)
+        )
+        .await
+        .unwrap(),
+        AllowListEditOutcome::CapExceeded
+    );
+    assert_eq!(
+        store::modify_allow_list_access(
+            &f.pool,
+            &world,
+            &owner,
+            caps,
+            AllowListEdit::AddWallet(&last)
+        )
+        .await
+        .unwrap(),
+        AllowListEditOutcome::Applied
+    );
+    assert_eq!(
+        store::modify_allow_list_access(
+            &f.pool,
+            &world,
+            &owner,
             caps,
             AllowListEdit::AddCommunity(Uuid::new_v4())
         )
@@ -3631,6 +3730,7 @@ async fn allow_list_edits_are_guarded_updates() {
         store::modify_allow_list_access(
             &f.pool,
             &world,
+            &owner,
             caps,
             AllowListEdit::AddCommunity(Uuid::parse_str(&communities[7]).unwrap())
         )
@@ -5159,6 +5259,40 @@ async fn a_settings_thumbnail_is_stored_only_for_an_authorized_writer() {
     assert!(f.storage.exist(&hash).await.unwrap());
 }
 
+/// A settings edit is recorded for the name's holder, also when a collaborator with world-wide
+/// deployment makes it, so the mirror keeps it while that holder holds the name.
+#[tokio::test]
+async fn a_collaborators_settings_edit_is_marked_for_the_holder() {
+    let Some(f) = fixture().await else { return };
+    let (owner, collaborator) = (Wallet::random(), Wallet::random());
+    let world = owned_world(&f, &owner).await;
+    store::grant_addresses_world_wide_permission(
+        &f.pool,
+        &world,
+        Permission::Deployment,
+        std::slice::from_ref(&collaborator.address),
+        None,
+    )
+    .await
+    .unwrap();
+    put_settings(
+        &f,
+        &world,
+        &collaborator,
+        &[("title", None, b"Theirs")],
+        200,
+    )
+    .await;
+    let marked: (bool, Option<String>) = sqlx::query_as(
+        "SELECT settings_set_here, settings_set_by FROM worlds.worlds WHERE name = $1",
+    )
+    .bind(world.key())
+    .fetch_one(&f.pool)
+    .await
+    .unwrap();
+    assert_eq!(marked, (true, Some(owner.address.as_str().to_string())));
+}
+
 /// The body is read after the signed fetch: an unsigned request of any
 /// content type gets the signed-fetch refusal (`world-settings-handler.spec.ts:849-876`),
 /// not the multipart parser's 400.
@@ -5632,6 +5766,32 @@ async fn deleting_an_address_grant_requires_a_valid_world() {
             json!(format!("World \"{}\" not found.", world.display()))
         );
     }
+    {
+        // `isWorldValid` first asks `checkNameDenyList` (`component.ts:71-74`):
+        // the name lowercased without its first `.eth` and `.dcl` against each
+        // entry lowercased, so a plain label entry in any case answers 404,
+        // while `getAccessForWorld` (route 1) still reads the stored access.
+        store::store_access_for_owner(
+            &f.pool,
+            &world,
+            &owner.address,
+            &AccessSetting::NftOwnership {
+                nft: "urn:x".into(),
+            },
+        )
+        .await
+        .unwrap();
+        let _denied = DenyListed::seed(&f.state.names, vec![world.label().to_uppercase()]);
+        let body = expect(&f.app, delete(&world).signed(&owner).await, 404).await;
+        assert_eq!(
+            body["message"],
+            json!(format!("World \"{}\" not found.", world.display()))
+        );
+        let path = format!("/world/{}/permissions", world.display());
+        let body = expect(&f.app, Case::new("get", path), 200).await;
+        assert_eq!(body["permissions"]["access"]["type"], "nft-ownership");
+    }
+    expect(&f.app, delete(&world).signed(&owner).await, 204).await;
     assert!(
         store::admin_set_world_blocked(&f.pool, &world, true)
             .await
@@ -5827,10 +5987,17 @@ async fn served_app(f: &Fixture) -> Router {
 
 /// The read states `served_app` mounts, for a test that seeds them first.
 fn served_states(f: &Fixture) -> (Arc<crate::WorldsState>, Arc<crate::content::ContentState>) {
+    served_states_with(f, crate::Settings::for_tests("https://worlds.example.org"))
+}
+
+fn served_states_with(
+    f: &Fixture,
+    settings: crate::Settings,
+) -> (Arc<crate::WorldsState>, Arc<crate::content::ContentState>) {
     let worlds = Arc::new(crate::WorldsState::new(
         f.pool.clone(),
         f.storage.clone(),
-        crate::Settings::for_tests("https://worlds.example.org"),
+        settings,
         None,
         crate::http::Outbound::for_tests(),
     ));
@@ -6199,14 +6366,22 @@ async fn available_content_reads_literal_cids_and_lists_denylisted_ones() {
 #[tokio::test]
 async fn index_lists_deny_listed_worlds_and_answers_upstream_fields() {
     let Some(f) = fixture().await else { return };
-    let (listed, banned) = (world_name(), world_name());
-    for world in [&listed, &banned] {
+    let (listed, banned, blocked) = (world_name(), world_name(), world_name());
+    for world in [&listed, &banned, &blocked] {
         let owner = Wallet::random();
         f.names.set(&owner.address, world.label());
         let d = deployment(&owner, world, "Indexed", "0,0", &["0,0"]).await;
         post_entity(&f.app, &d, 200).await;
     }
-    let (worlds, blobs) = served_states(&f);
+    // `getBannedNames` holds `BLOCKED_WORLD_NAMES` as configured (lowercased)
+    // and the list entries suffix-stripped; both compare with the full name.
+    let (worlds, blobs) = served_states_with(
+        &f,
+        crate::Settings {
+            blocked_world_names: format!(" {} ,", blocked.display().to_uppercase()),
+            ..crate::Settings::for_tests("https://worlds.example.org")
+        },
+    );
     worlds.names.seed(vec![banned.label().to_uppercase()]);
     let app = served_app_over(&f, worlds, blobs).await;
 
@@ -6222,6 +6397,7 @@ async fn index_lists_deny_listed_worlds_and_answers_upstream_fields() {
             .cloned()
     };
     assert!(entry(&banned).is_some(), "{body}");
+    assert!(entry(&blocked).is_none(), "{body}");
     let listed = entry(&listed).expect("the allowed world is listed");
     let scene = &listed["scenes"][0];
     assert_eq!(scene["title"], "Indexed");
@@ -6260,6 +6436,331 @@ async fn active_entities_look_up_pointers_as_sent_and_fold_a_null_owner() {
     let body = expect(&f.app, active(world.display().to_uppercase()), 200).await;
     assert_eq!(body[0]["id"], json!(d.entity_id));
     assert_eq!(body[0]["metadata"]["owner"], Value::Null);
+}
+
+/// `index-handler.ts` reads `searchParams.get('limit')` and
+/// `searchParams.get('offset')`, the first of a repeated key, so a repeated
+/// key is not a 400 and pages as its first values alone. With at least three
+/// indexed worlds, the last values (2, 0) or a last limit (2, 1) would list
+/// two worlds, and a last offset (1, 0) another page than (1, 1).
+#[tokio::test]
+async fn index_reads_the_first_of_a_repeated_query_key() {
+    let Some(f) = fixture().await else { return };
+    for _ in 0..3 {
+        let (owner, world) = (Wallet::random(), world_name());
+        f.names.set(&owner.address, world.label());
+        let d = deployment(&owner, &world, "Indexed", "0,0", &["0,0"]).await;
+        post_entity(&f.app, &d, 200).await;
+    }
+    let app = served_app(&f).await;
+    let page = |query: &str| Case::new("get", format!("{NEST}/index?{query}"));
+    let repeated = expect(&app, page("limit=1&limit=2&offset=1&offset=0"), 200).await;
+    let first = expect(&app, page("limit=1&offset=1"), 200).await;
+    assert_eq!(repeated["data"].as_array().unwrap().len(), 1, "{repeated}");
+    assert_eq!(repeated["data"], first["data"]);
+}
+
+/// `checkNameDenyList` refuses a `BLOCKED_WORLD_NAMES` entry (trimmed,
+/// lowercased, the full name), so `POST /entities/active` leaves it out.
+#[tokio::test]
+async fn active_entities_skip_a_blocked_world_name() {
+    let Some(f) = fixture().await else { return };
+    let (allowed, blocked) = (world_name(), world_name());
+    for world in [&allowed, &blocked] {
+        let owner = Wallet::random();
+        f.names.set(&owner.address, world.label());
+        let d = deployment(&owner, world, "Active", "0,0", &["0,0"]).await;
+        post_entity(&f.app, &d, 200).await;
+    }
+    let blocking = fixture_on_pool(
+        f.pool.clone(),
+        PersonalWorldsPolicy::disabled(),
+        None,
+        None,
+        test_settings(),
+        &format!(" , {} ", blocked.display().to_uppercase()),
+    )
+    .await;
+    let pointers = json!({ "pointers": [allowed.display(), blocked.display()] });
+    let body = expect(
+        &blocking.app,
+        Case::new("post", "/entities/active").json(&pointers),
+        200,
+    )
+    .await;
+    let names: Vec<&str> = body
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| {
+            e["metadata"]["worldConfiguration"]["name"]
+                .as_str()
+                .unwrap()
+        })
+        .collect();
+    assert_eq!(names, vec![allowed.display()]);
+}
+
+/// `BLOCKED_WORLD_NAMES` (`name-deny-list-checker.ts:8-13,45-49,61-65`): a
+/// whole configured name is refused by `/about` (`world-about-handler.ts:22-24`),
+/// `/manifest` (`world-manifest-handler.ts:33-35`) and `/limits`
+/// (`world-limits-handler.ts:54-56`), and `GET /worlds` leaves it out of the
+/// page and the total (`worlds-manager.ts:1371,1409-1413`); the same label
+/// under another suffix is not blocked.
+#[tokio::test]
+async fn configured_world_names_are_hidden_from_the_world_reads() {
+    let Some(f) = fixture().await else { return };
+    let blocked = world_name();
+    let sibling = format!("{}.eth", blocked.label());
+    let owner = Wallet::random();
+    f.names.set(&owner.address, blocked.label());
+    let d = deployment(&owner, &blocked, "Blocked", "0,0", &["0,0"]).await;
+    post_entity(&f.app, &d, 200).await;
+    sqlx::query("INSERT INTO worlds.worlds (name) VALUES ($1)")
+        .bind(&sibling)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+
+    let configured = format!(" {} , ", blocked.display().to_uppercase());
+    let blocking = fixture_on_pool(
+        f.pool.clone(),
+        PersonalWorldsPolicy::disabled(),
+        None,
+        None,
+        test_settings(),
+        &configured,
+    )
+    .await;
+    let (worlds, blobs) = served_states_with(
+        &blocking,
+        crate::Settings {
+            blocked_world_names: configured.clone(),
+            ..crate::Settings::for_tests("https://worlds.example.org")
+        },
+    );
+    let app = served_app_over(&blocking, worlds, blobs).await;
+    let name = blocked.display();
+
+    let body = expect(&app, Case::new("get", format!("/world/{name}/about")), 404).await;
+    assert_eq!(
+        body,
+        json!({"error": "Not Found", "message": format!("World \"{name}\" has no scene deployed.")})
+    );
+    let body = expect(
+        &app,
+        Case::new("get", format!("/world/{name}/manifest")),
+        404,
+    )
+    .await;
+    assert_eq!(body["message"], format!("World \"{name}\" not found."));
+    let body = expect(&app, Case::new("get", format!("/world/{name}/limits")), 404).await;
+    assert_eq!(
+        body["message"],
+        format!("World \"{}\" not found.", blocked.key())
+    );
+
+    let body = expect(
+        &app,
+        Case::new("get", format!("/worlds?search={}", blocked.label())),
+        200,
+    )
+    .await;
+    let names: Vec<&str> = body["worlds"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|w| w["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, vec![sibling.as_str()], "{body}");
+    assert_eq!(body["total"], 1);
+
+    // The unblocked node serves the same world.
+    expect(
+        &f.app,
+        Case::new("get", format!("/world/{name}/manifest")),
+        200,
+    )
+    .await;
+}
+
+/// Upstream builds one `nameDenyListChecker` (`src/components.ts:166`) and hands it to
+/// `isWorldValid`, the world reads and deploy validation, so they answer from one memo. The core
+/// reads the policy's list, so an entry the core's memo holds refuses the comms admission at once
+/// (a second list would read the DAO table, which holds no such entry, and admit the world).
+#[tokio::test]
+async fn the_core_and_the_comms_admission_share_one_name_deny_list() {
+    use crate::comms::interfaces::AccessPolicy;
+    use crate::policy::{AccessType, WorldAdmission};
+    let Some(f) = fixture().await else { return };
+    assert!(Arc::ptr_eq(&f.state.names, f.state.policy.names()));
+    let owner = Wallet::random();
+    let world = owned_world(&f, &owner).await;
+    let manifest = || Case::new("get", format!("/world/{}/manifest", world.display()));
+    let now = chrono::Utc::now().naive_utc();
+    assert_eq!(
+        f.state.policy.world_admission(&world, now).await.unwrap(),
+        WorldAdmission::Open(AccessType::Unrestricted)
+    );
+    expect(&f.app, manifest(), 200).await;
+
+    let _denied = DenyListed::seed(&f.state.names, vec![world.label().to_string()]);
+    assert_eq!(
+        f.state.policy.world_admission(&world, now).await.unwrap(),
+        WorldAdmission::Unknown
+    );
+    expect(&f.app, manifest(), 404).await;
+}
+
+/// `BLOCKED_WORLD_NAMES` on the permission routes: `getAccessForWorld` reads
+/// a blocked world as the default `unrestricted` (`getBannedNames` keeps the
+/// whole configured name, `worlds-manager.ts:327,345-349`), and the owner's
+/// DELETE answers 404 through `isWorldValid` (`component.ts:71-74`).
+#[tokio::test]
+async fn configured_world_names_are_invalid_on_the_permission_routes() {
+    let Some(f) = fixture().await else { return };
+    let owner = Wallet::random();
+    let world = owned_world(&f, &owner).await;
+    store::store_access_for_owner(
+        &f.pool,
+        &world,
+        &owner.address,
+        &AccessSetting::NftOwnership {
+            nft: "urn:x".into(),
+        },
+    )
+    .await
+    .unwrap();
+    let blocking = fixture_on_pool(
+        f.pool.clone(),
+        PersonalWorldsPolicy::disabled(),
+        None,
+        None,
+        test_settings(),
+        &format!(" , {} ", world.display().to_uppercase()),
+    )
+    .await;
+    blocking.names.set(&owner.address, world.label());
+    let w = world.display();
+    let delete = || {
+        Case::new(
+            "delete",
+            format!(
+                "/world/{w}/permissions/deployment/{}",
+                Wallet::random().address.as_str()
+            ),
+        )
+    };
+    let read = || Case::new("get", format!("/world/{w}/permissions"));
+
+    let body = expect(&blocking.app, read(), 200).await;
+    assert_eq!(body["permissions"]["access"]["type"], "unrestricted");
+    let body = expect(&blocking.app, delete().signed(&owner).await, 404).await;
+    assert_eq!(body["message"], json!(format!("World \"{w}\" not found.")));
+
+    // The unblocked node reads the stored access and accepts the DELETE.
+    let body = expect(&f.app, read(), 200).await;
+    assert_eq!(body["permissions"]["access"]["type"], "nft-ownership");
+    expect(&f.app, delete().signed(&owner).await, 204).await;
+}
+
+/// `JSON.stringify` of `JSON.parse(<jsonb text>)`: an object's members in
+/// `jsonb`'s order (key length, then bytes).
+fn jsonb_js_members(object: &serde_json::Map<String, Value>) -> Vec<(String, String)> {
+    let mut keys: Vec<&String> = object.keys().collect();
+    keys.sort_by(|a, b| (a.len(), a.as_bytes()).cmp(&(b.len(), b.as_bytes())));
+    keys.into_iter()
+        .map(|k| (k.clone(), jsonb_js_text(&object[k])))
+        .collect()
+}
+
+fn jsonb_js_text(value: &Value) -> String {
+    match value {
+        Value::Object(object) => js_object(jsonb_js_members(object)),
+        Value::Array(items) => format!(
+            "[{}]",
+            items
+                .iter()
+                .map(jsonb_js_text)
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
+        other => other.to_string(),
+    }
+}
+
+fn js_object(members: Vec<(String, String)>) -> String {
+    let members: Vec<String> = members
+        .into_iter()
+        .map(|(k, v)| format!("{}:{v}", Value::String(k)))
+        .collect();
+    format!("{{{}}}", members.join(","))
+}
+
+/// `{...members, [key]: value}`.
+fn js_spread(
+    mut members: Vec<(String, String)>,
+    key: &str,
+    value: String,
+) -> Vec<(String, String)> {
+    match members.iter_mut().find(|(k, _)| k == key) {
+        Some(member) => member.1 = value,
+        None => members.push((key.to_string(), value)),
+    }
+    members
+}
+
+/// `getEntityForWorlds` answers `{...row.entity, id, metadata: {...metadata,
+/// owner}}` over node-postgres' parse of the `jsonb` column: the body bytes
+/// keep the stored member order with `owner` last in the metadata (WR-15).
+#[tokio::test]
+async fn active_entities_answer_upstream_member_order() {
+    let Some(f) = fixture().await else { return };
+    let world = world_name();
+    let owner = Wallet::random();
+    f.names.set(&owner.address, world.label());
+    let d = deployment(&owner, &world, "Ordered", "0,0", &["0,0"]).await;
+    post_entity(&f.app, &d, 200).await;
+
+    let (stored, stored_owner): (Value, String) = sqlx::query_as(
+        "SELECT ws.entity, w.owner FROM worlds.world_scenes ws JOIN worlds.worlds w ON w.name = ws.world_name WHERE ws.world_name = $1",
+    )
+    .bind(world.key())
+    .fetch_one(&f.pool)
+    .await
+    .unwrap();
+    let stored = stored.as_object().unwrap();
+    let metadata = js_spread(
+        jsonb_js_members(stored["metadata"].as_object().unwrap()),
+        "owner",
+        Value::String(stored_owner).to_string(),
+    );
+    let entity = js_spread(
+        js_spread(
+            jsonb_js_members(stored),
+            "id",
+            Value::String(d.entity_id.clone()).to_string(),
+        ),
+        "metadata",
+        js_object(metadata),
+    );
+    let expected = format!("[{}]", js_object(entity));
+
+    let request = Request::builder()
+        .method("POST")
+        .uri("/entities/active")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            json!({ "pointers": [world.display()] }).to_string(),
+        ))
+        .unwrap();
+    let response = f.app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    assert_eq!(String::from_utf8(body.to_vec()).unwrap(), expected);
+    assert!(expected.contains(r#","owner":"0x"#), "{expected}");
 }
 
 /// WCS's status checks answer under the worlds prefix.
@@ -8247,6 +8748,7 @@ async fn a_quota_block_follows_the_live_name_holder() {
 }
 
 mod partial_uploads;
+mod reprocess_ab;
 
 /// Every signed worlds route answers a refused signed fetch as upstream's
 /// `onError` does (`undeploy-entity-handler.spec.ts:39-55`,

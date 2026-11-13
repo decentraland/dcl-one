@@ -33,8 +33,18 @@ impl AppState {
 
     /// The LiveKit server clients are sent to. None while the scene has a
     /// server, whatever `livekit` holds.
+    /// Returns once the built-in livekit-server, started beside the preview
+    /// rather than before it, has answered or been given up on: at once in
+    /// every other case. What names the comms transport waits here, so a
+    /// client asking in the server's first moments is never told ws-room
+    /// and then LiveKit.
+    pub(super) async fn voice_settled(&self) {
+        let mut starting = self.voice_starting.clone();
+        let _ = starting.wait_for(|starting| !*starting).await;
+    }
+
     pub(super) fn voice(&self) -> Option<&crate::livekit::Livekit> {
-        self.livekit.as_ref().filter(|_| !self.hosts_scene())
+        self.livekit.get().filter(|_| !self.hosts_scene())
     }
 
     /// The router's clones of the state outlive `start`; the isolate must not.
@@ -94,7 +104,7 @@ impl AppState {
                 } else {
                     "authoritative host attached (scene.json authoritativeMultiplayer; --no-host or --no-server to skip)"
                 });
-                if self.livekit.is_some() && !was_running {
+                if self.livekit.get().is_some() && !was_running {
                     ux::note(
                         "comms moved to the built-in ws-room while the scene has a server, which has no \
                          LiveKit transport; clients already in the preview rejoin to meet it",

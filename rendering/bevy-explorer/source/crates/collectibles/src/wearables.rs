@@ -31,6 +31,11 @@ impl Plugin for WearablePlugin {
         app.add_systems(Update, (load_collections, retain_wearables));
         app.add_systems(PostUpdate, clean_images.before(AssetEvents));
     }
+
+    fn finish(&self, app: &mut App) {
+        // reads the ipfs resource, which exists once every plugin is built
+        app.init_asset_loader::<crate::smart_wearables::SmartWearableSceneLoader>();
+    }
 }
 
 #[derive(Resource, Default)]
@@ -301,6 +306,20 @@ pub struct Wearable {
 #[derive(Clone, Debug)]
 pub struct WearableExtraData {
     pub category: WearableCategory,
+    /// The content files named `scene.json` (`male/scene.json`, `female/scene.json`, or a bare
+    /// `scene.json`): a non-empty list marks a smart wearable candidate.
+    pub scene_json_files: Vec<String>,
+}
+
+/// The content keys that make a wearable a smart wearable candidate.
+pub fn scene_json_files(content: &ipfs::ContentMap) -> Vec<String> {
+    let mut files: Vec<String> = content
+        .files()
+        .filter(|file| file.ends_with("scene.json"))
+        .cloned()
+        .collect();
+    files.sort();
+    files
 }
 
 impl CollectibleType for Wearable {
@@ -317,6 +336,10 @@ impl CollectibleType for Wearable {
 
     fn data_extension() -> &'static str {
         "wearable_data"
+    }
+
+    fn with_content_aliases(content: ipfs::ContentMap) -> ipfs::ContentMap {
+        crate::smart_wearables::with_scene_aliases(content)
     }
 }
 
@@ -338,6 +361,7 @@ impl AssetLoader for WearableLoader {
         let mut entity = EntityDefinitionLoader
             .load(reader, settings, load_context)
             .await?;
+        let scene_json_files = scene_json_files(&entity.content);
         let metadata = entity.metadata.ok_or(anyhow!("no metadata?"))?;
         let meta = serde_json::from_value::<WearableMeta>(metadata)?;
 
@@ -498,7 +522,10 @@ impl AssetLoader for WearableLoader {
                 name: meta.name.unwrap_or_default(),
                 description: meta.description.unwrap_or_default(),
                 available_representations: representations.keys().cloned().collect(),
-                extra_data: WearableExtraData { category },
+                extra_data: WearableExtraData {
+                    category,
+                    scene_json_files: scene_json_files.clone(),
+                },
             },
             representations,
         })
@@ -542,6 +569,7 @@ impl AssetLoader for WearableMetaLoader {
         let mut entity = EntityDefinitionLoader
             .load(reader, settings, load_context)
             .await?;
+        let scene_json_files = scene_json_files(&entity.content);
         let metadata = entity.metadata.ok_or(anyhow!("no metadata?"))?;
         let meta = serde_json::from_value::<WearableMeta>(metadata)?;
 
@@ -572,7 +600,10 @@ impl AssetLoader for WearableMetaLoader {
             name: meta.name.unwrap_or_default(),
             description: meta.description.unwrap_or_default(),
             available_representations,
-            extra_data: WearableExtraData { category },
+            extra_data: WearableExtraData {
+                category,
+                scene_json_files: scene_json_files.clone(),
+            },
         })
     }
 }
