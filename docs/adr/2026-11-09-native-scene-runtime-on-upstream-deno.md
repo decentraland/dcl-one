@@ -38,7 +38,9 @@ rest.
   wrapped are not installed. No persistent storage of any kind.
 - **Hardening:** an op never panics or exits on scene input (`security.md`). Every upstream op a
   scene can call is overridden with an op of the same shape, disabled, or on a reviewed list
-  (`hardened_ops.rs`); structured clone uses our serializer, which has no host objects. Structured
+  (`hardened_ops.rs`); structured clone uses our serializer, which has no host objects, and the
+  JS rejection drain, which writes through scene-set prototype setters while holding a borrow, is
+  replaced by the event loop's own dispatch. Structured
   arguments go through `Plain<T>`, and op results are ordinary objects (`JsPlain<T>`), replacing
   the fork's `toString` patch. The V8
   callbacks scene code reaches without an op are ours (`isolate_hooks.rs`): stack formatting
@@ -106,8 +108,7 @@ rest.
   transport errors are `TypeError: fetch failed` with a `cause`, clocks are 2 ms granular,
   `String(opResult)` is `[object Object]`, `Error.prepareStackTrace` is not called, a Blob,
   File or DOMException structured-cloned (a `performance.mark` detail, a tee'd stream chunk)
-  comes back as a plain object, index properties cannot be defined on `Array.prototype` or
-  `Object.prototype` and `Array.prototype`'s prototype cannot be replaced (deno_core's rejection
-  drain writes through them; a client scene can still reach them with its primordials), and
+  comes back as a plain object, unhandled rejections are reported by the event loop's own
+  dispatch rather than between `nextTick` callbacks, and
   `WebAssembly.compileStreaming`/`instantiateStreaming` are absent. New globals from V8 15:
   `Temporal`, `DisposableStack`, `AsyncDisposableStack` and `SuppressedError`.
