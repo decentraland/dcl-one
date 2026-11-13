@@ -126,7 +126,8 @@ struct Instance {
     parcel: IVec2,
     index: u32,
     prototype: usize,
-    /// At its height on the terrain once it has drawn, at height 0 before.
+    /// On the terrain as it was when the instance was listed or last started to draw, and kept on
+    /// it while it draws.
     transform: Transform,
     lod: Lod,
     entity: Option<Entity>,

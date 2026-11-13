@@ -471,11 +471,14 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   - The impostors draw in the main pass only, cut out at half coverage, with boimp's shaders in
     a material of their own: boimp's own impostor material is blended (in the depth prepass it
     would hide behind its own box), which would put every impostor in the sorted transparent
-    pass. Out of the prepass, depth of field and ambient occlusion see what stands behind an
-    impostor. They cast and receive no shadows. They are lit by bevy's standard lighting,
-    without the sky light and softened sun shadows the models' material adds. An impostor's
-    size lives in its material, so each prototype has 16 materials over its scale range and an
-    instance draws the nearest, at most a thirtieth of the range off its own scale.
+    pass. Out of the prepass, ambient occlusion sees what stands behind an impostor. The main
+    pass's depth, which depth of field reads, holds the face of the impostor's box nearest the
+    camera rather than the tree it shows (the impostor shader writes no depth of its own), so the
+    blur takes the whole impostor at that face. They cast and receive no shadows. They are lit
+    by bevy's standard lighting, without the sky light and softened sun shadows the models'
+    material adds. An impostor's size lives in its material, so each prototype has 16 materials
+    over its scale range and an instance draws the nearest, at most a thirtieth of the range off
+    its own scale.
   - The stones draw their one model down to the screen height of the last of Unity's three
     meshes, and nothing below it; they have no impostor in Unity either.
   - An instance that draws nothing has no entity and no colliders. Unity keeps the colliders

@@ -4,8 +4,9 @@
 //! boimp's own material is blended: drawn in the depth prepass, an impostor writes its box's front
 //! face there, and its fragment stage then hides it behind that depth. Kept out of the prepass,
 //! the impostor's depth check meets the scene's depth only, so it can be cut out and drawn in
-//! the binned opaque passes, where instances sharing a material batch into one draw. The prepass
-//! consumers (depth of field, ambient occlusion) see what stands behind an impostor.
+//! the binned opaque passes, where instances sharing a material batch into one draw. Ambient
+//! occlusion, which reads the prepass, sees what stands behind an impostor; depth of field reads
+//! the main pass's depth, where an impostor leaves its box's nearest face.
 
 use bevy::{
     pbr::{MaterialPipeline, MaterialPipelineKey},

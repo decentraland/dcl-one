@@ -289,6 +289,8 @@ fn drive_bake(
     match bake.stage {
         Stage::Start => {
             bake.started = Some((Instant::now(), SystemTime::now()));
+            // held before anything can end the bake, which puts it back
+            bake.wind = wind.0;
             // the files this bake writes replace the old ones, so none can pass for new
             for prototype in baked_prototypes() {
                 let path = bake.path(prototype);
@@ -300,7 +302,6 @@ fn drive_bake(
                     }
                 }
             }
-            bake.wind = wind.0;
             wind.0 = false;
             bake.subjects = baked_prototypes()
                 .enumerate()
