@@ -19,6 +19,7 @@ import { storedLoginType, type LoginType } from '@explorer-core/features/session
 import type { InteractableArea } from '../../lib/hudInset'
 import type { FatalError } from '@explorer-core/features/error/fatalError'
 import { createLoadingProgress } from '@explorer-core/features/session/loadingProgress'
+import { useConnectivity } from './useConnectivity'
 import { DEFAULT_REALM } from '@hud-host'
 import { provideHudLogin, provideHudLogout, type HudLoginReply, type HudLoginRequest } from '@explorer-core/lib/hudAutomation'
 import { checkRealm, realmCheckMessage } from '@explorer-core/lib/realmCheck'
@@ -967,6 +968,7 @@ export interface EngineSession {
    *  'entering'. NOT the scene the player is in — that is `minimap.sceneTitle`, resolved by
    *  parcel; this title is whatever was last loading and goes stale as the player moves. */
   sceneLoading: SceneLoadingState | null
+  connectivity: ReturnType<typeof useConnectivity>
   /** One 0–100 value for the whole loader, across every stage it waits on; it only rises. */
   loadingProgress: number
   /** Why the last in-world travel failed (the engine kept the player where they were), shown as a notice. */
@@ -4192,6 +4194,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
         ? 'entering'
         : 'world'
 
+  const connectivity = useConnectivity(driverRef.current, phase === 'world' || phase === 'entering')
   // A /hud_login is answered once the engine took the sign-in and the HUD is past the welcome page
   // (still to come, shown, or its accept still saving): in the lobby, where its destination is
   // picked as a card's would be (or from the picker), or already entering a link's destination,
@@ -4506,6 +4509,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       openLegal
     },
     sceneLoading,
+    connectivity,
     loadingProgress,
     travelError,
     dismissTravelError,

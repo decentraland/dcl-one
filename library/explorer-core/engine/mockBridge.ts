@@ -872,6 +872,12 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
 
     await wait(o.latency)
 
+    if (msg.kind === 'getConnectivity' || msg.kind === 'retryConnectivity') {
+      reply({ kind: 'connectivity', state: { connectionLost: false, probing: false, everConnected: playerSpawned, suppressed: !playerSpawned, rooms: [] } })
+      if (msg.kind === 'retryConnectivity') reply({ kind: 'connectivityRetry', requestId: msg.requestId })
+      return
+    }
+
     if (msg.kind === 'getHomeScene') {
       reply({ kind: 'homeScene', realm: DEFAULT_REALM, parcel: { x: 0, y: 0 } })
       return

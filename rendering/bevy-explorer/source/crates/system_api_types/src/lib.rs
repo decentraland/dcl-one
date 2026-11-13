@@ -16,6 +16,27 @@ use dcl_component::proto_components::{
 use serde::{Deserialize, Serialize};
 use strum_macros::EnumIter;
 
+/// The safe connectivity snapshot shared by the HUD and diagnostic console.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ConnectivitySnapshot {
+    pub connection_lost: bool,
+    pub probing: bool,
+    pub ever_connected: bool,
+    pub suppressed: bool,
+    pub rooms: Vec<ConnectivityRoomStatus>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ConnectivityRoomStatus {
+    pub scope: String,
+    pub state: String,
+    pub retry_at: Option<f64>,
+}
+
 /// A Color3 with a `clear` flag, distinguishing "set this color" from "clear the
 /// stored color" while remaining representable in JSON (where an absent field
 /// already means "leave unchanged").

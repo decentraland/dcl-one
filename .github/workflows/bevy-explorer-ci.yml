@@ -331,6 +331,8 @@ jobs:
         run: node --test local-harness/web-driver/driver.test.mjs
       - name: Test scene signed fetch
         run: node --test crates/dcl_js/src/modules/SignedFetch.test.cjs
+      - name: Test LiveKit browser bindings
+        run: node --test crates/comms/livekit_web_bindings.test.mjs
       - name: Build the benchmark runner
         # The benchmark runner, for each OS: the fleet's laptops (Windows and macOS) run the legs with
         # it and Bevy Explorer / Benchmark writes the report with the Linux one. Name:

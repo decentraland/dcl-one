@@ -183,6 +183,10 @@ pub enum SystemApi {
     SetInteractableArea(Vec4),
     GetMicState(RpcResultSender<MicState>),
     SetMicEnabled(bool),
+    /// Trusted HUD recovery request; terminal access decisions remain unchanged.
+    RetryConnectivity,
+    /// The current safe snapshot, followed by changes until the consumer closes.
+    GetConnectivityStream(RpcStreamSender<ConnectivitySnapshot>),
     GetAvatarModifiers(RpcResultSender<Vec<AvatarModifierState>>),
     // Social / Friends
     GetFriends(RpcResultSender<Vec<FriendData>>),

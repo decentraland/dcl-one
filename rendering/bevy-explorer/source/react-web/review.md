@@ -42,6 +42,17 @@ deterministically — they have their own tiers (§3, §4).
 
 ## 1. The testing tiers (why three)
 
+Connectivity feedback is engine-owned. `library/ui/apps/hud/test/hosted/connectivity.test.tsx` checks the shared
+SystemApi stream/retry bridge, subscription cleanup, stable unchanged snapshots, one Connection Lost alert dialog,
+pending Retry/Exit controls through bridge acknowledgement, reply timeout and session cleanup,
+failed-retry recovery controls, automatic dismissal,
+and scoped access messages. Runtime verification reads `/connectivity_state`, uses
+`/connectivity_retry`, and locates `alertdialog` named `Connection Lost`, buttons `Retry` and
+`Exit Application`, and status `Multiplayer status`. The engine's Connectivity debug section exposes the
+same safe snapshot and Retry action. Preview, held-world and terminal access failures must
+never become an offline alert. A reachable network with a failed or disconnected room shows its
+room status. An initial `connecting` room stays quiet during ordinary scene crossings.
+
 | Tier | Command | What it proves | Engine? | Deterministic? |
 |------|---------|----------------|---------|----------------|
 | **1 — contract** | `npm test` | Every page→scene API call posts the exact wire message, and every scene→page message updates state. Component clicks fire the right action. | no (FakeDriver) | yes |
