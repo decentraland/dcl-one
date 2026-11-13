@@ -186,11 +186,10 @@ impl Config {
     pub const MIN_OPERATOR_SECRET_BYTES: usize = 32;
 
     /// The operator-chosen secrets that guard this node's own routes (admin
-    /// bearers, service tokens, the console's session key) and the external
-    /// minter's token: a short one is guessable or brute-forced offline, so
-    /// startup refuses it. Bearers this node sends to services it does not
-    /// run (`AB_REGISTRY_ADMIN_TOKEN`) keep their issuer's length.
-    pub const OPERATOR_SECRETS: [&'static str; 20] = [
+    /// bearers, service tokens, the console's session key): a short one is
+    /// guessable or brute-forced offline, so startup refuses it. Bearers this
+    /// node sends elsewhere keep their issuer's length.
+    pub const OPERATOR_SECRETS: [&'static str; 19] = [
         "SESSION_SECRET",
         "CATALYRST_CONTENT_ADMIN_TOKEN",
         "COMMUNITIES_ADMIN_TOKEN",
@@ -210,7 +209,6 @@ impl Config {
         "PLACES_ADMIN_AUTH_TOKEN",
         "MODERATOR_TOKEN",
         "COMMS_GATEKEEPER_AUTH_TOKEN",
-        "SCENE_HOST_DELEGATION_MINTER_TOKEN",
     ];
 
     pub fn is_operator_secret(name: &str) -> bool {
@@ -793,7 +791,11 @@ mod tests {
             assert!(Config::refuse_short_operator_secret(name, None).is_ok());
             assert!(Config::refuse_short_operator_secret(name, Some(" ")).is_ok());
         }
-        for outbound in ["STRIPE_SECRET_KEY", "AB_REGISTRY_ADMIN_TOKEN"] {
+        for outbound in [
+            "STRIPE_SECRET_KEY",
+            "AB_REGISTRY_ADMIN_TOKEN",
+            "SCENE_HOST_DELEGATION_MINTER_TOKEN",
+        ] {
             assert!(Config::refuse_short_operator_secret(outbound, Some("x")).is_ok());
         }
         let (mut config, _) =
