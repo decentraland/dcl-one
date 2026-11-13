@@ -1,0 +1,137 @@
+name: Build
+on: [ workflow_call ]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: creator-hub-build-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: 'bash'
+    working-directory: apps/creator-hub
+
+# Builds the shared artifacts once per run; QA jobs download them instead of
+# rebuilding. A source-hash cache skips the build when inputs are unchanged.
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/creator-hub-setup
+        id: setup
+        with:
+          cache-protoc: 'true'
+
+      - name: install
+        if: steps.setup.outputs.node-modules-cache-hit != 'true'
+        run: make install
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+
+      # One combined key: inspector's bundle embeds asset-packs and the proto gen,
+      # so per-package caches could go stale. No restore-keys — a partial restore
+      # of compiled output would be silently wrong.
+      - name: Restore build cache
+        id: build-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            apps/creator-hub/packages/asset-packs/dist
+            apps/creator-hub/packages/asset-packs/bin
+            apps/creator-hub/packages/asset-packs/catalog.json
+            apps/creator-hub/packages/inspector/dist
+            apps/creator-hub/packages/inspector/public
+            apps/creator-hub/packages/inspector/src/lib/data-layer/proto/gen
+            apps/creator-hub/packages/creator-hub/main/dist
+            apps/creator-hub/packages/creator-hub/preload/dist
+            apps/creator-hub/packages/creator-hub/renderer/dist
+          key: >-
+            ${{ runner.os }}-build-${{ hashFiles(
+              'apps/creator-hub/packages/asset-packs/src/**',
+              'apps/creator-hub/packages/asset-packs/scripts/**',
+              'apps/creator-hub/packages/asset-packs/tsconfig*.json',
+              'apps/creator-hub/packages/asset-packs/package.json',
+              'apps/creator-hub/packages/inspector/src/**',
+              'apps/creator-hub/packages/inspector/build.js',
+              'apps/creator-hub/packages/inspector/scripts/**',
+              'apps/creator-hub/packages/inspector/tsconfig*.json',
+              'apps/creator-hub/packages/inspector/package.json',
+              'apps/creator-hub/packages/inspector/public/index.html',
+              'apps/creator-hub/packages/inspector/agents/bevy/src/**',
+              'apps/creator-hub/packages/inspector/agents/bevy/package.json',
+              'apps/creator-hub/packages/creator-hub/main/**',
+              'apps/creator-hub/packages/creator-hub/preload/**',
+              'apps/creator-hub/packages/creator-hub/renderer/**',
+              'apps/creator-hub/packages/creator-hub/shared/**',
+              'apps/creator-hub/packages/creator-hub/types/**',
+              'apps/creator-hub/packages/creator-hub/package.json',
+              'apps/creator-hub/package-lock.json',
+              'apps/creator-hub/Makefile',
+              '.github/actions/creator-hub-setup/action.yml',
+              '.github/workflows/creator-hub-build.yml') }}
+
+      - name: protoc
+        if: steps.build-cache.outputs.cache-hit != 'true'
+        run: make protoc
+
+      - uses: ./.github/actions/creator-hub-lfs
+        if: steps.build-cache.outputs.cache-hit != 'true'
+
+      - name: build asset-packs
+        if: steps.build-cache.outputs.cache-hit != 'true'
+        run: make build-asset-packs
+
+      - name: build inspector
+        if: steps.build-cache.outputs.cache-hit != 'true'
+        run: make build-inspector
+        env:
+          NODE_OPTIONS: "--max-old-space-size=8192"
+
+      - name: build creator-hub
+        if: steps.build-cache.outputs.cache-hit != 'true'
+        run: make build-creator-hub
+        env:
+          NODE_OPTIONS: "--max-old-space-size=8192"
+
+      - name: upload proto-gen
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: proto-gen
+          path: apps/creator-hub/packages/inspector/src/lib/data-layer/proto/gen
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: upload asset-packs-dist
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: asset-packs-dist
+          path: |
+            apps/creator-hub/packages/asset-packs/dist
+            apps/creator-hub/packages/asset-packs/bin
+            apps/creator-hub/packages/asset-packs/catalog.json
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: upload inspector-dist
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: inspector-dist
+          path: |
+            apps/creator-hub/packages/inspector/dist
+            apps/creator-hub/packages/inspector/public
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: upload creator-hub-dist
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: creator-hub-dist
+          path: |
+            apps/creator-hub/packages/creator-hub/main/dist
+            apps/creator-hub/packages/creator-hub/preload/dist
+            apps/creator-hub/packages/creator-hub/renderer/dist
+          if-no-files-found: error
+          retention-days: 7

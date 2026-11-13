@@ -1,0 +1,261 @@
+import type * as BABYLON from '@babylonjs/core';
+import future from 'fp-future';
+import mitt from 'mitt';
+import type { Emitter } from 'mitt';
+import type { ComponentDefinition, Entity } from '@dcl/ecs';
+import { CrdtMessageType, Engine } from '@dcl/ecs';
+import * as components from '@dcl/ecs/dist/components';
+import type * as Schemas from '@dcl/schemas';
+
+import type { RendererEvents } from '../../renderer/types';
+
+import { createEditorComponents } from '../../sdk/components';
+import { createOperations } from '../../sdk/operations';
+import { ParticleSystemSchema } from '../../sdk/components/ParticleSystem';
+import { getDataLayerInterface } from '../../../redux/data-layer';
+import { ROOT } from '../../sdk/tree';
+import type { ComponentOperation } from './component-operations';
+import { EcsEntity } from './EcsEntity';
+import {
+  deleteEntitySelectedComponent,
+  putEntitySelectedComponent,
+} from './editorComponents/selection';
+import { putBillboardComponent } from './sdkComponents/billboard';
+import { putGltfContainerComponent } from './sdkComponents/gltf-container';
+import { putMeshRendererComponent } from './sdkComponents/mesh-renderer';
+import { putTransformComponent } from './sdkComponents/transform';
+import { putTextShapeComponent } from './sdkComponents/text-shape';
+import { putSceneComponent } from './editorComponents/scene';
+import { createGizmoManager } from './GizmoManager';
+import { createSpawnPointManager } from './spawn-point-manager';
+import { putMaterialComponent } from './sdkComponents/material';
+import { putNftShapeComponent } from './sdkComponents/nft';
+import { putVideoPlayerComponent } from './sdkComponents/video-player';
+import { putAvatarAttachComponent } from './sdkComponents/avatar-attach';
+import { putHideComponent } from './editorComponents/hide';
+import { putLockComponent } from './editorComponents/lock';
+import { putPlaceholderComponent } from './sdkComponents/placeholder';
+import { putParticleSystemComponent } from './sdkComponents/particle-system';
+
+export type LoadableScene = {
+  readonly entity: Readonly<Omit<Schemas.Entity, 'id'>>;
+  readonly baseUrl: string;
+  readonly id: string;
+};
+
+export class SceneContext {
+  #entities = new Map<Entity, EcsEntity>();
+  #weakThis = new WeakRef(this);
+  rootNode: EcsEntity;
+
+  logger = {
+    log: console.log.bind(console),
+    error: console.error.bind(console),
+  };
+
+  engine = Engine({
+    onChangeFunction: (entity, op, component, _value) => {
+      this.processEcsChange(entity, op, component);
+    },
+  });
+
+  operations = createOperations(this.engine);
+  gizmos = createGizmoManager(this);
+  spawnPoints = createSpawnPointManager(this.scene);
+
+  /**
+   * Reverse-channel event bus (pick/gizmoCommit/…). The renderer emits viewport
+   * interactions here; the inspector subscribes and owns the ECS response. This
+   * is the single path from viewport → ECS edits. {@link BabylonRenderer}
+   * re-exposes this as its `events`, and input.ts / GizmoManager emit onto it.
+   */
+  rendererEvents: Emitter<RendererEvents> = mitt<RendererEvents>();
+
+  Billboard = components.Billboard(this.engine);
+  Transform = components.Transform(this.engine);
+  Material = components.Material(this.engine);
+  MeshRenderer = components.MeshRenderer(this.engine);
+  GltfContainer = components.GltfContainer(this.engine);
+  TextShape = components.TextShape(this.engine);
+  Name = components.Name(this.engine);
+  Tags = components.Tags(this.engine);
+  Animator = components.Animator(this.engine);
+  NftShape = components.NftShape(this.engine);
+  VideoPlayer = components.VideoPlayer(this.engine);
+  AvatarAttach = components.AvatarAttach(this.engine);
+  // No render operation for these two: they're defined so their state exists in
+  // this engine and the gizmo-commit path (operations.updateValue on Transform)
+  // can mirror scale changes into their `area` field.
+  AvatarModifierArea = components.AvatarModifierArea(this.engine);
+  CameraModeArea = components.CameraModeArea(this.engine);
+  ParticleSystem = this.engine.defineComponentFromSchema(
+    'core::ParticleSystem',
+    ParticleSystemSchema,
+  );
+
+  readonly editorComponents = createEditorComponents(this.engine);
+
+  readonly componentPutOperations: Record<number, ComponentOperation> = {
+    [this.Transform.componentId]: putTransformComponent,
+    [this.MeshRenderer.componentId]: putMeshRendererComponent,
+    [this.Material.componentId]: putMaterialComponent,
+    [this.Billboard.componentId]: putBillboardComponent,
+    [this.GltfContainer.componentId]: putGltfContainerComponent,
+    [this.TextShape.componentId]: putTextShapeComponent,
+    [this.NftShape.componentId]: putNftShapeComponent,
+    [this.VideoPlayer.componentId]: putVideoPlayerComponent,
+    [this.AvatarAttach.componentId]: putAvatarAttachComponent,
+    [this.editorComponents.Selection.componentId]: putEntitySelectedComponent,
+    [this.editorComponents.Scene.componentId]: putSceneComponent,
+    [this.editorComponents.Hide.componentId]: putHideComponent,
+    [this.editorComponents.Lock.componentId]: putLockComponent,
+    [this.editorComponents.Placeholder.componentId]: putPlaceholderComponent,
+    [this.ParticleSystem.componentId]: putParticleSystemComponent,
+  };
+
+  readonly componentDeleteOperations: Record<number, ComponentOperation> = {
+    [this.Transform.componentId]: putTransformComponent,
+    [this.MeshRenderer.componentId]: putMeshRendererComponent,
+    [this.Material.componentId]: putMaterialComponent,
+    [this.Billboard.componentId]: putBillboardComponent,
+    [this.GltfContainer.componentId]: putGltfContainerComponent,
+    [this.TextShape.componentId]: putTextShapeComponent,
+    [this.NftShape.componentId]: putNftShapeComponent,
+    [this.VideoPlayer.componentId]: putVideoPlayerComponent,
+    [this.AvatarAttach.componentId]: putAvatarAttachComponent,
+    [this.editorComponents.Selection.componentId]: deleteEntitySelectedComponent,
+    [this.editorComponents.Scene.componentId]: putSceneComponent,
+    [this.editorComponents.Hide.componentId]: putHideComponent,
+    [this.editorComponents.Lock.componentId]: putLockComponent,
+    [this.editorComponents.Placeholder.componentId]: putPlaceholderComponent,
+    [this.ParticleSystem.componentId]: putParticleSystemComponent,
+  };
+
+  // this future is resolved when the scene is disposed
+  readonly stopped = future<void>();
+
+  /**
+   * How file bytes are fetched. Defaults to the inspector's data layer (the
+   * in-process path). When this SceneContext runs inside an out-of-process
+   * renderer iframe, the boundary's `loadAsset` is injected instead, since the
+   * data layer is unreachable from there.
+   */
+  #assetLoader?: (src: string) => Promise<Uint8Array | null>;
+
+  constructor(
+    public babylon: BABYLON.Engine,
+    public scene: BABYLON.Scene,
+    public loadableScene: LoadableScene,
+    assetLoader?: (src: string) => Promise<Uint8Array | null>,
+  ) {
+    this.#assetLoader = assetLoader;
+    this.rootNode = this.getOrCreateEntity(ROOT);
+    Object.assign(globalThis, { babylon: this.engine });
+  }
+
+  private processEcsChange(
+    entityId: Entity,
+    op: CrdtMessageType,
+    component?: ComponentDefinition<any>,
+  ) {
+    if (op === CrdtMessageType.PUT_COMPONENT) {
+      // when setting a component value we need to get or create the entity
+      const entity = this.getOrCreateEntity(entityId);
+      entity.putComponent(component!);
+    } else if (op === CrdtMessageType.DELETE_COMPONENT) {
+      // when deleting a component, we can skip the entity creation if it doesn't exist
+      const entity = this.getOrCreateEntity(entityId);
+      if (entity) {
+        entity.deleteComponent(component!);
+        if (shouldEntityBeDeleted(entity)) {
+          this.removeEntity(entityId);
+        }
+      }
+    } else if (op === CrdtMessageType.DELETE_ENTITY) {
+      this.removeEntity(entityId);
+    }
+  }
+
+  removeEntity(entityId: Entity) {
+    const entity = this.getEntityOrNull(entityId);
+    if (entity) {
+      entity.dispose();
+      this.#entities.delete(entityId);
+    }
+  }
+
+  getOrCreateEntity(entityId: Entity): EcsEntity {
+    let entity = this.#entities.get(entityId);
+    if (!entity) {
+      entity = new EcsEntity(entityId, this.#weakThis, this.scene);
+      this.#entities.set(entityId, entity);
+    }
+    return entity;
+  }
+
+  getEntityOrNull(entityId: Entity): EcsEntity | null {
+    return this.#entities.get(entityId) || null;
+  }
+
+  getAllEntities(): Iterable<EcsEntity> {
+    return this.#entities.values();
+  }
+
+  resolveFile(src: string): string | null {
+    // filenames are lower cased as per https://adr.decentraland.org/adr/ADR-80
+    const normalized = src.toLowerCase();
+
+    // and we iterate over the entity content mappings to resolve the file hash
+    for (const { file, hash } of this.loadableScene.entity.content) {
+      if (file.toLowerCase() === normalized) return hash;
+    }
+
+    return null;
+  }
+
+  async getFile(src: string, retryCount = 3): Promise<Uint8Array | null> {
+    if (!src) return null;
+    try {
+      // Out-of-process: fetch bytes across the renderer boundary.
+      if (this.#assetLoader) return await this.#assetLoader(src);
+      // In-process: read from the inspector's data layer directly.
+      // TODO: how we handle this with redux ?
+      const dataLayer = getDataLayerInterface();
+      if (!dataLayer) return null;
+      const response = await dataLayer.getAssetData({ path: src });
+      return response.data;
+    } catch (err) {
+      if (retryCount > 0) {
+        // Wait for 500ms before retrying
+        await new Promise(resolve => setTimeout(resolve, 500));
+        console.log(`Retrying fetch for ${src}, attempts remaining: ${retryCount - 1}`);
+        return this.getFile(src, retryCount - 1);
+      }
+      console.error('Error fetching file ' + src, err);
+      return null;
+    }
+  }
+
+  resolveFileAbsolute(src: string): string | null {
+    const resolved = this.resolveFile(src);
+
+    if (src) return this.loadableScene.baseUrl + resolved;
+
+    return null;
+  }
+
+  dispose() {
+    this.stopped.resolve();
+    this.spawnPoints.dispose();
+    for (const [entityId] of this.#entities) {
+      this.removeEntity(entityId);
+    }
+    this.rootNode.parent = null;
+    this.rootNode.dispose();
+  }
+}
+
+// an entity only exists if it has any component attached to it
+function shouldEntityBeDeleted(entity: EcsEntity) {
+  return entity.usedComponents.size === 0;
+}
