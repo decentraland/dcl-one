@@ -9,7 +9,7 @@ The Decentraland content hashes, as a package in this repository ([ADR](../../do
 
 `content` is a `Uint8Array` or an async iterable of `Uint8Array`, for example a Node read stream. A stream is hashed as it arrives, and it can use its buffer again after each part.
 
-The exports and the results are those of `@dcl/hashing` 1.2.0 from `decentraland/core-libs`. `@noble/hashes` is the only dependency; the package encodes the CID, the dag-pb node and the UnixFS header itself.
+The functions listed above are available from the package root and produce the results of `@dcl/hashing` 1.2.0 from `decentraland/core-libs`. The package does not provide its `./node`, `./ADR32` or `./ADR62` entry points, or its `sortKeys` and `compareStrings` exports. `@noble/hashes` is the only dependency; the package encodes the CID, the dag-pb node and the UnixFS header itself.
 
 ```sh
 pnpm install --frozen-lockfile --ignore-scripts
