@@ -393,6 +393,21 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **Donate's buttons.** The minimap's uses unity-explorer's tip icon, beside the collapse button;
   the map's place panel has a DONATE text button under JUMP IN, whose art is not ported. The fourth
   amount choice reads OTHER, and the minimum reads "Tips must be ≥ 1 MANA".
+- **The hills follow the Landscape Distance.** The distance is the config's `landscape_distance`
+  (default 1000 m, Unity's default), read at startup; there is no setting for it in the menu yet.
+  Unity displaces its whole terrain and its Landscape Distance setting does not drive it. Here the
+  ground's rings are displaced out to the Landscape Distance from the player, never less than the
+  832 m the parcel-sized rings always reached, and the hills flatten over a further tenth of it, so
+  the rest of the 13 km ground costs the vertex shader nothing and walking moves no vertex abruptly.
+  Each ring coarser than a parcel snaps to its own cell size, so its vertices stay on the same
+  terrain points and the far hills do not swim.
+- **Cliffs reach 768 m at most.** Unity culls each cliff prefab whose bounds are beyond the
+  Landscape Distance from the camera. Bevy's cliffs are procedural chunks built around the
+  player's parcel out to the nearer of 768 m and the Landscape Distance: building them out to
+  7 km would mean hundreds of chunks with their invisible walls.
+- **One sea plane.** Unity culls its water chunks one by one beyond the Landscape Distance. Bevy
+  has one sea plane, shown while the nearest sea (beyond the terrain bounds, at sea level) is
+  within the Landscape Distance of the camera.
 
 ## Deliberate choices that look like mistakes
 

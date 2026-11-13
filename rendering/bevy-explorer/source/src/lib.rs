@@ -47,9 +47,9 @@ use common::{
     inputs::InputMap,
     sets::SetupSets,
     structs::{
-        AppConfig, AvatarDynamicState, HeadSync, IVec2Arg, PointAtSync, PrimaryCamera,
-        PrimaryCameraRes, PrimaryPlayerRes, SceneImposterBake, SceneLoadDistance, ShowOutOfBounds,
-        StartupScene, StartupScenes, Version, GROUND_RENDERLAYER,
+        AppConfig, AvatarDynamicState, HeadSync, IVec2Arg, LandscapeDistance, PointAtSync,
+        PrimaryCamera, PrimaryCameraRes, PrimaryPlayerRes, SceneImposterBake, SceneLoadDistance,
+        ShowOutOfBounds, StartupScene, StartupScenes, Version, GROUND_RENDERLAYER,
     },
     util::UtilsPlugin,
 };
@@ -486,6 +486,9 @@ impl DecentralandApp {
                     .collect(),
             })
             .insert_resource(ShowOutOfBounds(show_out_of_bounds))
+            .insert_resource(LandscapeDistance(
+                decentraland_app_config.app_config.landscape_distance,
+            ))
             .insert_resource(SceneLoadDistance {
                 load: if decentraland_app_config.arguments.launch.preview {
                     1.0

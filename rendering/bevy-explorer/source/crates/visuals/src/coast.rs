@@ -22,7 +22,7 @@ use bevy::{
 };
 use common::{
     sets::PostUpdateSets,
-    structs::{PrimaryCamera, PrimaryUser},
+    structs::{LandscapeDistance, PrimaryCamera, PrimaryUser},
 };
 use dcl_component::SceneEntityId;
 use scene_runner::{
@@ -37,7 +37,8 @@ use crate::terrain::{TerrainSet, TerrainSurface, NO_COAST};
 pub const SEA_LEVEL: f32 = -19.0;
 /// Cliffs are built in chunks of this length along each side.
 const CHUNK: f32 = 64.0;
-/// Cliff chunks within this distance of the player's parcel centre are built.
+/// Cliff chunks within this distance of the player's parcel centre are built, or within the
+/// Landscape Distance when that is nearer (`cliff_range`).
 const CLIFF_RANGE: f32 = 768.0;
 /// Profile columns along each side are this far apart.
 const COLUMN: f32 = 1.0;
@@ -228,6 +229,7 @@ fn update(
     underground: Single<(&mut Transform, &mut Visibility), UndergroundOnly>,
     cliffs: Query<(Entity, &Cliff)>,
     walls: Single<&mut SceneColliderData, With<CoastWalls>>,
+    distance: Res<LandscapeDistance>,
 ) {
     let bounds = surface.coast();
     let changed = bounds != state.bounds;
@@ -283,14 +285,17 @@ fn update(
         if transform.translation != translation {
             transform.translation = translation;
         }
-        visibility.set_if_neq(Visibility::Inherited);
+        visibility.set_if_neq(if ocean_visible(bounds, position, distance.0) {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        });
     }
 
-    let mut desired: HashSet<_> = near_chunks(bounds, parcel, CLIFF_RANGE)
-        .into_iter()
-        .collect();
+    let range = cliff_range(distance.0);
+    let mut desired: HashSet<_> = near_chunks(bounds, parcel, range).into_iter().collect();
     // built chunks are kept for another parcel, so stepping back and forth doesn't rebuild them
-    let keep: HashSet<_> = near_chunks(bounds, parcel, CLIFF_RANGE + PARCEL_SIZE)
+    let keep: HashSet<_> = near_chunks(bounds, parcel, range + PARCEL_SIZE)
         .into_iter()
         .collect();
     for (entity, cliff) in &cliffs {
@@ -318,6 +323,23 @@ fn update(
             Transform::default(),
         ));
     }
+}
+
+/// How far from the player's parcel cliffs are built for a Landscape Distance.
+fn cliff_range(distance: f32) -> f32 {
+    CLIFF_RANGE.min(distance)
+}
+
+/// Whether the sea is within `distance` of the camera (bevy position): its nearest part, beyond
+/// the terrain bounds at sea level.
+fn ocean_visible(bounds: Vec4, camera: Vec3, distance: f32) -> bool {
+    let unity = Vec2::new(camera.x, -camera.z);
+    let inside = (unity - bounds.xy())
+        .min(bounds.zw() - unity)
+        .min_element()
+        .max(0.0);
+    let above = (camera.y - SEA_LEVEL).max(0.0);
+    Vec2::new(inside, above).length() < distance
 }
 
 /// Deterministic value in [0, 1] (pcg hash).
