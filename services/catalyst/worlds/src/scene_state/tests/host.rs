@@ -1323,3 +1323,27 @@ async fn a_load_in_progress_does_not_hold_up_joins_to_other_scenes() {
         "the slow key's join completes after its load"
     );
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_reload_at_the_cap_keeps_its_slot() {
+    let Some(h) = host_tuned(false, None, |raw| raw.max_scenes = 1).await else {
+        return;
+    };
+    let (first, second) = (world_name(), world_name());
+    for (world, id) in [(&first, "bafyCapReload"), (&second, "bafyCapOther")] {
+        seed_world(&h.state.pool, world, None, AccessType::Unrestricted).await;
+        seed_scene(&h.state, world, id, "", None, "0,0", &["0,0"], false).await;
+    }
+    h.state.load(&SceneKey::World(first.clone())).await.unwrap();
+    h.state
+        .load(&SceneKey::World(first.clone()))
+        .await
+        .expect("a reload of a hosted scene fits at the cap");
+    let err = h
+        .state
+        .load(&SceneKey::World(second.clone()))
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("full"), "{err}");
+    assert_eq!(h.state.scenes.len(), 1);
+}

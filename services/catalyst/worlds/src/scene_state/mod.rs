@@ -608,10 +608,12 @@ impl SceneHostState {
     /// hosted yet, until the returned guard drops.
     fn reserve_slot(&self, key: &SceneKey) -> anyhow::Result<SlotReservation<'_>> {
         let _membership = self.loads.membership.lock();
-        if self.scenes.get(&key.room_key()).is_some() {
-            return Ok(SlotReservation(None));
-        }
         let loading = &self.loads.loading;
+        // A reload keeps its slot while the old scene is down.
+        if self.scenes.get(&key.room_key()).is_some() {
+            loading.fetch_add(1, Ordering::SeqCst);
+            return Ok(SlotReservation(Some(loading)));
+        }
         if self.scenes.len() + loading.load(Ordering::SeqCst) >= self.settings.max_scenes {
             anyhow::bail!(
                 "scene host is full ({} scenes hosted, SCENE_HOST_MAX_SCENES)",
@@ -770,8 +772,9 @@ impl SceneHostState {
                         continue;
                     }
                     tracing::info!(scene = %scene.identity.key, %address, %reason, "admission revoked; closing the socket");
-                    scene.remove_client(client.index);
-                    kicked += 1;
+                    if scene.remove_client_if(client.index, &client.address) {
+                        kicked += 1;
+                    }
                 }
             }
         }
@@ -829,8 +832,9 @@ impl SceneHostState {
                     }
                     Err(reason) => {
                         tracing::info!(scene = %key, %address, %reason, "admission revoked; closing the socket");
-                        scene.remove_client(client.index);
-                        summary.kicked += 1;
+                        if scene.remove_client_if(client.index, &client.address) {
+                            summary.kicked += 1;
+                        }
                     }
                 }
             }

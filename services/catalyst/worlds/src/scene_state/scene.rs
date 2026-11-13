@@ -191,19 +191,32 @@ impl Scene {
     }
 
     pub fn remove_client(&self, index: u32) {
+        self.remove_matching(index, |_| true);
+    }
+
+    /// Removes `index` only while it still belongs to `address`: a decision
+    /// made across an await never kicks a newer client given the same index.
+    pub fn remove_client_if(&self, index: u32, address: &str) -> bool {
+        self.remove_matching(index, |c| c.address == address)
+    }
+
+    fn remove_matching(&self, index: u32, matches: impl FnOnce(&Client) -> bool) -> bool {
         let mut since = self.empty_since.lock();
-        if let Some((_, client)) = self.clients.remove(&index) {
-            client.cancel.cancel();
-        }
+        let Some((_, client)) = self.clients.remove_if(&index, |_, c| matches(c)) else {
+            return false;
+        };
+        client.cancel.cancel();
         if self.clients.is_empty() {
             since.get_or_insert_with(std::time::Instant::now);
         }
         drop(since);
 
+        // Only the removal that took the client tells the runtime.
         for body in self.runtime.on_client_close(index) {
             let frame = crate::scene_state::runtime::frame_crdt(&body);
             self.broadcast(&frame, index);
         }
+        true
     }
 
     pub fn kick_all(&self) -> usize {
@@ -449,5 +462,25 @@ mod tests {
         );
         assert_eq!(scene.kick_all(), 1);
         assert!(b.cancel.is_cancelled());
+    }
+
+    #[test]
+    fn a_stale_removal_never_kicks_the_client_now_at_that_index() {
+        let scene = Scene::new(
+            "localScene",
+            Arc::new(RelayRuntime::new("h", ServerTransportConfig::default())),
+        );
+        let (tx, _rx) = mpsc::channel(16);
+        let (old, _) = scene.add_client(
+            "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
+            tx.clone(),
+        );
+        scene.remove_client(old.index);
+        let (new, _) = scene.add_client("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into(), tx);
+        assert_eq!(new.index, old.index, "the index is reused");
+        assert!(!scene.remove_client_if(old.index, &old.address));
+        assert!(!new.cancel.is_cancelled());
+        assert!(scene.remove_client_if(new.index, &new.address));
+        assert!(new.cancel.is_cancelled());
     }
 }
