@@ -391,6 +391,15 @@ struct RoomChannel {
 
 static ROOM_EVENTS: LazyLock<DashMap<RoomId, RoomChannel>> = LazyLock::new(DashMap::new);
 
+/// Removes its request from [`PENDING`] when dropped; a no-op once the reply was taken.
+struct PendingGuard(RequestId);
+
+impl Drop for PendingGuard {
+    fn drop(&mut self) {
+        PENDING.remove(&self.0);
+    }
+}
+
 fn send_command(command: LivekitCommand) {
     match HOST.get() {
         Some(host) => {
@@ -408,8 +417,8 @@ async fn request(command: impl FnOnce(RequestId) -> LivekitCommand) -> RoomResul
     let request = NEXT_REQUEST_ID.fetch_add(1, Ordering::Relaxed);
     let (sender, receiver) = oneshot::channel();
     PENDING.insert(request, sender);
+    let _pending = PendingGuard(request);
     if host.commands.unbounded_send(command(request)).is_err() {
-        PENDING.remove(&request);
         return Err(RoomError::from("livekit host is gone".to_owned()));
     }
     receiver
