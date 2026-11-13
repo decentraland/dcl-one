@@ -1,4 +1,4 @@
-import { createRef } from 'react'
+import { createElement, createRef } from 'react'
 import type { NavBarProps, NavBarSection } from '@dcl/one-ui'
 
 const sections: NavBarSection[] = [
@@ -16,6 +16,34 @@ const signedIn: NavBarProps = {
     { label: 'Profile', href: '/profile' },
     { label: 'Sign out', onSelect: () => {} }
   ]
+}
+// App-owned controls retain their own native semantics through the public props type.
+const composition: NavBarProps = {
+  sections,
+  signIn: { href: '/sign-in' },
+  balanceAction: createElement('a', { href: '/credits' }, 'Get credits'),
+  accountControl: createElement('button', { type: 'button' }, 'Connect wallet'),
+  mobileSecondaryNavigation: ({ closeDrawer }) =>
+    createElement('a', { href: '/profile', onClick: closeDrawer }, 'Profile')
+}
+const callbackSlot: NavBarProps = {
+  sections,
+  signIn: { href: '/sign-in' },
+  // @ts-expect-error Controls are React nodes, not render callbacks.
+  balanceAction: () => 'Credits'
+}
+// @ts-expect-error The generic balance action does not introduce a credits-only alias.
+const creditsAlias: NavBarProps = { sections, signIn: { href: '/sign-in' }, creditsAction: null }
+const overlayNavigation: NavBarProps = {
+  sections,
+  signIn: { href: '/sign-in' },
+  surface: 'overlay'
+}
+const invalidSurface: NavBarProps = {
+  sections,
+  signIn: { href: '/sign-in' },
+  // @ts-expect-error Only the documented solid and overlay surfaces are supported.
+  surface: 'transparent'
 }
 // @ts-expect-error Sections are required: the library holds no navigation data of its own.
 const missingSections: NavBarProps = { signIn: { href: '/sign-in' } }
@@ -45,6 +73,11 @@ const inertAction: NavBarProps = {
 }
 
 void [
+  overlayNavigation,
+  invalidSurface,
+  composition,
+  callbackSlot,
+  creditsAlias,
   signedOut,
   signedOutLink,
   signedIn,

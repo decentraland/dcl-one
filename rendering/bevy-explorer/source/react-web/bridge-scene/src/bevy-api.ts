@@ -12,6 +12,7 @@ import type {
   ChatMessage,
   ChatReactionData,
   CommunityMemberConnectivityData,
+  ConnectivitySnapshot,
   CommunityVoiceUpdate,
   DmHistoryEntryData,
   DmUserStateData,
@@ -28,6 +29,7 @@ import type {
   PermanentPermissionItem,
   PermissionRequestEvent,
   PhotoModeState,
+  PortableInfo,
   ProfileChangedEvent,
   ProximityEvent,
   SatelliteView,
@@ -181,6 +183,8 @@ export type BevyApiInterface = {
   getAnalyticsEventStream: () => Promise<AsyncIterable<AnalyticsEvent>>
   getHoverStream: () => Promise<AsyncIterable<SystemHoverEvent>>
   getProximityStream: () => Promise<AsyncIterable<SystemProximityEvent>>
+  getConnectivityStream: () => Promise<AsyncIterable<ConnectivitySnapshot>>
+  retryConnectivity: () => void
   /** Photo mode (the camera reel's in-world camera): its state whenever it changes. Optional:
    *  absent on runtimes whose SystemApi predates it. */
   getPhotoModeStream?: () => Promise<AsyncIterable<PhotoModeState>>
@@ -207,6 +211,9 @@ export type BevyApiInterface = {
   getPermissionUsedStream: () => Promise<AsyncIterable<PermissionUsedRaw>>
   /** The stored rules at one level: `value` is the scene hash (Scene) or realm url (Realm). */
   getPermanentPermissions: (body: { level: 'Scene' | 'Realm' | 'Global'; value?: string }) => Promise<PermanentPermissionItem[]>
+  /** The portables the player can see and stop, tagged by kind: the whole list on subscribe and on
+   *  every change (never the HUD's own scene or a startup portable). */
+  getPortablesStream: () => Promise<AsyncIterable<PortableInfo[]>>
   /** Live scenes, for resolving a permission request's scene name (hash → title) and the current
    *  scene to reload — `/reload` uses `parcels`/`isSuper` to target the scene the player stands in,
    *  never the bridge. */

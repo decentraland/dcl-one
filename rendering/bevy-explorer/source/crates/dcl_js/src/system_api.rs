@@ -16,12 +16,12 @@ use strum::IntoEnumIterator;
 use system_bridge::{
     settings::SettingInfo, AnalyticsEvent, AvatarModifierState, BlockUpdateData, BlockedUserData,
     BlockingStatusData, ChatMessage, ChatReactionData, CommunityMemberConnectivityData,
-    CommunityVoiceUpdate, DmHistoryEntryData, DmUserStateData, FriendConnectivityEvent, FriendData,
-    FriendRequestData, FriendStatusData, FriendshipEventUpdate, HomeScene, HoverEvent,
-    LiveSceneInfo, PermanentPermissionItem, PermissionRequestEvent, PhotoModeState,
-    ProfileChangedEvent, ProximityEvent, SatelliteView, SceneLoadingUi, SetAvatarData,
-    SetPermanentPermission, SetSinglePermission, SystemApi, VoiceChatAction, VoiceChatState,
-    VoiceMessage, WelcomeState, WorldAccessEvent,
+    CommunityVoiceUpdate, ConnectivitySnapshot, DmHistoryEntryData, DmUserStateData,
+    FriendConnectivityEvent, FriendData, FriendRequestData, FriendStatusData,
+    FriendshipEventUpdate, HomeScene, HoverEvent, LiveSceneInfo, PermanentPermissionItem,
+    PermissionRequestEvent, PhotoModeState, PortableInfo, ProfileChangedEvent, ProximityEvent,
+    SatelliteView, SceneLoadingUi, SetAvatarData, SetPermanentPermission, SetSinglePermission,
+    SystemApi, VoiceChatAction, VoiceChatState, VoiceMessage, WelcomeState, WorldAccessEvent,
 };
 use tokio::sync::Notify;
 
@@ -791,6 +791,26 @@ pub fn op_set_single_permission(state: Rc<RefCell<impl State>>, id: usize, allow
         .unwrap();
 }
 
+pub async fn op_get_portables_stream(state: Rc<RefCell<impl State>>) -> u32 {
+    let (sx, rx) = RpcStreamSender::channel();
+    let rid = open_stream(&mut *state.borrow_mut(), rx);
+
+    state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::GetPortablesStream(sx))
+        .unwrap();
+
+    rid
+}
+
+pub async fn op_read_portables_stream(
+    state: Rc<RefCell<impl State>>,
+    rid: u32,
+) -> Result<Option<Vec<PortableInfo>>, anyhow::Error> {
+    Ok(read_stream(state, rid).await)
+}
+
 pub async fn op_get_world_access_stream(state: Rc<RefCell<impl State>>) -> u32 {
     let (sx, rx) = RpcStreamSender::channel();
     let rid = open_stream(&mut *state.borrow_mut(), rx);
@@ -999,6 +1019,36 @@ pub async fn op_read_hover_stream(
     rid: u32,
 ) -> Result<Option<HoverEvent>, anyhow::Error> {
     Ok(read_stream(state, rid).await)
+}
+
+pub async fn op_get_connectivity_stream(state: Rc<RefCell<impl State>>) -> u32 {
+    let (sender, receiver) = RpcStreamSender::channel();
+    let rid = open_stream(&mut *state.borrow_mut(), receiver);
+    state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::GetConnectivityStream(sender))
+        .unwrap();
+    rid
+}
+
+pub async fn op_read_connectivity_stream(
+    state: Rc<RefCell<impl State>>,
+    rid: u32,
+) -> Result<Option<ConnectivitySnapshot>, anyhow::Error> {
+    Ok(read_stream(state, rid).await)
+}
+
+pub fn op_close_connectivity_stream(state: Rc<RefCell<impl State>>, rid: u32) {
+    close_stream::<ConnectivitySnapshot>(&mut *state.borrow_mut(), rid);
+}
+
+pub fn op_retry_connectivity(state: Rc<RefCell<impl State>>) {
+    state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::RetryConnectivity)
+        .unwrap();
 }
 
 pub async fn op_get_proximity_stream(state: Rc<RefCell<impl State>>) -> u32 {
@@ -1643,6 +1693,45 @@ mod stream_tests {
         let mut state = TestState::default();
         state.put(SuperUserScene(sx));
         (Rc::new(RefCell::new(state)), rx)
+    }
+
+    #[test]
+    fn connectivity_reads_and_retry_use_the_trusted_system_channel() {
+        let (state, mut system) = system_scene();
+        let rid = block_on(op_get_connectivity_stream(state.clone()));
+        let Ok(SystemApi::GetConnectivityStream(sender)) = system.try_recv() else {
+            panic!("expected a connectivity stream request");
+        };
+        let snapshot = ConnectivitySnapshot {
+            connection_lost: true,
+            ..Default::default()
+        };
+        sender.send(snapshot.clone()).unwrap();
+        assert_eq!(
+            block_on(op_read_connectivity_stream(state.clone(), rid)).unwrap(),
+            Some(snapshot)
+        );
+        op_retry_connectivity(state.clone());
+        assert!(matches!(
+            system.try_recv(),
+            Ok(SystemApi::RetryConnectivity)
+        ));
+        drop(state);
+        assert!(sender.is_closed());
+    }
+
+    #[test]
+    fn closing_connectivity_wakes_its_parked_read() {
+        let (state, mut system) = system_scene();
+        let rid = block_on(op_get_connectivity_stream(state.clone()));
+        let Ok(SystemApi::GetConnectivityStream(sender)) = system.try_recv() else {
+            panic!("expected a connectivity stream request");
+        };
+        let mut parked = Box::pin(op_read_connectivity_stream(state.clone(), rid));
+        assert!(block_on(poll_once(&mut parked)).is_none());
+        op_close_connectivity_stream(state.clone(), rid);
+        assert!(block_on(parked).unwrap().is_none());
+        assert!(sender.is_closed());
     }
 
     // what the engine does with each request: keep the sender

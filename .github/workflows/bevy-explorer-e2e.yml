@@ -163,12 +163,13 @@ jobs:
           echo 'The scenarios are skipped: the BEVY_E2E_WINDOWS_RUNNER repository variable names no runner.'
           >> "$GITHUB_STEP_SUMMARY"
   # The scenes' CLI, built where the Rust toolchain, the MSVC linker and bash are: a hosted
-  # Windows runner. The GPU image gets the executable. A pull request's run restores the cache
-  # and saves none: only a first attempt that built main's head writes it.
+  # Windows runner. The GPU image gets the executable, for the smart wearable fixture of the
+  # InWorld group and the visual scenes of the Visual group. A pull request's run restores the
+  # cache and saves none: only a first attempt that built main's head writes it.
   scene-cli:
     name: dcl-scene-cli (Windows)
     needs: inputs
-    if: needs.inputs.outputs.run == 'true' && vars.BEVY_E2E_WINDOWS_RUNNER != '' && (github.event.inputs.group || 'both') != 'inworld'
+    if: needs.inputs.outputs.run == 'true' && vars.BEVY_E2E_WINDOWS_RUNNER != ''
     runs-on: windows-2025
     timeout-minutes: 30
     permissions:
@@ -321,6 +322,22 @@ jobs:
           }
       # The accounts secret is on the two scenario steps alone: never in the environment of the
       # install, the builds, or the report.
+      # The scenes are built with the dcl-scene-cli the scene-cli job built, and served from the
+      # runner: the smart wearable fixture for the InWorld group, the visual scenes for the
+      # Visual group. Without the CLI the InWorld group still runs; its smart wearable scenarios
+      # then fail on the missing fixture, and the Visual group is skipped.
+      - name: Download dcl-scene-cli
+        if: needs.scene-cli.result == 'success'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dcl-scene-cli-windows-${{ needs.inputs.outputs.sha }}
+          path: scene-cli
+      - name: Build the smart wearable fixture
+        if: env.GROUP != 'visual' && needs.scene-cli.result == 'success'
+        env:
+          # A backslash path: build-scenes.ts spawns it through cmd.exe, which reads a `/` as a switch.
+          DCL_SCENE_CLI: ${{ github.workspace }}\scene-cli\dcl-scene-cli.exe
+        run: npm run build-scenes -- smart-wearable
       - name: InWorld scenarios
         id: inworld
         if: env.GROUP != 'visual'
@@ -329,14 +346,6 @@ jobs:
         env:
           DCL_E2E_ACCOUNT_KEYS: ${{ secrets.DCL_E2E_ACCOUNT_KEYS }}
         run: npm run e2e -- --inworld
-      # The visual scenes are built with the dcl-scene-cli the scene-cli job built, and served
-      # from the runner.
-      - name: Download dcl-scene-cli
-        if: env.GROUP != 'inworld' && needs.scene-cli.result == 'success'
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: dcl-scene-cli-windows-${{ needs.inputs.outputs.sha }}
-          path: scene-cli
       - name: Build the visual scenes
         if: env.GROUP != 'inworld' && needs.scene-cli.result == 'success'
         env:
@@ -369,7 +378,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
       - name: Fail when a group failed
-        if: steps.inworld.outcome == 'failure' || steps.visual.outcome == 'failure' || (env.GROUP != 'inworld' && needs.scene-cli.result != 'success')
+        if: steps.inworld.outcome == 'failure' || steps.visual.outcome == 'failure' || needs.scene-cli.result != 'success'
         run: |
           Write-Output "InWorld: ${{ steps.inworld.outcome }}; Visual: ${{ steps.visual.outcome }}; dcl-scene-cli build: ${{ needs.scene-cli.result }}"
           exit 1
