@@ -29,7 +29,10 @@ use serde::Serialize;
 use serde_json::Value;
 use sqlx::PgPool;
 
-use crate::sanitize::{sanitize_asset_url, sanitize_event_description, validate_event_url};
+use crate::sanitize::{
+    sanitize_asset_url, sanitize_event_description, strip_all_markup, strip_all_markup_opt,
+    validate_event_url,
+};
 use crate::shared::errors::ApiError;
 
 /// The JSON form of every date the events routes answer: upstream serialised
@@ -1061,8 +1064,9 @@ fn event_row_to_record(
         .and_then(|s| validate_event_url(s).ok());
     let user = raw_str(raw, "user").or_else(|| r.user_creator.clone());
     let owner_view = matches!((verified_viewer,user.as_deref()),(Some(viewer),Some(owner)) if viewer.eq_ignore_ascii_case(owner));
-    let scene_name = raw_str(raw, "scene_name");
-    let estate_name = raw_str(raw, "estate_name").or_else(|| scene_name.clone());
+    let scene_name = strip_all_markup_opt(raw_str(raw, "scene_name"));
+    let estate_name =
+        strip_all_markup_opt(raw_str(raw, "estate_name")).or_else(|| scene_name.clone());
     let world = raw.get("world").and_then(|v| v.as_bool()).unwrap_or(false);
     let duration = r
         .duration_ms
@@ -1156,7 +1160,7 @@ fn event_row_to_record(
 
     EventRecord {
         id: r.id,
-        name: r.name,
+        name: strip_all_markup(&r.name),
         image,
         image_vertical,
         description: r
@@ -1178,11 +1182,11 @@ fn event_row_to_record(
         y,
         server,
         url,
-        user_name: foundation::display_name(
+        user_name: strip_all_markup_opt(foundation::display_name(
             &view.foundation,
             user.as_deref(),
             raw_str(raw, "user_name"),
-        ),
+        )),
         user,
         estate_id: raw_str(raw, "estate_id"),
         estate_name,
@@ -2068,6 +2072,28 @@ mod tests {
             rec.image_vertical,
             Some(Value::String("/poster/bafabc123".into()))
         );
+    }
+
+    #[test]
+    fn record_names_carry_no_rich_text_tags() {
+        let raw = json!({
+            "user_name": "<size=200>Host</size>",
+            "scene_name": "<link=\"file:///x\">Scene</link>",
+            "estate_name": "<#ff0000>Estate",
+        });
+        let mut row = row_with(raw, None, None);
+        row.name = "Party <link=\"smb://h/s\">here</link>".into();
+        let rec = event_row_to_record(row, None, &test_view(None));
+        assert_eq!(rec.name, "Party here");
+        assert_eq!(rec.scene_name.as_deref(), Some("Scene"));
+        assert_eq!(rec.estate_name.as_deref(), Some("Estate"));
+        assert_eq!(rec.user_name.as_deref(), Some("Host"));
+
+        let mut row = row_with(json!({ "scene_name": "Plain Scene" }), None, None);
+        row.name = "Plain <3 party".into();
+        let rec = event_row_to_record(row, None, &test_view(None));
+        assert_eq!(rec.name, "Plain <3 party");
+        assert_eq!(rec.estate_name.as_deref(), Some("Plain Scene"));
     }
 
     fn at(

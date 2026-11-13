@@ -72,7 +72,9 @@ fn markup_tag_end(bytes: &[u8], lt: usize) -> Option<usize> {
     if bytes.get(j) == Some(&b'/') {
         j += 1;
     }
-    if !bytes.get(j)?.is_ascii_alphabetic() {
+    let first = *bytes.get(j)?;
+    // `<#rrggbb>` is the rich-text colour shorthand.
+    if !(first.is_ascii_alphabetic() || (first == b'#' && j == lt + 1)) {
         return None;
     }
     j += 1;
@@ -643,6 +645,38 @@ mod markup_tests {
     }
 
     #[test]
+    fn description_strips_the_colour_shorthand_and_keeps_safe_links() {
+        assert_eq!(
+            sanitize_markup_description(
+                "<#ff0000>red</color> and <link=\"https://a.com\">a</link>"
+            ),
+            "red and <link=\"https://a.com\">a</link>"
+        );
+        assert_eq!(sanitize_markup_description("issue <#12"), "issue <#12");
+    }
+
+    #[test]
+    fn strip_all_markup_drops_every_tag_and_keeps_plain_text() {
+        for (input, expected) in [
+            (
+                "Party <link=\"file:///etc\">click</link><size=300>!",
+                "Party click!",
+            ),
+            ("<link=\"https://a.com\">safe</link>", "safe"),
+            ("<#ff0000>red", "red"),
+            ("<<b>link=x>click", "click"),
+            ("Plain title", "Plain title"),
+            ("5 < 10, I <3 it", "5 < 10, I <3 it"),
+            ("a > b", "a > b"),
+        ] {
+            assert_eq!(strip_all_markup(input), expected, "{input:?}");
+        }
+        let out = strip_all_markup("<<<<<<<<b>b>b>b>b>b>b>b>");
+        assert!(!out.contains('<') && !out.contains('>'), "{out}");
+        assert_eq!(strip_all_markup_opt(None), None);
+    }
+
+    #[test]
     fn fails_closed_when_input_does_not_stabilize_within_the_pass_cap() {
         let out = sanitize_markup_description("<<<<<<b>b>b>b>b>b>");
         assert!(!out.contains('<') && !out.contains('>'), "{out}");
@@ -872,6 +906,44 @@ pub fn sanitize_place_description(description: Option<&str>) -> Option<String> {
 
 pub fn sanitize_event_description(description: &str) -> String {
     sanitize_markup_description(description)
+}
+
+/// Plain text for names and titles, which keep no markup at all: every `<…>`
+/// span is dropped to a fixed point, so no rich-text tag (link, size, colour)
+/// survives. Fails closed like [`sanitize_markup_description`].
+pub fn strip_all_markup(text: &str) -> String {
+    let mut current = text.to_owned();
+    for _ in 0..MAX_SANITIZE_PASSES {
+        let next = strip_tag_spans(&current);
+        if next == current {
+            return current;
+        }
+        current = next;
+    }
+    current.retain(|c| !matches!(c, '<' | '>'));
+    current
+}
+
+fn strip_tag_spans(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(lt) = rest.find('<') {
+        out.push_str(&rest[..lt]);
+        let after = &rest[lt + 1..];
+        match after.find(['<', '>']) {
+            Some(end) if after.as_bytes()[end] == b'>' => rest = &after[end + 1..],
+            _ => {
+                out.push('<');
+                rest = after;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+pub fn strip_all_markup_opt(text: Option<String>) -> Option<String> {
+    text.map(|t| strip_all_markup(&t))
 }
 
 pub const MAX_EVENT_URL_LEN: usize = 2048;

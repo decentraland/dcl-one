@@ -200,7 +200,7 @@ async fn recipients(
 
 fn metadata(intent: &Intent, recipient: &Recipient, links: &Links) -> Value {
     let base = links.base.trim_end_matches('/');
-    let name = text(&intent.event, "name");
+    let name = crate::explore::sanitize::strip_all_markup(text(&intent.event, "name"));
     let description =
         crate::explore::sanitize::sanitize_event_description(text(&intent.event, "description"));
     // `Notifications/index.ts:48,85,205`: the jump-in link; the other kinds
@@ -1837,6 +1837,35 @@ mod tests {
 
     /// `Notifications/index.ts:44-68,73-110`: the reminder and start titles,
     /// descriptions, jump-in links (`position` and `realm`) and `attendee`.
+    #[test]
+    fn notice_text_carries_the_event_name_without_rich_text_tags() {
+        let links = test_links("https://example.org");
+        let event =
+            json!({"name":"Party <link=\"file:///x\">here</link><size=300>","description":"d"});
+        let reminder = metadata(
+            &intent("events_starts_soon", event.clone()),
+            &recipient(false, false),
+            &links,
+        );
+        assert_eq!(
+            reminder["description"],
+            "The event Party here starts in an hour."
+        );
+        assert_eq!(reminder["name"], "Party here");
+        let approved = metadata(
+            &intent("event_approved", event),
+            &recipient(false, false),
+            &links,
+        );
+        assert_eq!(approved["title"], "Party here");
+        let plain = metadata(
+            &intent("event_approved", json!({"name":"Launch"})),
+            &recipient(false, false),
+            &links,
+        );
+        assert_eq!(plain["title"], "Launch");
+    }
+
     #[test]
     fn reminder_and_start_notices_follow_upstream_titles_and_links() {
         let start = chrono::DateTime::parse_from_rfc3339("2099-06-01T18:00:00Z")

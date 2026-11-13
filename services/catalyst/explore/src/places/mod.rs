@@ -663,7 +663,7 @@ impl PlacesComponent {
                 );
             }
             if row.contact_name.is_none() {
-                row.contact_name = text("contact_name");
+                row.contact_name = crate::sanitize::strip_all_markup_opt(text("contact_name"));
             }
             if row.contact_email.is_none() {
                 row.contact_email = text("contact_email");
