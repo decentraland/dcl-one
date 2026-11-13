@@ -213,7 +213,7 @@ where
         }
     }
 
-    request = request.header("User-Agent", "DCLExplorer/0.1");
+    request = request.header("User-Agent", common::util::USER_AGENT);
 
     debug!("request {url}");
     let cancel = CancelHandle::new_rc();
@@ -511,7 +511,8 @@ struct SceneHttpClient(reqwest::Client);
 
 pub(super) fn allow_private_network(state: &OpState) -> bool {
     // The renderer gives this sender only to its bundled HUD or an operator-selected
-    // system scene. Hosted scenes never inherit that native privilege.
+    // system scene. Hosted scenes never inherit that native privilege. No context fails
+    // closed.
     state.try_borrow::<CrdtContext>().is_some_and(|context| {
         context.preview || (!context.is_server && state.has::<dcl_js::SuperUserScene>())
     })
@@ -553,7 +554,7 @@ fn scene_client_builder(allow_private: bool) -> reqwest::ClientBuilder {
     platform::http_client_builder()
         .connect_timeout(Duration::from_secs(5))
         .use_native_tls()
-        .user_agent("DCLExplorer/0.1")
+        .user_agent(common::util::USER_AGENT)
         .dns_resolver(std::sync::Arc::new(PublicOnlyResolver { allow_private }))
 }
 
@@ -577,11 +578,7 @@ fn build_scene_client(allow_private: bool, is_server: bool) -> reqwest::Client {
 /// Parse a URL host component as an IP literal, tolerating the brackets the `url` crate keeps
 /// around an IPv6 literal (`[::1]`). Returns `None` for a hostname.
 fn host_ip_literal(host: &str) -> Option<std::net::IpAddr> {
-    host.strip_prefix('[')
-        .and_then(|h| h.strip_suffix(']'))
-        .unwrap_or(host)
-        .parse()
-        .ok()
+    common::util::strip_ipv6_brackets(host).parse().ok()
 }
 
 /// Redirect policy for the desktop client. Redirects are followed (as the browser would), but

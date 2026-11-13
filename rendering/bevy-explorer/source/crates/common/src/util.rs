@@ -479,13 +479,23 @@ pub fn camera_to_render_layers<'a>(
     })
 }
 
+/// The User-Agent every client of this engine sends, scene fetch and WebSocket included.
+pub const USER_AGENT: &str = "DCLExplorer/0.1";
+
+/// `host` without the brackets of an IPv6 literal.
+pub fn strip_ipv6_brackets(host: &str) -> &str {
+    host.strip_prefix('[')
+        .and_then(|h| h.strip_suffix(']'))
+        .unwrap_or(host)
+}
+
 // convenient non-pooled client use for infrequent requests
 #[cfg(not(target_arch = "wasm32"))]
 pub fn reqwest_client() -> reqwest::Client {
     platform::http_client_builder()
         .timeout(std::time::Duration::from_secs(5))
         .use_native_tls()
-        .user_agent("DCLExplorer/0.1")
+        .user_agent(USER_AGENT)
         .build()
         .unwrap()
 }
@@ -493,7 +503,7 @@ pub fn reqwest_client() -> reqwest::Client {
 #[cfg(target_arch = "wasm32")]
 pub fn reqwest_client() -> reqwest::Client {
     platform::http_client_builder()
-        .user_agent("DCLExplorer/0.1")
+        .user_agent(USER_AGENT)
         .build()
         .unwrap()
 }
@@ -824,8 +834,8 @@ pub fn validate_public_addrs(
 /// and silently dropping the private ones would let the request proceed looking legitimate.
 ///
 /// This is the shared primitive behind [`assert_public_url`] (pre-flight, by URL) and the
-/// connect-time resolver used by every scene http client, so both reach the same verdict
-/// from the same code. `allow_private` (preview, or a non-server super-user scene) permits
+/// connect-time resolver used by every scene http client and the scene WebSocket, so all
+/// reach the same verdict from the same code. `allow_private` (preview, or a non-server super-user scene) permits
 /// [`is_private_lan`] addresses but never link-local, so metadata stays blocked in every mode.
 #[cfg(not(target_arch = "wasm32"))]
 pub async fn resolve_public_addrs(
