@@ -715,6 +715,8 @@ fn launch(st: Arc<AppState>, root: PathBuf, id: u64) {
         quiet: true,
         host_signer,
         identity,
+        // the project's stored texture setting: what this preview serves
+        textures: crate::textures::Overrides::default(),
         programmatic: false,
         deploy_token: None,
     };

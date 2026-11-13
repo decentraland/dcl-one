@@ -78,6 +78,17 @@ async fn build_unless_skipped(opts: &DeployOptions) -> Result<()> {
     Ok(())
 }
 
+/// The texture setting, after the build and before `prepare` reads the
+/// payload: the release bundle the ignore rule searches is the one uploaded.
+/// The stage it returns must outlive `prepare`. A failure stops the deploy
+/// rather than publishing a half-optimized scene.
+async fn optimize_textures(
+    opts: &DeployOptions,
+    project: &Project,
+) -> Result<crate::textures::DeployStage> {
+    crate::textures::stage_for_deploy(&project.root, opts.textures, opts.quiet).await
+}
+
 /// Eight leading and six trailing characters tell two CIDs apart by eye.
 fn short_hash(h: &str) -> String {
     match h.len() > 15 {
@@ -200,7 +211,10 @@ async fn publish(opts: &DeployOptions) -> Result<Published> {
 
     if opts.dry_run {
         build_unless_skipped(opts).await?;
-        let packed = pack(opts, &super::prepare_checked(&project, validate)?, 1)?;
+        let textures = optimize_textures(opts, &project).await?;
+        let prepared = super::prepare_checked(&project, validate)?;
+        drop(textures);
+        let packed = pack(opts, &prepared, 1)?;
         tracing::info!("dry run — not uploading");
         ux::note("dry run \u{2014} entity not uploaded");
         return Ok(Published {
@@ -225,12 +239,15 @@ async fn publish(opts: &DeployOptions) -> Result<Published> {
     };
 
     build_unless_skipped(opts).await?;
+    let textures = optimize_textures(opts, &project).await?;
     let prepared = {
         let project = project.clone();
         tokio::task::spawn_blocking(move || super::prepare_checked(&project, validate))
             .await
             .context("preparing the payload")??
     };
+    // the payload's bytes are read: the preview's overlay goes back
+    drop(textures);
 
     if headless {
         deploy_headless(opts, prepared, &target, world.as_deref(), needs_delete).await

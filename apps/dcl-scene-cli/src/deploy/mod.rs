@@ -65,6 +65,11 @@ pub struct DeployOptions {
     /// A delegated identity that signs headlessly instead of hosting a
     /// browser signing page, while unexpired.
     pub identity: Option<DeployIdentity>,
+    /// `--[no-]optimize-textures` and `--[no-]keep-source-textures`, stored
+    /// as the project setting; with it on, models' textures are published as
+    /// UASTC KTX2, staged after the build and before the payload is read
+    /// ([`crate::textures`]).
+    pub textures: crate::textures::Overrides,
     /// A program drives the run: no browser, stdout carries one JSON line
     /// when the signing server is ready and one with the final state, and
     /// the CLI ends with the deployment.
@@ -821,18 +826,25 @@ fn uses_release(root: &Path) -> bool {
     matches!(crate::build_script::command(root), Ok(None))
 }
 
-/// The payload's paths: the tree's publishable files plus any the release
-/// build alone emits (a chunk only the production build splits out).
-pub fn with_release_files(root: &Path, mut rels: Vec<String>) -> Vec<String> {
-    if !uses_release(root) {
-        return rels;
-    }
-    for rel in release_rel_files(&root.join(crate::build::RELEASE_OUT)) {
-        if !rels.contains(&rel) {
-            rels.push(rel);
+/// The payload's paths before the texture overlay: the tree's publishable
+/// files plus any the release build alone emits (a chunk only the production
+/// build splits out).
+pub(crate) fn tree_payload_files(root: &Path, mut rels: Vec<String>) -> Vec<String> {
+    if uses_release(root) {
+        for rel in release_rel_files(&root.join(crate::build::RELEASE_OUT)) {
+            if !rels.contains(&rel) {
+                rels.push(rel);
+            }
         }
     }
     rels
+}
+
+/// The payload's paths: the tree's publishable files plus any the release
+/// build alone emits, with the optimized-texture overlay applied when the
+/// project enables one. Read each through [`payload_path`].
+pub fn with_release_files(root: &Path, rels: Vec<String>) -> Vec<String> {
+    crate::textures::publishable(root, tree_payload_files(root, rels))
 }
 
 /// Where a payload path is read from. rustc keeps debug and release
@@ -842,8 +854,17 @@ pub fn with_release_files(root: &Path, mut rels: Vec<String>) -> Vec<String> {
 /// builds stop clobbering one file — and a publish stops rewriting the very
 /// tree the page just fingerprinted. Every look at the payload — the sizes
 /// the preview states, the hashes the forecast asks about, the bytes the
-/// deploy signs — goes through here, so they describe the same file.
+/// deploy signs — goes through here, so they describe the same file. A
+/// model or KTX2 file the texture overlay staged is read from the stage.
 pub fn payload_path(root: &Path, rel: &str) -> PathBuf {
+    match crate::textures::staged_source(root, rel) {
+        Some(staged) => staged,
+        None => tree_payload_path(root, rel),
+    }
+}
+
+/// [`payload_path`] before the texture overlay: the release copy or the tree.
+pub(crate) fn tree_payload_path(root: &Path, rel: &str) -> PathBuf {
     if !uses_release(root) {
         return root.join(rel);
     }

@@ -7,7 +7,11 @@ pub mod proto {
     include!(concat!(env!("OUT_DIR"), "/decentraland.sdk.development.rs"));
 }
 
-use proto::{UpdateModel, UpdateModelType, UpdateScene, WsSceneMessage, ws_scene_message};
+use crate::textures::import::{ImportState, ImportStatus};
+use proto::{
+    TextureOptimization, UpdateModel, UpdateModelType, UpdateScene, WsSceneMessage,
+    texture_optimization, ws_scene_message,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReloadEvent {
@@ -56,6 +60,65 @@ pub fn update_model_frame(scene_id: &str, src: &str, hash: &str, removed: bool) 
     }))
 }
 
+fn proto_state(state: ImportState) -> texture_optimization::State {
+    match state {
+        ImportState::Running => texture_optimization::State::TosRunning,
+        ImportState::Ready => texture_optimization::State::TosReady,
+        ImportState::Failed => texture_optimization::State::TosFailed,
+    }
+}
+
+fn state_name(state: ImportState) -> &'static str {
+    match state {
+        ImportState::Running => "RUNNING",
+        ImportState::Ready => "READY",
+        ImportState::Failed => "FAILED",
+    }
+}
+
+pub fn texture_optimization_frame(scene_id: &str, status: &ImportStatus) -> Vec<u8> {
+    frame(ws_scene_message::Message::TextureOptimization(
+        TextureOptimization {
+            scene_id: scene_id.to_string(),
+            state: proto_state(status.state) as i32,
+            done: status.done,
+            total: status.total,
+            failed: status.failed,
+            bytes_before: status.bytes_before,
+            bytes_after: status.bytes_after,
+            enabled: status.enabled,
+        },
+    ))
+}
+
+/// The JSON twin of [`texture_optimization_frame`], as `SCENE_UPDATE` has
+/// one; `state` is `RUNNING`, `READY` or `FAILED`.
+pub fn texture_optimization_json(scene_id: &str, status: &ImportStatus) -> String {
+    json!({
+        "type": "TEXTURE_OPTIMIZATION",
+        "payload": {
+            "sceneId": scene_id,
+            "state": state_name(status.state),
+            "done": status.done,
+            "total": status.total,
+            "failed": status.failed,
+            "bytesBefore": status.bytes_before,
+            "bytesAfter": status.bytes_after,
+            "enabled": status.enabled,
+        }
+    })
+    .to_string()
+}
+
+/// The background texture import's status: a text frame for clients that
+/// read JSON, then the `WsSceneMessage`. Reloads nothing by itself.
+pub fn texture_optimization_frames(scene_id: &str, status: &ImportStatus) -> Vec<ReloadFrame> {
+    vec![
+        ReloadFrame::Text(texture_optimization_json(scene_id, status)),
+        ReloadFrame::Binary(texture_optimization_frame(scene_id, status)),
+    ]
+}
+
 pub fn model_src(root: &Path, path: &Path) -> String {
     path.strip_prefix(root)
         .unwrap_or(path)
@@ -73,7 +136,15 @@ pub fn reload_frames(
         ReloadEvent::Scene => update_scene_frame(scene_id),
         ReloadEvent::Model { path, removed } => {
             let src = model_src(root, path);
-            let hash = b64_content_hash(&root.join(&src).display().to_string(), machine);
+            // a model the texture overlay rewrote is served from its stage
+            let hash = match crate::textures::staged_source(root, &src) {
+                Some(staged) => crate::scene::b64_content_hash_in_root(
+                    &crate::scene::root_tag(root, machine),
+                    &src,
+                    &staged,
+                ),
+                None => b64_content_hash(&root.join(&src).display().to_string(), machine),
+            };
             update_model_frame(scene_id, &src, &hash, *removed)
         }
     };
@@ -184,6 +255,95 @@ mod tests {
         );
         assert_eq!(u.scene_id, "scene-1");
         assert_eq!(u.r#type(), UpdateModelType::UmtChange);
+    }
+
+    fn status(state: ImportState) -> ImportStatus {
+        ImportStatus {
+            state,
+            done: 2,
+            total: 3,
+            failed: 1,
+            bytes_before: 300,
+            bytes_after: 200,
+            enabled: true,
+        }
+    }
+
+    #[test]
+    fn texture_optimization_golden_bytes() {
+        let bytes = texture_optimization_frame("s", &status(ImportState::Ready));
+        assert_eq!(
+            bytes,
+            vec![
+                0x1a, 0x13, // field 3 of the oneof, 19 bytes
+                0x0a, 0x01, 0x73, // scene_id "s"
+                0x10, 0x01, // state TOS_READY
+                0x18, 0x02, // done
+                0x20, 0x03, // total
+                0x28, 0x01, // failed
+                0x30, 0xac, 0x02, // bytes_before 300
+                0x38, 0xc8, 0x01, // bytes_after 200
+                0x40, 0x01, // enabled
+            ]
+        );
+    }
+
+    #[test]
+    fn texture_optimization_round_trips_every_state() {
+        for (state, wire) in [
+            (
+                ImportState::Running,
+                texture_optimization::State::TosRunning,
+            ),
+            (ImportState::Ready, texture_optimization::State::TosReady),
+            (ImportState::Failed, texture_optimization::State::TosFailed),
+        ] {
+            let bytes = texture_optimization_frame("scene-1", &status(state));
+            let t = match WsSceneMessage::decode(bytes.as_slice()).unwrap().message {
+                Some(ws_scene_message::Message::TextureOptimization(t)) => t,
+                other => panic!("unexpected oneof: {other:?}"),
+            };
+            assert_eq!(t.scene_id, "scene-1");
+            assert_eq!(t.state(), wire);
+            assert_eq!((t.done, t.total, t.failed), (2, 3, 1));
+            assert_eq!((t.bytes_before, t.bytes_after), (300, 200));
+            assert!(t.enabled);
+        }
+    }
+
+    #[test]
+    fn texture_optimization_json_mirrors_the_message() {
+        let frames = texture_optimization_frames("scene-1", &status(ImportState::Running));
+        assert_eq!(frames.len(), 2);
+        let ReloadFrame::Text(text) = &frames[0] else {
+            panic!("the JSON frame goes first");
+        };
+        let v: serde_json::Value = serde_json::from_str(text).unwrap();
+        assert_eq!(
+            v,
+            json!({
+                "type": "TEXTURE_OPTIMIZATION",
+                "payload": {
+                    "sceneId": "scene-1",
+                    "state": "RUNNING",
+                    "done": 2,
+                    "total": 3,
+                    "failed": 1,
+                    "bytesBefore": 300,
+                    "bytesAfter": 200,
+                    "enabled": true
+                }
+            })
+        );
+        assert_eq!(
+            frames[1],
+            ReloadFrame::Binary(texture_optimization_frame(
+                "scene-1",
+                &status(ImportState::Running)
+            ))
+        );
+        let failed = texture_optimization_json("x", &status(ImportState::Failed));
+        assert!(failed.contains("\"state\":\"FAILED\""), "{failed}");
     }
 
     #[test]

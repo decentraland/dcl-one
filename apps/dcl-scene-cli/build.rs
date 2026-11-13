@@ -21,6 +21,7 @@ fn main() -> Result<()> {
     prost_build::Config::new().compile_fds(fds)?;
     generate_abgen_embed()?;
     generate_livekit_embed()?;
+    generate_basisu_embed()?;
     generate_skills_embed()?;
     generate_play_embed()?;
     Ok(())
@@ -576,6 +577,100 @@ fn fetch_pinned_abgen(lock: &AbgenLock) -> Result<PathBuf> {
 /// download per abgen release, not per `cargo clean`.
 fn abgen_cache_dir() -> PathBuf {
     embed_cache_dir("ABGEN_EMBED_CACHE", "dcl-scene-cli-abgen")
+}
+
+fn basisu_cache_dir() -> PathBuf {
+    embed_cache_dir("BASISU_EMBED_CACHE", "dcl-scene-cli-basisu")
+}
+
+/// The Basis Universal encoder `--optimize-textures` runs in-process
+/// (src/textures/basisu.rs): the official single-threaded WASI build pinned in
+/// basisu-release.lock. One wasm module serves every host, and its sha256 is
+/// part of each encoded texture's identity, so the bytes are verified whether
+/// they come from the shared cache, a download or BASISU_EMBED_WASM (an
+/// already-downloaded copy, for offline builds): a different module would mint
+/// different content hashes. Stored deflate-compressed, inflated once per run.
+fn generate_basisu_embed() -> Result<()> {
+    println!("cargo:rerun-if-env-changed=BASISU_EMBED_WASM");
+    println!("cargo:rerun-if-env-changed=BASISU_EMBED_CACHE");
+    println!("cargo:rerun-if-changed=basisu-release.lock");
+    let out_dir = PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR"));
+    let lock = ReleaseLock::read("basisu-release.lock")?;
+    let (name, sha) = lock
+        .entries
+        .iter()
+        .next()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .expect("basisu-release.lock pins one file");
+    let wasm = match std::env::var("BASISU_EMBED_WASM").unwrap_or_default() {
+        v if v.is_empty() => fetch_pinned_basisu(&lock, &name, &sha)?,
+        v => {
+            let p = PathBuf::from(&v);
+            if !p.is_file() {
+                panic!("BASISU_EMBED_WASM={v} is not a file; it must point at {name}");
+            }
+            p
+        }
+    };
+    println!("cargo:rerun-if-changed={}", wasm.display());
+    let raw = std::fs::read(&wasm)?;
+    let got = sha256_hex(&raw);
+    if got != sha {
+        panic!(
+            "{} hashed to {got}, but basisu-release.lock pins {sha}",
+            wasm.display()
+        );
+    }
+    let blob = out_dir.join("basisu.wasm.z");
+    std::fs::write(&blob, deflate(&raw))?;
+    let code = format!(
+        "/// The deflated encoder module.\npub static PACKED: &[u8] = include_bytes!({:?});\npub const RAW_LEN: usize = {};\npub const WASM_SHA256: &str = {sha:?};\npub const VERSION: &str = {:?};\n",
+        blob.display().to_string(),
+        raw.len(),
+        lock.version,
+    );
+    std::fs::write(out_dir.join("basisu_embed_data.rs"), code)
+}
+
+fn fetch_pinned_basisu(lock: &ReleaseLock, name: &str, sha: &str) -> Result<PathBuf> {
+    let cache = basisu_cache_dir().join(&lock.version);
+    let cached = cache.join(name);
+    if cached.is_file() && sha256_hex(&std::fs::read(&cached)?) == sha {
+        return Ok(cached);
+    }
+    std::fs::create_dir_all(&cache)?;
+    let url = lock.url.replace("{version}", &lock.version);
+    let part = cache.join(format!("{name}.{}", std::process::id()));
+    println!(
+        "cargo:warning=downloaded pinned basisu {} into {}",
+        lock.version,
+        cache.display()
+    );
+    let status = std::process::Command::new("curl")
+        .args(["-fsSL", "--retry", "3", "--retry-delay", "2", "-o"])
+        .arg(&part)
+        .arg(&url)
+        .status();
+    match status {
+        Ok(s) if s.success() => {}
+        other => {
+            let _ = std::fs::remove_file(&part);
+            panic!(
+                "could not download the pinned basisu encoder from {url} ({other:?}).\n\
+                 to build without network access, download it yourself and set \
+                 BASISU_EMBED_WASM=<path>/{name}"
+            );
+        }
+    }
+    let got = sha256_hex(&std::fs::read(&part)?);
+    if got != sha {
+        let _ = std::fs::remove_file(&part);
+        panic!("{url} hashed to {got}, but basisu-release.lock pins {sha}");
+    }
+    if std::fs::rename(&part, &cached).is_err() && !cached.is_file() {
+        panic!("could not place {name} into {}", cache.display());
+    }
+    Ok(cached)
 }
 
 fn livekit_cache_dir() -> PathBuf {
