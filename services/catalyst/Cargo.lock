@@ -2048,6 +2048,7 @@ dependencies = [
  "bytes",
  "catalyst-chain-index",
  "catalyst-comms",
+ "catalyst-config",
  "catalyst-content",
  "catalyst-db",
  "catalyst-explore",

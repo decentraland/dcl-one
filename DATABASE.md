@@ -1500,7 +1500,8 @@ failed insert answers 503 and LiveKit delivers the event again. Only events in
 a place a badge could count now are kept: a 5 s snapshot of the published badges' worlds, parcels and the
 scene entities deployed on them (one GIN-indexed `entity_pointers &&` read),
 with the engine's lookahead and lookback. A scene entity the snapshot does not
-know (a redeploy since) is looked up once per batch by `entity_id` and dropped
+know (a redeploy since) is looked up by `entity_id` in the webhook that carries
+it, under the webhook's lock stripes, and dropped
 only when it is deployed off every badge parcel; one the node has not synced
 is kept for the engine. Every event is kept when the snapshot cannot be read.
 A badge published or moved earlier is seen within 5 s; joins before that are
@@ -1527,9 +1528,10 @@ tables need no per-session locks. The runtime state is upstream's
 value meets a LiveKit event time or the `intervals` document. Indexes follow
 the statements: `(wallet, realm_name)` for a leave's open visits,
 `opened_at` and `(last_checked_at, opened_at)` for the sweeper's due visits,
-and each fact table's retention column for the bounded prune (batches of 1,000
-per table until one comes back short, at most 20 per sweep, after the 7-day
-redelivery window). Completed badges are left out in one statement per event,
+and each fact table's retention column for the bounded prune (batches of
+`BADGES_PRESENCE_PRUNE_BATCH_SIZE` rows, 1,000 by default, per table until one
+comes back short, at most 20 per sweep, after the redelivery window,
+`BADGES_PRESENCE_APPLIED_EVENTS_TTL_SECONDS`, 7 days by default). Completed badges are left out in one statement per event,
 so a wallet with nothing left to earn in a place records no visit or pending
 leave there. A scene badge resolves
 the event's entity to its parcels through `content.deployments` (`entity_id`
@@ -1539,14 +1541,32 @@ upstream writes it, so an imported document resumes. As upstream's catalog
 requires, a badge is counted only when its row is single (not tiered), its
 `criteria_steps` is its rule's (`required_seconds` for a stay, 1 for a visit)
 and no evaluator or import of its own (other than a one-time import) writes
-it; another row is skipped, logged and counted as `badge_invalid`, so the
+it; another row is skipped and counted as `badge_invalid` (logged once per
+badge and reason), so the
 flow never overwrites another writer's progress. Invariants: a session
 counts only from its own join to its own leave, never past the first
 occupancy observation that missed the wallet; an ended session never reopens
 for that badge; overlapping connections count once; a stay completes at the
-instant the union reaches `required_seconds`. The sweeper reads this
-process's LiveKit occupancy observation (`comms::presence`) and only closes
-visits; no observation, or an empty one, changes nothing.
+instant the union reaches `required_seconds`. A grant writes its
+`badge_granted` notification unless `BADGES_PRESENCE_GRANT_NOTIFICATIONS` is
+false. The sweeper reads this process's LiveKit occupancy observation
+(`comms::presence`) and only closes visits; no observation, or an empty one,
+changes nothing. `BADGES_PRESENCE_SWEEPER_ENABLED=false` stops only these
+occupancy checks; the maximum age and the prune still run.
+
+Upstream's tuning is environment settings, in seconds and with upstream's
+defaults (shared with `presence::Settings::default()`; each duration at most
+30 days, each batch at most 100,000):
+`BADGES_PRESENCE_EARLY_JOIN_LOOKAHEAD_SECONDS` (21,600; 0 keeps no early join),
+`BADGES_PRESENCE_OPEN_VISIT_CHECK_AFTER_SECONDS` (900),
+`BADGES_PRESENCE_OPEN_VISIT_MAX_AGE_SECONDS` (86,400),
+`BADGES_PRESENCE_APPLIED_EVENTS_TTL_SECONDS` (604,800),
+`BADGES_PRESENCE_ABSENT_EXPIRE_AFTER_SECONDS` (3,600),
+`BADGES_PRESENCE_SWEEP_INTERVAL_SECONDS` (60), `BADGES_PRESENCE_SWEEP_BATCH_SIZE`
+(100), `BADGES_PRESENCE_PRUNE_BATCH_SIZE` (1,000),
+`BADGES_PRESENCE_GRANT_NOTIFICATIONS` and `BADGES_PRESENCE_SWEEPER_ENABLED`
+(both true). Upstream names them without the `BADGES_` prefix and gives the
+sweep interval in milliseconds.
 ### Adding a badge
 
 A running node takes a new badge through the bearer-gated catalog routes

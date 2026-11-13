@@ -978,18 +978,18 @@ pub async fn serve(
         vec![stage5.core.clone()];
     let presence_badge_settings = {
         let social = &config.social;
-        let ms = |secs: u64| i64::try_from(secs.saturating_mul(1000)).unwrap_or(i64::MAX);
+        let ms = badges::presence::secs_to_ms;
         badges::presence::Settings {
-            check_after_ms: ms(social.presence_open_visit_check_after_seconds),
-            max_age_ms: ms(social.presence_open_visit_max_age_seconds),
-            applied_events_ttl_ms: ms(social.presence_applied_events_ttl_seconds),
-            absent_expire_ms: ms(social.presence_absent_expire_after_seconds),
-            lookahead_ms: ms(social.presence_early_join_lookahead_seconds),
-            sweep_batch: i64::from(social.presence_sweep_batch_size),
-            prune_batch: i64::from(social.presence_prune_batch_size),
-            sweep_interval: Duration::from_millis(social.presence_sweep_interval_ms),
-            grant_notifications: social.presence_grant_notifications,
-            sweeper_enabled: social.presence_sweeper_enabled,
+            check_after_ms: ms(social.badges_presence_open_visit_check_after_seconds),
+            max_age_ms: ms(social.badges_presence_open_visit_max_age_seconds),
+            applied_events_ttl_ms: ms(social.badges_presence_applied_events_ttl_seconds),
+            absent_expire_ms: ms(social.badges_presence_absent_expire_after_seconds),
+            lookahead_ms: ms(social.badges_presence_early_join_lookahead_seconds),
+            sweep_batch: i64::from(social.badges_presence_sweep_batch_size),
+            prune_batch: i64::from(social.badges_presence_prune_batch_size),
+            sweep_interval: Duration::from_secs(social.badges_presence_sweep_interval_seconds),
+            grant_notifications: social.badges_presence_grant_notifications,
+            sweeper_enabled: social.badges_presence_sweeper_enabled,
             ..badges::presence::Settings::default()
         }
     };

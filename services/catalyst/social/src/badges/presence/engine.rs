@@ -93,6 +93,7 @@ fn invalid_reason(
     required_seconds: i32,
 ) -> Option<&'static str> {
     use crate::badges::backfill::{Kind, kind};
+    // Unlike "can be granted at all", a one-time import is not an owner: presence replaces it.
     let owned = crate::badges::evaluators::EVALUATED.contains(&badge_id)
         || kind(badge_id).is_some_and(|k| !matches!(k, Kind::OneTime | Kind::Unsupported));
     if owned {
@@ -127,16 +128,25 @@ fn config(
     })
 }
 
-/// False, logged and counted, for a badge whose catalog row presence may not write.
+/// The invalid badges already logged, with the reason logged.
+static WARNED_INVALID: std::sync::LazyLock<std::sync::Mutex<HashMap<String, &'static str>>> =
+    std::sync::LazyLock::new(Default::default);
+
+/// False, and counted, for a badge whose catalog row presence may not write;
+/// logged once per badge and reason.
 fn writable(badge: &BadgeConfig, out: &mut EventOutcome) -> bool {
+    let mut warned = WARNED_INVALID.lock().unwrap_or_else(|e| e.into_inner());
     let Some(reason) = badge.invalid else {
+        warned.remove(&badge.badge_id);
         return true;
     };
-    tracing::warn!(
-        badge_id = badge.badge_id,
-        reason,
-        "presence badge has an invalid catalog row; not counted"
-    );
+    if warned.insert(badge.badge_id.clone(), reason) != Some(reason) {
+        tracing::warn!(
+            badge_id = badge.badge_id,
+            reason,
+            "presence badge has an invalid catalog row; not counted"
+        );
+    }
     out.outcomes.push("badge_invalid");
     false
 }

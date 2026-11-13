@@ -60,21 +60,27 @@ pub struct Settings {
 
 impl Default for Settings {
     fn default() -> Self {
+        use crate::config::presence_badges as d;
         Self {
-            check_after_ms: 900_000,
-            max_age_ms: 86_400_000,
-            applied_events_ttl_ms: 604_800_000,
-            absent_expire_ms: 3_600_000,
-            lookahead_ms: 6 * 3_600_000,
-            sweep_batch: 100,
-            prune_batch: 1000,
+            check_after_ms: secs_to_ms(d::OPEN_VISIT_CHECK_AFTER_SECONDS),
+            max_age_ms: secs_to_ms(d::OPEN_VISIT_MAX_AGE_SECONDS),
+            applied_events_ttl_ms: secs_to_ms(d::APPLIED_EVENTS_TTL_SECONDS),
+            absent_expire_ms: secs_to_ms(d::ABSENT_EXPIRE_AFTER_SECONDS),
+            lookahead_ms: secs_to_ms(d::EARLY_JOIN_LOOKAHEAD_SECONDS),
+            sweep_batch: i64::from(d::SWEEP_BATCH_SIZE),
+            prune_batch: i64::from(d::PRUNE_BATCH_SIZE),
             event_batch: 500,
             poll_interval: Duration::from_secs(5),
-            sweep_interval: Duration::from_secs(60),
-            grant_notifications: true,
-            sweeper_enabled: true,
+            sweep_interval: Duration::from_secs(d::SWEEP_INTERVAL_SECONDS),
+            grant_notifications: d::GRANT_NOTIFICATIONS,
+            sweeper_enabled: d::SWEEPER_ENABLED,
         }
     }
+}
+
+/// Seconds as the milliseconds the settings hold.
+pub fn secs_to_ms(seconds: u64) -> i64 {
+    i64::try_from(seconds.saturating_mul(1000)).unwrap_or(i64::MAX)
 }
 
 /// An event that failed this many passes is dropped (logged and counted),

@@ -46,8 +46,8 @@ impl ActivePlaces {
               AND d.published_at IS NOT NULL AND d.archived_at IS NULL \
              WHERE p.window_end > $1 AND p.window_start <= $2",
         )
-        .bind(naive(now - settings.max_age_ms))
-        .bind(naive(now + settings.lookahead_ms))
+        .bind(naive(now.saturating_sub(settings.max_age_ms)))
+        .bind(naive(now.saturating_add(settings.lookahead_ms)))
         .fetch_one(pool)
         .await?;
         let scenes = if parcels.is_empty() {
