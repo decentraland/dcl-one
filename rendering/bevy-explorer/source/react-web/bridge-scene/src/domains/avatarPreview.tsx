@@ -50,6 +50,10 @@ const FRAMING: Record<PreviewFocus, { range: number; centerY: number }> = {
 // The Shop's whole body in its 573×942 window, as the design draws it: the avatar ~751px tall, its feet on
 // the stage's floor logo (~970px down the screen). The Shop frames nothing else.
 const SHOP_FRAMING = { range: 4.9, centerY: 1.84 }
+// The sign-in screens' whole body: the head about 23% down the screen, the feet about 77%, on a podium
+// about a quarter of the screen wide.
+const SIGNIN_FRAMING = { range: 7.3, centerY: 1.95 }
+const SIGNIN_PODIUM_SCALE = 1.38
 const FOCUS_SECONDS = 0.6
 const CAMERA_PITCH = 12
 const CAMERA_DISTANCE = 8
@@ -302,7 +306,7 @@ function createPreview(): void {
     MeshRenderer.setCylinder(e, 1, 1)
     Material.setPbrMaterial(e, { albedoColor: layer.color, metallic: 0, roughness: 0.6 })
     CameraLayers.create(e, { layers: [LAYER] })
-    Transform.create(e, { position: Vector3.create(8, layer.y, 8), scale: Vector3.create(layer.scale, layer.height, layer.scale) })
+    Transform.create(e, { position: Vector3.create(8, layer.y, 8), scale: podiumLayerScale(layer) })
     return e
   })
 
@@ -580,6 +584,14 @@ export function registerAvatarPreview(ctx: Ctx): void {
       framingT = 1
     }
     const opened = msg.rect != null && (msg.region !== region || rect == null)
+    if (msg.region !== region && stage === 'backpack' && avatarEntity != null) {
+      // the same stage under another page (not met in practice): rebuilt with that page's framing and podium
+      disposePreview()
+    }
+    if (msg.region !== region && stage === 'backpack') {
+      framing = framingFrom = framingTo = msg.region === 'signin' ? SIGNIN_FRAMING : FRAMING.body
+      framingT = 1
+    }
     region = msg.region
     if (msg.rect == null) {
       if (avatarEntity != null) disposeIn = DISPOSE_FRAMES
@@ -617,7 +629,7 @@ export function registerAvatarPreview(ctx: Ctx): void {
 
   // The Backpack's selected category: ease the camera to frame that part of the avatar.
   ctx.on('previewFocus', (msg) => {
-    if (stage !== 'backpack' || shopStage != null) return
+    if (stage !== 'backpack' || region === 'signin' || shopStage != null) return
     const to = FRAMING[msg.focus] ?? FRAMING.body
     if (to === framingTo) return
     framingFrom = framing
@@ -718,11 +730,16 @@ export async function waitFrames(frames: number): Promise<void> {
   })
 }
 
+function podiumLayerScale(layer: (typeof PODIUM_LAYERS)[number]): Vector3 {
+  const wide = region === 'signin' ? SIGNIN_PODIUM_SCALE : 1
+  return Vector3.create(layer.scale * wide, layer.height, layer.scale * wide)
+}
+
 function showPodium(visible: boolean): void {
   if (stage !== 'backpack') return
   podiumEntities.forEach((e, i) => {
     const layer = PODIUM_LAYERS[i]
-    Transform.getMutable(e).scale = visible ? Vector3.create(layer.scale, layer.height, layer.scale) : Vector3.Zero()
+    Transform.getMutable(e).scale = visible ? podiumLayerScale(layer) : Vector3.Zero()
   })
 }
 
