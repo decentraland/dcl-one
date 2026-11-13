@@ -1,0 +1,6 @@
+{
+  "name": "bevy-explorer-e2e-scene-smart-wearable",
+  "version": "0.0.0",
+  "private": true,
+  "description": "End-to-end fixture: a smart wearable (portable experience) with one UI label"
+}
