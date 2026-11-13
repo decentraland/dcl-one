@@ -1,0 +1,90 @@
+name: Creator Hub / Promote
+# Installed apps update to the release marked "Latest" in decentraland/creator-hub, the
+# release-only repository creator-hub-desktop.yml publishes pre-releases to. This workflow is the
+# one way to change that: `promote` makes a pre-release the Latest release, `rollback` turns the
+# current Latest back into a pre-release so the previous release is Latest again. Apps already on
+# the rolled-back version stay on it (the updater never downgrades); the fix is a new release.
+#
+# The `creator-hub-promote` environment holds the release App key and requires a reviewer, so
+# every run waits for an approval.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version, for example 0.54.0
+        required: true
+        type: string
+      action:
+        description: promote makes it Latest; rollback demotes it (it must be the current Latest)
+        required: true
+        type: choice
+        options: [promote, rollback]
+
+# Reads this repository's tags only; the release repository is reached with the App token.
+permissions:
+  contents: read
+
+concurrency:
+  group: creator-hub-promote
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    name: ${{ inputs.action }} ${{ inputs.version }}
+    runs-on: ubuntu-latest
+    environment: creator-hub-promote
+    steps:
+      - name: Token for the release repository
+        id: release-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: ${{ vars.CREATOR_HUB_RELEASES_APP_ID }}
+          private-key: ${{ secrets.CREATOR_HUB_RELEASES_APP_PRIVATE_KEY }}
+          owner: decentraland
+          repositories: creator-hub
+
+      - name: ${{ inputs.action }}
+        env:
+          GH_TOKEN: ${{ steps.release-token.outputs.token }}
+          DCL_ONE_TOKEN: ${{ github.token }}
+          REPO: decentraland/creator-hub
+          VERSION: ${{ inputs.version }}
+          ACTION: ${{ inputs.action }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::'$VERSION' is not a version like 0.54.0"; exit 1
+          fi
+          release=$(gh api "repos/$REPO/releases/tags/$VERSION") || {
+            echo "::error::$REPO has no release $VERSION"; exit 1
+          }
+          latest=$(gh api "repos/$REPO/releases/latest" --jq .tag_name 2>/dev/null || true)
+
+          if [ "$ACTION" = promote ]; then
+            if [ "$(jq -r .prerelease <<<"$release")" != true ]; then
+              echo "::error::$VERSION is not a pre-release"; exit 1
+            fi
+            # creator-hub-desktop.yml tags creator-hub@X.Y.Z here only after both installers built,
+            # signed and passed the Windows signature check. Installers upload before those checks
+            # finish, so a pre-release without the tag may be half-built or wrongly signed.
+            if ! GH_TOKEN="$DCL_ONE_TOKEN" gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/creator-hub@$VERSION" >/dev/null 2>&1; then
+              echo "::error::$GITHUB_REPOSITORY has no tag creator-hub@$VERSION: its release run didn't finish cleanly"; exit 1
+            fi
+            # The update feeds the installed apps read; without them the release is invisible.
+            for feed in latest.yml latest-mac.yml; do
+              if ! jq -e --arg f "$feed" 'any(.assets[]; .name == $f)' <<<"$release" >/dev/null; then
+                echo "::error::$VERSION has no $feed"; exit 1
+              fi
+            done
+            gh release edit "$VERSION" --repo "$REPO" --prerelease=false --latest --title "$VERSION"
+          else
+            if [ "$latest" != "$VERSION" ]; then
+              echo "::error::$VERSION is not the Latest release (Latest is ${latest:-none})"; exit 1
+            fi
+            # The title marks it, so creator-hub-drop.yml leaves it alone instead of deleting it
+            # with the ordinary pre-releases.
+            gh release edit "$VERSION" --repo "$REPO" --prerelease --title "$VERSION (rolled back)"
+          fi
+
+          now=$(gh api "repos/$REPO/releases/latest" --jq .tag_name 2>/dev/null || echo none)
+          echo "Latest was ${latest:-none}, now $now" | tee -a "$GITHUB_STEP_SUMMARY"

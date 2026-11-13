@@ -1,0 +1,84 @@
+export enum DEPENDENCY_UPDATE_STRATEGY {
+  AUTO_UPDATE = 'auto_update',
+  NOTIFY = 'notify',
+  DO_NOTHING = 'do_nothing',
+}
+
+export const DEFAULT_DEPENDENCY_UPDATE_STRATEGY = DEPENDENCY_UPDATE_STRATEGY.NOTIFY;
+
+export enum PREVIEW_CLIENT {
+  // The Decentraland Desktop (Unity) client, launched via `decentraland://` deep-link.
+  DESKTOP = 'desktop',
+  // The Bevy web client, opened in the browser via `sdk-commands start --bevy-web`.
+  BEVY_WEB = 'bevy_web',
+}
+
+export const DEFAULT_PREVIEW_CLIENT = PREVIEW_CLIENT.DESKTOP;
+
+export type PreviewOptions = {
+  debugger: boolean;
+  skipAuthScreen: boolean;
+  enableLandscapeTerrains: boolean;
+  openNewInstance: boolean;
+  multiInstance: boolean;
+  mcp: boolean;
+  showWarnings: boolean;
+  // Unity explorer opt-out from the local asset bundles it builds by default in Local Scene
+  // Development (desktop preview only).
+  loadRawGltfs: boolean;
+  client: PREVIEW_CLIENT;
+};
+
+export enum RENDERER {
+  // The built-in Babylon.js renderer (default).
+  BABYLON = 'babylon',
+  // The Bevy engine renderer. Editing runs against a headless sdk-commands realm
+  // + the super-user editor-agent portable experience.
+  BEVY = 'bevy',
+}
+
+export const DEFAULT_RENDERER = RENDERER.BABYLON;
+
+export type AppSettings = {
+  scenesPath: string;
+  dependencyUpdateStrategy: DEPENDENCY_UPDATE_STRATEGY;
+  previewOptions: PreviewOptions;
+  // Marker for the one-time `previewOptions.debugger` promotion (the toolbar's "Open Debug
+  // Console" checkbox was removed, so this is now the only way an existing install gets it
+  // turned on) — see `promoteDebugConsoleSetting`.
+  debugConsolePromoted?: boolean;
+  // Opt-in to experimental features. Gates the renderer picker in settings — off
+  // means the stable default renderer (Babylon), no picker shown. Kept as its own
+  // persisted flag (not derived from `renderer`) so the picker stays visible when
+  // the user selects the default renderer from within experimental mode.
+  experimental: boolean;
+  // Which engine the inspector uses to render the scene in the editor viewport.
+  renderer: RENDERER;
+  aiAssistant: boolean;
+  aiAssistantPromoted?: boolean;
+  // Opt-in: let AI agents running OUTSIDE the app (Claude Code in a terminal or VS Code,
+  // Codex, Claude Desktop…) use the Creator Hub MCP server. While on, its URL + token are shown
+  // in settings and written to the app data folder as `mcp-server.json` and into the open scene
+  // as `.mcp.json` (see main/src/modules/mcp-discovery.ts). An agent can ask for it, but only the creator can turn
+  // it on. Independent of `aiAssistant`: the in-app assistant has its own access either way.
+  // Off by default.
+  exposeMcpServer: boolean;
+  // Opt-in: let the AI assistant bill against the API key in your environment
+  // (ANTHROPIC_API_KEY / OPENAI_API_KEY) instead of your signed-in CLI subscription. Off by
+  // default — the assistant strips those keys to force subscription billing. Base-URL
+  // overrides are always stripped regardless (they could redirect the OAuth token).
+  useApiKeyFromEnv: boolean;
+  // The creator ticked "don't show this again" on the Optimize tools disclosure. Per machine;
+  // the install screen still says when tools are being downloaded.
+  optimizerConsentAcknowledged?: boolean;
+  // Dev/QA only: point the inspector's smart-item catalog at the development CDN
+  // (builder-items.decentraland.zone) instead of production, so assets uploaded from a PR via
+  // `/upload-assets` can be tested before merge. The toggle is shown and honored ONLY in
+  // non-production builds (`!import.meta.env.PROD`); a production release ignores it entirely.
+  useDevAssetCatalog?: boolean;
+};
+
+export interface ReleaseNotes {
+  version: string;
+  content: string;
+}
