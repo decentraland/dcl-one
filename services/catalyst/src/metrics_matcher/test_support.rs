@@ -90,6 +90,7 @@ struct NativeCounters {
     peak: AtomicUsize,
     completed: AtomicUsize,
     finalized: AtomicBool,
+    finalized_signal: tokio::sync::Notify,
     entered_first: tokio::sync::Notify,
 }
 
@@ -125,6 +126,7 @@ impl Drop for NativeProbe {
             );
         }
         self.counters.finalized.store(true, Ordering::SeqCst);
+        self.counters.finalized_signal.notify_one();
     }
 }
 
@@ -258,6 +260,8 @@ async fn native_contention() -> Value {
             stop.send(()).unwrap();
             server.await.unwrap();
             drop(adapter);
+            // Graceful shutdown can precede the last connection's service drop.
+            counters.finalized_signal.notified().await;
             assert!(counters.finalized.load(Ordering::SeqCst));
             rows.push(json!({"cancellation":cancellation,"native_completed":33,"peak_native_locked":1,
                 "controlled_pool_blocked_ns":pool_blocked_ns,"controlled_native_locked_ns":native_probe_held_ns,
