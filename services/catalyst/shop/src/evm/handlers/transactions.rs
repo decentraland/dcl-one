@@ -40,6 +40,13 @@ pub async fn send_transaction(
 
     state
         .transaction
+        .check_global_budget(
+            state.settings.max_relayed_transactions_per_day,
+            crate::evm::now(),
+        )
+        .await?;
+    state
+        .transaction
         .reserve_quota(
             state.settings.max_transactions_per_day,
             &sender,

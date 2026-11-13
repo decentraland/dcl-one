@@ -220,6 +220,14 @@ pub struct EconomyConfig {
     #[arg(long, env = "MAX_TRANSACTIONS_PER_DAY", default_value_t = 10)]
     pub max_transactions_per_day: i64,
 
+    /// Meta-transactions the relayer pays for per day across every address; 0 is no limit.
+    #[arg(
+        long,
+        env = "MAX_RELAYED_TRANSACTIONS_PER_DAY",
+        default_value_t = 20_000
+    )]
+    pub max_relayed_transactions_per_day: i64,
+
     /// The dApps' contract-addresses JSON (public https); unset, only the collections mirror admits.
     #[arg(long, env = "CONTRACT_ADDRESSES_URL")]
     pub contract_addresses_url: Option<String>,

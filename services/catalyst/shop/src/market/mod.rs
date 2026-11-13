@@ -77,8 +77,8 @@ pub mod mirrors;
 pub mod neighbours;
 pub mod nft_index;
 pub mod nft_reads;
-pub mod notice_cursor;
 pub mod nfts;
+pub mod notice_cursor;
 pub mod orders;
 pub mod owners;
 pub mod prices;
@@ -535,6 +535,16 @@ pub type SharedState = Arc<MarketplaceState>;
 impl MarketplaceState {
     pub fn new(pool: PgPool, http: crate::http::Outbound, settings: Settings) -> Self {
         let index = Arc::new(ChainIndex::new(http.clone(), settings.index_settings()));
+        catalog::set_served_chains(
+            settings
+                .market
+                .indexes
+                .chain_id(chain_walk::ChainNet::Ethereum),
+            settings
+                .market
+                .indexes
+                .chain_id(chain_walk::ChainNet::Matic),
+        );
         Self {
             pool,
             http,

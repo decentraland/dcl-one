@@ -38,6 +38,8 @@ CREATE TABLE economy.transactions (
 -- The per-day quota count (WHERE user_address = $1 AND created_at >= $now - interval '1 day')
 -- and GET /v1/transactions/{address}.
 CREATE INDEX transactions_user_created_idx ON economy.transactions (user_address, created_at);
+-- The relayer's daily budget across addresses (WHERE created_at >= $now - interval '1 day').
+CREATE INDEX transactions_created_idx ON economy.transactions (created_at);
 
 -- The MANA spot archive: one row per poll (the mana-price-poll job): CoinGecko,
 -- or the first fallback exchange that answered (source names it).

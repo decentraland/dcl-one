@@ -451,6 +451,36 @@ impl TransactionComponent {
         Ok(())
     }
 
+    /// The relayer's budget across every address: refused once the day
+    /// before `now` holds `max_total` reservations (0 is no limit).
+    pub async fn check_global_budget(
+        &self,
+        max_total: i64,
+        now: NaiveDateTime,
+    ) -> Result<(), ApiError> {
+        if max_total <= 0 {
+            return Ok(());
+        }
+        let window_start = now - chrono::Duration::seconds(QUOTA_WINDOW_SECS);
+        let used: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM (SELECT 1 FROM economy.transactions WHERE created_at >= $1 LIMIT $2) used",
+        )
+        .bind(window_start)
+        .bind(max_total)
+        .fetch_one(&self.pool)
+        .await?;
+        if used >= max_total {
+            tracing::warn!(
+                max_total,
+                "relay budget for the day is spent; refusing meta-transactions"
+            );
+            return Err(ApiError::QuotaReached(
+                "The relayer's daily transaction budget is spent; try again later".into(),
+            ));
+        }
+        Ok(())
+    }
+
     pub async fn confirm_reservation(
         &self,
         session_id: &str,

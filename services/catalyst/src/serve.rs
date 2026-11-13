@@ -684,6 +684,7 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     let economy_settings = shop::evm::Settings {
         min_sale_value_in_wei: config.economy.min_sale_value_in_wei.clone(),
         max_transactions_per_day: config.economy.max_transactions_per_day,
+        max_relayed_transactions_per_day: config.economy.max_relayed_transactions_per_day,
         contract_addresses_url: Config::non_empty(&config.economy.contract_addresses_url),
         contract_addresses_chain_key: config.economy.contract_addresses_chain_key.clone(),
         collections_chain_id: config.economy.collections_chain_id,

@@ -31,6 +31,7 @@ use super::signed::{
 };
 use super::wire::ApiError;
 use super::{MarketplaceState, SharedState};
+use crate::comms::limits::{RateLimitDecision, RateLimiter};
 
 pub const ASSET_TYPE_ERC20: i32 = 1;
 pub const ASSET_TYPE_USD_PEGGED_MANA: i32 = 2;
@@ -721,12 +722,25 @@ pub enum TradeCreationError {
     EffectiveAfterExpiration,
     SignerMismatch,
     UnsupportedChain(i64),
-    NetworkMismatch { expected: String, got: String },
+    NetworkMismatch {
+        expected: String,
+        got: String,
+    },
     InvalidStructure(String),
     InvalidSignature(String),
     OwnershipUnverifiable(i64),
     OwnershipLookupFailed(String),
-    NotTheOwner { owner: String },
+    NotTheOwner {
+        owner: String,
+    },
+    /// A chain this node does not serve for the trade's network.
+    WrongChain {
+        expected: i64,
+        got: i64,
+    },
+    /// The item is not in the mirrored catalogue (yet).
+    ItemUnknown,
+    NotTheCreator,
     Duplicate,
     Db(sqlx::Error),
 }
@@ -756,6 +770,16 @@ impl std::fmt::Display for TradeCreationError {
                 f,
                 "the signer does not own this token; it belongs to {owner}"
             ),
+            Self::WrongChain { expected, got } => {
+                write!(
+                    f,
+                    "this node serves chain {expected} for the network, not {got}"
+                )
+            }
+            Self::ItemUnknown => write!(f, "the item is not in the catalogue yet; retry later"),
+            Self::NotTheCreator => {
+                write!(f, "only the item's creator may sell it as a primary sale")
+            }
             Self::Duplicate => write!(f, "a trade with this signature already exists"),
             Self::Db(e) => write!(f, "database error: {e}"),
         }
@@ -765,6 +789,40 @@ impl std::fmt::Display for TradeCreationError {
 impl From<sqlx::Error> for TradeCreationError {
     fn from(e: sqlx::Error) -> Self {
         Self::Db(e)
+    }
+}
+
+/// The chain this node serves for `network` ("ETHEREUM" or "MATIC").
+pub fn served_chain(indexes: &super::chain_walk::IndexSettings, network: &str) -> i64 {
+    use super::chain_walk::ChainNet;
+    if network.eq_ignore_ascii_case("ETHEREUM") {
+        indexes.chain_id(ChainNet::Ethereum)
+    } else {
+        indexes.chain_id(ChainNet::Matic)
+    }
+}
+
+/// A public item order is a primary sale: only the item's creator may sign it.
+async fn verify_item_creator(
+    pool: &PgPool,
+    network: &str,
+    trade: &TradeCreation,
+) -> Result<(), TradeCreationError> {
+    let sent = &trade.sent[0];
+    let item_id = sent.item_id.as_deref().unwrap_or_default();
+    let creator: Option<String> = sqlx::query_scalar(
+        "SELECT creator FROM shop.items \
+         WHERE network = lower($1) AND contract_address = lower($2) AND item_id = $3::numeric",
+    )
+    .bind(network)
+    .bind(&sent.contract_address)
+    .bind(item_id)
+    .fetch_optional(pool)
+    .await?;
+    match creator {
+        None => Err(TradeCreationError::ItemUnknown),
+        Some(c) if c.eq_ignore_ascii_case(&trade.signer) => Ok(()),
+        Some(_) => Err(TradeCreationError::NotTheCreator),
     }
 }
 
@@ -914,10 +972,22 @@ pub async fn create_trade(
             got: trade.network.clone(),
         });
     }
+    if let Some(s) = state {
+        let expected = served_chain(&s.settings.market.indexes, network);
+        if trade.chain_id != expected {
+            return Err(TradeCreationError::WrongChain {
+                expected,
+                got: trade.chain_id,
+            });
+        }
+    }
     validate_structure(trade)?;
     let matched = resolve_signature(trade, &candidates)
         .map_err(|e| TradeCreationError::InvalidSignature(e.to_string()))?;
     verify_sent_ownership(state, trade).await?;
+    if trade.trade_type == TRADE_TYPE_PUBLIC_ITEM_ORDER {
+        verify_item_creator(pool, network, trade).await?;
+    }
     // Stateless callers (tests) link to the default origins.
     let defaults;
     let settings = match state {
@@ -1049,14 +1119,21 @@ fn creation_error_to_api(e: TradeCreationError) -> ApiError {
         TradeCreationError::SignerMismatch | TradeCreationError::InvalidSignature(_) => {
             ApiError::http(401, message)
         }
-        TradeCreationError::NotTheOwner { .. } => ApiError::http(403, message),
+        TradeCreationError::NotTheOwner { .. } | TradeCreationError::NotTheCreator => {
+            ApiError::http(403, message)
+        }
         TradeCreationError::OwnershipUnverifiable(_)
-        | TradeCreationError::OwnershipLookupFailed(_) => ApiError::http(503, message),
+        | TradeCreationError::OwnershipLookupFailed(_)
+        | TradeCreationError::ItemUnknown => ApiError::http(503, message),
         TradeCreationError::Duplicate => ApiError::http(409, message),
         TradeCreationError::Db(_) => ApiError::http(500, message),
         _ => ApiError::bad_request(message),
     }
 }
+
+/// Trades one signer may post per minute.
+static TRADE_LIMITER: std::sync::LazyLock<RateLimiter> =
+    std::sync::LazyLock::new(|| RateLimiter::new(30, std::time::Duration::from_secs(60)));
 
 async fn post_trade_inner(
     state: &MarketplaceState,
@@ -1065,6 +1142,9 @@ async fn post_trade_inner(
 ) -> Result<Response, ApiError> {
     require_auth_metadata(headers, MARKETPLACE_AUTH_SIGNERS, Some(CREATE_TRADE_INTENT))?;
     let recovered = require_signer(headers, "post", "/v1/trades").await?;
+    if TRADE_LIMITER.check(&recovered.to_ascii_lowercase()) == RateLimitDecision::Deny {
+        return Err(ApiError::http(429, "rate limit exceeded".to_string()));
+    }
     let trade: TradeCreation = serde_json::from_str(body)
         .map_err(|e| ApiError::bad_request(format!("invalid trade body: {e}")))?;
     // A creator's own item order is the Shop's primary sale; every other trade (a resale listing, a bid, and any type
@@ -1388,6 +1468,19 @@ mod tests {
                 TradeCreationError::OwnershipUnverifiable(137)
             ),
             "no TRADE_RPC_URLS entry for the chain"
+        );
+        let testnet = signed_trade_on(MATIC_AMOY, &offchain_marketplace_v3(MATIC_AMOY).unwrap());
+        assert!(
+            matches!(
+                create_trade(pool, Some(&state), &testnet, &testnet.signer.clone(), 1_000)
+                    .await
+                    .unwrap_err(),
+                TradeCreationError::WrongChain {
+                    expected: 137,
+                    got: MATIC_AMOY
+                }
+            ),
+            "a node serving Polygon mainnet refuses an Amoy-signed trade"
         );
         let mut other_chain = signed_trade();
         other_chain.chain_id = 42;

@@ -49,6 +49,7 @@ use super::{MarketplaceState, SharedState};
 use crate::comms::limits::{RateLimitDecision, RateLimiter};
 use crate::fed::{FedError, Signed, TypedMessage};
 use crate::jobs::{Jobs, PeriodicCfg};
+use crate::shared::cache::TtlMap;
 use crate::shared::signed_fetch::{self, PayloadPolicy};
 
 pub const NONCES: &str = "shop.fed_seen_nonces";
@@ -434,6 +435,7 @@ async fn append<T: TypedMessage>(
     .bind(&payload)
     .execute(pool)
     .await?;
+    SNAPSHOT.clear();
     Ok(signature_hash)
 }
 
@@ -735,7 +737,14 @@ pub async fn record_trade(
             Err(r) => return r,
         };
     let m = &signed.message;
+    // Only the order's signer reports its fill; nothing verifies a third party's.
     match lookup(&state.pool, "order", &m.order_signature_hash).await {
+        Ok(Some((original, _))) if !original.eq_ignore_ascii_case(&signer) => {
+            return err_json(
+                StatusCode::FORBIDDEN,
+                "only the order signer may record its trade",
+            );
+        }
         Ok(Some(_)) => {}
         Ok(None) => return err_json(StatusCode::NOT_FOUND, "order not found"),
         Err(e) => return db_err(e),
@@ -893,11 +902,18 @@ pub async fn snapshot_view(pool: &PgPool) -> Result<MarketSnapshot, sqlx::Error>
 
 /// `GET /federation/market/snapshot`.
 pub async fn snapshot(State(state): State<SharedState>) -> Response {
-    match snapshot_view(&state.pool).await {
+    match SNAPSHOT
+        .get_or_fetch((), || snapshot_view(&state.pool))
+        .await
+    {
         Ok(s) => Json(s).into_response(),
         Err(e) => db_err(e),
     }
 }
+
+/// The snapshot walks the whole log; one computation serves every request for 30 s.
+static SNAPSHOT: LazyLock<TtlMap<(), MarketSnapshot>> =
+    LazyLock::new(|| TtlMap::bounded(Duration::from_secs(30), 1));
 
 #[derive(Debug, Deserialize)]
 pub struct ChangesQuery {
@@ -1474,13 +1490,25 @@ mod tests {
             to_json(&sign(&bidder, market.clone(), trade.clone(), now())),
         )
         .await;
+        assert_eq!(
+            status,
+            StatusCode::FORBIDDEN,
+            "only the order signer records its fill: {body}"
+        );
+        let (status, body) = post(
+            &app,
+            &owner,
+            "/v1/federation/trade",
+            to_json(&sign(&owner, market.clone(), trade.clone(), now())),
+        )
+        .await;
         assert_eq!(status, StatusCode::OK, "{body}");
         let (status, _) = post(
             &app,
-            &bidder,
+            &owner,
             "/v1/federation/trade",
             to_json(&sign(
-                &bidder,
+                &owner,
                 market.clone(),
                 TradeRecord {
                     order_signature_hash: "00".repeat(32),

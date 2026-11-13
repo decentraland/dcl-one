@@ -474,6 +474,43 @@ fn unique_address() -> String {
 }
 
 #[tokio::test]
+async fn the_global_relay_budget_caps_reservations_across_addresses() {
+    let Some(pool) = scratch_pool().await else {
+        return;
+    };
+    let tc = component(pool.clone());
+    // A day no other test reserves in.
+    let at = chrono::NaiveDate::from_ymd_opt(2100, 1, 1)
+        .unwrap()
+        .and_hms_opt(0, 0, 0)
+        .unwrap();
+    let addrs = [unique_address(), unique_address()];
+    for a in &addrs {
+        tc.reserve_quota(
+            10,
+            &sender(a),
+            &Uuid::new_v4().to_string(),
+            137,
+            COLLECTION,
+            at,
+        )
+        .await
+        .expect("reserve");
+    }
+    assert!(tc.check_global_budget(3, at).await.is_ok());
+    assert!(matches!(
+        tc.check_global_budget(2, at).await,
+        Err(ApiError::QuotaReached(_))
+    ));
+    assert!(tc.check_global_budget(0, at).await.is_ok(), "0 is no limit");
+    sqlx::query("DELETE FROM economy.transactions WHERE user_address = ANY($1)")
+        .bind(addrs.iter().map(|a| a.to_lowercase()).collect::<Vec<_>>())
+        .execute(&pool)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
 async fn reserve_then_confirm_promotes_and_is_user_visible() {
     let Some(pool) = scratch_pool().await else {
         return;

@@ -25,6 +25,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::Duration;
 
 use axum::Json;
@@ -507,6 +508,32 @@ impl Builder {
     }
 }
 
+static SERVED_ETHEREUM: AtomicI64 = AtomicI64::new(1);
+static SERVED_MATIC: AtomicI64 = AtomicI64::new(137);
+
+/// The chains this node's trade readers serve (`MARKETPLACE_INDEX_CHAIN_ID_*`),
+/// set when the marketplace state is built.
+pub fn set_served_chains(ethereum: i64, matic: i64) {
+    SERVED_ETHEREUM.store(ethereum, Ordering::Relaxed);
+    SERVED_MATIC.store(matic, Ordering::Relaxed);
+}
+
+/// `(ethereum, matic)`.
+pub fn served_chains() -> (i64, i64) {
+    (
+        SERVED_ETHEREUM.load(Ordering::Relaxed),
+        SERVED_MATIC.load(Ordering::Relaxed),
+    )
+}
+
+/// `alias`'s trade is on the chain this node serves for its network.
+pub fn served_chain_sql(alias: &str) -> String {
+    let (eth, matic) = served_chains();
+    format!(
+        "{alias}.chain_id = CASE lower({alias}.network) WHEN 'ethereum' THEN {eth} ELSE {matic} END"
+    )
+}
+
 /// `unified_trades`: the open off-chain listings of `shop.trades` as
 /// one row per trade with its sent asset resolved to `(contract, item_id,
 /// token_id)` and its received amount. Open = effective, not expired at
@@ -536,7 +563,13 @@ pub fn unified_trades_cte(now_p: &str, since_p: &str) -> String {
              AND NOT EXISTS (SELECT 1 FROM shop.trade_cancellations c WHERE c.target_hashed_signature = t.hashed_signature) \
              AND NOT {closed} \
              AND {counted} \
+             AND {served} \
+             AND (t.type <> 'public_item_order' OR EXISTS ( \
+                   SELECT 1 FROM shop.items ci \
+                   WHERE ci.network = lower(t.network) AND ci.contract_address = lower(sent.contract_address) \
+                     AND ci.item_id = sent_item.item_id::numeric AND lower(ci.creator) = lower(t.signer))) \
          )",
+        served = served_chain_sql("t"),
         shift = ITEM_ID_SHIFT,
         closed = super::trade_events::closed_on_chain_sql("t", now_p),
         counted = super::trades::counted_sql("t.", since_p)

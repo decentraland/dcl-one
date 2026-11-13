@@ -630,6 +630,19 @@ async fn trade_events_walk_under_a_budget_resume_after_a_kill_fold_the_verdicts_
     .execute(&db.pool)
     .await
     .unwrap();
+    // Alice's item orders are primary sales of her own items.
+    for item_id in [1, 2, 4] {
+        sqlx::query(
+            "INSERT INTO shop.items (network, contract_address, item_id, chain_id, item_type, urn, creator, rarity, total_supply, max_supply, available, price, image, name, category, created_at, updated_at, reviewed_at, mirrored_at) \
+             VALUES ('matic', $1, $2::int4, 137, 'wearable_v2', 'urn:decentraland:matic:collections-v2:0xc1:' || $2::int4::text, $3, 'epic', 1, 10, 9, 1000, 'https://img/0', 'Hat', 'hat', 1, 1, 1, timezone('UTC', now()))",
+        )
+        .bind(item)
+        .bind(item_id)
+        .bind(ALICE)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    }
     let s = start;
     let logs = vec![
         traded(s + 100, 0, market, CARL, ALICE, &sold.1),
@@ -778,8 +791,9 @@ async fn trade_events_walk_under_a_budget_resume_after_a_kill_fold_the_verdicts_
     .fetch_all(&db.pool)
     .await
     .unwrap();
+    // `sold` sells Carl's item, so only `by_signer` (Alice's own) is served.
     assert!(
-        open_ids.contains(&sold.0),
+        open_ids.contains(&by_signer.0) && !open_ids.contains(&sold.0),
         "an unpublished verdict is ignored: {open_ids:?}"
     );
     db.drop().await;

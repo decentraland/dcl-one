@@ -101,6 +101,8 @@ pub struct Settings {
     pub min_sale_value_in_wei: String,
     /// `MAX_TRANSACTIONS_PER_DAY` (10): the per-address relay quota.
     pub max_transactions_per_day: i64,
+    /// `MAX_RELAYED_TRANSACTIONS_PER_DAY` (20,000): the relay quota across every address; 0 is no limit.
+    pub max_relayed_transactions_per_day: i64,
     /// `CONTRACT_ADDRESSES_URL`: the dApps' contract-addresses JSON; unset, only the mirror admits.
     pub contract_addresses_url: Option<String>,
     /// `CONTRACT_ADDRESSES_CHAIN_KEY` (matic): the key inside that JSON.
@@ -170,6 +172,7 @@ impl Settings {
         Self {
             min_sale_value_in_wei: "1000000000000000000".to_string(),
             max_transactions_per_day: 10,
+            max_relayed_transactions_per_day: 20_000,
             contract_addresses_url: None,
             contract_addresses_chain_key: "matic".to_string(),
             collections_chain_id: 137,
