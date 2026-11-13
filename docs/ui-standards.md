@@ -68,14 +68,17 @@ Component.figma.ts     Figma-to-component mapping for the tooling
 
 Define component-owned props and types in the component file by default. Use a
 separate types file for a substantial contract shared across components.
-Export the component and its public prop types from `library/ui/index.ts`
-(created with the first shared component).
+Export the component and its public prop types from `library/ui/index.ts`.
 The mapping is used by the Figma tooling and is not imported by browser code.
 The template is not a production component. Replace the Figma mapping
-placeholder with the actual component's node and properties when its tooling
-contract is established. The sample test is a smoke test; configure React
-Testing Library, jest-dom matchers and CSS Module handling for the package, and
-add the component-specific interaction and accessibility tests before use.
+placeholder with a mapping in the contract the tooling reads
+(`library/ui/figma/src/contract/mapping-file.ts`, described in
+`library/ui/figma/MAINTENANCE.md`): header comments `url`, `source`,
+`component` and `contract=1`, then the component's Figma properties.
+`components/NavBar/NavBar.figma.ts` is a working example. The sample test is a
+smoke test; React Testing Library, jest-dom matchers and CSS Module handling
+are already configured in `library/ui` (`vitest.config.ts`, `test/setup.ts`),
+so add the component-specific interaction and accessibility tests before use.
 
 ### Design tokens
 
@@ -88,8 +91,8 @@ portals.
 
 ### Global CSS boundary
 
-Shared foundations and components belong in `library/ui` once it is
-implemented; until then each surface keeps its existing ones (see
+Shared foundations and components belong in `library/ui`; a surface keeps
+its existing ones until they are migrated there (see
 [Shared UI](#shared-ui-libraryui)). Global stylesheets
 contain only token definitions, font faces, resets, and application-wide base
 and accessibility rules. Each app keeps its own global entry point and loads
@@ -121,9 +124,12 @@ progress, position or a computed size. Pass them as a narrowly scoped custom
 property and let the module consume it; fixed appearance stays in the module.
 
 ```tsx
-import type { CSSProperties } from 'react'
+import type { CSSProperties } from "react";
 
-;<div className={styles.track} style={{ '--progress': `${pct}%` } as CSSProperties} />
+<div
+  className={styles.track}
+  style={{ "--progress": `${pct}%` } as CSSProperties}
+/>;
 ```
 
 Shared components expose runtime geometry through typed props mapped to custom
@@ -211,13 +217,12 @@ consumer, and verify a change to it in every app that imports it.
   app.
 - Each app keeps its own global entry point for its resets and base rules.
 - When a second app or the Bevy HUD needs the same component or foundation,
-  move it from `library/ui/apps/<app>/` (or from the app, until `library/ui` is
-  implemented) to the shared `components/` or `foundations/`, update its
+  move it from `library/ui/apps/<app>/` (or from the app) to the shared `components/` or `foundations/`, update its
   consumers and remove the old copy.
 
 ## Shared UI: `library/ui`
 
-The shared foundations are implemented in `library/ui/foundations`, with bundled fonts and typed browser exports. Runtime component and consumer integration are separate work. Keep each surface's existing tokens and components until its integration has been reviewed. The decision is recorded in the [shared UI library ADR](adr/2026-10-30-shared-ui-library.md).
+The shared foundations are implemented in `library/ui/foundations`, with bundled fonts and typed browser exports. Shared components live in `library/ui/components`, written from the component template above, and are exported from `library/ui/index.ts`. A surface keeps its existing tokens and components until its migration to the shared ones has been reviewed. The decision is recorded in the [shared UI library ADR](adr/2026-10-30-shared-ui-library.md).
 
 `library/ui` is the home of the shared UI foundation:
 
@@ -258,7 +263,7 @@ library/ui/
       Button.figma.ts   Figma mapping, read by the tooling only
   apps/
     <app>/              app-specific UI: components and styles used by one app
-  index.ts              public foundation exports; components when installed
+  index.ts              public foundation and component exports
   figma/                Node-only Figma MCP server and CLI, config, verified cache
 ```
 
@@ -369,8 +374,8 @@ Each consumer keeps its own independent build and imports the shared code as
 source:
 
 ```tsx
-import { theme } from '@dcl/one-ui/foundations'
-import '@dcl/one-ui/foundations.css'
+import { theme } from "@dcl/one-ui/foundations";
+import "@dcl/one-ui/foundations.css";
 ```
 
 `@dcl/one-ui` exposes the shared source and foundation styles. Before using these imports, each application configures the package name and CSS subpaths in both its TypeScript paths and bundler aliases, allows access to shared sources and deduplicates React and React DOM. Assets must work in every supported target, including native CEF.

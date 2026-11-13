@@ -260,6 +260,10 @@ pub enum RpcCall {
     ListPortables {
         response: RpcResultSender<Vec<SpawnResponse>>,
     },
+    /// The calling scene, if it is a portable experience, asks to be unloaded.
+    ExitPortable {
+        response: RpcResultSender<bool>,
+    },
     GetUserData {
         user: Option<String>,
         response: RpcResultSender<Result<SerializedProfile, ()>>,
@@ -320,6 +324,14 @@ pub enum RpcCall {
         sender: RpcEventSender,
     },
     SubscribeBinaryBus {
+        sender: RpcStreamSender<(String, Vec<u8>)>,
+    },
+    /// A `CommsApi` topic message, already framed (type byte first), for the scene's room.
+    PublishSceneTopic {
+        data: Vec<u8>,
+    },
+    /// Topic messages addressed to the scene: (sender address, payload after the type byte).
+    SubscribeSceneTopics {
         sender: RpcStreamSender<(String, Vec<u8>)>,
     },
     TestPlan {

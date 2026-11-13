@@ -13,6 +13,9 @@ proto type comes from `dcl_component`; never redeclare it.
 
 ## A new engine-to-system-scene stream
 
+State the engine owns reaches the HUD this way, sent on subscribe and on change; the HUD shows
+what the stream last said rather than polling a request.
+
 Template: the proximity stream, `GetProximityStream` in
 `crates/scene_runner/src/update_scene/pointer_results.rs` and
 `react-web/bridge-scene/src/domains/proximity.ts`, added whole in #764. Not the chat stream,
@@ -43,6 +46,17 @@ Run `just ts-bindings` before touching the TypeScript: it regenerates the types 
 `library/explorer-core/engine/generated/`, which both HUD hosts compile. Commit them with the
 Rust struct change. CI regenerates them before every TS build, so a Rust struct change that
 breaks the page fails `tsc` there, and the Sites import fails while the committed copy differs.
+
+## Pausing a scene
+
+To hold a scene for a while, insert a named reason into its `RendererSceneContext.blocked` and
+remove it when the cause ends: the scene loop skips a blocked scene (a super-user scene runs
+regardless), which keeps its entities and
+JS state and resumes where it stopped. References: imposter baking (`"imposter_baking"`), the
+inspector's freeze (`FROZEN_BLOCK`), `portableExperiences: disabled`
+(`PORTABLE_EXPERIENCES_BLOCK` in `crates/scene_runner/src/portables.rs`). Compare before writing
+so the context is not marked changed every frame, and hide its UI through the `ui_scenes` filter
+in `scene_ui` if it should not show. `LiveSceneInfo.is_blocked` reports it.
 
 ## The ts-rs boundary
 
@@ -128,19 +142,19 @@ the defs; a material extension's defs do not reach a separate material.
 ## A pipeline-compile test for a shader
 
 Every shader change gets a test that compiles every pipeline variant off-screen, `#[ignore]`d
-because CI has no GPU. `crates/perf_output/tests/gpu_frame_time.rs` shows the headless app
-setup of step 1; no test in the repo polls the pipeline cache yet:
+because CI has no GPU. `assets::test_support` holds the setup these tests share:
 
-1. A `DefaultPlugins` app with `WinitPlugin`, `LogPlugin` and `PipelinedRenderingPlugin`
-   disabled and no primary window.
-2. A camera rendering to an `Image`, with `DepthPrepass` and `NormalPrepass`, and a shadowing
-   `DirectionalLight`, so the prepass and shadow variants compile too.
+1. `headless_app()`: a `DefaultPlugins` app with `WinitPlugin`, `LogPlugin` and
+   `PipelinedRenderingPlugin` disabled, no primary window and the embedded assets.
+2. A camera rendering to `render_target(&mut app)`, with `DepthPrepass` and `NormalPrepass`,
+   and a shadowing `DirectionalLight`, so the prepass and shadow variants compile too.
 3. One entity per material and tag variant the change touches.
-4. Update until the `RenderApp`'s `PipelineCache` has nothing pending, then assert that no
-   pipeline is in an error state.
+4. `compile_pipelines(&mut app)` updates until the `RenderApp`'s `PipelineCache` has nothing
+   pending and panics on a pipeline in an error state. `fragment_pipelines(&app, path)` counts
+   the compiled pipelines whose fragment stage is one shader.
 
-The crate needs `assets` and `naga_oil` as dev-dependencies, the latter only to enable its
-`override_any` feature for the crate. Run with
+The crate needs `assets` with its `test-support` feature and `naga_oil` as dev-dependencies,
+the latter only to enable its `override_any` feature for the crate. Run with
 `cargo test -p <crate> <test> -- --ignored --nocapture`. The native pass compiles the same
 variants as web, but the web-only rules on the [platforms](platforms.md#web) page still need
 the web build once.

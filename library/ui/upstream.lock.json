@@ -605,7 +605,7 @@
       },
       "files": {
         "library/ui/figma/MAINTENANCE.md": {
-          "sha256": "aad38c51f636631db4deb88d0c41fc95c1732128930f2ba4f6aedb6bb97da5ea",
+          "sha256": "bfa764bb545580c17efe3afda87e8000c41e676e4ed53b34acb5c0c499c47c98",
           "fds": null,
           "deviation": [
             "live-access-removed",
@@ -622,7 +622,8 @@
             "resolver-followups",
             "port-command-followups",
             "port-safe-restore",
-            "generation-import-closure"
+            "generation-import-closure",
+            "hand-written-public-components"
           ]
         },
         "library/ui/figma/agent-kit/cli.mjs": {
@@ -679,7 +680,7 @@
           ]
         },
         "library/ui/figma/agent-kit/skills/implement-figma-design/SKILL.md": {
-          "sha256": "6a73bad4dffdd030260367d84a44466dc674607d2383a4ae83aff50bbff453a8",
+          "sha256": "5a0c362ac450066e4236dce71ab1c5b1c9cf6ae45a90e0b8790dfef1c69d69ce",
           "fds": {
             "path": "component-library/agent-kit/skills/implement-figma-design/SKILL.md",
             "sha256": "d817e30d4343b12e02dba7597879696382176eba05d8b21f51911e47b02a25d2"
@@ -691,17 +692,19 @@
             "name-identity",
             "accepted-limits",
             "skill-kit-followups",
-            "resolver-followups"
+            "resolver-followups",
+            "hand-written-public-components"
           ]
         },
         "library/ui/figma/agent-kit/skills/maintain-figma-library/SKILL.md": {
-          "sha256": "d9dc813769c17ce8d7866826f3a7f299084362483c85c01fc5b5eee4c0d85e08",
+          "sha256": "e1f6f04a7ff35f507c330d94b2c68150e82e1e21bc62d0c7398b44912acbb6c9",
           "fds": null,
           "deviation": [
             "port-command",
             "skill-kit-followups",
             "port-command-followups",
-            "port-safe-restore"
+            "port-safe-restore",
+            "hand-written-public-components"
           ]
         },
         "library/ui/figma/component-generation.mjs": {
@@ -911,13 +914,14 @@
           ]
         },
         "library/ui/figma/review/scripts/capture-browser.mjs": {
-          "sha256": "53697bdb05da83b8a88997eb014ec7015aef5bb5cb265accbdea4a1c9ef36632",
+          "sha256": "b5f086bec0b58006cf822c536d8dbe405110a30132f061d8fa33f74eea1f8d1f",
           "fds": null,
           "deviation": [
             "bot-review-279-b",
             "evidence-removed",
             "navigation-settle",
-            "request-scope-hardening"
+            "request-scope-hardening",
+            "startup-diagnostics"
           ]
         },
         "library/ui/figma/review/scripts/capture-teardown.mjs": {
@@ -2235,11 +2239,12 @@
           }
         },
         "library/ui/figma/review/test/capture-browser.test.ts": {
-          "sha256": "6c92fd52fbcf22c27f36b04b7f5b8891e2a9eb1159d45c5dbcefe3c2a379e9c2",
+          "sha256": "58ac63387e0f9a016fbbe777eaea7af91358abc2c846f0046c544a4b555cf317",
           "fds": null,
           "deviation": [
             "dcl-one-only",
-            "bot-review-279-b"
+            "bot-review-279-b",
+            "startup-diagnostics"
           ]
         },
         "library/ui/figma/review/test/capture-teardown.test.ts": {
@@ -4413,6 +4418,7 @@
         "generated": "Generated Review output (figma/review/src/generated and figma/review/src/review/catalog.json) is regenerated here by this tree's generator and figma.config.json from the pinned capture: it differs from figma-design-system's committed output wherever the ports above, the keyless context or the imageFills placeholder differ. figma diff against the fetched cache reports no change.",
         "generation-import-closure": "components/generation.json binds the import closure of the install process instead of every tooling module (docs/adr/2026-11-11-generation-binds-installer-import-closure.md). module-graph.mjs computes the closure without dependencies and fails closed on any import it cannot resolve to one tracked file or a sanctioned package; componentModulePaths selects the fixed inputs, that closure and non-code files under figma/src from lock-verified bytes, and the generation record is schema 2. dcl-figma install runs in its own process (src/install-main.ts), so the modules it loads are the closure; createApp moves to src/app-context.ts so that process does not load the sync tooling. The install and offline inventories still require every candidate module to be tracked and pinned.",
         "hand-written-components": "Hand-written public components are plain tracked source in library/ui/components: a top-level directory the public component table does not name. The installer carries them into the published tree byte for byte and refuses a plan that writes into one; the common inspector checks them as tracked, materialized TypeScript and CSS with no Figma URL or key-shaped value, LFS pointer or known generator marker (a mapping header is not one), and the lock never pins them. lock-digests --write regenerates the public foundation and component tables from the staged manifests, keeps a table whose manifest does not validate and then exits 1.",
+        "hand-written-public-components": "Public library components are written by hand from templates/component/ per docs/ui-standards.md; generation backs the Review previews only. The maintainer skill covers the Figma pipeline (port and Review) and sends a new public component to the template instead of components/promotion.json or promotion.include, the consumer skill attributes a difference to the capture the mappings follow, and MAINTENANCE.md describes components/ as hand-written components and previews as not public components.",
         "internal-components": "Keep incomplete generated components internal, omit their public mappings, and derive CSS declarations from selectors only. Public export waits for source controls and semantic data props.",
         "key-download-identity": "Key jobs download each artifact under its one name and from its one run: the scan inputs only from the run itself, the Review build only from the triggering run. The root checkout key step template, not yet used by a workflow, runs against the real guard.",
         "key-guard-integrity": "Key guard integrity: the key scan runs in two jobs. prepare holds no secret: it validates the triggering run, fetches the scanned commits and prefetches their LFS objects, checks the Review artifact, posts the failed check for every skip or failure, and uploads the commits as a git bundle (prerequisites: the parents of the default branch commit it checked out) and the LFS objects as the key-scan-input artifact. key-scan holds FIGMA_FILE_KEY and has only pinned actions/checkout of the default branch into trusted/ without persisted credentials, actions/setup-node, actions/download-artifact into runner.temp, the key step and a report step. The policy test requires a key step's run to equal, once trimmed, one of the fixed templates in figma/test/key-step.ts (the trusted/ scan, or an artifact scan over a workspace root checkout with the build in .preview/input), and its env to hold exactly FIGMA_FILE_KEY, TRUSTED_SHA (github.sha or github.workflow_sha), GIT_CONFIG_NOSYSTEM, GIT_CONFIG_GLOBAL and GIT_NO_REPLACE_OBJECTS at their hardening values, and the template's data variables, each from an allowlisted expression; the optional report step must equal the report template and come last. Any other step, action, action input or step key in a key job is rejected, so no shell runs before the key step and no command is parsed. The key step copies key-guard.mjs from TRUSTED_SHA by object id with --no-replace-objects before it fetches the bundle (into refs/key-scan/ only), reads the url allowlist from TRUSTED_SHA, names it with --revision, and reads LFS objects from the downloaded store (--lfs-store), each verified against its oid. Key jobs run on GitHub-hosted runners, and the import check covers export from and dynamic loads.",
@@ -4442,6 +4448,7 @@
         "seal-removed": "port:9c6dfbe6 installs foundations through the installation subset of promotion/promote.ts. The seal is removed together with promotion manifests, promotion verification and release publication. The shared command generates only from the verified cache, preserves maintained files, stages a complete target, detects concurrent changes and rolls back failed publication. Dev2 extends this same command with components.",
         "single-component-module-pin": "The public component table pins components/generation.json once: output origins name the source and transform and do not repeat the generator module list, and the policy checks every module in that record against the source lock and the index. A table that still carries a per-output module map is refused.",
         "skill-kit-followups": "Consumer skill and kit follow-ups: the skill's plugin script reads boolean and text component properties, skips text layers of nested instances, collects only visible text (a TEXT property only when a visible layer shows it), drops a name two visible texts disagree on and reports it and refuses a node without a main component; design text goes in single quotes, never double quotes; the mapping-only scope and the preflight's expected exit 1 are stated. The kit refuses every conflict (foreign or unreadable skill, newer or unordered version, symlinked .claude or .claude/skills) before it writes, orders versions by semver, hashes paths with / and CRLF as LF with framed entries, and check names install --force for a newer install. resolve --batch reads a relative path from the directory the package's figma script was run in. Figma BOOLEAN properties travel apart from variants as booleanProperties (batch, MCP, --boolean): one the mapping does not read is an unmapped-figma-property warning, one it reads as a variant does not fit, an unread variant still refuses a name match, and usageFor and propTranslation report the booleans given. check reports an install hashed by an earlier kit as stale, not as edited; an unreadable manifest or one from another library's kit is refused without --force.",
+        "startup-diagnostics": "Local capture startup diagnostics retain bounded sanitized stderr, executable basename and available version, pre-cleanup process status and port-file observations. The existing polling budget, launch flags, abort behavior and primary failure are unchanged. After collection, the drained stderr stream is unreferenced so inherited helper writers cannot pin the caller event loop; the pipe remains open for browser writes.",
         "verified-install": "Verified installation binds lock bytes before cache verification and compares them after every verification and source initialization. Tests reject invalid cache reads through a bypass App, preserve ignored target files and retain both errors and the previous tree when rollback fails."
       }
     }
