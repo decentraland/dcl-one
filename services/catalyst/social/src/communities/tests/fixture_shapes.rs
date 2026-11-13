@@ -329,7 +329,7 @@ fn fields(prefix: &str, kind: &str, names: &[&str]) -> Vec<String> {
 /// with the consumer that reads it.
 fn pinned() -> BTreeMap<&'static str, Vec<String>> {
     let page = Vec::new();
-    let posts = fields("data.posts[].", "extra", &["isLikedByUser"]);
+    let posts = fields("data.posts[].", "extra", &["isLikedByUser", "isOfficial"]);
     BTreeMap::from([
         ("community-by-id", page.clone()),
         ("community-v2-by-id", page),

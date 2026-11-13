@@ -22,7 +22,6 @@ vi.mock('../../bridge-scene/src/http', () => ({
 }))
 vi.mock('../../bridge-scene/src/bevy-api', () => ({ BevyApi: { getCompactProfiles, social: {} } }))
 vi.mock('../../bridge-scene/src/system-helpers', () => ({ relay: vi.fn() }))
-vi.mock('../../bridge-scene/src/officialWallets', () => ({ officialWallets: async () => new Set(['0xofficial']) }))
 vi.mock('../../bridge-scene/src/domains/profile', () => ({
   fetchIdentities: async () => (address: string) => ({ name: address, hasClaimedName: false })
 }))
@@ -655,9 +654,9 @@ describe('bridge community announcements', () => {
   const v1 = 'https://socialApi.example/v1/communities'
   const v2 = 'https://socialApi.example/v2/communities'
   const page = (n: number): string => `GET ${v2}/c1/posts?offset=${(n - 1) * 10}&limit=10`
-  const row = { id: 'p1', authorAddress: '0xOFFICIAL', content: 'Hello', createdAt: '2026-11-01T10:00:00Z', likesCount: 3, isLikedByUser: true }
+  const row = { id: 'p1', authorAddress: '0xOFFICIAL', content: 'Hello', createdAt: '2026-11-01T10:00:00Z', likesCount: 3, isLikedByUser: true, isOfficial: true }
 
-  it('reads a page of 10 with the authors, the official mark and the likes', async () => {
+  it('reads a page of 10 with the authors, the service’s official mark and the likes', async () => {
     serve({ [page(2)]: { posts: [row, { id: 'p2', authorAddress: '0xother', likesCount: 0 }], total: 12 } })
     const h = fakeCtx()
     await h.req({ kind: 'getCommunityPosts', id: 'c1', page: 2 })
@@ -706,7 +705,7 @@ describe('bridge community announcements', () => {
     serve({ [`DELETE ${v1}/c1/posts/p1`]: new Error('HTTP 403') })
     const f = fakeCtx()
     await f.req({ kind: 'deleteCommunityPost', id: 'c1', postId: 'p1' })
-    expect(f.sent).toEqual([{ kind: 'communityActionFailed', id: 'c1', action: 'deletePost', message: 'HTTP 403' }])
+    expect(f.sent).toEqual([{ kind: 'communityActionFailed', id: 'c1', action: 'deletePost', postId: 'p1', message: 'HTTP 403' }])
   })
 
   it('likes with a POST and unlikes with a DELETE, and says how it went', async () => {

@@ -70,7 +70,6 @@ const GATEWAY_PREFIXES: Readonly<Record<string, string>> = {
   api: '/api',
   'pulse-server': '',
   'marketplace-api': '/marketplace-api',
-  'feature-flags': '/feature-flags',
   events: '/events',
   'autotranslate-server': '/autotranslate-server',
   'camera-reel-service': '/camera-reel-service',

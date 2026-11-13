@@ -812,9 +812,6 @@ button.autoTranslateOff:hover {
 .suggestActive {
   background: var(--emoji-hover);
 }
-.suggestPeople .suggestName {
-  font-weight: var(--fw-semibold);
-}
 
 /* Input row: 46 tall, the field 40 tall sitting 1px above the bottom, controls inside it. */
 .inputRow {
@@ -865,23 +862,11 @@ button.autoTranslateOff:hover {
   pointer-events: none;
 }
 
+/* Where the shared EmojiButton sits in the input. */
 .emojiBtn {
   position: absolute;
   right: 15px;
   bottom: 15px;
-  width: 22px;
-  height: 22px;
-  padding: 0;
-  border: none;
-  cursor: pointer;
-  background: url('../../assets/chat/emoji-idle.png') center / contain no-repeat;
-}
-.emojiBtn:hover {
-  background-image: url('../../assets/chat/emoji-hover.png');
-}
-.emojiOn,
-.emojiOn:hover {
-  background-image: url('../../assets/chat/emoji-selected.png');
 }
 
 /* Members view: covers the panel with its own title bar and list; the feed and input hide under it. */

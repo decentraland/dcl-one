@@ -9,6 +9,7 @@ import heartOutline from '../../assets/communities/favourite-outline.png'
 import heartSolid from '../../assets/communities/favourite-solid.png'
 import { splitName } from '@explorer-core/lib/identity'
 import type { CommunityPost } from '@explorer-core/engine/protocol'
+import { EmojiButton } from '../chat/EmojiButton'
 import { EmojiPicker } from '../chat/EmojiPicker'
 import { EmojiSuggestList, emojiSuggestionAt, moveSelection, type EmojiSuggestion } from '../chat/EmojiSuggestList'
 import { isCancelKey } from '../../lib/bindingLabels'
@@ -204,14 +205,7 @@ function Composer({
           </div>
         )}
         <div className={styles.composeFoot}>
-          <button
-            type="button"
-            className={`${styles.emojiBtn} ${picker ? styles.emojiOn : ''}`.trim()}
-            aria-label="Emoji"
-            aria-pressed={picker}
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={() => setPicker((p) => !p)}
-          />
+          <EmojiButton open={picker} onToggle={() => setPicker((p) => !p)} />
           {draft.length > 0 && (
             <span className={styles.count}>
               {draft.length}/{ANNOUNCEMENT_MAX}

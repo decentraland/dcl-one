@@ -1565,6 +1565,8 @@ export interface CommunityActionFailedMessage {
   id: string
   action: CommunityAction
   message: string
+  /** The announcement a failed `deletePost` was about. */
+  postId?: string
 }
 
 /** A member of a community (Members tab). */
@@ -1605,7 +1607,7 @@ export interface CommunityPost {
   authorPicture?: string
   /** The author claimed their name: a verified mark instead of the address's #tag. */
   hasClaimedName: boolean
-  /** The author is one of the official wallets (the feature flags' list): the official mark. */
+  /** The social API marked the post official (its author is one of the official wallets): the official mark. */
   official: boolean
   text: string
   timestamp: number

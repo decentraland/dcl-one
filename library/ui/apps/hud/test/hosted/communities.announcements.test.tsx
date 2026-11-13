@@ -129,6 +129,19 @@ describe('announcements session', () => {
     expect(await screen.findByText('There was an error sending the like status to the community announcement. Please try again.')).toBeInTheDocument()
   })
 
+  it('counts a like once when a first page read since already carries it', async () => {
+    const h = renderSession()
+    await enterAsGuest(h)
+    act(() => h.session().communities.loadPosts('c1'))
+    act(() => h.driver.emit({ kind: 'communityPosts', id: 'c1', page: 1, posts: [post(1)], total: 1 }))
+    const before = h.session().communities.posts!.posts[0].likes
+    act(() => h.session().communities.likePost('c1', 'p1', true))
+    // the page read after the like already has it in the service's count
+    act(() => h.driver.emit({ kind: 'communityPosts', id: 'c1', page: 1, posts: [post(1, { likes: before + 1, likedByMe: true })], total: 1 }))
+    act(() => h.driver.emit({ kind: 'communityPostLiked', id: 'c1', postId: 'p1', liked: true, ok: true }))
+    expect(h.session().communities.posts?.posts[0]).toMatchObject({ likes: before + 1, likedByMe: true })
+  })
+
   it('toasts a failed read or delete with their texts', async () => {
     render(<ToastHost />)
     const h = renderSession()
@@ -142,9 +155,13 @@ describe('announcements session', () => {
     act(() => h.session().communities.deletePost('c1', 'p1'))
     expect(h.driver.sentOf('deleteCommunityPost')).toEqual([{ kind: 'deleteCommunityPost', id: 'c1', postId: 'p1' }])
     expect(h.session().communities.posts?.deleting).toEqual(['p1'])
+    // a failed delete releases that announcement only
+    act(() => h.session().communities.deletePost('c1', 'p2'))
+    act(() => h.driver.emit({ kind: 'communityActionFailed', id: 'c1', action: 'deletePost', postId: 'p1', message: 'x' }))
+    expect(h.session().communities.posts?.deleting).toEqual(['p2'])
     act(() => h.driver.emit({ kind: 'communityActionFailed', id: 'c1', action: 'deletePost', message: 'x' }))
     expect(h.session().communities.posts?.deleting).toEqual([])
-    expect(await screen.findByText('There was an error deleting the community announcement. Please try again.')).toBeInTheDocument()
+    expect((await screen.findAllByText('There was an error deleting the community announcement. Please try again.')).length).toBeGreaterThan(0)
     expect(h.session().communities.error).toBeNull()
   })
 })

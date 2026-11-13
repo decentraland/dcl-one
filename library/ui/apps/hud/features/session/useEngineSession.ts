@@ -141,7 +141,7 @@ const COMMUNITY_ERROR: Record<CommunityAction, string> = {
   acceptInvite: 'There was an error accepting community invitation. Please try again.',
   rejectInvite: 'There was an error rejecting community invitation. Please try again.',
   manageRequest: 'There was an error managing the user request. Please try again.',
-  // the Announcements tab's (AnnouncementsSectionController *_ERROR_MESSAGE)
+  // the Announcements tab's
   fetchPosts: 'There was an error fetching the community announcements. Please try again.',
   createPost: 'There was an error creating the community announcement. Please try again.',
   deletePost: 'There was an error deleting the community announcement. Please try again.',
@@ -2113,14 +2113,17 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
             if (prev == null || prev.id !== msg.id) return prev
             const liking = prev.liking.filter((p) => p !== msg.postId)
             if (!msg.ok) return { ...prev, liking }
-            const posts = prev.posts.map((p) => (p.id === msg.postId ? { ...p, likedByMe: msg.liked, likes: Math.max(0, p.likes + (msg.liked ? 1 : -1)) } : p))
+            // only a change counts: a first page read since may already carry the service's count
+            const posts = prev.posts.map((p) => (p.id === msg.postId && p.likedByMe !== msg.liked ? { ...p, likedByMe: msg.liked, likes: Math.max(0, p.likes + (msg.liked ? 1 : -1)) } : p))
             return { ...prev, liking, posts }
           })
           if (!msg.ok) showToast(COMMUNITY_ERROR.likePost, { tone: 'error' })
           break
         case 'communityActionFailed':
           if (msg.action === 'fetchPosts') updateCommunityPosts((prev) => (prev == null || prev.id !== msg.id ? prev : { ...prev, loading: false, loadingMore: false, failed: prev.posts.length === 0 }))
-          if (msg.action === 'deletePost') updateCommunityPosts((prev) => (prev == null || prev.id !== msg.id ? prev : { ...prev, deleting: [] }))
+          // a failed delete releases that announcement only; the others still being deleted stay so
+          if (msg.action === 'deletePost')
+            updateCommunityPosts((prev) => (prev == null || prev.id !== msg.id ? prev : { ...prev, deleting: msg.postId == null ? [] : prev.deleting.filter((p) => p !== msg.postId) }))
           if (TOASTED_COMMUNITY_ACTIONS.has(msg.action)) showToast(COMMUNITY_ERROR[msg.action], { tone: 'error' })
           else {
             setCommunityError({ id: msg.id, message: COMMUNITY_ERROR[msg.action] })

@@ -57,8 +57,6 @@ pub enum Service {
     AssetsCdn,
     /// Marketplace api: item listings — HUD only
     MarketplaceApi,
-    /// Feature flags: `/explorer.json`, the official wallets list — HUD only
-    FeatureFlags,
     /// Chat translation (a LibreTranslate) — HUD only
     Autotranslate,
     /// Pulse comms server — an authority, `host[:port]`; the port defaults per platform
@@ -105,7 +103,6 @@ impl Service {
             Service::Notifications => ("https", "notifications", ""),
             Service::AssetsCdn => ("https", "assets-cdn", ""),
             Service::MarketplaceApi => ("https", "marketplace-api", ""),
-            Service::FeatureFlags => ("https", "feature-flags", ""),
             Service::Autotranslate => ("https", "autotranslate-server", ""),
             Service::PulseServer => ("", "pulse-server", ""),
         }
@@ -137,7 +134,6 @@ impl Service {
             Service::Notifications => "notifications",
             Service::AssetsCdn => "assets_cdn",
             Service::MarketplaceApi => "marketplace_api",
-            Service::FeatureFlags => "feature_flags",
             Service::Autotranslate => "autotranslate",
             Service::PulseServer => "pulse_server",
         }
@@ -272,10 +268,6 @@ pub struct ServiceOverrides {
     #[arg(long, value_name = "url", help_heading = HELP_HEADING)]
     pub marketplace_api: Option<String>,
 
-    /// Feature flags (`/explorer.json`), used by the HUD; absent = `https://feature-flags.<base>`
-    #[arg(long, value_name = "url", help_heading = HELP_HEADING)]
-    pub feature_flags: Option<String>,
-
     /// Chat translation, used by the HUD; absent = `https://autotranslate-server.<base>`
     #[arg(long, value_name = "url", help_heading = HELP_HEADING)]
     pub autotranslate: Option<String>,
@@ -311,7 +303,6 @@ impl ServiceOverrides {
             Service::Notifications => &self.notifications,
             Service::AssetsCdn => &self.assets_cdn,
             Service::MarketplaceApi => &self.marketplace_api,
-            Service::FeatureFlags => &self.feature_flags,
             Service::Autotranslate => &self.autotranslate,
             Service::PulseServer => &self.pulse_server,
         }

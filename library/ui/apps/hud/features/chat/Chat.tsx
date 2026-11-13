@@ -9,7 +9,8 @@ import type { ChatLine, ChatState, Conversation } from '../session/useEngineSess
 import type { DmUserState, MessageReaction, NearbyMember } from '@explorer-core/engine/protocol'
 import { Avatar, ControlButton, DclLogo, MaskIcon, Tooltip, Translate, VerifiedBadge, VoiceBars } from '../../design'
 import { EmojiPicker } from './EmojiPicker'
-import { EmojiSuggestList, tokenAtCaret } from './EmojiSuggestList'
+import { EmojiButton } from './EmojiButton'
+import { EmojiSuggestList, emojiSuggestionAt, moveSelection, tokenAtCaret } from './EmojiSuggestList'
 import { AutoTranslateButton } from './AutoTranslateButton'
 import { ConversationMenu } from './ConversationMenu'
 import { ConversationRail } from './ConversationRail'
@@ -17,7 +18,7 @@ import { CommunityHeader } from './CommunityHeader'
 import { clearPingMode } from './ping'
 import { roleLabel } from '@explorer-core/features/communities/roles'
 import { displaySender, isSystem, memberLabel, senderColor, shortAddr, splitName, usePartner } from './chatIdentity'
-import { EMOJI_BY_CODE, EMOJI_BY_GLYPH, QUICK_REACTIONS, loadRecents, searchByShortcode, type Emoji } from './emojiData'
+import { EMOJI_BY_CODE, EMOJI_BY_GLYPH, QUICK_REACTIONS, loadRecents, type Emoji } from './emojiData'
 import { MessageText } from './chatText'
 import { mentionsMe } from '@explorer-core/features/chat/chatParse'
 import { autoTranslates, clearAutoTranslate, getTranslation, hasTranslatableText, languageName, requestTranslation, showOriginal, type Translation } from '@explorer-core/features/chat/translation'
@@ -983,9 +984,8 @@ export function Chat({
     const word = tokenAtCaret(value, caret)
     if (word == null) return setSug(null)
     if (word.kind === 'emoji') {
-      const items = searchByShortcode(word.query, 50)
-      if (items.length > 0) return setSug({ kind: 'emoji', items, start: word.start, end: caret, sel: 0 })
-      return setSug(null)
+      const emoji = emojiSuggestionAt(value, caret)
+      return setSug(emoji == null ? null : { kind: 'emoji', ...emoji })
     }
     const q = word.query.toLowerCase()
     const nearby = new Set(chat.members.map((m) => m.address.toLowerCase()))
@@ -1037,8 +1037,7 @@ export function Chat({
     if (e.nativeEvent.isComposing) return
     if (sug && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
       e.preventDefault()
-      const n = sug.items.length
-      setSug({ ...sug, sel: (sug.sel + (e.key === 'ArrowDown' ? 1 : n - 1)) % n })
+      setSug(moveSelection(sug, e.key === 'ArrowDown' ? 1 : -1))
     } else if (sug && (e.key === 'Enter' || e.key === 'Tab')) {
       e.preventDefault()
       accept(sug, sug.sel)
@@ -1264,14 +1263,7 @@ export function Chat({
         )}
         {focused && draft.length > 0 && <CharRing len={draft.length} />}
         {!bare && blockedState == null && (
-          <button
-            type="button"
-            className={`${styles.emojiBtn} ${picker ? styles.emojiOn : ''}`.trim()}
-            aria-label="Emoji"
-            aria-pressed={picker}
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={toggleEmoji}
-          />
+          <EmojiButton className={styles.emojiBtn} open={picker} onToggle={toggleEmoji} />
         )}
       </form>
 

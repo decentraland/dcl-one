@@ -14,7 +14,6 @@ import { destinationsByIds, type DestinationRaw } from '../destinations'
 import { fetchIdentities } from './profile'
 import type { ProfileIdentity } from './profile'
 import { relay } from '../system-helpers'
-import { officialWallets } from '../officialWallets'
 import type { Ctx } from '../bridge'
 import type {
   Community,
@@ -62,7 +61,7 @@ type CommunityRaw = {
 
 // The v2 rows are FLAT and address-only: no name, face, or claimed-name flag on any of them.
 type MemberRaw = { memberAddress?: string; role?: string }
-type PostRaw = { id: string; authorAddress?: string; content?: string; createdAt?: string; likesCount?: number; isLikedByUser?: boolean }
+type PostRaw = { id: string; authorAddress?: string; content?: string; createdAt?: string; likesCount?: number; isLikedByUser?: boolean; isOfficial?: boolean }
 type PlaceRaw = {
   id: string
   title?: string
@@ -326,8 +325,9 @@ async function detail(id: string): Promise<{ members: CommunityMember[]; places:
   return { members, places, events, photos }
 }
 
-// The announcements, POSTS_PAGE at a time, newest first, with their authors' names and faces and
-// the official wallets' mark.
+// The announcements, POSTS_PAGE at a time, newest first, with their authors' names and faces. The
+// official mark is the service's own `isOfficial` (this node's social API names the official
+// wallets from the explorer flags; a service that sends no such field marks no one).
 export const POSTS_PAGE = 10
 async function postsPage(id: string, page: number): Promise<{ posts: CommunityPost[]; total: number }> {
   const b = await base('v2')
@@ -335,7 +335,7 @@ async function postsPage(id: string, page: number): Promise<{ posts: CommunityPo
     `${b}/${encodeURIComponent(id)}/posts?offset=${(page - 1) * POSTS_PAGE}&limit=${POSTS_PAGE}`
   )
   const rows = res?.posts ?? []
-  const [identity, official] = await Promise.all([fetchIdentities(rows.map((p) => p.authorAddress ?? '')), officialWallets()])
+  const identity = await fetchIdentities(rows.map((p) => p.authorAddress ?? ''))
   const posts = rows.map((p): CommunityPost => {
     const address = p.authorAddress ?? ''
     const { name, picture, hasClaimedName } = identity(address)
@@ -345,7 +345,7 @@ async function postsPage(id: string, page: number): Promise<{ posts: CommunityPo
       authorAddress: address,
       authorPicture: picture,
       hasClaimedName,
-      official: official.has(address.toLowerCase()),
+      official: p.isOfficial === true,
       text: p.content ?? '',
       timestamp: p.createdAt != null ? Date.parse(p.createdAt) : 0,
       likes: p.likesCount ?? 0,
@@ -998,7 +998,7 @@ export function registerCommunities(ctx: Ctx): void {
         () => true,
         (e: unknown) => {
           console.error('[communities] post delete failed', e)
-          ctx.send({ kind: 'communityActionFailed', id: msg.id, action: 'deletePost', message: e instanceof Error ? e.message : String(e) })
+          ctx.send({ kind: 'communityActionFailed', id: msg.id, action: 'deletePost', postId: msg.postId, message: e instanceof Error ? e.message : String(e) })
           return false
         }
       )

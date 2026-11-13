@@ -31,8 +31,8 @@ export function emojiSuggestionAt(value: string, caret: number): EmojiSuggestion
   return items.length > 0 ? { items, start: word.start, end: caret, sel: 0 } : null
 }
 
-/** The suggestion with its highlight moved one row down (+1) or up (-1), wrapping. */
-export function moveSelection(s: EmojiSuggestion, by: 1 | -1): EmojiSuggestion {
+/** The suggestion (emoji, or the chat's people) with its highlight moved one row down (+1) or up (-1), wrapping. */
+export function moveSelection<S extends { items: readonly unknown[]; sel: number }>(s: S, by: 1 | -1): S {
   const n = s.items.length
   return { ...s, sel: (s.sel + by + n) % n }
 }

@@ -153,22 +153,6 @@
 .count + :last-child {
   margin-left: 0;
 }
-/* The chat's emoji button. */
-.emojiBtn {
-  width: 22px;
-  height: 22px;
-  padding: 0;
-  border: none;
-  cursor: pointer;
-  background: url('../../assets/chat/emoji-idle.png') center / contain no-repeat;
-}
-.emojiBtn:hover {
-  background-image: url('../../assets/chat/emoji-hover.png');
-}
-.emojiOn,
-.emojiOn:hover {
-  background-image: url('../../assets/chat/emoji-selected.png');
-}
 /* The suggestions and the emoji panel open over the list, under the composer's buttons. */
 .suggest,
 .picker {

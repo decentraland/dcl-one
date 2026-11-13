@@ -261,21 +261,19 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   asked first ("Are you sure you want to delete this Announcement?", DELETE and CANCEL); a
   moderator cannot delete another member's. Anyone who sees the list likes and unlikes, one
   request at a time for each announcement, and the count changes once the service answers. The
-  author shows a verified mark or their #tag, and the official mark when the address is in the
-  feature flags' `alfa-official-wallets` list (`wallets` variant, first CSV line), read once from
-  the deployment's feature-flags service (`--feature-flags` / `featureFlags`, default
-  `https://feature-flags.<base>`). A post or a delete reads the first page again. Every failure is
+  author shows a verified mark or their #tag, and the official mark when the post comes marked
+  `isOfficial` by the social API. A post or a delete reads the first page again. Every failure is
   toasted with unity-explorer's four texts. A member who sees no announcements reads "No
   Announcements here yet!". A private community's announcements are not read for someone who
   isn't a member (the service refuses them); their tab stays empty. Differences: POST stays off
   for a draft of only whitespace, and the text is posted without leading and trailing whitespace
   (unity-explorer enables POST for any text and sends it as typed; the service refuses a post that
   starts with whitespace); a failed post stops the button's spinner (unity-explorer
-  leaves it spinning); and the official wallets are read once, with a failed read tried again
-  after a minute. The document is read with a plain, unsigned GET with no custom
-  header. On the web build the Foundation's feature-flags host answers that only for its own sites'
-  origins (and localhost), so a page on another origin pointed at it shows no official marks; a
-  catalyst deployment serves the document with CORS open. Native reads it from anywhere.
+  leaves it spinning); and the official mark comes with the post, not from the client: this
+  node's social API marks each post (`isOfficial`, a field the Foundation's API doesn't have)
+  when its author is in the explorer feature flags' `alfa-official-wallets` list (`wallets`
+  variant, first CSV line), which unity-explorer reads itself. Against the Foundation's social
+  API, which sends no such field, no post shows the official mark.
 - **One answer to "banned or blocked?".** The `ban_block` crate is a facade: it reads the
   social client's block sets and comms' scene admission and scene-room lists through one
   `BanBlock` system parameter and owns only the platform-ban check, where unity-explorer keeps

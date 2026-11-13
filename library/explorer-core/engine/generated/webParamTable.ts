@@ -147,12 +147,6 @@ export const WEB_PARAMS: WebParam[] = [
     "doc": "Marketplace api, used by the HUD; absent = `https://marketplace-api.<base>`"
   },
   {
-    "name": "featureFlags",
-    "kind": "string",
-    "delivery": "resolved",
-    "doc": "Feature flags (`/explorer.json`), used by the HUD; absent = `https://feature-flags.<base>`"
-  },
-  {
     "name": "autotranslate",
     "kind": "string",
     "delivery": "resolved",
