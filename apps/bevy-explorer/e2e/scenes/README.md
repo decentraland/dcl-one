@@ -15,6 +15,16 @@ spans three parcels, so none can see another), with the host's `skyboxConfig.fix
 `dcl-scene-cli init` writes it (the host's shared base file did not come along). The visual spec
 (`../specs/visual`) teleports to each scene's base parcel.
 
+`smart-wearable` is the last member and no visual scene: a smart-wearable project
+(`wearable.json`, a `hat` whose `model.glb` is `swap_material`'s cube, and `scene.json` with
+`"isPortableExperience": true` and no `requiredPermissions`, which the engine ignores) whose code logs
+`smart wearable fixture started` and shows the screen-space label `Smart wearable running`. The
+`smart-wearables` spec serves it from a loopback realm's `/preview-wearables`, and once, renamed
+and at `0,0`, as the parcel scene that disables portable experiences; its own parcel `204,0`
+(index 17) only keeps a workspace preview clear of the others. It
+carries dcl-scene-cli's scene `tsconfig.json` and no `scripts.build`, so `build-scenes` bundles it
+with the CLI's built-in build into `bin/` (a loader, `index.js`, and the chunks it reads).
+
 Build them with `apps/dcl-scene-cli` (the vendored SDK toolchain, no npm):
 
 ```sh

@@ -10,7 +10,9 @@
 import type {
   Color3,
   CommunityVoiceStatus,
+  ConnectivitySnapshot,
   HomeScene,
+  PortableInfo,
   SatelliteView,
   SceneLoadingUi,
   VoiceChatAction,
@@ -164,6 +166,8 @@ export interface BridgeUnavailableMessage {
 
 export type PageToScene =
   | HelloRequest
+  | { kind: 'getConnectivity' }
+  | { kind: 'retryConnectivity'; requestId: string }
   | VoiceChatActionRequest
   | RpcRequest
   | SendChatRequest
@@ -840,10 +844,14 @@ export interface HomeSceneMessage extends HomeScene {
 /** What the welcome page must show for the signed-in account (answered with `welcome`). */
 export interface GetWelcomeRequest {
   kind: 'getWelcome'
+  /** The page's tag for this ask, which its answer echoes. */
+  ask?: number
 }
 
 export interface WelcomeMessage extends WelcomeState {
   kind: 'welcome'
+  /** The tag of the ask this answers, as the page sent it. */
+  ask?: number
 }
 
 /** Put the curated default look `default<look>` on the lobby stage's avatar, as the page fetched it
@@ -1042,6 +1050,14 @@ export interface PermissionUsedMessage {
   scene: string
   realm: string
   allowed: boolean
+}
+
+/** The portable experiences the player can see and stop (scene → page, from getPortablesStream):
+ *  every portable but the HUD's own scene and the startup ones, plus smart wearables that are
+ *  stopped or still loading. The engine sends the whole list on subscribe and on every change. */
+export interface PortablesMessage {
+  kind: 'portables'
+  portables: PortableInfo[]
 }
 
 /** The engine needs a password to enter the world the player is travelling to (scene → page).
@@ -2154,6 +2170,8 @@ export interface AvatarClickMessage {
 
 export type SceneToPage =
   | BridgeReadyMessage
+  | { kind: 'connectivity'; state: ConnectivitySnapshot }
+  | { kind: 'connectivityRetry'; requestId: string; error?: string }
   | BridgeUnavailableMessage
   | VoiceChatStateMessage
   | CommunityVoiceUpdateMessage
@@ -2241,6 +2259,7 @@ export type SceneToPage =
   | WorldPasswordRequestMessage
   | WorldPasswordWithdrawnMessage
   | EditorSceneResultMessage
+  | PortablesMessage
 
 // ---- envelope --------------------------------------------------------------
 
