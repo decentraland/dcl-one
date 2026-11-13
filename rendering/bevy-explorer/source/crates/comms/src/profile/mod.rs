@@ -598,6 +598,8 @@ pub fn setup_primary_profile(
     }) {
         senders.push(sender.clone());
     }
+    // a closed sender holds one of its scene host's channels until it is dropped
+    senders.retain(|sender| !sender.is_closed());
 
     // adopt the snapshots the server generated for our deployed profile: a change like any
     // other, so the component, scenes and the profile-changed stream all pick them up

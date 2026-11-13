@@ -251,6 +251,8 @@ fn broadcast_emote(
     }) {
         senders.push(sender.clone());
     }
+    // a closed sender holds one of its scene host's channels until it is dropped
+    senders.retain(|sender| !sender.is_closed());
 
     // The currently-broadcastable emote: the one `playing` (the wire has one emote slot too), still
     // going, whose clip has resolved (`duration_ms` is stamped by the play system only once the

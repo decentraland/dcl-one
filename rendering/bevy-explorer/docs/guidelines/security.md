@@ -20,10 +20,11 @@ How this lands on each platform:
 | Scene isolation | V8 isolates inside the `dcl_deno_ipc` sidecar process, one process for all scenes | One sandbox worker per scene, each with its own wasm memory |
 | Engine boundary | Process boundary; the sidecar talks to the engine over a pipe | The `dcl_wasm` relay runs in the engine's memory and copies messages wasm to wasm |
 | Signing key | Engine process (`wallet`) | The shell page, a separate process from the app page; the engine asks it for each signature through `wallet::remote_signer` |
-| SystemApi sender | Given to the scene the engine marks `is_super`; the engine forwards what the sidecar sends | Held by the engine-side relay for the one scene the engine marked super; any other scene that sends a `SystemApi` message is ended |
+| SystemApi sender | Given to the scene the engine marks `is_super`; the engine forwards `SystemApi` only from the sidecar running that scene, while it runs. On the desktop every scene shares the sidecar that runs the system scene, so this separates nothing there; it does where scenes get their own sidecar | Held by the engine-side relay for the one scene the engine marked super; any other scene that sends a `SystemApi` message is ended |
 
-The native sidecar is one trust domain: the engine trusts it as a whole and relies on V8
-isolation between scenes inside it.
+The engine validates every frame the native sidecar sends: a frame it cannot read ends that
+sidecar, and a sidecar speaks only for the scenes the engine gave it. Scenes that share a sidecar
+rely on V8 isolation between them.
 
 ## Rules
 
@@ -42,6 +43,20 @@ a signed request supplies method, URL and body only; the engine builds the signe
 (realm, profile, scene) from its own state. Do not add a path that hands a scene, the sidecar, or
 the app page anything derived from the key, and do not let scene-supplied metadata into a
 signature.
+
+**The engine never panics or acts for another scene on what a scene host sends.** A frame over
+the size limit, cut short, nested too deep, undecodable, or that does not fit the engine's budget
+for scene host frames (`dcl_deno_ipc::HOST_FRAME_BUDGET_BYTES`, shared by every host), ends that
+host's connection, which the engine handles as a lost sidecar. So does opening more reply channels
+than a host may hold: a channel counts until the engine drops its sender, whatever the host says,
+so engine code that keeps senders drops the closed ones. The host itself ends a scene that holds
+more than its own share (`dcl_deno_ipc::MAX_SCENE_IPC_CHANNELS`), so an honest host loses one
+scene, not its connection; only the per-host limit is the engine's. A response for a scene the
+host was not given, a `SystemApi` message from a host running no system scene, or IPC data from a
+host is dropped and counted (`dcl_deno_ipc::rejected_host_messages`), with one warning per
+connection. `crates/dcl_deno_ipc/src/engine_ipc_tests.rs`
+plays a scene host against the engine side of the pipe; cover every new `SceneToEngine` message
+there.
 
 **On web, the HUD never touches `localStorage`.** The app page and the sandbox workers share an
 origin with the shell page that holds the key. The first `localStorage` read loads the origin's
