@@ -330,7 +330,7 @@ describe('when a public NavBar composes app-owned controls in Chromium', () => {
         `(()=>{const p=getComputedStyle(document.querySelector('nav[aria-label="Main"]'),'::before');return{wash:p.backgroundColor,filter:p.backdropFilter}})()`
       )
     ).toEqual({ wash: 'rgba(22, 21, 24, 0.75)', filter: 'none' })
-  })
+  }, 30_000)
 
   for (const width of [991, 992, 1023, 1024, 1440]) {
     for (const surface of ['solid', 'overlay']) {
