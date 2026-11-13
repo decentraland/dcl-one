@@ -1,5 +1,11 @@
 // @vitest-environment jsdom
-import { dehydrate, focusManager, QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import {
+  dehydrate,
+  focusManager,
+  QueryClient,
+  QueryClientProvider,
+  QueryObserver,
+} from "@tanstack/react-query";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { createMemoryRouter, RouterProvider, useNavigate } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -50,12 +56,7 @@ import { ProfileErrorBoundary, ProfileRoute, profileClientLoader } from "./profi
 
 const A = "0x4e9c4a2502fdf71e93ed8ed6ca9ddbd891d6f295";
 const avatar = (name: string) => ({ name, hasClaimedName: true, description: "", avatar: { snapshots: { face256: "" } } });
-const identity = {
-  signer: A,
-  ephemeral: { address: "0xeph", privateKey: "0xdeadbeef" },
-  expiration: "2999-01-01T00:00:00.000Z",
-  authChain: [],
-};
+const identity = { signer: A, ephemeral: { address: "0xeph", privateKey: "0xdeadbeef" }, expiration: "2999-01-01T00:00:00.000Z", authChain: [] };
 
 let client: QueryClient;
 
@@ -157,17 +158,17 @@ describe("profile route, first hydration", () => {
 });
 
 describe("profile route, client navigation", () => {
-  it("preserves a newer healthy profile after leaving the old error boundary", async () => {
-    net.fetchProfile.mockRejectedValueOnce(new CatalystError("Catalyst unreachable", "/lambdas/profile", 0));
+  it("keeps a newer healthy public profile when the previous error boundary leaves", async () => {
+    net.fetchProfile.mockRejectedValueOnce(
+      new CatalystError("Catalyst unreachable", "/lambdas/profile", 0),
+    );
     const router = mount(`/profile/${A}`);
     await screen.findByRole("heading", { name: "Profile unavailable" });
     const fresh = mapProfile(avatar("Recovered") as never, A);
     act(() => client.setQueryData(profileKeys.profile(A), fresh));
-
     await act(async () => {
       await router.navigate("/other");
     });
-
     expect(client.getQueryData(profileKeys.profile(A))).toEqual(fresh);
     await act(async () => {
       await router.navigate(`/profile/${A}`);
@@ -176,55 +177,82 @@ describe("profile route, client navigation", () => {
     expect(net.fetchProfile).toHaveBeenCalledTimes(1);
   });
 
-  it("preserves recovered data after a background read fails and the old boundary unmounts", async () => {
-    net.fetchProfile.mockRejectedValueOnce(new CatalystError("Catalyst unreachable", "/lambdas/profile", 0));
+  it("keeps usable cached data after a newer background read fails", async () => {
+    net.fetchProfile.mockRejectedValue(
+      new CatalystError("Catalyst unreachable", "/lambdas/profile", 0),
+    );
     const router = mount(`/profile/${A}`);
     await screen.findByRole("heading", { name: "Profile unavailable" });
     const fresh = mapProfile(avatar("Recovered") as never, A);
     act(() => client.setQueryData(profileKeys.profile(A), fresh));
-    await client
-      .fetchQuery({
-        ...profileQuery(A),
-        staleTime: 0,
-        queryFn: async () => {
-          throw new CatalystError("Catalyst unreachable", "/lambdas/profile", 0);
-        },
-      })
-      .catch(() => undefined);
-    expect(client.getQueryState(profileKeys.profile(A))?.status).toBe("error");
-
+    await expect(
+      client.fetchQuery({ ...profileQuery(A), staleTime: 0 }),
+    ).rejects.toBeInstanceOf(CatalystError);
     await act(async () => {
       await router.navigate("/other");
     });
-
     expect(client.getQueryData(profileKeys.profile(A))).toEqual(fresh);
-    expect(client.getQueryState(profileKeys.profile(A))?.status).toBe("error");
   });
 
-  it("preserves a newer in-flight profile read after leaving the old error boundary", async () => {
-    net.fetchProfile.mockRejectedValueOnce(new CatalystError("Catalyst unreachable", "/lambdas/profile", 0));
+  it("does not cancel a newer in-flight public profile read when the old boundary leaves", async () => {
+    let finish!: (value: ReturnType<typeof avatar>) => void;
+    let signal: AbortSignal | undefined;
+    const response = new Promise<ReturnType<typeof avatar>>((resolve) => {
+      finish = resolve;
+    });
+    net.fetchProfile
+      .mockRejectedValueOnce(
+        new CatalystError("Catalyst unreachable", "/lambdas/profile", 0),
+      )
+      .mockImplementationOnce((_address, options: { signal: AbortSignal }) => {
+        signal = options.signal;
+        return response;
+      });
     const router = mount(`/profile/${A}`);
     await screen.findByRole("heading", { name: "Profile unavailable" });
-    const fresh = mapProfile(avatar("Recovered") as never, A);
-    let resolve!: (value: typeof fresh) => void;
-    const result = client.fetchQuery({
+    const read = client.fetchQuery(profileQuery(A)).then(
+      (value) => ({ ok: true, value }),
+      (error: unknown) => ({ ok: false, error }),
+    );
+    try {
+      await act(async () => {
+        await router.navigate("/other");
+      });
+      expect(signal?.aborted).toBe(false);
+    } finally {
+      finish(avatar("Recovered"));
+    }
+    expect(await read).toMatchObject({
+      ok: true,
+      value: { name: "Recovered" },
+    });
+    expect(net.fetchProfile).toHaveBeenCalledTimes(2);
+  });
+
+  it("leaves a failed public profile owned by another active observer intact", async () => {
+    const failure = new CatalystError(
+      "Catalyst unreachable",
+      "/lambdas/profile",
+      0,
+    );
+    net.fetchProfile.mockRejectedValue(failure);
+    const router = mount(`/profile/${A}`);
+    await screen.findByRole("heading", { name: "Profile unavailable" });
+    const observer = new QueryObserver(client, {
       ...profileQuery(A),
-      queryFn: () =>
-        new Promise<typeof fresh>((done) => {
-          resolve = done;
-        }),
+      retryOnMount: false,
     });
-    const settled = result.catch(() => null);
-
-    await act(async () => {
-      await router.navigate("/other");
-    });
-    const fetchStatus = client.getQueryState(profileKeys.profile(A))?.fetchStatus;
-    resolve(fresh);
-    await settled;
-
-    expect(fetchStatus).toBe("fetching");
-    expect(client.getQueryData(profileKeys.profile(A))).toEqual(fresh);
+    const unsubscribe = observer.subscribe(() => {});
+    try {
+      await act(async () => {
+        await router.navigate("/other");
+      });
+      expect(observer.getCurrentResult().isError).toBe(true);
+      expect(client.getQueryState(profileKeys.profile(A))?.error).toBe(failure);
+      expect(net.fetchProfile).toHaveBeenCalledTimes(1);
+    } finally {
+      unsubscribe();
+    }
   });
 
   it("uses a newer healthy profile when Retry leaves the old error boundary", async () => {
@@ -275,9 +303,7 @@ describe("profile route, client navigation", () => {
   });
 
   it("shows the unavailable screen when the profile cannot be read, and Retry reads it again", async () => {
-    net.fetchProfile
-      .mockRejectedValueOnce(new CatalystError("Catalyst unreachable", "/lambdas/profile", 0))
-      .mockResolvedValueOnce(avatar("Alice"));
+    net.fetchProfile.mockRejectedValueOnce(new CatalystError("Catalyst unreachable", "/lambdas/profile", 0)).mockResolvedValueOnce(avatar("Alice"));
 
     mount(`/profile/${A}`);
 
@@ -288,14 +314,17 @@ describe("profile route, client navigation", () => {
   });
 
   it("reads the profile afresh after leaving a failed profile and coming back", async () => {
-    net.fetchProfile
-      .mockRejectedValueOnce(new CatalystError("Catalyst unreachable", "/lambdas/profile", 0))
-      .mockResolvedValueOnce(avatar("Alice"));
+    net.fetchProfile.mockRejectedValueOnce(new CatalystError("Catalyst unreachable", "/lambdas/profile", 0)).mockResolvedValueOnce(avatar("Alice"));
     const router = mount(`/profile/${A}`);
     await screen.findByRole("heading", { name: "Profile unavailable" });
 
     await act(async () => {
       await router.navigate("/other");
+    });
+    expect(client.getQueryState(profileKeys.profile(A))).toMatchObject({
+      status: "pending",
+      error: null,
+      fetchStatus: "idle",
     });
     screen.getByRole("button", { name: "back to profile" }).click();
 
@@ -312,7 +341,7 @@ describe("profile route, client navigation", () => {
     expect(screen.queryByRole("heading", { name: "Profile unavailable" })).toBeNull();
   });
 
-  it('shows unavailable, not "invalid address", when the node answers 404 for a wallet', async () => {
+  it("shows unavailable, not \"invalid address\", when the node answers 404 for a wallet", async () => {
     net.fetchProfile.mockRejectedValue(new CatalystError("Catalyst returned 404", "/lambdas/profile", 404));
 
     mount(`/profile/${A}`);
@@ -344,7 +373,9 @@ describe("profile route, communities", () => {
 
     mount(`/profile/${A}/communities`);
 
-    await waitFor(() => expect(net.track).toHaveBeenCalledWith("profile_communities_load_failed", { address: A }, expect.anything()));
+    await waitFor(() =>
+      expect(net.track).toHaveBeenCalledWith("profile_communities_load_failed", { address: A }, expect.anything()),
+    );
     act(() => {
       focusManager.setFocused(false);
       focusManager.setFocused(true);
