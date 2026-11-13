@@ -2328,17 +2328,15 @@ impl super::events::RoomEventStore for RecordingStore {
     }
 }
 
-/// A reconnect's old leave arrives after the new join: comms' own session
-/// ordering skips it, the store still receives it, and a failed store is a
-/// 503 so LiveKit delivers the event again.
-#[tokio::test]
-async fn the_room_event_store_receives_superseded_session_events_and_fails_the_webhook() {
+type WebhookPost =
+    Box<dyn Fn(&str, &str, &str, i64) -> futures::future::BoxFuture<'static, StatusCode>>;
+
+/// A webhook on a world room with the access-log sink and a recording store;
+/// the returned poster signs and sends `(id, kind, sid, createdAt)`.
+fn room_event_store_app() -> (WebhookPost, Arc<AccessLogSink>, Arc<RecordingStore>) {
     use super::webhook::test_support::webhook_jwt;
     use crate::world_identity::WorldName;
     let room = crate::rooms::worlds_service_world_room(&WorldName::parse("alice.dcl.eth").unwrap());
-    let event = |id: &str, kind: &str, sid: &str, at: i64| {
-        serde_json::to_vec(&serde_json::json!({ "id": id, "createdAt": at, "event": kind, "room": { "name": room }, "participant": { "identity": "0xabc", "sid": sid, "metadata": "{}" } })).unwrap()
-    };
     let settings = Settings::for_tests();
     let (key, secret) = (
         settings.livekit.api_key.clone(),
@@ -2366,17 +2364,27 @@ async fn the_room_event_store_receives_superseded_session_events_and_fails_the_w
         .with_room_event_store(store.clone()),
     );
     let app = super::router(state);
-    let post = |body: Vec<u8>| {
+    let post: WebhookPost = Box::new(move |id, kind, sid, at| {
+        let body = serde_json::to_vec(&serde_json::json!({ "id": id, "createdAt": at, "event": kind, "room": { "name": room }, "participant": { "identity": "0xabc", "sid": sid, "metadata": "{}" } })).unwrap();
         let jwt = webhook_jwt(&body, &key, &secret);
         let app = app.clone();
-        async move { post_webhook(&app, Some(&jwt), &body).await }
-    };
-    for body in [
-        event("old-join", "participant_joined", "PA_old", 1718900000),
-        event("new-join", "participant_joined", "PA_new", 1718900001),
-        event("old-leave", "participant_left", "PA_old", 1718900002),
+        Box::pin(async move { post_webhook(&app, Some(&jwt), &body).await })
+    });
+    (post, sink, store)
+}
+
+/// A reconnect's old leave arrives after the new join: comms' own session
+/// ordering skips it, the store still receives it, and a failed store is a
+/// 503 so LiveKit delivers the event again.
+#[tokio::test]
+async fn the_room_event_store_receives_superseded_session_events_and_fails_the_webhook() {
+    let (post, sink, store) = room_event_store_app();
+    for (id, kind, sid, at) in [
+        ("old-join", "participant_joined", "PA_old", 1718900000),
+        ("new-join", "participant_joined", "PA_new", 1718900001),
+        ("old-leave", "participant_left", "PA_old", 1718900002),
     ] {
-        assert_eq!(post(body).await, StatusCode::OK);
+        assert_eq!(post(id, kind, sid, at).await, StatusCode::OK);
     }
     assert_eq!(
         sink.0.lock().unwrap().len(),
@@ -2393,15 +2401,88 @@ async fn the_room_event_store_receives_superseded_session_events_and_fails_the_w
         ]
     );
 
-    let leave = event("new-leave", "participant_left", "PA_new", 1718900003);
+    let leave = || post("new-leave", "participant_left", "PA_new", 1718900003);
     store.fail.store(true, std::sync::atomic::Ordering::SeqCst);
-    assert_eq!(post(leave.clone()).await, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(leave().await, StatusCode::SERVICE_UNAVAILABLE);
     assert_eq!(sink.0.lock().unwrap().len(), 2, "nothing applied yet");
-    assert_eq!(post(leave).await, StatusCode::OK);
+    assert_eq!(leave().await, StatusCode::OK);
     assert_eq!(sink.0.lock().unwrap().len(), 3);
     assert_eq!(
         store.events.lock().unwrap().last(),
         Some(&stored("new-leave", "PA_new"))
+    );
+}
+
+/// A leave whose store failed is still logged once when its redelivery
+/// follows the reconnect's join; a superseded leave's failed store (its
+/// tombstone already kept) is retried; an applied event's redelivery is not
+/// stored again.
+#[tokio::test]
+async fn the_room_event_store_retries_failed_leaves_and_skips_duplicates() {
+    let (post, sink, store) = room_event_store_app();
+    let fail = || store.fail.store(true, std::sync::atomic::Ordering::SeqCst);
+    let stored = || store.events.lock().unwrap().len();
+    let leaves = || {
+        sink.0
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(action, ..)| action == "leave")
+            .count()
+    };
+    assert_eq!(
+        post("a-join", "participant_joined", "PA_a", 1718900000).await,
+        StatusCode::OK
+    );
+    assert_eq!(
+        post("a-join", "participant_joined", "PA_a", 1718900000).await,
+        StatusCode::OK
+    );
+    assert_eq!(stored(), 1, "a duplicate is not stored again");
+
+    fail();
+    assert_eq!(
+        post("a-leave", "participant_left", "PA_a", 1718900001).await,
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+    assert_eq!(
+        post("b-join", "participant_joined", "PA_b", 1718900002).await,
+        StatusCode::OK
+    );
+    assert_eq!(
+        post("a-leave", "participant_left", "PA_a", 1718900001).await,
+        StatusCode::OK
+    );
+    assert_eq!(leaves(), 1, "the redelivered leave reaches the access log");
+    assert_eq!(
+        post("a-leave", "participant_left", "PA_a", 1718900001).await,
+        StatusCode::OK
+    );
+    assert_eq!(leaves(), 1, "only once");
+    assert_eq!(stored(), 4);
+
+    assert_eq!(
+        post("c-join", "participant_joined", "PA_c", 1718900004).await,
+        StatusCode::OK
+    );
+    fail();
+    assert_eq!(
+        post("b-leave", "participant_left", "PA_b", 1718900005).await,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "a superseded leave's failed store is retried"
+    );
+    assert_eq!(
+        post("b-leave", "participant_left", "PA_b", 1718900005).await,
+        StatusCode::OK
+    );
+    assert_eq!(
+        store.events.lock().unwrap().last(),
+        Some(&("b-leave".to_string(), "PA_b".to_string()))
+    );
+    assert_eq!(
+        leaves(),
+        1,
+        "comms' ordering still skips it in the access log"
     );
 }
 

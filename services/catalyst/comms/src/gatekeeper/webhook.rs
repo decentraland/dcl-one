@@ -65,10 +65,12 @@ impl<V> History<V> {
         self.order.insert(self.sequence, key.clone());
         self.values.insert(key, (value, self.sequence));
     }
-    fn remove(&mut self, key: &str) {
-        if let Some((_, order)) = self.values.remove(key) {
-            self.order.remove(&order);
-        }
+    fn remove(&mut self, key: &str) -> bool {
+        let Some((_, order)) = self.values.remove(key) else {
+            return false;
+        };
+        self.order.remove(&order);
+        true
     }
 }
 
@@ -88,6 +90,8 @@ struct WebhookState {
     participants: History<(i64, bool)>,
     current: History<(String, i64, bool)>,
     metadata: History<(String, tokio::time::Instant)>,
+    /// Event IDs whose store failed before the sink observed them.
+    unobserved: History<()>,
 }
 
 pub(super) struct WebhookCoordinator {
@@ -179,6 +183,7 @@ impl WebhookState {
 
     fn applied(&mut self, event: &Value, kind: &str, deadline: u64) {
         let id = event_id(event).unwrap().to_owned();
+        self.unobserved.remove(&id);
         self.applied.insert(id.clone(), deadline);
         if matches!(kind, "participant_joined" | "participant_left") {
             let sid = participant_sid(event).unwrap();
@@ -308,6 +313,11 @@ pub async fn livekit_webhook(
             && let Some(room_event) = room_event(&state, event_kind, &event).await?
         {
             store_room_event(&state, &room_event).await?;
+            // A failed store's redelivery can be superseded by then; the sink still gets it once.
+            let owed = state.webhooks.state.lock().unwrap().unobserved.remove(id);
+            if owed && let Some(sink) = state.room_events.as_ref() {
+                sink.observe_room_event(&room_event);
+            }
         }
         return Ok(axum::http::StatusCode::OK.into_response());
     }
@@ -346,7 +356,16 @@ pub async fn livekit_webhook(
     }
     dispatch(&state, event_kind, &event).await?;
     if let Some(room_event) = room_event(&state, event_kind, &event).await? {
-        store_room_event(&state, &room_event).await?;
+        if let Err(error) = store_room_event(&state, &room_event).await {
+            state
+                .webhooks
+                .state
+                .lock()
+                .unwrap()
+                .unobserved
+                .insert(id.to_owned(), ());
+            return Err(error);
+        }
         if let Some(sink) = state.room_events.as_ref() {
             sink.observe_room_event(&room_event);
         }
