@@ -7,14 +7,27 @@
     #import bevy_pbr::forward_io::{VertexOutput, FragmentOutput};
     #import bevy_pbr::pbr_fragment::pbr_input_from_standard_material;
     #import bevy_pbr::pbr_functions::{apply_pbr_lighting, main_pass_post_lighting_processing};
+    #import bevy_pbr::{mesh_view_bindings::{lights, view}, shadows};
+    #import "embedded://shaders/shadow_softening.wgsl"::soften_directional_shadow
     #import "embedded://visuals/landscape_ground.wgsl"::ground_albedo_normal
 #endif
 
 #import "embedded://visuals/terrain_params.wgsl"::terrain
 #import "embedded://visuals/coast_profile.wgsl"::beyond_coast
 
+#ifndef PREPASS_PIPELINE
+// same softened sun shadows as scene materials (see bound_material.wgsl)
+override fn shadows::fetch_directional_shadow(light_id: u32, frag_position: vec4<f32>, surface_normal: vec3<f32>, view_z: f32) -> f32 {
+    let base = shadows::fetch_directional_shadow(light_id, frag_position, surface_normal, view_z);
+    // the far bound of the last cascade is the shadow distance for this light
+    let light = &lights.directional_lights[light_id];
+    let far = (*light).cascades[max((*light).num_cascades, 1u) - 1u].far_bound;
+    let to_frag = frag_position.xyz - view.world_position;
+    return soften_directional_shadow(base, far, dot(to_frag, to_frag));
+}
+
 #ifdef ENVIRONMENT_MAP
-#import bevy_pbr::{ambient, clustered_forward::ClusterableObjectIndexRanges, environment_map, lighting, mesh_view_bindings::lights}
+#import bevy_pbr::{ambient, clustered_forward::ClusterableObjectIndexRanges, environment_map, lighting}
 #import "embedded://shaders/sky_envmap_lookup.wgsl"::{sky_envmap_input, sky_envmap_level}
 
 // the sky envmap, levelled towards the flat ambient light, is the only ambient light
@@ -28,6 +41,7 @@ override fn environment_map::compute_radiances(input: lighting::LayerLightingInp
 override fn ambient::ambient_light(world_position: vec4<f32>, world_normal: vec3<f32>, V: vec3<f32>, NdotV: f32, diffuse_color: vec3<f32>, specular_color: vec3<f32>, perceptual_roughness: f32, occlusion: vec3<f32>) -> vec3<f32> {
     return vec3(0.0);
 }
+#endif
 #endif
 
 @fragment

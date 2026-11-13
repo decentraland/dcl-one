@@ -11,8 +11,8 @@ use ipfs::IpfsResource;
 
 use crate::{initialize_scene::SceneHash, renderer_context::RendererSceneContext, ContainingScene};
 
-/// Where a scene, or an entity with `PartitionedDownloads`, is relative to the player and the
-/// camera; refreshed every frame by `update_scene_partitions`.
+/// Where a scene, or an entity with `PartitionedDownloads` or `PartitionedEmoteDownloads`, is
+/// relative to the player and the camera; refreshed every frame by `update_scene_partitions`.
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub struct Partition(pub PartitionData);
 
@@ -26,6 +26,17 @@ pub struct Partition(pub PartitionData);
     on_replace = release_partitioned_downloads
 )]
 pub struct PartitionedDownloads(pub Vec<String>);
+
+/// The content hashes of the emotes this entity plays, filed like [`PartitionedDownloads`]: an
+/// emote's definition, model and sounds download under its own entity hash, which no scene root
+/// holds. It is a component of its own because the emotes change with playback and the outfit
+/// with the profile, and each list is replaced whole.
+#[derive(Component, Clone, Debug, Default, PartialEq)]
+#[component(
+    on_insert = register_partitioned_emote_downloads,
+    on_replace = release_partitioned_emote_downloads
+)]
+pub struct PartitionedEmoteDownloads(pub Vec<String>);
 
 /// `SceneHash` hook: the scene root appeared, so its hash ranks at its partition, or at the
 /// bottom of the scene tier until it has one; the publisher raises the player's scene to the
@@ -59,30 +70,50 @@ pub fn release_scene_hash(world: DeferredWorld, context: HookContext) {
 }
 
 fn register_partitioned_downloads(world: DeferredWorld, context: HookContext) {
-    let (Some(ipfs), Some(downloads)) = (
-        world.get_resource::<IpfsResource>(),
-        world.get::<PartitionedDownloads>(context.entity),
-    ) else {
-        return;
-    };
-    let key = world
-        .get::<Partition>(context.entity)
-        .map_or(LoadPriority::AVATAR_PENDING, |partition| {
-            partition.0.load_priority(Tier::Avatar)
-        });
-    for hash in &downloads.0 {
-        ipfs.register_download_priority(hash, key);
+    if let Some(downloads) = world.get::<PartitionedDownloads>(context.entity) {
+        register_avatar_hashes(&world, context.entity, &downloads.0);
     }
 }
 
 fn release_partitioned_downloads(world: DeferredWorld, context: HookContext) {
-    let (Some(ipfs), Some(downloads)) = (
-        world.get_resource::<IpfsResource>(),
-        world.get::<PartitionedDownloads>(context.entity),
-    ) else {
+    if let Some(downloads) = world.get::<PartitionedDownloads>(context.entity) {
+        release_avatar_hashes(&world, &downloads.0);
+    }
+}
+
+fn register_partitioned_emote_downloads(world: DeferredWorld, context: HookContext) {
+    if let Some(downloads) = world.get::<PartitionedEmoteDownloads>(context.entity) {
+        register_avatar_hashes(&world, context.entity, &downloads.0);
+    }
+}
+
+fn release_partitioned_emote_downloads(world: DeferredWorld, context: HookContext) {
+    if let Some(downloads) = world.get::<PartitionedEmoteDownloads>(context.entity) {
+        release_avatar_hashes(&world, &downloads.0);
+    }
+}
+
+/// The hashes rank at the entity's partition in the avatar tier, or at the tier's bottom until
+/// it has one. Without the ipfs resource (tests) nothing is registered.
+fn register_avatar_hashes(world: &DeferredWorld, entity: Entity, hashes: &[String]) {
+    let Some(ipfs) = world.get_resource::<IpfsResource>() else {
         return;
     };
-    for hash in &downloads.0 {
+    let key = world
+        .get::<Partition>(entity)
+        .map_or(LoadPriority::AVATAR_PENDING, |partition| {
+            partition.0.load_priority(Tier::Avatar)
+        });
+    for hash in hashes {
+        ipfs.register_download_priority(hash, key);
+    }
+}
+
+fn release_avatar_hashes(world: &DeferredWorld, hashes: &[String]) {
+    let Some(ipfs) = world.get_resource::<IpfsResource>() else {
+        return;
+    };
+    for hash in hashes {
         ipfs.release_download_priority(hash);
     }
 }
@@ -114,7 +145,10 @@ pub fn update_scene_partitions(
     mut scenes: Query<(Entity, &RendererSceneContext, Option<&mut Partition>)>,
     mut points: Query<
         (Entity, &GlobalTransform, Option<&mut Partition>),
-        (With<PartitionedDownloads>, Without<RendererSceneContext>),
+        (
+            Or<(With<PartitionedDownloads>, With<PartitionedEmoteDownloads>)>,
+            Without<RendererSceneContext>,
+        ),
     >,
     mut commands: Commands,
 ) {
@@ -145,16 +179,17 @@ pub fn update_scene_partitions(
 /// This frame's download priority of every registered hash, written into the ipfs request
 /// slots in place: the player's scenes first, even before they have a context and while the
 /// player is still out of world arriving in one; then the
-/// avatars' bodies and wearables, nearest avatar first, a shared wearable at the best of its
+/// avatars' bodies, wearables and emotes, nearest avatar first, a shared one at the best of its
 /// avatars; then the other scenes by partition, a scene with no partition yet last among them.
 /// Which hashes are registered is the hooks' business (`register_scene_hash`,
-/// `register_partitioned_downloads`). Runs only on a frame in which a download waits for or
-/// holds a slot: a grant that chooses between downloads happens at an enqueue while others wait
-/// or at a release, so it reads this frame's keys unless the gate was idle when the frame began,
-/// and the steady state costs nothing.
+/// `register_partitioned_downloads`, `register_partitioned_emote_downloads`). Runs only on a
+/// frame in which a download waits for or holds a slot: a grant that chooses between downloads
+/// happens at an enqueue while others wait or at a release, so it reads this frame's keys unless
+/// the gate was idle when the frame began, and the steady state costs nothing.
 pub fn publish_download_priorities(
     scenes: Query<(Entity, &SceneHash, Option<&Partition>)>,
     partitioned: Query<(&Partition, &PartitionedDownloads)>,
+    partitioned_emotes: Query<(&Partition, &PartitionedEmoteDownloads)>,
     player: Query<Entity, With<PrimaryUser>>,
     containing_scene: ContainingScene,
     ipfs: Res<IpfsResource>,
@@ -180,7 +215,13 @@ pub fn publish_download_priorities(
         let key = partition.0.load_priority(Tier::Avatar);
         downloads.0.iter().map(move |hash| (hash.as_str(), key))
     });
-    ipfs.update_download_priorities(scene_keys.chain(wearable_keys));
+    let emote_keys = partitioned_emotes
+        .iter()
+        .flat_map(|(partition, downloads)| {
+            let key = partition.0.load_priority(Tier::Avatar);
+            downloads.0.iter().map(move |hash| (hash.as_str(), key))
+        });
+    ipfs.update_download_priorities(scene_keys.chain(wearable_keys).chain(emote_keys));
 }
 
 #[cfg(test)]

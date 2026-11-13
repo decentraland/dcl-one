@@ -52,6 +52,9 @@
       "path": "ui"
     },
     {
+      "path": "smart-wearable"
+    },
+    {
       "path": "pointer-targets"
     },
     {

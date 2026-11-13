@@ -70,8 +70,22 @@
               pkgs.glibcLocales.override { allLocales = false; locales = [ "C.UTF-8/UTF-8" "en_US.UTF-8/UTF-8" ]; }
             }/lib/locale/locale-archive";
           });
+          # The web explorer's loop, `just wasm` in rendering/bevy-explorer/source: the nightly its
+          # justfile pins, and wasm-bindgen at that workspace's Cargo.lock version, so wasm-pack
+          # downloads neither it nor wasm-opt. No services: the shell hook is the default shell's.
+          wasm = pkgs.mkShell {
+            packages = with pkgs; [
+              (rust-bin.nightly."2026-04-15".default.override {
+                targets = [ "wasm32-unknown-unknown" ];
+                extensions = [ "rust-src" ];
+              })
+              just wasm-pack wasm-bindgen-cli_0_2_114 binaryen nodejs_26 python3 gitMinimal
+              pkg-config cmake clang protobuf
+            ] ++ lib.optionals stdenv.hostPlatform.isLinux [ udev ];
+            LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
+          };
         in {
-          inherit default ci;
+          inherit default ci wasm;
           # foundation-dev desktop: the Tauri shell (apps/desktop). Linux needs
           # WebKitGTK; libsoup gets TLS from glib-networking.
           desktop = default.overrideAttrs (old: {

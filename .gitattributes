@@ -1,5 +1,10 @@
 # Preserve the exact upstream bytes on Windows as well as Unix.
+services/catalyst/src/metrics_matcher/path-to-regexp.cjs -text
+services/catalyst/src/metrics_matcher/path-to-regexp.LICENSE -text
 rendering/bevy-explorer/source/** -text
+# The shared HUD input manifest hashes these source and asset bytes on every platform.
+library/explorer-core/** -text
+library/ui/apps/hud/** -text
 library/vendor/rusty_enet/** -text -whitespace
 rendering/bevy-explorer/bevy/** -text -whitespace
 rendering/bevy-explorer/source/vendor/basisu/** -text -whitespace

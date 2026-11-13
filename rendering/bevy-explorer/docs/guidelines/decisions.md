@@ -17,6 +17,29 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **Emissive strength.** Unity never parses `KHR_materials_emissive_strength`; bevy honours
   it, spec-correctly. Content authored against Unity can glow (the Nekko cat at 65x). Dropping
   the extension is not the fix; the long-term answer is still open.
+- **Sun shadows keep bevy's default bias.** Unity's `DepthBias` (1.75 or 1.56 texels, times
+  URP's soft kernel radius 2.5) is a depth bias, not a normal bias, and carried over as bevy's
+  normal bias it offset each lookup about half a metre on Low at 60 m, dropping thin and contact
+  shadows. On the 1024 map, acne showed below a normal bias of 0.5 on Low and about 1 on High
+  (Genesis Plaza, low sun), so both qualities keep bevy's 0.02 m depth and 1.8 texel normal
+  bias.
+- **Sun shadow map stays at 4096.** Unity's main shadow resolution is 1024. Low's single
+  cascade spreads that over the whole shadow distance, and the bias is in texels, so past about
+  75 m on 1024 the avatar's shadow disappeared, and on 2048 it was a smudge at the feet. 4096
+  keeps it.
+- **Sun shadows block 0.65 of the sun.** Unity's sun shadow strength is 1, and its Trilight
+  ambient fills the shadow in. Our ambient is darker, so a full-strength shadow comes out far
+  darker than Unity's. `SHADOW_OPACITY` in `shadow_softening.wgsl` stays at 0.65 until Unity's
+  ambient lands, and the two get tuned together after that.
+- **Sun shadows hold a floor past the shadow distance.** URP fades the shadow out completely at
+  the shadow distance. We fade over the same squared-distance curve, but towards a partial
+  shadow (`CASCADE_FAR_SHADOW` in `shadow_softening.wgsl`) that holds past the distance, so the
+  worst-case change between near and far is smaller. Fading to no shadow looked worse about
+  half the time.
+- **Low shadows keep hardware 2x2 filtering.** Unity's soft shadows filter every quality. Low is
+  the default preset and the filter applies per view, spot shadows included, so Low keeps
+  bevy's `Hardware2x2` (one PCF sample) instead of `Gaussian` (nine) to stay cheap on weak GPUs
+  and web. High uses `Gaussian`.
 - **Jump marker reads the depth prepass.** Like Unity's projector, the blob (`BlobShadow.mat`)
   is projected onto the surface below, so it follows slopes, steps and ledges; a flat quad
   cut into rising ground. A depth bias does not fix that: it offsets the quad's depth test,
@@ -40,10 +63,11 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   scheduler and measure raw squared distance from the player to the nearest point of a scene's
   nearest parcel (not its corner); a scene behind the rendering camera counts four times
   farther in the tick queue (no once-a-second cap, no frozen far scenes). Request slots go to
-  the head of the best-ranked queue (one per scene or wearable hash, and one for requests with
-  no hash): the player's scenes, then avatars' wearables, then the other scenes, the last two by
-  parcel ring, in front before behind, then raw distance; then requests no scene or avatar owns
-  (no hash, or a hash nobody holds), oldest first; last, the downloads of a scene that has left.
+  the head of the best-ranked queue (one per scene, wearable or emote hash, and one for requests
+  with no hash): the player's scenes, then avatars' wearables and the emotes they play, then the
+  other scenes, the last two by parcel ring, in front before behind, then raw distance; then
+  requests no scene or avatar owns (no hash, or a hash nobody holds), oldest first; last, the
+  downloads of a scene that has left.
   Scene roots and avatars register their hashes through component hooks; the publisher writes
   the values in place. See the
   [ADR](../../../../docs/adr/2026-11-02-explorer-nearest-first-priority.md).
@@ -98,6 +122,27 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
     rejected on reconnect (one the user placed is ended), and the reconnect's own report of it is
     ignored: the server tells only the caller about a reject, so a second ring would never stop.
   - Don't show the "stream in this scene" banner to guests: they can't join.
+- **Saved mutes for nearby voice** follow unity-explorer's: the profile menu's Hush and Hear, the
+  list kept by the social service (`/v1/mutes`), a mute that holds for the session when saving it
+  fails, a saved list that only adds to what the user did before it arrived, and a muted player
+  silenced but still subscribed, with the hushed badge in place of the speaking bars. These differ:
+  - The list belongs to the account. A change of account drops it and reads the new account's;
+    unity-explorer reads it once at start and keeps it for whoever signs in next.
+  - `nearby_voice_user_mute` is sent for the user's Hush or Hear only; unity-explorer also sends
+    it for every mute read from the saved list.
+  - Muting oneself is refused, as the service refuses it; the menu never offers it.
+  - Changes are saved one at a time, in the order the user made them, and only once the saved
+    list has been read: the service applies each request on its own, so a Hush and a Hear sent
+    together could land in either order, and a row removed while the list is read page by page
+    makes the next page skip one. unity-explorer sends each change as it is made, cancels the
+    one in flight when the next is made, and does not wait for the list.
+  - A saved list that cannot be read is read again from the first page after 2, 4 and 8 seconds;
+    after that it stays unread until the account changes. unity-explorer repeats a single page
+    request up to twice on a transient network error and does not read the list again.
+  - Hush and Hear are on the profile card's default and friend menus, for a blocked user too, as
+    unity-explorer's user menu has them; the request, blocked-list and community-member menus
+    do not carry them.
+  - Don't apply it to calls or community streams: as in unity-explorer it is nearby voice only.
 - **Profiles from the centralized catalyst.** unity-explorer switches between the
   asset-bundle registry and a catalyst with `USE_CENTRALIZED_PROFILES` and reads a remote
   player's catalyst from their LiveKit metadata. We read the base-domain catalyst's lambdas:
@@ -309,6 +354,82 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   unity-explorer scales the scroll delta by 50 everywhere but macOS, per frame; here a wheel line
   (16 pixels of a trackpad's scroll, on every platform including web) zooms as Unity's 60 fps frame
   would, and a held bumper zooms at Unity's per-second rate, so neither depends on the frame rate.
+- **Smart wearable permissions are asked on use, not at equip.** unity-explorer asks once, when a
+  smart wearable is equipped (or at login for one already worn), to allow the permissions its
+  `requiredPermissions` declares, and refuses what it did not declare. Here a smart wearable is a
+  portable like any other: each restricted action goes through the stored rules and the per-use
+  prompt, which shows what is being done (the URL to open, the realm to change to). So
+  `requiredPermissions` is ignored, and nothing is asked before the scene starts. On native,
+  `fetch` and WebSocket are asked per use like the rest (`dcl_deno`); on web they are not
+  permission-gated for any scene (scene code can reach the page's raw `fetch`), so a
+  declared-permission check on them would be bypassable.
+- **`portableExperiences: disabled` pauses every listed portable.** unity-explorer unloads smart
+  wearables while the player stands in a scene that disables portable experiences and loads them
+  again on leaving. Here every portable the player can see (not startup ones, not the HUD's scene)
+  is paused through `RendererSceneContext.blocked` and its UI is hidden, so it keeps its state
+  across the crossing and nothing has to remember a portable that is not running.
+
+- **Donate is on `/play` only, and for web3 sign-ins only.** unity-explorer offers it to any
+  signed-in player through its wallet. Here only the Sites `/play` web shell holds a wallet that can
+  sign a transfer, so the Explorer's own HUD shows no Donate. MANA is shown to web3 wallet
+  sign-ins only (AGENTS.md), so an in-app (managed) sign-in sees no Donate either, and the shell
+  refuses one that asks. See [the ADR](../../../../docs/adr/2026-11-12-play-shell-signs-tips.md).
+- **The Donate panel is drawn by the web shell, over the app.** The amount is confirmed where the
+  wallet is, and the shell resolves the creator itself; the HUD names the place only.
+- **An unclear tip outcome is shown as processing, with no Try again.** unity-explorer's error
+  view always offers Try again. Here a failure that may have reached the chain (the relay's answer
+  lost or a 5xx after signing, a transaction not yet mined) shows the tip as processing and watches
+  it; Try again appears only after a clear failure (the wallet declined, nothing was signed, the
+  transaction reverted), so a player never tips twice. A tip still unconfirmed after 30 minutes
+  stays "still being processed" with no retry, and opening Donate again shows it until it settles.
+  There is no fallback to a transaction from the wallet: the relay's refusal fails the tip, and
+  trying again signs the same nonce (pinned), so at most one can land; once that nonce is used, the
+  next send signs nothing and watches the failed attempts until one is seen mined.
+- **The MANA price comes from the deployment.** unity-explorer reads the MANA/USD rate from
+  CoinGecko; the panel reads the catalyst's price service (`/price/api/v3/simple/price`), which
+  answers in the same shape.
+- **The creator is the scene's deployer.** The places service's `creator_address`, which the tip
+  goes to, is the deployer of the place's scene here.
+- **Donate's buttons.** The minimap's uses unity-explorer's tip icon, beside the collapse button;
+  the map's place panel has a DONATE text button under JUMP IN, whose art is not ported. The fourth
+  amount choice reads OTHER, and the minimum reads "Tips must be ≥ 1 MANA".
+- **Events page: JUMP IN closes the page and the event detail.** unity-explorer leaves both open
+  while the player travels. Here a jump reconnects the realm under the loading screen, and every
+  other page closes on a jump, so Events does too.
+- **Events page: its links carry the HUD's `utm_source`.** unity-explorer tags them
+  `utm_source=explorer`; here they carry `bevy-web-client` or `bevy-desktop-client` like every
+  other link out, and keep `utm_campaign=discover`. Event names and descriptions are URL-encoded
+  in the share and calendar links, and so are the world, the referrer and the event id in the
+  jump and event links; unity-explorer leaves all of them raw.
+- **Events page: JUMP IN travels to a world only by its name.** The events service takes any
+  text as an event's `server`, and the engine reads anything but a world name as a realm's
+  address. unity-explorer builds the worlds server's address from it; here a `server` that is
+  not a `.eth` name does not travel, and a toast says the world cannot be reached.
+- **Events page: the calendar never steps before today.** unity-explorer steps back by the days
+  shown and locks the arrow only on today itself, so after the highlighted events come or go,
+  or past midnight, it reaches earlier days. Here a step back stops at today.
+- **Events page: a recurrent date's offset keeps its minutes.** unity-explorer writes whole
+  hours, `(UTC+5)` in a `+5:30` zone; here it reads `(UTC+5:30)`.
+- **Events page: a failed read shows an error with Retry.** unity-explorer shows a toast and
+  leaves the loading placeholders up. A read the bridge has not answered in 10 seconds counts as
+  failed (the limit `library/explorer-core/lib/shell.ts` gives a request); an answer that arrives later still shows,
+  and so does a reminder the service confirms late.
+- **Events page: one copy of an event.** unity-explorer changes the reminder on the card's own
+  copy, so a card scrolled out and back shows the old state; its day view's card buttons are not
+  wired, and its banner is drawn before the friends list arrives. Here the calendar, the day
+  view, the banner and the detail read one event, every card's buttons act, and friends show
+  when they arrive.
+- **Events page: analytics.** unity-explorer reports `event_card_clicked` from calendar cards
+  only and nothing for an open from the sidebar; here a day view's cards report it too, and the
+  sidebar reports `events_section_opened` with `source: sidebar`.
+- **Events page: no "error loading friends" or "My Communities" toast.** The friends list and
+  the member-of list reach the HUD as snapshots with no failure signal, so there is nothing to
+  report; cards show friends and community marks once the lists are there.
+- **Events page: shapes are CSS, icons are unity-explorer's.** Its rounded containers, outlines
+  and gradients are nine-slice sprites there; drawn as masks at the HUD's fractional scale they
+  show seams between the slices, so here they are radii, borders and gradients with the sprites'
+  colours. The canvas scales by the smaller of width and height, as every menu page does, where
+  unity-explorer's scales by width.
 - **No satellite floor.** unity-explorer lays the minimap's satellite images flat at 0.205 m under the
   terrain in Genesis City; here the terrain covers that plane out to the landscape distance, so the
   floor would never be seen and is not shipped.
@@ -339,6 +460,16 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   the executable's assets directory and the IPFS cache lives elsewhere. Containment is done
   in `ipfs_path.rs` instead. See the security page.
 - **Web-only engine switches are page params**, not `LaunchOptions` fields.
+- **`CommsApi.consumeMessages` resolves to a bare array** of `{ sender, data }`, not the
+  protocol's `{ messages }`, because unity-explorer, the client scenes are tested on, returns
+  the array. Changing it to the protocol's shape would break those scenes here.
+- **A scene's messages use the scene room that carries the scene.** The message bus and topic
+  messages, sent and received, and the `isConnectedSceneRoom` flag in `RealmInfo` all ask
+  `comms::scene_rooms::SceneRooms`. A message sent while that room is connecting or reconnecting
+  waits in the room's channel and goes out once it is connected; with no room that carries the
+  scene it is dropped. The flag is true only while that room is connected. A client's room carries
+  the scene the player is in. In a local preview or a world with one scene it carries every scene
+  of the realm.
 - **Native HUD preferences are persisted by the engine** (`hud-prefs.json`), because CEF's
   `localStorage` does not survive.
 - **Web is Chrome only.**
