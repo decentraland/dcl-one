@@ -40,7 +40,8 @@ const MAX_BUFFERED_BYTES: usize = 64 * 1024;
 const MAX_OPEN_STREAMS: usize = 256;
 // a stream's producer is scene code, so reading one to its end stops here
 const MAX_READ_ALL_BYTES: usize = 64 * 1024 * 1024;
-// Bytes one stream may carry, so `op_read_all` cannot grow native memory without bound.
+// Bytes one stream may carry. This bounds a fetch upload, which is read whole; `op_read_all`
+// stops earlier, at MAX_READ_ALL_BYTES.
 const SERVER_MAX_STREAM_BYTES: u64 = super::fetch::SERVER_MAX_BODY_BYTES;
 const CLIENT_MAX_STREAM_BYTES: u64 = 512 * 1024 * 1024;
 

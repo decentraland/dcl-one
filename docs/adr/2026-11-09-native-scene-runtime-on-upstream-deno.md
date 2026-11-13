@@ -47,8 +47,9 @@ rest.
 - **Memory per scene:** a 512 MiB V8 heap and 512 MiB of ArrayBuffers (a counting allocator);
   past either the allocation fails or the scene ends. Native memory that ops hold has its own
   caps: Blob parts 64 MiB (a clone or slice shares its parent's bytes), a scene-fed stream read
-  whole 64 MiB, 256 open streams and sinks, 4096 resources, 32 MiB per text decode. Not bounded
-  per scene: resizable ArrayBuffers and WebAssembly memories, which V8 reserves outside the
+  whole 64 MiB, one stream's bytes 10 MiB on the server and 512 MiB on the client, 256 open
+  streams and sinks; cancel handles stop at 4096 open resources; 32 MiB per non-UTF-8 decode.
+  Not bounded per scene: resizable ArrayBuffers and WebAssembly memories, which V8 reserves outside the
   allocator; buffers ops return (a Blob read, a stream read whole), which wrap a Rust allocation;
   the timer and unref sets a client scene can grow through the raw ops; and fetch request and
   response bodies on the client.
@@ -103,6 +104,9 @@ rest.
   what deno_core accepts.
 - Scene-visible changes: fetch follows up to 20 redirects with a permission check per hop,
   transport errors are `TypeError: fetch failed` with a `cause`, clocks are 2 ms granular,
-  `String(opResult)` is `[object Object]`, `Error.prepareStackTrace` is not called, and
+  `String(opResult)` is `[object Object]`, `Error.prepareStackTrace` is not called, a Blob,
+  File or DOMException structured-cloned (a `performance.mark` detail, a tee'd stream chunk)
+  comes back as a plain object, index properties cannot be defined on `Array.prototype` or
+  `Object.prototype` and `Array.prototype`'s prototype cannot be replaced, and
   `WebAssembly.compileStreaming`/`instantiateStreaming` are absent. New globals from V8 15:
   `Temporal`, `DisposableStack`, `AsyncDisposableStack` and `SuppressedError`.
