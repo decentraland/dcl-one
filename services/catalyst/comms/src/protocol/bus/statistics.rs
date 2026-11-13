@@ -1,6 +1,6 @@
 //! Internal legacy statistics observations and atomic full-state transfers.
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 
 pub const OBSERVATIONS_SUBJECT: &str = "archipelago.statistics.observations.v2";
 pub const PRODUCER_SUBJECT: &str = "archipelago.statistics.producer.v2";
@@ -111,7 +111,8 @@ pub struct Snapshot {
 }
 /// A recovery transfer is all-or-nothing above this supported byte budget.
 pub const MAX_TRANSFER_BYTES: usize = 64 * 1024 * 1024;
-/// Retired Pulse snapshot incarnations per reader; connector generations are separate.
+/// Retired Pulse snapshot incarnation fences per reader; the oldest is forgotten at
+/// capacity. Connector generations are separate.
 pub const MAX_PRODUCERS: usize = 4096;
 pub const TRANSFER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 pub const PRODUCER_QUIET: std::time::Duration = std::time::Duration::from_secs(15);
@@ -268,11 +269,13 @@ struct Transfer {
 }
 
 /// Two bounded slots isolate an incomplete replacement from the working producer.
-/// Fences never expire; at the lifecycle limit unknown producers fail closed until restart.
+/// Retired fences are kept for the last [`MAX_PRODUCERS`] replacements; beyond that the
+/// oldest is forgotten, so a new Pulse incarnation is never refused for the reader's lifetime.
 #[derive(Default)]
 pub struct Assembler {
     producer: Option<uuid::Uuid>,
     retired: HashSet<uuid::Uuid>,
+    retired_order: VecDeque<uuid::Uuid>,
     sequence: u64,
     last_valid: Option<std::time::Instant>,
     pending: [Option<Transfer>; 2],
@@ -322,10 +325,9 @@ impl Assembler {
         }
         if !active
             && self.producer.is_some()
-            && (self.retired.len() >= MAX_PRODUCERS
-                || self
-                    .last_valid
-                    .is_some_and(|at| now.saturating_duration_since(at) < PRODUCER_QUIET))
+            && self
+                .last_valid
+                .is_some_and(|at| now.saturating_duration_since(at) < PRODUCER_QUIET)
         {
             return None;
         }
@@ -380,13 +382,24 @@ impl Assembler {
         }
         if !active {
             if let Some(previous) = self.producer.replace(producer) {
-                self.retired.insert(previous);
+                self.retire(previous);
             }
             self.pending = [None, None];
         }
         self.sequence = sequence;
         self.last_valid = Some(now);
         Some((producer, update))
+    }
+    fn retire(&mut self, producer: uuid::Uuid) {
+        if !self.retired.insert(producer) {
+            return;
+        }
+        self.retired_order.push_back(producer);
+        while self.retired_order.len() > MAX_PRODUCERS {
+            if let Some(oldest) = self.retired_order.pop_front() {
+                self.retired.remove(&oldest);
+            }
+        }
     }
 }
 

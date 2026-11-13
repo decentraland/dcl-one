@@ -344,6 +344,7 @@ impl Rig {
             ),
             ("PULSE_ROOM_AUTHORITY_KEY", self.authority_key.clone()),
             ("PULSE_ROOM_AUTHORITY_ALLOW_LOOPBACK_HTTP", "true".into()),
+            ("AUTHORITATIVE_SERVER_ADDRESS", self.authoritative.address()),
             ("PULSE_CLUSTERS_ENABLED", "true".into()),
             ("PULSE_CLUSTERS_PASS_INTERVAL_MS", "200".into()),
             ("PULSE_CLUSTERS_DWELL_PASSES", "1".into()),

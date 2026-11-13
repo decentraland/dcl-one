@@ -1406,11 +1406,21 @@ default, and social writes are), each a reader of tables other areas own, with o
 - `shop.sale_event` (`mint`, `bid_accepted`), `shop.trade_event` (`traded`)
   and `shop.nft_event` (`order_successful`) on Polygon by (block, log index),
   each up to the block its index published in `shop.chain_cursor`
-  (emotionista, fashionista; one step per transaction hash, the legacy order's
-  chain position standing in for its missing hash). A sale of an item
-  `shop.items` lacks holds its log's cursor until the item is mirrored or the
-  items mirror completes a pass an hour after the sale (a pass walks every
-  item, minutes at the defaults); then it is passed without effect. Without
+  (emotionista, fashionista; one step per transaction hash, a legacy order
+  indexed before `nft_event.tx_hash` was recorded counted by its chain
+  position until a re-index fills the hash). An off-chain good counts for
+  its `beneficiary` in `trade_event.assets`; a legacy order bought by a fiat
+  or cross-chain relay counts for the token's last `transfer` recipient after
+  the order in the same block, and for nobody while a relay holds it (one
+  `nft_event_token_idx` probe per such order). Step
+  `0040_shop_nft_event_tx_hash` adds `tx_hash` as a nullable column without
+  a default (catalog only, no row rewritten); it takes ACCESS EXCLUSIVE on
+  `shop.nft_event`, held until `migrate` commits, so the nft index's writes
+  and the reads of the table wait for the rest of the migration. A sale of
+  an item `shop.items` lacks holds its log's cursor until the item is
+  mirrored or the items mirror completes a pass an hour after the sale (a
+  pass walks every item, minutes at the defaults); then it is passed without
+  effect. Without
   `MARKETPLACE_MIRRORS_ENABLED` no pass ever completes, so the sales job is
   not started (logged at startup);
 - recounts of `shop.items` and `shop.collections` on Polygon (once
@@ -1487,31 +1497,31 @@ published block for the sales logs), and for the id cursors
 `badges_processor_cursor_gaps` and `badges_processor_cursor_oldest_gap_seconds`:
 a cursor that stops advancing shows as a growing lag, and a horizon held by a
 transaction left open on the cluster as gaps that keep ageing. A deployment stored
-more than `BADGES_DEPLOYMENT_MAX_LAG_SECS` (default a day) after its entity
-timestamp is history a syncing node caught up on and is passed without
-effect; `BADGES_EVENT_MAX_AGE_SECS` (default off) is upstream's
+more than `BADGES_DEPLOYMENT_MAX_LAG_SECS` (default off, as upstream had no
+such filter) after its entity timestamp is history a syncing node caught up
+on and is passed without effect; `BADGES_EVENT_MAX_AGE_SECS` (default off) is upstream's
 `EVENT_PROCESSING_MAX_AGE_IN_SECONDS`. Step `0038_social_badge_processor`
 adds `seq`; the object pass creates `social.badge_cursors`,
 `social.badge_cursor_gaps` and both indexes.
 
 ### Presence badges flow
 
-Input is the gatekeeper's verified LiveKit joins and leaves (`RoomEventFanout`
-in `serve`, beside the worlds access log): wallet identities only, scene and
-world rooms only, with LiveKit's participant sid as the session. Each process
-queues them without blocking the webhook (10,000 events, a dropped one counted
-in `badges_presence_events_dropped_total`) and its writer inserts batches into
-`social.presence_events`, keyed by LiveKit's event id, so a redelivered
-webhook is one row. The writer keeps only events in a place a badge could
-count now: a 5 s snapshot of the published badges' worlds, parcels and the
+Input is every verified LiveKit join and leave (the gatekeeper's
+`RoomEventStore`), including one the gatekeeper's own session ordering
+supersedes, such as a reconnect's old leave that follows the new join: wallet
+identities only, scene and world rooms only, with LiveKit's participant sid as
+the session. The webhook inserts each into `social.presence_events` before it
+answers, keyed by LiveKit's event id, so a redelivered webhook is one row; a
+failed insert answers 503 and LiveKit delivers the event again. Only events in
+a place a badge could count now are kept: a 5 s snapshot of the published badges' worlds, parcels and the
 scene entities deployed on them (one GIN-indexed `entity_pointers &&` read),
 with the engine's lookahead and lookback. A scene entity the snapshot does not
-know (a redeploy since) is looked up once per batch by `entity_id` and dropped
+know (a redeploy since) is looked up by `entity_id` in the webhook that carries
+it, under the webhook's lock stripes, and dropped
 only when it is deployed off every badge parcel; one the node has not synced
 is kept for the engine. Every event is kept when the snapshot cannot be read.
 A badge published or moved earlier is seen within 5 s; joins before that are
-not counted, and the player's next join is. A failed batch insert is
-retried once after 1 s, then dropped and counted. Expected volume is every
+not counted, and the player's next join is. Expected volume is every
 join and leave of the scene and world rooms of active presence badges while
 `BADGES_PRESENCE_ENABLED` is on (unmeasured); rows live only
 until the next pass of the leased `badges-presence` job (5 s), which applies
@@ -1534,21 +1544,45 @@ tables need no per-session locks. The runtime state is upstream's
 value meets a LiveKit event time or the `intervals` document. Indexes follow
 the statements: `(wallet, realm_name)` for a leave's open visits,
 `opened_at` and `(last_checked_at, opened_at)` for the sweeper's due visits,
-and each fact table's retention column for the bounded prune (batches of 1,000
-per table until one comes back short, at most 20 per sweep, after the 7-day
-redelivery window). Completed badges are left out in one statement per event,
+and each fact table's retention column for the bounded prune (batches of
+`BADGES_PRESENCE_PRUNE_BATCH_SIZE` rows, 1,000 by default, per table until one
+comes back short, at most 20 per sweep, after the redelivery window,
+`BADGES_PRESENCE_APPLIED_EVENTS_TTL_SECONDS`, 7 days by default). Completed badges are left out in one statement per event,
 so a wallet with nothing left to earn in a place records no visit or pending
 leave there. A scene badge resolves
 the event's entity to its parcels through `content.deployments` (`entity_id`
 is unique); a world badge compares names. Progress is written through
 `apply_progress` with the progress document `{ steps, intervals }` kept as
-upstream writes it, so an imported document resumes. Invariants: a session
+upstream writes it, so an imported document resumes. As upstream's catalog
+requires, a badge is counted only when its row is single (not tiered), its
+`criteria_steps` is its rule's (`required_seconds` for a stay, 1 for a visit)
+and no evaluator or import of its own (other than a one-time import) writes
+it; another row is skipped and counted as `badge_invalid` (logged once per
+badge and reason), so the
+flow never overwrites another writer's progress. Invariants: a session
 counts only from its own join to its own leave, never past the first
 occupancy observation that missed the wallet; an ended session never reopens
 for that badge; overlapping connections count once; a stay completes at the
-instant the union reaches `required_seconds`. The sweeper reads this
-process's LiveKit occupancy observation (`comms::presence`) and only closes
-visits; no observation, or an empty one, changes nothing.
+instant the union reaches `required_seconds`. A grant writes its
+`badge_granted` notification unless `BADGES_PRESENCE_GRANT_NOTIFICATIONS` is
+false. The sweeper reads this process's LiveKit occupancy observation
+(`comms::presence`) and only closes visits; no observation, or an empty one,
+changes nothing. `BADGES_PRESENCE_SWEEPER_ENABLED=false` stops only these
+occupancy checks; the maximum age and the prune still run.
+
+Upstream's tuning is environment settings, in seconds and with upstream's
+defaults (shared with `presence::Settings::default()`; each duration at most
+30 days, each batch at most 100,000):
+`BADGES_PRESENCE_EARLY_JOIN_LOOKAHEAD_SECONDS` (21,600; 0 keeps no early join),
+`BADGES_PRESENCE_OPEN_VISIT_CHECK_AFTER_SECONDS` (900),
+`BADGES_PRESENCE_OPEN_VISIT_MAX_AGE_SECONDS` (86,400),
+`BADGES_PRESENCE_APPLIED_EVENTS_TTL_SECONDS` (604,800),
+`BADGES_PRESENCE_ABSENT_EXPIRE_AFTER_SECONDS` (3,600),
+`BADGES_PRESENCE_SWEEP_INTERVAL_SECONDS` (60), `BADGES_PRESENCE_SWEEP_BATCH_SIZE`
+(100), `BADGES_PRESENCE_PRUNE_BATCH_SIZE` (1,000),
+`BADGES_PRESENCE_GRANT_NOTIFICATIONS` and `BADGES_PRESENCE_SWEEPER_ENABLED`
+(both true). Upstream names them without the `BADGES_` prefix and gives the
+sweep interval in milliseconds.
 ### Adding a badge
 
 A running node takes a new badge through the bearer-gated catalog routes
@@ -1570,18 +1604,24 @@ catalog rows, and the bootstrap seed reaches only new databases.
    tier a wallet holds, or switch a badge with player rows between single and
    tiered, is a 409 and changes nothing; a removed tier nobody holds is
    deleted from `badge_tiers`. Player rows are never written: a lowered
-   target awards on the wallet's next progress write, not retroactively, and
-   a tier added above a completed badge leaves it complete until that write.
+   target awards on the wallet's next progress write (for a processor badge
+   other than traveler, the next one that gains steps, one tier per step or
+   event), not retroactively, and a tier added above a completed badge
+   leaves it complete until such a write.
    A badge takes at most 32 tiers, each `2d` or `3d` at most 8 files, and
-   the badges routes refuse bodies over 1 MiB (413).
+   the badges routes refuse bodies over 1 MiB (413), the backfill's over
+   64 MiB.
 2. Make the art reachable: upload it to the CDN that
    `BADGES_PUBLIC_ASSET_BASE_URL` names (upstream's by default), or mirror it
    into `BADGES_ASSETS_DIR` under the same relative paths when the base is
    `<node>/badges/assets`.
 3. `PATCH /badges/badges/{id}` `{"published": true}`. The badge is listed and
-   awardable.
+   awardable. An active badge with no evaluator, backfill import or presence
+   configuration (`social.presence_badges`) is named in a warning at startup,
+   since only console grants award it.
 4. Grant it per wallet with the console grant (`POST
-   /badges/users/{address}/badges/{id}`), the one caller of `apply_progress`.
+   /badges/users/{address}/badges/{id}`), which awards it through
+   `apply_progress`.
 
 Retire a badge with `PATCH {"archived": true}`: it stays listed and kept by
 its earners, and `apply_progress` answers `NotAwardable`. `{"archived":
