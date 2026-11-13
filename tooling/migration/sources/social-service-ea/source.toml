@@ -9,6 +9,9 @@ Imported communities become local authority (origin 'local', with member roles);
 community the upstream mirror already holds is taken over and its social.community_mirror
 row is deleted (communities step), and actively banned wallets lose their member row
 (community_bans step), to keep the node's invariants.
+Rows this source wrote are recorded in dcl_migration (social_*_loaded); a row
+the node changed or removed since stays the node's. community_members and the
+*_reconcile steps delete imported rows upstream no longer holds.
 Not migrated: private_voice_chats (live call state, LiveKit rooms do not move),
 community_ranking_metrics and communities.ranking_score (upstream ranking job output, no
 writer on the node), community thumbnails (S3 objects, not in this database;
@@ -75,6 +78,19 @@ columns = [
   { name = "blocked_at", type = "timestamptz" },
 ]
 
+
+[[step]]
+name = "blocks_reconcile"
+targets = ["social.blocks"]
+extract = "blocks_reconcile.extract.sql"
+load = "blocks_reconcile.load.sql"
+key = ["blocker_address", "blocked_address"]
+whole = true
+columns = [
+  { name = "blocker_address", type = "text" },
+  { name = "blocked_address", type = "text" },
+]
+
 [[step]]
 name = "user_mutes"
 targets = ["social.user_mutes"]
@@ -86,6 +102,19 @@ columns = [
   { name = "muter_address", type = "text" },
   { name = "muted_address", type = "text" },
   { name = "muted_at", type = "timestamptz" },
+]
+
+
+[[step]]
+name = "user_mutes_reconcile"
+targets = ["social.user_mutes"]
+extract = "user_mutes_reconcile.extract.sql"
+load = "user_mutes_reconcile.load.sql"
+key = ["muter_address", "muted_address"]
+whole = true
+columns = [
+  { name = "muter_address", type = "text" },
+  { name = "muted_address", type = "text" },
 ]
 
 [[step]]
@@ -114,6 +143,7 @@ targets = ["social.community_members"]
 extract = "community_members.extract.sql"
 load = "community_members.load.sql"
 key = ["community_id", "member_address"]
+whole = true
 columns = [
   { name = "community_id", type = "uuid" },
   { name = "member_address", type = "text" },
@@ -182,6 +212,18 @@ columns = [
   { name = "author_address", type = "text" },
   { name = "content", type = "text" },
   { name = "created_at", type = "timestamptz" },
+]
+
+
+[[step]]
+name = "community_posts_reconcile"
+targets = ["social.community_posts", "social.community_post_likes"]
+extract = "community_posts_reconcile.extract.sql"
+load = "community_posts_reconcile.load.sql"
+key = ["id"]
+whole = true
+columns = [
+  { name = "id", type = "uuid" },
 ]
 
 [[step]]

@@ -3,8 +3,9 @@
 -- It is derived here from upstream's log, so the imported state is what the
 -- node's transition table sees. A friendship without actions projects to
 -- 'accept' by the requested wallet when active, 'delete' otherwise.
--- Upstream's pair key is ordered; the node's is unordered: of A->B and B->A
--- the most recently updated row wins (then the larger id).
+-- Upstream's pair key is ordered and case-sensitive; the node's is unordered
+-- and lowercase: of A->B, B->A and their case variants the most recently
+-- updated row wins (then the larger id).
 -- A latest `accept` not preceded by the other wallet's `request` was forged
 -- through upstream's missing state-machine check (fixed upstream in #427).
 -- It is neutralized: the friendship projects to `delete` by the forger one
@@ -58,7 +59,9 @@ WHERE lower(f.address_requester) ~ '^0x[0-9a-f]{40}$'
   AND lower(f.address_requester) <> lower(f.address_requested)
   AND NOT EXISTS (
       SELECT 1 FROM friendships r
-      WHERE r.address_requester = f.address_requested
-        AND r.address_requested = f.address_requester
+      WHERE LEAST(lower(r.address_requester), lower(r.address_requested))
+            = LEAST(lower(f.address_requester), lower(f.address_requested))
+        AND GREATEST(lower(r.address_requester), lower(r.address_requested))
+            = GREATEST(lower(f.address_requester), lower(f.address_requested))
         AND (COALESCE(r.updated_at, r.created_at, 'epoch'), r.id)
           > (COALESCE(f.updated_at, f.created_at, 'epoch'), f.id))

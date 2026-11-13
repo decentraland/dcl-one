@@ -10,8 +10,10 @@ WITH kept AS (
       AND lower(f.address_requester) <> lower(f.address_requested)
       AND NOT EXISTS (
           SELECT 1 FROM friendships r
-          WHERE r.address_requester = f.address_requested
-            AND r.address_requested = f.address_requester
+          WHERE LEAST(lower(r.address_requester), lower(r.address_requested))
+                = LEAST(lower(f.address_requester), lower(f.address_requested))
+            AND GREATEST(lower(r.address_requester), lower(r.address_requested))
+                = GREATEST(lower(f.address_requester), lower(f.address_requested))
             AND (COALESCE(r.updated_at, r.created_at, 'epoch'), r.id)
               > (COALESCE(f.updated_at, f.created_at, 'epoch'), f.id))
 ), forged AS (
