@@ -163,6 +163,7 @@ afterEach(async () => {
   if (session) {
     await session.send('Emulation.setTouchEmulationEnabled', { enabled: false })
     await session.send('Emulation.setEmulatedMedia', { features: [] })
+    await session.send('Animation.setPlaybackRate', { playbackRate: 1 })
   }
 })
 
@@ -998,3 +999,58 @@ describe('when a public NavBar composes app-owned controls in Chromium', () => {
     }
   }
 })
+
+for (const preference of ['no-preference', 'reduce']) {
+  it(`should reveal the inverse upward exit without releasing modal ownership for ${preference}`, async () => {
+    await session.send('Emulation.setDeviceMetricsOverride', {
+      width: 390,
+      height: 844,
+      deviceScaleFactor: 1,
+      mobile: true
+    })
+    await session.send('Emulation.setTouchEmulationEnabled', { enabled: true })
+    await session.send('Emulation.setEmulatedMedia', {
+      features: [{ name: 'prefers-reduced-motion', value: preference }]
+    })
+    await session.navigate(origin + '?surface-proof&motion')
+    await evaluate(
+      `(async()=>{for(let n=0;n<100&&!document.querySelector('#page-under-motion');n++)await new Promise(r=>setTimeout(r,50))})()`
+    )
+    await click('button[aria-label="Open menu"]')
+    await session.send('Animation.enable')
+    await session.send('Animation.setPlaybackRate', { playbackRate: 0 })
+    await click('button[aria-label="Close menu"]', false)
+    if (preference === 'reduce') {
+      expect(await evaluate(`!!document.querySelector('[data-testid=navbar-panel]')`)).toBe(false)
+    } else {
+      expect(
+        await evaluate(
+          `(()=>{const p=document.querySelector('[data-testid=navbar-panel]');return p&&{closing:p.hasAttribute('data-exiting'),inert:p.inert,animations:p.getAnimations().length,locked:document.body.style.overflow==='hidden',focus:document.activeElement.getAttribute('aria-label'),header:document.querySelector('nav').getBoundingClientRect().height}})()`
+        )
+      ).toEqual({
+        closing: true,
+        inert: true,
+        animations: 1,
+        locked: true,
+        focus: 'Close menu',
+        header: 64
+      })
+      await evaluate(
+        `(()=>{const a=document.querySelector('[data-testid=navbar-panel]').getAnimations()[0];a.pause();a.currentTime=90;window.exitAnimation=a})()`
+      )
+      expect(
+        await evaluate(
+          `(()=>{const p=document.querySelector('[data-testid=navbar-panel]'),hit=document.elementFromPoint(200,820);return{clip:getComputedStyle(p).clipPath,blocked:document.querySelector('[role=dialog]').contains(hit),locked:document.body.style.overflow==='hidden'}})()`
+        )
+      ).toMatchObject({ blocked: true, locked: true })
+      await touch('#page-under-motion')
+      expect(await evaluate('location.hash')).not.toBe('#under-motion')
+      await evaluate(
+        `exitAnimation.finish();new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))`
+      )
+      expect(await evaluate(`!!document.querySelector('[data-testid=navbar-panel]')`)).toBe(false)
+    }
+    expect(await evaluate('document.activeElement.getAttribute("aria-label")')).toBe('Open menu')
+    expect(await evaluate('document.body.style.overflow')).not.toBe('hidden')
+  }, 30_000)
+}

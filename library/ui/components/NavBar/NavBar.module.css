@@ -362,12 +362,24 @@
     }
   }
 
+  @keyframes drawerConceal {
+    from {
+      clip-path: var(--drawer-exit-from, inset(0));
+    }
+    to {
+      clip-path: inset(0 0 100% 0);
+    }
+  }
+
   @media (prefers-reduced-motion: no-preference) {
     .drawer {
       animation: drawerReveal 180ms ease-out both;
     }
     .drawer[data-entry-revealed] {
       animation: none;
+    }
+    .drawer[data-exiting] {
+      animation: drawerConceal 180ms ease-in both;
     }
   }
 
