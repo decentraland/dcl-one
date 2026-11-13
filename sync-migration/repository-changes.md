@@ -56,3 +56,9 @@ The worker now validates entity IDs from vote commands and POI results even when
 [dcl-one #706](https://github.com/decentraland/dcl-one/pull/706) adds the native target player operation, ordered receipts, baseline verification and source capture/apply commands. The normal storage handlers share the native operation and retain their quotas/cache behavior. Target replay trusts the already accepted source operation; it does not re-evaluate expired delegation credentials or later quota inputs.
 
 The Worlds residual adapter captures only owner/quota committed facts, including physical unblocks. [Worlds content #561](https://github.com/decentraland/worlds-content-server/pull/561) supplies the source lock-order hook required before existing Worlds row/advisory locks: a statement trigger alone could deadlock requests that already locked a world row. Source effects and jobs remain production-owned; eviction is not treated as another active-scene deletion. See [the implementation boundary](worlds-background-contract.md#implemented-boundary) and [source installation](../services/migration-sync/source/worlds.md).
+
+## Reproducible Places identities
+
+The source Places generator and dcl-one's native Genesis/world-scene identity paths must use the same versioned UUIDv5 contract for newly created identities. Updating only the target cannot reproduce production's random UUIDs. Existing matched/imported IDs are preserved; reactivation and conflicting binding checks protect their linked data. No additional gateway route, client change or broad DB synchronization is required by this change.
+
+See [the identity contract and lifecycle limits](places-hybrid-commands.md#place-uuids-reproducible-creation-and-lifecycle-coverage). Matching generation does not synchronize skipped deployment transitions or expand the fixed migration scopes.
