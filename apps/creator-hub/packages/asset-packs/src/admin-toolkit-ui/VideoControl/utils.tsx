@@ -1,10 +1,9 @@
 import type { DeepReadonlyObject, Entity, IEngine, PBVideoPlayer } from '@dcl/ecs';
-import type { AdminTools } from '../../definitions';
 import { LIVEKIT_STREAM_SRC, VIDEO_URL_TYPE } from '../../definitions';
 import { getExplorerComponents } from '../../components';
+import { getAdminToolkitVideoControl, getVideoPlayers } from '../../admin-commands';
 import { state } from '../store';
 import { getAdminMessageBus } from '../admin-message-bus';
-import { getAdminConfigOrNull } from '../config';
 import { DEFAULT_VOLUME } from '.';
 
 interface VideoPlayerControls {
@@ -17,24 +16,7 @@ interface VideoPlayerControls {
   setLoop(loop: boolean): void;
 }
 
-export function getAdminToolkitVideoControl(engine: IEngine) {
-  return getAdminConfigOrNull(engine)?.videoControl ?? null;
-}
-
-export function getVideoPlayers(
-  engine: IEngine,
-): NonNullable<AdminTools['videoControl']['videoPlayers']> {
-  const adminToolkitVideoControl = getAdminToolkitVideoControl(engine);
-
-  if (
-    !adminToolkitVideoControl ||
-    !adminToolkitVideoControl.videoPlayers ||
-    adminToolkitVideoControl.videoPlayers.length === 0
-  )
-    return [];
-
-  return Array.from(adminToolkitVideoControl.videoPlayers);
-}
+export { getAdminToolkitVideoControl, getVideoPlayers };
 
 function checkVideoPlayerSound(entity: Entity, engine: IEngine) {
   const videoControl = getAdminToolkitVideoControl(engine);
