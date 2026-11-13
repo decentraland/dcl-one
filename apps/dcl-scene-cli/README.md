@@ -275,9 +275,11 @@ cannot be sRGB and linear at once).
 The preview applies a finished import in one swap: until then it serves the previous optimized
 files, never part of a run. Rewritten models are staged under names taken from their bytes, so a run
 never rewrites a file the preview is serving. `start` sends no reload when an import finishes. Each
-import sends its status on the live-reload socket instead: `WsSceneMessage.texture_optimization`
-(`decentraland.sdk.development`) as a binary frame, and a JSON text frame
+import sends its status on the live-reload socket instead, as a JSON text frame only:
 `{"type":"TEXTURE_OPTIMIZATION","payload":{sceneId,state,done,total,failed,bytesBefore,bytesAfter,enabled}}`.
+There is no binary `WsSceneMessage` for it: the Unity explorer's preview socket treats every binary
+frame other than `UpdateModel` as a scene update, so a binary status would reload the scene each time,
+and it ignores text frames.
 `state` is `RUNNING` while textures are encoded (at most every 500 ms), then `READY` or `FAILED` once.
 `READY` is sent only when the optimized files or the setting changed. A client connecting later gets
 the last status first. The next reload, from a save or from the client, serves the new files.

@@ -32,7 +32,8 @@ pub enum ImportState {
     Failed,
 }
 
-/// One status update: the `TextureOptimization` message without its scene.
+/// One status update: the `TEXTURE_OPTIMIZATION` text frame's payload without
+/// its scene.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ImportStatus {
     pub state: ImportState,

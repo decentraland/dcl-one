@@ -119,9 +119,7 @@ async fn preview_socket(
             continue;
         };
 
-        if let Some(command) = PreviewCommand::from_message(message) {
-            sender.send(command)?;
-        }
+        sender.send(message.into())?;
     }
 
     warn!("preview socket disconnected, waiting 5 secs to attempt reconnect");

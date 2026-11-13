@@ -51,12 +51,14 @@ is byte-for-byte what it was.
   their bytes, so a run never rewrites a file the overlay in use names, and staged models the new
   overlay no longer names are deleted after the swap. `start` sends no reload when a run ends: the
   next reload, from a save or from the client, serves the new files.
-- **Status.** Each run reports on the live-reload socket with
-  `decentraland.sdk.development.TextureOptimization`, case `texture_optimization = 3` of
-  `WsSceneMessage`. The message carries the scene id, the state (`TOS_RUNNING`, `TOS_READY`,
-  `TOS_FAILED`), the textures done, total and failed, the source and KTX2 bytes of the converted
-  images, and whether the setting is on. A JSON text frame `TEXTURE_OPTIMIZATION` carries the same
-  fields in camelCase, as `SCENE_UPDATE` does for `UpdateScene`. `RUNNING` goes out while textures
+- **Status.** Each run reports on the live-reload socket with one JSON text frame,
+  `{"type":"TEXTURE_OPTIMIZATION","payload":{...}}`. The payload carries the scene id, the state
+  (`RUNNING`, `READY`, `FAILED`), the textures done, total and failed, the source and KTX2 bytes of
+  the converted images, and whether the setting is on. There is no binary `WsSceneMessage` case:
+  the Unity explorer's preview socket reuses one `WsSceneMessage` and treats every binary frame
+  other than `UpdateModel` as `UpdateScene`, so a new case would reload the scene on every status
+  (or end its receive loop when the status is the first frame). It ignores text frames, and so do
+  Bevy builds that predate reading it. `RUNNING` goes out while textures
   are encoded, at most every 500 ms. `READY` or `FAILED` goes out once per run, and `READY` only
   when the overlay or the setting changed or `RUNNING` went out. A run that changes nothing sends
   nothing. A client that connects later receives the last status first. The client decides when to
@@ -128,8 +130,8 @@ textures. Content hashes are the same whichever machine deploys. The binary embe
 module (deflated) and links wasmtime with Cranelift. The first import of a large scene takes
 minutes of background work on all cores but one. Later runs re-encode only changed textures, and a
 deploy after a preview finds them cached. Until a run finishes, a changed model or texture is
-served as the previous import left it. The status message adds a case to `WsSceneMessage`; clients
-that ignore unknown oneof cases are unaffected.
+served as the previous import left it. The status is a text frame only, which clients that read
+the binary `WsSceneMessage` frames never see.
 
 Clients without KTX2 support show converted models untextured, because no fallback is published.
 These include Unity's local raw-glTF preview and Bevy Explorer builds older than its
