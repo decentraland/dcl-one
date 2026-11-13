@@ -90,7 +90,7 @@ of the compiled engine's cache key, so that build recompiles the WASM.
 | `bevy-explorer-headless.yml` | Publish the four validated platform packages after CI; explicit manual builds include Linux | Headless npm packages; manual prerelease |
 | `apis-sites-images.yml` | Reusable image builds after the web producer; publish after complete CI | Tested AMD64/ARM64 APIs and Sites images |
 | `bevy-explorer-images.yml` | Images from a successful main CI run | Web (Linux AMD64/ARM64), headless (Linux AMD64) |
-| `bevy-explorer-rollout{,-manual}.yml` | Roll out at `decentraland.zone/play` after a CDN upload, or by hand | Rollout records |
+| `bevy-explorer-rollout-manual.yml` | Roll out a CDN version at `decentraland.zone/play` or `decentraland.org/play` by hand | Rollout records |
 | `bevy-explorer-upstream.yml` | Daily fork check and drift report | `upstream/forks` PR; drift artifact |
 
 `tooling/bevy-ci.py` selects engine and image jobs per changed input. Unknown engine inputs and
@@ -196,16 +196,20 @@ replays can overwrite tags. Desktop/headless `publish` creates a prerelease tagg
 
 `decentraland/oddish-action` stamps `0.1.0-<run id>.commit-<sha>`: `next` from main, `latest` from a
 manual headless run on main, a chosen `publish-tag` from a branch. npm trusted publishing (OIDC): each
-of the six names must list `decentraland/dcl-one` and its workflow on npmjs.com. The CDN upload needs
-`GITLAB_CDN_DEPLOYER_TOKEN` and `GITLAB_CDN_DEPLOYER_URL`. Retry with "re-run failed jobs".
+of the six names must list `decentraland/dcl-one` and its workflow on npmjs.com. Before the npm
+publish, `decentraland/actions/cdn-deploy` uploads the web package over OIDC without a rollout;
+once a main build's npm publish succeeds, the `rollout-web` job rolls that version out at
+`decentraland.zone/play`. Retry with "re-run failed jobs": the upload skips a version already on the
+CDN, and a failed rollout re-runs alone.
 
 Same-repo PRs publish under the `pr-<n>` dist-tag. The CI status *Build* section links the exact
-package version for the run after checking its npm commit against the web checkout SHA. It uses the
-PR tag to look up the version if the run lacks a usable package artifact or was dispatched manually.
+package version for the run after checking its CDN completion marker's commit against the web
+checkout SHA. It uses the PR tag to look up the version if the run lacks a usable package artifact
+or was dispatched manually.
 A PR publish failure does not fail the build, and closing the PR removes the tag (the trusted
 publisher needs "npm dist-tag"). A `pr-<n>` version is for testing only, never for a rollout;
 while `BENCHMARK_ENABLED_RUNNERS` is `none`, a PR that compiles the engine also skips wasm-opt. The
-automatic rollout takes only the `next` version, so `publish-tag` builds need "Manual CDN rollout".
+automatic rollout takes only main builds, so `publish-tag` builds need "Manual CDN rollout".
 Before archiving `decentraland/bevy-explorer`, verify one `next` of each package and re-adapt
 `apps/ui3/src/play`.
 
