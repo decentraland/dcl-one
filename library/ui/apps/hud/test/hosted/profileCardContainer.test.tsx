@@ -83,6 +83,20 @@ describe('ProfileCard container — action wiring', () => {
     expect(openPassport).toHaveBeenCalledWith('0xabc')
   })
 
+  it('Hush mutes the user through the session, and a muted user gets Hear', async () => {
+    const s = renderWithSession(card('0xabc'), asAlice)
+    await userEvent.click(screen.getByRole('button', { name: 'Hush' }))
+    expect(s.nearbyMutes.set).toHaveBeenCalledWith('0xabc', true)
+  })
+
+  it('Hear unmutes a user the session has muted, whatever the case of the id', async () => {
+    const s = renderWithSession(card('0xABC'), (session) => {
+      session.nearbyMutes.muted = new Set(['0xabc'])
+    })
+    await userEvent.click(screen.getByRole('button', { name: 'Hear' }))
+    expect(s.nearbyMutes.set).toHaveBeenCalledWith('0xABC', false)
+  })
+
   it('Block opens a confirm that fires the session friend action', async () => {
     const s = renderWithSession(
       <>

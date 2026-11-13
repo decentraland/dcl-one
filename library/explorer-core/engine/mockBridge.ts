@@ -405,6 +405,7 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
   fixMapPublicReads({ pois: MOCK_POIS, peers: MOCK_PEERS })
   // Stateful so a home pinned from the map is the home the lobby and the map then show.
   let mockHome = { realm: DEFAULT_REALM, parcel: { x: 0, y: 0 }, pinned: false }
+  const mockNearbyMuted = new Set<string>([MOCK_NEARBY[1].address.toLowerCase()])
   // Stateful so markNotificationsRead persists across reopens (like the real service).
   const mockNow = 1_700_000_000_000
   // Shapes mirror the real notifications service: friendship notifications carry the other user
@@ -644,6 +645,8 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     )
     // One nearby player is talking in voice chat, so the speaking indicator is visible in ?mock=1.
     setTimeout(() => reply({ kind: 'voiceActivity', address: MOCK_NEARBY[0].address, active: true }), 1500)
+    // One nearby player is already hushed, so both Hush and Hear show in ?mock=1.
+    setTimeout(() => reply({ kind: 'nearbyMutes', addresses: [...mockNearbyMuted] }), 1500)
 
     // Voice chat: the engine's first snapshot and the live streams (one is at Genesis Plaza's parcel).
     const pushVoice = (next: Partial<VoiceChatState>): void => {
@@ -1115,6 +1118,12 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
         for (const w of mockWearables) w.equipped = set.has(w.urn)
         reply({ kind: 'wearables', equipped: equippedNow(), bodyShape: BASE_MALE, colors: mockColors })
       }
+      return
+    }
+    if (msg.kind === 'setNearbyMute') {
+      if (msg.muted) mockNearbyMuted.add(msg.address)
+      else mockNearbyMuted.delete(msg.address)
+      reply({ kind: 'nearbyMutes', addresses: [...mockNearbyMuted] })
       return
     }
     if (msg.kind === 'setMic') {

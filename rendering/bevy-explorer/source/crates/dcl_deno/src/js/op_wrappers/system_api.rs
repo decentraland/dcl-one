@@ -76,6 +76,9 @@ pub fn ops(super_user: bool) -> Vec<OpDecl> {
             op_set_mic_enabled(),
             op_get_voice_stream(),
             op_read_voice_stream(),
+            op_set_nearby_muted(),
+            op_get_nearby_mute_stream(),
+            op_read_nearby_mute_stream(),
             op_get_hover_stream(),
             op_read_hover_stream(),
             op_get_proximity_stream(),
@@ -535,6 +538,30 @@ pub async fn op_read_voice_stream(
     rid: u32,
 ) -> Result<Option<VoiceMessage>, deno_core::anyhow::Error> {
     dcl_js::system_api::op_read_voice_stream(state, rid).await
+}
+
+#[op2(async)]
+#[serde]
+pub async fn op_set_nearby_muted(
+    state: Rc<RefCell<OpState>>,
+    #[string] address: String,
+    muted: bool,
+) -> Result<(), anyhow::Error> {
+    dcl_js::system_api::op_set_nearby_muted(state, address, muted).await
+}
+
+#[op2(async)]
+pub async fn op_get_nearby_mute_stream(state: Rc<RefCell<OpState>>) -> u32 {
+    dcl_js::system_api::op_get_nearby_mute_stream(state).await
+}
+
+#[op2(async)]
+#[serde]
+pub async fn op_read_nearby_mute_stream(
+    state: Rc<RefCell<OpState>>,
+    #[smi] rid: u32,
+) -> Result<Option<Vec<String>>, anyhow::Error> {
+    dcl_js::system_api::op_read_nearby_mute_stream(state, rid).await
 }
 
 #[op2(async)]
