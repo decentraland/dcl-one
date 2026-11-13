@@ -19,6 +19,8 @@ export { DiscoverCard, DiscoverGrid, type CardCreator } from './DiscoverCard'
 export { BrowseToolbar, BrowseControl, BrowsePanel, BrowseLoading } from './BrowsePage'
 export { DclLogo } from './DclLogo'
 export { LogoPattern } from './LogoPattern'
+export { CodeInput } from './CodeInput'
+export { SubmitField } from './SubmitField'
 export { Icon, type IconName } from './icons'
 
 // Ported from eordano/dcl-react-ui (reimplemented in TS + CSS Modules + our tokens).

@@ -28,6 +28,11 @@ vi.mock('@explorer-core/features/auth/guest', async (importOriginal) => ({
   createGuestIdentity: vi.fn(async () => identity(GUEST, 30))
 }))
 
+vi.mock('@explorer-core/shell/emailLogin', () => ({
+  startEmailSignIn: vi.fn(async () => undefined),
+  completeEmailSignIn: vi.fn(async () => ({ identity: identity(ACCOUNT, 7), wallet: { token: 'tok', walletAddress: ACCOUNT } }))
+}))
+
 async function shell() {
   vi.resetModules()
   return import('../shell/login')
@@ -35,6 +40,21 @@ async function shell() {
 
 describe('shell login requests', () => {
   beforeEach(() => localStorage.clear())
+
+  it('emailLogin keeps the email account like the sign-in page does and hands the app the public identity', async () => {
+    const { request } = await shell()
+    expect(await request('emailStart', { email: 'player@example.com' })).toBeNull()
+    const login = (await request('emailLogin', { email: 'player@example.com', code: '123456' })) as { address: string; identity: AuthIdentity; guest?: boolean }
+    expect(login.address).toBe(ACCOUNT)
+    expect(login.guest).toBeUndefined()
+    expect(login.identity.ephemeralIdentity.privateKey).toBeUndefined()
+    expect(JSON.parse(localStorage.getItem(`single-sign-on-${ACCOUNT}`) ?? 'null').ephemeralIdentity.privateKey).toBe(KEY)
+    // this page has no Shop: the wallet's token stays in the shell's call
+    expect(localStorage.getItem('dcl:auth:thirdweb:v1')).toBeNull()
+    // it is now the current login, and the shell signs with it
+    expect(await request('identity', undefined)).toEqual(login)
+    expect(await request('sign', { signer: EPHEMERAL, message: 'Some data' })).toBe(personalSign(KEY, 'Some data'))
+  })
 
   it('createGuest keeps the guest with its key and hands the app the public identity', async () => {
     const { request } = await shell()

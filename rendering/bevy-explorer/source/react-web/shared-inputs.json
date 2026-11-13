@@ -614,6 +614,10 @@
       "path": "library/explorer-core/shell",
       "entries": [
         {
+          "name": "emailLogin.ts",
+          "kind": "regular"
+        },
+        {
           "name": "googleTag.ts",
           "kind": "regular"
         },
@@ -660,6 +664,10 @@
         },
         {
           "name": "donateTip.test.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "emailLogin.test.ts",
           "kind": "regular"
         },
         {
@@ -1869,6 +1877,18 @@
       "path": "library/ui/apps/hud/assets/startup",
       "entries": [
         {
+          "name": "apple.png",
+          "kind": "regular"
+        },
+        {
+          "name": "arrow-down.png",
+          "kind": "regular"
+        },
+        {
+          "name": "arrow-left.png",
+          "kind": "regular"
+        },
+        {
           "name": "audio-off.png",
           "kind": "regular"
         },
@@ -1881,11 +1901,55 @@
           "kind": "regular"
         },
         {
+          "name": "coinbase.png",
+          "kind": "regular"
+        },
+        {
+          "name": "discord.png",
+          "kind": "regular"
+        },
+        {
+          "name": "envelope.png",
+          "kind": "regular"
+        },
+        {
           "name": "exit.png",
           "kind": "regular"
         },
         {
+          "name": "google.png",
+          "kind": "regular"
+        },
+        {
+          "name": "incorrect.png",
+          "kind": "regular"
+        },
+        {
           "name": "login-music.mp3",
+          "kind": "regular"
+        },
+        {
+          "name": "metamask.png",
+          "kind": "regular"
+        },
+        {
+          "name": "padlock.webp",
+          "kind": "regular"
+        },
+        {
+          "name": "success.png",
+          "kind": "regular"
+        },
+        {
+          "name": "wallet-connect.png",
+          "kind": "regular"
+        },
+        {
+          "name": "warning.png",
+          "kind": "regular"
+        },
+        {
+          "name": "x.png",
           "kind": "regular"
         }
       ]
@@ -2077,6 +2141,14 @@
         },
         {
           "name": "Chip.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "CodeInput.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "CodeInput.tsx",
           "kind": "regular"
         },
         {
@@ -2325,6 +2397,14 @@
         },
         {
           "name": "Submenu.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "SubmitField.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "SubmitField.tsx",
           "kind": "regular"
         },
         {
@@ -3470,6 +3550,22 @@
           "kind": "regular"
         },
         {
+          "name": "LoginSelection.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "LoginSelection.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "StartupBack.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "StartupBack.tsx",
+          "kind": "regular"
+        },
+        {
           "name": "StartupFlow.module.css",
           "kind": "regular"
         },
@@ -3491,6 +3587,18 @@
         },
         {
           "name": "StartupSplash.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "VerificationOtp.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "VerificationOtp.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "connectionError.ts",
           "kind": "regular"
         },
         {
@@ -3890,6 +3998,10 @@
           "kind": "regular"
         },
         {
+          "name": "emailSession.test.tsx",
+          "kind": "regular"
+        },
+        {
           "name": "emotes.clicks.test.tsx",
           "kind": "regular"
         },
@@ -4059,6 +4171,10 @@
         },
         {
           "name": "sidebarAutoHide.test.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "signIn.clicks.test.tsx",
           "kind": "regular"
         },
         {
@@ -4381,7 +4497,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/session.ts",
-      "sha256": "a335e94255e00de0a0401a9a6f13553538ac309ac1ad75eae3b20da99f747098"
+      "sha256": "874cc626923f9c934979409812eff2c7b25b877bf10f54583467f38812dd7aac"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/urns.ts",
@@ -4497,11 +4613,11 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/shell/login.ts",
-      "sha256": "9a8cf899a0773d4dae18dea11f68fc05ca142621f0540a064280435454093fbe"
+      "sha256": "42c531891e4b37d3782183b78e6cdf7a1c6a4df9756354afe3e7fa688bb5c15b"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/shell/main.ts",
-      "sha256": "40a349a06d73850cedc48f2017c80ba0c332d168b709ad69d0945935e3c33a87"
+      "sha256": "b589a3f22f7ce1a9b0d2a5b90dc6ae8fa20b3537af608992b159ce40d95d2aa9"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/styles/global.css",
@@ -4661,7 +4777,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/shellLogin.test.ts",
-      "sha256": "6bc97ebe8875fbe08a6c9563097ea74708c7dd9553e2f8283ae66f276210c2d6"
+      "sha256": "1be19c9535a388f4952f82d86c6bb1c6cdfc83fa301cbcb482a19b24b562a37d"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/shopQueries.test.tsx",
@@ -4782,7 +4898,7 @@
     },
     {
       "path": "library/explorer-core/engine/EngineDriver.ts",
-      "sha256": "9e7c59498626bdaee4210ca28d0e5642a0daca8b16c6ea68170544467ced27e8"
+      "sha256": "fe68a5ccb7769295bb85f50e5915fc977b9ae56374b93e5b2135fd2a0d9e32bf"
     },
     {
       "path": "library/explorer-core/engine/avatarEquip.ts",
@@ -4798,7 +4914,7 @@
     },
     {
       "path": "library/explorer-core/engine/bridge.ts",
-      "sha256": "61a5ff36afc92615995c768a289438b9a457e25b5851d20211835028ecb50b26"
+      "sha256": "a14d1fa14d3d532aea0a2667f751f0499f7745cfdf1b088d29acc2a4462c1d92"
     },
     {
       "path": "library/explorer-core/engine/bridgeChannel.ts",
@@ -4810,7 +4926,7 @@
     },
     {
       "path": "library/explorer-core/engine/driver.ts",
-      "sha256": "be886661ae838d8b3bb9a332b6d3a9c2f3921a9d09b499488262219f44286690"
+      "sha256": "883ae0f00eb846686931f2990b7f2febbd943725732976f710932027c63a9df3"
     },
     {
       "path": "library/explorer-core/engine/engineRpc.ts",
@@ -4826,7 +4942,7 @@
     },
     {
       "path": "library/explorer-core/engine/mockBridge.ts",
-      "sha256": "902a69036243b4eee88ffcfb5c0c98155719a746bf216920f177529e5d994eeb"
+      "sha256": "3b49308e9618575ef8449f8ae57cf07b721e6fca6513be18c2a287ee9f29327a"
     },
     {
       "path": "library/explorer-core/engine/mockEvents.ts",
@@ -4854,7 +4970,7 @@
     },
     {
       "path": "library/explorer-core/engine/protocol.ts",
-      "sha256": "b3ffd79a9ec6f3ab53241506bdc7b84738cc5ab0d89a7cb6f8de95f6251b5cdd"
+      "sha256": "a23859cd45a81118def077a0b2e1a229a8ea39c9cf6fd7a302288b896e504791"
     },
     {
       "path": "library/explorer-core/features/auth/authReturn.ts",
@@ -4862,7 +4978,7 @@
     },
     {
       "path": "library/explorer-core/features/auth/guest.ts",
-      "sha256": "b638040c60b5187bd66c956aa3c7e40e1c4a73ec0b02ac7e25197b24631664f3"
+      "sha256": "8978238aa9663e07e2ef6961efe98cbe443accdce23cfad1000e546408c0c6c5"
     },
     {
       "path": "library/explorer-core/features/auth/guestWalletEvent.ts",
@@ -4870,11 +4986,11 @@
     },
     {
       "path": "library/explorer-core/features/auth/sso.ts",
-      "sha256": "0eaef74f7ca05a1ad513d0b5494ab41a6cb054d257a6be3e84ac74841b67f5ac"
+      "sha256": "b161b158fbc9a432b62cd7b4efe86cdd5604c9f90c2efad252df476a32b1e638"
     },
     {
       "path": "library/explorer-core/features/auth/thirdweb.ts",
-      "sha256": "4de4563457633cb81391084943b612f450d9428ce22f6043be1fdbb00e9562b1"
+      "sha256": "1c8ef4df066468ac6bbef199bca7204fd7db2d854df0fcad8862967a2acfef21"
     },
     {
       "path": "library/explorer-core/features/backpack/avatarColors.ts",
@@ -5149,6 +5265,10 @@
       "sha256": "d99c6f7298dcb5bac95c664809ae19965d2ebdfb5fc839d36e42d3ca2379f3c9"
     },
     {
+      "path": "library/explorer-core/shell/emailLogin.ts",
+      "sha256": "fb3abee50b3c6f2234f82a05ce93b96f94fcb8956eb668f5a5ad1bc373d2e3ff"
+    },
+    {
       "path": "library/explorer-core/shell/googleTag.ts",
       "sha256": "4140451e05e4bd199030898f4f790ef0d82511a205d747906672ecbc88bf4db0"
     },
@@ -5191,6 +5311,10 @@
     {
       "path": "library/explorer-core/test/donateTip.test.ts",
       "sha256": "920446a0dcf3b0ef15f1422b584a37ddc43df345eb2595210b9ab87934107e1e"
+    },
+    {
+      "path": "library/explorer-core/test/emailLogin.test.ts",
+      "sha256": "0365d4e634d8e479fb230676431492aa8fec9f275086e6b735a23a009c6e7142"
     },
     {
       "path": "library/explorer-core/test/engineDriver.test.ts",
@@ -6089,6 +6213,18 @@
       "sha256": "c6dc0e68a48f20d3be726d729e7173ce41b9d393bee91387c4e0a731ae567236"
     },
     {
+      "path": "library/ui/apps/hud/assets/startup/apple.png",
+      "sha256": "28599368fb41007b8706a5a2cb2037e31760683e923e6fba610b25c688067fc9"
+    },
+    {
+      "path": "library/ui/apps/hud/assets/startup/arrow-down.png",
+      "sha256": "22ea3b89bb4b600dd1a08f260673895248125da5fcb4e27a5d704eae55daea0b"
+    },
+    {
+      "path": "library/ui/apps/hud/assets/startup/arrow-left.png",
+      "sha256": "5bc5d8b5af16fa41bdf488257e76586fc252b03bcb5c088fe39bfecaf491f1c3"
+    },
+    {
       "path": "library/ui/apps/hud/assets/startup/audio-off.png",
       "sha256": "2707c23690fcfba8ceef326c1af537d3046a30e8c5b1ade2fab4fff047c00bd2"
     },
@@ -6101,12 +6237,56 @@
       "sha256": "0dd6a40474244ee0f47941babe7ceb2782f445116c2f3e2a31756b3d1a191d18"
     },
     {
+      "path": "library/ui/apps/hud/assets/startup/coinbase.png",
+      "sha256": "2ca98435cd71f1bef73e49932cae58db6b3391990cfea8428067d8acb5b7826e"
+    },
+    {
+      "path": "library/ui/apps/hud/assets/startup/discord.png",
+      "sha256": "78903f9cb403664fdbfa16e409a9d0c1e182b1086570145878e58793fa577719"
+    },
+    {
+      "path": "library/ui/apps/hud/assets/startup/envelope.png",
+      "sha256": "2aa2adcd96fab7a36ef39bfea65abe5f45418e32d5dd55b262db98b9ea106ea0"
+    },
+    {
       "path": "library/ui/apps/hud/assets/startup/exit.png",
       "sha256": "37c21a39c77d3329cea3714fb959226207bbd0f7b61955a35bafae3cc6584658"
     },
     {
+      "path": "library/ui/apps/hud/assets/startup/google.png",
+      "sha256": "44e418b00ea341ae5544cb13836cbee38172cc77da9d38434d115397a2c33f66"
+    },
+    {
+      "path": "library/ui/apps/hud/assets/startup/incorrect.png",
+      "sha256": "4128ec4d3587a57cf70bedfd3af1a5af5af809fb6f555eef9f619c84b67a36bf"
+    },
+    {
       "path": "library/ui/apps/hud/assets/startup/login-music.mp3",
       "sha256": "0aa762fef2c0d556417f355f243278370e4a2cccd31a5a56616c9af28fda3577"
+    },
+    {
+      "path": "library/ui/apps/hud/assets/startup/metamask.png",
+      "sha256": "6dc863d276b4b18cda7c9056c7461e2d8b1468d162d9a31402e745dbee917b9d"
+    },
+    {
+      "path": "library/ui/apps/hud/assets/startup/padlock.webp",
+      "sha256": "2fc19687e852b3b05f847c35eef5de1b096a957bf2cd178b2434e4030fd71cb1"
+    },
+    {
+      "path": "library/ui/apps/hud/assets/startup/success.png",
+      "sha256": "a9f800ba7a6b772e23e0ef4a3638282208e3073f2955eb2a94c0867fa3607040"
+    },
+    {
+      "path": "library/ui/apps/hud/assets/startup/wallet-connect.png",
+      "sha256": "8458a39b1e50f40420cb4dde0e716d5f38603ad19ac4fa0d701c07b7401f341b"
+    },
+    {
+      "path": "library/ui/apps/hud/assets/startup/warning.png",
+      "sha256": "395767c56689382561d30ce09ddf74018edac2a12d95a6bca1da29fa94f1f93c"
+    },
+    {
+      "path": "library/ui/apps/hud/assets/startup/x.png",
+      "sha256": "3f9d844bf0e67644aec5aa9a5110f768a139e56fa53504ec693503650a095ea6"
     },
     {
       "path": "library/ui/apps/hud/assets/voice/accept-request.png",
@@ -6254,11 +6434,11 @@
     },
     {
       "path": "library/ui/apps/hud/design/Button.module.css",
-      "sha256": "1c2eb303b43be2755ad8eb082016a5c3fd9257836d07cc49cec39ce80c530190"
+      "sha256": "4f2cbc4a6b79d48e3b699cb0bcd833c49b3eaf192b81e2f222daf5ce09c94d25"
     },
     {
       "path": "library/ui/apps/hud/design/Button.tsx",
-      "sha256": "5884cd62a062856e5d90dd95364dd891c1bfdafa19a42833c9da57c309e1f837"
+      "sha256": "1d3fa7f377c016bf6cb04bb3cffca8098c436771214c933a5e68775b61e1ba31"
     },
     {
       "path": "library/ui/apps/hud/design/CharCounter.module.css",
@@ -6283,6 +6463,14 @@
     {
       "path": "library/ui/apps/hud/design/Chip.tsx",
       "sha256": "f13758dea5e8665abd9c3fb629eed4ee6bd25259580613952d601c6d8581c8c1"
+    },
+    {
+      "path": "library/ui/apps/hud/design/CodeInput.module.css",
+      "sha256": "8348fd1bb220bbe707a237a238297f108ca02e0f38236e11e968909bc3ec6f1d"
+    },
+    {
+      "path": "library/ui/apps/hud/design/CodeInput.tsx",
+      "sha256": "f2f7fa8d775f5ea9b12bcf2e59ae0f5d4cbf869057b3207d4982b6bfd7189258"
     },
     {
       "path": "library/ui/apps/hud/design/ColorPicker.module.css",
@@ -6422,7 +6610,7 @@
     },
     {
       "path": "library/ui/apps/hud/design/MaskIcon.tsx",
-      "sha256": "facff7c7763143bca47d66e7a25893cd8d73158ac7519b9beaf96da874f9fa24"
+      "sha256": "36153c5c4d77aa64c1b8ec1e3c2b48d6e8c4a94dec05cd716b2dcbd802ce27f6"
     },
     {
       "path": "library/ui/apps/hud/design/Modal.module.css",
@@ -6498,7 +6686,7 @@
     },
     {
       "path": "library/ui/apps/hud/design/Showcase.tsx",
-      "sha256": "09b6631349ee262d8d7f74c0d70d9b9185ad6a5e863cb50add05ca28397220bf"
+      "sha256": "3382a3db850f8972caa9c3c4f2975d47bc8006385be19a25ac2848313f2fd1cb"
     },
     {
       "path": "library/ui/apps/hud/design/Skeleton.module.css",
@@ -6518,11 +6706,11 @@
     },
     {
       "path": "library/ui/apps/hud/design/Spinner.module.css",
-      "sha256": "08fd705f87cf3dfeeabeecc0075d4c0023c43db799ad694f10fbe139f17ff7ea"
+      "sha256": "9d9d1a159d2f250c7d667b6c1e4918b364a48865b81172bdcccf61f67f7c7d0e"
     },
     {
       "path": "library/ui/apps/hud/design/Spinner.tsx",
-      "sha256": "1d2994130f6bd55885e90b4e8e05f409aebe5fbdd321a031424bcd64bb75f584"
+      "sha256": "59e37f708b968ac5067c39d6b40f18c5c7171994d3f84906ca04f6178a0b3045"
     },
     {
       "path": "library/ui/apps/hud/design/Submenu.module.css",
@@ -6531,6 +6719,14 @@
     {
       "path": "library/ui/apps/hud/design/Submenu.tsx",
       "sha256": "8d0acddb022a8e9e980e4f232730bdbfe2f69ecf0c6067c92f0a56305913f384"
+    },
+    {
+      "path": "library/ui/apps/hud/design/SubmitField.module.css",
+      "sha256": "95d0a51098ef2873262ac3d03f63a3fe65a1ce88e1df11be6df677b16577dc2f"
+    },
+    {
+      "path": "library/ui/apps/hud/design/SubmitField.tsx",
+      "sha256": "7349761ba0b20b4c34ac8b1b53b9ed75020fc54f816969922a6dbeb5aff3efe5"
     },
     {
       "path": "library/ui/apps/hud/design/SwapLabel.module.css",
@@ -6610,7 +6806,7 @@
     },
     {
       "path": "library/ui/apps/hud/design/index.ts",
-      "sha256": "c49568cf225e8f964ed7b7b5b73dab01117249278c1e5c191085f23e3945bad0"
+      "sha256": "528bc71688795f8b8ab467efed196c5313ab0f73e77c5275f43f8009c9dad0aa"
     },
     {
       "path": "library/ui/apps/hud/design/popups.module.css",
@@ -7054,11 +7250,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/login/LoadingAndLogin.module.css",
-      "sha256": "194f10cc410fca31dec085be91ff0e6ea27f9ddd9002eee7e846019346dd3ce1"
+      "sha256": "8735e89fe7bfd35a6fffa79ddfcd8e4a84747d52fdc3e61a676b5a7c1e04e48b"
     },
     {
       "path": "library/ui/apps/hud/features/login/LoadingAndLogin.tsx",
-      "sha256": "bf13ee5450a9336d8eacececdcf70dede1c297c77ee6ef356c1cca7b0073dec0"
+      "sha256": "58a93f05e770e3bbb1acb131a9beab76303083ca99733af246cf07f52048ac33"
     },
     {
       "path": "library/ui/apps/hud/features/login/useStoredProfile.ts",
@@ -7298,7 +7494,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "859c8fb297a9440c625ad70699e38d90681a69c8f863bb4351da4d43b85d607f"
+      "sha256": "6206ee70056631e35a5416aa5a8220278e917cc7894dad1f0400fc200b37fe4a"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -7354,7 +7550,23 @@
     },
     {
       "path": "library/ui/apps/hud/features/startup/GuestOrSignUp.tsx",
-      "sha256": "4ba57b70faf82dc54ff4c4cb54b3098f427b3d1033c9d93d42ea20238398fd0d"
+      "sha256": "c5b48d5b110238d87de29bd82be12932164b1cae0710e30d646f4ad86c013195"
+    },
+    {
+      "path": "library/ui/apps/hud/features/startup/LoginSelection.module.css",
+      "sha256": "338a2f1c52a70120f62c8cb37aa83fce8cd9ba7da67367e18dda9d9446bffc79"
+    },
+    {
+      "path": "library/ui/apps/hud/features/startup/LoginSelection.tsx",
+      "sha256": "14151e4dc236a6a30f3f19b3be24cd69c4ac42fd104ff59c0a59e7601ab62cea"
+    },
+    {
+      "path": "library/ui/apps/hud/features/startup/StartupBack.module.css",
+      "sha256": "37c51325e27f33bb9dbf64a68dd5f9732e9e07f9163d8f75cf52f2620c48171a"
+    },
+    {
+      "path": "library/ui/apps/hud/features/startup/StartupBack.tsx",
+      "sha256": "108946891408e3110b2073362d571474487da396416a67802eb4bb4ea5dc9a20"
     },
     {
       "path": "library/ui/apps/hud/features/startup/StartupFlow.module.css",
@@ -7362,7 +7574,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/startup/StartupFlow.tsx",
-      "sha256": "c57b7c208b85ad09a59b932dd038c6aac2345dfe451e24078c0c6bc5bb7446b0"
+      "sha256": "a2bab5e8d83bc1a031b8b7ce8d8918b4017ce9d73be9b16198593fef182ca421"
     },
     {
       "path": "library/ui/apps/hud/features/startup/StartupFooter.module.css",
@@ -7379,6 +7591,18 @@
     {
       "path": "library/ui/apps/hud/features/startup/StartupSplash.tsx",
       "sha256": "2e571cbe035f991a75b3e4ef32097eeeed0015060b5c11c840ece21936ff3ae6"
+    },
+    {
+      "path": "library/ui/apps/hud/features/startup/VerificationOtp.module.css",
+      "sha256": "8e3165b70c854dc65ed6171c8eccfa56f96ca0a1c5a5d2097e1d164e99549b05"
+    },
+    {
+      "path": "library/ui/apps/hud/features/startup/VerificationOtp.tsx",
+      "sha256": "8bfe08829ad45dae8ad6df31f1423556654408a67c8d061fff9ccfec549ca8b0"
+    },
+    {
+      "path": "library/ui/apps/hud/features/startup/connectionError.ts",
+      "sha256": "6a14a0afe1b5b946c0bc92c67438889d1a036e3646bba1651c5c4fe1143e4dce"
     },
     {
       "path": "library/ui/apps/hud/features/startup/startupScreen.ts",
@@ -7462,7 +7686,7 @@
     },
     {
       "path": "library/ui/apps/hud/styles/tokens.css",
-      "sha256": "451d41b948cd93884efa3c7f9d4b5b1e73a1c8e975f17ead7990bcd6dc50e149"
+      "sha256": "978782e55a6a99537c344f536e9bd3df235c3359c681337df773cb0b37d6cdad"
     },
     {
       "path": "library/ui/apps/hud/test/avatar.test.tsx",
@@ -7514,7 +7738,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/harness.tsx",
-      "sha256": "a26465b08992169fd83c5ecae91b2ecaac704d10f7980a5231c78d8ca3038c22"
+      "sha256": "ae77f00a521842d2360525d16922d45c42f584462a0e1f035b7a8a837097e981"
     },
     {
       "path": "library/ui/apps/hud/test/host.ts",
@@ -7649,6 +7873,10 @@
       "sha256": "598cf23dfc54b59b323b351a4d306a58cd40da9ad36422c7ac7a293486112d76"
     },
     {
+      "path": "library/ui/apps/hud/test/hosted/emailSession.test.tsx",
+      "sha256": "b381828d755cdf6b6d09fe893817c6d4f07e7219779103ef0ce99bf24fa5ba63"
+    },
+    {
       "path": "library/ui/apps/hud/test/hosted/emotes.clicks.test.tsx",
       "sha256": "43731dfca6aba96527d5084ef006ef16953d82cff36315fcfb1517db55a48ebf"
     },
@@ -7710,7 +7938,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/login.clicks.test.tsx",
-      "sha256": "99bb0451202660f9393932c964f629b57512b84280669335969bff98b31b8dcb"
+      "sha256": "eda87fb793f786c5e7b02b2ff29abe55eadc35d3a7b5eb6aa548a5b269c3b423"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/map.clicks.test.tsx",
@@ -7819,6 +8047,10 @@
     {
       "path": "library/ui/apps/hud/test/hosted/sidebarAutoHide.test.tsx",
       "sha256": "08899a73899425069ff78de2f821f591b9947dcdad7e97354c98548afc641383"
+    },
+    {
+      "path": "library/ui/apps/hud/test/hosted/signIn.clicks.test.tsx",
+      "sha256": "278fc6cc1f47cb6c7ef13795d3cc4a1e0ca676034340575a1ae1138db0141d7f"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/skybox.test.tsx",
@@ -8437,6 +8669,21 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/explorer-core/features/auth/thirdweb.ts",
+      "to": "library/explorer-core/lib/shellReply.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/features/auth/thirdweb.ts",
+      "to": "library/explorer-core/lib/shellReply.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/features/auth/thirdweb.ts",
+      "to": "library/explorer-core/lib/shellReply.ts",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/explorer-core/features/chat/chatCommands.test.ts",
       "to": "library/explorer-core/features/chat/chatCommands.ts",
       "kind": "native:runtime"
@@ -9022,6 +9269,36 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/explorer-core/shell/emailLogin.ts",
+      "to": "library/explorer-core/features/auth/guest.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/shell/emailLogin.ts",
+      "to": "library/explorer-core/features/auth/guest.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/shell/emailLogin.ts",
+      "to": "library/explorer-core/features/auth/guest.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/explorer-core/shell/emailLogin.ts",
+      "to": "library/explorer-core/features/auth/thirdweb.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/shell/emailLogin.ts",
+      "to": "library/explorer-core/features/auth/thirdweb.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/shell/emailLogin.ts",
+      "to": "library/explorer-core/features/auth/thirdweb.ts",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/explorer-core/shell/googleTag.ts",
       "to": "library/explorer-core/lib/analytics.ts",
       "kind": "native:runtime"
@@ -9214,6 +9491,66 @@
     {
       "from": "library/explorer-core/test/donateTip.test.ts",
       "to": "library/explorer-core/features/donate/tip.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/emailLogin.test.ts",
+      "to": "library/explorer-core/features/auth/guest.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/emailLogin.test.ts",
+      "to": "library/explorer-core/features/auth/guest.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/emailLogin.test.ts",
+      "to": "library/explorer-core/features/auth/guest.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/emailLogin.test.ts",
+      "to": "library/explorer-core/features/auth/sso.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/emailLogin.test.ts",
+      "to": "library/explorer-core/features/auth/sso.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/emailLogin.test.ts",
+      "to": "library/explorer-core/features/auth/sso.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/emailLogin.test.ts",
+      "to": "library/explorer-core/features/auth/thirdweb.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/emailLogin.test.ts",
+      "to": "library/explorer-core/features/auth/thirdweb.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/emailLogin.test.ts",
+      "to": "library/explorer-core/features/auth/thirdweb.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/emailLogin.test.ts",
+      "to": "library/explorer-core/shell/emailLogin.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/emailLogin.test.ts",
+      "to": "library/explorer-core/shell/emailLogin.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/emailLogin.test.ts",
+      "to": "library/explorer-core/shell/emailLogin.ts",
       "kind": "test:runtime"
     },
     {
@@ -10642,6 +10979,21 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/apps/hud/design/CodeInput.tsx",
+      "to": "library/ui/apps/hud/design/CodeInput.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/CodeInput.tsx",
+      "to": "library/ui/apps/hud/design/CodeInput.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/CodeInput.tsx",
+      "to": "library/ui/apps/hud/design/CodeInput.module.css",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/apps/hud/design/ColorPicker.tsx",
       "to": "library/explorer-core/lib/cancelLayers.ts",
       "kind": "native:runtime"
@@ -11513,6 +11865,21 @@
     },
     {
       "from": "library/ui/apps/hud/design/Showcase.tsx",
+      "to": "library/ui/apps/hud/design/CodeInput.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Showcase.tsx",
+      "to": "library/ui/apps/hud/design/CodeInput.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Showcase.tsx",
+      "to": "library/ui/apps/hud/design/CodeInput.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Showcase.tsx",
       "to": "library/ui/apps/hud/design/ColorPicker.tsx",
       "kind": "native:runtime"
     },
@@ -11828,6 +12195,36 @@
     },
     {
       "from": "library/ui/apps/hud/design/Showcase.tsx",
+      "to": "library/ui/apps/hud/design/Spinner.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Showcase.tsx",
+      "to": "library/ui/apps/hud/design/Spinner.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Showcase.tsx",
+      "to": "library/ui/apps/hud/design/Spinner.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Showcase.tsx",
+      "to": "library/ui/apps/hud/design/SubmitField.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Showcase.tsx",
+      "to": "library/ui/apps/hud/design/SubmitField.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Showcase.tsx",
+      "to": "library/ui/apps/hud/design/SubmitField.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Showcase.tsx",
       "to": "library/ui/apps/hud/design/SwapLabel.tsx",
       "kind": "native:runtime"
     },
@@ -12094,6 +12491,51 @@
     {
       "from": "library/ui/apps/hud/design/Submenu.tsx",
       "to": "library/ui/apps/hud/design/Submenu.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/SubmitField.tsx",
+      "to": "library/ui/apps/hud/design/MaskIcon.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/SubmitField.tsx",
+      "to": "library/ui/apps/hud/design/MaskIcon.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/SubmitField.tsx",
+      "to": "library/ui/apps/hud/design/MaskIcon.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/SubmitField.tsx",
+      "to": "library/ui/apps/hud/design/Spinner.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/SubmitField.tsx",
+      "to": "library/ui/apps/hud/design/Spinner.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/SubmitField.tsx",
+      "to": "library/ui/apps/hud/design/Spinner.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/SubmitField.tsx",
+      "to": "library/ui/apps/hud/design/SubmitField.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/SubmitField.tsx",
+      "to": "library/ui/apps/hud/design/SubmitField.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/SubmitField.tsx",
+      "to": "library/ui/apps/hud/design/SubmitField.module.css",
       "kind": "test:runtime"
     },
     {
@@ -12698,6 +13140,21 @@
     },
     {
       "from": "library/ui/apps/hud/design/index.ts",
+      "to": "library/ui/apps/hud/design/CodeInput.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/index.ts",
+      "to": "library/ui/apps/hud/design/CodeInput.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/index.ts",
+      "to": "library/ui/apps/hud/design/CodeInput.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/index.ts",
       "to": "library/ui/apps/hud/design/ColorPicker.tsx",
       "kind": "native:runtime"
     },
@@ -13159,6 +13616,21 @@
     {
       "from": "library/ui/apps/hud/design/index.ts",
       "to": "library/ui/apps/hud/design/Submenu.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/index.ts",
+      "to": "library/ui/apps/hud/design/SubmitField.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/index.ts",
+      "to": "library/ui/apps/hud/design/SubmitField.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/index.ts",
+      "to": "library/ui/apps/hud/design/SubmitField.tsx",
       "kind": "test:runtime"
     },
     {
@@ -23963,21 +24435,6 @@
     },
     {
       "from": "library/ui/apps/hud/features/startup/GuestOrSignUp.tsx",
-      "to": "library/ui/apps/hud/features/gate/exitApplication.ts",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/startup/GuestOrSignUp.tsx",
-      "to": "library/ui/apps/hud/features/gate/exitApplication.ts",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/startup/GuestOrSignUp.tsx",
-      "to": "library/ui/apps/hud/features/gate/exitApplication.ts",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/startup/GuestOrSignUp.tsx",
       "to": "library/ui/apps/hud/features/login/LoadingAndLogin.tsx",
       "kind": "native:runtime"
     },
@@ -24004,6 +24461,321 @@
     {
       "from": "library/ui/apps/hud/features/startup/GuestOrSignUp.tsx",
       "to": "library/ui/apps/hud/features/startup/GuestOrSignUp.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/LoginSelection.tsx",
+      "to": "library/explorer-core/features/auth/thirdweb.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/LoginSelection.tsx",
+      "to": "library/explorer-core/features/auth/thirdweb.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/LoginSelection.tsx",
+      "to": "library/explorer-core/features/auth/thirdweb.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/LoginSelection.tsx",
+      "to": "library/explorer-core/shell/emailLogin.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/LoginSelection.tsx",
+      "to": "library/explorer-core/shell/emailLogin.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/LoginSelection.tsx",
+      "to": "library/explorer-core/shell/emailLogin.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/LoginSelection.tsx",
+      "to": "library/ui/apps/hud/assets/loading/logo-icon.webp",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/LoginSelection.tsx",
+      "to": "library/ui/apps/hud/assets/loading/logo-icon.webp",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/LoginSelection.tsx",
+      "to": "library/ui/apps/hud/assets/loading/logo-icon.webp",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/LoginSelection.tsx",
+      "to": "library/ui/apps/hud/assets/startup/apple.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/LoginSelection.tsx",
+      "to": "library/ui/apps/hud/assets/startup/apple.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/LoginSelection.tsx",
+      "to": "library/ui/apps/hud/assets/startup/apple.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/LoginSelection.tsx",
+      "to": "library/ui/apps/hud/assets/startup/arrow-down.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/LoginSelection.tsx",
+      "to": "library/ui/apps/hud/assets/startup/arrow-down.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/LoginSelection.tsx",
+      "to": "library/ui/apps/hud/assets/startup/arrow-down.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/LoginSelection.tsx",
+      "to": "library/ui/apps/hud/assets/startup/avatars.webp",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/LoginSelection.tsx",
+      "to": "library/ui/apps/hud/assets/startup/avatars.webp",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/LoginSelection.tsx",
+      "to": "library/ui/apps/hud/assets/startup/avatars.webp",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/LoginSelection.tsx",
+      "to": "library/ui/apps/hud/assets/startup/coinbase.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/LoginSelection.tsx",
+      "to": "library/ui/apps/hud/assets/startup/coinbase.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/LoginSelection.tsx",
+      "to": "library/ui/apps/hud/assets/startup/coinbase.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/LoginSelection.tsx",
+      "to": "library/ui/apps/hud/assets/startup/discord.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/LoginSelection.tsx",
+      "to": "library/ui/apps/hud/assets/startup/discord.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/LoginSelection.tsx",
+      "to": "library/ui/apps/hud/assets/startup/discord.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/LoginSelection.tsx",
+      "to": "library/ui/apps/hud/assets/startup/envelope.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/LoginSelection.tsx",
+      "to": "library/ui/apps/hud/assets/startup/envelope.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/LoginSelection.tsx",
+      "to": "library/ui/apps/hud/assets/startup/envelope.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/LoginSelection.tsx",
+      "to": "library/ui/apps/hud/assets/startup/google.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/LoginSelection.tsx",
+      "to": "library/ui/apps/hud/assets/startup/google.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/LoginSelection.tsx",
+      "to": "library/ui/apps/hud/assets/startup/google.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/LoginSelection.tsx",
+      "to": "library/ui/apps/hud/assets/startup/metamask.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/LoginSelection.tsx",
+      "to": "library/ui/apps/hud/assets/startup/metamask.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/LoginSelection.tsx",
+      "to": "library/ui/apps/hud/assets/startup/metamask.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/LoginSelection.tsx",
+      "to": "library/ui/apps/hud/assets/startup/wallet-connect.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/LoginSelection.tsx",
+      "to": "library/ui/apps/hud/assets/startup/wallet-connect.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/LoginSelection.tsx",
+      "to": "library/ui/apps/hud/assets/startup/wallet-connect.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/LoginSelection.tsx",
+      "to": "library/ui/apps/hud/assets/startup/warning.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/LoginSelection.tsx",
+      "to": "library/ui/apps/hud/assets/startup/warning.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/LoginSelection.tsx",
+      "to": "library/ui/apps/hud/assets/startup/warning.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/LoginSelection.tsx",
+      "to": "library/ui/apps/hud/assets/startup/x.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/LoginSelection.tsx",
+      "to": "library/ui/apps/hud/assets/startup/x.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/LoginSelection.tsx",
+      "to": "library/ui/apps/hud/assets/startup/x.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/LoginSelection.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/LoginSelection.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/LoginSelection.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/LoginSelection.tsx",
+      "to": "library/ui/apps/hud/features/startup/LoginSelection.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/LoginSelection.tsx",
+      "to": "library/ui/apps/hud/features/startup/LoginSelection.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/LoginSelection.tsx",
+      "to": "library/ui/apps/hud/features/startup/LoginSelection.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/LoginSelection.tsx",
+      "to": "library/ui/apps/hud/features/startup/StartupBack.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/LoginSelection.tsx",
+      "to": "library/ui/apps/hud/features/startup/StartupBack.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/LoginSelection.tsx",
+      "to": "library/ui/apps/hud/features/startup/StartupBack.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/LoginSelection.tsx",
+      "to": "library/ui/apps/hud/features/startup/connectionError.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/LoginSelection.tsx",
+      "to": "library/ui/apps/hud/features/startup/connectionError.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/LoginSelection.tsx",
+      "to": "library/ui/apps/hud/features/startup/connectionError.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/StartupBack.tsx",
+      "to": "library/ui/apps/hud/assets/startup/arrow-left.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/StartupBack.tsx",
+      "to": "library/ui/apps/hud/assets/startup/arrow-left.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/StartupBack.tsx",
+      "to": "library/ui/apps/hud/assets/startup/arrow-left.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/StartupBack.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/StartupBack.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/StartupBack.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/StartupBack.tsx",
+      "to": "library/ui/apps/hud/features/startup/StartupBack.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/StartupBack.tsx",
+      "to": "library/ui/apps/hud/features/startup/StartupBack.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/StartupBack.tsx",
+      "to": "library/ui/apps/hud/features/startup/StartupBack.module.css",
       "kind": "test:runtime"
     },
     {
@@ -24053,6 +24825,21 @@
     },
     {
       "from": "library/ui/apps/hud/features/startup/StartupFlow.tsx",
+      "to": "library/ui/apps/hud/features/startup/LoginSelection.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/StartupFlow.tsx",
+      "to": "library/ui/apps/hud/features/startup/LoginSelection.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/StartupFlow.tsx",
+      "to": "library/ui/apps/hud/features/startup/LoginSelection.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/StartupFlow.tsx",
       "to": "library/ui/apps/hud/features/startup/StartupFlow.module.css",
       "kind": "native:runtime"
     },
@@ -24094,6 +24881,36 @@
     {
       "from": "library/ui/apps/hud/features/startup/StartupFlow.tsx",
       "to": "library/ui/apps/hud/features/startup/StartupSplash.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/StartupFlow.tsx",
+      "to": "library/ui/apps/hud/features/startup/VerificationOtp.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/StartupFlow.tsx",
+      "to": "library/ui/apps/hud/features/startup/VerificationOtp.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/StartupFlow.tsx",
+      "to": "library/ui/apps/hud/features/startup/VerificationOtp.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/StartupFlow.tsx",
+      "to": "library/ui/apps/hud/features/startup/connectionError.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/StartupFlow.tsx",
+      "to": "library/ui/apps/hud/features/startup/connectionError.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/StartupFlow.tsx",
+      "to": "library/ui/apps/hud/features/startup/connectionError.ts",
       "kind": "test:runtime"
     },
     {
@@ -24244,6 +25061,171 @@
     {
       "from": "library/ui/apps/hud/features/startup/StartupSplash.tsx",
       "to": "library/ui/apps/hud/features/startup/StartupSplash.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/VerificationOtp.tsx",
+      "to": "library/explorer-core/features/auth/thirdweb.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/VerificationOtp.tsx",
+      "to": "library/explorer-core/features/auth/thirdweb.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/VerificationOtp.tsx",
+      "to": "library/explorer-core/features/auth/thirdweb.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/VerificationOtp.tsx",
+      "to": "library/ui/apps/hud/assets/loading/logo-icon.webp",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/VerificationOtp.tsx",
+      "to": "library/ui/apps/hud/assets/loading/logo-icon.webp",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/VerificationOtp.tsx",
+      "to": "library/ui/apps/hud/assets/loading/logo-icon.webp",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/VerificationOtp.tsx",
+      "to": "library/ui/apps/hud/assets/startup/incorrect.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/VerificationOtp.tsx",
+      "to": "library/ui/apps/hud/assets/startup/incorrect.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/VerificationOtp.tsx",
+      "to": "library/ui/apps/hud/assets/startup/incorrect.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/VerificationOtp.tsx",
+      "to": "library/ui/apps/hud/assets/startup/padlock.webp",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/VerificationOtp.tsx",
+      "to": "library/ui/apps/hud/assets/startup/padlock.webp",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/VerificationOtp.tsx",
+      "to": "library/ui/apps/hud/assets/startup/padlock.webp",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/VerificationOtp.tsx",
+      "to": "library/ui/apps/hud/assets/startup/success.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/VerificationOtp.tsx",
+      "to": "library/ui/apps/hud/assets/startup/success.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/VerificationOtp.tsx",
+      "to": "library/ui/apps/hud/assets/startup/success.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/VerificationOtp.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/VerificationOtp.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/VerificationOtp.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/VerificationOtp.tsx",
+      "to": "library/ui/apps/hud/features/startup/StartupBack.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/VerificationOtp.tsx",
+      "to": "library/ui/apps/hud/features/startup/StartupBack.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/VerificationOtp.tsx",
+      "to": "library/ui/apps/hud/features/startup/StartupBack.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/VerificationOtp.tsx",
+      "to": "library/ui/apps/hud/features/startup/VerificationOtp.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/VerificationOtp.tsx",
+      "to": "library/ui/apps/hud/features/startup/VerificationOtp.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/VerificationOtp.tsx",
+      "to": "library/ui/apps/hud/features/startup/VerificationOtp.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/VerificationOtp.tsx",
+      "to": "library/ui/apps/hud/features/startup/connectionError.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/VerificationOtp.tsx",
+      "to": "library/ui/apps/hud/features/startup/connectionError.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/VerificationOtp.tsx",
+      "to": "library/ui/apps/hud/features/startup/connectionError.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/connectionError.ts",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/connectionError.ts",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/connectionError.ts",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/connectionError.ts",
+      "to": "library/ui/apps/hud/features/gate/exitApplication.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/connectionError.ts",
+      "to": "library/ui/apps/hud/features/gate/exitApplication.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/startup/connectionError.ts",
+      "to": "library/ui/apps/hud/features/gate/exitApplication.ts",
       "kind": "test:runtime"
     },
     {
@@ -27018,6 +28000,21 @@
     },
     {
       "from": "library/ui/apps/hud/test/hosted/editorHostShellSigning.test.tsx",
+      "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/emailSession.test.tsx",
+      "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/emailSession.test.tsx",
+      "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/emailSession.test.tsx",
       "to": "library/ui/apps/hud/test/harness.tsx",
       "kind": "test:runtime"
     },
@@ -28848,6 +29845,81 @@
     },
     {
       "from": "library/ui/apps/hud/test/hosted/sidebarAutoHide.test.tsx",
+      "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/signIn.clicks.test.tsx",
+      "to": "library/explorer-core/features/auth/thirdweb.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/signIn.clicks.test.tsx",
+      "to": "library/explorer-core/features/auth/thirdweb.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/signIn.clicks.test.tsx",
+      "to": "library/explorer-core/features/auth/thirdweb.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/signIn.clicks.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/signIn.clicks.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/signIn.clicks.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/signIn.clicks.test.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/signIn.clicks.test.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/signIn.clicks.test.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/signIn.clicks.test.tsx",
+      "to": "library/ui/apps/hud/features/startup/StartupFlow.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/signIn.clicks.test.tsx",
+      "to": "library/ui/apps/hud/features/startup/StartupFlow.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/signIn.clicks.test.tsx",
+      "to": "library/ui/apps/hud/features/startup/StartupFlow.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/signIn.clicks.test.tsx",
+      "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/signIn.clicks.test.tsx",
+      "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/signIn.clicks.test.tsx",
       "to": "library/ui/apps/hud/test/harness.tsx",
       "kind": "test:runtime"
     },
@@ -30518,6 +31590,16 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/src/shell/login.ts",
+      "to": "library/explorer-core/shell/emailLogin.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/src/shell/login.ts",
+      "to": "library/explorer-core/shell/emailLogin.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/src/shell/login.ts",
       "to": "library/explorer-core/shell/sign.ts",
       "kind": "production:runtime"
     },
@@ -30539,6 +31621,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/src/shell/main.ts",
       "to": "library/explorer-core/lib/prefs.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/src/shell/main.ts",
+      "to": "library/explorer-core/lib/shellReply.ts",
       "kind": "production:runtime"
     },
     {
@@ -31303,6 +32390,11 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/explorer-core/shell/emailLogin.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/explorer-core/shell/googleTag.ts",
       "kind": "type"
     },
@@ -31354,6 +32446,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/explorer-core/test/donateTip.test.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/explorer-core/test/emailLogin.test.ts",
       "kind": "type"
     },
     {
@@ -31464,6 +32561,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/design/Chip.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/design/CodeInput.tsx",
       "kind": "type"
     },
     {
@@ -31624,6 +32726,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/design/Submenu.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/design/SubmitField.tsx",
       "kind": "type"
     },
     {
@@ -32278,6 +33385,16 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/features/startup/LoginSelection.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/features/startup/StartupBack.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/features/startup/StartupFlow.tsx",
       "kind": "type"
     },
@@ -32289,6 +33406,16 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/features/startup/StartupSplash.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/features/startup/VerificationOtp.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/features/startup/connectionError.ts",
       "kind": "type"
     },
     {
@@ -32603,6 +33730,11 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/test/hosted/emailSession.test.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/test/hosted/emotes.clicks.test.tsx",
       "kind": "type"
     },
@@ -32814,6 +33946,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/test/hosted/sidebarAutoHide.test.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/test/hosted/signIn.clicks.test.tsx",
       "kind": "type"
     },
     {
@@ -36223,6 +37360,51 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/startup/apple.png",
+      "kind": "native:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/startup/apple.png",
+      "kind": "production:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/startup/apple.png",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/startup/arrow-down.png",
+      "kind": "native:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/startup/arrow-down.png",
+      "kind": "production:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/startup/arrow-down.png",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/startup/arrow-left.png",
+      "kind": "native:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/startup/arrow-left.png",
+      "kind": "production:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/startup/arrow-left.png",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/hud/assets/startup/audio-off.png",
       "kind": "native:asset"
     },
@@ -36268,6 +37450,51 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/startup/coinbase.png",
+      "kind": "native:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/startup/coinbase.png",
+      "kind": "production:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/startup/coinbase.png",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/startup/discord.png",
+      "kind": "native:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/startup/discord.png",
+      "kind": "production:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/startup/discord.png",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/startup/envelope.png",
+      "kind": "native:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/startup/envelope.png",
+      "kind": "production:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/startup/envelope.png",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/hud/assets/startup/exit.png",
       "kind": "native:asset"
     },
@@ -36283,6 +37510,36 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/startup/google.png",
+      "kind": "native:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/startup/google.png",
+      "kind": "production:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/startup/google.png",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/startup/incorrect.png",
+      "kind": "native:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/startup/incorrect.png",
+      "kind": "production:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/startup/incorrect.png",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/hud/assets/startup/login-music.mp3",
       "kind": "native:asset"
     },
@@ -36294,6 +37551,96 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/hud/assets/startup/login-music.mp3",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/startup/metamask.png",
+      "kind": "native:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/startup/metamask.png",
+      "kind": "production:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/startup/metamask.png",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/startup/padlock.webp",
+      "kind": "native:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/startup/padlock.webp",
+      "kind": "production:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/startup/padlock.webp",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/startup/success.png",
+      "kind": "native:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/startup/success.png",
+      "kind": "production:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/startup/success.png",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/startup/wallet-connect.png",
+      "kind": "native:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/startup/wallet-connect.png",
+      "kind": "production:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/startup/wallet-connect.png",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/startup/warning.png",
+      "kind": "native:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/startup/warning.png",
+      "kind": "production:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/startup/warning.png",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/startup/x.png",
+      "kind": "native:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/startup/x.png",
+      "kind": "production:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/startup/x.png",
       "kind": "test:asset"
     },
     {

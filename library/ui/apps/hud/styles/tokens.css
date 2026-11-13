@@ -25,6 +25,17 @@
   --red: #ff0000; /* DCL/Red — blocked */
   --white-10: rgba(255, 255, 255, 0.1); /* DCL/White10% — dividers */
   --white-50: rgba(255, 255, 255, 0.5); /* the sign-in screens' footer icons and version line */
+  --white-3: rgba(255, 255, 255, 0.03); /* the sign-in screens' Back */
+  --white-30: rgba(255, 255, 255, 0.3); /* the sign-in screens' focused email field ring */
+  --black-60: rgba(0, 0, 0, 0.6); /* the sign-in screens' method buttons */
+  --black-70: rgba(0, 0, 0, 0.7);
+  --signin-field-focus: #f2f2f2; /* the email field, focused */
+  --signin-error-ring: #e00000; /* the email field's ring on an invalid address */
+  --signin-error-text: #ffcdcd; /* "Invalid email" */
+  --signin-code-success: #e9ffd3; /* the code's slots, accepted */
+  --signin-code-error: #ffd3df; /* the code's slots, refused */
+  --signin-incorrect: #ff5757; /* "Incorrect code"'s icon */
+  --signin-spinner-1: #ffbc5b; /* the sign-in spinner's arc, first of its three colours */
   --shop-card-hover: rgba(255, 255, 255, 0.2); /* DCL/White20% — the Shop cart's hovered card */
   --pale-black: #43404a; /* DCL/Pale Black — the Shop toast's rim */
   --silver: #a09ba8; /* DCL/Silver — the NAME field's placeholder and suffix, an empty nametag */
@@ -265,6 +276,7 @@
   --type-32: 32px;
   --type-36: 36px;
   --type-46: 46px; /* the sign-in screens' title */
+  --type-48: 48px; /* the sign-in method and code screens' title */
   --type-60: 60px;
   --type-shop-nametag: 32.44px; /* the Shop's NAMEs nametag over the avatar: the 18px nametag at 1.802× */
   --type-name-card-label: 24.36px; /* the NAME card art's "Name" */

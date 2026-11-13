@@ -194,6 +194,21 @@
   background: var(--fill-5);
 }
 
+/* whisper: an almost clear fill (the sign-in screens' Back) */
+.whisper {
+  background: var(--white-3);
+}
+.whisper:hover:not(:disabled) {
+  background: var(--white-10);
+}
+/* method: a sign-in method (GOOGLE, METAMASK, the More options row): black 60%, grows a little on hover */
+.method {
+  background: var(--black-60);
+}
+.method:hover:not(:disabled) {
+  background: var(--black-70);
+  transform: scale(1.05);
+}
 /* darkOutline: the see-through black fill with a white outline (the sign-in screens' LOGIN OR SIGNUP) */
 .darkOutline {
   background: var(--black-40);

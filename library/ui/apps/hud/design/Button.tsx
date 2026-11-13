@@ -3,7 +3,7 @@
 
 import styles from './Button.module.css'
 
-type Variant = 'primary' | 'secondary' | 'ghost' | 'light' | 'outline' | 'accent' | 'dark' | 'tint' | 'scrim' | 'faint' | 'veil' | 'glass' | 'shade' | 'clear' | 'darkOutline'
+type Variant = 'primary' | 'secondary' | 'ghost' | 'light' | 'outline' | 'accent' | 'dark' | 'tint' | 'scrim' | 'faint' | 'veil' | 'glass' | 'shade' | 'clear' | 'darkOutline' | 'whisper' | 'method'
 type Size = 'sm' | 'md' | 'lg' | 'row' | 'card' | 'cardSm' | 'header' | 'modal' | 'cta' | 'start' | 'bare'
 /** Overrides the size's corner radius. */
 type Radius = 'md' | 'button' | 'pill'

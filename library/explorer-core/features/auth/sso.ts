@@ -103,6 +103,17 @@ export function getStoredGuestLogin(): StoredLogin | null {
   return identity ? { address: rootAddress(identity).toLowerCase(), identity, guest: true } : null
 }
 
+/** Keep an account's sign-in the way the auth site does (`single-sign-on-<address>`), as the only
+ *  account signed in on this origin: the next visit, and the site's own pages, find it. */
+export function storeAccountLogin(identity: AuthIdentity): void {
+  const address = rootAddress(identity).toLowerCase()
+  for (let i = localStorage.length - 1; i >= 0; i--) {
+    const key = localStorage.key(i)
+    if (key?.startsWith(SSO_PREFIX + '0x') && key !== SSO_PREFIX + address) localStorage.removeItem(key)
+  }
+  localStorage.setItem(SSO_PREFIX + address, JSON.stringify(identity))
+}
+
 export function storeGuestLogin(identity: AuthIdentity): void {
   localStorage.setItem(GUEST_IDENTITY_KEY, JSON.stringify(identity))
 }
@@ -147,11 +158,21 @@ export function rootAddress(identity: AuthIdentity): string {
   return identity.authChain?.[0]?.payload ?? ''
 }
 
+/** The sign-in methods the Explorer's sign-in screen offers besides email, by the auth site's names: the
+ *  site's sign-in page starts the one named in `?loginMethod=`. */
+export const LOGIN_METHODS = ['google', 'metamask', 'discord', 'apple', 'x', 'coinbase', 'wallet-connect'] as const
+export type LoginMethod = (typeof LOGIN_METHODS)[number]
+
+export function isLoginMethod(value: unknown): value is LoginMethod {
+  return typeof value === 'string' && (LOGIN_METHODS as readonly string[]).includes(value)
+}
+
 // Same-origin auth site. Redirecting here keeps us on decentraland.org/.zone/.today so the
 // identity it writes lands in this origin's localStorage.
-export function authLoginUrl(redirectTo: string = location.href, attribution = attributionParams()): string {
+export function authLoginUrl(redirectTo: string = location.href, attribution = attributionParams(), loginMethod?: LoginMethod): string {
   const campaign = attribution.map(([name, value]) => `&${name}=${encodeURIComponent(value)}`).join('')
-  return `/auth/login?redirectTo=${encodeURIComponent(redirectTo)}${campaign}`
+  const method = loginMethod != null ? `&loginMethod=${loginMethod}` : ''
+  return `/auth/login?redirectTo=${encodeURIComponent(redirectTo)}${method}${campaign}`
 }
 
 /** `url` marked as the auth site's return, so the page it lands on knows the sign-in just happened
@@ -170,9 +191,9 @@ const entryUrl = location.href
 
 // Send the browser to the auth site to sign in (fresh account or switch account). Inside the shell
 // the shell navigates, so the auth site gets the top-level page and returns to the shell's URL.
-export function redirectToAuth(redirectTo: string = entryUrl): void {
-  if (inShell) postToShell({ type: 'bevy-shell:auth-login', session: sessionId() })
-  else location.assign(authLoginUrl(authReturnUrl(redirectTo)))
+export function redirectToAuth(redirectTo: string = entryUrl, loginMethod?: LoginMethod): void {
+  if (inShell) postToShell({ type: 'bevy-shell:auth-login', session: sessionId(), ...(loginMethod != null ? { loginMethod } : {}) })
+  else location.assign(authLoginUrl(authReturnUrl(redirectTo), undefined, loginMethod))
 }
 
 // Sign out: drop every SSO identity for this origin (matches sites' disconnect for the

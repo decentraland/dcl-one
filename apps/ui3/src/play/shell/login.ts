@@ -8,9 +8,12 @@ import {
   loginExpired,
   publicLogin,
   rootAddress,
+  storeAccountLogin,
   storeGuestLogin,
+  type AuthIdentity,
   type StoredLogin
 } from '@explorer-core/features/auth/sso'
+import { completeEmailSignIn, startEmailSignIn } from '@explorer-core/shell/emailLogin'
 import { personalSign } from '@explorer-core/shell/sign'
 
 // The login handed to the app, key included. It is the only one the shell signs with, and once it
@@ -54,9 +57,24 @@ export async function request(method: unknown, params: unknown): Promise<unknown
       pinned = true
       return publicLogin(held)
     }
+    // Email sign-in (features/startup): the code is sent, then checked here, and the account's
+    // identity kept like the sign-in page's, key included.
+    case 'emailStart':
+      await startEmailSignIn(params)
+      return null
+    case 'emailLogin': {
+      const { identity, wallet } = await completeEmailSignIn(params)
+      storeAccountLogin(identity)
+      // the session state the sign-in page leaves for an email account, which the Shop reads
+      recordInAppSession(identity, wallet)
+      held = { address: rootAddress(identity).toLowerCase(), identity }
+      pinned = true
+      return publicLogin(held)
+    }
     // Sign out. The guest is kept: it is only reachable through its stored session id.
     case 'logout':
       clearStoredLogins()
+      forgetInAppSession()
       held = null
       pinned = false
       return null
@@ -64,3 +82,28 @@ export async function request(method: unknown, params: unknown): Promise<unknown
       throw new Error(`unknown request ${String(method)}`)
   }
 }
+
+// Sites' keys for an in-app (thirdweb) sign-in: its token, for the Shop to sign with, and that the
+// account is a managed one, not a browser wallet's.
+const THIRDWEB_SESSION_KEY = 'dcl:auth:thirdweb:v1'
+const SIGN_IN_KIND_KEY = 'dcl:auth:signin-kind:v1'
+
+function recordInAppSession(identity: AuthIdentity, wallet: { token: string; walletAddress: string }): void {
+  try {
+    localStorage.setItem(THIRDWEB_SESSION_KEY, JSON.stringify({ token: wallet.token, address: wallet.walletAddress }))
+    localStorage.setItem(SIGN_IN_KIND_KEY, JSON.stringify({ signer: rootAddress(identity).toLowerCase(), kind: 'managed' }))
+  } catch {
+    // without them the Shop infers the kind of account as before
+  }
+}
+
+/** Sign-out drops them too, as the sign-in page's does. */
+function forgetInAppSession(): void {
+  try {
+    localStorage.removeItem(THIRDWEB_SESSION_KEY)
+    localStorage.removeItem(SIGN_IN_KIND_KEY)
+  } catch {
+    // nothing kept
+  }
+}
+

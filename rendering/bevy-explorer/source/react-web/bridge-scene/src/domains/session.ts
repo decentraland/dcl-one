@@ -7,7 +7,7 @@ import { BevyApi } from '../bevy-api'
 import { relay } from '../system-helpers'
 import { identity } from '../identity'
 import type { Ctx } from '../bridge'
-import { GUEST_SESSION_KEY, guestLogin, guestSign } from '@explorer-core/features/auth/thirdweb'
+import { GUEST_SESSION_KEY, emailLoginComplete, emailLoginStart, guestLogin, guestSign } from '@explorer-core/features/auth/thirdweb'
 
 // The Bevy engine injects a persistent localStorage into system scenes.
 declare const localStorage: {
@@ -58,6 +58,10 @@ export function registerSession(ctx: Ctx): void {
         }
         case 'guestSign': value = await guestSign(msg.params?.token ?? '', msg.params?.message ?? '', THIRDWEB_HEADERS); break
         case 'guestDiscard': localStorage.removeItem(GUEST_SESSION_KEY); break
+        // Email sign-in (native): the code and the wallet it opens, as for the guest; the page builds
+        // the identity. A refused code or address keeps its code in the error's text.
+        case 'emailStart': await emailLoginStart(msg.params?.email ?? '', THIRDWEB_HEADERS); break
+        case 'emailComplete': value = await emailLoginComplete(msg.params?.email ?? '', msg.params?.code ?? '', THIRDWEB_HEADERS); break
         case 'logout': BevyApi.logout(); break
         default: throw new Error(`unsupported method ${String(msg.method)}`)
       }

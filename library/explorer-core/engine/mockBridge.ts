@@ -1635,6 +1635,27 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
         reply({ kind: 'rpc:res', id: msg.id, ok: true })
         spawnPlayer()
         return
+      // Email sign-in: any address gets a code; the code 000000 is a wrong one, any other opens a
+      // mock wallet, which signs anything.
+      case 'emailStart':
+        setTimeout(() => reply({ kind: 'rpc:res', id: msg.id, ok: true }), 600)
+        return
+      case 'emailComplete': {
+        const wrong = msg.params?.code === '000000'
+        setTimeout(
+          () =>
+            reply(
+              wrong
+                ? { kind: 'rpc:res', id: msg.id, ok: false, error: 'EmailLoginError: [incorrect-code] mock' }
+                : { kind: 'rpc:res', id: msg.id, ok: true, value: { token: 'mock', walletAddress: '0x00000000000000000000000000000000000e4a11' } }
+            ),
+          600
+        )
+        return
+      }
+      case 'guestSign':
+        reply({ kind: 'rpc:res', id: msg.id, ok: true, value: `0x${'00'.repeat(65)}` })
+        return
       case 'loginIdentity':
         // Same-domain SSO hand-off: the engine would finalize the wallet from the identity.
         reply({ kind: 'rpc:res', id: msg.id, ok: true })

@@ -8,9 +8,11 @@ import {
   loginExpired,
   publicLogin,
   rootAddress,
+  storeAccountLogin,
   storeGuestLogin,
   type StoredLogin
 } from '@explorer-core/features/auth/sso'
+import { completeEmailSignIn, startEmailSignIn } from '@explorer-core/shell/emailLogin'
 import { isLoopbackHost } from '../lib/loopbackHost'
 import { createLocalGuestRootKey, getLocalGuestRootKey, localGuestIdentity, storeLocalGuestRootKey } from './localGuest'
 import { personalSign } from '@explorer-core/shell/sign'
@@ -68,6 +70,18 @@ export async function request(method: unknown, params: unknown): Promise<unknown
       storeLocalGuestRootKey(rootKey)
       const identity = localGuestIdentity(rootKey)
       held = { address: rootAddress(identity).toLowerCase(), identity, guest: true }
+      pinned = true
+      return publicLogin(held)
+    }
+    // Email sign-in (features/startup): the code is sent, then checked here, and the account's
+    // identity kept like the sign-in page's, key included.
+    case 'emailStart':
+      await startEmailSignIn(params)
+      return null
+    case 'emailLogin': {
+      const { identity } = await completeEmailSignIn(params)
+      storeAccountLogin(identity)
+      held = { address: rootAddress(identity).toLowerCase(), identity }
       pinned = true
       return publicLogin(held)
     }

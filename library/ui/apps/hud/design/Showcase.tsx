@@ -3,6 +3,9 @@
 
 import { Button } from './Button'
 import { LogoPattern } from './LogoPattern'
+import { SubmitField } from './SubmitField'
+import { CodeInput } from './CodeInput'
+import { Spinner } from './Spinner'
 import { Skeleton } from './Skeleton'
 import { IconButton } from './IconButton'
 import { VoiceBars } from './VoiceBars'
@@ -230,6 +233,10 @@ export function Showcase(): React.JSX.Element {
           <Button size="start" style={{ width: 300 }}>Play as guest</Button>
           <Button size="start" variant="darkOutline" style={{ width: 300 }}>Login or signup</Button>
         </div>
+      </Section>
+
+      <Section title="Sign-in: SubmitField, method buttons, CodeInput, chase spinner">
+        <SignInShowcase />
       </Section>
 
       <Section title="Logo pattern (the loading and sign-in backdrop)">
@@ -719,3 +726,21 @@ function ShowcaseRowScroller(): React.JSX.Element {
     </div>
   )
 }
+
+function SignInShowcase(): React.JSX.Element {
+  const [email, setEmail] = useState('')
+  const [code, setCode] = useState('')
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16, width: 458, padding: 16, background: 'var(--loading-vignette)' }}>
+      <SubmitField aria-label="Email" placeholder="your@email.com" value={email} onChange={setEmail} onSubmit={() => {}} submitLabel="Next" canSubmit={email.includes('@')} />
+      <SubmitField aria-label="Email (invalid)" value="not-an-email" onChange={() => {}} onSubmit={() => {}} submitLabel="Next" canSubmit={false} error="Invalid email" />
+      <Button size="modal" variant="method">Google</Button>
+      <Button size="bare" variant="whisper" style={{ width: 36, height: 36 }} aria-label="whisper">‹</Button>
+      <CodeInput value={code} onChange={setCode} />
+      <CodeInput value="123456" onChange={() => {}} state="success" disabled />
+      <CodeInput value="123456" onChange={() => {}} state="error" disabled />
+      <Spinner size={40} variant="chase" />
+    </div>
+  )
+}
+

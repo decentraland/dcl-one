@@ -39,7 +39,7 @@ describe('startup screens', () => {
     vi.mocked(exitApplication).mockClear()
   })
 
-  it('no session: PLAY AS GUEST plays as a guest with no pick (the name and terms page follows), LOGIN OR SIGNUP signs in', async () => {
+  it('no session: PLAY AS GUEST plays as a guest with no pick (the name and terms page follows), LOGIN OR SIGNUP opens the methods and BACK returns', async () => {
     const f = flow({ status: 'sign-in-or-guest' })
     await renderSettled(startup(f))
     expect(screen.getByRole('heading', { name: 'Welcome to Decentraland!' })).toBeInTheDocument()
@@ -47,7 +47,10 @@ describe('startup screens', () => {
     await userEvent.click(screen.getByRole('button', { name: /PLAY AS GUEST/i }))
     expect(vi.mocked(f.exploreAsGuest)).toHaveBeenCalledWith()
     await userEvent.click(screen.getByRole('button', { name: /LOGIN OR SIGNUP/i }))
-    expect(vi.mocked(f.startWithAccount)).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole('heading', { name: 'Log in or Sign up' })).toBeInTheDocument()
+    expect(f.startWithAccount).not.toHaveBeenCalled()
+    await userEvent.click(screen.getByRole('button', { name: /BACK/i }))
+    expect(screen.getByRole('heading', { name: 'Welcome to Decentraland!' })).toBeInTheDocument()
   })
 
   it('the splash covers loading and a stored sign-in on its way to the lobby; after a failed sign-in, JUMP IN / USE A DIFFERENT ACCOUNT', async () => {
@@ -67,10 +70,12 @@ describe('startup screens', () => {
     expect(vi.mocked(f.useDifferentAccount)).toHaveBeenCalledTimes(1)
   })
 
-  it('the desktop browser sign-in keeps its panel and Cancel', async () => {
+  it('the desktop browser sign-in waits on the methods screen, with a spinner and Cancel', async () => {
     const f = flow({ status: 'sign-in-or-guest', authPending: true })
     await renderSettled(startup(f))
-    expect(screen.getByText('Opening the sign-in page in your browser…')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Log in or Sign up' })).toBeInTheDocument()
+    expect(screen.getByRole('status', { name: 'Loading' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /GOOGLE/i })).toBeNull()
     await userEvent.click(screen.getByRole('button', { name: /CANCEL/i }))
     expect(vi.mocked(f.cancelLogin)).toHaveBeenCalledTimes(1)
   })
@@ -121,6 +126,7 @@ describe('startup screens', () => {
     const f = flow({ status: 'sign-in-or-guest' })
     const { rerender } = await renderSettled(startup(f))
     await userEvent.click(screen.getByRole('button', { name: /LOGIN OR SIGNUP/i }))
+    await userEvent.click(screen.getByRole('button', { name: /GOOGLE/i }))
     rerender(startup({ ...f, error: 'nothing on this mac handles decentraland:// links' }))
     const dialog = await screen.findByRole('dialog')
     expect(within(dialog).getByText('nothing on this mac handles decentraland:// links')).toBeInTheDocument()

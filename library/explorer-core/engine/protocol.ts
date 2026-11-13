@@ -67,6 +67,8 @@ export type RpcMethod =
   | 'guestLogin'
   | 'guestSign'
   | 'guestDiscard'
+  | 'emailStart'
+  | 'emailComplete'
 
 // ---- page -> scene ---------------------------------------------------------
 

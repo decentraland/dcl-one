@@ -2,7 +2,7 @@
 // Owns the driver and exposes the login flow + scene-loading state + phase.
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
-import { clearLogins, getLogin, redirectToAuth, returnedFromAuth, rootAddress, type StoredLogin } from '@explorer-core/features/auth/sso'
+import { clearLogins, getLogin, redirectToAuth, returnedFromAuth, rootAddress, type AuthIdentity, type LoginMethod, type StoredLogin } from '@explorer-core/features/auth/sso'
 import { hoverKey, proximityKey } from '@explorer-core/engine/pointerKeys'
 import type { LoginDriver, NewAccountPick } from '@explorer-core/engine/driver'
 import type { LaunchHostOptions } from '@explorer-core/engine/engineRpc'
@@ -874,8 +874,9 @@ export interface LoginFlow {
   loadProgress: number
   /** Active boot step id ('download'|'compile'|'init'|'workers'|'gpu') or null. */
   loadStep: string | null
-  /** Fresh sign-in: same-domain auth redirect (web) or the engine's remote-wallet flow (native). */
-  startWithAccount: () => void
+  /** Fresh sign-in: same-domain auth redirect (web), which starts `method` when given, or the engine's
+   *  remote-wallet flow (native), which offers every method. */
+  startWithAccount: (method?: LoginMethod) => void
   /** Native fresh sign-in in flight → show the verification panel (code null until it arrives). */
   authPending: boolean
   authCode: string | null
@@ -885,6 +886,15 @@ export interface LoginFlow {
    *  once signed in. Before the engine is ready the click is kept (`acceptQueued`) and runs once it is. */
   exploreAsGuest: (pick?: GuestPick) => void
   acceptQueued: boolean
+  /** This page can sign in with an email code (the driver makes the thirdweb calls). */
+  emailAvailable: boolean
+  /** Send a sign-in code to `email`. Rejects with an EmailLoginError code for a refused address. */
+  sendEmailCode: (email: string) => Promise<void>
+  /** Check the code and sign in with the account it opens; nothing signs in if it rejects (an
+   *  EmailLoginError code for a wrong code, anything else a failure) or once `signal` aborts. A sign-in
+   *  before the engine is ready waits for it (`emailQueued`). */
+  verifyEmailCode: (email: string, code: string, signal?: AbortSignal) => Promise<void>
+  emailQueued: boolean
   /** Reuse the stored SSO identity (hand it to the engine). */
   jumpIn: () => void
   /** The stored account's profile, for the screens before the engine draws it. */
@@ -1099,6 +1109,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const guestPick = useRef<GuestPick | null>(null)
   // ACCEPT AND PLAY clicked before the engine was ready: runs once it is
   const [queuedGuest, setQueuedGuest] = useState<{ pick: GuestPick | null } | null>(null)
+  // an email account's identity, checked, waiting for the engine to take its sign-in
+  const [queuedEmail, setQueuedEmail] = useState<AuthIdentity | null>(null)
   // the look sent to the stage and not yet shown there (null = none)
   const [pendingLook, setPendingLook] = useState<number | null>(null)
   // The address of the engine's actual reusable previous login (drives "Welcome back").
@@ -3803,6 +3815,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     welcomeRef.current = null
     guestPick.current = null
     setQueuedGuest(null)
+    setQueuedEmail(null)
     setPendingLook(null)
     setStatus('sign-in-or-guest')
     closeAllPanels()
@@ -4067,6 +4080,26 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     setQueuedGuest(null)
     startGuest(queuedGuest.pick ?? undefined)
   }, [queuedGuest, engineReady, startGuest])
+  // Email sign-in (features/startup): the code is checked before anything signs in, so a wrong one is
+  // told on its screen; the checked account then signs in like any other, once the engine can take it.
+  const sendEmailCode = useCallback(async (email: string) => {
+    const driver = driverRef.current
+    if (driver?.emailSendCode == null) throw new Error('email sign-in is not available here')
+    await driver.emailSendCode(email)
+  }, [])
+  const verifyEmailCode = useCallback(async (email: string, code: string, signal?: AbortSignal) => {
+    const driver = driverRef.current
+    if (driver?.emailVerify == null) throw new Error('email sign-in is not available here')
+    const identity = await driver.emailVerify(email, code)
+    // Back while it was checked: the account the shell already keeps is let go, so nothing finds it later
+    if (signal?.aborted) return clearLogins()
+    setQueuedEmail(identity)
+  }, [])
+  useEffect(() => {
+    if (queuedEmail == null || !engineReady) return
+    setQueuedEmail(null)
+    submitLogin((d) => d.loginEmail?.(queuedEmail) ?? d.loginWithIdentity(queuedEmail), 'fully_registered')
+  }, [queuedEmail, engineReady, submitLogin])
   const autoGuest = useCallback(() => submitLogin((d) => d.loginGuest(), 'guest'), [submitLogin])
   // An unattended run signs in with its own identity (the host's `unattendedRun`), never a stored account
   const unattendedLogin = useCallback(
@@ -4108,14 +4141,14 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   // The auth runs now (not deferred like Jump in — it needs the user at the code panel);
   // approval means the engine is already logged in, so the destination pick has no deferred
   // login left to run.
-  const startWithAccount = useCallback(() => {
+  const startWithAccount = useCallback((method?: LoginMethod) => {
     if (busy) return
     clickButton('SIGN_IN', 'ACCOUNT_HOME')
     guestPick.current = null
     const driver = driverRef.current
     if (driver?.loginNew == null) {
-      screenViewed('AUTH_BROWSER_OPEN', { method: 'sso' })
-      redirectToAuth()
+      screenViewed('AUTH_BROWSER_OPEN', { method: method ?? 'sso' })
+      redirectToAuth(undefined, method)
       return
     }
     const attempt = ++authAttempt.current
@@ -4738,6 +4771,10 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       cancelLogin,
       exploreAsGuest,
       acceptQueued: queuedGuest != null,
+      emailAvailable: driverRef.current?.emailSendCode != null && driverRef.current.emailAvailable !== false,
+      sendEmailCode,
+      verifyEmailCode,
+      emailQueued: queuedEmail != null,
       jumpIn,
       profile: accountProfile,
       profileFetchFailed,

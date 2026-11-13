@@ -87,3 +87,14 @@ export function layoutOptions(set: OptionSet, mode: SignInOptionsMode, hasInject
   const rest = all.filter((o) => o !== google && o !== metamask);
   return { more: [google, metamask, ...rest].filter((o): o is ConnectionOption => o !== undefined) };
 }
+
+/** A `?loginMethod=` the Explorer passes when the player picked a method there: one of the options, or null. */
+export function requestedOption(value: string | null): ConnectionOption | null {
+  return value != null && Object.hasOwn(OPTION_TITLES, value) ? (value as ConnectionOption) : null;
+}
+
+/** Whether `layout` offers `option`, so a requested one is started only where the page would show it. */
+export function layoutOffers(layout: Layout, option: ConnectionOption): boolean {
+  return layout.first === option || layout.second === option || layout.more.includes(option);
+}
+
