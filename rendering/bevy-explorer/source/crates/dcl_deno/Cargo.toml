@@ -35,6 +35,7 @@ deno_web = { workspace = true }
 deno_webidl = { workspace = true }
 # deno_web's TextDecoder backend, for the capped decode ops
 encoding_rs = "0.8.35"
+async-trait = { workspace = true }
 
 bytes = "1.11.1"
 

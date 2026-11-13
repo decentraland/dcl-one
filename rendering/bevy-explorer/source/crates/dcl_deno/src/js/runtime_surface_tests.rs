@@ -444,6 +444,51 @@ fn a_cloned_blob_part_counts_once() {
     );
 }
 
+/// A slice reads its parent's bytes, which count once until the last part holding them goes.
+#[test]
+fn a_blob_slice_shares_its_parent() {
+    const MIB: usize = 1024 * 1024;
+    let cap = super::super::blob_store::MAX_BLOB_BYTES / MIB;
+    let script = format!(
+        r#"
+        const ops = Deno.core.ops;
+        const tryCreate = (bytes) => {{
+            try {{ return ops.op_blob_create_part(new Uint8Array(bytes)); }} catch {{ return null; }}
+        }};
+        const bytes = new Uint8Array({} * 1024 * 1024);
+        bytes[1] = 7;
+        const original = ops.op_blob_create_part(bytes);
+        const slice = ops.op_blob_slice_part(original, {{ start: 1, len: bytes.length - 1 }});
+        ops.op_blob_remove_part(original);
+        const whileHeld = tryCreate(2 * 1024 * 1024) !== null;
+        globalThis.__slice = slice;
+        globalThis.__outcome = {{ whileHeld }};
+        ops.op_blob_read_part(slice).then((read) => {{
+            ops.op_blob_remove_part(slice);
+            __outcome.first = read[0];
+            __outcome.size = read.length;
+            __outcome.afterRelease = tryCreate(2 * 1024 * 1024) !== null;
+        }});
+        "#,
+        cap - 1
+    );
+    let outcome = in_scene(|runtime| {
+        eval(runtime, script).unwrap();
+        run_event_loop(runtime);
+        eval(runtime, "JSON.stringify(__outcome)".to_owned()).unwrap()
+    });
+    let outcome: serde_json::Value = serde_json::from_str(&outcome).unwrap();
+    assert_eq!(
+        outcome,
+        serde_json::json!({
+            "whileHeld": false,
+            "first": 7,
+            "size": (cap - 1) * MIB - 1,
+            "afterRelease": true,
+        })
+    );
+}
+
 #[test]
 fn broadcast_channels_do_not_cross_scenes() {
     use std::sync::mpsc;

@@ -672,12 +672,14 @@ fn op_blob_clone_part(
     #[string] id: &str,
 ) -> Result<ClonedPart, OpError> {
     let store = capped_store(state)?;
-    let part = store
-        .get_part(&blob_part_id(id)?)
+    let (uuid, size) = store
+        .insert_clone(&blob_part_id(id)?)
         .ok_or_else(|| anyhow::anyhow!("Blob part not found"))?;
-    let size = part.size();
-    let uuid = account_blob_memory(scope, &store, store.try_insert_shared(part))?.to_string();
-    Ok(ClonedPart { uuid, size })
+    account_blob_memory(scope, &store, Ok(()))?;
+    Ok(ClonedPart {
+        uuid: uuid.to_string(),
+        size,
+    })
 }
 
 #[op2]
@@ -690,18 +692,7 @@ fn op_blob_slice_part(
 ) -> Result<String, OpError> {
     let SliceOptions { start, len } = options.0;
     let store = capped_store(state)?;
-    let part = store
-        .get_part(&blob_part_id(id)?)
-        .ok_or_else(|| anyhow::anyhow!("Blob part not found"))?;
-    if start.checked_add(len).is_none_or(|end| end > part.size()) {
-        bail!("start + len can not be larger than blob part size");
-    }
-    // every part in a scene runtime is in memory, so its read is ready at once
-    let bytes = deno_core::futures::FutureExt::now_or_never(part.read())
-        .ok_or_else(|| anyhow::anyhow!("Blob part is not in memory"))?;
-    let id = store.try_insert_with(len, || {
-        Arc::new(InMemoryBlobPart::from(bytes[start..start + len].to_vec()))
-    });
+    let id = store.insert_slice(&blob_part_id(id)?, start, len);
     Ok(account_blob_memory(scope, &store, id)?.to_string())
 }
 
@@ -718,10 +709,17 @@ async fn op_blob_read_part(
     Ok(Uint8Array::from(bytes.to_vec()))
 }
 
-#[op2(fast)]
-fn op_blob_remove_part(state: &mut OpState, #[string] id: &str) -> Result<(), OpError> {
+// not fast, so the freed bytes reach V8's external memory count now
+#[op2(nofast)]
+fn op_blob_remove_part(
+    scope: &mut v8::PinScope,
+    state: &mut OpState,
+    #[string] id: &str,
+) -> Result<(), OpError> {
     let id = blob_part_id(id)?;
-    capped_store(state)?.remove_part(&id);
+    let store = capped_store(state)?;
+    store.remove_part(&id);
+    scope.adjust_amount_of_external_allocated_memory(store.take_external_change());
     Ok(())
 }
 
