@@ -377,7 +377,7 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
     else if (page === 'communities') session.communities.toggle()
     else if (page === 'map') session.map.toggle()
     else if (page === 'places') session.places.toggle()
-    else if (page === 'events') session.events.toggle()
+    else if (page === 'events') session.events.toggle(session.events.open ? undefined : 'start_menu')
     else if (page === 'shop') session.shop.toggle()
     else if (page === 'gallery') session.gallery.toggle()
     else if (page === 'create') session.create.toggle()
@@ -526,13 +526,7 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
             />
           </SurfaceBoundary>
           <SurfaceBoundary name="Events" open={session.events.open} onCrash={session.closeAllPanels}>
-            <EventsPage
-              events={session.events}
-              profile={session.profile}
-              onNavigate={goToMenuPage}
-              onTeleport={(x, y) => session.map.teleportToPlace(x, y)}
-              onVisitWorld={(realm) => session.map.changeRealm(realm)}
-            />
+            <EventsPage events={session.events} profile={session.profile} friends={session.friends} onNavigate={goToMenuPage} />
           </SurfaceBoundary>
           <SurfaceBoundary
             name="Shop"

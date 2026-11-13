@@ -246,3 +246,8 @@ debug = "line-tables-only"
 [profile.dev.package."*"]
 debug = false
 opt-level = 1
+
+# The scene CLI is one binary people download: its symbol table is 13 MB of a
+# 106 MB file and nothing reads it at run time. The node keeps its symbols.
+[profile.release.package.dcl-scene-cli]
+strip = "symbols"

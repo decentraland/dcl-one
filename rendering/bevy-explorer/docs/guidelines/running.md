@@ -23,7 +23,8 @@ just native-debug --realm <about-url> --position x,y
 a login screen with no HUD. Both binaries must build: `cargo build --package dcl_deno_ipc`,
 then `cargo build`. This loop is verified on macOS, the only platform where the client falls back
 to `~/.local/share/cef` at runtime; on Linux the loader needs `LD_LIBRARY_PATH` (see
-`source/readme.md`), and on Windows the desktop workflow's staging shows what CEF needs.
+`source/readme.md`), and on Windows the desktop workflow's staging shows what CEF needs; there
+`CEF_PATH` takes a Windows path, and `just` runs from Git Bash (see [Platforms](platforms.md#native)).
 
 ### Gateway routing
 

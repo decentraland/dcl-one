@@ -1,0 +1,54 @@
+{
+  "version": 1,
+  "components": [
+    {
+      "name": "core::GltfContainer",
+      "data": {
+        "0": {
+          "json": {
+            "src": "{assetPath}/sword.glb",
+            "visibleMeshesCollisionMask": 1
+          }
+        }
+      }
+    },
+    {
+      "name": "asset-packs::Script",
+      "data": {
+        "0": {
+          "json": {
+            "value": [
+              {
+                "path": "{assetPath}/Sword.ts",
+                "priority": 0,
+                "layout": "{\"params\":{\"hoverText\":{\"type\":\"string\",\"value\":\"Pick up\",\"optional\":true,\"tooltip\":\"Text shown when pointing at the sword.\"},\"radius\":{\"type\":\"number\",\"value\":3,\"optional\":true,\"tooltip\":\"How far the swing's damage reaches from the player.\"},\"damagePoints\":{\"type\":\"number\",\"value\":10,\"optional\":true,\"tooltip\":\"How much damage each swing deals.\"},\"damageTarget\":{\"type\":\"enum\",\"value\":\"non_player\",\"options\":[\"all\",\"player\",\"non_player\"],\"optional\":true,\"tooltip\":\"Who the swing damages.\"},\"cooldown\":{\"type\":\"number\",\"value\":0.5,\"optional\":true,\"tooltip\":\"Seconds between swings.\"},\"attackEmote\":{\"type\":\"string\",\"value\":\"sword_attack_emote.glb\",\"optional\":true,\"tooltip\":\"Emote file (.glb) played when swinging (e.g. sword_attack_emote.glb). Empty for none.\"}},\"actions\":[{\"methodName\":\"pickUp\",\"description\":\"Picks up the sword and attaches it to the player's hand.\",\"params\":{}},{\"methodName\":\"attack\",\"description\":\"Swings the sword, damaging targets in range of the player, then starts the cooldown.\",\"params\":{}}],\"events\":[]}"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "asset-packs::Actions",
+      "data": {
+        "0": {
+          "json": {
+            "id": "{self}",
+            "value": [
+              {
+                "name": "Pick Up",
+                "type": "call_script_method",
+                "jsonPayload": "{\"scriptPath\":\"{assetPath}/Sword.ts\",\"methodName\":\"pickUp\",\"params\":{}}"
+              },
+              {
+                "name": "Attack",
+                "type": "call_script_method",
+                "jsonPayload": "{\"scriptPath\":\"{assetPath}/Sword.ts\",\"methodName\":\"attack\",\"params\":{}}"
+              }
+            ]
+          }
+        }
+      }
+    }
+  ]
+}
