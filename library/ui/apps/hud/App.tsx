@@ -37,6 +37,7 @@ import { PopupHost, ToastHost, showDialog } from './design'
 import { SessionProvider } from './features/session/SessionContext'
 import { bootMode, hostEntryParams, isNativeHud, unrecognisedEntryParams, untrustedLaunchParams } from '@hud-host'
 import { FpsMeter } from './features/debug/FpsMeter'
+import { DebugPanelHost } from './features/debug/DebugPanel'
 import { BootProgress } from './features/engine/BootProgress'
 import { LoadingAndLogin } from './features/login/LoadingAndLogin'
 import { GuestStartPage } from './features/login/GuestStartPage'
@@ -451,6 +452,8 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
             <PhotoModeOverlay photoMode={session.photoMode} onOpenGallery={session.gallery.toggle} />
           )}
           {chrome && <Sidebar session={session} onViewProfile={viewMyProfile} />}
+          {/* Not gated by `chrome`: mounted while a menu page, photo mode or the editor is open. */}
+          <DebugPanelHost session={session} underPage={pageOpen} />
           {chrome && <VoiceChatPanel />}
           {chrome && <SceneVoiceChatBanner />}
           {chrome && (
