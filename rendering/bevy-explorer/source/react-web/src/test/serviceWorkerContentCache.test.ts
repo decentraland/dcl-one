@@ -1,8 +1,10 @@
 // The service worker's upkeep of the content cache: on a `content-cache-trim` message it deletes
-// the oldest-written entries of `ipfs-path-cache-v2` while the cache is over its cap, and touches
-// no other cache.
+// the least recently used entries of `ipfs-path-cache-v2` (oldest written when no use is recorded)
+// while the cache is over its cap, and touches no other cache. A `content-cache-touch` message
+// records uses.
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { IDBFactory } from 'fake-indexeddb'
 import { describe, expect, it, vi } from 'vitest'
 
 const CONTENT_CACHE = 'ipfs-path-cache-v2'
@@ -15,6 +17,7 @@ type Pure = {
     bytesToFree: number
   }
   pickEvictions: (sized: { key: string; size: number }[], bytesToFree: number) => { picked: string[]; freed: number }
+  contentCacheEvictionOrder: (requests: string[], lastUsed: Map<string, number>) => string[]
 }
 
 const entryUrl = (n: number | string) => `https://shared.invalid/bafkrei${n}`
@@ -42,7 +45,7 @@ function fakeCache(seed: [string, Response][] = []) {
 }
 type FakeCache = ReturnType<typeof fakeCache>
 
-function serviceWorker(options: { quota?: number; usage?: number; usageDetails?: object | null; others?: boolean; persisted?: 'absent' | 'rejects' } = {}) {
+function serviceWorker(options: { quota?: number; usage?: number; usageDetails?: object | null; others?: boolean; persisted?: 'absent' | 'rejects'; indexedDB?: unknown } = {}) {
   const listeners: Record<string, (event: unknown) => void> = {}
   const content = fakeCache()
   const fakes = new Map<string, FakeCache>([[CONTENT_CACHE, content]])
@@ -85,9 +88,11 @@ function serviceWorker(options: { quota?: number; usage?: number; usageDetails?:
     'fetch',
     'console',
     'navigator',
-    source + '\nreturn { contentCacheTarget, pickEvictions };'
+    'indexedDB',
+    source + '\nreturn { contentCacheTarget, pickEvictions, contentCacheEvictionOrder };'
   ) as (...args: unknown[]) => Pure
-  const pure = load(self, caches, vi.fn(), { log: vi.fn(), warn: vi.fn() }, navigator)
+  const indexedDB = options.indexedDB ?? new IDBFactory()
+  const pure = load(self, caches, vi.fn(), { log: vi.fn(), warn: vi.fn() }, navigator, indexedDB)
 
   const send = async (data: unknown) => {
     const port = { postMessage: vi.fn() }
@@ -98,8 +103,9 @@ function serviceWorker(options: { quota?: number; usage?: number; usageDetails?:
   }
   const seed = (n: number, size = 100, withLength = true) => content.map.set(entryUrl(n), entry(size, withLength))
   const trim = (message: Partial<Message> & { capBytes: unknown }) => send({ type: 'content-cache-trim', ...message })
+  const touch = (keys: unknown) => send({ type: 'content-cache-touch', keys })
   const remaining = () => [...content.map.keys()].map((url) => url.replace('https://shared.invalid/', ''))
-  return { pure, send, trim, seed, content, fakes, caches, opened, estimate, remaining }
+  return { pure, send, trim, touch, indexedDB, seed, content, fakes, caches, opened, estimate, remaining }
 }
 
 describe('content cache target', () => {
@@ -243,5 +249,117 @@ describe('content cache trim message', () => {
     expect(port.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({ evictedEntries: 6, persisted: false })
     )
+  })
+})
+
+describe('eviction order', () => {
+  it('puts entries without a recorded use first, oldest written first', () => {
+    const { pure } = serviceWorker()
+    const used = new Map([['a', 5], ['c', 1]])
+    expect(pure.contentCacheEvictionOrder(['a', 'b', 'c', 'd'], used)).toEqual(['b', 'd', 'c', 'a'])
+  })
+
+  it('keeps write order between equal last uses', () => {
+    const { pure } = serviceWorker()
+    expect(pure.contentCacheEvictionOrder(['b', 'a'], new Map([['a', 1], ['b', 1]]))).toEqual(['b', 'a'])
+  })
+
+  it('is the write order with no record', () => {
+    const { pure } = serviceWorker()
+    expect(pure.contentCacheEvictionOrder(['a', 'b', 'c'], new Map())).toEqual(['a', 'b', 'c'])
+  })
+})
+
+const recordedKeys = (factory: IDBFactory) =>
+  new Promise<unknown[]>((resolve, reject) => {
+    const open = factory.open('dcl-content-cache-index-v1')
+    open.onerror = () => reject(open.error)
+    open.onsuccess = () => {
+      const request = open.result.transaction('lastUsed').objectStore('lastUsed').getAllKeys()
+      request.onsuccess = () => resolve(request.result)
+      request.onerror = () => reject(request.error)
+    }
+  })
+
+describe('content cache last use', () => {
+  it('keeps a read entry longer than a later-written unread one', async () => {
+    const sw = serviceWorker()
+    for (let n = 0; n < 4; n++) sw.seed(n)
+    await sw.touch([entryUrl(0)])
+    const { port } = await sw.trim({ capBytes: 300 })
+    expect(sw.remaining()).toEqual(['bafkrei0', 'bafkrei3'])
+    expect(port.postMessage).toHaveBeenCalledWith(expect.objectContaining({ evictedEntries: 2, indexedEntries: 1 }))
+  })
+
+  it('ranks uses recorded later later', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      const sw = serviceWorker()
+      sw.seed(0)
+      sw.seed(1)
+      await sw.touch([entryUrl(1)])
+      vi.setSystemTime(Date.now() + 60_000)
+      await sw.touch([entryUrl(0)])
+      await sw.trim({ capBytes: 150 })
+      expect(sw.remaining()).toEqual(['bafkrei0'])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('falls back to write order without its index', async () => {
+    const sw = serviceWorker({
+      indexedDB: {
+        open() {
+          throw new Error('gone')
+        }
+      }
+    })
+    for (let n = 0; n < 4; n++) sw.seed(n)
+    const touched = await sw.touch([entryUrl(0)])
+    expect(touched.port.postMessage).toHaveBeenCalledWith({ error: expect.any(String) })
+    const { port } = await sw.trim({ capBytes: 300 })
+    expect(sw.remaining()).toEqual(['bafkrei2', 'bafkrei3'])
+    const report = port.postMessage.mock.calls[0][0]
+    expect(report).toMatchObject({ evictedEntries: 2, indexedEntries: 0 })
+    expect(report.error).toBeUndefined()
+  })
+
+  it('prunes the records of entries that are gone', async () => {
+    const sw = serviceWorker()
+    sw.seed(0)
+    sw.seed(1)
+    await sw.touch(['x', entryUrl(0)])
+    await sw.trim({ capBytes: 100 })
+    expect(sw.remaining()).toEqual([])
+    expect(await recordedKeys(sw.indexedDB as IDBFactory)).toEqual([])
+  })
+
+  it('records only strings, and at most 4096', async () => {
+    const sw = serviceWorker()
+    const some = await sw.touch(['a', 7, null, 'b'])
+    expect(some.port.postMessage).toHaveBeenCalledWith({ recorded: 2 })
+    const bad = await sw.touch('a')
+    expect(bad.port.postMessage).toHaveBeenCalledWith({ error: expect.any(String) })
+    const many = await sw.touch(Array.from({ length: 5000 }, (_, i) => `k${i}`))
+    expect(many.port.postMessage).toHaveBeenCalledWith({ recorded: 4096 })
+    expect(await recordedKeys(sw.indexedDB as IDBFactory)).toHaveLength(4096 + 2)
+  })
+
+  it('reads no index when a trim finds the cache under its cap', async () => {
+    const open = vi.fn()
+    const sw = serviceWorker({ indexedDB: { open } })
+    sw.seed(0)
+    await sw.trim({ capBytes: 1000 })
+    expect(open).not.toHaveBeenCalled()
+  })
+
+  it('runs touches and trims in arrival order', async () => {
+    const sw = serviceWorker()
+    for (let n = 0; n < 4; n++) sw.seed(n)
+    const touched = sw.touch([entryUrl(0)])
+    const trimmed = sw.trim({ capBytes: 300 })
+    await Promise.all([touched, trimmed])
+    expect(sw.remaining()).toEqual(['bafkrei0', 'bafkrei3'])
   })
 })

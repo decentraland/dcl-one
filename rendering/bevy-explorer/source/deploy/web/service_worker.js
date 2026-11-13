@@ -122,8 +122,16 @@ async function servePreviewRealm(request, clientId) {
 
 // The content cache's upkeep: the engine asks with a `content-cache-trim` message
 // (engine/content_cache.js) after it has written enough, when its cap changes, and after a write
-// failed for quota. The trim runs here, off the engine's threads, and only ever opens CACHE_NAME.
+// failed for quota. The trim runs here, off the engine's threads, evicts the least recently used
+// entries first (oldest written first for those with no recorded use), and only ever opens CACHE_NAME.
 const CONTENT_CACHE_TRIM = 'content-cache-trim';
+const CONTENT_CACHE_TOUCH = 'content-cache-touch';
+// When each entry was last read or written, as the engine reported it: eviction goes least
+// recently used first. The browser may drop it at any time; without it, oldest written first.
+const CONTENT_CACHE_INDEX_DB = 'dcl-content-cache-index-v1';
+const CONTENT_CACHE_INDEX_STORE = 'lastUsed';
+// More keys than this in one message are not recorded: the engine sends at most 1024.
+const CONTENT_CACHE_TOUCH_MAX = 4096;
 // Half the origin's quota stays for its other storage (OPFS, IndexedDB).
 const CONTENT_CACHE_QUOTA_SHARE = 0.5;
 // A trim goes down to this share of the cap, so the next one waits for real growth.
@@ -136,10 +144,16 @@ let contentCacheQueue = Promise.resolve();
 
 self.addEventListener('message', (event) => {
     const data = event.data;
-    if (data?.type !== CONTENT_CACHE_TRIM) return;
+    let task;
+    if (data?.type === CONTENT_CACHE_TRIM) {
+        task = () => trimContentCache(data.capBytes, data.quotaError === true);
+    } else if (data?.type === CONTENT_CACHE_TOUCH) {
+        task = () => recordContentCacheUse(data.keys);
+    } else {
+        return;
+    }
     const port = event.ports?.[0];
-    const task = () => trimContentCache(data.capBytes, data.quotaError === true);
-    // one trim at a time: a second request sees what the first left
+    // one task at a time, in arrival order: a trim sees the uses sent before it
     const run = contentCacheQueue.then(task, task);
     contentCacheQueue = run.catch(() => {});
     event.waitUntil(run.then(
@@ -178,6 +192,85 @@ async function contentCacheEntrySize(response) {
     return (await response.blob()).size;
 }
 
+// Entries without a recorded use first, in `keys()` order (oldest written first), then by last use.
+function contentCacheEvictionOrder(requests, lastUsed) {
+    const url = (request) => request.url ?? request;
+    const ranked = requests.map((request, position) => ({ request, position, used: lastUsed.get(url(request)) }));
+    ranked.sort((a, b) => {
+        if (a.used === undefined || b.used === undefined) {
+            if (a.used !== b.used) return a.used === undefined ? -1 : 1;
+        } else if (a.used !== b.used) {
+            return a.used - b.used;
+        }
+        return a.position - b.position;
+    });
+    return ranked.map(({ request }) => request);
+}
+
+function openContentCacheIndex() {
+    return new Promise((resolve, reject) => {
+        const open = indexedDB.open(CONTENT_CACHE_INDEX_DB, 1);
+        open.onupgradeneeded = () => open.result.createObjectStore(CONTENT_CACHE_INDEX_STORE);
+        open.onsuccess = () => resolve(open.result);
+        open.onerror = () => reject(open.error);
+        open.onblocked = () => reject(new Error('content cache index blocked'));
+    });
+}
+
+function finished(transaction) {
+    return new Promise((resolve, reject) => {
+        transaction.oncomplete = () => resolve();
+        transaction.onerror = () => reject(transaction.error);
+        transaction.onabort = () => reject(transaction.error);
+    });
+}
+
+function result(request) {
+    return new Promise((resolve, reject) => {
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+    });
+}
+
+// Every recorded use, or none when the index is gone or unreadable.
+async function readContentCacheUses() {
+    let db;
+    try {
+        db = await openContentCacheIndex();
+        const store = db.transaction(CONTENT_CACHE_INDEX_STORE).objectStore(CONTENT_CACHE_INDEX_STORE);
+        const [keys, times] = await Promise.all([result(store.getAllKeys()), result(store.getAll())]);
+        return new Map(keys.map((key, i) => [key, times[i]]));
+    } catch (e) {
+        console.warn('[IPFS Cache Service Worker]: content cache index unavailable, evicting oldest written first', e);
+        return new Map();
+    } finally {
+        db?.close();
+    }
+}
+
+// Applies `put` (keys used now) and `remove` (keys gone) in one transaction.
+async function writeContentCacheUses(put, remove) {
+    if (put.length === 0 && remove.length === 0) return;
+    const db = await openContentCacheIndex();
+    try {
+        const transaction = db.transaction(CONTENT_CACHE_INDEX_STORE, 'readwrite');
+        const store = transaction.objectStore(CONTENT_CACHE_INDEX_STORE);
+        const now = Date.now();
+        for (const key of put) store.put(now, key);
+        for (const key of remove) store.delete(key);
+        await finished(transaction);
+    } finally {
+        db.close();
+    }
+}
+
+async function recordContentCacheUse(keys) {
+    if (!Array.isArray(keys)) throw new Error('keys must be an array');
+    const valid = keys.filter((key) => typeof key === 'string').slice(0, CONTENT_CACHE_TOUCH_MAX);
+    await writeContentCacheUses(valid, []);
+    return { recorded: valid.length };
+}
+
 async function trimContentCache(capBytes, quotaError) {
     if (!(typeof capBytes === 'number' && capBytes >= 0)) throw new Error('capBytes must be a non-negative number');
     const { usage = 0, quota = Infinity, usageDetails } = await navigator.storage.estimate();
@@ -192,15 +285,27 @@ async function trimContentCache(capBytes, quotaError) {
     const cache = await caches.open(CACHE_NAME);
     // insertion order: oldest written first (a put over a key moves it to the end)
     const requests = await cache.keys();
-    for (let i = 0; i < requests.length && report.evictedBytes < bytesToFree; i += CONTENT_CACHE_SIZE_BATCH) {
-        const sized = await Promise.all(requests.slice(i, i + CONTENT_CACHE_SIZE_BATCH).map(async (key) => {
+    const lastUsed = await readContentCacheUses();
+    const ordered = contentCacheEvictionOrder(requests, lastUsed);
+    report.indexedEntries = requests.filter((r) => lastUsed.has(r.url)).length;
+    const evicted = [];
+    for (let i = 0; i < ordered.length && report.evictedBytes < bytesToFree; i += CONTENT_CACHE_SIZE_BATCH) {
+        const sized = await Promise.all(ordered.slice(i, i + CONTENT_CACHE_SIZE_BATCH).map(async (key) => {
             const response = await cache.match(key);
             return { key, size: response ? await contentCacheEntrySize(response) : 0 };
         }));
         const { picked, freed } = pickEvictions(sized, bytesToFree - report.evictedBytes);
         await Promise.all(picked.map((key) => cache.delete(key)));
+        evicted.push(...picked.map((key) => key.url ?? key));
         report.evictedEntries += picked.length;
         report.evictedBytes += freed;
+    }
+    const present = new Set(requests.map((r) => r.url));
+    const stale = [...lastUsed.keys()].filter((key) => !present.has(key));
+    try {
+        await writeContentCacheUses([], [...evicted, ...stale]);
+    } catch (e) {
+        console.warn('[IPFS Cache Service Worker]: content cache index not pruned', e);
     }
     return report;
 }

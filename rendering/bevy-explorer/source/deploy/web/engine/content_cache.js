@@ -4,6 +4,7 @@
 // (headless.js): each is the page of its own engine's workers.
 
 export const CONTENT_CACHE_TRIM = 'content-cache-trim';
+export const CONTENT_CACHE_TOUCH = 'content-cache-touch';
 const REPLY_TIMEOUT_MS = 30_000;
 // A write that hit the quota waits for its trim: do not hold it for long on a worker that never answers.
 const QUOTA_ERROR_REPLY_TIMEOUT_MS = 5_000;
@@ -43,6 +44,11 @@ export function contentCacheTrim(capBytes, quotaError, container, timeoutMs) {
   );
 }
 
+/** `__contentCacheTouch`: records `keys` (cache key urls) as used now. */
+export function contentCacheTouch(keys, container, timeoutMs) {
+  return askServiceWorker({ type: CONTENT_CACHE_TOUCH, keys: Array.from(keys) }, container, timeoutMs);
+}
+
 /**
  * Asks once for persistent storage, so the browser does not clear this origin under storage
  * pressure. The browser decides without prompting.
@@ -57,4 +63,5 @@ export async function requestPersistentStorage(storage = navigator.storage) {
 /** Defines the page functions on `target` (a window). */
 export function installContentCachePageFunctions(target = window) {
   target.__contentCacheTrim = (capBytes, quotaError) => contentCacheTrim(capBytes, quotaError);
+  target.__contentCacheTouch = (keys) => contentCacheTouch(keys);
 }

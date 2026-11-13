@@ -3,7 +3,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 // plain JS served as is by the engine page (deploy/web/engine), so it has no declarations
 // @ts-expect-error TS7016
-import { contentCacheTrim, installContentCachePageFunctions, requestPersistentStorage } from '../../../deploy/web/engine/content_cache.js'
+import { contentCacheTouch, contentCacheTrim, installContentCachePageFunctions, requestPersistentStorage } from '../../../deploy/web/engine/content_cache.js'
 
 afterEach(() => vi.useRealTimers())
 
@@ -64,9 +64,22 @@ describe('content cache page functions', () => {
     expect(denied.persist).toHaveBeenCalledTimes(1)
   })
 
-  it('installs the trim page function', () => {
+  it('posts used keys to the service worker', async () => {
+    const container = {
+      controller: {
+        postMessage(msg: unknown, [port]: MessagePort[]) {
+          port.postMessage({ msg })
+        }
+      }
+    }
+    const reply = await contentCacheTouch(['k1', 'k2'], container as never, 1000)
+    expect(reply).toEqual({ msg: { type: 'content-cache-touch', keys: ['k1', 'k2'] } })
+  })
+
+  it('installs the page functions', () => {
     const target: Record<string, unknown> = {}
     installContentCachePageFunctions(target as never)
     expect(typeof target.__contentCacheTrim).toBe('function')
+    expect(typeof target.__contentCacheTouch).toBe('function')
   })
 })
