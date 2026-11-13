@@ -62,7 +62,7 @@ incomplete transfers per reader and a 15-second transfer lifetime. Larger states
 are rejected as a whole; the last complete view remains visible. Readers retain
 fences for the 4,096 most recently retired Pulse incarnations plus their active
 producer; at capacity the oldest fence is forgotten, so a new Pulse incarnation
-is never refused. An incarnation whose fence was forgotten can again replace a
+is never *permanently* refused. An incarnation whose fence was forgotten can again replace a
 quiet producer with a complete snapshot. This reader limit is separate from
 connector registration. The selected
 producer remains selected while valid publications arrive; replacement requires
