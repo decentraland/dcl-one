@@ -2,7 +2,7 @@ use crate::deploy::{self, Prepared};
 use crate::ux::{self, TrySteps, UserError};
 use anyhow::Result;
 use axum::{Json, extract::State};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -22,12 +22,19 @@ pub struct LinkerDeploy {
     pub base_parcel: String,
     pub multi_scene: bool,
     pub gate: deploy::PermissionGate,
+    /// What `X-Deploy-Token` must carry to cancel through the deploy API.
+    pub deploy_token: String,
+    /// Told to a program through `/api/info`.
+    pub skip_validations: bool,
 }
 
 pub struct LinkerOptions {
     pub port: Option<u16>,
     pub open_browser: bool,
     pub timeout: Duration,
+    /// A program drives the run: stdout carries JSON lines, the CLI ends
+    /// with the deployment instead of keeping the preview up.
+    pub programmatic: bool,
     /// The caller hosts the signing routes on a server it already runs (the
     /// preview server's /deploy/sign/): no listener bound, no browser opened.
     pub host: Option<HostSigner>,
@@ -40,6 +47,205 @@ pub struct HostSigner {
 }
 
 pub const DEFAULT_TIMEOUT_SECS: u64 = 600;
+
+pub const MIN_DEPLOY_TOKEN_LENGTH: usize = 16;
+
+/// The `--deploy-token` given, or a random one for this run.
+pub fn resolve_deploy_token(given: Option<&str>) -> Result<String> {
+    match given {
+        None => Ok(hex::encode(rand::random::<[u8; 16]>())),
+        Some(t) if t.len() < MIN_DEPLOY_TOKEN_LENGTH => Err(UserError::new(
+            format!("--deploy-token must be at least {MIN_DEPLOY_TOKEN_LENGTH} characters long"),
+            TrySteps::one("pass a longer token, or drop the flag for a random one per run"),
+        )
+        .into()),
+        Some(t) => Ok(t.to_string()),
+    }
+}
+
+/// Constant time: a guess learns nothing from how long the comparison took.
+pub fn token_matches(provided: &str, expected: &str) -> bool {
+    let (a, b) = (provided.as_bytes(), expected.as_bytes());
+    a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+}
+
+/// Where the signing page carries the token: a fragment never travels in a
+/// request, and the page's cancel button reads it from there.
+pub fn linker_fragment(token: &str) -> String {
+    format!("#token={}", deploy::encode_segment(token))
+}
+
+/// The deployment of this run as `/api/deploy` tells it, in the shape
+/// `@dcl/sdk-commands` serves.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct DeploymentState {
+    pub phase: &'static str,
+    pub upload: Option<DeploymentUpload>,
+    pub result: Option<DeploymentResult>,
+    pub error: Option<DeploymentError>,
+    #[serde(rename = "cancelRequested")]
+    pub cancel_requested: bool,
+}
+
+impl DeploymentState {
+    pub fn is_final(&self) -> bool {
+        matches!(self.phase, "deployed" | "failed" | "cancelled")
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct DeploymentUpload {
+    pub stage: &'static str,
+    #[serde(rename = "sentBytes")]
+    pub sent_bytes: u64,
+    #[serde(rename = "totalBytes")]
+    pub total_bytes: u64,
+    /// Always null: this CLI uploads in one request.
+    #[serde(rename = "completedBatches")]
+    pub completed_batches: Option<u32>,
+    #[serde(rename = "totalBatches")]
+    pub total_batches: Option<u32>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct DeploymentResult {
+    #[serde(rename = "entityId")]
+    pub entity_id: String,
+    pub message: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct DeploymentError {
+    pub code: String,
+    pub message: String,
+}
+
+/// A publish that went through: the id the server holds and the outcome line.
+#[derive(Clone, Debug)]
+pub struct Published {
+    pub entity_id: String,
+    pub message: String,
+}
+
+pub const DEPLOY_CANCELLED: &str = "DEPLOY_CANCELLED";
+pub const DEPLOY_CANCELLED_AFTER_UNDEPLOY: &str = "DEPLOY_CANCELLED_AFTER_UNDEPLOY";
+pub const DEPLOY_FAILED: &str = "DEPLOY_FAILED";
+
+/// A run ended through `DELETE /api/deploy`; the code says what happened to
+/// the world meanwhile.
+#[derive(Clone, Debug)]
+pub struct Cancelled {
+    pub code: &'static str,
+}
+
+impl Cancelled {
+    pub fn message(&self) -> &'static str {
+        match self.code {
+            DEPLOY_CANCELLED_AFTER_UNDEPLOY => {
+                "Deployment cancelled after the world's previous scenes were removed. Deploy again to publish the scene."
+            }
+            _ => "Deployment cancelled",
+        }
+    }
+}
+
+impl std::fmt::Display for Cancelled {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.message())
+    }
+}
+
+impl std::error::Error for Cancelled {}
+
+fn cancel_error(c: &Cancelled) -> Option<DeploymentError> {
+    (c.code != DEPLOY_CANCELLED).then(|| DeploymentError {
+        code: c.code.to_string(),
+        message: c.message().to_string(),
+    })
+}
+
+/// The error as the API tells it: rendered for a reader, minus the prompt.
+fn rendered(e: &anyhow::Error) -> String {
+    let text = crate::ux::render(e, false, false);
+    let text = text.trim();
+    text.strip_prefix("Error:")
+        .map(str::trim)
+        .unwrap_or(text)
+        .to_string()
+}
+
+/// The final state a programmatic run prints from its outcome, when the run
+/// never reached the API (headless signing, a failure before the server):
+/// the same shape the API serves.
+pub fn final_state(outcome: &Result<Published>) -> DeploymentState {
+    let (phase, result, error, cancel_requested) = match outcome {
+        Ok(p) => (
+            "deployed",
+            Some(DeploymentResult {
+                entity_id: p.entity_id.clone(),
+                message: p.message.clone(),
+            }),
+            None,
+            false,
+        ),
+        Err(e) => match e.downcast_ref::<Cancelled>() {
+            Some(c) => ("cancelled", None, cancel_error(c), true),
+            None => (
+                "failed",
+                None,
+                Some(DeploymentError {
+                    code: DEPLOY_FAILED.to_string(),
+                    message: rendered(e),
+                }),
+                false,
+            ),
+        },
+    };
+    DeploymentState {
+        phase,
+        upload: None,
+        result,
+        error,
+        cancel_requested,
+    }
+}
+
+/// The deploy API's view of the run, beside the signing state.
+#[derive(Default)]
+struct Resource {
+    /// A signed payload was accepted: nothing else may start.
+    started: bool,
+    /// The world's other scenes are being removed: a cancel is refused.
+    undeploying: bool,
+    cancel_requested: bool,
+    /// Someone follows the run through the API: the CLI lingers after the
+    /// end so the final state stays readable.
+    followed: bool,
+    outcome: Option<Final>,
+}
+
+#[derive(Clone)]
+enum Final {
+    Deployed(Published),
+    Failed(DeploymentError),
+    Cancelled(Option<DeploymentError>),
+}
+
+#[derive(Debug, PartialEq)]
+pub enum CancelOutcome {
+    /// Before any signature: ended right away.
+    Cancelled,
+    /// The upload in flight is being aborted; the run settles the outcome.
+    Cancelling,
+    /// The world's scenes are being removed: too late to stop cleanly.
+    Refused,
+    Final,
+}
+
+/// How long the CLI stays after the end for a follower to read the final
+/// state, and when nobody followed.
+pub const FOLLOWED_SETTLE: Duration = Duration::from_secs(2);
+pub const SETTLE: Duration = Duration::from_millis(100);
 
 pub fn linker_timeout() -> Duration {
     let secs = std::env::var("DCL_SCENE_CLI_LINKER_TIMEOUT_SECS")
@@ -81,7 +287,7 @@ const MINT_FRESH: Duration = Duration::from_secs(600);
 /// [`MINT_FRESH`], the panel a browser opened stays valid for over an hour.
 const PENDING_KEEP: usize = 8;
 
-pub(crate) type DoneSender = tokio::sync::oneshot::Sender<Result<String>>;
+pub(crate) type DoneSender = tokio::sync::oneshot::Sender<Result<Published>>;
 
 pub struct LinkerState {
     dep: LinkerDeploy,
@@ -93,11 +299,148 @@ pub struct LinkerState {
     /// personalize on it, and a signature is the one moment a wallet names
     /// itself.
     signer: Mutex<Option<String>>,
+    resource: Mutex<Resource>,
+    /// Flipped once by a cancel; the upload in flight selects on it.
+    cancel: tokio::sync::watch::Sender<bool>,
 }
 
 impl LinkerState {
     pub(crate) fn target_content(&self) -> &str {
         &self.dep.target_content
+    }
+
+    pub(crate) fn dep(&self) -> &LinkerDeploy {
+        &self.dep
+    }
+
+    pub(crate) fn deploy_token(&self) -> &str {
+        &self.dep.deploy_token
+    }
+
+    /// The id a program signs (minted now if none is fresh) and the removal
+    /// payload a world overwrite also needs signed.
+    pub(crate) fn minted(self: &Arc<Self>) -> Result<(String, Option<String>)> {
+        mint(self)
+    }
+
+    /// Resolves on every change of the run after it is taken.
+    pub(crate) fn changes(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.progress.changes()
+    }
+
+    fn resource(&self) -> std::sync::MutexGuard<'_, Resource> {
+        self.resource.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Whether a signed payload can still start the run.
+    pub(crate) fn can_start(&self) -> bool {
+        let r = self.resource();
+        !r.started && !r.cancel_requested && r.outcome.is_none()
+    }
+
+    pub(crate) fn follow(&self) {
+        self.resource().followed = true;
+    }
+
+    pub(crate) fn settle_delay(&self) -> Duration {
+        match self.resource().followed {
+            true => FOLLOWED_SETTLE,
+            false => SETTLE,
+        }
+    }
+
+    pub(crate) fn deployment_state(&self) -> DeploymentState {
+        let progress = self.progress.snapshot();
+        let upload = match progress.phase {
+            "idle" => None,
+            phase => Some(DeploymentUpload {
+                stage: match phase {
+                    "checking" | "staging" => "checking",
+                    "uploading" => "uploading",
+                    _ => "processing",
+                },
+                sent_bytes: progress.sent,
+                total_bytes: progress.total,
+                completed_batches: None,
+                total_batches: None,
+            }),
+        };
+        let r = self.resource();
+        let (phase, result, error) = match &r.outcome {
+            Some(Final::Deployed(p)) => (
+                "deployed",
+                Some(DeploymentResult {
+                    entity_id: p.entity_id.clone(),
+                    message: p.message.clone(),
+                }),
+                None,
+            ),
+            Some(Final::Failed(e)) => ("failed", None, Some(e.clone())),
+            Some(Final::Cancelled(e)) => ("cancelled", None, e.clone()),
+            None if r.undeploying => ("undeploying", None, None),
+            None if r.started => ("uploading", None, None),
+            None => ("awaiting-signature", None, None),
+        };
+        DeploymentState {
+            phase,
+            upload,
+            result,
+            error,
+            cancel_requested: r.cancel_requested,
+        }
+    }
+
+    /// `DELETE /api/deploy`: before the signature the run ends here; during
+    /// the upload the request in flight is dropped and the run settles.
+    pub(crate) fn cancel(&self) -> CancelOutcome {
+        let before_signature = {
+            let mut r = self.resource();
+            if r.outcome.is_some() {
+                return CancelOutcome::Final;
+            }
+            if r.undeploying {
+                return CancelOutcome::Refused;
+            }
+            r.followed = true;
+            if r.cancel_requested {
+                return CancelOutcome::Cancelling;
+            }
+            r.cancel_requested = true;
+            !r.started
+        };
+        let _ = self.cancel.send(true);
+        self.progress.touch();
+        if before_signature {
+            self.conclude(Err(Cancelled {
+                code: DEPLOY_CANCELLED,
+            }
+            .into()));
+            return CancelOutcome::Cancelled;
+        }
+        CancelOutcome::Cancelling
+    }
+
+    /// The run's one ending: recorded for the API, handed to the CLI.
+    pub(crate) fn conclude(&self, outcome: Result<Published>) {
+        let ended = match &outcome {
+            Ok(p) => Final::Deployed(p.clone()),
+            Err(e) => match e.downcast_ref::<Cancelled>() {
+                Some(c) => Final::Cancelled(cancel_error(c)),
+                None => Final::Failed(DeploymentError {
+                    code: DEPLOY_FAILED.to_string(),
+                    message: rendered(e),
+                }),
+            },
+        };
+        {
+            let mut r = self.resource();
+            if r.outcome.is_some() {
+                return;
+            }
+            r.outcome = Some(ended);
+        }
+        self.progress.touch();
+        finish(&self.done, outcome);
     }
 
     pub(crate) fn signer_address(&self) -> Option<String> {
@@ -124,7 +467,7 @@ pub fn new_state(
     dep: LinkerDeploy,
 ) -> (
     Arc<LinkerState>,
-    tokio::sync::oneshot::Receiver<Result<String>>,
+    tokio::sync::oneshot::Receiver<Result<Published>>,
 ) {
     let (tx, rx) = tokio::sync::oneshot::channel();
     (
@@ -135,6 +478,8 @@ pub fn new_state(
             progress: deploy::UploadProgress::default(),
             done: Mutex::new(Some(tx)),
             signer: Mutex::new(None),
+            resource: Mutex::new(Resource::default()),
+            cancel: tokio::sync::watch::Sender::new(false),
         }),
         rx,
     )
@@ -264,10 +609,11 @@ pub(crate) fn sign_section(st: &Arc<LinkerState>, api: &str) -> String {
     {scene}{where_kv}{parcels}{entity}{payload}
   </div>
   {delete_warn}
-  <button class="jn__cta" id="sign-go" type="button">Connect wallet and sign</button>
+  <button class="btn btn--primary btn--lg jn__cta" id="sign-go" type="button">Connect wallet and sign</button>
+  <button class="btn btn--ghost btn--lg" id="sign-cancel" type="button" hidden>Cancel this deployment</button>
   <div class="sign-progress" id="sign-progress" hidden>
     <div class="sign-progress__head"><span class="sign-progress__big" id="sign-progress-big"></span><span class="sign-progress__pct" id="sign-progress-pct"></span></div>
-    <div class="sign-progress__bar"><div class="sign-progress__fill" id="sign-progress-fill"></div></div>
+    <div class="u-progress sign-progress__bar"><span class="sign-progress__fill" id="sign-progress-fill"></span></div>
     <div class="sign-progress__meta" id="sign-progress-meta"></div>
   </div>
   <p class="note sign-status" id="sign-status" hidden></p>
@@ -311,55 +657,112 @@ fn retry(error: &str) -> Json<Value> {
     Json(json!({ "ok": false, "fatal": false, "error": error }))
 }
 
-fn fatal(st: &Arc<LinkerState>, e: anyhow::Error) -> Json<Value> {
-    let msg = crate::ux::render(&e, false, false);
-    finish(&st.done, Err(e));
-    Json(json!({ "ok": false, "fatal": true, "error": msg }))
+/// A signed payload: the chain the content server verifies and the id it
+/// covers. The panel sends a bare signature; the API sends the chain.
+pub(crate) struct Signed {
+    pub address: String,
+    pub entity_id: String,
+    pub auth_chain: Value,
+    pub delete_signature: Option<String>,
 }
 
-pub(crate) async fn sign(
-    State(st): State<Arc<LinkerState>>,
-    Json(req): Json<SignReq>,
-) -> Json<Value> {
-    let pending = {
-        let mut pending = st.pending.lock().unwrap_or_else(PoisonError::into_inner);
-        let Some(entry) = pending.get(&req.entity_id) else {
-            drop(pending);
-            *st.minted.lock().unwrap_or_else(PoisonError::into_inner) = None;
-            return Json(json!({
-                "ok": false,
-                "fatal": false,
-                "stale": true,
-                "error": "that signing request is no longer on the server — the preview was rebuilt or restarted since this page loaded",
-            }));
-        };
-        if entry.delete_payload.is_some() && req.delete_signature.is_none() {
-            return retry(
-                "this deploy also removes the existing world scenes and needs the second signature — sign both prompts",
-            );
-        }
-        pending
-            .remove(&req.entity_id)
-            .expect("looked up under the same lock")
-    };
-    *st.signer.lock().unwrap_or_else(PoisonError::into_inner) = Some(req.address.clone());
-    let world = st.dep.world.as_deref();
-    if let Err(e) = st.dep.gate.verify(&req.address).await {
-        return fatal(&st, e);
+pub(crate) enum SignOutcome {
+    Published(Published),
+    /// The id is not pending here any more: the page re-renders a fresh one.
+    Stale,
+    /// Nothing ran; the message says what the payload lacks.
+    Retry(&'static str),
+    /// The run ended in this error, already concluded.
+    Fatal(String),
+    /// A run already started, or the deployment was cancelled.
+    Refused,
+}
+
+const NEEDS_DELETE_SIGNATURE: &str = "this deploy also removes the existing world scenes and needs the second signature \u{2014} sign both prompts";
+
+/// What stops a payload before anything runs, so the API refuses it in the
+/// same response instead of after a 202.
+pub(crate) fn precheck(st: &LinkerState, signed: &Signed) -> Option<SignOutcome> {
+    if !st.can_start() {
+        return Some(SignOutcome::Refused);
     }
+    let pending = st.pending.lock().unwrap_or_else(PoisonError::into_inner);
+    let Some(entry) = pending.get(&signed.entity_id) else {
+        drop(pending);
+        *st.minted.lock().unwrap_or_else(PoisonError::into_inner) = None;
+        return Some(SignOutcome::Stale);
+    };
+    if entry.delete_payload.is_some() && signed.delete_signature.is_none() {
+        return Some(SignOutcome::Retry(NEEDS_DELETE_SIGNATURE));
+    }
+    None
+}
+
+fn fatal(st: &LinkerState, e: anyhow::Error) -> SignOutcome {
+    let msg = crate::ux::render(&e, false, false);
+    st.conclude(Err(e));
+    SignOutcome::Fatal(msg)
+}
+
+/// The run itself: claim the pending entity, check the wallet, remove the
+/// world's other scenes when asked, upload. A cancel through the API drops
+/// the upload in flight unless every byte is out, when the server's answer
+/// is the truth.
+pub(crate) async fn run_signed(st: &Arc<LinkerState>, signed: Signed) -> SignOutcome {
+    if let Some(stop) = precheck(st, &signed) {
+        return stop;
+    }
+    let pending = {
+        let mut r = st.resource();
+        if r.started || r.cancel_requested || r.outcome.is_some() {
+            return SignOutcome::Refused;
+        }
+        let mut pending = st.pending.lock().unwrap_or_else(PoisonError::into_inner);
+        let Some(entry) = pending.remove(&signed.entity_id) else {
+            return SignOutcome::Stale;
+        };
+        r.started = true;
+        entry
+    };
+    *st.signer.lock().unwrap_or_else(PoisonError::into_inner) = Some(signed.address.clone());
+    st.progress.touch();
+    let world = st.dep.world.as_deref();
+    if let Err(e) = st.dep.gate.verify(&signed.address).await {
+        return fatal(st, e);
+    }
+    let mut undeployed = false;
     if let Some(payload) = &pending.delete_payload {
-        let Some(dsig) = &req.delete_signature else {
-            return retry(
-                "this deploy also removes the existing world scenes and needs the second signature — sign both prompts",
+        let Some(dsig) = &signed.delete_signature else {
+            return fatal(
+                st,
+                UserError::new(NEEDS_DELETE_SIGNATURE, TrySteps::one("sign both prompts")).into(),
             );
         };
-        let chain = deploy::simple_auth_chain(&req.address, payload, dsig);
-        if let Err(e) =
-            deploy::send_world_delete(&st.dep.target_content, world.unwrap_or_default(), &chain)
-                .await
         {
-            return fatal(&st, e);
+            let mut r = st.resource();
+            if r.cancel_requested {
+                drop(r);
+                return fatal(
+                    st,
+                    Cancelled {
+                        code: DEPLOY_CANCELLED,
+                    }
+                    .into(),
+                );
+            }
+            r.undeploying = true;
         }
+        st.progress.touch();
+        let chain = deploy::simple_auth_chain(&signed.address, payload, dsig);
+        let removed =
+            deploy::send_world_delete(&st.dep.target_content, world.unwrap_or_default(), &chain)
+                .await;
+        st.resource().undeploying = false;
+        st.progress.touch();
+        if let Err(e) = removed {
+            return fatal(st, e);
+        }
+        undeployed = true;
     }
     let destination = match st.dep.world.as_deref() {
         Some(name) => deploy::UploadDestination::World {
@@ -372,36 +775,92 @@ pub(crate) async fn sign(
         },
     };
     let entity = deploy::UploadEntity {
-        id: &req.entity_id,
+        id: &signed.entity_id,
         bytes: pending.bytes.clone(),
         files: &st.dep.prepared.files,
     };
-    match deploy::upload_entity_to(
+    let upload = deploy::upload_entity_with_chain_to(
         &st.dep.target_content,
         entity,
-        &req.address,
-        &req.signature,
+        &signed.address,
+        signed.auth_chain.clone(),
         destination,
         &st.progress,
-    )
-    .await
-    {
+    );
+    tokio::pin!(upload);
+    let mut cancel = st.cancel.subscribe();
+    let answered = tokio::select! {
+        r = &mut upload => Some(r),
+        _ = cancel.wait_for(|c| *c) => None,
+    };
+    let uploaded = match answered {
+        Some(r) => r,
+        // Every byte is out: the server may publish regardless, so its
+        // answer is the truth.
+        None if st.progress.snapshot().phase == "validating" => upload.await,
+        None => Err(Cancelled {
+            code: match undeployed {
+                true => DEPLOY_CANCELLED_AFTER_UNDEPLOY,
+                false => DEPLOY_CANCELLED,
+            },
+        }
+        .into()),
+    };
+    match uploaded {
         Ok(message) => {
             if let Some(path) = &st.dep.entity_out
                 && let Err(e) = std::fs::write(path, &pending.bytes)
             {
                 tracing::warn!("could not write --entity-out {}: {e}", path.display());
             }
-            finish(&st.done, Ok(message.clone()));
-            Json(json!({ "ok": true, "message": message }))
+            let published = Published {
+                entity_id: signed.entity_id.clone(),
+                message,
+            };
+            st.conclude(Ok(published.clone()));
+            SignOutcome::Published(published)
         }
-        Err(e) => fatal(&st, e),
+        Err(e) => fatal(st, e),
+    }
+}
+
+/// `POST /deploy/sign`, the panel's route: a bare signature over the entity
+/// id, wrapped as a simple auth chain.
+pub(crate) async fn sign(
+    State(st): State<Arc<LinkerState>>,
+    Json(req): Json<SignReq>,
+) -> Json<Value> {
+    let auth_chain = deploy::simple_auth_chain(&req.address, &req.entity_id, &req.signature);
+    let signed = Signed {
+        address: req.address,
+        entity_id: req.entity_id,
+        auth_chain,
+        delete_signature: req.delete_signature,
+    };
+    match run_signed(&st, signed).await {
+        SignOutcome::Published(p) => Json(json!({ "ok": true, "message": p.message })),
+        SignOutcome::Stale => Json(json!({
+            "ok": false,
+            "fatal": false,
+            "stale": true,
+            "error": "that signing request is no longer on the server \u{2014} the preview was rebuilt or restarted since this page loaded",
+        })),
+        SignOutcome::Retry(m) => retry(m),
+        SignOutcome::Fatal(m) => Json(json!({ "ok": false, "fatal": true, "error": m })),
+        SignOutcome::Refused => Json(json!({
+            "ok": false,
+            "fatal": true,
+            "error": "this deployment already started or was cancelled \u{2014} nothing more can be signed",
+        })),
     }
 }
 
 /// Hand the outcome to the CLI once, after a beat so the page's response
 /// lands first.
-pub(crate) fn finish(done: &Mutex<Option<DoneSender>>, result: Result<String>) {
+pub(crate) fn finish<T: Send + 'static>(
+    done: &Mutex<Option<tokio::sync::oneshot::Sender<Result<T>>>>,
+    result: Result<T>,
+) {
     let tx = done.lock().unwrap_or_else(PoisonError::into_inner).take();
     if let Some(tx) = tx {
         tokio::spawn(async move {
@@ -468,10 +927,10 @@ pub fn linker_bind_host() -> String {
 }
 
 pub(crate) async fn await_outcome(
-    rx: tokio::sync::oneshot::Receiver<Result<String>>,
+    rx: tokio::sync::oneshot::Receiver<Result<Published>>,
     timeout: Duration,
     url: &str,
-) -> Result<String> {
+) -> Result<Published> {
     tokio::select! {
         res = rx => match res {
             Ok(outcome) => outcome,
@@ -485,14 +944,23 @@ pub(crate) async fn await_outcome(
     }
 }
 
-pub async fn run(dep: LinkerDeploy, opts: LinkerOptions) -> Result<String> {
+pub async fn run(dep: LinkerDeploy, opts: LinkerOptions) -> Result<Published> {
     let dir = dep.dir.clone();
     let (state, rx) = new_state(dep);
     if let Some(host) = opts.host {
         (host.register)(state);
         return await_outcome(rx, opts.timeout, &host.url).await;
     }
-    crate::start::serve_signing(&dir, opts.port, opts.open_browser, opts.timeout, state, rx).await
+    crate::start::serve_signing(
+        &dir,
+        opts.port,
+        opts.open_browser,
+        opts.timeout,
+        opts.programmatic,
+        state,
+        rx,
+    )
+    .await
 }
 
 #[cfg(test)]
@@ -501,8 +969,14 @@ mod tests {
     async fn finish_reports_the_outcome_without_advancing_time() {
         let (tx, rx) = tokio::sync::oneshot::channel();
         let started = tokio::time::Instant::now();
-        super::finish(&std::sync::Mutex::new(Some(tx)), Ok("published".into()));
-        assert_eq!(rx.await.unwrap().unwrap(), "published");
+        super::finish(
+            &std::sync::Mutex::new(Some(tx)),
+            Ok(super::Published {
+                entity_id: "id".into(),
+                message: "published".into(),
+            }),
+        );
+        assert_eq!(rx.await.unwrap().unwrap().message, "published");
         assert_eq!(tokio::time::Instant::now(), started);
     }
 
@@ -538,6 +1012,8 @@ mod tests {
             base_parcel: "0,0".to_string(),
             multi_scene: false,
             gate: deploy::PermissionGate::off(),
+            deploy_token: "t".repeat(MIN_DEPLOY_TOKEN_LENGTH),
+            skip_validations: false,
         };
         (t, dep)
     }
@@ -663,6 +1139,175 @@ mod tests {
         assert_eq!(resp["fatal"], true);
         let outcome = rx.await.unwrap();
         assert!(outcome.is_err());
+        let s = state.deployment_state();
+        assert_eq!(s.phase, "failed");
+        assert_eq!(s.error.as_ref().unwrap().code, DEPLOY_FAILED);
+        assert!(!s.error.as_ref().unwrap().message.starts_with("Error:"));
+        assert_eq!(state.cancel(), CancelOutcome::Final);
+        assert_eq!(s, state.deployment_state(), "a final state never moves");
+    }
+
+    #[test]
+    fn deploy_tokens_are_random_by_default_and_at_least_sixteen_characters() {
+        let a = resolve_deploy_token(None).unwrap();
+        let b = resolve_deploy_token(None).unwrap();
+        assert_eq!(a.len(), 32);
+        assert!(a.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_ne!(a, b);
+        assert_eq!(
+            resolve_deploy_token(Some("0123456789abcdef")).unwrap(),
+            "0123456789abcdef"
+        );
+        let short = resolve_deploy_token(Some("short")).unwrap_err().to_string();
+        assert!(short.contains("16 characters"), "{short}");
+        assert!(token_matches("abc", "abc"));
+        assert!(!token_matches("abc", "abd"));
+        assert!(!token_matches("ab", "abc"));
+        assert!(!token_matches("", "abc"));
+        assert_eq!(linker_fragment("a b"), "#token=a%20b");
+    }
+
+    #[tokio::test]
+    async fn a_cancel_before_the_signature_ends_the_run_cancelled() {
+        let (_t, dep) = fixture("cancel-early", None);
+        let (state, rx) = new_state(dep);
+        let s = state.deployment_state();
+        assert_eq!(s.phase, "awaiting-signature");
+        assert!(s.upload.is_none());
+        assert!(!s.cancel_requested);
+        assert!(!s.is_final());
+        assert_eq!(state.settle_delay(), SETTLE, "nobody follows yet");
+
+        assert_eq!(state.cancel(), CancelOutcome::Cancelled);
+        let s = state.deployment_state();
+        assert_eq!(s.phase, "cancelled");
+        assert!(s.cancel_requested);
+        assert!(s.error.is_none(), "a plain cancel carries no error");
+        assert!(s.is_final());
+        assert_eq!(state.cancel(), CancelOutcome::Final);
+        let err = rx.await.unwrap().unwrap_err();
+        assert_eq!(
+            err.downcast_ref::<Cancelled>().unwrap().code,
+            DEPLOY_CANCELLED
+        );
+        assert!(!state.can_start());
+        assert_eq!(
+            state.settle_delay(),
+            FOLLOWED_SETTLE,
+            "a cancel follows the run"
+        );
+
+        let id = minted_entity_id(&sign_section(&state, "/deploy/sign"));
+        let resp = sign_as(&state, "0x0".into(), "0x0".into(), id).await;
+        assert_eq!(resp["ok"], false);
+        assert_eq!(resp["fatal"], true);
+        assert!(
+            resp["error"].as_str().unwrap().contains("cancelled"),
+            "{resp}"
+        );
+        assert_eq!(state.deployment_state().phase, "cancelled");
+    }
+
+    #[tokio::test]
+    async fn a_cancel_mid_upload_drops_the_request_and_ends_cancelled() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let hold = tokio::spawn(async move {
+            let mut kept = Vec::new();
+            loop {
+                let (socket, _) = listener.accept().await.unwrap();
+                kept.push(socket);
+            }
+        });
+        let (_t, mut dep) = fixture("cancel-mid", None);
+        dep.target_content = format!("http://{addr}");
+        let (state, rx) = new_state(dep);
+        let signer = crate::random_test_wallet();
+        let run = {
+            let state = state.clone();
+            tokio::spawn(async move { sign_minted(&state, &signer).await })
+        };
+        let mut changes = state.changes();
+        let started = tokio::time::timeout(Duration::from_secs(30), async {
+            loop {
+                if state.deployment_state().phase == "uploading" && state.progress().phase != "idle"
+                {
+                    break;
+                }
+                changes.changed().await.unwrap();
+            }
+        })
+        .await;
+        assert!(started.is_ok(), "the upload never got under way");
+        assert_eq!(state.cancel(), CancelOutcome::Cancelling);
+        assert!(state.deployment_state().cancel_requested);
+        assert_eq!(
+            state.cancel(),
+            CancelOutcome::Cancelling,
+            "asking twice changes nothing"
+        );
+        let resp = tokio::time::timeout(Duration::from_secs(30), run)
+            .await
+            .expect("the cancelled upload settles")
+            .unwrap();
+        assert_eq!(resp["ok"], false);
+        assert_eq!(resp["fatal"], true);
+        let s = state.deployment_state();
+        assert_eq!(s.phase, "cancelled", "{s:?}");
+        assert!(s.upload.is_some(), "the upload so far stays readable");
+        let err = rx.await.unwrap().unwrap_err();
+        assert_eq!(
+            err.downcast_ref::<Cancelled>().unwrap().code,
+            DEPLOY_CANCELLED
+        );
+        hold.abort();
+    }
+
+    #[test]
+    fn the_final_state_of_an_outcome_matches_the_api_shape() {
+        let ok = final_state(&Ok(Published {
+            entity_id: "bafy".into(),
+            message: "Deployed bafy (HTTP 200)".into(),
+        }));
+        assert_eq!(ok.phase, "deployed");
+        assert_eq!(ok.result.as_ref().unwrap().entity_id, "bafy");
+        let plain = final_state(&Err(Cancelled {
+            code: DEPLOY_CANCELLED,
+        }
+        .into()));
+        assert_eq!(plain.phase, "cancelled");
+        assert!(plain.cancel_requested);
+        assert!(plain.error.is_none());
+        let late = final_state(&Err(Cancelled {
+            code: DEPLOY_CANCELLED_AFTER_UNDEPLOY,
+        }
+        .into()));
+        assert_eq!(
+            late.error.as_ref().unwrap().code,
+            DEPLOY_CANCELLED_AFTER_UNDEPLOY
+        );
+        let failed = final_state(&Err(UserError::new(
+            "the content server refused",
+            TrySteps::one("retry"),
+        )
+        .into()));
+        assert_eq!(failed.phase, "failed");
+        assert_eq!(failed.error.as_ref().unwrap().code, DEPLOY_FAILED);
+        assert!(
+            failed
+                .error
+                .as_ref()
+                .unwrap()
+                .message
+                .starts_with("the content server refused"),
+            "{failed:?}"
+        );
+        let json = serde_json::to_value(&failed).unwrap();
+        assert!(json["cancelRequested"].is_boolean());
+        assert!(
+            json.get("upload").is_some(),
+            "null fields are present, as upstream"
+        );
     }
 
     #[tokio::test]
@@ -684,7 +1329,7 @@ mod tests {
         let resp = sign_minted(&state, &signer).await;
         assert_eq!(resp["ok"], true, "sign flow failed: {}", resp);
         let outcome = rx.await.unwrap();
-        let message = outcome.unwrap();
+        let message = outcome.unwrap().message;
         assert!(
             message.contains("Deployed"),
             "unexpected message: {message}"

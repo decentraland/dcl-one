@@ -268,7 +268,7 @@ impl WatchSession {
                 ux::note_clocked(format!("\u{25b8} custom build: {script}"));
             }
             let started = std::time::Instant::now();
-            match build::build(&narrated).await {
+            match build::build_as(&narrated, build::BuildMode::Preview).await {
                 Ok(built) => {
                     ux::note_clocked(format!(
                         "\u{21bb} rebuilt {}",
