@@ -1,4 +1,4 @@
-import { HydrationBoundary, useQueryClient } from "@tanstack/react-query";
+import { HydrationBoundary, type QueryClient, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 import { useLocation, useNavigate, useParams, useRouteError, useRouteLoaderData } from "react-router";
 
@@ -22,12 +22,7 @@ export function ProfileRoute({ loaderData }: { loaderData: ProfileLoaderData | n
   const sid = loaderData?.sid ?? root?.sid ?? "";
   return (
     <HydrationBoundary state={loaderData?.dehydratedState}>
-      <ProfilePage
-        address={params.address ?? ""}
-        tabSegment={params.tab}
-        ownOnServer={loaderData?.own}
-        sid={sid}
-      />
+      <ProfilePage address={params.address ?? ""} tabSegment={params.tab} ownOnServer={loaderData?.own} sid={sid} />
     </HydrationBoundary>
   );
 }
@@ -43,9 +38,18 @@ const COPY: Record<ProfileErrorReason, (address: string) => { title: string; bod
   }),
 };
 
+function resetFailedProfile(client: QueryClient, address: string) {
+  return client.resetQueries({
+    queryKey: profileKeys.profile(address),
+    exact: true,
+    predicate: ({ state }) => state.status === "error" && state.data === undefined,
+  });
+}
+
 /**
  * The document request's 404/503 response and a client navigation's failed profile read render the
- * same screen. Retry and leaving both drop the failed profile read, so the next visit asks again.
+ * same screen. Retry and leaving reset only failed reads without data; newer successful or pending
+ * reads remain owned by their current observers.
  */
 export function ProfileErrorBoundary() {
   const error = useRouteError();
@@ -61,13 +65,13 @@ export function ProfileErrorBoundary() {
 
   useEffect(
     () => () => {
-      void client.resetQueries({ queryKey: profileKeys.profile(address), exact: true });
+      void resetFailedProfile(client, address);
     },
     [client, address],
   );
 
   const retry = async () => {
-    await client.resetQueries({ queryKey: profileKeys.profile(address), exact: true });
+    await resetFailedProfile(client, address);
     // A navigation to the same URL clears the router's error, which a revalidation does not for an
     // error thrown while rendering.
     void navigate(`${location.pathname}${location.search}`, { replace: true });

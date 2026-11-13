@@ -43,14 +43,19 @@ vi.mock("@ui/web/pages/StProfileMyAssetsTab", () => stub("assets"));
 
 import { CatalystError } from "@/data/lib/catalyst/client";
 import { mapProfile } from "@/data/lib/catalyst/social/profile";
-import { profileKeys } from "@/data/lib/profile/queries";
+import { profileKeys, profileQuery } from "@/data/lib/profile/queries";
 
 import type { ProfileLoaderData } from "./profile-loader.server";
 import { ProfileErrorBoundary, ProfileRoute, profileClientLoader } from "./profile-route";
 
 const A = "0x4e9c4a2502fdf71e93ed8ed6ca9ddbd891d6f295";
 const avatar = (name: string) => ({ name, hasClaimedName: true, description: "", avatar: { snapshots: { face256: "" } } });
-const identity = { signer: A, ephemeral: { address: "0xeph", privateKey: "0xdeadbeef" }, expiration: "2999-01-01T00:00:00.000Z", authChain: [] };
+const identity = {
+  signer: A,
+  ephemeral: { address: "0xeph", privateKey: "0xdeadbeef" },
+  expiration: "2999-01-01T00:00:00.000Z",
+  authChain: [],
+};
 
 let client: QueryClient;
 
@@ -152,6 +157,114 @@ describe("profile route, first hydration", () => {
 });
 
 describe("profile route, client navigation", () => {
+  it("preserves a newer healthy profile after leaving the old error boundary", async () => {
+    net.fetchProfile.mockRejectedValueOnce(new CatalystError("Catalyst unreachable", "/lambdas/profile", 0));
+    const router = mount(`/profile/${A}`);
+    await screen.findByRole("heading", { name: "Profile unavailable" });
+    const fresh = mapProfile(avatar("Recovered") as never, A);
+    act(() => client.setQueryData(profileKeys.profile(A), fresh));
+
+    await act(async () => {
+      await router.navigate("/other");
+    });
+
+    expect(client.getQueryData(profileKeys.profile(A))).toEqual(fresh);
+    await act(async () => {
+      await router.navigate(`/profile/${A}`);
+    });
+    expect(await screen.findByRole("heading", { name: "Recovered" })).toBeTruthy();
+    expect(net.fetchProfile).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves recovered data after a background read fails and the old boundary unmounts", async () => {
+    net.fetchProfile.mockRejectedValueOnce(new CatalystError("Catalyst unreachable", "/lambdas/profile", 0));
+    const router = mount(`/profile/${A}`);
+    await screen.findByRole("heading", { name: "Profile unavailable" });
+    const fresh = mapProfile(avatar("Recovered") as never, A);
+    act(() => client.setQueryData(profileKeys.profile(A), fresh));
+    await client
+      .fetchQuery({
+        ...profileQuery(A),
+        staleTime: 0,
+        queryFn: async () => {
+          throw new CatalystError("Catalyst unreachable", "/lambdas/profile", 0);
+        },
+      })
+      .catch(() => undefined);
+    expect(client.getQueryState(profileKeys.profile(A))?.status).toBe("error");
+
+    await act(async () => {
+      await router.navigate("/other");
+    });
+
+    expect(client.getQueryData(profileKeys.profile(A))).toEqual(fresh);
+    expect(client.getQueryState(profileKeys.profile(A))?.status).toBe("error");
+  });
+
+  it("preserves a newer in-flight profile read after leaving the old error boundary", async () => {
+    net.fetchProfile.mockRejectedValueOnce(new CatalystError("Catalyst unreachable", "/lambdas/profile", 0));
+    const router = mount(`/profile/${A}`);
+    await screen.findByRole("heading", { name: "Profile unavailable" });
+    const fresh = mapProfile(avatar("Recovered") as never, A);
+    let resolve!: (value: typeof fresh) => void;
+    const result = client.fetchQuery({
+      ...profileQuery(A),
+      queryFn: () =>
+        new Promise<typeof fresh>((done) => {
+          resolve = done;
+        }),
+    });
+    const settled = result.catch(() => null);
+
+    await act(async () => {
+      await router.navigate("/other");
+    });
+    const fetchStatus = client.getQueryState(profileKeys.profile(A))?.fetchStatus;
+    resolve(fresh);
+    await settled;
+
+    expect(fetchStatus).toBe("fetching");
+    expect(client.getQueryData(profileKeys.profile(A))).toEqual(fresh);
+  });
+
+  it("uses a newer healthy profile when Retry leaves the old error boundary", async () => {
+    net.fetchProfile.mockRejectedValueOnce(new CatalystError("Catalyst unreachable", "/lambdas/profile", 0));
+    mount(`/profile/${A}`);
+    await screen.findByRole("heading", { name: "Profile unavailable" });
+    const fresh = mapProfile(avatar("Recovered") as never, A);
+    act(() => client.setQueryData(profileKeys.profile(A), fresh));
+
+    await act(async () => {
+      screen.getByRole("button", { name: "Try again" }).click();
+    });
+
+    expect(await screen.findByRole("heading", { name: "Recovered" })).toBeTruthy();
+    expect(net.fetchProfile).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps repeated failed retries to one new read per attempt", async () => {
+    net.fetchProfile
+      .mockRejectedValueOnce(new CatalystError("Catalyst unreachable", "/lambdas/profile", 0))
+      .mockRejectedValueOnce(new CatalystError("Catalyst unreachable", "/lambdas/profile", 0))
+      .mockResolvedValueOnce(avatar("Recovered"));
+    const router = mount(`/profile/${A}`);
+    await screen.findByRole("heading", { name: "Profile unavailable" });
+
+    await act(async () => {
+      screen.getByRole("button", { name: "Try again" }).click();
+    });
+    await waitFor(() => expect(client.getQueryState(profileKeys.profile(A))?.status).toBe("error"));
+    expect(router.state.navigation.state).toBe("idle");
+    expect(net.fetchProfile).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole("heading", { name: "Profile unavailable" })).toBeTruthy();
+
+    await act(async () => {
+      screen.getByRole("button", { name: "Try again" }).click();
+    });
+    expect(await screen.findByRole("heading", { name: "Recovered" })).toBeTruthy();
+    expect(net.fetchProfile).toHaveBeenCalledTimes(3);
+  });
+
   it("receives no server data and reads the profile through the browser client", async () => {
     net.fetchProfile.mockResolvedValue(avatar("Alice"));
 
@@ -162,7 +275,9 @@ describe("profile route, client navigation", () => {
   });
 
   it("shows the unavailable screen when the profile cannot be read, and Retry reads it again", async () => {
-    net.fetchProfile.mockRejectedValueOnce(new CatalystError("Catalyst unreachable", "/lambdas/profile", 0)).mockResolvedValueOnce(avatar("Alice"));
+    net.fetchProfile
+      .mockRejectedValueOnce(new CatalystError("Catalyst unreachable", "/lambdas/profile", 0))
+      .mockResolvedValueOnce(avatar("Alice"));
 
     mount(`/profile/${A}`);
 
@@ -173,7 +288,9 @@ describe("profile route, client navigation", () => {
   });
 
   it("reads the profile afresh after leaving a failed profile and coming back", async () => {
-    net.fetchProfile.mockRejectedValueOnce(new CatalystError("Catalyst unreachable", "/lambdas/profile", 0)).mockResolvedValueOnce(avatar("Alice"));
+    net.fetchProfile
+      .mockRejectedValueOnce(new CatalystError("Catalyst unreachable", "/lambdas/profile", 0))
+      .mockResolvedValueOnce(avatar("Alice"));
     const router = mount(`/profile/${A}`);
     await screen.findByRole("heading", { name: "Profile unavailable" });
 
@@ -195,7 +312,7 @@ describe("profile route, client navigation", () => {
     expect(screen.queryByRole("heading", { name: "Profile unavailable" })).toBeNull();
   });
 
-  it("shows unavailable, not \"invalid address\", when the node answers 404 for a wallet", async () => {
+  it('shows unavailable, not "invalid address", when the node answers 404 for a wallet', async () => {
     net.fetchProfile.mockRejectedValue(new CatalystError("Catalyst returned 404", "/lambdas/profile", 404));
 
     mount(`/profile/${A}`);
@@ -227,9 +344,7 @@ describe("profile route, communities", () => {
 
     mount(`/profile/${A}/communities`);
 
-    await waitFor(() =>
-      expect(net.track).toHaveBeenCalledWith("profile_communities_load_failed", { address: A }, expect.anything()),
-    );
+    await waitFor(() => expect(net.track).toHaveBeenCalledWith("profile_communities_load_failed", { address: A }, expect.anything()));
     act(() => {
       focusManager.setFocused(false);
       focusManager.setFocused(true);
