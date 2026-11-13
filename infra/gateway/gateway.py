@@ -195,7 +195,8 @@ def render(table, cfg, mime):
                         'add_header Cross-Origin-Opener-Policy $coop_fallback always;')
     locations = location("= /_gateway/healthz", 'access_log off; return 200 "ok\\n";')
     # The operator gate is applied in the server rewrite phase, before any
-    # location or .data regex, and again after a root alias internal redirect.
+    # location or .data regex; a root alias rewrites with `break`, so the gate
+    # lists alias prefixes (market, camera-reel) beside their targets.
     for path in ("/admin", "/server"):
         locations += pair(path, "sites" if path in prefixes else "apis", True)
     for row in table["node"]:
@@ -409,7 +410,7 @@ http {{
         volatile;
         default 0;
         "~*^/(admin|server)(\\\\W|$)" 1;
-        "~*^/((shop-api|marketplace-api|transactions-api|signatures-api|credits|rpc|price|badges|builder-api|camera-reel-service|worlds-content-server|world-storage|presence|social-api|social-rpc|comms-gatekeeper)/)?((v1|api)/)?admin(\\\\W|$)" 1;
+        "~*^/((shop-api|marketplace-api|market|transactions-api|signatures-api|credits|rpc|price|badges|builder-api|camera-reel-service|camera-reel|worlds-content-server|world-storage|scene-state|presence|social-api|social-rpc|comms-gatekeeper)/)?((v1|api)/)?admin(\\\\W|$)" 1;
         "~*^/(places|events)/(v1|api)/admin(\\\\W|$)" 1;
         "~*^/metabase(/|\\\\.|$)" 1;
         "~*^/telemetry/dash/(sql|flag|group/target)(\\\\.data)?/?$" 1;

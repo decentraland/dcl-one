@@ -47,7 +47,8 @@ class ConfigurationTest(unittest.TestCase):
                  "/rpc/admin/rpc/config", "/v1/admin/names/approve-mana", "/shop-api/v1/admin/names/approve-mana",
                  "/shop-api/admin/campaigns/1/collections", "/marketplace-api/v1/admin/audit",
                  "/transactions-api/v1/admin/relayer", "/credits/admin/flags", "/CREDITS/Admin.data",
-                 "/social-rpc/admin/x", "/places/api/admin/x", "/events/v1/admin/x"]
+                 "/social-rpc/admin/x", "/places/api/admin/x", "/events/v1/admin/x",
+                 "/market/v1/admin/audit", "/camera-reel/admin/images/1", "/scene-state/admin/scene/x/reset"]
         public = ["/telemetry/dash", "/telemetry/dash/overview", "/telemetry/dash/sqlx",
                   "/telemetry/dash/administrator", "/telemetry", "/events/admin/pending-events",
                   "/events/admin/users", "/docs/creator/images/editor/admin/activate.webp",

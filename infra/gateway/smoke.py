@@ -198,7 +198,8 @@ def client(args):
                       "/telemetry/dash/sql", "/telemetry/dash/sql.data",
                       "/telemetry/dash/flag.data", "/telemetry/dash/group/target.data",
                       "/telemetry/dash/admin.data", "/telemetry/dash/admin/users",
-                      "/rpc/admin/rpc/config", "/v1/admin/names/approve-mana", "/credits/admin/flags"]
+                      "/rpc/admin/rpc/config", "/v1/admin/names/approve-mana", "/credits/admin/flags",
+                      "/market/v1/admin/audit", "/scene-state/admin/scene/x/reset"]
     forged = {"X-Forwarded-For": "198.51.100.7", "X-Real-IP": "198.51.100.7",
               "CF-Connecting-IP": "203.0.113.88", "True-Client-IP": "203.0.113.88",
               "X-Catalyst-Admin-Gate": "admitted", "X-Forwarded-Proto": "https",

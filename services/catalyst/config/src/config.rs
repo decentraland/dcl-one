@@ -185,12 +185,36 @@ impl Config {
     /// The fewest bytes an operator secret (an admin bearer, `SESSION_SECRET`) may have.
     pub const MIN_OPERATOR_SECRET_BYTES: usize = 32;
 
-    /// The admin bearers and the console's session key: a short one is
-    /// guessable or brute-forced offline, so startup refuses it.
+    /// The operator-chosen secrets that guard this node's own routes (admin
+    /// bearers, service tokens, the console's session key) and the external
+    /// minter's token: a short one is guessable or brute-forced offline, so
+    /// startup refuses it. Bearers this node sends to services it does not
+    /// run (`AB_REGISTRY_ADMIN_TOKEN`) keep their issuer's length.
+    pub const OPERATOR_SECRETS: [&'static str; 20] = [
+        "SESSION_SECRET",
+        "CATALYRST_CONTENT_ADMIN_TOKEN",
+        "COMMUNITIES_ADMIN_TOKEN",
+        "CATALYRST_SOCIAL_RPC_ADMIN_TOKEN",
+        "CATALYRST_NOTIFICATIONS_ADMIN_TOKEN",
+        "CATALYRST_BADGES_ADMIN_TOKEN",
+        "CATALYRST_EVENTS_ADMIN_TOKEN",
+        "CATALYRST_BUILDER_ADMIN_TOKEN",
+        "CATALYRST_CAMERA_REEL_ADMIN_TOKEN",
+        "CATALYRST_WORLDS_ADMIN_TOKEN",
+        "SCENE_HOST_ADMIN_TOKEN",
+        "MARKET_ADMIN_TOKEN",
+        "PRICE_ADMIN_TOKEN",
+        "CATALYRST_ECONOMY_ADMIN_TOKEN",
+        "CATALYRST_CREDITS_ADMIN_TOKEN",
+        "CATALYRST_RPC_ADMIN_TOKEN",
+        "PLACES_ADMIN_AUTH_TOKEN",
+        "MODERATOR_TOKEN",
+        "COMMS_GATEKEEPER_AUTH_TOKEN",
+        "SCENE_HOST_DELEGATION_MINTER_TOKEN",
+    ];
+
     pub fn is_operator_secret(name: &str) -> bool {
-        name == "SESSION_SECRET"
-            || name.ends_with("_ADMIN_TOKEN")
-            || name.ends_with("_ADMIN_AUTH_TOKEN")
+        Self::OPERATOR_SECRETS.contains(&name)
     }
 
     fn refuse_short_operator_secret(name: &str, value: Option<&str>) -> anyhow::Result<()> {
@@ -760,12 +784,7 @@ mod tests {
     fn short_operator_secrets_are_refused() {
         let long = "a".repeat(Config::MIN_OPERATOR_SECRET_BYTES);
         let short = "a".repeat(Config::MIN_OPERATOR_SECRET_BYTES - 1);
-        for name in [
-            "SESSION_SECRET",
-            "CATALYRST_RPC_ADMIN_TOKEN",
-            "MARKET_ADMIN_TOKEN",
-            "PLACES_ADMIN_AUTH_TOKEN",
-        ] {
+        for name in Config::OPERATOR_SECRETS {
             let error = Config::refuse_short_operator_secret(name, Some(&short))
                 .unwrap_err()
                 .to_string();
@@ -774,7 +793,16 @@ mod tests {
             assert!(Config::refuse_short_operator_secret(name, None).is_ok());
             assert!(Config::refuse_short_operator_secret(name, Some(" ")).is_ok());
         }
-        assert!(Config::refuse_short_operator_secret("STRIPE_SECRET_KEY", Some("x")).is_ok());
+        for outbound in ["STRIPE_SECRET_KEY", "AB_REGISTRY_ADMIN_TOKEN"] {
+            assert!(Config::refuse_short_operator_secret(outbound, Some("x")).is_ok());
+        }
+        let (mut config, _) =
+            Config::parse_with_matches_for_tests(&["catalyst", "--database-url", "postgres://x/y"])
+                .unwrap();
+        let slots: Vec<&str> = config.secret_slots().into_iter().map(|(n, _)| n).collect();
+        for name in Config::OPERATOR_SECRETS {
+            assert!(slots.contains(&name), "{name} is a secret slot");
+        }
     }
 
     #[test]
