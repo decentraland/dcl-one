@@ -26,7 +26,7 @@ use std::{
     fmt::{Display, Formatter},
     sync::{
         atomic::{AtomicU32, Ordering},
-        LazyLock, Mutex,
+        Arc, LazyLock, Mutex,
     },
 };
 
@@ -383,10 +383,10 @@ static NEXT_REQUEST_ID: AtomicU32 = AtomicU32::new(1);
 /// Engine-side: requests awaiting their [`Reply`].
 static PENDING: LazyLock<DashMap<RequestId, oneshot::Sender<Reply>>> = LazyLock::new(DashMap::new);
 /// Engine-side: a room's event queue (the receiver is what [`Room::connect`] returns) and the
-/// metadata the page last reported for it.
+/// metadata the page last reported for it, shared with the room's [`Room`].
 struct RoomChannel {
     events: mpsc::UnboundedSender<RoomEvent>,
-    metadata: String,
+    metadata: Arc<Mutex<String>>,
 }
 
 static ROOM_EVENTS: LazyLock<DashMap<RoomId, RoomChannel>> = LazyLock::new(DashMap::new);
@@ -416,31 +416,24 @@ async fn request(command: impl FnOnce(RequestId) -> LivekitCommand) -> RoomResul
         .map_err(|_| RoomError::from("livekit host dropped the request".to_owned()))
 }
 
-fn register_room_events(room: RoomId) -> mpsc::UnboundedReceiver<RoomEvent> {
+fn register_room_events(room: RoomId) -> (mpsc::UnboundedReceiver<RoomEvent>, Arc<Mutex<String>>) {
     let (sender, receiver) = mpsc::unbounded_channel();
+    let metadata = Arc::new(Mutex::new(String::new()));
     ROOM_EVENTS.insert(
         room,
         RoomChannel {
             events: sender,
-            metadata: String::new(),
+            metadata: metadata.clone(),
         },
     );
-    receiver
+    (receiver, metadata)
 }
 
 /// Records the metadata the page reported for `room` at connect.
 fn set_room_metadata(room: RoomId, metadata: &str) {
-    if let Some(mut channel) = ROOM_EVENTS.get_mut(&room) {
-        metadata.clone_into(&mut channel.metadata);
+    if let Some(channel) = ROOM_EVENTS.get(&room) {
+        metadata.clone_into(&mut channel.metadata.lock().unwrap());
     }
-}
-
-/// The metadata the page last reported for `room`; empty once the room is unregistered.
-fn room_metadata(room: RoomId) -> String {
-    ROOM_EVENTS
-        .get(&room)
-        .map(|channel| channel.metadata.clone())
-        .unwrap_or_default()
 }
 
 fn unregister_room_events(room: RoomId) {
@@ -509,17 +502,18 @@ pub fn dispatch_page_events(
                 }
             }
             LivekitEvent::Room { room, event } => {
-                let Some(mut channel) = ROOM_EVENTS.get_mut(&room) else {
-                    debug!("event for unknown room {room}: {event:?}");
-                    continue;
+                // the entry's guard ends with this block: `remove` under it would deadlock
+                let receiver_gone = {
+                    let Some(channel) = ROOM_EVENTS.get(&room) else {
+                        debug!("event for unknown room {room}: {event:?}");
+                        continue;
+                    };
+                    // the metadata is written before the event that reports it is forwarded
+                    if let RoomEvent::RoomMetadataChanged { metadata } = &event {
+                        channel.metadata.lock().unwrap().clone_from(metadata);
+                    }
+                    channel.events.send(event).is_err()
                 };
-                // the metadata is written before the event that reports it is forwarded
-                if let RoomEvent::RoomMetadataChanged { metadata } = &event {
-                    channel.metadata.clone_from(metadata);
-                }
-                let receiver_gone = channel.events.send(event).is_err();
-                // removing while the entry's shard guard is held would deadlock
-                drop(channel);
                 if receiver_gone {
                     // the engine's LivekitRoom is gone
                     ROOM_EVENTS.remove(&room);
