@@ -79,7 +79,8 @@
       "tsconfig_required": "Esta escena no tiene el archivo requerido {{tsconfig}}",
       "no_input_files": "No hay archivos de entrada para construir: {{entrypointSource}}",
       "rebuild_failed": "No se pudo reconstruir el bundle: {{error}}",
-      "type_checker_failed": "El typechecker salió con código {{code}}."
+      "type_checker_failed": "El typechecker salió con código {{code}}.",
+      "typescript_platform_package_missing": "TypeScript {{version}} necesita su paquete compilador para esta plataforma, {{platformPackage}}, instalado junto a {{packageDir}}. Es una dependencia opcional: vuelve a instalar las dependencias de la escena en esta plataforma, sin --omit=optional ni --no-optional."
     },
     "code_to_composite": {
       "build_failed": "Error al construir la escena: {{error}}",
@@ -93,6 +94,14 @@
     },
     "build": {
       "js_runtime_version": "@dcl/js-runtime {{runtime}} está instalado junto a @dcl/sdk {{sdk}}. Cada uno fija su propio @dcl/ecs, así que los tipos de los módulos ~system pueden no coincidir con los de la escena: instala @dcl/js-runtime@{{sdk}}."
+    },
+    "bundle": {
+      "tsconfig_base_url_removed": "TypeScript 7 eliminó la opción \"baseUrl\": se quitó de {{tsconfig}} y las entradas de \"paths\" ahora son relativas a ese archivo. Conserva este cambio.",
+      "tsconfig_star_path_added": "{{tsconfig}} ahora asigna \"*\" a \"{{target}}\" en \"paths\" para que los imports que se resolvían mediante \"baseUrl\" sigan funcionando; elimina esa entrada si la escena no tiene imports así.",
+      "tsconfig_strict_default_kept": "TypeScript 7 activa \"strict\" por defecto: {{tsconfig}} ahora fija \"strict\": false, la configuración con la que esta escena se verificaba hasta ahora. Cámbialo a true cuando la escena esté lista para las verificaciones estrictas.",
+      "tsconfig_not_writable": "{{tsconfig}} usa la opción \"baseUrl\", que TypeScript 7 eliminó, y no se pudo reescribir: {{error}}. Elimina \"baseUrl\" y comienza cada entrada de \"paths\" con ./",
+      "tsconfig_strict_unresolved": "TypeScript 7 activa \"strict\" por defecto y {{tsconfig}} no lo fija. No se sabe si lo fija algún archivo que extiende, porque \"{{target}}\" no se pudo resolver, así que \"strict\" se dejó como está: fíjalo en {{tsconfig}} para elegir las verificaciones con las que se compila la escena.",
+      "tsconfig_strict_not_writable": "{{tsconfig}} no fija \"strict\", que TypeScript 7 activa por defecto, y no se pudo reescribir: {{error}}. Fija \"strict\": false en él para conservar las verificaciones con las que la escena se verificaba hasta ahora, o true para adoptar las verificaciones estrictas."
     }
   }
 }

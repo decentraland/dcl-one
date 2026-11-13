@@ -79,7 +79,8 @@
       "tsconfig_required": "此场景没有必需的文件 {{tsconfig}}",
       "no_input_files": "没有要构建的输入文件：{{entrypointSource}}",
       "rebuild_failed": "无法重新构建包：{{error}}",
-      "type_checker_failed": "类型检查器退出，代码为 {{code}}。"
+      "type_checker_failed": "类型检查器退出，代码为 {{code}}。",
+      "typescript_platform_package_missing": "TypeScript {{version}} 需要安装此平台的编译器包 {{platformPackage}}（位于 {{packageDir}} 旁）。它是可选依赖：请在此平台上重新安装场景依赖，不要使用 --omit=optional 或 --no-optional。"
     },
     "code_to_composite": {
       "build_failed": "构建场景失败：{{error}}",
@@ -93,6 +94,14 @@
     },
     "build": {
       "js_runtime_version": "已安装的 @dcl/js-runtime {{runtime}} 与 @dcl/sdk {{sdk}} 版本不同。两者各自固定自己的 @dcl/ecs，~system 模块的类型可能与场景的不一致：请安装 @dcl/js-runtime@{{sdk}}。"
+    },
+    "bundle": {
+      "tsconfig_base_url_removed": "TypeScript 7 移除了 \"baseUrl\" 选项：已从 {{tsconfig}} 中删除，并把 \"paths\" 条目改为相对于该文件。请保留此修改。",
+      "tsconfig_star_path_added": "{{tsconfig}} 现在在 \"paths\" 中把 \"*\" 映射到 \"{{target}}\"，以便原先通过 \"baseUrl\" 解析的导入继续有效；若场景没有这类导入，可删除该条目。",
+      "tsconfig_strict_default_kept": "TypeScript 7 默认启用 \"strict\"：{{tsconfig}} 现已设置 \"strict\": false，即此场景此前进行类型检查时的设置。当场景准备好接受严格检查时，请将其改为 true。",
+      "tsconfig_not_writable": "{{tsconfig}} 使用了 TypeScript 7 已移除的 \"baseUrl\" 选项，且无法重写：{{error}}。请删除 \"baseUrl\"，并让每个 \"paths\" 条目以 ./ 开头",
+      "tsconfig_strict_unresolved": "TypeScript 7 默认启用 \"strict\"，而 {{tsconfig}} 没有设置它。由于 \"{{target}}\" 无法解析，无法确定它所扩展的文件是否设置了该选项，因此未改动 \"strict\"：请在 {{tsconfig}} 中设置它，以选择场景构建时使用的检查。",
+      "tsconfig_strict_not_writable": "{{tsconfig}} 没有设置 TypeScript 7 默认启用的 \"strict\"，且无法重写：{{error}}。在其中设置 \"strict\": false 可保留此前类型检查所用的设置，设置为 true 则采用严格检查。"
     }
   }
 }

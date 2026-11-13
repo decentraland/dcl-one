@@ -4,7 +4,7 @@ import { ensureFileExists } from './helpers'
 export const flow = describe
 
 // TOOLS
-export const TSC = resolve(process.cwd(), './node_modules/typescript/bin/tsc')
+export const TSC = resolve(process.cwd(), './packages/@dcl/sdk-commands/node_modules/.bin/tsc')
 
 // WORKING DIRECTORIES
 export const SDK_PATH = resolve(process.cwd(), './packages/@dcl/sdk')

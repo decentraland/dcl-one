@@ -15,6 +15,7 @@ import { CliComponents } from '../components'
 import { colors } from '../components/log'
 import { printProgressInfo, printProgressStep, printWarning } from './beautiful-logs'
 import { CliError } from './error'
+import { fixTsconfigForTypescript7 } from './tsconfig'
 import { getAllComposites, type Script } from './composite'
 import { isEditorScene } from './project-validations'
 import { watch } from 'chokidar'
@@ -124,6 +125,8 @@ export async function bundleProject(components: BundleComponents, options: Compi
   if (!(await components.fs.fileExists(tsconfig))) {
     throw new CliError('BUNDLE_TSCONFIG_REQUIRED', i18next.t('errors.bundle.tsconfig_required', { tsconfig }))
   }
+
+  await fixTsconfigForTypescript7(components, tsconfig, options.workingDirectory)
 
   const entrypointSource = options.single || 'src/index.ts'
   const entrypoints = globSync(entrypointSource, { cwd: options.workingDirectory }).map((entry) =>
@@ -343,8 +346,35 @@ export async function bundleSingleProject(components: BundleComponents, options:
   await runTypeChecker(components, options)
 }
 
+/**
+ * The type checker's script. `typescript` 7 reaches its compiler, shipped as the per-platform
+ * optional dependency `@typescript/typescript-<platform>-<arch>`, through `lib/tsc.js`, and the
+ * package exports no `typescript/lib/tsc` subpath: the script is reached from the package root. A
+ * platform package left out of an install would otherwise surface as the script's own resolution
+ * error.
+ */
+export function typeCheckerBin(): string {
+  const packageJson = require.resolve('typescript/package.json')
+  const packageDir = path.dirname(packageJson)
+  const version: string = JSON.parse(fs.readFileSync(packageJson, 'utf-8')).version
+  /* istanbul ignore else */
+  if (parseInt(version, 10) >= 7) {
+    const platformPackage = `@typescript/typescript-${process.platform}-${process.arch}`
+    try {
+      require.resolve(`${platformPackage}/package.json`, { paths: [packageDir] })
+    } catch {
+      /* istanbul ignore next */
+      throw new CliError(
+        'BUNDLE_TYPESCRIPT_PLATFORM_PACKAGE_MISSING',
+        i18next.t('errors.bundle.typescript_platform_package_missing', { version, platformPackage, packageDir })
+      )
+    }
+  }
+  return path.join(packageDir, 'lib', 'tsc.js')
+}
+
 function runTypeChecker(components: BundleComponents, options: CompileOptions) {
-  const tsBin = require.resolve('typescript/lib/tsc')
+  const tsBin = typeCheckerBin()
   const args = [
     '-p',
     'tsconfig.json',

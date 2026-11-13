@@ -1,3 +1,4 @@
+/// <reference types="@dcl/js-runtime" preserve="true" />
 import { EngineInfo as _EngineInfo, NetworkEntity as _NetworkEntity } from '@dcl/ecs'
 import { componentNumberFromName } from '@dcl/ecs/dist/components/component-number'
 

@@ -23,14 +23,15 @@ export async function generateProtocolBuffer(params: {
 
   const protoCommandArgs: string[] = [
     `--plugin=${TS_PROTO_PLUGIN_PATH}`,
-    `--dcl_ts_proto_opt=esModuleInterop=true`,
-    `--dcl_ts_proto_opt=outputJsonMethods=false`,
-    `--dcl_ts_proto_opt=forceLong=false`,
-    `--dcl_ts_proto_opt=outputPartialMethods=false`,
-    `--dcl_ts_proto_opt=fileSuffix=.gen`,
-    `--dcl_ts_proto_opt=unrecognizedEnum=false`,
-    `--dcl_ts_proto_opt=oneof=unions`,
-    `--dcl_ts_proto_out=${pbGeneratedPath}`,
+    `--ts_proto_opt=esModuleInterop=true`,
+    `--ts_proto_opt=outputJsonMethods=false`,
+    `--ts_proto_opt=forceLong=false`,
+    `--ts_proto_opt=outputPartialMethods=false`,
+    `--ts_proto_opt=fileSuffix=.gen`,
+    `--ts_proto_opt=unrecognizedEnum=false`,
+    `--ts_proto_opt=oneof=unions`,
+    `--ts_proto_opt=annotateFilesWithVersion=false`,
+    `--ts_proto_out=${pbGeneratedPath}`,
     `--proto_path=${protocolPath}`,
     protoFiles
   ]
@@ -82,12 +83,15 @@ export function fixTsGeneratedByProto(filePath: string) {
   content = content.replace(/^import type/gm, 'import')
 
   /**
-   * Read the generated pb component and add @internal comments to exported methods
-   * So we dont add this types to the final .d.ts build
+   * Keep the per-file package constant private: every generated file exports the same name,
+   * which would collide in the rolled-up .d.ts
    */
-  content = content.replace(`export const protobufPackage = `, 'const protobufPackageSarasa = ')
+  content = content.replace(/^export const protobufPackage = /gm, 'const protobufPackage = ')
+
+  /**
+   * Add @public comments to the exported declarations so they are part of the final .d.ts build
+   */
   content = content.replace(/\nexport /g, publicInterface)
-  content = content.replace(/export const/g, internalComment)
 
   /**
    * Convert all `enum` to `const enum`
@@ -97,12 +101,6 @@ export function fixTsGeneratedByProto(filePath: string) {
   fs.removeSync(filePath)
   fs.writeFileSync(filePath, content)
 }
-
-const internalComment = `
-/**
- * @internal
- */
-export const`
 
 const publicInterface = `
 /**

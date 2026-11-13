@@ -1,3 +1,4 @@
+/// <reference types="@dcl/js-runtime" preserve="true" />
 import {
   engine,
   ExplorerItemPurchaseResult,
