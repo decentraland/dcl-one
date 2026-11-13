@@ -1,4 +1,4 @@
-// MUST stay in sync with crates/ipfs/src/web_cache.rs (cache name, both keys, the cached header):
+// MUST stay in sync with crates/ipfs/src/web_cache.rs (cache name, both keys):
 // this worker only answers from the cache; the engine fills it (content it has checked against
 // its hash under the shared key, a url's response under the url), and its asset processor writes
 // processed bytes back over the entry it read.

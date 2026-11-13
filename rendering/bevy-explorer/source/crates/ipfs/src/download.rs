@@ -330,26 +330,15 @@ impl IpfsIo {
             #[cfg(feature = "ipfs_debug")]
             start,
         };
-        // in wasm we add a custom header to allow the service worker to cache ipfs requests across content servers
-        #[cfg(target_arch = "wasm32")]
-        let sw_caches = cache_key.is_some();
 
         debug!("[{token:?}]: remote url: `{remote}` awaiting a request slot");
         // a request slot, granted nearest scene first
         let _deferred_in_flight = DeferredDropper::new(&IPFS_IN_FLIGHT);
         let mut no_cache = false;
-        // whether the service worker answered from its cache
-        #[cfg(target_arch = "wasm32")]
-        let sw_cached;
         let client = &self.client;
+        // no `X-IPFS` header on web: a caller with a cache key has read `web_cache` already, and
+        // the header would have the service worker repeat that lookup
         let request = client.get(&remote);
-
-        #[cfg(target_arch = "wasm32")]
-        let request = if sw_caches {
-            request.header("X-IPFS", "true")
-        } else {
-            request
-        };
 
         let request = ipfs_io_read_state.send_failure(request.build().map_err(|e| {
             AssetReaderError::Io(Arc::new(std::io::Error::other(format!("[{token:?}]: {e}"))))
@@ -421,21 +410,12 @@ impl IpfsIo {
             }
         }
 
-        #[cfg(target_arch = "wasm32")]
-        {
-            sw_cached = fetched.headers.contains_key(web_cache::CACHED_HEADER);
-        }
-
-        #[cfg(not(target_arch = "wasm32"))]
-        let sw_cached = false;
-        if !sw_cached {
-            if let Some(start) = timing.started {
-                self.request_metrics.downloads.lock().unwrap().download(
-                    fetched.body.len(),
-                    start.elapsed(),
-                    timing.first_byte,
-                );
-            }
+        if let Some(start) = timing.started {
+            self.request_metrics.downloads.lock().unwrap().download(
+                fetched.body.len(),
+                start.elapsed(),
+                timing.first_byte,
+            );
         }
         let data = SharedBytes(Arc::new(fetched.body));
 
@@ -458,10 +438,10 @@ impl IpfsIo {
             }
         };
 
-        // the worker only answers from its cache; fill it: content under its hash, for every
-        // server, once checked; a url under its own key
+        // fill the web cache, which callers read before they download: content under its hash,
+        // for every server, once checked; a url under its own key
         #[cfg(target_arch = "wasm32")]
-        if sw_caches && !sw_cached {
+        {
             let kept = match &cache_key {
                 Some(key @ CacheKey::Content(_)) => {
                     web_cache::share(&remote, key.name(), &data, || cacheable(key)).await
