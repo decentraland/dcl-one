@@ -1,4 +1,6 @@
 # Preserve the exact upstream bytes on Windows as well as Unix.
+services/catalyst/src/metrics_matcher/path-to-regexp.cjs -text
+services/catalyst/src/metrics_matcher/path-to-regexp.LICENSE -text
 rendering/bevy-explorer/source/** -text
 library/vendor/rusty_enet/** -text -whitespace
 rendering/bevy-explorer/bevy/** -text -whitespace
