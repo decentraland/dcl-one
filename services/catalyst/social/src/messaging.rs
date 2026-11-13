@@ -19,7 +19,8 @@
 //! it into the `/comms-gatekeeper` nest, so the routes answer exactly as
 //! when they were part of that router.
 
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
+use std::time::Duration;
 
 use axum::body::Bytes;
 use axum::extract::{Extension, OriginalUri, Path, Query, State};
@@ -37,6 +38,7 @@ use crate::Address;
 use crate::auth::eip1654::Eip1654Validator;
 use crate::comms::gatekeeper::auth::require_signer;
 use crate::comms::gatekeeper::errors::{ApiError, forbidden, service_unavailable, unauthorized};
+use crate::comms::limits::{RateLimitDecision, RateLimiter};
 use crate::mls;
 use crate::shared::now_utc;
 use crate::shared::signed_fetch::SignedPath;
@@ -150,6 +152,31 @@ pub fn router(state: SharedState) -> Router {
 const MAX_OPAQUE_BYTES: usize = 256 * 1024;
 const MAX_KEY_PACKAGES: usize = 100;
 const MAX_COMMITS_PAGE: i64 = 500;
+
+/// Blob bytes (in KiB) a signer may store through group creates, commits and
+/// messages: 16 MiB per hour.
+static BLOB_BUDGET: LazyLock<RateLimiter> =
+    LazyLock::new(|| RateLimiter::new(16 * 1024, Duration::from_secs(3600)));
+
+/// Spends the signer's blob budget for `bytes` before anything is stored.
+fn spend_blob_budget(signer: &str, bytes: usize) -> Result<(), ApiError> {
+    let kib = u32::try_from(bytes.div_ceil(1024)).unwrap_or(u32::MAX);
+    match BLOB_BUDGET.check_cost(signer, kib) {
+        RateLimitDecision::Allow => Ok(()),
+        RateLimitDecision::Deny => Err(ApiError::labeled(
+            429,
+            "rate limit exceeded",
+            "message store budget exhausted for this wallet; retry later",
+        )),
+    }
+}
+
+fn opaque(bytes: Vec<u8>, what: &str) -> Result<Vec<u8>, ApiError> {
+    if bytes.is_empty() || bytes.len() > MAX_OPAQUE_BYTES {
+        return Err(ApiError::bad_request(format!("{what} length out of range")));
+    }
+    Ok(bytes)
+}
 const MEMBER_EXISTS: &str = "EXISTS (SELECT 1 FROM social.mls_group_members \
      WHERE group_id = $1 AND member = $2 AND removed_epoch IS NULL)";
 
@@ -442,16 +469,28 @@ pub async fn create_group(
     }
     let community_id = authorized_community_binding(&state, &headers, b.community_id.as_deref())?;
     let epoch_author = state.peer_id().await?;
+    let exists: bool =
+        sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM social.mls_groups WHERE group_id = $1)")
+            .bind(&group_id)
+            .fetch_one(&state.pool)
+            .await?;
+    if exists {
+        return Err(ApiError::http(409, "group already exists"));
+    }
     let initial = match &b.initial_commit {
         Some(c) => {
-            let commit_bytes = decode_b64(c, "initial_commit")?;
+            let commit_bytes = opaque(decode_b64(c, "initial_commit")?, "initial_commit")?;
             mls::parse_commit_routing(&commit_bytes)
                 .map_err(|e| ApiError::bad_request(e.to_string()))?;
             let welcome_bytes = b
                 .welcome
                 .as_deref()
-                .map(|w| decode_b64(w, "welcome"))
+                .map(|w| decode_b64(w, "welcome").and_then(|w| opaque(w, "welcome")))
                 .transpose()?;
+            spend_blob_budget(
+                &creator,
+                commit_bytes.len() + welcome_bytes.as_ref().map_or(0, Vec::len),
+            )?;
             let commit_hash = mls::content_hash(&commit_bytes);
             let commit_cid = store_blob(&state, commit_bytes).await?;
             let welcome_cid = match welcome_bytes {
@@ -582,8 +621,12 @@ pub async fn submit_commit(
     let welcome_bytes = b
         .welcome
         .as_deref()
-        .map(|w| decode_b64(w, "welcome"))
+        .map(|w| decode_b64(w, "welcome").and_then(|w| opaque(w, "welcome")))
         .transpose()?;
+    spend_blob_budget(
+        &signer,
+        commit_bytes.len() + welcome_bytes.as_ref().map_or(0, Vec::len),
+    )?;
     let commit_hash = mls::content_hash(&commit_bytes);
     let commit_cid = store_blob(&state, commit_bytes).await?;
     let welcome_cid = match welcome_bytes {
@@ -759,6 +802,7 @@ pub async fn send_message(
     let signature_hash = mls::content_hash(
         format!("{group_id}:{}:{signer}:{ciphertext_hash}", routing.epoch).as_bytes(),
     );
+    spend_blob_budget(&signer, ciphertext.len())?;
     let ciphertext_cid = store_blob(&state, ciphertext).await?;
     sqlx::query(
         "INSERT INTO social.mls_message_refs \
@@ -1064,6 +1108,21 @@ mod tests {
             status,
             serde_json::from_slice(&bytes).unwrap_or(Value::Null),
         )
+    }
+
+    #[test]
+    fn the_blob_budget_refuses_a_wallet_past_its_hourly_bytes() {
+        let (heavy, light) = (address_of(&random_key()), address_of(&random_key()));
+        for _ in 0..64 {
+            spend_blob_budget(&heavy, MAX_OPAQUE_BYTES).unwrap();
+        }
+        assert_eq!(
+            spend_blob_budget(&heavy, MAX_OPAQUE_BYTES)
+                .unwrap_err()
+                .code,
+            429
+        );
+        spend_blob_budget(&light, MAX_OPAQUE_BYTES).unwrap();
     }
 
     /// Unset `FED_PEER_ID` falls back to the id schema apply minted (the old

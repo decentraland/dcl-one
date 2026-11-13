@@ -69,8 +69,10 @@ pub const NONCES: &str = "social.community_seen_nonces";
 const DOMAIN: &str = "DecentralandCommunities";
 /// The router's body limit, which the envelope branch reads under.
 const BODY_LIMIT: usize = 512 * 1024;
-/// The old content store's `MAX_BODY_BYTES`.
-pub const MAX_CONTENT_BYTES: usize = 256 * 1024;
+/// A post body: at most `POST_CONTENT_MAX` characters of up to 4 bytes each.
+pub const MAX_CONTENT_BYTES: usize = super::posts::POST_CONTENT_MAX * 4;
+/// Registered bodies no post names yet, across all uploaders.
+const MAX_UNBOUND_CONTENT_BYTES: i64 = 32 * 1024 * 1024;
 const DEFAULT_CHANGES: i64 = 500;
 const MAX_CHANGES: i64 = 5000;
 const SNAPSHOT_COMMUNITIES: i64 = 1000;
@@ -79,6 +81,10 @@ const GC_CHUNK: i64 = 1000;
 /// The old `RateLimiter::new(60, 60 s)`, per signer, process-wide.
 static LIMITER: LazyLock<RateLimiter> =
     LazyLock::new(|| RateLimiter::new(60, Duration::from_secs(60)));
+
+/// Content uploads per signer.
+static CONTENT_LIMITER: LazyLock<RateLimiter> =
+    LazyLock::new(|| RateLimiter::new(30, Duration::from_secs(600)));
 
 fn ec(buf: &mut Vec<u8>, s: &str) {
     buf.extend_from_slice(s.as_bytes());
@@ -302,6 +308,7 @@ pub(super) fn requires_gateway_signer(method: &Method, path: &str) -> bool {
             && matches!(
                 path.split('/').collect::<Vec<_>>().as_slice(),
                 ["", "v1", "communities", _, "requests"]
+                    | ["", "federation", "communities", "content"]
             ))
 }
 
@@ -1390,14 +1397,17 @@ async fn post(ctx: &Ctx<'_>, id: &str) -> Response {
         return *r;
     }
     let body = registered_body(ctx.state, &m.content_hash.to_ascii_lowercase()).await;
-    if body.is_none() {
-        tracing::debug!(community_id = %m.community_id, content_hash = %m.content_hash, %signer, "CommunityPost accepted before its content body is here");
-    }
-    let text = body
-        .as_ref()
-        .and_then(|b| std::str::from_utf8(b).ok())
-        .map(str::to_string)
-        .unwrap_or_else(|| m.content_hash.clone());
+    let text = match body.as_deref().map(std::str::from_utf8) {
+        None => {
+            tracing::debug!(community_id = %m.community_id, content_hash = %m.content_hash, %signer, "CommunityPost accepted before its content body is here");
+            m.content_hash.clone()
+        }
+        Some(Ok(raw)) => match super::posts::validate_text(raw) {
+            Ok(text) => text,
+            Err(refused) => return refused,
+        },
+        Some(Err(_)) => return bad("content body is not valid UTF-8"),
+    };
     let signature_hash = signed.signature_hash();
     let applied: sqlx::Result<()> = async {
         let mut tx = ctx.state.pool.begin().await?;
@@ -1644,6 +1654,9 @@ fn hash_all(hashes: &[String]) -> String {
     hex::encode(h.finalize())
 }
 
+/// The feeds and bodies peers pull leave private communities out.
+const PUBLIC_ONLY: &str = "NOT EXISTS (SELECT 1 FROM social.communities pc WHERE pc.id = a.community_uuid AND pc.private)";
+
 pub async fn snapshot_view(pool: &PgPool) -> sqlx::Result<Value> {
     let latest = |kinds: &'static [&'static str]| async move {
         sqlx::query_scalar::<_, Option<i64>>(
@@ -1661,12 +1674,12 @@ pub async fn snapshot_view(pool: &PgPool) -> sqlx::Result<Value> {
     );
     let communities: Vec<(String, String, Option<String>, i64)> = sqlx::query_as(
         "SELECT a.community_id, a.signer, COALESCE(c.name, a.payload->>'name'), a.signed_at FROM social.community_signed_actions a \
-         LEFT JOIN social.communities c ON c.id = a.community_uuid WHERE a.kind = 'create' ORDER BY a.seq LIMIT $1",
+         LEFT JOIN social.communities c ON c.id = a.community_uuid WHERE a.kind = 'create' AND NOT COALESCE(c.private, false) ORDER BY a.seq LIMIT $1",
     )
     .bind(SNAPSHOT_COMMUNITIES)
     .fetch_all(pool)
     .await?;
-    let role_hashes: Vec<String> = sqlx::query_scalar("SELECT signature_hash FROM social.community_signed_actions WHERE kind IN ('create', 'role') ORDER BY signature_hash").fetch_all(pool).await?;
+    let role_hashes: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT signature_hash FROM social.community_signed_actions a WHERE kind IN ('create', 'role') AND {PUBLIC_ONLY} ORDER BY signature_hash"))).fetch_all(pool).await?;
     Ok(json!({
         "latest_role_seq": role,
         "latest_posts_seq": posts,
@@ -1695,10 +1708,10 @@ pub struct ChangesQuery {
 pub async fn changes_view(pool: &PgPool, since: i64, limit: i64) -> sqlx::Result<Value> {
     let limit = limit.clamp(1, MAX_CHANGES);
     let rows = |kinds: &'static [&'static str]| async move {
-        sqlx::query(
+        sqlx::query(sqlx::AssertSqlSafe(format!(
             "SELECT signature_hash, community_id, kind, signer, target, role, action, content_hash, signed_at, payload, seq \
-             FROM social.community_signed_actions WHERE kind = ANY($1) AND seq > $2 ORDER BY seq ASC LIMIT $3",
-        )
+             FROM social.community_signed_actions a WHERE kind = ANY($1) AND seq > $2 AND {PUBLIC_ONLY} ORDER BY seq ASC LIMIT $3"
+        )))
         .bind(kinds)
         .bind(since)
         .bind(limit)
@@ -1778,6 +1791,18 @@ async fn registered_cid(pool: &PgPool, hash: &str) -> sqlx::Result<Option<String
         .await
 }
 
+/// The blob of a body a post in a public community names.
+async fn published_cid(pool: &PgPool, hash: &str) -> sqlx::Result<Option<String>> {
+    sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "SELECT cc.cid FROM social.community_contents cc WHERE cc.content_hash = $1 \
+           AND EXISTS (SELECT 1 FROM social.community_signed_actions a \
+                       WHERE a.content_hash = cc.content_hash AND a.kind = 'post' AND {PUBLIC_ONLY})"
+    )))
+    .bind(hash)
+    .fetch_optional(pool)
+    .await
+}
+
 async fn registered_body(state: &CommunitiesState, hash: &str) -> Option<Bytes> {
     if !is_valid_hash(hash) {
         return None;
@@ -1786,9 +1811,29 @@ async fn registered_body(state: &CommunitiesState, hash: &str) -> Option<Bytes> 
     state.storage.retrieve(&cid).await.ok().flatten()
 }
 
-/// `POST /federation/communities/content`: stores a post body (<= 256 KiB)
-/// and registers its sha256 (the wire's content hash) against the blob.
-pub async fn put_content(State(state): State<SharedState>, body: Bytes) -> Response {
+/// `POST /federation/communities/content` (signed by a community owner or
+/// moderator): stores a post body and registers its sha256 (the wire's
+/// content hash) against the blob. Bodies no post names are collected by
+/// `community-content-gc`.
+pub async fn put_content(
+    State(state): State<SharedState>,
+    caller: super::auth::Caller,
+    headers: HeaderMap,
+    original: OriginalUri,
+    body: Bytes,
+) -> Response {
+    let signer = match caller
+        .require_signer(
+            &state,
+            &headers,
+            "post",
+            &super::signed_path(&original, "/federation/communities/content"),
+        )
+        .await
+    {
+        Ok(signer) => signer,
+        Err(e) => return e.into_response(),
+    };
     if body.len() > MAX_CONTENT_BYTES {
         return err_json(
             StatusCode::PAYLOAD_TOO_LARGE,
@@ -1796,6 +1841,21 @@ pub async fn put_content(State(state): State<SharedState>, body: Bytes) -> Respo
         );
     }
     let (hash, size) = (content_hash(&body), body.len());
+    match registered_cid(&state.pool, &hash).await {
+        Ok(Some(_)) => {
+            return Json(json!({ "ok": true, "content_hash": hash, "size": size })).into_response();
+        }
+        Ok(None) => {}
+        Err(e) => return db_err(e),
+    }
+    if CONTENT_LIMITER.check(signer.as_str()) == RateLimitDecision::Deny {
+        return err_json(StatusCode::TOO_MANY_REQUESTS, "rate limit exceeded");
+    }
+    match may_upload(&state.pool, &signer).await {
+        Ok(None) => {}
+        Ok(Some(refused)) => return refused,
+        Err(e) => return db_err(e),
+    }
     let for_cid = body.clone();
     let cid = match tokio::task::spawn_blocking(move || crate::auth::hash::hash_bytes_v1(&for_cid))
         .await
@@ -1826,13 +1886,45 @@ pub async fn put_content(State(state): State<SharedState>, body: Bytes) -> Respo
     Json(json!({ "ok": true, "content_hash": hash, "size": size })).into_response()
 }
 
-/// `GET /federation/communities/content/{hash}`: the registered body.
+/// Only a wallet that may post somewhere uploads, within the global budget
+/// of bodies no post names yet.
+async fn may_upload(pool: &PgPool, signer: &Address) -> sqlx::Result<Option<Response>> {
+    let poster: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM social.community_members m \
+           JOIN social.communities c ON c.id = m.community_id \
+           WHERE m.member_address = $1 AND m.role IN ('owner', 'moderator', 'mod') \
+             AND c.active AND NOT c.suspended)",
+    )
+    .bind(signer)
+    .fetch_one(pool)
+    .await?;
+    if !poster {
+        return Ok(Some(err_json(
+            StatusCode::FORBIDDEN,
+            "only a community owner or moderator may upload post content",
+        )));
+    }
+    let unbound: i64 = sqlx::query_scalar(
+        "SELECT COALESCE(sum(cc.size), 0)::bigint FROM social.community_contents cc \
+         WHERE NOT EXISTS (SELECT 1 FROM social.community_signed_actions a WHERE a.content_hash = cc.content_hash)",
+    )
+    .fetch_one(pool)
+    .await?;
+    Ok((unbound >= MAX_UNBOUND_CONTENT_BYTES).then(|| {
+        err_json(
+            StatusCode::TOO_MANY_REQUESTS,
+            "content upload budget exhausted; retry later",
+        )
+    }))
+}
+
+/// `GET /federation/communities/content/{hash}`: the body of a public post.
 pub async fn get_content(State(state): State<SharedState>, Path(hash): Path<String>) -> Response {
     let hash = hash.to_ascii_lowercase();
     if !is_valid_hash(&hash) {
         return bad(format!("invalid content hash: {hash}"));
     }
-    let cid = match registered_cid(&state.pool, &hash).await {
+    let cid = match published_cid(&state.pool, &hash).await {
         Ok(Some(cid)) => cid,
         Ok(None) => return err_json(StatusCode::NOT_FOUND, "content not found"),
         Err(e) => return db_err(e),
@@ -1843,6 +1935,10 @@ pub async fn get_content(State(state): State<SharedState>, Path(hash): Path<Stri
             headers.insert(
                 header::CONTENT_TYPE,
                 HeaderValue::from_static("application/octet-stream"),
+            );
+            headers.insert(
+                header::X_CONTENT_TYPE_OPTIONS,
+                HeaderValue::from_static("nosniff"),
             );
             if let Ok(v) = HeaderValue::from_str(&hash) {
                 headers.insert("x-content-hash", v);
@@ -1921,8 +2017,20 @@ async fn collect(state: &CommunitiesState) -> anyhow::Result<Value> {
     )
 }
 
-/// `community-nonce-sweep`: drops the nonces whose replay window closed.
+/// `community-nonce-sweep`: drops the nonces whose replay window closed;
+/// `community-content-gc`: drops bodies no post names (see [`collect`]).
 pub fn spawn_job(state: &SharedState, jobs: &Jobs) {
+    let content = state.clone();
+    let cfg = PeriodicCfg::every(Duration::from_secs(900))
+        .with_jitter(Duration::from_secs(60))
+        .with_error_backoff(Duration::from_secs(1800));
+    jobs.spawn_periodic_leased("community-content-gc", cfg, move |_ctx| {
+        let state = content.clone();
+        async move {
+            collect(&state).await?;
+            Ok(())
+        }
+    });
     let pool = state.pool.clone();
     let cfg = PeriodicCfg::every(Duration::from_secs(300))
         .with_jitter(Duration::from_secs(30))
@@ -2017,6 +2125,20 @@ mod tests {
             Body::from(serde_json::to_vec(signed).unwrap()),
         )
         .await
+    }
+
+    async fn upload(app: &Router, w: &PrivateKeySigner, body: &str) -> (StatusCode, Value) {
+        let path = "/federation/communities/content";
+        let headers = signed_headers_by(
+            w,
+            "post",
+            path,
+            "{}",
+            true,
+            &chrono::Utc::now().timestamp_millis().to_string(),
+        )
+        .await;
+        call(app, "POST", path, headers, Body::from(body.to_string())).await
     }
 
     fn env<T: TypedMessage>(w: &PrivateKeySigner, message: T) -> Signed<T> {
@@ -3360,7 +3482,7 @@ mod tests {
         assert_eq!(places, ["p-1"]);
 
         // A post whose body was uploaded first lands with its text.
-        let (status, stored) = call(
+        let (status, _) = call(
             &app,
             "POST",
             "/federation/communities/content",
@@ -3368,10 +3490,16 @@ mod tests {
             Body::from("hello peers"),
         )
         .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "an unsigned upload");
+        let (status, _) = upload(&app, &PrivateKeySigner::random(), "hello peers").await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "a wallet that posts nowhere");
+        let (status, _) = upload(&app, &owner, &"a".repeat(MAX_CONTENT_BYTES + 1)).await;
+        assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+        let (status, stored) = upload(&app, &owner, "hello peers").await;
         assert_eq!(status, StatusCode::OK, "{stored}");
         let content = stored["content_hash"].as_str().unwrap().to_string();
         assert_eq!(content, hex::encode(Sha256::digest(b"hello peers")));
-        let (status, got) = call(
+        let (status, _) = call(
             &app,
             "GET",
             &format!("/federation/communities/content/{content}"),
@@ -3379,10 +3507,27 @@ mod tests {
             Body::empty(),
         )
         .await;
-        assert_eq!(
-            (status, got),
-            (StatusCode::OK, Value::String("hello peers".into()))
-        );
+        assert_eq!(status, StatusCode::NOT_FOUND, "no post names it yet");
+
+        // A body over the post limit is refused as a post.
+        let (status, long) = upload(&app, &owner, &"a".repeat(1001)).await;
+        assert_eq!(status, StatusCode::OK, "{long}");
+        let (status, _) = send(
+            &app,
+            &owner,
+            "POST",
+            &format!("{base}/posts"),
+            &env(
+                &owner,
+                CommunityPost {
+                    community_id: hex_id.clone(),
+                    content_hash: long["content_hash"].as_str().unwrap().to_string(),
+                },
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "1001 characters");
+
         let post_env = env(
             &owner,
             CommunityPost {
@@ -3404,6 +3549,18 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(text, "hello peers");
+        let (status, got) = call(
+            &app,
+            "GET",
+            &format!("/federation/communities/content/{content}"),
+            HeaderMap::new(),
+            Body::empty(),
+        )
+        .await;
+        assert_eq!(
+            (status, got),
+            (StatusCode::OK, Value::String("hello peers".into()))
+        );
 
         let (status, _) = send(
             &app,
@@ -3651,6 +3808,56 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::UNAUTHORIZED, "the owner cannot leave");
 
+        // A private community's actions and bodies stay out of the feeds.
+        let private_name = format!("fed private {}", &Uuid::new_v4().simple().to_string()[..8]);
+        let (status, created) = send(
+            &app,
+            &owner,
+            "POST",
+            "/v1/communities",
+            &env(
+                &owner,
+                CommunityCreate {
+                    name: private_name,
+                    description: "d".into(),
+                    private: true,
+                    unlisted: false,
+                    flags: vec![],
+                },
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{created}");
+        let private_hex = created["community_id"].as_str().unwrap().to_string();
+        let private_id = created["id"].as_str().unwrap().to_string();
+        let (status, secret) = upload(&app, &owner, "members only").await;
+        assert_eq!(status, StatusCode::OK, "{secret}");
+        let secret = secret["content_hash"].as_str().unwrap().to_string();
+        let (status, body) = send(
+            &app,
+            &owner,
+            "POST",
+            &format!("/v1/communities/{private_id}/posts"),
+            &env(
+                &owner,
+                CommunityPost {
+                    community_id: private_hex.clone(),
+                    content_hash: secret.clone(),
+                },
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let (status, _) = call(
+            &app,
+            "GET",
+            &format!("/federation/communities/content/{secret}"),
+            HeaderMap::new(),
+            Body::empty(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "a private community's body");
+
         // The feeds peers pull.
         let (_, snap) = call(
             &app,
@@ -3672,6 +3879,13 @@ mod tests {
             (json!(address(&owner)), json!(format!("{name} 2")))
         );
         assert_eq!(snap["role_log_hash"].as_str().map(str::len), Some(64));
+        assert!(
+            !snap["communities"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|c| c["community_id"] == json!(private_hex))
+        );
         let (_, feed) = call(
             &app,
             "GET",
@@ -3680,6 +3894,16 @@ mod tests {
             Body::empty(),
         )
         .await;
+        for kind in ["role", "posts", "places"] {
+            assert!(
+                !feed[kind]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|r| r["community_id"] == json!(private_hex)),
+                "{kind}"
+            );
+        }
         let mine: Vec<&Value> = feed["role"]
             .as_array()
             .unwrap()

@@ -83,6 +83,13 @@ impl RateLimiter {
     }
 
     pub fn check(&self, key: &str) -> RateLimitDecision {
+        self.check_cost(key, 1)
+    }
+
+    /// Spends `cost` tokens at once (e.g. bytes in KiB); a cost above the
+    /// capacity is always refused.
+    pub fn check_cost(&self, key: &str, cost: u32) -> RateLimitDecision {
+        let cost = f64::from(cost.max(1));
         self.maybe_sweep();
         let now = Instant::now();
         let entry = self
@@ -98,8 +105,8 @@ impl RateLimiter {
         let elapsed = now.saturating_duration_since(b.last).as_secs_f64();
         b.tokens = (b.tokens + elapsed * self.refill_per_sec).min(self.capacity);
         b.last = now;
-        if b.tokens >= 1.0 {
-            b.tokens -= 1.0;
+        if b.tokens >= cost {
+            b.tokens -= cost;
             RateLimitDecision::Allow
         } else {
             RateLimitDecision::Deny
@@ -134,6 +141,15 @@ impl RateLimiter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn check_cost_spends_several_tokens_and_refuses_over_budget() {
+        let limiter = RateLimiter::new(10, Duration::from_secs(60));
+        assert_eq!(limiter.check_cost("a", 6), RateLimitDecision::Allow);
+        assert_eq!(limiter.check_cost("a", 6), RateLimitDecision::Deny);
+        assert_eq!(limiter.check_cost("a", 4), RateLimitDecision::Allow);
+        assert_eq!(limiter.check_cost("b", 11), RateLimitDecision::Deny);
+    }
 
     #[test]
     fn is_rate_limited_does_not_consume_and_clear_forgives() {
