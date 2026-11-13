@@ -13,7 +13,8 @@ mod screen_position;
 pub mod snapshot;
 mod write_commands;
 
-pub use active_scene::ActiveInspectionScene;
+pub use active_scene::{ActiveInspectionScene, SceneResolver};
+pub use read_commands::parse_entity_id;
 pub use snapshot::PendingSnapshotRequests;
 
 pub struct SceneInspectorPlugin;

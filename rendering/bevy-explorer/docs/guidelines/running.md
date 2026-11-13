@@ -130,9 +130,21 @@ For the distributable, run `make web` in repository-root `apps/bevy-explorer`
 does not start a dev server. `make web-dev` skips wasm optimization. Import the artifact
 with `python3 tooling/fetch-play.py --from-build apps/bevy-explorer/dist/web` from the
 repository root, then follow the root README to run Sites. Sites serves it under `/play`
-with its own HUD, `apps/ui3/src/play`; see `rendering/bevy-explorer/README.md` for how that
-copy tracks `react-web`. Full DevTools logging needs DevTools open before the page loads.
+with its HUD host, `apps/ui3/src/play`, which runs the same shared HUD as `react-web`; see
+`rendering/bevy-explorer/README.md` for what each host keeps. Full DevTools logging needs DevTools open before the page loads.
 The engine console lives in the app iframe.
+
+To try a pull request's web build by hand, take its CI artifact (`bevy-explorer-web-<sha>`,
+built from the PR merged with main) and serve the folder on loopback with the headers the dev
+server sends (`coiHeadersExceptAuth` in `react-web/vite.config.ts`): none on the shell page,
+`Document-Isolation-Policy` on `app.html`, the isolation headers on everything else. The app
+frame is isolated, so drive it with the [web driver](#test-commands) rather than a page script;
+its window must stay visible, or Chrome throttles it. `?guest=1` signs in the engine's plain
+guest: the HUD's guest sign-in goes through thirdweb, which refuses origins it does not list. The HUD focuses the chat field on
+arrival, so release it (`/press_key Escape`) and check `keyboardClaimed` in `/world_state` before
+holding a movement key; a scene's own dialog can hold movement too. `/performance_state` gives the
+slowest frame and the frames over 50 ms of each 1,000 frames, and `/instantiation_state` what the
+spawner and glTF processing take.
 
 ## Headless
 
@@ -208,6 +220,42 @@ State, in every build:
   emote markers and direct messages are left out; `/dm_history` has those.
 - `/voice_state`: the mic (`available`, `enabled`) and, in LiveKit builds, each voice room's state
   and the addresses speaking.
+- `/nearby_mutes`: the wallets whose nearby voice the account muted (`muted`, the first 32 of
+  `count`), the `account` and where its saved list stands (`load`: `idle` signed out, `loading`,
+  `loaded`, `failed`). `/nearby_mute on|off <address>` mutes or unmutes one, as the profile
+  menu's Hush and Hear do, and saves it on the social service.
+- `/connectivity_state`: `connectionLost`, `probing`, `everConnected`, `suppressed` and `rooms`
+  (`scope`, `state`, `retryAt`). Scope names identify realm, scene or private chat rooms without
+  adapter URLs or credentials. `/connectivity_retry` requests immediate recovery and a new
+  reachability check; terminal admission failures and intentional pauses stay stopped.
+  The Connectivity debug section exposes both. The HUD's Connection Lost alert has Retry and
+  Exit Application buttons; recovery dismisses it, while Exit signs out through the existing session flow.
+  Room states share the same calculation as voice and room diagnostics: first admission is
+  `connecting`, a refused dial is `failed`, and pauses and terminal refusals retain their
+  specific labels. Room diagnostic `attempts` counts failures since the last stable reset.
+  The HUD receives initial and changed snapshots over the SystemApi bridge stream and sends
+  Retry through that bridge; the console commands remain available for diagnostics.
+  The [modal reference](connection-lost-modal.md) records Unity assets, dimensions and platform differences.
+- `/bevy_variants`: the abgen Bevy variants client as JSON: `base` (the variants origin, `null`
+  when off), `state` (on, off and why, or waiting for the GPU's texture formats), `formats` (the
+  variant formats this build takes and those it does not), `manifestCounts` (manifests loaded,
+  none, failed, not eligible and pending), `manifests` (each entity's manifest state: scene,
+  wearable or emote), `served` (variants downloaded and read from the cache), `servedByFormat`
+  (the same per format: `ktx2-bc`, and `glb-br` on web), `fallbacks` (files that loaded their
+  original instead) and `recentFallbacks` (the last 20, with the file, its entity and the
+  reason).
+- `/ban_block_state [address]`: the ban and block status as JSON: the local user's address, the
+  social blocks (`state` live or unavailable with its `reason`, `blocked`, `blockedBy`), the
+  platform ban (`state` unknown, checked or failed, `isBanned`, `source`, `reason`,
+  `matchedOn` for a record the gatekeeper withheld, `customMessage`, `expiresAt`,
+  `checkedAgoSecs`, `error`), the local user's scene admission
+  (`state` unknown, allowed or refused, `scope` platform, world or scene, `message`, `sceneId`),
+  the scene room's lists (`state`, `sceneId`, `bannedAddresses`, `sceneAdmins`, while the room is
+  connected) and, with an address, its `lookup` (`isBlockedEitherWay`, `direction`,
+  `bannedInScene`, `adminPermissions`). Every `null` reading has its reason in `unavailable`,
+  keyed by field path. `/block_user <address>` and `/unblock_user <address>` change the blocks
+  through the social service and answer once it has; `/ban_block_refresh` re-checks the
+  platform ban now.
 - `/entity_screen_position <entity> [--bounds]`: where a scene entity is on screen, in the
   coordinates `/click_at` takes, `null` behind the camera. The scene is the one `/set_scene`
   picked, else the player's; the entity is as `/scene_entities` lists it. `--bounds` aims at the
@@ -248,7 +296,7 @@ The HUD and input:
   matches need an `index`. `"busy"` is true inside a region that says it is still loading (`aria-busy`), such as
   the Backpack's `Catalog` grid or `Places results` while a query is in flight; `ready` waits for a
   control out of every such region. `/hud_fill` answers with the field
-  as the typing left it. The page's side is `react-web/src/lib/hudAutomation.ts`.
+  as the typing left it. The page's side is `library/explorer-core/lib/hudAutomation.ts`.
 - `/hud_login <identity> [--name <name> --look <n>] [--guest] [--default-on-error] [--realm <realm>]
   [--position <x,y>]` (web, and only while a test runner drives the browser: the page registers it
   when `window.__dclTrustedInput` is present): sign in through the HUD's own flow with an
@@ -259,10 +307,34 @@ The HUD and input:
   own), and the destination is picked from the lobby as a link's would be, which releases the held
   world. Replies `{"address", "guest", "phase"}` (`lobby`, `entering` on the way to the destination,
   `picking` or `world`) once the sign-in has landed and the page is done, or fails with its error.
-  The command is `react-web/src/lib/hudAutomation.ts` (`LOGIN_COMMANDS`, `provideHudLogin`); the
-  session provides the sign-in in `react-web/src/features/session/useEngineSession.ts`.
+  The command is `library/explorer-core/lib/hudAutomation.ts` (`LOGIN_COMMANDS`, `provideHudLogin`); the
+  session provides the sign-in in `library/ui/apps/hud/features/session/useEngineSession.ts`.
+- `/hud_logout` (web, under a test runner as `/hud_login` is): sign out through the HUD's own
+  flow, the engine included, back to the HUD's start page, where `/hud_login` takes a sign-in
+  again; a `/hud_login` still waiting for its answer fails with `signed out`. The engine's
+  `/logout` never reaches the HUD, which stays signed in and refuses a new `/hud_login`. A sign-in
+  the engine still holds keeps the next one waiting (`a sign-in is still finishing`) until the
+  engine answers it; one it never answers needs a page reload.
 - `/press_key <code> [--state down|up]`, with the key named as `KeyboardEvent.code` names it, and
   `/click_at <x> <y> [--button left|right|middle]`.
+- `/hover_entity <entity> [--bounds] [--frames N] [--timeout-frames N]`, `/hover_entity --clear`
+  and `/click_entity <entity> [--bounds] [--button pointer|primary|secondary] [--event
+  click|down|up] [--timeout-frames N]`: hover or click a scene entity of the active scene by id
+  through the pointer pipeline, on native and web alike. The pointer ray is aimed from the camera
+  at the entity, and a click presses the key or mouse button bound to the action. The reply is
+  JSON: `hit` (`entity`, `container`, `scene`, `playerDistance`, `cameraDistance`, or `null`), the
+  hover `entries`, the pointer `events` the scene got (`event`, `button`, `tick`) and a `diagnosis`
+  (`null`, `blocked by entity <id>`, `entity not live`, `input held by the HUD`,
+  `timed out waiting for target|hover|tick|release`). `--event down` keeps the press
+  held until `--event up` or `/hover_entity --clear`; other pointer commands are refused meanwhile
+  (`src/automation/pointer.rs`). `--frames` is at most 1800, and a hover's deadline is never
+  shorter than its frames plus 3, whatever `--timeout-frames` says.
+  A blocked outcome is a resolved reply with `diagnosis` set, not a failure.
+  [Interaction](interaction.md) has every option and reply field.
+- `/raycast_stats` (JSON: the capped tier's `budgetMs`, `ran`, `deferred` and `spentMs`, and the
+  uncapped tier's `uncappedRan` and `uncappedSpentMs`, each for its last frame with raycasts to
+  cast) and `/raycast_budget [ms|auto]` (show the capped budget, a tenth of the target frame, or
+  override it from 0 to 10 ms; `auto` ends the override).
 
 The accepted design makes these commands the client's agent surface in every build,
 so agents and tests share the same interface. Its native implementation asks the page where
@@ -275,6 +347,10 @@ which prove the HUD's handlers but not the browser's input path, and give a page
 lacks. `/hud_click` and `/hud_fill` say which in `"input"`: `trusted` or `synthetic`. Arguments
 are split on whitespace, so runs of spaces in a name or a text collapse to one. The preview-only
 commands (`/jump`, `/speed`, `/move_player_to`, the debug dumps) stay preview-only.
+
+On the web, `/hover_entity`, `/click_entity`, `/raycast_stats` and `/raycast_budget` go to the engine
+through `engine_console_command` and write Bevy input events, unlike `/press_key` and `/click_at`,
+which go through the page's trusted input; they need no DevTools client.
 
 **The loopback console contract.** The design requires every native build, including headless client mode, to carry a
 JSON-RPC server that runs console commands from outside the process, off unless the client is

@@ -11,6 +11,7 @@ use alloy_core::primitives::Address;
 use bevy::{
     color::palettes,
     math::DVec3,
+    pbr::CascadeShadowConfig,
     platform::collections::{HashMap, HashSet},
     prelude::*,
     render::{primitives::Aabb, view::RenderLayers},
@@ -602,6 +603,10 @@ pub struct AppConfig {
     pub camera_smoothing: CameraSmoothing,
     /// The language the player chose (BCP-47); `None` follows the system language.
     pub language: Option<String>,
+    /// Base url of an abgen Bevy variants service (prototype), when `--bevy-variants-url` /
+    /// `?bevyVariants=` is absent; `None` = the asset-bundle generator's CDN for the base
+    /// domain, `off` = off.
+    pub bevy_variants_url: Option<String>,
     // field-level default (0) so configs saved before this field existed read as outdated,
     // rather than taking the current generation from the container-level default
     #[serde(default)]
@@ -660,6 +665,7 @@ impl Default for AppConfig {
             dm_privacy: None,
             camera_smoothing: Default::default(),
             language: None,
+            bevy_variants_url: None,
             settings_generation: SETTINGS_GENERATION,
             inputs_generation: INPUTS_GENERATION,
             is_fresh_user_id: true,
@@ -960,10 +966,15 @@ pub enum AudioType {
     Avatar,
 }
 
+// a field missing from a saved config takes its default (a failed parse resets the whole config)
 #[derive(Resource, Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(default)]
 pub struct AudioSettings {
     pub master: i32, // 0-100
+    /// nearby players' voices
     pub voice: i32,
+    /// private calls and community voice streams
+    pub voice_chat: i32,
     pub scene: i32,
     pub system: i32,
     pub avatar: i32,
@@ -974,6 +985,7 @@ impl Default for AudioSettings {
         Self {
             master: 100,
             voice: 100,
+            voice_chat: 100,
             scene: 100,
             system: 100,
             avatar: 100,
@@ -984,6 +996,9 @@ impl Default for AudioSettings {
 impl AudioSettings {
     pub fn voice(&self) -> f32 {
         (self.voice * self.master) as f32 / 10_000.0
+    }
+    pub fn voice_chat(&self) -> f32 {
+        (self.voice_chat * self.master) as f32 / 10_000.0
     }
     pub fn scene(&self) -> f32 {
         (self.scene * self.master) as f32 / 10_000.0
@@ -999,8 +1014,46 @@ impl AudioSettings {
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ShadowSetting {
     Off,
+    /// one cascade, hardware 2x2 filtering
     Low,
+    /// four soft cascades
     High,
+}
+
+/// The far bounds of High's first three cascades, as fractions of the shadow distance.
+pub const SUN_CASCADE_4_SPLITS: [f32; 3] = [0.102, 0.282, 0.474];
+/// How far from the player a spot light can cast shadows, in metres.
+pub const SPOT_SHADOW_MAX_DISTANCE: f32 = 20.0;
+pub const MIN_CASCADE: f32 = 0.1;
+
+/// The sun's cascades for a quality and a shadow distance, `None` when it casts no shadows.
+pub fn sun_cascades(setting: ShadowSetting, distance: f32) -> Option<CascadeShadowConfig> {
+    if distance <= 0.0 {
+        return None;
+    }
+    let far = distance.max(MIN_CASCADE + f32::EPSILON);
+    let bounds = match setting {
+        ShadowSetting::Off => return None,
+        ShadowSetting::Low => vec![far],
+        ShadowSetting::High => {
+            let mut previous = MIN_CASCADE;
+            SUN_CASCADE_4_SPLITS
+                .iter()
+                .map(|split| (f64::from(*split) * f64::from(far)) as f32)
+                .chain([far])
+                .map(|bound| {
+                    // bounds must increase strictly, even for a distance under the minimum
+                    previous = bound.max(previous + f32::EPSILON);
+                    previous
+                })
+                .collect()
+        }
+    };
+    Some(CascadeShadowConfig {
+        bounds,
+        overlap_proportion: 0.2,
+        minimum_distance: MIN_CASCADE,
+    })
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
@@ -1193,6 +1246,45 @@ pub struct SceneMeta {
     pub spawn_points: Option<Vec<SpawnPoint>>,
     pub skybox_config: Option<SkyboxConfig>,
     pub authoritative_multiplayer: Option<bool>,
+    /// `featureToggles`: a host scene's switches, of which `portableExperiences` is read
+    /// ([`PortableExperiencesToggle`]). Kept as raw json so a value of another shape never
+    /// fails the scene.json.
+    pub feature_toggles: Option<serde_json::Value>,
+}
+
+impl SceneMeta {
+    /// What this scene says about portable experiences while the player stands in it.
+    pub fn portable_experiences_toggle(&self) -> PortableExperiencesToggle {
+        self.feature_toggles
+            .as_ref()
+            .and_then(|toggles| toggles.get("portableExperiences"))
+            .and_then(serde_json::Value::as_str)
+            .map(|value| value.parse().unwrap_or_default())
+            .unwrap_or_default()
+    }
+}
+
+/// A host scene's `featureToggles.portableExperiences`: whether portable experiences run (and
+/// show their UI) while the player is inside the scene. Anything but `disabled` lets them run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum PortableExperiencesToggle {
+    #[default]
+    Enabled,
+    Disabled,
+    HideUi,
+}
+
+impl std::str::FromStr for PortableExperiencesToggle {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "enabled" => Ok(Self::Enabled),
+            "disabled" => Ok(Self::Disabled),
+            "hideui" => Ok(Self::HideUi),
+            _ => Err(()),
+        }
+    }
 }
 
 pub trait PermissionStrings {
@@ -1925,6 +2017,39 @@ mod tests {
     use super::*;
 
     #[test]
+    fn sun_cascades_split_the_shadow_distance() {
+        let high = sun_cascades(ShadowSetting::High, 100.0).unwrap();
+        assert_eq!(high.bounds, vec![10.2, 28.2, 47.4, 100.0]);
+        assert_eq!(high.minimum_distance, MIN_CASCADE);
+        let medium = sun_cascades(ShadowSetting::Low, 60.0).unwrap();
+        assert_eq!(medium.bounds, vec![60.0]);
+        assert!(sun_cascades(ShadowSetting::Off, 60.0).is_none());
+        assert!(sun_cascades(ShadowSetting::High, 0.0).is_none());
+        // a distance under the minimum still yields a strictly increasing config
+        let tiny = sun_cascades(ShadowSetting::High, 0.05).unwrap();
+        assert!(tiny.bounds.windows(2).all(|w| w[0] < w[1]) && tiny.bounds[0] > MIN_CASCADE);
+    }
+
+    #[test]
+    fn a_config_saved_before_the_voice_chat_volume_keeps_its_audio() {
+        let config = AppConfig::from_json(
+            br#"{"user_id":"u","audio":{"master":80,"voice":40,"scene":30,"system":20,"avatar":10}}"#,
+        );
+        assert_eq!(config.user_id, "u");
+        assert_eq!(
+            config.audio,
+            AudioSettings {
+                master: 80,
+                voice: 40,
+                voice_chat: 100,
+                scene: 30,
+                system: 20,
+                avatar: 10,
+            }
+        );
+    }
+
+    #[test]
     fn reset_outdated_settings_caps_uncapped_uploads() {
         let saved = |gpu_bytes_per_frame| {
             let mut config = AppConfig {
@@ -2054,6 +2179,42 @@ mod tests {
         assert!(parse(r#"{"sizes":[],"satelliteView":{"topLeftOffset":null}}"#).is_none());
         assert!(parse(r#"{"sizes":[],"satelliteView":{"topLeftOffset":{"x":1}}}"#).is_none());
         assert!(parse(r#"{"sizes":[],"satelliteView":{"version":1}}"#).is_none());
+    }
+
+    #[test]
+    fn feature_toggles_parse_leniently() {
+        let meta = |toggles: &str| -> SceneMeta {
+            serde_json::from_str(&format!(
+                r#"{{"main":"bin/index.js","scene":{{"base":"0,0","parcels":["0,0"]}}{toggles}}}"#
+            ))
+            .unwrap()
+        };
+        assert_eq!(
+            meta("").portable_experiences_toggle(),
+            PortableExperiencesToggle::Enabled
+        );
+        assert_eq!(
+            meta(r#","featureToggles":{"portableExperiences":"disabled","voiceChat":false}"#)
+                .portable_experiences_toggle(),
+            PortableExperiencesToggle::Disabled
+        );
+        assert_eq!(
+            meta(r#","featureToggles":{"portableExperiences":"hideUi"}"#)
+                .portable_experiences_toggle(),
+            PortableExperiencesToggle::HideUi
+        );
+        // values of another shape are ignored rather than failing the scene.json
+        for toggles in [
+            r#","featureToggles":{"portableExperiences":1}"#,
+            r#","featureToggles":["disabled"]"#,
+            r#","featureToggles":{"portableExperiences":"unknown"}"#,
+        ] {
+            assert_eq!(
+                meta(toggles).portable_experiences_toggle(),
+                PortableExperiencesToggle::Enabled,
+                "{toggles}"
+            );
+        }
     }
 }
 

@@ -234,6 +234,18 @@ class ConfigurationTest(unittest.TestCase):
         for body in bodies:
             self.assertIn(f"limit_conn deploy_uploads {gateway.DEPLOY_CONNECTIONS_PER_ADDRESS};", body)
 
+    def test_protected_storage_keeps_the_apps_content_headers(self):
+        cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1", "GATEWAY_STORAGE_ROOT": "/content"})
+        table = {"sites": [], "internal": ["/metrics"], "node": [], "aliases": [], "deploy": ["/entities"]}
+        text = gateway.render(table, cfg, "/mime.types")
+        body = re.search(r"location \^~ /__protected_storage/ \{\n(.*?)\n\}", text, re.S)[1]
+        # The app's Cache-Control passes through the redirect; a second one would double it.
+        self.assertNotIn("Cache-Control", body)
+        self.assertIn("add_header Access-Control-Expose-Headers "
+                      "$upstream_http_access_control_expose_headers always;", body)
+        # Ranges the app does not answer itself get the whole file, as upstream.
+        self.assertIn("max_ranges 0;", body)
+
     def worlds_locations(self):
         cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1", "GATEWAY_DOMAIN": "example.test"})
         table = {"sites": [], "internal": ["/metrics"], "node": [], "aliases": [],
@@ -302,6 +314,46 @@ class ConfigurationTest(unittest.TestCase):
             self.assertNotIn(f"location ^~ {path}/", config)
         self.assertIn("location ^~ /places/api/ {\nproxy_pass http://apis;", config)
         self.assertIn("location /places/ {\nproxy_pass http://sites;", config)
+
+    def test_legal_documents_route_to_sites_without_claiming_api_paths(self):
+        root = Path(__file__).parents[3]
+        legal_fixtures = root / "apps/sites/src/data/legal/fixtures"
+        canonical_paths = {
+            json.loads(path.read_text())["path"] for path in legal_fixtures.glob("*.json")
+        }
+        public_paths = canonical_paths | {"/content-policy", "/rewards", "/referral"}
+        # The route table production renders: every Sites route file, and no node row for
+        # /credits, which reaches the APIs through `location /`.
+        sites = sorted(path.name for path in (root / "apps/sites/src/routes/routes").iterdir())
+        table = {"sites": sites, "internal": [], "aliases": [], "node": [], "deploy": []}
+        cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1"})
+        config = gateway.render(table, cfg, "/mime.types")
+
+        for path in public_paths - {"/content"}:
+            with self.subTest(path=path):
+                self.assertIn(f"location = {path} {{\nproxy_pass http://sites;", config)
+        self.assertIn("location = /content {\nproxy_pass http://$content_root;", config)
+        self.assertIn("location /content/ {\nproxy_pass http://apis;", config)
+        self.assertIn("location / {\nproxy_pass http://apis;", config)
+        sites_locations = re.findall(r"location (= |\^~ )?(/\S*) \{\nproxy_pass http://sites;", config)
+        for path in ("/credits", "/credits/", "/credits/seasons"):
+            with self.subTest(path=path):
+                self.assertEqual([], [
+                    (kind, prefix) for kind, prefix in sites_locations
+                    if (path == prefix if kind == "= " else path.startswith(prefix)) and prefix != "/"
+                ])
+
+    def test_content_page_is_sites_only_on_the_apex_host(self):
+        cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1", "GATEWAY_DOMAIN": "example.test",
+                                "GATEWAY_HOST_ALIASES": "www.example.test"})
+        table = {"sites": [], "internal": [], "aliases": [], "node": [], "deploy": []}
+        maps = nginx_map.parse(gateway.render(table, cfg, "/mime.types"))
+        root = lambda host: nginx_map.Request(maps, host=host)["content_root"]
+        self.assertEqual(root("example.test"), "sites")
+        self.assertEqual(root("www.example.test"), "sites")
+        for host in ("peer.example.test", "worlds.example.test", "content.example.test"):
+            with self.subTest(host=host):
+                self.assertEqual(root(host), "apis")
 
     def test_bundled_event_image_uses_api_without_claiming_other_event_assets(self):
         path = "/events/assets/event-default.webp"

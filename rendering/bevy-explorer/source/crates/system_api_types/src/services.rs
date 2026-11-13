@@ -29,8 +29,8 @@ pub enum Service {
     AuthApi,
     /// The sign-in web page the browser is sent to
     AuthPage,
-    /// Asset-bundle registry: profile lookups
-    AssetBundleRegistry,
+    /// Asset-bundle generator CDN: Bevy variants
+    AbgenCdn,
     /// World storage (storage delegation signing)
     Storage,
     /// Ethereum json-rpc websocket
@@ -89,7 +89,7 @@ impl Service {
             Service::PreviewGatekeeper => ("https", "comms-gatekeeper-local", ""),
             Service::AuthApi => ("https", "auth-api", ""),
             Service::AuthPage => ("https", "", "/auth"),
-            Service::AssetBundleRegistry => ("https", "asset-bundle-registry", ""),
+            Service::AbgenCdn => ("https", "abgen-cdn", ""),
             Service::Storage => ("https", "storage", ""),
             Service::EthereumRpc => ("wss", "rpc", ""),
             Service::SocialRpc => ("wss", "rpc-social-service-ea", ""),
@@ -120,7 +120,7 @@ impl Service {
             Service::PreviewGatekeeper => "preview_gatekeeper",
             Service::AuthApi => "auth_api",
             Service::AuthPage => "auth_page",
-            Service::AssetBundleRegistry => "asset_bundle_registry",
+            Service::AbgenCdn => "abgen_cdn",
             Service::Storage => "storage",
             Service::EthereumRpc => "ethereum_rpc",
             Service::SocialRpc => "social_rpc",
@@ -210,10 +210,10 @@ pub struct ServiceOverrides {
     #[arg(long, value_name = "url", help_heading = HELP_HEADING)]
     pub auth_page: Option<String>,
 
-    /// Asset-bundle registry; absent = `https://asset-bundle-registry.<base>` (custom domains
-    /// only: org and zone profiles use the registry of the profile's own environment)
+    /// Asset-bundle generator CDN (Bevy variants); absent =
+    /// `https://abgen-cdn.<base>`
     #[arg(long, value_name = "url", help_heading = HELP_HEADING)]
-    pub asset_bundle_registry: Option<String>,
+    pub abgen_cdn: Option<String>,
 
     /// World storage; absent = `https://storage.<base>`. https only: an http instance is never
     /// signed for (the delegation claim must not go out in cleartext)
@@ -289,7 +289,7 @@ impl ServiceOverrides {
             Service::PreviewGatekeeper => &self.preview_gatekeeper,
             Service::AuthApi => &self.auth_api,
             Service::AuthPage => &self.auth_page,
-            Service::AssetBundleRegistry => &self.asset_bundle_registry,
+            Service::AbgenCdn => &self.abgen_cdn,
             Service::Storage => &self.storage,
             Service::EthereumRpc => &self.ethereum_rpc,
             Service::SocialRpc => &self.social_rpc,

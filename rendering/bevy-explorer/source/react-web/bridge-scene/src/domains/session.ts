@@ -2,12 +2,12 @@
 //   from: BevyApi (login + getSceneLoadingUIStream), @dcl/sdk getPlayer (player-ready).
 import { getPlayer } from '@dcl/sdk/players'
 import { openExternalUrl } from '~system/RestrictedActions'
-import { bugReportUrl } from '../../../src/lib/bugReport'
+import { bugReportUrl } from '@explorer-core/lib/bugReport'
 import { BevyApi } from '../bevy-api'
 import { relay } from '../system-helpers'
 import { identity } from '../identity'
 import type { Ctx } from '../bridge'
-import { guestLogin, guestSign } from '../../../src/features/auth/thirdweb'
+import { guestLogin, guestSign } from '@explorer-core/features/auth/thirdweb'
 
 // thirdweb only serves origins on the project's allowlist, and the native page's cef:// origin is
 // not one. The scene's fetch runs in the engine, so it can name one that is (as Godot does).

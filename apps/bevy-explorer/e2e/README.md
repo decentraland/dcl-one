@@ -7,9 +7,9 @@ the standalone, by `node --test`, with no browser-automation framework
 The sign-in flows
 (explorer-automation's Auth and CrossVerify fixtures) are left aside.
 
-The scenarios were copied once from `decentraland/explorer-automation` at `955b338` (2026-10-22)
-and rewritten; no Unity code moved. Nothing here compares the two clients: every visual reference
-is recorded anew in dcl-one.
+The scenario inventory is pinned to `decentraland/explorer-automation@955b338` (2026-10-22),
+with scenarios implemented through this repository's console driver. Every visual reference
+is recorded anew by dcl-one's CI against this client's rendering behavior.
 
 **Status.** The driver and the tooling are covered by unit tests, which run in CI. The scenarios
 run on the Windows GPU runner with the zone accounts ([CI](#ci)), and on a workstation with a GPU
@@ -29,7 +29,7 @@ npm run typecheck                      # tsc
 npm test                               # the driver's tests (a stub page in headless Chrome)
 DCL_E2E_ACCOUNT_KEYS=0x... npm run e2e -- --inworld     # the InWorld scenarios against zone
 npm run e2e -- --visual                # the Visual suite (build the scenes first, see below)
-npm run e2e -- --filter 'opens the Backpack'            # a name pattern
+npm run e2e -- --filter 'opens the Backpack'            # a scenario-name pattern, not a file name
 npm run gpu-probe                      # the GPU the browser gives, started as the scenarios start it (chrome://gpu to report/)
 npm run gpu-probe -- --adapter nvidia  # and once more on that adapter when the browser runs on another (Windows)
 ```
@@ -71,6 +71,9 @@ second one on its own realm.
 | `DCL_E2E_TRANSPORT` | `native` drives the standalone through `dcl/console` instead of a browser | `web` |
 | `DCL_E2E_NATIVE_BIN`, `DCL_E2E_NATIVE_ARGS` | A standalone to start with its loopback console on (`--realm`, `--position`, `--automation-token` and `--automation-port` are added) | unset |
 | `DCL_E2E_NATIVE_PORT`, `DCL_E2E_NATIVE_TOKEN` | A running standalone's loopback console and the token it was started with | `15702`, unset |
+| `DCL_E2E_SMART_WEARABLE_URN` | A smart wearable on the configured backend for `specs/smart-wearables.test.ts` to run with no prompt | unset: that scenario is skipped |
+
+A development binary started by `DCL_E2E_NATIVE_BIN` reads its assets next to the executable: set `BEVY_ASSET_ROOT` to `rendering/bevy-explorer/source` so the bundled HUD loads, and pass `DCL_E2E_NATIVE_ARGS=--guest` on a machine whose install never accepted the terms, or the welcome page holds the world and no scenario arrives.
 
 To run the native Explorer against a gateway, set
 `DCL_E2E_NATIVE_ARGS="--gateway https://gateway.example.test"`.
@@ -79,7 +82,7 @@ describes the gateway layouts and service overrides.
 
 The report goes to `report/`: `junit-<groups>.xml`, and per scenario `commands.jsonl` (every
 console command, its reply or error and its time; `/login_identity` and `/hud_login` payloads
-redacted) and
+redacted wherever the line puts them, found by the shape of an identity, encoded or raw JSON) and
 `final.png` (the engine's frame as the scenario left it). A failed scenario adds `page.jpg`, the
 page as it looked, the HUD included (on the web the engine's frame has none), and `console.txt`,
 the page's last 200 console lines; a failed restore adds the same as `restore-page.jpg` and
@@ -95,10 +98,10 @@ as it happens.
 
 ## How a spec is written
 
-One file per explorer-automation fixture under `specs/`, headed by a table of its Unity tests
+One file per explorer-automation fixture under `specs/`, headed by a table of its test cases
 with the class of each: **Port** (the same scenario), **Partial** (an assertion changed, said
 in the header), **Gap** (the Bevy HUD has no such feature or control) or **Drop** (a Unity
-harness self-test). Each Unity test is one `scenario` (`driver/harness.ts`); a Gap or Drop is a
+harness self-test). Each test case is one `scenario` (`driver/harness.ts`); a Gap or Drop is a
 `todo` with its reason, counted apart in the report and never a pass.
 
 A scenario reaches the client only through `Explorer` (`driver/explorer.ts`): console commands
@@ -161,12 +164,25 @@ same-origin Chrome page contexts, recreates those contexts to check recovery, an
 IndexedDB transaction. These checks do not substitute for running the debug panel against a built
 Explorer. The chat scenarios in `specs/chat.test.ts` also check that a slash keypress and Unicode text reach the composer.
 
+`specs/ban-block-state.test.ts` reads the engine's ban and block status (`/ban_block_state`), blocks
+and unblocks a second configured account through `/block_user` and `/unblock_user`, and checks the
+"Bans and blocks" debug section is registered. With one account key the blocking scenario is a todo.
+`specs/platform-ban.test.ts` reads the platform-ban check against zone, then, on the standalone only,
+boots a second client with `--comms-gatekeeper` pointed at `driver/gatekeeper-stub.ts` (a loopback
+gatekeeper answering as scripted, `DCL_E2E_GATEKEEPER_PORT`, 18745 by default, one shared by
+every spec and closed with the sessions) to see a banned answer and a failed check; a scenario's
+`session.nativeArgs` is what starts that client, on an automation port of its own. On the web
+a service override stops the boot at the launch gate, so those scenarios are todos there.
+`specs/scene-ban.test.ts` reads the scene room's admission and moderation lists at Genesis Plaza and
+their absence on an empty parcel, and, on the standalone against the same stub, a refused scene
+adapter reported as a scene ban.
+
 ## Scenario map
 
 explorer-automation's 89 Explorer tests outside the sign-in flows, by fixture; the class of each
-test is in the spec file's header. Port 43, Partial 32, Gap 12, Drop 2.
+test is in the spec file's header. Port 43, Partial 33, Gap 11, Drop 2.
 
-| Unity fixture (tests) | Spec | Port | Partial | Gap | Drop | What changed |
+| Fixture (tests) | Spec | Port | Partial | Gap | Drop | What changed |
 | --- | --- | --- | --- | --- | --- | --- |
 | ExplorePanel (7) | `explore-panel` | 6 | 1 | | | Pages instead of one panel; the top bar has no Communities tab |
 | Shortcuts (7) | `shortcuts` | 5 | 1 | 1 | | Gallery is `G`, not `K`; no key opens Events |
@@ -175,7 +191,7 @@ test is in the spec file's header. Port 43, Partial 32, Gap 12, Drop 2.
 | Navmap (1) | `navmap` | 1 | | | | `Sports`, not `Sport` |
 | Events (3) | `events` | | | 3 | | Two lists, no calendar, detail popup or Create button |
 | Places (5) | `places` | | 4 | 1 | | Tabs and dropdowns without counters; a card jumps in, so no detail popup |
-| Communities (4) | `communities` | | 3 | 1 | | No invites view, titles or counts; the detail is a modal |
+| Communities (4) | `communities` | | 4 | | | No titles or counts; the invites view's titles only with something pending; the detail is a modal |
 | Chat (6) | `chat` | 2 | 4 | | | Escape leaves the input but keeps the panel; history checked through `/chat_history` |
 | EmoteWheel (3) | `emote-wheel` | 2 | 1 | | | The emote playing is asserted through `/avatar_state` |
 | Camera (3) | `camera` | 3 | | | | The camera and the capture are the engine's (`/photo_mode`, `/take_photo`); the HUD opens and closes photo mode (the C key, the rail's Camera button) and shows the overlay's Shoot and Close |
@@ -196,6 +212,19 @@ counts in `/community_state` and lands in `/dm_history community:<id>`. It needs
 account that is a member of a community, whose card it finds under My Communities (VIEW ALL), and
 fails saying so otherwise.
 
+Specs with no explorer-automation counterpart, outside the counts above:
+
+| Spec | Scenarios | Needs |
+| --- | --- | --- |
+| `debug-panel` | every debug reading resolves; the panel shows live data and plays an emote | |
+| `smart-wearables` | a realm's `/preview-wearables` runs the fixture as a smart wearable with no prompt (`/live_scenes`, `/smart_wearables`, its log and UI label, the sidebar's `Portable experiences` button); `/stop_portable` stops it, it stays listed as stopped, and the popover's `Restart` runs it again; a parcel scene with `portableExperiences: disabled` pauses it (blocked, still live); a configured wearable, run as a guest through the backend, runs with no prompt | the fixture built (`npm run build-scenes -- smart-wearable`); `DCL_E2E_SMART_WEARABLE_URN` for the fourth |
+
+The first three smart-wearable scenarios boot a guest client on a loopback realm of their own
+(`driver/realm.ts` with `previewWearables`, on an ephemeral port) that lists `scenes/smart-wearable`
+under `male/` and `female/`, as the creator preview serves a wearable. The third's realm also
+serves the same project as the parcel scene at `0,0`, its `scene.json` rewritten (`buildScene`'s
+`rewrite`) to disable portable experiences.
+
 What the HUD would need for more Ports, found while porting: roles or labels on the minimap's
 name and coordinates, the chat message text, the communities titles and counts, the passport
 header and bio, the skybox slider and switch; `aria-selected` and `aria-pressed` readable through
@@ -203,7 +232,8 @@ header and bio, the skybox slider and switch; `aria-selected` and `aria-pressed`
 
 ## Visual suite
 
-`scenes/` holds the 17 SDK7 scenes, each at its own parcels ([scenes/README.md](scenes/README.md)).
+`scenes/` holds the 17 SDK7 scenes, each at its own parcels, and the smart-wearable fixture the
+InWorld spec `smart-wearables` previews ([scenes/README.md](scenes/README.md)).
 `specs/visual/visual.test.ts` builds their entities, serves them as a realm on loopback
 (`driver/realm.ts`: `/about`, `/content/contents/<hash>`), boots the client on it as a guest in a
 960x540 window, turns the nametags off and holds the landscape's trees still (`/nametags false`:
@@ -293,17 +323,35 @@ Kept from explorer-automation's guides:
 
 ## Keeping the suite true
 
+Connectivity diagnostics use `explorer.connectivity()` (`/connectivity_state`) and
+`explorer.retryConnectivity()` (`/connectivity_retry`). The snapshot contains `connectionLost`,
+`probing`, `everConnected`, `suppressed`, and `rooms` (`scope`, `state`, `retryAt`), without
+credentials or raw server responses. The HUD exposes one `alertdialog` named `Connection Lost`,
+with `Retry` and `Exit Application` buttons, and a `status` named `Multiplayer status` for scoped room
+degradation. Retry is disabled and `aria-busy` while its command is pending. The dialog
+follows engine state through retry, reopening or remaining available when a probe fails.
+Recovery retracts it automatically; Exit follows session sign-out.
+
+Connectivity and voice diagnostics share room states: `connecting` for first admission,
+`connected`, `reconnecting`, `disconnected`, `failed`, `paused`, and the terminal reasons
+`denied`, `invalid`, `identity_conflict`, `credentials_required`. A first connection has no
+retry deadline. `/room_diagnostics` reports failed attempts since the last stable reset.
+The HUD receives initial and changed connectivity snapshots through its bridge stream;
+the console commands remain available to the driver and debug panel.
+
 The suite and the console surface read the code they test (the repository's `AGENTS.md`). A
 change on the left updates what is on the right in the same change, then runs the check.
 
 | Changed | Update | Check |
 | --- | --- | --- |
-| A HUD control's role, accessible name, placeholder, `aria-*` state or visibility; a page's heading or tablist (`react-web/src`) | The selector in the spec (`specs/*.test.ts`, `specs/pages.ts`, `specs/backpack.ts`); the spec header's row and the scenario map above when a test's class changed; the HUD copy in `apps/ui3/src/play` and `hud_source_sha256` in `rendering/bevy-explorer/upstream.lock.json` (`python3 tooling/play-artifact.py hud-inputs --root .`) | `npm run typecheck`; the scenarios in CI |
+| A HUD control's role, accessible name, placeholder, `aria-*` state or visibility; a page's heading or tablist (`library/ui/apps/hud`) | The selector in the spec (`specs/*.test.ts`, `specs/pages.ts`, `specs/backpack.ts`); the spec header's row and the scenario map above when a test's class changed | `npm run typecheck`; the scenarios in CI |
 | A list region's `aria-busy` or what sets it (the Backpack's `Catalog` and `Saved outfits`, `Places results`), or a HUD control animated other than by CSS (which `hudAutomation.ts` cannot see moving) | `CATALOG` and `SAVED_OUTFITS` in `specs/backpack.ts`, `RESULTS` in `specs/places.test.ts`; the HUD tests that pin the state (`backpackStates`, `placesBrowser`, `hudAutomation`) | the HUD's tests; the scenarios in CI |
 | What `/world_state`'s `keyboardClaimed` reads (`InputPriorities`), or how the HUD relays a field's focus (`uiFocus`) | `keyboardTaken` and `keyboardReleased` in `driver/explorer.ts`, `closePage` in `specs/pages.ts`, `closeToRest` in `driver/harness.ts` and their tests | `cargo test world_state`; `npm test` |
 | A key binding | The keys in `specs/pages.ts`; the shortcuts spec's header | the same |
-| A console command's name, arguments or reply, in the engine or in `hudAutomation.ts`; what `/hud_login` does with the session (`useEngineSession.ts`: the stored sign-in, the welcome page, the lobby's pick) | `driver/explorer.ts`, `driver/session.ts` and their tests; the Explorer readme's "Agents and tests" and `docs/guidelines/running.md` "Test commands" | `npm test`; the HUD's tests (`react-web`: `npm test`) |
+| A console command's name, arguments or reply, in the engine or in `hudAutomation.ts`; what `/hud_login` and `/hud_logout` do with the session (`useEngineSession.ts`: the stored sign-in, the welcome page, the lobby's pick, the sign-out) | `driver/explorer.ts`, `driver/session.ts` and their tests; the Explorer readme's "Agents and tests" and `docs/guidelines/running.md` "Test commands" | `npm test`; the HUD's tests (`react-web`: `npm test`) |
+| `/hover_entity`, `/click_entity`, `/raycast_stats`, `/raycast_budget`, `/scene_logs` or the `pointer-targets` and `raycast-storm` scenes | `driver/explorer.ts`, `test/explorer.test.ts`, `specs/visual/pointer.test.ts`, `specs/visual/raycast-budget.test.ts`, `rendering/bevy-explorer/docs/guidelines/interaction.md`; `scenes/README.md` for a scene | `npm test`; the two scenarios, e.g. `npm run e2e -- --visual --filter 'the box behind the wall'` and `--filter 'a zero budget holds'` (the scenarios of `pointer.test.ts` and `raycast-budget.test.ts` have their own names; a pattern on a file name selects nothing). On the web these commands reach the engine through `engine_console_command` and write Bevy input events, not the page's trusted input |
 | `--automation-token`, `--automation-port`, their environment fallbacks, the `dcl/console` methods, or the `__dclTrustedInput` contract | `driver/native.ts`, `driver/web.ts`, `local-harness/web-driver` and its README; the readme section | `npm test`; the web driver's tests |
+| The smart-wearable fixture (`scenes/smart-wearable`: its title, name, log line or label), `/preview-wearables` or `buildScene` in `driver/realm.ts`, the `/smart_wearable*`, `/portables` or `/stop_portable` commands, or the HUD's `Portable experiences` button, popover or its `Stop`/`Restart` rows | `specs/smart-wearables.test.ts`, `test/realm.test.ts`, `scenes/README.md` | `npm test`; the scenario in CI |
 | A scene under `scenes/`, its parcels or spawn, `specs/visual/scenes.ts`, the 960x540 window or the tolerance | The references, re-recorded in CI (`record`) and committed in a PR; `scenes/README.md` | the visual scenarios in CI |
 | A path moved under `apps/bevy-explorer/e2e`, `tooling/bevy-e2e-*.py` or the workflow | The workflow's `paths` filters, `tooling/bevy-ci.py` and `tooling/tests/test_bevy_ci.py`, the LFS patterns in `.gitattributes`, the links in this README | the tooling tests |
 | The CI workflow's name, its job names, the `bevy-explorer-web-<sha>` artifact or the status comment's sections | `tooling/bevy-e2e-inputs.py`, `tooling/bevy-e2e-report.py` and their tests; the e2e workflow's `workflow_run` | the tooling tests |

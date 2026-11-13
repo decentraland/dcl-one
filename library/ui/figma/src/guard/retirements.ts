@@ -1,5 +1,6 @@
 import path from 'node:path'
 import { z } from 'zod'
+import { isPlainText } from '../../component-generation.mjs'
 import { readIfExists } from './fs-safe.js'
 
 // Retirement identities are permanent developer records, so later ready captures cannot readmit them.
@@ -10,15 +11,13 @@ import { readIfExists } from './fs-safe.js'
 // and repository-relative artifact paths. A Figma URL or a file key has no field it fits in.
 const nodeId = z.string().regex(/^[\w:;-]{1,64}$/, 'must be a Figma node id')
 const LINK = /:\/\/|figma\.com|www\./i
+// The same plain-text rule as the accepted limits of the component registry.
 const plainText = (max: number) =>
   z
     .string()
     .min(1)
     .max(max)
-    .refine(
-      (text) => !/[\p{Cc}<>]/u.test(text) && !LINK.test(text),
-      'must be plain text with no link'
-    )
+    .refine((text) => isPlainText(text, max), 'must be plain text with no link')
 const artifact = z
   .string()
   .regex(

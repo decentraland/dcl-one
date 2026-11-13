@@ -5,6 +5,7 @@
 // page file names, this tree's paths), and accepts the result only when every file matches the digest pinned for
 // it in the lock. The raw FDS objects, which carry the file key, never reach the cache: the temporary repository
 // is deleted before this returns. `verifyFdsCache` lets every consumer refuse a missing, stale or edited cache.
+import { digestTableHash } from '../../source-identity.mjs'
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
@@ -113,16 +114,6 @@ function assertCapturePath(file: string, root: string): void {
 }
 
 const sha256 = (bytes: Buffer | string) => createHash('sha256').update(bytes).digest('hex')
-
-/** Hash of a digest table, independent of key order. */
-function digestTableHash(digests: Record<string, string>): string {
-  return sha256(
-    Object.keys(digests)
-      .sort()
-      .map((file) => `${file}\0${digests[file]}\n`)
-      .join('')
-  )
-}
 
 /** The only repository a lock may pin, so a lock edit cannot point fetch-source at a fork. */
 const FDS_REPOSITORY = 'https://github.com/decentraland/figma-design-system'
@@ -552,7 +543,9 @@ async function verifyFdsCache(dir: string, lockFile: string): Promise<void> {
       cause: error
     })
   }
-  const repair = 'run `pnpm figma fetch-source`'
+  // Two routes: maintainers rebuild the cache; a consumer resolving against the mappings needs no cache.
+  const repair =
+    'maintainers run `pnpm figma fetch-source` (needs read access to figma-design-system); to resolve a component without the capture, pass --mapping-only'
   if (!existsSync(path.join(dir, MARKER)))
     throw new FdsCacheError(
       `The Figma capture is not materialized (${path.basename(dir)}): ${repair}`
