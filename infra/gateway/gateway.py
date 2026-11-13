@@ -261,9 +261,11 @@ def render(table, cfg, mime):
         "limit_req zone=content burst=1000 nodelay;"))
     locations += location("~ ^/comms-gatekeeper/reports/players/[^/]+/evidence/", proxy("apis",
         "client_max_body_size 11m;"))
-    # Both badges host forms reach this already rewritten under /badges.
+    # Both badges host forms reach this already rewritten under /badges. The admin
+    # check is a bearer token the app reads after nginx buffers the body, so
+    # concurrent uploads are capped as on the deploy routes.
     locations += location('~ "^/badges/badges/[^/]+/backfill$"', proxy("apis",
-        f"client_max_body_size {BADGES_BACKFILL_CAP};"))
+        f"client_max_body_size {BADGES_BACKFILL_CAP}; {uploads}"))
     locations += location("~ ^(/builder-api)?/v1/(projects/[^/]+/(blobs/[^/]+|manifest|files)|items/[^/]+/files)/*$",
                           proxy("apis", "client_max_body_size 21m;"))
     locations += location('~ "^/explorer/0x[0-9a-fA-F]{40}/(wearables|emotes)$"', proxy("apis"))

@@ -1159,9 +1159,12 @@ pub async fn serve(
     presence.spawn_jobs(&jobs);
     social.notifications.spawn_jobs(&jobs);
     let catalog = social.badges.clone();
-    tokio::spawn(async move {
-        if let Err(e) = catalog.badges.warn_ahead_of_code().await {
-            tracing::warn!(error = %e, "badge catalog check failed");
+    jobs.spawn("badges-catalog-check", move |ctx| async move {
+        tokio::select! {
+            _ = ctx.cancel.cancelled() => Ok(()),
+            checked = catalog.badges.warn_ahead_of_code() => {
+                checked.map(drop).context("badge catalog check failed")
+            }
         }
     });
     comms_stage.gatekeeper.spawn_jobs(&jobs);

@@ -46,10 +46,7 @@ use sqlx::PgPool;
 
 use crate::notifications::admin::AdminSecretSource;
 
-pub use progress::{
-    Applied, ApplyOptions, Progress, ProgressChange, TierGrant, apply_progress,
-    apply_progress_granting,
-};
+pub use progress::{Applied, ApplyOptions, Progress, ProgressChange, apply_progress};
 pub use store::{BadgesStore, DEFAULT_ASSET_BASE_URL};
 
 /// Request bodies of every route but the backfill; the catalog's are far below it.

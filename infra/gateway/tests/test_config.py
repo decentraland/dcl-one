@@ -207,6 +207,7 @@ class ConfigurationTest(unittest.TestCase):
             with self.subTest(path=path):
                 body = next(body for regex, body in regexes if regex.search(path))
                 self.assertIn(f"client_max_body_size {gateway.BADGES_BACKFILL_CAP};", body)
+                self.assertIn(f"limit_conn deploy_uploads {gateway.DEPLOY_CONNECTIONS_PER_ADDRESS};", body)
         for path in ["/badges/badges/traveler", "/badges/users/0xab/badges/traveler",
                      "/badges/badges/x/backfill/y", "/x/badges/badges/x/backfill"]:
             with self.subTest(path=path):

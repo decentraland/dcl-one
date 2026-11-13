@@ -10,8 +10,9 @@
 
 use serde_json::{Map, Value, json};
 
+use super::Progress;
 use super::backfill::{self, Kind};
-use super::{Progress, TierGrant};
+use super::progress::TierGrant;
 
 pub const DCL_CITIZEN: &str = "dclcitizen";
 pub const TRAVELER: &str = "traveler";
@@ -67,7 +68,7 @@ pub const EVALUATED: [&str; 20] = [
 /// tier per event, except `traveler.ts`, which `filter`s every reached one.
 /// A client event or a sale is one write; a recount stands for one upstream
 /// event per step it adds.
-pub fn tier_grant(badge_id: &str) -> TierGrant {
+pub(crate) fn tier_grant(badge_id: &str) -> TierGrant {
     match badge_id {
         TRAVELER => TierGrant::Reached,
         // One event adds its whole step count.

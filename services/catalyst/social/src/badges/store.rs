@@ -287,7 +287,7 @@ impl BadgesStore {
         .await?;
         let ahead: Vec<String> = ids.into_iter().filter(|id| !has_evaluator(id)).collect();
         for id in &ahead {
-            tracing::warn!(badge = %id, "a published badge has no evaluator or presence configuration in this build; only admin grants award it");
+            tracing::warn!(badge = %id, "a published badge has no evaluator, backfill import or presence configuration in this build; only console grants award it");
         }
         Ok(ahead)
     }

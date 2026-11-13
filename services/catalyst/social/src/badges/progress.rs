@@ -77,7 +77,7 @@ pub struct ApplyOptions<'a> {
 
 /// How many reached tiers one write achieves, lowest first.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TierGrant {
+pub(crate) enum TierGrant {
     /// Every reached tier (backfills, grants, `traveler.ts`'s `filter`).
     Reached,
     /// At most one: upstream's observers `find` one tier per event.
@@ -146,7 +146,7 @@ where
 }
 
 /// [`apply_progress`] achieving the reached tiers `grant` allows.
-pub async fn apply_progress_granting<F>(
+pub(crate) async fn apply_progress_granting<F>(
     conn: &mut PgConnection,
     address: &Address,
     badge_id: &str,
