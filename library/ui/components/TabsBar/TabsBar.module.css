@@ -1,0 +1,116 @@
+@layer dcl.reset, dcl.foundations, dcl.components;
+@layer dcl.components {
+  .root {
+    box-sizing: border-box;
+    display: flex;
+    align-items: flex-start;
+    gap: var(--dcl-space-32);
+    min-width: 0;
+    min-height: 64px;
+    padding-inline: var(--dcl-layout-margin-x);
+    background: var(--dcl-transparencies-black-20);
+    box-shadow: inset 0 -1px 0 var(--dcl-transparencies-white-20);
+    color: var(--dcl-text-primary);
+  }
+  .navigation {
+    flex: 1 0 var(--dcl-space-96);
+    min-width: 0;
+  }
+  .list {
+    display: flex;
+    gap: var(--dcl-space-32);
+    margin: 0;
+    padding: 0;
+    overflow-x: auto;
+    list-style: none;
+    scrollbar-width: none;
+    scroll-padding-inline: var(--dcl-space-16);
+  }
+  .item {
+    flex: none;
+  }
+  .link {
+    composes: root from '../Tabs/Tabs.module.css';
+  }
+  .text {
+    composes: label from '../Tabs/Tabs.module.css';
+  }
+  .link:focus-visible {
+    outline-offset: -2px;
+  }
+  .controls {
+    box-sizing: border-box;
+    display: flex;
+    flex: 0 1 auto;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--dcl-space-24);
+    min-height: 64px;
+    min-width: 0;
+    max-width: calc(100% - 64px);
+    padding-block: var(--dcl-space-8);
+  }
+  .search {
+    flex: 0 1 240px;
+    width: 240px;
+    min-width: 0;
+  }
+  .actions {
+    display: flex;
+    align-items: center;
+    flex: none;
+    gap: var(--dcl-space-24);
+  }
+  @media (min-width: 1536px) {
+    .root,
+    .list {
+      gap: 50px;
+    }
+    .search {
+      flex-basis: 364px;
+      width: 364px;
+    }
+  }
+  @media (max-width: 767px) {
+    .root {
+      flex-direction: column;
+      gap: var(--dcl-space-12);
+      min-height: 44px;
+      padding-inline: 0;
+    }
+    .navigation {
+      flex: none;
+      box-sizing: border-box;
+      width: 100%;
+      padding-inline: var(--dcl-space-16);
+    }
+    .list {
+      gap: var(--dcl-space-16);
+    }
+    .item[data-mobile-hidden] {
+      display: none;
+    }
+    .controls {
+      gap: var(--dcl-space-8);
+      width: 100%;
+      max-width: none;
+      padding: var(--dcl-space-8) var(--dcl-space-16);
+    }
+    .search {
+      flex: 1 1 202px;
+      width: 202px;
+      max-width: 202px;
+    }
+    .root[data-page='learn'] .search {
+      flex-basis: 230px;
+      width: 230px;
+      max-width: 230px;
+    }
+    .root[data-page='learn'] .controls {
+      min-height: 68px;
+    }
+    .actions {
+      gap: var(--dcl-space-8);
+    }
+  }
+}
