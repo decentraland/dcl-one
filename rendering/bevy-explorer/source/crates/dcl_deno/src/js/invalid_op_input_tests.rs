@@ -31,18 +31,66 @@ fn op_panic_is_refused() {
     assert_refused(r#"Deno.core.ops.op_panic("x")"#, "not available");
 }
 
+/// The builtin add ops wrap like a release build instead of overflow-panicking.
 #[test]
 fn add_ops_wrap_instead_of_overflowing() {
-    run_scene(
-        false,
-        r#"
-        if (Deno.core.ops.op_add(2147483647, 1) !== -2147483648) { throw new Error("op_add"); }
-        Deno.core.ops.op_add_async(2147483647, 1).then((v) => {
-            if (v !== -2147483648) { throw new Error("op_add_async"); }
-        });
-        "#,
-    )
-    .unwrap();
+    let (mut runtime, _) = create_runtime(false, false, "test-add", Default::default());
+    runtime.op_state().borrow_mut().put(context(false));
+    runtime
+        .execute_script(
+            "<test>",
+            r#"
+            globalThis.__sync = Deno.core.ops.op_add(2147483647, 1);
+            Deno.core.ops.op_add_async(2147483647, 1).then((v) => { globalThis.__async = v; });
+            "#,
+        )
+        .unwrap();
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(runtime.run_event_loop(Default::default()))
+        .unwrap();
+    assert_eq!(
+        eval_string(&mut runtime, "`${globalThis.__sync} ${globalThis.__async}`"),
+        "-2147483648 -2147483648"
+    );
+}
+
+/// Each voice chat action decodes through `Plain` in its tagged-enum shape.
+#[test]
+fn voice_chat_actions_decode_as_plain_data() {
+    use crate::js::plain::Plain;
+    use deno_core::{v8, FromV8};
+    use system_bridge::VoiceChatAction as A;
+
+    let address = || "0xabc".to_owned();
+    let community_id = || "c1".to_owned();
+    let cases = [
+        (r#"{op:"startPrivateCall",address:"0xabc"}"#, A::StartPrivateCall { address: address() }),
+        (r#"{op:"acceptCall"}"#, A::AcceptCall),
+        (r#"{op:"rejectCall"}"#, A::RejectCall),
+        (r#"{op:"endCall"}"#, A::EndCall),
+        (r#"{op:"startCommunityCall",communityId:"c1"}"#, A::StartCommunityCall { community_id: community_id() }),
+        (r#"{op:"joinCommunityCall",communityId:"c1"}"#, A::JoinCommunityCall { community_id: community_id() }),
+        (r#"{op:"leaveCall"}"#, A::LeaveCall),
+        (r#"{op:"endCommunityCall"}"#, A::EndCommunityCall),
+        (r#"{op:"requestToSpeak",raise:true}"#, A::RequestToSpeak { raise: true }),
+        (r#"{op:"promoteSpeaker",address:"0xabc"}"#, A::PromoteSpeaker { address: address() }),
+        (r#"{op:"demoteSpeaker",address:"0xabc"}"#, A::DemoteSpeaker { address: address() }),
+        (r#"{op:"kickPlayer",address:"0xabc"}"#, A::KickPlayer { address: address() }),
+        (r#"{op:"rejectSpeakRequest",address:"0xabc"}"#, A::RejectSpeakRequest { address: address() }),
+        (r#"{op:"setMic",enabled:false}"#, A::SetMic { enabled: false }),
+        (r#"{op:"dismissError"}"#, A::DismissError),
+    ];
+    let mut runtime = JsRuntime::new(Default::default());
+    for (js, expected) in cases {
+        let value = runtime.execute_script("<test>", format!("({js})")).unwrap();
+        let scope = &mut runtime.handle_scope();
+        let value = v8::Local::new(scope, value);
+        let Plain(decoded) = Plain::<A>::from_v8(scope, value).expect(js);
+        assert_eq!(decoded, expected);
+    }
 }
 
 #[test]
@@ -313,7 +361,7 @@ fn a_huge_stream_length_is_not_preallocated() {
             "<test>",
             r#"
             const ops = Deno.core.ops;
-            const rid = ops.op_readable_stream_resource_allocate_sized(2 ** 50);
+            const rid = ops.op_readable_stream_resource_allocate_sized(1e19);
             const sink = ops.op_readable_stream_resource_get_sink(rid);
             ops.op_readable_stream_resource_write_sync(sink, new Uint8Array([1, 2, 3]));
             ops.op_readable_stream_resource_close(sink);
@@ -511,7 +559,7 @@ fn a_large_blob_upload_keeps_its_content_length() {
     assert!(!upload.left_a_stream, "the upload left a stream resource behind");
 }
 
-/// A server scene's streamed upload is bounded like its response bodies.
+/// A server scene's upload, streamed or not, is bounded like its response bodies.
 #[test]
 fn a_server_scene_upload_is_capped() {
     let stream = |chunks: usize| {
@@ -532,6 +580,9 @@ fn a_server_scene_upload_is_capped() {
     assert!(refused.outcome.contains("exceeds"), "{}", refused.outcome);
     assert_eq!(refused.content_length, None, "the server received a request");
     assert!(!refused.left_a_stream, "the upload left a stream resource behind");
+    let buffered = upload_from(true, "const body = new Uint8Array(11 * 1024 * 1024);");
+    assert!(buffered.outcome.contains("exceeds"), "{}", buffered.outcome);
+    assert_eq!(buffered.content_length, None, "the server received a request");
 }
 
 /// Buffers reach serde_v8 without their prototype, so no scene getter runs while an op
@@ -555,6 +606,7 @@ fn buffer_arguments_run_no_scene_code() {
     .unwrap();
 }
 
+/// `performance.now()` works whatever the buffer's alignment.
 #[test]
 fn performance_now_takes_a_misaligned_buffer() {
     run_scene(
@@ -572,6 +624,8 @@ fn performance_now_takes_a_misaligned_buffer() {
     .unwrap();
 }
 
+/// A runtime holds a bounded number of streams, and a stream reserves its sink's slot so
+/// taking the sink never fails at the cap.
 #[test]
 fn open_streams_are_capped_per_runtime() {
     run_scene(
@@ -579,18 +633,13 @@ fn open_streams_are_capped_per_runtime() {
         r#"
         const ops = Deno.core.ops;
         const rids = [];
-        for (let i = 0; i < 255; i++) { rids.push(ops.op_readable_stream_resource_allocate()); }
-        // sinks count too
-        const sink = ops.op_readable_stream_resource_get_sink(rids[0]);
-        for (const call of [
-            () => ops.op_readable_stream_resource_allocate_sized(1),
-            () => ops.op_readable_stream_resource_get_sink(rids[1]),
-        ]) {
-            let refused = "";
-            try { call(); } catch (e) { refused = String(e); }
-            if (!refused.includes("too many open streams")) { throw new Error(`not refused: ${refused}`); }
-        }
-        ops.op_readable_stream_resource_close(sink);
+        for (let i = 0; i < 128; i++) { rids.push(ops.op_readable_stream_resource_allocate()); }
+        let refused = "";
+        try { ops.op_readable_stream_resource_allocate_sized(1); } catch (e) { refused = String(e); }
+        if (!refused.includes("too many open streams")) { throw new Error(`not refused: ${refused}`); }
+        const sinks = rids.map((rid) => ops.op_readable_stream_resource_get_sink(rid));
+        ops.op_readable_stream_resource_close(sinks[0]);
+        ops.op_close(rids[0]);
         ops.op_readable_stream_resource_allocate_sized(1);
         "#,
     )
@@ -700,6 +749,10 @@ fn sweep_ops(super_user: bool, is_server: bool) {
                     return;
                 }}
                 result.returned++;
+                // free stream slots so later stream ops still reach their own checks
+                if (typeof value === "number" && /^op_readable_stream_resource_(allocate|allocate_sized|get_sink)$/.test(name)) {{
+                    try {{ ops.op_close(value); }} catch {{}}
+                }}
                 if (value instanceof Promise) {{
                     value.then(() => result.resolved++, () => result.rejected++);
                 }}
