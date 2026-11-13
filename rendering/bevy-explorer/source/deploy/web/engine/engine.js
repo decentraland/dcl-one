@@ -273,8 +273,58 @@ export async function initEngine() {
     if (!window.open(url, "_blank")) console.warn("[Main JS] window.open blocked:", url);
   };
 
-  // Setup HLS video source callback
-  window.setVideoSource = (video, src) => {
+  // Attaches `src` to `video`, through hls.js for an HLS stream the browser cannot play itself.
+  // hls.js recovers one fatal error in place (`startLoad`, `recoverMediaError`) until a fragment
+  // buffers again; a second one is passed to `onFatal` with its type. Returns the source's
+  // `destroy()`, `live` and `hls` (attached through hls.js).
+  window.setVideoSource = (video, src, onFatal) => {
+    let hls = null;
+    let hlsLive = false;
+    let destroyed = false;
+    const source = {
+      destroy() {
+        destroyed = true;
+        if (hls) {
+          hls.destroy();
+          hls = null;
+        } else {
+          video.removeAttribute("src");
+          video.load();
+        }
+      },
+      get live() {
+        return hlsLive || video.duration === Infinity;
+      },
+      get hls() {
+        return hls !== null;
+      },
+    };
+
+    function attachHls() {
+      hls = new Hls();
+      let recovered = false;
+      hls.on(Hls.Events.LEVEL_LOADED, (_event, data) => {
+        hlsLive = data.details.live;
+      });
+      hls.on(Hls.Events.FRAG_BUFFERED, () => {
+        recovered = false;
+      });
+      hls.on(Hls.Events.ERROR, (_event, data) => {
+        if (!data.fatal || destroyed) return;
+        if (!recovered && data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+          recovered = true;
+          hls.startLoad();
+        } else if (!recovered && data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+          recovered = true;
+          hls.recoverMediaError();
+        } else {
+          onFatal(data.type);
+        }
+      });
+      hls.loadSource(src);
+      hls.attachMedia(video);
+    }
+
     async function isHlsStream(url) {
       try {
         const response = await fetch(url, {
@@ -306,15 +356,16 @@ export async function initEngine() {
     } else if (Hls.isSupported()) {
       // check if we need hls
       setTimeout(async () => {
-        if (await isHlsStream(src)) {
-          var hls = new Hls();
-          hls.loadSource(src);
-          hls.attachMedia(video);
+        const isHls = await isHlsStream(src);
+        if (destroyed) return;
+        if (isHls) {
+          attachHls();
         } else {
           video.src = src;
         }
       }, 0);
     }
+    return source;
   };
 
   // The scene sandbox workers (sandbox_host.js), behind the page functions the engine calls.

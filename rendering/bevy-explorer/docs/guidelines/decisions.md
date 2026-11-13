@@ -393,6 +393,27 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **Donate's buttons.** The minimap's uses unity-explorer's tip icon, beside the collapse button;
   the map's place panel has a DONATE text button under JUMP IN, whose art is not ported. The fourth
   amount choice reads OTHER, and the minimum reads "Tips must be ≥ 1 MANA".
+- **Media reopens on the web.** The web backend keeps unity-explorer's schedule:
+  a failed URL source is reopened up to 5 times, 2, 4, 8, 16 and 32 s
+  after each failure; the count restarts when the source opens again (`canplay`) or the scene
+  changes the source, and a source that gave up stays failed until the source changes. It differs
+  in four ways:
+  - *States between reopens.* unity-explorer reports `VsError` after every failed attempt; here a
+    scheduled reopen reports `VsLoading`, so `VsError` means the source gave up.
+  - *Failures during playback.* unity-explorer reopens only a source that failed to open; here an
+    element error or an hls.js fatal error at any time starts the schedule, and a live stream that
+    ends (its feed dropped) counts as a failure rather than a normal end. hls.js first recovers a
+    fatal error in place once (`startLoad`, `recoverMediaError`); a second before a fragment
+    buffers again reopens the source, and the element's own `error` is left to hls.js. A reopened
+    source that is not live resumes where it failed.
+  - *Pause.* unity-explorer reopens a failed source whether or not it plays; here a pause cancels a
+    scheduled or loading reopen, a failure while paused schedules none, and the next play
+    reopens at once with the count restarted.
+  - *The screen.* unity-explorer renders black whenever a player is in `VsError` or `VsNone`; here
+    the image turns black when the source gives up or a non-looping source ends, and keeps the
+    last frame while a reopen is pending.
+
+  Native (FFmpeg) has no reopen: its first error ends playback.
 
 ## Deliberate choices that look like mistakes
 

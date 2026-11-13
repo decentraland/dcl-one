@@ -418,6 +418,18 @@ describe('Explorer', () => {
     ])
   })
 
+  test('mediaState and mediaRetryDelay compose the lines and parse the replies', async () => {
+    const fake = new FakeConsole({
+      media_state: JSON.stringify({ backend: 'HTML media', players: [{ type: 'video', entity: '512', scene: 'video', source: 'media/flaky.webm', retryAttempt: 2, retryDelaySeconds: 0.2, retryGaveUp: false, lastError: 'source not supported' }] }),
+      media_retry_delay: JSON.stringify({ firstDelayMs: 100, maxReopens: 5 })
+    })
+    const explorer = new Explorer(fake)
+    assert.equal((await explorer.mediaState()).players[0]!.retryAttempt, 2)
+    assert.deepEqual(await explorer.mediaRetryDelay(100), { firstDelayMs: 100, maxReopens: 5 })
+    await explorer.mediaRetryDelay()
+    assert.deepEqual(fake.lines, ['/media_state', '/media_retry_delay 100', '/media_retry_delay'])
+  })
+
   test("profileDeployWindow waits out the catalyst's window after the own profile changed, and only then", async () => {
     let version = 3
     const fake = new FakeConsole({ get_user_data: () => `tester (0x${'a'.repeat(40)}): v${version}, web3=true` })

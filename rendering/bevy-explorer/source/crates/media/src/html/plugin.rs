@@ -49,7 +49,8 @@ impl Plugin for HtmlMediaPlugin {
         }
     }
 
-    /// Runs on the render worker: listens for the frames the page transfers here.
+    /// Runs on the render worker: listens for the frames the page transfers here and its
+    /// clears.
     fn finish(&self, _app: &mut App) {
         let Ok(global) = js_sys::global().dyn_into::<web_sys::DedicatedWorkerGlobalScope>() else {
             return;
@@ -57,21 +58,25 @@ impl Plugin for HtmlMediaPlugin {
         let on_message =
             Closure::<dyn FnMut(web_sys::MessageEvent)>::new(|event: web_sys::MessageEvent| {
                 let data = event.data();
-                let is_frame = js_sys::Reflect::get(&data, &"type".into())
+                let kind = js_sys::Reflect::get(&data, &"type".into())
                     .ok()
-                    .and_then(|t| t.as_string())
-                    .is_some_and(|t| t == "VIDEO_FRAME");
-                if !is_frame {
-                    return;
-                }
-                let id = js_sys::Reflect::get(&data, &"id".into())
-                    .ok()
-                    .and_then(|id| id.as_f64())
-                    .unwrap_or_default() as MediaId;
-                if let Ok(frame) = js_sys::Reflect::get(&data, &"frame".into())
-                    .and_then(|frame| frame.dyn_into::<VideoFrame>())
-                {
-                    media_render_frame(id, frame);
+                    .and_then(|t| t.as_string());
+                let id = || {
+                    js_sys::Reflect::get(&data, &"id".into())
+                        .ok()
+                        .and_then(|id| id.as_f64())
+                        .unwrap_or_default() as MediaId
+                };
+                match kind.as_deref() {
+                    Some("VIDEO_FRAME") => {
+                        if let Ok(frame) = js_sys::Reflect::get(&data, &"frame".into())
+                            .and_then(|frame| frame.dyn_into::<VideoFrame>())
+                        {
+                            media_render_frame(id(), Some(frame));
+                        }
+                    }
+                    Some("VIDEO_CLEAR") => media_render_frame(id(), None),
+                    _ => (),
                 }
             });
         if let Err(e) =
@@ -133,6 +138,11 @@ fn serve_av_sources(mut sources: ResMut<AvSources>, mut receiver: ResMut<MediaEv
                     source.send_state(state);
                 }
             }
+            MediaEvent::Retry { id, status } => {
+                if let Some(source) = sources.0.get(&id) {
+                    source.retry_sender.send_replace(status);
+                }
+            }
             MediaEvent::Frame {
                 id,
                 media_time,
@@ -154,12 +164,13 @@ fn serve_av_sources(mut sources: ResMut<AvSources>, mut receiver: ResMut<MediaEv
 // Render worker side.
 
 thread_local! {
-    /// Frames the page transferred to this worker, newest last.
-    static FRAMES: RefCell<Vec<(MediaId, VideoFrame)>> = const { RefCell::new(Vec::new()) };
+    /// Frames the page transferred to this worker, newest last; `None` clears the image.
+    static FRAMES: RefCell<Vec<(MediaId, Option<VideoFrame>)>> = const { RefCell::new(Vec::new()) };
 }
 
-/// A `VIDEO_FRAME` message the page posted to the render worker.
-fn media_render_frame(id: MediaId, frame: VideoFrame) {
+/// A `VIDEO_FRAME` (`Some`) or `VIDEO_CLEAR` (`None`) message the page posted to the render
+/// worker.
+fn media_render_frame(id: MediaId, frame: Option<VideoFrame>) {
     FRAMES.with(|frames| frames.borrow_mut().push((id, frame)));
 }
 
@@ -187,10 +198,10 @@ fn perform_video_copies(
         }
     }
 
-    // Only the newest frame per media is worth copying.
-    let mut latest: HashMap<MediaId, VideoFrame> = HashMap::default();
+    // Only the newest frame (or clear) per media is worth copying.
+    let mut latest: HashMap<MediaId, Option<VideoFrame>> = HashMap::default();
     for (id, frame) in FRAMES.with(|frames| std::mem::take(&mut *frames.borrow_mut())) {
-        if let Some(prev) = latest.insert(id, frame) {
+        if let Some(Some(prev)) = latest.insert(id, frame) {
             prev.close();
         }
     }
@@ -202,7 +213,13 @@ fn perform_video_copies(
             .and_then(|target| images.get_mut(*target))
         else {
             debug!("media {id}: no target image yet");
-            frame.close();
+            if let Some(frame) = frame {
+                frame.close();
+            }
+            continue;
+        };
+        let Some(frame) = frame else {
+            clear_image(gpu_image, &render_queue);
             continue;
         };
         let visible_rect = frame.visible_rect().unwrap();
@@ -258,4 +275,29 @@ fn perform_video_copies(
 
         frame_handle.close();
     }
+}
+
+/// Fills a video image with opaque black.
+fn clear_image(gpu_image: &GpuImage, render_queue: &RenderQueue) {
+    // video images are 4 bytes a texel (`Rgba8UnormSrgb`)
+    if gpu_image.texture_descriptor.format.block_copy_size(None) != Some(4) {
+        return;
+    }
+    let Extent3d { width, height, .. } = gpu_image.size;
+    let black = [0u8, 0, 0, 255].repeat((width * height) as usize);
+    render_queue.write_texture(
+        wgpu::TexelCopyTextureInfo {
+            texture: &gpu_image.texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        &black,
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(width * 4),
+            rows_per_image: Some(height),
+        },
+        gpu_image.size,
+    );
 }

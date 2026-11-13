@@ -306,6 +306,8 @@ fn update_av_volume<T: AVPlayer>(
             sent_event: _,
             sent_volume,
             sent_state: _,
+            #[cfg(feature = "html")]
+                retry: _,
             _phantom,
         } = sinks.as_mut();
 
@@ -407,6 +409,8 @@ fn play_videos(
             sent_event: _,
             sent_volume: _,
             sent_state: _,
+            #[cfg(feature = "html")]
+                retry: _,
             _phantom,
         } = video_player_sinks.as_mut()
         else {
@@ -491,6 +495,8 @@ fn publish_av_player_state<T: AVPlayer>(
             sent_event,
             sent_volume: _,
             sent_state,
+            #[cfg(feature = "html")]
+                retry: _,
             _phantom,
         } = video_player_sinks.as_mut();
 
@@ -608,6 +614,8 @@ mod snapshot_tests {
                 sent_event: 0.,
                 sent_state: VideoState::VsLoading,
                 sent_volume: None,
+                #[cfg(feature = "html")]
+                retry: tokio::sync::watch::channel(Default::default()).1,
                 _phantom: Default::default(),
             },
             ContainerEntity {
