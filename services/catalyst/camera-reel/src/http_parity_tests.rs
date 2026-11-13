@@ -324,6 +324,11 @@ async fn openapi_describes_visible_person_screen_rect() {
         "#/components/schemas/ScreenRect"
     );
     assert_eq!(spec["paths"].as_object().unwrap().len(), 9);
+    assert!(
+        spec["components"]["schemas"]["User"]["properties"]["screenRect"]
+            .get("description")
+            .is_none()
+    );
 }
 
 #[tokio::test]
@@ -798,10 +803,17 @@ async fn lossy_path_decoding_keeps_authorization_bound_to_the_raw_request() {
     for prefix in ["", "/camera-reel-service"] {
         let (app, dir) = app_at_mount(None, prefix).await;
         let original = format!("{prefix}/%61pi/images/%FF");
-        let headers = crate::shared::signed_fetch::test_support::signed_headers(
+        let mut headers = crate::shared::signed_fetch::test_support::signed_headers(
             "DELETE", &original, "{}", true,
         )
         .await;
+        let mut signer: serde_json::Value =
+            serde_json::from_str(headers["x-identity-auth-chain-0"].to_str().unwrap()).unwrap();
+        signer["signature"] = json!("");
+        headers.insert(
+            "x-identity-auth-chain-0",
+            signer.to_string().parse().unwrap(),
+        );
         for (path, expected) in [
             (original.clone(), StatusCode::NOT_FOUND),
             (
@@ -945,5 +957,76 @@ mod main_extractor_contracts {
         let (status, ct, _) = call(app, send(big, Some("application/json"))).await;
         assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
         assert_eq!(ct, "text/plain; charset=utf-8");
+    }
+}
+
+#[tokio::test]
+async fn camera_requires_a_string_signature_field_on_the_signer_link() {
+    let (app, dir) = app().await;
+    let path = "/camera-reel-service/api/images/not-a-uuid";
+    let headers =
+        crate::shared::signed_fetch::test_support::signed_headers("DELETE", path, "{}", true).await;
+    for (signature, expected) in [
+        (None, StatusCode::UNAUTHORIZED),
+        (Some(json!(null)), StatusCode::UNAUTHORIZED),
+        (Some(json!("")), StatusCode::NOT_FOUND),
+        (Some(json!("unused signer field")), StatusCode::NOT_FOUND),
+    ] {
+        let mut request = Request::builder()
+            .method("DELETE")
+            .uri(path)
+            .body(Body::empty())
+            .unwrap();
+        *request.headers_mut() = headers.clone();
+        let mut signer: serde_json::Value =
+            serde_json::from_str(headers["x-identity-auth-chain-0"].to_str().unwrap()).unwrap();
+        signer.as_object_mut().unwrap().remove("signature");
+        if let Some(signature) = signature {
+            signer["signature"] = signature;
+        }
+        request.headers_mut().insert(
+            "x-identity-auth-chain-0",
+            signer.to_string().parse().unwrap(),
+        );
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), expected);
+        let body = to_bytes(response.into_body(), 4096).await.unwrap();
+        if expected == StatusCode::UNAUTHORIZED {
+            assert_eq!(body, "Unathorized");
+        } else {
+            assert_eq!(body, r#"{"message":"image not found"}"#);
+        }
+    }
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[tokio::test]
+async fn preflight_responses_do_not_leak_method_router_allow_headers() {
+    for prefix in ["", "/camera-reel-service"] {
+        let (app, dir) = app_at_mount(None, prefix).await;
+        for method in ["GET", "POST", "PUT", "get"] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method("OPTIONS")
+                        .uri(format!("{prefix}/api/users/someone/images"))
+                        .header(header::ACCESS_CONTROL_REQUEST_METHOD, method)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(
+                response.status(),
+                if matches!(method, "GET" | "POST") {
+                    StatusCode::OK
+                } else {
+                    StatusCode::BAD_REQUEST
+                }
+            );
+            assert!(!response.headers().contains_key(header::ALLOW));
+        }
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

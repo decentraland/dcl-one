@@ -211,8 +211,8 @@ pub async fn upload_image_json(
     .await
 }
 
-/// The 640x360 thumbnail in the image's own format; decode failures are the
-/// client's (400), as before.
+/// The source service's 640x360 thumbnail in the detected image format.
+/// Detection, decoding and encoding failures retain their distinct 400 errors.
 pub fn thumbnail_of(image_bytes: &[u8]) -> Result<Bytes, ApiError> {
     let format = guess_format(image_bytes)
         .map_err(|_| ApiError::BadRequest("invalid image format".to_string()))?;
@@ -282,7 +282,12 @@ async fn finalize_upload(
     let max_images = state.settings.max_images_per_user;
     let current_images = state
         .db
-        .insert_image_within_limit_named(&new_image, max_images, Some(original_filename))
+        .insert_image_within_limit_named(
+            &new_image,
+            max_images,
+            Some(original_filename),
+            Some(&content_type),
+        )
         .await
         .map_err(|e| {
             tracing::error!("failed to store image metadata: {e}");
@@ -312,6 +317,19 @@ async fn finalize_upload(
     if let Err(err) = stored {
         let _ = state.db.delete_image(new_image.id).await;
         return Err(err);
+    }
+
+    {
+        let _verdict = state.blob_verdict.lock().await;
+        let released = state
+            .db
+            .release_deleted_upload(new_image.id)
+            .await
+            .map_err(|error| {
+                tracing::error!(%error, "failed to restore uploaded image availability");
+                ApiError::Internal("failed to upload image".to_owned())
+            })?;
+        state.apply_verdict(&released);
     }
 
     // PhotoTaken's counter handler is best-effort upstream. Retain the false
@@ -583,6 +601,7 @@ async fn delete_image_row(
     image_id: &str,
     owner: Option<&str>,
 ) -> Result<DeletedImage, ApiError> {
+    let _verdict = state.blob_verdict.lock().await;
     let deleted = state
         .db
         .delete_image_owned(image_id, owner, chrono::Utc::now().naive_utc())
@@ -639,25 +658,8 @@ pub async fn get_image(
     Path(image_id): Path<String>,
 ) -> Result<Response, ApiError> {
     let location = match &state.settings.bucket_url {
-        Some(bucket_url) => {
-            // Public upload names resolve to immutable keys in the shared bucket.
-            // An absent row still redirects, leaving object existence to that origin.
-            let object = state
-                .db
-                .image_hash_for_name(&image_id)
-                .await
-                .unwrap_or_else(|error| {
-                    tracing::debug!(%error, "image redirect alias lookup unavailable");
-                    None
-                })
-                .unwrap_or_else(|| image_id.clone());
-            format!("{bucket_url}/{}", crate::db::encode_path_segment(&object))
-        }
-        None => format!(
-            "{}/api/files/{}",
-            state.settings.api_url,
-            crate::db::encode_path_segment(&image_id)
-        ),
+        Some(bucket_url) => format!("{bucket_url}/{image_id}"),
+        None => format!("{}/api/files/{image_id}", state.settings.api_url),
     };
     Ok((
         StatusCode::TEMPORARY_REDIRECT,
@@ -673,22 +675,22 @@ pub async fn get_image_bytes(
     State(state): State<SharedState>,
     Path(image_id): Path<String>,
 ) -> Result<Response, ApiError> {
-    let image_id = state
+    let image_blob = state
         .db
-        .image_hash_for_name(&image_id)
+        .image_blob_for_name(&image_id)
         .await
         .map_err(|e| {
             tracing::error!("failed to resolve image bytes: {e}");
             ApiError::NotFound("image not found".to_string())
         })?
         .ok_or_else(|| ApiError::NotFound("image not found".to_string()))?;
-    if state.storage.withholds(&image_id) {
+    if state.storage.withholds(&image_blob.hash) {
         return Err(ApiError::NotFound("image not found".to_string()));
     }
 
     let bytes = state
         .storage
-        .retrieve(&image_id)
+        .retrieve(&image_blob.hash)
         .await
         .map_err(|e| match e {
             StorageError::InvalidId(_) | StorageError::PathTraversal(_) => {
@@ -698,11 +700,15 @@ pub async fn get_image_bytes(
         })?
         .ok_or_else(|| ApiError::NotFound("image not found".to_string()))?;
 
-    let content_type = match guess_format(&bytes) {
-        Ok(image::ImageFormat::Png) => "image/png",
-        Ok(image::ImageFormat::Jpeg) => "image/jpeg",
-        _ => "application/octet-stream",
-    };
+    let content_type =
+        image_blob
+            .content_type
+            .as_deref()
+            .unwrap_or_else(|| match guess_format(&bytes) {
+                Ok(image::ImageFormat::Png) => "image/png",
+                Ok(image::ImageFormat::Jpeg) => "image/jpeg",
+                _ => "application/octet-stream",
+            });
 
     Ok((
         StatusCode::OK,
@@ -745,6 +751,7 @@ pub async fn admin_update_image_review(
         ));
     }
 
+    let _verdict = state.blob_verdict.lock().await;
     let verdict = state
         .db
         .update_image_review_status(
@@ -795,3 +802,7 @@ pub async fn get_metadata(
 #[cfg(test)]
 #[path = "writes_parity_tests.rs"]
 mod parity_tests;
+
+#[cfg(test)]
+#[path = "image_format_tests.rs"]
+mod image_format_tests;

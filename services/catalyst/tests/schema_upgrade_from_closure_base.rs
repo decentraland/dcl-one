@@ -11,7 +11,7 @@ use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions};
 use catalyst::schema_migrate::{self, MigrateError};
 
 /// The steps a prepared version-2 database has not recorded.
-const PREPARED_PENDING_STEPS: [&str; 19] = [
+const PREPARED_PENDING_STEPS: [&str; 21] = [
     "0018_event_hook_compatibility",
     "0019_event_hook_admin_priority",
     "0023_social_referral_pending_reward",
@@ -31,6 +31,8 @@ const PREPARED_PENDING_STEPS: [&str; 19] = [
     "0038_social_badge_processor",
     "0039_worlds_set_here",
     "0040_camera_reel_original_filename",
+    "0041_credits_captcha_generated_at",
+    "0042_camera_reel_image_content_type",
 ];
 type LedgerRow = (String, String, bool, chrono::NaiveDateTime);
 /// id, category, is_tier, criteria_steps, published, created_at
@@ -584,7 +586,18 @@ async fn a_database_stamped_with_the_closure_base_upgrades_to_head_with_its_rows
     .execute(pool)
     .await
     .unwrap();
+    assert!(!has_column(pool, "credits.captcha_challenges", "generated_at").await);
+    let captcha_id:i64=sqlx::query_scalar("INSERT INTO credits.captcha_challenges(address,answer_x,expires_at) VALUES('0x2222222222222222222222222222222222222222',52.25,timezone('UTC',now())+interval '1 hour') RETURNING id").fetch_one(pool).await.unwrap();
+    let captcha_before: serde_json::Value =
+        sqlx::query_scalar("SELECT to_jsonb(c) FROM credits.captcha_challenges c WHERE id=$1")
+            .bind(captcha_id)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    sqlx::query("INSERT INTO credits.wallets(address,available,earned_available) VALUES('0x2222222222222222222222222222222222222222',12.5,0)").execute(pool).await.unwrap();
+    let wallet_before:serde_json::Value=sqlx::query_scalar("SELECT to_jsonb(w) FROM credits.wallets w WHERE address='0x2222222222222222222222222222222222222222'").fetch_one(pool).await.unwrap();
     assert!(!has_column(pool, "camera_reel.images", "original_filename").await);
+    assert!(!has_column(pool, "camera_reel.images", "image_content_type").await);
     let photo_id = uuid::Uuid::new_v4();
     sqlx::query(
         "INSERT INTO camera_reel.images (id, user_address, image_hash, thumbnail_hash, metadata) \
@@ -611,8 +624,29 @@ async fn a_database_stamped_with_the_closure_base_upgrades_to_head_with_its_rows
         "only steps the prepared capture lacks run; historical steps never replay"
     );
     assert_only_pending_steps_added(&historical_ledger, &step_ledger(pool).await);
-    let photo_after: (serde_json::Value, Option<String>) = sqlx::query_as(
-        "SELECT to_jsonb(image)-'original_filename', original_filename \
+    let captcha_after:(serde_json::Value,chrono::NaiveDateTime)=sqlx::query_as("SELECT to_jsonb(c)-'generated_at',generated_at FROM credits.captcha_challenges c WHERE id=$1").bind(captcha_id).fetch_one(pool).await.unwrap();
+    assert_eq!(
+        captcha_after.0, captcha_before,
+        "migration keeps the live answer, expiry and consumption state"
+    );
+    let wallet_after:serde_json::Value=sqlx::query_scalar("SELECT to_jsonb(w) FROM credits.wallets w WHERE address='0x2222222222222222222222222222222222222222'").fetch_one(pool).await.unwrap();
+    assert_eq!(
+        wallet_before, wallet_after,
+        "new goal relations never alter paid balances"
+    );
+    let goal_relations:i64=sqlx::query_scalar("SELECT count(*) FROM information_schema.tables WHERE table_schema='credits' AND table_name IN ('seasons','season_goals','program_opt_outs','goal_progress','photo_goal_receipts','goal_grants','captcha_attempts')").fetch_one(pool).await.unwrap();
+    assert_eq!(goal_relations, 7);
+    let seeded_seasons: i64 = sqlx::query_scalar("SELECT count(*) FROM credits.seasons")
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        seeded_seasons, 0,
+        "upgrade never activates monetary programs"
+    );
+
+    let photo_after: (serde_json::Value, Option<String>, Option<String>) = sqlx::query_as(
+        "SELECT to_jsonb(image)-'original_filename'-'image_content_type', original_filename, image_content_type \
          FROM camera_reel.images image WHERE id=$1",
     )
     .bind(photo_id)
@@ -621,8 +655,8 @@ async fn a_database_stamped_with_the_closure_base_upgrades_to_head_with_its_rows
     .unwrap();
     assert_eq!(
         photo_after,
-        (photo_before.clone(), None),
-        "the additive filename migration preserves every existing photo value and leaves its hash URL unnamed"
+        (photo_before.clone(), None, None),
+        "the additive photo migrations preserve every existing value without inventing a filename or MIME"
     );
     assert!(
         !done.created.iter().any(|object| matches!(object,
@@ -744,15 +778,21 @@ async fn a_database_stamped_with_the_closure_base_upgrades_to_head_with_its_rows
             .is_empty(),
         "a second run applies nothing"
     );
-    let photo_after_replay: (serde_json::Value, Option<String>) = sqlx::query_as(
-        "SELECT to_jsonb(image)-'original_filename', original_filename \
+    let photo_after_replay: (serde_json::Value, Option<String>, Option<String>) = sqlx::query_as(
+        "SELECT to_jsonb(image)-'original_filename'-'image_content_type', original_filename, image_content_type \
          FROM camera_reel.images image WHERE id=$1",
     )
     .bind(photo_id)
     .fetch_one(pool)
     .await
     .unwrap();
-    assert_eq!(photo_after_replay, (photo_before, None));
+    assert_eq!(photo_after_replay, (photo_before, None, None));
+    let captcha_replayed:(serde_json::Value,chrono::NaiveDateTime)=sqlx::query_as("SELECT to_jsonb(c)-'generated_at',generated_at FROM credits.captcha_challenges c WHERE id=$1").bind(captcha_id).fetch_one(pool).await.unwrap();
+    assert_eq!(
+        captcha_replayed, captcha_after,
+        "replaying migrate never refreshes the challenge solve clock"
+    );
+
     let status =
         schema_migrate::status(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
             .await

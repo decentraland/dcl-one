@@ -17,18 +17,20 @@ use crate::shared::signed_fetch::{
 use crate::{Settings, SharedState, State, router, signed_path};
 
 async fn state(pool: sqlx::PgPool) -> (SharedState, std::path::PathBuf) {
+    state_with_settings(pool, Settings::new("https://camera.example")).await
+}
+
+async fn state_with_settings(
+    pool: sqlx::PgPool,
+    settings: Settings,
+) -> (SharedState, std::path::PathBuf) {
     let directory = std::env::temp_dir().join(format!("camera-read-{}", Uuid::new_v4()));
     let storage = Arc::new(
         crate::storage::Storage::from_config(&directory)
             .await
             .unwrap(),
     );
-    let state = Arc::new(State::new(
-        pool,
-        storage,
-        Settings::new("https://camera.example"),
-        None,
-    ));
+    let state = Arc::new(State::new(pool, storage, settings, None));
     (state, directory)
 }
 
@@ -62,7 +64,7 @@ async fn signed_headers(signer: &PrivateKeySigner, path: &str) -> HeaderMap {
         AuthLink {
             link_type: AuthLinkType::SIGNER,
             payload: format!("{:#x}", signer.address()),
-            signature: None,
+            signature: Some(String::new()),
         },
         AuthLink {
             link_type: AuthLinkType::EcdsaSignedEntity,
@@ -159,33 +161,132 @@ async fn private_gallery_requires_the_canonical_owner_address_in_the_path() {
 #[tokio::test]
 async fn world_resolution_failure_is_bad_gateway_for_single_and_batch_reads() {
     let (state, directory) = closed_state().await;
-    let (status, body) = get(&state, "/api/places/unavailable.eth/images").await;
+    let expected = json!({
+        "message": "failed to resolve world name: request failed: place lookup unavailable"
+    });
+    let (status, body) = json_request(
+        &state,
+        "GET",
+        "/api/places/unavailable.eth/images",
+        None,
+        None,
+    )
+    .await;
     assert_eq!(status, StatusCode::BAD_GATEWAY);
-    let error: Value = serde_json::from_slice(&body).unwrap();
-    // Upstream includes its places-client error. Local SQL failures keep the
-    // same status and envelope while withholding database implementation details.
-    assert_eq!(
-        error,
-        serde_json::json!({ "message": "failed to resolve world name" })
-    );
-    let response = router(state.clone())
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/places/images")
-                .header("content-type", "application/json")
-                .body(Body::from(r#"{"placesIds":["unavailable.eth"]}"#))
-                .unwrap(),
+    assert_eq!(body, expected);
+    for ids in [
+        json!(["unavailable.eth"]),
+        json!(["invalid-place-id", "unavailable.eth"]),
+        json!(["unavailable.eth", "another.eth"]),
+    ] {
+        let (status, body) = json_request(
+            &state,
+            "POST",
+            "/api/places/images",
+            None,
+            Some(json!({"placesIds": ids})),
         )
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
-    let body = to_bytes(response.into_body(), 8192).await.unwrap();
-    let error: Value = serde_json::from_slice(&body).unwrap();
+        .await;
+        assert_eq!(status, StatusCode::BAD_GATEWAY);
+        assert_eq!(body, expected);
+    }
+    // Image-query failures have the source's 404 messages, independent of the
+    // 502 used for world-name resolution. The .eth suffix is case-sensitive.
+    for id in [Uuid::new_v4().to_string(), "unavailable.ETH".to_owned()] {
+        let (status, body) = json_request(
+            &state,
+            "GET",
+            &format!("/api/places/{id}/images"),
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(body, json!({"message":"place not found"}));
+    }
+    let (status, body) = json_request(
+        &state,
+        "POST",
+        "/api/places/images",
+        None,
+        Some(json!({"placesIds":[Uuid::new_v4().to_string()]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(body, json!({"message":"places not found"}));
+    let (status, body) = json_request(
+        &state,
+        "POST",
+        "/api/places/images",
+        None,
+        Some(json!({"placesIds":[]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body, json!({"message":"no place IDs provided"}));
+    tokio::fs::remove_dir_all(directory).await.unwrap();
+}
+
+#[tokio::test]
+async fn cached_empty_worlds_skip_image_queries_for_single_and_batch_reads() {
+    let Some(pool) = catalyst_db::scratch::pool(2).await else {
+        return;
+    };
+    let (state, directory) = state(pool).await;
+    let world = format!("{}.eth", Uuid::new_v4());
+    let empty = json!({"images":[],"maxImages":0});
+    for _ in 0..2 {
+        let (status, body) = json_request(
+            &state,
+            "GET",
+            &format!("/api/places/{world}/images"),
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, empty);
+        // The second pass must use the cached successful empty lookup.
+        state.db.pool().close().await;
+    }
+    // Only the exact world name was cached. A case variant still needs its
+    // own lookup even though both queries use the same lowercase catalogue key.
+    let variant = format!("{}.eth", world.trim_end_matches(".eth").to_uppercase());
+    let (status, body) = json_request(
+        &state,
+        "GET",
+        &format!("/api/places/{variant}/images"),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY);
     assert_eq!(
-        error,
-        serde_json::json!({ "message": "failed to resolve world name" })
+        body,
+        json!({
+            "message": "failed to resolve world name: request failed: place lookup unavailable"
+        })
     );
+    let (status, body) = json_request(
+        &state,
+        "POST",
+        "/api/places/images",
+        None,
+        Some(json!({"placesIds":[world.clone(),world.clone()]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, empty);
+    let (status, body) = json_request(
+        &state,
+        "POST",
+        "/api/places/images",
+        None,
+        Some(json!({"placesIds":[world,Uuid::new_v4().to_string()]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(body, json!({"message":"places not found"}));
     tokio::fs::remove_dir_all(directory).await.unwrap();
 }
 
@@ -351,4 +452,40 @@ async fn unavailable_wearable_count_has_its_own_error_message() {
         json!({"message":"failed to count the images of the item"})
     );
     tokio::fs::remove_dir_all(directory).await.unwrap();
+}
+
+#[tokio::test]
+async fn zero_world_lookup_ttl_or_capacity_disables_success_cache() {
+    for (ttl_seconds, max_size) in [(0, 1000), (300, 0)] {
+        let Some(pool) = catalyst_db::scratch::pool(2).await else {
+            return;
+        };
+        let mut settings = Settings::new("https://camera.example");
+        settings.places_cache_ttl_seconds = ttl_seconds;
+        settings.places_cache_max_size = max_size;
+        let (state, directory) = state_with_settings(pool, settings).await;
+        let world = format!("{}.eth", Uuid::new_v4());
+        let path = format!("/api/places/{world}/images");
+        let (status, body) = json_request(&state, "GET", &path, None, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, json!({"images":[],"maxImages":0}));
+        state.db.pool().close().await;
+        let expected = json!({
+            "message":"failed to resolve world name: request failed: place lookup unavailable"
+        });
+        let (status, body) = json_request(&state, "GET", &path, None, None).await;
+        assert_eq!(status, StatusCode::BAD_GATEWAY);
+        assert_eq!(body, expected);
+        let (status, body) = json_request(
+            &state,
+            "POST",
+            "/api/places/images",
+            None,
+            Some(json!({"placesIds":[world]})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_GATEWAY);
+        assert_eq!(body, expected);
+        tokio::fs::remove_dir_all(directory).await.unwrap();
+    }
 }

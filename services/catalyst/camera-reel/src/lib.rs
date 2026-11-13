@@ -8,7 +8,8 @@
 //! What it reuses rather than duplicates: the ONE pool ([`db`]), the ONE
 //! blob store (`storage`) for the image and thumbnail bytes by
 //! `auth::hash_bytes_v1` hash. The wire URLs retain the upload's UUID and
-//! basename under `api_url`; rows without a retained basename keep hash URLs.
+//! basename under the literal configured `api_url`; reserved filename characters
+//! are not URL-escaped. Rows without a retained basename keep hash URLs.
 //! Signed fetch uses the shared signature primitives with a one-minute
 //! expiration, mandatory raw metadata, the 6.x payload followed by legacy
 //! fallback, and the process's EIP-1654 validator. World names resolve through
@@ -46,9 +47,10 @@
 //! in the review's and the delete's transaction and mirrored into the shared
 //! in-memory `content::Denylist`, refilled at boot by
 //! [`State::load_withheld`]). A hash is
-//! withheld only while no non-rejected row and no content file or builder
+//! newly withheld only when no non-rejected row and no content file or builder
 //! upload names it, so an owner's delete cannot hide a deployed file of the
-//! same bytes. A private, non-rejected photo is served to whoever holds its
+//! same bytes. A later successful upload can release deletion withholding;
+//! it does not release rejected hashes or operator and remote denials. A private, non-rejected photo is served to whoever holds its
 //! filename URL or hash. Deletion removes the gallery row and applies withholding
 //! without unlinking immutable shared blobs. `GET /api/files/{name}` serves only
 //! a hash a non-rejected camera row names; arbitrary content files cannot be
@@ -59,9 +61,14 @@
 //! `GET /api/images/{name}` redirects whether or not the object exists.
 //! With no bucket origin configured, the target is `/api/files/{name}`,
 //! which resolves exact filename aliases and checks the underlying hash's
-//! denylist. With a configured bucket origin, known aliases redirect to their
-//! stored hash and unknown names keep their requested key. That origin must
-//! enforce its own object availability; this process only controls local bytes.
+//! denylist. With a configured bucket origin, redirects retain the requested
+//! filename without reading the database. Point that origin at `/api/files` or
+//! configure its ingress to resolve filenames; a hash-only origin is insufficient.
+//! An external origin must enforce its own object availability; this process only
+//! controls local bytes. Filename aliases retain the photo's accepted upload MIME
+//! for both objects; older rows without it and raw hash URLs sniff stored bytes.
+//! The local byte route serves complete GET responses; it
+//! does not implement byte ranges or ETag validators, and its HEAD response is 404.
 //!
 //! Mount: `.nest("/camera-reel-service", camera_reel::router(state))`;
 //! the router's own paths are `/api/...`, `/admin/...`, `/health`. It is not
@@ -101,6 +108,8 @@ mod http_parity_tests;
 #[cfg(test)]
 mod tests;
 
+extern crate image_camera as image;
+
 use std::sync::Arc;
 
 use axum::Router;
@@ -117,6 +126,8 @@ use crate::storage::Storage;
 use http::ApiError;
 
 pub const DEFAULT_MAX_IMAGES_PER_USER: u64 = 500;
+pub const DEFAULT_PLACES_CACHE_TTL_SECONDS: u64 = 300;
+pub const DEFAULT_PLACES_CACHE_MAX_SIZE: u64 = 1000;
 
 /// The body cap, applied to the whole router.
 pub const MAX_BODY_BYTES: usize = 25 * 1024 * 1024;
@@ -126,9 +137,9 @@ pub struct Settings {
     /// Base of the rendered `url`/`thumbnailUrl` (old `API_URL`): the public
     /// URL of this router, `<PUBLIC_URL>/camera-reel-service`.
     pub api_url: String,
-    /// Public blob origin. Known image filenames redirect to their stored hash;
-    /// unknown names are forwarded as requested. Without an external origin,
-    /// image URLs redirect to this service's protected `/api/files` route.
+    /// Public filename origin. Every requested name is preserved in the redirect.
+    /// Without an external origin, image URLs redirect to this service's protected
+    /// `/api/files` route, which resolves names to immutable hashes internally.
     pub bucket_url: Option<String>,
     /// Old `MAX_IMAGES_PER_USER` (500).
     pub max_images_per_user: u64,
@@ -138,17 +149,23 @@ pub struct Settings {
     pub writes_enabled: bool,
     /// Protects the service metrics endpoint; an unset token refuses scrapes.
     pub metrics_bearer_token: Option<String>,
+    /// Successful world-name lookup cache lifetime (`PLACES_CACHE_TTL_SECONDS`).
+    pub places_cache_ttl_seconds: u64,
+    /// Maximum world-name lookup cache entries (`PLACES_CACHE_MAX_SIZE`).
+    pub places_cache_max_size: u64,
 }
 
 impl Settings {
     pub fn new(api_url: impl Into<String>) -> Self {
         Self {
-            api_url: api_url.into().trim_end_matches('/').to_string(),
+            api_url: api_url.into(),
             bucket_url: None,
             max_images_per_user: DEFAULT_MAX_IMAGES_PER_USER,
             admin_token: None,
             writes_enabled: false,
             metrics_bearer_token: None,
+            places_cache_ttl_seconds: DEFAULT_PLACES_CACHE_TTL_SECONDS,
+            places_cache_max_size: DEFAULT_PLACES_CACHE_MAX_SIZE,
         }
     }
 }
@@ -164,6 +181,9 @@ pub struct State {
     pub denylist: Arc<Denylist>,
     eip1654: Option<Arc<dyn Eip1654Validator>>,
     metrics: http::Metrics,
+    /// Keep a committed camera verdict and its shared in-memory projection in
+    /// the same order across upload finalization, deletion and moderation.
+    blob_verdict: tokio::sync::Mutex<()>,
 }
 
 pub type SharedState = Arc<State>;
@@ -180,7 +200,12 @@ impl State {
         settings: Settings,
         eip1654: Option<Arc<dyn Eip1654Validator>>,
     ) -> Self {
-        let db = db::Database::new(pool, settings.api_url.clone());
+        let db = db::Database::new(
+            pool,
+            settings.api_url.clone(),
+            settings.places_cache_ttl_seconds,
+            settings.places_cache_max_size,
+        );
         let denylist = storage.denylist().clone();
         Self {
             settings,
@@ -189,6 +214,7 @@ impl State {
             denylist,
             eip1654,
             metrics: http::Metrics::default(),
+            blob_verdict: tokio::sync::Mutex::new(()),
         }
     }
 
@@ -222,6 +248,14 @@ impl State {
         use crate::auth::signed_fetch::{LegacyPayload, SignatureRefusal, SignedRequest};
 
         let chain = signed_fetch::extract_auth_chain(headers)?;
+        // The source chain parser requires a string signature on every link,
+        // including the SIGNER's normally empty field. Shared extraction is
+        // more permissive for other services, so enforce Camera's wire shape here.
+        if chain.iter().any(|link| link.signature.is_none()) {
+            return Err(SignedFetchError::MalformedChain {
+                detail: "missing auth link signature".to_owned(),
+            });
+        }
         let timestamp = signed_fetch::header_str(headers, signed_fetch::AUTH_TIMESTAMP_HEADER)
             .ok_or_else(|| SignedFetchError::InvalidTimestamp(String::new()))?;
         let signed_at = timestamp
@@ -315,9 +349,9 @@ async fn not_found() -> axum::http::StatusCode {
 /// axum lists the served methods in `Allow` on its method fallback; the 404
 /// that fallback answers here carries no such header, as upstream's.
 async fn without_allow(mut res: axum::response::Response) -> axum::response::Response {
-    if res.status() == axum::http::StatusCode::NOT_FOUND {
-        res.headers_mut().remove(axum::http::header::ALLOW);
-    }
+    // MethodRouter adds this after route middleware, including CORS preflights.
+    // The source route guards and CORS responses never emit an Allow header.
+    res.headers_mut().remove(axum::http::header::ALLOW);
     res
 }
 

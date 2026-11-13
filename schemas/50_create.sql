@@ -312,6 +312,10 @@ CREATE TABLE camera_reel.images (
     -- The client's basename renders UUID-prefixed image and thumbnail aliases.
     -- NULL preserves the hash URLs of rows created without a filename.
     original_filename text,
+    -- Both source objects use the accepted client MIME, independently of encoding.
+    -- NULL leaves older rows on their byte-sniffing fallback.
+    image_content_type text CONSTRAINT images_image_content_type_check
+        CHECK (image_content_type IN ('image/png', 'image/jpeg')),
     is_public boolean NOT NULL DEFAULT false,
     review_status text NOT NULL DEFAULT 'ok',
     -- Old rows have no new ranking event. New uploads set false, then publish

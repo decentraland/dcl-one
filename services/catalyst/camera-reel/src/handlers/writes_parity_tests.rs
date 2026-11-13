@@ -212,7 +212,7 @@ async fn headers(
         AuthLink {
             link_type: AuthLinkType::SIGNER,
             payload: address.clone(),
-            signature: None,
+            signature: Some(String::new()),
         },
         AuthLink {
             link_type: AuthLinkType::EcdsaSignedEntity,

@@ -292,7 +292,7 @@ async fn signed_headers(w: &Wallet, method: &str, path: &str, v6: bool) -> Vec<(
         AuthLink {
             link_type: AuthLinkType::SIGNER,
             payload: format!("{:#x}", w.signer.address()),
-            signature: None,
+            signature: Some(String::new()),
         },
         AuthLink {
             link_type: AuthLinkType::EcdsaSignedEntity,
@@ -3270,7 +3270,7 @@ async fn a_failed_world_lookup_is_a_502_without_the_database_error() {
         (status, json_of(&body)),
         (
             StatusCode::BAD_GATEWAY,
-            json!({ "message": "failed to resolve world name" })
+            json!({ "message": "failed to resolve world name: request failed: place lookup unavailable" })
         )
     );
     let batch = json!({ "placesIds": ["somebody.dcl.eth"] })
@@ -3288,7 +3288,7 @@ async fn a_failed_world_lookup_is_a_502_without_the_database_error() {
         (status, json_of(&body)),
         (
             StatusCode::BAD_GATEWAY,
-            json!({ "message": "failed to resolve world name" })
+            json!({ "message": "failed to resolve world name: request failed: place lookup unavailable" })
         )
     );
     let _ = tokio::fs::remove_dir_all(&dir).await;

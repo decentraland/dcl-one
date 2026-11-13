@@ -6,14 +6,12 @@ use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 
 pub async fn openapi_json() -> Response {
-    (
-        [(header::CONTENT_TYPE, "application/json")],
-        include_str!(concat!(
-            env!("DCL_ONE_ROOT"),
-            "/services/catalyst/camera-reel/src/openapi.json"
-        )),
-    )
-        .into_response()
+    let spec: serde_json::Value = serde_json::from_str(include_str!(concat!(
+        env!("DCL_ONE_ROOT"),
+        "/services/catalyst/camera-reel/src/openapi.json"
+    )))
+    .expect("pinned Camera Reel OpenAPI document");
+    axum::Json(spec).into_response()
 }
 
 pub async fn swagger_ui(uri: axum::http::Uri, nested: Option<Extension<NestedPath>>) -> Response {

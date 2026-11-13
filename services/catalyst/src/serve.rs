@@ -853,6 +853,8 @@ pub async fn serve(
             admin_token: Config::non_empty(&config.create.catalyrst_camera_reel_admin_token),
             writes_enabled: config.create.create_writes_enabled,
             metrics_bearer_token: config.social.wkc_metrics_bearer_token.clone(),
+            places_cache_ttl_seconds: config.create.camera_reel_places_cache_ttl_seconds,
+            places_cache_max_size: config.create.camera_reel_places_cache_max_size,
         },
         eip1654.clone(),
     ));
@@ -1595,6 +1597,11 @@ struct OpsStates {
 fn credits_settings(config: &Config) -> anyhow::Result<shop::credits::Settings> {
     let non_empty = Config::non_empty;
     shop::credits::Settings::parse(shop::credits::RawSettings {
+        goal_flags_source: shop::credits::goals::flags::Source {
+            url: config.shop.credits_feature_flags_url.clone(),
+            origin: config.shop.credits_server_url.clone(),
+            refresh: Duration::from_secs(config.shop.credits_feature_flags_refresh_secs),
+        },
         writes_enabled: config.ops.ops_writes_enabled,
         admin_token: non_empty(&config.shop.catalyrst_credits_admin_token),
         captcha_secret: non_empty(&config.shop.credits_captcha_secret),
@@ -1665,6 +1672,7 @@ async fn ops_states(
         sources.eip1654.clone(),
     ));
     credits.spawn_jobs(jobs);
+    shop::credits::goals::spawn_job(&credits, jobs);
 
     let rpc = ops::rpc::State::new(
         ops::rpc::Settings::parse(

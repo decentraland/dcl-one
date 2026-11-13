@@ -875,8 +875,7 @@
                 "$ref": "#/components/schemas/ScreenRect"
               }
             ],
-            "nullable": true,
-            "description": "Skipped rather than written as null so a photo taken by a client that does not report it keeps\nthe shape it has always had."
+            "nullable": true
           }
         }
       },
