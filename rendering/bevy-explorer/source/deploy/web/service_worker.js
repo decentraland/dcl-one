@@ -1,4 +1,4 @@
-// MUST stay in sync with crates/ipfs/src/web_cache.rs (cache name, both keys, the cached header):
+// MUST stay in sync with crates/ipfs/src/web_cache.rs (cache name, both keys):
 // this worker only answers from the cache; the engine fills it (content it has checked against
 // its hash under the shared key, a url's response under the url), and its asset processor writes
 // processed bytes back over the entry it read.
@@ -25,7 +25,7 @@ try {
     importScripts('preview_realm.js');
     previewRealm = self.dclPreviewRealm;
 } catch (e) {
-    // keep the worker installable: the page needs its COEP rewrite and X-IPFS cache regardless
+    // keep the worker installable: the page needs its COEP rewrite regardless
     console.warn('[IPFS Cache Service Worker]: preview realm unavailable', e);
 }
 

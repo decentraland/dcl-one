@@ -4230,7 +4230,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/shell/main.ts",
-      "sha256": "40a349a06d73850cedc48f2017c80ba0c332d168b709ad69d0945935e3c33a87"
+      "sha256": "60abf9ac2e09ff6678288ee949a5da2e48e970bcafd405053222f9ea3e2bf490"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/styles/global.css",
@@ -4370,7 +4370,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/serviceWorkerCache.test.ts",
-      "sha256": "8ff57c92f31bcda6cd80c01e9dc849b0f0d2e0fa447c7bc709acd23bdface10c"
+      "sha256": "9575d03e55719e2df50b0cd125ded6ed26a5b16b71be7fdbb748169132d69403"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/session.test.tsx",
@@ -4422,7 +4422,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "sha256": "4ad58e33d5e40e37875d130347d7dbd254d76cfe06cf8121abf6e01fd8047023"
+      "sha256": "cbc9f68eaf4d7249dda8b53d1bbd88914a5ced7e4f10879f132d8c3127de6f25"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/vite.shared.ts",
@@ -4774,7 +4774,7 @@
     },
     {
       "path": "library/explorer-core/lib/coiServiceWorker.ts",
-      "sha256": "c6eaf4d73e1225f72b9f34510a1f5a5370488f0c0a24f32a8b84059d681876aa"
+      "sha256": "41cdd406b7f2075f5583a18ee191abf11e3e026cd11862fcbe0a4082a34db378"
     },
     {
       "path": "library/explorer-core/lib/color.ts",
