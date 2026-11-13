@@ -12,10 +12,7 @@ mod platform_ban;
 use alloy_core::primitives::Address;
 use bevy::{
     app::{App, Plugin},
-    ecs::{
-        query::Has,
-        system::{Query, Res, SystemParam},
-    },
+    ecs::system::{Query, Res, SystemParam},
     platform::collections::HashSet,
 };
 use serde::Serialize;
@@ -48,7 +45,7 @@ pub struct BanBlock<'w, 's> {
         (
             &'static comms::SceneRoom,
             &'static SceneRoomModeration,
-            Has<comms::livekit::room::Connected>,
+            comms::room_connection::RoomStatus,
         ),
     >,
     #[cfg(not(feature = "livekit"))]
@@ -221,12 +218,14 @@ impl BanBlock<'_, '_> {
     /// `NotConnected`.
     pub fn scene_room(&self) -> SceneRoomView<'_> {
         #[cfg(feature = "livekit")]
-        if let Ok((scene, moderation, true)) = self.room.single() {
-            return SceneRoomView::Connected {
-                scene_id: &scene.0,
-                banned_addresses: &moderation.banned_addresses,
-                scene_admins: &moderation.scene_admins,
-            };
+        if let Ok((scene, moderation, status)) = self.room.single() {
+            if status.state() == comms::room_connection::RoomState::Connected {
+                return SceneRoomView::Connected {
+                    scene_id: &scene.0,
+                    banned_addresses: &moderation.banned_addresses,
+                    scene_admins: &moderation.scene_admins,
+                };
+            }
         }
         SceneRoomView::NotConnected
     }
@@ -307,6 +306,51 @@ mod tests {
         assert_eq!(
             down.admin_permissions_for_addr(address(2)),
             AdminPermissionsStatus::NotLoadedYet
+        );
+    }
+
+    #[cfg(feature = "livekit")]
+    #[test]
+    fn suspended_or_denied_rooms_do_not_expose_live_moderation() {
+        use bevy::{ecs::system::RunSystemOnce, prelude::*};
+        use comms::room_connection::{ConnectionHealth, FailureKind, RoomRecovery, RoomSuspended};
+        let mut world = World::new();
+        world.init_resource::<Wallet>();
+        world.init_resource::<PlatformBanStatus>();
+        world.init_resource::<SceneAdmission>();
+        let health = ConnectionHealth::default();
+        health.connected();
+        let room = world
+            .spawn((
+                comms::SceneRoom("scene".into()),
+                SceneRoomModeration {
+                    scene_admins: HashSet::from_iter([address(1)]),
+                    ..Default::default()
+                },
+                RoomRecovery::default(),
+                health,
+            ))
+            .id();
+        let read = |ban_block: BanBlock| ban_block.admin_permissions_for_addr(address(1));
+        assert_eq!(
+            world.run_system_once(read).unwrap(),
+            AdminPermissionsStatus::Admin
+        );
+        world.entity_mut(room).insert(RoomSuspended);
+        assert_eq!(
+            world.run_system_once(read).unwrap(),
+            AdminPermissionsStatus::NotLoadedYet
+        );
+        world.entity_mut(room).remove::<RoomSuspended>();
+        world.get_mut::<RoomRecovery>(room).unwrap().failure = Some(FailureKind::Denied);
+        assert_eq!(
+            world.run_system_once(read).unwrap(),
+            AdminPermissionsStatus::NotLoadedYet
+        );
+        world.get_mut::<RoomRecovery>(room).unwrap().reset();
+        assert_eq!(
+            world.run_system_once(read).unwrap(),
+            AdminPermissionsStatus::Admin
         );
     }
 

@@ -170,6 +170,11 @@ describe("profile route, client navigation", () => {
       await router.navigate("/other");
     });
     expect(client.getQueryData(profileKeys.profile(A))).toEqual(fresh);
+    await act(async () => {
+      await router.navigate(`/profile/${A}`);
+    });
+    expect(await screen.findByRole("heading", { name: "Recovered" })).toBeTruthy();
+    expect(net.fetchProfile).toHaveBeenCalledTimes(1);
   });
 
   it("keeps usable cached data after a newer background read fails", async () => {
@@ -248,6 +253,44 @@ describe("profile route, client navigation", () => {
     } finally {
       unsubscribe();
     }
+  });
+
+  it("uses a newer healthy profile when Retry leaves the old error boundary", async () => {
+    net.fetchProfile.mockRejectedValueOnce(new CatalystError("Catalyst unreachable", "/lambdas/profile", 0));
+    mount(`/profile/${A}`);
+    await screen.findByRole("heading", { name: "Profile unavailable" });
+    const fresh = mapProfile(avatar("Recovered") as never, A);
+    act(() => client.setQueryData(profileKeys.profile(A), fresh));
+
+    await act(async () => {
+      screen.getByRole("button", { name: "Try again" }).click();
+    });
+
+    expect(await screen.findByRole("heading", { name: "Recovered" })).toBeTruthy();
+    expect(net.fetchProfile).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps repeated failed retries to one new read per attempt", async () => {
+    net.fetchProfile
+      .mockRejectedValueOnce(new CatalystError("Catalyst unreachable", "/lambdas/profile", 0))
+      .mockRejectedValueOnce(new CatalystError("Catalyst unreachable", "/lambdas/profile", 0))
+      .mockResolvedValueOnce(avatar("Recovered"));
+    const router = mount(`/profile/${A}`);
+    await screen.findByRole("heading", { name: "Profile unavailable" });
+
+    await act(async () => {
+      screen.getByRole("button", { name: "Try again" }).click();
+    });
+    await waitFor(() => expect(client.getQueryState(profileKeys.profile(A))?.status).toBe("error"));
+    expect(router.state.navigation.state).toBe("idle");
+    expect(net.fetchProfile).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole("heading", { name: "Profile unavailable" })).toBeTruthy();
+
+    await act(async () => {
+      screen.getByRole("button", { name: "Try again" }).click();
+    });
+    expect(await screen.findByRole("heading", { name: "Recovered" })).toBeTruthy();
+    expect(net.fetchProfile).toHaveBeenCalledTimes(3);
   });
 
   it("receives no server data and reads the profile through the browser client", async () => {

@@ -168,6 +168,12 @@ pub fn _embedded_asset_path(
     file_path: &Path,
     asset_path: &Path,
 ) -> PathBuf {
+    // `file!()` keeps the build host's separators: a wasm build on a Windows host yields `\`,
+    // which a non-Windows `Path` does not split on.
+    #[cfg(not(windows))]
+    let normalized = PathBuf::from(file_path.to_string_lossy().replace('\\', "/"));
+    #[cfg(not(windows))]
+    let file_path = normalized.as_path();
     let mut maybe_parent = file_path.parent();
     let after_src = loop {
         let Some(parent) = maybe_parent else {
@@ -346,6 +352,19 @@ mod tests {
             "my_crate",
             "src".as_ref(),
             "src/foo/plugin.rs".as_ref(),
+            "the/asset.png".as_ref(),
+        );
+        assert_eq!(asset_path, Path::new("my_crate/foo/the/asset.png"));
+    }
+
+    // A non-Windows target built on a Windows host: `file!()` keeps the host's `\`.
+    #[cfg(not(windows))]
+    #[test]
+    fn embedded_asset_path_from_windows_build_host() {
+        let asset_path = _embedded_asset_path(
+            "my_crate",
+            "src".as_ref(),
+            r"crates\my_crate\src\foo\plugin.rs".as_ref(),
             "the/asset.png".as_ref(),
         );
         assert_eq!(asset_path, Path::new("my_crate/foo/the/asset.png"));

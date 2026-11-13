@@ -10,7 +10,9 @@
 import type {
   Color3,
   CommunityVoiceStatus,
+  ConnectivitySnapshot,
   HomeScene,
+  PortableInfo,
   SatelliteView,
   SceneLoadingUi,
   VoiceChatAction,
@@ -164,6 +166,8 @@ export interface BridgeUnavailableMessage {
 
 export type PageToScene =
   | HelloRequest
+  | { kind: 'getConnectivity' }
+  | { kind: 'retryConnectivity'; requestId: string }
   | VoiceChatActionRequest
   | RpcRequest
   | SendChatRequest
@@ -194,6 +198,7 @@ export type PageToScene =
   | TriggerEmoteRequest
   | EquipEmoteRequest
   | SetMicRequest
+  | SetNearbyMuteRequest
   | GetWearablesRequest
   | CatalogQueryRequest
   | EquipRequest
@@ -239,6 +244,9 @@ export type PageToScene =
   | GetCommunityChannelsRequest
   | SetCommunityChannelsRequest
   | GetCommunityOnlineMembersRequest
+  | GetEventsRequest
+  | SetEventAttendingRequest
+  | GetEventPlacesRequest
   | PlayUiSoundRequest
   | GetMapRequest
   | GetHomeSceneRequest
@@ -364,6 +372,19 @@ export interface VoiceActivityMessage {
   kind: 'voiceActivity'
   address: string
   active: boolean
+}
+
+/** The wallets whose nearby voice the user muted (lowercased), whole on every change (scene → page). */
+export interface NearbyMutesMessage {
+  kind: 'nearbyMutes'
+  addresses: string[]
+}
+
+/** Mute ("Hush") or unmute ("Hear") a wallet's nearby voice (page → scene). */
+export interface SetNearbyMuteRequest {
+  kind: 'setNearbyMute'
+  address: string
+  muted: boolean
 }
 
 // ---- voice chat: private calls and community streams ----------------------
@@ -840,10 +861,14 @@ export interface HomeSceneMessage extends HomeScene {
 /** What the welcome page must show for the signed-in account (answered with `welcome`). */
 export interface GetWelcomeRequest {
   kind: 'getWelcome'
+  /** The page's tag for this ask, which its answer echoes. */
+  ask?: number
 }
 
 export interface WelcomeMessage extends WelcomeState {
   kind: 'welcome'
+  /** The tag of the ask this answers, as the page sent it. */
+  ask?: number
 }
 
 /** Put the curated default look `default<look>` on the lobby stage's avatar, as the page fetched it
@@ -1042,6 +1067,14 @@ export interface PermissionUsedMessage {
   scene: string
   realm: string
   allowed: boolean
+}
+
+/** The portable experiences the player can see and stop (scene → page, from getPortablesStream):
+ *  every portable but the HUD's own scene and the startup ones, plus smart wearables that are
+ *  stopped or still loading. The engine sends the whole list on subscribe and on every change. */
+export interface PortablesMessage {
+  kind: 'portables'
+  portables: PortableInfo[]
 }
 
 /** The engine needs a password to enter the world the player is travelling to (scene → page).
@@ -2154,6 +2187,8 @@ export interface AvatarClickMessage {
 
 export type SceneToPage =
   | BridgeReadyMessage
+  | { kind: 'connectivity'; state: ConnectivitySnapshot }
+  | { kind: 'connectivityRetry'; requestId: string; error?: string }
   | BridgeUnavailableMessage
   | VoiceChatStateMessage
   | CommunityVoiceUpdateMessage
@@ -2203,6 +2238,7 @@ export type SceneToPage =
   | CommunityBrowseMessage
   | CommunityMessage
   | VoiceActivityMessage
+  | NearbyMutesMessage
   | CommunityActionFailedMessage
   | CommunitySaveResultMessage
   | CommunityPlaceOptionsMessage
@@ -2223,6 +2259,9 @@ export type SceneToPage =
   | CommunityChannelRemovedMessage
   | CommunityOnlineMembersMessage
   | CommunityPresenceMessage
+  | EventsMessage
+  | EventAttendingMessage
+  | EventPlacesMessage
   | MapMessage
   | HomeSceneMessage
   | WelcomeMessage
@@ -2241,6 +2280,98 @@ export type SceneToPage =
   | WorldPasswordRequestMessage
   | WorldPasswordWithdrawnMessage
   | EditorSceneResultMessage
+  | PortablesMessage
+
+// ---- events ----------------------------------------------------------------
+
+/** An event as the events service lists it for the signed-in user. Dates are ISO strings. */
+export interface EventData {
+  id: string
+  name: string
+  description: string | null
+  image: string | null
+  image_vertical: string | null
+  start_at: string | null
+  finish_at: string | null
+  next_start_at: string | null
+  next_finish_at: string | null
+  /** Milliseconds. */
+  duration: number | null
+  x: number
+  y: number
+  /** The world's name when `world` is set. */
+  server: string | null
+  world: boolean
+  user_name: string | null
+  scene_name: string | null
+  highlighted: boolean
+  live: boolean
+  /** The signed-in user asked to be reminded. */
+  attending: boolean
+  total_attendees: number
+  recurrent: boolean
+  recurrent_dates: string[]
+  /** Who is at the event now, by address. */
+  connected_addresses: string[]
+  community_id: string | null
+  place_id: string | null
+}
+
+/** A list of events (page → scene → events service, signed so each event carries `attending`).
+ *  With `from` and `to` it is the events starting in that range; with `list` it is that list. */
+export interface GetEventsRequest {
+  kind: 'getEvents'
+  /** Echoed in the answer, so the page drops an answer to a request it no longer waits for. */
+  request: number
+  /** UTC, `yyyy-MM-ddTHH:mm:ssZ`. */
+  from?: string
+  to?: string
+  list?: 'live' | 'highlight'
+  limit?: number
+  offset?: number
+}
+export interface EventsMessage {
+  kind: 'events'
+  request: number
+  events: EventData[]
+  /** The read failed; `events` is empty. */
+  failed?: boolean
+}
+
+/** Set or clear the signed-in user's reminder on an event (POST / DELETE …/attendees). */
+export interface SetEventAttendingRequest {
+  kind: 'setEventAttending'
+  eventId: string
+  attending: boolean
+}
+/** The reminder as it is after the request; `failed` when the service refused, with `attending`
+ *  the value that was asked for. */
+export interface EventAttendingMessage {
+  kind: 'eventAttending'
+  eventId: string
+  attending: boolean
+  failed?: boolean
+}
+
+/** A place an event is held at, for the event detail's location line. */
+export interface EventPlace {
+  id: string
+  title: string
+  world_name: string | null
+  /** "x,y". */
+  base_position: string | null
+}
+export interface GetEventPlacesRequest {
+  kind: 'getEventPlaces'
+  request: number
+  placeIds: string[]
+}
+export interface EventPlacesMessage {
+  kind: 'eventPlaces'
+  request: number
+  places: EventPlace[]
+  failed?: boolean
+}
 
 // ---- envelope --------------------------------------------------------------
 

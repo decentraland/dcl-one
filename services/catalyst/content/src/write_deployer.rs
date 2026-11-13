@@ -1341,8 +1341,9 @@ pub(crate) fn deploy_function_sql(local_provenance: bool, or_replace: bool) -> S
 }
 
 pub(crate) fn deploy_function_call(name: &str) -> String {
+    // Keep the shared JSONB validity boundary without normalizing stored property order.
     format!(
-        "SELECT dep_id, newer, overwrote, cleared, {LOCAL_MS_SQL} AS local_ms FROM content.{name}($1, $2, $3, $4, $5::json, $6, $7, $8::json, $9, $10, $11)"
+        "SELECT dep_id, newer, overwrote, cleared, {LOCAL_MS_SQL} AS local_ms FROM content.{name}($1, $2, $3, $4, CASE WHEN $5::text::jsonb IS NOT NULL THEN $5::text::json ELSE NULL END, $6, $7, $8::json, $9, $10, $11)"
     )
 }
 
@@ -1371,6 +1372,12 @@ impl WriteDeployer {
         context: &str,
     ) -> Result<Persisted, DeployFailure> {
         let unavailable = |e: String| deploy_error(&entity.id, &e);
+        let metadata = crate::entity::deployment_metadata(
+            entity_bytes,
+            crate::entity::MetadataInput::LocalEntity,
+        )
+        .and_then(|metadata| serde_json::to_string(&metadata))
+        .map_err(|e| unavailable(e.to_string()))?;
         let started = Instant::now();
         store_deployment_files(
             &self.storage,
@@ -1385,10 +1392,6 @@ impl WriteDeployer {
             .first()
             .map(|l| l.payload.clone())
             .unwrap_or_default();
-        let metadata = match &entity.metadata {
-            Some(m) if !m.is_null() => serde_json::json!({ "v": m }),
-            _ => Value::Null,
-        };
         let pointers: Vec<String> = {
             let mut seen = std::collections::HashSet::new();
             entity

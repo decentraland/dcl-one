@@ -45,7 +45,8 @@ const COPY: Record<ProfileErrorReason, (address: string) => { title: string; bod
 
 /**
  * The document request's 404/503 response and a client navigation's failed profile read render the
- * same screen. Retry and leaving both drop the failed profile read, so the next visit asks again.
+ * same screen. Retry resets only failed reads without data; leaving additionally requires the read
+ * to be inactive and idle. Newer data and requests remain owned by their current observers.
  */
 export function ProfileErrorBoundary() {
   const error = useRouteError();
@@ -76,7 +77,11 @@ export function ProfileErrorBoundary() {
   );
 
   const retry = async () => {
-    await client.resetQueries({ queryKey: profileKeys.profile(address), exact: true });
+    await client.resetQueries({
+      queryKey: profileKeys.profile(address),
+      exact: true,
+      predicate: ({ state }) => state.status === "error" && state.data === undefined,
+    });
     // A navigation to the same URL clears the router's error, which a revalidation does not for an
     // error thrown while rendering.
     void navigate(`${location.pathname}${location.search}`, { replace: true });

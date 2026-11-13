@@ -14,7 +14,8 @@
 //! /world/{name}/permissions/{perm}/parcels` (the addresses holding a grant
 //! over the parcels) and the world-storage `POST /exports` (a download of
 //! the scene's values); so does `POST /admin/federation/worlds/refresh`, a poll of the
-//! admitted peers that writes mirror rows, never user authority. The scene
+//! admitted peers that writes mirror rows, never user authority, and so does
+//! `POST /reprocess-ab`, which only asks the asset-bundle converter to build. The scene
 //! host (`/scene-state`: a WebSocket, an operator kick and a reload) and
 //! archipelago (`/ws`, the challenge and heartbeat: admission and presence)
 //! are not user authority and are not wrapped.
@@ -38,7 +39,7 @@ pub fn is_gated(method: &Method, path: &str) -> bool {
     if *method == Method::POST
         && matches!(
             path,
-            "/entities/active" | "/admin/federation/worlds/refresh" | "/exports"
+            "/entities/active" | "/admin/federation/worlds/refresh" | "/exports" | "/reprocess-ab"
         )
     {
         return false;
@@ -176,6 +177,7 @@ mod tests {
         ));
         assert!(!is_gated(&Method::POST, "/admin/federation/worlds/refresh"));
         assert!(!is_gated(&Method::POST, "/exports"));
+        assert!(!is_gated(&Method::POST, "/reprocess-ab"));
     }
 
     #[tokio::test]

@@ -6,6 +6,7 @@ mod assistant_provider;
 mod assistant_utterances;
 pub(crate) mod chrome;
 mod content_cache;
+mod deploy_api;
 mod deploy_page;
 mod deploy_rights;
 mod deploy_status;
@@ -27,6 +28,7 @@ mod ui_designer;
 use crate::build::{self, BuildOptions};
 use crate::data_layer::{self, DataLayerState};
 use crate::joinblock::{self, JoinBlock, QrMode};
+use crate::linker::Published;
 use crate::live_reload::{self, ReloadEvent, ReloadFrame};
 use crate::netinfo::{self, Iface, IfaceClass};
 use crate::play_embed;
@@ -47,7 +49,8 @@ use axum::{
 use editor::{data_layer_ws, inspector_asset, inspector_index, inspector_redirect, mobile_preview};
 use http::{
     about, contents, entities_active, entities_scene, feature_flags, get_scene_adapter,
-    preview_wearables, root, scene_id_for, scene_json, scenes, signed_login,
+    preview_origin, preview_wearable, preview_wearables, root, scene_id_for, scene_json, scenes,
+    signed_login,
 };
 use proxy::{
     catalyst_proxy, lambdas_contracts_servers, lambdas_explore_realms, world_about, world_content,
@@ -109,6 +112,17 @@ pub struct StartOptions {
     pub no_host: bool,
     /// `--talk`: hands-free listening in the web explorer's Scene assistant.
     pub talk: Option<Talk>,
+    /// `--dclenv`: `org` or `zone`, for the deep links and the hosted web
+    /// explorer.
+    pub dclenv: String,
+    /// `--realm`: what the desktop deep links name instead of this preview.
+    pub realm: Option<String>,
+    /// `--position`: where the join links land instead of scene.json's base.
+    pub position: Option<(i64, i64)>,
+    /// `--explorer-alpha`: open the desktop deep link once the banner prints.
+    pub launch_desktop: bool,
+    /// `--web`: open the hosted web explorer once the banner prints.
+    pub launch_web: bool,
 }
 
 /// `--talk`: the web explorer that will be opened is let through the
@@ -287,6 +301,9 @@ pub(crate) struct AppState {
     mcp: bool,
     mcp_port: u16,
     allow_remote_deploy: bool,
+    /// `--position`: where the hosted `/play` fallback lands, as the printed
+    /// join links do, instead of scene.json's base parcel.
+    position: Option<(i64, i64)>,
     /// Publish stops before signing or uploading. Only the test suite sets
     /// it: every gate test works by BREAKING a gate, so without this a test
     /// would fall through to a real deploy against a real content server.
@@ -331,6 +348,7 @@ impl AppState {
             mcp: false,
             mcp_port: joinblock::DEFAULT_EXPLORER_MCP_PORT,
             allow_remote_deploy: false,
+            position: None,
             deploy_dry_run: false,
             explorer_params: Vec::new(),
             recent_requests: Mutex::new(VecDeque::new()),
@@ -478,6 +496,19 @@ fn cross_origin_refusal(headers: &HeaderMap) -> Option<&'static str> {
         }
     }
     None
+}
+
+/// The gate's answer to DNS rebinding, for a route that admits only this
+/// machine: after a rebind `Origin` and `Host` both name the attacker's
+/// domain and agree, and the peer is still loopback, so the `Origin` host
+/// itself has to be a loopback one. Not applied when remote peers are let
+/// in on purpose (`--allow-remote-deploy`): their origin is a LAN address.
+fn rebound_origin_refusal(headers: &HeaderMap) -> Option<&'static str> {
+    let origin = headers.get(header::ORIGIN).and_then(|v| v.to_str().ok())?;
+    let host = url::Url::parse(origin.trim())
+        .ok()
+        .and_then(|u| u.host_str().map(str::to_string))?;
+    (!loopback_host(&host)).then_some("this request did not come from the preview's own page")
 }
 
 /// Whether an `Origin` header names exactly the origin of a request that
@@ -659,6 +690,7 @@ fn lock_cache(st: &AppState) -> MutexGuard<'_, HashMap<PathBuf, (Instant, Value)
 }
 
 pub async fn start(opts: StartOptions) -> Result<()> {
+    joinblock::set_dclenv(&opts.dclenv);
     let trunk_url = opts
         .tunnel
         .as_deref()
@@ -693,7 +725,10 @@ pub async fn start(opts: StartOptions) -> Result<()> {
                 std::env::var("DCL_SCENE_CLI_WEB_EXPLORER").ok().as_deref(),
             );
             let realm = format!("http://127.0.0.1:{port}");
-            let url = talk_url(&player, &realm, joinblock::base_coords(&first.scene_json))
+            let position = opts
+                .position
+                .unwrap_or_else(|| joinblock::base_coords(&first.scene_json));
+            let url = talk_url(&player, &realm, position)
                 .context("--talk needs a complete http:// or https:// web explorer URL (--player or DCL_SCENE_CLI_WEB_EXPLORER)")?;
             let origin = origin_of_url(&player).expect("a URL that joined is an http(s) URL");
             let _ = TALK_ORIGIN.set(origin);
@@ -759,6 +794,7 @@ pub async fn start(opts: StartOptions) -> Result<()> {
     state.mcp = opts.mcp;
     state.mcp_port = opts.mcp_port;
     state.allow_remote_deploy = opts.allow_remote_deploy;
+    state.position = opts.position;
     state.explorer_params = opts.explorer_params.clone();
     let state = Arc::new(state);
     let talk_link = talk_link.map(|(url, open)| {
@@ -821,6 +857,11 @@ pub async fn start(opts: StartOptions) -> Result<()> {
     let mobile = opts.mobile;
     let local_ab = opts.local_ab;
     let tunnel_token = opts.tunnel_token.clone();
+    let position = opts
+        .position
+        .unwrap_or_else(|| joinblock::base_coords(&scene_json));
+    let realm_override = opts.realm.clone();
+    let (launch_desktop, launch_web) = (opts.launch_desktop, opts.launch_web);
     tokio::spawn(async move {
         let mut optimized_assets_url = None;
         if let Some(s) = sidecar.as_mut()
@@ -844,11 +885,15 @@ pub async fn start(opts: StartOptions) -> Result<()> {
         );
         let block = JoinBlock {
             title: joinblock::scene_title(&scene_json),
-            position: joinblock::base_coords(&scene_json),
+            position,
             port,
             ifaces,
             web_explorer: joinblock::web_explorer_base(),
-            qr: if mobile { QrMode::Print } else { QrMode::Hint },
+            qr: if mobile && !ux::ci() {
+                QrMode::Print
+            } else {
+                QrMode::Hint
+            },
             unreachable,
             tunnel_hint: trunk_url.is_none(),
             editor: banner_state.data_layer.is_some(),
@@ -859,6 +904,7 @@ pub async fn start(opts: StartOptions) -> Result<()> {
                 banner_state.mcp.then_some(banner_state.mcp_port),
                 &params,
             ),
+            realm_override,
             native_hud: true,
             native_bin: joinblock::detect_native_bin(),
         };
@@ -881,6 +927,16 @@ pub async fn start(opts: StartOptions) -> Result<()> {
             if open_browser {
                 crate::linker::spawn_browser(&talk_opener_url(port));
             }
+        }
+        if launch_desktop {
+            let link = block.local_desktop_link();
+            ux::note_arrow(format!("Desktop client: {link}"));
+            crate::linker::spawn_browser(&link);
+        }
+        if launch_web {
+            let url = block.local_web_url();
+            ux::note_arrow(format!("Web explorer: {url}"));
+            crate::linker::spawn_browser(&url);
         }
         if let Some(trunk_url) = trunk_url {
             let events = crate::tunnel::spawn(crate::tunnel::AgentConfig {
@@ -915,12 +971,41 @@ pub(crate) async fn serve_signing(
     port: Option<u16>,
     open_browser: bool,
     timeout: Duration,
+    programmatic: bool,
     signer: Arc<crate::linker::LinkerState>,
-    rx: tokio::sync::oneshot::Receiver<Result<String>>,
-) -> Result<String> {
+    rx: tokio::sync::oneshot::Receiver<Result<Published>>,
+) -> Result<Published> {
     let workspace = Workspace::load(dir)?;
     let bound = bind_preview_port(port).await?;
-    serve_signing_on(workspace, bound, open_browser, timeout, signer, rx).await
+    serve_signing_on(
+        workspace,
+        bound,
+        open_browser,
+        timeout,
+        programmatic,
+        signer,
+        rx,
+    )
+    .await
+}
+
+/// The one line a programmatic run reads to drive the deploy: where the
+/// signing page and the API are, the token that cancels, the id to sign.
+fn programmatic_ready(port: u16, url: &str, signer: &Arc<crate::linker::LinkerState>) -> String {
+    let (entity_id, delete_payload) = match signer.minted() {
+        Ok((id, delete)) => (Some(id), delete),
+        Err(_) => (None, None),
+    };
+    serde_json::json!({
+        "event": "ready",
+        "port": port,
+        "url": url,
+        "api": format!("http://localhost:{port}{}", deploy_api::RESOURCE_PATH),
+        "deployToken": signer.deploy_token(),
+        "entityId": entity_id,
+        "deleteScenesFromWorldPayload": delete_payload,
+    })
+    .to_string()
 }
 
 /// [`serve_signing`] on a listener already bound to `port`.
@@ -929,29 +1014,43 @@ async fn serve_signing_on(
     (port, listener): (u16, tokio::net::TcpListener),
     open_browser: bool,
     timeout: Duration,
+    programmatic: bool,
     signer: Arc<crate::linker::LinkerState>,
-    rx: tokio::sync::oneshot::Receiver<Result<String>>,
-) -> Result<String> {
+    rx: tokio::sync::oneshot::Receiver<Result<Published>>,
+) -> Result<Published> {
     let allow_remote = crate::linker::linker_bind_host() != "127.0.0.1";
     let mut state = AppState::new(workspace.projects.clone(), port, broadcast::channel(32).0);
     state.allow_remote_deploy = allow_remote;
     let state = Arc::new(state);
     deploy_page::adopt_cli_signing(&state, signer.clone());
     let app = build_router(state.clone(), Arc::new(crate::comms::CommsState::default()));
-    let url = format!("http://localhost:{port}/deploy");
-    println!();
-    println!("Sign the deployment with your wallet in a browser:");
-    println!("  {url}");
-    ux::note("the same server previews the scene at / while you decide");
-    if !allow_remote {
-        ux::note("to sign from another device, re-run with DCL_SCENE_CLI_LINKER_HOST=0.0.0.0");
+    let url = format!(
+        "http://localhost:{port}/deploy{}",
+        crate::linker::linker_fragment(signer.deploy_token())
+    );
+    if programmatic {
+        println!("{}", programmatic_ready(port, &url, &signer));
     } else {
-        ux::note("from another device, replace localhost with this machine's address");
-    }
-    if open_browser {
-        crate::linker::spawn_browser(&url);
-    } else {
-        ux::note("browser auto-open disabled \u{2014} open the URL manually");
+        // Under --json stdout is the result document alone: the prompt
+        // goes to stderr, where the notes below already are not (quiet).
+        let prompt = |line: &str| match ux::json() {
+            true => eprintln!("{line}"),
+            false => println!("{line}"),
+        };
+        prompt("");
+        prompt("Sign the deployment with your wallet in a browser:");
+        prompt(&format!("  {url}"));
+        ux::note("the same server previews the scene at / while you decide");
+        if !allow_remote {
+            ux::note("to sign from another device, re-run with DCL_SCENE_CLI_LINKER_HOST=0.0.0.0");
+        } else {
+            ux::note("from another device, replace localhost with this machine's address");
+        }
+        if open_browser {
+            crate::linker::spawn_browser(&url);
+        } else {
+            ux::note("browser auto-open disabled \u{2014} open the URL manually");
+        }
     }
     let serve = axum::serve(
         listener,
@@ -968,16 +1067,23 @@ async fn serve_signing_on(
             )
             .into())
         }
-        outcome = crate::linker::await_outcome(rx, timeout, &url) => {
+        outcome = crate::linker::await_outcome(&signer, rx, timeout, &url) => {
             deploy_page::finish_cli_signing(&state, &outcome);
-            // An unanswered CLI request must finish on its deadline. Once
-            // a wallet submits, keep the preview available to inspect the
+            // A program drives the run: it ends with the deployment, after
+            // a beat for a follower of /api/deploy to read the final state.
+            // So does a --json run, whose document is the result, and an
+            // unanswered CLI request must finish on its deadline. Once a
+            // wallet submits, keep the preview available to inspect the
             // deployment result (including an upload failure) and retry.
-            if outcome.is_err() && signer.signer_address().is_none() {
+            if programmatic
+                || ux::json()
+                || (outcome.is_err() && signer.signer_address().is_none())
+            {
+                tokio::time::sleep(signer.settle_delay()).await;
                 return outcome;
             }
             match &outcome {
-                Ok(message) => println!("{message}"),
+                Ok(published) => println!("{}", published.message),
                 Err(error) => eprintln!("{error}"),
             }
             ux::note(format!("preview remains available at {url} — press Ctrl+C to stop"));
@@ -1033,6 +1139,7 @@ fn build_router(state: Arc<AppState>, comms_state: Arc<crate::comms::CommsState>
         .route("/scenes", get(scenes))
         .route("/scene.json", get(scene_json))
         .route("/preview-wearables", get(preview_wearables))
+        .route("/preview-wearables/{id}", get(preview_wearable))
         .route("/feature-flags/{file}", get(feature_flags))
         .route("/content/contents/{hash}", get(contents).head(contents))
         .route("/content/entities/active", post(entities_active))
@@ -1075,15 +1182,52 @@ fn build_router(state: Arc<AppState>, comms_state: Arc<crate::comms::CommsState>
                 .route("/scene", get(scene_route))
                 .route("/deploy/sign", post(deploy_page::sign_submit))
                 .route("/deploy/progress", get(deploy_page::sign_progress))
+                .route(
+                    deploy_api::RESOURCE_PATH,
+                    get(deploy_api::get)
+                        .post(deploy_api::post)
+                        .delete(deploy_api::cancel),
+                )
+                .route("/api/info", get(deploy_api::info))
+                .route("/api/files", get(deploy_api::files))
                 .route("/scene-json", post(edit::scene_json))
                 .route("/scene-thumbnail", post(edit::thumbnail))
                 .merge(storage_page::routes())
                 .with_state(state.clone()),
         )
         .merge(project_bridge::routes(state.clone()))
-        .merge(play_embed::routes())
+        .merge(play_routes(state.clone()))
         .layer(middleware::from_fn_with_state(state, access_log))
         .layer(compression_layer())
+}
+
+/// The embedded web explorer when this binary carries one; otherwise `/play`
+/// is still an address that plays the scene: it sends the browser to the
+/// hosted web explorer, pointed at this preview.
+fn play_routes(state: Arc<AppState>) -> Router {
+    if play_embed::present() {
+        return play_embed::routes();
+    }
+    Router::new()
+        .route("/play", get(play_hosted))
+        .route("/play/", get(play_hosted))
+        .with_state(state)
+}
+
+async fn play_hosted(State(st): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+    let realm = preview_origin(&headers);
+    let position = st
+        .position
+        .or_else(|| {
+            st.first_project()
+                .map(|p| joinblock::base_coords(&p.scene_json))
+        })
+        .unwrap_or((0, 0));
+    let url = joinblock::web_join_url(&joinblock::web_explorer_base(), &realm, position);
+    if url.is_empty() {
+        return (axum::http::StatusCode::NOT_FOUND, play_embed::NOT_EMBEDDED).into_response();
+    }
+    axum::response::Redirect::temporary(&url).into_response()
 }
 
 /// gzip, fastest level, on text-like bodies above 1 KB: the scene's chunks
@@ -1221,10 +1365,12 @@ fn spawn_tunnel_printer(
     });
 }
 
-/// Built-in preview builds use the generated entry point; custom scripts own
+/// Built-in preview builds use the generated entry point, shaped by the
+/// `--ignoreComposite` and `--customEntryPoint` a toolchain `scripts.build`
+/// carries (its `--production` is not a preview's); custom scripts own
 /// their output and receive DCL_SCENE_CLI_PRODUCTION=0.
 fn preview_build_opts(opts: &StartOptions, dir: PathBuf) -> BuildOptions {
-    BuildOptions {
+    crate::build_script::preview_options(&BuildOptions {
         built_in: false,
         dir,
         production: false,
@@ -1233,7 +1379,7 @@ fn preview_build_opts(opts: &StartOptions, dir: PathBuf) -> BuildOptions {
         skip_type_check: opts.skip_type_check,
         out_root: None,
         quiet: false,
-    }
+    })
 }
 
 /// How many `steps` an initial build reports.
@@ -1252,7 +1398,7 @@ async fn build_or_watch(
     let build_opts = preview_build_opts(opts, build_dir);
     if opts.no_watch {
         if !opts.skip_build {
-            build::build(&build_opts).await?;
+            build::build_as(&build_opts, build::BuildMode::Preview).await?;
         }
         return Ok(());
     }

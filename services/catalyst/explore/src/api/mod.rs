@@ -701,6 +701,9 @@ impl State {
     }
 }
 
+/// The Registry's service key; it keeps its own CORS ([`registry::cors`]).
+const REGISTRY_PREFIX: &str = "asset-bundle-registry";
+
 /// One router per upstream service, keyed by the subdomain the explorer
 /// derives it from (`realm-provider-ea.<domain>`, `api.<domain>`, ...), for
 /// a deployment that serves the raw-subdomain form.
@@ -712,10 +715,7 @@ pub fn service_routers(state: Shared) -> Vec<(&'static str, Router)> {
         ),
         ("auth-api", auth_api::routes().with_state(state.clone())),
         ("onboarding", onboarding::routes().with_state(state.clone())),
-        (
-            "asset-bundle-registry",
-            registry::routes().with_state(state.clone()),
-        ),
+        (REGISTRY_PREFIX, registry::routes(state.clone())),
         ("dcl-lists", lists::routes().with_state(state.clone())),
         ("config", denylist::routes().with_state(state.clone())),
         (
@@ -738,6 +738,8 @@ pub fn service_routers(state: Shared) -> Vec<(&'static str, Router)> {
 /// the statics the main vhost served at the root: `/world-manifest.json`,
 /// `/satellite/{z}/{x}/{y}` (web.nix's `/satellite/` location) and the
 /// poster bucket's `/poster[-vertical]/{file}` (the vhost's own paths).
+/// Everything but the Registry answers permissive CORS; the Registry is
+/// nested after that layer so only its own CORS applies.
 pub fn router(state: Shared) -> Router {
     let mut app = Router::new()
         .route("/mirrors", get(mirror::status))
@@ -745,10 +747,17 @@ pub fn router(state: Shared) -> Router {
         .route("/satellite/{z}/{x}/{y}", get(satellite::tile))
         .merge(posters::routes())
         .with_state(state.clone());
-    for (prefix, service) in service_routers(state) {
+    let (registry, services): (Vec<_>, Vec<_>) = service_routers(state)
+        .into_iter()
+        .partition(|(prefix, _)| *prefix == REGISTRY_PREFIX);
+    for (prefix, service) in services {
         app = app.nest(&format!("/{prefix}"), service);
     }
-    app.layer(CorsLayer::permissive())
+    let mut app = app.layer(CorsLayer::permissive());
+    for (prefix, service) in registry {
+        app = app.nest(&format!("/{prefix}"), service);
+    }
+    app
 }
 
 /// The unavailable envelope (`marketplace::unavailable`'s shape) for a

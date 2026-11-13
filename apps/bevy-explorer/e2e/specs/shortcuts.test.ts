@@ -1,7 +1,7 @@
 // explorer-automation `ShortcutsTests` (7): a key opens its page, Escape closes it.
 //
 // | Unity test                          | Here                                   | Class   |
-// | TestOpenEventsWithShortcut (X)      | no key: the rail opens Events          | Gap     |
+// | TestOpenEventsWithShortcut (X)      | X opens Events                         | Port    |
 // | TestOpenPlacesWithShortcut (Z)      | Z opens Places                         | Port    |
 // | TestOpenCommunitiesWithShortcut (O) | O opens Communities                    | Port    |
 // | TestOpenMapWithShortcut (M)         | M opens the Map                        | Port    |
@@ -15,6 +15,7 @@ import { PAGES, closePage, openWithKey, type PageName } from './pages.ts'
 const scenario = spec(import.meta.url)
 
 const WITH_KEY: { page: PageName; unity: string }[] = [
+  { page: 'events', unity: 'X' },
   { page: 'places', unity: 'Z' },
   { page: 'communities', unity: 'O' },
   { page: 'map', unity: 'M' },
@@ -32,7 +33,3 @@ for (const { page, unity } of WITH_KEY) {
     assert.equal(await explorer.hud.isVisible(PAGES[page].marker), false, `${page} should be closed after Escape`)
   })
 }
-
-scenario('X opens Events', async () => {}, {
-  todo: 'the Bevy HUD binds no key to Events; the rail button opens it (explore-panel spec)'
-})

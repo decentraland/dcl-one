@@ -67,6 +67,17 @@ message TakeoverCompleted {
 // fresh completed-pass and live-registration authority. An inactive retained session replies
 // only while cleanup remains pending; final completion makes it unavailable, never mint-ready.
 message PeerClusterSnapshot {
+  enum SelectedOrigin {
+    SELECTED_ORIGIN_UNKNOWN = 0;
+    SELECTED_ORIGIN_NATIVE = 1;
+    SELECTED_ORIGIN_LEGACY_OWNER_V1 = 2;
+    SELECTED_ORIGIN_LEGACY_INTENT_V2 = 3;
+  }
+  enum AssignmentState {
+    ASSIGNMENT_STATE_UNKNOWN = 0;
+    ASSIGNMENT_STATE_ACTIVE = 1;
+    ASSIGNMENT_STATE_RETAINED_CLEANUP_ONLY = 2;
+  }
   string wallet = 1;
   string session = 2;
   string cluster_id = 3;
@@ -77,4 +88,7 @@ message PeerClusterSnapshot {
   repeated PendingTakeover pending_takeovers = 7;
   optional uint64 token_not_before = 8;
   uint64 assignment_version = 9;
+  SelectedOrigin selected_origin = 10;
+  optional uint64 selected_identity = 11;
+  AssignmentState assignment_state = 12;
 }

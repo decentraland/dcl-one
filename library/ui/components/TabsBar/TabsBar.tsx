@@ -1,4 +1,10 @@
-import { useLayoutEffect, useRef, type AnchorHTMLAttributes, type ComponentType, type ReactNode } from 'react'
+import {
+  useLayoutEffect,
+  useRef,
+  type AnchorHTMLAttributes,
+  type ComponentType,
+  type ReactNode
+} from 'react'
 import { isPlainLinkClick } from '../../link.helpers'
 import { Tabs } from '../Tabs/Tabs'
 import styles from './TabsBar.module.css'

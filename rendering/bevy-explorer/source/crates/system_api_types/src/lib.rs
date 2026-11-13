@@ -16,6 +16,27 @@ use dcl_component::proto_components::{
 use serde::{Deserialize, Serialize};
 use strum_macros::EnumIter;
 
+/// The safe connectivity snapshot shared by the HUD and diagnostic console.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ConnectivitySnapshot {
+    pub connection_lost: bool,
+    pub probing: bool,
+    pub ever_connected: bool,
+    pub suppressed: bool,
+    pub rooms: Vec<ConnectivityRoomStatus>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ConnectivityRoomStatus {
+    pub scope: String,
+    pub state: String,
+    pub retry_at: Option<f64>,
+}
+
 /// A Color3 with a `clear` flag, distinguishing "set this color" from "clear the
 /// stored color" while remaining representable in JSON (where an absent field
 /// already means "leave unchanged").
@@ -74,10 +95,65 @@ pub struct LiveSceneInfo {
     pub title: String,
     pub parcels: Vec<Vector2>,
     pub is_portable: bool,
+    /// A portable backing an equipped or previewed smart wearable.
+    pub is_smart_wearable: bool,
     pub is_broken: bool,
     pub is_blocked: bool,
     pub is_super: bool,
     pub sdk_version: String,
+}
+
+/// A portable the player can see and stop: every portable but startup ones and the HUD's own
+/// scene, and the smart wearables stopped while still equipped.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct PortableInfo {
+    /// The live scene hash, which `/stop_portable` takes. `None` for a smart wearable that is not
+    /// loaded (stopped, or waiting for its wearable data).
+    pub hash: Option<String>,
+    /// A smart wearable's urn; a scene portable's urn or ens.
+    pub pid: String,
+    /// The wearable's name; a scene portable's title, else its ens or pid.
+    pub name: String,
+    pub kind: PortableInfoKind,
+    pub state: PortableState,
+    /// Why a portable failed, when known.
+    pub reason: Option<String>,
+    /// Smart wearables only: why the engine holds it.
+    pub source: Option<SmartWearableSource>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum PortableInfoKind {
+    Scene,
+    SmartWearable,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum PortableState {
+    Loading,
+    Running,
+    Failed,
+    /// Paused while the player stands in a scene with `portableExperiences: disabled`.
+    Blocked,
+    /// A smart wearable stopped while still equipped; it can be restarted.
+    Stopped,
+}
+
+/// Why the engine holds a smart wearable: the profile equips it, a console `run`, or the realm's
+/// `/preview-wearables`.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum SmartWearableSource {
+    Equipped,
+    Console,
+    Preview,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, ts_rs::TS)]
