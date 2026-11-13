@@ -47,6 +47,25 @@ describe('realm', () => {
     assert.notEqual(host.entity.id, scene.entity.id)
   })
 
+  test('contentFailures answers a file 503 for its first GETs, then serves it; HEAD is not counted', async () => {
+    const hash = contentHash(Buffer.from([1, 2, 3]))
+    const flaky = await serveRealm({ scenes: [scene], port: 0, contentFailures: new Map([[hash, 2]]) })
+    try {
+      const url = `${flaky.realm}/content/contents/${hash}`
+      assert.equal((await fetch(url, { method: 'HEAD' })).status, 200)
+      const statuses = []
+      for (let i = 0; i < 3; i++) {
+        const response = await fetch(url)
+        await response.arrayBuffer()
+        statuses.push(response.status)
+      }
+      assert.deepEqual(statuses, [503, 503, 200])
+      assert.equal(flaky.contentGets.get(hash), 3)
+    } finally {
+      await flaky.close()
+    }
+  })
+
   test('the hash is stable for the same bytes', () => {
     assert.equal(contentHash(Buffer.from('x')), contentHash(Buffer.from('x')))
     assert.notEqual(contentHash(Buffer.from('x')), contentHash(Buffer.from('y')))

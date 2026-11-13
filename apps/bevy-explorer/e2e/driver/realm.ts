@@ -175,11 +175,15 @@ export interface RealmOptions {
   /** Smart wearables to list on `/preview-wearables`; without them the route answers 404, as a
    *  production catalyst does. */
   previewWearables?: PreviewWearable[]
+  /** Content files whose first GETs answer 503, by hash: how many (`Infinity`: every one). */
+  contentFailures?: Map<string, number>
 }
 
 export interface RealmServer extends StaticServer {
   /** The realm for `?realm=` and `--realm`: the origin, no trailing slash. */
   readonly realm: string
+  /** The GETs of each content file so far, by hash. */
+  readonly contentGets: Map<string, number>
 }
 
 const CORS_HEADERS: Record<string, string> = {
@@ -225,7 +229,8 @@ async function readBody(request: IncomingMessage): Promise<string> {
 }
 
 export function serveRealm(options: RealmOptions): Promise<RealmServer> {
-  const { scenes, port, realmName = 'e2e-visual', previewWearables } = options
+  const { scenes, port, realmName = 'e2e-visual', previewWearables, contentFailures } = options
+  const contentGets = new Map<string, number>()
   const byId = new Map(scenes.map((scene) => [scene.entity.id, scene]))
   const byHash = new Map<string, string>()
   for (const scene of scenes) for (const [hash, file] of scene.files) byHash.set(hash, file)
@@ -270,6 +275,14 @@ export function serveRealm(options: RealmOptions): Promise<RealmServer> {
         return
       }
       const file = byHash.get(hash)
+      if (file && request.method === 'GET') {
+        const gets = (contentGets.get(hash) ?? 0) + 1
+        contentGets.set(hash, gets)
+        if (gets <= (contentFailures?.get(hash) ?? 0)) {
+          response.writeHead(503).end()
+          return
+        }
+      }
       if (file) {
         const bytes = await readFile(file)
         response.writeHead(200, { 'content-type': contentType(file), 'content-length': bytes.length })
@@ -288,6 +301,6 @@ export function serveRealm(options: RealmOptions): Promise<RealmServer> {
   })
   return listen(server, port).then((bound) => {
     origin = `http://127.0.0.1:${bound.port}`
-    return { ...bound, realm: origin }
+    return { ...bound, realm: origin, contentGets }
   })
 }

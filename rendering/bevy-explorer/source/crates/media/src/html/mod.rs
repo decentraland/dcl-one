@@ -21,7 +21,7 @@ use dcl_component::proto_components::sdk::components::VideoState;
 use futures_channel::mpsc::{UnboundedReceiver, UnboundedSender};
 use once_cell::sync::OnceCell;
 
-use crate::{AVCommand, VideoData, VideoInfo};
+use crate::{AVCommand, MediaRetryStatus, VideoData, VideoInfo};
 
 pub type MediaId = u32;
 
@@ -46,6 +46,11 @@ pub enum MediaEvent {
         id: MediaId,
         state: VideoState,
         duration: f64,
+    },
+    /// The source's reopen state changed.
+    Retry {
+        id: MediaId,
+        status: MediaRetryStatus,
     },
     /// A frame was transferred to the render worker.
     Frame {
@@ -97,6 +102,7 @@ struct AvSource {
     commands: tokio::sync::mpsc::UnboundedReceiver<AVCommand>,
     video: tokio::sync::mpsc::Sender<VideoData>,
     state_sender: tokio::sync::watch::Sender<VideoState>,
+    retry_sender: tokio::sync::watch::Sender<MediaRetryStatus>,
     size: Option<(u32, u32)>,
     duration: f64,
 }
@@ -106,6 +112,7 @@ impl AvSource {
         commands: tokio::sync::mpsc::UnboundedReceiver<AVCommand>,
         video: tokio::sync::mpsc::Sender<VideoData>,
         state_sender: tokio::sync::watch::Sender<VideoState>,
+        retry_sender: tokio::sync::watch::Sender<MediaRetryStatus>,
         image: Option<&Handle<Image>>,
     ) -> Self {
         let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
@@ -115,6 +122,7 @@ impl AvSource {
             commands,
             video,
             state_sender,
+            retry_sender,
             size: None,
             duration: 0.0,
         }
@@ -145,6 +153,7 @@ impl AvSource {
 /// Plays `url` in a page element whose frames are copied into `image`: the web counterpart of
 /// native's ffmpeg thread, driven by `commands` and reporting on `video`. `None` opens a
 /// placeholder that never plays. Without `has_video` (an audio stream) no frames are read.
+/// Returns the source's reopen state.
 pub fn spawn_av(
     commands: tokio::sync::mpsc::UnboundedReceiver<AVCommand>,
     video: tokio::sync::mpsc::Sender<VideoData>,
@@ -152,14 +161,16 @@ pub fn spawn_av(
     url: Option<String>,
     has_video: bool,
     image: Option<&Handle<Image>>,
-) {
-    let source = AvSource::new(commands, video, state_sender, image);
+) -> tokio::sync::watch::Receiver<MediaRetryStatus> {
+    let (retry_sender, retry_receiver) = tokio::sync::watch::channel(MediaRetryStatus::default());
+    let source = AvSource::new(commands, video, state_sender, retry_sender, image);
     send_host(HostCommand::Create {
         id: source.id,
         url,
         has_video,
     });
     NEW_SOURCES.lock().unwrap().push(source);
+    retry_receiver
 }
 
 /// A page `<video>` element the page registers itself (a livekit track's) under the returned
@@ -171,7 +182,8 @@ pub fn adopt_video(
     state_sender: tokio::sync::watch::Sender<VideoState>,
     image: &Handle<Image>,
 ) -> MediaId {
-    let source = AvSource::new(commands, video, state_sender, Some(image));
+    let (retry_sender, _) = tokio::sync::watch::channel(MediaRetryStatus::default());
+    let source = AvSource::new(commands, video, state_sender, retry_sender, Some(image));
     let id = source.id;
     NEW_SOURCES.lock().unwrap().push(source);
     id

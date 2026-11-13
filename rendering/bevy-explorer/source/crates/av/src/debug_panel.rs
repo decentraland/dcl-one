@@ -9,6 +9,7 @@ use serde_json::Value;
 
 pub(super) fn register(app: &mut App) {
     app.add_console_command::<MediaState, _>(media_state)
+        .add_console_command::<MediaRetryDelay, _>(media_retry_delay)
         .add_debug_section(DebugSection {
             title: "Media player",
             query: "/media_state",
@@ -25,6 +26,27 @@ pub(super) fn register(app: &mut App) {
             actions: &[],
             inputs: &[],
         });
+}
+
+/// Set the wait before a failed web media source's first reopen; later waits double from it.
+#[derive(clap::Parser, ConsoleCommand)]
+#[command(name = "/media_retry_delay")]
+struct MediaRetryDelay {
+    /// Milliseconds; without it, the current wait is reported.
+    milliseconds: Option<u64>,
+}
+
+fn media_retry_delay(mut cmd: ConsoleCommand<MediaRetryDelay>) {
+    let Some(Ok(MediaRetryDelay { milliseconds })) = cmd.take() else {
+        return;
+    };
+    if let Some(milliseconds) = milliseconds {
+        media::set_first_reopen_delay(std::time::Duration::from_millis(milliseconds));
+    }
+    cmd.reply_ok(
+        json!({"firstDelayMs": media::first_reopen_delay().as_millis() as u64, "maxReopens": media::MAX_REOPENS})
+            .to_string(),
+    );
 }
 
 /// Inspect scene media players and their requested and scheduled playback states.
@@ -143,6 +165,16 @@ fn add_sink<T: AVPlayer>(row: &mut Value, sinks: Option<&AVSinks<T>>, images: &A
         .filter(|s| s.current_time >= 0.0)
         .map(|s| s.current_time));
     row["durationSeconds"] = json!(sink.and_then(|s| s.length));
+    #[cfg(feature = "html")]
+    {
+        let retry = sinks.map(|s| *s.retry.borrow());
+        row["retryAttempt"] = json!(retry.map(|r| r.attempt));
+        row["retryDelaySeconds"] = json!(retry
+            .and_then(|r| r.next_delay)
+            .map(|delay| delay.as_secs_f64()));
+        row["retryGaveUp"] = json!(retry.map(|r| r.gave_up));
+        row["lastError"] = json!(retry.and_then(|r| r.last_error));
+    }
 }
 
 #[cfg(all(test, feature = "ffmpeg"))]

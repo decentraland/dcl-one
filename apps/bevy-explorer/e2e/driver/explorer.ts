@@ -69,6 +69,31 @@ export interface RaycastStats {
   uncappedSpentMs: number
 }
 
+/** A `/media_state` player row; the retry fields are the web backend's. */
+export interface MediaPlayerRow {
+  type: 'video' | 'audio'
+  entity: string
+  scene: string | null
+  source: string
+  lastPlaybackState?: string | null
+  retryAttempt?: number | null
+  retryDelaySeconds?: number | null
+  retryGaveUp?: boolean | null
+  lastError?: string | null
+}
+
+/** `/media_state`: the loaded media players. */
+export interface MediaState {
+  backend: string
+  players: MediaPlayerRow[]
+}
+
+/** `/media_retry_delay`: the wait before a failed web source's first reopen and the reopens allowed. */
+export interface MediaRetryDelay {
+  firstDelayMs: number
+  maxReopens: number
+}
+
 export interface Control {
   found: true
   role: string
@@ -943,6 +968,15 @@ export class Explorer {
     const match = /^raycast budget: ([0-9.]+) ms \((auto|override)\)$/.exec(reply.trim())
     if (!match) throw new Error(`unexpected /raycast_budget reply: ${reply}`)
     return Number(match[1])
+  }
+
+  mediaState(): Promise<MediaState> {
+    return this.json<MediaState>('/media_state')
+  }
+
+  /** The wait before a failed web media source's first reopen; with `ms`, sets it first. */
+  mediaRetryDelay(ms?: number): Promise<MediaRetryDelay> {
+    return this.json<MediaRetryDelay>(ms === undefined ? '/media_retry_delay' : `/media_retry_delay ${ms}`)
   }
 
   /** The target scene's last log lines, oldest first; a leading "(+N older entries not retained)" line is kept. */

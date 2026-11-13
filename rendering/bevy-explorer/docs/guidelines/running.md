@@ -283,6 +283,14 @@ State, in every build:
 - `/tree_wind [true|false]`: whether the landscape's trees and bushes sway in the wind. Still,
   they stand in their rest pose, so two frames of them agree whenever they were taken; the visual
   scenarios hold them still for their frames.
+- `/media_state`: the loaded video players and audio streams as JSON, the Media player debug
+  section's reading. On the web each row also carries the source's reopen state:
+  `retryAttempt` (reopens since it last opened), `retryDelaySeconds` (the wait before the
+  scheduled one, else null), `retryGaveUp` and `lastError`.
+- `/media_retry_delay [ms]`: the wait before a failed web media source's first reopen (2000 by
+  default; later waits double from it, 5 reopens at most) as `firstDelayMs` and `maxReopens`;
+  with `ms`, sets it first for every source failing from then on. For tests that would otherwise
+  wait the full 62 s schedule.
 
 The HUD and input:
 
