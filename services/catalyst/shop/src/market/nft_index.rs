@@ -135,7 +135,8 @@ pub struct NftEvent {
     pub amount: Option<String>,
     pub expires_at: Option<i64>,
     pub detail: Option<String>,
-    /// The transaction of an `order_successful`.
+    /// The transaction of an `order_successful` (NULL on other kinds and on
+    /// rows indexed before 0040).
     pub tx_hash: Option<String>,
 }
 
@@ -357,7 +358,7 @@ pub fn parse_land_data(raw: &str) -> Option<(Option<String>, Option<String>)> {
     Some((field(1), field(2)))
 }
 
-/// Appends a window's rows (`ON CONFLICT (network, block_number, log_index) DO NOTHING`).
+/// Appends a window's rows; a row already kept only gains a missing `tx_hash`.
 pub async fn insert_events(
     conn: &mut PgConnection,
     net: ChainNet,
@@ -371,7 +372,8 @@ pub async fn insert_events(
              SELECT $1, b, i, t, k, em, c, tok::numeric, f, tt, a::numeric, x, d, h \
              FROM UNNEST($2::bigint[], $3::int[], $4::bigint[], $5::text[], $6::text[], $7::text[], $8::text[], $9::text[], $10::text[], $11::text[], $12::bigint[], $13::text[], $14::text[]) \
                   AS u(b, i, t, k, em, c, tok, f, tt, a, x, d, h) \
-             ON CONFLICT (network, block_number, log_index) DO NOTHING",
+             ON CONFLICT (network, block_number, log_index) DO UPDATE SET tx_hash = EXCLUDED.tx_hash \
+             WHERE shop.nft_event.tx_hash IS NULL AND EXCLUDED.tx_hash IS NOT NULL",
         )
         .bind(net.db_name())
         .bind(chunk.iter().map(|r| r.block_number).collect::<Vec<_>>())
