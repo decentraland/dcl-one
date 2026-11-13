@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { releaseHarness } from './release-harness'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { findBrowser, openSession } from '../figma/review/scripts/capture-browser.mjs'
 
 let server: Server
@@ -141,6 +141,10 @@ async function prepareHarness() {
     ))()
   session = await startup
 }
+
+afterEach(async () => {
+  if (session) await session.send('Emulation.setTouchEmulationEnabled', { enabled: false })
+})
 
 afterAll(async () => {
   startupController.abort(new Error('NavBar composition fixture disposed'))
@@ -366,6 +370,7 @@ describe('when a public NavBar composes app-owned controls in Chromium', () => {
   for (const width of [991, 992, 1023, 1024, 1440]) {
     for (const surface of ['solid', 'overlay']) {
       it(`should keep account geometry stable across balance states at ${width}px on ${surface}`, async () => {
+        expect(await evaluate('navigator.maxTouchPoints')).toBe(0)
         await session.send('Emulation.setDeviceMetricsOverride', {
           width,
           height: 900,
