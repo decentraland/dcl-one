@@ -71,4 +71,44 @@ describe('checkAssetCompatibility', () => {
     });
     expect(checkAssetCompatibility(composite, engine)).toEqual({ compatible: true });
   });
+
+  describe('when the asset declares the SDK version it needs', () => {
+    const composite = scriptComposite({});
+    const check = (installed: string | null | undefined) =>
+      checkAssetCompatibility(composite, engine, { required: '7.32.0', installed });
+
+    it('rejects it in a scene on an older SDK', () => {
+      expect(check('7.31.5')).toEqual({
+        compatible: false,
+        incompatibleComponents: [{ name: '@dcl/sdk 7.32.0', reason: 'sdk-too-old' }],
+      });
+    });
+
+    it('accepts it in a scene on that SDK or a newer one', () => {
+      expect(check('7.32.0')).toEqual({ compatible: true });
+      expect(check('7.33.1')).toEqual({ compatible: true });
+      expect(check('8.0.0')).toEqual({ compatible: true });
+    });
+
+    it('compares the numbers, not the text', () => {
+      expect(check('7.4.0')).toMatchObject({ compatible: false });
+      expect(check('7.100.0')).toEqual({ compatible: true });
+    });
+
+    it('counts a pre-release of that SDK as that SDK', () => {
+      expect(check('7.32.0-123456.commit-abc1234')).toEqual({ compatible: true });
+    });
+
+    it('accepts it when the SDK of the scene is unknown', () => {
+      expect(check(null)).toEqual({ compatible: true });
+      expect(check(undefined)).toEqual({ compatible: true });
+      expect(check('next')).toEqual({ compatible: true });
+    });
+  });
+
+  it('ignores the SDK of the scene for an asset that declares no minimum', () => {
+    expect(checkAssetCompatibility(scriptComposite({}), engine, { installed: '7.0.0' })).toEqual({
+      compatible: true,
+    });
+  });
 });

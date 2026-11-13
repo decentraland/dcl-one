@@ -17,5 +17,6 @@
     "environment"
   ],
   "description": "Sets the colours of the sky and the ambient light, the clouds and stars, the sunlight and the fog of the whole scene.",
-  "author": "Decentraland Foundation"
+  "author": "Decentraland Foundation",
+  "minSdkVersion": "7.32.0"
 }

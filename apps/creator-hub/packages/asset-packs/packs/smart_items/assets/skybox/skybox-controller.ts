@@ -1,6 +1,13 @@
 import type { Entity } from '@dcl/sdk/ecs';
-import { EnvironmentFog, Skybox, Sun, engine } from '@dcl/sdk/ecs';
+import * as ecs from '@dcl/sdk/ecs';
+import { engine } from '@dcl/sdk/ecs';
 import { Color3 } from '@dcl/sdk/math';
+
+// Skybox, Sun and EnvironmentFog arrived in @dcl/sdk 7.32. They are read off the namespace because
+// an import that names a missing export fails the whole scene build on an older SDK. Read this
+// way they are undefined there, and the item does nothing instead of stopping the scene's scripts.
+const { Skybox, Sun, EnvironmentFog } = ecs;
+const MIN_SDK_VERSION = '7.32.0';
 
 // A number edited with a slider in the Creator Hub UI: Slider<min, max, step>
 type Slider<_Min extends number, _Max extends number, _Step extends number = 1> = number;
@@ -113,6 +120,7 @@ export class SkyboxController {
    * @action
    */
   enable() {
+    if (!isSupported()) return;
     this.enabled = true;
     this.apply();
   }
@@ -122,6 +130,7 @@ export class SkyboxController {
    * @action
    */
   disable() {
+    if (!isSupported()) return;
     this.enabled = false;
     Skybox.deleteFrom(engine.RootEntity);
     Sun.deleteFrom(engine.RootEntity);
@@ -259,6 +268,14 @@ export class SkyboxController {
       z: -Math.cos(heading) * Math.cos(height),
     };
   }
+}
+
+function isSupported() {
+  if (Skybox && Sun && EnvironmentFog) return true;
+  console.error(
+    `Skybox: this item needs @dcl/sdk ${MIN_SDK_VERSION} or newer. Update the SDK of the scene to use it.`,
+  );
+  return false;
 }
 
 // A single key holds the colour at every time of day. The protocol documents these colours as

@@ -3,7 +3,7 @@ import type { Entity } from '@dcl/ecs';
 import type { SkyboxController as SkyboxControllerClass } from '../packs/smart_items/assets/skybox/skybox-controller';
 import { fakeSdkEcs } from './script-harness';
 
-// Skybox, Sun and EnvironmentFog arrived in SDK 7.33, newer than the @dcl/ecs this package installs,
+// Skybox, Sun and EnvironmentFog arrived in SDK 7.32, newer than the @dcl/ecs this package installs,
 // so the test stands them in with a store of the last value written to each entity.
 function fakeComponent() {
   const values = new Map<Entity, any>();

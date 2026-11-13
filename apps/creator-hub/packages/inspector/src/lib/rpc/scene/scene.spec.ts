@@ -76,6 +76,16 @@ describe('SceneClient RPC', () => {
     });
   });
 
+  describe('when using the getSdkVersion method', () => {
+    it('should send the get_sdk_version request and return the version', async () => {
+      const spy = vi.spyOn(client, 'request').mockResolvedValueOnce({ version: '7.32.0' });
+      const result = await client.getSdkVersion();
+      expect(spy).toHaveBeenCalledWith('get_sdk_version', {});
+      expect(result).toEqual({ version: '7.32.0' });
+      spy.mockRestore();
+    });
+  });
+
   describe('when using the openDirectory method', () => {
     let path: string;
     let spy: any;
