@@ -441,11 +441,11 @@ pub struct PulseDecoder {
     /// newer one authenticates, though the older one's `PlayerLeft` can arrive after the newer
     /// one's join, so a join replaces the subject held for its wallet under another id.
     wallets: HashMap<Address, u32>,
-    /// Subjects with a `Resync` sent that nothing has answered yet. A gap in a subject's deltas
-    /// shows in every one after it, so without this each would ask again. A full state, a delta
-    /// that applies, a join (its own, or a newer one of its wallet's, which replaces it), a leave
-    /// and `reset` each end the wait, as does `resync_not_sent`. Only a held subject is asked for
-    /// (a delta for any other is dropped, see `on_delta`), so no entry outlives its subject.
+    /// Subjects with an outstanding `Resync`. Only sequence progress releases the request gate;
+    /// if a newer observed destination is still missing, recovery starts another request from
+    /// the advanced baseline. Stale states and equal-sequence emotes preserve the gate. A join,
+    /// leave, `reset` or `resync_not_sent` also releases it. Only held subjects are asked for, so
+    /// no entry outlives its subject.
     pending_resync: HashSet<u32>,
     /// Server ticks are `u32` milliseconds since the Pulse server started, so they roll over after
     /// ~49.7 days of server uptime. The newest raw tick seen, and the number of milliseconds to
@@ -630,12 +630,11 @@ impl PulseDecoder {
     }
 
     /// Replace a known subject's baseline from a server-supplied full state, if it is newer than the
-    /// one held: a higher sequence, or for an emote event an equal one too ([`FullKind`]). An older
-    /// state leaves the baseline as it is, an older teleport's realm included, and announces
-    /// nothing. Any state for a known subject ends the wait for its resync, an older one too; a
-    /// message without a state does not, and an unknown subject has no wait to end. Unknown
-    /// subjects are dropped: full state carries no wallet, so without a prior `PlayerJoined` we
-    /// can't address it.
+    /// one held: a higher sequence, or for an emote event an equal one too ([`FullKind`]). Older
+    /// states preserve the baseline, realm and outstanding resync without emitting events.
+    /// Sequence progress, including a buffered replay, releases the request gate and requests
+    /// any still-missing destination from the advanced baseline. Unknown subjects are dropped:
+    /// full state carries no wallet, so without a prior `PlayerJoined` we can't address it.
     fn on_full(
         &mut self,
         subject_id: u32,
@@ -651,13 +650,13 @@ impl PulseDecoder {
             return Vec::new();
         };
 
-        self.pending_resync.remove(&subject_id);
+        let previous_seq = subject.last_seq;
         let newer = match kind {
             FullKind::Refresh | FullKind::Teleport(_) => sequence > subject.last_seq,
             FullKind::Emote => sequence >= subject.last_seq,
         };
         if !newer {
-            return self.resync_buffered_delta(subject_id);
+            return Vec::new();
         }
 
         subject.baseline = SubjectState::from_player_state(&state);
@@ -676,6 +675,9 @@ impl PulseDecoder {
         let realm = subject.realm.clone();
         let replayed = subject.replay_pending_delta();
         let tick = subject.last_tick;
+        if subject.last_seq > previous_seq {
+            self.pending_resync.remove(&subject_id);
+        }
         let movement = self.to_movement_for(subject_id, replayed);
         // Entering a realm is announced like a first sighting: an observer there filtered out
         // whatever it was sent while the subject was elsewhere, and the server won't re-announce a
@@ -996,8 +998,8 @@ impl PulseDecoder {
             head_yaw: state.head_yaw.map(signed_angle).unwrap_or(0.0),
             head_pitch: state.head_pitch.map(signed_angle).unwrap_or(0.0),
             scene_driven_animation: None,
-            // Stamped only on delta-derived movements (see `on_delta`); a full state carries an
-            // exact position, so the shared builder leaves the box unset (precise).
+            // `to_movement_for` sets this for delta-derived positions, including a full state or
+            // teleport that replays a buffered delta. Other full-state positions remain precise.
             position_precision: None,
         }
     }

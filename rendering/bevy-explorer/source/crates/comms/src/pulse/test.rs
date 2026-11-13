@@ -782,9 +782,9 @@ fn a_stale_teleport_keeps_the_realm() {
     assert_eq!(&**realm, "home");
 }
 
-/// A stale reply leaves the buffered gap unresolved, so recovery asks again immediately.
+/// An old reply does not complete the request for a newer baseline.
 #[test]
-fn an_older_full_state_renews_the_unresolved_gap_resync() {
+fn an_older_full_state_keeps_the_outstanding_gap_resync() {
     let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
     decoder.handle(server_msg(joined(5, (1.0, 2.0, 3.0), 0)));
     decoder.handle(delta(SUBJECT, 5, 6, 1500, 5.0));
@@ -793,7 +793,7 @@ fn an_older_full_state_renews_the_unresolved_gap_resync() {
     assert!(is_one_resync(&events, SUBJECT, 6), "{events:?}");
 
     let events = decoder.handle(player_state_full(5, 1400, 1.0));
-    assert!(is_one_resync(&events, SUBJECT, 6), "{events:?}");
+    assert!(events.is_empty(), "{events:?}");
 
     let events = decoder.handle(delta(SUBJECT, 8, 9, 1700, 5.0));
     assert!(events.is_empty(), "{events:?}");
@@ -1235,6 +1235,10 @@ fn buffered_delta_renews_resync_when_a_full_state_does_not_close_the_gap() {
         "{events:?}"
     );
     approx(only_movement(events).position_x, 163.0);
+    for sequence in [7, 6, 7, 5] {
+        let events = decoder.handle(player_state_full(sequence, 1600, 3.0));
+        assert!(events.is_empty(), "{events:?}");
+    }
     approx(
         only_movement(decoder.handle(player_state_full(8, 1700, 4.0))).position_x,
         166.0,
@@ -1268,7 +1272,12 @@ fn buffered_delta_survives_a_stale_full_state_and_an_unsent_resync() {
     decoder.handle(delta(SUBJECT, 7, 8, 1700, 5.0));
     decoder.resync_not_sent(SUBJECT);
     let stale = decoder.handle(player_state_full(4, 900, 0.0));
-    assert!(is_one_resync(&stale, SUBJECT, 5), "{stale:?}");
+    assert!(stale.is_empty(), "{stale:?}");
+    assert!(is_one_resync(
+        &decoder.handle(delta(SUBJECT, 7, 8, 1700, 5.0)),
+        SUBJECT,
+        5
+    ));
     approx(
         only_movement(decoder.handle(player_state_full(7, 1600, 3.0))).position_x,
         165.0,
@@ -1477,4 +1486,77 @@ fn buffered_delta_remembers_a_later_destination_after_keeping_a_nearer_link() {
         );
         assert!(decoder.pending_resync.is_empty());
     }
+}
+
+#[test]
+fn buffered_delta_keeps_one_request_during_repeated_stale_and_equal_snapshots() {
+    let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
+    decoder.handle(server_msg(joined(5, (1.0, 2.0, 3.0), 0)));
+    assert!(is_one_resync(
+        &decoder.handle(delta(SUBJECT, 7, 8, 1700, 5.0)),
+        SUBJECT,
+        5
+    ));
+
+    for _ in 0..4 {
+        for message in [
+            player_state_full(4, 900, 0.0),
+            player_state_full(5, 1000, 1.0),
+            teleported(4, 900, "old"),
+            teleported(5, 1000, "old"),
+        ] {
+            let events = decoder.handle(message);
+            assert!(events.is_empty(), "{events:?}");
+            assert!(decoder.pending_resync.contains(&SUBJECT));
+        }
+    }
+    approx(
+        only_movement(decoder.handle(player_state_full(7, 1600, 3.0))).position_x,
+        165.0,
+    );
+    assert!(decoder.pending_resync.is_empty());
+}
+
+#[test]
+fn buffered_delta_keeps_its_request_while_equal_sequence_emotes_are_reported() {
+    let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
+    decoder.handle(server_msg(joined(5, (1.0, 2.0, 3.0), 0)));
+    decoder.handle(delta(SUBJECT, 7, 8, 1700, 5.0));
+
+    let events = decoder.handle(emote_started(5, 1100, "wave", 1.0));
+    assert!(
+        matches!(
+            events.as_slice(),
+            [PulseEvent::Movement { .. }, PulseEvent::EmoteStart { .. }]
+        ),
+        "{events:?}"
+    );
+    assert!(decoder.pending_resync.contains(&SUBJECT));
+
+    for _ in 0..3 {
+        let events = decoder.handle(emote_started(5, 1100, "wave", 1.0));
+        assert!(
+            matches!(
+                events.as_slice(),
+                [PulseEvent::Movement { .. }, PulseEvent::EmoteStart { .. }]
+            ),
+            "{events:?}"
+        );
+        assert!(decoder.pending_resync.contains(&SUBJECT));
+    }
+
+    let events = decoder.handle(emote_stopped(5, 1200, 1.0));
+    assert!(
+        matches!(
+            events.as_slice(),
+            [PulseEvent::Movement { .. }, PulseEvent::EmoteStop { .. }]
+        ),
+        "{events:?}"
+    );
+    assert!(decoder.pending_resync.contains(&SUBJECT));
+    approx(
+        only_movement(decoder.handle(player_state_full(7, 1600, 3.0))).position_x,
+        165.0,
+    );
+    assert!(decoder.pending_resync.is_empty());
 }
