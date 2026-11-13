@@ -230,6 +230,9 @@ struct Subject {
     realm: Arc<str>,
     /// Latest version the server has told us of, from `PlayerJoined` then each announcement.
     profile_version: i32,
+    /// Unwrapped snapshot time of this subject's join. Subject ids can be reused while an old
+    /// unreliable delta is still in flight; its sequence can look ahead of the new subject's.
+    joined_at: f64,
     last_seq: u32,
     /// Raw server tick of the state in `baseline`, so a replay can stamp it honestly.
     last_tick: u32,
@@ -571,6 +574,7 @@ impl PulseDecoder {
 
         let baseline = SubjectState::from_player_state(&state);
         let movement = self.to_movement(&baseline);
+        let joined_at = self.tick_secs(full.server_tick);
         let realm: Arc<str> = Arc::from(joined.realm.as_str());
         // A newcomer in another realm: the wallet leaves the replaced subject's, and its emote
         // goes with it.
@@ -586,6 +590,7 @@ impl PulseDecoder {
                 wallet: address,
                 realm: realm.clone(),
                 profile_version: joined.profile_version,
+                joined_at,
                 last_seq: full.sequence,
                 last_tick: full.server_tick,
                 baseline,
@@ -615,7 +620,7 @@ impl PulseDecoder {
                 realm: realm.clone(),
                 // the avatar jumps from wherever the subject it replaces left it
                 teleport: replaced.is_some(),
-                timestamp: self.tick_secs(full.server_tick),
+                timestamp: joined_at,
             },
         ]);
         // The avatar may be playing the replaced subject's emote, and this one has none yet.
@@ -764,7 +769,7 @@ impl PulseDecoder {
     }
 
     fn on_delta(&mut self, delta: pulse::PlayerStateDeltaTier0) -> Vec<PulseEvent> {
-        let Some(subject) = self.subjects.get_mut(&delta.subject_id) else {
+        let Some(subject) = self.subjects.get(&delta.subject_id) else {
             // Not held. Either its `PlayerJoined`, reliable and carrying the full state, is still
             // on its way, or it has left, or a newer join of its wallet replaced it, and this delta
             // arrived after that (the two channels keep no order between them), and the server
@@ -777,6 +782,11 @@ impl PulseDecoder {
         if delta.new_seq <= subject.last_seq || delta.new_seq <= delta.baseline_seq {
             return Vec::new();
         }
+        let joined_at = subject.joined_at;
+        if self.tick_secs(delta.server_tick) < joined_at {
+            return Vec::new();
+        }
+        let subject = self.subjects.get_mut(&delta.subject_id).unwrap();
 
         // A reliable baseline may still be in flight. Keep one future update to chain when it
         // arrives; request a resync too, since the gap may be genuine packet loss.

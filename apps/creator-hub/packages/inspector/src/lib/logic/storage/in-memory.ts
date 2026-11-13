@@ -1,0 +1,65 @@
+import type { Storage } from './types';
+
+export function createInMemoryStorage(initialFs: Record<string, Buffer> = {}): Storage {
+  const storage: Map<string, Buffer> = new Map();
+
+  for (const [id, content] of Object.entries(initialFs)) {
+    storage.set(id, content);
+  }
+
+  return {
+    async writeFile(path: string, content: Buffer) {
+      storage.set(path, content);
+    },
+    async exists(path: string) {
+      return storage.has(path);
+    },
+    async readFile(path: string) {
+      const content = storage.get(path);
+      if (!content) {
+        throw new Error(`File ${path} doesn't exists`);
+      }
+      return content;
+    },
+    async delete(path: string) {
+      storage.delete(path);
+    },
+    async rmdir(dirPath: string) {
+      // In in-memory storage, directories are virtual (just path prefixes)
+      // To remove a directory, we need to delete all files that start with this path
+      const normalizedDirPath = dirPath.endsWith('/') ? dirPath : dirPath + '/';
+      for (const key of Array.from(storage.keys())) {
+        if (key.startsWith(normalizedDirPath) || key === dirPath) {
+          storage.delete(key);
+        }
+      }
+    },
+    async list(path: string) {
+      const files: { name: string; isDirectory: boolean }[] = [];
+      const prefix = path === '' || path.endsWith('/') ? path : `${path}/`;
+      for (const _path of Array.from(storage.keys())) {
+        if (!_path.startsWith(prefix)) continue;
+
+        const fileName = _path.substring(prefix.length);
+        const slashPosition = fileName.indexOf('/');
+        if (slashPosition !== -1) {
+          const directoryName = fileName.substring(0, slashPosition);
+          if (!files.find(item => item.name === directoryName)) {
+            files.push({ name: directoryName, isDirectory: true });
+          }
+        } else {
+          files.push({ name: fileName, isDirectory: false });
+        }
+      }
+
+      return files;
+    },
+    async stat(path: string) {
+      const content = storage.get(path);
+      if (!content) {
+        throw new Error(`File ${path} doesn't exists`);
+      }
+      return { size: content.length };
+    },
+  };
+}
