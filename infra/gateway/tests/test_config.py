@@ -197,6 +197,22 @@ class ConfigurationTest(unittest.TestCase):
         self.assertEqual(gateway.WORLDS_DEPLOY_CAP, mib("deploy.rs", "MAX_UPLOAD_WIRE_SIZE_BYTES"))
         self.assertEqual(gateway.WORLDS_SETTINGS_CAP, mib("settings.rs", "MAX_SETTINGS_UPLOAD_WIRE_BYTES"))
 
+    def test_badges_backfill_cap_matches_the_route_limit(self):
+        source = (Path(__file__).parents[3] / "services/catalyst/social/src/badges/mod.rs").read_text()
+        expr = re.search(r"const MAX_BACKFILL_BODY_BYTES: usize = ([^;]+);", source)[1]
+        self.assertRegex(expr, r"^[\d\s*]+$")
+        self.assertEqual(gateway.BADGES_BACKFILL_CAP, f"{eval(expr) // (1024 * 1024)}m")
+        _, regexes = self.worlds_locations()
+        for path in ["/badges/badges/halloweeks_2026/backfill", "/badges/badges/traveler/backfill"]:
+            with self.subTest(path=path):
+                body = next(body for regex, body in regexes if regex.search(path))
+                self.assertIn(f"client_max_body_size {gateway.BADGES_BACKFILL_CAP};", body)
+                self.assertIn(f"limit_conn deploy_uploads {gateway.DEPLOY_CONNECTIONS_PER_ADDRESS};", body)
+        for path in ["/badges/badges/traveler", "/badges/users/0xab/badges/traveler",
+                     "/badges/badges/x/backfill/y", "/x/badges/badges/x/backfill"]:
+            with self.subTest(path=path):
+                self.assertFalse(any("64m" in body for regex, body in regexes if regex.search(path)))
+
     def test_the_content_deploy_cap_reaches_the_apps_route_limit(self):
         root = Path(__file__).parents[3] / "services/catalyst"
         source = (root / "content/src/create_entity.rs").read_text()
@@ -265,15 +281,42 @@ class ConfigurationTest(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertFalse(any("12m" in body for regex, body in regexes if regex.search(path)))
 
-    def test_worlds_content_reads_use_the_content_rate_zone(self):
-        _, regexes = self.worlds_locations()
-        for path in ["/worlds-content-server/contents/bafy", "/worlds-content-server/ipfs/bafy"]:
+    def test_worlds_reads_are_not_rate_limited_but_writes_and_admin_are(self):
+        # Upstream worlds-content-server limits no route by rate (WR-37).
+        text, regexes = self.worlds_locations()
+        self.assertIn("limit_req_zone $worlds_limit_key zone=worlds:10m rate=30r/s;", text)
+        key_map = re.search(r'map "\$request_method:\$uri" \$worlds_limit_key \{(.*?)\}', text, re.S)[1]
+        rules = [(re.compile(m[1][1:]), m[2]) for m in re.finditer(r'"(~[^"]+)" (\S+);', key_map)]
+
+        def key(subject):
+            return next((value for regex, value in rules if regex.search(subject)), "$binary_remote_addr")
+        for subject in ["GET:/worlds-content-server/status", "HEAD:/world/w.dcl.eth/about",
+                        "OPTIONS:/worlds-content-server/world/w.dcl.eth/permissions", "GET:/index"]:
+            with self.subTest(subject=subject):
+                self.assertEqual(key(subject), '""')
+        for subject in ["POST:/worlds-content-server/world/w.dcl.eth/permissions/deployment",
+                        "DELETE:/worlds-content-server/entities/w.dcl.eth", "POST:/world/w.dcl.eth/scenes",
+                        "GET:/worlds-content-server/admin/worlds", "POST:/worlds-content-server/gc",
+                        "GET:/worlds-content-server/reprocess-ab"]:
+            with self.subTest(subject=subject):
+                self.assertEqual(key(subject), "$binary_remote_addr")
+        exact = {key: re.search(r"\nlocation " + re.escape(key) + r" \{\n(.*?)\n\}", text, re.S)[1]
+                 for key in ["= /worlds-content-server", "/worlds-content-server/", "= /index", "= /worlds",
+                             "= /worlds/status"]}
+        for name, body in exact.items():
+            with self.subTest(location=name):
+                self.assertIn("limit_req zone=worlds burst=60 nodelay;", body)
+        for path in ["/worlds-content-server/contents/bafy", "/worlds-content-server/ipfs/bafy",
+                     "/worlds-content-server/world/w.dcl.eth/settings", "/world/w.dcl.eth/settings",
+                     "/world/w.dcl.eth/about"]:
             with self.subTest(path=path):
                 body = next(body for regex, body in regexes if regex.search(path))
-                self.assertIn("limit_req zone=content burst=1000 nodelay;", body)
-        for path in ["/worlds-content-server/status", "/worlds-content-server/contentsx/a"]:
-            with self.subTest(path=path):
-                self.assertFalse(any("zone=content" in body for regex, body in regexes if regex.search(path)))
+                self.assertIn("limit_req zone=worlds burst=60 nodelay;", body)
+                self.assertNotIn("zone=content", body)
+        settings = next(body for regex, body in regexes if regex.search("/world/w.dcl.eth/settings"))
+        self.assertIn("limit_conn worlds_uploads 10;", settings)
+        deploy = next(body for regex, body in regexes if regex.search("/worlds-content-server/entities"))
+        self.assertIn("limit_req zone=deploy burst=4 nodelay;", deploy)
 
     def test_the_deploy_zone_sits_above_the_content_servers_burst_limit(self):
         cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1"})

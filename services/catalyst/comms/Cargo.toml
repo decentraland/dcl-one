@@ -9,6 +9,7 @@ publish = false
 catalyst-db = { path = "../db" }
 dcl-http = { workspace = true, features = ["db"] }
 dcl-auth.workspace = true
+ipnet.workspace = true
 catalyst-jobs = { path = "../jobs" }
 catalyst-shared = { path = "../shared" }
 catalyst-config = { path = "../config" }

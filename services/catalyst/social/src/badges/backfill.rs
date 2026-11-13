@@ -22,8 +22,8 @@
 //! tiers and the completion. Unlike upstream, the merge reads the progress
 //! under the lock, earned tiers and completion are never taken back, a
 //! reached tier or target the merger left unstamped is stamped now, and a
-//! wallet listed twice is merged twice in order. The gateway caps request
-//! bodies at 1 MB, so callers send their registries in batches.
+//! wallet listed twice is merged twice in order. The body is capped at
+//! [`super::MAX_BACKFILL_BODY_BYTES`] here and at the gateway.
 
 use std::collections::{HashMap, HashSet};
 

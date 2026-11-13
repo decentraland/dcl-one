@@ -1161,6 +1161,15 @@ pub async fn serve(
     ));
     presence.spawn_jobs(&jobs);
     social.notifications.spawn_jobs(&jobs);
+    let catalog = social.badges.clone();
+    jobs.spawn("badges-catalog-check", move |ctx| async move {
+        tokio::select! {
+            _ = ctx.cancel.cancelled() => Ok(()),
+            checked = catalog.badges.warn_ahead_of_code() => {
+                checked.map(drop).context("badge catalog check failed")
+            }
+        }
+    });
     comms_stage.gatekeeper.spawn_jobs(&jobs);
     social.media.spawn_jobs(&jobs);
     social.rpc.spawn_jobs(&jobs);
@@ -2082,6 +2091,8 @@ async fn comms_states(
     let archipelago_settings = archipelago::Settings::resolve(
         archipelago::config::RawSettings {
             max_sockets: config.worlds.ws_max_sockets,
+            max_sockets_per_ip: config.worlds.ws_max_sockets_per_ip,
+            trusted_proxy_cidrs: config.node.http_trusted_proxy_cidrs.clone(),
             handshake_timeout_ms: config.worlds.handshake_timeout,
             deny_list_url: config.worlds.deny_list(),
             island_changed_dedup_ms: config.worlds.island_changed_dedup_ms,
