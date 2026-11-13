@@ -81,11 +81,42 @@ stand-in made of its own glTF files (`scene_lod.rs`).
   see; pointer events and triggers query live scenes only. The colliders go with the stand-in.
 - **Walls.** While a scene's stand-in is shown its loading walls are hidden; a scene without a
   shown stand-in keeps them.
-- **Debug view.** The Scene stand-ins debug section counts stand-ins by state and can tint the
-  near LOD's models green (`/lod_tint`). The tint changes only the stand-in's own materials, never
-  the live scene's.
+- **Debug view.** The Scene stand-ins debug section counts near and far LODs by state and can
+  tint the near LOD's models green and the far LOD's mesh blue (`/lod_tint`). The tint changes
+  only the stand-in's own materials, never the live scene's.
 
-A far LOD and the removal of the loading walls are later decisions.
+### Far LOD
+
+Past the near LOD's keep ring a scene that is not on screen gets a far LOD instead: the asset
+pipeline's single mesh for the scene (`scene_lod.rs`, `LodLevel::Far`).
+
+- **Mesh.** `{abgen-cdn}/LOD/lods-unity/lods/{sceneId}_1.glb` (the scene id lowercase), one glTF
+  placed at the scene's base parcel and dressed like the near LOD's models. None published, or
+  one the loader refuses, leaves the scene's parcels to the imposters.
+- **Range in parcel rings.** It starts where the near LOD's keep band ends: its scene's nearest
+  parcel past ring 4 (about 64 m) and within ring 20 (about 320 m), the scene not wholly behind
+  the camera. Inside ring 4 an existing far LOD is kept until the near LOD shows, so the scene is
+  never bare between the two; one is not started there. Beyond ring 20 only the imposters remain.
+- **Edge on imposter tiles.** Imposters are tiles of 2^level parcels a side, and any tile with a
+  stand-in's parcel in it is split down to single parcels. A far LOD is therefore shown only if
+  every parcel of its scene lies where the imposters would draw a tile of level 1 or less
+  (`FAR_LOD_MAX_TILE_LEVEL`, 2 parcels a side), as the imposters lay out their tiles around the
+  focus (`ImposterTiling`, set by the imposters). No larger tile ever holds a far LOD, so the
+  edge between far LODs and imposters falls on a tile boundary and the splitting stays among the
+  small tiles. At the default imposter distances that edge lies between about 200 m and 290 m;
+  ring 20 bounds it where the tiles reach further (a camera far from the player).
+- **Download tier.** The mesh is a url download. Its path names the scene it downloads for
+  (`IpfsKey::Owner`, the `&owner` key; `IpfsPath::scene_hash` returns it), so it ranks in
+  `Tier::Lod` with the near LOD's files rather than with the requests that are no scene's.
+- **Quantized meshes.** The meshes require `KHR_mesh_quantization` (16-bit positions, 8-bit
+  normals, 16-bit texture coordinates). The vendored glTF loader accepts files that require it
+  and reads the integer attributes as the floats they stand for
+  (`rendering/bevy-explorer/docs/guidelines/bevy-fork.md`).
+- **Hand-off.** Like the near LOD it shows in one frame once loaded, and goes in the frame the
+  live scene's content is on screen. Imposters skip its parcels and its scene's loading walls
+  are hidden while it is shown.
+
+The removal of the loading walls is a later decision.
 
 ## Rejected
 
@@ -103,6 +134,11 @@ A far LOD and the removal of the loading walls are later decisions.
 - **A separate simplified near model.** It would need colliders of its own, and a scene the
   player enters would download a second copy of its models. The scene's own files carry their
   collider nodes already.
+- **Far LODs out to ring 20 regardless of the tiles.** Every 4×4 tile between 200 m and 320 m
+  touching a far LOD would be split into single-parcel imposters, each its own load, and a tile
+  swap shows the old tile over the LOD until its children load.
+- **Far LODs cut off at the tiles' parcels.** Scene materials can clip to parcels, but a scene
+  on the edge would show part mesh and part imposter.
 - **A near-LOD range in metres.** Rings are what the partition, the download order and the
   waves already measure, and a keep ring one wider than the start ring stops a player on the
   edge from starting and dropping a stand-in every few steps.
@@ -117,6 +153,12 @@ A far LOD and the removal of the loading walls are later decisions.
   the keep ring. Waves rarely queue a scene there; they matter once the load distance is raised.
 - Whether 1.5 s is enough depends on the time a scene takes from spawn to shown, which has not
   been measured.
+- Out to the edge of the small imposter tiles (about 200 m to 290 m at the default imposter
+  distances), a scene the pipeline has meshed shows that mesh where it would have shown its
+  imposter tile.
+- The far LOD's textures are not compressed to BC7: the texture processor compresses only
+  content-addressed files, and url downloads live in the web cache, so a mesh decodes its
+  textures on every load. Compressing them is a change to the processor's cache targets.
 - A scene stalled in loading holds a wave slot for 20 s, then the wave moves on with it still
   loading.
 - Loading scenes keep their animated walls; what shows while a scene loads is a later decision.
