@@ -688,6 +688,52 @@ pub struct SocialConfig {
     #[arg(long, env = "BADGES_PRESENCE_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
     pub badges_presence_enabled: bool,
 
+    /// A presence grant writes its badge_granted notification; false
+    /// grants without one.
+    #[arg(long, env = "PRESENCE_GRANT_NOTIFICATIONS", default_value_t = true, action = clap::ArgAction::Set)]
+    pub presence_grant_notifications: bool,
+
+    /// A join this long before a badge's window opens is kept (0: none).
+    #[arg(
+        long,
+        env = "PRESENCE_EARLY_JOIN_LOOKAHEAD_SECONDS",
+        default_value_t = 21_600
+    )]
+    pub presence_early_join_lookahead_seconds: u64,
+
+    /// A visit open this long is checked against the LiveKit occupancy.
+    #[arg(long, env = "PRESENCE_OPEN_VISIT_CHECK_AFTER_SECONDS", default_value_t = 900, value_parser = clap::value_parser!(u64).range(1..))]
+    pub presence_open_visit_check_after_seconds: u64,
+
+    /// A connection open longer, or a join-to-leave stretch longer, proves no time.
+    #[arg(long, env = "PRESENCE_OPEN_VISIT_MAX_AGE_SECONDS", default_value_t = 86_400, value_parser = clap::value_parser!(u64).range(1..))]
+    pub presence_open_visit_max_age_seconds: u64,
+
+    /// How long applied events, pending leaves and absences are kept.
+    #[arg(long, env = "PRESENCE_APPLIED_EVENTS_TTL_SECONDS", default_value_t = 604_800, value_parser = clap::value_parser!(u64).range(1..))]
+    pub presence_applied_events_ttl_seconds: u64,
+
+    /// How long a visit unconfirmed by the occupancy waits for a late leave.
+    #[arg(long, env = "PRESENCE_ABSENT_EXPIRE_AFTER_SECONDS", default_value_t = 3_600, value_parser = clap::value_parser!(u64).range(1..))]
+    pub presence_absent_expire_after_seconds: u64,
+
+    /// Interval of the badges-presence-sweep job.
+    #[arg(long, env = "PRESENCE_SWEEP_INTERVAL_MS", default_value_t = 60_000, value_parser = clap::value_parser!(u64).range(1..))]
+    pub presence_sweep_interval_ms: u64,
+
+    /// Visits the sweeper checks per pass.
+    #[arg(long, env = "PRESENCE_SWEEP_BATCH_SIZE", default_value_t = 100, value_parser = clap::value_parser!(u32).range(1..))]
+    pub presence_sweep_batch_size: u32,
+
+    /// Rows pruned per table per batch.
+    #[arg(long, env = "PRESENCE_PRUNE_BATCH_SIZE", default_value_t = 1_000, value_parser = clap::value_parser!(u32).range(1..))]
+    pub presence_prune_batch_size: u32,
+
+    /// false stops only the occupancy checks; the maximum age and the
+    /// pruning still run.
+    #[arg(long, env = "PRESENCE_SWEEPER_ENABLED", default_value_t = true, action = clap::ArgAction::Set)]
+    pub presence_sweeper_enabled: bool,
+
     // social/media: the autotranslate route (an external engine over the network).
     /// disabled | mock | http | llm; empty = http when TRANSLATE_BACKEND_URL
     /// is set, llm when TRANSLATE_LLM_BASE_URL is, else disabled (503).

@@ -1,22 +1,19 @@
 //! The badges half of the gatekeeper's room events: every wallet join or
-//! leave of a scene or world room is queued here without blocking the
-//! webhook, and a writer task inserts the queue into
-//! `social.presence_events` in batches (keyed by LiveKit's event id, so a
-//! redelivered webhook is one row). The engine applies the rows later.
+//! leave of a scene or world room is inserted into `social.presence_events`
+//! before the webhook is acknowledged (keyed by LiveKit's event id, so a
+//! redelivered webhook is one row); a failed insert fails the webhook and
+//! LiveKit delivers it again. The engine applies the rows later.
 //! Only events in a place a presence badge could count are stored: the
-//! writer checks them against a short-lived snapshot of those places, and
+//! sink checks them against a short-lived snapshot of those places, and
 //! looks up a scene entity the snapshot does not know (a redeploy).
 
 use std::collections::HashSet;
-use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 
-use parking_lot::Mutex;
 use sqlx::PgPool;
-use tokio::sync::mpsc;
 
-use crate::comms::gatekeeper::events::RoomEventSink;
+use crate::comms::gatekeeper::events::RoomEventStore;
 use crate::comms::protocol::bus::room_events::{RoomEvent, RoomEventKind, RoomType};
 use crate::identity::Address;
 use crate::shared::cache::TtlMap;
@@ -24,13 +21,8 @@ use crate::shared::cache::TtlMap;
 use super::Settings;
 use super::engine::naive;
 
-/// Events queued between the webhook and the writer; past it they are dropped.
-pub const QUEUE: usize = 10_000;
-const BATCH: usize = 500;
 /// How long a badge configured, published or archived waits to be seen.
 const PLACES_TTL: Duration = Duration::from_secs(5);
-/// The pause before a failed batch insert is tried once more.
-const RETRY_BACKOFF: Duration = Duration::from_secs(1);
 
 /// The places of the badges whose windows an event now could count for (the
 /// engine's join lookahead and leave lookback): worlds by name, scenes by
@@ -171,8 +163,7 @@ impl PresenceEvent {
 }
 
 pub struct EventSink {
-    tx: mpsc::Sender<PresenceEvent>,
-    rx: Mutex<Option<mpsc::Receiver<PresenceEvent>>>,
+    pool: PgPool,
     settings: Settings,
     places: TtlMap<(), Arc<ActivePlaces>>,
 }
@@ -180,15 +171,9 @@ pub struct EventSink {
 impl EventSink {
     /// A sink with the engine's `settings`, so both agree on what a badge
     /// could count.
-    pub fn new(settings: Settings) -> Self {
-        Self::with_capacity(QUEUE, settings)
-    }
-
-    pub fn with_capacity(capacity: usize, settings: Settings) -> Self {
-        let (tx, rx) = mpsc::channel(capacity);
+    pub fn new(pool: PgPool, settings: Settings) -> Self {
         Self {
-            tx,
-            rx: Mutex::new(Some(rx)),
+            pool,
             settings,
             places: TtlMap::new(PLACES_TTL),
         }
@@ -196,7 +181,8 @@ impl EventSink {
 
     /// The events a presence badge could count. When the places cannot be
     /// read every event is kept: the engine decides again.
-    async fn counted(&self, pool: &PgPool, batch: &mut Vec<PresenceEvent>) {
+    async fn counted(&self, batch: &mut Vec<PresenceEvent>) {
+        let pool = &self.pool;
         let places = self
             .places
             .get_or_fetch((), || async {
@@ -228,95 +214,22 @@ impl EventSink {
         batch.retain(|e| places.counts(e, &off));
     }
 
-    /// Stores the counted events of `batch`, trying once more after a pause.
-    async fn insert_events(
-        &self,
-        pool: &PgPool,
-        mut batch: Vec<PresenceEvent>,
-    ) -> Result<u64, sqlx::Error> {
-        self.counted(pool, &mut batch).await;
-        retry_once(RETRY_BACKOFF, || insert(pool, &batch)).await
-    }
-
-    /// Stores whatever is queued now, without the writer (tests). A no-op
-    /// once the writer owns the receiver.
-    pub async fn flush(&self, pool: &PgPool) -> Result<u64, sqlx::Error> {
-        let mut batch = Vec::new();
-        if let Some(rx) = self.rx.lock().as_mut() {
-            while let Ok(event) = rx.try_recv() {
-                batch.push(event);
-            }
-        }
-        self.insert_events(pool, batch).await
-    }
-
-    /// The `badges-presence-events` writer, on every process that receives
-    /// webhooks: drains the queue in batches until shutdown, then what is left.
-    pub fn spawn_writer(self: &Arc<Self>, pool: PgPool, jobs: &crate::jobs::Jobs) {
-        let Some(mut rx) = self.rx.lock().take() else {
-            return;
-        };
-        let sink = self.clone();
-        jobs.spawn("badges-presence-events", move |ctx| async move {
-            let mut batch = Vec::with_capacity(BATCH);
-            loop {
-                let received = tokio::select! {
-                    n = rx.recv_many(&mut batch, BATCH) => n,
-                    _ = ctx.cancel.cancelled() => {
-                        while let Ok(event) = rx.try_recv() {
-                            batch.push(event);
-                        }
-                        0
-                    }
-                };
-                let rows = batch.len();
-                if rows > 0
-                    && let Err(error) = sink.insert_events(&pool, std::mem::take(&mut batch)).await
-                {
-                    metrics::counter!("badges_presence_events_dropped_total", "reason" => "insert_failed")
-                        .increment(rows as u64);
-                    tracing::warn!(%error, rows, "presence events not stored");
-                }
-                batch.clear();
-                if received == 0 {
-                    return Ok(());
-                }
-            }
-        });
+    /// Stores the event when a badge could count it; the rows inserted.
+    pub async fn store(&self, event: PresenceEvent) -> Result<u64, sqlx::Error> {
+        let mut batch = vec![event];
+        self.counted(&mut batch).await;
+        insert(&self.pool, &batch).await
     }
 }
 
-impl RoomEventSink for EventSink {
-    fn observe_room_event(&self, event: &RoomEvent) {
+#[async_trait::async_trait]
+impl RoomEventStore for EventSink {
+    async fn store_room_event(&self, event: &RoomEvent) -> anyhow::Result<()> {
         let Some(event) = PresenceEvent::from_room_event(event) else {
-            return;
+            return Ok(());
         };
-        if let Err(error) = self.tx.try_send(event) {
-            let reason = match error {
-                mpsc::error::TrySendError::Full(_) => "queue_full",
-                mpsc::error::TrySendError::Closed(_) => "writer_gone",
-            };
-            metrics::counter!("badges_presence_events_dropped_total", "reason" => reason)
-                .increment(1);
-            tracing::warn!(reason, "presence event dropped");
-        }
-    }
-}
-
-/// Runs `op` once more after `backoff` when it fails, so a brief database
-/// blip loses nothing.
-pub(super) async fn retry_once<T, F, Fut>(backoff: Duration, mut op: F) -> Result<T, sqlx::Error>
-where
-    F: FnMut() -> Fut,
-    Fut: Future<Output = Result<T, sqlx::Error>>,
-{
-    match op().await {
-        Ok(value) => Ok(value),
-        Err(error) => {
-            tracing::warn!(%error, "presence events not stored; retrying");
-            tokio::time::sleep(backoff).await;
-            op().await
-        }
+        self.store(event).await?;
+        Ok(())
     }
 }
 

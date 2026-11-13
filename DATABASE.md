@@ -1490,22 +1490,21 @@ adds `seq`; the object pass creates `social.badge_cursors`,
 
 ### Presence badges flow
 
-Input is the gatekeeper's verified LiveKit joins and leaves (`RoomEventFanout`
-in `serve`, beside the worlds access log): wallet identities only, scene and
-world rooms only, with LiveKit's participant sid as the session. Each process
-queues them without blocking the webhook (10,000 events, a dropped one counted
-in `badges_presence_events_dropped_total`) and its writer inserts batches into
-`social.presence_events`, keyed by LiveKit's event id, so a redelivered
-webhook is one row. The writer keeps only events in a place a badge could
-count now: a 5 s snapshot of the published badges' worlds, parcels and the
+Input is every verified LiveKit join and leave (the gatekeeper's
+`RoomEventStore`), including one the gatekeeper's own session ordering
+supersedes, such as a reconnect's old leave that follows the new join: wallet
+identities only, scene and world rooms only, with LiveKit's participant sid as
+the session. The webhook inserts each into `social.presence_events` before it
+answers, keyed by LiveKit's event id, so a redelivered webhook is one row; a
+failed insert answers 503 and LiveKit delivers the event again. Only events in
+a place a badge could count now are kept: a 5 s snapshot of the published badges' worlds, parcels and the
 scene entities deployed on them (one GIN-indexed `entity_pointers &&` read),
 with the engine's lookahead and lookback. A scene entity the snapshot does not
 know (a redeploy since) is looked up once per batch by `entity_id` and dropped
 only when it is deployed off every badge parcel; one the node has not synced
 is kept for the engine. Every event is kept when the snapshot cannot be read.
 A badge published or moved earlier is seen within 5 s; joins before that are
-not counted, and the player's next join is. A failed batch insert is
-retried once after 1 s, then dropped and counted. Expected volume is every
+not counted, and the player's next join is. Expected volume is every
 join and leave of the scene and world rooms of active presence badges while
 `BADGES_PRESENCE_ENABLED` is on (unmeasured); rows live only
 until the next pass of the leased `badges-presence` job (5 s), which applies
@@ -1536,7 +1535,12 @@ leave there. A scene badge resolves
 the event's entity to its parcels through `content.deployments` (`entity_id`
 is unique); a world badge compares names. Progress is written through
 `apply_progress` with the progress document `{ steps, intervals }` kept as
-upstream writes it, so an imported document resumes. Invariants: a session
+upstream writes it, so an imported document resumes. As upstream's catalog
+requires, a badge is counted only when its row is single (not tiered), its
+`criteria_steps` is its rule's (`required_seconds` for a stay, 1 for a visit)
+and no evaluator or import of its own (other than a one-time import) writes
+it; another row is skipped, logged and counted as `badge_invalid`, so the
+flow never overwrites another writer's progress. Invariants: a session
 counts only from its own join to its own leave, never past the first
 occupancy observation that missed the wallet; an ended session never reopens
 for that badge; overlapping connections count once; a stay completes at the

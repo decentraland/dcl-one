@@ -2303,6 +2303,108 @@ impl super::events::RoomEventSink for AccessLogSink {
     }
 }
 
+/// What social's presence-badge store is in `serve`: every verified
+/// participant event, by `(event id, session)`; `fail` refuses the next one.
+#[derive(Default)]
+struct RecordingStore {
+    events: std::sync::Mutex<Vec<(String, String)>>,
+    fail: std::sync::atomic::AtomicBool,
+}
+
+#[async_trait::async_trait]
+impl super::events::RoomEventStore for RecordingStore {
+    async fn store_room_event(
+        &self,
+        event: &crate::protocol::bus::room_events::RoomEvent,
+    ) -> anyhow::Result<()> {
+        if self.fail.swap(false, std::sync::atomic::Ordering::SeqCst) {
+            anyhow::bail!("database unavailable");
+        }
+        self.events
+            .lock()
+            .unwrap()
+            .push((event.event_id.clone(), event.participant_sid.clone()));
+        Ok(())
+    }
+}
+
+/// A reconnect's old leave arrives after the new join: comms' own session
+/// ordering skips it, the store still receives it, and a failed store is a
+/// 503 so LiveKit delivers the event again.
+#[tokio::test]
+async fn the_room_event_store_receives_superseded_session_events_and_fails_the_webhook() {
+    use super::webhook::test_support::webhook_jwt;
+    use crate::world_identity::WorldName;
+    let room = crate::rooms::worlds_service_world_room(&WorldName::parse("alice.dcl.eth").unwrap());
+    let event = |id: &str, kind: &str, sid: &str, at: i64| {
+        serde_json::to_vec(&serde_json::json!({ "id": id, "createdAt": at, "event": kind, "room": { "name": room }, "participant": { "identity": "0xabc", "sid": sid, "metadata": "{}" } })).unwrap()
+    };
+    let settings = Settings::for_tests();
+    let (key, secret) = (
+        settings.livekit.api_key.clone(),
+        settings.livekit.api_secret.clone(),
+    );
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .acquire_timeout(std::time::Duration::from_millis(50))
+        .connect_lazy("postgres://postgres@127.0.0.1:1/postgres")
+        .expect("a lazy pool never connects");
+    let sink = Arc::new(AccessLogSink::default());
+    let store = Arc::new(RecordingStore::default());
+    let state = Arc::new(
+        CommsState::new(
+            pool,
+            Outbound::for_tests(),
+            settings,
+            None,
+            None,
+            Arc::new(StubPolicy::default()),
+            Arc::new(known_lobby_scenes("alice.dcl.eth")),
+            Arc::new(crate::presence::Presence::new()),
+            Arc::new(crate::interfaces::test_support::StubDirectory::default()),
+        )
+        .with_room_event_sink(sink.clone())
+        .with_room_event_store(store.clone()),
+    );
+    let app = super::router(state);
+    let post = |body: Vec<u8>| {
+        let jwt = webhook_jwt(&body, &key, &secret);
+        let app = app.clone();
+        async move { post_webhook(&app, Some(&jwt), &body).await }
+    };
+    for body in [
+        event("old-join", "participant_joined", "PA_old", 1718900000),
+        event("new-join", "participant_joined", "PA_new", 1718900001),
+        event("old-leave", "participant_left", "PA_old", 1718900002),
+    ] {
+        assert_eq!(post(body).await, StatusCode::OK);
+    }
+    assert_eq!(
+        sink.0.lock().unwrap().len(),
+        2,
+        "the access log keeps comms' ordering"
+    );
+    let stored = |id: &str, sid: &str| (id.to_string(), sid.to_string());
+    assert_eq!(
+        store.events.lock().unwrap().as_slice(),
+        &[
+            stored("old-join", "PA_old"),
+            stored("new-join", "PA_new"),
+            stored("old-leave", "PA_old")
+        ]
+    );
+
+    let leave = event("new-leave", "participant_left", "PA_new", 1718900003);
+    store.fail.store(true, std::sync::atomic::Ordering::SeqCst);
+    assert_eq!(post(leave.clone()).await, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(sink.0.lock().unwrap().len(), 2, "nothing applied yet");
+    assert_eq!(post(leave).await, StatusCode::OK);
+    assert_eq!(sink.0.lock().unwrap().len(), 3);
+    assert_eq!(
+        store.events.lock().unwrap().last(),
+        Some(&stored("new-leave", "PA_new"))
+    );
+}
+
 /// The webhook feeds the live presence itself, then hands the event to the
 /// access-log sink: a join counts the wallet in the world and logs one
 /// `join`, its leave drops it and logs one `leave`.
