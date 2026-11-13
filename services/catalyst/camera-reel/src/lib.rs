@@ -9,9 +9,12 @@
 //! blob store (`storage`) for the image and thumbnail bytes by
 //! `auth::hash_bytes_v1` hash (the old per-service disk tree is gone; the
 //! wire's `url`/`thumbnailUrl` render from the stored hashes under
-//! `api_url`), signed fetch through the shared verifier
-//! (`shared::signed_fetch`, the 6.x payload then the legacy one) with the
-//! process's EIP-1654 validator, and `explore.place_indexed` for a world
+//! `api_url`), signed fetch through the shared verifier under the
+//! camera-reel profile (`shared::signed_fetch::VerificationProfile::camera_reel`:
+//! upstream's dcl-crypto-middleware-rs rules, a signature at most 60 s old
+//! and never too new, `x-identity-metadata` required but unread, the 6.x
+//! payload then the unguarded legacy one) with the process's EIP-1654
+//! validator, and `explore.place_indexed` for a world
 //! name's place ids (the old HTTP hop to the places API is a local read,
 //! [`db::Database::world_place_ids`]; a failed lookup is upstream's 502).
 //!
@@ -81,11 +84,13 @@
 //!   307 there), and 404 for a hash no non-rejected row names;
 //! - a refused signature is 401 JSON `{"message":"Unauthorized"}` (upstream:
 //!   text/plain `Unathorized`);
-//! - the shared signed-fetch verifier's policy is not upstream's
-//!   (dcl-crypto-middleware-rs 0.3.0): a symmetric 5 minute timestamp window
-//!   (upstream: up to 60 s old, any future one), `x-identity-metadata`
-//!   optional but a JSON object when present (upstream: required, any
-//!   string), and the scene signer `decentraland-kernel-scene` refused;
+//! - a write (an upload, a delete, a visibility change) whose metadata
+//!   names the scene signer `decentraland-kernel-scene`, under any spelling,
+//!   is refused with the same 401 (upstream never checks it); reads serve a
+//!   scene's request as its signer, as upstream does;
+//! - an EIP-1654 (contract wallet) chain verifies through the process's
+//!   validator (upstream verifies with `WithoutTransport`, which refuses
+//!   every EIP-1654 link);
 //! - an upload's `metadata.userAddress` matches the signer whatever its
 //!   case (upstream compares it with the lowercase signer exactly), and so
 //!   does the owner check of the user routes;
@@ -140,7 +145,9 @@ use sqlx::PgPool;
 
 use crate::auth::eip1654::Eip1654Validator;
 use crate::content::Denylist;
-use crate::shared::signed_fetch::{self, PayloadPolicy, SignedFetchError, Signer};
+use crate::shared::signed_fetch::{
+    self, SceneSignerRule, SignedFetchError, Signer, VerificationProfile,
+};
 use crate::storage::Storage;
 
 use http::ApiError;
@@ -242,32 +249,37 @@ impl State {
         headers: &HeaderMap,
         method: &str,
         path: &SignedPath,
+        scene_signer: SceneSignerRule,
     ) -> Result<Signer, SignedFetchError> {
-        signed_fetch::require_signer_at(
+        signed_fetch::require_signer_with(
             headers,
             method,
             path,
-            PayloadPolicy::V6ThenLegacy,
+            &VerificationProfile::camera_reel(scene_signer),
             self.eip1654.as_deref(),
         )
         .await
     }
 
-    /// The verified signer of a write; every refusal is 401.
+    /// The verified signer of a write; every refusal is 401, a request a
+    /// scene signed included.
     pub async fn require_auth(
         &self,
         headers: &HeaderMap,
         method: &str,
         path: &SignedPath,
     ) -> Result<Signer, ApiError> {
-        self.verify(headers, method, path).await.map_err(|e| {
-            tracing::debug!(error = %e, "auth chain verification failed");
-            ApiError::Unauthorized
-        })
+        self.verify(headers, method, path, SceneSignerRule::Refused)
+            .await
+            .map_err(|e| {
+                tracing::debug!(error = %e, "auth chain verification failed");
+                ApiError::Unauthorized
+            })
     }
 
     /// The signer of a read that widens for its owner: no chain, or one that
-    /// does not verify, reads as anonymous.
+    /// does not verify, reads as anonymous. A scene's request is served as
+    /// its signer, as upstream serves it.
     pub async fn optional_auth(
         &self,
         headers: &HeaderMap,
@@ -275,7 +287,10 @@ impl State {
         path: &SignedPath,
     ) -> Option<Signer> {
         headers.get(format!("{}0", signed_fetch::AUTH_CHAIN_HEADER_PREFIX))?;
-        match self.verify(headers, method, path).await {
+        match self
+            .verify(headers, method, path, SceneSignerRule::Allowed)
+            .await
+        {
             Ok(signer) => Some(signer),
             Err(e) => {
                 tracing::debug!(error = %e, "optional auth chain verification failed");
