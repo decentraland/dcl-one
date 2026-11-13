@@ -241,7 +241,13 @@ fn authorized_community_binding(
         .map_err(|_| ApiError::bad_request("community_id must be a uuid"))
 }
 
-async fn store_blob(state: &MessagingState, bytes: Vec<u8>) -> Result<String, ApiError> {
+/// Stores the bytes under their CID; `wrote` is set when this call created
+/// the blob, so a write that then loses its race keeps its budget spent.
+async fn store_blob(
+    state: &MessagingState,
+    bytes: Vec<u8>,
+    wrote: &mut bool,
+) -> Result<String, ApiError> {
     let storage = &state.storage;
     let bytes = Bytes::from(bytes);
     let cid = {
@@ -253,6 +259,7 @@ async fn store_blob(state: &MessagingState, bytes: Vec<u8>) -> Result<String, Ap
     let stored = async {
         if !storage.exist(&cid).await? {
             storage.store(&cid, bytes).await?;
+            *wrote = true;
         }
         Ok::<_, crate::storage::StorageError>(())
     }
@@ -478,7 +485,7 @@ pub async fn create_group(
     if exists {
         return Err(ApiError::http(409, "group already exists"));
     }
-    let mut spent = 0;
+    let (mut spent, mut wrote) = (0, false);
     let initial = match &b.initial_commit {
         Some(c) => {
             let commit_bytes = opaque(decode_b64(c, "initial_commit")?, "initial_commit")?;
@@ -494,9 +501,9 @@ pub async fn create_group(
                 commit_bytes.len() + welcome_bytes.as_ref().map_or(0, Vec::len),
             )?;
             let commit_hash = mls::content_hash(&commit_bytes);
-            let commit_cid = store_blob(&state, commit_bytes).await?;
+            let commit_cid = store_blob(&state, commit_bytes, &mut wrote).await?;
             let welcome_cid = match welcome_bytes {
-                Some(w) => Some(store_blob(&state, w).await?),
+                Some(w) => Some(store_blob(&state, w, &mut wrote).await?),
                 None => None,
             };
             Some((commit_cid, welcome_cid, commit_hash))
@@ -541,7 +548,9 @@ pub async fn create_group(
     .fetch_one(&state.pool)
     .await?;
     if !created {
-        BLOB_BUDGET.refund(&creator, spent);
+        if !wrote {
+            BLOB_BUDGET.refund(&creator, spent);
+        }
         return Err(ApiError::http(409, "group already exists"));
     }
     Ok(Json(json!({
@@ -631,9 +640,10 @@ pub async fn submit_commit(
         commit_bytes.len() + welcome_bytes.as_ref().map_or(0, Vec::len),
     )?;
     let commit_hash = mls::content_hash(&commit_bytes);
-    let commit_cid = store_blob(&state, commit_bytes).await?;
+    let mut wrote = false;
+    let commit_cid = store_blob(&state, commit_bytes, &mut wrote).await?;
     let welcome_cid = match welcome_bytes {
-        Some(w) => Some(store_blob(&state, w).await?),
+        Some(w) => Some(store_blob(&state, w, &mut wrote).await?),
         None => None,
     };
     let mut added: Vec<String> = b
@@ -681,7 +691,9 @@ pub async fn submit_commit(
     .fetch_one(&state.pool)
     .await?;
     if b.epoch != locked + 1 {
-        BLOB_BUDGET.refund(&signer, spent);
+        if !wrote {
+            BLOB_BUDGET.refund(&signer, spent);
+        }
         return Err(ApiError::http(409, "epoch advanced concurrently; retry"));
     }
     Ok(Json(
@@ -807,7 +819,8 @@ pub async fn send_message(
         format!("{group_id}:{}:{signer}:{ciphertext_hash}", routing.epoch).as_bytes(),
     );
     let spent = spend_blob_budget(&signer, ciphertext.len())?;
-    let ciphertext_cid = store_blob(&state, ciphertext).await?;
+    let mut wrote = false;
+    let ciphertext_cid = store_blob(&state, ciphertext, &mut wrote).await?;
     let inserted = sqlx::query(
         "INSERT INTO social.mls_message_refs \
             (signature_hash, group_id, author, epoch, ciphertext_hash, ciphertext_cid, signed_at, received_at) \
@@ -824,7 +837,7 @@ pub async fn send_message(
     .execute(&state.pool)
     .await?
     .rows_affected();
-    if inserted == 0 {
+    if inserted == 0 && !wrote {
         BLOB_BUDGET.refund(&signer, spent);
     }
     Ok(Json(json!({

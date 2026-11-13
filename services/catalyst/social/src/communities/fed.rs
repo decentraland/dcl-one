@@ -1416,7 +1416,7 @@ async fn post(ctx: &Ctx<'_>, id: &str) -> Response {
     let signature_hash = signed.signature_hash();
     let applied: sqlx::Result<()> = async {
         let mut tx = ctx.state.pool.begin().await?;
-        let entry = Entry { kind: "post", content_hash: Some(m.content_hash.clone()), ..Default::default() };
+        let entry = Entry { kind: "post", content_hash: Some(hash.clone()), ..Default::default() };
         if record(&mut tx, &signature_hash, &m.community_id, community, &signer, signed.signed_at, &payload(m), &entry).await? {
             sqlx::query("INSERT INTO social.community_posts (id, community_id, author_address, content) VALUES ($1, $2, $3, $4) ON CONFLICT (id) DO NOTHING")
                 .bind(post_uuid(&signature_hash))
@@ -1887,41 +1887,40 @@ pub async fn put_content(
         Ok(cid) => cid,
         Err(_) => return err_json(StatusCode::INTERNAL_SERVER_ERROR, "io error"),
     };
-    // A body registered earlier may have lost its blob; storing again repairs it.
-    let stored = async {
-        if !state.storage.exist(&cid).await? {
-            state.storage.store(&cid, body).await?;
-        }
-        Ok::<_, crate::storage::StorageError>(())
-    }
-    .await;
-    if let Err(e) = stored {
-        tracing::error!(error = %e, "community content store io error");
-        return err_json(StatusCode::INTERNAL_SERVER_ERROR, "io error");
-    }
-    match register_upload(&state.pool, &hash, &cid, size as i32, &signer).await {
+    match register_upload(&state, &hash, &cid, body, &signer).await {
         Ok(None) => Json(json!({ "ok": true, "content_hash": hash, "size": size })).into_response(),
         Ok(Some(refused)) => refused,
-        Err(e) => db_err(e),
+        Err(e) => {
+            tracing::error!(error = %e, "community content upload failed");
+            err_json(StatusCode::INTERNAL_SERVER_ERROR, "io error")
+        }
     }
 }
 
-/// Registers the body and binds it to its uploader under one lock, within
-/// the per-uploader and global budgets of unposted bodies. A repeated upload
-/// refreshes both rows, so the collector keeps a body a retried post needs.
-async fn register_upload(
-    pool: &PgPool,
-    hash: &str,
-    cid: &str,
-    size: i32,
-    uploader: &Address,
-) -> sqlx::Result<Option<Response>> {
-    let mut tx = pool.begin().await?;
+/// Serializes uploads with the collector's deletes until the transaction ends.
+async fn lock_uploads(conn: &mut PgConnection) -> sqlx::Result<()> {
     sqlx::query(
         "SELECT pg_advisory_xact_lock(hashtextextended('social.community_content_uploads', 0))",
     )
-    .execute(&mut *tx)
-    .await?;
+    .execute(conn)
+    .await
+    .map(|_| ())
+}
+
+/// Stores and registers the body and binds it to its uploader under the
+/// collector's lock, within the per-uploader and global budgets of unposted
+/// bodies. A repeated upload re-stores a lost blob and refreshes both rows;
+/// a body whose post by this uploader arrived first is bound as posted.
+async fn register_upload(
+    state: &CommunitiesState,
+    hash: &str,
+    cid: &str,
+    body: Bytes,
+    uploader: &Address,
+) -> anyhow::Result<Option<Response>> {
+    let size = i32::try_from(body.len())?;
+    let mut tx = state.pool.begin().await?;
+    lock_uploads(&mut tx).await?;
     let (mine, all): (i64, i64) = sqlx::query_as(
         "SELECT COALESCE(sum(size) FILTER (WHERE uploader = $1), 0)::bigint, COALESCE(sum(size), 0)::bigint \
          FROM social.community_content_uploads \
@@ -1939,6 +1938,9 @@ async fn register_upload(
             "content upload budget exhausted; retry later",
         )));
     }
+    if !state.storage.exist(cid).await? {
+        state.storage.store(cid, body).await?;
+    }
     sqlx::query(
         "INSERT INTO social.community_contents (content_hash, cid, size) VALUES ($1, $2, $3) \
                  ON CONFLICT (content_hash) DO UPDATE SET stored_at = timezone('UTC', now())",
@@ -1948,8 +1950,13 @@ async fn register_upload(
     .bind(size)
     .execute(&mut *tx)
     .await?;
-    sqlx::query("INSERT INTO social.community_content_uploads (content_hash, uploader, size) VALUES ($1, $2, $3) \
-                 ON CONFLICT (content_hash, uploader) DO UPDATE SET uploaded_at = timezone('UTC', now())")
+    sqlx::query(
+        "INSERT INTO social.community_content_uploads (content_hash, uploader, size, posted_at) \
+         VALUES ($1, $2, $3, CASE WHEN EXISTS (SELECT 1 FROM social.community_signed_actions a \
+                 WHERE a.content_hash = $1 AND a.kind = 'post' AND a.signer = $2) THEN timezone('UTC', now()) END) \
+         ON CONFLICT (content_hash, uploader) DO UPDATE SET uploaded_at = timezone('UTC', now()), \
+           posted_at = COALESCE(social.community_content_uploads.posted_at, EXCLUDED.posted_at)",
+    )
         .bind(hash)
         .bind(uploader)
         .bind(size)
@@ -2030,14 +2037,19 @@ async fn collect(state: &CommunitiesState) -> anyhow::Result<Value> {
         .fetch_one(&state.pool)
         .await?;
     let referenced: i64 = sqlx::query_scalar("SELECT count(DISTINCT content_hash) FROM social.community_signed_actions WHERE content_hash IS NOT NULL").fetch_one(&state.pool).await?;
+    let mut tx = state.pool.begin().await?;
+    lock_uploads(&mut tx).await?;
     sqlx::query(
         "DELETE FROM social.community_content_uploads WHERE posted_at IS NULL AND uploaded_at < $1",
     )
     .bind(floor)
-    .execute(&state.pool)
+    .execute(&mut *tx)
     .await?;
+    tx.commit().await?;
     let mut removed = 0i64;
     loop {
+        let mut tx = state.pool.begin().await?;
+        lock_uploads(&mut tx).await?;
         let dropped: Vec<String> = sqlx::query_scalar(
             "DELETE FROM social.community_contents WHERE content_hash IN ( \
                SELECT cc.content_hash FROM social.community_contents cc \
@@ -2049,7 +2061,7 @@ async fn collect(state: &CommunitiesState) -> anyhow::Result<Value> {
         )
         .bind(floor)
         .bind(GC_CHUNK)
-        .fetch_all(&state.pool)
+        .fetch_all(&mut *tx)
         .await?;
         if dropped.is_empty() {
             break;
@@ -2066,12 +2078,13 @@ async fn collect(state: &CommunitiesState) -> anyhow::Result<Value> {
                 "SELECT EXISTS (SELECT 1 FROM social.community_contents WHERE cid = $1)",
             )
             .bind(cid)
-            .fetch_one(&state.pool)
+            .fetch_one(&mut *tx)
             .await?;
             if !registered_again {
                 state.storage.delete_strict(cid).await?;
             }
         }
+        tx.commit().await?;
     }
     Ok(
         json!({ "ok": true, "scanned": scanned, "kept": scanned - removed, "removed": removed, "referenced": referenced }),
@@ -4220,6 +4233,36 @@ mod tests {
                 .collect::<Vec<_>>(),
             [json!(opened)]
         );
+
+        // A body arriving after its post is bound as posted and served; a
+        // post naming the hash in upper case is logged in lower case.
+        let late = hex::encode(Sha256::digest(b"late body"));
+        let (status, body) = send(
+            &app,
+            &owner,
+            "POST",
+            &format!("/v1/communities/{private_id}/posts"),
+            &env(
+                &owner,
+                CommunityPost {
+                    community_id: private_hex.clone(),
+                    content_hash: late.to_ascii_uppercase(),
+                },
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let (status, _) = upload(&app, &owner, "late body").await;
+        assert_eq!(status, StatusCode::OK);
+        let posted: bool = sqlx::query_scalar(
+            "SELECT posted_at IS NOT NULL FROM social.community_content_uploads WHERE content_hash = $1",
+        )
+        .bind(&late)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(posted, "the collector keeps it");
+        assert_eq!(get(late.clone()).await, StatusCode::OK);
 
         // The collector drops unposted bodies past the age floor.
         let (status, stale) = upload(&app, &owner, "never posted").await;
