@@ -17,6 +17,14 @@ For formal verification of LiveKit or networking decisions, or maintenance of
 their proof evidence, use
 [verify-dcl-networking](.claude/skills/verify-dcl-networking/SKILL.md).
 
+## Design feasibility
+
+- Before planning or implementing runtime features, resource policies or architecture
+  changes that depend on platform capabilities, external services or cross-subsystem
+  ownership, apply [the design feasibility gate](docs/design-feasibility.md).
+  Its outcome and platform coverage decision precedes implementation planning;
+  unresolved design blockers remain visible in PR review.
+
 ## Agentic roles documentation
 
 - README `Agentic roles` lists every agent role: name, goal, main functions, relative link to its tracked definition or workflow.
