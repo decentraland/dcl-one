@@ -4,3 +4,19 @@ export function secureRel(target: string | undefined, rel: string | undefined): 
     ' '
   )
 }
+
+export function isPlainLinkClick(
+  event: Pick<
+    MouseEvent,
+    'defaultPrevented' | 'button' | 'ctrlKey' | 'metaKey' | 'altKey' | 'shiftKey'
+  >
+): boolean {
+  return (
+    !event.defaultPrevented &&
+    event.button === 0 &&
+    !event.ctrlKey &&
+    !event.metaKey &&
+    !event.altKey &&
+    !event.shiftKey
+  )
+}

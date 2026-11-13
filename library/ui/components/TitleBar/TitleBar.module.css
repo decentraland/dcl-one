@@ -1,0 +1,150 @@
+@layer dcl.reset, dcl.foundations, dcl.components;
+@layer dcl.components {
+  .root {
+    box-sizing: border-box;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: center;
+    gap: var(--dcl-space-16);
+    min-width: 0;
+    min-height: 68px;
+    padding: var(--dcl-space-12) 20px;
+    background: var(--dcl-transparencies-black-40);
+    color: var(--dcl-neutrals-snow);
+  }
+  .primary {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 20px;
+    min-width: 0;
+    max-width: 100%;
+  }
+  .title {
+    composes: text626f64792f6d642d7374726f6e67 from '../../foundations/typography/text-styles.module.css';
+    flex: none;
+    margin: 0;
+    font-size: 36px;
+    font-weight: 600;
+    line-height: 44px;
+    overflow-wrap: anywhere;
+    max-width: 100%;
+  }
+  .sections {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 14px;
+    min-width: 0;
+    max-width: 100%;
+  }
+  .root[data-variant='backpack'] .sections,
+  .root[data-variant='shop'] .sections {
+    gap: 10px;
+  }
+  .section {
+    position: relative;
+    composes: text626f64792f6d642d7374726f6e67 from '../../foundations/typography/text-styles.module.css';
+    box-sizing: border-box;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+    gap: var(--dcl-space-4);
+    min-height: 44px;
+    max-width: 100%;
+    border: 0;
+    border-radius: var(--dcl-radius-md);
+    padding: 8px 14px 8px 10px;
+    background: var(--dcl-transparencies-white-10);
+    color: var(--dcl-neutrals-snow);
+    font-size: 18px;
+    font-weight: 600;
+    line-height: 22.5px;
+    text-align: start;
+    text-decoration: none;
+    overflow-wrap: anywhere;
+    cursor: pointer;
+  }
+  .section[data-active] {
+    background: var(--dcl-primary-alt-primary-alt);
+    color: var(--dcl-neutrals-shadow);
+  }
+  .section:focus-visible {
+    outline: 2px solid var(--dcl-neutrals-snow);
+    outline-offset: 2px;
+  }
+  .icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+    width: 24px;
+    height: 24px;
+  }
+  .controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 14px;
+    min-width: 0;
+    max-width: 100%;
+  }
+  .root[data-variant='events'] .controls {
+    gap: 20px;
+  }
+  .slot {
+    position: relative;
+    box-sizing: border-box;
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: 100%;
+  }
+  .slot[data-control='collection'] {
+    width: 273px;
+  }
+  .slot[data-control='filters'] {
+    width: 190px;
+  }
+  .slot[data-control='search'] {
+    width: 396px;
+  }
+  .slot[data-control='date'] {
+    width: 82px;
+  }
+  .slot[data-control='create'] {
+    width: 290px;
+  }
+  .root[data-variant='shop'] .slot[data-control='filters'],
+  .slot[data-control='sort'] {
+    width: 150px;
+  }
+  .slot[data-control='cart'] {
+    width: 44px;
+  }
+  .filterMenu {
+    position: absolute;
+    top: calc(100% + var(--dcl-space-12));
+    left: 0;
+    z-index: 1;
+    width: 240px;
+    max-width: calc(100vw - 40px);
+  }
+}
+
+@layer dcl.components {
+  @media (forced-colors: active) {
+    .section[data-active]::after {
+      content: '';
+      position: absolute;
+      inset: 2px;
+      border: 2px solid CanvasText;
+      border-radius: inherit;
+      pointer-events: none;
+    }
+    .section:focus-visible {
+      outline-color: Highlight;
+    }
+  }
+}

@@ -25,3 +25,10 @@ export type { InputExplorerNamesProps } from './components/InputExplorerNames/In
 
 export { TabsBar } from './components/TabsBar/TabsBar'
 export type { TabsBarProps, TabsBarItem, TabsBarLinkProps } from './components/TabsBar/TabsBar'
+
+export { TitleBar } from './components/TitleBar/TitleBar'
+export type {
+  TitleBarProps,
+  TitleBarSection,
+  TitleBarLinkProps
+} from './components/TitleBar/TitleBar'
