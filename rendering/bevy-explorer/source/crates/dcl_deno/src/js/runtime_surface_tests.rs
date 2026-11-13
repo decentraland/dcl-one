@@ -757,19 +757,15 @@ fn the_vendored_fetch_ops_take_the_upstream_contract() {
 
 #[test]
 fn a_refused_connection_rejects_with_fetch_failed_and_its_cause() {
-    let port = std::net::TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port();
+    // a privileged port outside fetch's blocked list: nothing listens there, and the
+    // ephemeral binds other tests make never land on it
     let outcome = fetch_outcome(
         false,
         None,
-        format!(
-            r#"fetch("http://127.0.0.1:{port}/").then(() => "resolved",
-                (e) => `${{e.name}}: ${{e.message}} / ${{e.cause instanceof Error}}`)
-            .then((s) => globalThis.__outcome = s);"#
-        ),
+        r#"fetch("http://127.0.0.1:47/").then(() => "resolved",
+            (e) => `${e.name}: ${e.message} / ${e.cause instanceof Error}`)
+        .then((s) => globalThis.__outcome = s);"#
+            .to_owned(),
     );
     assert_eq!(outcome, "TypeError: fetch failed / true");
 }
