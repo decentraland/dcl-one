@@ -1,5 +1,7 @@
 pub mod agent_commands;
 pub mod explorer_ui;
+pub mod portables;
+pub mod smart_wearables;
 pub mod teleport;
 
 use std::{path::PathBuf, sync::Arc};
@@ -16,6 +18,7 @@ use bevy::{
 };
 use bevy_console::{ConsoleCommand, ConsoleResponder, PrintConsoleLine};
 use bevy_dui::{DuiEntityCommandsExt, DuiProps, DuiRegistry};
+use collectibles::wearables::WearableUrn;
 use common::{
     profile::SerializedProfile,
     rpc::{
@@ -46,10 +49,12 @@ use ipfs::{
     ChangeRealmEvent, EntityDefinition, IpfsAssetServer, IpfsIo, RealmInitialLocation, ServerAbout,
 };
 use nft::asset_source::Nft;
+use portables::StopPortable;
 use reqwest::StatusCode;
 use scene_runner::{
     initialize_scene::{
-        LiveScenes, PortableScenes, PortableSource, SceneLoading, SuperUserScene, PARCEL_SIZE,
+        LiveScenes, PortableKind, PortableScenes, PortableSource, SceneLoading, SuperUserScene,
+        PARCEL_SIZE,
     },
     permissions::Permission,
     realm_base_url_and_name,
@@ -82,6 +87,7 @@ impl Plugin for RestrictedActionsPlugin {
                     external_url,
                     spawn_portable,
                     kill_portable,
+                    exit_portable,
                     list_portables,
                     get_user_data,
                 ),
@@ -121,6 +127,8 @@ impl Plugin for RestrictedActionsPlugin {
         app.add_console_command::<SpawnPortableCommand, _>(spawn_portable_command);
         app.add_console_command::<KillPortableCommand, _>(kill_portable_command);
         app.add_plugins(agent_commands::AgentCommandsPlugin);
+        app.add_plugins(smart_wearables::SmartWearablesPlugin);
+        app.add_plugins(portables::PortablesPlugin);
     }
 }
 
@@ -785,12 +793,7 @@ fn lookup_local_realm(
 
     Ok((
         hash,
-        PortableSource {
-            pid: file_urn,
-            parent_scene,
-            ens: None,
-            super_user,
-        },
+        PortableSource::new(file_urn, parent_scene, None, super_user),
     ))
 }
 
@@ -850,12 +853,7 @@ pub async fn lookup_portable(
     let (hash, pid) = resolve_portable_urn(&urn, &url)?;
     Ok((
         hash,
-        PortableSource {
-            pid,
-            parent_scene,
-            ens: None,
-            super_user,
-        },
+        PortableSource::new(pid, parent_scene, None, super_user),
     ))
 }
 
@@ -965,12 +963,7 @@ fn spawn_portable(
                 if current_portables.get(&hash).is_none() {
                     new_portables.insert(
                         hash.clone(),
-                        PortableSource {
-                            pid: hacked_urn,
-                            parent_scene: Some(parent_hash),
-                            ens: None,
-                            super_user: false,
-                        },
+                        PortableSource::new(hacked_urn, Some(parent_hash), None, false),
                     );
                 }
                 pending_responses.insert(hash, Some(response.clone()));
@@ -1077,6 +1070,15 @@ fn spawn_portable(
     }
 }
 
+/// The wearable a `kill` urn names, if it names one. Entity urns are excluded up front so they
+/// do not log as invalid collectible urns.
+fn smart_wearable_urn(urn: &str) -> Option<WearableUrn> {
+    if !urn.starts_with("urn:decentraland:") || urn.starts_with("urn:decentraland:entity:") {
+        return None;
+    }
+    WearableUrn::new(urn).ok()
+}
+
 fn portable_matches_location(
     hash: &str,
     source: &PortableSource,
@@ -1084,6 +1086,14 @@ fn portable_matches_location(
 ) -> bool {
     match location {
         PortableLocation::Urn(urn) => {
+            if let Some(wearable) = smart_wearable_urn(urn) {
+                return match &source.kind {
+                    PortableKind::SmartWearable { .. } => {
+                        WearableUrn::new(&source.pid).is_ok_and(|urn| urn == wearable)
+                    }
+                    _ => false,
+                };
+            }
             let hacked_urn = urn.replace('?', "?=&");
             IpfsPath::new_from_urn::<EntityDefinition>(&hacked_urn)
                 .ok()
@@ -1095,27 +1105,32 @@ fn portable_matches_location(
     }
 }
 
+/// `PortableExperiences.kill`: a scene stops a portable it spawned, or one it did not spawn
+/// while the player stands in it. Refused in server mode, where every hosted scene is a portable
+/// the server re-inserts.
 fn kill_portable(
-    mut commands: Commands,
     portables: Res<PortableScenes>,
     mut events: EventReader<RpcCallEvent>,
+    mut stops: EventWriter<StopPortable>,
     scenes: Query<&RendererSceneContext>,
     player: Query<Entity, With<PrimaryUser>>,
     containing_scene: ContainingScene,
     mut perms: Permission<(PortableLocation, RpcResultSender<bool>)>,
 ) {
-    let mut kill_portables = HashSet::new();
-
     for (scene, location, response) in events.read().filter_map(|ev| match (&ev.origin, &ev.call) {
         (RpcOrigin::Scene { entity: scene, .. }, RpcCall::KillPortable { location, response }) => {
             Some((scene, location, response))
         }
         _ => None,
     }) {
+        if server_mode() {
+            response.send(false);
+            continue;
+        }
         // requesting scene may kill a portable only if it spawned the portable,
-        // or if some other scene spawned it and the player is currently within
-        // the requesting scene's bounds. startup / system portables (no parent
-        // scene) are never killable by scenes.
+        // or if some other scene spawned it (or it is a smart wearable) and the player
+        // is currently within the requesting scene's bounds. startup / system portables
+        // are never killable by scenes.
         let is_parent = scenes.get(*scene).is_ok_and(|ctx| {
             portables
                 .by_parent(&ctx.hash)
@@ -1128,7 +1143,7 @@ fn kill_portable(
                 .is_some_and(|p| containing_scene.get(p).contains(scene));
             player_in_scene
                 && portables.iter().any(|(hash, src)| {
-                    src.parent_scene.is_some() && portable_matches_location(hash, src, location)
+                    !src.is_startup() && portable_matches_location(hash, src, location)
                 })
         };
         if !is_parent && !containing_other_owned {
@@ -1147,7 +1162,21 @@ fn kill_portable(
 
     for (location, response) in perms.drain_success(PermissionType::KillPortables) {
         match location {
-            PortableLocation::Urn(urn) => {
+            PortableLocation::Urn(ref urn) => {
+                if smart_wearable_urn(urn).is_some() {
+                    match portables
+                        .iter()
+                        .find(|(hash, src)| portable_matches_location(hash, src, &location))
+                    {
+                        Some((hash, _)) => {
+                            response.send(true);
+                            stops.write(StopPortable { hash: hash.clone() });
+                        }
+                        None => response.send(false),
+                    }
+                    continue;
+                }
+
                 let hacked_urn = urn.replace('?', "?=&");
 
                 let Ok(path) = IpfsPath::new_from_urn::<EntityDefinition>(&hacked_urn) else {
@@ -1162,7 +1191,7 @@ fn kill_portable(
 
                 if portables.contains_key(&hash) {
                     response.send(true);
-                    kill_portables.insert(hash.clone());
+                    stops.write(StopPortable { hash });
                 } else {
                     response.send(false);
                 }
@@ -1177,15 +1206,32 @@ fn kill_portable(
     for (_, response) in perms.drain_fail(PermissionType::KillPortables) {
         response.send(false);
     }
+}
 
-    // deferred write to avoid resource conflict
-    if !kill_portables.is_empty() {
-        commands.queue(|world: &mut World| {
-            let mut portables = world.resource_mut::<PortableScenes>();
-            for killed in kill_portables {
-                portables.remove(&killed);
-            }
-        })
+/// `PortableExperiences.exit`: the calling scene unloads itself if it is a portable. Refused in
+/// server mode, where every hosted scene is a portable the server re-inserts.
+fn exit_portable(
+    portables: Res<PortableScenes>,
+    mut events: EventReader<RpcCallEvent>,
+    mut stops: EventWriter<StopPortable>,
+) {
+    for (hash, response) in events.read().filter_map(|ev| match (&ev.origin, &ev.call) {
+        (RpcOrigin::Scene { hash, .. }, RpcCall::ExitPortable { response }) => {
+            Some((hash, response))
+        }
+        _ => None,
+    }) {
+        if server_mode() {
+            response.send(false);
+            continue;
+        }
+        let is_portable = portables.contains_key(hash);
+        if is_portable {
+            stops.write(StopPortable {
+                hash: hash.to_string(),
+            });
+        }
+        response.send(is_portable);
     }
 }
 
@@ -1200,21 +1246,28 @@ fn list_portables(
         _ => None,
     }) {
         debug!("listing portables");
-        // hide startup / system portables (parent_scene = None) from scenes
+        // hide startup / system portables from scenes
         let portables = portables
             .iter()
-            .filter(|(_, source)| source.parent_scene.is_some())
+            .filter(|(_, source)| !source.is_startup())
             .map(|(hash, source)| {
                 let context = live_scenes
                     .scenes
                     .get(hash)
                     .and_then(|ent| contexts.get(*ent).ok());
 
+                let (parent_cid, ens) = match source.kind {
+                    PortableKind::SmartWearable { .. } => ("avatar".to_owned(), None),
+                    _ => (
+                        source.parent_scene.clone().unwrap_or_default(),
+                        source.ens.clone(),
+                    ),
+                };
                 SpawnResponse {
                     pid: source.pid.clone(),
                     name: context.map_or(String::default(), |c| c.title.to_owned()),
-                    parent_cid: source.parent_scene.clone().unwrap_or_default(),
-                    ens: source.ens.clone(),
+                    parent_cid,
+                    ens,
                 }
             })
             .collect();

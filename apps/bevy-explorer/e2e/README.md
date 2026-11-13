@@ -71,6 +71,9 @@ second one on its own realm.
 | `DCL_E2E_TRANSPORT` | `native` drives the standalone through `dcl/console` instead of a browser | `web` |
 | `DCL_E2E_NATIVE_BIN`, `DCL_E2E_NATIVE_ARGS` | A standalone to start with its loopback console on (`--realm`, `--position`, `--automation-token` and `--automation-port` are added) | unset |
 | `DCL_E2E_NATIVE_PORT`, `DCL_E2E_NATIVE_TOKEN` | A running standalone's loopback console and the token it was started with | `15702`, unset |
+| `DCL_E2E_SMART_WEARABLE_URN` | A smart wearable on the configured backend for `specs/smart-wearables.test.ts` to run with no prompt | unset: that scenario is skipped |
+
+A development binary started by `DCL_E2E_NATIVE_BIN` reads its assets next to the executable: set `BEVY_ASSET_ROOT` to `rendering/bevy-explorer/source` so the bundled HUD loads, and pass `DCL_E2E_NATIVE_ARGS=--guest` on a machine whose install never accepted the terms, or the welcome page holds the world and no scenario arrives.
 
 To run the native Explorer against a gateway, set
 `DCL_E2E_NATIVE_ARGS="--gateway https://gateway.example.test"`.
@@ -209,6 +212,19 @@ counts in `/community_state` and lands in `/dm_history community:<id>`. It needs
 account that is a member of a community, whose card it finds under My Communities (VIEW ALL), and
 fails saying so otherwise.
 
+Specs with no explorer-automation counterpart, outside the counts above:
+
+| Spec | Scenarios | Needs |
+| --- | --- | --- |
+| `debug-panel` | every debug reading resolves; the panel shows live data and plays an emote | |
+| `smart-wearables` | a realm's `/preview-wearables` runs the fixture as a smart wearable with no prompt (`/live_scenes`, `/smart_wearables`, its log and UI label, the sidebar's `Portable experiences` button); `/stop_portable` stops it, it stays listed as stopped, and the popover's `Restart` runs it again; a parcel scene with `portableExperiences: disabled` pauses it (blocked, still live); a configured wearable, run as a guest through the backend, runs with no prompt | the fixture built (`npm run build-scenes -- smart-wearable`); `DCL_E2E_SMART_WEARABLE_URN` for the fourth |
+
+The first three smart-wearable scenarios boot a guest client on a loopback realm of their own
+(`driver/realm.ts` with `previewWearables`, on an ephemeral port) that lists `scenes/smart-wearable`
+under `male/` and `female/`, as the creator preview serves a wearable. The third's realm also
+serves the same project as the parcel scene at `0,0`, its `scene.json` rewritten (`buildScene`'s
+`rewrite`) to disable portable experiences.
+
 What the HUD would need for more Ports, found while porting: roles or labels on the minimap's
 name and coordinates, the chat message text, the communities titles and counts, the passport
 header and bio, the skybox slider and switch; `aria-selected` and `aria-pressed` readable through
@@ -216,7 +232,8 @@ header and bio, the skybox slider and switch; `aria-selected` and `aria-pressed`
 
 ## Visual suite
 
-`scenes/` holds the 17 SDK7 scenes, each at its own parcels ([scenes/README.md](scenes/README.md)).
+`scenes/` holds the 17 SDK7 scenes, each at its own parcels, and the smart-wearable fixture the
+InWorld spec `smart-wearables` previews ([scenes/README.md](scenes/README.md)).
 `specs/visual/visual.test.ts` builds their entities, serves them as a realm on loopback
 (`driver/realm.ts`: `/about`, `/content/contents/<hash>`), boots the client on it as a guest in a
 960x540 window, turns the nametags off and holds the landscape's trees still (`/nametags false`:
@@ -318,6 +335,7 @@ change on the left updates what is on the right in the same change, then runs th
 | A console command's name, arguments or reply, in the engine or in `hudAutomation.ts`; what `/hud_login` does with the session (`useEngineSession.ts`: the stored sign-in, the welcome page, the lobby's pick) | `driver/explorer.ts`, `driver/session.ts` and their tests; the Explorer readme's "Agents and tests" and `docs/guidelines/running.md` "Test commands" | `npm test`; the HUD's tests (`react-web`: `npm test`) |
 | `/hover_entity`, `/click_entity`, `/raycast_stats`, `/raycast_budget`, `/scene_logs` or the `pointer-targets` and `raycast-storm` scenes | `driver/explorer.ts`, `test/explorer.test.ts`, `specs/visual/pointer.test.ts`, `specs/visual/raycast-budget.test.ts`, `rendering/bevy-explorer/docs/guidelines/interaction.md`; `scenes/README.md` for a scene | `npm test`; the two scenarios, e.g. `npm run e2e -- --visual --filter 'the box behind the wall'` and `--filter 'a zero budget holds'` (the scenarios of `pointer.test.ts` and `raycast-budget.test.ts` have their own names; a pattern on a file name selects nothing). On the web these commands reach the engine through `engine_console_command` and write Bevy input events, not the page's trusted input |
 | `--automation-token`, `--automation-port`, their environment fallbacks, the `dcl/console` methods, or the `__dclTrustedInput` contract | `driver/native.ts`, `driver/web.ts`, `local-harness/web-driver` and its README; the readme section | `npm test`; the web driver's tests |
+| The smart-wearable fixture (`scenes/smart-wearable`: its title, name, log line or label), `/preview-wearables` or `buildScene` in `driver/realm.ts`, the `/smart_wearable*`, `/portables` or `/stop_portable` commands, or the HUD's `Portable experiences` button, popover or its `Stop`/`Restart` rows | `specs/smart-wearables.test.ts`, `test/realm.test.ts`, `scenes/README.md` | `npm test`; the scenario in CI |
 | A scene under `scenes/`, its parcels or spawn, `specs/visual/scenes.ts`, the 960x540 window or the tolerance | The references, re-recorded in CI (`record`) and committed in a PR; `scenes/README.md` | the visual scenarios in CI |
 | A path moved under `apps/bevy-explorer/e2e`, `tooling/bevy-e2e-*.py` or the workflow | The workflow's `paths` filters, `tooling/bevy-ci.py` and `tooling/tests/test_bevy_ci.py`, the LFS patterns in `.gitattributes`, the links in this README | the tooling tests |
 | The CI workflow's name, its job names, the `bevy-explorer-web-<sha>` artifact or the status comment's sections | `tooling/bevy-e2e-inputs.py`, `tooling/bevy-e2e-report.py` and their tests; the e2e workflow's `workflow_run` | the tooling tests |

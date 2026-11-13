@@ -244,6 +244,27 @@ from HUD-side key matching. The rules:
 - Key **labels** come from `bindingLabels` (`keyHintFor`/`labelForInput`), never hardcoded
   letters — they follow the user's rebinds and keyboard layout.
 
+## Portables
+
+A portable experience runs beside the scene the player stands in: a smart wearable's scene
+while it is worn, or a portable another scene spawned. The engine decides and lists them; the HUD
+shows them and stops or restarts them (`bridge-scene/src/domains/portables.ts`). Expectations:
+
+- **List**: the engine's `portables` message (`getPortablesStream`), sent on subscribe and on every
+  change, never the HUD's own scene or a startup portable. No polling and no prompt of its own: a
+  portable's permissions are asked on use through the scene permission dialog.
+- **Rail**: the `Portable experiences` button shows while the list is non-empty; its tooltip reads
+  `N running`, plus `, M paused in this scene` while the scene the player stands in disables
+  portable experiences. Its popover lists one row per portable: name, kind (`Smart wearable` /
+  `Portable experience`) and state (`Loading`, `Running`, `Failed: <reason>`, `Paused in this
+  scene`, `Stopped`). `Stop <name>` on every row with a scene hash runs the console's
+  `/stop_portable <hash>`; a stopped smart wearable (still worn) shows `Restart <name>` instead,
+  `/smart_wearable restart <urn>`. The HUD's own command replies stay out of chat; a failed one is
+  toasted.
+- **Toasts**: entering running, paused, stopped or failed is toasted, from the list the player
+  arrived with (no burst at login).
+- Mock: `?mock=1&mockportables=1`. Tests: `library/ui/apps/hud/test/portables.test.tsx`.
+
 ## Analytics
 
 The page reports the screens and clicks mobile does, with mobile's names and property shapes

@@ -28,6 +28,7 @@ import type {
   PermanentPermissionItem,
   PermissionRequestEvent,
   PhotoModeState,
+  PortableInfo,
   ProfileChangedEvent,
   ProximityEvent,
   SatelliteView,
@@ -203,6 +204,9 @@ export type BevyApiInterface = {
   getPermissionUsedStream: () => Promise<AsyncIterable<PermissionUsedRaw>>
   /** The stored rules at one level: `value` is the scene hash (Scene) or realm url (Realm). */
   getPermanentPermissions: (body: { level: 'Scene' | 'Realm' | 'Global'; value?: string }) => Promise<PermanentPermissionItem[]>
+  /** The portables the player can see and stop, tagged by kind: the whole list on subscribe and on
+   *  every change (never the HUD's own scene or a startup portable). */
+  getPortablesStream: () => Promise<AsyncIterable<PortableInfo[]>>
   /** Live scenes, for resolving a permission request's scene name (hash → title) and the current
    *  scene to reload — `/reload` uses `parcels`/`isSuper` to target the scene the player stands in,
    *  never the bridge. */

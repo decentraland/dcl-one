@@ -7,7 +7,7 @@ import { hoverKey, proximityKey } from '@explorer-core/engine/pointerKeys'
 import type { LoginDriver, NewAccountPick } from '@explorer-core/engine/driver'
 import type { LaunchHostOptions } from '@explorer-core/engine/engineRpc'
 import { recordVisit } from '@explorer-core/features/lobby/lobbyApi'
-import type { SatelliteView } from '@explorer-core/engine/generated'
+import type { PortableInfo, PortableState, SatelliteView } from '@explorer-core/engine/generated'
 import type { AvatarLook } from '@explorer-core/engine/avatarEquip'
 import type { PhotoModeSnapshot, PhotoModeSource, PreviewFocus } from '@explorer-core/engine/protocol'
 import { clickButton, screenViewed, sessionId, track } from '@explorer-core/lib/analytics'
@@ -30,6 +30,7 @@ import { emitFriendEvent } from '@explorer-core/features/friends/friendEvents'
 import { toastFriendOnline, toastFriendResult } from '../friends/friendToasts'
 import { clearNotificationToasts, queueNotificationToasts } from '../notifications/NotificationToast'
 import { clearRewardPopups, queueRewardPopups } from '../rewards/RewardPopup'
+import { portableKey, toastPortableChanges } from '../portables/portableToasts'
 import { bootMode, IN_WORLD_SHOP, unattendedRun } from '@hud-host'
 import { notificationTimeMs } from '@explorer-core/lib/notificationTime'
 import { isCancelKey, isEditableTarget, setBindingsSnapshot, useBindingsSnapshot } from '../../lib/bindingLabels'
@@ -636,6 +637,15 @@ export interface WorldPasswordState {
   resolve: (password: string | null) => void
 }
 
+export interface PortablesState {
+  /** The portables the engine lists, tagged by kind: never the HUD's own scene or a startup portable. */
+  list: PortableInfo[]
+  /** Stop a listed portable by its scene hash (`/stop_portable`). */
+  stop: (hash: string) => void
+  /** Start a stopped smart wearable again (`/smart_wearable restart`). */
+  restart: (urn: string) => void
+}
+
 export type ChatLine = ChatMessage & {
   id: number
   ts: number
@@ -1002,6 +1012,8 @@ export interface EngineSession {
   permissions: PermissionsState
   /** The password prompt for a password-protected world being travelled to. */
   worldPassword: WorldPasswordState
+  /** The portable experiences running beside the scene (smart wearables, scene-spawned portables). */
+  portables: PortablesState
   editor: EditorHostState
   mic: { enabled: boolean; available: boolean; toggle: () => void }
   /** Private calls and community streams. */
@@ -1432,6 +1444,15 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   // dismissed prompt asks again; an "Always …" answer is the engine's stored rule from here on).
   const answeredPermissions = useRef(new Map<string, boolean | null>())
   const [worldPassword, setWorldPassword] = useState<WorldPasswordRequestMessage | null>(null)
+  const [portables, setPortables] = useState<PortableInfo[]>([])
+  // Each portable's last reported state, for the change toasts (null: no list yet). Toasts start
+  // once the player is in world from a known baseline: the list the player arrived with, or the
+  // first list after arriving, so logging in wearing several smart wearables does not burst toasts.
+  const portableStates = useRef<Map<string, PortableState> | null>(null)
+  const portableToasts = useRef(false)
+  // Stop/Restart lines the HUD ran itself: their console reply is not echoed into the chat (the
+  // list's toast says what happened); a typed /stop_portable or /smart_wearable command still is.
+  const ownConsoleCommands = useRef<string[]>([])
   const chatId = useRef(0)
   // when each conversation last pinged, per kind of ping
   const pingAtRef = useRef<Map<string, number>>(new Map())
@@ -1517,6 +1538,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           if (msg.name === 'playerReady') {
             playerReadyRef.current = true
             setPlayerReady(true)
+            portableToasts.current = portableStates.current != null
             bootPollStop.current = true // world reached → stop watching for a boot panic
             // The bridge pushes bindings at registration, but that can race the page's channel
             // subscription — re-request now that both ends are up (shortcut hints need them).
@@ -2125,7 +2147,13 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           setMapParcel((prev) => (prev.x === px && prev.y === py ? prev : { x: px, y: py }))
           break
         }
-        case 'consoleReply':
+        case 'consoleReply': {
+          const own = ownConsoleCommands.current.indexOf([msg.command, ...msg.args].join(' '))
+          if (own >= 0) {
+            ownConsoleCommands.current.splice(own, 1)
+            if (!msg.ok) showToast(formatConsoleReply(msg.command, msg.args, msg.output), { tone: 'error' })
+            break
+          }
           // Command feedback: a local "DCL System" line, never broadcast (same shape as pushSystemMessage).
           setMessages((prev) =>
             [
@@ -2134,6 +2162,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
             ].slice(-MAX_CHAT_LINES)
           )
           break
+        }
         case 'realmInfo':
           setSatelliteView(msg.satelliteView)
           break
@@ -2299,6 +2328,16 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
         case 'worldPasswordWithdrawn':
           setWorldPassword(null)
           break
+        case 'portables': {
+          const before = portableStates.current
+          portableStates.current = new Map(msg.portables.map((p) => [portableKey(p), p.state]))
+          if (playerReadyRef.current) {
+            if (portableToasts.current && before != null) toastPortableChanges(before, msg.portables)
+            portableToasts.current = true
+          }
+          setPortables(msg.portables)
+          break
+        }
       }
     })
 
@@ -2984,6 +3023,12 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     },
     []
   )
+  const ownConsoleCommand = useCallback((command: string, args: string[]) => {
+    ownConsoleCommands.current.push([command, ...args].join(' '))
+    driverRef.current?.send({ kind: 'consoleCommand', command, args })
+  }, [])
+  const stopPortable = useCallback((hash: string) => ownConsoleCommand('stop_portable', [hash]), [ownConsoleCommand])
+  const restartSmartWearable = useCallback((urn: string) => ownConsoleCommand('smart_wearable', ['restart', urn]), [ownConsoleCommand])
   const resolveWorldPassword = useCallback((password: string | null) => {
     setWorldPassword((p) => {
       if (p == null) return p
@@ -3694,6 +3739,9 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     setDmLines({})
     setChatUnread(0)
     setNearbyUnread(0)
+    setPortables([])
+    portableStates.current = null
+    portableToasts.current = false
   }, [closeAllPanels])
 
   // Where the Backpack's avatar shows through, so the lobby under its modal can open the same hole.
@@ -4517,6 +4565,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       resolve: resolvePermission
     },
     worldPassword: { pending: worldPassword, resolve: resolveWorldPassword },
+    portables: { list: portables, stop: stopPortable, restart: restartSmartWearable },
     editor: { mode: editorMode, setMode: setEditorMode },
     mic: { enabled: mic.enabled, available: mic.available, toggle: toggleMic },
     voiceChat: { state: voiceChatState, active: activeVoiceChats, activeLoaded: activeVoiceChatsLoaded, scene: sceneVoiceChat, guest: profile?.isGuest === true, act: voiceChatAct },

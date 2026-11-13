@@ -18,7 +18,7 @@ use system_bridge::{
     BlockingStatusData, ChatMessage, ChatReactionData, CommunityMemberConnectivityData,
     CommunityVoiceUpdate, DmHistoryEntryData, DmUserStateData, FriendConnectivityEvent, FriendData,
     FriendRequestData, FriendStatusData, FriendshipEventUpdate, HomeScene, HoverEvent,
-    LiveSceneInfo, PermanentPermissionItem, PermissionRequestEvent, PhotoModeState,
+    LiveSceneInfo, PermanentPermissionItem, PermissionRequestEvent, PhotoModeState, PortableInfo,
     ProfileChangedEvent, ProximityEvent, SatelliteView, SceneLoadingUi, SetAvatarData,
     SetPermanentPermission, SetSinglePermission, SystemApi, VoiceChatAction, VoiceChatState,
     VoiceMessage, WelcomeState, WorldAccessEvent,
@@ -789,6 +789,26 @@ pub fn op_set_single_permission(state: Rc<RefCell<impl State>>, id: usize, allow
             allow,
         }))
         .unwrap();
+}
+
+pub async fn op_get_portables_stream(state: Rc<RefCell<impl State>>) -> u32 {
+    let (sx, rx) = RpcStreamSender::channel();
+    let rid = open_stream(&mut *state.borrow_mut(), rx);
+
+    state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::GetPortablesStream(sx))
+        .unwrap();
+
+    rid
+}
+
+pub async fn op_read_portables_stream(
+    state: Rc<RefCell<impl State>>,
+    rid: u32,
+) -> Result<Option<Vec<PortableInfo>>, anyhow::Error> {
+    Ok(read_stream(state, rid).await)
 }
 
 pub async fn op_get_world_access_stream(state: Rc<RefCell<impl State>>) -> u32 {

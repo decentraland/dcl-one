@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 import { ConsoleError, FakeConsole, commandOf, redactLine } from '../driver/console.ts'
-import { type CommandRecord, Explorer, type WorldState } from '../driver/explorer.ts'
+import { type CommandRecord, Explorer, parseLiveScenes, parsePortables, parseSmartWearables, type WorldState } from '../driver/explorer.ts'
 import { enterWorld } from '../driver/session.ts'
 
 function world(overrides: Partial<WorldState> = {}): string {
@@ -425,6 +425,98 @@ describe('Explorer', () => {
     const png = await explorer.screenshot()
     assert.equal(png.length, 9000)
     assert.match(records[0]!.reply ?? '', /\.\.\. \(12000 chars\)$/)
+  })
+})
+
+describe('smart wearables and live scenes', () => {
+  const urn = 'urn:decentraland:off-chain:e2e:smart-wearable'
+
+  test('parseLiveScenes reads the title, the hash and the flags', () => {
+    assert.deepEqual(parseLiveScenes('no scenes loaded'), [])
+    assert.deepEqual(parseLiveScenes('Genesis Plaza [bafyabc]\nSmart Wearable Fixture [e2e123, portable, smart wearable]\nOld [b1, portable, broken]'), [
+      { title: 'Genesis Plaza', hash: 'bafyabc', portable: false, smartWearable: false, broken: false },
+      { title: 'Smart Wearable Fixture', hash: 'e2e123', portable: true, smartWearable: true, broken: false },
+      { title: 'Old', hash: 'b1', portable: true, smartWearable: false, broken: true }
+    ])
+    assert.throws(() => parseLiveScenes('no brackets here'), /unparseable live_scenes line/)
+  })
+
+  test('parseSmartWearables reads the header and each entry, with or without a reason', () => {
+    assert.deepEqual(parseSmartWearables('no smart wearables'), { currentSceneAllows: null, entries: [] })
+    assert.deepEqual(parseSmartWearables(`current scene allows: false\n${urn} running\nurn:a blocked [scene disables portable experiences]\nurn:b failed no scene.json`), {
+      currentSceneAllows: false,
+      entries: [
+        { urn, state: 'running' },
+        { urn: 'urn:a', state: 'blocked', reason: 'scene disables portable experiences' },
+        { urn: 'urn:b', state: 'failed', reason: 'no scene.json' }
+      ]
+    })
+    assert.deepEqual(parseSmartWearables('current scene allows: true\nurn:c stopped\nurn:d notSmart'), {
+      currentSceneAllows: true,
+      entries: [
+        { urn: 'urn:c', state: 'stopped' },
+        { urn: 'urn:d', state: 'notSmart' }
+      ]
+    })
+    assert.throws(() => parseSmartWearables('urn:a running'), /unparseable smart_wearables header/)
+    // the states of the up-front authorization are gone
+    assert.throws(() => parseSmartWearables('current scene allows: true\nurn:a awaitingAuthorization'), /unparseable smart_wearables line/)
+    assert.throws(() => parseSmartWearables('current scene allows: true\nurn:a killed'), /unparseable smart_wearables line/)
+  })
+
+  test('parsePortables reads the name, the hash or none, the kind and the state', () => {
+    assert.deepEqual(parsePortables('no portables'), [])
+    assert.deepEqual(parsePortables('Smart Wearable Fixture [e2e123-sw-male, smartWearable, running]\nRadio [bafyabc, scene, blocked]\nJetpack [-, smart wearable, stopped]'), [
+      { name: 'Smart Wearable Fixture', hash: 'e2e123-sw-male', kind: 'smartWearable', state: 'running' },
+      { name: 'Radio', hash: 'bafyabc', kind: 'scene', state: 'blocked' },
+      { name: 'Jetpack', hash: null, kind: 'smartWearable', state: 'stopped' }
+    ])
+    assert.throws(() => parsePortables('Radio [bafyabc, scene]'), /unparseable portables line/)
+    assert.throws(() => parsePortables('Radio [bafyabc, startup, running]'), /unparseable portables line/)
+    assert.throws(() => parsePortables('Radio [bafyabc, scene, killed]'), /unparseable portables line/)
+  })
+
+  test('stopPortable checks the reply', async () => {
+    const fake = new FakeConsole({ stop_portable: (line) => (line.endsWith(' gone') ? 'not a listed portable: gone' : `stopped ${line.split(' ')[1]}`) })
+    const explorer = new Explorer(fake)
+    await explorer.stopPortable('e2e123-sw-male')
+    assert.deepEqual(fake.sent('stop_portable'), ['/stop_portable e2e123-sw-male'])
+    await assert.rejects(explorer.stopPortable('gone'), /replied: not a listed portable: gone/)
+  })
+
+  test('smartWearableAction checks the reply and smartWearable finds the entry', async () => {
+    const fake = new FakeConsole({
+      smart_wearable: (line) => (line.startsWith('/smart_wearable kill') ? `not running: ${urn}` : `running ${urn}`),
+      smart_wearables: `current scene allows: true\n${urn} running`
+    })
+    const explorer = new Explorer(fake)
+    await explorer.smartWearableAction('run', urn)
+    assert.deepEqual(fake.sent('smart_wearable'), [`/smart_wearable run ${urn}`])
+    await assert.rejects(explorer.smartWearableAction('kill', urn), /replied: not running/)
+    assert.deepEqual(await explorer.smartWearable(urn), { urn, state: 'running' })
+    assert.equal(await explorer.smartWearable('urn:other'), undefined)
+  })
+
+  test('setScene, sceneLogs and uiTexts read the targeted scene', async () => {
+    const fake = new FakeConsole({
+      set_scene: "active scene set to 'Smart Wearable Fixture'",
+      scene_logs: '(+3 older entries not retained)\n[1.25] Log: smart wearable fixture started\n[1.50] Warn: careful',
+      scene_entities: '512\n513',
+      inspect_component: (line) => (line.includes(' 512 ') ? JSON.stringify({ value: 'Smart wearable running', fontSize: 20 }) : JSON.stringify({ value: 'other' }))
+    })
+    const explorer = new Explorer(fake)
+    await explorer.setScene('e2e123')
+    await explorer.setScene()
+    assert.deepEqual(fake.sent('set_scene'), ['/set_scene e2e123', '/set_scene'])
+    assert.deepEqual(await explorer.sceneLogs(50), ['(+3 older entries not retained)', '[1.25] Log: smart wearable fixture started', '[1.50] Warn: careful'])
+    assert.deepEqual(fake.sent('scene_logs'), ['/scene_logs 50'])
+    assert.deepEqual(await explorer.uiTexts(), ['Smart wearable running', 'other'])
+    assert.deepEqual(fake.sent('scene_entities'), ['/scene_entities UiText'])
+    assert.deepEqual(fake.sent('inspect_component'), ['/inspect_component 512 UiText', '/inspect_component 513 UiText'])
+  })
+
+  test('sceneLogs is empty on the no-logs text', async () => {
+    assert.deepEqual(await new Explorer(new FakeConsole({ scene_logs: '(no logs)' })).sceneLogs(), [])
   })
 })
 

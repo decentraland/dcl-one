@@ -79,6 +79,7 @@ pub mod gltf_resolver;
 pub mod initialize_scene;
 pub mod load_timing;
 pub mod permissions;
+pub mod portables;
 pub mod primary_entities;
 pub mod renderer_context;
 pub mod scene_partition;
@@ -399,6 +400,7 @@ impl Plugin for SceneRunnerPlugin {
         );
 
         app.add_plugins(SceneLifecyclePlugin);
+        app.add_plugins(portables::PortableExperiencesPlugin);
 
         app.add_systems(
             Update,

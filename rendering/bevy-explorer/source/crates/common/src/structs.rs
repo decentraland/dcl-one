@@ -1246,6 +1246,45 @@ pub struct SceneMeta {
     pub spawn_points: Option<Vec<SpawnPoint>>,
     pub skybox_config: Option<SkyboxConfig>,
     pub authoritative_multiplayer: Option<bool>,
+    /// `featureToggles`: a host scene's switches, of which `portableExperiences` is read
+    /// ([`PortableExperiencesToggle`]). Kept as raw json so a value of another shape never
+    /// fails the scene.json.
+    pub feature_toggles: Option<serde_json::Value>,
+}
+
+impl SceneMeta {
+    /// What this scene says about portable experiences while the player stands in it.
+    pub fn portable_experiences_toggle(&self) -> PortableExperiencesToggle {
+        self.feature_toggles
+            .as_ref()
+            .and_then(|toggles| toggles.get("portableExperiences"))
+            .and_then(serde_json::Value::as_str)
+            .map(|value| value.parse().unwrap_or_default())
+            .unwrap_or_default()
+    }
+}
+
+/// A host scene's `featureToggles.portableExperiences`: whether portable experiences run (and
+/// show their UI) while the player is inside the scene. Anything but `disabled` lets them run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum PortableExperiencesToggle {
+    #[default]
+    Enabled,
+    Disabled,
+    HideUi,
+}
+
+impl std::str::FromStr for PortableExperiencesToggle {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "enabled" => Ok(Self::Enabled),
+            "disabled" => Ok(Self::Disabled),
+            "hideui" => Ok(Self::HideUi),
+            _ => Err(()),
+        }
+    }
 }
 
 pub trait PermissionStrings {
@@ -2140,6 +2179,42 @@ mod tests {
         assert!(parse(r#"{"sizes":[],"satelliteView":{"topLeftOffset":null}}"#).is_none());
         assert!(parse(r#"{"sizes":[],"satelliteView":{"topLeftOffset":{"x":1}}}"#).is_none());
         assert!(parse(r#"{"sizes":[],"satelliteView":{"version":1}}"#).is_none());
+    }
+
+    #[test]
+    fn feature_toggles_parse_leniently() {
+        let meta = |toggles: &str| -> SceneMeta {
+            serde_json::from_str(&format!(
+                r#"{{"main":"bin/index.js","scene":{{"base":"0,0","parcels":["0,0"]}}{toggles}}}"#
+            ))
+            .unwrap()
+        };
+        assert_eq!(
+            meta("").portable_experiences_toggle(),
+            PortableExperiencesToggle::Enabled
+        );
+        assert_eq!(
+            meta(r#","featureToggles":{"portableExperiences":"disabled","voiceChat":false}"#)
+                .portable_experiences_toggle(),
+            PortableExperiencesToggle::Disabled
+        );
+        assert_eq!(
+            meta(r#","featureToggles":{"portableExperiences":"hideUi"}"#)
+                .portable_experiences_toggle(),
+            PortableExperiencesToggle::HideUi
+        );
+        // values of another shape are ignored rather than failing the scene.json
+        for toggles in [
+            r#","featureToggles":{"portableExperiences":1}"#,
+            r#","featureToggles":["disabled"]"#,
+            r#","featureToggles":{"portableExperiences":"unknown"}"#,
+        ] {
+            assert_eq!(
+                meta(toggles).portable_experiences_toggle(),
+                PortableExperiencesToggle::Enabled,
+                "{toggles}"
+            );
+        }
     }
 }
 

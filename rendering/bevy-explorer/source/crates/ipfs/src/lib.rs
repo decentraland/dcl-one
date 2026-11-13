@@ -289,12 +289,44 @@ impl ContentMap {
         self.0.insert(Self::key(&file), hash);
         self
     }
+
+    /// The map as a scene packed under `prefix` sees it: every `{prefix}{file}` entry becomes
+    /// `{file}` and wins over an unprefixed entry of the same name; unprefixed entries are kept;
+    /// entries under another prefix (the other body shape of a smart wearable) are dropped.
+    pub fn strip_prefix(&self, prefix: &str, other_prefixes: &[&str]) -> Self {
+        let prefix = prefix.to_lowercase();
+        let mut map = HashMap::<String, String>::default();
+        for (file, hash) in self.0.iter() {
+            if file.starts_with(&prefix) {
+                continue;
+            }
+            if other_prefixes
+                .iter()
+                .any(|other| file.starts_with(&other.to_lowercase()))
+            {
+                continue;
+            }
+            map.insert(file.clone(), hash.clone());
+        }
+        for (file, hash) in self.0.iter() {
+            if let Some(stripped) = file.strip_prefix(&prefix) {
+                map.insert(stripped.to_owned(), hash.clone());
+            }
+        }
+        Self(map)
+    }
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub enum SceneIpfsLocation {
     Hash(String),
     Urn(String),
+    /// A content file of a registered collection whose loader produces the definition (a smart
+    /// wearable's scene, `{shape}.smart_wearable` in the wearable's collection).
+    ContentFile {
+        hash: String,
+        file: String,
+    },
 }
 
 #[derive(Resource, Clone)]
@@ -1366,18 +1398,49 @@ impl IpfsIo {
         modifier: Option<IpfsModifier>,
         metadata: Option<String>,
     ) {
-        let mut write = self.context.blocking_write();
+        Self::insert_collection(
+            &mut self.context.blocking_write(),
+            hash,
+            collection,
+            modifier,
+            metadata,
+        );
+    }
 
+    /// [`Self::add_collection`] for async code (an asset loader), which must not block.
+    pub async fn add_collection_async(
+        &self,
+        hash: String,
+        collection: ContentMap,
+        modifier: Option<IpfsModifier>,
+        metadata: Option<String>,
+    ) {
+        Self::insert_collection(
+            &mut *self.context.write().await,
+            hash,
+            collection,
+            modifier,
+            metadata,
+        );
+    }
+
+    fn insert_collection(
+        context: &mut IpfsContext,
+        hash: String,
+        collection: ContentMap,
+        modifier: Option<IpfsModifier>,
+        metadata: Option<String>,
+    ) {
         let entity = IpfsEntity {
             collection,
             metadata,
         };
 
         if let Some(modifier) = modifier {
-            write.modifiers.insert(hash.clone(), modifier);
+            context.modifiers.insert(hash.clone(), modifier);
         }
 
-        write.entities.insert(hash, entity);
+        context.entities.insert(hash, entity);
     }
 
     /// Merge additional path→hash entries into an existing collection (creating it if absent),

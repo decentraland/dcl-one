@@ -11,6 +11,7 @@ import type {
   Color3,
   CommunityVoiceStatus,
   HomeScene,
+  PortableInfo,
   SatelliteView,
   SceneLoadingUi,
   VoiceChatAction,
@@ -1042,6 +1043,14 @@ export interface PermissionUsedMessage {
   scene: string
   realm: string
   allowed: boolean
+}
+
+/** The portable experiences the player can see and stop (scene → page, from getPortablesStream):
+ *  every portable but the HUD's own scene and the startup ones, plus smart wearables that are
+ *  stopped or still loading. The engine sends the whole list on subscribe and on every change. */
+export interface PortablesMessage {
+  kind: 'portables'
+  portables: PortableInfo[]
 }
 
 /** The engine needs a password to enter the world the player is travelling to (scene → page).
@@ -2241,6 +2250,7 @@ export type SceneToPage =
   | WorldPasswordRequestMessage
   | WorldPasswordWithdrawnMessage
   | EditorSceneResultMessage
+  | PortablesMessage
 
 // ---- envelope --------------------------------------------------------------
 

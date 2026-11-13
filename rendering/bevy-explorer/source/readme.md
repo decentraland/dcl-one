@@ -168,6 +168,47 @@ To try it against a local abgen:
 just native-release --realm https://realm-provider-ea.decentraland.org/main --position 0,0 --bevy-variants-url http://localhost:5147
 ```
 
+## Smart wearables and portables
+
+A smart wearable is a wearable whose content carries an SDK7 scene (`scene.json`, packed under the
+body-shape folders `male/` and `female/`, or bare). The engine runs that scene as a portable
+experience while the wearable is equipped, and stops it when it is unequipped. On entering a realm
+it also fetches `{realm}/preview-wearables`, the creator preview path, and runs each wearable
+listed there the same way.
+
+The scene loads like any other portable: a wearable's collection carries a `{shape}.smart_wearable`
+alias for its body shape's `scene.json`, and loading that alias as the scene's entity
+(`crates/collectibles/src/smart_wearables.rs`) roots the shape's folder, so a `scene.json` that is
+not SDK7 or lacks its `main` fails the scene's load. Its permission requests go through the stored
+rules and the per-use prompt like any portable's; `requiredPermissions` is not read
+([decisions](../docs/guidelines/decisions.md)).
+
+The parcel scene the player stands in decides what portables do there:
+`featureToggles.portableExperiences` set to `disabled` pauses every listed portable (every portable
+but the startup ones and the HUD's own scene) and hides its UI while the player is inside it;
+`hideUi` keeps them running with their UI hidden. The HUD follows the listed portables through
+`getPortablesStream` (`PortableInfo`: each one's kind, `loading`, `running`, `failed`, `blocked` or
+`stopped`) and shows them in the sidebar's `Portable experiences` popover, each with `Stop`; a
+stopped smart wearable stays equipped and offers `Restart`. A smart wearable is listed once its
+wearable data says it is one (its scene resolved); while an equipped wearable's data is still
+loading, or when it has no scene or could not be resolved, it is not a portable and does not
+appear (`/smart_wearables` shows those phases).
+
+Console commands:
+
+- `/portables`: `<name> [<hash or ->, <scene|smartWearable>, <state>]` per listed portable, or
+  `no portables`. `/stop_portable <hash>` stops one (replies `stopped <hash>`).
+- `/smart_wearables`: `current scene allows: true|false`, then `<urn> <state> [<reason>]` per
+  wearable (`loading`, `running`, `blocked`, `stopped`, `notSmart`, `failed`), or
+  `no smart wearables`.
+- `/smart_wearable run <urn>` runs a wearable's scene without equipping it (ownership is not
+  checked); `/smart_wearable kill <urn>` stops one; `/smart_wearable restart <urn>` clears a stop or
+  retries a failure.
+- `/live_scenes` marks their scenes `, portable, smart wearable`; `/list_portables` prints every
+  entry of `PortableScenes` with its kind (`scene`, `startup` or `smart wearable`), startup
+  portables included: a debug listing, where `/portables` and the scenes' own
+  `getPortableExperiencesLoaded` hide them.
+
 ## Testing
 
 ```bash
@@ -248,6 +289,9 @@ Replies are JSON where the command says so; a failed command rejects (web) or an
   `/click_at <x> <y> [--button left|right|middle]`. Natively these and the HUD commands go through
   CEF and the window's own input, always real. On the web the page needs a DevTools client to make
   them real (below); without one they fall back to DOM events and say `"input": "synthetic"`.
+- Portables and smart wearables: `/portables`, `/stop_portable <hash>`, `/smart_wearables`,
+  `/smart_wearable run|kill|restart <urn>` and the `, smart wearable` mark in `/live_scenes`
+  ([Smart wearables and portables](#smart-wearables-and-portables)).
 - Scene pointer: `/hover_entity <entity>` and `/click_entity <entity>` hover and click a scene
   entity by id through the pointer pipeline, on native and web alike, and answer with the hit, the
   hover entries, the scene's pointer events and a diagnosis (`docs/guidelines/running.md`). A hover
