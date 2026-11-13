@@ -14,7 +14,7 @@ mod trees;
 
 use bevy::{
     core_pipeline::dof::{DepthOfField, DepthOfFieldMode},
-    pbr::{wireframe::WireframePlugin, CascadeShadowConfigBuilder, DirectionalLightShadowMap},
+    pbr::{wireframe::WireframePlugin, DirectionalLightShadowMap},
     prelude::*,
     render::view::{Layer, RenderLayers},
 };
@@ -32,8 +32,8 @@ use bevy_console::ConsoleCommand;
 use common::{
     sets::SetupSets,
     structs::{
-        AppConfig, DofConfig, FogSetting, PrimaryCamera, PrimaryCameraRes, PrimaryUser,
-        SceneGlobalLight, ShadowSetting, TimeOfDay, AMBIENT_BRIGHTNESS_UNITY,
+        sun_cascades, AppConfig, DofConfig, FogSetting, PrimaryCamera, PrimaryCameraRes,
+        PrimaryUser, SceneGlobalLight, TimeOfDay, AMBIENT_BRIGHTNESS_UNITY,
         PRIMARY_AVATAR_LIGHT_LAYER,
     },
 };
@@ -51,8 +51,6 @@ use crate::{
     terrain::TerrainPlugin,
     trees::TreesPlugin,
 };
-
-const MIN_CASCADE: f32 = 0.1;
 
 pub struct VisualsPlugin {
     pub no_fog: bool,
@@ -99,6 +97,8 @@ impl Plugin for VisualsPlugin {
         .add_plugins(stars::StarsPlugin);
 
         app.add_console_command::<ShadowConsoleCommand, _>(shadow_console_command);
+        app.init_resource::<ShadowBiasOverride>();
+        app.add_console_command::<ShadowBiasConsoleCommand, _>(shadow_bias_console_command);
         app.add_console_command::<FogConsoleCommand, _>(fog_console_command);
         app.add_console_command::<DofConsoleCommand, _>(dof_console_command);
         app.add_console_command::<CloudConsoleCommand, _>(cloud_console_command);
@@ -193,8 +193,9 @@ fn apply_global_light(
     scene_global_light: Res<SceneGlobalLight>,
     time_of_day: Res<TimeOfDay>,
     envmap_settings: Res<SkyEnvmapSettings>,
-    fog_density: Res<FogDensity>,
     mut sky_ambient: ResMut<SkyAmbient>,
+    // one param: a system takes at most 16
+    (fog_density, shadow_bias): (Res<FogDensity>, Res<ShadowBiasOverride>),
     mut prev: Local<(f32, SceneGlobalLight)>,
     mut cloud_dt: Local<f32>,
     mut last_day_fraction: Local<f32>,
@@ -296,6 +297,7 @@ fn apply_global_light(
         && !setting.is_changed()
         && !envmap_settings.is_changed()
         && !fog_density.is_changed()
+        && !shadow_bias.is_changed()
         && !fog_added
         && *last_day_fraction == clock_fraction;
     *last_day_fraction = clock_fraction;
@@ -306,6 +308,7 @@ fn apply_global_light(
         return;
     }
 
+    let (shadow_depth_bias, shadow_normal_bias) = shadow_bias.0.unwrap_or(SUN_SHADOW_BIAS);
     let mut directional_layers = RenderLayers::none();
     for (entity, layer, mut light_trans, mut directional) in sun.iter_mut() {
         if !next_light.layers.intersects(&RenderLayers::layer(layer.0)) {
@@ -317,6 +320,8 @@ fn apply_global_light(
         light_trans.rotation = rotation;
         directional.illuminance = next_light.dir_illuminance;
         directional.color = next_light.dir_color;
+        directional.shadow_depth_bias = shadow_depth_bias;
+        directional.shadow_normal_bias = shadow_normal_bias;
     }
 
     for new_layer in next_light
@@ -329,40 +334,12 @@ fn apply_global_light(
             layer = layer.union(&PRIMARY_AVATAR_LIGHT_LAYER);
         }
 
-        let (shadows_enabled, cascade_shadow_config) = match setting.graphics.shadow_settings {
-            ShadowSetting::Off => (false, Default::default()),
-            ShadowSetting::Low => (
-                true,
-                CascadeShadowConfigBuilder {
-                    num_cascades: 1,
-                    minimum_distance: MIN_CASCADE,
-                    maximum_distance: setting
-                        .graphics
-                        .shadow_distance
-                        .max(MIN_CASCADE + f32::EPSILON),
-                    first_cascade_far_bound: setting
-                        .graphics
-                        .shadow_distance
-                        .max(MIN_CASCADE + f32::EPSILON),
-                    overlap_proportion: 0.2,
-                }
-                .build(),
-            ),
-            ShadowSetting::High => (
-                true,
-                CascadeShadowConfigBuilder {
-                    num_cascades: 4,
-                    minimum_distance: MIN_CASCADE,
-                    maximum_distance: setting
-                        .graphics
-                        .shadow_distance
-                        .max(MIN_CASCADE + f32::EPSILON),
-                    first_cascade_far_bound: (setting.graphics.shadow_distance / 15.0)
-                        .max(MIN_CASCADE + f32::EPSILON),
-                    overlap_proportion: 0.2,
-                }
-                .build(),
-            ),
+        let (shadows_enabled, cascade_shadow_config) = match sun_cascades(
+            setting.graphics.shadow_settings,
+            setting.graphics.shadow_distance,
+        ) {
+            Some(cascades) => (true, cascades),
+            None => (false, Default::default()),
         };
 
         commands.spawn((
@@ -370,6 +347,8 @@ fn apply_global_light(
                 color: next_light.dir_color,
                 illuminance: next_light.dir_illuminance,
                 shadows_enabled,
+                shadow_depth_bias,
+                shadow_normal_bias,
                 ..Default::default()
             },
             Transform::default().with_rotation(rotation),
@@ -448,6 +427,74 @@ fn shadow_console_command(
                 Some(false) => "disabled",
             }
         ));
+    }
+}
+
+/// The sun's shadow depth bias (a world length) and normal bias (shadow map texels): bevy's
+/// defaults (see decisions.md).
+pub(crate) const SUN_SHADOW_BIAS: (f32, f32) = (
+    DirectionalLight::DEFAULT_SHADOW_DEPTH_BIAS,
+    DirectionalLight::DEFAULT_SHADOW_NORMAL_BIAS,
+);
+
+/// The sun shadow biases set live by `/shadowbias`, in place of `SUN_SHADOW_BIAS`.
+#[derive(Resource, Default)]
+pub struct ShadowBiasOverride(pub Option<(f32, f32)>);
+
+/// Set the sun shadow depth bias (world length) or normal bias (shadow map texels), keeping the
+/// other at its current value; `--reset` restores the default biases.
+#[derive(clap::Parser, ConsoleCommand)]
+#[command(name = "/shadowbias")]
+struct ShadowBiasConsoleCommand {
+    #[arg(long)]
+    depth: Option<f32>,
+    #[arg(long)]
+    normal: Option<f32>,
+    #[arg(long, conflicts_with_all = ["depth", "normal"])]
+    reset: bool,
+}
+
+/// The override after a `/shadowbias` command, or an error for a negative bias.
+fn next_shadow_bias(
+    current: Option<(f32, f32)>,
+    preset: (f32, f32),
+    depth: Option<f32>,
+    normal: Option<f32>,
+    reset: bool,
+) -> Result<Option<(f32, f32)>, &'static str> {
+    if reset {
+        return Ok(None);
+    }
+    if depth.is_some_and(|d| d < 0.0) || normal.is_some_and(|n| n < 0.0) {
+        return Err("shadow biases cannot be negative");
+    }
+    if depth.is_none() && normal.is_none() {
+        return Ok(current);
+    }
+    let (d, n) = current.unwrap_or(preset);
+    Ok(Some((depth.unwrap_or(d), normal.unwrap_or(n))))
+}
+
+fn shadow_bias_console_command(
+    mut input: ConsoleCommand<ShadowBiasConsoleCommand>,
+    mut bias: ResMut<ShadowBiasOverride>,
+) {
+    if let Some(Ok(command)) = input.take() {
+        let preset = SUN_SHADOW_BIAS;
+        match next_shadow_bias(bias.0, preset, command.depth, command.normal, command.reset) {
+            Ok(next) => {
+                // only write when it changes, so a query does not rewrite the lights
+                if bias.0 != next {
+                    bias.0 = next;
+                }
+                let (depth, normal) = next.unwrap_or(preset);
+                input.reply_ok(format!(
+                    "shadow bias depth {depth:.3} normal {normal:.3} (preset {:.3} {:.3})",
+                    preset.0, preset.1
+                ));
+            }
+            Err(error) => input.reply_failed(error),
+        }
     }
 }
 
@@ -852,5 +899,34 @@ fn bloom_console_command(
         };
         bloom.intensity = command.intensity;
         input.reply_ok(format!("bloom intensity: {}", command.intensity));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::next_shadow_bias;
+
+    #[test]
+    fn shadow_bias_flags_change_one_bias_at_a_time() {
+        let preset = (0.02, 4.375);
+        // one flag keeps the other bias, from the preset or from an earlier override
+        assert_eq!(
+            next_shadow_bias(None, preset, Some(0.05), None, false),
+            Ok(Some((0.05, 4.375)))
+        );
+        assert_eq!(
+            next_shadow_bias(Some((0.05, 4.375)), preset, None, Some(1.0), false),
+            Ok(Some((0.05, 1.0)))
+        );
+        // no flag only reports; reset drops the override
+        assert_eq!(
+            next_shadow_bias(Some((0.05, 1.0)), preset, None, None, false),
+            Ok(Some((0.05, 1.0)))
+        );
+        assert_eq!(
+            next_shadow_bias(Some((0.05, 1.0)), preset, None, None, true),
+            Ok(None)
+        );
+        assert!(next_shadow_bias(None, preset, Some(-0.1), None, false).is_err());
     }
 }

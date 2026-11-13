@@ -25,6 +25,7 @@ use analytics::{metrics::MetricsPlugin, segment_system::SegmentConfig};
 use assets::EmbedAssetsPlugin;
 use av::plugin::AVPlayerPlugin;
 use avatar::AvatarPlugin;
+use ban_block::BanBlockPlugin;
 #[cfg(not(target_arch = "wasm32"))]
 use bevy::window::{PresentMode, WindowResolution};
 use bevy::{
@@ -286,6 +287,17 @@ pub struct DecentralandArguments {
     /// the performance harness parses
     #[arg(long, value_name = "path", help_heading = DEBUG)]
     pub csv: Option<std::path::PathBuf>,
+    /// Benchmark walk-in (`--autopilot` with `--csv`): once measuring starts, walk from where the
+    /// run arrived to the centre of this parcel at 6 m/s, then stand there; the scenes on the way
+    /// load during play, with no loading screen. Without it the run stands at spawn
+    #[arg(
+        long,
+        value_name = "x,y",
+        allow_hyphen_values = true,
+        value_parser = |value: &str| value.parse::<IVec2Arg>().map(|parcel| parcel.0),
+        help_heading = DEBUG
+    )]
+    pub autopilot_walk_to: Option<IVec2>,
     /// Write the whole session log here, in the performance harness's line format; the
     /// harness's spelling `-logFile` is accepted too
     #[arg(long, value_name = "path", help_heading = DEBUG)]
@@ -487,27 +499,27 @@ impl DecentralandApp {
                         .app_config
                         .scene_unload_extra_distance
                 },
-                load_imposter: decentraland_app_config
-                    .app_config
-                    .scene_imposter_distances
-                    .last()
-                    .map(|last| {
-                        // actual distance we need is last + diagonal of the largest mip size
-                        let mip_size = (1
-                            << (decentraland_app_config
-                                .app_config
-                                .scene_imposter_distances
-                                .len()
-                                - 1)) as f32
-                            * 16.0;
-                        last + (2.0 * mip_size * mip_size).sqrt()
-                    })
-                    .unwrap_or(0.0)
-                    * if decentraland_app_config.arguments.launch.preview {
-                        0.0
-                    } else {
-                        1.0
-                    },
+                load_imposter: if decentraland_app_config.arguments.launch.preview {
+                    // preview renders no imposters; a far distance keeps the fog off the scene
+                    99999.0
+                } else {
+                    decentraland_app_config
+                        .app_config
+                        .scene_imposter_distances
+                        .last()
+                        .map(|last| {
+                            // actual distance we need is last + diagonal of the largest mip size
+                            let mip_size = (1
+                                << (decentraland_app_config
+                                    .app_config
+                                    .scene_imposter_distances
+                                    .len()
+                                    - 1)) as f32
+                                * 16.0;
+                            last + (2.0 * mip_size * mip_size).sqrt()
+                        })
+                        .unwrap_or(0.0)
+                },
             })
             // the host page's analytics session (web), else one per engine run
             .insert_resource(SegmentConfig::new(
@@ -607,12 +619,20 @@ impl DecentralandApp {
         );
         if decentraland_app_config.arguments.client.autopilot {
             let arguments = &decentraland_app_config.arguments;
-            app.insert_resource(common::autopilot::Autopilot {
-                measure: arguments.csv.is_some()
-                    || (arguments.perf_stream.is_some() && arguments.perf_csv),
-            })
-            .init_resource::<common::autopilot::AutopilotPhase>()
-            .add_plugins(autopilot::AutopilotPlugin);
+            let measure =
+                arguments.csv.is_some() || (arguments.perf_stream.is_some() && arguments.perf_csv);
+            app.insert_resource(common::autopilot::Autopilot { measure })
+                .init_resource::<common::autopilot::AutopilotPhase>()
+                .add_plugins(autopilot::AutopilotPlugin);
+            match arguments.autopilot_walk_to {
+                Some(to) if measure => {
+                    app.insert_resource(autopilot::walk::AutopilotWalk { to });
+                }
+                Some(_) => warn!(
+                    "--autopilot-walk-to has no effect without --csv: the run ends once it arrives"
+                ),
+                None => (),
+            }
             // the autopilot's CSV (perf_output follows its phase): `--csv`, or on the web the
             // page's `csv` stream, which `perfCsv` asks for
             #[cfg(not(target_arch = "wasm32"))]
@@ -623,8 +643,17 @@ impl DecentralandApp {
             if let Some(destination) = destination {
                 app.add_plugins(CsvPlugin { destination });
             }
-        } else if decentraland_app_config.arguments.csv.is_some() {
-            warn!("--csv has no effect without --autopilot: no CSV is written");
+        } else {
+            if decentraland_app_config.arguments.csv.is_some() {
+                warn!("--csv has no effect without --autopilot: no CSV is written");
+            }
+            if decentraland_app_config
+                .arguments
+                .autopilot_walk_to
+                .is_some()
+            {
+                warn!("--autopilot-walk-to has no effect without --autopilot: nothing walks");
+            }
         }
 
         // add AppConfig as a resource
@@ -653,10 +682,13 @@ impl DecentralandApp {
             .add_plugins(WalletPlugin)
             .add_plugins(CommsPlugin)
             .add_plugins(SocialPlugin)
+            .add_plugins(BanBlockPlugin)
             // Keep ImageProcessingPlugin ahead of NftShapePlugin. Bevy gives an image path
             // without an extension to the last image loader registered, which must stay
-            // NftShapePlugin's ExtendedImageLoader (16-bit conversion, size cap); Ktx2Loader,
-            // registered before it, then only ever sees `.ktx2` paths.
+            // NftShapePlugin's ExtendedImageLoader (16-bit conversion, size cap, BC texture
+            // variants); Ktx2Loader, registered before it, then only ever sees `.ktx2` paths.
+            // ExtendedImageLoader also takes `.png`, `.jpg`, `.jpeg` and `.webp` over Bevy's
+            // own ImageLoader, which it wraps.
             .add_plugins(ImageProcessingPlugin)
             .add_plugins(NftShapePlugin)
             .add_plugins(TweenPlugin)

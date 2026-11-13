@@ -87,19 +87,6 @@
   transform: scaleX(1);
 }
 
-.badge {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 18px;
-  height: 18px;
-  padding: 0 5px;
-  border-radius: var(--r-pill);
-  background: var(--brand);
-  color: var(--text);
-  font-size: 11px;
-  font-weight: 700;
-}
 
 /* ---- fill: equal-width tabs across the strip, all labels white, inset thick underline ---- */
 .fill {
@@ -127,11 +114,6 @@
 .fill .tab:not(.active):hover:not(:disabled)::after {
   transform: scaleX(1);
   background: var(--fill-4);
-}
-.fill .badge {
-  min-width: 16px;
-  height: 16px;
-  padding: 0 4px;
 }
 
 /* ---- section: large icon pills (menu page sections, e.g. Wearables / Emotes) ---- */

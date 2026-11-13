@@ -28,6 +28,9 @@ describe("reading the flags file", () => {
 
   it("refuses an answer that is not a 2xx, or not JSON", async () => {
     await expect(readFlagsFile("https://flags.test", transport(503, "{}"))).rejects.toThrow("feature flags: HTTP 503");
+    const asked: string[] = [];
+    await readFlagsFile("https://flags.test", async (url) => (asked.push(url), { status: 200, body: "{}" }), undefined, "explorer").catch(() => {});
+    expect(asked).toEqual(["https://flags.test/explorer.json"]);
     await expect(readFlagsFile("https://flags.test", transport(200, "<html>"))).rejects.toThrow();
   });
 });

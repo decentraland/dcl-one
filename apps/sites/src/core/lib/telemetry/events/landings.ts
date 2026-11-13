@@ -174,6 +174,10 @@ export type LandingsEvents = {
     approved?: boolean;
     event_id?: string;
   };
+  lp_help_creator_fund_clicked: {
+    button: string;
+  };
+  lp_help_viewed: Record<string, never>;
   lp_home_download_clicked: {
     placement: string;
     store: string;
@@ -204,11 +208,11 @@ export type LandingsEvents = {
     resolved: boolean;
   };
   lp_legal_section_clicked: {
-    doc: "brand" | "content" | "ethics" | "privacy" | "referral" | "rewards" | "security" | "terms";
+    doc: "brand" | "content" | "credits" | "ethics" | "privacy" | "referral" | "rewards" | "security" | "terms";
     section: string;
   };
   lp_legal_viewed: {
-    doc: "brand" | "content" | "ethics" | "privacy" | "referral" | "rewards" | "security" | "terms";
+    doc: "brand" | "content" | "credits" | "ethics" | "privacy" | "referral" | "rewards" | "security" | "terms";
   };
   lp_rsvp_cancelled: {
     count: number;

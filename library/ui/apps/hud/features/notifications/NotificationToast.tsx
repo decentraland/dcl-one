@@ -6,7 +6,7 @@
 import { useSyncExternalStore } from 'react'
 import type { AppNotification } from '@explorer-core/engine/protocol'
 import type { ChatState, FriendsState, NotificationsState, VoiceChatSession } from '../session/useEngineSession'
-import { friendshipTarget, streamTarget, summarize } from './summary'
+import { communityTarget, friendshipTarget, tipTarget, streamTarget, summarize } from './summary'
 import styles from './NotificationToast.module.css'
 
 export const TOAST_MS = 5000
@@ -61,7 +61,7 @@ export function NotificationToastHost({
   const n = useSyncExternalStore(subscribe, getSnapshot)
   if (n == null) return null
   const { title, body, image } = summarize(n)
-  const target = friendshipTarget(n, friends) ?? streamTarget(n, voiceChat, chat)
+  const target = friendshipTarget(n, friends) ?? tipTarget(n) ?? streamTarget(n, voiceChat, chat) ?? communityTarget(n)
   const open = (): void => {
     showNext()
     if (target != null) target()

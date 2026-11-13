@@ -10,7 +10,9 @@
 import type {
   Color3,
   CommunityVoiceStatus,
+  ConnectivitySnapshot,
   HomeScene,
+  PortableInfo,
   SatelliteView,
   SceneLoadingUi,
   VoiceChatAction,
@@ -164,6 +166,8 @@ export interface BridgeUnavailableMessage {
 
 export type PageToScene =
   | HelloRequest
+  | { kind: 'getConnectivity' }
+  | { kind: 'retryConnectivity'; requestId: string }
   | VoiceChatActionRequest
   | RpcRequest
   | SendChatRequest
@@ -194,6 +198,7 @@ export type PageToScene =
   | TriggerEmoteRequest
   | EquipEmoteRequest
   | SetMicRequest
+  | SetNearbyMuteRequest
   | GetWearablesRequest
   | CatalogQueryRequest
   | EquipRequest
@@ -228,6 +233,13 @@ export type PageToScene =
   | LeaveCommunityRequest
   | RequestToJoinCommunityRequest
   | CancelJoinRequestRequest
+  | ManageCommunityRequestRequest
+  | UnbanCommunityMemberRequest
+  | GetCommunityInvitesRequest
+  | GetCommunityInvitesCountRequest
+  | GetCommunityMemberSectionRequest
+  | GetInvitableCommunitiesRequest
+  | InviteToCommunityRequest
   | GetCommunityDetailRequest
   | GetCommunityChannelsRequest
   | SetCommunityChannelsRequest
@@ -357,6 +369,19 @@ export interface VoiceActivityMessage {
   kind: 'voiceActivity'
   address: string
   active: boolean
+}
+
+/** The wallets whose nearby voice the user muted (lowercased), whole on every change (scene → page). */
+export interface NearbyMutesMessage {
+  kind: 'nearbyMutes'
+  addresses: string[]
+}
+
+/** Mute ("Hush") or unmute ("Hear") a wallet's nearby voice (page → scene). */
+export interface SetNearbyMuteRequest {
+  kind: 'setNearbyMute'
+  address: string
+  muted: boolean
 }
 
 // ---- voice chat: private calls and community streams ----------------------
@@ -833,10 +858,14 @@ export interface HomeSceneMessage extends HomeScene {
 /** What the welcome page must show for the signed-in account (answered with `welcome`). */
 export interface GetWelcomeRequest {
   kind: 'getWelcome'
+  /** The page's tag for this ask, which its answer echoes. */
+  ask?: number
 }
 
 export interface WelcomeMessage extends WelcomeState {
   kind: 'welcome'
+  /** The tag of the ask this answers, as the page sent it. */
+  ask?: number
 }
 
 /** Put the curated default look `default<look>` on the lobby stage's avatar, as the page fetched it
@@ -1037,6 +1066,14 @@ export interface PermissionUsedMessage {
   allowed: boolean
 }
 
+/** The portable experiences the player can see and stop (scene → page, from getPortablesStream):
+ *  every portable but the HUD's own scene and the startup ones, plus smart wearables that are
+ *  stopped or still loading. The engine sends the whole list on subscribe and on every change. */
+export interface PortablesMessage {
+  kind: 'portables'
+  portables: PortableInfo[]
+}
+
 /** The engine needs a password to enter the world the player is travelling to (scene → page).
  *  Shown as the password dialog; answered with worldPasswordResolve. Re-sent with an `error` when
  *  an answer was refused (wrong password, too many attempts). There is only ever one open prompt:
@@ -1168,6 +1205,8 @@ export interface Community {
   visibility?: string
   /** Id of the local user's pending request to join (private communities). */
   pendingRequestId?: string
+  /** Id of the local user's pending invite to the community, to accept or reject. */
+  pendingInviteId?: string
   /** The community's voice stream, as the social-api reports it. */
   voiceChatStatus?: { isActive: boolean; participantCount: number; moderatorCount: number }
   /** The first three of the user's friends who are members, for the browse card. Only the paged
@@ -1353,6 +1392,14 @@ export interface RequestToJoinCommunityRequest {
   id: string
 }
 
+/** The user's join request to a community was sent (with its id) or cancelled (no id), told as
+ *  soon as the write succeeds, before the community is read again (scene → page). */
+export interface CommunityJoinRequestMessage {
+  kind: 'communityJoinRequest'
+  id: string
+  requestId?: string
+}
+
 export interface CancelJoinRequestRequest {
   kind: 'cancelJoinRequest'
   id: string
@@ -1372,7 +1419,134 @@ export interface CommunityMemberActionRequest {
   action: CommunityMemberAction
 }
 
-export type CommunityAction = 'join' | 'requestToJoin' | 'cancelJoinRequest' | 'leave' | 'fetch' | 'delete' | 'removePlace' | CommunityMemberAction
+export type CommunityAction =
+  | 'join'
+  | 'requestToJoin'
+  | 'cancelJoinRequest'
+  | 'leave'
+  | 'fetch'
+  | 'delete'
+  | 'removePlace'
+  | CommunityMemberAction
+  | 'unban'
+  | CommunityRequestAction
+
+/** Lift a member's ban, from the card's Banned section (page → scene → signed DELETE
+ *  /v1/communities/{id}/members/{address}/bans). */
+export interface UnbanCommunityMemberRequest {
+  kind: 'unbanCommunityMember'
+  id: string
+  address: string
+}
+
+/** The answers to an invite or a request, each with its own error text: accepting or rejecting the user's own invite, and an owner's or
+ *  moderator's accept, reject or cancel on a member's request or invite. */
+export type CommunityRequestAction = 'acceptInvite' | 'rejectInvite' | 'manageRequest'
+
+/** Accept, reject or cancel a pending invite or join request (page → scene → signed PATCH
+ *  /v1/communities/{id}/requests/{requestId}). `address` names the member when an owner or
+ *  moderator answers another member's request or cancels an invite they sent; without it the
+ *  request is the user's own invite. */
+export interface ManageCommunityRequestRequest {
+  kind: 'manageCommunityRequest'
+  id: string
+  requestId: string
+  intention: 'accepted' | 'rejected' | 'cancelled'
+  address?: string
+}
+
+/** An answer to a request ended, well or not (scene → page): that request's buttons are released. */
+export interface CommunityRequestSettledMessage {
+  kind: 'communityRequestSettled'
+  id: string
+  requestId: string
+}
+
+/** A pending join request or invite as a member row: who it is for, and the request's id. */
+export interface CommunityRequestMember extends CommunityMember {
+  requestId: string
+}
+
+/** The join requests one of the user's communities received, for its owners and moderators. */
+export interface CommunityRequestsGroup {
+  community: Community
+  requests: CommunityRequestMember[]
+  total: number
+}
+
+/** The browser's Invites & Requests section (page → scene): the user's invites, the join requests
+ *  their owned or moderated communities received, and their own join requests. */
+export interface GetCommunityInvitesRequest {
+  kind: 'getCommunityInvites'
+}
+/** The sidebar's counter alone (page → scene), read when the Communities page opens: the full
+ *  section is read only when it opens. */
+export interface GetCommunityInvitesCountRequest {
+  kind: 'getCommunityInvitesCount'
+}
+/** How many invites and requests received wait on the user (scene → page). */
+export interface CommunityInvitesCountMessage {
+  kind: 'communityInvitesCount'
+  count: number
+}
+/** The answer to GetCommunityInvitesRequest (scene → page). `failed` names the lists that could not
+ *  be read; those are empty. */
+export interface CommunityInvitesMessage {
+  kind: 'communityInvites'
+  /** Communities the user is invited to, each with its `pendingInviteId`. */
+  invites: Community[]
+  requestsReceived: CommunityRequestsGroup[]
+  /** Communities the user asked to join, each with its `pendingRequestId`. */
+  requestsSent: Community[]
+  failed: Array<'invites' | 'requestsReceived' | 'requestsSent'>
+}
+
+/** The card's Members tab sections an owner or moderator sees beside Members: banned members,
+ *  join requests (private communities) and invites sent. */
+export type CommunityMemberSection = 'banned' | 'requests' | 'invites'
+
+/** Read one Members tab section (page → scene → signed social-api GET). */
+export interface GetCommunityMemberSectionRequest {
+  kind: 'getCommunityMemberSection'
+  id: string
+  section: CommunityMemberSection
+}
+/** One Members tab section (scene → page). A banned row's `requestId` is ''. */
+export interface CommunityMemberSectionMessage {
+  kind: 'communityMemberSection'
+  id: string
+  section: CommunityMemberSection
+  members: CommunityRequestMember[]
+  total: number
+  failed?: boolean
+}
+
+/** The communities the user may invite someone to (page → scene → social-api GET
+ *  /v1/members/{address}/invites): those they own or moderate that the person is not in. */
+export interface GetInvitableCommunitiesRequest {
+  kind: 'getInvitableCommunities'
+  address: string
+}
+export interface InvitableCommunitiesMessage {
+  kind: 'invitableCommunities'
+  address: string
+  communities: Array<{ id: string; name: string }>
+  failed?: boolean
+}
+
+/** Invite someone to a community (page → scene → signed POST /v1/communities/{id}/requests). */
+export interface InviteToCommunityRequest {
+  kind: 'inviteToCommunity'
+  id: string
+  address: string
+}
+/** How an invite ended (scene → page), for its toast. */
+export interface CommunityInviteSentMessage {
+  kind: 'communityInviteSent'
+  id: string
+  address: string
+  ok: boolean
+}
 
 /** A community write, or the read of one community, the social-api rejected (scene → page), so the UI can say so. */
 export interface CommunityActionFailedMessage {
@@ -2010,6 +2184,8 @@ export interface AvatarClickMessage {
 
 export type SceneToPage =
   | BridgeReadyMessage
+  | { kind: 'connectivity'; state: ConnectivitySnapshot }
+  | { kind: 'connectivityRetry'; requestId: string; error?: string }
   | BridgeUnavailableMessage
   | VoiceChatStateMessage
   | CommunityVoiceUpdateMessage
@@ -2059,6 +2235,7 @@ export type SceneToPage =
   | CommunityBrowseMessage
   | CommunityMessage
   | VoiceActivityMessage
+  | NearbyMutesMessage
   | CommunityActionFailedMessage
   | CommunitySaveResultMessage
   | CommunityPlaceOptionsMessage
@@ -2067,6 +2244,13 @@ export type SceneToPage =
   | AvatarSaveFailedMessage
   | RequestFailedMessage
   | CommunityDetailMessage
+  | CommunityInvitesMessage
+  | CommunityInvitesCountMessage
+  | CommunityJoinRequestMessage
+  | CommunityRequestSettledMessage
+  | CommunityMemberSectionMessage
+  | InvitableCommunitiesMessage
+  | CommunityInviteSentMessage
   | CommunityChannelsMessage
   | CommunityChannelAddedMessage
   | CommunityChannelRemovedMessage
@@ -2090,6 +2274,7 @@ export type SceneToPage =
   | WorldPasswordRequestMessage
   | WorldPasswordWithdrawnMessage
   | EditorSceneResultMessage
+  | PortablesMessage
 
 // ---- envelope --------------------------------------------------------------
 

@@ -122,7 +122,11 @@ async fn retry_uses_live_priorities_after_another_download_completes_in_backoff(
                     attempts,
                     request,
                     &io.client,
-                    (LIMIT, LIMIT),
+                    FetchPolicy {
+                        headers_timeout: LIMIT,
+                        idle_timeout: LIMIT,
+                        max_attempts: 4,
+                    },
                     None,
                     |delay| {
                         assert_eq!(delay, Duration::from_secs(60));
@@ -223,7 +227,11 @@ async fn a_503_without_retry_after_is_retried_after_a_growing_wait() {
                     attempts,
                     request,
                     &io.client,
-                    (LIMIT, LIMIT),
+                    FetchPolicy {
+                        headers_timeout: LIMIT,
+                        idle_timeout: LIMIT,
+                        max_attempts: 4,
+                    },
                     None,
                     move |delay| {
                         waits.lock().unwrap().push(delay);

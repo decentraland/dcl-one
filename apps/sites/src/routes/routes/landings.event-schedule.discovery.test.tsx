@@ -1,3 +1,4 @@
+import { RouterContextProvider } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fetchEvents, type Event } from "@/data/lib/catalyst/places/events";
 import { loader } from "./landings.event-schedule";
@@ -21,7 +22,7 @@ describe("when the event schedule landing loads live occupancy", () => {
   });
   afterEach(() => { vi.resetAllMocks(); vi.useRealTimers(); });
   it("should request and reuse observed wallets for live cards and calendar rows", async () => {
-    expect((await loader({ request } as never)).data).toMatchObject({ liveNow: [{ users: 2 }], allDays: expect.arrayContaining([[expect.objectContaining({ users: 2 })]]) });
+    expect((await loader({ request, context: new RouterContextProvider() } as never)).data).toMatchObject({ liveNow: [{ users: 2 }], allDays: expect.arrayContaining([[expect.objectContaining({ users: 2 })]]) });
     expect(fetchEvents).toHaveBeenCalledWith(expect.objectContaining({ list: "live", with_connected_users: true }), expect.anything());
   });
 });

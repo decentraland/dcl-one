@@ -4,14 +4,26 @@
     forward_io::{VertexOutput, FragmentOutput},
     pbr_fragment::pbr_input_from_standard_material,
     pbr_functions::{apply_pbr_lighting, main_pass_post_lighting_processing},
-    mesh_view_bindings::globals,
+    mesh_view_bindings::{globals, lights, view},
+    shadows,
 }
 #import "embedded://visuals/coast_surf.wgsl"::coast_surf
 #import "embedded://visuals/coast_profile.wgsl"::{coast_outside, coast_profile}
 #import "embedded://shaders/simplex.wgsl"::simplex_noise_2d
+#import "embedded://shaders/shadow_softening.wgsl"::soften_directional_shadow
+
+// same softened sun shadows as scene materials (see bound_material.wgsl)
+override fn shadows::fetch_directional_shadow(light_id: u32, frag_position: vec4<f32>, surface_normal: vec3<f32>, view_z: f32) -> f32 {
+    let base = shadows::fetch_directional_shadow(light_id, frag_position, surface_normal, view_z);
+    // the far bound of the last cascade is the shadow distance for this light
+    let light = &lights.directional_lights[light_id];
+    let far = (*light).cascades[max((*light).num_cascades, 1u) - 1u].far_bound;
+    let to_frag = frag_position.xyz - view.world_position;
+    return soften_directional_shadow(base, far, dot(to_frag, to_frag));
+}
 
 #ifdef ENVIRONMENT_MAP
-#import bevy_pbr::{ambient, clustered_forward::ClusterableObjectIndexRanges, environment_map, lighting, mesh_view_bindings::lights}
+#import bevy_pbr::{ambient, clustered_forward::ClusterableObjectIndexRanges, environment_map, lighting}
 #import "embedded://shaders/sky_envmap_lookup.wgsl"::{sky_envmap_input, sky_envmap_level, sky_envmap_light}
 
 // the sky envmaps are the only ambient light: the Trilight ambient, and the sky reflections

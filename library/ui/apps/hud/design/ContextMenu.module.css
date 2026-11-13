@@ -9,6 +9,12 @@
   color: var(--text);
 }
 
+/* A long list scrolls past this height. */
+.scroll {
+  max-height: 600px;
+  overflow-y: auto;
+}
+
 .header {
   display: flex;
   align-items: center;

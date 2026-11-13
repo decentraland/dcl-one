@@ -49,7 +49,7 @@ const FALLBACK: PageDefaults = {
   variant: "confirm_modal",
 };
 
-export async function loader({ request }: Route.LoaderArgs) {
+export async function loader({ request, context }: Route.LoaderArgs) {
   const url = new URL(request.url);
   const step = normStep(url.searchParams.get("step"));
   const projectParam = url.searchParams.get("project")?.trim() ?? "";
@@ -60,7 +60,7 @@ export async function loader({ request }: Route.LoaderArgs) {
   const creator = url.searchParams.get("creator")?.trim() || readWallet(request) || "";
 
   const [{ sid, wrap }, { data: ds, source }] = await Promise.all([
-    pageLoader(request,  FALLBACK),
+    pageLoader(request, context,  FALLBACK),
     loadDeleteProjectData({
     creator: creator || undefined,
   }),

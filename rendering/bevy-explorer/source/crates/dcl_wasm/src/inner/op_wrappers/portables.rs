@@ -18,6 +18,13 @@ pub async fn op_portable_kill(state: &WorkerContext, pid: String) -> Result<bool
 }
 
 #[wasm_bindgen]
+pub async fn op_portable_exit(state: &WorkerContext) -> Result<bool, WasmError> {
+    dcl_js::portables::op_portable_exit(state.rc())
+        .await
+        .map_err(WasmError::from)
+}
+
+#[wasm_bindgen]
 pub async fn op_portable_list(state: &WorkerContext) -> Result<Vec<JsValue>, WasmError> {
     Ok(dcl_js::portables::op_portable_list(state.rc())
         .await

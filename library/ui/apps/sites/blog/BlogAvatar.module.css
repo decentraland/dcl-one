@@ -1,0 +1,29 @@
+.avatar {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--dcl-radius-full);
+  background: linear-gradient(135deg, var(--dcl-brand-violet), var(--dcl-brand-ruby));
+  color: var(--dcl-text-primary);
+  font-weight: 700;
+  overflow: hidden;
+}
+
+.sm {
+  width: var(--dcl-space-24);
+  height: var(--dcl-space-24);
+}
+
+.md {
+  width: 56px;
+  height: 56px;
+  font-size: var(--dcl-font-size-heading-4);
+}
+
+.img {
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  object-fit: cover;
+}

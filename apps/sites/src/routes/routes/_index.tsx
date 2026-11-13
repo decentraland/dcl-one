@@ -36,8 +36,8 @@ export function meta() {
   return [{ title: "Decentraland" }];
 }
 
-export async function loader({ request }: Route.LoaderArgs) {
-  const { sid, wrap } = sidLoader(request);
+export async function loader({ request, context }: Route.LoaderArgs) {
+  const { sid, wrap } = sidLoader(request, context);
   const [{ content: loadedContent }, downloads] = await Promise.all([
     loadHomeEvents(),
     loadDownloadsLabel(),
@@ -70,7 +70,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
     position: (n: number, total: number) => `Slide ${n} of ${total}`,
   };
   return (
-    <SitesChrome active="play" overlayNav>
+    <SitesChrome active="play" overlayNav headerSurface="overlay">
       <main>
         <Hero
           title="Close the Feed. Come Hang Out."

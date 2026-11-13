@@ -2,13 +2,16 @@
 // sender's name/avatar, an @mention, or a nearby avatar in the world. Header with
 // avatar / name+copy / address+copy, a relationship-driven friend CTA (Add / Accept +
 // Reject / Requested), then the action list — mirroring bevy-ui-scene's profile-menu:
-// View Passport · Mention · Block/Unblock. A community card's member row opens it as
-// unity-explorer's member menu (context 'community'): View Profile · Chat, the owner's and
-// moderators' actions, then Block · Report.
+// View Passport · Mention · Block/Unblock. A community card's member row opens it as the member
+// menu (context 'community'): View Profile · Chat · Call, the owner's and moderators' actions,
+// then Block · Report, then Invite to Community.
 
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
-import { Avatar, BlockUserIcon, MaskIcon, ReportFlag, Tooltip, VerifiedBadge } from '../../design'
+import { Avatar, BlockUserIcon, ContextMenu, MaskIcon, ReportFlag, Submenu, Tooltip, VerifiedBadge, type ContextMenuItem } from '../../design'
+import { inviteSubmenuItem } from '../communities/InviteToCommunity'
 import callIcon from '../../assets/voice/call.png'
+import hearIcon from '../../assets/voice/hear.png'
+import hushIcon from '../../assets/voice/hush.png'
 import { shortAddr, splitName, userColor } from '@explorer-core/lib/identity'
 import { looksClaimed, mentionName } from '@explorer-core/engine/mention'
 import { peekProfile } from '../session/profileStore'
@@ -88,6 +91,7 @@ export function ProfileCardPresentation({
   blockedBy = false,
   context = 'default',
   communityActions = [],
+  inviteItems = [],
   onAddFriend,
   onUnfriend,
   onCancelRequest,
@@ -97,6 +101,8 @@ export function ProfileCardPresentation({
   onMention,
   onMessage,
   onCall,
+  hushed = false,
+  onSetHushed,
   onViewProfile,
   onClose
 }: {
@@ -114,6 +120,8 @@ export function ProfileCardPresentation({
   context?: MenuContext
   /** 'community' only: the owner's or moderator's actions on this member. */
   communityActions?: CardAction[]
+  /** The Invite to Community submenu's communities; the option shows only when there are some. */
+  inviteItems?: ContextMenuItem[]
   onAddFriend?: (user: ChatUser) => void
   onUnfriend?: (user: ChatUser) => void
   onCancelRequest?: (user: ChatUser) => void
@@ -125,6 +133,10 @@ export function ProfileCardPresentation({
   onMessage?: (user: ChatUser) => void
   /** Ring the user (a private voice call). */
   onCall?: (user: ChatUser) => void
+  /** The user's nearby voice is muted for the local user: the row reads Hear instead of Hush. */
+  hushed?: boolean
+  /** Mute (true) or unmute the user's nearby voice. */
+  onSetHushed?: (user: ChatUser, hushed: boolean) => void
   onViewProfile?: (user: ChatUser) => void
   onClose: () => void
 }): React.JSX.Element {
@@ -139,6 +151,8 @@ export function ProfileCardPresentation({
   const reasonId = useId()
   // Start at the anchor; once laid out, clamp to the viewport using the card's REAL size.
   const [pos, setPos] = useState({ left: x, top: y })
+  // the Invite to Community row arrives after the card opens and makes it taller
+  const hasInvite = inviteItems.length > 0
   useLayoutEffect(() => {
     const el = cardRef.current
     if (!el) return
@@ -148,7 +162,7 @@ export function ProfileCardPresentation({
       left: Math.max(8, Math.min(x, window.innerWidth - r.width - 8)),
       top: Math.max(8, Math.min(top, window.innerHeight - r.height - 8))
     })
-  }, [x, y, above, relationship])
+  }, [x, y, above, relationship, hasInvite])
   const isMe = !!me?.address && !!user.address && me.address.toLowerCase() === user.address.toLowerCase()
   const { base, tag } = splitName(user.name)
   const color = userColor(user.address, user.name, user.claimed, user.nameColor)
@@ -173,6 +187,8 @@ export function ProfileCardPresentation({
   // unity-explorer's member menu offers Chat to every other member
   const showMessage = other && (community || (relationship !== 'blocked' && context !== 'blocked')) && !!onMessage
   const showCall = other && relationship !== 'blocked' && context !== 'blocked' && !!onCall
+  // offered for a blocked user too
+  const showHush = other && (context === 'default' || context === 'friend') && !!onSetHushed
 
   let cta: React.ReactNode = null
   // the member menu's header button only shows a friendship (to remove it): the row carries the rest
@@ -225,7 +241,26 @@ export function ProfileCardPresentation({
     </button>
   )
   const hasDestructive = !!block || !!report
-  const hasMenu = !isMe && (!!viewProfile || showMention || showMessage || showCall || hasDestructive || communityActions.length > 0)
+  // picking a community invites and closes the card, as any other row does
+  const inviteEntry = other ? inviteSubmenuItem(inviteItems, onClose) : null
+  const invite = inviteEntry != null && (
+    <Submenu className={styles.row} label={inviteEntry.label} icon={inviteEntry.icon}>
+      <ContextMenu items={inviteEntry.items ?? []} scroll />
+    </Submenu>
+  )
+  const call = showCall && (
+    <button type="button" className={styles.row} onClick={run(onCall)}>
+      <MaskIcon src={callIcon} size={16} />
+      <span>Call</span>
+    </button>
+  )
+  const hush = showHush && (
+    <button type="button" className={styles.row} onClick={() => { onClose(); onSetHushed?.(user, !hushed) }}>
+      <MaskIcon src={hushed ? hearIcon : hushIcon} size={16} />
+      <span>{hushed ? 'Hear' : 'Hush'}</span>
+    </button>
+  )
+  const hasMenu = !isMe && (!!viewProfile || showMention || showMessage || showCall || showHush || hasDestructive || communityActions.length > 0 || !!invite)
   const message = showMessage && (
     <button type="button" className={styles.row} onClick={run(onMessage)}>
       <MessageIcon />
@@ -265,6 +300,7 @@ export function ProfileCardPresentation({
             <>
               {viewProfile}
               {message}
+              {call}
               {communityActions.length > 0 && <div className={styles.divider} />}
               {communityActions.map((a, i) =>
                 a.disabledReason != null ? (
@@ -286,6 +322,7 @@ export function ProfileCardPresentation({
               {hasDestructive && <div className={styles.divider} />}
               {block}
               {report}
+              {invite}
             </>
           ) : context === 'request' ? (
             <>
@@ -299,12 +336,8 @@ export function ProfileCardPresentation({
           ) : (
             <>
               {message}
-              {showCall && (
-                <button type="button" className={styles.row} onClick={run(onCall)}>
-                  <MaskIcon src={callIcon} size={16} />
-                  <span>Call</span>
-                </button>
-              )}
+              {call}
+              {hush}
               {showMention && (
                 <button type="button" className={styles.row} onClick={() => { onMention?.(mentionName(user.name, user.address, peekProfile(user.address)?.hasClaimedName)); onClose() }}>
                   <MentionIcon />
@@ -312,6 +345,7 @@ export function ProfileCardPresentation({
                 </button>
               )}
               {viewProfile}
+              {invite}
               {hasDestructive && <div className={styles.divider} />}
               {report}
               {block}

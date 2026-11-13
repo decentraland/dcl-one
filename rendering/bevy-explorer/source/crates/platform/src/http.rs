@@ -20,6 +20,12 @@ async fn with_timeout<F: Future>(dur: Duration, fut: F) -> Result<F::Output, Ela
     }
 }
 
+/// `fut`'s output if it resolves within `dur`, else `None`. The future is dropped when the
+/// timer wins.
+pub async fn within<F: Future>(dur: Duration, fut: F) -> Option<F::Output> {
+    with_timeout(dur, fut).await.ok()
+}
+
 /// A successfully-fetched response: its headers and fully-read body.
 pub struct FetchedResponse {
     pub headers: reqwest::header::HeaderMap,
@@ -172,6 +178,10 @@ impl TracedJsonResponse {
 
     pub fn status(&self) -> reqwest::StatusCode {
         self.response.status()
+    }
+
+    pub fn headers(&self) -> &reqwest::header::HeaderMap {
+        self.response.headers()
     }
 
     /// The caller deliberately stops at the HTTP status, without consuming the body.
