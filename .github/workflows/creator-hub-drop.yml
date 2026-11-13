@@ -1,6 +1,9 @@
 name: Drop pre-release
 on:
   workflow_call:
+    secrets:
+      CREATOR_HUB_RELEASES_APP_PRIVATE_KEY:
+        required: false
     inputs:
       dry-run:
         description: 'Compiles the app but not upload artifacts to distribution server'

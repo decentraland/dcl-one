@@ -1,6 +1,43 @@
 name: Creator Hub
 on:
   workflow_call:
+    secrets:
+      CREATOR_HUB_RELEASES_APP_PRIVATE_KEY:
+        required: false
+      ES_PASSWORD:
+        required: false
+      ES_TOTP_SECRET:
+        required: false
+      ES_USERNAME:
+        required: false
+      MACOS_CSC_KEY_PASSWORD:
+        required: false
+      MACOS_CSC_LINK:
+        required: false
+      MACOS_NOTARIZATION_APPLE_ID:
+        required: false
+      MACOS_NOTARIZATION_PWD:
+        required: false
+      MACOS_NOTARIZATION_TEAM_ID:
+        required: false
+      SDK_TEAM_AWS_REGION:
+        required: false
+      SDK_TEAM_S3_BASE_URL:
+        required: false
+      SDK_TEAM_S3_BUCKET:
+        required: false
+      SENTRY_AUTH_TOKEN:
+        required: false
+      SENTRY_DSN:
+        required: false
+      VITE_ALLOWED_EXTERNAL_ORIGINS:
+        required: false
+      VITE_SEGMENT_CREATORS_HUB_API_KEY:
+        required: false
+      VITE_SEGMENT_INSPECTOR_API_KEY:
+        required: false
+      WINDOWS_CREDENTIAL_ID_SIGNER:
+        required: false
     inputs:
       dry-run:
         description: 'Compiles the app but not upload artifacts to distribution server'
