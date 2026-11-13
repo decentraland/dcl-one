@@ -32,6 +32,14 @@ jobs:
     steps:
       - name: Clone repo
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Fetch the landscape assets from Git LFS
+        # The build embeds these files. Only they are fetched: `lfs: true` on the checkout would
+        # download every LFS object in the repository.
+        working-directory: .
+        shell: bash
+        run: |
+          git lfs install --local
+          git lfs pull --include="rendering/bevy-explorer/source/crates/assets/src/assets/landscape/**" --exclude=""
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: '3.12'

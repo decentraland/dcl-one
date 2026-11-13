@@ -1,46 +1,19 @@
-//! Archipelago's ws-connector and stats (port of decentraland/archipelago-workers):
-//! the `/ws` sockets that hand each wallet the island Pulse's
-//! cluster feed assigns it, and the `/hot-scenes`, `/peers`, `/islands`,
-//! `/parcels` and status surfaces. It computes nothing itself: Pulse
-//! (`comms::pulse`, its own process) derives
-//! the clusters and publishes them on the NATS broker (`NATS_URL`), and the
-//! gatekeeper's island subscriber mints each island. This module is part of
-//! the gatekeeper's process: it announces each session to the subscriber and
-//! takes the islands it mints for its sockets, both by call (`feed`), and it
-//! takes the topology snapshots and publishes control positions over the
-//! gatekeeper's link (`gatekeeper::bus`, `serve`'s one NATS client). It lives in
-//! `catalyst-comms` and runs inside `catalyst serve` beside the gatekeeper,
-//! over the ONE pool (`/hot-scenes` reads
-//! `content.active_pointers` + `content.deployments`), the gatekeeper's
-//! LiveKit (it removes a kicked wallet's participant,
-//! `CommsState::kick_island_participant`; the connector holds no LiveKit
-//! credential), the worlds permission core through
-//! [`interfaces::AccessPolicy`](crate::interfaces::AccessPolicy) (its
-//! `is_banned` replaces the old HTTP hop to the gatekeeper's ban status; worlds'
-//! `Policy` implements it) and the guarded client (`DENY_LIST_URL`). Its wire
-//! messages are [`protocol::archipelago`](crate::protocol::archipelago).
-//!
-//! One process holds every socket: only the primary `serve`
-//! (`FLEET_JOBS_ENABLED`) mounts `/ws` and the routes that read its
-//! sockets ([`socket_router`]) and runs the island subscriber that mints for
-//! them. An API replica keeps `/core-status`, `/status` and `/ping`, and the
-//! feed job that carries Pulse's beacon to `/core-status` and `/about`
-//! ([`mounts`]).
-//!
-//! The assignment authority (`ARCHIPELAGO_CONTROL_V4_AUDIENCE`) claims legacy sockets'
-//! lanes in `social.archipelago_v4_*` (`schemas/40_social.sql`, the comms
-//! section), the rows comms' realm-lane fence reads and commits island
-//! assignments to; without the audience, or with that table unreadable,
-//! configured legacy admission fails closed for ownership.
+//! Authenticated `/ws` adapter beside Gatekeeper in the primary `serve` process.
+//! Socket admission, assignment delivery, moderation room bookkeeping and bounded
+//! ownership-controlled positions stay local. Every decoded authenticated position
+//! and disconnect separately enters the statistics observation queue. Pulse alone
+//! owns statistics; read-only HTTP views use its complete snapshots on the same bus.
+//! Social retains the independent topology subscription. Gatekeeper alone holds
+//! LiveKit credentials and validates room authority at every credential boundary.
 
 pub mod auth;
 pub mod ban;
 pub mod config;
-pub mod content;
 pub mod control_v4;
+pub mod enforcement;
 pub mod feed;
 pub mod handlers;
-pub mod peers;
+pub mod observations;
 mod reconciliation;
 pub mod registry;
 pub mod session;
@@ -54,17 +27,15 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use axum::Router;
-use tower_http::cors::{Any, CorsLayer};
 
 use crate::jobs::Jobs;
 
 use crate::deny_list::DenyList;
 use auth::ChallengeStore;
 use ban::BanChecker;
-use content::ContentResolver;
 use control_v4::AssignmentAuthority;
+use enforcement::Enforcement;
 use feed::{FeedCache, Outbox};
-use peers::PeerDirectory;
 use registry::PeersRegistry;
 
 /// keccak256, the EIP-712 dynamic-value hash the v4 socket fingerprints its transcripts with.
@@ -94,14 +65,13 @@ pub async fn build_state(
         );
     }
     let registry = PeersRegistry::new();
-    let peers = PeerDirectory::new(
+    let enforcement = Enforcement::new(
         settings.cluster.clone(),
         Arc::clone(&gatekeeper),
         Arc::clone(&ban_checker),
         Arc::clone(&registry),
     );
     let challenges = ChallengeStore::new(settings.auth.clone());
-    let content = ContentResolver::new(pool.clone(), settings.content_base_url.clone(), 10);
     let replica_id = uuid::Uuid::new_v4().to_string();
     let control_v4 = if let Some(audience) = &gatekeeper.cluster.control_v4_audience {
         match AssignmentAuthority::pg_with_namespace(pool, audience.clone()).await {
@@ -125,19 +95,30 @@ pub async fn build_state(
         "archipelago wired"
     );
 
+    let statistics = Arc::new(crate::stats::Reader::default());
+    let statistics_subscription = statistics.subscribe(gatekeeper.bus.as_ref());
+    let observations = observations::Observations::new(gatekeeper.bus.clone(), jobs);
     let state = Arc::new(AppStateInner {
+        statistics,
+        _statistics_subscription: statistics_subscription,
+        observations,
+        connector_metrics: crate::stats::runtime::Metrics::from_env(),
+        started_at: std::time::Instant::now(),
+        started: std::sync::atomic::AtomicBool::new(false),
         sockets: Arc::new(tokio::sync::Semaphore::new(
+            settings.server.max_sockets as usize,
+        )),
+        handlers: Arc::new(tokio::sync::Semaphore::new(
             settings.server.max_sockets as usize,
         )),
         restart: tokio_util::sync::CancellationToken::new(),
         settings,
-        peers,
+        enforcement,
         registry,
         feed: Arc::new(FeedCache::default()),
         outbox: Outbox::new(Arc::clone(&gatekeeper.bus)),
         gatekeeper,
         challenges,
-        content,
         control_v4,
         replica_id,
         ban_checker,
@@ -147,58 +128,56 @@ pub async fn build_state(
     Ok(state)
 }
 
-/// The two directory sweeps (`archipelago-peer-expiry`, `archipelago-ban-sweep`).
+/// The connected-wallet moderation sweep.
 pub fn spawn_jobs(state: &AppState, jobs: &Jobs) {
-    state.peers.spawn_jobs(jobs);
+    state.enforcement.spawn_jobs(jobs);
 }
 
-/// The connector's routes at their old paths, where the old gateway served them at the root of
-/// the `archipelago-*` vhosts. `serve` nests `stats` under `/archipelago-ea-stats` (the per-vhost
-/// proxy forwards to it) and merges `root` at the root of the one app for the explorer, whose
-/// `/ws` and `/hot-scenes` are root paths.
+/// Routes for the shared root, complete Stats host, and distinct connector host.
 pub struct Mounts {
-    /// The routes without `/status` and `/ping`, which the content server already answers at the
-    /// root of the one app.
     pub root: Router,
     pub stats: Router,
+    pub connector: Router,
+    pub statistics: crate::stats::http::State,
 }
-
-/// The connector's two mounts. Every process serves `/core-status` at both, and `/status` and
-/// `/ping` under `/archipelago-ea-stats`; the `primary` (`FLEET_JOBS_ENABLED`), the one process
-/// that holds the sockets, also serves [`socket_router`] at both.
-pub fn mounts(state: AppState, primary: bool) -> Mounts {
-    let root = with_cors(handlers::core_status_routes()).with_state(state.clone());
-    let stats = with_cors(handlers::status_routes().merge(handlers::core_status_routes()))
-        .with_state(state.clone());
-    if !primary {
-        return Mounts { root, stats };
-    }
-    Mounts {
-        root: root.merge(socket_router(state.clone())),
-        stats: stats.merge(socket_router(state)),
-    }
-}
-
-/// The routes only the primary mounts, the same at the root and under `/archipelago-ea-stats`:
-/// `/ws` and the routes that read its own sockets' state (`/parcels`, `/peers`,
-/// `/islands` and their `/comms` and `/stats` copies, `/hot-scenes`, `/stats/health`).
-pub fn socket_router(state: AppState) -> Router {
-    with_cors(
+pub fn mounts(
+    state: AppState,
+    primary: bool,
+    settings: crate::stats::http::Settings,
+    matcher: Arc<dyn crate::stats::http::MetricsMatcher>,
+    denylist: Arc<crate::content::Denylist>,
+) -> Mounts {
+    let statistics = crate::stats::http::State::new(
+        state.statistics.clone(),
+        Arc::new(crate::stats::content::Content {
+            pool: state.gatekeeper.pool.clone(),
+            denylist,
+        }),
+        crate::stats::runtime::Runtime::new(state.clone()),
+        settings,
+        matcher,
+    );
+    let sockets = if primary {
+        socket_router(state.clone())
+    } else {
         Router::new()
-            .merge(handlers::socket_routes())
-            .merge(ws::routes()),
-    )
-    .with_state(state)
+    };
+    let root = crate::stats::http::merge_root(sockets.clone(), statistics.clone());
+    let stats = crate::stats::http::socket_alias(
+        crate::stats::http::standalone(statistics.clone()).merge(sockets),
+        statistics.clone(),
+    );
+    let connector = handlers::connector(state, primary);
+    Mounts {
+        root,
+        stats,
+        connector,
+        statistics,
+    }
 }
-
-fn with_cors(router: Router<AppState>) -> Router<AppState> {
-    router.layer(
-        CorsLayer::new()
-            .allow_origin(Any)
-            .allow_methods(Any)
-            .allow_headers(Any)
-            .expose_headers(Any),
-    )
+/// Existing `/ws` aliases keep the same authenticated socket adapter.
+pub fn socket_router(state: AppState) -> Router {
+    ws::routes().with_state(state)
 }
 
 /// The connector over a test gatekeeper whose NATS link is a given bus, for the unit tests.
@@ -316,7 +295,7 @@ pub(crate) mod test_support {
             .expect("lazy pool")
     }
 
-    fn comms_state(pool: PgPool) -> CommsState {
+    pub(super) fn comms_state(pool: PgPool) -> CommsState {
         CommsState::new(
             pool,
             Outbound::for_tests(),
@@ -331,21 +310,6 @@ pub(crate) mod test_support {
     }
 }
 
-/// `/about`'s comms probe: archipelago's `/core-status` as a module call.
-impl crate::content::about_comms::CommsCore for state::AppStateInner {
-    fn core_status(&self) -> (bool, u64) {
-        (
-            self.feed
-                .is_core_healthy(chrono::Utc::now().timestamp_millis()),
-            u64::from(self.feed.core_user_count()),
-        )
-    }
-
-    fn parcel_counts(&self) -> Vec<((i32, i32), u32)> {
-        self.peers.parcel_counts().into_iter().collect()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -355,9 +319,361 @@ mod tests {
     use axum::http::{Method, Request, StatusCode};
     use tower::ServiceExt;
 
-    use super::feed::IslandReport;
     use super::{AppState, Settings, mounts};
     use crate::gatekeeper::bus::InProcessBus;
+    #[tokio::test]
+    async fn mounted_hot_scenes_share_local_content_policy_for_get_and_head() {
+        use crate::protocol::bus::statistics::{Peer, SNAPSHOTS_SUBJECT, Snapshot, frames};
+        let pool = crate::db::scratch::pool(2)
+            .await
+            .expect("test database required");
+        let tag = uuid::Uuid::new_v4();
+        let coordinate = 1_800_000 + (tag.as_u128() % 100_000) as i32;
+        let ids = [format!("allowed-{tag}"), format!("denied-{tag}")];
+        // Synthetic binder rows isolate selected-source policy and metadata rendering.
+        for (i, id) in ids.iter().enumerate() {
+            let pointer = format!("{},0", coordinate + i as i32);
+            let metadata = format!(
+                r#"{{"v":{{"scene":{{"base":"{pointer}","parcels":["{pointer}"]}},"display":{{"title":{{"z":1,"a":2}}}}}}}}"#
+            );
+            sqlx::query("INSERT INTO content.deployments (deployer_address,version,entity_type,entity_id,entity_metadata,entity_timestamp,entity_pointers,local_timestamp,auth_chain) VALUES ('0x0000000000000000000000000000000000000001','v3','scene',$1,$2::json,to_timestamp(1),$3,to_timestamp(1),'[]'::json)").bind(id).bind(metadata).bind(vec![pointer.clone()]).execute(&pool).await.unwrap();
+            sqlx::query("INSERT INTO content.active_pointers (pointer,entity_id,entity_type) VALUES ($1,$2,'scene')").bind(pointer).bind(id).execute(&pool).await.unwrap();
+        }
+        let bus = Arc::new(InProcessBus::new());
+        let jobs = crate::jobs::Jobs::new();
+        let gatekeeper =
+            Arc::new(super::test_support::comms_state(pool.clone()).with_bus(bus.clone()));
+        let state = super::build_state(Settings::for_tests(), gatekeeper, &jobs)
+            .await
+            .unwrap();
+        let snapshot = Snapshot {
+            peers: (0..2)
+                .map(|i| Peer {
+                    address: format!("peer-{i}"),
+                    position: [f64::from(coordinate + i) * 16., 0., 0.],
+                    time: 1,
+                })
+                .collect(),
+            ..Default::default()
+        };
+        for frame in frames(&snapshot, uuid::Uuid::nil(), 1, 65536).unwrap() {
+            bus.inject(SNAPSHOTS_SUBJECT, &frame);
+        }
+        let denylist = Arc::new(crate::content::Denylist::default());
+        denylist.set_operator([ids[1].clone()]);
+        let mounted = mounts(
+            state,
+            false,
+            Default::default(),
+            crate::stats::http::test_support::matcher(),
+            denylist.clone(),
+        );
+        async fn request(app: Router, method: &str) -> (StatusCode, axum::http::HeaderMap, String) {
+            let response = app
+                .oneshot(
+                    Request::builder()
+                        .method(method)
+                        .uri("/hot-scenes")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            let status = response.status();
+            let headers = response.headers().clone();
+            let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            (status, headers, String::from_utf8(body.to_vec()).unwrap())
+        }
+        let app = mounted.stats.clone();
+        for app in [mounted.root, mounted.stats] {
+            let (status, headers, body) = request(app.clone(), "GET").await;
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(
+                body,
+                format!(
+                    r#"[{{"id":"{}","name":{{"z":1,"a":2}},"baseCoords":[{coordinate},0],"usersTotalCount":1,"parcels":[[{coordinate},0]]}}]"#,
+                    ids[0]
+                )
+            );
+            assert_eq!(headers["content-length"], body.len().to_string());
+            let (status, _, body) = request(app.clone(), "HEAD").await;
+            assert_eq!(status, StatusCode::OK);
+            assert!(body.is_empty());
+            denylist.set_operator(ids.clone());
+            let (status, _, body) = request(app.clone(), "GET").await;
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(body, "[]");
+            assert_eq!(request(app, "HEAD").await.0, StatusCode::OK);
+            denylist.set_operator([ids[1].clone()]);
+        }
+        pool.close().await;
+        for method in ["GET", "HEAD"] {
+            assert_eq!(
+                request(app.clone(), method).await.0,
+                StatusCode::INTERNAL_SERVER_ERROR
+            );
+        }
+        for frame in frames(&Snapshot::default(), uuid::Uuid::nil(), 2, 65536).unwrap() {
+            bus.inject(SNAPSHOTS_SUBJECT, &frame);
+        }
+        let (status, _, body) = request(app.clone(), "GET").await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "empty population skips the closed SQL source"
+        );
+        assert_eq!(body, "[]");
+        assert_eq!(request(app, "HEAD").await.0, StatusCode::OK);
+        assert!(
+            jobs.shutdown(std::time::Duration::from_secs(1))
+                .await
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn shutdown_waits_for_handler_observations_after_writers_are_gone() {
+        use crate::protocol::bus::statistics::{Event, OBSERVATIONS_SUBJECT, Observation};
+        let bus = Arc::new(InProcessBus::new());
+        let jobs = crate::jobs::Jobs::new();
+        let state = super::test_support::state_on(Settings::for_tests(), bus.clone(), &jobs).await;
+        let handler = state.handlers.clone().acquire_owned().await.unwrap();
+        let shutting_down = state.clone();
+        let done = tokio::spawn(async move {
+            super::shutdown(&shutting_down).await;
+        });
+        state.restart.cancelled().await;
+        assert!(!done.is_finished());
+        let beat = Event::Heartbeat {
+            address: "wallet".into(),
+            position: [0.; 3],
+        };
+        let remove = Event::Disconnect {
+            address: "wallet".into(),
+        };
+        assert!(state.observations.publish(beat.clone()));
+        assert!(state.observations.publish(remove.clone()));
+        drop(handler);
+        done.await.unwrap();
+        let events: Vec<_> = bus
+            .published()
+            .into_iter()
+            .filter(|(subject, _)| subject == OBSERVATIONS_SUBJECT)
+            .map(|(_, bytes)| Observation::decode(&bytes).unwrap().event)
+            .collect();
+        assert_eq!(events, [beat, remove]);
+        assert_eq!(state.observations.dropped(), 0);
+        assert!(
+            jobs.shutdown(std::time::Duration::from_secs(1))
+                .await
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn every_replica_serves_remote_pulse_statistics_without_local_sockets() {
+        use crate::protocol::bus::statistics::{Peer, SNAPSHOTS_SUBJECT, Snapshot, frames};
+        let bus = Arc::new(InProcessBus::new());
+        let state = super::test_support::state_over(Settings::for_tests(), bus.clone()).await;
+        let snapshot = Snapshot {
+            peers: vec![Peer {
+                address: "RemoteCase".into(),
+                position: [17., 0., -1.],
+                time: 123,
+            }],
+            ..Default::default()
+        };
+        for frame in frames(&snapshot, uuid::Uuid::new_v4(), 1, 65536).unwrap() {
+            bus.inject(SNAPSHOTS_SUBJECT, &frame);
+        }
+        let mounts = mounts(
+            state,
+            false,
+            Default::default(),
+            crate::stats::http::test_support::matcher(),
+            Arc::new(crate::content::Denylist::default()),
+        );
+        let response = mounts
+            .root
+            .oneshot(
+                Request::builder()
+                    .uri("/peers")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "statistics must be available on replicas"
+        );
+        let body = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(value["peers"][0]["address"], "RemoteCase");
+        assert_eq!(value["peers"][0]["lastPing"], 123);
+    }
+
+    #[tokio::test]
+    async fn connector_status_counts_authenticated_registrations_and_keeps_its_own_fallback() {
+        let state =
+            super::test_support::state_over(Settings::for_tests(), Arc::new(InProcessBus::new()))
+                .await;
+        let (old, _events, _) = state.registry.on_peer_connected("wallet", "session");
+        let (_second, _events, _) = state.registry.on_peer_connected("wallet", "other");
+        let (_replacement, _events, _) = state.registry.on_peer_connected("wallet", "session");
+        state
+            .registry
+            .on_peer_disconnected("wallet", "session", old.id);
+        let mounts = mounts(
+            state,
+            true,
+            Default::default(),
+            crate::stats::http::test_support::matcher(),
+            Arc::new(crate::content::Denylist::default()),
+        );
+        let response = mounts
+            .connector
+            .clone()
+            .oneshot(Request::get("/status").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.headers()["access-control-allow-origin"], "*");
+        let body = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(value["userCount"], 2);
+        for path in ["/peers", "/health/ready", "/health/startup"] {
+            let response = mounts
+                .connector
+                .clone()
+                .oneshot(Request::get(path).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::NOT_FOUND);
+            assert_eq!(
+                &axum::body::to_bytes(response.into_body(), 4096)
+                    .await
+                    .unwrap()[..],
+                br#"{"error":"Not Found"}"#
+            );
+        }
+        assert_eq!(
+            status(&mounts.connector, Method::OPTIONS, "/health/live").await,
+            StatusCode::OK
+        );
+        assert_eq!(
+            status(&mounts.connector, Method::HEAD, "/status").await,
+            StatusCode::NOT_FOUND
+        );
+        let response = mounts
+            .stats
+            .oneshot(Request::get("/status").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let value: serde_json::Value = serde_json::from_slice(
+            &axum::body::to_bytes(response.into_body(), 4096)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert!(value.get("userCount").is_none());
+    }
+
+    #[tokio::test]
+    async fn running_outer_router_isolates_stats_and_connector_from_shared_normalization() {
+        let state =
+            super::test_support::state_over(Settings::for_tests(), Arc::new(InProcessBus::new()))
+                .await;
+        let mounts = mounts(
+            state.clone(),
+            true,
+            Default::default(),
+            crate::stats::http::test_support::matcher(),
+            Arc::new(crate::content::Denylist::default()),
+        );
+        let shared = Router::new()
+            .route("/status", axum::routing::get(|| async { "shared-status" }))
+            .route("/other", axum::routing::get(|| async { "shared-other" }));
+        let app = crate::stats::http::mount_services(
+            shared,
+            mounts.statistics,
+            mounts.stats,
+            mounts.connector,
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        state
+            .started
+            .store(true, std::sync::atomic::Ordering::Release);
+        let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let client = reqwest::Client::new();
+        assert_eq!(
+            client
+                .get(format!("{base}/status"))
+                .send()
+                .await
+                .unwrap()
+                .text()
+                .await
+                .unwrap(),
+            "shared-status"
+        );
+        assert_eq!(
+            client
+                .get(format!("{base}/other///"))
+                .send()
+                .await
+                .unwrap()
+                .text()
+                .await
+                .unwrap(),
+            "shared-other"
+        );
+        let response = client
+            .get(format!("{base}/archipelago-ea-stats/peers//"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), reqwest::StatusCode::NOT_FOUND);
+        assert_eq!(response.text().await.unwrap(), "Not found");
+        let response = client
+            .get(format!("{base}/archipelago-ea-ws-connector/status/"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), reqwest::StatusCode::NOT_FOUND);
+        assert_eq!(response.text().await.unwrap(), r#"{"error":"Not Found"}"#);
+        let response = client
+            .request(
+                reqwest::Method::OPTIONS,
+                format!("{base}/archipelago-ea-stats/peers"),
+            )
+            .header("Origin", "https://example.invalid")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            response.headers()["access-control-allow-origin"],
+            "https://example.invalid"
+        );
+        let response = client
+            .get(format!("{base}/archipelago-ea-stats/health/ready"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), reqwest::StatusCode::OK);
+        assert_eq!(
+            response.text().await.unwrap(),
+            r#"{"details":{"server":{"status":"pass"}},"status":"pass"}"#
+        );
+        task.abort();
+    }
 
     const PEER: &str = "0x000000000000000000000000000000000000000a";
     const ISLAND: &str = "I1";
@@ -367,19 +683,35 @@ mod tests {
     /// The connector over an in-process link that knows one peer and one island, so a route
     /// that looks either up answers it instead of its own 404.
     async fn known_peer_and_island() -> AppState {
-        let state =
-            super::test_support::state_over(Settings::for_tests(), Arc::new(InProcessBus::new()))
-                .await;
-        state
-            .peers
-            .upsert_peer(PEER.into(), [0.0; 3], [0, 0], "main".into());
-        state.feed.on_islands(vec![IslandReport {
-            id: ISLAND.into(),
-            peers: vec![PEER.into()],
-            max_peers: 0,
-            center: [0.0; 3],
-            radius: 1.0,
-        }]);
+        use crate::protocol::bus::statistics::{Peer, SNAPSHOTS_SUBJECT, Snapshot, frames};
+        use prost::Message;
+        let bus = Arc::new(InProcessBus::new());
+        let state = super::test_support::state_over(Settings::for_tests(), bus.clone()).await;
+        let snapshot = Snapshot {
+            peers: vec![Peer {
+                address: PEER.into(),
+                position: [0.; 3],
+                time: 123,
+            }],
+            islands: crate::protocol::archipelago::archipelago::IslandStatusMessage {
+                data: vec![crate::protocol::archipelago::archipelago::IslandData {
+                    id: ISLAND.into(),
+                    peers: vec![PEER.into()],
+                    max_peers: 0,
+                    center: Some(crate::protocol::archipelago::Position {
+                        x: 0.,
+                        y: 0.,
+                        z: 0.,
+                    }),
+                    radius: 1.,
+                }],
+            }
+            .encode_to_vec(),
+            ..Default::default()
+        };
+        for frame in frames(&snapshot, uuid::Uuid::new_v4(), 1, 65536).unwrap() {
+            bus.inject(SNAPSHOTS_SUBJECT, &frame);
+        }
         state
     }
 
@@ -419,10 +751,16 @@ mod tests {
 
     /// The primary serves the connector's routes at both mounts: every route at the stats mount,
     /// and all but `/status` and `/ping` (the content server's at the root) at the root. `/ws`
-    /// without upgrade headers answers the upgrade extractor's rejection.
+    /// without upgrade headers uses the standalone Stats fallback at that mount.
     #[tokio::test]
     async fn the_primary_serves_every_connector_route() {
-        let mounts = mounts(known_peer_and_island().await, true);
+        let mounts = mounts(
+            known_peer_and_island().await,
+            true,
+            Default::default(),
+            crate::stats::http::test_support::matcher(),
+            Arc::new(crate::content::Denylist::default()),
+        );
         for (mount, router) in [("root", &mounts.root), ("stats", &mounts.stats)] {
             assert_eq!(
                 status(router, Method::GET, "/ws/v4").await,
@@ -432,7 +770,11 @@ mod tests {
             gets.push("/core-status".to_owned());
             for path in &gets {
                 let answer = status(router, Method::GET, path).await;
-                assert_ne!(answer, StatusCode::NOT_FOUND, "{mount}: GET {path}");
+                if mount == "stats" && (path.starts_with("/stats/") || path == "/ws") {
+                    assert_eq!(answer, StatusCode::NOT_FOUND, "{mount}: GET {path}");
+                } else {
+                    assert_ne!(answer, StatusCode::NOT_FOUND, "{mount}: GET {path}");
+                }
             }
         }
         for path in ["/status", "/ping"] {
@@ -453,7 +795,13 @@ mod tests {
     /// so the method does not matter and a GET is not found either.
     #[tokio::test]
     async fn the_retired_routes_are_gone() {
-        let mounts = mounts(known_peer_and_island().await, true);
+        let mounts = mounts(
+            known_peer_and_island().await,
+            true,
+            Default::default(),
+            crate::stats::http::test_support::matcher(),
+            Arc::new(crate::content::Denylist::default()),
+        );
         for (mount, router) in [("root", &mounts.root), ("stats", &mounts.stats)] {
             for path in RETIRED_POSTS {
                 for method in [Method::POST, Method::GET] {
@@ -468,40 +816,57 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_replica_serves_only_status_ping_and_core_status() {
-        let mounts = mounts(known_peer_and_island().await, false);
-        for path in ["/status", "/ping", "/core-status"] {
+    async fn replicas_serve_statistics_but_never_sockets() {
+        let mounts = mounts(
+            known_peer_and_island().await,
+            false,
+            Default::default(),
+            crate::stats::http::test_support::matcher(),
+            Arc::new(crate::content::Denylist::default()),
+        );
+        assert_eq!(
+            status(&mounts.root, Method::GET, "/stats/health").await,
+            StatusCode::OK
+        );
+        assert_eq!(
+            status(&mounts.stats, Method::GET, "/stats/health").await,
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            status(&mounts.stats, Method::GET, "/ws").await,
+            StatusCode::NOT_FOUND
+        );
+        for path in ["/status", "/ping", "/core-status", "/peers", "/islands"] {
             assert_eq!(
                 status(&mounts.stats, Method::GET, path).await,
                 StatusCode::OK,
-                "stats: GET {path}"
+                "{path}"
             );
         }
-        for path in socket_gets() {
-            assert_eq!(
-                status(&mounts.stats, Method::GET, &path).await,
-                StatusCode::NOT_FOUND,
-                "stats: GET {path}"
-            );
-        }
-        for path in RETIRED_POSTS {
-            assert_eq!(
-                status(&mounts.stats, Method::POST, path).await,
-                StatusCode::NOT_FOUND,
-                "stats: POST {path}"
-            );
-        }
+    }
+}
 
-        assert_eq!(
-            status(&mounts.root, Method::GET, "/core-status").await,
-            StatusCode::OK
+/// Stop admission and drain handlers, writers and observations concurrently.
+/// Jobs and the shared broker must stay alive until this completes.
+pub async fn shutdown(state: &AppState) {
+    state.restart.cancel();
+    let cap = state.settings.server.max_sockets;
+    let handlers_done = tokio_util::sync::CancellationToken::new();
+    let drain = tokio::time::timeout(std::time::Duration::from_secs(18), async {
+        let _handlers = state.handlers.clone().acquire_many_owned(cap).await;
+        handlers_done.cancel();
+        let _writers = state.sockets.clone().acquire_many_owned(cap).await;
+    });
+    let (drained, _) = tokio::join!(
+        drain,
+        state.observations.shutdown_after(handlers_done.cancelled())
+    );
+    let drained = drained.is_ok();
+    if !drained {
+        let remaining = cap as usize - state.handlers.available_permits();
+        tracing::warn!(
+            remaining,
+            "socket teardown exceeded shutdown budget; disconnects may be lost"
         );
-        for path in ["/ws", "/peers", "/hot-scenes", "/stats/health"] {
-            assert_eq!(
-                status(&mounts.root, Method::GET, path).await,
-                StatusCode::NOT_FOUND,
-                "root: GET {path}"
-            );
-        }
     }
 }

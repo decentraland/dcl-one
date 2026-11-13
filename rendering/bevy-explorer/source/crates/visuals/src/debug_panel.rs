@@ -13,8 +13,8 @@ use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddCo
 use serde_json::json;
 
 use crate::{
+    landscape_trees::{Tree, TreeWind},
     shell_texturing::{Ground, ParcelGrass},
-    trees::Tree,
     CloudCover, ShadowBiasOverride, SUN_SHADOW_BIAS,
 };
 
@@ -71,6 +71,7 @@ pub(super) fn register(app: &mut App) {
         inputs: &[
             toggle("Ground", "ground", "/landscape ground {value}"),
             toggle("Trees", "trees", "/landscape trees {value}"),
+            toggle("Tree wind", "treeWind", "/tree_wind {value}"),
             toggle("Parcel grass", "grass", "/landscape grass {value}"),
         ],
     })
@@ -203,9 +204,8 @@ fn landscape_command(
     mut cmd: ConsoleCommand<LandscapeCommand>,
     preview: Option<Res<common::structs::PreviewMode>>,
     mut layers: ResMut<LandscapeLayers>,
-    load: Res<SceneLoadDistance>,
-    landscape: Res<LandscapeDistance>,
-    trees: Query<(), With<Tree>>,
+    (load, landscape): (Res<SceneLoadDistance>, Res<LandscapeDistance>),
+    (trees, wind): (Query<(), With<Tree>>, Option<Res<TreeWind>>),
     grass: Query<(), With<ParcelGrass>>,
 ) {
     let Some(Ok(args)) = cmd.take() else { return };
@@ -221,7 +221,8 @@ fn landscape_command(
         }
     }
     cmd.reply_ok(json!({"ground":layers.ground, "trees":layers.trees, "grass":layers.grass,
-        "treeCount":trees.iter().len(), "grassParcels":grass.iter().len(), "loadDistance":load.load, "landscapeDistance":landscape.0}).to_string());
+        "treeCount":trees.iter().len(), "grassParcels":grass.iter().len(), "loadDistance":load.load, "landscapeDistance":landscape.0,
+        "treeWind":wind.is_some_and(|wind| wind.0)}).to_string());
 }
 
 type LandscapeObjects = Or<(With<Ground>, With<Tree>, With<ParcelGrass>)>;

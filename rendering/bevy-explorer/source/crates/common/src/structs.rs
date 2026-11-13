@@ -582,7 +582,7 @@ pub struct AppConfig {
     pub scene_imposter_multisample_amount: f32,
     pub scene_imposter_bake: SceneImposterBake,
     pub parcel_grass_setting: ParcelGrassSetting,
-    /// The landscape distance in metres ([`LandscapeDistance`]), read at startup.
+    /// The Landscape Distance setting in metres ([`LandscapeDistance`]).
     pub landscape_distance: f32,
     pub sysinfo_visible: bool,
     pub scene_log_to_console: bool,
@@ -810,13 +810,33 @@ impl AppConfig {
         self.inputs
             .0
             .retain(|(action, _)| *action != Action::System(SystemAction::ShowProfile));
-        for (action, bindings) in InputMapSerialized::default().0 {
+        // A merged default leaves out inputs the user gave another action, or one press would
+        // fire both. Inputs the defaults share on purpose still merge.
+        let defaults = InputMapSerialized::default().0;
+        let chosen: HashSet<InputIdentifier> = self
+            .inputs
+            .0
+            .iter()
+            .flat_map(|(action, bindings)| {
+                let own = defaults
+                    .iter()
+                    .find(|(default_action, _)| default_action == action)
+                    .map(|(_, default_bindings)| default_bindings.as_slice())
+                    .unwrap_or_default();
+                bindings.iter().filter(move |id| !own.contains(id)).copied()
+            })
+            .collect();
+        for (action, bindings) in defaults {
             if !self
                 .inputs
                 .0
                 .iter()
                 .any(|(existing, _)| *existing == action)
             {
+                let bindings = bindings
+                    .into_iter()
+                    .filter(|id| !chosen.contains(id))
+                    .collect();
                 self.inputs.0.push((action, bindings));
             }
         }
@@ -1137,8 +1157,9 @@ pub struct SceneLoadDistance {
     pub load_imposter: f32,
 }
 
-/// The landscape distance in metres: how far the hills are displaced and the cliffs and the sea
-/// are drawn. Set from the config's `landscape_distance` at startup.
+/// The Landscape Distance setting in metres: how far the hills are displaced, the trees, bushes
+/// and stones stand and the cliffs and the sea are drawn. Set from the config's
+/// `landscape_distance` at startup and changed by the Graphics setting.
 #[derive(Resource, Clone, Copy, Debug, PartialEq)]
 pub struct LandscapeDistance(pub f32);
 
@@ -2029,6 +2050,7 @@ pub struct PointAtMarkerVisibilityChanged;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::inputs::CommonInputAction;
 
     #[test]
     fn sun_cascades_split_the_shadow_distance() {
@@ -2113,6 +2135,11 @@ mod tests {
                         Action::System(SystemAction::QuickEmote4),
                         vec![InputIdentifier::Key(KeyCode::KeyX)],
                     ),
+                    // a default binding that a photo-mode default shares
+                    (
+                        Action::Scene(CommonInputAction::IaPrimary),
+                        vec![InputIdentifier::Key(KeyCode::KeyE)],
+                    ),
                 ],
                 Default::default(),
             ),
@@ -2142,6 +2169,18 @@ mod tests {
             get(&config, SystemAction::Places),
             Some(vec![InputIdentifier::Key(KeyCode::KeyZ)])
         );
+        // ...but not onto a key the user gave another action: X stays QuickEmote4's alone
+        assert_eq!(get(&config, SystemAction::Events), Some(vec![]));
+        // a key the defaults share on purpose still merges
+        let photo_tilt_right = InputMapSerialized::default()
+            .0
+            .into_iter()
+            .find(|(a, _)| *a == Action::System(SystemAction::PhotoTiltRight))
+            .map(|(_, bindings)| bindings);
+        assert!(photo_tilt_right
+            .as_ref()
+            .is_some_and(|b| b.contains(&InputIdentifier::Key(KeyCode::KeyE))));
+        assert_eq!(get(&config, SystemAction::PhotoTiltRight), photo_tilt_right);
         assert_eq!(config.inputs_generation, INPUTS_GENERATION);
         // fixed bindings restored: the wheel always scrolls
         assert_eq!(

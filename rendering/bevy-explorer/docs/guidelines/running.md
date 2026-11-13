@@ -23,7 +23,8 @@ just native-debug --realm <about-url> --position x,y
 a login screen with no HUD. Both binaries must build: `cargo build --package dcl_deno_ipc`,
 then `cargo build`. This loop is verified on macOS, the only platform where the client falls back
 to `~/.local/share/cef` at runtime; on Linux the loader needs `LD_LIBRARY_PATH` (see
-`source/readme.md`), and on Windows the desktop workflow's staging shows what CEF needs.
+`source/readme.md`), and on Windows the desktop workflow's staging shows what CEF needs; there
+`CEF_PATH` takes a Windows path, and `just` runs from Git Bash (see [Platforms](platforms.md#native)).
 
 ### Gateway routing
 
@@ -144,7 +145,8 @@ guest: the HUD's guest sign-in goes through thirdweb, which refuses origins it d
 arrival, so release it (`/press_key Escape`) and check `keyboardClaimed` in `/world_state` before
 holding a movement key; a scene's own dialog can hold movement too. `/performance_state` gives the
 slowest frame and the frames over 50 ms of each 1,000 frames, and `/instantiation_state` what the
-spawner and glTF processing take.
+spawner and glTF processing take, what primitives and materials charged the last frame and how
+many of them wait.
 
 ## Headless
 
@@ -282,7 +284,11 @@ State, in every build:
 
 - `/tree_wind [true|false]`: whether the landscape's trees and bushes sway in the wind. Still,
   they stand in their rest pose, so two frames of them agree whenever they were taken; the visual
-  scenarios hold them still for their frames.
+  scenarios hold them still for their frames. The debug panel's "Landscape" section toggles it ("Tree wind").
+- `/landscape [ground|trees|grass] [true|false]`: the landscape layers as JSON:
+  `ground`, `trees` and `grass` (each layer's toggle), `treeCount`, `grassParcels`,
+  `loadDistance`, and `treeWind` (whether the trees sway, as `/tree_wind` sets it). With a layer and a value it shows or hides that layer, in preview
+  mode only. The debug panel's "Landscape" section binds it.
 
 The HUD and input:
 

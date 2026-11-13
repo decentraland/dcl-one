@@ -393,14 +393,49 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **Donate's buttons.** The minimap's uses unity-explorer's tip icon, beside the collapse button;
   the map's place panel has a DONATE text button under JUMP IN, whose art is not ported. The fourth
   amount choice reads OTHER, and the minimum reads "Tips must be ≥ 1 MANA".
-- **The hills follow the Landscape Distance.** The distance is the config's `landscape_distance`
-  (default 1000 m, Unity's default), read at startup; there is no setting for it in the menu yet.
-  Unity displaces its whole terrain and its Landscape Distance setting does not drive it. Here the
-  ground's rings are displaced out to the Landscape Distance from the player, never less than the
-  832 m the parcel-sized rings always reached, and the hills flatten over a further tenth of it, so
-  the rest of the 13 km ground costs the vertex shader nothing and walking moves no vertex abruptly.
-  Each ring coarser than a parcel snaps to its own cell size, so its vertices stay on the same
-  terrain points and the far hills do not swim.
+- **Events page: JUMP IN closes the page and the event detail.** unity-explorer leaves both open
+  while the player travels. Here a jump reconnects the realm under the loading screen, and every
+  other page closes on a jump, so Events does too.
+- **Events page: its links carry the HUD's `utm_source`.** unity-explorer tags them
+  `utm_source=explorer`; here they carry `bevy-web-client` or `bevy-desktop-client` like every
+  other link out, and keep `utm_campaign=discover`. Event names and descriptions are URL-encoded
+  in the share and calendar links, and so are the world, the referrer and the event id in the
+  jump and event links; unity-explorer leaves all of them raw.
+- **Events page: JUMP IN travels to a world only by its name.** The events service takes any
+  text as an event's `server`, and the engine reads anything but a world name as a realm's
+  address. unity-explorer builds the worlds server's address from it; here a `server` that is
+  not a `.eth` name does not travel, and a toast says the world cannot be reached.
+- **Events page: the calendar never steps before today.** unity-explorer steps back by the days
+  shown and locks the arrow only on today itself, so after the highlighted events come or go,
+  or past midnight, it reaches earlier days. Here a step back stops at today.
+- **Events page: a recurrent date's offset keeps its minutes.** unity-explorer writes whole
+  hours, `(UTC+5)` in a `+5:30` zone; here it reads `(UTC+5:30)`.
+- **Events page: a failed read shows an error with Retry.** unity-explorer shows a toast and
+  leaves the loading placeholders up. A read the bridge has not answered in 10 seconds counts as
+  failed (the limit `library/explorer-core/lib/shell.ts` gives a request); an answer that arrives later still shows,
+  and so does a reminder the service confirms late.
+- **Events page: one copy of an event.** unity-explorer changes the reminder on the card's own
+  copy, so a card scrolled out and back shows the old state; its day view's card buttons are not
+  wired, and its banner is drawn before the friends list arrives. Here the calendar, the day
+  view, the banner and the detail read one event, every card's buttons act, and friends show
+  when they arrive.
+- **Events page: analytics.** unity-explorer reports `event_card_clicked` from calendar cards
+  only and nothing for an open from the sidebar; here a day view's cards report it too, and the
+  sidebar reports `events_section_opened` with `source: sidebar`.
+- **Events page: no "error loading friends" or "My Communities" toast.** The friends list and
+  the member-of list reach the HUD as snapshots with no failure signal, so there is nothing to
+  report; cards show friends and community marks once the lists are there.
+- **Events page: shapes are CSS, icons are unity-explorer's.** Its rounded containers, outlines
+  and gradients are nine-slice sprites there; drawn as masks at the HUD's fractional scale they
+  show seams between the slices, so here they are radii, borders and gradients with the sprites'
+  colours. The canvas scales by the smaller of width and height, as every menu page does, where
+  unity-explorer's scales by width.
+- **The hills follow the Landscape Distance.** Unity displaces its whole terrain and the setting
+  does not drive it. Here the ground's rings are displaced out to the Landscape Distance from the
+  player, never less than the 832 m the parcel-sized rings always reached, and the hills flatten
+  over a further tenth of it, so the rest of the 13 km ground costs the vertex shader nothing and
+  walking moves no vertex abruptly. Each ring coarser than a parcel snaps to its own cell size, so
+  its vertices stay on the same terrain points and the far hills do not swim.
 - **Cliffs reach 768 m at most.** Unity culls each cliff prefab whose bounds are beyond the
   Landscape Distance from the camera. Bevy's cliffs are procedural chunks built around the
   player's parcel out to the nearer of 768 m and the Landscape Distance: building them out to
@@ -408,6 +443,37 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **One sea plane.** Unity culls its water chunks one by one beyond the Landscape Distance. Bevy
   has one sea plane, shown while the nearest sea (beyond the terrain bounds, at sea level) is
   within the Landscape Distance of the camera.
+- **Graphics presets leave the Landscape Distance alone.** Unity's Low, Medium and High set it to
+  500, 1000 and 7000 m. The Graphics Preset setting
+  (`source/react-web/bridge-scene/src/domains/settings.ts`) assumes the engine defaults are its Low
+  preset, and the default here is Unity's 1000 m, so mapping it would show every fresh install as
+  Custom.
+- **No satellite floor.** unity-explorer lays the minimap's satellite images flat at 0.205 m under the
+  terrain in Genesis City; here the terrain covers that plane out to the landscape distance, so the
+  floor would never be seen and is not shipped.
+- **The baked trees, bushes and stones** keep unity-explorer's layouts (Genesis City's and the
+  Worlds'), prototypes, scale ranges, footprints, first level of detail, collider shapes and
+  material values, and differ in these ways.
+  - They stand only on parcels whose pointers have resolved empty near the player; unknown and
+    occupied parcels and parcels outside the terrain count as occupied. Unity reads a static
+    occupancy map of the whole city, so inside the city, beyond the resolved parcels, it has trees
+    where bevy has none.
+  - Each instance is an entity, spawned when it is within the Landscape Distance of the player
+    (horizontally) and checked again when the player changes parcel; bevy batches the shared
+    meshes. Unity hands the whole layout to a GPU instancing package that culls by distance.
+  - Bevy's lit material replaces the trees' and bushes' simple Blinn-Phong one. Colour, texture,
+    cut-off, culling and normal maps carry over; the trunk takes a roughness of one minus its
+    smoothness. The leaves are fully rough: their Unity smoothness of 1 is a pin-point
+    highlight there, and a mirror of the sky under bevy's image-based light.
+  - The ground colour texture the stones take their foot's colour from is 512x512 (2048x2048 in
+    Unity). Otherwise they keep Unity's ground colour at their foot and moss on their upward faces,
+    on bevy's lit material as in Unity, with a roughness of one minus their smoothness.
+  - The wind moves the leaves in the depth and shadow passes too. Unity's moves the colour pass
+    only; here the depth prepass has to match it.
+  - The textures are 512x512 (1024x1024 in Unity), uncompressed RGBA8 with their mips built when
+    they load.
+  - Their colliders are built over the ground collider's 64 m patch around the player, like the
+    ground's, rather than parcel by parcel around each character.
 
 ## Deliberate choices that look like mistakes
 

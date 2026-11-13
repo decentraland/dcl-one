@@ -721,8 +721,8 @@ mod test {
     use super::*;
 
     /// The softened sun shadow overrides compile on this machine's adapter, in a renderer with no
-    /// window: a grass shell (`shell_texturing.wgsl`), a rock (`soft_shadows.wgsl`), the flat
-    /// ground (`terrain_flat.wgsl`), a cliff (`coast_cliff.wgsl`) and the ocean
+    /// window: a grass shell (`shell_texturing.wgsl`), a landscape tree surface and a stone
+    /// (`landscape_tree.wgsl` and `soft_shadows.wgsl`), the flat ground (`terrain_flat.wgsl`), a cliff (`coast_cliff.wgsl`) and the ocean
     /// (`coast_water.wgsl`) in front of an HDR camera with the prepasses and a shadowing light.
     /// Needs a GPU, so `#[ignore]`d and skipped by CI:
     ///
@@ -748,16 +748,17 @@ mod test {
 
         use crate::{
             coast::{CliffExtension, CliffMaterial, WaterExtension, WaterMaterial},
+            landscape_trees::material::{StoneBlend, StoneMaterial, TreeMaterial, TreeSway},
             terrain::NO_COAST,
-            trees::{SoftShadowMaterial, SoftShadows},
         };
 
         let mut app = headless_app();
-        // the shaders as `ShellTexturingPlugin`, `TreesPlugin`, `TerrainPlugin` and `CoastPlugin`
+        // the shaders as `ShellTexturingPlugin`, `LandscapeTreesPlugin`, `TerrainPlugin` and `CoastPlugin`
         // embed them; those plugins need the scene runner and the terrain
         let registry = app.world().resource::<EmbeddedAssetRegistry>();
         for (name, source) in [
             ("shell_texturing.wgsl", include_str!("shell_texturing.wgsl")),
+            ("landscape_tree.wgsl", include_str!("landscape_tree.wgsl")),
             ("soft_shadows.wgsl", include_str!("soft_shadows.wgsl")),
             ("terrain_vertex.wgsl", include_str!("terrain_vertex.wgsl")),
             ("terrain_params.wgsl", include_str!("terrain_params.wgsl")),
@@ -772,7 +773,8 @@ mod test {
         }
         app.add_plugins((
             MaterialPlugin::<ShellTexture>::default(),
-            MaterialPlugin::<SoftShadowMaterial>::default(),
+            MaterialPlugin::<TreeMaterial>::default(),
+            MaterialPlugin::<StoneMaterial>::default(),
             MaterialPlugin::<TerrainFlatMaterial>::default(),
             MaterialPlugin::<CliffMaterial>::default(),
             MaterialPlugin::<WaterMaterial>::default(),
@@ -796,6 +798,7 @@ mod test {
             ),
         );
         let ripples = images.add(Image::default());
+        let stone_ground = images.add(Image::default());
         let mut meshes = world.resource_mut::<Assets<Mesh>>();
         let grass_mesh = meshes.add(parcel_mesh(grid_segments(HIGH_LOD)));
         let rock_mesh = meshes.add(Cuboid::new(1.0, 1.0, 1.0));
@@ -811,11 +814,21 @@ mod test {
                 terrain_steps: TERRAIN_TEXTURE,
                 terrain: TerrainParams::default(),
             });
-        let rock = world
-            .resource_mut::<Assets<SoftShadowMaterial>>()
-            .add(SoftShadowMaterial {
+        let tree = world
+            .resource_mut::<Assets<TreeMaterial>>()
+            .add(TreeMaterial {
                 base: StandardMaterial::default(),
-                extension: SoftShadows {},
+                extension: TreeSway::default(),
+            });
+        let stone = world
+            .resource_mut::<Assets<StoneMaterial>>()
+            .add(StoneMaterial {
+                base: StandardMaterial::default(),
+                extension: StoneBlend {
+                    moss: Vec4::ZERO,
+                    terrain: Vec4::ZERO,
+                    terrain_texture: stone_ground,
+                },
             });
         let ground = world
             .resource_mut::<Assets<TerrainFlatMaterial>>()
@@ -874,8 +887,13 @@ mod test {
         ));
         world.spawn((
             Mesh3d(rock_mesh.clone()),
-            MeshMaterial3d(rock),
+            MeshMaterial3d(tree),
             Transform::from_xyz(1.0, 0.5, 0.0),
+        ));
+        world.spawn((
+            Mesh3d(rock_mesh.clone()),
+            MeshMaterial3d(stone),
+            Transform::from_xyz(1.0, 0.5, -1.0),
         ));
         world.spawn((
             Mesh3d(plane_mesh.clone()),
@@ -900,8 +918,8 @@ mod test {
         for (name, at_least) in [
             // the main pass and the prepass
             ("shell_texturing.wgsl", 2),
-            // the main pass
-            ("soft_shadows.wgsl", 1),
+            // the tree's and the stone's main passes
+            ("soft_shadows.wgsl", 2),
             // the main pass and the prepass
             ("terrain_flat.wgsl", 2),
             // the main pass
