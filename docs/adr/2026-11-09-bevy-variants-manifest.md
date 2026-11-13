@@ -87,9 +87,13 @@ Classes:
   pixel-identical to the Explorer's own transcode; no variant when a level
   cannot be block-transcoded or the variant is larger than the original.
 - `g`, a GLB: a GLB with Draco decoded, `KHR_texture_basisu`
-  resolved and embedded images replaced by BC KTX2. External image URIs stay as
+  resolved to a core `source`, external buffers inlined, and each embedded image
+  replaced by a KTX2 of the `t` class's format (`mimeType: "image/ktx2"`, in a
+  buffer view of the GLB's binary chunk). An embedded image that could not be
+  converted keeps its own bytes and MIME type. External image URIs stay as
   they are; they resolve to their own original CID, which has its own texture
-  variant.
+  variant. Geometry, nodes and materials stay as in the original. A Brotli copy
+  sits beside it at `{path}.br`, as for `m`.
 - `m`, a `glb-br` model: the original `.glb`, byte for byte, with a Brotli copy
   beside it at `{path}.br`, stored with `Content-Encoding: br`. A CDN does not
   pick the copy by `Accept-Encoding`, so a reader asks for `{path}.br` by name.
@@ -119,7 +123,7 @@ Excluded from variants: source maps, audio, video and scene code.
 - A content file reads as a variant only when its original CID has a variant of
   a class the Explorer supports for that file type and GPU: original CID, first
   supported variant, fetch from `{base}/{path}`, decode. Any failure (fetch, a
-  KTX2 that does not unwrap, a texture that does not load) falls back to the
+  KTX2 that does not unwrap, a texture or GLB that does not load) falls back to the
   original, per file; a variant that failed is not tried again in the session,
   its cached copy is dropped and the asset is reloaded from the original. Repeated transport failures turn the
   service off for the session.
@@ -135,9 +139,19 @@ Excluded from variants: source maps, audio, video and scene code.
   build only, `glb-br`: the browser decodes the Brotli copy, the bytes must hash
   to the original's own CID (they are the original byte for byte, so a copy that
   passes needs no reload if the glTF loader then fails), and the GLB goes to the
-  glTF loader of the original path. Native loads original models until its
-  http client can decode Brotli. `glb` is not taken because the glTF loader
-  rejects a file that requires `KHR_texture_basisu`.
+  glTF loader of the original path. Native loads original models for `glb-br`
+  until its http client can decode Brotli.
+- The table also holds `glb`, on a GPU with BC textures: on web it is fetched as
+  its Brotli copy, natively at its own path. The cache keeps it as served. The
+  glTF loader decodes embedded images itself and reads DDS but not KTX2, so on
+  every read the reader rewrites the GLB before the loader sees it: each
+  embedded KTX2 is unwrapped to its DDS, appended to the binary chunk, its
+  buffer view pointed there and its `mimeType` set to `image/vnd-ms.dds`; every
+  other byte keeps its offset. The loader picks sRGB or linear for each image
+  from how the materials use it. A KTX2 that does not unwrap fails the variant
+  before the loader sees it, and a GLB that then fails to load is reloaded from
+  the original. The asset keeps the original path, so every user of the model
+  shares one loaded copy. Image processing skips a GLB read from a variant.
 
 ## Consequences
 

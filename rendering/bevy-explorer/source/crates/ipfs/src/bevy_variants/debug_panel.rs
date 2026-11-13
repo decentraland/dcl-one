@@ -22,7 +22,15 @@ pub(super) fn register(app: &mut App) {
                 ("Scene manifests", "manifests"),
                 ("Variants served (downloaded / from cache)", "served"),
                 ("Variants served by format", "servedByFormat"),
+                (
+                    "Embedded images in glb variants read (BC1 / BC5 / BC7 / left as they were)",
+                    "glbImages",
+                ),
                 ("Fallbacks to the original", "fallbacks"),
+                (
+                    "Fallbacks from a chosen variant, by format",
+                    "fallbacksByFormat",
+                ),
                 ("Recent fallbacks", "recentFallbacks"),
             ],
             actions: &[],
@@ -113,12 +121,27 @@ pub(super) fn snapshot(variants: &BevyVariants) -> Value {
                 .collect::<Vec<_>>()
                 .join("\n")
         }),
+        "glbImages": [
+            session.glb_images.bc1,
+            session.glb_images.bc5,
+            session.glb_images.bc7,
+            session.glb_images.kept,
+        ],
         "fallbacks": session.fallbacks,
+        "fallbacksByFormat": (!session.fallbacks_by_format.is_empty()).then(|| {
+            session
+                .fallbacks_by_format
+                .iter()
+                .map(|(format, count)| format!("{format}: {count}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        }),
         "recentFallbacks": (!recent.is_empty()).then(|| recent.join("\n")),
         "unavailable": {
             "base": "Off: --bevy-variants-url, ?bevyVariants= or bevy_variants_url in the config is `off`.",
             "manifests": "No scene has asked for a manifest yet.",
             "servedByFormat": "No variant has been served.",
+            "fallbacksByFormat": "No chosen variant has fallen back.",
             "recentFallbacks": "No file has fallen back to its original.",
         },
     })
