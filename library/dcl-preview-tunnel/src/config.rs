@@ -41,9 +41,16 @@ impl Default for Config {
 
 impl Config {
     pub fn from_env() -> Result<Self> {
+        Self::from_lookup(&|key| env::var(key).ok())
+    }
+
+    pub fn from_lookup(lookup: &dyn Fn(&str) -> Option<String>) -> Result<Self> {
         let defaults = Config::default();
-        let opt = |k: &str| env::var(k).ok().filter(|s| !s.is_empty());
-        let http_port = get_port("HTTP_SERVER_PORT", defaults.http_port)?;
+        let opt = |k: &str| lookup(k).filter(|s| !s.is_empty());
+        let http_port = match opt("HTTP_SERVER_PORT") {
+            Some(raw) => raw.parse::<u16>().context("invalid HTTP_SERVER_PORT")?,
+            None => defaults.http_port,
+        };
         let cfg = Config {
             http_host: opt("HTTP_SERVER_HOST").unwrap_or(defaults.http_host),
             http_port,
@@ -85,13 +92,6 @@ impl Config {
         self.public_base_url
             .clone()
             .unwrap_or_else(|| format!("http://{}:{}", self.http_host, self.http_port))
-    }
-}
-
-fn get_port(key: &str, default: u16) -> Result<u16> {
-    match env::var(key) {
-        Ok(s) => s.parse::<u16>().with_context(|| format!("invalid {}", key)),
-        Err(_) => Ok(default),
     }
 }
 
@@ -138,6 +138,36 @@ mod tests {
             ..Config::default()
         };
         assert!(tokened.validate().is_ok());
+    }
+
+    fn lookup(pairs: &'static [(&'static str, &'static str)]) -> impl Fn(&str) -> Option<String> {
+        move |key| {
+            pairs
+                .iter()
+                .find(|(k, _)| *k == key)
+                .map(|(_, v)| v.to_string())
+        }
+    }
+
+    #[test]
+    fn env_parses_the_caps_and_the_anonymous_opt_in() {
+        assert!(Config::from_lookup(&lookup(&[])).is_err());
+        let cfg = Config::from_lookup(&lookup(&[
+            ("TUNNEL_ALLOW_ANONYMOUS", "true"),
+            ("TUNNEL_MAX_AGENTS", "3"),
+            ("TUNNEL_MAX_CHANNELS", "0"),
+        ]))
+        .unwrap();
+        assert!(cfg.allow_anonymous);
+        assert_eq!((cfg.max_agents, cfg.max_channels_per_agent), (3, 1));
+        let cfg = Config::from_lookup(&lookup(&[("TUNNEL_TOKENS", "a, b")])).unwrap();
+        assert!(!cfg.allow_anonymous);
+        assert_eq!(cfg.tokens, vec!["a".to_string(), "b".to_string()]);
+        assert_eq!((cfg.max_agents, cfg.max_channels_per_agent), (256, 256));
+        assert!(
+            Config::from_lookup(&lookup(&[("TUNNEL_ALLOW_ANONYMOUS", "yes")])).is_err(),
+            "only true or 1 opts in"
+        );
     }
 
     #[test]
