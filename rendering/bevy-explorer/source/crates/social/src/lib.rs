@@ -55,14 +55,7 @@ impl Plugin for SocialPlugin {
         app.init_resource::<SocialClient>();
         app.init_resource::<SocialConsumerRequested>();
         app.add_event::<SocialStateChanged>();
-        app.add_systems(
-            PostUpdate,
-            |mut client: ResMut<SocialClient>, mut changed: EventWriter<SocialStateChanged>| {
-                if client.0.as_mut().is_some_and(|client| client.update()) {
-                    changed.write(SocialStateChanged);
-                }
-            },
-        );
+        app.add_systems(PostUpdate, apply_social_updates);
         app.add_systems(PostUpdate, init_social_client);
         app.add_systems(
             PostUpdate,
@@ -85,11 +78,26 @@ impl Plugin for SocialPlugin {
             app.add_console_command::<RestartSocialCommand, _>(restart_social);
             app.add_console_command::<DmPrivacyCommand, _>(dm_privacy);
             app.add_console_command::<DmPrivacyOfCommand, _>(dm_privacy_of);
+            app.add_console_command::<BlockUserCommand, _>(block_user);
+            app.add_console_command::<UnblockUserCommand, _>(unblock_user);
             app.add_systems(
                 PostUpdate,
                 debug_write_social.run_if(|e: Res<DebugSocialEnabled>| e.0),
             );
         }
+    }
+}
+
+/// Whether this build carries the social client; without it `SocialClientHandler` is a stub.
+pub const SOCIAL_FEATURE: bool = cfg!(feature = "social");
+
+/// Drains the social client's channel into its state.
+fn apply_social_updates(
+    mut client: ResMut<SocialClient>,
+    mut changed: EventWriter<SocialStateChanged>,
+) {
+    if client.0.as_mut().is_some_and(|client| client.update()) {
+        changed.write(SocialStateChanged);
     }
 }
 
@@ -323,6 +331,86 @@ fn dm_privacy_of(
     );
 }
 
+/// `/block_user <address>` blocks a user through the social service.
+#[cfg(feature = "social")]
+#[derive(clap::Parser, ConsoleCommand)]
+#[command(name = "/block_user")]
+struct BlockUserCommand {
+    address: String,
+}
+
+#[cfg(feature = "social")]
+fn block_user(
+    mut input: ConsoleCommand<BlockUserCommand>,
+    social: Res<SocialClient>,
+    mut pending: ResMut<console::PendingConsoleResponses>,
+) {
+    let Some(Ok(command)) = input.take() else {
+        return;
+    };
+    let Some(address) = command.address.as_h160() else {
+        input.reply_failed("invalid address");
+        return;
+    };
+    let Some(client) = social.0.as_ref() else {
+        input.reply_failed("social not connected");
+        return;
+    };
+    let rx = match client.block_user(format!("{address:#x}")) {
+        Ok(rx) => rx,
+        Err(e) => {
+            input.reply_failed(format!("{e}"));
+            return;
+        }
+    };
+    let responder = input.take_responder();
+    pending.push_oneshot(
+        rx,
+        |result| result.map(|()| "block requested".to_owned()),
+        responder,
+    );
+}
+
+/// `/unblock_user <address>` lifts a block through the social service.
+#[cfg(feature = "social")]
+#[derive(clap::Parser, ConsoleCommand)]
+#[command(name = "/unblock_user")]
+struct UnblockUserCommand {
+    address: String,
+}
+
+#[cfg(feature = "social")]
+fn unblock_user(
+    mut input: ConsoleCommand<UnblockUserCommand>,
+    social: Res<SocialClient>,
+    mut pending: ResMut<console::PendingConsoleResponses>,
+) {
+    let Some(Ok(command)) = input.take() else {
+        return;
+    };
+    let Some(address) = command.address.as_h160() else {
+        input.reply_failed("invalid address");
+        return;
+    };
+    let Some(client) = social.0.as_ref() else {
+        input.reply_failed("social not connected");
+        return;
+    };
+    let rx = match client.unblock_user(format!("{address:#x}")) {
+        Ok(rx) => rx,
+        Err(e) => {
+            input.reply_failed(format!("{e}"));
+            return;
+        }
+    };
+    let responder = input.take_responder();
+    pending.push_oneshot(
+        rx,
+        |result| result.map(|()| "unblock requested".to_owned()),
+        responder,
+    );
+}
+
 #[cfg(feature = "social")]
 #[derive(Resource, Default)]
 struct DebugSocialEnabled(bool);
@@ -439,7 +527,12 @@ fn init_social_client(
         // Drop the old handler (and its event channels) before opening a new
         // connection so the old async task observes its channels closed and tears
         // down its WS, rather than overlapping with the new one.
-        social.0 = None;
+        // the same account keeps its blocks across the rebuild
+        let carried = social
+            .0
+            .take()
+            .filter(|_| !wallet.is_changed())
+            .map(|old| (old.blocked, old.blocked_by, old.has_snapshot));
         *friends = None;
         *connectivity = None;
         *block_updates = None;
@@ -486,6 +579,11 @@ fn init_social_client(
             },
         );
         social.0 = client;
+        if let (Some(client), Some((blocked, blocked_by, has_snapshot))) =
+            (social.0.as_mut(), carried)
+        {
+            client.carry_blocks(blocked, blocked_by, has_snapshot);
+        }
         *friends = Some(f_rx);
         *connectivity = Some(conn_rx);
         *block_updates = Some(block_rx);

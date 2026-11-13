@@ -31,6 +31,9 @@ pub enum RoomEvent {
         old_metadata: String,
         metadata: String,
     },
+    RoomMetadataChanged {
+        metadata: String,
+    },
     ConnectionQualityChanged {
         quality: ConnectionQuality,
         participant: Participant,
@@ -120,9 +123,10 @@ fn get_disconnect_reason(js_value: &JsValue, key: &str) -> Option<DisconnectReas
 fn get_remote_participant(
     js_value: &JsValue,
     key: &str,
+    room: RoomId,
     registry: &mut Registry,
 ) -> Option<RemoteParticipant> {
-    get(js_value, key).map(|participant| registry.remote_participant(&participant))
+    get(js_value, key).map(|participant| registry.remote_participant(&participant, room))
 }
 
 fn get_participant(
@@ -137,13 +141,19 @@ fn get_participant(
 fn get_publication(
     js_value: &JsValue,
     key: &str,
+    room: RoomId,
     registry: &mut Registry,
 ) -> Option<RemoteTrackPublication> {
-    get(js_value, key).map(|publication| registry.remote_track_publication(&publication))
+    get(js_value, key).map(|publication| registry.remote_track_publication(&publication, room))
 }
 
-fn get_remote_track(js_value: &JsValue, key: &str, registry: &mut Registry) -> Option<RemoteTrack> {
-    get(js_value, key).and_then(|track| registry.remote_track(&track))
+fn get_remote_track(
+    js_value: &JsValue,
+    key: &str,
+    room: RoomId,
+    registry: &mut Registry,
+) -> Option<RemoteTrack> {
+    get(js_value, key).and_then(|track| registry.remote_track(&track, room))
 }
 
 impl RoomEvent {
@@ -167,7 +177,7 @@ impl RoomEvent {
                     .iter()
                     .filter_map(|js_object: JsValue| {
                         let Some(participant) =
-                            get_remote_participant(&js_object, "participant", registry)
+                            get_remote_participant(&js_object, "participant", room, registry)
                         else {
                             error!(
                                 "Object in participants_with_tracks array of RoomEvent::Connected\
@@ -187,7 +197,9 @@ impl RoomEvent {
                             participant,
                             publications
                                 .iter()
-                                .map(|publication| registry.remote_track_publication(&publication))
+                                .map(|publication| {
+                                    registry.remote_track_publication(&publication, room)
+                                })
                                 .collect(),
                         ))
                     })
@@ -227,7 +239,7 @@ impl RoomEvent {
                     error!("RoomEvent::DataReceived did not have payload field.");
                     return None;
                 };
-                let participant = get_remote_participant(js_value, "participant", registry);
+                let participant = get_remote_participant(js_value, "participant", room, registry);
                 let participant_identity =
                     get_string(js_value, "participantIdentity").map(ParticipantIdentity);
                 let Some(kind) = get_data_packet_kind(js_value, "kind") else {
@@ -245,7 +257,8 @@ impl RoomEvent {
                 }
             }
             Some("participantConnected") => {
-                let Some(participant) = get_remote_participant(js_value, "participant", registry)
+                let Some(participant) =
+                    get_remote_participant(js_value, "participant", room, registry)
                 else {
                     error!("RoomEvent::ParticipantConnected did not have participant field.");
                     return None;
@@ -253,7 +266,8 @@ impl RoomEvent {
                 RoomEvent::ParticipantConnected(participant)
             }
             Some("participantDisconnected") => {
-                let Some(participant) = get_remote_participant(js_value, "participant", registry)
+                let Some(participant) =
+                    get_remote_participant(js_value, "participant", room, registry)
                 else {
                     error!("RoomEvent::ParticipantDisconnected did not have participant field.");
                     return None;
@@ -283,6 +297,13 @@ impl RoomEvent {
                     metadata,
                 }
             }
+            Some("roomMetadataChanged") => {
+                let Some(metadata) = get_string(js_value, "metadata") else {
+                    error!("RoomEvent::RoomMetadataChanged did not have metadata field.");
+                    return None;
+                };
+                RoomEvent::RoomMetadataChanged { metadata }
+            }
             Some("connectionQualityChanged") => {
                 let Some(quality) = get_connection_quality(js_value, "connection_quality") else {
                     error!("RoomEvent::ConnectionQualityChanged did not have quality field.");
@@ -299,11 +320,13 @@ impl RoomEvent {
                 }
             }
             Some("trackPublished") => {
-                let Some(publication) = get_publication(js_value, "publication", registry) else {
+                let Some(publication) = get_publication(js_value, "publication", room, registry)
+                else {
                     error!("RoomEvent::TrackPublished did not have publication field.");
                     return None;
                 };
-                let Some(participant) = get_remote_participant(js_value, "participant", registry)
+                let Some(participant) =
+                    get_remote_participant(js_value, "participant", room, registry)
                 else {
                     error!("RoomEvent::TrackPublished did not have participant field.");
                     return None;
@@ -314,11 +337,13 @@ impl RoomEvent {
                 }
             }
             Some("trackUnpublished") => {
-                let Some(publication) = get_publication(js_value, "publication", registry) else {
+                let Some(publication) = get_publication(js_value, "publication", room, registry)
+                else {
                     error!("RoomEvent::TrackUnpublished did not have publication field.");
                     return None;
                 };
-                let Some(participant) = get_remote_participant(js_value, "participant", registry)
+                let Some(participant) =
+                    get_remote_participant(js_value, "participant", room, registry)
                 else {
                     error!("RoomEvent::TrackUnpublished did not have participant field.");
                     return None;
@@ -330,15 +355,17 @@ impl RoomEvent {
                 }
             }
             Some("trackSubscribed") => {
-                let Some(track) = get_remote_track(js_value, "track", registry) else {
+                let Some(track) = get_remote_track(js_value, "track", room, registry) else {
                     error!("RoomEvent::TrackSubscribed did not have track field.");
                     return None;
                 };
-                let Some(publication) = get_publication(js_value, "publication", registry) else {
+                let Some(publication) = get_publication(js_value, "publication", room, registry)
+                else {
                     error!("RoomEvent::TrackSubscribed did not have publication field.");
                     return None;
                 };
-                let Some(participant) = get_remote_participant(js_value, "participant", registry)
+                let Some(participant) =
+                    get_remote_participant(js_value, "participant", room, registry)
                 else {
                     error!("RoomEvent::TrackSubscribed did not have participant field.");
                     return None;
@@ -350,18 +377,20 @@ impl RoomEvent {
                 }
             }
             Some("trackUnsubscribed") => {
-                let Some(track) = get_remote_track(js_value, "track", registry) else {
+                let Some(track) = get_remote_track(js_value, "track", room, registry) else {
                     error!("RoomEvent::TrackUnsubscribed did not have track field.");
                     return None;
                 };
-                let Some(mut publication) = get_publication(js_value, "publication", registry)
+                let Some(mut publication) =
+                    get_publication(js_value, "publication", room, registry)
                 else {
                     error!("RoomEvent::TrackUnsubscribed did not have publication field.");
                     return None;
                 };
                 // livekit-client emits this before it clears the publication's track
                 publication.track = None;
-                let Some(participant) = get_remote_participant(js_value, "participant", registry)
+                let Some(participant) =
+                    get_remote_participant(js_value, "participant", room, registry)
                 else {
                     error!("RoomEvent::TrackUnsubscribed did not have participant field.");
                     return None;

@@ -1,4 +1,4 @@
-//! Executable counterexamples from the Rocq CRDT development -- now regression
+//! Executable counterexamples from the CRDT proof development -- now regression
 //! pins for the fixes.
 //!
 //! Every test here is a **refutation witness**: it asserts the behaviour a

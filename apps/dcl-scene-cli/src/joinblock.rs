@@ -21,9 +21,30 @@ pub fn web_explorer_base() -> String {
     std::env::var("DCL_SCENE_CLI_WEB_EXPLORER")
         .ok()
         .filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| DEFAULT_WEB_EXPLORER.to_string())
+        .unwrap_or_else(|| default_web_explorer(dclenv()))
         .trim_end_matches('/')
         .to_string()
+}
+
+/// The hosted web explorer of a Decentraland environment: bevy-web is
+/// deployed on decentraland.org and decentraland.zone alone.
+pub fn default_web_explorer(dclenv: &str) -> String {
+    match dclenv {
+        "zone" => DEFAULT_WEB_EXPLORER.replace("decentraland.org", "decentraland.zone"),
+        _ => DEFAULT_WEB_EXPLORER.to_string(),
+    }
+}
+
+static DCLENV: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// `start --dclenv`: the environment every deep link and hosted-explorer URL
+/// of this run names; `org` until set, and set once.
+pub fn set_dclenv(env: &str) {
+    let _ = DCLENV.set(env.trim().to_ascii_lowercase());
+}
+
+pub fn dclenv() -> &'static str {
+    DCLENV.get().map(String::as_str).unwrap_or("org")
 }
 
 pub fn world_name(scene_json: &Value) -> Option<String> {
@@ -81,6 +102,9 @@ pub struct JoinBlock {
     pub optimized_assets_url: Option<String>,
     /// Pre-encoded `&key=value...`, appended verbatim to every desktop link.
     pub deep_link_extra: String,
+    /// `start --realm`: the realm the desktop deep links name instead of
+    /// this preview's own address.
+    pub realm_override: Option<String>,
     pub native_hud: bool,
     /// From [`detect_native_bin`]; None prints the generic `bevy-explorer` name.
     pub native_bin: Option<String>,
@@ -264,12 +288,22 @@ pub fn desktop_deep_link(
     optimized_assets_url: Option<&str>,
     extra: &str,
 ) -> String {
+    desktop_deep_link_in(dclenv(), realm, position, optimized_assets_url, extra)
+}
+
+fn desktop_deep_link_in(
+    dclenv: &str,
+    realm: &str,
+    position: (i64, i64),
+    optimized_assets_url: Option<&str>,
+    extra: &str,
+) -> String {
     let ab = match optimized_assets_url {
         Some(url) => format!("&optimized-assets-url={}", form_encode(url)),
         None => String::new(),
     };
     format!(
-        "{}&local-scene=true&dclenv=org{ab}{extra}",
+        "{}&local-scene=true&dclenv={dclenv}{ab}{extra}",
         crate::deep_link::realm_deep_link(realm, position),
     )
 }
@@ -348,6 +382,16 @@ impl JoinBlock {
         web_join_url(&self.web_explorer, realm, self.position)
     }
 
+    /// The desktop deep link and web URL for a player on this machine: what
+    /// `start --explorer-alpha` and `start --web` open.
+    pub fn local_desktop_link(&self) -> String {
+        self.desktop_link(&self.local_realm(), "")
+    }
+
+    pub fn local_web_url(&self) -> String {
+        self.web_url(&self.local_realm())
+    }
+
     /// Keys in the row's own `extra` drop the same key from the shared
     /// `deep_link_extra`, so a passthrough `multi-instance` is never doubled.
     fn desktop_link(&self, realm: &str, extra: &str) -> String {
@@ -364,7 +408,7 @@ impl JoinBlock {
             .map(|kv| format!("&{kv}"))
             .collect();
         desktop_deep_link(
-            realm,
+            self.realm_override.as_deref().unwrap_or(realm),
             self.position,
             self.optimized_assets_url.as_deref(),
             &format!("{extra}{shared}"),
@@ -608,8 +652,44 @@ mod tests {
             native_bin: None,
             optimized_assets_url: None,
             deep_link_extra: String::new(),
+            realm_override: None,
             native_hud: true,
         }
+    }
+
+    #[test]
+    fn realm_override_renames_the_desktop_links_only() {
+        let mut b = block(vec![iface("lo", "127.0.0.1")], QrMode::Hint);
+        b.realm_override = Some("https://tunnel.example".to_string());
+        let out = b.render();
+        assert!(out.contains("realm=https%3A%2F%2Ftunnel.example&"), "{out}");
+        assert!(
+            !out.contains("realm=http%3A%2F%2F127.0.0.1%3A5600"),
+            "{out}"
+        );
+        assert!(
+            out.contains("realm=http://127.0.0.1:5600"),
+            "web row keeps the preview: {out}"
+        );
+        assert!(
+            b.local_desktop_link()
+                .starts_with("decentraland://realm=https%3A%2F%2Ftunnel.example&")
+        );
+        assert!(b.local_web_url().contains("realm=http://127.0.0.1:5600"));
+    }
+
+    #[test]
+    fn dclenv_names_the_environment_in_the_deep_link_and_the_web_explorer() {
+        let zone = desktop_deep_link_in("zone", "http://127.0.0.1:1", (0, 0), None, "");
+        assert!(zone.contains("&local-scene=true&dclenv=zone"), "{zone}");
+        let org = desktop_deep_link_in("org", "http://127.0.0.1:1", (0, 0), None, "");
+        assert!(org.contains("&dclenv=org"), "{org}");
+        assert_eq!(
+            default_web_explorer("zone"),
+            "https://decentraland.zone/bevy-web"
+        );
+        assert_eq!(default_web_explorer("org"), DEFAULT_WEB_EXPLORER);
+        assert_eq!(default_web_explorer("anything-else"), DEFAULT_WEB_EXPLORER);
     }
 
     fn full_ifaces() -> Vec<Iface> {
