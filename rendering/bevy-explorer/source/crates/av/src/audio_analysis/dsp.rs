@@ -9,7 +9,7 @@ use dcl_component::proto_components::sdk::components::PbAudioAnalysisMode;
 use super::fft;
 
 pub const BANDS: usize = 8;
-/// fundsp's `real_fft` takes a power-of-two length between 2 and 32768.
+/// The longest window analysed, in samples; longer input is cut to it.
 pub const FFT_MAX: usize = 32768;
 /// The upper edge of bands 0 to 6; band 7 ends at Nyquist.
 pub const BAND_EDGES_HZ: [f32; BANDS - 1] = [60.0, 120.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0];
@@ -56,7 +56,8 @@ pub struct Scratch {
 
 /// Analyses the largest power-of-two prefix of `samples` (at most [`FFT_MAX`]); zeros for fewer
 /// than two samples or a non-positive rate. In logarithmic mode every value is
-/// `log10(x * gain + 1)` clamped to `[0, 1]`; raw values are unbounded.
+/// `log10(x * gain + 1)` clamped to `[0, 1]`, and 0 where a gain makes that undefined; raw
+/// values are unbounded.
 pub fn analyze(
     samples: &[f32],
     sample_rate: f32,
@@ -138,15 +139,33 @@ fn freq_to_bin(freq: f32, sample_rate: f32, bins: usize) -> usize {
 
 #[inline]
 fn normalize_log(x: f32, gain: f32) -> f32 {
-    (x * gain + 1.0).log10().clamp(0.0, 1.0)
+    let value = (x * gain + 1.0).log10();
+    if value.is_nan() {
+        0.0
+    } else {
+        value.clamp(0.0, 1.0)
+    }
 }
 
-/// `[end - WINDOW_FRAMES, end)` of a clip's frames, interleaved left and right, padded with
-/// silence at the front while fewer frames have played.
-pub fn window_at(frames: &[kira::Frame], end: usize, out: &mut Vec<f32>) {
+/// `[end - WINDOW_FRAMES, end)` of a clip's frames, interleaved left and right. Before `end`
+/// a looping clip continues from its own tail; a clip that does not loop is padded with silence
+/// at the front while fewer frames have played.
+pub fn window_at(frames: &[kira::Frame], end: usize, looping: bool, out: &mut Vec<f32>) {
+    out.clear();
+    if looping && !frames.is_empty() {
+        let len = frames.len();
+        let end = end % len;
+        // the first frame's index, one whole window back from `end`, wrapped into the clip
+        let first = (end + len - WINDOW_FRAMES % len) % len;
+        for i in 0..WINDOW_FRAMES {
+            let frame = &frames[(first + i) % len];
+            out.push(frame.left);
+            out.push(frame.right);
+        }
+        return;
+    }
     let end = end.min(frames.len());
     let start = end.saturating_sub(WINDOW_FRAMES);
-    out.clear();
     out.resize((WINDOW_FRAMES - (end - start)) * CHANNELS, 0.0);
     for frame in &frames[start..end] {
         out.push(frame.left);
@@ -223,7 +242,7 @@ mod tests {
 
     #[test]
     fn a_mono_tone_lights_the_band_that_holds_it() {
-        // 350 Hz sits in band 4 (250 to 500 Hz)
+        // 350 Hz sits in band 3 (250 to 500 Hz)
         let result = run(&sine(350.0, 2048, 0.5), Mode::Raw);
         assert_eq!(loudest(&result.bands), 3);
         let result = run(&sine(3000.0, 2048, 0.5), Mode::Raw);
@@ -240,6 +259,22 @@ mod tests {
         let result = run(&stereo, Mode::Raw);
         assert_eq!(loudest(&result.bands), 2);
         assert!(result.bands[7] > 0.0);
+    }
+
+    #[test]
+    fn a_gain_that_makes_the_log_undefined_gives_zero() {
+        assert_eq!(normalize_log(0.5, -10.0), 0.0);
+        assert_eq!(normalize_log(0.5, f32::NAN), 0.0);
+        assert_eq!(normalize_log(0.5, f32::INFINITY), 1.0);
+        let result = analyze(
+            &sine(1000.0, 2048, 1.0),
+            RATE,
+            Mode::Logarithmic,
+            -10.0,
+            f32::NAN,
+            &mut Scratch::default(),
+        );
+        assert!(result.amplitude.is_finite() && result.bands.iter().all(|b| b.is_finite()));
     }
 
     #[test]
@@ -272,18 +307,45 @@ mod tests {
             .map(|i| kira::Frame::new(i as f32, -(i as f32)))
             .collect();
         let mut out = Vec::new();
-        window_at(&frames, 1500, &mut out);
+        window_at(&frames, 1500, false, &mut out);
         assert_eq!(out.len(), WINDOW_SAMPLES);
         assert_eq!(out[0], 476.0);
         assert_eq!(out[1], -476.0);
         assert_eq!(out[WINDOW_SAMPLES - 2], 1499.0);
-        window_at(&frames, 10, &mut out);
+        window_at(&frames, 10, false, &mut out);
         assert_eq!(out.len(), WINDOW_SAMPLES);
         assert!(out[..(WINDOW_FRAMES - 10) * CHANNELS]
             .iter()
             .all(|s| *s == 0.0));
         assert_eq!(out[WINDOW_SAMPLES - 2], 9.0);
-        window_at(&frames, 5000, &mut out);
+        window_at(&frames, 5000, false, &mut out);
         assert_eq!(out[WINDOW_SAMPLES - 2], 1999.0);
+    }
+
+    #[test]
+    fn a_looping_clip_window_continues_from_its_tail() {
+        let frames: Vec<kira::Frame> = (0..2000)
+            .map(|i| kira::Frame::new(i as f32, -(i as f32)))
+            .collect();
+        let mut out = Vec::new();
+        // 10 frames after the wrap: 1014 from the tail, then 0..10
+        window_at(&frames, 10, true, &mut out);
+        assert_eq!(out.len(), WINDOW_SAMPLES);
+        assert_eq!(out[0], 986.0);
+        assert_eq!(out[1], -986.0);
+        assert_eq!(out[(WINDOW_FRAMES - 11) * CHANNELS], 1999.0);
+        assert_eq!(out[(WINDOW_FRAMES - 10) * CHANNELS], 0.0);
+        assert_eq!(out[WINDOW_SAMPLES - 2], 9.0);
+        // away from the wrap it is the plain window
+        window_at(&frames, 1500, true, &mut out);
+        assert_eq!(out[0], 476.0);
+        assert_eq!(out[WINDOW_SAMPLES - 2], 1499.0);
+        // a clip shorter than the window repeats within it
+        let short: Vec<kira::Frame> = (0..300).map(|i| kira::Frame::new(i as f32, 0.0)).collect();
+        window_at(&short, 0, true, &mut out);
+        assert_eq!(out.len(), WINDOW_SAMPLES);
+        assert_eq!(out[WINDOW_SAMPLES - 2], 299.0);
+        assert_eq!(out[(WINDOW_FRAMES - 300) * CHANNELS], 0.0);
+        assert_eq!(out[(WINDOW_FRAMES - 301) * CHANNELS], 299.0);
     }
 }

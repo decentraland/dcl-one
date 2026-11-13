@@ -9,15 +9,23 @@ pub mod dsp;
 mod fft;
 
 use bevy::prelude::*;
-use dcl_component::{
-    proto_components::sdk::components::PbAudioAnalysis, CrdtType, SceneComponentId, SceneEntityId,
-};
+use dcl_component::{proto_components::sdk::components::PbAudioAnalysis, SceneComponentId};
 use dcl_types::interface::ComponentPosition;
-use scene_runner::{
-    renderer_context::RendererSceneContext, update_world::AddCrdtInterfaceExt, ContainerEntity,
+use scene_runner::update_world::AddCrdtInterfaceExt;
+
+use dsp::Analysis;
+#[cfg(not(feature = "html"))]
+use {
+    dcl_component::{CrdtType, SceneEntityId},
+    dsp::{Mode, Scratch, DEFAULT_AMPLITUDE_GAIN, DEFAULT_BANDS_GAIN},
+    scene_runner::{renderer_context::RendererSceneContext, ContainerEntity},
 };
 
-use dsp::{Analysis, Mode, Scratch, DEFAULT_AMPLITUDE_GAIN, DEFAULT_BANDS_GAIN};
+#[cfg(feature = "ffmpeg")]
+const _: () = assert!(
+    media::CAPTURE_FRAMES == dsp::WINDOW_FRAMES && media::CAPTURE_CHANNELS == dsp::CHANNELS,
+    "the stream capture holds exactly one analysis window"
+);
 
 #[derive(Component, Debug)]
 pub struct AudioAnalysis(pub PbAudioAnalysis);
@@ -33,12 +41,15 @@ impl From<PbAudioAnalysis> for AudioAnalysis {
 #[derive(Component, Default)]
 pub struct AudioAnalysisState {
     pub last: Analysis,
-    /// The clip window last analysed (`position / WINDOW_FRAMES`), so a window is analysed once.
-    pub last_block: Option<u64>,
     pub window_frames: u32,
     pub sample_rate: u32,
     pub analyses: u32,
+    /// The clip frame the last window ended at, so a window is analysed once.
+    #[cfg(not(feature = "html"))]
+    last_end: Option<usize>,
+    #[cfg(not(feature = "html"))]
     window: Vec<f32>,
+    #[cfg(not(feature = "html"))]
     scratch: Scratch,
 }
 
@@ -70,6 +81,7 @@ impl Plugin for AudioAnalysisPlugin {
 }
 
 /// The gains the scene set, or Unity's defaults.
+#[cfg(not(feature = "html"))]
 fn gains(source: &PbAudioAnalysis) -> (Mode, f32, f32) {
     (
         Mode::from(source.mode()),
@@ -79,7 +91,8 @@ fn gains(source: &PbAudioAnalysis) -> (Mode, f32, f32) {
 }
 
 /// Writes the whole component back, the scene's parameters as received plus the result, as
-/// Unity's `PutMessage` does.
+/// Unity's `PutMessage` does, unless it holds that already.
+#[cfg(not(feature = "html"))]
 fn put_analysis(
     context: &mut RendererSceneContext,
     id: SceneEntityId,
@@ -100,7 +113,7 @@ fn put_analysis(
         band_6: result.bands[6],
         band_7: result.bands[7],
     };
-    context.update_crdt(
+    context.update_crdt_if_different(
         SceneComponentId::AUDIO_ANALYSIS,
         CrdtType::LWW_ENT,
         id,
@@ -109,6 +122,7 @@ fn put_analysis(
 }
 
 /// Analyses `state.window` at `sample_rate` and writes the result to the scene.
+#[cfg(not(feature = "html"))]
 fn analyse(
     state: &mut AudioAnalysisState,
     sample_rate: u32,
@@ -135,7 +149,7 @@ fn analyse(
     put_analysis(context, id, source, &result);
 }
 
-#[expect(clippy::type_complexity)]
+#[cfg_attr(feature = "ffmpeg", expect(clippy::type_complexity))]
 fn analysis_added(
     trigger: Trigger<OnAdd, AudioAnalysis>,
     mut commands: Commands,
@@ -154,7 +168,7 @@ fn analysis_added(
     }
 }
 
-#[expect(clippy::type_complexity)]
+#[cfg_attr(feature = "ffmpeg", expect(clippy::type_complexity))]
 fn analysis_removed(
     trigger: Trigger<OnRemove, AudioAnalysis>,
     mut commands: Commands,
@@ -205,7 +219,8 @@ fn sinks_inserted<T: crate::AVPlayer>(
 }
 
 /// A clip is analysed from its decoded frames: the window that ends at the instance's position,
-/// once per window, at the clip's own rate. Pitch and volume are not applied (a divergence from
+/// once the position has moved a whole window on or gone back (a loop or a seek), at the clip's
+/// own rate. Pitch and volume are not applied (a divergence from
 /// Unity, which analyses the mixed output). Values stay while the clip is paused or stopped.
 #[cfg(not(feature = "html"))]
 fn analyse_audio_clips(
@@ -234,15 +249,17 @@ fn analyse_audio_clips(
         };
         let sample_rate = clip.sound.sample_rate;
         let end = (position.max(0.0) * sample_rate as f64) as usize;
-        let block = (end / dsp::WINDOW_FRAMES) as u64;
-        if state.last_block == Some(block) {
+        if state
+            .last_end
+            .is_some_and(|last| end >= last && end - last < dsp::WINDOW_FRAMES)
+        {
             continue;
         }
         let Ok(mut context) = scenes.get_mut(container.root) else {
             continue;
         };
-        state.last_block = Some(block);
-        dsp::window_at(&clip.sound.frames, end, &mut state.window);
+        state.last_end = Some(end);
+        dsp::window_at(&clip.sound.frames, end, emitter.r#loop, &mut state.window);
         analyse(
             &mut state,
             sample_rate,
@@ -329,6 +346,61 @@ mod tests {
             false,
             false,
         )
+    }
+
+    #[cfg(feature = "ffmpeg")]
+    #[test]
+    fn the_stream_capture_follows_the_analysis_and_the_sinks() {
+        use crate::{video_stream::noop_sinks, AVPlayerSinks, AVSinks, AudioStream};
+
+        let mut app = App::new();
+        app.add_observer(analysis_added)
+            .add_observer(analysis_removed)
+            .add_observer(sinks_inserted::<AudioStream>);
+        let capturing = |app: &App, entity: Entity| {
+            app.world()
+                .get::<AVSinks<AudioStream>>(entity)
+                .and_then(|sinks| sinks.audio_sink())
+                .is_some_and(|sink| sink.capture.enabled())
+        };
+
+        let entity = app
+            .world_mut()
+            .spawn(noop_sinks::<AudioStream>(String::new(), None))
+            .id();
+        assert!(!capturing(&app, entity), "no analysis, no capture");
+
+        app.world_mut()
+            .entity_mut(entity)
+            .insert(AudioAnalysis(PbAudioAnalysis::default()));
+        assert!(capturing(&app, entity), "an analysis turns the capture on");
+
+        app.world_mut()
+            .entity_mut(entity)
+            .insert(noop_sinks::<AudioStream>(String::new(), None));
+        assert!(
+            capturing(&app, entity),
+            "replaced sinks capture from the start"
+        );
+
+        app.world_mut().entity_mut(entity).remove::<AudioAnalysis>();
+        assert!(
+            !capturing(&app, entity),
+            "removing the analysis turns it off"
+        );
+
+        let sinks = app
+            .world_mut()
+            .entity_mut(entity)
+            .take::<AVSinks<AudioStream>>()
+            .unwrap();
+        let capture = sinks.audio_sink().unwrap().capture.clone();
+        app.world_mut()
+            .entity_mut(entity)
+            .insert((sinks, AudioAnalysis(PbAudioAnalysis::default())));
+        assert!(capture.enabled());
+        app.world_mut().despawn(entity);
+        assert!(!capture.enabled(), "a despawn turns it off");
     }
 
     #[test]

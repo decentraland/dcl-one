@@ -27,8 +27,10 @@ component but computed nothing (parity card K3 SDK media, task `K3 · AudioAnaly
   rate, channel count discarded. That makes a stereo 440 Hz tone read in band 2 with an image
   near Nyquist; the quirk is part of the contract scenes were authored against and is kept.
 - A clip (`AudioSource`) is analysed from its decoded frames: the window that ends at the kira
-  instance's position, once per window, at the clip's own sample rate. No audio-thread code and
-  no second playback path. Pitch and volume are not applied, and a 44.1 kHz clip is analysed at
+  instance's position, each time the position has moved a whole window on or gone back (a loop
+  or a seek), at the clip's own sample rate. A looping clip's window continues from its own
+  tail across the wrap, so the values do not dip at each loop. No audio-thread code and no
+  second playback path. Pitch and volume are not applied, and a 44.1 kHz clip is analysed at
   44.1 kHz (the band edges are in Hz, so the bands match; the window is 8% longer).
 - A stream (`AudioStream`, the audio of a `VideoPlayer`) is analysed from a single-slot capture
   (`crates/media/src/capture.rs`) that the FFmpeg decoder's kira bridge
@@ -36,9 +38,11 @@ component but computed nothing (parity card K3 SDK media, task `K3 · AudioAnaly
   `LastAudioFrameBuffer`: never blocking, a window not taken in time is overwritten, enabled
   only while an `AudioAnalysis` sits on the entity, nothing captured while the player is not
   playing. The decoder does not resample, so a stream is analysed at its own sample rate, which
-  the capture records.
+  the capture records. Any other decoder that plays scene streams has to write the same capture.
 - The whole component is written back, the scene's parameters as received plus the result,
-  as Unity's `PutMessage` does; the last values stay while the source is paused. There is no
+  as Unity's `PutMessage` does, and only when it differs from what the scene holds; the last
+  values stay while the source is paused. A gain that makes the log undefined (negative, NaN)
+  gives 0 rather than NaN. There is no
   frame-time budget: a 2048-point FFT costs microseconds.
 - The web build registers the component and compiles the maths but writes no results, as
   unity-explorer's WebGL build (`OnAudioFilterRead` is unavailable there) does.
@@ -59,6 +63,8 @@ component but computed nothing (parity card K3 SDK media, task `K3 · AudioAnaly
 - A scene adding `AudioAnalysis` to an entity with an `AudioSource`, `AudioStream` or
   `VideoPlayer` reads amplitude and bands updated about once per 1024 frames while the audio
   plays, on the standalone. On the web the values stay at zero.
+- A `VideoPlayer` playing a LiveKit track (`livekit-video://`) has no decoder sinks, so its
+  `AudioAnalysis` stays at zero; analysing it needs a capture on the LiveKit audio path.
 - The e2e `audio` scene (`apps/bevy-explorer/e2e/scenes/audio`) shows four equalisers driven
   by the component, and `specs/visual/audio.test.ts` asserts the values through the engine on
   the standalone.

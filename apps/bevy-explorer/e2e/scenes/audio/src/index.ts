@@ -26,8 +26,8 @@ import { setupVisualTest } from './visual-test-setup'
  *   - `video`: a solid red video with the same tone (`assets/video/red_tone.mp4`) as a VideoPlayer.
  *
  * Two boxes take clicks: `pause / resume` toggles the log clip's `playing`, `detach` removes
- * its `AudioAnalysis`. The scene also pauses the log clip by itself at PAUSE_AT_S, so a run
- * without input shows the values holding.
+ * its `AudioAnalysis`. The scene also pauses the log clip by itself PAUSE_AT_S after its analysis
+ * first reports a value, so a run without input shows the values holding.
  */
 const PAUSE_AT_S = 12
 const BANDS = 8
@@ -128,14 +128,16 @@ export function main() {
     AudioAnalysis.deleteFrom(clip)
   })
 
+  const clipEqualiser = equalisers[0]!
   let elapsed = 0
   let pausedByTimer = false
   engine.addSystem((dt) => {
-    elapsed += dt
+    // counted from the log clip's first analysed window, so a slow load cannot pause it unheard
+    if (clipEqualiser.view.amplitude > 0) elapsed += dt
     if (!pausedByTimer && elapsed >= PAUSE_AT_S) {
       pausedByTimer = true
       AudioSource.getMutable(clip).playing = false
-      TextShape.getMutable(pauseLabel).text = `pause / resume (paused at ${PAUSE_AT_S} s)`
+      TextShape.getMutable(pauseLabel).text = `pause / resume (paused ${PAUSE_AT_S} s after its first values)`
     }
     for (const equaliser of equalisers) equaliser.update()
   })

@@ -154,9 +154,9 @@ jobs:
           node-version: 24
           cache: npm
           cache-dependency-path: apps/bevy-explorer/e2e/package-lock.json
-      - name: Fetch the audio scene's assets
+      - name: Fetch the end-to-end scenes' assets
         if: ${{ !cancelled() && steps.engine.outcome == 'success' && inputs.suite != 'snapshots' }}
-        run: git lfs pull --include 'apps/bevy-explorer/e2e/scenes/audio/**'
+        run: git lfs pull --include 'apps/bevy-explorer/e2e/scenes/**'
       - name: Install the end-to-end suite
         if: ${{ !cancelled() && steps.engine.outcome == 'success' && inputs.suite != 'snapshots' }}
         working-directory: apps/bevy-explorer/e2e
@@ -173,12 +173,13 @@ jobs:
         # The crate is a member of the catalyst workspace (services/catalyst), whose target folder
         # would otherwise take the binary; its own keeps the path below and the cache local.
         run: cargo build --release --locked --target-dir target
-      - name: Build the audio scene
+      - name: Build the end-to-end scenes
         if: ${{ !cancelled() && steps.engine.outcome == 'success' && inputs.suite != 'snapshots' }}
         working-directory: apps/bevy-explorer/e2e
         env:
           DCL_SCENE_CLI: ${{ github.workspace }}/apps/dcl-scene-cli/target/release/dcl-scene-cli
-        run: npm run build-scenes -- audio
+        # the visual specs' realm (specs/visual/realm.ts) serves every workspace scene
+        run: npm run build-scenes
       - name: Audio analysis through the engine
         id: audio
         if: ${{ !cancelled() && steps.engine.outcome == 'success' && inputs.suite != 'snapshots' }}
@@ -219,22 +220,24 @@ jobs:
           path: apps/bevy-explorer/e2e/report/
           if-no-files-found: ignore
           retention-days: 14
-      - name: Fail on an audio analysis failure, or on a run that played no test
+      - name: Fail on an audio analysis failure, or on a run that did not play its test
         if: always() && steps.audio.outcome != '' && steps.audio.outcome != 'skipped'
         env:
           AUDIO_OUTCOME: ${{ steps.audio.outcome }}
+          AUDIO_TEST: audio analysis reaches the scene
         # `--filter` is a name pattern and node's runner exits 0 when nothing matches, so the
-        # JUnit report must name a test that ran.
+        # JUnit report must name the expected test, run and not skipped.
         run: |
           python3 - <<'PY'
           import os, sys, xml.etree.ElementTree as ET
           report = "../../../apps/bevy-explorer/e2e/report/junit-visual.xml"
+          expected = os.environ["AUDIO_TEST"]
           try:
-              cases = ET.parse(report).getroot().iter("testcase")
-              ran = [case for case in cases if case.find("skipped") is None]
+              cases = [case for case in ET.parse(report).getroot().iter("testcase") if case.get("name") == expected]
           except (OSError, ET.ParseError) as error:
               sys.exit(f"no readable JUnit report at {report}: {error}")
-          print(f"{len(ran)} audio test(s) ran; outcome {os.environ['AUDIO_OUTCOME']}")
+          ran = [case for case in cases if case.find("skipped") is None]
+          print(f"'{expected}': {len(cases)} found, {len(ran)} ran; outcome {os.environ['AUDIO_OUTCOME']}")
           sys.exit(0 if ran and os.environ["AUDIO_OUTCOME"] == "success" else 1)
           PY
     defaults:

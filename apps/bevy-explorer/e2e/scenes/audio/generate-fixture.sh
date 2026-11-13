@@ -6,7 +6,8 @@
 # aac. MP3, because a stream is served without range requests and ffmpeg's ogg demuxer seeks
 # while probing.
 #
-# tone_440_loop.mp3: 20 s of a 440 Hz sine at -3 dB peak, stereo 48 kHz: the clip the
+# tone_440_loop.mp3: 20 s of a 440 Hz sine near 0 dBFS peak (the sine source's 1/8 amplitude
+# raised 18 dB), stereo 48 kHz: the clip the
 # AudioSources loop and the AudioStream streams.
 # red_tone.mp4: 6 s, 320x240 at 30 fps, a keyframe every second; solid red video and the same
 # 440 Hz sine, stereo 48 kHz aac: the VideoPlayer's audio.
