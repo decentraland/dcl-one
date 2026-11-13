@@ -260,6 +260,8 @@ MANDATORY_ARCHIPELAGO = {
         "selected_identity_domains_survive_production_assignment_json_postgres_roundtrip",
         "selected_realm_ownership_tracks_native_without_ws_and_borrows_external_rows_read_only",
         "lost_selected_claim_and_publication_acknowledgments_reconcile_without_restoring_a_predecessor",
+        "recovery::started_native_periodic_replay_retries_borrowed_and_foreign_rows_after_lapse",
+        "recovery::started_native_periodic_replay_survives_one_lookup_failure_without_another_hint",
         "recovery::a_stationary_reconnect_refills_the_claim_once_despite_an_old_participant",
         "recovery::a_stale_connect_cannot_refill_a_newer_owners_claim",
         "recovery::same_room_control_handoffs_refill_same_and_different_session_claims",

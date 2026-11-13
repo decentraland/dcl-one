@@ -496,3 +496,235 @@ async fn same_room_recovery_renews_expired_credentials_without_periodic_churn() 
         fixture.finish().await;
     }
 }
+
+#[tokio::test]
+async fn started_native_periodic_replay_retries_borrowed_and_foreign_rows_after_lapse() {
+    for row in [
+        "same-session-null",
+        "same-session-assignment",
+        "foreign-session",
+    ] {
+        periodic_native_retry_case(row).await;
+    }
+}
+
+#[tokio::test]
+async fn started_native_periodic_replay_survives_one_lookup_failure_without_another_hint() {
+    periodic_native_retry_case("lookup-failure").await;
+}
+
+async fn periodic_native_retry_case(case: &str) {
+    use catalyst::comms::gatekeeper::admission::cluster::{
+        ClusterRuntime,
+        fence::{AssignmentFence, PulseAdmissionStamp},
+    };
+    use catalyst::comms::gatekeeper::bus::{NatsBus, PublishOutcome};
+    use catalyst::comms::protocol::bus::cluster::ClusterChange;
+    use catalyst::comms::protocol::pulse::decentraland::pulse::PeerClusterChange;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    let fixture = Fixture::new()
+        .await
+        .expect("required disposable PostgreSQL");
+    let harness = RecoveryHarness::new(&fixture, SESSION).await;
+    let selected = harness.source.lock().unwrap().clone();
+    let authority_available = Arc::new(AtomicBool::new(true));
+    let initial_failures = Arc::new(AtomicUsize::new(usize::from(case == "lookup-failure")));
+    let available = authority_available.clone();
+    let failures = initial_failures.clone();
+    let replies = harness.source.clone();
+    harness
+        .bus
+        .respond_to_requests(Arc::new(move |subject, payload| {
+            assert_eq!(subject, format!("peer.{WALLET}.cluster_lookup"));
+            if !available.load(Ordering::SeqCst)
+                || failures
+                    .try_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
+                    .is_ok()
+            {
+                return Err(RequestError::TimedOut);
+            }
+            let current = replies.lock().unwrap();
+            if current.session.as_bytes() != payload {
+                return Err(RequestError::NoResponders);
+            }
+            Ok(current.encode_to_vec())
+        }));
+    if case != "lookup-failure" {
+        // The external owner shares the real allocator domain; lapse must not need
+        // artificial sequence catch-up or an ownership flag in the coordinator.
+        let epoch: i64 =
+            sqlx::query_scalar("SELECT nextval('social.archipelago_v4_connection_epoch')")
+                .fetch_one(&fixture.pool)
+                .await
+                .unwrap();
+        let previous = if case == "same-session-assignment" {
+            let mut document = super::assignment(&fixture.pool, "island-current", None).await;
+            let safety = document.pulse_admission.as_ref().unwrap().clone();
+            let mut stamp = PulseAdmissionStamp::from_snapshot(&selected, 0).unwrap();
+            stamp.safety_generation = safety.safety_generation;
+            stamp.safety_token_floor = safety.safety_token_floor;
+            document.pulse_admission = Some(stamp);
+            Some(serde_json::to_value(document).unwrap())
+        } else {
+            None
+        };
+        seed_realm(
+            &fixture.pool,
+            WALLET,
+            if case == "foreign-session" {
+                STALE_SESSION
+            } else {
+                SESSION
+            },
+            epoch,
+            1,
+            1,
+            previous,
+        )
+        .await;
+    }
+    let before = periodic_native_owner_row(&fixture).await;
+    let change = ClusterChange {
+        wallet: WALLET.into(),
+        change: PeerClusterChange {
+            session: selected.session.clone(),
+            realm: selected.realm.clone(),
+            cluster_id: selected.cluster_id.clone(),
+            source_incarnation: selected.source_incarnation.clone(),
+            assignment_version: selected.assignment_version,
+            token_not_before: selected.token_not_before,
+            ..Default::default()
+        },
+    };
+    assert_eq!(
+        harness
+            .bus
+            .publish(&change.subject(), change.encode())
+            .await,
+        PublishOutcome::Submitted
+    );
+    tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        harness.subscriber.settle(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(initial_failures.load(Ordering::SeqCst), 0);
+    assert!(
+        harness.gateway.fences.lock().unwrap().is_empty(),
+        "{case}: no token before selected acquisition"
+    );
+    assert_eq!(
+        periodic_native_owner_row(&fixture).await,
+        before,
+        "{case}: foreign or borrowed authority remains untouched"
+    );
+    assert_eq!(
+        harness.fence.selected_reconciliation_targets(),
+        vec![(WALLET.into(), SESSION.into())],
+        "{case}: retry survives the first failed/readonly attempt"
+    );
+    let jobs = catalyst::jobs::Jobs::new();
+    let runtime = ClusterRuntime {
+        subscriber: harness.subscriber.clone(),
+        fence: Some(harness.fence.clone()),
+    };
+    runtime.start(&jobs);
+    if case != "lookup-failure" {
+        let asked = harness.bus.requested().len();
+        tokio::time::timeout(std::time::Duration::from_secs(8),async{
+            while harness.bus.requested().len()<=asked {tokio::time::sleep(std::time::Duration::from_millis(10)).await;}
+            harness.subscriber.settle().await;
+        }).await.expect("the started runtime actually replays its retained native target while the row is still fresh");
+        assert_eq!(
+            periodic_native_owner_row(&fixture).await,
+            before,
+            "{case}: periodic replay cannot renew/release a fresh external row"
+        );
+        assert!(harness.gateway.fences.lock().unwrap().is_empty());
+        assert_eq!(
+            harness.fence.selected_reconciliation_targets(),
+            vec![(WALLET.into(), SESSION.into())]
+        );
+        sqlx::query("UPDATE social.archipelago_v4_assignments SET updated_at=timezone('UTC',clock_timestamp())-interval '91 seconds' WHERE deployment_audience=$1 AND owner_address=$2 AND lane_key='realm'")
+            .bind(AUDIENCE).bind(WALLET).execute(&fixture.pool).await.unwrap();
+    }
+    tokio::time::timeout(std::time::Duration::from_secs(8),async{
+        loop {
+            let row=periodic_native_owner_row(&fixture).await;
+            if row.as_ref().is_some_and(|row|row.0==SESSION && row.4.as_ref().is_some_and(|doc|doc["pulseAdmission"]["sourceIncarnation"]==selected.source_incarnation)) && !harness.gateway.fences.lock().unwrap().is_empty() {break;}
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        harness.subscriber.settle().await;
+    }).await.expect("periodic replay automatically acquires and publishes for unchanged native selection, without /ws or another Pulse hint");
+    assert_eq!(harness.gateway.fences.lock().unwrap().len(), 1);
+    let acquired = periodic_native_owner_row(&fixture).await.unwrap();
+    assert_eq!(acquired.0, SESSION);
+    assert!(acquired.4.is_some());
+    if let Some(previous) = &before {
+        assert!(acquired.1 > previous.1);
+        assert!(acquired.3 > previous.3);
+    }
+    assert!(harness.sockets.0.lock().unwrap().is_empty());
+    assert_eq!(
+        harness.bus.published(),
+        vec![(change.subject(), change.encode())],
+        "no new Pulse publication or manual reconnect drives recovery"
+    );
+    assert_eq!(
+        harness.fence.selected_reconciliation_targets(),
+        vec![(WALLET.into(), SESSION.into())],
+        "one bounded target remains after acquisition"
+    );
+    if case == "lookup-failure" {
+        // Silence is unknown even after the SQL lease lapses. It must neither
+        // mint nor erase the only retry hint for this still-authenticated peer.
+        authority_available.store(false, Ordering::SeqCst);
+        sqlx::query("UPDATE social.archipelago_v4_assignments SET updated_at=timezone('UTC',clock_timestamp())-interval '91 seconds' WHERE deployment_audience=$1 AND owner_address=$2 AND lane_key='realm'")
+            .bind(AUDIENCE).bind(WALLET).execute(&fixture.pool).await.unwrap();
+        let lapsed = periodic_native_owner_row(&fixture).await;
+        let asked = harness.bus.requested().len();
+        tokio::time::timeout(std::time::Duration::from_secs(8), async {
+            while harness.bus.requested().len() <= asked {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+            harness.subscriber.settle().await;
+        })
+        .await
+        .expect("periodic lookup also runs while authority is unknown");
+        assert_eq!(periodic_native_owner_row(&fixture).await, lapsed);
+        assert_eq!(harness.gateway.fences.lock().unwrap().len(), 1);
+        assert_eq!(
+            harness.fence.selected_reconciliation_targets(),
+            vec![(WALLET.into(), SESSION.into())]
+        );
+    }
+    let final_row = periodic_native_owner_row(&fixture).await;
+    let ended = Arc::downgrade(&harness.fence);
+    jobs.shutdown(std::time::Duration::from_secs(2)).await;
+    drop(runtime);
+    drop(harness);
+    assert!(
+        ended.upgrade().is_none(),
+        "retained retry state ends with the actual coordinator incarnation, not with a negative lookup"
+    );
+    assert_eq!(
+        periodic_native_owner_row(&fixture).await,
+        final_row,
+        "lifecycle cleanup does not release a foreign or known SQL row"
+    );
+    fixture.finish().await;
+}
+
+type PeriodicNativeOwnerRow = (
+    String,
+    i64,
+    i64,
+    i64,
+    Option<serde_json::Value>,
+    chrono::NaiveDateTime,
+);
+async fn periodic_native_owner_row(fixture: &Fixture) -> Option<PeriodicNativeOwnerRow> {
+    sqlx::query_as("SELECT owner_session,owner_epoch,assignment_revision,fencing_token,assignment_json,updated_at FROM social.archipelago_v4_assignments WHERE deployment_audience=$1 AND owner_address=$2 AND lane_key='realm'")
+        .bind(AUDIENCE).bind(WALLET).fetch_optional(&fixture.pool).await.unwrap()
+}

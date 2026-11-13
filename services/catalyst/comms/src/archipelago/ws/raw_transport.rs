@@ -344,16 +344,42 @@ mod tests {
         assert!(io.shutdown().await.is_err());
     }
 
-    async fn wait_until(mut condition: impl FnMut() -> bool) {
+    async fn wait_until(label: &str, mut condition: impl FnMut() -> bool) {
         let began = std::time::Instant::now();
         while !condition() {
             assert!(
                 began.elapsed() < std::time::Duration::from_secs(3),
-                "listener did not reach the synchronized condition"
+                "timed out waiting for {label} at Tokio time {:?}",
+                Instant::now()
             );
             // Keep paused time from auto-advancing while the reactor handles TCP.
             tokio::task::yield_now().await;
         }
+    }
+
+    async fn advance_timer(logical_deadline: Instant) {
+        assert!(Instant::now() < logical_deadline);
+        let barrier = tokio::time::sleep_until(logical_deadline);
+        tokio::pin!(barrier);
+        assert!(futures::poll!(barrier.as_mut()).is_pending());
+        // Sleep deadlines round up to a millisecond tick. Crossing that full
+        // resolution reaches the effective tick even when the clock is frozen
+        // at a nanosecond deadline between ticks. Await the registered barrier
+        // so advancing the clock is not mistaken for processing its timers.
+        let after_tick = logical_deadline + std::time::Duration::from_millis(1);
+        tokio::time::advance(after_tick.duration_since(Instant::now())).await;
+        barrier.await;
+        assert_eq!(Instant::now(), after_tick);
+    }
+
+    async fn assert_before_probe(tcp: &TcpStream, logical_deadline: Instant) {
+        let before = logical_deadline - std::time::Duration::from_millis(1);
+        tokio::time::advance(before.duration_since(Instant::now())).await;
+        let mut bytes = [0; 32];
+        assert_eq!(
+            tcp.try_read(&mut bytes).unwrap_err().kind(),
+            io::ErrorKind::WouldBlock
+        );
     }
 
     async fn mounted_listener() -> (
@@ -427,22 +453,29 @@ mod tests {
 
     async fn partial_idle_scenario(read_ahead: bool) {
         let (port, state, mut signals, task) = mounted_listener().await;
-        // A runnable task prevents automatic clock jumps during reactor waits.
-        // Every clock movement in this scenario is explicit.
-        let reactor = tokio::spawn(async {
+        // Prevent automatic clock jumps during OS readiness waits. Timer
+        // processing is synchronized separately by a registered Sleep barrier.
+        let clock_guard = tokio::spawn(async {
             loop {
                 tokio::task::yield_now().await;
             }
         });
         tokio::time::pause();
+        let mut tcp = admitted_with_prefix(port, if read_ahead { &[0x82] } else { &[] }).await;
+        let signal = signals.recv().await.unwrap();
+        wait_until(
+            "admitted WebSocket initialization consumes its raw snapshot",
+            || {
+                let raw = signal.state.lock();
+                raw.armed && raw.activity.is_none()
+            },
+        )
+        .await;
         let epoch = Instant::from_std(state.started_at);
         let mut probe = epoch
             + std::time::Duration::from_secs(
                 (Instant::now().duration_since(epoch).as_secs() / 4 + 19) * 4,
             );
-        let mut tcp = admitted_with_prefix(port, if read_ahead { &[0x82] } else { &[] }).await;
-        let signal = signals.recv().await.unwrap();
-        wait_until(|| signal.state.lock().armed).await;
         if !read_ahead {
             tokio::time::advance(
                 (probe - std::time::Duration::from_secs(1)).duration_since(Instant::now()),
@@ -450,13 +483,18 @@ mod tests {
             .await;
             let before = signal.state.lock().generation;
             tcp.write_all(&[0x82]).await.unwrap();
-            wait_until(|| signal.state.lock().generation > before).await;
+            wait_until("positive raw header read", || {
+                signal.state.lock().generation > before
+            })
+            .await;
             probe += std::time::Duration::from_secs(72);
         }
         // No complete frame exists. The reader must still drive the raw seam.
-        tokio::time::advance(probe.duration_since(Instant::now())).await;
+        assert_before_probe(&tcp, probe).await;
+        assert!(!signal.state.lock().terminal);
+        advance_timer(probe).await;
         let mut wire = Vec::new();
-        wait_until(|| {
+        wait_until("first idle Ping bytes on the actual TCP stream", || {
             let mut bytes = [0; 32];
             if let Ok(n) = tcp.try_read(&mut bytes) {
                 wire.extend_from_slice(&bytes[..n]);
@@ -464,14 +502,17 @@ mod tests {
             wire == [0x89, 0]
         })
         .await;
-        for fragment in [&[0x84, 1, 2][..], &[3, 4, 8][..]] {
+        for (label, fragment) in [
+            ("positive raw partial mask read", &[0x84, 1, 2][..]),
+            ("positive raw partial payload read", &[3, 4, 8][..]),
+        ] {
             // The first fragment arrives in probe grace; the second arrives
             // immediately before the new first-stage deadline.
             let arrival = probe + std::time::Duration::from_secs(15);
             tokio::time::advance(arrival.duration_since(Instant::now())).await;
             let before = signal.state.lock().generation;
             tcp.write_all(fragment).await.unwrap();
-            wait_until(|| signal.state.lock().generation > before).await;
+            wait_until(label, || signal.state.lock().generation > before).await;
             let next = epoch
                 + std::time::Duration::from_secs(
                     (arrival.duration_since(epoch).as_secs() / 4 + 19) * 4,
@@ -483,8 +524,10 @@ mod tests {
             probe = next - std::time::Duration::from_secs(16);
         }
         let final_probe = probe + std::time::Duration::from_secs(16);
-        tokio::time::advance(final_probe.duration_since(Instant::now())).await;
-        wait_until(|| {
+        assert_before_probe(&tcp, final_probe).await;
+        assert!(!signal.state.lock().terminal);
+        advance_timer(final_probe).await;
+        wait_until("second idle Ping bytes after partial-input resets", || {
             let mut bytes = [0; 32];
             if let Ok(n) = tcp.try_read(&mut bytes) {
                 wire.extend_from_slice(&bytes[..n]);
@@ -493,14 +536,18 @@ mod tests {
         })
         .await;
         assert_eq!(wire, [0x89, 0, 0x89, 0]);
-        tokio::time::advance(std::time::Duration::from_secs(16)).await;
-        wait_until(|| signal.state.lock().terminal && state.sockets.available_permits() == 1).await;
+        advance_timer(Instant::now() + std::time::Duration::from_secs(16)).await;
+        wait_until(
+            "idle grace retires raw I/O and returns the physical permit",
+            || signal.state.lock().terminal && state.sockets.available_permits() == 1,
+        )
+        .await;
         let generation = signal.state.lock().generation;
         let _ = tcp.write_all(&[9, 9, 9]).await;
         assert_eq!(signal.state.lock().generation, generation);
         assert_eq!(signal.take_activity(), None);
         tokio::time::resume();
-        reactor.abort();
+        clock_guard.abort();
         task.abort();
     }
 
@@ -697,7 +744,7 @@ mod tests {
             .await;
             let permit = state.sockets.clone().acquire_owned().await.unwrap();
             let capacity = state.settings.server.max_sockets as usize;
-            let reactor = tokio::spawn(async {
+            let clock_guard = tokio::spawn(async {
                 loop {
                     tokio::task::yield_now().await;
                 }
@@ -730,8 +777,16 @@ mod tests {
                 ))
             ));
             if opcode == 0x89 {
-                tokio::time::advance(std::time::Duration::from_secs(5)).await;
-                wait_until(|| signal.state.lock().terminal).await;
+                let write_deadline = Instant::now() + std::time::Duration::from_secs(5);
+                let before_write = write_deadline - std::time::Duration::from_millis(1);
+                tokio::time::advance(before_write.duration_since(Instant::now())).await;
+                assert!(!signal.state.lock().terminal);
+                assert_eq!(state.feed.socket_write_timeout_count(), 0);
+                advance_timer(write_deadline).await;
+                wait_until("partial-write deadline publishes raw retirement", || {
+                    signal.state.lock().terminal
+                })
+                .await;
                 assert_eq!(state.feed.socket_write_timeout_count(), 1);
             } else {
                 // Close must retire the raw gate before recv returns, while the
@@ -747,10 +802,14 @@ mod tests {
                 assert!(futures::poll!(read.as_mut()).is_pending());
             }
             drop(socket);
-            wait_until(|| state.sockets.available_permits() == capacity).await;
+            wait_until(
+                "reader drop returns every physical transport permit",
+                || state.sockets.available_permits() == capacity,
+            )
+            .await;
             assert_eq!(signal.take_activity(), None);
             tokio::time::resume();
-            reactor.abort();
+            clock_guard.abort();
             task.abort();
         }
     }

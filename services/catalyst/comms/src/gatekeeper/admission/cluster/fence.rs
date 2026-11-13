@@ -664,17 +664,12 @@ impl PgAssignmentFence {
             slot.key = None;
         }
         match realm_transition(current.as_ref(), slot.owned.as_ref(), &snapshot.session) {
-            RealmTransition::Conflict => {
-                if slot.owned.is_none() && slot.attempt.is_none() {
-                    drop(slot);
-                    self.remove_selected_slot(&snapshot.wallet, &slot_ref);
-                }
-                return Err(FenceError::Conflict);
-            }
+            // Borrowing or refusing an external row does not end Pulse's selected
+            // retry obligation. The same native peer may have no signaling socket.
+            RealmTransition::Conflict => return Err(FenceError::Conflict),
             RealmTransition::Borrow => {
                 tx.commit().await.map_err(|_| FenceError::Unavailable)?;
                 drop(slot);
-                self.remove_selected_slot(&snapshot.wallet, &slot_ref);
                 let mut lease = self.lock(&snapshot.wallet, &snapshot.session).await?;
                 lease.read_only = true;
                 return Ok(lease);
@@ -784,14 +779,6 @@ impl PgAssignmentFence {
         });
         Ok(lease)
     }
-    fn remove_selected_slot(&self, wallet: &str, slot: &std::sync::Arc<SelectedWallet>) {
-        let mut slots = self.selected.lock();
-        if slots.get(wallet).is_some_and(|current| {
-            std::sync::Arc::ptr_eq(current, slot) && std::sync::Arc::strong_count(slot) == 2
-        }) {
-            slots.remove(wallet);
-        }
-    }
     async fn settle_selected_idle(&self, wallet: &str) -> Result<(), FenceError> {
         let Some(slot_ref) = self.selected.lock().get(wallet).cloned() else {
             return Ok(());
@@ -812,8 +799,10 @@ impl PgAssignmentFence {
                     .as_ref()
                     .is_some_and(|owned| owned.same_fact(row))
         }) {
-            drop(slot);
-            self.remove_selected_slot(wallet, &slot_ref);
+            // A failed lookup is unknown, including after lease lapse. Retire
+            // settled SQL ownership facts, but keep the bounded desired retry.
+            slot.owned = None;
+            slot.key = None;
         }
         Ok(())
     }
