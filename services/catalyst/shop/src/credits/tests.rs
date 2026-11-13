@@ -5348,6 +5348,45 @@ async fn checkout_refuses_an_item_created_by_the_buyer() {
 
 /// A cart line never fills from the buyer's own listing: the selection falls
 /// back to the next one, and refuses when only the buyer's own is open.
+/// A cart line priced from a trade that pays the buyer is refused, whoever signed it.
+#[tokio::test]
+async fn a_cart_trade_paying_the_buyer_is_refused() {
+    let Some(pool) = pool().await else { return };
+    let buyer = scratch_wallet();
+    let mut pays_buyer = trade_book_row("a1-be5e", 4, "1");
+    pays_buyer["received"][0]["beneficiary"] =
+        json!(buyer.address.to_ascii_uppercase().replace("0X", "0x"));
+    let state = state_with(
+        pool.clone(),
+        StateCfg::default(),
+        market_for_checkout()
+            .with_trade("a1-be5e", pays_buyer)
+            .with_trade("a2-0e5e", trade_book_row("a2-0e5e", 4, "1")),
+        MockBroker::configured(),
+    );
+    let info = state.pricing.fetch_item(COLLECTION, "1").await.unwrap();
+    let basis = |trade_id: &str| super::pricing::ChargeBasis {
+        info: info.clone(),
+        basis_wei: "5000000000000000000".into(),
+        kind: super::pricing::BasisKind::Trade {
+            trade_id: trade_id.into(),
+        },
+    };
+    let session = crate::types::Session::Web3 {
+        wallet: crate::types::EvmAddress::parse(&buyer.address.to_ascii_lowercase()).unwrap(),
+    };
+    let refused = super::handlers::cart::rule_line(&state, session, &basis("a1-be5e")).await;
+    assert!(
+        matches!(refused, Err(ApiError::Forbidden(ref m)) if m.contains("own wallet")),
+        "a trade paying the buyer is refused"
+    );
+    let other = super::handlers::cart::rule_line(&state, session, &basis("a2-0e5e")).await;
+    assert!(
+        !matches!(other, Err(ApiError::Forbidden(ref m)) if m.contains("own wallet")),
+        "a trade paying someone else is not refused as self-dealing"
+    );
+}
+
 #[tokio::test]
 async fn checkout_skips_the_buyers_own_listing() {
     let Some(pool) = pool().await else { return };

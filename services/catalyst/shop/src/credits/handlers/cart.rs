@@ -46,7 +46,17 @@ pub(crate) async fn rule_line(
             token_id: token_id.clone(),
         },
         BasisKind::Trade { trade_id } => match state.pricing.fetch_trade(trade_id).await? {
-            TradeLookup::Open(trade) => guards::credits::Kind::Trade { trade },
+            TradeLookup::Open(trade) => {
+                // The listing's seller is skipped at selection; its payees are checked here.
+                if let Session::Web3 { wallet } | Session::Web2 { account: wallet } = session
+                    && crate::credits::batch::trade_payees(&trade).contains(&wallet)
+                {
+                    return Err(ApiError::forbidden(
+                        "credits cannot pay the buyer's own wallet for a listing",
+                    ));
+                }
+                guards::credits::Kind::Trade { trade }
+            }
             TradeLookup::NotFound => {
                 return Err(ApiError::conflict(
                     "the listing this line was priced from is gone",

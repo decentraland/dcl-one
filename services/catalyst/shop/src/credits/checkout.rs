@@ -957,7 +957,11 @@ impl OutboxWorker {
                     SecondarySource::Fresh => {
                         let order = match self
                             .pricing
-                            .fetch_open_order(&info.contract_address, &row.item_id)
+                            .fetch_open_order(
+                                &info.contract_address,
+                                &row.item_id,
+                                Some(&row.buyer),
+                            )
                             .await
                         {
                             Ok(Some(order)) => order,

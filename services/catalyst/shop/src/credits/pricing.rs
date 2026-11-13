@@ -590,10 +590,11 @@ impl Pricing {
         &self,
         collection: &str,
         item_id: &str,
+        buyer: Option<&str>,
     ) -> Result<Option<OpenOrder>, ApiError> {
         let pairs = [(collection.to_ascii_lowercase(), item_id.to_string())];
         let listings = self
-            .fetch_open_listings_batch(&pairs, ORDER_SCAN_MAX_PAGES, false, None)
+            .fetch_open_listings_batch(&pairs, ORDER_SCAN_MAX_PAGES, false, buyer)
             .await?;
         Ok(listings
             .get(&pairs[0])

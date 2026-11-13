@@ -6,8 +6,8 @@
 //! A transfer mined while no MANA/USD rate was recorded (a price poller down
 //! longer than the freshness window) answers 422 for good. An operator credits
 //! it with `POST /admin/credits/grant` and `idempotencyKey` `mana-topup:<txHash>`
-//! (lowercase), so a later claim of that hash replays the grant instead of
-//! granting again.
+//! (lowercase): the grant is booked as a purchase, like the claim, and a later
+//! claim of that hash replays it instead of granting again.
 
 use axum::Json;
 use axum::extract::{OriginalUri, Query, State};

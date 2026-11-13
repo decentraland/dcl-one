@@ -489,7 +489,7 @@ async fn item_lookup(
 
 /// The wallets a trade pays: its `received[].beneficiary` (an unparsable one is skipped;
 /// the chain pays the signer for a zero beneficiary, which the signer check covers).
-fn trade_payees(json: &Value) -> Vec<EvmAddress> {
+pub(crate) fn trade_payees(json: &Value) -> Vec<EvmAddress> {
     json.get("received")
         .and_then(Value::as_array)
         .into_iter()

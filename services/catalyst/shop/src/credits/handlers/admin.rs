@@ -105,7 +105,15 @@ async fn grant_credits(
         .admin_grant_credits(GrantRequest {
             address: &address,
             amount: &amount,
-            kind: "grant",
+            // A recovered MANA top-up is paid for, like the claim it stands in for.
+            kind: if idempotency_key
+                .as_deref()
+                .is_some_and(|k| k.starts_with("mana-topup:"))
+            {
+                "purchase"
+            } else {
+                "grant"
+            },
             reason: reason.as_deref(),
             actor: Some(&actor),
             idempotency_key: idempotency_key.as_deref(),
