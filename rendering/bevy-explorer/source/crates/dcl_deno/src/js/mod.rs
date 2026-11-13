@@ -60,34 +60,8 @@ pub fn create_runtime(
     let blob_store = Arc::new(blob_store::CappedBlobStore::default());
     let [webidl, web, fetch_ext] = web_extensions(blob_store.clone());
 
-    let mut ops = vec![op_require(), op_log(), op_error()];
-
-    let op_sets: [Vec<deno_core::OpDecl>; 15] = [
-        op_wrappers::engine::ops(),
-        op_wrappers::restricted_actions::ops(),
-        op_wrappers::runtime::ops(),
-        fetch::ops(),
-        op_wrappers::portables::ops(),
-        op_wrappers::user_identity::ops(),
-        op_wrappers::player::ops(),
-        op_wrappers::events::ops(),
-        op_wrappers::comms::ops(),
-        op_wrappers::comms_api::ops(),
-        op_wrappers::testing::ops(),
-        op_wrappers::ethereum_controller::ops(),
-        op_wrappers::adaption_layer_helper::ops(),
-        op_wrappers::system_api::ops(super_user),
-        websocket::ops(),
-    ];
-
-    // add plugin registrations
-    let mut op_map = HashMap::new();
-    for set in op_sets {
-        for op in &set {
-            op_map.insert(op.name, *op);
-        }
-        ops.extend(set);
-    }
+    let ops = own_ops(super_user);
+    let mut op_map: HashMap<_, _> = ops.iter().map(|op| (op.name, *op)).collect();
 
     let override_sets: [Vec<deno_core::OpDecl>; 2] = [
         hardened_ops::override_ops(),
@@ -267,6 +241,31 @@ pub fn create_runtime(
     } else {
         (runtime, None)
     }
+}
+
+/// The ops this crate registers; every other op comes from deno_core, deno_webidl or deno_web.
+fn own_ops(super_user: bool) -> Vec<OpDecl> {
+    let mut ops = vec![op_require(), op_log(), op_error()];
+    for set in [
+        op_wrappers::engine::ops(),
+        op_wrappers::restricted_actions::ops(),
+        op_wrappers::runtime::ops(),
+        fetch::ops(),
+        op_wrappers::portables::ops(),
+        op_wrappers::user_identity::ops(),
+        op_wrappers::player::ops(),
+        op_wrappers::events::ops(),
+        op_wrappers::comms::ops(),
+        op_wrappers::comms_api::ops(),
+        op_wrappers::testing::ops(),
+        op_wrappers::ethereum_controller::ops(),
+        op_wrappers::adaption_layer_helper::ops(),
+        op_wrappers::system_api::ops(super_user),
+        websocket::ops(),
+    ] {
+        ops.extend(set);
+    }
+    ops
 }
 
 /// deno_webidl, deno_web and the vendored fetch scripts, with every script compiled in.

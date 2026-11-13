@@ -49,6 +49,11 @@ pub fn override_ops() -> Vec<OpDecl> {
         op_now(),
         op_time_origin(),
         op_timer_now(),
+        op_print(),
+        op_cancel_handle(),
+        op_encoding_new_decoder(),
+        op_encoding_decode(),
+        op_encoding_decode_single(),
     ]
 }
 
@@ -77,6 +82,139 @@ pub const DISABLED_OPS: &[&str] = &[
     "op_compile_function",
     // the scene's handler runs while deno_core holds borrows the handler can take again
     "op_set_handled_promise_rejection_handler",
+    // nothing the runtime loads calls these, and some grow native state per call
+    "op_add_main_module_handler",
+    "op_set_promise_hooks",
+    "op_set_format_exception_callback",
+    "op_leak_tracing_enable",
+    "op_leak_tracing_get_all",
+    "op_import_sync",
+    "op_import_sync_with_source",
+    "op_event_loop_has_more_work",
+    "op_resources",
+    "op_memory_usage",
+    "op_op_names",
+    "op_is_terminal",
+    "op_read_sync",
+    "op_write_sync",
+    "op_write",
+    "op_write_type_error",
+    "op_error_async",
+    "op_error_async_deferred",
+    // the console inspector; scenes log through init.js
+    "op_console_css_to_ansi",
+    "op_console_format_value",
+    "op_console_get_string_width",
+    "op_console_inspect",
+    "op_console_inspect_args",
+    "op_console_parse_css",
+    "op_console_parse_css_color",
+    "op_console_quote_string",
+    "op_console_strip_vt",
+    "op_preview_entries",
+    "op_get_proxy_details",
+    "op_get_promise_details",
+    "op_get_non_index_property_names",
+    "op_get_constructor_name",
+    // MessageChannel, wasm streaming, object URLs and geometry are not installed for scenes
+    "op_message_port_create_entangled",
+    "op_message_port_post_message_raw",
+    "op_message_port_recv_message",
+    "op_message_port_recv_message_sync",
+    "op_set_wasm_streaming_callback",
+    "op_abort_wasm_streaming",
+    "op_wasm_streaming_feed",
+    "op_wasm_streaming_set_url",
+    "op_blob_revoke_object_url",
+    "op_geometry_get_enable_css_parser_features",
+    "op_geometry_matrix_set_matrix_value",
+    "op_geometry_matrix_to_string",
+];
+
+/// Upstream ops scenes keep as they are, each reviewed against scene input at the locked
+/// deno_core, deno_web and deno_webidl. An upstream op on none of these lists fails
+/// `every_upstream_op_is_reviewed`, so an upgrade cannot add one unseen.
+#[cfg(test)]
+pub const REVIEWED_UPSTREAM_OPS: &[&str] = &[
+    // the core's own JS: init, the event loop, rejections and exceptions
+    "op_get_extras_binding_object",
+    "op_get_ext_import_meta_proto",
+    "op_set_captured_bootstrap",
+    "op_lazy_load_esm",
+    "op_load_ext_script",
+    "op_drain_pending_rejections",
+    "op_dispatch_exception",
+    "op_destructure_error",
+    "op_run_microtasks",
+    "op_immediate_check",
+    // these and op_timer_track grow a set per call; only a client scene reaches them raw
+    "op_ref_op",
+    "op_unref_op",
+    // timers
+    "op_timer_schedule",
+    "op_timer_track",
+    "op_timer_untrack",
+    "op_defer",
+    // resources: streams, fetch bodies, websockets; a wrong rid is a table miss
+    "op_close",
+    "op_try_close",
+    "op_read",
+    "op_write_all",
+    "op_shutdown",
+    "op_cancel_read",
+    "op_pipe",
+    // pure conversions and type checks
+    "op_void_sync",
+    "op_void_async",
+    "op_void_async_deferred",
+    "op_encode",
+    "op_decode",
+    "op_encode_binary_string",
+    "op_str_byte_length",
+    "op_is_any_array_buffer",
+    "op_is_arguments_object",
+    "op_is_array_buffer",
+    "op_is_array_buffer_view",
+    "op_is_async_function",
+    "op_is_big_int_object",
+    "op_is_boolean_object",
+    "op_is_boxed_primitive",
+    "op_is_data_view",
+    "op_is_date",
+    "op_is_generator_function",
+    "op_is_generator_object",
+    "op_is_map",
+    "op_is_map_iterator",
+    "op_is_module_namespace_object",
+    "op_is_native_error",
+    "op_is_number_object",
+    "op_is_promise",
+    "op_is_proxy",
+    "op_is_reg_exp",
+    "op_is_set",
+    "op_is_set_iterator",
+    "op_is_shared_array_buffer",
+    "op_is_string_object",
+    "op_is_symbol_object",
+    "op_is_typed_array",
+    "op_is_weak_map",
+    "op_is_weak_set",
+    "op_base64_atob",
+    "op_base64_btoa",
+    "op_base64_decode",
+    "op_base64_decode_into",
+    "op_base64_encode_from_buffer",
+    "op_base64url_decode",
+    "op_base64url_decode_into",
+    "op_base64url_encode_from_buffer",
+    "op_encoding_decode_utf8",
+    "op_encoding_decode_utf8_ascii_only",
+    "op_encoding_encode_into",
+    "op_encoding_encode_into_fallback",
+    "op_encoding_normalize_label",
+    "op_url_parse_search_params",
+    // looks up the runtime's own object URLs, of which there are none
+    "op_blob_from_object_url",
 ];
 
 #[op2(fast)]
@@ -585,6 +723,140 @@ fn op_blob_remove_part(state: &mut OpState, #[string] id: &str) -> Result<(), Op
     let id = blob_part_id(id)?;
     capped_store(state)?.remove_part(&id);
     Ok(())
+}
+
+/// Writes to the sidecar's stdout and unwraps its flush; scene output goes to the log instead.
+#[op2(fast)]
+fn op_print(#[string] msg: &str, is_err: bool) {
+    const MAX_PRINT_CHARS: usize = 4096;
+    let end = msg
+        .char_indices()
+        .nth(MAX_PRINT_CHARS)
+        .map_or(msg.len(), |(at, _)| at);
+    if is_err {
+        bevy::log::warn!("{}", &msg[..end]);
+    } else {
+        bevy::log::info!("{}", &msg[..end]);
+    }
+}
+
+// A resource per call, which only fetch closes; bounded by the table size.
+const MAX_RESOURCES: usize = 4096;
+
+#[op2(fast)]
+#[smi]
+fn op_cancel_handle(state: &mut OpState) -> Result<u32, OpError> {
+    if state.resource_table.names().count() >= MAX_RESOURCES {
+        bail!("too many open resources");
+    }
+    Ok(state.resource_table.add(deno_core::CancelHandle::new()))
+}
+
+// The originals allocate twice the input in UTF-16 outside every cap.
+const MAX_DECODE_BYTES: usize = 32 * 1024 * 1024;
+
+struct SceneTextDecoder {
+    decoder: RefCell<encoding_rs::Decoder>,
+    fatal: bool,
+}
+
+// SAFETY: holds no V8 handles, so there is nothing to trace
+unsafe impl deno_core::GarbageCollected for SceneTextDecoder {
+    fn trace(&self, _visitor: &mut v8::cppgc::Visitor) {}
+
+    fn get_name(&self) -> &'static std::ffi::CStr {
+        c"TextDecoderResource"
+    }
+}
+
+fn text_decoder(label: &str, ignore_bom: bool) -> Result<encoding_rs::Decoder, AnyError> {
+    let encoding = encoding_rs::Encoding::for_label(label.as_bytes()).ok_or_else(|| {
+        deno_error::JsErrorBox::range_error(format!(
+            "The encoding label provided ('{label}') is invalid."
+        ))
+    })?;
+    Ok(if ignore_bom {
+        encoding.new_decoder_without_bom_handling()
+    } else {
+        encoding.new_decoder_with_bom_removal()
+    })
+}
+
+fn decode<'s>(
+    scope: &mut v8::PinScope<'s, '_>,
+    decoder: &mut encoding_rs::Decoder,
+    data: &[u8],
+    fatal: bool,
+    last: bool,
+) -> Result<v8::Local<'s, v8::String>, AnyError> {
+    if data.len() > MAX_DECODE_BYTES {
+        return Err(deno_error::JsErrorBox::range_error("Value too large to decode").into());
+    }
+    let max = decoder
+        .max_utf16_buffer_length(data.len())
+        .ok_or_else(|| deno_error::JsErrorBox::range_error("Value too large to decode"))?;
+    let mut output = vec![0u16; max];
+    let written = if fatal {
+        match decoder.decode_to_utf16_without_replacement(data, &mut output, last) {
+            (encoding_rs::DecoderResult::InputEmpty, _, written) => written,
+            (encoding_rs::DecoderResult::Malformed(..), ..) => {
+                return Err(
+                    deno_error::JsErrorBox::type_error("The encoded data is not valid").into(),
+                )
+            }
+            (encoding_rs::DecoderResult::OutputFull, ..) => {
+                return Err(deno_error::JsErrorBox::range_error("Provided buffer too small").into())
+            }
+        }
+    } else {
+        match decoder.decode_to_utf16(data, &mut output, last) {
+            (encoding_rs::CoderResult::InputEmpty, _, written, _) => written,
+            (encoding_rs::CoderResult::OutputFull, ..) => {
+                return Err(deno_error::JsErrorBox::range_error("Provided buffer too small").into())
+            }
+        }
+    };
+    v8::String::new_from_two_byte(scope, &output[..written], v8::NewStringType::Normal)
+        .ok_or_else(|| deno_error::JsErrorBox::type_error("buffer exceeds maximum length").into())
+}
+
+#[op2]
+#[cppgc]
+fn op_encoding_new_decoder(
+    #[string] label: &str,
+    fatal: bool,
+    ignore_bom: bool,
+) -> Result<SceneTextDecoder, OpError> {
+    Ok(SceneTextDecoder {
+        decoder: RefCell::new(text_decoder(label, ignore_bom)?),
+        fatal,
+    })
+}
+
+#[op2]
+fn op_encoding_decode<'s>(
+    scope: &mut v8::PinScope<'s, '_>,
+    #[anybuffer] data: &[u8],
+    #[cppgc] resource: &SceneTextDecoder,
+    stream: bool,
+) -> Result<v8::Local<'s, v8::String>, OpError> {
+    let mut decoder = resource
+        .decoder
+        .try_borrow_mut()
+        .map_err(|_| anyhow::anyhow!("TextDecoder is in use"))?;
+    Ok(decode(scope, &mut decoder, data, resource.fatal, !stream)?)
+}
+
+#[op2]
+fn op_encoding_decode_single<'s>(
+    scope: &mut v8::PinScope<'s, '_>,
+    #[anybuffer] data: &[u8],
+    #[string] label: String,
+    fatal: bool,
+    ignore_bom: bool,
+) -> Result<v8::Local<'s, v8::String>, OpError> {
+    let mut decoder = text_decoder(&label, ignore_bom)?;
+    Ok(decode(scope, &mut decoder, data, fatal, true)?)
 }
 
 // Scenes share a process, so every clock they can read is coarsened against timing side

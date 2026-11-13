@@ -45,6 +45,38 @@ fn core_ops_that_abort_on_scene_input_are_disabled() {
 }
 
 #[test]
+fn text_decoders_work_and_cap_their_input() {
+    run_scene(
+        false,
+        r#"
+        if (new TextDecoder("windows-1252").decode(new Uint8Array([0x80])) !== "\u20ac") {
+            throw new Error("single decode");
+        }
+        const utf16 = new TextDecoder("utf-16le");
+        const text = utf16.decode(new Uint8Array([0x41]), { stream: true }) + utf16.decode(new Uint8Array([0]));
+        if (text !== "A") { throw new Error(`stream decode: ${text}`); }
+        let threw = false;
+        try { new TextDecoder("utf-16le", { fatal: true }).decode(new Uint8Array([0x41])); } catch (e) { threw = e instanceof TypeError; }
+        if (!threw) { throw new Error("fatal decode accepted malformed input"); }
+        "#,
+    )
+    .unwrap();
+    assert_refused(
+        r#"Deno.core.ops.op_encoding_decode_single(new Uint8Array(33 * 1024 * 1024), "latin1", false, false)"#,
+        "too large",
+    );
+}
+
+#[test]
+fn cancel_handles_are_capped_and_print_does_not_reach_stdout() {
+    assert_refused(
+        "for (let i = 0; i < 5000; i++) { Deno.core.ops.op_cancel_handle(); }",
+        "too many open resources",
+    );
+    run_scene(false, r#"Deno.core.print("x".repeat(10000), true);"#).unwrap();
+}
+
+#[test]
 fn op_panic_is_refused() {
     assert_refused(r#"Deno.core.ops.op_panic("x")"#, "not available");
 }
@@ -373,6 +405,44 @@ fn a_huge_stream_length_is_not_preallocated() {
         .block_on(runtime.run_event_loop(Default::default()))
         .unwrap();
     assert_eq!(eval_string(&mut runtime, "String(globalThis.__read)"), "3");
+}
+
+/// Every op a scene can call is ours, overridden, disabled or on the reviewed list.
+#[test]
+fn every_upstream_op_is_reviewed() {
+    use crate::js::{hardened_ops, own_ops, stream_resource};
+    let overridden: Vec<_> = hardened_ops::override_ops()
+        .into_iter()
+        .chain(stream_resource::override_ops())
+        .map(|op| op.name)
+        .collect();
+    let lists = [
+        ("overridden", overridden.as_slice()),
+        ("disabled", hardened_ops::DISABLED_OPS),
+        ("reviewed", hardened_ops::REVIEWED_UPSTREAM_OPS),
+    ];
+    let own: std::collections::HashSet<_> = own_ops(true).iter().map(|op| op.name).collect();
+    let mut registered = std::collections::HashSet::new();
+    for super_user in [false, true] {
+        let (mut runtime, _) = create_runtime(false, super_user, Default::default());
+        let names = eval_string(&mut runtime, "Object.keys(Deno.core.ops).join(',')");
+        registered.extend(names.split(',').map(str::to_owned));
+    }
+    let unreviewed: Vec<_> = registered
+        .iter()
+        .filter(|name| {
+            !own.contains(name.as_str())
+                && !lists.iter().any(|(_, list)| list.contains(&name.as_str()))
+        })
+        .collect();
+    assert!(unreviewed.is_empty(), "unreviewed upstream ops: {unreviewed:?}");
+    for (kind, list) in lists {
+        for name in list {
+            assert!(registered.contains(*name), "{kind} op {name} is not registered");
+            let on = lists.iter().filter(|(_, other)| other.contains(name)).count();
+            assert_eq!(on, 1, "{name} is on more than one list");
+        }
+    }
 }
 
 #[test]

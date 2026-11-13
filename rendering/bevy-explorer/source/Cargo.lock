@@ -4317,6 +4317,7 @@ dependencies = [
  "deno_error",
  "deno_web",
  "deno_webidl",
+ "encoding_rs",
  "fastwebsockets",
  "http 1.5.0",
  "hyper 0.14.32",
