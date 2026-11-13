@@ -95,6 +95,15 @@ impl MailboxSender {
         self.0.closed.is_cancelled()
     }
 
+    pub(super) fn while_open(&self, apply: impl FnOnce()) -> bool {
+        let _pending = self.0.pending.lock();
+        if self.is_closed() {
+            return false;
+        }
+        apply();
+        true
+    }
+
     pub(super) fn close(&self) {
         self.0.close();
     }
