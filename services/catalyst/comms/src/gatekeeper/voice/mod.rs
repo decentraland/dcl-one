@@ -192,22 +192,22 @@ pub struct PrivateVoiceChatBody {
     pub user_addresses: Vec<String>,
 }
 
-/// The credentials of a private call: one token per participant, both sides
-/// checked against the platform ban first, then the call row opened with
-/// both `not_connected`. `room_id` is the call id (`social.private_voice_chats`
-/// keys it as a uuid, so the friends module's ids are the wire's).
 pub const DENY_LISTED_MSG: &str = "Access denied, deny-listed wallet.";
 
 /// Voice mints refuse a deny-listed participant like the other mint paths.
 async fn refuse_deny_listed(state: &CommsState, addresses: &[Address]) -> Result<(), ApiError> {
     for address in addresses {
         if state.deny_list.is_denied(address.as_str()).await {
-            return Err(forbidden(DENY_LISTED_MSG));
+            return Err(super::errors::unauthorized(DENY_LISTED_MSG));
         }
     }
     Ok(())
 }
 
+/// The credentials of a private call: one token per participant, both sides
+/// checked against the platform ban first, then the call row opened with
+/// both `not_connected`. `room_id` is the call id (`social.private_voice_chats`
+/// keys it as a uuid, so the friends module's ids are the wire's).
 pub async fn get_private_voice_chat_room_credentials(
     state: &CommsState,
     room_id: &str,

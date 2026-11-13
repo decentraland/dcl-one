@@ -1149,6 +1149,37 @@ mod stream_access {
             (status, body["error"].as_str()),
             (StatusCode::FORBIDDEN, Some(NOT_AUTHORIZED_TO_STREAM_MSG))
         );
+        // A redeploy the catalogue has not caught up with: no place is based on
+        // the new scene's base, so another scene's admins are never lent to it.
+        let moved_parcel = format!("{},{}", x, if y < 0 { y + 151 } else { y - 151 });
+        let moved_scene = format!("bafkreimoved{}", Uuid::new_v4().simple());
+        deploy_scene(&pool, &moved_scene, &moved_parcel).await;
+        let old_place = Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO explore.place (id, base_position, raw) VALUES ($1, $2, $3::jsonb)",
+        )
+        .bind(&old_place)
+        .bind(&victim_parcel)
+        .bind(serde_json::json!({ "world": false, "positions": [moved_parcel, victim_parcel] }))
+        .execute(&pool)
+        .await
+        .unwrap();
+        state
+            .moderation
+            .add_admin(&old_place, &admin, &admin)
+            .await
+            .unwrap();
+        let moved = serde_json::json!({ "signer": SCENE_SIGNER, "realmName": "main", "parcel": moved_parcel, "sceneId": moved_scene }).to_string();
+        let (status, body) = call(&app, &admin_key, "POST", &moved).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+        let moved_rows: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM social.scene_stream_access WHERE room_id = $1",
+        )
+        .bind(format!("scene:main:{moved_scene}"))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(moved_rows, 0);
 
         let device = format!("stream-device-{}", Uuid::new_v4().simple());
         state

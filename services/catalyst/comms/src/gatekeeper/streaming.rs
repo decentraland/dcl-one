@@ -2,9 +2,10 @@
 //! ingress credential of a place's stream. The signer must own or
 //! administer the place the signed metadata stands on. List, add and reset
 //! require the signed scene to be the current deployment on its parcel and
-//! authorize against that deployment's footprint; remove needs only the
-//! place (a world by its realm name, a Genesis place by its parcel), so a
-//! key outlives no redeploy. List, add and reset are refused to
+//! authorize against that deployment's footprint and the place based on its
+//! base parcel; remove needs only the place (a world by its realm name, a
+//! Genesis place by its parcel), so a key can still be revoked after a
+//! redeploy. List, add and reset are refused to
 //! a platform-banned wallet BEFORE that check, because LiveKit honours the
 //! key without re-checking the wallet, and remove stays ungated (upstream's
 //! `*-scene-stream-access-handler.ts`). One active row per place in
@@ -151,6 +152,7 @@ pub async fn scene_stream_access(
             &state.pool,
             world.as_ref(),
             parcel.as_deref().unwrap_or_default(),
+            false,
         )
         .await?
         .ok_or_else(|| ApiError::not_found("place not found for this scene"))?;
@@ -162,7 +164,7 @@ pub async fn scene_stream_access(
         let bound = Context::resolve(&state, &sf.metadata).await?;
         let world = bound.world_scene.as_ref().map(|(world, _)| world);
         let base = bound.footprint.base_position.clone().unwrap_or_default();
-        let place_id = resolve_place_id(&state.pool, world, &base)
+        let place_id = resolve_place_id(&state.pool, world, &base, true)
             .await?
             .ok_or_else(|| ApiError::not_found("place not found for this scene"))?;
         let place = PlaceLookup::resolved(&state, &place_id, bound.footprint);
@@ -237,11 +239,14 @@ async fn refuse_if_platform_banned(
 }
 
 /// The place the bound scene stands on: its world (published here or
-/// mirrored) by name, else the Genesis place holding `parcel`.
+/// mirrored) by name, else the Genesis place holding `parcel`. With
+/// `based_there` only a place based on `parcel` counts, so a catalogue that
+/// has not caught up with a redeploy never lends another scene's admins.
 async fn resolve_place_id(
     pool: &PgPool,
     world: Option<&WorldName>,
     parcel: &str,
+    based_there: bool,
 ) -> Result<Option<String>, ApiError> {
     if let Some(world) = world {
         return Ok(sqlx::query_scalar(
@@ -258,9 +263,11 @@ async fn resolve_place_id(
     Ok(sqlx::query_scalar(
         "SELECT id FROM explore.place WHERE NOT world AND NOT disabled \
          AND raw->'positions' @> jsonb_build_array($1::text) \
+         AND (NOT $2 OR base_position = $1) \
          ORDER BY base_position = $1 DESC, deployed_at DESC NULLS LAST, id LIMIT 1",
     )
     .bind(parcel)
+    .bind(based_there)
     .fetch_optional(pool)
     .await?)
 }

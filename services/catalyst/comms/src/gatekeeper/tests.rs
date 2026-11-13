@@ -3162,7 +3162,7 @@ async fn deny_listed_wallet_is_refused_by_every_world_mint_and_private_messages(
     .unwrap_err();
     assert_eq!(
         (error.code, error.message.as_str()),
-        (403, voice::DENY_LISTED_MSG)
+        (401, voice::DENY_LISTED_MSG)
     );
     server.abort();
 }
@@ -3222,6 +3222,49 @@ async fn a_refused_scene_adapter_retry_keeps_the_recorded_banned_device() {
     let recorded: Option<String> =
         sqlx::query_scalar("SELECT device_id FROM social.player_connections WHERE address = $1")
             .bind(&me)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(recorded.as_deref(), Some(device.as_str()));
+
+    // The private-messages token keeps the same rule.
+    let other_key = random_key();
+    let other = Address::parse(&address_of(&other_key)).unwrap();
+    state
+        .moderation
+        .upsert_connection(UpsertPlayerConnection {
+            address: other.clone(),
+            ip_address: None,
+            device_id: Some(device.clone()),
+        })
+        .await
+        .unwrap();
+    let path = "/private-messages/token";
+    let headers = signed(
+        &other_key,
+        "get",
+        path,
+        &meta("main", "bafkreiunused", Some("fresh-device")),
+    )
+    .await;
+    for attempt in 0..2 {
+        let err = voice::private_messages_token(
+            State(state.clone()),
+            at(path),
+            headers.clone(),
+            writes_on(),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(
+            (err.code, err.message.as_str()),
+            (403, PLATFORM_BANNED_MSG),
+            "attempt {attempt}"
+        );
+    }
+    let recorded: Option<String> =
+        sqlx::query_scalar("SELECT device_id FROM social.player_connections WHERE address = $1")
+            .bind(&other)
             .fetch_one(&pool)
             .await
             .unwrap();
