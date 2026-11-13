@@ -55,7 +55,8 @@ thread_local! {
 }
 
 // a scene can trigger the caught decode panic at will, so it must not reach the log; any
-// other panic still does
+// other panic still does. Matching on the source path and a later non-chaining set_hook
+// only make the log noisy again.
 fn quiet_decode_panics() {
     static HOOK: Once = Once::new();
     HOOK.call_once(|| {
@@ -226,6 +227,10 @@ fn rewrap_buffer<'s>(
     let view = v8::Local::<v8::ArrayBufferView>::try_from(value).ok()?;
     let buffer = view.buffer(scope).filter(|buffer| !buffer.was_detached())?;
     let offset = view.byte_offset();
+    // a shrunk resizable buffer can leave the view out of bounds
+    if offset + view.byte_length() > buffer.byte_length() {
+        return None;
+    }
     macro_rules! same_type {
         ($($ty:ident),*) => {$(
             if let Ok(typed) = v8::Local::<v8::$ty>::try_from(value) {

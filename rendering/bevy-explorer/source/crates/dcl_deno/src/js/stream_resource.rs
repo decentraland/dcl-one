@@ -40,6 +40,9 @@ const MAX_BUFFERED_BYTES: usize = 64 * 1024;
 const MAX_OPEN_STREAMS: usize = 256;
 // a stream's producer is scene code, so reading one to its end stops here
 const MAX_READ_ALL_BYTES: usize = 64 * 1024 * 1024;
+// Bytes one stream may carry, so `op_read_all` cannot grow native memory without bound.
+const SERVER_MAX_STREAM_BYTES: u64 = super::fetch::SERVER_MAX_BODY_BYTES;
+const CLIENT_MAX_STREAM_BYTES: u64 = 512 * 1024 * 1024;
 
 #[derive(Default)]
 struct Channel {
@@ -151,16 +154,16 @@ struct OpenStreams(Rc<Cell<usize>>);
 struct OpenStream(OpenStreams);
 
 impl OpenStream {
-    fn take(state: &mut OpState) -> Result<Self, AnyError> {
+    fn take(state: &mut OpState, count: usize) -> Result<Vec<Self>, AnyError> {
         if !state.has::<OpenStreams>() {
             state.put(OpenStreams::default());
         }
         let open = state.borrow::<OpenStreams>().clone();
-        if open.0.get() >= MAX_OPEN_STREAMS {
+        if open.0.get() + count > MAX_OPEN_STREAMS {
             return Err(type_error("too many open streams"));
         }
-        open.0.set(open.0.get() + 1);
-        Ok(Self(open))
+        open.0.set(open.0.get() + count);
+        Ok((0..count).map(|_| Self(open.clone())).collect())
     }
 }
 
@@ -177,19 +180,34 @@ struct ReadableStreamResource {
     cancel_handle: CancelHandle,
     completion: Rc<RefCell<Completion>>,
     length: Option<u64>,
+    read_bytes: Cell<u64>,
+    max_bytes: u64,
     _open: OpenStream,
+    // reserved up front so a sink can always be taken: deno_web never closes a stream
+    // whose sink it failed to get
+    sink_slot: RefCell<Option<OpenStream>>,
 }
 
 impl ReadableStreamResource {
     fn add(state: &mut OpState, length: Option<u64>) -> Result<ResourceId, AnyError> {
-        let open = OpenStream::take(state)?;
+        let mut slots = OpenStream::take(state, 2)?;
+        let is_server = state
+            .try_borrow::<dcl_types::interface::crdt_context::CrdtContext>()
+            .is_some_and(|context| context.is_server);
         Ok(state.resource_table.add(Self {
             channel: Default::default(),
             read_queue: Default::default(),
             cancel_handle: Default::default(),
             completion: Default::default(),
             length,
-            _open: open,
+            read_bytes: Cell::new(0),
+            max_bytes: if is_server {
+                SERVER_MAX_STREAM_BYTES
+            } else {
+                CLIENT_MAX_STREAM_BYTES
+            },
+            sink_slot: RefCell::new(slots.pop()),
+            _open: slots.pop().expect("two slots taken"),
         }))
     }
 
@@ -200,7 +218,17 @@ impl ReadableStreamResource {
             .or_cancel(cancel_handle)
             .await
             .map_err(JsErrorBox::from_err)?;
-        self.channel.borrow_mut().read(limit)
+        let chunk = self.channel.borrow_mut().read(limit)?;
+        let read = self.read_bytes.get() + chunk.len() as u64;
+        if read > self.max_bytes {
+            self.close_channel();
+            return Err(JsErrorBox::type_error(format!(
+                "stream exceeds {} bytes",
+                self.max_bytes
+            )));
+        }
+        self.read_bytes.set(read);
+        Ok(chunk)
     }
 
     fn close_channel(&self) {
@@ -231,9 +259,9 @@ impl Resource for ReadableStreamResource {
         self.close_channel();
     }
 
-    // only an upper bound: an exact hint makes `op_read_all` preallocate the whole length
+    // only a small upper bound: `op_read_all` preallocates from it
     fn size_hint(&self) -> (u64, Option<u64>) {
-        (0, self.length)
+        (0, self.length.map(|l| l.min(MAX_BUFFERED_BYTES as u64)))
     }
 }
 
@@ -290,12 +318,13 @@ fn op_readable_stream_resource_get_sink(
     state: &mut OpState,
     #[smi] rid: ResourceId,
 ) -> Result<ResourceId, OpError> {
-    let channel = state
-        .resource_table
-        .get::<ReadableStreamResource>(rid)?
-        .channel
-        .clone();
-    let open = OpenStream::take(state)?;
+    let resource = state.resource_table.get::<ReadableStreamResource>(rid)?;
+    let channel = resource.channel.clone();
+    let reserved = resource.sink_slot.borrow_mut().take();
+    let open = match reserved {
+        Some(open) => open,
+        None => OpenStream::take(state, 1)?.remove(0),
+    };
     Ok(state.resource_table.add(ReadableStreamSink {
         channel,
         _open: open,
