@@ -833,15 +833,46 @@ fn emits_emote_start(events: &[PulseEvent]) -> bool {
 }
 
 /// The reply to a resync and the regular deltas travel on different channels, so one can arrive
-/// leading on from a state we have already passed. That is nothing to ask the server about.
+/// leading on from a state we have already passed while advertising a newer destination.
 #[test]
-fn a_delta_behind_the_baseline_is_dropped_without_a_resync() {
+fn a_delta_behind_the_baseline_requests_its_newer_destination_without_applying_its_mask() {
     let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
     decoder.handle(server_msg(joined(5, (1.0, 2.0, 3.0), 0)));
 
     // new_seq 6 is ahead of our last_seq 5, but baseline_seq 4 is behind it.
     let events = decoder.handle(delta(SUBJECT, 4, 6, 1500, 5.0));
-    assert!(events.is_empty(), "{events:?}");
+    assert!(is_one_resync(&events, SUBJECT, 5), "{events:?}");
+    assert_eq!(decoder.subjects[&SUBJECT].last_seq, 5);
+    assert_eq!(decoder.subjects[&SUBJECT].latest_pending_seq, 6);
+}
+
+#[test]
+fn a_late_resync_delta_with_an_old_base_recovers_after_a_full_state_closed_the_gap() {
+    let now = Instant::now();
+    let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
+    decoder.handle_at(server_msg(joined(5, (1.0, 2.0, 3.0), 0)), now);
+    decoder.handle_at(delta(SUBJECT, 6, 7, 1500, 5.0), now);
+    decoder.handle_at(player_state_full(8, 1800, 4.0), now);
+    assert!(decoder.pending_resync.is_empty());
+
+    let events = decoder.handle_at(delta(SUBJECT, 5, 9, 1900, 9.0), now);
+    assert!(is_one_resync(&events, SUBJECT, 8), "{events:?}");
+    assert_eq!(decoder.subjects[&SUBJECT].last_seq, 8);
+    assert!(decoder.subjects[&SUBJECT].pending_delta.is_none());
+    assert!(is_one_resync(
+        &decoder.retry_resyncs(now + Duration::from_secs(1)),
+        SUBJECT,
+        8
+    ));
+    let events = decoder.handle_at(
+        delta(SUBJECT, 8, 9, 2000, 9.0),
+        now + Duration::from_secs(1),
+    );
+    approx(only_movement(events).position_x, 169.0);
+    assert!(decoder.pending_resync.is_empty());
+    assert!(decoder
+        .retry_resyncs(now + Duration::from_secs(60))
+        .is_empty());
 }
 
 /// A gap shows in every delta after it, so one resync stays in flight per subject until something

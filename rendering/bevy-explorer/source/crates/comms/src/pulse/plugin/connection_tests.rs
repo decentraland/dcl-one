@@ -1107,6 +1107,88 @@ fn begin_resync_gap(session: &mut PulseSession, now: Instant) -> pulse::ResyncRe
 }
 
 #[test]
+fn partial_queue_admission_rotates_retries_while_an_admitted_subject_never_answers() {
+    let (mut session, _) = session_with_link(PulseRole::Listener(ListenerRole::default()));
+    let (link, mut driver) = transport::pulse_channels(1);
+    session.link = Some(link);
+    session.state = Connection::Established;
+    let start = Instant::now();
+    // Exercise wrap-around as well as real bounded-channel admission, without relying on
+    // HashSet iteration order. Each subject gets its own wallet and outstanding gap.
+    session.decoder.next_resync_order = u64::MAX - 2;
+    for id in 42..45 {
+        let wallet = format!("0x{id:040x}");
+        session.decoder.handle_at(
+            pulse::ServerMessage {
+                message: Some(joined(id, &wallet)),
+            },
+            start,
+        );
+        let events = session.decoder.handle_at(
+            pulse::ServerMessage {
+                message: Some(pulse::server_message::Message::PlayerStateDelta(
+                    pulse::PlayerStateDeltaTier0 {
+                        subject_id: id,
+                        baseline_seq: 1,
+                        new_seq: 2,
+                        ..default()
+                    },
+                )),
+            },
+            start,
+        );
+        for event in events {
+            if let PulseEvent::Resync(request) = event {
+                send_resync(
+                    session.link.as_mut(),
+                    &mut session.resyncs,
+                    &mut session.decoder,
+                    request,
+                    0.0,
+                );
+            }
+        }
+    }
+    driver.outbound.try_recv().unwrap(); // Only subject 42 fit initially.
+    let mut admitted = Vec::new();
+    for seconds in [1, 3, 7, 12, 17, 22] {
+        let now = start + Duration::from_secs(seconds);
+        retry_resyncs(&mut session, now, 0.0);
+        let frame = driver.outbound.try_recv().unwrap();
+        let Some(pulse::client_message::Message::Resync(request)) =
+            pulse::ClientMessage::decode(frame.bytes.as_slice())
+                .unwrap()
+                .message
+        else {
+            panic!("expected a resync")
+        };
+        admitted.push(request.subject_id);
+        // Subject 42 never responds. Others recover and leave the retry set.
+        if request.subject_id != 42 {
+            session.decoder.handle_at(
+                pulse::ServerMessage {
+                    message: Some(pulse::server_message::Message::PlayerStateFull(
+                        pulse::PlayerStateFull {
+                            subject_id: request.subject_id,
+                            sequence: 2,
+                            server_tick: 2000,
+                            state: Some(pose()),
+                        },
+                    )),
+                },
+                now,
+            );
+        }
+        retry_resyncs(&mut session, now, 0.0);
+        assert!(driver.outbound.try_recv().is_err());
+    }
+    assert_eq!(&admitted[..3], &[42, 43, 44]);
+    assert_eq!(session.decoder.pending_resync.len(), 1);
+    assert!(session.decoder.pending_resync.contains(&42));
+    assert_eq!(session.resyncs[0], (0, 7));
+}
+
+#[test]
 fn a_full_send_queue_recovers_through_the_pump_without_inbound_or_game_time_progress() {
     let mut harness = Harness::player(Connection::Established);
     let (link, driver) = transport::pulse_channels(1);
@@ -1125,6 +1207,7 @@ fn a_full_send_queue_recovers_through_the_pump_without_inbound_or_game_time_prog
         assert!(!send_resync(
             session.link.as_mut(),
             &mut session.resyncs,
+            &mut session.decoder,
             request,
             0.0
         ));
@@ -1181,6 +1264,7 @@ fn an_unanswered_resync_retries_over_the_link_only_when_due() {
     assert!(send_resync(
         session.link.as_mut(),
         &mut session.resyncs,
+        &mut session.decoder,
         request,
         0.0
     ));

@@ -253,6 +253,8 @@ const RESYNC_RETRY_MAX: Duration = Duration::from_secs(5);
 struct ResyncRetry {
     retry_at: Instant,
     delay: Duration,
+    /// Failed admissions keep their place; a successful enqueue moves to the back.
+    admission_order: u64,
 }
 
 impl Subject {
@@ -463,6 +465,7 @@ pub struct PulseDecoder {
     /// its subject.
     pending_resync: HashSet<u32>,
     resync_now: Instant,
+    next_resync_order: u64,
     /// Server ticks are `u32` milliseconds since the Pulse server started, so they roll over after
     /// ~49.7 days of server uptime. The newest raw tick seen, and the number of milliseconds to
     /// add to it (a multiple of 2^32) to keep the emitted timestamps monotonic across rollovers.
@@ -478,6 +481,7 @@ impl PulseDecoder {
             wallets: HashMap::new(),
             pending_resync: HashSet::new(),
             resync_now: Instant::now(),
+            next_resync_order: 0,
             newest_tick: None,
             tick_epoch_ms: 0,
         }
@@ -802,10 +806,12 @@ impl PulseDecoder {
             let known_seq = subject.last_seq;
             return self.request_resync(subject_id, known_seq);
         }
-        // Behind us, it leads on from a state we are already past — the reply to a resync that a
-        // later state has since answered. There is nothing to ask for.
+        // A delayed reply may start behind us yet advertise a newer destination. Its mask is
+        // relative to the old baseline, so ask again from our current state without applying it.
         if delta.baseline_seq < subject.last_seq {
-            return Vec::new();
+            subject.latest_pending_seq = subject.latest_pending_seq.max(delta.new_seq);
+            let known_seq = subject.last_seq;
+            return self.request_resync(delta.subject_id, known_seq);
         }
 
         // Back on track, whether this is the next in line or the reply to the resync.
@@ -826,6 +832,18 @@ impl PulseDecoder {
         }];
         events.extend(self.resync_buffered_delta(delta.subject_id));
         events
+    }
+
+    /// Only an admitted request yields its place to subjects whose outbound queue was full.
+    pub fn resync_sent(&mut self, subject_id: u32) {
+        if let Some(retry) = self
+            .subjects
+            .get_mut(&subject_id)
+            .and_then(|subject| subject.resync_retry.as_mut())
+        {
+            retry.admission_order = self.next_resync_order;
+            self.next_resync_order = self.next_resync_order.wrapping_add(1);
+        }
     }
 
     /// A response can advance the baseline without reaching the latest observed destination.
@@ -867,6 +885,22 @@ impl PulseDecoder {
             }
             true
         });
+        // Age is wrapping so crossing the ordinal boundary preserves admission order. At most
+        // the live subjects have an outstanding place, rather than a queue of retry attempts.
+        events.sort_by_key(|event| {
+            let PulseEvent::Resync(request) = event else {
+                unreachable!()
+            };
+            std::cmp::Reverse(
+                self.next_resync_order.wrapping_sub(
+                    self.subjects[&request.subject_id]
+                        .resync_retry
+                        .as_ref()
+                        .unwrap()
+                        .admission_order,
+                ),
+            )
+        });
         events
     }
 
@@ -882,7 +916,9 @@ impl PulseDecoder {
         subject.resync_retry = Some(ResyncRetry {
             retry_at: self.resync_now + RESYNC_RETRY_INITIAL,
             delay: RESYNC_RETRY_INITIAL,
+            admission_order: self.next_resync_order,
         });
+        self.next_resync_order = self.next_resync_order.wrapping_add(1);
         vec![PulseEvent::Resync(pulse::ResyncRequest {
             subject_id,
             known_seq,
