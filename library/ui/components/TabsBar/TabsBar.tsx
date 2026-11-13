@@ -1,4 +1,5 @@
 import { useLayoutEffect, useRef, type AnchorHTMLAttributes, type ComponentType, type ReactNode } from 'react'
+import { isPlainLinkClick } from '../../link.helpers'
 import { Tabs } from '../Tabs/Tabs'
 import styles from './TabsBar.module.css'
 
@@ -106,15 +107,7 @@ export function TabsBar({
         <ul ref={listRef} className={styles.list}>
           {items.map((item) => {
             const select: AnchorHTMLAttributes<HTMLAnchorElement>['onClick'] = (event) => {
-              if (
-                !event.defaultPrevented &&
-                event.button === 0 &&
-                !event.ctrlKey &&
-                !event.metaKey &&
-                !event.altKey &&
-                !event.shiftKey
-              )
-                onSelect?.(item.id)
+              if (isPlainLinkClick(event)) onSelect?.(item.id)
             }
             return (
               <li
