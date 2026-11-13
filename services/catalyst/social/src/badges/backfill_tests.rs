@@ -195,6 +195,18 @@ async fn badge_and_body_checks_follow_upstream() {
 }
 
 #[tokio::test]
+async fn the_backfill_takes_bodies_over_the_shared_limit() {
+    let Some(state) = state().await else {
+        return;
+    };
+    let bearer = format!("Bearer {TOKEN}");
+    let body = json!({ "registries": [], "pad": "x".repeat(2 * super::MAX_BODY_BYTES) });
+    let (status, body) = backfill(&state, "traveler", Some(&bearer), &body.to_string()).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["data"]["userProgressesMerged"], json!(0));
+}
+
+#[tokio::test]
 async fn a_one_time_badge_keeps_its_first_completion_and_never_notifies() {
     let Some(state) = state().await else {
         return;

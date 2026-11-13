@@ -59,6 +59,8 @@ pub struct BadgeConfig {
     pub window: Interval,
     pub stay: bool,
     pub required_seconds: i64,
+    /// Why the catalog row is not one presence may write, if it is not.
+    pub invalid: Option<&'static str>,
 }
 
 type ConfigRow = (
@@ -70,31 +72,83 @@ type ConfigRow = (
     NaiveDateTime,
     String,
     i32,
+    bool,
+    Option<i32>,
 );
 
 const SELECT_BADGES: &str = "SELECT p.badge_id, p.location_kind, p.parcel, p.world_name, \
-       p.window_start, p.window_end, p.mode, p.required_seconds \
+       p.window_start, p.window_end, p.mode, p.required_seconds, d.is_tier, d.criteria_steps \
      FROM social.presence_badges p \
      JOIN social.badge_definitions d ON d.id = p.badge_id \
       AND d.published_at IS NOT NULL AND d.archived_at IS NULL";
 
+/// Upstream's catalog rule (`badge-catalog.ts`): presence writes the whole
+/// progress of a single badge whose steps are its rule's (the seconds of a
+/// stay, 1 for a visit), never one an evaluator or an import of its own writes.
+fn invalid_reason(
+    badge_id: &str,
+    is_tier: bool,
+    criteria_steps: Option<i32>,
+    stay: bool,
+    required_seconds: i32,
+) -> Option<&'static str> {
+    use crate::badges::backfill::{Kind, kind};
+    // Unlike "can be granted at all", a one-time import is not an owner: presence replaces it.
+    let owned = crate::badges::evaluators::EVALUATED.contains(&badge_id)
+        || kind(badge_id).is_some_and(|k| !matches!(k, Kind::OneTime | Kind::Unsupported));
+    if owned {
+        Some("evaluated elsewhere")
+    } else if is_tier {
+        Some("tiered")
+    } else if criteria_steps.unwrap_or(1) != if stay { required_seconds } else { 1 } {
+        Some("steps differ from its rule")
+    } else {
+        None
+    }
+}
+
 fn config(
-    (badge_id, kind, parcel, world, start, end, mode, seconds): ConfigRow,
+    (badge_id, kind, parcel, world, start, end, mode, seconds, is_tier, criteria_steps): ConfigRow,
 ) -> Option<BadgeConfig> {
     let location = match kind.as_str() {
         "scene" => Location::Scene(parcel?.trim().to_lowercase()),
         _ => Location::World(world?.to_lowercase()),
     };
+    let stay = mode == "stay";
     Some(BadgeConfig {
+        invalid: invalid_reason(&badge_id, is_tier, criteria_steps, stay, seconds),
         badge_id,
         location,
         window: (
             start.and_utc().timestamp_millis(),
             end.and_utc().timestamp_millis(),
         ),
-        stay: mode == "stay",
+        stay,
         required_seconds: i64::from(seconds),
     })
+}
+
+/// The invalid badges already logged, with the reason logged.
+static WARNED_INVALID: std::sync::LazyLock<std::sync::Mutex<HashMap<String, &'static str>>> =
+    std::sync::LazyLock::new(Default::default);
+
+/// False, and counted, for a badge whose catalog row presence may not write;
+/// logged once per badge and reason.
+fn writable(badge: &BadgeConfig, out: &mut EventOutcome) -> bool {
+    let mut warned = WARNED_INVALID.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(reason) = badge.invalid else {
+        warned.remove(&badge.badge_id);
+        return true;
+    };
+    if warned.insert(badge.badge_id.clone(), reason) != Some(reason) {
+        tracing::warn!(
+            badge_id = badge.badge_id,
+            reason,
+            "presence badge has an invalid catalog row; not counted"
+        );
+    }
+    out.outcomes.push("badge_invalid");
+    false
 }
 
 /// The awardable badges whose window contains `at`, or starts within
@@ -298,7 +352,7 @@ impl Flow<'_> {
         let mut place = Place::new(event);
         let mut matching = Vec::new();
         for badge in active_badges(conn, at, self.settings.lookahead_ms).await? {
-            if place.matches(conn, &badge).await? {
+            if place.matches(conn, &badge).await? && writable(&badge, out) {
                 matching.push(badge);
             }
         }
@@ -479,7 +533,7 @@ impl Flow<'_> {
         let mut place = Place::new(event);
         let mut matching = Vec::new();
         for badge in active_badges(conn, at - max_age, max_age).await? {
-            if place.matches(conn, &badge).await? {
+            if place.matches(conn, &badge).await? && writable(&badge, out) {
                 matching.push(badge);
             }
         }
@@ -575,8 +629,8 @@ impl Flow<'_> {
         let badges = badges_by_id(conn, &ids).await?;
         let mut ended = false;
         for visit in visits {
-            let Some(badge) = badges.get(&visit.badge_id) else {
-                // archived or unpublished while the visit was open: nothing to count it for
+            let Some(badge) = badges.get(&visit.badge_id).filter(|b| writable(b, out)) else {
+                // archived, unpublished or made invalid while the visit was open
                 drop_visit(conn, self, &visit).await?;
                 continue;
             };
@@ -786,7 +840,7 @@ impl Flow<'_> {
             badge_id,
             &ApplyOptions {
                 at: naive(at),
-                notify: Some(self.asset_base),
+                notify: self.settings.grant_notifications.then_some(self.asset_base),
                 granted_by: None,
             },
             update,

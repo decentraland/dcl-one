@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { releaseHarness } from './release-harness'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { findBrowser, openSession } from '../figma/review/scripts/capture-browser.mjs'
 
 let server: Server
@@ -142,6 +142,10 @@ async function prepareHarness() {
   session = await startup
 }
 
+afterEach(async () => {
+  if (session) await session.send('Emulation.setTouchEmulationEnabled', { enabled: false })
+})
+
 afterAll(async () => {
   startupController.abort(new Error('NavBar composition fixture disposed'))
   await preparation?.catch(() => undefined)
@@ -235,15 +239,16 @@ describe('when a public NavBar composes app-owned controls in Chromium', () => {
       expect(await evaluate('document.activeElement.getAttribute("aria-label")')).toBe('Open menu')
     }, 30_000)
   }
-  for (const width of [360, 390, 1440]) {
+  for (const width of [360, 390, 414, 768, 1023, 1024, 1440]) {
     for (const surface of ['solid', 'overlay']) {
       it(`should preserve the production surface and viewport overlays at ${width}px on ${surface}`, async () => {
         await session.send('Emulation.setDeviceMetricsOverride', {
           width,
           height: 844,
           deviceScaleFactor: 1,
-          mobile: false
+          mobile: width < 1024
         })
+        await session.send('Emulation.setTouchEmulationEnabled', { enabled: width < 1024 })
         const errorStart = session.runtimeErrors.length
         await session.navigate(origin + '?surface-proof&surface=' + surface)
         await evaluate(
@@ -290,13 +295,12 @@ describe('when a public NavBar composes app-owned controls in Chromium', () => {
             `(()=>{const d=document.querySelector('[role=dialog]'),layer=d.parentElement,r=d.getBoundingClientRect(),l=layer.getBoundingClientRect();return{dialog:{x:r.x,y:r.y,width:r.width,height:r.height},layer:{x:l.x,y:l.y,width:l.width,height:l.height},background:getComputedStyle(d).backgroundColor,bottomInside:d.contains(document.elementFromPoint(innerWidth-1,innerHeight-1)),bottomBackdrop:document.elementFromPoint(1,innerHeight-1)===layer.firstElementChild}})()`
           )
           expect(measure).toMatchObject({
-            dialog: { x: width - 360, y: 0, width: 360, height: 844 },
+            dialog: { x: 0, y: 0, width, height: 844 },
             layer: { x: 0, y: 0, width, height: 844 },
-            bottomInside: true
+            bottomInside: true,
+            bottomBackdrop: false
           })
           expect((measure as { background: string }).background).toMatch(/^rgb\(/)
-          if (width > 360)
-            expect((measure as { bottomBackdrop: boolean }).bottomBackdrop).toBe(true)
           await key('Tab', true)
           expect(await evaluate('document.activeElement.id')).toBe('account-control')
           await key('Tab')
@@ -314,7 +318,19 @@ describe('when a public NavBar composes app-owned controls in Chromium', () => {
           expect(await evaluate('document.activeElement.getAttribute("aria-label")')).toBe(
             'Open menu'
           )
+          await click('button[aria-label="Open menu"]')
+          await click('button[aria-label="Close menu"]')
+          expect(await evaluate('!!document.querySelector("[role=dialog]")')).toBe(false)
+          expect(await evaluate('document.activeElement.getAttribute("aria-label")')).toBe(
+            'Open menu'
+          )
         } else {
+          expect(
+            await evaluate(
+              `document.querySelector('button[aria-label="Open menu"]').getClientRects().length`
+            )
+          ).toBe(0)
+          expect(await evaluate('!!document.querySelector("[role=dialog]")')).toBe(false)
           const trigger = 'button[aria-controls]:not([aria-label])'
           await click(trigger)
           const popup = await evaluate(
@@ -354,6 +370,7 @@ describe('when a public NavBar composes app-owned controls in Chromium', () => {
   for (const width of [991, 992, 1023, 1024, 1440]) {
     for (const surface of ['solid', 'overlay']) {
       it(`should keep account geometry stable across balance states at ${width}px on ${surface}`, async () => {
+        expect(await evaluate('navigator.maxTouchPoints')).toBe(0)
         await session.send('Emulation.setDeviceMetricsOverride', {
           width,
           height: 900,

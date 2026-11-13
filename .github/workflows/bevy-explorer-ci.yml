@@ -838,16 +838,6 @@ jobs:
       - name: Report a failed PR preview
         if: github.event_name == 'pull_request' && (steps.cdn.outcome == 'failure' || steps.publish.outcome == 'failure')
         run: echo '::warning::The PR preview did not publish; see the Upload to the CDN and Publish step logs.'
-      - name: Wait for npm to serve the PR preview
-        if: github.event_name == 'pull_request' && steps.publish.outcome == 'success'
-        env:
-          VERSION: ${{ steps.web.outputs.version }}
-        run: |
-          for _ in $(seq 60); do
-            npm view "@dcl-regenesislabs/bevy-explorer-web@$VERSION" version --prefer-online >/dev/null 2>&1 && exit 0
-            sleep 15
-          done
-          echo '::warning::npm does not serve the PR preview yet; the CI status comment may omit its link.'
     # A PR preview never fails the run.
     continue-on-error: ${{ github.event_name == 'pull_request' }}
     timeout-minutes: 60
@@ -867,6 +857,10 @@ jobs:
       group: bevy-explorer-cdn-rollout
       cancel-in-progress: false
     steps:
+      # cdn-deploy needs Node 22 or newer on PATH.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
       - uses: decentraland/actions/cdn-deploy@c80272b77e7aacba162024f7f4b9c1b0d701f012 # cdn-deploy-v1.0.2
         with:
           package-name: '@dcl-regenesislabs/bevy-explorer-web'

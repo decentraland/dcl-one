@@ -133,7 +133,7 @@ Common notes:
 
 | # | method | upstream path (upstream `routes.ts`) | dcl-one handler (`worlds/src/core/permissions.rs`) | status |
 |---|---|---|---|---|
-| 1 | GET | `/world/:world_name/permissions` (`:255`) | `get_permissions` | GAP |
+| 1 | GET | `/world/:world_name/permissions` (`:255`) | `get_permissions` | DIVERGENT |
 | 2 | POST | `/world/:world_name/permissions/:permission_name` (`:256-260`, legacy-payload instance) | `post_permissions` `:242` | DIVERGENT |
 | 3 | GET | `/world/:world_name/permissions/:permission_name/address/:address/parcels` (`:264-267`) | `get_allowed_parcels_for_permission` | MATCH |
 | 4 | POST | `/world/:world_name/permissions/:permission_name/address/:address/parcels` (`:269-274`) | `post_permission_parcels` `:676` | DIVERGENT |
@@ -144,8 +144,8 @@ Common notes:
 | 9 | PUT | `/world/:world_name/permissions/:permission_name/:address` (`:304-308`) | `put_permissions_address` `:475` | DIVERGENT |
 | 10 | DELETE | `/world/:world_name/permissions/:permission_name/:address` (`:311-315`) | `delete_permissions_address` `:520` | DIVERGENT |
 
-Counts: 10 endpoints. MATCH 1, GAP 1, DIVERGENT 8, MISSING 0. Route 1 is a GAP for mirrored worlds only
-(WP-21, open: their access and grants). Every route exists in dcl-one at the same method
+Counts: 10 endpoints. MATCH 1, GAP 0, DIVERGENT 9, MISSING 0. Route 1 differs for mirrored worlds
+(WP-21, intended: their access and grants). Every route exists in dcl-one at the same method
 and path, on both mounts. On the success path, each route answers the upstream status and body shape.
 Of the three unsigned routes (1, 3 and 6), route 3 differs only where `docs/worlds-compatibility.md` says
 so; route 1 differs there and, for a mirrored world, as WP-21 records. The seven signed routes (six strict, one legacy) share the
@@ -179,7 +179,7 @@ dcl-one: `permissions.rs:75-127`. It reads `store::get_world`, `store::permissio
 | World with a stored owner whose NAME was sold | 200 | upstream: the **stored** owner; dcl-one: the live holder | `getOwner` reads `metadata.owner` first | `current_owner` | DIVERGENT: intended (same entry) |
 | Invalid world name | upstream 200 defaults; dcl-one 400 | | none | `parse_world` | intended (worlds-compatibility.md "Invalid world names") |
 | Deny-listed name | 200; access read as `unrestricted` when `getRawWorldRecords` filters the record out, summary still listed | | `access/component.ts:34-40`; `worlds-manager.ts:327,345-349`: `name != ALL(getBannedNames())`, the `BLOCKED_WORLD_NAMES` entries whole plus the list entries without their first `.eth`/`.dcl`, so a list entry leaves out only a bare name equal to it, a plain `<label>` entry nothing | `store::raw_records_exclude` (`store.rs:446-452`) over `BannedNames::banned_names` (`names.rs:67-77`) | MATCH (WP-11, WP-20; tests `deleting_an_address_grant_requires_a_valid_world`, `configured_world_names_are_invalid_on_the_permission_routes`) |
-| Mirrored world (`mirror_source` set) | 200; upstream reads the world's own rows. dcl-one: the access setting the source's `/permissions` reports, copied by every mirror pass and read-through fill unless the owner set the access here (`mirror.rs:1028-1074,1693,1941`; a shared secret stored as one no secret matches); `deployment.wallets`, `streaming.wallets` and `summary` list only grants made on this node, so they are empty | | `permissions-handlers.ts:50-107` | `get_permissions` over the stored rows | GAP (WP-21, open; tests `tests/worlds_mirror.rs` `a_mirror_pass_copies_the_upstream_access_setting`, `an_access_setting_the_owner_made_here_is_kept_by_the_mirror`, `tests/worlds_read_through.rs` `a_fill_stores_the_upstream_access_setting`) |
+| Mirrored world (`mirror_source` set) | 200; upstream reads the world's own rows. dcl-one: the access setting the source's `/permissions` reports, copied by every mirror pass and read-through fill unless the owner set the access here (`mirror.rs:1028-1074,1693,1941`; a shared secret stored as one no secret matches); `deployment.wallets`, `streaming.wallets` and `summary` list only grants made on this node, so they are empty | | `permissions-handlers.ts:50-107` | `get_permissions` over the stored rows | DIVERGENT (WP-21, intended; tests `tests/worlds_mirror.rs` `a_mirror_pass_copies_the_upstream_access_setting`, `an_access_setting_the_owner_made_here_is_kept_by_the_mirror`, `tests/worlds_read_through.rs` `a_fill_stores_the_upstream_access_setting`) |
 
 ## 2. POST /world/:world_name/permissions/:permission_name
 
@@ -690,8 +690,8 @@ filter keeps it (`store::raw_records_exclude`), and no operator disable or quota
       `nft-ownership` and a 204 on a node that does not) and the unit tests in `names.rs`.
     - Severity: none (closed).
 
-21. **WP-21 · routes 1, 2, 7-10 and comms admission · a mirrored world's access and grants.** Status: GAP
-    (open, needs a decision).
+21. **WP-21 · routes 1, 2, 7-10 and comms admission · a mirrored world's access and grants.** Status:
+    DIVERGENT (intended).
     - Upstream: the source reads the world's own rows: the access JSONB (`access/component.ts:34-40`), and the
       deployment and streaming grants with their summary (`permissions-handlers.ts:50-107`,
       `permissions/component.ts:422-440`). A shared-secret world admits a caller who presents the matching
@@ -723,7 +723,9 @@ filter keeps it (`store::raw_records_exclude`), and no operator disable or quota
       `an_access_setting_the_owner_made_here_is_kept_by_the_mirror`, `tests/worlds_read_through.rs`
       `a_fill_stores_the_upstream_access_setting` (a fill stores an allow-list; an unknown type stores
       nothing), and the unit `upstream_access_is_copied_or_refused`.
-    - What still differs from upstream, for a decision:
+    - What differs from upstream. The mirror applies this node's permission model and settings to the
+      source's access; a world's own grants, secrets and allow-list members come with a data migration,
+      not through the mirror:
       - a shared-secret world: the source does not publish its hash, so the copy is stored with one no secret
         matches (`NO_SECRET_MATCHES`, `mirror.rs:100`) and every secret is refused here, while the source
         admits the matching one;
@@ -736,7 +738,8 @@ filter keeps it (`store::raw_records_exclude`), and no operator disable or quota
         mirrored world. A copied grant would let its holder deploy or stream on this node on the source's
         word, which the mirror's trust rule refuses (`mirror.rs` module doc; `Policy::may_have_published`;
         `WORLDS_READ_THROUGH_TRUST_UPSTREAM_GRANTS` is the only opt-in, and only for a read-through signer).
-    - Severity: P2 (open).
+    - Listed in `docs/worlds-compatibility.md` ("Mirrored worlds").
+    - Severity: none (closed).
 
 ## Endpoints dcl-one serves in this area that upstream does not
 
