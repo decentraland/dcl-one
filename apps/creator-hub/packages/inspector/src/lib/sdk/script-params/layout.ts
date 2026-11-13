@@ -1,6 +1,6 @@
-import { getScriptParams } from './parser';
+import { getScriptParams, toColorOfKind } from './parser';
 import { isMalformedParam, isPlainObject } from './validation';
-import type { ScriptLayout, ScriptParamUnion } from './types';
+import type { ScriptColor, ScriptLayout, ScriptParamColor, ScriptParamUnion } from './types';
 
 export function parseLayout(layout?: string): ScriptLayout | undefined {
   if (!layout) return undefined;
@@ -10,6 +10,21 @@ export function parseLayout(layout?: string): ScriptLayout | undefined {
     console.warn('Failed to parse script layout:', error);
     return undefined;
   }
+}
+
+// Keeps a stored colour if it still is one, reshaped to the declared kind (a script that changes
+// a param from Color3 to Color4 keeps the creator's channels and gains an opaque alpha).
+function reconcileColor(sourceParam: ScriptParamColor, storedValue: unknown): ScriptColor {
+  const stored = storedValue as Partial<ScriptColor> | undefined;
+  const isColor =
+    !!stored &&
+    typeof stored.r === 'number' &&
+    typeof stored.g === 'number' &&
+    typeof stored.b === 'number';
+  return toColorOfKind(
+    isColor ? (stored as ScriptColor) : sourceParam.value,
+    sourceParam.value.a !== undefined,
+  );
 }
 
 // Reconciles a stored value against a freshly-parsed param shape: the structure/defaults
@@ -44,6 +59,8 @@ function reconcileValue(sourceParam: ScriptParamUnion, storedValue: unknown): un
       const n = typeof storedValue === 'number' ? storedValue : sourceParam.value;
       return Math.min(Math.max(n, sourceParam.min), sourceParam.max);
     }
+    case 'color':
+      return reconcileColor(sourceParam, storedValue);
     default:
       return storedValue !== undefined ? storedValue : sourceParam.value;
   }
@@ -82,8 +99,12 @@ export function mergeLayout(source: ScriptLayout, target: ScriptLayout): ScriptL
           ? targetParam.value
           : value.value;
       layout.params[name] = { ...value, value: storedValue };
+    } else if (value.type === 'color' && targetParam.type === 'color') {
+      layout.params[name] = { ...value, value: reconcileColor(value, targetParam.value) };
     } else {
-      layout.params[name] = { ...value, ...targetParam };
+      // editor metadata (tooltip, @enabledIf, @components…) comes from the fresh parse too, so
+      // removing a tag from the script takes effect on refresh
+      layout.params[name] = { ...value, value: targetParam.value } as ScriptParamUnion;
     }
   }
 

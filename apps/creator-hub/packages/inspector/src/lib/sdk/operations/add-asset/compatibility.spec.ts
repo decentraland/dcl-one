@@ -45,13 +45,13 @@ describe('checkAssetCompatibility', () => {
       cfg: {
         type: 'object',
         value: {},
-        fields: { tint: { type: 'color', value: '#fff' } },
+        fields: { spin: { type: 'quaternion', value: {} } },
       },
     });
     expect(checkAssetCompatibility(composite, engine)).toEqual({
       compatible: false,
       incompatibleComponents: [
-        { name: 'AdminTools.ts: cfg.tint', reason: 'unsupported-script-param' },
+        { name: 'AdminTools.ts: cfg.spin', reason: 'unsupported-script-param' },
       ],
     });
   });
