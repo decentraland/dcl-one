@@ -8,7 +8,6 @@ mod nishita_cloud;
 #[cfg(test)]
 mod pipeline_test;
 mod props;
-mod satellite_floor;
 mod sky_envmap;
 mod solids;
 mod stars;
@@ -50,7 +49,6 @@ use crate::{
     grass::GrassPlugin,
     landscape_textures::LandscapeTexturesPlugin,
     props::PropsPlugin,
-    satellite_floor::SatelliteFloorPlugin,
     sky_envmap::{SkyEnvmapPlugin, SkyEnvmapSettings},
     solids::SolidsPlugin,
     terrain::TerrainPlugin,
@@ -85,7 +83,7 @@ impl Plugin for VisualsPlugin {
             .add_plugins(TerrainPlugin)
             .add_plugins(GrassPlugin)
             .add_plugins(CoastPlugin)
-            .add_plugins((TreesPlugin, PropsPlugin, SolidsPlugin, SatelliteFloorPlugin))
+            .add_plugins((TreesPlugin, PropsPlugin, SolidsPlugin))
             .add_systems(Update, apply_global_light)
             .add_systems(Update, update_dof)
             .add_systems(Startup, setup.in_set(SetupSets::Main));
