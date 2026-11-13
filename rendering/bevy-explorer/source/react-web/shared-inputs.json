@@ -521,6 +521,14 @@
           "kind": "regular"
         },
         {
+          "name": "featureFlags.test.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "featureFlags.ts",
+          "kind": "regular"
+        },
+        {
           "name": "gpu.test.ts",
           "kind": "regular"
         },
@@ -3505,6 +3513,10 @@
           "kind": "regular"
         },
         {
+          "name": "useFeatureFlag.ts",
+          "kind": "regular"
+        },
+        {
           "name": "useFocusTrap.ts",
           "kind": "regular"
         },
@@ -4399,7 +4411,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/main.tsx",
-      "sha256": "a061e017d8c58b4bb8b1b19953e37aa05fd5fef009d759f5d75c6dbec6b96ee7"
+      "sha256": "7f35963c340f2e19651d6a8a02077a24bc3b610db602d99c01b5df700a110696"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/shell/localGuest.ts",
@@ -4971,6 +4983,14 @@
       "sha256": "2d6fdf87314ce3c3bedbdb79d1c659c14f554fb9bfbdd3118dc3ef93be34bdf0"
     },
     {
+      "path": "library/explorer-core/lib/featureFlags.test.ts",
+      "sha256": "e6a423456f0be353d04985c6a041a003315c6e22204a29a01d3b0fa86d5b4e9b"
+    },
+    {
+      "path": "library/explorer-core/lib/featureFlags.ts",
+      "sha256": "b5cd2edafe190f8268b11d541947e68bfcd2214d79d7a41226ee209277eb74ae"
+    },
+    {
       "path": "library/explorer-core/lib/gpu.test.ts",
       "sha256": "74bd1e89d9adbb69d3161431f008f927aaede96034ecf1935ba0d13f9e22437c"
     },
@@ -5032,7 +5052,7 @@
     },
     {
       "path": "library/explorer-core/lib/prefs.ts",
-      "sha256": "d48c28b714e2abb7384ae2f8ee0f725af94a1d6223ffe11b35f2999bfb092a41"
+      "sha256": "8ae17d8a71b4226dcb508cb1748aa154f4128a4856aac0f759188637845bf2d2"
     },
     {
       "path": "library/explorer-core/lib/realmCheck.ts",
@@ -7295,6 +7315,10 @@
       "sha256": "ccb0c386a1b862293f7137b1587474d41e357713955f6c15fecd473fe8fbadec"
     },
     {
+      "path": "library/ui/apps/hud/lib/useFeatureFlag.ts",
+      "sha256": "867e019570104250d69d0da90e49fdae6a485bff026e6f353f82bbe3bab4aa60"
+    },
+    {
       "path": "library/ui/apps/hud/lib/useFocusTrap.ts",
       "sha256": "8b30600d944e137ce3224dcd53ef20abf9271c71bccb9ef9bcee71537c164780"
     },
@@ -8725,6 +8749,66 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/explorer-core/lib/featureFlags.test.ts",
+      "to": "library/explorer-core/lib/featureFlags.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/lib/featureFlags.test.ts",
+      "to": "library/explorer-core/lib/featureFlags.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/lib/featureFlags.test.ts",
+      "to": "library/explorer-core/lib/featureFlags.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/explorer-core/lib/featureFlags.test.ts",
+      "to": "library/explorer-core/lib/prefs.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/lib/featureFlags.test.ts",
+      "to": "library/explorer-core/lib/prefs.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/lib/featureFlags.test.ts",
+      "to": "library/explorer-core/lib/prefs.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/explorer-core/lib/featureFlags.ts",
+      "to": "library/explorer-core/lib/analytics.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/lib/featureFlags.ts",
+      "to": "library/explorer-core/lib/analytics.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/lib/featureFlags.ts",
+      "to": "library/explorer-core/lib/analytics.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/explorer-core/lib/featureFlags.ts",
+      "to": "library/explorer-core/lib/prefs.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/lib/featureFlags.ts",
+      "to": "library/explorer-core/lib/prefs.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/lib/featureFlags.ts",
+      "to": "library/explorer-core/lib/prefs.ts",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/explorer-core/lib/gpu.test.ts",
       "to": "library/explorer-core/lib/gpu.ts",
       "kind": "native:runtime"
@@ -24712,6 +24796,21 @@
     {
       "from": "library/ui/apps/hud/lib/hudInset.ts",
       "to": "library/explorer-core/lib/hudScale.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/lib/useFeatureFlag.ts",
+      "to": "library/explorer-core/lib/featureFlags.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/lib/useFeatureFlag.ts",
+      "to": "library/explorer-core/lib/featureFlags.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/lib/useFeatureFlag.ts",
+      "to": "library/explorer-core/lib/featureFlags.ts",
       "kind": "test:runtime"
     },
     {
@@ -29946,6 +30045,16 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/src/main.tsx",
+      "to": "library/explorer-core/lib/featureFlags.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/src/main.tsx",
+      "to": "library/explorer-core/lib/featureFlags.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/src/main.tsx",
       "to": "library/explorer-core/lib/hudAutomation.ts",
       "kind": "native:runtime"
     },
@@ -30727,6 +30836,16 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/explorer-core/lib/color.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/explorer-core/lib/featureFlags.test.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/explorer-core/lib/featureFlags.ts",
       "kind": "type"
     },
     {
@@ -31857,6 +31976,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/lib/hudInset.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/lib/useFeatureFlag.ts",
       "kind": "type"
     },
     {
