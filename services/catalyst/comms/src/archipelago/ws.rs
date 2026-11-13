@@ -29,13 +29,15 @@ pub fn routes() -> Router<AppState> {
     Router::new().route("/ws", get(ws_upgrade))
 }
 
+type Peer = Option<axum::Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>;
+
 pub(super) fn connector_routes(
     http: std::sync::Arc<super::handlers::ConnectorHttp>,
 ) -> Router<AppState> {
     Router::new().route(
         "/ws",
-        axum::routing::any(move |method, uri, headers, ws, state| {
-            connector_upgrade(method, uri, headers, ws, state, http.clone())
+        axum::routing::any(move |method, uri, headers, peer, ws, state| {
+            connector_upgrade(method, uri, headers, peer, ws, state, http.clone())
         }),
     )
 }
@@ -44,6 +46,7 @@ async fn connector_upgrade(
     method: axum::http::Method,
     uri: axum::http::Uri,
     headers: axum::http::HeaderMap,
+    peer: Peer,
     ws: Result<WebSocketUpgrade, axum::extract::ws::rejection::WebSocketUpgradeRejection>,
     State(state): State<AppState>,
     http: std::sync::Arc<super::handlers::ConnectorHttp>,
@@ -56,7 +59,9 @@ async fn connector_upgrade(
         return http.respond(method, uri, headers).await;
     }
     match ws {
-        Ok(ws) => ws_upgrade(ws, State(state), headers).await.into_response(),
+        Ok(ws) => ws_upgrade(ws, State(state), headers, peer)
+            .await
+            .into_response(),
         Err(error) => error.into_response(),
     }
 }
@@ -65,8 +70,17 @@ async fn ws_upgrade(
     ws: WebSocketUpgrade,
     State(state): State<AppState>,
     headers: axum::http::HeaderMap,
+    peer: Peer,
 ) -> impl IntoResponse {
     let start = std::time::Instant::now();
+    let client = crate::shared::client_ip::distinct_client_ip(
+        &headers,
+        peer.map(|axum::Extension(axum::extract::ConnectInfo(peer))| peer),
+        &state.settings.server.trusted_proxy_cidrs,
+    );
+    if client.is_none() && state.sockets_per_ip.enabled() {
+        crate::gatekeeper::admission::cluster::metrics::ws_unattributed_upgrade();
+    }
     // Optional protocol names never select the authentication or packet decoder.
     let protocols = headers
         .get("sec-websocket-protocol")
@@ -80,7 +94,7 @@ async fn ws_upgrade(
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
-    let response = upgrade(ws, state.clone(), protocols);
+    let response = upgrade(ws, state.clone(), protocols, client.as_deref());
     state
         .connector_metrics
         .observe_connector(crate::stats::http::Observation {
@@ -97,7 +111,15 @@ fn upgrade(
     ws: WebSocketUpgrade,
     state: AppState,
     protocols: Vec<String>,
+    client: Option<&str>,
 ) -> axum::response::Response {
+    let Ok(ip_slot) = state.sockets_per_ip.try_acquire(client) else {
+        return (
+            axum::http::StatusCode::TOO_MANY_REQUESTS,
+            [(axum::http::header::RETRY_AFTER, "5")],
+        )
+            .into_response();
+    };
     let handler = state.handlers.clone().try_acquire_owned();
     let permit = match state.sockets.clone().try_acquire_owned() {
         Ok(permit) if handler.is_ok() && !state.restart.is_cancelled() => permit,
@@ -116,6 +138,7 @@ fn upgrade(
         .max_message_size(MAX_CLIENT_MESSAGE_BYTES)
         .max_frame_size(MAX_CLIENT_MESSAGE_BYTES)
         .on_upgrade(move |socket| async move {
+            let _ip_slot = ip_slot;
             let socket = io::WebSocket::new(socket, state.clone(), permit);
             handle_socket(socket, state).await;
             drop(handler);
