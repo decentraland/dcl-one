@@ -87,12 +87,20 @@ fn markup_tag_end(bytes: &[u8], lt: usize) -> Option<usize> {
     if bytes.get(j) == Some(&b'/') {
         j += 1;
     }
-    if !bytes.get(j)?.is_ascii_alphabetic() {
+    if !starts_tag_name(*bytes.get(j)?) {
         return None;
     }
     j += 1;
-    let rel = bytes[j..].iter().position(|b| *b == b'>')?;
-    Some(j + rel + 1)
+    // The client ends a tag at the next `<` too; stopping there also keeps
+    // the scan linear.
+    let rel = bytes[j..].iter().position(|b| matches!(b, b'<' | b'>'))?;
+    (bytes[j + rel] == b'>').then_some(j + rel + 1)
+}
+
+/// A tag name starts with a letter, or with `\`: the client decodes a
+/// `\uXXXX` escape into any character before it reads the tag.
+fn starts_tag_name(byte: u8) -> bool {
+    byte.is_ascii_alphabetic() || byte == b'\\'
 }
 
 /// The rich-text colour shorthand `<#rgb>`, `<#rgba>`, `<#rrggbb>` or
@@ -732,6 +740,27 @@ mod markup_tests {
     }
 
     #[test]
+    fn description_drops_tags_whose_name_starts_with_an_escape() {
+        for (input, expected) in [
+            ("<\\u006Cink=\"file:///x\">click</link>", "click"),
+            ("a <\\U0000006Cink=\"smb://h/s\">b</\\u006Cink>", "a b"),
+            ("<\\u0073ize=300>BIG", "BIG"),
+            ("C:\\path <3", "C:\\path <3"),
+        ] {
+            assert_eq!(sanitize_markup_description(input), expected, "{input:?}");
+        }
+    }
+
+    #[test]
+    fn a_long_run_of_unclosed_openers_is_scanned_in_linear_time() {
+        let input = "<a".repeat(200_000);
+        let started = std::time::Instant::now();
+        let _ = sanitize_markup_description(&input);
+        let _ = strip_all_markup(&input);
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
+    }
+
+    #[test]
     fn description_drops_tags_rebuilt_from_split_escapes() {
         let input = "see \\u<b>003Clink=\"file:///x\"\\u<b>003Ehere\\u<b>003C/link\\u<b>003E";
         let out = sanitize_markup_description(input);
@@ -783,6 +812,10 @@ mod markup_tests {
             (" Untagged ", " Untagged "),
             ("Club <VIP> Night", "Club Night"),
             ("<<Best Party>>", "Best Party"),
+            ("<\\u0073ize=300>BIG", "BIG"),
+            ("</\\u006Cink>x", "x"),
+            ("<br/>", ""),
+            ("<<b>foo>", ""),
             ("<size=300><b>", ""),
             ("<b> </b>", ""),
             ("A  B <b>bold</b>", "A  B bold"),
@@ -1114,10 +1147,9 @@ pub const RICH_TEXT_TAG_NAMES: &[&str] = &[
 /// literally (`<<Best Party>>`) keeps its words.
 pub fn strip_all_markup(text: &str) -> String {
     let mut current = text.to_owned();
-    let mut literal = false;
     let mut stable = false;
     for _ in 0..MAX_SANITIZE_PASSES {
-        let next = strip_tag_spans(&decode_bracket_escapes(&current), &mut literal);
+        let next = strip_tag_spans(&decode_bracket_escapes(&current));
         if next == current {
             stable = true;
             break;
@@ -1130,7 +1162,7 @@ pub fn strip_all_markup(text: &str) -> String {
     if current == text || current.chars().any(char::is_alphanumeric) {
         return current;
     }
-    if literal {
+    if has_literal_span(&decode_bracket_escapes(text)) {
         let words = decode_bracket_escapes(text).replace(['<', '>'], " ");
         let words = drop_brackets(words);
         if words.chars().any(char::is_alphanumeric) {
@@ -1140,10 +1172,17 @@ pub fn strip_all_markup(text: &str) -> String {
     String::new()
 }
 
+/// Whether `text` holds a tag-shaped span the client shows as text (its name
+/// is no rich-text tag), the one case where tag-only text keeps its words.
+fn has_literal_span(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    text.match_indices('<')
+        .any(|(lt, _)| name_tag_end(bytes, lt).is_some_and(|end| !is_rich_text_tag(&text[lt..end])))
+}
+
 /// Drops tag spans, and the whitespace a span leaves at either end of the
-/// text or doubled between words. `literal` is set when a dropped span is not
-/// a tag the client acts on.
-fn strip_tag_spans(text: &str, literal: &mut bool) -> String {
+/// text or doubled between words.
+fn strip_tag_spans(text: &str) -> String {
     let bytes = text.as_bytes();
     let mut out = String::with_capacity(text.len());
     let mut i = 0;
@@ -1153,9 +1192,6 @@ fn strip_tag_spans(text: &str, literal: &mut bool) -> String {
         out.push_str(&text[i..lt]);
         match name_tag_end(bytes, lt).or_else(|| colour_tag_end(bytes, lt)) {
             Some(end) => {
-                if !is_rich_text_tag(&text[lt..end]) {
-                    *literal = true;
-                }
                 i = end;
                 if out.is_empty() || out.ends_with(char::is_whitespace) {
                     i += text[i..].len() - text[i..].trim_start().len();
@@ -1178,10 +1214,10 @@ fn strip_tag_spans(text: &str, literal: &mut bool) -> String {
 
 fn is_rich_text_tag(span: &str) -> bool {
     let inner = span.trim_start_matches('<').trim_start_matches('/');
-    if inner.starts_with('#') {
+    if inner.starts_with(['#', '\\']) {
         return true;
     }
-    let name_len = inner.find([' ', '=', '>']).unwrap_or(inner.len());
+    let name_len = inner.find([' ', '=', '/', '>']).unwrap_or(inner.len());
     RICH_TEXT_TAG_NAMES
         .iter()
         .any(|name| name.eq_ignore_ascii_case(&inner[..name_len]))
@@ -1193,7 +1229,7 @@ fn name_tag_end(bytes: &[u8], lt: usize) -> Option<usize> {
     if bytes.get(j) == Some(&b'/') {
         j += 1;
     }
-    if !bytes.get(j)?.is_ascii_alphabetic() {
+    if !starts_tag_name(*bytes.get(j)?) {
         return None;
     }
     let rel = bytes[j..].iter().position(|b| matches!(b, b'<' | b'>'))?;

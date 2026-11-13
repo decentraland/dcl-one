@@ -43,7 +43,7 @@ pub(super) fn placeholder_image_patterns() -> Vec<String> {
 pub(super) const ROAD_POSITIONS_TABLE: &str = "explore.road_positions";
 
 const TAG_RE: &str =
-    "</?[a-zA-Z][^<>]*>|<#([0-9a-fA-F]{8}|[0-9a-fA-F]{6}|[0-9a-fA-F]{4}|[0-9a-fA-F]{3})>";
+    "</?[a-zA-Z\\\\][^<>]*>|<#([0-9a-fA-F]{8}|[0-9a-fA-F]{6}|[0-9a-fA-F]{4}|[0-9a-fA-F]{3})>";
 
 /// `title` with the bracket escapes the client decodes turned into brackets.
 fn decoded_sql(expr: &str) -> String {
@@ -72,10 +72,10 @@ pub(super) fn plain_title_sql() -> &'static str {
             d = decoded_sql(&passes)
         );
         let known = crate::sanitize::RICH_TEXT_TAG_NAMES.join("|");
-        let literal = format!("<(?!/?(?:{known})[ =>])/?[a-z][^<>]*>");
+        let literal = format!("<(?!/?(?:{known})[ =/>])/?[a-z][^<>]*>");
         format!(
             "(CASE WHEN strpos(title, '<') = 0 AND strpos(title, '\\') = 0 THEN title \
-             ELSE (SELECT CASE WHEN p ~ '[[:alnum:]]' THEN p \
+             ELSE (SELECT CASE WHEN p = title OR p ~ '[[:alnum:]]' THEN p \
                WHEN title ~ '[[:alnum:]]' AND {d} ~* '{literal}' \
                  THEN REGEXP_REPLACE({d}, '[<>]', ' ', 'g') \
                ELSE '' END FROM (SELECT {settled} AS p) plain) END)",
@@ -259,6 +259,12 @@ mod tests {
             "\\u<b>003Csize=300\\u<b>003EBig",
             "<<<<<<<<b>b>b>b>b>b>b>b>Untitled",
             "a \\u0041 b",
+            "<\\u0073ize=300>BIG",
+            "</\\u006Cink><b>x",
+            "<<b>foo>",
+            "<br/>",
+            "<3 :)",
+            "\\ <> /",
         ] {
             let got: String = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
                 "SELECT {} FROM (SELECT $1::text AS title) t",

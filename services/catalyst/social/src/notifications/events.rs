@@ -204,7 +204,14 @@ fn metadata(intent: &Intent, recipient: &Recipient, links: &Links) -> Value {
     let community_name = recipient
         .community_name
         .as_deref()
-        .map(crate::explore::sanitize::strip_all_markup);
+        .map(crate::explore::sanitize::strip_all_markup)
+        .filter(|n| !n.is_empty());
+    // A name that was only markup is left out of the sentence.
+    let named = if name.is_empty() {
+        String::new()
+    } else {
+        format!(" {name}")
+    };
     let description =
         crate::explore::sanitize::sanitize_event_description(text(&intent.event, "description"));
     // `Notifications/index.ts:48,85,205`: the jump-in link; the other kinds
@@ -223,7 +230,7 @@ fn metadata(intent: &Intent, recipient: &Recipient, links: &Links) -> Value {
         // `Notifications/index.ts:56-57`
         "events_starts_soon" => (
             "Event starts in an hour".to_string(),
-            format!("The event {name} starts in an hour."),
+            format!("The event{named} starts in an hour."),
         ),
         "events_started" if recipient.community => (
             "Community Event starting".into(),
@@ -234,7 +241,7 @@ fn metadata(intent: &Intent, recipient: &Recipient, links: &Links) -> Value {
         ),
         "events_started" => (
             "Event started".into(),
-            format!("The event {name} has begun!"),
+            format!("The event{named} has begun!"),
         ),
         "event_created" => (
             "Community Event Added".into(),
@@ -243,6 +250,7 @@ fn metadata(intent: &Intent, recipient: &Recipient, links: &Links) -> Value {
                 community_name.as_deref().unwrap_or("community")
             ),
         ),
+        _ if name.is_empty() => ("Event".to_string(), description),
         _ => (name.to_string(), description),
     };
     let mut metadata = json!({"eventId":intent.event_id,"title":title,"description":description,"name":name,"image":catalyst_explore::events::posters::absolute_default_image(text(&intent.event,"image"),&links.asset_base),"link":link,"occurredAt":intent.occurred_at.and_utc().to_rfc3339()});
@@ -1866,6 +1874,26 @@ mod tests {
             &links,
         );
         assert_eq!(plain["title"], "Launch");
+        let tags_only = json!({"name":"<size=300><b>","description":"d"});
+        let reminder = metadata(
+            &intent("events_starts_soon", tags_only.clone()),
+            &recipient(false, false),
+            &links,
+        );
+        assert_eq!(reminder["description"], "The event starts in an hour.");
+        let approved = metadata(
+            &intent("event_approved", tags_only.clone()),
+            &recipient(false, false),
+            &links,
+        );
+        assert_eq!(approved["title"], "Event");
+        let mut member = recipient(true, false);
+        member.community_name = Some("<b></b>".into());
+        let started = metadata(&intent("events_started", tags_only), &member, &links);
+        assert_eq!(
+            started["description"],
+            "A community event is about to start."
+        );
     }
 
     /// `Notifications/index.ts:44-68,73-110`: the reminder and start titles,
