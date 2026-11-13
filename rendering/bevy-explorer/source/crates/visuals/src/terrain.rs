@@ -1,8 +1,8 @@
 //! Empty-parcel terrain. Step targets are resolved in `ScenePointers`; this eases them, feeds the
-//! eased values to the ground and grass vertex shader, and builds the player's ground collider from
-//! the same values so what you see is what you stand on.
+//! eased values to the shaders that stand on the terrain (the ground and the grass), and builds
+//! the player's ground collider from the same values so what you see is what you stand on.
 
-use crate::landscape_textures::{ground_shader_defs, LandscapeTextures};
+use crate::landscape_textures::{ground_shader_defs, rebind_on_replace, LandscapeTextures};
 use bevy::{
     asset::{embedded_asset, embedded_path, weak_handle, RenderAssetUsages},
     pbr::{
@@ -13,6 +13,7 @@ use bevy::{
     render::{
         extract_resource::{ExtractResource, ExtractResourcePlugin},
         mesh::{Indices, MeshVertexBufferLayoutRef, PrimitiveTopology},
+        primitives::Aabb,
         render_asset::RenderAssets,
         render_resource::{
             AsBindGroup, Extent3d, Origin3d, RenderPipelineDescriptor, ShaderRef,
@@ -23,10 +24,13 @@ use bevy::{
         texture::GpuImage,
         Render, RenderApp, RenderSet,
     },
+    transform::TransformSystem,
 };
 use common::{
-    sets::PostUpdateSets,
-    structs::{CurrentRealm, EngineMovementControl, PrimaryUser},
+    sets::{PostUpdateSets, SetupSets},
+    structs::{
+        CurrentRealm, EngineMovementControl, LandscapeDistance, PrimaryUser, GROUND_RENDERLAYER,
+    },
     terrain::{
         height, texel_value, uv_size, PlayerTerrainHeight, TerrainChange, TerrainTargets,
         MAX_STEPS, ZERO,
@@ -42,6 +46,15 @@ use scene_runner::{
 
 pub(crate) const TERRAIN_TEXTURE: Handle<Image> =
     weak_handle!("540a82e9-5602-4123-9dc7-3d76e0aec0e5");
+
+pub(crate) const GROUND_MESH: Handle<Mesh> = weak_handle!("e2002cd1-4a0b-4944-ad26-97d64d72e5f9");
+pub(crate) const GROUND_MATERIAL_FLAT_COLOR: Handle<TerrainFlatMaterial> =
+    weak_handle!("3e91f222-a374-4f7f-ba1a-4a239c9734ae");
+/// The ground's visual offset below the terrain height.
+pub(crate) const GROUND_Y: f32 = -0.05;
+// terrain rises at most 8 steps of 1.8 m plus ~4.4 m of noise
+pub(crate) const GROUND_MIN_Y: f32 = -5.0;
+pub(crate) const GROUND_MAX_Y: f32 = 25.0;
 
 /// Eased change of a parcel's step value per second. One step is 1.8 m of height.
 const EASE_STEPS_PER_SECOND: f32 = 1.0;
@@ -60,11 +73,12 @@ impl Plugin for TerrainPlugin {
         embed_shaders(app);
 
         app.init_resource::<TerrainSurface>()
+            .init_resource::<LandscapeDistance>()
             .init_resource::<PlayerTerrainHeight>()
             .init_resource::<TerrainTextureWrites>()
             .add_plugins(ExtractResourcePlugin::<TerrainTextureWrites>::default())
             .add_plugins(MaterialPlugin::<TerrainFlatMaterial>::default())
-            .add_systems(Startup, setup)
+            .add_systems(Startup, (setup, spawn_ground.in_set(SetupSets::Main)))
             .add_systems(
                 PostUpdate,
                 (
@@ -72,12 +86,15 @@ impl Plugin for TerrainPlugin {
                         .chain()
                         .in_set(TerrainSet)
                         .before(PostUpdateSets::ColliderUpdate),
+                    update_ground_params.after(TerrainSet),
                     update_collider.in_set(PostUpdateSets::ColliderUpdate),
                     floor_player
                         .after(PostUpdateSets::PlayerUpdate)
                         .before(PostUpdateSets::CameraUpdate),
+                    follow_player.before(TransformSystem::TransformPropagate),
                 ),
             );
+        rebind_materials(app);
 
         if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
             render_app.add_systems(
@@ -90,9 +107,24 @@ impl Plugin for TerrainPlugin {
     }
 }
 
+/// The surface's per-frame systems alone, without the ground, its material or the collider: for
+/// tests elsewhere that need a surface following `ScenePointers`.
+#[cfg(test)]
+pub(crate) fn add_surface_systems(app: &mut App) {
+    app.init_resource::<TerrainSurface>()
+        .init_resource::<LandscapeDistance>()
+        .add_systems(PostUpdate, (sync, ease).chain().in_set(TerrainSet));
+}
+
+/// The flat ground binds the landscape textures: prepare it again when one is replaced.
+pub(crate) fn rebind_materials(app: &mut App) {
+    rebind_on_replace::<TerrainFlatMaterial>(app);
+}
+
 pub(crate) fn embed_shaders(app: &mut App) {
     embedded_asset!(app, "terrain_vertex.wgsl");
     embedded_asset!(app, "terrain_params.wgsl");
+    embedded_asset!(app, "terrain_height.wgsl");
     embedded_asset!(app, "terrain_flat.wgsl");
     embedded_asset!(app, "coast_profile.wgsl");
     embedded_asset!(app, "landscape_ground.wgsl");
@@ -123,13 +155,15 @@ mod decl {
         pub size: IVec2,
         pub max_steps: f32,
         pub uv_size: f32,
-        /// ground and grass resolution follows parcel grass lod around this parcel (x, unity z)
+        /// the ground's grids are finer around this parcel (x, unity z)
         pub player_parcel: IVec2,
         /// the player's position within that parcel, 0 to 1 (x, unity z)
         pub player_offset: Vec2,
         /// coast bounds in unity x/z metres (min x, min z, max x, max z); the ground ends at the
         /// cliffs
         pub coast: Vec4,
+        /// hills are displaced out to this many metres from the player (`hill_reach`)
+        pub hill_reach: f32,
     }
 
     /// Coast bounds that no point is beyond.
@@ -145,14 +179,14 @@ mod decl {
                 player_parcel: IVec2::ZERO,
                 player_offset: Vec2::ZERO,
                 coast: NO_COAST,
+                hill_reach: super::hill_reach(super::LandscapeDistance::default().0),
             }
         }
     }
 }
 pub use decl::*;
 
-/// The ground without grass shells (used when parcel grass is off), textured from the splat and
-/// displaced like the grass.
+/// The ground, textured from the splat and displaced by the terrain.
 pub type TerrainFlatMaterial = ExtendedMaterial<TerrainExtension>;
 
 #[derive(Asset, AsBindGroup, TypePath, Clone)]
@@ -253,6 +287,7 @@ pub struct TerrainSurface {
     player_parcel: IVec2,
     player_offset: Vec2,
     coast: Vec4,
+    hill_reach: f32,
     changes: SurfaceChanges,
 }
 
@@ -272,6 +307,7 @@ impl Default for TerrainSurface {
             player_parcel: IVec2::ZERO,
             player_offset: Vec2::ZERO,
             coast: NO_COAST,
+            hill_reach: TerrainParams::default().hill_reach,
             changes: SurfaceChanges::default(),
         }
     }
@@ -287,6 +323,15 @@ fn union(rect: Option<(IVec2, IVec2)>, min: IVec2, max: IVec2) -> Option<(IVec2,
 impl TerrainSurface {
     pub fn changes(&self) -> &SurfaceChanges {
         &self.changes
+    }
+
+    /// Displace the hills out to `hill_reach(distance)`.
+    pub fn set_landscape_distance(&mut self, distance: f32) {
+        let reach = hill_reach(distance);
+        if reach != self.hill_reach {
+            self.hill_reach = reach;
+            self.changes.params = true;
+        }
     }
 
     /// Coast bounds in unity x/z metres (min x, min z, max x, max z), if there is a coast.
@@ -317,6 +362,7 @@ impl TerrainSurface {
                 player_parcel: self.player_parcel,
                 player_offset: self.player_offset,
                 coast: self.coast,
+                hill_reach: self.hill_reach,
             },
             None => TerrainParams {
                 min: IVec2::ZERO,
@@ -326,6 +372,7 @@ impl TerrainSurface {
                 player_parcel: self.player_parcel,
                 player_offset: self.player_offset,
                 coast: self.coast,
+                hill_reach: self.hill_reach,
             },
         }
     }
@@ -523,7 +570,7 @@ impl TerrainSurface {
         bytes
     }
 
-    fn image(&self) -> Image {
+    pub(crate) fn image(&self) -> Image {
         let (size, bytes) = match self.bounds {
             Some((min, max)) => (max - min + 1, self.rect_bytes(min, max)),
             None => (IVec2::ONE, f32::from(ZERO).to_le_bytes().to_vec()),
@@ -586,9 +633,11 @@ fn sync(
     // when the scene unloads
     mut enabled: Local<Option<bool>>,
     mut surface: ResMut<TerrainSurface>,
+    distance: Res<LandscapeDistance>,
     player: Query<&GlobalTransform, With<PrimaryUser>>,
 ) {
     surface.changes = SurfaceChanges::default();
+    surface.set_landscape_distance(distance.0);
     if let Ok(player) = player.single() {
         let translation = player.translation();
         let parcel = vec3_to_parcel(translation);
@@ -907,31 +956,34 @@ impl MeshBuilder {
     }
 }
 
-/// Parcel-sized grid centred on the origin.
-pub(crate) fn parcel_mesh(segments: u32) -> Mesh {
-    let mut builder = MeshBuilder::new();
-    builder.grid(
-        Vec2::splat(-8.0),
-        16.0 / segments as f32,
-        segments,
-        |_, _| Vec2::ZERO,
-    );
-    builder.build()
-}
-
-/// Parcel offsets from the player's parcel that the ground covers with per-parcel grids at the
-/// parcel grass resolution: every parcel that can hold grass (it is dropped beyond 150 parcels²).
+/// Parcel offsets from the player's parcel that the ground covers with per-parcel grids, finer
+/// near the player (`ground_segments`).
 pub(crate) const GROUND_NEAR_MIN: i32 = -13;
 pub(crate) const GROUND_NEAR_MAX: i32 = 12;
 /// Cell size of the first rings around the per-parcel grids; each further ring doubles it.
 const RING_CELL: f32 = 16.0;
-/// Rings at `RING_CELL`, which follow the terrain: their cells move with the player in whole cells,
-/// so they sit on the same points. Coarser rings beyond would slide over it, so the ground there is
-/// flat (terrain_vertex.wgsl FLAT_REACH).
+/// Rings at `RING_CELL`. The ground moves with the player in whole parcels, so their cells sit on
+/// the same terrain points; terrain_vertex.wgsl snaps each coarser ring to its own cell size
+/// (`ring_origin`) so that its cells do too.
 const TERRAIN_RINGS: u32 = 2;
+/// Rings beyond the per-parcel grids, out to 13 km, covering the old 1024-parcel ground plane and
+/// the highest `hill_reach`.
+pub(crate) const GROUND_RINGS: u32 = 6;
+
+/// How far the hills are displaced for a Landscape Distance: never short of the `RING_CELL` rings,
+/// which always followed the terrain.
+pub(crate) fn hill_reach(distance_m: f32) -> f32 {
+    distance_m.max(ground_extent(TERRAIN_RINGS))
+}
+
+/// Origin of a ground ring with `cell`-sized cells (Unity x/z): the corner of the player's cell,
+/// so the ring moves only in whole cells. terrain_vertex.wgsl's `ring_origin` does the same.
+pub(crate) fn ring_origin(player: Vec2, cell: f32) -> Vec2 {
+    (player / cell).floor() * cell
+}
 
 /// Flat ground relative to the player's parcel corner (Unity x/z). Parcels near the player get
-/// `segments(offset)` cells a side, matching the parcel grass over them, so both share vertices.
+/// `segments(offset)` cells a side.
 /// Beyond, `rings` square rings each double the extent, with cells doubling after the first
 /// `TERRAIN_RINGS`.
 pub(crate) fn ground_mesh(segments: impl Fn(IVec2) -> u32, rings: u32) -> Mesh {
@@ -997,10 +1049,96 @@ pub(crate) fn ground_extent(rings: u32) -> f32 {
     (-GROUND_NEAR_MIN * 16) as f32 * (1 << rings) as f32
 }
 
-/// Ground placement: the corner of the player's parcel.
+/// Ground placement: the corner of the player's parcel, the origin of the `RING_CELL` rings.
 pub(crate) fn ground_origin(player: Vec3) -> Vec3 {
-    let parcel = vec3_to_parcel(player);
-    Vec3::new(parcel.x as f32 * 16.0, 0.0, -(parcel.y as f32) * 16.0)
+    let corner = ring_origin(Vec2::new(player.x, -player.z), RING_CELL);
+    Vec3::new(corner.x, 0.0, -corner.y)
+}
+
+/// Cells per side of the ground grid of the parcel `offset` from the player's parcel: finer near
+/// the player. Mirrored by `lod_cell` in terrain_vertex.wgsl, which stitches the grids.
+pub(crate) fn ground_segments(offset: IVec2) -> u32 {
+    match offset.length_squared() {
+        ..8 => 16,
+        8..16 => 8,
+        16.. => 4,
+    }
+}
+
+/// Huge plane that covers a huge area
+#[derive(Component)]
+pub(crate) struct Ground;
+
+pub(crate) fn ground_aabb() -> Aabb {
+    let extent = ground_extent(GROUND_RINGS);
+    Aabb::from_min_max(
+        Vec3::new(-extent, GROUND_MIN_Y, -extent),
+        Vec3::new(extent, GROUND_MAX_Y, extent),
+    )
+}
+
+fn spawn_ground(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<TerrainFlatMaterial>>,
+    textures: Res<LandscapeTextures>,
+) {
+    meshes.insert(GROUND_MESH.id(), ground_mesh(ground_segments, GROUND_RINGS));
+    materials.insert(
+        GROUND_MATERIAL_FLAT_COLOR.id(),
+        TerrainFlatMaterial {
+            base: StandardMaterial {
+                perceptual_roughness: 1.0,
+                metallic: 0.0,
+                depth_bias: -100.0,
+                fog_enabled: false,
+                ..Default::default()
+            },
+            extension: TerrainExtension::new(&textures),
+        },
+    );
+    commands.spawn((
+        Name::new("Ground"),
+        // follows the player's parcel, see `follow_player`
+        Transform::from_translation(Vec3::new(0., GROUND_Y, 0.)),
+        Visibility::Inherited,
+        ground_aabb(),
+        Ground,
+        Mesh3d(GROUND_MESH.clone()),
+        MeshMaterial3d(GROUND_MATERIAL_FLAT_COLOR),
+        GROUND_RENDERLAYER.clone(),
+    ));
+}
+
+fn follow_player(
+    player: Query<&GlobalTransform, With<PrimaryUser>>,
+    mut ground: Query<&mut Transform, With<Ground>>,
+) {
+    let (Ok(player), Ok(mut ground)) = (player.single(), ground.single_mut()) else {
+        return;
+    };
+    let translation = player.translation();
+    if !translation.is_finite() {
+        return;
+    }
+    let origin = ground_origin(translation).with_y(ground.translation.y);
+    if ground.translation != origin {
+        ground.translation = origin;
+    }
+}
+
+fn update_ground_params(
+    surface: Res<TerrainSurface>,
+    mut flat: ResMut<Assets<TerrainFlatMaterial>>,
+) {
+    let changes = surface.changes();
+    if !changes.params && !changes.relayout && !changes.player {
+        return;
+    }
+    // touching the material also rebinds the step texture after a relayout
+    if let Some(material) = flat.get_mut(&GROUND_MATERIAL_FLAT_COLOR) {
+        material.extension.terrain = surface.params();
+    }
 }
 
 #[cfg(test)]

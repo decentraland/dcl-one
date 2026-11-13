@@ -44,7 +44,7 @@ fn heightfield_split_matches_unity() {
 #[test]
 fn mesh_split_matches_unity() {
     for mesh in [
-        parcel_mesh(16),
+        ground_mesh(|_| 16, 0),
         ground_mesh(|offset| 16 >> (offset.x.abs() % 3), 2),
     ] {
         let Some(VertexAttributeValues::Float32x3(positions)) =
@@ -231,9 +231,8 @@ fn scene_casts_hit_the_heightfield() {
     }
 }
 
-/// The textured ground compiles in every pipeline it is drawn with: the flat ground (grass off)
-/// and a ground shell (grass on), each with the prepasses and shadows. Needs a GPU, so `#[ignore]`d
-/// and skipped by CI:
+/// The textured ground compiles in every pipeline it is drawn with: the main pass, the prepasses
+/// and shadows. Needs a GPU, so `#[ignore]`d and skipped by CI:
 ///
 /// ```text
 /// cargo test -p visuals ground_shader_compiles -- --ignored --nocapture
@@ -241,21 +240,11 @@ fn scene_casts_hit_the_heightfield() {
 #[test]
 #[ignore = "needs a GPU; run with --ignored"]
 fn ground_shader_compiles() {
-    use crate::{
-        landscape_textures::LandscapeTextures,
-        pipeline_test,
-        shell_texturing::{self, ShellTexture},
-    };
-    use bevy::render::mesh::MeshTag;
-    use common::structs::ParcelGrassSetting;
+    use crate::{landscape_textures::LandscapeTextures, pipeline_test};
 
     let mut app = pipeline_test::app();
     embed_shaders(&mut app);
-    shell_texturing::embed_shaders(&mut app);
-    app.add_plugins((
-        MaterialPlugin::<TerrainFlatMaterial>::default(),
-        MaterialPlugin::<ShellTexture>::default(),
-    ));
+    app.add_plugins(MaterialPlugin::<TerrainFlatMaterial>::default());
     app.finish();
     app.cleanup();
 
@@ -265,37 +254,344 @@ fn ground_shader_compiles() {
     world
         .resource_mut::<Assets<Image>>()
         .insert(TERRAIN_TEXTURE.id(), steps);
-    let mesh = world.resource_mut::<Assets<Mesh>>().add(parcel_mesh(4));
+    let mesh = world
+        .resource_mut::<Assets<Mesh>>()
+        .add(ground_mesh(ground_segments, 0));
     let flat = world
         .resource_mut::<Assets<TerrainFlatMaterial>>()
         .add(TerrainFlatMaterial {
             base: StandardMaterial::default(),
             extension: TerrainExtension::new(&textures),
         });
-    let shell = world
-        .resource_mut::<Assets<ShellTexture>>()
-        .add(ShellTexture::new(
-            &ParcelGrassSetting::Low,
-            3,
-            TerrainParams::default(),
-            &textures,
-        ));
-    world.spawn((
-        Mesh3d(mesh.clone()),
-        MeshMaterial3d(flat),
-        Transform::default(),
-    ));
-    world.spawn((
-        Mesh3d(mesh),
-        MeshMaterial3d(shell),
-        MeshTag(1),
-        Transform::from_xyz(0.0, 0.1, 0.0),
-    ));
+    world.spawn((Mesh3d(mesh), MeshMaterial3d(flat), Transform::default()));
 
     pipeline_test::assert_pipelines_compile(
         &mut app,
         Vec3::new(0.0, 3.0, 6.0),
         Vec3::ZERO,
-        &["terrain_flat.wgsl", "shell_texturing.wgsl"],
+        &["terrain_flat.wgsl"],
     );
+}
+
+/// The softened sun shadow overrides compile on this machine's adapter, in a renderer with no
+/// window: a rock (`soft_shadows.wgsl`), the ground (`terrain_flat.wgsl`), a cliff
+/// (`coast_cliff.wgsl`) and the ocean (`coast_water.wgsl`) in front of a camera with the
+/// prepasses and a shadowing light. The grass's override is compiled by `grass_wind_compiles`.
+/// Needs a GPU, so `#[ignore]`d and skipped by CI:
+///
+/// ```text
+/// cargo test -p visuals soft_shadow_pipelines_compile -- --ignored --nocapture
+/// ```
+#[test]
+#[ignore = "needs a GPU; run with --ignored"]
+fn soft_shadow_pipelines_compile() {
+    use std::path::Path;
+
+    use bevy::{asset::io::embedded::EmbeddedAssetRegistry, pbr::NotShadowCaster};
+
+    use crate::{
+        coast::{self, cliff_material, CliffMaterial, WaterExtension, WaterMaterial},
+        landscape_textures::LandscapeTextures,
+        pipeline_test,
+        trees::{SoftShadowMaterial, SoftShadows},
+    };
+
+    let mut app = pipeline_test::app();
+    embed_shaders(&mut app);
+    coast::embed_shaders(&mut app);
+    // as `TreesPlugin` embeds it; that plugin needs the scene runner
+    let path = Path::new("visuals").join("soft_shadows.wgsl");
+    app.world()
+        .resource::<EmbeddedAssetRegistry>()
+        .insert_asset(
+            path.clone(),
+            &path,
+            include_str!("../soft_shadows.wgsl").as_bytes(),
+        );
+    app.add_plugins((
+        MaterialPlugin::<SoftShadowMaterial>::default(),
+        MaterialPlugin::<TerrainFlatMaterial>::default(),
+        MaterialPlugin::<CliffMaterial>::default(),
+        MaterialPlugin::<WaterMaterial>::default(),
+    ));
+    app.finish();
+    app.cleanup();
+
+    let world = app.world_mut();
+    let textures = world.resource::<LandscapeTextures>().clone();
+    let mut images = world.resource_mut::<Assets<Image>>();
+    images.insert(TERRAIN_TEXTURE.id(), TerrainSurface::default().image());
+    let ripples = images.add(Image::default());
+    let mut meshes = world.resource_mut::<Assets<Mesh>>();
+    let rock_mesh = meshes.add(Cuboid::new(1.0, 1.0, 1.0));
+    let plane_mesh = meshes.add(Plane3d::default().mesh().size(4.0, 4.0));
+    let rock = world
+        .resource_mut::<Assets<SoftShadowMaterial>>()
+        .add(SoftShadowMaterial {
+            base: StandardMaterial::default(),
+            extension: SoftShadows {},
+        });
+    let ground = world
+        .resource_mut::<Assets<TerrainFlatMaterial>>()
+        .add(TerrainFlatMaterial {
+            base: StandardMaterial::default(),
+            extension: TerrainExtension::new(&textures),
+        });
+    let cliff = world
+        .resource_mut::<Assets<CliffMaterial>>()
+        .add(cliff_material(&textures));
+    let water = world
+        .resource_mut::<Assets<WaterMaterial>>()
+        .add(WaterMaterial {
+            base: StandardMaterial {
+                fog_enabled: false,
+                ..default()
+            },
+            extension: WaterExtension {
+                bounds: NO_COAST,
+                ripples,
+            },
+        });
+    world.spawn((
+        Mesh3d(rock_mesh.clone()),
+        MeshMaterial3d(rock),
+        Transform::from_xyz(1.0, 0.5, 0.0),
+    ));
+    world.spawn((
+        Mesh3d(plane_mesh.clone()),
+        MeshMaterial3d(ground),
+        Transform::from_xyz(-1.0, 0.0, 0.0),
+    ));
+    world.spawn((
+        Mesh3d(rock_mesh),
+        MeshMaterial3d(cliff),
+        Transform::from_xyz(-1.0, 0.5, 1.0),
+    ));
+    world.spawn((
+        Mesh3d(plane_mesh),
+        MeshMaterial3d(water),
+        NotShadowCaster,
+        Transform::from_xyz(0.0, -0.1, 1.0),
+    ));
+
+    pipeline_test::assert_pipelines_compile(
+        &mut app,
+        Vec3::new(0.0, 2.0, 6.0),
+        Vec3::ZERO,
+        &[
+            "soft_shadows.wgsl",
+            "terrain_flat.wgsl",
+            "coast_cliff.wgsl",
+            "coast_water.wgsl",
+        ],
+    );
+}
+
+/// The lowest Landscape Distance still displaces the hills as far as the fine rings always did.
+#[test]
+fn hill_reach_never_below_832() {
+    assert_eq!(hill_reach(500.0), 832.0);
+    assert_eq!(hill_reach(832.0), 832.0);
+    assert_eq!(hill_reach(1000.0), 1000.0);
+    assert_eq!(hill_reach(7000.0), 7000.0);
+
+    let mut surface = TerrainSurface::default();
+    assert_eq!(surface.params().hill_reach, 1000.0);
+    surface.set_landscape_distance(500.0);
+    assert!(surface.changes().params);
+    assert_eq!(surface.params().hill_reach, 832.0);
+    surface.changes = SurfaceChanges::default();
+    surface.set_landscape_distance(500.0);
+    assert!(!surface.changes().params);
+    surface.set_landscape_distance(7000.0);
+    assert_eq!(surface.params().hill_reach, 7000.0);
+    surface.set_landscape_distance(500.0);
+    assert_eq!(surface.params().hill_reach, 832.0);
+}
+
+/// The ground mesh reaches past the highest setting, so hills are displaced all the way out.
+#[test]
+fn ground_reaches_the_highest_hill_reach() {
+    assert!(ground_extent(GROUND_RINGS) >= hill_reach(7000.0) * 1.1);
+}
+
+/// A ring's origin moves only when the player crosses a whole cell of that ring, so its vertices
+/// stay on the same terrain points while the player walks.
+#[test]
+fn ring_origins_snap_to_cell_size() {
+    for cell in [32.0, 64.0, 128.0, 256.0] {
+        let origin = ring_origin(Vec2::new(1000.0, -3000.0), cell);
+        assert_eq!(origin % cell, Vec2::ZERO);
+        for step in [0.0, 1.0, 15.9, 16.0, 31.0] {
+            let player = origin + Vec2::new(step, step * 0.5);
+            assert_eq!(ring_origin(player, cell), origin, "{cell} {step}");
+        }
+        assert_eq!(
+            ring_origin(origin + Vec2::new(cell, -0.5), cell),
+            origin + Vec2::new(cell, -cell)
+        );
+    }
+    // the whole ground snaps to its first rings' cell, the player's parcel corner
+    let player = Vec3::new(37.0, 0.0, -21.0);
+    let corner = ring_origin(Vec2::new(player.x, -player.z), RING_CELL);
+    assert_eq!(ground_origin(player), Vec3::new(corner.x, 0.0, -corner.y));
+}
+
+/// Every terrain vertex shader variant (the ground and a parcel grid, main pass, prepasses and
+/// shadows) compiles. Needs a GPU:
+/// `cargo test -p visuals terrain_vertex_compiles -- --ignored --nocapture`.
+#[test]
+#[ignore = "needs a GPU"]
+fn terrain_vertex_compiles() {
+    use bevy::{
+        core_pipeline::prepass::{DepthPrepass, NormalPrepass},
+        log::LogPlugin,
+        render::{
+            camera::RenderTarget,
+            pipelined_rendering::PipelinedRenderingPlugin,
+            render_resource::{
+                CachedPipelineState, PipelineCache, PipelineCacheError, PipelineDescriptor,
+                TextureUsages,
+            },
+        },
+        window::ExitCondition,
+        winit::WinitPlugin,
+    };
+
+    use crate::landscape_textures::{LandscapeTextures, LandscapeTexturesPlugin};
+
+    let mut app = App::new();
+    app.add_plugins(
+        DefaultPlugins
+            .build()
+            .disable::<LogPlugin>()
+            .disable::<WinitPlugin>()
+            .disable::<PipelinedRenderingPlugin>()
+            .set(WindowPlugin {
+                primary_window: None,
+                exit_condition: ExitCondition::DontExit,
+                close_when_requested: false,
+            }),
+    )
+    .add_plugins((assets::EmbedAssetsPlugin, LandscapeTexturesPlugin))
+    .add_plugins(MaterialPlugin::<TerrainFlatMaterial>::default());
+    embed_shaders(&mut app);
+    app.finish();
+    app.cleanup();
+
+    let world = app.world_mut();
+    let textures = world.resource::<LandscapeTextures>().clone();
+    let mut target = Image::new_fill(
+        Extent3d {
+            width: 64,
+            height: 64,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        &[0; 4],
+        TextureFormat::Bgra8UnormSrgb,
+        RenderAssetUsages::default(),
+    );
+    target.texture_descriptor.usage |= TextureUsages::RENDER_ATTACHMENT;
+    let mut images = world.resource_mut::<Assets<Image>>();
+    let target = images.add(target);
+    images.insert(TERRAIN_TEXTURE.id(), TerrainSurface::default().image());
+    world.spawn((
+        Camera3d::default(),
+        Camera {
+            target: RenderTarget::Image(target.into()),
+            ..default()
+        },
+        DepthPrepass,
+        NormalPrepass,
+        Transform::from_xyz(0.0, 50.0, 100.0).looking_at(Vec3::ZERO, Vec3::Y),
+    ));
+    world.spawn((
+        DirectionalLight {
+            shadows_enabled: true,
+            ..default()
+        },
+        Transform::from_xyz(1.0, 2.0, 1.0).looking_at(Vec3::ZERO, Vec3::Y),
+    ));
+    let mut meshes = world.resource_mut::<Assets<Mesh>>();
+    let ground = meshes.add(ground_mesh(ground_segments, GROUND_RINGS));
+    let flat = world
+        .resource_mut::<Assets<TerrainFlatMaterial>>()
+        .add(TerrainFlatMaterial {
+            base: StandardMaterial::default(),
+            extension: TerrainExtension::new(&textures),
+        });
+    world.spawn((Mesh3d(ground), MeshMaterial3d(flat)));
+    let ShaderRef::Path(path) = terrain_vertex_shader() else {
+        unreachable!("the terrain vertex shader is embedded");
+    };
+    let vertex = world.resource::<AssetServer>().load::<Shader>(path).id();
+
+    let mut seen = 0;
+    for _ in 0..2000 {
+        app.update();
+        let cache = app.sub_app(RenderApp).world().resource::<PipelineCache>();
+        let terrain: Vec<_> = cache
+            .pipelines()
+            .filter(|pipeline| {
+                matches!(&pipeline.descriptor,
+                    PipelineDescriptor::RenderPipelineDescriptor(descriptor)
+                        if descriptor.vertex.shader.id() == vertex)
+            })
+            .collect();
+        for pipeline in &terrain {
+            if let CachedPipelineState::Err(error) = &pipeline.state {
+                // both clear once the shader and its imports have loaded
+                if !matches!(
+                    error,
+                    PipelineCacheError::ShaderNotLoaded(_)
+                        | PipelineCacheError::ShaderImportNotYetAvailable
+                ) {
+                    panic!("a terrain pipeline failed to compile: {error}");
+                }
+            }
+        }
+        seen = terrain.len();
+        let ready = terrain
+            .iter()
+            .all(|pipeline| matches!(pipeline.state, CachedPipelineState::Ok(_)));
+        // the main pass, the prepass and the shadow pass
+        if seen >= 3 && ready && cache.waiting_pipelines().next().is_none() {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    panic!("the terrain pipelines did not finish compiling ({seen} seen)");
+}
+
+/// The landscape's systems (terrain, grass, trees, props, coast) fit the explorer's PostUpdate
+/// ordering: the transform and collider sets, which run before the realm's scene lifecycle, and
+/// the realm lifecycle itself. A cycle among them would panic the client at start-up.
+#[test]
+fn landscape_schedule_is_acyclic() {
+    use bevy::ecs::schedule::ScheduleLabel;
+    use common::sets::RealmLifecycle;
+    use scene_runner::{
+        initialize_scene::process_scene_lifecycle,
+        update_world::transform_and_parent::configure_post_update_sets,
+    };
+
+    let mut app = App::new();
+    app.add_plugins((MinimalPlugins, AssetPlugin::default()))
+        .init_asset::<Shader>()
+        .init_asset::<Mesh>()
+        .init_asset::<Image>();
+    // the explorer's own order of the transform, collider and camera sets, before the realm's
+    // scene lifecycle
+    configure_post_update_sets(&mut app);
+    app.add_systems(PostUpdate, process_scene_lifecycle.in_set(RealmLifecycle));
+    TerrainPlugin.build(&mut app);
+    crate::grass::GrassPlugin.build(&mut app);
+    crate::trees::TreesPlugin.build(&mut app);
+    crate::props::PropsPlugin.build(&mut app);
+    crate::coast::CoastPlugin.build(&mut app);
+    let label = PostUpdate.intern();
+    app.world_mut()
+        .schedule_scope(label, |world, schedule| schedule.initialize(world))
+        .unwrap_or_else(|error| panic!("PostUpdate does not build: {error}"));
 }

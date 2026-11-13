@@ -142,7 +142,7 @@ well, or its writes land a frame late. `crates/avatar/src/point_at_marker.rs` is
   - `spawn_timing`'s `start_spawner` before the spawner, `finish_spawner` between the spawner and
     processing, and `finish_processing` after processing: they measure both into diagnostics.
 - **`Last`**: CEF command drain, livekit room close on app exit, the web engine heartbeat.
-- **`OnEnter`/`OnExit`**: a few states (transmitter, receiver, microphone, parcel grass).
+- **`OnEnter`/`OnExit`**: a few states (transmitter, receiver, microphone).
 
 Other named sets: `RealmLifecycle` for systems that react to a realm change, `TerrainSet` in
 `visuals`, `GltfLinkSet` for gltf instance linking, `ConsoleSet` (`ConsoleUI`, `Commands`,

@@ -1,5 +1,5 @@
-// Displaces ground and grass meshes by the empty-parcel terrain height. The height function
-// matches `common::terrain::height`, reading eased per-parcel step values from `terrain_steps`.
+// Displaces the ground mesh by the empty-parcel terrain height (terrain_height.wgsl), stitching
+// its finer and coarser grids so neither leaves a crack.
 
 #import bevy_pbr::{
     mesh_functions,
@@ -7,6 +7,7 @@
 }
 
 #import "embedded://visuals/terrain_params.wgsl"::terrain
+#import "embedded://visuals/terrain_height.wgsl"::{hill_fade, terrain_height, terrain_height_unity}
 
 #ifdef PREPASS_PIPELINE
     #import bevy_pbr::prepass_io::{Vertex, VertexOutput};
@@ -14,135 +15,41 @@
     #import bevy_pbr::forward_io::{Vertex, VertexOutput};
 #endif
 
-@group(2) @binding(100) var terrain_steps: texture_2d<f32>;
-
-const STEP_HEIGHT: f32 = 1.8;
-const TEXEL_STEP: f32 = 10.0;
 const NORMAL_EPSILON: f32 = 0.5;
-// parcels around the player drawn at parcel grass resolution (terrain.rs GROUND_NEAR_MIN/MAX)
+// parcels around the player drawn as per-parcel grids (terrain.rs GROUND_NEAR_MIN/MAX)
 const GROUND_NEAR_MIN: i32 = -13;
 const GROUND_NEAR_MAX: i32 = 12;
 // cell size of the ground ring beyond them (terrain.rs RING_CELL)
 const RING_CELL: f32 = 16.0;
-// Beyond the rings at RING_CELL (terrain.rs TERRAIN_RINGS, each doubling the extent) the ground is
-// flat: coarser cells slide over the terrain as the mesh follows the player, so can't follow it
-// without swimming.
-const FLAT_REACH: f32 = f32(-GROUND_NEAR_MIN) * 16.0 * 4.0;
+// Half-size of the rings at RING_CELL (terrain.rs TERRAIN_RINGS, each doubling the extent). Each
+// ring beyond doubles both its cell and its extent.
+const FINE_REACH: f32 = f32(-GROUND_NEAR_MIN) * 16.0 * 4.0;
+// rings beyond those (terrain.rs GROUND_RINGS - TERRAIN_RINGS)
+const COARSE_RINGS: i32 = 4;
 
-fn modulo289(value: f32) -> f32 {
-    return value - floor(value * (1.0 / 289.0)) * 289.0;
-}
-
-fn permute(value: f32) -> f32 {
-    return modulo289((34.0 * value + 1.0) * value);
-}
-
-fn simplex_corner(i: vec2<f32>, offset: vec2<f32>, corner: vec2<f32>) -> f32 {
-    let p = permute(permute(i.y + offset.y) + i.x + offset.x);
-    var m = max(0.5 - dot(corner, corner), 0.0);
-    m *= m;
-    m *= m;
-    let fractional = p * 0.024390243 - floor(p * 0.024390243);
-    let x = 2.0 * fractional - 1.0;
-    let h = abs(x) - 0.5;
-    let a = x - floor(x + 0.5);
-    m *= 1.7928429 - 0.85373473 * (a * a + h * h);
-    return m * (a * corner.x + h * corner.y);
-}
-
-fn simplex(v: vec2<f32>) -> f32 {
-    let c = vec4<f32>(0.21132487, 0.36602542, -0.57735026, 0.024390243);
-    let i = floor(v + dot(v, c.yy));
-    let x0 = v - i + dot(i, c.xx);
-    var i1 = vec2<f32>(0.0, 1.0);
-    if x0.x > x0.y {
-        i1 = vec2<f32>(1.0, 0.0);
+// Cell size of the ground ring holding a vertex `distance` metres (the larger of x and z) from the
+// mesh origin. A vertex on the border of two rings takes the finer ring's cell, so the two rings'
+// copies of it land on the same point.
+fn ring_cell(distance: f32) -> f32 {
+    var cell = RING_CELL;
+    var edge = FINE_REACH;
+    for (var ring = 0; ring < COARSE_RINGS && distance > edge; ring++) {
+        cell *= 2.0;
+        edge *= 2.0;
     }
-    let x1 = x0 + c.xx - i1;
-    let x2 = x0 + c.zz;
-    let im = vec2<f32>(modulo289(i.x), modulo289(i.y));
-    return 130.0 * (
-        simplex_corner(im, vec2<f32>(0.0), x0)
-        + simplex_corner(im, i1, x1)
-        + simplex_corner(im, vec2<f32>(1.0), x2)
-    );
+    return cell;
 }
 
-fn mountain_noise(p: vec2<f32>) -> f32 {
-    let offsets = array<vec2<f32>, 3>(
-        vec2<f32>(-99974.82, -93748.33),
-        vec2<f32>(-67502.3, -22190.19),
-        vec2<f32>(77881.34, -61863.88),
-    );
-    var amplitude = 1.0;
-    var frequency = 1.0;
-    var height = 0.0;
-    for (var octave = 0; octave < 3; octave++) {
-        height += simplex((p + offsets[octave]) * 0.02 * frequency) * amplitude;
-        amplitude *= 0.338;
-        frequency *= 2.9;
-    }
-    return height * 3.0;
-}
-
-fn terrain_texel(parcel: vec2<i32>) -> f32 {
-    let local = parcel - terrain.min;
-    if any(local < vec2<i32>(0)) || any(local >= terrain.size) {
-        return 0.0;
-    }
-    let steps = textureLoad(terrain_steps, local, 0).r;
-    if steps < 0.0 {
-        return 0.0;
-    }
-    return 255.0 - TEXEL_STEP * terrain.max_steps + TEXEL_STEP * steps;
-}
-
-// x and unity z (= -bevy z)
-fn terrain_height_unity(p: vec2<f32>) -> f32 {
-    if terrain.max_steps <= 0.0 {
-        return 0.0;
-    }
-    let uv_size = terrain.uv_size;
-    let half = i32(uv_size * 0.5);
-    let last = vec2<i32>(i32(uv_size) - 1);
-    let pixel = ((p / 16.0 + uv_size * 0.5) / uv_size) * uv_size - 0.5;
-    // unity's texture clamps to its edge
-    let base0 = clamp(vec2<i32>(floor(pixel)), vec2<i32>(0), last) - half;
-    let base1 = clamp(vec2<i32>(floor(pixel)) + 1, vec2<i32>(0), last) - half;
-    let fraction = pixel - floor(pixel);
-    let top = mix(
-        terrain_texel(base0),
-        terrain_texel(vec2<i32>(base1.x, base0.y)),
-        fraction.x,
-    );
-    let bottom = mix(
-        terrain_texel(vec2<i32>(base0.x, base1.y)),
-        terrain_texel(base1),
-        fraction.x,
-    );
-    let occupancy = mix(top, bottom, fraction.y) * (1.0 / 255.0);
-    let floor_value = (255.0 - TEXEL_STEP * terrain.max_steps) / 255.0;
-    if occupancy <= floor_value {
-        return 0.0;
-    }
-    let normalized = (occupancy - floor_value) / (1.0 - floor_value);
-    return max(
-        normalized * (terrain.max_steps * STEP_HEIGHT)
-            + mountain_noise(p) * clamp(normalized * 20.0, 0.0, 1.0),
-        0.0,
-    );
-}
-
-// bevy world x/z
-fn terrain_height(xz: vec2<f32>) -> f32 {
-    return terrain_height_unity(vec2<f32>(xz.x, -xz.y));
+// terrain.rs `ring_origin`: the corner of the `cell` holding `p` (x and unity z)
+fn ring_origin(p: vec2<f32>, cell: f32) -> vec2<f32> {
+    return floor(p / cell) * cell;
 }
 
 // Detail morph: nearer than this to a border (in parcels) whose crossing gives a parcel a coarser
 // grid, the parcel's vertices blend onto that grid, reaching it at the crossing.
 const MORPH_BAND: f32 = 0.5;
 
-// cell size of a parcel's ground and grass grid: ParcelGrassLod::from_distance for 16 / lod cells
+// cell size of a parcel's ground grid: 16 / terrain.rs `ground_segments`
 fn lod_cell(parcel: vec2<i32>) -> f32 {
     return lod_cell_from(parcel, terrain.player_parcel);
 }
@@ -180,9 +87,9 @@ fn edge_height(p: vec2<f32>, along_x: bool, cell: f32, anchor: vec2<f32>) -> f32
     return mix(terrain_height_unity(a), terrain_height_unity(b), t);
 }
 
-// Height of a ground or grass vertex (unity x/z). Vertices on an edge shared with a coarser grid
+// Height of a ground vertex (unity x/z). Vertices on an edge shared with a coarser grid
 // sit on that grid's edge so neither leaves a crack: `stitch` gives the coarser cell along an axis
-// for ring edges (anchored at the mesh origin); parcel edges use the parcel grass lod.
+// for ring edges (anchored at the mesh origin); parcel edges use the parcels' grids.
 fn vertex_height(p: vec2<f32>, stitch: vec2<f32>, anchor: vec2<f32>) -> f32 {
     if stitch.x > 0.0 {
         return edge_height(p, true, stitch.x, anchor);
@@ -329,15 +236,23 @@ fn vertex(vertex: Vertex) -> VertexOutput {
     stitch = vertex.uv;
     out.uv = vec2<f32>(0.0);
 #endif
-    let xz = world_position.xz;
+    // The mesh follows the player's parcel. Rings coarser than a parcel move to the corner of the
+    // player's cell of their own size instead, so their vertices stay on the same terrain points
+    // while the player walks rather than swimming over the hills.
     let anchor = world_from_local[3].xz;
-    let outer = max(abs(xz.x - anchor.x), abs(xz.y - anchor.y)) >= FLAT_REACH;
-    if !outer {
-        world_position.y += vertex_height(
-            vec2<f32>(xz.x, -xz.y),
-            stitch,
-            vec2<f32>(anchor.x, -anchor.y),
-        );
+    let local = world_position.xz - anchor;
+    let cell = ring_cell(max(abs(local.x), abs(local.y)));
+    var origin = vec2<f32>(anchor.x, -anchor.y);
+    if cell > RING_CELL {
+        origin = ring_origin(origin, cell);
+    }
+    let p = origin + vec2<f32>(local.x, -local.y);
+    world_position.x = p.x;
+    world_position.z = -p.y;
+    let xz = world_position.xz;
+    let beyond_reach = hill_fade(p) <= 0.0;
+    if !beyond_reach {
+        world_position.y += vertex_height(p, stitch, origin);
     }
 
     out.world_position = world_position;
@@ -349,13 +264,13 @@ fn vertex(vertex: Vertex) -> VertexOutput {
     out.position.z = min(out.position.z, 1.0);
 #endif
 #ifdef NORMAL_PREPASS_OR_DEFERRED_PREPASS
-    out.world_normal = select(terrain_normal(xz), vec3<f32>(0.0, 1.0, 0.0), outer);
+    out.world_normal = select(terrain_normal(xz), vec3<f32>(0.0, 1.0, 0.0), beyond_reach);
 #endif
 #ifdef MOTION_VECTOR_PREPASS
     out.previous_world_position = world_position;
 #endif
 #else
-    out.world_normal = select(terrain_normal(xz), vec3<f32>(0.0, 1.0, 0.0), outer);
+    out.world_normal = select(terrain_normal(xz), vec3<f32>(0.0, 1.0, 0.0), beyond_reach);
 #endif
 
 #ifdef VERTEX_OUTPUT_INSTANCE_INDEX

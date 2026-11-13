@@ -8,13 +8,14 @@ use bevy::{
     },
 };
 use bevy_console::ConsoleCommand;
-use common::structs::{AppConfig, PrimaryCamera, SceneLoadDistance, TimeOfDay};
+use common::structs::{AppConfig, LandscapeDistance, PrimaryCamera, SceneLoadDistance, TimeOfDay};
 use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand};
 use serde_json::json;
 
 use crate::{
+    grass::ParcelGrass,
     landscape_textures::{self, LandscapeTextures},
-    shell_texturing::{Ground, ParcelGrass},
+    terrain::Ground,
     trees::Tree,
     CloudCover, ShadowBiasOverride, SUN_SHADOW_BIAS,
 };
@@ -64,8 +65,10 @@ pub(super) fn register(app: &mut App) {
         query: "/landscape",
         fields: &[
             ("Scene load distance (m)", "loadDistance"),
+            ("Landscape distance (m)", "landscapeDistance"),
             ("Loaded trees", "treeCount"),
             ("Grass parcels", "grassParcels"),
+            ("Grass tufts", "grassTufts"),
             ("Ground and cliff textures", "groundTextures"),
         ],
         actions: &[],
@@ -204,10 +207,9 @@ fn landscape_command(
     mut cmd: ConsoleCommand<LandscapeCommand>,
     preview: Option<Res<common::structs::PreviewMode>>,
     mut layers: ResMut<LandscapeLayers>,
-    load: Res<SceneLoadDistance>,
+    (load, landscape): (Res<SceneLoadDistance>, Res<LandscapeDistance>),
     textures: Res<LandscapeTextures>,
-    trees: Query<(), With<Tree>>,
-    grass: Query<(), With<ParcelGrass>>,
+    (trees, grass): (Query<(), With<Tree>>, Query<&ParcelGrass>),
 ) {
     let Some(Ok(args)) = cmd.take() else { return };
     if let (Some(layer), Some(value)) = (args.layer.as_deref(), args.visible) {
@@ -223,7 +225,8 @@ fn landscape_command(
     }
     let ground_textures = landscape_textures::load_state(&textures);
     cmd.reply_ok(json!({"ground":layers.ground, "trees":layers.trees, "grass":layers.grass,
-        "treeCount":trees.iter().len(), "grassParcels":grass.iter().len(), "loadDistance":load.load, "groundTextures":ground_textures}).to_string());
+        "treeCount":trees.iter().len(), "grassParcels":grass.iter().len(), "grassTufts":grass.iter().map(|grass| grass.tufts).sum::<u32>(), "loadDistance":load.load, "landscapeDistance":landscape.0,
+        "groundTextures":ground_textures}).to_string());
 }
 
 type LandscapeObjects = Or<(With<Ground>, With<Tree>, With<ParcelGrass>)>;

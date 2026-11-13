@@ -1,5 +1,4 @@
-// The ground without grass shells (parcel grass off): the splat-textured ground colour under
-// standard lighting, ending at the coast like the grass.
+// The ground: the splat-textured ground colour under standard lighting, ending at the coast.
 
 #ifdef PREPASS_PIPELINE
     #import bevy_pbr::prepass_io::{VertexOutput, FragmentOutput};
@@ -16,7 +15,7 @@
 #import "embedded://visuals/coast_profile.wgsl"::beyond_coast
 
 #ifndef PREPASS_PIPELINE
-// same softened sun shadows as scene materials (see bound_material.wgsl)
+// the softened sun shadows of the scene materials, trees and grass (see shadow_softening.wgsl)
 override fn shadows::fetch_directional_shadow(light_id: u32, frag_position: vec4<f32>, surface_normal: vec3<f32>, view_z: f32) -> f32 {
     let base = shadows::fetch_directional_shadow(light_id, frag_position, surface_normal, view_z);
     // the far bound of the last cascade is the shadow distance for this light

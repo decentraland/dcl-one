@@ -24,7 +24,7 @@ fn coast_crest_distance(unity: vec2<f32>, bounds: vec4<f32>) -> f32 {
     return coast_outside(unity, bounds) - coast_profile(clamp(unity, bounds.xy, bounds.zw)).x;
 }
 
-// The ground and grass end just past the cliff crest (bevy world x/z), which the cliff top meets
+// The ground ends just past the cliff crest (bevy world x/z), which the cliff top meets
 // below them, so the chords of the cliff mesh never open a gap.
 fn beyond_coast(xz: vec2<f32>, bounds: vec4<f32>) -> bool {
     return coast_crest_distance(vec2(xz.x, -xz.y), bounds) > 0.3;

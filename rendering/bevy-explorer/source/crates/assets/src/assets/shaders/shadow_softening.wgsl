@@ -1,8 +1,9 @@
-// Sun shadow fade shared by the fetch_directional_shadow overrides in bound_material.wgsl,
-// soft_shadows.wgsl and the grass shell shader. The overrides stay in each top-level shader, and
-// this module must not import view bindings: importing such a module breaks the override
-// ("can't find function shadows::fetch_directional_shadow for redirection"), so callers pass in
-// the shadow distance and the camera distance.
+// Sun shadow fade shared by the fetch_directional_shadow overrides in bound_material.wgsl and in
+// the ground, the grass and the trees (visuals: terrain_flat, grass_wind, soft_shadows). The
+// overrides stay in each top-level shader, and this module must not import view bindings:
+// importing such a module breaks the override ("can't find function
+// shadows::fetch_directional_shadow for redirection"), so callers pass in the shadow distance and
+// the camera distance.
 
 /// The fraction of the shadow distance the fade spans: shadows fade from `(1 - border) * distance`
 /// to the shadow distance, linear in squared camera distance, whatever the cascade count, so the

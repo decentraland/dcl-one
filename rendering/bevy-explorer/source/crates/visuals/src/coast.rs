@@ -1,7 +1,7 @@
 //! The coast around the terrain, after eordano's procedural landscape (#1342): cliffs dropping from
 //! the ground to a sandy shelf, the sea, and invisible walls along the cliff crest. Unity places
 //! cliff prefabs along the terrain bounds; this builds a rounded, varying cliff instead. The ground
-//! and grass end just past the cliff crest (`beyond_coast` in coast_profile.wgsl).
+//! ends just past the cliff crest (`beyond_coast` in coast_profile.wgsl).
 //!
 //! Coordinates in the geometry are unity x/z metres (bevy z = -unity z).
 
@@ -22,7 +22,7 @@ use bevy::{
 };
 use common::{
     sets::PostUpdateSets,
-    structs::{PrimaryCamera, PrimaryUser},
+    structs::{LandscapeDistance, PrimaryCamera, PrimaryUser},
 };
 use dcl_component::SceneEntityId;
 use scene_runner::{
@@ -40,7 +40,8 @@ use crate::{
 pub const SEA_LEVEL: f32 = -19.0;
 /// Cliffs are built in chunks of this length along each side.
 const CHUNK: f32 = 64.0;
-/// Cliff chunks within this distance of the player's parcel centre are built.
+/// Cliff chunks within this distance of the player's parcel centre are built, or within the
+/// Landscape Distance when that is nearer (`cliff_range`).
 const CLIFF_RANGE: f32 = 768.0;
 /// Profile columns along each side are this far apart.
 const COLUMN: f32 = 1.0;
@@ -53,8 +54,8 @@ const ROCK_RINGS: usize = 3;
 const ROCK_SPLIT: usize = 4;
 /// Walls stand on every this many columns: the crest is smooth, so they stay on it.
 const WALL_EVERY: usize = 4;
-/// The ground's visual offset (shell_texturing), where the cliff crest meets it.
-const GROUND_LEVEL: f32 = -0.05;
+/// The ground.s visual offset, where the cliff crest meets it.
+const GROUND_LEVEL: f32 = crate::terrain::GROUND_Y;
 /// Hidden shadow casters for the land stand just below the ground: the ground doesn't cast
 /// shadows, which would otherwise leave only the ring of cliffs shading the shore.
 const UNDERGROUND: f32 = -0.5;
@@ -258,6 +259,7 @@ fn update(
     underground: Single<(&mut Transform, &mut Visibility), UndergroundOnly>,
     cliffs: Query<(Entity, &Cliff)>,
     walls: Single<&mut SceneColliderData, With<CoastWalls>>,
+    distance: Res<LandscapeDistance>,
 ) {
     let bounds = surface.coast();
     let changed = bounds != state.bounds;
@@ -313,14 +315,17 @@ fn update(
         if transform.translation != translation {
             transform.translation = translation;
         }
-        visibility.set_if_neq(Visibility::Inherited);
+        visibility.set_if_neq(if ocean_visible(bounds, position, distance.0) {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        });
     }
 
-    let mut desired: HashSet<_> = near_chunks(bounds, parcel, CLIFF_RANGE)
-        .into_iter()
-        .collect();
+    let range = cliff_range(distance.0);
+    let mut desired: HashSet<_> = near_chunks(bounds, parcel, range).into_iter().collect();
     // built chunks are kept for another parcel, so stepping back and forth doesn't rebuild them
-    let keep: HashSet<_> = near_chunks(bounds, parcel, CLIFF_RANGE + PARCEL_SIZE)
+    let keep: HashSet<_> = near_chunks(bounds, parcel, range + PARCEL_SIZE)
         .into_iter()
         .collect();
     for (entity, cliff) in &cliffs {
@@ -348,6 +353,23 @@ fn update(
             Transform::default(),
         ));
     }
+}
+
+/// How far from the player's parcel cliffs are built for a Landscape Distance.
+fn cliff_range(distance: f32) -> f32 {
+    CLIFF_RANGE.min(distance)
+}
+
+/// Whether the sea is within `distance` of the camera (bevy position): its nearest part, beyond
+/// the terrain bounds at sea level.
+fn ocean_visible(bounds: Vec4, camera: Vec3, distance: f32) -> bool {
+    let unity = Vec2::new(camera.x, -camera.z);
+    let inside = (unity - bounds.xy())
+        .min(bounds.zw() - unity)
+        .min_element()
+        .max(0.0);
+    let above = (camera.y - SEA_LEVEL).max(0.0);
+    Vec2::new(inside, above).length() < distance
 }
 
 /// Deterministic value in [0, 1] (pcg hash).
