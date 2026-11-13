@@ -239,6 +239,34 @@ class CameraFiles(unittest.TestCase):
         self.assertEqual(rows[0][0], row())
         self.assertEqual(rows[0][1], (PHOTO + '-photo.png', PHOTO + '-thumbnail-photo.png'))
 
+    def test_camera_csv_large_fields_restore_limit_before_yield_and_close(self):
+        original_limit = csv.field_size_limit()
+        metadata = dict(META, userName='x' * (2 * 1024 * 1024 - 2048))
+        values = row(metadata=json.dumps(metadata))
+        records = migrate.camera_rows(self.write([values, values]))
+        try:
+            self.assertEqual(next(records)[0], values)
+            self.assertEqual(csv.field_size_limit(), original_limit)
+        finally:
+            records.close()
+        self.assertEqual(csv.field_size_limit(), original_limit)
+        self.assertEqual(len(list(migrate.camera_rows(self.write([values])))), 1)
+        self.assertEqual(csv.field_size_limit(), original_limit)
+
+    def test_camera_csv_rejects_malformed_oversize_and_wrong_column_count(self):
+        original_limit = csv.field_size_limit()
+        for contents in ('"unterminated', '"closed"garbage,x', 'one,two\n',
+                         'x' * (migrate.CAMERA_CSV_FIELD_LIMIT + 1)):
+            with self.subTest(kind=contents[:20]):
+                data = self.root / 'invalid.csv'
+                data.write_text(contents)
+                with self.assertRaises(migrate.MigrationError):
+                    list(migrate.camera_rows(data))
+                self.assertEqual(csv.field_size_limit(), original_limit)
+        with self.assertRaises(migrate.MigrationError):
+            list(migrate.camera_rows(self.write([row(metadata='{}')])))
+        self.assertEqual(csv.field_size_limit(), original_limit)
+
     def test_unsupported_facts_fail_closed(self):
         for changes in ({'created': ''}, {'thumbnail': ''}, {'owner': OWNER.upper()},
                         {'url': 'https://other.example.test/api/images/' + PHOTO + '-photo.png'},
@@ -360,6 +388,12 @@ CREATE TABLE camera_reel.photo_events (id bigint);
         self.sql('UPDATE images SET metadata=' + migrate.literal(json.dumps(metadata)) + '::jsonb;')
         args = ['run', migrate.CAMERA, '--storage-root', str(self.store.contents.parent)]
         self.assertEqual(migrate.main(args), 0)
+        self.assertEqual(json.loads(self.sql('SELECT metadata FROM camera_reel.images;')), metadata)
+
+    def test_cli_imports_large_valid_source_metadata_without_truncation(self):
+        metadata = dict(META, userName='x' * 140000)
+        self.sql('UPDATE images SET metadata=' + migrate.literal(json.dumps(metadata)) + '::jsonb;')
+        self.assertEqual(migrate.main(['run', migrate.CAMERA, '--storage-root', str(self.store.contents.parent)]), 0)
         self.assertEqual(json.loads(self.sql('SELECT metadata FROM camera_reel.images;')), metadata)
 
     def test_source_visibility_follows_tracked_import_and_preserves_rejection(self):

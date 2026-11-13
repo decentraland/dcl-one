@@ -59,7 +59,11 @@ facts as well as the local blobs under the shared GC lock; missing header facts
 never invoke the runtime's legacy byte-sniffing fallback.
 
 Preflight scans the source through a disk spool and reports every unsupported
-row before copying or loading. Supported URLs have exactly these forms:
+row before copying or loading. Camera CSV fields have an 8,388,608-character bound,
+allowing PostgreSQL JSONB rendering headroom above the pinned source's shared
+2 MiB in-memory multipart limit. Malformed CSV and oversized fields fail without
+truncation; other importers retain their existing CSV limits. Supported URLs have
+exactly these forms:
 `<API base>/api/images/<UUID>-<basename>` and
 `<API base>/api/images/<UUID>-thumbnail-<basename>`. No URL decoding occurs.
 Different origins, mismatched names, slash/backslash, control characters and

@@ -752,6 +752,9 @@ def camera_extract_sql(step, since, cursor):
 
 CAMERA = 'camera-reel-service'
 CAMERA_BATCH = 100
+# Pinned uploads share 2 MiB of in-memory multipart data. Allow 4x headroom
+# for PostgreSQL JSONB whitespace/numeric rendering in the exported CSV field.
+CAMERA_CSV_FIELD_LIMIT = 8 * 1024 * 1024
 STORE_LOCK_KEY = 0x53544F52455F4743  # services/catalyst/storage/src/gc.rs
 
 
@@ -770,7 +773,23 @@ def camera_rows(data, report=None):
     prefix = camera_api_url() + '/api/images/'
     blobs = load_blobs_module()
     with Path(data).open(newline='') as stream:
-        for row in csv.reader(stream):
+        reader = csv.reader(stream, strict=True)
+        while True:
+            # csv's limit is process-global: restore it before validating or
+            # yielding each row, including EOF, malformed input and exceptions.
+            previous_limit = csv.field_size_limit()
+            try:
+                csv.field_size_limit(CAMERA_CSV_FIELD_LIMIT)
+                try:
+                    row = next(reader)
+                except StopIteration:
+                    return
+                except csv.Error as error:
+                    raise MigrationError(f'camera CSV record {reader.line_num}: {error}') from error
+            finally:
+                csv.field_size_limit(previous_limit)
+            if len(row) != 7:
+                raise MigrationError(f'camera CSV record {reader.line_num}: expected 7 columns, got {len(row)}')
             photo, owner, url, thumbnail, public, metadata, created = row
             reason = None
             if not created or public not in ('t', 'f'):
