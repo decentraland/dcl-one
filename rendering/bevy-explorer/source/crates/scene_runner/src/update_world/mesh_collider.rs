@@ -21,7 +21,8 @@ use rapier3d_f64::{
 use crate::{
     gltf_resolver::GltfMeshResolver,
     update_world::{
-        gltf_container::mesh_to_parry_shape, mesh_renderer::truncated_cone::TruncatedCone,
+        gltf_container::{mesh_to_parry_shape, GltfProcessing},
+        mesh_renderer::truncated_cone::TruncatedCone,
     },
     ContainerEntity, PrimaryUser, RendererSceneContext, SceneSets,
 };
@@ -1070,6 +1071,19 @@ impl SceneColliderData {
         Some(Vec3::new(c.x as f32, c.y as f32, c.z as f32))
     }
 
+    /// Removes `id`'s collider if `entity` still holds it. Another entity may have taken the id
+    /// over since: a glTF's replacement registers its colliders under the same ids while the old
+    /// model is still shown.
+    pub fn remove_collider_of(&mut self, id: &ColliderId, entity: Entity) {
+        if self
+            .collider_state
+            .get(id)
+            .is_some_and(|state| state.entity == Some(entity))
+        {
+            self.remove_collider(id);
+        }
+    }
+
     pub fn remove_collider(&mut self, id: &ColliderId) {
         if let Some(handle) = self.scaled_collider.get_by_left(id) {
             self.collider_set.remove(
@@ -1199,7 +1213,12 @@ fn update_colliders<T: ColliderType>(
     // add colliders
     // any entity with a mesh collider that we're not already using, or where the mesh collider has changed
     new_colliders: Query<
-        (Entity, &MeshCollider<T>, &ContainerEntity),
+        (
+            Entity,
+            &MeshCollider<T>,
+            &ContainerEntity,
+            Has<HasCollider<T>>,
+        ),
         Or<(Changed<MeshCollider<T>>, Without<HasCollider<T>>)>,
     >,
     // remove colliders
@@ -1211,12 +1230,22 @@ fn update_colliders<T: ColliderType>(
     mut scene_data: Query<(&RendererSceneContext, &mut SceneColliderData)>,
     mut gltf_mesh_resolver: GltfMeshResolver,
     meshes: Res<Assets<Mesh>>,
+    gltfs_in_progress: Query<(), With<GltfProcessing>>,
 ) {
     gltf_mesh_resolver.begin_frame();
 
     // add colliders
     // any entity with a mesh collider that we're not using, or where the mesh collider has changed
-    for (ent, collider_def, container) in new_colliders.iter() {
+    for (ent, collider_def, container, has_collider) in new_colliders.iter() {
+        // still unmatched by `Without<HasCollider>`, so it comes back next frame
+        if waits_for_reveal(
+            ent,
+            container,
+            has_collider,
+            gltfs_in_progress.contains(container.container),
+        ) {
+            continue;
+        }
         let collider = match &collider_def.shape {
             MeshColliderShape::Box => ColliderBuilder::cuboid(0.5, 0.5, 0.5),
             MeshColliderShape::Cylinder {
@@ -1304,7 +1333,7 @@ fn update_colliders<T: ColliderType>(
             continue;
         };
 
-        scene_data.remove_collider(&collider.0);
+        scene_data.remove_collider_of(&collider.0, ent);
 
         commands.entity(ent).remove::<HasCollider<T>>();
     }
@@ -1318,7 +1347,7 @@ fn on_collider_removed<T: ColliderType>(
     let entity = trigger.target();
     if let Ok((has_collider, container)) = collider_query.get(entity) {
         if let Ok(mut scene_data) = scene_data.get_mut(container.root) {
-            scene_data.remove_collider(&has_collider.0);
+            scene_data.remove_collider_of(&has_collider.0, entity);
         }
     }
 }
@@ -1580,6 +1609,24 @@ fn render_debug_colliders<T: ColliderType>(
         }
     }
 }
+
+/// Whether a collider waits for its glTF to be revealed: a new one on a node of a model still
+/// being processed, which is hidden. A change to a collider already registered, such as one of
+/// the old model shown meanwhile, and the container entity's own collider apply at once: a
+/// `Changed` skipped here would be lost.
+fn waits_for_reveal(
+    entity: Entity,
+    container: &ContainerEntity,
+    has_collider: bool,
+    model_in_progress: bool,
+) -> bool {
+    model_in_progress && !has_collider && entity != container.container
+}
+
+#[cfg(test)]
+mod ownership_tests;
+#[cfg(test)]
+mod reveal_tests;
 
 #[cfg(test)]
 mod tests {

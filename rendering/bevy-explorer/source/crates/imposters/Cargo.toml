@@ -33,5 +33,12 @@ tokio = { workspace = true }
 web-fs = { workspace = true }
 futures-lite = { workspace = true }
 
+[dev-dependencies]
+# the embedded shaders, for the GPU shader test
+assets = { workspace = true, features = ["test-support"] }
+# present only to enable the naga_oil `override_any` feature in a per-crate test build, as the
+# root crate does for the app (see [workspace.dependencies]); not referenced from Rust
+naga_oil = { workspace = true }
+
 [lints]
 workspace = true

@@ -25,6 +25,19 @@ pub struct BuildOptions {
     pub quiet: bool,
 }
 
+/// What a build is for, beside its [`BuildOptions`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum BuildMode {
+    #[default]
+    Plain,
+    /// The type check also writes `.d.ts` files (`--emitDeclaration`).
+    EmitDeclaration,
+    /// A `start` build or a watcher's: `scripts.build`'s `--production` is
+    /// not applied (upstream's `start` never reads the script), only its
+    /// `--ignoreComposite` and `--customEntryPoint`.
+    Preview,
+}
+
 /// The built-in release profile's artifact root, relative to the scene: where a deploy's
 /// production bundle lands. Stale only when `--skip-build` skips the rebuild.
 pub const RELEASE_OUT: &str = ".dcl-one/release";
@@ -65,12 +78,12 @@ pub fn member_options(opts: &BuildOptions, project: &Project) -> BuildOptions {
     }
 }
 
-pub async fn build_workspace(ws: &Workspace, opts: &BuildOptions) -> Result<()> {
+pub async fn build_workspace(ws: &Workspace, opts: &BuildOptions, mode: BuildMode) -> Result<()> {
     for (i, project) in ws.projects.iter().enumerate() {
         if let Some(header) = ws.member_header(i) {
             ux::note(header);
         }
-        build(&member_options(opts, project)).await?;
+        build_as(&member_options(opts, project), mode).await?;
     }
     Ok(())
 }
@@ -171,10 +184,26 @@ async fn bundle_step(
 }
 
 pub async fn build(opts: &BuildOptions) -> Result<Built> {
+    build_as(opts, BuildMode::Plain).await
+}
+
+pub async fn build_as(opts: &BuildOptions, mode: BuildMode) -> Result<Built> {
+    let emit_declaration = mode == BuildMode::EmitDeclaration;
     let project = Project::load(&opts.dir)?;
     if let Some(script) = crate::build_script::selected(&project, opts)? {
+        if emit_declaration {
+            ux::note_absent(NO_DECLARATIONS_CUSTOM);
+        }
         return crate::build_script::run(project, opts, &script).await;
     }
+    let flags = crate::build_script::script_flags(&project.root);
+    if !flags.ignored.is_empty() && !opts.quiet {
+        ux::note(format!(
+            "package.json scripts.build passes {} \u{2014} not supported by this build, ignored",
+            flags.ignored.join(" ")
+        ));
+    }
+    let opts = &flags.apply(opts, mode == BuildMode::Preview);
     let main = project.main_output()?;
     project.tsconfig()?;
     let art_root = opts
@@ -210,7 +239,10 @@ pub async fn build(opts: &BuildOptions) -> Result<Built> {
             let project = project.clone();
             Some(tokio::spawn(async move {
                 let started = Instant::now();
-                (type_check(&project, Reloaded::No).await, started.elapsed())
+                (
+                    type_check_mode(&project, Reloaded::No, emit_declaration).await,
+                    started.elapsed(),
+                )
             }))
         }
     };
@@ -264,16 +296,155 @@ pub async fn build(opts: &BuildOptions) -> Result<Built> {
             }
             let checked = checked?;
             tracing::info!("type checking completed without errors");
-            steps.done(match checked {
-                Checked::Ran => format!("Type check passed ({})", ux::fmt_elapsed_tinted(took, "")),
-                Checked::Unchanged => {
-                    "Type check passed (unchanged since the last pass)".to_string()
-                }
-            });
+            steps.done(check_line(checked, emit_declaration, took));
         }
     }
 
     Ok(Built { project, outfile })
+}
+
+const NO_DECLARATIONS_CUSTOM: &str = "--emitDeclaration writes no .d.ts files here: package.json scripts.build runs this build (--built-in uses the SDK pipeline, which writes them)";
+
+/// Why `--emitDeclaration` writes nothing with these flags: the type check
+/// writes the files, and neither a skipped check nor a watcher's does.
+pub fn no_declarations(skip_type_check: bool, watch: bool) -> Option<&'static str> {
+    match (skip_type_check, watch) {
+        (true, _) => Some(
+            "--emitDeclaration writes no .d.ts files with --skip-type-check: the type check writes them",
+        ),
+        (false, true) => Some(
+            "--emitDeclaration writes no .d.ts files with --watch: run build --emitDeclaration once without it",
+        ),
+        (false, false) => None,
+    }
+}
+
+fn check_line(checked: Checked, emit_declaration: bool, took: std::time::Duration) -> String {
+    let what = match emit_declaration {
+        true => "Type check passed, declarations emitted",
+        false => "Type check passed",
+    };
+    match checked {
+        Checked::Ran => format!("{what} ({})", ux::fmt_elapsed_tinted(took, "")),
+        Checked::Unchanged => format!("{what} (unchanged since the last pass)"),
+    }
+}
+
+/// `--single <glob>`: each matching `.ts`/`.tsx` under the project bundles to
+/// a sibling `.js` after one type check of the whole project. The SDK stays a
+/// `require`, as in the scene chunk, so a consuming scene bundles one SDK.
+pub async fn build_single(
+    opts: &BuildOptions,
+    pattern: &str,
+    emit_declaration: bool,
+) -> Result<Vec<PathBuf>> {
+    let project = Project::load(&opts.dir)?;
+    let tsconfig = project.tsconfig()?;
+    let entries = single_entrypoints(&project.root, pattern)?;
+    if entries.is_empty() {
+        return Err(UserError::new(
+            format!(
+                "--single {pattern} matches no .ts or .tsx file under {}",
+                project.root.display()
+            ),
+            TrySteps::one("quote the pattern so the shell leaves it alone: --single 'src/**/*.ts'")
+                .and("patterns are relative to the project folder; .d.ts files never match"),
+        )
+        .into());
+    }
+    let mut steps = match opts.quiet {
+        true => ux::Steps::silent(),
+        false => ux::Steps::new(entries.len() + usize::from(!opts.skip_type_check)),
+    };
+    if !opts.skip_type_check {
+        let started = Instant::now();
+        let checked = type_check_mode(&project, Reloaded::No, emit_declaration).await?;
+        steps.done(check_line(checked, emit_declaration, started.elapsed()));
+    }
+    let aliases = esbuild::resolve_aliases(&project)?;
+    let externals = split::scene_externals(&project);
+    let mut outfiles = Vec::with_capacity(entries.len());
+    for (entrypoint, outfile) in single_outputs(&project.root, entries)? {
+        let started = Instant::now();
+        esbuild::bundle(
+            &project,
+            &EsbuildOptions {
+                production: opts.production,
+                entrypoint,
+                outfile: outfile.clone(),
+                tsconfig: tsconfig.clone(),
+                aliases: aliases.clone(),
+                externals: externals.clone(),
+            },
+        )
+        .await?;
+        steps.done(saved("Bundle", &project.root, &outfile, started));
+        outfiles.push(outfile);
+    }
+    Ok(outfiles)
+}
+
+/// Each source with the sibling `.js` it bundles to. Two sources that name
+/// one output (`a.ts` and `a.tsx`) are refused before anything is written.
+pub fn single_outputs(root: &Path, entries: Vec<PathBuf>) -> Result<Vec<(PathBuf, PathBuf)>> {
+    let mut by_output = std::collections::HashMap::new();
+    let mut pairs = Vec::with_capacity(entries.len());
+    for entrypoint in entries {
+        let outfile = entrypoint.with_extension("js");
+        if let Some(other) = by_output.insert(outfile.clone(), entrypoint.clone()) {
+            return Err(UserError::new(
+                format!(
+                    "{} and {} would both be written to {}",
+                    ux::rel_to(root, &other),
+                    ux::rel_to(root, &entrypoint),
+                    ux::rel_to(root, &outfile)
+                ),
+                TrySteps::one("narrow the --single pattern to one of them, or rename one"),
+            )
+            .into());
+        }
+        pairs.push((entrypoint, outfile));
+    }
+    Ok(pairs)
+}
+
+/// The `.ts`/`.tsx` files under `root` (never `node_modules`, never `.d.ts`)
+/// that `pattern` names, relative to `root`, sorted.
+pub fn single_entrypoints(root: &Path, pattern: &str) -> Result<Vec<PathBuf>> {
+    let invalid = |e: ignore::Error| {
+        UserError::new(
+            format!("--single {pattern} is not a valid glob ({e})"),
+            TrySteps::one("example: --single 'src/**/*.ts'"),
+        )
+    };
+    // The leading slash anchors the pattern at the project folder: without
+    // it a pattern with no slash would match at any depth.
+    let mut globs = ignore::overrides::OverrideBuilder::new(root);
+    globs
+        .add(&format!("/{}", pattern.trim_start_matches("./")))
+        .map_err(invalid)?;
+    let globs = globs.build().map_err(invalid)?;
+    let mut found = Vec::new();
+    for entry in ignore::WalkBuilder::new(root)
+        .hidden(true)
+        .filter_entry(|e| e.file_name() != "node_modules")
+        .build()
+        .flatten()
+    {
+        if !entry.file_type().is_some_and(|t| t.is_file()) {
+            continue;
+        }
+        let Ok(rel) = entry.path().strip_prefix(root) else {
+            continue;
+        };
+        let rel = rel.to_string_lossy().replace('\\', "/");
+        let typescript = (rel.ends_with(".ts") || rel.ends_with(".tsx")) && !rel.ends_with(".d.ts");
+        if typescript && globs.matched(entry.path(), false).is_whitelist() {
+            found.push(entry.into_path());
+        }
+    }
+    found.sort();
+    Ok(found)
 }
 
 /// The source-path SDK chunk: one rolldown pass over everything installed. Only
@@ -455,8 +626,21 @@ pub enum Checked {
 }
 
 pub async fn type_check(project: &Project, reloaded: Reloaded) -> Result<Checked> {
-    let tsc = project.require_node_module("typescript/lib/tsc.js")?;
-    if crate::check_stamp::unchanged(project, &tsc) {
+    type_check_mode(project, reloaded, false).await
+}
+
+/// `emit_declaration` swaps `--noEmit` for `--emitDeclarationOnly`, so the
+/// pass also writes the `.d.ts` files tsconfig's declarationDir (or outDir)
+/// names; the unchanged-stamp is not consulted then, the files are the point.
+/// Nor is tsc's own build info: with it, tsc writes nothing for sources it
+/// already emitted, also when the output is gone.
+pub async fn type_check_mode(
+    project: &Project,
+    reloaded: Reloaded,
+    emit_declaration: bool,
+) -> Result<Checked> {
+    let compiler = crate::typescript::locate(project)?;
+    if !emit_declaration && crate::check_stamp::unchanged(project, &compiler.tsc) {
         tracing::info!("type check skipped: nothing changed since the last pass");
         return Ok(Checked::Unchanged);
     }
@@ -468,41 +652,47 @@ pub async fn type_check(project: &Project, reloaded: Reloaded) -> Result<Checked
     if let Some(dir) = buildinfo.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
-    let out = tokio::process::Command::new(node)
-        .arg(&tsc)
-        .args(["-p", "tsconfig.json", "--noEmit"])
-        .args(["--incremental", "--tsBuildInfoFile"])
-        .arg(&buildinfo)
-        .args(if std::io::IsTerminal::is_terminal(&std::io::stderr()) {
-            &[] as &[&str]
-        } else {
-            &["--pretty", "false"]
-        })
-        .current_dir(&project.root)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true)
-        .output()
-        .await
-        .map_err(|e| {
-            anyhow::Error::from(
-                UserError::new(
-                    "could not start the TypeScript compiler (node_modules/typescript)",
-                    TrySteps::one("run dcl-scene-cli init --node-modules-only to restore the vendored node_modules (or npm install)")
-                        .and("to build without type checking, pass --skip-type-check"),
-                )
-                .caused_by(e),
-            )
-        })?;
+    if emit_declaration {
+        let _ = std::fs::remove_file(&buildinfo);
+    }
+    let tsc = |extra: &[&str]| {
+        let mut cmd = tokio::process::Command::new(&node);
+        cmd.arg(&compiler.tsc)
+            .args(["-p", "tsconfig.json"])
+            .args(match emit_declaration {
+                true => &["--declaration", "--emitDeclarationOnly"][..],
+                false => &["--noEmit"][..],
+            })
+            .args(["--incremental", "--tsBuildInfoFile"])
+            .arg(&buildinfo)
+            .args(if std::io::IsTerminal::is_terminal(&std::io::stderr()) {
+                &[] as &[&str]
+            } else {
+                &["--pretty", "false"]
+            })
+            .args(extra)
+            .current_dir(&project.root)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
+        cmd
+    };
+    let mut out = tsc(&[]).output().await.map_err(tsc_start_error)?;
+    if !out.status.success()
+        && crate::typescript::retry_ignoring_deprecations(&compiler, &tsc_report(&out))
+    {
+        if let Some(note) = deprecation_note(&compiler, &tsc_report(&out)) {
+            ux::note_stderr(note);
+        }
+        out = tsc(&crate::typescript::IGNORE_DEPRECATIONS_6)
+            .output()
+            .await
+            .map_err(tsc_start_error)?;
+    }
     if !out.status.success() {
         crate::check_stamp::forget(&project.root);
-        let body = format!(
-            "{}{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
-        let body = body.replace("\x1b[7m", "\x1b[90m");
+        let body = tsc_report(&out);
         let body = body.trim();
         let count = ts_error_count(body);
         let what = match count {
@@ -510,13 +700,47 @@ pub async fn type_check(project: &Project, reloaded: Reloaded) -> Result<Checked
             n => format!("type check failed \u{2014} {n} error{}", plural(n as u64)),
         };
         let mut steps = TrySteps::one(fix_step(reloaded));
+        for step in crate::typescript::config_steps(body) {
+            steps = steps.and(step);
+        }
         if let Some(hint) = skip_type_check_hint() {
             steps = steps.and(hint);
         }
         return Err(UserError::new(what, steps).why(body).into());
     }
-    crate::check_stamp::record(project, &tsc);
+    crate::check_stamp::record(project, &compiler.tsc);
     Ok(Checked::Ran)
+}
+
+fn tsc_start_error(e: std::io::Error) -> anyhow::Error {
+    UserError::new(
+        "could not start the TypeScript compiler (node_modules/typescript)",
+        TrySteps::one(
+            "run dcl-scene-cli init --node-modules-only to restore the vendored node_modules",
+        )
+        .and("to build without type checking, pass --skip-type-check"),
+    )
+    .caused_by(e)
+    .into()
+}
+
+/// stdout then stderr, with tsc's inverse-video highlight turned grey.
+fn tsc_report(out: &std::process::Output) -> String {
+    format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    )
+    .replace("\x1b[7m", "\x1b[90m")
+}
+
+/// Said once per process: under `start` every save would repeat it.
+fn deprecation_note(compiler: &crate::typescript::Compiler, report: &str) -> Option<String> {
+    static NOTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    match NOTED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        true => None,
+        false => Some(crate::typescript::deprecation_message(compiler, report)),
+    }
 }
 
 /// How many `error TSnnnn` diagnostics a tsc report carries. Pretty output
@@ -549,6 +773,77 @@ pub fn require_node(purpose: &str, without: &str) -> Result<PathBuf> {
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    #[test]
+    fn single_matches_typescript_from_the_project_folder() {
+        let t = crate::scene::Tmp::new("build-single-glob");
+        for rel in [
+            "index.ts",
+            "src/index.ts",
+            "src/ui.tsx",
+            "src/types.d.ts",
+            "src/notes.md",
+            "src/deep/util.ts",
+            "node_modules/pkg/src/index.ts",
+        ] {
+            t.write(rel, "");
+        }
+        let found = |pattern: &str| -> Vec<String> {
+            single_entrypoints(&t.0, pattern)
+                .unwrap()
+                .iter()
+                .map(|p| p.strip_prefix(&t.0).unwrap().to_string_lossy().into_owned())
+                .collect()
+        };
+        assert_eq!(found("src/index.ts"), ["src/index.ts"]);
+        assert_eq!(found("./src/index.ts"), ["src/index.ts"]);
+        assert_eq!(found("*.ts"), ["index.ts"], "no slash: this folder only");
+        assert_eq!(found("src/*.ts"), ["src/index.ts"], "* stays in its folder");
+        assert_eq!(found("src/*"), ["src/index.ts", "src/ui.tsx"]);
+        assert_eq!(
+            found("src/**/*.ts"),
+            ["src/deep/util.ts", "src/index.ts"],
+            "never a .d.ts"
+        );
+        assert_eq!(
+            found("**/*.ts"),
+            ["index.ts", "src/deep/util.ts", "src/index.ts"],
+            "never node_modules"
+        );
+        assert!(found("lib/*.ts").is_empty());
+        assert!(single_entrypoints(&t.0, "src/[").is_err());
+    }
+
+    #[test]
+    fn single_sources_that_share_an_output_are_refused() {
+        let root = Path::new("/scene");
+        let at = |rel: &str| root.join(rel);
+        let pairs = single_outputs(root, vec![at("src/a.ts"), at("src/b.tsx")]).unwrap();
+        assert_eq!(pairs[0], (at("src/a.ts"), at("src/a.js")));
+        assert_eq!(pairs[1], (at("src/b.tsx"), at("src/b.js")));
+        let err = single_outputs(root, vec![at("src/a.ts"), at("src/a.tsx")]).unwrap_err();
+        let shown = ux::render(&err, false, false);
+        assert!(
+            shown.contains("src/a.ts and src/a.tsx would both be written to src/a.js"),
+            "{shown}"
+        );
+    }
+
+    #[test]
+    fn emit_declaration_says_when_it_writes_nothing() {
+        assert!(no_declarations(false, false).is_none());
+        assert!(
+            no_declarations(true, false)
+                .unwrap()
+                .contains("--skip-type-check")
+        );
+        assert!(
+            no_declarations(true, true)
+                .unwrap()
+                .contains("--skip-type-check")
+        );
+        assert!(no_declarations(false, true).unwrap().contains("--watch"));
+    }
 
     #[test]
     fn the_error_count_reads_through_tsc_colour_codes() {

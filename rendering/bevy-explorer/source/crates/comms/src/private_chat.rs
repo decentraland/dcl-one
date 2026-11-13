@@ -10,26 +10,19 @@
 use std::collections::HashSet;
 
 use alloy_core::primitives::Address;
-use bevy::{
-    ecs::relationship::Relationship,
-    prelude::*,
-    tasks::{IoTaskPool, Task},
-};
+use bevy::{ecs::relationship::Relationship, prelude::*};
 use bevy_console::ConsoleCommand;
 use common::{
     base_domain::Service,
     structs::{AppConfig, DmPrivacy, PrimaryUser},
-    util::{AsH160, TaskCompat, TaskExt},
+    util::AsH160,
 };
 use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand};
 use dcl_component::proto_components::kernel::comms::rfc4;
-use http::Uri;
-use ipfs::IpfsAssetServer;
 use prost::Message as _;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use system_bridge::SystemApi;
-use tokio::sync::mpsc::Sender;
 use wallet::Wallet;
 
 use crate::{
@@ -41,7 +34,7 @@ use crate::{
         channel_for, community_id, message_router_identity, resolve_author, PrivateChatTarget,
         CHANNEL_PREFIX,
     },
-    global_crdt::{ChannelControl, ChatEvent},
+    global_crdt::ChatEvent,
     livekit::{
         participant::{
             plugin::InboundRateLimiter, HostedBy, HostingParticipants, LivekitParticipant,
@@ -49,10 +42,9 @@ use crate::{
             ParticipantPayload,
         },
         room::{Connected, Connecting, Disconnected},
-        standalone_room_components, LivekitTransport,
+        LivekitTransport, RoomSender,
     },
-    mint_gatekeeper_adapter, DisableRealmComms, DisableSceneRoomGatekeeper, NetworkMessage,
-    NetworkMessageRecipient,
+    DisableRealmComms, DisableSceneRoomGatekeeper, NetworkMessage, NetworkMessageRecipient,
 };
 
 /// Reactions with a longer message id are dropped by the receiving client.
@@ -112,13 +104,9 @@ impl Plugin for PrivateChatPlugin {
     }
 }
 
-/// Marks the private chat room entity and holds its outgoing channel.
+/// Marks the data-only private chat room; its channel is the shared `RoomSender`.
 #[derive(Component)]
-pub struct PrivateChatRoom {
-    pub sender: Sender<NetworkMessage>,
-    // keeps the room's control channel open; the room has no voice, so nothing is ever sent
-    _control: Sender<ChannelControl>,
-}
+pub struct PrivateChatRoom;
 
 /// Community chat counters on the private chat room, for `/community_state`. No message bodies.
 #[derive(Component, Default, Serialize)]
@@ -211,99 +199,44 @@ fn privacy_from_metadata(metadata: &str) -> Option<DmPrivacy> {
     }
 }
 
-/// Gatekeeper retry backoff: 5s doubling to 60s.
-fn gatekeeper_retry_delay(attempt: u32) -> f64 {
-    (5.0 * 2f64.powi(attempt.min(4) as i32)).min(60.0)
-}
-
-#[allow(clippy::too_many_arguments)]
 fn connect_private_chat_room(
     mut commands: Commands,
     wallet: Res<Wallet>,
     config: Res<AppConfig>,
-    ipfs: IpfsAssetServer,
-    time: Res<Time>,
     rooms: Query<Entity, With<PrivateChatRoom>>,
     mut channels: ResMut<CommunityChannels>,
-    mut gatekeeper_task: Local<Option<Task<Result<String, anyhow::Error>>>>,
-    mut retry: Local<Option<(f64, u32)>>,
     disable_realm_comms: Option<Res<DisableRealmComms>>,
     disable_gatekeeper: Res<DisableSceneRoomGatekeeper>,
 ) {
-    // headless servers never join (they would be a ghost participant), and orchestrated servers
-    // never sign gatekeeper handshakes themselves
     if disable_realm_comms.is_some_and(|d| d.0) || disable_gatekeeper.0 {
         return;
     }
-
-    let now = time.elapsed_secs_f64();
-    let mint = if wallet.is_changed() {
-        for room in rooms.iter() {
-            commands.entity(room).despawn();
-        }
-        *gatekeeper_task = None;
-        *retry = None;
-        channels.0.clear();
-
-        if wallet.address().is_none() {
-            info!("private chat: no identity, not connecting");
-            return;
-        }
-        true
-    } else {
-        gatekeeper_task.is_none() && retry.is_some_and(|(due, _)| now >= due)
-    };
-
-    if mint {
-        let uri = Uri::try_from(common::base_domain::url(
-            Service::CommsGatekeeper,
-            "/private-messages/token",
-        ))
-        .unwrap();
-        let meta = serde_json::json!({
-            "signer": "dcl:explorer",
-            "deviceIdentifier": config.user_id,
-        })
-        .to_string();
-        let client = ipfs.ipfs().client();
-        let wallet = wallet.clone();
-        *gatekeeper_task = Some(IoTaskPool::get().spawn_compat(async move {
-            mint_gatekeeper_adapter("GET", client, uri, &wallet, meta)
-                .await
-                .map_err(anyhow::Error::from)
-        }));
+    if !wallet.is_changed() {
+        return;
     }
-
-    if let Some(mut task) = gatekeeper_task.take() {
-        match task.complete() {
-            None => *gatekeeper_task = Some(task),
-            Some(Err(e)) => {
-                let attempt = retry.map_or(0, |(_, attempt)| attempt);
-                let delay = gatekeeper_retry_delay(attempt);
-                warn!(
-                    "private chat: failed to get room from gatekeeper: {e}; retrying in {delay}s"
-                );
-                *retry = Some((now + delay, attempt + 1));
-            }
-            Some(Ok(adapter)) => {
-                *retry = None;
-                let Some(("livekit", address)) = adapter.split_once(':') else {
-                    warn!("private chat: unsupported adapter `{adapter}`");
-                    return;
-                };
-                let (components, sender, control) = standalone_room_components(address.to_owned());
-                commands.spawn((
-                    components,
-                    PrivateChatRoom {
-                        sender,
-                        _control: control,
-                    },
-                    CommunityChatStats::default(),
-                ));
-                info!("private chat: connecting");
-            }
-        }
+    channels.0.clear();
+    for room in &rooms {
+        commands.entity(room).despawn();
     }
+    if wallet.address().is_none() {
+        return;
+    }
+    let url = common::base_domain::url(Service::CommsGatekeeper, "/private-messages/token");
+    let mut metadata = serde_json::json!({"signer": "dcl:explorer"});
+    if crate::adapter::allows_device_identifier(&url) {
+        metadata["deviceIdentifier"] = serde_json::json!(config.user_id);
+    }
+    commands.spawn((
+        PrivateChatRoom,
+        CommunityChatStats::default(),
+        crate::room_connection::RoomAccessScope(crate::access_status::AccessScope::PrivateChat),
+        crate::room_connection::CredentialRequest {
+            method: "GET",
+            url,
+            metadata: metadata.to_string(),
+        },
+        crate::room_connection::NeedsAdapter,
+    ));
 }
 
 /// The HUD's community channel set replaces the current one.
@@ -599,7 +532,7 @@ fn route(target: &PrivateChatTarget) -> (String, NetworkMessageRecipient) {
 fn send_private_chats(
     mut chats: EventReader<ChatEvent>,
     player: Query<Entity, With<PrimaryUser>>,
-    mut room: Query<(&PrivateChatRoom, &mut CommunityChatStats)>,
+    mut room: Query<(&RoomSender, &mut CommunityChatStats), With<PrivateChatRoom>>,
     channels: Res<CommunityChannels>,
 ) {
     let Ok(player) = player.single() else {
@@ -654,7 +587,7 @@ fn send_private_chats(
 fn send_private_reactions(
     mut reactions: EventReader<ChatReactionEvent>,
     wallet: Res<Wallet>,
-    mut room: Query<(&PrivateChatRoom, &mut CommunityChatStats)>,
+    mut room: Query<(&RoomSender, &mut CommunityChatStats), With<PrivateChatRoom>>,
 ) {
     let Some(me) = wallet.address() else {
         reactions.clear();
@@ -934,6 +867,180 @@ mod tests {
     const BOB: &str = "0x2222222222222222222222222222222222222222";
     const COMMUNITY: &str = "abc-1";
 
+    #[test]
+    fn custom_room_endpoints_do_not_receive_the_installation_identifier() {
+        const CHILD: &str = "DCL_COMMS_TEST_CUSTOM_ENDPOINTS";
+        if std::env::var_os(CHILD).is_none() {
+            // Service overrides latch for the process; other tests configure Pulse separately.
+            let status = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "private_chat::tests::custom_room_endpoints_do_not_receive_the_installation_identifier",
+                    "--nocapture",
+                ])
+                .env(CHILD, "1")
+                .status()
+                .unwrap();
+            assert!(status.success());
+            return;
+        }
+        common::base_domain::set_services([
+            (
+                Service::CommsGatekeeper,
+                "https://custom.example/gatekeeper",
+            ),
+            (Service::PreviewGatekeeper, "https://custom.example/preview"),
+            (Service::WorldsServer, "https://custom.example/worlds"),
+        ])
+        .unwrap();
+        for (about_url, scene_id, path) in [
+            (
+                "https://realm.example/about",
+                "scene",
+                "/gatekeeper/get-scene-adapter",
+            ),
+            (
+                "https://realm.example/about",
+                "b64-preview",
+                "/preview/get-scene-adapter",
+            ),
+            (
+                "https://custom.example/worlds/world/test.dcl.eth/about",
+                "scene",
+                "/worlds/worlds/test.dcl.eth/scenes/scene/comms",
+            ),
+        ] {
+            let mut wallet = Wallet::default();
+            wallet.finalize_as_guest();
+            let mut app = App::new();
+            app.insert_resource(wallet)
+                .init_resource::<AppConfig>()
+                .insert_resource(common::structs::CurrentRealm {
+                    about_url: about_url.into(),
+                    ..Default::default()
+                })
+                .init_resource::<common::structs::PreviewMode>()
+                .init_resource::<ipfs::world_access::WorldCommsSecret>()
+                .init_resource::<crate::SceneRoomConnection>()
+                .init_resource::<crate::SceneAdmission>()
+                .init_resource::<crate::SceneRoomAdapterOverride>()
+                .init_resource::<DisableSceneRoomGatekeeper>()
+                .init_resource::<CommunityChannels>()
+                .add_event::<crate::SetCurrentScene>()
+                .add_event::<crate::websocket_room::StartWsRoom>()
+                .add_event::<crate::signed_login::StartSignedLogin>()
+                .add_event::<crate::archipelago::StartArchipelago>()
+                .add_event::<crate::livekit::StartLivekit>()
+                .add_systems(
+                    Update,
+                    (crate::connect_scene_room, connect_private_chat_room),
+                );
+            app.world_mut()
+                .spawn(crate::global_crdt::GlobalCrdtState::new(None));
+            app.world_mut().send_event(crate::SetCurrentScene {
+                realm_name: "realm".into(),
+                scene_id: scene_id.into(),
+            });
+            app.update();
+            let world = app.world_mut();
+            let requests: Vec<_> = world
+                .query::<&crate::room_connection::CredentialRequest>()
+                .iter(world)
+                .collect();
+            assert_eq!(requests.len(), 2);
+            for request in requests {
+                assert!(
+                    request.url == format!("https://custom.example{path}")
+                        || request.url
+                            == "https://custom.example/gatekeeper/private-messages/token"
+                );
+                let metadata: serde_json::Value = serde_json::from_str(&request.metadata).unwrap();
+                assert!(
+                    metadata.get("deviceIdentifier").is_none(),
+                    "{}",
+                    request.url
+                );
+                if request.method == "GET" {
+                    assert_eq!(metadata["signer"], "dcl:explorer");
+                } else {
+                    assert_eq!(metadata["realmName"], "realm");
+                    assert_eq!(metadata["sceneId"], scene_id);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn outgoing_chats_wait_in_the_room_channel_while_not_connected() {
+        use bevy::ecs::system::RunSystemOnce;
+        let (mut world, room) = world();
+        let player = world.spawn(PrimaryUser::default()).id();
+        world.init_resource::<Events<ChatEvent>>();
+        let (sender, mut receiver) = tokio::sync::mpsc::channel(10);
+        let (control, _control_receiver) = tokio::sync::mpsc::channel(1);
+        world
+            .entity_mut(room)
+            .insert(RoomSender { sender, control });
+        for channel in [BOB.to_owned(), channel_for(COMMUNITY)] {
+            world.send_event(ChatEvent {
+                timestamp: 42.0,
+                sender: player,
+                channel,
+                message: "queued during reconnect".to_owned(),
+            });
+        }
+        world.run_system_once(send_private_chats).unwrap();
+        for topic in [BOB.to_owned(), channel_for(COMMUNITY)] {
+            let queued = receiver.try_recv().expect("chat must survive reconnect");
+            assert_eq!(queued.topic.as_deref(), Some(topic.as_str()));
+            assert!(!queued.unreliable);
+            let bytes = queued.message.to_rfc4().unwrap();
+            let packet = rfc4::Packet::decode(bytes.as_slice()).unwrap();
+            let Some(rfc4::packet::Message::Chat(chat)) = packet.message else {
+                panic!("expected chat packet");
+            };
+            assert_eq!(chat.message, "queued during reconnect");
+            assert_eq!(chat.timestamp, 42.0);
+        }
+        assert!(receiver.try_recv().is_err());
+    }
+
+    #[test]
+    fn outgoing_reactions_wait_in_the_room_channel_while_not_connected() {
+        use bevy::ecs::system::RunSystemOnce;
+        let (mut world, room) = world();
+        let me = world.resource::<Wallet>().address().unwrap();
+        let (sender, mut receiver) = tokio::sync::mpsc::channel(10);
+        let (control, _control_receiver) = tokio::sync::mpsc::channel(1);
+        world
+            .entity_mut(room)
+            .insert(RoomSender { sender, control });
+        for channel in [BOB.to_owned(), channel_for(COMMUNITY)] {
+            world.send_event(ChatReactionEvent {
+                channel,
+                message_id: format!("{ALICE}:42"),
+                emoji: "\u{1f44d}".to_owned(),
+                from: me,
+                remove: false,
+            });
+        }
+        world.run_system_once(send_private_reactions).unwrap();
+        for topic in [BOB.to_owned(), channel_for(COMMUNITY)] {
+            let queued = receiver
+                .try_recv()
+                .expect("reaction must survive reconnect");
+            assert_eq!(queued.topic.as_deref(), Some(topic.as_str()));
+            let bytes = queued.message.to_rfc4().unwrap();
+            let packet = rfc4::Packet::decode(bytes.as_slice()).unwrap();
+            let Some(rfc4::packet::Message::ChatReaction(reaction)) = packet.message else {
+                panic!("expected reaction packet");
+            };
+            assert_eq!(reaction.message_id, format!("{ALICE}:42"));
+            assert_eq!(reaction.emoji, "\u{1f44d}");
+        }
+        assert!(receiver.try_recv().is_err());
+    }
+
     /// A world with the private chat room and `participant_payload` listening on it, the local
     /// user listening to `COMMUNITY`.
     fn world() -> (World, Entity) {
@@ -949,13 +1056,8 @@ mod tests {
         let mut channels = CommunityChannels::default();
         channels.0.insert(COMMUNITY.to_owned());
         world.insert_resource(channels);
-        let (sender, _) = tokio::sync::mpsc::channel(1);
-        let (_control, _) = tokio::sync::mpsc::channel(1);
         let room = world
-            .spawn((
-                PrivateChatRoom { sender, _control },
-                CommunityChatStats::default(),
-            ))
+            .spawn((PrivateChatRoom, CommunityChatStats::default()))
             .id();
         world.add_observer(participant_payload);
         (world, room)

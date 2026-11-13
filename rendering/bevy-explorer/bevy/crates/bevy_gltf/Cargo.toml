@@ -53,6 +53,9 @@ gltf = { version = "1.4.0", default-features = false, features = [
   "KHR_materials_unlit",
   "KHR_materials_emissive_strength",
   "KHR_texture_transform",
+  # accepts a required KHR_texture_basisu and a texture with no `source`; the loader reads the
+  # extension's image itself (`prefer_basisu_sources`) and the host decodes it
+  "allow_empty_texture",
   "extras",
   "extensions",
   "names",
