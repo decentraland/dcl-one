@@ -30,7 +30,7 @@ def compile_wasm(no_opt, env):
         env = {**env, 'CARGO_PROFILE_RELEASE_CODEGEN_UNITS': '16'}
     run('cargo', 'build', '--locked', '--release', '--target', 'wasm32-unknown-unknown',
         '--lib', '-p', 'decentra-bevy', '-p', 'dcl_scene_wasm', '--no-default-features',
-        '--features=decentra-bevy/livekit,decentra-bevy/social', env=env)
+        '--features=decentra-bevy/livekit,decentra-bevy/social,decentra-bevy/profiler', env=env)
     target = Path(env.get('CARGO_TARGET_DIR', SOURCE / 'target')) / 'wasm32-unknown-unknown/release'
     for name, directory in (('webgpu_build', 'pkg'), ('dcl_scene_wasm', 'pkg-scene')):
         output = SOURCE / 'deploy/web/engine' / directory
@@ -59,7 +59,7 @@ def prepare_engine(no_opt, engine_cache, shared_build, env):
             compile_wasm(no_opt, env)
         else:
             run('wasm-pack', 'build', '--target', 'web', *flags, '--out-dir', './deploy/web/engine/pkg',
-                '--no-default-features', '--features=livekit,social', env=env)
+                '--no-default-features', '--features=livekit,social,profiler', env=env)
             run('wasm-pack', 'build', 'crates/dcl_scene_wasm', '--target', 'web', *flags,
                 '--out-dir', '../../deploy/web/engine/pkg-scene', '--no-default-features', env=env)
         pkg = SOURCE / 'deploy/web/engine/pkg'

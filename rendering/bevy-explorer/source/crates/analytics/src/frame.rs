@@ -1,119 +1,63 @@
+//! The "Performance Metrics" event, one per `common::perf::PerformanceSnapshot` event read.
+
 use bevy::prelude::*;
+use common::perf::PerformanceSnapshot;
 
 use crate::{
     data_definition::{SegmentEvent, SegmentEventPerformanceMetrics},
     segment_system::{SegmentConfig, SegmentMetricsEvents},
 };
 
-#[derive(Resource)]
-pub(crate) struct Frame {
-    dt_ms_vec: Vec<f32>,
-    hiccups_count: u32,
-    hiccups_time_ms: f32,
-    sum_dt: f32,
-}
-
-/// The completed analytics window. The panel reads the same sorted samples as telemetry.
-#[derive(Default, Resource)]
-pub struct LastFrameWindow {
-    pub min_fps: Option<u32>,
-    pub max_fps: Option<u32>,
-    pub hiccups: Option<u32>,
-}
-
-const HICCUP_THRESHOLD_MS: f32 = 50.0;
-const FRAME_AMOUNT_TO_MEASURE: usize = 1000;
 pub struct FrameMetricPlugin;
 
 impl Plugin for FrameMetricPlugin {
     fn build(&self, app: &mut App) {
-        app.insert_resource(Frame {
-            dt_ms_vec: Vec::new(),
-            hiccups_count: 0,
-            hiccups_time_ms: 0.0,
-            sum_dt: 0.0,
-        })
-        .init_resource::<LastFrameWindow>()
-        .add_systems(Update, metrics_frame_system);
+        app.add_event::<PerformanceSnapshot>()
+            .add_systems(Update, report_performance_snapshot_system);
     }
 }
 
-fn metrics_frame_system(
-    time: Res<Time>,
-    mut frame_data: ResMut<Frame>,
-    mut last: ResMut<LastFrameWindow>,
+fn report_performance_snapshot_system(
+    mut snapshots: EventReader<PerformanceSnapshot>,
     mut metrics: ResMut<SegmentMetricsEvents>,
-    config: Res<SegmentConfig>,
+    config: Option<Res<SegmentConfig>>,
 ) {
-    let dt = 1000.0 * time.delta_secs();
-    frame_data.sum_dt += dt;
-    frame_data.dt_ms_vec.push(dt);
-    if dt > HICCUP_THRESHOLD_MS {
-        frame_data.hiccups_count += 1;
-        frame_data.hiccups_time_ms += dt;
-    }
-
-    if frame_data.dt_ms_vec.len() >= FRAME_AMOUNT_TO_MEASURE {
-        // All the dt >= 0
-        frame_data
-            .dt_ms_vec
-            .sort_by(|a, b| a.partial_cmp(b).unwrap());
-
-        let n_samples = frame_data.dt_ms_vec.len();
-        let fps = |ms: &f32| (*ms > 0.0).then(|| (1000.0 / ms).round() as u32);
-        *last = LastFrameWindow {
-            min_fps: frame_data.dt_ms_vec.last().and_then(fps),
-            max_fps: frame_data
-                .dt_ms_vec
-                .iter()
-                .find(|ms| **ms > 0.0)
-                .and_then(fps),
-            hiccups: Some(frame_data.hiccups_count),
-        };
-        let median_frame_time = frame_data.dt_ms_vec[n_samples / 2];
-        let p1_frame_time = frame_data.dt_ms_vec[n_samples / 100];
-        let p5_frame_time = frame_data.dt_ms_vec[(n_samples * 5) / 100];
-        let p10_frame_time = frame_data.dt_ms_vec[(n_samples * 10) / 100];
-        let p20_frame_time = frame_data.dt_ms_vec[(n_samples * 20) / 100];
-        let p50_frame_time = frame_data.dt_ms_vec[(n_samples * 50) / 100];
-        let p75_frame_time = frame_data.dt_ms_vec[(n_samples * 75) / 100];
-        let p80_frame_time = frame_data.dt_ms_vec[(n_samples * 80) / 100];
-        let p90_frame_time = frame_data.dt_ms_vec[(n_samples * 90) / 100];
-        let p95_frame_time = frame_data.dt_ms_vec[(n_samples * 95) / 100];
-        let p99_frame_time = frame_data.dt_ms_vec[(n_samples * 99) / 100];
-
+    let Some(config) = config else {
+        return;
+    };
+    for snapshot in snapshots.read() {
+        let cpu = &snapshot.cpu_frame_times;
         metrics.add_event(
             SegmentEvent::PerformanceMetrics(SegmentEventPerformanceMetrics {
-                samples: n_samples as u32,
-                total_time: frame_data.sum_dt,
-                hiccups_in_thousand_frames: frame_data.hiccups_count, // TODO: if FRAME_AMOUNT_TO_MEASURE is != 1000, this be measured in a different way
-                hiccups_time: frame_data.hiccups_time_ms / 1000.0,
-                min_frame_time: *frame_data.dt_ms_vec.first().unwrap(),
-                max_frame_time: *frame_data.dt_ms_vec.last().unwrap(),
-                mean_frame_time: frame_data.sum_dt / n_samples as f32,
-                median_frame_time,
-                p1_frame_time,
-                p5_frame_time,
-                p10_frame_time,
-                p20_frame_time,
-                p50_frame_time,
-                p75_frame_time,
-                p80_frame_time,
-                p90_frame_time,
-                p95_frame_time,
-                p99_frame_time,
+                samples: cpu.sample_count,
+                total_time: cpu.mean_ms * cpu.sample_count as f32,
+                hiccups_in_thousand_frames: (u64::from(cpu.frames_over_hiccup_threshold_count)
+                    * 1000
+                    / u64::from(cpu.sample_count.max(1)))
+                    as u32,
+                hiccups_time: cpu.frames_over_hiccup_threshold_time_sum_ms / 1000.0,
+                min_frame_time: cpu.min_ms,
+                max_frame_time: cpu.max_ms,
+                mean_frame_time: cpu.mean_ms,
+                median_frame_time: cpu.p50_ms,
+                p1_frame_time: cpu.p1_ms,
+                p5_frame_time: cpu.p5_ms,
+                p10_frame_time: cpu.p10_ms,
+                p20_frame_time: cpu.p20_ms,
+                p50_frame_time: cpu.p50_ms,
+                p75_frame_time: cpu.p75_ms,
+                p80_frame_time: cpu.p80_ms,
+                p90_frame_time: cpu.p90_ms,
+                p95_frame_time: cpu.p95_ms,
+                p99_frame_time: cpu.p99_ms,
 
-                // TODO
+                // TODO: a separate telemetry PR reports these from the snapshot's
+                // nearby_player_count, js_heap.used_bytes_sum and client_memory.used_bytes (KB)
                 player_count: -1,
                 used_jsheap_size: -1,
                 memory_usage: -1,
             }),
             config.common(),
         );
-
-        frame_data.dt_ms_vec.resize(0, 0.0);
-        frame_data.hiccups_count = 0;
-        frame_data.hiccups_time_ms = 0.0;
-        frame_data.sum_dt = 0.0;
     }
 }

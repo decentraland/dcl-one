@@ -20,15 +20,28 @@ required-features = ["headless"]
 # - copy ./assets to deploy/web/assets
 # - copy ./crates/dcl_js/src/modules to deploy/web/modules
 # - rustup default nightly # (tested with 2026-04-15)
-# - wasm-pack build --target web --out-dir ./deploy/web/engine/pkg --no-default-features --features="livekit,social" (then serve via react-web; see react-web/README.md)
+# - wasm-pack build --target web --out-dir ./deploy/web/engine/pkg --no-default-features --features="livekit,social,profiler" (then serve via react-web; see react-web/README.md)
 
 [features]
-default = ["livekit", "ffmpeg", "inspect", "social", "react-hud-cef", "remote"]
+default = [
+  "livekit",
+  "ffmpeg",
+  "inspect",
+  "social",
+  "react-hud-cef",
+  "remote",
+  "profiler",
+]
 # default = ["wasm"]
 console = []
 dcl-assert = ["common/dcl-assert"]
 gen-tests = []
-tracy = ["bevy/trace_tracy"]
+# The in-app profiler's inputs: Bevy's `trace` spans around every system, schedule and
+# render-graph node (`src/perf/profiled_scopes.rs`) and the counting allocator
+# (`src/perf/allocation_counter.rs`). In every native build, and in the web build as
+# `build-web.py` and `just wasm` build it.
+profiler = ["bevy/trace"]
+tracy = ["profiler", "bevy/trace_tracy"]
 inspect = ["dcl_deno/inspect", "system_ui/inspect"]
 hot_reload = ["bevy/file_watcher", "bevy/embedded_watcher", "ipfs/hot_reload"]
 livekit = ["comms/livekit", "system_ui/livekit", "ban_block/livekit"]
@@ -331,6 +344,7 @@ js-sys = "0.3"
 serde-wasm-bindgen = "0.6"
 serde_bytes = "0.11"
 web-sys = { version = "0.3", features = [
+  "console",
   "Performance",
   "Window",
   "Navigator",
@@ -465,6 +479,9 @@ mimalloc = { workspace = true }
 cef_offscreen = { workspace = true, optional = true }
 
 [target.'cfg(any(windows, target_os = "linux"))'.dependencies]
+# Bevy's system-information diagnostics. Not on macOS: there the feature turns on sysinfo's
+# `apple-app-store`, which removes the process memory reading `src/memory.rs` samples.
+bevy = { workspace = true, features = ["sysinfo_plugin"] }
 ash = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]

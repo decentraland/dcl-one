@@ -152,12 +152,29 @@ function coiHeadersExceptAuth(): Plugin {
   }
 }
 
+/** `HUD_REACT_PROFILING=1` at build time: the HUD is built on React's profiling build, the
+ *  production build in which <Profiler> reports commits, slower on every commit. Off by
+ *  default, and never in the native bundle. */
+const HUD_REACT_PROFILING = process.env.HUD_REACT_PROFILING === '1'
+
+/** Resolves react-dom/client to React's profiling build, the production build in which
+ *  <Profiler> reports commits. */
+function reactProfilingBuild(): Plugin {
+  return {
+    name: 'react-profiling-build',
+    config: () => ({ resolve: { alias: [{ find: /^react-dom\/client$/, replacement: 'react-dom/profiling' }] } })
+  }
+}
+
 export default defineConfig(({ command, mode }) => ({
   // ?native=1 (CEF HUD mode) is honoured only where it's legitimate: the bundle:native build
   // (--mode native) that CEF loads from disk, and the dev server (react_hud_cef.rs supports
   // REACT_HUD_URL at a vite dev server). Deployed web builds compile it FALSE so a crafted
   // link can't switch them into native mode and skip the launch gates (see src/App.tsx MODE).
-  define: { __NATIVE_HUD__: JSON.stringify(command === 'serve' || mode === 'native') },
+  define: {
+    __NATIVE_HUD__: JSON.stringify(command === 'serve' || mode === 'native'),
+    __HUD_REACT_PROFILING__: JSON.stringify(HUD_REACT_PROFILING && mode !== 'native')
+  },
   // Production is served from a VERSIONED CDN subpath (cdn.decentraland.org/<pkg>/<version>/ —
   // see deploy/web/scripts/prebuild.js), so built asset URLs can't be origin-absolute. CI passes
   // PUBLIC_URL for an absolute CDN base; otherwise './' (relative → works from any path, e.g. a
@@ -169,6 +186,7 @@ export default defineConfig(({ command, mode }) => ({
   resolve: { alias: SHARED_ALIASES, dedupe: SHARED_DEDUPE },
   plugins: [
     react(),
+    ...(HUD_REACT_PROFILING && mode !== 'native' ? [reactProfilingBuild()] : []),
     bridgeScenePreview(),
     coiHeadersExceptAuth(),
     serveStatic('/engine/', '../deploy/web/engine'),

@@ -9,7 +9,7 @@ mod support;
 use std::path::PathBuf;
 use std::process::Command;
 
-use benchmark::report::{self, Options, Report};
+use benchmark::report::{self, BenchmarkReport, ReportOptions};
 use support::scratch;
 
 fn fixture(case: &str) -> PathBuf {
@@ -18,8 +18,8 @@ fn fixture(case: &str) -> PathBuf {
         .join(case)
 }
 
-fn options(case: &str) -> Options {
-    Options {
+fn options(case: &str) -> ReportOptions {
+    ReportOptions {
         dir: fixture(case),
         title: "Benchmark".into(),
         pr: None,
@@ -31,22 +31,22 @@ fn options(case: &str) -> Options {
     }
 }
 
-fn build(options: &Options) -> Report {
-    report::build(options).unwrap_or_else(|failure| panic!("{failure}"))
+fn build(options: &ReportOptions) -> BenchmarkReport {
+    report::build_report(options).unwrap_or_else(|failure| panic!("{failure}"))
 }
 
-fn report_of(case: &str) -> Report {
+fn report_of(case: &str) -> BenchmarkReport {
     build(&options(case))
 }
 
 /// The lines of the report, each checked to be there once.
-fn has_line(report: &Report, line: &str) {
+fn has_line(report: &BenchmarkReport, line: &str) {
     let found = report.markdown.lines().filter(|l| *l == line).count();
     assert_eq!(found, 1, "{line}\n----- in -----\n{}", report.markdown);
 }
 
 /// The report's lines after the first one that starts with `title`, up to the next section.
-fn section<'a>(report: &'a Report, title: &str) -> Vec<&'a str> {
+fn section<'a>(report: &'a BenchmarkReport, title: &str) -> Vec<&'a str> {
     let heading = format!("### {title}");
     let lines: Vec<&str> = report.markdown.lines().collect();
     let start = lines
@@ -414,5 +414,41 @@ fn the_log_markers_are_the_explorers() {
     assert_eq!(
         report::EXCEPTION_MARKER,
         constant("perf_output/src/format.rs", "EXCEPTION_MARKER")
+    );
+}
+
+#[test]
+fn summary_lines_add_hiccup_memory_and_scope_rows_only_where_a_run_wrote_them() {
+    let report = report_of("summary");
+    let apple = section(&report, "Apple M1 (Chrome)");
+    for row in [
+        "| Hiccups per run | 6 (5–7) over 50 ms | 1 (1–2) over 50 ms | -5 | 🟢 fewer hiccups |",
+        "| Peak memory | 1200 MiB (1190–1210) | 905 MiB (900–910) | -295 MiB | 🟢 25% less memory |",
+        "<details><summary>Top scopes (self time per run, ms)</summary>",
+        "| Scope | Baseline | Change |",
+        "| `scene_runner update_scene` | 160.0 | 120.0 |",
+        "| `avatar processing` | 30.0 | 30.0 |",
+        "| `text shapes` | 5.0 | - |",
+    ] {
+        assert!(apple.contains(&row), "{row}\n{apple:#?}");
+    }
+    // the headline names a metric that moved by 10 % on one machine: the memory did, the CPU
+    // average (9 %) and the hiccups (a count, no magnitude) did not
+    has_line(
+        &report,
+        "**Overall: 🟢 Peak memory improved on Apple M1 (Chrome)**",
+    );
+
+    // a section without summaries keeps its table as it was
+    let ok = report_of("ok");
+    assert!(
+        !ok.markdown.contains("Hiccups per run |"),
+        "{}",
+        ok.markdown
+    );
+    assert!(
+        !ok.markdown.contains("<details><summary>Top scopes"),
+        "{}",
+        ok.markdown
     );
 }

@@ -79,6 +79,28 @@ scenario('the debug panel shows live plugin data and can play an avatar emote', 
     await explorer.hud.click(button('Use configured FPS'))
     await explorer.hud.wait(button('Limit to 30 FPS'))
     assert.equal((await explorer.json<{ overrideFps: number | null }>('/performance_state')).overrideFps, null)
+    await expand('Profiler')
+    await explorer.hud.click(button('Enable profiler'))
+    await until(() => explorer.hud.get(panel), (read) => read.text.includes('Disable profiler'), {
+      timeoutMs: 10_000, what: 'the profiler to report itself enabled'
+    })
+    // Bevy's spans exist in a `profiler` build: every native build, and the web build as CI
+    // builds it
+    const enabled = await until(() => explorer.json<ProfileTop>('/profile_top 5'), (reading) => reading.enabled,
+      { timeoutMs: 10_000, what: 'the profiler to report itself enabled' })
+    assert.ok(enabled.profilerBuild, 'the build carries the profiler feature')
+    const top = await until(() => explorer.json<ProfileTop>('/profile_top 5'),
+      (reading) => reading.scopeSummaries.length === 5,
+      { timeoutMs: 10_000, what: 'five profiled scopes' })
+    for (const row of top.scopeSummaries) {
+      assert.ok(['ecs_system', 'schedule', 'render_graph_node', 'bevy_internal', 'explorer_span'].includes(row.scopeKind), row.scopeKind)
+      assert.ok(row.callCount > 0 && row.selfTimeMs >= 0 && row.inclusiveTimeMs >= row.selfTimeMs, JSON.stringify(row))
+    }
+    await explorer.hud.click(button('Disable profiler'))
+    await explorer.hud.wait(button('Enable profiler'))
+    const off = await explorer.json<ProfileTop>('/profile_top')
+    assert.equal(off.enabled, false)
+    assert.match(String(off.unavailable.scopeSummary), /disabled/)
     await expand('Avatar')
     // a scene's movement animation outranks a triggered emote while it is not idle (the scene
     // under the player can drive one): the wave goes out once the avatar would take it
@@ -89,12 +111,69 @@ scenario('the debug panel shows live plugin data and can play an avatar emote', 
       emote?.source === 'triggeredEmote' && !emote.finished && /(?:^|:)wave$/i.test(emote.urn),
       { timeoutMs: 20_000, intervalMs: 100, what: 'the debug action to play the wave emote' })
   } finally {
+    await explorer.run('/profile_enable off')
     await explorer.run(before.overrideFps == null ? '/session_graphics fps' : '/session_graphics fps ' + before.overrideFps)
     if (await explorer.hud.isVisible(panel)) await explorer.escape()
     await explorer.hud.waitHidden(panel)
   }
   assert.equal(await explorer.hud.isVisible(button('Play wave')), false)
 })
+
+type ProfileTop = {
+  enabled: boolean
+  /** The build has Bevy's spans and the allocation counter (the `profiler` cargo feature). */
+  profilerBuild: boolean
+  scopeSummaries: { scopeName: string; scopeKind: string; callCount: number; selfTimeMs: number; inclusiveTimeMs: number }[]
+  unavailable: Record<string, string>
+}
+
+type PerformanceState = {
+  sampling: { status: 'sampling' | 'paused'; pausedReason: string | null }
+  inProgressSample: { sampledSeconds: number }
+  cpuFrameTimes: { hiccupThresholdMs: number; sampleCount: number; p99Ms: number } | null
+  frameTimeBreakdown: (number | null)[]
+  bottleneck: string | null
+  hudMainThreadCost: (number | null)[] | null
+  entityCount: number | null
+  unavailable: Record<string, string>
+}
+
+scenario('the performance sampler samples in world and scales the hiccup threshold to the target', async ({ explorer }) => {
+  const state = await until(() => explorer.json<PerformanceState>('/performance_state'),
+    (reading) => reading.sampling.status === 'sampling' && reading.inProgressSample.sampledSeconds > 0,
+    { timeoutMs: 20_000, what: 'the sampler to run in world' })
+  assert.equal(state.sampling.pausedReason, null)
+  assert.equal(state.frameTimeBreakdown.length, 6)
+  assert.ok(state.frameTimeBreakdown.slice(0, 4).every((ms) => typeof ms === 'number' && ms >= 0), JSON.stringify(state.frameTimeBreakdown))
+  assert.ok(state.bottleneck === null || ['main_thread_cpu', 'render_thread_cpu', 'gpu', 'swapchain_present_wait', 'frame_rate_limiter', 'cpu_and_gpu_balanced'].includes(state.bottleneck), String(state.bottleneck))
+  assert.ok((state.entityCount ?? 0) > 0)
+  if (explorer.console.kind === 'native') {
+    assert.equal(state.hudMainThreadCost, null)
+    assert.equal(state.unavailable.hudMainThreadCost, '-')
+  } else {
+    // React commits (the first two cells) only from a HUD built with HUD_REACT_PROFILING=1
+    const withHud = await until(() => explorer.json<PerformanceState>('/performance_state'),
+      (reading) => reading.hudMainThreadCost != null,
+      { timeoutMs: 10_000, what: 'a HUD main-thread cost window' })
+    assert.equal(withHud.hudMainThreadCost!.length, 5, JSON.stringify(withHud.hudMainThreadCost))
+    const [commitCount, commitMs] = withHud.hudMainThreadCost!
+    assert.equal(commitCount == null, commitMs == null, JSON.stringify(withHud.hudMainThreadCost))
+    if (commitCount != null) assert.ok(commitCount >= 0 && commitMs! >= 0, JSON.stringify(withHud.hudMainThreadCost))
+  }
+  if (state.cpuFrameTimes == null) assert.match(String(state.unavailable.cpuFrameTimes), /sampled time/)
+  const before = await explorer.json<{ overrideFps: number | null }>('/performance_state')
+  try {
+    await explorer.run('/session_graphics fps 30')
+    const capped = await until(() => explorer.json<PerformanceState>('/performance_state'),
+      (reading) => reading.cpuFrameTimes != null && Math.abs(reading.cpuFrameTimes.hiccupThresholdMs - 66.7) < 0.1,
+      { timeoutMs: 40_000, what: 'a snapshot taken at the 30 FPS cap, with its 66.7 ms threshold' })
+    assert.ok(capped.cpuFrameTimes!.sampleCount > 0)
+    assert.ok(capped.cpuFrameTimes!.p99Ms > 0)
+  } finally {
+    await explorer.run('/profile_enable off')
+    await explorer.run(before.overrideFps == null ? '/session_graphics fps' : '/session_graphics fps ' + before.overrideFps)
+  }
+}, { session: { signIn: 'guest' } })
 
 // An unsigned guest, the session-only one the engine's `/login_guest` signs in (as a scene
 // preview's `?guest=1` does), has no signed identity to send a client login with. The HUD's

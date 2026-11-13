@@ -15,7 +15,7 @@
 use std::str::FromStr;
 
 use bevy::{
-    diagnostic::{FrameTimeDiagnosticsPlugin, LogDiagnosticsPlugin},
+    diagnostic::{EntityCountDiagnosticsPlugin, FrameTimeDiagnosticsPlugin, LogDiagnosticsPlugin},
     prelude::*,
     render::render_asset::RenderAssetBytesPerFrame,
 };
@@ -57,11 +57,12 @@ pub fn apply(app: &mut App, launch: &LaunchOptions, config: &AppConfig, boot_ser
         preview_parcel: None,
     });
 
+    // the frame rate and the entity count diagnostics, in every build
+    if !app.is_plugin_added::<FrameTimeDiagnosticsPlugin>() {
+        app.add_plugins(FrameTimeDiagnosticsPlugin::default());
+    }
+    app.add_plugins(EntityCountDiagnosticsPlugin);
     if log_fps.unwrap_or(config.graphics.log_fps) {
-        // the HUD adds the frame timing too
-        if !app.is_plugin_added::<FrameTimeDiagnosticsPlugin>() {
-            app.add_plugins(FrameTimeDiagnosticsPlugin::default());
-        }
         app.add_plugins(LogDiagnosticsPlugin::default());
     }
 }
@@ -100,11 +101,6 @@ pub fn apply_client(
     // preview mode refuses realm changes, so nothing could ever release the hold
     if *hold_world && !launch.preview {
         app.insert_resource(WorldHold);
-    }
-
-    // the preview stats and sysinfo panels (system_ui) read the frame rate
-    if launch.preview && !app.is_plugin_added::<FrameTimeDiagnosticsPlugin>() {
-        app.add_plugins(FrameTimeDiagnosticsPlugin::default());
     }
 
     if let Some(source) = imposter_source {

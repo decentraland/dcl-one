@@ -278,7 +278,9 @@ Replies are JSON where the command says so; a failed command rejects (web) or an
   Use the panel to inspect a scene, compare frame and memory measurements, diagnose
   room and media connections, and exercise supported controls. Availability depends
   on the build, platform and preview mode. `/performance_state` reports the effective
-  frame-rate target and session override independently of the panel.
+  frame-rate target and session override, the sampling status, the latest 15 s performance
+  snapshot and the frame-time breakdown independently of the panel; `/render_state`,
+  `/profile_top` and `/debug_memory` the rest ([profiling](../docs/guidelines/profiling.md)).
 - The HUD, by role and accessible name (`library/explorer-core/lib/hudAutomation.ts`): `/hud_list [role]`,
   `/hud_read`, `/hud_click`, `/hud_fill` (`{"name", "text"}`), `/hud_wait` (`"state"`: `visible`,
   `hidden`, `enabled`, `actionable`, `ready`; `"timeout"` ms). A selector is the name or JSON

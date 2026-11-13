@@ -1,0 +1,362 @@
+//! The benchmark run's summary: two `perf_summary` log lines when the autopilot's measured phase
+//! ends.
+//!
+//! While `Measuring`, every frame's `Time<Real>` delta and every new GPU frame time are kept, so
+//! the lines summarise the whole measured phase, not one sample. The profiler records for the
+//! phase, its table reset at the start, so the top scopes are the table's rows at the end: every
+//! frame of the phase, focused or not, where a snapshot's rows are its sampled frames only. The
+//! lines are logged in `Last` of the frame the phase turns `Ending`.
+//!
+//! Line 1, `key=value` pairs in this order:
+//! `cpu_p99_ms cpu_frames_over_hiccup_threshold_count cpu_hiccup_threshold_ms gpu_p99_ms
+//! gpu_frames_over_hiccup_threshold_count used_peak_mib js_heap_used_mib entity_count
+//! sample_count snapshot_duration_seconds`; a GPU value is `n/a` without timestamp queries, the
+//! peak `n/a` without a memory reading during the phase, the heap `n/a` without a reporting
+//! scene, the entity count `n/a` without its diagnostic.
+//! Line 2: `top_scopes=<name>:<self ms>,...`, up to 30, highest self time first; a name has its
+//! commas, colons and equals signs replaced by spaces.
+
+use bevy::prelude::*;
+use common::{
+    autopilot::AutopilotPhase,
+    perf::{
+        hiccup_threshold_ms, FrameTimeSampleSummary, ProfiledScopeSummary,
+        SNAPSHOT_TOP_PROFILED_SCOPE_COUNT,
+    },
+};
+
+use super::{
+    frame_inputs::FrameInputs,
+    profiled_scopes::{ProfiledScopeSortMetric, ProfiledScopesTable},
+};
+
+pub const PERF_SUMMARY_LOG_TARGET: &str = "perf_summary";
+
+#[derive(Default)]
+pub struct BenchmarkMeasuredPhaseAccumulator {
+    measured_phase_started: bool,
+    cpu_frame_times_ms: Vec<f32>,
+    gpu_frame_times_ms: Vec<f32>,
+    /// `None` until a memory reading is taken during the phase.
+    used_peak_bytes: Option<u64>,
+    sampled_seconds: f64,
+    perf_summary_logged: bool,
+}
+
+/// Does nothing without an [`AutopilotPhase`] resource. Consumes the frame's [`FrameInputs`],
+/// the sample's inputs, under the phase instead of the sampling status.
+pub fn accumulate_benchmark_measured_phase_system(
+    phase: Option<Res<AutopilotPhase>>,
+    inputs: Res<FrameInputs>,
+    mut profiled_scopes: ResMut<ProfiledScopesTable>,
+    mut run: Local<BenchmarkMeasuredPhaseAccumulator>,
+) {
+    let Some(phase) = phase else {
+        return;
+    };
+    match *phase {
+        AutopilotPhase::Arriving => {}
+        AutopilotPhase::Measuring => {
+            if !run.measured_phase_started {
+                run.measured_phase_started = true;
+                profiled_scopes.set_recording_enabled(true);
+                // the table covers the phase only
+                profiled_scopes.reset();
+                // the frame the phase changed spans the arrival
+                return;
+            }
+            run.cpu_frame_times_ms
+                .push(inputs.frame_delta_seconds as f32 * 1000.0);
+            run.sampled_seconds += inputs.frame_delta_seconds;
+            if let Some(gpu_ms) = inputs.new_gpu_frame_time_ms {
+                run.gpu_frame_times_ms.push(gpu_ms);
+            }
+            if let Some(reading) = inputs.memory_reading {
+                run.used_peak_bytes = Some(
+                    run.used_peak_bytes
+                        .map_or(reading.used_bytes, |peak| peak.max(reading.used_bytes)),
+                );
+            }
+        }
+        AutopilotPhase::Ending { exit_code } => {
+            if run.perf_summary_logged || !run.measured_phase_started {
+                return;
+            }
+            run.perf_summary_logged = true;
+            let run = &mut *run;
+            let top_scopes = profiled_scopes.top_scope_summaries(
+                SNAPSHOT_TOP_PROFILED_SCOPE_COUNT,
+                ProfiledScopeSortMetric::SelfTime,
+            );
+            profiled_scopes.set_recording_enabled(false);
+            if exit_code != 0 {
+                return;
+            }
+            let threshold = hiccup_threshold_ms(inputs.target_fps);
+            let cpu =
+                FrameTimeSampleSummary::from_frame_times(&mut run.cpu_frame_times_ms, threshold);
+            let gpu =
+                FrameTimeSampleSummary::from_frame_times(&mut run.gpu_frame_times_ms, threshold);
+            let (values_line, top_scopes_line) = perf_summary_log_lines(
+                cpu.as_ref(),
+                gpu.as_ref(),
+                run.used_peak_bytes,
+                inputs.js_heap.map(|heap| heap.used_bytes_sum),
+                inputs.entity_count.map(u64::from),
+                run.sampled_seconds,
+                &top_scopes,
+            );
+            info!(target: PERF_SUMMARY_LOG_TARGET, "{values_line}");
+            info!(target: PERF_SUMMARY_LOG_TARGET, "{top_scopes_line}");
+        }
+    }
+}
+
+const BYTES_PER_MIB: u64 = 1 << 20;
+
+/// The two lines, as the module doc lays them out; `top_scopes` highest self time first.
+pub fn perf_summary_log_lines(
+    cpu: Option<&FrameTimeSampleSummary>,
+    gpu: Option<&FrameTimeSampleSummary>,
+    used_peak_bytes: Option<u64>,
+    js_heap_used_bytes: Option<u64>,
+    entity_count: Option<u64>,
+    sampled_seconds: f64,
+    top_scopes: &[ProfiledScopeSummary],
+) -> (String, String) {
+    let ms = |value: Option<f32>| value.map_or("n/a".to_owned(), |ms| format!("{ms:.2}"));
+    let count = |value: Option<u32>| value.map_or("n/a".to_owned(), |count| count.to_string());
+    let mib = |bytes: Option<u64>| {
+        bytes.map_or("n/a".to_owned(), |bytes| {
+            (bytes / BYTES_PER_MIB).to_string()
+        })
+    };
+    let values_line = format!(
+        "cpu_p99_ms={} cpu_frames_over_hiccup_threshold_count={} cpu_hiccup_threshold_ms={} gpu_p99_ms={} gpu_frames_over_hiccup_threshold_count={} used_peak_mib={} js_heap_used_mib={} entity_count={} sample_count={} snapshot_duration_seconds={:.1}",
+        ms(cpu.map(|cpu| cpu.p99_ms)),
+        count(cpu.map(|cpu| cpu.frames_over_hiccup_threshold_count)),
+        ms(cpu.map(|cpu| cpu.hiccup_threshold_ms)),
+        ms(gpu.map(|gpu| gpu.p99_ms)),
+        count(gpu.map(|gpu| gpu.frames_over_hiccup_threshold_count)),
+        mib(used_peak_bytes),
+        mib(js_heap_used_bytes),
+        entity_count.map_or("n/a".to_owned(), |count| count.to_string()),
+        count(cpu.map(|cpu| cpu.sample_count)),
+        sampled_seconds,
+    );
+    let top_scopes_line = format!(
+        "top_scopes={}",
+        top_scopes
+            .iter()
+            .take(SNAPSHOT_TOP_PROFILED_SCOPE_COUNT)
+            .map(|row| {
+                format!(
+                    "{}:{:.2}",
+                    row.scope_name.replace([',', ':', '='], " "),
+                    row.self_time_ms
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",")
+    );
+    (values_line, top_scopes_line)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scope(name: &str, self_time_ms: f32) -> ProfiledScopeSummary {
+        ProfiledScopeSummary {
+            scope_name: name.to_owned(),
+            scope_kind: common::perf::ProfiledScopeKind::EcsSystem,
+            call_count: 1,
+            self_time_ms,
+            inclusive_time_ms: self_time_ms,
+            max_single_call_ms: self_time_ms,
+            smoothed_self_time_per_frame_ms: self_time_ms,
+        }
+    }
+
+    #[test]
+    fn the_lines_hold_every_key_in_order_and_the_scopes_with_their_separators_replaced() {
+        let mut cpu_times = vec![10.0, 20.0, 80.0, 15.0];
+        let cpu = FrameTimeSampleSummary::from_frame_times(&mut cpu_times, 50.0).unwrap();
+        let scopes = [scope("x, y: z=w", 9.0), scope("a::b", 1.5)];
+        let (values_line, top_scopes_line) = perf_summary_log_lines(
+            Some(&cpu),
+            None,
+            Some(300 * BYTES_PER_MIB),
+            Some(64 * BYTES_PER_MIB),
+            Some(1234),
+            90.04,
+            &scopes,
+        );
+        assert_eq!(
+            values_line,
+            "cpu_p99_ms=80.00 cpu_frames_over_hiccup_threshold_count=1 cpu_hiccup_threshold_ms=50.00 gpu_p99_ms=n/a gpu_frames_over_hiccup_threshold_count=n/a used_peak_mib=300 js_heap_used_mib=64 entity_count=1234 sample_count=4 snapshot_duration_seconds=90.0"
+        );
+        assert_eq!(
+            top_scopes_line,
+            "top_scopes=x  y  z w:9.00,a::b:1.50".replace("a::b", "a  b")
+        );
+    }
+
+    #[test]
+    fn an_unmeasured_value_is_n_a_never_zero() {
+        let (values_line, _) = perf_summary_log_lines(None, None, None, None, None, 0.0, &[]);
+        assert_eq!(
+            values_line,
+            "cpu_p99_ms=n/a cpu_frames_over_hiccup_threshold_count=n/a cpu_hiccup_threshold_ms=n/a gpu_p99_ms=n/a gpu_frames_over_hiccup_threshold_count=n/a used_peak_mib=n/a js_heap_used_mib=n/a entity_count=n/a sample_count=n/a snapshot_duration_seconds=0.0"
+        );
+    }
+}
+
+// This test signs its fixture account with the native-only local guest wallet.
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod log_order_tests {
+    use std::{cell::RefCell, sync::Once, time::Duration};
+
+    use bevy::{
+        diagnostic::{DiagnosticsPlugin, FrameCountPlugin},
+        ecs::schedule::ExecutorKind,
+        log::{
+            tracing::{
+                field::{Field, Visit},
+                subscriber::set_global_default,
+                Event, Subscriber,
+            },
+            tracing_subscriber::{layer::Context, prelude::*, registry, Layer},
+        },
+        time::{TimePlugin, TimeUpdateStrategy},
+    };
+    use common::{
+        autopilot::{Autopilot, AutopilotPhase, EXIT_MARKER, LOG_TARGET, MEASURE_SECONDS},
+        memory::MemoryStatus,
+        structs::{AppConfig, CurrentRealm, OutOfWorld, PrimaryUser},
+    };
+    use wallet::Wallet;
+
+    use super::*;
+    use crate::{autopilot::RunControlPlugin, perf::PerformanceMonitoringPlugin};
+
+    thread_local! {
+        /// The target and message of every event logged on this thread while capturing.
+        static CAPTURED_LOG_LINES: RefCell<Option<Vec<(String, String)>>> = const { RefCell::new(None) };
+    }
+
+    /// The process-wide subscriber: a thread-local default would miss a callsite another test's
+    /// thread, with no subscriber, registered first (tracing caches the callsite's interest from
+    /// the registering thread's default when one dispatcher exists).
+    struct CapturingLayer;
+
+    #[derive(Default)]
+    struct MessageVisitor(String);
+
+    impl Visit for MessageVisitor {
+        fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
+            if field.name() == "message" {
+                self.0 = format!("{value:?}");
+            }
+        }
+    }
+
+    impl<S: Subscriber> Layer<S> for CapturingLayer {
+        fn on_event(&self, event: &Event<'_>, _: Context<'_, S>) {
+            CAPTURED_LOG_LINES.with(|lines| {
+                if let Some(lines) = lines.borrow_mut().as_mut() {
+                    let mut visitor = MessageVisitor::default();
+                    event.record(&mut visitor);
+                    lines.push((event.metadata().target().to_owned(), visitor.0));
+                }
+            });
+        }
+    }
+
+    /// The lines logged on this thread while `f` runs.
+    fn capture_log_lines(f: impl FnOnce()) -> Vec<(String, String)> {
+        static INSTALL: Once = Once::new();
+        INSTALL.call_once(|| {
+            set_global_default(registry().with(CapturingLayer))
+                .expect("no other test installs a global subscriber");
+        });
+        CAPTURED_LOG_LINES.with(|lines| *lines.borrow_mut() = Some(Vec::new()));
+        f();
+        CAPTURED_LOG_LINES.with(|lines| lines.borrow_mut().take().unwrap_or_default())
+    }
+
+    /// The summary lines are logged in the frame the measured phase ends, before the exit marker
+    /// of the next frame.
+    #[test]
+    fn the_summary_lines_precede_the_exit_marker() {
+        // this app records into the process-wide profiler state
+        let _shared = crate::perf::profiled_scopes::SHARED_PROFILER_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        let mut app = App::new();
+        app.add_plugins((
+            TimePlugin,
+            FrameCountPlugin,
+            DiagnosticsPlugin,
+            crate::world_state::ArrivalsPlugin,
+            RunControlPlugin,
+            PerformanceMonitoringPlugin,
+        ))
+        .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs(1)))
+        .insert_resource(Autopilot { measure: true })
+        .init_resource::<AutopilotPhase>()
+        .init_resource::<Wallet>()
+        .init_resource::<CurrentRealm>()
+        .init_resource::<MemoryStatus>()
+        .insert_resource(AppConfig::default());
+        // every system on this thread, whose captured lines the test reads
+        for (_, schedule) in app.world_mut().resource_mut::<Schedules>().iter_mut() {
+            schedule.set_executor_kind(ExecutorKind::SingleThreaded);
+        }
+        let player = app
+            .world_mut()
+            .spawn((PrimaryUser::default(), OutOfWorld))
+            .id();
+        app.update();
+        let root = wallet::local_guest::new_root_key();
+        let (ephemeral, auth) = wallet::local_guest::sign_identity(&root, 0).unwrap();
+        app.world_mut()
+            .resource_mut::<Wallet>()
+            .finalize(root.address(), ephemeral, auth, true);
+        app.world_mut().resource_mut::<CurrentRealm>().connected = true;
+        app.world_mut().entity_mut(player).remove::<OutOfWorld>();
+
+        let lines = capture_log_lines(|| {
+            // arriving, the measured seconds, the `Ending` frame and the exit frame
+            for _ in 0..(MEASURE_SECONDS as u32 + 4) {
+                app.update();
+            }
+        });
+        assert!(
+            matches!(
+                *app.world().resource::<AutopilotPhase>(),
+                AutopilotPhase::Ending { exit_code: 0 }
+            ),
+            "{:?}",
+            *app.world().resource::<AutopilotPhase>()
+        );
+
+        let summary_indices: Vec<usize> = lines
+            .iter()
+            .enumerate()
+            .filter(|(_, (target, _))| target == PERF_SUMMARY_LOG_TARGET)
+            .map(|(index, _)| index)
+            .collect();
+        let marker_index = lines
+            .iter()
+            .position(|(target, message)| target == LOG_TARGET && message.contains(EXIT_MARKER))
+            .unwrap_or_else(|| panic!("the exit marker is logged: {lines:?}"));
+        assert_eq!(summary_indices.len(), 2, "{lines:?}");
+        assert!(
+            summary_indices.iter().all(|&index| index < marker_index),
+            "{lines:?}"
+        );
+        assert!(lines[summary_indices[0]].1.starts_with("cpu_p99_ms="));
+        assert!(lines[summary_indices[1]].1.starts_with("top_scopes="));
+    }
+}

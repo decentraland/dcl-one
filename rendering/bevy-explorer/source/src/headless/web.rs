@@ -100,7 +100,8 @@ pub fn headless_run(options: JsValue) -> Result<(), JsValue> {
     app.add_plugins(LogPlugin {
         level: Level::INFO,
         filter: "symphonia=warn".to_owned(),
-        custom_layer: |_| None,
+        // the browser console: the fork's `bevy_log` installs no layer of its own on the web
+        custom_layer: |_| Some(Box::new(crate::web::console_layer())),
     });
     // as the client (lib.rs wasm_default_plugins): only the compute pool has real threads
     let fixed = |n: usize| TaskPoolThreadAssignmentPolicy {

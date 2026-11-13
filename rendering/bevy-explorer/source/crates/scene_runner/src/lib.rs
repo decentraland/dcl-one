@@ -72,6 +72,7 @@ use dcl_component::ComponentNameRegistry;
 
 pub mod asset_preload;
 pub mod automatic_testing;
+pub mod visible_content_bytes;
 /// Region decomposition, in `common` so `comms` can reach it too; re-exported here because this is
 /// where it has always lived for callers.
 pub use common::bounds_calc;
@@ -244,6 +245,19 @@ pub struct Toast {
 
 // plugin which creates and runs scripts
 pub struct SceneRunnerPlugin;
+
+/// What the scene loop did in the frame.
+#[derive(Resource, Clone, Copy, Debug, PartialEq)]
+pub struct SceneLoopTiming {
+    /// From the loop's start until its deadline passed or no scene work remained.
+    pub scene_loop_ms: f32,
+    /// The frame limiter's sleep after the loop (native only; 0 on web).
+    pub frame_limiter_sleep_ms: f32,
+    /// Runs of the scene schedule in the loop.
+    pub scene_schedule_run_count: u32,
+    /// Scenes still eligible for a tick when the loop ended.
+    pub eligible_scene_jobs_left_count: u32,
+}
 
 #[derive(Resource)]
 pub struct SceneLoopSchedule {
@@ -515,6 +529,7 @@ fn run_scene_loop(world: &mut World) {
 
     // run at least once to collect updates even if no scenes are eligible
     let mut run_once = false;
+    let mut scene_schedule_run_count = 0u32;
 
     // run until time elapsed or all scenes are updated
     while !run_once
@@ -524,7 +539,10 @@ fn run_scene_loop(world: &mut World) {
     {
         schedule.run(world);
         run_once = true;
+        scene_schedule_run_count += 1;
     }
+    let loop_end_time = Instant::now();
+    let eligible_scene_jobs_left_count = world.resource::<SceneUpdates>().eligible_jobs as u32;
 
     let mut loop_schedule = world.resource_mut::<SceneLoopSchedule>();
     loop_schedule.schedule = schedule;
@@ -535,6 +553,13 @@ fn run_scene_loop(world: &mut World) {
             loop_schedule.sleeper.sleep(sleep_time);
         }
     }
+    let frame_limiter_sleep_ms = loop_end_time.elapsed().as_secs_f32() * 1000.0;
+    world.insert_resource(SceneLoopTiming {
+        scene_loop_ms: (loop_end_time - start_loop_time).as_secs_f32() * 1000.0,
+        frame_limiter_sleep_ms,
+        scene_schedule_run_count,
+        eligible_scene_jobs_left_count,
+    });
 }
 
 fn update_scene_priority(

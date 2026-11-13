@@ -193,6 +193,15 @@ across workers:
 - Fixes with no API surface: unicode asset paths, skin buffer growth, missing cascades panic,
   bad vertices for a frame on second mesh load, sparse index warning.
 
+## Logging
+
+- `bevy_log` installs its `tracing-wasm` layer on the web only behind a `tracing-wasm` feature,
+  off: that layer marks and measures every span on the page's performance timeline, entries
+  nothing clears, so with `trace` on it grows without bound. The explorer writes the console
+  lines with its own layer (`source/src/web.rs`).
+- `bevy_internal/trace` no longer enables `bevy_log/trace` (`tracing-error`'s `ErrorLayer` and
+  the span-trace panic hook): the explorer's `profiler` feature wants the spans only.
+
 ## Changing bevy
 
 - Edit `rendering/bevy-explorer/bevy` in place, in an ordinary PR, and update this page in the
