@@ -1,7 +1,7 @@
 // The typed API specs use. Every method is one console command (or a command and the wait that
 // makes its effect observable), with the reply parsed as rendering/bevy-explorer/docs/guidelines/
 // running.md ("Test commands") describes it. Specs never see which transport carries the line.
-import { type Console, ConsoleError, redact, redactLine, secretOf } from './console.ts'
+import { type Console, ConsoleError, redact, redactLine, replaceSecrets, secretsOf } from './console.ts'
 import { type AuthIdentity, encodeIdentity } from './identity.ts'
 import { type Selector, describeSelector, selectorArg, toSelectorObject } from './selectors.ts'
 import { sleep, until } from './wait.ts'
@@ -210,14 +210,25 @@ export interface CommunityState {
   lastError?: string | null
 }
 
+export type RoomState = 'connecting' | 'connected' | 'reconnecting' | 'disconnected' | 'failed'
+  | 'paused' | 'denied' | 'invalid' | 'identity_conflict' | 'credentials_required'
+
 export interface VoiceState {
   mic: { available: boolean; enabled: boolean }
   livekit: boolean
   connected: boolean | null
-  rooms: { scene: boolean; state: string }[] | null
+  rooms: { scene: boolean; state: RoomState }[] | null
   speakers: string[] | null
   /** Null without `livekit`. */
   call: VoiceCallState | null
+}
+
+export interface ConnectivityState {
+  connectionLost: boolean
+  probing: boolean
+  everConnected: boolean
+  suppressed: boolean
+  rooms: { scope: string; state: RoomState; retryAt: number | null }[]
 }
 
 /** `/ban_block_state [address]`: the one answer to "is this user banned or blocked?", with every
@@ -280,6 +291,98 @@ export interface Position {
   x: number
   y: number
   z: number
+}
+
+export interface LiveScene {
+  title: string
+  hash: string
+  portable: boolean
+  smartWearable: boolean
+  broken: boolean
+}
+
+export type SmartWearableState = 'loading' | 'running' | 'blocked' | 'stopped' | 'notSmart' | 'failed'
+
+export interface SmartWearableEntry {
+  urn: string
+  state: SmartWearableState
+  reason?: string
+}
+
+export interface SmartWearables {
+  /** Whether the parcel scene the player stands in allows portable experiences; null when there
+   *  are no smart wearables (the reply then has no header). */
+  currentSceneAllows: boolean | null
+  entries: SmartWearableEntry[]
+}
+
+export type SmartWearableAction = 'run' | 'kill' | 'restart'
+
+const SMART_WEARABLE_STATES: readonly SmartWearableState[] = ['loading', 'running', 'blocked', 'stopped', 'notSmart', 'failed']
+
+export type PortableKind = 'scene' | 'smartWearable'
+export type PortableState = 'loading' | 'running' | 'failed' | 'blocked' | 'stopped'
+
+/** A portable experience the HUD lists: every portable but startup ones and the HUD's own scene,
+ *  and smart wearables that are stopped while still equipped. */
+export interface Portable {
+  name: string
+  /** The live scene hash `/stop_portable` takes; null for a smart wearable that is not loaded. */
+  hash: string | null
+  kind: PortableKind
+  state: PortableState
+}
+
+const PORTABLE_STATES: readonly PortableState[] = ['loading', 'running', 'failed', 'blocked', 'stopped']
+
+/** `/live_scenes`: `<title> [<hash>, portable, smart wearable, broken]` per line, the flags
+ *  optional, or `no scenes loaded`. */
+export function parseLiveScenes(reply: string): LiveScene[] {
+  if (reply.trim() === 'no scenes loaded') return []
+  return reply
+    .split('\n')
+    .filter((line) => line.trim() !== '')
+    .map((line) => {
+      const match = /^(.*) \[([^,\]]+)((?:, [a-z ]+)*)\]$/.exec(line.trim())
+      if (!match) throw new Error(`unparseable live_scenes line: ${line}`)
+      const flags = match[3]!.split(',').map((flag) => flag.trim()).filter(Boolean)
+      return { title: match[1]!, hash: match[2]!, portable: flags.includes('portable'), smartWearable: flags.includes('smart wearable'), broken: flags.includes('broken') }
+    })
+}
+
+/** `/smart_wearables`: `current scene allows: <bool>`, then `<urn> <state> [<reason>]` per entry,
+ *  or `no smart wearables`. */
+export function parseSmartWearables(reply: string): SmartWearables {
+  const lines = reply.split('\n').map((line) => line.trim()).filter(Boolean)
+  if (lines.length === 1 && lines[0] === 'no smart wearables') return { currentSceneAllows: null, entries: [] }
+  const header = /^current scene allows: (true|false)$/.exec(lines[0] ?? '')
+  if (!header) throw new Error(`unparseable smart_wearables header: ${reply.slice(0, 200)}`)
+  const entries = lines.slice(1).map((line): SmartWearableEntry => {
+    const match = /^(\S+) (\S+)(?: (.+))?$/.exec(line)
+    const state = match?.[2] as SmartWearableState | undefined
+    if (!match || !state || !SMART_WEARABLE_STATES.includes(state)) throw new Error(`unparseable smart_wearables line: ${line}`)
+    const reason = match[3]?.replace(/^\[(.*)\]$/, '$1')
+    return reason ? { urn: match[1]!, state, reason } : { urn: match[1]!, state }
+  })
+  return { currentSceneAllows: header[1] === 'true', entries }
+}
+
+const SMART_WEARABLE_REPLIES: Record<SmartWearableAction, string> = { run: 'running', kill: 'killed', restart: 'restarted' }
+
+/** `/portables`: `<name> [<hash or ->, <kind>, <state>]` per line, or `no portables`. The kind is
+ *  `scene` or `smartWearable` (`smart wearable` reads the same). */
+export function parsePortables(reply: string): Portable[] {
+  if (reply.trim() === 'no portables') return []
+  return reply
+    .split('\n')
+    .filter((line) => line.trim() !== '')
+    .map((line): Portable => {
+      const match = /^(.*) \[([^,\]]+), ([^,\]]+), ([^,\]]+)\]$/.exec(line.trim())
+      const kind = match?.[3]!.replace(/ (\w)/g, (_, c: string) => c.toUpperCase()) as PortableKind | undefined
+      const state = match?.[4] as PortableState | undefined
+      if (!match || (kind !== 'scene' && kind !== 'smartWearable') || !state || !PORTABLE_STATES.includes(state)) throw new Error(`unparseable portables line: ${line}`)
+      return { name: match[1]!, hash: match[2] === '-' ? null : match[2]!, kind, state }
+    })
 }
 
 /** What `/hud_login` answers once the sign-in has landed and the welcome page is done: the
@@ -352,7 +455,7 @@ export class Explorer {
   /** The own profile's version as last read, and when it was last seen to change. */
   #ownVersion: number | undefined
   #ownVersionChangedAt = 0
-  /** The credentials the lines run so far carried (`secretOf`), for text that may quote them. */
+  /** The credentials the lines run so far carried (`secretsOf`), for text that may quote them. */
   readonly #secrets = new Set<string>()
 
   constructor(console: Console, options: ExplorerOptions = {}) {
@@ -372,8 +475,7 @@ export class Explorer {
   async run(line: string): Promise<string> {
     const startedAt = Date.now()
     const record: CommandRecord = { line: redactLine(line.trim()), startedAt, ms: 0 }
-    const secret = secretOf(line)
-    if (secret !== undefined) this.#secrets.add(secret)
+    for (const secret of secretsOf(line)) this.#secrets.add(secret)
     try {
       const reply = await this.console.run(line)
       record.ms = Date.now() - startedAt
@@ -394,9 +496,7 @@ export class Explorer {
   /** `text` with every credential a line of this client carried replaced: the page's console,
    *  which the HUD may have written an error into. */
   redactSecrets(text: string): string {
-    let out = text
-    for (const secret of this.#secrets) out = out.split(secret).join('<redacted>')
-    return out
+    return replaceSecrets(this.#secrets, text)
   }
 
   /** Run a line whose reply is JSON. A reply that does not parse is an error naming the command,
@@ -538,6 +638,8 @@ export class Explorer {
     await until(() => this.worldState(), (state) => state.signedIn, { timeoutMs: 30_000, intervalMs: 250, what: 'the guest to be signed in' })
   }
 
+  /** The engine's sign-out (`/logout`). On the web the HUD never hears of it and stays signed in,
+   *  refusing a new `/hud_login`; `/hud_logout` signs both out. */
   async logout(): Promise<void> {
     await this.run('/logout')
   }
@@ -638,6 +740,14 @@ export class Explorer {
     return this.json<VoiceState>('/voice_state')
   }
 
+  connectivity(): Promise<ConnectivityState> {
+    return this.json<ConnectivityState>('/connectivity_state')
+  }
+
+  retryConnectivity(): Promise<string> {
+    return this.run('/connectivity_retry')
+  }
+
   /** The ban and block status; with an address, also that address's standing. */
   banBlockState(address?: string): Promise<BanBlockState> {
     return this.json<BanBlockState>(address ? `/ban_block_state ${address}` : '/ban_block_state')
@@ -718,6 +828,57 @@ export class Explorer {
   async sceneEntities(component?: string): Promise<string[]> {
     const reply = await this.run(component ? `/scene_entities ${component}` : '/scene_entities')
     return reply === '(no entities)' ? [] : reply.split('\n')
+  }
+
+  /** Point the scene commands (`/scene_entities`, `/inspect_component`, `/scene_logs`) at a scene
+   *  by hash or title; without one they follow the player's parcel again. */
+  async setScene(hashOrTitle?: string): Promise<void> {
+    await this.run(hashOrTitle ? `/set_scene ${hashOrTitle}` : '/set_scene')
+  }
+
+  /** The `value` of every `UiText` in the target scene: what its screen-space UI shows. */
+  async uiTexts(): Promise<string[]> {
+    const entities = await this.sceneEntities('UiText')
+    const texts: string[] = []
+    for (const entity of entities) {
+      const id = /\((\d+)\)$/.exec(entity)?.[1] ?? entity
+      const text = await this.inspect<{ value?: string }>(id, 'UiText')
+      if (typeof text.value === 'string') texts.push(text.value)
+    }
+    return texts
+  }
+
+  /** The scenes running: parcel scenes and portable experiences. */
+  async liveScenes(): Promise<LiveScene[]> {
+    return parseLiveScenes(await this.run('/live_scenes'))
+  }
+
+  async smartWearables(): Promise<SmartWearables> {
+    return parseSmartWearables(await this.run('/smart_wearables'))
+  }
+
+  /** A smart wearable's entry, or undefined when the engine does not track it. */
+  async smartWearable(urn: string): Promise<SmartWearableEntry | undefined> {
+    return (await this.smartWearables()).entries.find((entry) => entry.urn === urn)
+  }
+
+  /** The portable experiences the HUD's rail lists. */
+  async portables(): Promise<Portable[]> {
+    return parsePortables(await this.run('/portables'))
+  }
+
+  /** `/stop_portable <hash>`: stop a listed portable as the HUD's `Stop` does; a reply other than
+   *  `stopped <hash>` is an error. */
+  async stopPortable(hash: string): Promise<void> {
+    const reply = (await this.run(`/stop_portable ${hash}`)).trim()
+    if (reply !== `stopped ${hash}`) throw new Error(`/stop_portable ${hash} replied: ${reply}`)
+  }
+
+  /** `/smart_wearable run|kill|restart <urn>`; a reply other than `<running|killed|restarted>
+   *  <urn>` is an error. */
+  async smartWearableAction(action: SmartWearableAction, urn: string): Promise<void> {
+    const reply = (await this.run(`/smart_wearable ${action} ${urn}`)).trim()
+    if (reply !== `${SMART_WEARABLE_REPLIES[action]} ${urn}`) throw new Error(`/smart_wearable ${action} ${urn} replied: ${reply}`)
   }
 
   async inspect<T = unknown>(entity: string | number, component: string): Promise<T> {

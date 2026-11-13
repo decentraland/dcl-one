@@ -42,6 +42,17 @@ deterministically — they have their own tiers (§3, §4).
 
 ## 1. The testing tiers (why three)
 
+Connectivity feedback is engine-owned. `library/ui/apps/hud/test/hosted/connectivity.test.tsx` checks the shared
+SystemApi stream/retry bridge, subscription cleanup, stable unchanged snapshots, one Connection Lost alert dialog,
+pending Retry/Exit controls through bridge acknowledgement, reply timeout and session cleanup,
+failed-retry recovery controls, automatic dismissal,
+and scoped access messages. Runtime verification reads `/connectivity_state`, uses
+`/connectivity_retry`, and locates `alertdialog` named `Connection Lost`, buttons `Retry` and
+`Exit Application`, and status `Multiplayer status`. The engine's Connectivity debug section exposes the
+same safe snapshot and Retry action. Preview, held-world and terminal access failures must
+never become an offline alert. A reachable network with a failed or disconnected room shows its
+room status. An initial `connecting` room stays quiet during ordinary scene crossings.
+
 | Tier | Command | What it proves | Engine? | Deterministic? |
 |------|---------|----------------|---------|----------------|
 | **1 — contract** | `npm test` | Every page→scene API call posts the exact wire message, and every scene→page message updates state. Component clicks fire the right action. | no (FakeDriver) | yes |
@@ -244,6 +255,27 @@ from HUD-side key matching. The rules:
 - Key **labels** come from `bindingLabels` (`keyHintFor`/`labelForInput`), never hardcoded
   letters — they follow the user's rebinds and keyboard layout.
 
+## Portables
+
+A portable experience runs beside the scene the player stands in: a smart wearable's scene
+while it is worn, or a portable another scene spawned. The engine decides and lists them; the HUD
+shows them and stops or restarts them (`bridge-scene/src/domains/portables.ts`). Expectations:
+
+- **List**: the engine's `portables` message (`getPortablesStream`), sent on subscribe and on every
+  change, never the HUD's own scene or a startup portable. No polling and no prompt of its own: a
+  portable's permissions are asked on use through the scene permission dialog.
+- **Rail**: the `Portable experiences` button shows while the list is non-empty; its tooltip reads
+  `N running`, plus `, M paused in this scene` while the scene the player stands in disables
+  portable experiences. Its popover lists one row per portable: name, kind (`Smart wearable` /
+  `Portable experience`) and state (`Loading`, `Running`, `Failed: <reason>`, `Paused in this
+  scene`, `Stopped`). `Stop <name>` on every row with a scene hash runs the console's
+  `/stop_portable <hash>`; a stopped smart wearable (still worn) shows `Restart <name>` instead,
+  `/smart_wearable restart <urn>`. The HUD's own command replies stay out of chat; a failed one is
+  toasted.
+- **Toasts**: entering running, paused, stopped or failed is toasted, from the list the player
+  arrived with (no burst at login).
+- Mock: `?mock=1&mockportables=1`. Tests: `library/ui/apps/hud/test/portables.test.tsx`.
+
 ## Analytics
 
 The page reports the screens and clicks mobile does, with mobile's names and property shapes
@@ -329,3 +361,22 @@ owns the mode as a surface. Expectations:
   (the overlay's buttons, bindings, notice and effect); the e2e camera scenarios
   (`apps/bevy-explorer/e2e/specs/camera.test.ts`) drive the real engine.
 
+
+## Donate
+
+Tipping a place's creator in MANA, where the host can sign a tip (`@hud-host`'s `donations`: the Sites `/play`
+web shell; null here, so this HUD shows no Donate). The shared HUD names a place and nothing else
+(`features/donate/useDonate.ts`); the shell resolves the creator, draws the panel and signs (`apps/ui3/src/play/shell/donate`,
+[ADR](../../../../docs/adr/2026-11-12-play-shell-signs-tips.md)). Expectations:
+
+- **Where it shows:** the minimap's header for the scene the player stands in (the session's
+  `minimap.donatePlace`: a Genesis City parcel or a World, none in a preview or a local realm), and the
+  map's place panel. Only when the host says the session may tip and the place has a creator; hidden while
+  the first answer is pending. Whether the session may tip is asked once per sign-in. The minimap's place
+  changes with the scene, not with each parcel crossed (none on a parcel with no scene), and its last answer
+  stays while the next scene is asked about; on the map a newly picked place hides it until answered.
+- **After a tip** the host's `onSent` plays the `money` base emote; a `tip_received` notification opens the
+  tipper's passport (`notifications/summary.ts` `tipTarget`).
+- Tests: `library/ui/apps/hud/test/donate.test.tsx` (gating, open, emote, notification),
+  `library/explorer-core/test/donatePlace.test.ts`; the shell's side in `apps/ui3/src/play/test/donateShell.test.ts`
+  and `donateGuard.test.ts`. No visual baseline: the panel is drawn by the `/play` shell, not by `?mock=1`.

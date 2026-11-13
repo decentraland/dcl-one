@@ -50,6 +50,18 @@ pub async fn op_portable_kill(
     rx.await.map_err(|e| anyhow::anyhow!(e))
 }
 
+pub async fn op_portable_exit(state: Rc<RefCell<impl State>>) -> Result<bool, anyhow::Error> {
+    debug!("op_portable_exit");
+    let (sx, rx) = RpcResultSender::channel();
+
+    state
+        .borrow_mut()
+        .borrow_mut::<RpcCalls>()
+        .push(RpcCall::ExitPortable { response: sx })?;
+
+    rx.await.map_err(|e| anyhow::anyhow!(e))
+}
+
 pub async fn op_portable_list(
     state: Rc<RefCell<impl State>>,
 ) -> Result<Vec<SpawnResponse>, anyhow::Error> {

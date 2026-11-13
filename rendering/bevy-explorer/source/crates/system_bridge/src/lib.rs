@@ -174,6 +174,8 @@ pub enum SystemApi {
         PermissionLevel,
         RpcResultSender<Vec<PermanentPermissionItem>>,
     ),
+    /// The portables the player can see and stop, sent on subscribe and on every change.
+    GetPortablesStream(RpcStreamSender<Vec<PortableInfo>>),
     /// Prompts for the password of a world being entered (see `ipfs::world_access`).
     GetWorldAccessStream(RpcStreamSender<WorldAccessEvent>),
     /// Answers the password prompt: the password, or `None` when the player gives up.
@@ -181,6 +183,10 @@ pub enum SystemApi {
     SetInteractableArea(Vec4),
     GetMicState(RpcResultSender<MicState>),
     SetMicEnabled(bool),
+    /// Trusted HUD recovery request; terminal access decisions remain unchanged.
+    RetryConnectivity,
+    /// The current safe snapshot, followed by changes until the consumer closes.
+    GetConnectivityStream(RpcStreamSender<ConnectivitySnapshot>),
     GetAvatarModifiers(RpcResultSender<Vec<AvatarModifierState>>),
     // Social / Friends
     GetFriends(RpcResultSender<Vec<FriendData>>),
