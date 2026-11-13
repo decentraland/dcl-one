@@ -9,12 +9,15 @@
 //! - empty answers the boot reads (`/entities/active`, `/entities/versions`)
 //!   with `200 []` and the other reads with 503.
 //!
-//! The boot reads check the Registry's request rule first, with every source:
-//! a body without a non-empty `pointers` answers the Registry's
-//! `400 {"ok":false,"message":"No pointers provided"}` (`ids` is not read),
-//! and a body that is not JSON its `500`. An `/entities/active` answer drops
-//! every entity whose id is on this node's content denylist, as the content
-//! reads do ([`crate::content::queries::retain_non_denylisted`]).
+//! The boot reads check the Registry's request rule first, with every source
+//! ([`pointers_rule`]): a body without a non-empty `pointers` answers the
+//! Registry's `400 {"ok":false,"message":"No pointers provided"}` (`ids` is
+//! not read), and a body that is not JSON, or is JSON `null`, its `500`. Their
+//! bodies are capped at [`BOOT_READ_BODY_LIMIT`]. An `/entities/active` answer
+//! drops every entity whose id is on this node's content denylist, as the
+//! content reads do ([`crate::content::queries::retain_non_denylisted`]); that
+//! read forwards no conditional request headers, and an answer the filter
+//! changed loses the backend's `ETag` and `Last-Modified`.
 //!
 //! Registry writes (moderation, queue controls, registration, cache flush)
 //! are not exposed here: the abgen admin bearer stays on this host and those
@@ -29,13 +32,15 @@
 use std::sync::LazyLock;
 use std::time::Duration;
 
-use axum::extract::{OriginalUri, Request, State};
-use axum::http::{HeaderMap, Method, StatusCode, Uri};
+use axum::extract::{DefaultBodyLimit, OriginalUri, Request, State};
+use axum::http::{HeaderMap, Method, StatusCode, Uri, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use bytes::Bytes;
+use serde::de::{DeserializeSeed, Deserializer, IgnoredAny, MapAccess, SeqAccess, Visitor};
+use serde_json::value::RawValue;
 use serde_json::{Value, json};
 use tokio::sync::Semaphore;
 
@@ -52,11 +57,25 @@ const IN_FLIGHT: usize = 64;
 const SLOT_WAIT: Duration = Duration::from_secs(2);
 const TIMEOUT: Duration = Duration::from_secs(30);
 static PERMITS: LazyLock<Semaphore> = LazyLock::new(|| Semaphore::new(IN_FLIGHT));
+/// Largest `/entities/active` or `/entities/versions` request body. The
+/// largest a client sends is unity-explorer's world read
+/// (`decentraland/unity-explorer@59c3766`, `LoadFixedPointersSystem`): every
+/// occupied parcel of the world manifest in one `{"pointers":["x,y",...]}`
+/// body, at most the 301 x 301 parcels world coordinates allow
+/// (`MAX_PARCEL_COORDINATE`), 865,088 bytes. Its scene (60 parcels) and
+/// wearable (200 URNs) batches are far smaller.
+const BOOT_READ_BODY_LIMIT: usize = 1024 * 1024;
 
 pub fn routes(state: Shared) -> Router {
     Router::new()
-        .route("/entities/active", post(active))
-        .route("/entities/versions", post(versions))
+        .route(
+            "/entities/active",
+            post(active).layer(DefaultBodyLimit::max(BOOT_READ_BODY_LIMIT)),
+        )
+        .route(
+            "/entities/versions",
+            post(versions).layer(DefaultBodyLimit::max(BOOT_READ_BODY_LIMIT)),
+        )
         .route("/entities/status", get(read))
         .route("/entities/status/{id}", get(read))
         .route("/worlds/{world_name}/manifest", get(read))
@@ -134,7 +153,9 @@ impl Backend {
 }
 
 /// `POST /entities/active`: the backend's entities without those on this
-/// node's content denylist.
+/// node's content denylist. The backend's validators describe its unfiltered
+/// answer, so no conditional request reaches it (a `304` would skip the
+/// filter) and a filtered answer drops its `ETag` and `Last-Modified`.
 async fn active(
     State(state): State<Shared>,
     OriginalUri(original_uri): OriginalUri,
@@ -149,9 +170,16 @@ async fn active(
     if state.settings.sources.registry.is_empty() {
         return Json(json!([])).into_response();
     }
-    match forward(&state, &original_uri, method, &uri, &headers, body).await {
-        Ok((status, out_headers, bytes)) if status == StatusCode::OK => {
-            let bytes = without_denylisted(bytes, &state.content.denylist);
+    match forward(&state, &original_uri, method, &uri, &headers, body, false).await {
+        Ok((status, mut out_headers, bytes)) if status == StatusCode::OK => {
+            let bytes = match without_denylisted(&bytes, &state.content.denylist) {
+                Some(filtered) => {
+                    out_headers.remove(header::ETAG);
+                    out_headers.remove(header::LAST_MODIFIED);
+                    filtered
+                }
+                None => bytes,
+            };
             (status, out_headers, bytes).into_response()
         }
         Ok(answer) => answer.into_response(),
@@ -178,24 +206,30 @@ async fn versions(
 }
 
 /// The Registry's request rule for the boot reads (`get-active-entities.ts`
-/// and `get-entity-versions.ts`): the body is read as JSON whatever its
-/// `Content-Type` (unparseable: the http-commons `500`), and `pointers` must
-/// be present, truthy and, when an array, non-empty. `ids` is not read, and
+/// and `get-entity-versions.ts`): `await context.request.json()` reads the
+/// body as JSON whatever its `Content-Type`, then `body.pointers` and
+/// `!pointers || pointers?.length === 0` answer the 400. A body that is not
+/// JSON, or is JSON `null` (`null.pointers` throws), is the http-commons
+/// `500`; any other non-object body has no `pointers`. `ids` is not read, and
 /// the number of pointers is not capped.
+///
+/// Only `pointers` is kept, as raw text: the rest of the body is scanned
+/// without being built, so a large body costs no more than its bytes.
 fn pointers_rule(body: &[u8]) -> Result<(), Response> {
-    let Ok(body) = serde_json::from_slice::<Value>(body) else {
-        return Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error":"Internal Server Error"})),
-        )
-            .into_response());
-    };
-    let present = match body.get("pointers") {
-        None | Some(Value::Null) | Some(Value::Bool(false)) => false,
-        Some(Value::String(s)) => !s.is_empty(),
-        Some(Value::Number(n)) => n.as_f64().is_some_and(|n| n != 0.0),
-        Some(Value::Array(a)) => !a.is_empty(),
-        Some(_) => true,
+    let mut de = serde_json::Deserializer::from_slice(body);
+    let shape = Field("pointers")
+        .deserialize(&mut de)
+        .and_then(|shape| de.end().map(|()| shape));
+    let present = match shape {
+        Err(_) | Ok(Shape::Null) => {
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error":"Internal Server Error"})),
+            )
+                .into_response());
+        }
+        Ok(Shape::Other | Shape::Object(None)) => false,
+        Ok(Shape::Object(Some(pointers))) => pointers_given(pointers.get()),
     };
     if present {
         Ok(())
@@ -203,27 +237,132 @@ fn pointers_rule(body: &[u8]) -> Result<(), Response> {
         // Written out: `json!` would sort the keys, the Registry sends `ok` first.
         Err((
             StatusCode::BAD_REQUEST,
-            [(axum::http::header::CONTENT_TYPE, "application/json")],
+            [(header::CONTENT_TYPE, "application/json")],
             r#"{"ok":false,"message":"No pointers provided"}"#,
         )
             .into_response())
     }
 }
 
+/// `!(!pointers || pointers?.length === 0)` for one JSON value's text: truthy,
+/// and an array non-empty, an object without a `length` that is exactly `0`.
+fn pointers_given(text: &str) -> bool {
+    match text.as_bytes().first() {
+        Some(b'[') => !text[1..].trim_start().starts_with(']'),
+        Some(b'{') => {
+            let mut de = serde_json::Deserializer::from_str(text);
+            !matches!(
+                Field("length").deserialize(&mut de),
+                Ok(Shape::Object(Some(length))) if is_zero(length.get())
+            )
+        }
+        Some(b'"') => text != r#""""#,
+        Some(b't') => true,
+        Some(b'f' | b'n') => false,
+        // A number, falsy only at zero. JavaScript reads one beyond `f64`
+        // as an infinity, as Rust's parser does.
+        _ => !is_zero(text),
+    }
+}
+
+/// A JSON number equal to zero (`-0`, `0.0` and `0e5` included).
+fn is_zero(text: &str) -> bool {
+    matches!(text.as_bytes().first(), Some(b'-' | b'0'..=b'9'))
+        && text.parse::<f64>().is_ok_and(|n| n == 0.0)
+}
+
+/// What [`Field`] found in one JSON value.
+enum Shape<'a> {
+    Null,
+    /// An object, with its named member's raw value. A repeated member
+    /// keeps the last one, as `JSON.parse` does.
+    Object(Option<&'a RawValue>),
+    Other,
+}
+
+/// Reads one JSON value, keeping only the named member of an object as raw
+/// text; everything else is scanned, not built.
+struct Field<'k>(&'k str);
+
+impl<'de> DeserializeSeed<'de> for Field<'_> {
+    type Value = Shape<'de>;
+    fn deserialize<D: Deserializer<'de>>(self, de: D) -> Result<Shape<'de>, D::Error> {
+        de.deserialize_any(self)
+    }
+}
+
+impl<'de> Visitor<'de> for Field<'_> {
+    type Value = Shape<'de>;
+    fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.write_str("a JSON value")
+    }
+    fn visit_unit<E>(self) -> Result<Shape<'de>, E> {
+        Ok(Shape::Null)
+    }
+    fn visit_bool<E>(self, _: bool) -> Result<Shape<'de>, E> {
+        Ok(Shape::Other)
+    }
+    fn visit_i64<E>(self, _: i64) -> Result<Shape<'de>, E> {
+        Ok(Shape::Other)
+    }
+    fn visit_u64<E>(self, _: u64) -> Result<Shape<'de>, E> {
+        Ok(Shape::Other)
+    }
+    fn visit_f64<E>(self, _: f64) -> Result<Shape<'de>, E> {
+        Ok(Shape::Other)
+    }
+    fn visit_str<E>(self, _: &str) -> Result<Shape<'de>, E> {
+        Ok(Shape::Other)
+    }
+    fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Shape<'de>, A::Error> {
+        while seq.next_element::<IgnoredAny>()?.is_some() {}
+        Ok(Shape::Other)
+    }
+    fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Shape<'de>, A::Error> {
+        let mut found = None;
+        while let Some(named) = map.next_key_seed(Key(self.0))? {
+            if named {
+                found = Some(map.next_value::<&'de RawValue>()?);
+            } else {
+                map.next_value::<IgnoredAny>()?;
+            }
+        }
+        Ok(Shape::Object(found))
+    }
+}
+
+/// An object key, compared with the wanted name without being kept.
+struct Key<'k>(&'k str);
+
+impl<'de> DeserializeSeed<'de> for Key<'_> {
+    type Value = bool;
+    fn deserialize<D: Deserializer<'de>>(self, de: D) -> Result<bool, D::Error> {
+        de.deserialize_str(self)
+    }
+}
+
+impl<'de> Visitor<'de> for Key<'_> {
+    type Value = bool;
+    fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.write_str("an object key")
+    }
+    fn visit_str<E>(self, key: &str) -> Result<bool, E> {
+        Ok(key == self.0)
+    }
+}
+
 /// The entities of a backend answer without those whose id is on this node's
 /// content denylist (the projection and rule of the content reads, failing
-/// closed on an entity without an id). An answer that drops nothing, or that
-/// is not a JSON array, keeps its bytes.
-fn without_denylisted(body: Vec<u8>, denylist: &crate::content::Denylist) -> Vec<u8> {
+/// closed on an entity without an id), or `None` when the answer drops
+/// nothing or is not a JSON array: it keeps its bytes.
+fn without_denylisted(body: &[u8], denylist: &crate::content::Denylist) -> Option<Vec<u8>> {
     use crate::content::queries::{EntityDoc, retain_non_denylisted};
     #[derive(serde::Deserialize)]
     struct Id<'a> {
         #[serde(borrow, default)]
         id: Option<std::borrow::Cow<'a, str>>,
     }
-    let Ok(items) = serde_json::from_slice::<Vec<&serde_json::value::RawValue>>(&body) else {
-        return body;
-    };
+    let items = serde_json::from_slice::<Vec<&RawValue>>(body).ok()?;
     let mut docs: Vec<EntityDoc> = items
         .iter()
         .map(|raw| EntityDoc {
@@ -237,10 +376,7 @@ fn without_denylisted(body: Vec<u8>, denylist: &crate::content::Denylist) -> Vec
         .collect();
     let before = docs.len();
     retain_non_denylisted(&mut docs, denylist);
-    if docs.len() == before {
-        return body;
-    }
-    EntityDoc::json_array(&docs).to_vec()
+    (docs.len() != before).then(|| EntityDoc::json_array(&docs).to_vec())
 }
 
 async fn read(
@@ -251,14 +387,16 @@ async fn read(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    match forward(&state, &original_uri, method, &uri, &headers, body).await {
+    match forward(&state, &original_uri, method, &uri, &headers, body, true).await {
         Ok(answer) => answer.into_response(),
         Err(response) => response,
     }
 }
 
 /// One backend call: its status, the kept headers and the buffered body, or
-/// the gateway's own answer when the call cannot be made or fails.
+/// the gateway's own answer when the call cannot be made or fails. The
+/// client's `If-None-Match` and `If-Modified-Since` go along only when
+/// `conditional`.
 async fn forward(
     state: &Shared,
     original_uri: &Uri,
@@ -266,6 +404,7 @@ async fn forward(
     uri: &Uri,
     headers: &HeaderMap,
     body: Bytes,
+    conditional: bool,
 ) -> Result<(StatusCode, HeaderMap, Vec<u8>), Response> {
     let source = &state.settings.sources.registry;
     if source.is_empty() {
@@ -311,10 +450,9 @@ async fn forward(
             .body(body);
         for (name, value) in headers {
             let name = name.as_str();
-            if matches!(
-                name,
-                "content-type" | "accept" | "if-none-match" | "if-modified-since"
-            ) || (native && name.starts_with("x-identity-"))
+            if matches!(name, "content-type" | "accept")
+                || (conditional && matches!(name, "if-none-match" | "if-modified-since"))
+                || (native && name.starts_with("x-identity-"))
             {
                 request = request.header(name, value);
             }
@@ -401,6 +539,66 @@ mod tests {
     use axum::http::{Request, StatusCode};
     use serde_json::Value;
     use tower::ServiceExt;
+
+    /// `pointers_rule` against the Registry's handler as JavaScript reads it:
+    /// `body.pointers` throws on `null`, and `!pointers || pointers?.length
+    /// === 0` is the 400; a repeated key keeps the last value.
+    #[test]
+    fn pointers_rule_follows_the_registry_handler() {
+        let status = |body: &str| match super::pointers_rule(body.as_bytes()) {
+            Ok(()) => StatusCode::OK,
+            Err(response) => response.status(),
+        };
+        for body in [
+            "null",
+            " null ",
+            "",
+            "{",
+            "nul",
+            r#"{"pointers":["0,0"]} x"#,
+        ] {
+            assert_eq!(status(body), StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+        }
+        for body in [
+            "{}",
+            "[]",
+            r#"["0,0"]"#,
+            "5",
+            "true",
+            r#""pointers""#,
+            r#"{"pointers":[]}"#,
+            r#"{"pointers": [ ] }"#,
+            r#"{"pointers":null}"#,
+            r#"{"pointers":false}"#,
+            r#"{"pointers":0}"#,
+            r#"{"pointers":-0.0}"#,
+            r#"{"pointers":0e5}"#,
+            r#"{"pointers":""}"#,
+            r#"{"pointers":{"length":0}}"#,
+            r#"{"pointers":{"length":-0}}"#,
+            r#"{"pointers":{"length":1,"length":0}}"#,
+            r#"{"pointers":["0,0"],"pointers":[]}"#,
+            r#"{"ids":["bafkreiexample"]}"#,
+        ] {
+            assert_eq!(status(body), StatusCode::BAD_REQUEST, "{body}");
+        }
+        for body in [
+            r#"{"pointers":["0,0"]}"#,
+            r#"{"pointers":[0]}"#,
+            r#"{"pointers":"0,0"}"#,
+            r#"{"pointers":1}"#,
+            r#"{"pointers":1e400}"#,
+            r#"{"pointers":true}"#,
+            r#"{"pointers":{}}"#,
+            r#"{"pointers":{"length":"0"}}"#,
+            r#"{"pointers":{"length":1}}"#,
+            r#"{"pointers":{"length":0,"length":1}}"#,
+            r#"{"pointers":[],"pointers":["0,0"]}"#,
+            r#"{"other":{"pointers":[]},"pointers":["0,0"],"x":[1e400,{"a":null}]}"#,
+        ] {
+            assert_eq!(status(body), StatusCode::OK, "{body}");
+        }
+    }
 
     async fn app() -> axum::Router {
         super::super::router(super::super::tests_support::state_without_db().await)

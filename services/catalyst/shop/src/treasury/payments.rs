@@ -232,18 +232,27 @@ pub async fn verify(
     };
     let pay_to = signer.relayer_address();
 
-    let (outcome, logs) = signer.fetch_receipt_once(&tx_hash).await?;
+    let (outcome, logs, block_number) = signer.fetch_receipt_with_block(&tx_hash).await?;
     let response = match outcome {
         ReceiptOutcome::Pending => json!({ "status": "pending" }),
         ReceiptOutcome::Reverted => json!({ "status": "reverted" }),
         ReceiptOutcome::Confirmed => {
             match sum_erc20_transfers_to(&logs, contracts.mana_token, pay_to) {
-                Some((from, total)) => json!({
-                    "status": "confirmed",
-                    "from": format!("{from:#x}"),
-                    "to": format!("{pay_to:#x}"),
-                    "valueWei": total.to_string(),
-                }),
+                Some((from, total)) => {
+                    let block_number = block_number.ok_or_else(|| {
+                        ApiError::RelayerFailed(format!("receipt for {tx_hash} has no block"))
+                    })?;
+                    let (head, block_timestamp) = signer.head_and_block_time(block_number).await?;
+                    json!({
+                        "status": "confirmed",
+                        "from": format!("{from:#x}"),
+                        "to": format!("{pay_to:#x}"),
+                        "valueWei": total.to_string(),
+                        "blockNumber": block_number,
+                        "blockTimestamp": block_timestamp,
+                        "confirmations": head.saturating_sub(block_number),
+                    })
+                }
                 None => json!({
                     "status": "no_payment",
                     "to": format!("{pay_to:#x}"),

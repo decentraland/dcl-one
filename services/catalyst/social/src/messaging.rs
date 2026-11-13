@@ -152,6 +152,32 @@ pub fn router(state: SharedState) -> Router {
 const MAX_OPAQUE_BYTES: usize = 256 * 1024;
 const MAX_KEY_PACKAGES: usize = 100;
 const MAX_COMMITS_PAGE: i64 = 500;
+/// Blob bytes (in KiB) a signer may store through group creates, commits and
+/// messages: 16 MiB per hour.
+static BLOB_BUDGET: LazyLock<RateLimiter> =
+    LazyLock::new(|| RateLimiter::new(16 * 1024, Duration::from_secs(3600)));
+
+/// Spends the signer's blob budget for `bytes` before anything is stored;
+/// answers the KiB spent, refunded when the write does not land.
+fn spend_blob_budget(signer: &str, bytes: usize) -> Result<u32, ApiError> {
+    let kib = u32::try_from(bytes.div_ceil(1024)).unwrap_or(u32::MAX);
+    match BLOB_BUDGET.check_cost(signer, kib) {
+        RateLimitDecision::Allow => Ok(kib),
+        RateLimitDecision::Deny => Err(ApiError::labeled(
+            429,
+            "rate limit exceeded",
+            "message store budget exhausted for this wallet; retry later",
+        )),
+    }
+}
+
+fn opaque(bytes: Vec<u8>, what: &str) -> Result<Vec<u8>, ApiError> {
+    if bytes.is_empty() || bytes.len() > MAX_OPAQUE_BYTES {
+        return Err(ApiError::bad_request(format!("{what} length out of range")));
+    }
+    Ok(bytes)
+}
+
 /// A current roster member of group `$g`; in a community-bound group also a
 /// member of the community who is not banned from it, and in a `dm` one
 /// whom the other party has not blocked (nor blocked them).
@@ -289,7 +315,13 @@ fn authorized_community_binding(
         .map_err(|_| ApiError::bad_request("community_id must be a uuid"))
 }
 
-async fn store_blob(state: &MessagingState, bytes: Vec<u8>) -> Result<String, ApiError> {
+/// Stores the bytes under their CID; `wrote` is set when this call created
+/// the blob, so a write that then loses its race keeps its budget spent.
+async fn store_blob(
+    state: &MessagingState,
+    bytes: Vec<u8>,
+    wrote: &mut bool,
+) -> Result<String, ApiError> {
     let storage = &state.storage;
     let bytes = Bytes::from(bytes);
     let cid = {
@@ -301,6 +333,7 @@ async fn store_blob(state: &MessagingState, bytes: Vec<u8>) -> Result<String, Ap
     let stored = async {
         if !storage.exist(&cid).await? {
             storage.store(&cid, bytes).await?;
+            *wrote = true;
         }
         Ok::<_, crate::storage::StorageError>(())
     }
@@ -540,21 +573,34 @@ pub async fn create_group(
     }
     let community_id = authorized_community_binding(&state, &headers, b.community_id.as_deref())?;
     let epoch_author = state.peer_id().await?;
+    let exists: bool =
+        sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM social.mls_groups WHERE group_id = $1)")
+            .bind(&group_id)
+            .fetch_one(&state.pool)
+            .await?;
+    if exists {
+        return Err(ApiError::http(409, "group already exists"));
+    }
+    let (mut spent, mut wrote) = (0, false);
     let initial = match &b.initial_commit {
         Some(c) => {
-            let commit_bytes = decode_b64(c, "initial_commit")?;
+            let commit_bytes = opaque(decode_b64(c, "initial_commit")?, "initial_commit")?;
             let routing = mls::parse_commit_routing(&commit_bytes)
                 .map_err(|e| ApiError::bad_request(e.to_string()))?;
             check_commit_routing(&routing, &group_id, 0)?;
             let welcome_bytes = b
                 .welcome
                 .as_deref()
-                .map(|w| decode_b64(w, "welcome"))
+                .map(|w| decode_b64(w, "welcome").and_then(|w| opaque(w, "welcome")))
                 .transpose()?;
+            spent = spend_blob_budget(
+                &creator,
+                commit_bytes.len() + welcome_bytes.as_ref().map_or(0, Vec::len),
+            )?;
             let commit_hash = mls::content_hash(&commit_bytes);
-            let commit_cid = store_blob(&state, commit_bytes).await?;
+            let commit_cid = store_blob(&state, commit_bytes, &mut wrote).await?;
             let welcome_cid = match welcome_bytes {
-                Some(w) => Some(store_blob(&state, w).await?),
+                Some(w) => Some(store_blob(&state, w, &mut wrote).await?),
                 None => None,
             };
             Some((commit_cid, welcome_cid, commit_hash))
@@ -599,6 +645,9 @@ pub async fn create_group(
     .fetch_one(&state.pool)
     .await?;
     if !created {
+        if !wrote {
+            BLOB_BUDGET.refund(&creator, spent);
+        }
         return Err(ApiError::http(409, "group already exists"));
     }
     // An initial commit moves the group from epoch 0 to 1.
@@ -692,7 +741,7 @@ pub async fn submit_commit(
     let welcome_bytes = b
         .welcome
         .as_deref()
-        .map(|w| decode_b64(w, "welcome"))
+        .map(|w| decode_b64(w, "welcome").and_then(|w| opaque(w, "welcome")))
         .transpose()?;
     let mut added: Vec<String> = b
         .added_members
@@ -712,10 +761,15 @@ pub async fn submit_commit(
         creator: &creator,
     };
     check_roster_change(&state.pool, &group, &signer, &added, &removed).await?;
+    let spent = spend_blob_budget(
+        &signer,
+        commit_bytes.len() + welcome_bytes.as_ref().map_or(0, Vec::len),
+    )?;
     let commit_hash = mls::content_hash(&commit_bytes);
-    let commit_cid = store_blob(&state, commit_bytes).await?;
+    let mut wrote = false;
+    let commit_cid = store_blob(&state, commit_bytes, &mut wrote).await?;
     let welcome_cid = match welcome_bytes {
-        Some(w) => Some(store_blob(&state, w).await?),
+        Some(w) => Some(store_blob(&state, w, &mut wrote).await?),
         None => None,
     };
     let now = now_utc();
@@ -754,6 +808,9 @@ pub async fn submit_commit(
     .fetch_one(&state.pool)
     .await?;
     if b.epoch != locked + 1 {
+        if !wrote {
+            BLOB_BUDGET.refund(&signer, spent);
+        }
         return Err(ApiError::http(409, "epoch advanced concurrently; retry"));
     }
     Ok(Json(
@@ -981,8 +1038,10 @@ pub async fn send_message(
     let signature_hash = mls::content_hash(
         format!("{group_id}:{}:{signer}:{ciphertext_hash}", routing.epoch).as_bytes(),
     );
-    let ciphertext_cid = store_blob(&state, ciphertext).await?;
-    sqlx::query(
+    let spent = spend_blob_budget(&signer, ciphertext.len())?;
+    let mut wrote = false;
+    let ciphertext_cid = store_blob(&state, ciphertext, &mut wrote).await?;
+    let inserted = sqlx::query(
         "INSERT INTO social.mls_message_refs \
             (signature_hash, group_id, author, epoch, ciphertext_hash, ciphertext_cid, signed_at, received_at) \
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8) ON CONFLICT (signature_hash) DO NOTHING",
@@ -996,7 +1055,11 @@ pub async fn send_message(
     .bind(now)
     .bind(now_utc())
     .execute(&state.pool)
-    .await?;
+    .await?
+    .rows_affected();
+    if inserted == 0 && !wrote {
+        BLOB_BUDGET.refund(&signer, spent);
+    }
     Ok(Json(json!({
         "group_id": group_id,
         "epoch": routing.epoch,
@@ -1290,6 +1353,23 @@ mod tests {
             status,
             serde_json::from_slice(&bytes).unwrap_or(Value::Null),
         )
+    }
+
+    #[test]
+    fn the_blob_budget_refuses_a_wallet_past_its_hourly_bytes() {
+        let (heavy, light) = (address_of(&random_key()), address_of(&random_key()));
+        for _ in 0..64 {
+            spend_blob_budget(&heavy, MAX_OPAQUE_BYTES).unwrap();
+        }
+        BLOB_BUDGET.refund(&heavy, 256);
+        spend_blob_budget(&heavy, MAX_OPAQUE_BYTES).unwrap();
+        assert_eq!(
+            spend_blob_budget(&heavy, MAX_OPAQUE_BYTES)
+                .unwrap_err()
+                .code,
+            429
+        );
+        spend_blob_budget(&light, MAX_OPAQUE_BYTES).unwrap();
     }
 
     /// Unset `FED_PEER_ID` falls back to the id schema apply minted (the old
