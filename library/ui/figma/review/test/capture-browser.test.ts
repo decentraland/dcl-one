@@ -401,20 +401,25 @@ describe('when a real page navigates', () => {
   })
   const evaluate = (expression: string) => session.evaluate(expression)
 
-  it('should let mobile touch override desktop pointer capabilities and restore them', async () => {
+  it('should capture touch devices and restore desktop defaults for the next document', async () => {
     const media = () =>
       evaluate(
-        `({hover:matchMedia('(hover:hover)').matches,fine:matchMedia('(pointer:fine)').matches,touch:navigator.maxTouchPoints})`
+        `({hover:matchMedia('(hover:hover)').matches,fine:matchMedia('(pointer:fine)').matches,coarse:matchMedia('(pointer:coarse)').matches,touch:navigator.maxTouchPoints})`
       )
     await session.navigate(`${origin}/first`)
-    assert.deepEqual(await media(), { hover: true, fine: true, touch: 0 })
+    assert.deepEqual(await media(), { hover: true, fine: true, coarse: false, touch: 0 })
     try {
       await session.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 1 })
-      assert.deepEqual(await media(), { hover: false, fine: false, touch: 1 })
+      assert.deepEqual(await media(), { hover: false, fine: false, coarse: true, touch: 1 })
+      await session.navigate(`${origin}/second`)
+      assert.deepEqual(await media(), { hover: false, fine: false, coarse: true, touch: 1 })
     } finally {
       await session.send('Emulation.setTouchEmulationEnabled', { enabled: false })
     }
-    assert.deepEqual(await media(), { hover: true, fine: true, touch: 0 })
+    assert.equal(await evaluate('navigator.maxTouchPoints'), 0)
+    // Touch disable restores host media; a new capture document applies the configured defaults.
+    await session.navigate(`${origin}/first`)
+    assert.deepEqual(await media(), { hover: true, fine: true, coarse: false, touch: 0 })
   })
   it('should resolve navigate only after the document a script redirect lands on has loaded', async () => {
     await session.navigate(`${origin}/redirect`)
