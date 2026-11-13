@@ -151,10 +151,10 @@ impl TreeLayout {
         };
 
         let cells = width as usize * depth as usize;
-        let starts: Vec<i32> = cursor
-            .take(cells * 4)?
-            .chunks_exact(4)
-            .map(|bytes| i32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+        let (words, _) = cursor.take(cells * 4)?.as_chunks::<4>();
+        let starts: Vec<i32> = words
+            .iter()
+            .map(|bytes| i32::from_le_bytes(*bytes))
             .collect();
 
         let count = cursor.i32()?;
@@ -170,9 +170,9 @@ impl TreeLayout {
             previous = start;
         }
 
-        let instances = cursor
-            .take(count as usize * 6)?
-            .chunks_exact(6)
+        let (records, _) = cursor.take(count as usize * 6)?.as_chunks::<6>();
+        let instances = records
+            .iter()
             .enumerate()
             .map(|(instance, bytes)| {
                 if usize::from(bytes[0]) >= PROTOTYPES.len() {
