@@ -1,9 +1,11 @@
 //! The web content cache's cap, its trim requests and its debug section (`web_cache`).
 
-use bevy::{prelude::*, tasks::IoTaskPool};
+use bevy::{prelude::*, tasks::IoTaskPool, time::common_conditions::on_real_timer};
 use bevy_console::ConsoleCommand;
 use common::{structs::AppConfig, util::TaskCompat};
 use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand};
+
+use std::time::Duration;
 
 use crate::web_cache;
 
@@ -27,6 +29,10 @@ impl Plugin for WebCachePlugin {
                 apply_cap.run_if(
                     resource_changed::<AppConfig>.or(resource_changed::<WebCacheCapOverride>),
                 ),
+            )
+            .add_systems(
+                Update,
+                flush_used_keys.run_if(on_real_timer(Duration::from_secs(30))),
             )
             .add_console_command::<WebCacheStateCommand, _>(web_cache_state);
         let inputs: &'static [DebugInput] = if self.preview {
@@ -61,6 +67,7 @@ impl Plugin for WebCachePlugin {
                 ),
                 ("Entries evicted this session", "evictedEntriesTotal"),
                 ("Evicted this session (MiB)", "evictedTotalMiB"),
+                ("Uses waiting to be recorded", "pendingUses"),
                 ("Last trim: cap after the quota bound (MiB)", "workerCapMiB"),
                 ("Last trim: origin usage (MiB)", "usageMiB"),
                 ("Last trim: origin quota (MiB)", "quotaMiB"),
@@ -68,6 +75,10 @@ impl Plugin for WebCachePlugin {
                 ("Last trim: entries evicted", "evictedEntries"),
                 ("Last trim: evicted (MiB)", "evictedMiB"),
                 ("Last trim: content cache size (MiB)", "contentMiB"),
+                (
+                    "Last trim: entries ordered by recorded use",
+                    "indexedEntries",
+                ),
                 ("Storage persisted", "persisted"),
             ],
             actions: &[],
@@ -91,6 +102,12 @@ fn apply_cap(
         .spawn_compat(async {
             web_cache::request_trim(false).await;
         })
+        .detach();
+}
+
+fn flush_used_keys() {
+    IoTaskPool::get()
+        .spawn_compat(web_cache::flush_used())
         .detach();
 }
 

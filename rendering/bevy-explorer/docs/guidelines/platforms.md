@@ -51,7 +51,12 @@ sees a `cfg`. Backend functionality that only one caller needs lives next to tha
 - **The content cache is capped.** Downloaded content lives in the Cache API cache
   `ipfs-path-cache-v2` (`crates/ipfs/src/web_cache.rs`), at most 1 GiB or the configured
   `cache_bytes` if lower, and at most half the origin's quota. The service worker trims it,
-  oldest-written entries first, down to 90% of the cap, when the engine asks through the
+  least recently used entries first (the engine records reads, including those the service worker
+  answers from the cache, and writes, and sends them to the worker every 30 s and before each
+  trim except a trim after a quota error, which carries them instead; entries with no record,
+  keys over 2048 characters, and every entry if the browser dropped the record, go first, oldest
+  written first; uses noted in the last 30 s before the tab closes, or in a batch that is not
+  delivered, are not recorded), down to 90% of the cap, when the engine asks through the
   `__contentCacheTrim` page function (`deploy/web/engine/content_cache.js`): at start, after each
   sixteenth of the cap written (at most 64 MiB), and before retrying a write that failed for quota
   (then it frees at least a quarter, at most once a minute). It never opens another cache. The

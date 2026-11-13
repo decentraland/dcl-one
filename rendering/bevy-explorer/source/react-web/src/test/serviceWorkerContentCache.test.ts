@@ -1,20 +1,23 @@
 // The service worker's upkeep of the content cache: on a `content-cache-trim` message it deletes
-// the oldest-written entries of `ipfs-path-cache-v2` while the cache is over its cap, and touches
-// no other cache.
+// the least recently used entries of `ipfs-path-cache-v2` (oldest written when no use is recorded)
+// while the cache is over its cap, and touches no other cache. A `content-cache-touch` message
+// records uses.
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { IDBFactory } from 'fake-indexeddb'
 import { describe, expect, it, vi } from 'vitest'
 
 const CONTENT_CACHE = 'ipfs-path-cache-v2'
 const OTHER_CACHES = ['dcl-editor-preview-v1', 'dcl-editor-scene-v1', 'dcl-editor-storage-v1']
 
-type Message = { type: string; capBytes?: unknown; quotaError?: boolean }
+type Message = { type: string; capBytes?: unknown; quotaError?: boolean; usedNow?: unknown }
 type Pure = {
   contentCacheTarget: (input: { capBytes: number; quota: number; cachesUsage: number; quotaError: boolean }) => {
     cap: number
     bytesToFree: number
   }
   pickEvictions: (sized: { key: string; size: number }[], bytesToFree: number) => { picked: string[]; freed: number }
+  contentCacheEvictionOrder: (requests: string[], lastUsed: Map<string, number>) => string[]
 }
 
 const entryUrl = (n: number | string) => `https://shared.invalid/bafkrei${n}`
@@ -42,7 +45,7 @@ function fakeCache(seed: [string, Response][] = []) {
 }
 type FakeCache = ReturnType<typeof fakeCache>
 
-function serviceWorker(options: { quota?: number; usage?: number; usageDetails?: object | null; others?: boolean; otherSize?: number; persisted?: 'absent' | 'rejects' } = {}) {
+function serviceWorker(options: { quota?: number; usage?: number; usageDetails?: object | null; others?: boolean; otherSize?: number; persisted?: 'absent' | 'rejects'; indexedDB?: unknown } = {}) {
   const listeners: Record<string, (event: unknown) => void> = {}
   const content = fakeCache()
   const fakes = new Map<string, FakeCache>([[CONTENT_CACHE, content]])
@@ -85,9 +88,11 @@ function serviceWorker(options: { quota?: number; usage?: number; usageDetails?:
     'fetch',
     'console',
     'navigator',
-    source + '\nreturn { contentCacheTarget, pickEvictions };'
+    'indexedDB',
+    source + '\nreturn { contentCacheTarget, pickEvictions, contentCacheEvictionOrder };'
   ) as (...args: unknown[]) => Pure
-  const pure = load(self, caches, vi.fn(), { log: vi.fn(), warn: vi.fn() }, navigator)
+  const indexedDB = options.indexedDB ?? new IDBFactory()
+  const pure = load(self, caches, vi.fn(), { log: vi.fn(), warn: vi.fn() }, navigator, indexedDB)
 
   const send = async (data: unknown) => {
     const port = { postMessage: vi.fn() }
@@ -106,8 +111,9 @@ function serviceWorker(options: { quota?: number; usage?: number; usageDetails?:
   const replies: { data: unknown; message: any }[] = []
   const seed = (n: number, size = 100, withLength = true) => content.map.set(entryUrl(n), entry(size, withLength))
   const trim = (message: Partial<Message> & { capBytes: unknown }) => send({ type: 'content-cache-trim', ...message })
+  const touch = (keys: unknown) => send({ type: 'content-cache-touch', keys })
   const remaining = () => [...content.map.keys()].map((url) => url.replace('https://shared.invalid/', ''))
-  return { pure, send, sendAsync, replies, trim, seed, content, fakes, caches, opened, estimate, remaining }
+  return { pure, send, sendAsync, replies, trim, touch, indexedDB, seed, content, fakes, caches, opened, estimate, remaining }
 }
 
 describe('content cache target', () => {
@@ -168,7 +174,8 @@ describe('content cache trim message', () => {
       evictedBytes: 600,
       persisted: false,
       contentBytes: 1000,
-      preempted: false
+      preempted: false,
+      indexedEntries: 0
     })
   })
 
@@ -370,5 +377,285 @@ describe('content cache trim message', () => {
     expect(sw.replies.map((r) => (r.data as Message).quotaError === true)).toEqual([false, true, false])
     expect(forced.port.postMessage).toHaveBeenCalledWith(expect.objectContaining({ preempted: false }))
     expect(sw.remaining().length * 100).toBeLessThanOrEqual(1000)
+  })
+})
+
+describe('eviction order', () => {
+  it('puts entries without a recorded use first, oldest written first', () => {
+    const { pure } = serviceWorker()
+    const used = new Map([['a', 5], ['c', 1]])
+    expect(pure.contentCacheEvictionOrder(['a', 'b', 'c', 'd'], used)).toEqual(['b', 'd', 'c', 'a'])
+  })
+
+  it('keeps write order between equal last uses', () => {
+    const { pure } = serviceWorker()
+    expect(pure.contentCacheEvictionOrder(['b', 'a'], new Map([['a', 1], ['b', 1]]))).toEqual(['b', 'a'])
+  })
+
+  it('is the write order with no record', () => {
+    const { pure } = serviceWorker()
+    expect(pure.contentCacheEvictionOrder(['a', 'b', 'c'], new Map())).toEqual(['a', 'b', 'c'])
+  })
+})
+
+const recordedKeys = (factory: IDBFactory) =>
+  new Promise<unknown[]>((resolve, reject) => {
+    const open = factory.open('dcl-content-cache-index-v1')
+    open.onerror = () => reject(open.error)
+    open.onsuccess = () => {
+      const request = open.result.transaction('lastUsed').objectStore('lastUsed').getAllKeys()
+      request.onsuccess = () => resolve(request.result)
+      request.onerror = () => reject(request.error)
+    }
+  })
+
+describe('content cache last use', () => {
+  it('keeps a read entry longer than a later-written unread one', async () => {
+    const sw = serviceWorker()
+    for (let n = 0; n < 4; n++) sw.seed(n)
+    await sw.touch([entryUrl(0)])
+    const { port } = await sw.trim({ capBytes: 300 })
+    expect(sw.remaining()).toEqual(['bafkrei0', 'bafkrei3'])
+    expect(port.postMessage).toHaveBeenCalledWith(expect.objectContaining({ evictedEntries: 2, indexedEntries: 1 }))
+  })
+
+  it('ranks uses recorded later later', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      const sw = serviceWorker()
+      sw.seed(0)
+      sw.seed(1)
+      await sw.touch([entryUrl(1)])
+      vi.setSystemTime(Date.now() + 60_000)
+      await sw.touch([entryUrl(0)])
+      await sw.trim({ capBytes: 150 })
+      expect(sw.remaining()).toEqual(['bafkrei0'])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('falls back to write order without its index', async () => {
+    const sw = serviceWorker({
+      indexedDB: {
+        open() {
+          throw new Error('gone')
+        }
+      }
+    })
+    for (let n = 0; n < 4; n++) sw.seed(n)
+    const touched = await sw.touch([entryUrl(0)])
+    expect(touched.port.postMessage).toHaveBeenCalledWith({ error: expect.any(String) })
+    const { port } = await sw.trim({ capBytes: 300 })
+    expect(sw.remaining()).toEqual(['bafkrei2', 'bafkrei3'])
+    const report = port.postMessage.mock.calls[0][0]
+    expect(report).toMatchObject({ evictedEntries: 2, indexedEntries: 0 })
+    expect(report.error).toBeUndefined()
+  })
+
+  it('ranks the uses a quota-error trim carries as used now', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      const sw = serviceWorker()
+      for (let n = 0; n < 4; n++) sw.seed(n)
+      await sw.touch([entryUrl(1), entryUrl(2), entryUrl(3)])
+      vi.setSystemTime(Date.now() + 60_000)
+      // entry 0 was written since the engine's last flush: the trim carries it, not a touch
+      const { port } = await sw.trim({ capBytes: 1000, quotaError: true, usedNow: [entryUrl(0), 42, 'ftp://x.example/y'] })
+      expect(sw.remaining()).toEqual(['bafkrei0', 'bafkrei2', 'bafkrei3'])
+      expect(port.postMessage).toHaveBeenCalledWith(expect.objectContaining({ evictedEntries: 1, indexedEntries: 4 }))
+      // only a touch records a use
+      expect(await recordedKeys(sw.indexedDB as IDBFactory)).toEqual([entryUrl(2), entryUrl(3)].sort())
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('ignores the uses a regular trim carries', async () => {
+    const sw = serviceWorker()
+    for (let n = 0; n < 4; n++) sw.seed(n)
+    await sw.touch([entryUrl(1), entryUrl(2), entryUrl(3)])
+    await sw.trim({ capBytes: 350, usedNow: [entryUrl(0)] })
+    expect(sw.remaining()).toEqual(['bafkrei1', 'bafkrei2', 'bafkrei3'])
+  })
+
+  it('prunes the index after a quota-error trim too', async () => {
+    const sw = serviceWorker()
+    sw.seed(0)
+    sw.seed(1)
+    await sw.touch([entryUrl(0), entryUrl(1)])
+    const { port } = await sw.trim({ capBytes: 1000, quotaError: true })
+    expect(port.postMessage).toHaveBeenCalledWith(expect.objectContaining({ evictedEntries: 1 }))
+    expect(await recordedKeys(sw.indexedDB as IDBFactory)).toEqual([entryUrl(1)])
+  })
+
+  it('prunes the records of entries that are gone', async () => {
+    const sw = serviceWorker()
+    sw.seed(0)
+    sw.seed(1)
+    await sw.touch(['https://shared.invalid/x', entryUrl(0)])
+    await sw.trim({ capBytes: 100 })
+    expect(sw.remaining()).toEqual([])
+    expect(await recordedKeys(sw.indexedDB as IDBFactory)).toEqual([])
+  })
+
+  it('records only short https urls, and at most 4096', async () => {
+    const sw = serviceWorker()
+    const some = await sw.touch([entryUrl('a'), 7, null, 'b', entryUrl('b'), `https://shared.invalid/${'x'.repeat(3000)}`])
+    expect(some.port.postMessage).toHaveBeenCalledWith({ recorded: 2 })
+    const bad = await sw.touch('a')
+    expect(bad.port.postMessage).toHaveBeenCalledWith({ error: expect.any(String) })
+    const many = await sw.touch(Array.from({ length: 5000 }, (_, i) => entryUrl(`k${i}`)))
+    expect(many.port.postMessage).toHaveBeenCalledWith({ recorded: 4096 })
+    expect(await recordedKeys(sw.indexedDB as IDBFactory)).toHaveLength(4096 + 2)
+  })
+
+  it('records the own key of a plain http content server', async () => {
+    const sw = serviceWorker()
+    const { port } = await sw.touch(['http://192.168.0.5:8080/contents/bafkreihash'])
+    expect(port.postMessage).toHaveBeenCalledWith({ recorded: 1 })
+  })
+
+  it('looks only at the first 4096 keys of a batch', async () => {
+    const sw = serviceWorker()
+    const keys = [...Array.from({ length: 4096 }, () => 7), entryUrl('late')]
+    const { port } = await sw.touch(keys)
+    expect(port.postMessage).toHaveBeenCalledWith({ recorded: 0 })
+  })
+
+  it('reads no index when a trim finds the cache under its cap', async () => {
+    const open = vi.fn()
+    const sw = serviceWorker({ indexedDB: { open } })
+    sw.seed(0)
+    await sw.trim({ capBytes: 1000 })
+    expect(open).not.toHaveBeenCalled()
+  })
+
+  it('runs touches and trims in arrival order', async () => {
+    const sw = serviceWorker()
+    for (let n = 0; n < 4; n++) sw.seed(n)
+    const touched = sw.touch([entryUrl(0)])
+    const trimmed = sw.trim({ capBytes: 300 })
+    await Promise.all([touched, trimmed])
+    expect(sw.remaining()).toEqual(['bafkrei0', 'bafkrei3'])
+  })
+})
+
+function neverOpens() {
+  const requests: Record<string, unknown>[] = []
+  return {
+    requests,
+    open() {
+      const request: Record<string, unknown> = {}
+      requests.push(request)
+      return request
+    }
+  }
+}
+
+describe('content cache index that does not answer', () => {
+  it('does not stop a trim: it gives up after 5 s and evicts in write order', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      const factory = neverOpens()
+      const sw = serviceWorker({ indexedDB: factory })
+      for (let n = 0; n < 4; n++) sw.seed(n)
+      const trimmed = sw.trim({ capBytes: 300 })
+      await vi.advanceTimersByTimeAsync(0)
+      let done = false
+      void trimmed.then(() => (done = true))
+      await vi.advanceTimersByTimeAsync(4_999)
+      expect(done).toBe(false)
+      await vi.advanceTimersByTimeAsync(1)
+      // the prune opens the index again and gives up the same way
+      await vi.advanceTimersByTimeAsync(5_000)
+      const { port } = await trimmed
+      expect(sw.remaining()).toEqual(['bafkrei2', 'bafkrei3'])
+      const report = port.postMessage.mock.calls[0][0]
+      expect(report).toMatchObject({ evictedEntries: 2, indexedEntries: 0 })
+      expect(report.error).toBeUndefined()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('holds a quota-error trim at most 1 s, and its reply does not wait for the prune', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      const factory = neverOpens()
+      const sw = serviceWorker({ indexedDB: factory })
+      for (let n = 0; n < 4; n++) sw.seed(n)
+      const { done } = sw.sendAsync({ type: 'content-cache-trim', capBytes: 1000, quotaError: true })
+      await vi.advanceTimersByTimeAsync(999)
+      expect(sw.replies).toEqual([])
+      await vi.advanceTimersByTimeAsync(1)
+      // a quarter of 400 bytes, oldest written first
+      expect(sw.remaining()).toEqual(['bafkrei1', 'bafkrei2', 'bafkrei3'])
+      expect(sw.replies.map(({ message }) => message)).toEqual([expect.objectContaining({ evictedEntries: 1, indexedEntries: 0 })])
+      // the worker is kept alive for the prune, which gives up on the index the same way
+      let settled = false
+      void done.then(() => (settled = true))
+      await vi.advanceTimersByTimeAsync(0)
+      expect(settled).toBe(false)
+      await vi.advanceTimersByTimeAsync(10_000)
+      expect(settled).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('closes a connection that opens after the wait was given up', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      const factory = neverOpens()
+      const sw = serviceWorker({ indexedDB: factory })
+      const touched = sw.touch([entryUrl(0)])
+      await vi.advanceTimersByTimeAsync(5_000)
+      expect((await touched).port.postMessage).toHaveBeenCalledWith({ error: expect.any(String) })
+      const close = vi.fn()
+      const request = factory.requests[0] as { onsuccess: () => void; result: unknown }
+      request.result = { close }
+      request.onsuccess()
+      expect(close).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('falls back at once when the open is blocked, and closes it if it opens later', async () => {
+    const factory = neverOpens()
+    const sw = serviceWorker({ indexedDB: factory })
+    for (let n = 0; n < 4; n++) sw.seed(n)
+    const trimmed = sw.trim({ capBytes: 300 })
+    await vi.waitFor(() => expect(factory.requests.length).toBe(1))
+    const request = factory.requests[0] as { onblocked: () => void; onsuccess: () => void; result: unknown }
+    request.onblocked()
+    // the prune's open is blocked too
+    await vi.waitFor(() => expect(factory.requests.length).toBe(2))
+    ;(factory.requests[1] as { onblocked: () => void }).onblocked()
+    await trimmed
+    expect(sw.remaining()).toEqual(['bafkrei2', 'bafkrei3'])
+    const close = vi.fn()
+    request.result = { close }
+    request.onsuccess()
+    expect(close).toHaveBeenCalledTimes(1)
+  })
+
+  it('closes its connection when another page asks for an upgrade', async () => {
+    const factory = neverOpens()
+    const sw = serviceWorker({ indexedDB: factory })
+    const touched = sw.touch([entryUrl(0)])
+    await vi.waitFor(() => expect(factory.requests.length).toBe(1))
+    const request = factory.requests[0] as { onsuccess: () => void; result: Record<string, unknown> }
+    const close = vi.fn()
+    request.result = { close, onversionchange: null, transaction: () => {
+        throw new Error('stop')
+      }
+    }
+    request.onsuccess()
+    expect(typeof request.result.onversionchange).toBe('function')
+    ;(request.result.onversionchange as () => void)()
+    expect(close).toHaveBeenCalled()
+    await touched
   })
 })

@@ -3,7 +3,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 // plain JS served as is by the engine page (deploy/web/engine), so it has no declarations
 // @ts-expect-error TS7016
-import { contentCacheTrim, installContentCachePageFunctions, requestPersistentStorage } from '../../../deploy/web/engine/content_cache.js'
+import { contentCacheTouch, contentCacheTrim, installContentCachePageFunctions, requestPersistentStorage } from '../../../deploy/web/engine/content_cache.js'
 
 afterEach(() => vi.useRealTimers())
 
@@ -64,10 +64,45 @@ describe('content cache page functions', () => {
     expect(denied.persist).toHaveBeenCalledTimes(1)
   })
 
-  it('installs the trim page function', () => {
+  it('posts used keys to the service worker', async () => {
+    const container = {
+      controller: {
+        postMessage(msg: unknown, [port]: MessagePort[]) {
+          port.postMessage({ msg })
+        }
+      }
+    }
+    const reply = await contentCacheTouch(['k1', 'k2'], container as never, 1000)
+    expect(reply).toEqual({ msg: { type: 'content-cache-touch', keys: ['k1', 'k2'] } })
+  })
+
+  it('does not hold a quota-error trim behind a touch the worker never answers', async () => {
+    vi.useFakeTimers()
+    const posted: string[] = []
+    const container = {
+      controller: {
+        postMessage(msg: { type: string }) {
+          posted.push(msg.type)
+        }
+      }
+    }
+    const touch = contentCacheTouch(['k1'], container as never)
+    let trimDone = false
+    const trim = contentCacheTrim(100, true, container as never).then(() => (trimDone = true))
+    // both are posted at once, in call order: the worker's queue runs the touch first
+    expect(posted).toEqual(['content-cache-touch', 'content-cache-trim'])
+    await vi.advanceTimersByTimeAsync(5_000)
+    await trim
+    expect(trimDone).toBe(true)
+    await vi.advanceTimersByTimeAsync(25_000)
+    expect(await touch).toBeNull()
+  })
+
+  it('installs the page functions', () => {
     const target: Record<string, unknown> = {}
     installContentCachePageFunctions(target as never)
     expect(typeof target.__contentCacheTrim).toBe('function')
+    expect(typeof target.__contentCacheTouch).toBe('function')
   })
 
   it('warns once without a controlling worker and asks again when one takes control', async () => {
@@ -118,6 +153,9 @@ describe('content cache page functions', () => {
       installContentCachePageFunctions(target as never)
       expect(await target.__contentCacheTrim(4096, true)).toEqual({ ok: true })
       expect(posted).toEqual([{ type: 'content-cache-trim', capBytes: 4096, quotaError: true }])
+      // and the uses a quota-error trim carries, when there are any
+      expect(await (target.__contentCacheTrim as (...args: unknown[]) => Promise<unknown>)(4096, true, ['https://a.example/x'])).toEqual({ ok: true })
+      expect(posted[1]).toEqual({ type: 'content-cache-trim', capBytes: 4096, quotaError: true, usedNow: ['https://a.example/x'] })
     } finally {
       vi.unstubAllGlobals()
     }

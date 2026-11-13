@@ -4,6 +4,7 @@
 // (headless.js): each is the page of its own engine's workers.
 
 export const CONTENT_CACHE_TRIM = 'content-cache-trim';
+export const CONTENT_CACHE_TOUCH = 'content-cache-touch';
 const REPLY_TIMEOUT_MS = 30_000;
 // A write that hit the quota waits for its trim: do not hold it for long on a worker that never answers.
 const QUOTA_ERROR_REPLY_TIMEOUT_MS = 5_000;
@@ -34,13 +35,22 @@ export function askServiceWorker(message, container = navigator.serviceWorker, t
   });
 }
 
-/** `__contentCacheTrim`: trim to `capBytes`, freeing at least a quarter after a quota error. */
-export function contentCacheTrim(capBytes, quotaError, container, timeoutMs) {
+/**
+ * `__contentCacheTrim`: trim to `capBytes`, freeing at least a quarter after a quota error. `usedNow`
+ * (a quota-error trim's): keys used since the last touch, which the trim ranks as used now.
+ */
+export function contentCacheTrim(capBytes, quotaError, container, timeoutMs, usedNow) {
+  const used = usedNow ? Array.from(usedNow) : [];
   return askServiceWorker(
-    { type: CONTENT_CACHE_TRIM, capBytes, quotaError: quotaError === true },
+    { type: CONTENT_CACHE_TRIM, capBytes, quotaError: quotaError === true, ...(used.length > 0 ? { usedNow: used } : {}) },
     container,
     timeoutMs ?? (quotaError === true ? QUOTA_ERROR_REPLY_TIMEOUT_MS : undefined)
   );
+}
+
+/** `__contentCacheTouch`: records `keys` (cache key urls) as used now. */
+export function contentCacheTouch(keys, container, timeoutMs) {
+  return askServiceWorker({ type: CONTENT_CACHE_TOUCH, keys: Array.from(keys) }, container, timeoutMs);
 }
 
 /**
@@ -68,7 +78,7 @@ export function installContentCachePageFunctions(target = window, container = na
     unanswered = null;
     contentCacheTrim(capBytes, false, container);
   });
-  target.__contentCacheTrim = (capBytes, quotaError) => {
+  target.__contentCacheTrim = (capBytes, quotaError, usedNow) => {
     if (!container?.controller) {
       unanswered = capBytes;
       if (!warned) {
@@ -76,6 +86,7 @@ export function installContentCachePageFunctions(target = window, container = na
         console.warn('[content cache] no service worker controls this page: the content cache is not trimmed until one does');
       }
     }
-    return contentCacheTrim(capBytes, quotaError, container);
+    return contentCacheTrim(capBytes, quotaError, container, undefined, usedNow);
   };
+  target.__contentCacheTouch = (keys) => contentCacheTouch(keys, container);
 }
