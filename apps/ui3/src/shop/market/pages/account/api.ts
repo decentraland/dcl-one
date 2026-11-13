@@ -3,10 +3,11 @@
 // Copyright 2020 Metaverse Holdings Ltd. (marketplace), Apache-2.0.
 
 import type { NftResult } from "@catalyst-api/market/NftResult";
-import { shopClient, type ShopClient } from "../../../api/shop";
-import { catalogCategoryParams } from "../../../discovery/lib/categories";
-import type { Gender } from "../../../discovery/lib/catalogItem";
+import { type ShopClient } from "@shop/api/shop";
+import { catalogCategoryParams } from "@shop/discovery/lib/categories";
+import type { Gender } from "@shop/discovery/lib/catalogItem";
 import { toMyAsset, type MyAsset } from "../../lib/api";
+import { shopClient } from "../../../api/host";
 
 export type AccountNft = MyAsset & {
   wearableCategory?: string;

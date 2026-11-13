@@ -1,9 +1,9 @@
 // Which upstream service a request belongs to, for both sides of a parity capture.
 //
 // The reference shop calls the production hosts directly; ui3 calls the node's canonical
-// `/shop-api` (and the compatibility mounts), which apps/ui3/src/shop/api/endpoints.ts maps onto the
+// `/shop-api` (and the compatibility mounts), which library/shop/api/endpoints.ts maps onto the
 // same upstream routes. Both resolve to one (service, path) so a recorded answer is served to both.
-import { ENDPOINTS, SHOP_API_PREFIX, type Endpoint } from "../../../apps/ui3/src/shop/api/endpoints.ts";
+import { ENDPOINTS, SHOP_API_PREFIX, type Endpoint } from "../../../library/shop/api/endpoints.ts";
 
 export type Service =
   | "marketplace"

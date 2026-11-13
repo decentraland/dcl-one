@@ -1,7 +1,7 @@
 // from: decentraland-transactions@3.3.0:src/contracts/{bid,bidV2,rentals,manaToken,collectionStore,creditsManager,offChainMarketplace,offChainMarketplaceV2,offChainMarketplaceV3,couponManagerV2,couponManagerV3,erc721CollectionV2,marketplaceV2}.ts
 //       (the version shop@94584a5c's app/package-lock.json resolves), cross-checked with docs/shop/CONTRACTS.md "Addresses"
-import { evmAddress, type EvmAddress } from "../../model/address";
-import { CHAIN, type ChainId } from "../../model/chain";
+import { evmAddress, type EvmAddress } from "@shop/model/address";
+import { CHAIN, type ChainId } from "@shop/model/chain";
 import { configuredCreditsManager } from "./config";
 
 export type MetaTxStyle = "functionData" | "functionSignature";

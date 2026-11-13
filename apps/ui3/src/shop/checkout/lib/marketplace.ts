@@ -4,7 +4,7 @@
 // other address is a contract that never signed it). Each version redeems coupons signed against its
 // own manager only.
 
-import type { ChainId } from "../../model/chain";
+import type { ChainId } from "@shop/model/chain";
 import { chainContracts, type OffChainMarketplace } from "../chain/contracts";
 
 /** The newest off-chain marketplace deployed on `chainId`; throws where none is. */

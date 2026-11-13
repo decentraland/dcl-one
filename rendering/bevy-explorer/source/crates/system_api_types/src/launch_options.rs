@@ -87,7 +87,7 @@ pub struct ClientOptions {
     #[arg(long, value_name = "a;b", help_heading = SYSTEM_SCENES)]
     pub portables: Option<String>,
 
-    /// Cap per-frame gpu uploads
+    /// Cap per-frame gpu uploads; absent = the saved setting (10 MB by default), 0 = unlimited
     #[arg(long, value_name = "bytes", help_heading = SETTINGS)]
     pub gpu_bytes_per_frame: Option<usize>,
 
@@ -100,6 +100,14 @@ pub struct ClientOptions {
     /// it is the same as the default store's
     #[arg(long, value_name = "url", help_heading = SERVICES)]
     pub imposter_source: Option<String>,
+
+    /// Base url of an abgen Bevy variants service (prototype); absent = the config's, else the
+    /// asset-bundle generator's CDN (`https://abgen-cdn.<base>`); `off` = off. Textures and
+    /// models of scenes, wearables and emotes it has GPU-ready variants of load as those
+    /// variants, trusted by their path from this service and rejected only when they fail to
+    /// decode; anything else, or any failure, loads the original
+    #[arg(long = "bevy-variants-url", value_name = "url", help_heading = SERVICES)]
+    pub bevy_variants: Option<String>,
 
     /// Benchmark run, unattended: sign in as the local guest (an account of its own, made once
     /// and kept with this install, so its address never changes; a stored account is never used
@@ -180,6 +188,7 @@ impl EngineRunOptions {
             &mut self.client.system_scene,
             &mut self.client.portables,
             &mut self.client.imposter_source,
+            &mut self.client.bevy_variants,
             &mut self.client.session_id,
             &mut self.client.campaign_anon_user_id,
         ] {

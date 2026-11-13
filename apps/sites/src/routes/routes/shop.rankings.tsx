@@ -5,7 +5,7 @@ import { ShopPage, shopClientLoader, shopHeaders, shopMeta } from "../shop/page"
 
 import type { Route } from "./+types/shop.rankings";
 
-export const loader = ({ request, params }: Route.LoaderArgs) => shopLoader("rankings", request, params);
+export const loader = ({ request, params, context }: Route.LoaderArgs) => shopLoader("rankings", request, params, context);
 export const clientLoader = shopClientLoader;
 export const meta = shopMeta("rankings");
 export const headers = shopHeaders;

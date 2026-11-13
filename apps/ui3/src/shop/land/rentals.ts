@@ -13,9 +13,9 @@ import { parseAbi, parseUnits, type Hex } from "viem";
 import type { Eip1193Provider } from "../../data/auth/wallet";
 import type { RentalListing } from "@catalyst-api/market/RentalListing";
 import type { RentalListingPeriod } from "@catalyst-api/market/RentalListingPeriod";
-import { shopClient, type ShopClient } from "../api/shop";
+import { type ShopClient } from "@shop/api/shop";
 import { requireChain } from "../wallet/chain";
-import { landCategoryOf, landNetwork, RENTALS_DOMAIN } from "./contracts";
+import { landCategoryOf, landNetwork, RENTALS_DOMAIN } from "@shop/land/contracts";
 import { readEstateFingerprint, ZERO_FINGERPRINT } from "./estate";
 import {
   encodeCall,
@@ -28,6 +28,7 @@ import {
   type ApprovalStage,
   type ChainReader,
 } from "./evm";
+import { shopClient } from "../api/host";
 
 export type { RentalListing, RentalListingPeriod };
 

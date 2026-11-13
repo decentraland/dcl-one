@@ -42,6 +42,10 @@ impl Gateway {
             Service::AssetsCdn if !self.virtual_host => Some("social-api"),
             // Site links and storage delegations use their own public destinations.
             Service::AuthPage | Service::Reels | Service::Storage => None,
+            // Not through the gateway yet: its `/ab-cdn` route serves the asset-bundle CDN and
+            // refuses `bevy/` paths, so abgen's CDN is reached directly until it has its own
+            // route.
+            Service::AbgenCdn => None,
             service if service.value() == ServiceValue::Http => Some(service.composition().1),
             _ => None,
         }
@@ -313,7 +317,6 @@ mod gateway_tests {
             (Service::CommsGatekeeper, "comms-gatekeeper"),
             (Service::PreviewGatekeeper, "comms-gatekeeper-local"),
             (Service::AuthApi, "auth-api"),
-            (Service::AssetBundleRegistry, "asset-bundle-registry"),
             (Service::SocialApi, "social-api"),
             (Service::MapApi, "api"),
             (Service::Opensea, "opensea"),

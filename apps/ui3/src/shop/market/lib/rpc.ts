@@ -8,7 +8,7 @@
 
 import { decodeFunctionResult, encodeFunctionData, type Abi, type ContractFunctionName } from "viem";
 
-import { CHAIN, type ChainId } from "../../model/chain";
+import { CHAIN, type ChainId } from "@shop/model/chain";
 
 const DEFAULT_RPC: Partial<Record<ChainId, string>> = {
   [CHAIN.ETHEREUM]: "https://ethereum-rpc.publicnode.com",
@@ -67,7 +67,10 @@ export async function rpc<T = unknown>(chainId: ChainId, method: string, params:
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ jsonrpc: "2.0", id: nextId++, method, params }),
   });
-  if (!res.ok) throw new RpcError(`RPC ${method} answered ${res.status}`, res.status);
+  if (!res.ok) {
+    await res.body?.cancel().catch(() => {});
+    throw new RpcError(`RPC ${method} answered ${res.status}`, res.status);
+  }
   const body = (await res.json()) as { result?: T; error?: { message?: string; code?: number } };
   if (body.error) throw new RpcError(body.error.message ?? `RPC ${method} failed`, body.error.code ?? null);
   return body.result as T;

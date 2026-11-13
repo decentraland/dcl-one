@@ -3,16 +3,18 @@
 // isolated on its own; this page is deliberately NOT isolated, so the browser keeps the two in
 // separate processes. The signed-in identity's key stays here: the app asks for the public
 // identity and for signatures, and never reads the origin's localStorage itself.
-import { authLoginUrl, authReturnUrl } from '../features/auth/sso'
-import { ANALYTICS_SESSION_PARAM, ANON_USER_ID_PARAM, dropAttributionParams } from '../lib/analytics'
-import { AUTH_RETURN_PARAM } from '../lib/entryParams'
-import { migratePrefs } from '../lib/prefs'
+import { exitUrl } from '../host'
+import { authLoginUrl, authReturnUrl } from '@explorer-core/features/auth/sso'
+import { ANALYTICS_SESSION_PARAM, ANON_USER_ID_PARAM, dropAttributionParams } from '@explorer-core/lib/analytics'
+import { AUTH_RETURN_PARAM } from '@explorer-core/features/auth/sso'
+import { migratePrefs } from '@explorer-core/lib/prefs'
 import { currentLogin, request } from './login'
-import { onInWorld } from './googleTag'
+import { onInWorld } from '@explorer-core/shell/googleTag'
 import { PAGE_DIR } from '../lib/publicUrl'
-import { siteUrl } from '../lib/baseDomain'
 import { loadOnce } from '../lib/loadOnce'
+import { shellResponse } from '@explorer-core/lib/shellReply'
 import type { ShellShop, ShellShopWallet } from './shop/purchase'
+import type { ShellDonate } from './donate/donation'
 
 // Runs the web shell on Sites' /play page: mounts the app document (/play/app.html) in an iframe of its
 // own process, answers its identity/sign requests, and registers the service worker that gives the
@@ -90,21 +92,37 @@ export function mountPlayShell(options: PlayShellOptions = {}): void {
 
   // The in-world Shop's purchases (shop/purchase), loaded on the app's first shop.* request: this page
   // holds the login and the wallet, shows the buyer the purchase dialog over the app and signs.
+  // Shop and Donate share the one dialog over the app: each refuses as busy while the other's is up.
+  let loadedShop: ShellShop | null = null
+  let loadedDonate: ShellDonate | null = null
+  const shopWallet = loadOnce(async () => (await options.shopWallet?.()) ?? null)
   const shellShop: () => Promise<ShellShop> = loadOnce(() =>
-    Promise.all([
-      import('./shop/purchase'),
-      import('./shop/overlay'),
-      options.shopWallet?.() ?? null
-    ]).then(([purchase, overlay, wallet]) =>
-      purchase.createShellShop({
+    Promise.all([import('./shop/purchase'), import('./shop/overlay'), shopWallet()]).then(([purchase, overlay, wallet]) => {
+      loadedShop = purchase.createShellShop({
         login: currentLogin,
         wallet,
         ui: overlay.createShopOverlay(() => frame?.focus()),
         post: (event) => frame?.contentWindow?.postMessage(event, location.origin),
         openExternal: (url) => void window.open(url, '_blank', 'noopener'),
-        signIn: () => location.assign(authLoginUrl(authReturnUrl(entryUrl)))
+        signIn: () => location.assign(authLoginUrl(authReturnUrl(entryUrl))),
+        otherDialogOpen: () => loadedDonate?.dialogOpen() === true
       })
-    )
+      return loadedShop
+    })
+  )
+  // Donate (shell/donate), loaded on the app's first donate.* request, with the same wallet as the Shop's.
+  const shellDonate: () => Promise<ShellDonate> = loadOnce(() =>
+    Promise.all([import('./donate/donation'), import('./donate/overlay'), shopWallet()]).then(([donation, overlay, wallet]) => {
+      loadedDonate = donation.createShellDonate({
+        login: currentLogin,
+        wallet,
+        ui: overlay.createDonateOverlay(() => frame?.focus()),
+        post: (event) => frame?.contentWindow?.postMessage(event, location.origin),
+        openExternal: (url) => void window.open(url, '_blank', 'noopener'),
+        otherDialogOpen: () => loadedShop?.dialogOpen() === true
+      })
+      return loadedDonate
+    })
   )
 
   // Shown instead of the app when the app would share this page's process.
@@ -130,14 +148,15 @@ export function mountPlayShell(options: PlayShellOptions = {}): void {
     if (!m || typeof m !== 'object') return
     switch (m.type) {
       case 'bevy-shell:request': {
-        let reply: { result?: unknown; error?: string }
-        try {
-          const shopRequest = typeof m.method === 'string' && m.method.startsWith('shop.')
-          reply = { result: shopRequest ? await (await shellShop()).request(m.method as string, m.params) : await request(m.method, m.params) }
-        } catch (err) {
-          reply = { error: err instanceof Error ? err.message : String(err) }
-        }
-        f.contentWindow?.postMessage({ type: 'bevy-shell:response', id: m.id, ...reply }, location.origin)
+        const method = typeof m.method === 'string' ? m.method : ''
+        const response = await shellResponse(m.id, async () =>
+          method.startsWith('shop.')
+            ? (await shellShop()).request(method, m.params)
+            : method.startsWith('donate.')
+              ? (await shellDonate()).request(method, m.params)
+              : request(m.method, m.params)
+        )
+        f.contentWindow?.postMessage(response, location.origin)
         break
       }
       // the engine's URL sync (engine/boot.js set_url_params), mirrored into the address bar
@@ -156,10 +175,11 @@ export function mountPlayShell(options: PlayShellOptions = {}): void {
       case 'bevy-shell:in-world':
         if (f.contentWindow) onInWorld(m, f.contentWindow)
         break
-      // the untrusted-link gate's exit (see src/features/gate/UntrustedLaunchGate.tsx)
+      // the untrusted-link gate's exit (library/ui/apps/hud/features/gate/UntrustedLaunchGate.tsx), to the
+      // host's fixed address
       case 'bevy-shell:exit':
         window.close()
-        location.replace(siteUrl('/'))
+        location.replace(exitUrl())
         break
     }
   })
