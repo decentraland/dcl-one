@@ -32,7 +32,7 @@ use super::{
     material::{StoneMaterial, TreeMaterial},
     prototypes::PROTOTYPES,
     spawn_tests::{open_land, GENESIS},
-    LandscapeTreeAssets, Tree, ASSET_DIR, IMPOSTOR_DIR,
+    LandscapeTreeAssets, LandscapeTreesPlugin, Tree, ASSET_DIR, IMPOSTOR_DIR,
 };
 use crate::solids::Solid;
 
@@ -473,8 +473,8 @@ fn impostor_materials_follow_the_scale() {
     }
 }
 
-/// A renderer with no window: the bake's plugins and the tree material.
-fn gpu_app() -> App {
+/// A renderer with no window and no tree plugins.
+fn windowless_renderer() -> App {
     let mut app = App::new();
     app.add_plugins(
         DefaultPlugins
@@ -489,6 +489,12 @@ fn gpu_app() -> App {
                 close_when_requested: false,
             }),
     );
+    app
+}
+
+/// A renderer with no window: the bake's plugins and the tree material.
+fn gpu_app() -> App {
+    let mut app = windowless_renderer();
     app.add_plugins((
         assets::EmbedAssetsPlugin,
         ImposterBakePlugin,
@@ -498,6 +504,23 @@ fn gpu_app() -> App {
     ));
     super::embed_shaders(&mut app);
     app
+}
+
+/// The real landscape trees plugin finishes outside preview mode: its bake material plugin is
+/// built from the tree material's pipeline, so it has to be added after the material plugin.
+/// Needs a GPU, so `#[ignore]`d and skipped by CI:
+///
+/// ```text
+/// cargo test -p visuals landscape_trees_plugin_finishes -- --ignored --nocapture
+/// ```
+#[test]
+#[ignore = "needs a GPU; run with --ignored"]
+fn landscape_trees_plugin_finishes_outside_preview_mode() {
+    let mut app = windowless_renderer();
+    app.insert_resource(common::structs::PreviewMode::default());
+    app.add_plugins((assets::EmbedAssetsPlugin, LandscapeTreesPlugin));
+    app.finish();
+    app.cleanup();
 }
 
 /// The tree material's bake shader compiles on this machine's adapter: a leaf surface and the
