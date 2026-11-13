@@ -7,9 +7,9 @@ import { hoverKey, proximityKey } from '@explorer-core/engine/pointerKeys'
 import type { LoginDriver, NewAccountPick } from '@explorer-core/engine/driver'
 import type { LaunchHostOptions } from '@explorer-core/engine/engineRpc'
 import { recordVisit } from '@explorer-core/features/lobby/lobbyApi'
-import type { PortableInfo, PortableState, SatelliteView } from '@explorer-core/engine/generated'
+import type { PlatformBanNotice, PortableInfo, PortableState, SatelliteView } from '@explorer-core/engine/generated'
 import type { AvatarLook } from '@explorer-core/engine/avatarEquip'
-import type { PhotoModeSnapshot, PhotoModeSource, PreviewFocus } from '@explorer-core/engine/protocol'
+import { PLATFORM_BANNED_REFUSAL, type PhotoModeSnapshot, type PhotoModeSource, type PreviewFocus } from '@explorer-core/engine/protocol'
 import { clickButton, screenViewed, sessionId, track } from '@explorer-core/lib/analytics'
 import { randomDefaultLook } from '@explorer-core/lib/guestName'
 import { fetchStoredProfile, type StoredProfile } from '@explorer-core/features/login/storedProfile'
@@ -974,6 +974,9 @@ export interface EngineSession {
   /** Why the last in-world travel failed (the engine kept the player where they were), shown as a notice. */
   travelError: string | null
   dismissTravelError: () => void
+  /** The signed-in wallet's known platform ban (null when not banned, unknown or failed), and
+   *  whether the last travel was refused for it. */
+  platformBan: { notice: PlatformBanNotice | null; travelRefused: boolean; dismissTravelRefused: () => void }
   /** The realm a HUD-requested travel is heading to, until the engine reports the outcome. The
    *  loader shows meanwhile. */
   travellingTo: string | null
@@ -1208,6 +1211,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const travelSeq = useRef(0)
   const [travellingTo, setTravellingTo] = useState<string | null>(null)
   const [travelError, setTravelError] = useState<string | null>(null)
+  const [platformBan, setPlatformBan] = useState<PlatformBanNotice | null>(null)
+  const [banRefusedTravel, setBanRefusedTravel] = useState(false)
   const [editorMode, setEditorModeState] = useState<EditorHudMode>('off')
   const [playerReady, setPlayerReady] = useState(false)
   // Ref twin of playerReady: the destination pick runs in a callback that would close over a
@@ -2206,7 +2211,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           if (msg.travelId !== travelSeq.current) break
           setTravellingTo(null)
           if (!msg.ok) {
-            setTravelError(`Couldn't travel to "${msg.realm}": ${msg.message ?? 'unknown error'}`)
+            if (msg.message === PLATFORM_BANNED_REFUSAL) setBanRefusedTravel(true)
+            else setTravelError(`Couldn't travel to "${msg.realm}": ${msg.message ?? 'unknown error'}`)
           }
           if (lobbyRef.current) {
             if (msg.ok) setLobby(false)
@@ -2364,6 +2370,9 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           break
         case 'worldPasswordWithdrawn':
           setWorldPassword(null)
+          break
+        case 'platformBan':
+          setPlatformBan(msg.ban.banned ? msg.ban : null)
           break
         case 'portables': {
           const before = portableStates.current
@@ -2543,6 +2552,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   }, [])
   const changeRealm = useCallback((realm: string) => travel({ kind: 'changeRealm', realm }), [travel])
   const dismissTravelError = useCallback(() => setTravelError(null), [])
+  const dismissBanRefusedTravel = useCallback(() => setBanRefusedTravel(false), [])
 
   // Chat send doubles as the slash-command interceptor (parity with bevy-ui-scene's `sendChatMessage`):
   // a recognized `/command` never reaches other players — it teleports, reloads, runs an engine console
@@ -4536,6 +4546,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     loadingProgress,
     travelError,
     dismissTravelError,
+    platformBan: { notice: platformBan, travelRefused: banRefusedTravel, dismissTravelRefused: dismissBanRefusedTravel },
     travellingTo,
     fatalError,
     reload: () => location.reload(),

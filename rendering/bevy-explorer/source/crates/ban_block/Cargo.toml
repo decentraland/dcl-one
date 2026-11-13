@@ -14,6 +14,7 @@ comms = { workspace = true }
 console = { workspace = true }
 platform = { workspace = true }
 social = { workspace = true }
+system_bridge = { workspace = true }
 wallet = { workspace = true }
 
 bevy = { workspace = true }

@@ -13,9 +13,9 @@ use system_bridge::{
     CommunityVoiceUpdate, ConnectivitySnapshot, DmHistoryEntryData, DmUserStateData,
     FriendConnectivityEvent, FriendData, FriendRequestData, FriendStatusData,
     FriendshipEventUpdate, HomeScene, HoverEvent, LiveSceneInfo, PermanentPermissionItem,
-    PermissionRequestEvent, PhotoModeState, PortableInfo, ProfileChangedEvent, ProximityEvent,
-    SatelliteView, SceneLoadingUi, SetAvatarData, VoiceChatAction, VoiceChatState, VoiceMessage,
-    WelcomeState, WorldAccessEvent,
+    PermissionRequestEvent, PhotoModeState, PlatformBanNotice, PortableInfo, ProfileChangedEvent,
+    ProximityEvent, SatelliteView, SceneLoadingUi, SetAvatarData, VoiceChatAction, VoiceChatState,
+    VoiceMessage, WelcomeState, WorldAccessEvent,
 };
 
 // list of op declarations
@@ -90,6 +90,8 @@ pub fn ops(super_user: bool) -> Vec<OpDecl> {
             op_read_photo_mode_stream(),
             op_get_world_access_stream(),
             op_read_world_access_stream(),
+            op_get_platform_ban_stream(),
+            op_read_platform_ban_stream(),
             op_set_world_password(),
             op_get_portables_stream(),
             op_read_portables_stream(),
@@ -634,6 +636,20 @@ pub async fn op_read_world_access_stream(
     rid: u32,
 ) -> Result<Option<WorldAccessEvent>, deno_core::anyhow::Error> {
     dcl_js::system_api::op_read_world_access_stream(state, rid).await
+}
+
+#[op2(async)]
+pub async fn op_get_platform_ban_stream(state: Rc<RefCell<OpState>>) -> u32 {
+    dcl_js::system_api::op_get_platform_ban_stream(state).await
+}
+
+#[op2(async)]
+#[serde]
+pub async fn op_read_platform_ban_stream(
+    state: Rc<RefCell<OpState>>,
+    rid: u32,
+) -> Result<Option<PlatformBanNotice>, deno_core::anyhow::Error> {
+    dcl_js::system_api::op_read_platform_ban_stream(state, rid).await
 }
 
 #[op2]

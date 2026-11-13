@@ -3,7 +3,7 @@
 use alloy_core::primitives::Address;
 use bevy::{app::App, ecs::system::Res, time::Time};
 use bevy_console::ConsoleCommand;
-use common::util::AsH160;
+use common::{structs::PlatformBanEntryGate, util::AsH160};
 use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand};
 use serde_json::{json, Map, Value};
 use wallet::Wallet;
@@ -27,6 +27,7 @@ pub(crate) fn register(app: &mut App) {
                 ("Ban matched on", "platformBan.matchedOn"),
                 ("Ban source", "platformBan.source"),
                 ("Checked (s ago)", "platformBan.checkedAgoSecs"),
+                ("Realm entry", "entryGate"),
                 ("Scene admission", "sceneAdmission.state"),
                 ("Refusal scope", "sceneAdmission.scope"),
                 ("Scene room", "sceneRoom.state"),
@@ -57,6 +58,7 @@ struct BanBlockStateCommand {
 fn ban_block_state(
     mut input: ConsoleCommand<BanBlockStateCommand>,
     ban_block: BanBlock,
+    entry_gate: Res<PlatformBanEntryGate>,
     wallet: Res<Wallet>,
     time: Res<Time>,
 ) {
@@ -73,15 +75,14 @@ fn ban_block_state(
             }
         },
     };
-    input.reply_ok(
-        snapshot(
-            &ban_block,
-            wallet.address(),
-            lookup,
-            time.elapsed_secs_f64(),
-        )
-        .to_string(),
+    let mut state = snapshot(
+        &ban_block,
+        wallet.address(),
+        lookup,
+        time.elapsed_secs_f64(),
     );
+    state["entryGate"] = json!(if entry_gate.banned { "closed" } else { "open" });
+    input.reply_ok(state.to_string());
 }
 
 fn hex(address: Address) -> String {

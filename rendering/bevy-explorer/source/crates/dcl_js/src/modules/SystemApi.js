@@ -525,6 +525,22 @@ module.exports.getWorldAccessStream = async function() {
   return streamGenerator();
 }
 
+// the signed-in wallet's platform ban: now, then again on every change
+// type PlatformBanNotice = { banned: bool, reason: string, customMessage: string | null, expiresAt: string | null }
+module.exports.getPlatformBanStream = async function() {
+  const rid = await Deno.core.ops.op_get_platform_ban_stream();
+
+  async function* streamGenerator() {
+    while (true) {
+      const next = await Deno.core.ops.op_read_platform_ban_stream(rid);
+      if (next === null) break;
+      yield next;
+    }
+  }
+
+  return streamGenerator();
+}
+
 // answer the password prompt; password null = the player gave up
 module.exports.setWorldPassword = function(body) {
     Deno.core.ops.op_set_world_password(body.password ?? null);

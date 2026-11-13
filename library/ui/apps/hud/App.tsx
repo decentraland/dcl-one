@@ -42,6 +42,7 @@ import { LoadingAndLogin } from './features/login/LoadingAndLogin'
 import { GuestStartPage } from './features/login/GuestStartPage'
 import { SceneLoadingOverlay } from './features/session/SceneLoadingOverlay'
 import { openTravelError } from './features/session/TravelError'
+import { openPlatformBanDialog } from './features/session/PlatformBanDialog'
 import { useEngineSession, type EngineSession } from './features/session/useEngineSession'
 import { useWindowKeyDown } from './lib/useWindowKeyDown'
 import { useHudInsetReport } from './lib/hudInset'
@@ -334,6 +335,25 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
     return openTravelError(travelError, session.dismissTravelError)
     // eslint-disable-next-line react-hooks/exhaustive-deps -- dismissTravelError is stable
   }, [travelError])
+
+  // A known platform ban before the world: a blocking notice over the lobby (or the welcome page,
+  // the picker, the loader) that only a sign-out leaves. The engine refuses the entry regardless.
+  const banNotice = session.platformBan.notice
+  const banBlocksEntry = banNotice != null && session.phase !== 'login' && session.phase !== 'world'
+  const banKey = banBlocksEntry ? JSON.stringify(banNotice) : null
+  useEffect(() => {
+    if (banKey == null || banNotice == null) return
+    return openPlatformBanDialog(banNotice, { signOut: session.logout })
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- re-open only when the notice changes
+  }, [banKey])
+  // An in-world travel refused for the ban: the player stays where they are and is told why.
+  const banRefusedTravel = session.platformBan.travelRefused && !banBlocksEntry
+  useEffect(() => {
+    if (!banRefusedTravel) return
+    const notice = banNotice ?? { banned: true, reason: '', customMessage: null, expiresAt: null }
+    return openPlatformBanDialog(notice, { onClose: session.platformBan.dismissTravelRefused })
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- dismissTravelRefused is stable
+  }, [banRefusedTravel])
 
   // Deploying the Backpack's look failed: try it again, or go back to the last look that deployed.
   // A deliberate choice only: Escape reverts, a stray click outside does nothing.

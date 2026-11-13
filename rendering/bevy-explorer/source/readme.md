@@ -246,7 +246,7 @@ Replies are JSON where the command says so; a failed command rejects (web) or an
   `/connectivity_state` (safe room state, offline warning and reachability probe; room states
   match voice diagnostics, with `connecting` for first admission and `failed` for refused dials),
   `/connectivity_retry` (immediate recovery without overriding denied access),
-  `/ban_block_state [address]` (platform ban, current scene admission, social blocks and
+  `/ban_block_state [address]` (platform ban and the realm entry it closes, current scene admission, social blocks and
   scene moderation lists; Nearby chat and reactions from an address the scene room bans are
   dropped; `/ban_block_refresh` re-checks the platform ban), `/entity_screen_position <entity>
   [--bounds]`, `/photo_mode [on|off]` (the camera reel's in-world camera: its state, or open or

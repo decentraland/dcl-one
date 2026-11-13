@@ -29,6 +29,7 @@ import type {
   PermanentPermissionItem,
   PermissionRequestEvent,
   PhotoModeState,
+  PlatformBanNotice,
   PortableInfo,
   ProfileChangedEvent,
   ProximityEvent,
@@ -205,6 +206,9 @@ export type BevyApiInterface = {
   /** Password prompts for a world being entered (and their withdrawal). Optional: absent on
    *  runtimes whose SystemApi predates it. */
   getWorldAccessStream?: () => Promise<AsyncIterable<WorldAccessEvent>>
+  /** The signed-in wallet's platform ban: now, then again on every change. Optional: absent on
+   *  runtimes whose SystemApi predates it. */
+  getPlatformBanStream?: () => Promise<AsyncIterable<PlatformBanNotice>>
   /** Answer a password prompt; `password: null` = the player gave up. */
   setWorldPassword?: (body: { password: string | null }) => void
   setPermanentPermission: (body: SetPermanentPermissionBody) => void
