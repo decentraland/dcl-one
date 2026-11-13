@@ -2141,20 +2141,16 @@ impl IpfsIo {
                     failed.repeat(&remote, Instant::now())
                 }
             };
-            match repeat {
-                None => {}
-                Some(Repeat::Recent) => {
-                    return ipfs_io_read_state.send_failure(Err(AssetReaderError::Io(Arc::new(
-                        std::io::Error::other(format!("(repeat request for failed `{remote}`)")),
-                    ))));
-                }
-                Some(Repeat::Session(status)) => {
-                    return ipfs_io_read_state.send_failure(Err(AssetReaderError::Io(Arc::new(
-                        std::io::Error::other(format!(
-                            "(repeat request for `{remote}`, which answered {status} earlier this session)"
-                        )),
-                    ))));
-                }
+            if let Some(repeat) = repeat {
+                let message = match repeat {
+                    Repeat::Recent => format!("(repeat request for failed `{remote}`)"),
+                    Repeat::Session(status) => format!(
+                        "(repeat request for `{remote}`, which answered {status} earlier this session)"
+                    ),
+                };
+                return ipfs_io_read_state.send_failure(Err(AssetReaderError::Io(Arc::new(
+                    std::io::Error::other(message),
+                ))));
             }
 
             // the scene the file belongs to decides its place in the request slot queue
