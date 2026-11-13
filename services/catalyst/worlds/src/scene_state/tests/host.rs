@@ -1031,9 +1031,17 @@ async fn a_scene_parked_by_an_oom_is_retired_and_stays_refused() {
     let genesis_key = SceneKey::Genesis(SceneId::parse(&first).unwrap());
     h.state.load(&genesis_key).await.unwrap();
 
-    crate::scene_state::jsruntime::park_for_tests(&world_id);
-    crate::scene_state::jsruntime::park_for_tests(&first);
+    // The same deployment also hosted under a parcel: a separate runtime.
+    let twin = SceneKey::GenesisParcel(Parcel::parse(&format!("{x},1")).unwrap());
+    h.state.load(&twin).await.unwrap();
+    for scene in [h.state.scenes.get(world.key()), h.state.scenes.get(&first)] {
+        scene.unwrap().runtime.mark_parked_for_tests();
+    }
     assert_eq!(h.state.retire_parked(), 2);
+    assert!(
+        h.state.scenes.get(&format!("{x},1")).is_some(),
+        "the healthy twin is kept"
+    );
     assert!(h.state.scenes.get(world.key()).is_none());
     assert!(h.state.scenes.get(&first).is_none());
     assert_eq!(

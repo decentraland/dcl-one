@@ -363,26 +363,39 @@ impl InboundBudget {
         }
     }
 
-    /// Charges one frame of `bytes` to `index`; `false` (nothing charged)
-    /// when that would exceed the client's or the scene's budget.
-    pub fn reserve(&self, index: u32, bytes: usize) -> bool {
+    /// Charges one frame of `bytes` to `index` and to the scene; nothing is
+    /// charged when either budget would be exceeded, and the refusal says which.
+    pub fn reserve(&self, index: u32, bytes: usize) -> Result<(), InboundRefusal> {
         let mut s = self.state.lock();
         let (used, frames) = s.per_client.get(&index).copied().unwrap_or_default();
-        if used.saturating_add(bytes) > self.client_max_bytes
-            || frames >= self.client_max_frames
-            || s.total.saturating_add(bytes) > self.scene_max_bytes
-        {
-            return false;
+        if used.saturating_add(bytes) > self.client_max_bytes || frames >= self.client_max_frames {
+            return Err(InboundRefusal::Client);
+        }
+        if s.total.saturating_add(bytes) > self.scene_max_bytes {
+            return Err(InboundRefusal::Scene);
         }
         s.per_client.insert(index, (used + bytes, frames + 1));
         s.total += bytes;
-        true
+        Ok(())
     }
 
     /// Returns `bytes` and `frames` previously reserved for `index`.
     pub fn release(&self, index: u32, bytes: usize, frames: usize) {
+        self.release_parts(index, bytes, frames, bytes);
+    }
+
+    /// Takes `bytes` off the scene total only; the client keeps the charge.
+    /// For frames held for a scene that cannot read them yet.
+    pub fn unshare(&self, bytes: usize) {
         let mut s = self.state.lock();
         s.total = s.total.saturating_sub(bytes);
+    }
+
+    /// [`Self::release`] of frames of which only `shared` bytes still count
+    /// toward the scene total.
+    pub fn release_parts(&self, index: u32, bytes: usize, frames: usize, shared: usize) {
+        let mut s = self.state.lock();
+        s.total = s.total.saturating_sub(shared);
         if let Some((used, queued)) = s.per_client.get_mut(&index) {
             *used = used.saturating_sub(bytes);
             *queued = queued.saturating_sub(frames);
@@ -395,7 +408,28 @@ impl InboundBudget {
     pub fn total(&self) -> usize {
         self.state.lock().total
     }
+
+    /// Bytes and frames charged to `index`.
+    pub fn client_usage(&self, index: u32) -> (usize, usize) {
+        self.state
+            .lock()
+            .per_client
+            .get(&index)
+            .copied()
+            .unwrap_or_default()
+    }
 }
+
+/// Which inbound budget a frame would exceed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InboundRefusal {
+    /// The sender's own budget: it is closed.
+    Client,
+    /// The scene-wide budget: the frame is dropped, no one is closed.
+    Scene,
+}
+
+static SCENE_BUDGET_DROPS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 pub struct InitState {
     pub start: u32,
@@ -435,6 +469,14 @@ pub trait SceneRuntime: Send + Sync {
     fn on_client_close(&self, client_index: u32) -> Vec<Vec<u8>>;
 
     fn snapshot(&self) -> Vec<u8>;
+
+    /// Whether a V8 OOM parked this runtime's thread.
+    fn parked(&self) -> bool {
+        false
+    }
+
+    #[cfg(test)]
+    fn mark_parked_for_tests(&self) {}
 }
 
 pub struct RelayRuntime {
@@ -445,6 +487,8 @@ pub struct RelayRuntime {
     /// Range each live client was actually given, so nothing is ever recomputed
     /// from a config read at a different time than the one the client was told.
     assigned: Mutex<BTreeMap<u32, (u32, u32)>>,
+    #[cfg(test)]
+    parked_for_tests: std::sync::atomic::AtomicBool,
 }
 
 impl RelayRuntime {
@@ -467,6 +511,8 @@ impl RelayRuntime {
             )),
             slots: ClientSlots::default(),
             assigned: Mutex::new(BTreeMap::new()),
+            #[cfg(test)]
+            parked_for_tests: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -483,6 +529,18 @@ impl RelayRuntime {
 impl SceneRuntime for RelayRuntime {
     fn scene_hash(&self) -> &str {
         &self.scene_hash
+    }
+
+    #[cfg(test)]
+    fn parked(&self) -> bool {
+        self.parked_for_tests
+            .load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    #[cfg(test)]
+    fn mark_parked_for_tests(&self) {
+        self.parked_for_tests
+            .store(true, std::sync::atomic::Ordering::SeqCst);
     }
 
     fn allocate_client_index(&self) -> u32 {
@@ -598,6 +656,21 @@ impl SceneRuntime for JsRuntime {
         &self.handle.scene_hash
     }
 
+    fn parked(&self) -> bool {
+        self.handle
+            .shared
+            .parked
+            .load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    #[cfg(test)]
+    fn mark_parked_for_tests(&self) {
+        self.handle
+            .shared
+            .parked
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
     fn allocate_client_index(&self) -> u32 {
         self.handle.acquire_client_index()
     }
@@ -647,8 +720,20 @@ impl SceneRuntime for JsRuntime {
         body: &[u8],
     ) -> Result<Vec<Vec<u8>>, InboundOverBudget> {
         let budget = &self.handle.shared.inbound;
-        if !budget.reserve(client_index, body.len()) {
-            return Err(InboundOverBudget);
+        match budget.reserve(client_index, body.len()) {
+            Ok(()) => {}
+            Err(InboundRefusal::Client) => return Err(InboundOverBudget),
+            Err(InboundRefusal::Scene) => {
+                let drops = SCENE_BUDGET_DROPS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                if drops % 1000 == 0 {
+                    tracing::warn!(
+                        scene = %self.handle.scene_hash,
+                        drops = drops + 1,
+                        "scene inbound budget full; client frame dropped"
+                    );
+                }
+                return Ok(vec![]);
+            }
         }
         let sent = self.handle.tx.send(Command::ClientCrdt {
             index: client_index,
@@ -1119,7 +1204,7 @@ mod tests {
     }
 
     #[test]
-    fn the_scene_budget_bounds_all_clients_together() {
+    fn a_full_scene_budget_drops_frames_without_closing_the_sender() {
         let limits = RuntimeLimits {
             client_inbound_max_bytes: 100,
             scene_inbound_max_bytes: 150,
@@ -1132,13 +1217,23 @@ mod tests {
         assert_eq!((fa.len(), fb.len(), fc.len()), (90, 50, 24));
         assert!(rt.on_client_crdt(a, &fa).is_ok());
         assert!(rt.on_client_crdt(b, &fb).is_ok());
-        assert_eq!(rt.on_client_crdt(b, &fc), Err(InboundOverBudget));
+        assert_eq!(
+            rt.on_client_crdt(b, &fc),
+            Ok(vec![]),
+            "b is under its own budget: its frame is dropped, it stays connected"
+        );
+        assert_eq!(rt.handle.shared.inbound.total(), 140);
+        assert_eq!(
+            rt.on_client_crdt(a, &fc),
+            Err(InboundOverBudget),
+            "a is over its own budget and is closed"
+        );
     }
 
     #[test]
-    fn before_the_observer_registers_only_a_share_of_the_budget_is_kept() {
+    fn frames_held_before_the_observer_registers_do_not_pin_the_scene_budget() {
         let limits = RuntimeLimits {
-            client_inbound_max_bytes: 800,
+            client_inbound_max_bytes: 3200,
             ..RuntimeLimits::default()
         };
         let rt = js_runtime("module.exports.onUpdate = function (dt) {};", limits);
@@ -1146,9 +1241,12 @@ mod tests {
         for i in 0..10 {
             assert!(rt.on_client_crdt(index, &put_frame(1100 + i, 26)).is_ok());
         }
+        let budget = &rt.handle.shared.inbound;
         assert!(
-            crate::shared::test_wait::until_blocking(|| rt.handle.shared.inbound.total() == 100),
-            "the newest frames within an eighth of the client budget stay queued"
+            crate::shared::test_wait::until_blocking(
+                || budget.client_usage(index).0 == 100 && budget.total() == 0
+            ),
+            "the newest frames within 1/32 of the client budget stay queued, off the scene total"
         );
     }
 }

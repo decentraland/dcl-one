@@ -637,12 +637,9 @@ impl SceneHostState {
 
     /// Unloads every scene an OOM parked; [`Self::take_scene`] records it.
     pub fn retire_parked(&self) -> usize {
-        if jsruntime::parked_isolates() == 0 {
-            return 0;
-        }
         let mut retired = 0;
         for scene in self.scenes.all() {
-            if jsruntime::is_parked(scene.runtime.scene_hash())
+            if scene.runtime.parked()
                 && let Some(scene) = self.take_scene(&scene.identity.key.room_key())
             {
                 scene.kick_all();
@@ -657,7 +654,8 @@ impl SceneHostState {
     /// isolate keeps a slot.
     pub(crate) fn take_scene(&self, name: &str) -> Option<Arc<scene::Scene>> {
         let scene = self.scenes.remove(name)?;
-        if jsruntime::is_parked(scene.runtime.scene_hash()) {
+        // Per runtime: a Genesis scene hosted under a parcel and an id is two runtimes.
+        if scene.runtime.parked() {
             let key = &scene.identity.key;
             tracing::error!(scene = %key, "scene ran out of memory; unloaded and not loaded again until restart");
             let mut parked = self.parked.lock();

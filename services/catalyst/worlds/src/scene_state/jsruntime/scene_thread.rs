@@ -26,8 +26,11 @@ struct ClientChannel {
     start: u32,
     size: u32,
 
-    inbound: VecDeque<Vec<u8>>,
+    /// Frames not yet read, and whether each still counts toward the scene
+    /// total (frames held before the observer registers do not).
+    inbound: VecDeque<(Vec<u8>, bool)>,
     inbound_bytes: usize,
+    inbound_shared_bytes: usize,
 
     outbound: VecDeque<Vec<u8>>,
     outbound_bytes: usize,
@@ -45,6 +48,7 @@ impl ClientChannel {
             size,
             inbound: VecDeque::new(),
             inbound_bytes: 0,
+            inbound_shared_bytes: 0,
             outbound: VecDeque::new(),
             outbound_bytes: 0,
             open_delivered: false,
@@ -55,9 +59,15 @@ impl ClientChannel {
 
     /// Hands what is still queued back to the inbound budget.
     fn release_inbound(&mut self, budget: &InboundBudget, index: u32) {
-        budget.release(index, self.inbound_bytes, self.inbound.len());
+        budget.release_parts(
+            index,
+            self.inbound_bytes,
+            self.inbound.len(),
+            self.inbound_shared_bytes,
+        );
         self.inbound.clear();
         self.inbound_bytes = 0;
+        self.inbound_shared_bytes = 0;
     }
 }
 
@@ -183,8 +193,8 @@ pub(super) fn run_scene_thread(
         scene_hash: scene_hash.clone(),
         client_outbound_max: limits.client_outbound_max,
         client_outbound_max_bytes: limits.client_outbound_max_bytes,
-        pre_register_bytes: limits.client_inbound_max_bytes / 8,
-        pre_register_frames: (limits.client_inbound_max / 8).max(1),
+        pre_register_bytes: limits.client_inbound_max_bytes / 32,
+        pre_register_frames: (limits.client_inbound_max / 32).max(1),
         crdt_max_bytes: limits.crdt_max_bytes,
         inbound_budget: Arc::clone(&shared.inbound),
         array_buffers,
@@ -360,16 +370,25 @@ pub(super) fn run_scene_thread(
                         } else {
                             let kept = encode_batch(&msgs);
                             budget.release(index, reserved.saturating_sub(kept.len()), 0);
+                            // Unread early frames must not pin the scene-wide budget.
+                            let shared = early.is_none();
+                            if shared {
+                                c.inbound_shared_bytes += kept.len();
+                            } else {
+                                budget.unshare(kept.len());
+                            }
                             c.inbound_bytes += kept.len();
-                            c.inbound.push_back(kept);
+                            c.inbound.push_back((kept, shared));
                         }
                         if let Some((max_bytes, max_frames)) = early {
                             while c.inbound_bytes > max_bytes || c.inbound.len() > max_frames {
-                                let Some(old) = c.inbound.pop_front() else {
+                                let Some((old, shared)) = c.inbound.pop_front() else {
                                     break;
                                 };
+                                let shared_bytes = if shared { old.len() } else { 0 };
                                 c.inbound_bytes -= old.len();
-                                budget.release(index, old.len(), 1);
+                                c.inbound_shared_bytes -= shared_bytes;
+                                budget.release_parts(index, old.len(), 1, shared_bytes);
                             }
                         }
                     }
@@ -1313,7 +1332,7 @@ fn op_client_get_messages(
         c.borrow()
             .clients
             .get(&index)
-            .map(|ch| ch.inbound.iter().cloned().collect())
+            .map(|ch| ch.inbound.iter().map(|(m, _)| m.clone()).collect())
             .unwrap_or_default()
     });
     let mut items: Vec<v8::Local<v8::Value>> = Vec::with_capacity(msgs.len());
@@ -1331,9 +1350,16 @@ fn op_client_get_messages(
         let budget = Arc::clone(&h.inbound_budget);
         if let Some(ch) = h.clients.get_mut(&index) {
             let n = msgs.len().min(ch.inbound.len());
-            let taken: usize = ch.inbound.drain(..n).map(|m| m.len()).sum();
+            let (mut taken, mut shared) = (0, 0);
+            for (m, counted) in ch.inbound.drain(..n) {
+                taken += m.len();
+                if counted {
+                    shared += m.len();
+                }
+            }
             ch.inbound_bytes = ch.inbound_bytes.saturating_sub(taken);
-            budget.release(index, taken, n);
+            ch.inbound_shared_bytes = ch.inbound_shared_bytes.saturating_sub(shared);
+            budget.release_parts(index, taken, n, shared);
         }
     });
     rv.set(arr.into());

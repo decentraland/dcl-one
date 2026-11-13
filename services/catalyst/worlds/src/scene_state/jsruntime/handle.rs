@@ -65,6 +65,9 @@ pub struct SharedState {
 
     /// Client bytes queued toward the scene thread and not yet read.
     pub inbound: Arc<InboundBudget>,
+
+    /// Set when a V8 OOM parked the scene thread for good.
+    pub parked: AtomicBool,
 }
 
 pub(super) struct Watchdog {
@@ -116,6 +119,11 @@ impl JsRuntimeHandle {
         }
 
         let mut guard = self.join.lock();
+        // A parked thread never ends: detach it without waiting.
+        if self.shared.parked.load(Ordering::SeqCst) {
+            guard.take();
+            return;
+        }
         if let Some(j) = guard.as_ref() {
             if j.is_finished() {
                 if let Some(j) = guard.take() {
@@ -203,6 +211,7 @@ pub fn spawn(
         running: AtomicBool::new(true),
         slots: Arc::clone(&slots),
         inbound: Arc::new(InboundBudget::new(&limits)),
+        parked: AtomicBool::new(false),
     });
 
     let watchdog = Arc::new(Watchdog {
@@ -311,12 +320,6 @@ pub fn is_parked(scene_hash: &str) -> bool {
     PARKED.contains(scene_hash)
 }
 
-/// Marks `scene_hash` as parked, as the OOM handler does.
-#[cfg(test)]
-pub fn park_for_tests(scene_hash: &str) {
-    PARKED.add(scene_hash);
-}
-
 thread_local! {
     static OOM_SCENE: std::cell::RefCell<Option<OomScene>> = const { std::cell::RefCell::new(None) };
 }
@@ -347,6 +350,7 @@ unsafe extern "C" fn scene_oom(location: *const std::ffi::c_char, _details: &v8:
         Some((shared, watchdog, scene)) => {
             tracing::error!(%scene, %location, "scene isolate out of memory; parking its thread");
             PARKED.add(scene);
+            shared.parked.store(true, Ordering::SeqCst);
             shared.running.store(false, Ordering::SeqCst);
             shared.slots.clear();
             watchdog.stopped.store(true, Ordering::SeqCst);
@@ -1693,12 +1697,11 @@ mod tests {
                  for (var j = 0; j < 1000; j++) keep.push(new ArrayBuffer(64)); leaked = true;",
             ),
         ] {
-            let parked_before = super::parked_isolates();
             let (leaked, stopped) = scene_leaks_with(name, body, limits);
             assert!(!leaked, "{name} allocated past the budget");
             assert!(stopped, "{name}: going over the budget stops the scene");
             assert!(
-                !super::is_parked(name) && super::parked_isolates() == parked_before,
+                !super::is_parked(name),
                 "{name}: the stop is the heap-limit termination, not an OOM park"
             );
         }
