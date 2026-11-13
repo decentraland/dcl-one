@@ -80,6 +80,8 @@ def input_files(root=ROOT, revision=None, engine_only=False):
             # Web npm metadata still invalidates the assembled artifact, not WASM.
             return False
         return (path.startswith((SOURCE, BEVY, PROTO, '.cargo/')) or path in shared or path in INPUTS
+                or (not engine_only and (path.startswith('library/hashing/')
+                                        or path == 'tooling/check-local-hashing.mjs'))
                 or path in TOOLCHAINS)
     if revision:
         tree = subprocess.check_output(['git', 'ls-tree', '-rz', revision], cwd=root, text=True)
@@ -120,6 +122,11 @@ def input_files(root=ROOT, revision=None, engine_only=False):
                        for p in ([root / base] if (root / base).is_file() else (root / base).rglob('*'))
                        if p.is_file()]
             tracked += list(INPUTS) + list(shared)
+            if not engine_only:
+                tracked += [p.relative_to(root).as_posix() for p in (root / 'library/hashing').rglob('*')
+                            if p.is_file()]
+                if (root / 'tooling/check-local-hashing.mjs').is_file():
+                    tracked.append('tooling/check-local-hashing.mjs')
             tracked += [name for name in TOOLCHAINS if (root / name).is_file()]
         hashes = {}
         for path in sorted(set(filter(selected, tracked))):

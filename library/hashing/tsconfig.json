@@ -6,6 +6,8 @@
     "rewriteRelativeImportExtensions": true,
     "erasableSyntaxOnly": true,
     "declaration": true,
+    "incremental": true,
+    "tsBuildInfoFile": "./node_modules/.cache/hashing.tsbuildinfo",
     "strict": true,
     "types": [],
     "rootDir": "src",

@@ -5,15 +5,15 @@
   "scripts": {
     "start": "sdk-commands start",
     "deploy": "sdk-commands deploy",
-    "build": "sdk-commands build",
+    "build": "pnpm --filter @dcl/hashing build && sdk-commands build",
     "export-native": "sdk-commands build --production && sdk-commands export-static --destination ../../assets/bridge-scene --realmName BevyExplorerUI --baseUrl /bridge-scene/ --commsAdapter ws-room:ws-room-service.decentraland.org/rooms/bevy-explorer-ui",
     "export-static": "node ../scripts/bridge-scene-export.mjs",
-    "bundle": "npm run lint && sdk-commands build --production && npm run export-web",
+    "bundle": "pnpm run lint && sdk-commands build --production && pnpm run export-web",
     "lint": "oxlint --deny-warnings src",
     "lint:fix": "oxlint --deny-warnings --fix src",
     "format": "prettier --config .prettierrc -c \"./src/**/*.{ts,tsx}\"",
     "format:fix": "prettier -w --config .prettierrc \"./src/**/*.{ts,tsx}\"",
-    "upgrade-sdk": "npm install @dcl/sdk@experimental-bevy @dcl/js-runtime@experimental-bevy @dcl/react-ecs@experimental-bevy @dcl/sdk-commands@experimental-bevy @dcl/ecs@experimental-bevy --save-exact",
+    "upgrade-sdk": "pnpm add @dcl/sdk@experimental-bevy @dcl/js-runtime@experimental-bevy @dcl/react-ecs@experimental-bevy @dcl/sdk-commands@experimental-bevy @dcl/ecs@experimental-bevy --save-exact",
     "server-logs": "sdk-commands sdk-server-logs",
     "export-web": "node ../scripts/bridge-scene-export.mjs --web"
   },

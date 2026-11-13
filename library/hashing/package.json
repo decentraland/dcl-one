@@ -3,7 +3,6 @@
   "version": "1.0.0",
   "private": true,
   "description": "Decentraland content hashes: hashV0, hashV1 and the ADR-32 and ADR-62 helpers",
-  "license": "Apache-2.0",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/decentraland/dcl-one.git",
@@ -11,11 +10,30 @@
   },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./node": {
+      "types": "./dist/node.d.ts",
+      "default": "./dist/node.js"
+    },
+    "./ADR32": {
+      "types": "./dist/ADR32.d.ts",
+      "default": "./dist/ADR32.js"
+    },
+    "./ADR62": {
+      "types": "./dist/ADR62.d.ts",
+      "default": "./dist/ADR62.js"
+    }
+  },
   "files": [
     "dist"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --test test/*.test.ts"
   },
   "engines": {

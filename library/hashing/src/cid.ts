@@ -68,31 +68,25 @@ const hasNativeDigest = typeof globalThis.crypto?.subtle?.digest === 'function'
 // costs a thread hop. Measured on Node 24: equal near 4 KiB, six times faster at 256 KiB.
 const NATIVE_DIGEST_MIN_BYTES = 4096
 
-/**
- * The sha2-256 digest of the bytes. Large input goes to the platform's digest, which runs off
- * the main thread, so several calls run at the same time. Each path reads the bytes before this
- * function returns, so the caller can change them afterwards. A view of shared memory gets the
- * JavaScript digest, because the platform refuses it. The result never rejects.
- */
 export function sha256Digest(bytes: Uint8Array): Uint8Array | Promise<Uint8Array> {
   if (
     !hasNativeDigest || bytes.length < NATIVE_DIGEST_MIN_BYTES ||
     (typeof SharedArrayBuffer !== 'undefined' && bytes.buffer instanceof SharedArrayBuffer)
   ) return sha256(bytes)
-  return nativeSha256(bytes).catch(() => sha256(bytes))
+  const digest = nativeSha256(bytes)
+  // Queued digests may fail before their turn is awaited; preserve that failure for the caller.
+  void digest.catch(() => {})
+  return digest
 }
 
-/** The binary CIDv1 of a block with this sha2-256 digest: version, codec, multihash. */
 export function cidV1(codec: number, digest: Uint8Array): Uint8Array {
   return multihash(digest, [0x01, codec])
 }
 
-/** A binary CIDv1 in its base32 text form ("bafkrei…" raw, "bafybei…" dag-pb). */
 export function cidV1Text(cid: Uint8Array): string {
   return 'b' + base32(cid)
 }
 
-/** The base58 text form of a sha2-256 digest ("Qm…"). */
 export function qmText(digest: Uint8Array): string {
   return base58(multihash(digest, []))
 }

@@ -19,11 +19,12 @@ let
       /rendering/bevy-explorer/source
       /rendering/bevy-explorer/bevy
       /library/protocol/proto
+      /library/hashing
       /apps/bevy-explorer/build-web.py /apps/bevy-explorer/install-linux-deps.py
       /apps/bevy-explorer/install-web-tools.py
       /apps/bevy-explorer/install-tools.sh /.github/actions/bevy-explorer-tools/action.yml
       /flake.lock /infra/packages/default.nix /infra/packages/tools.nix
-      /tooling/play-artifact.py /tooling/hud_shared_inputs.py
+      /tooling/play-artifact.py /tooling/hud_shared_inputs.py /tooling/check-local-hashing.mjs
       /.github/workflows/bevy-explorer-ci.yml
       /.cargo /rust-toolchain /rust-toolchain.toml
       /library/explorer-core/engine/generated

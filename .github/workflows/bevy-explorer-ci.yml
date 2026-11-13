@@ -12,6 +12,7 @@
       - tooling/ci_paths.py
       - tooling/bevy-mtimes.py
       - tooling/play-artifact.py
+      - tooling/check-local-hashing.mjs
       - tooling/hud_shared_inputs.py
       - tooling/tests/test_hud_shared_inputs.py
       - tooling/tests/hud_manifest_fixture.py
@@ -50,6 +51,7 @@
       - tooling/ci_paths.py
       - tooling/bevy-mtimes.py
       - tooling/play-artifact.py
+      - tooling/check-local-hashing.mjs
       - tooling/hud_shared_inputs.py
       - tooling/tests/test_hud_shared_inputs.py
       - tooling/tests/hud_manifest_fixture.py
@@ -656,7 +658,7 @@ jobs:
           cache: npm
           cache-dependency-path: |
             rendering/bevy-explorer/source/react-web/package-lock.json
-            rendering/bevy-explorer/source/react-web/bridge-scene/package-lock.json
+      - run: corepack enable
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10-16
         if: steps.engine-cache.outputs.cache-matched-key == ''
         with:
@@ -757,7 +759,7 @@ jobs:
           SCENE_BASE_URL="$(node -p "require('../../deploy/web/package.json').homepage || ''")/bridge-scene/static/"
           export SCENE_BASE_URL
           echo "SCENE_BASE_URL=$SCENE_BASE_URL"
-          npm run export-web
+          corepack pnpm@11.27.0 run export-web
         working-directory: rendering/bevy-explorer/source/react-web/bridge-scene
       # Publishing waits minutes for the registry; publish-web does it on a standard runner so
       # APIs + Sites starts as soon as the web app is tested.

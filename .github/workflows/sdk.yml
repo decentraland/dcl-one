@@ -6,12 +6,14 @@ on:
       - library/js-sdk-toolchain/**
       - library/protocol/**
       - library/hashing/**
+      - tooling/check-local-hashing.mjs
       - .github/workflows/sdk.yml
   pull_request:
     paths:
       - library/js-sdk-toolchain/**
       - library/protocol/**
       - library/hashing/**
+      - tooling/check-local-hashing.mjs
       - .github/workflows/sdk.yml
 permissions:
   contents: read
@@ -35,9 +37,7 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24.16.0
-          cache: npm
-          # library/protocol keeps no lockfile (it ignores package-lock.json)
-          cache-dependency-path: library/js-sdk-toolchain/package-lock.json
+      - run: corepack enable
       - name: Install (builds library/protocol's out-ts and library/hashing first)
         run: make install
       - name: Lint
@@ -56,9 +56,7 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24.16.0
-          cache: npm
-          # library/protocol keeps no lockfile (it ignores package-lock.json)
-          cache-dependency-path: library/js-sdk-toolchain/package-lock.json
+      - run: corepack enable
       - name: Install (builds library/protocol's out-ts and library/hashing first)
         run: make install
       - name: Build

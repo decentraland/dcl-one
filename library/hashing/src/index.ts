@@ -6,7 +6,6 @@ import { CHUNK_SIZE_BYTES, MAX_CHILDREN_PER_NODE, hashV1WithLayout, isAsyncItera
 
 export type HashableContent = AsyncGenerator<Uint8Array> | AsyncIterable<Uint8Array> | Uint8Array
 
-/** An entry of an entity's content, as ADR-32 defines it. */
 export interface EntityContentItemReference {
   file: string
   hash: string
@@ -60,27 +59,28 @@ export async function hashV0(content: HashableContent): Promise<string> {
   return qmText(incremental !== undefined ? incremental.digest() : await sha256Digest(collected.subarray(0, size)))
 }
 
-/** The content hash the content servers compute: the CIDv1 of the bytes as a UnixFS file with raw leaves. */
 export async function hashV1(content: HashableContent): Promise<string> {
   return hashV1WithLayout(content, { chunkSize: CHUNK_SIZE_BYTES, maxChildrenPerNode: MAX_CHILDREN_PER_NODE })
 }
 
-function compareStrings(a: string, b: string): number {
+export function compareStrings(a: string, b: string): number {
   if (a < b) return -1
   if (a > b) return 1
   return 0
 }
 
-/** The bytes ADR-32 hashes and signs: the content sorted by hash and then by file, with the metadata. */
+export function sortKeys(a: EntityContentItemReference, b: EntityContentItemReference): number {
+  return compareStrings(a.hash, b.hash) || compareStrings(a.file, b.file)
+}
+
 export function prepareADR32Data(contents: EntityContentItemReference[], metadata?: unknown): Uint8Array {
   // slice, not a spread: a value that is not an array throws here
-  const sorted = contents.slice().sort((a, b) => compareStrings(a.hash, b.hash) || compareStrings(a.file, b.file))
+  const sorted = contents.slice().sort(sortKeys)
   return textEncoder.encode(
     JSON.stringify({ content: sorted.map((entry) => ({ key: entry.file, hash: entry.hash })), metadata })
   )
 }
 
-/** The ADR-32 hash of several files, for hashes stored on-chain. */
 export async function calculateMultipleHashesADR32(
   contents: EntityContentItemReference[],
   metadata?: unknown
@@ -98,7 +98,6 @@ export async function calculateMultipleHashesADR32LegacyQmHash(
   return { data, hash: await hashV0(data) }
 }
 
-/** The ADR-62 metadata hash: keccak-256, in hex, of the JSON of the fields that `keys` names, in the order of `keys`. */
 export function keccak256Hash(metadata: Record<string, unknown>, keys: string[]): string {
   const picked = Object.fromEntries(
     keys.filter((key) => Object.hasOwn(metadata, key)).map((key) => [key, metadata[key]])

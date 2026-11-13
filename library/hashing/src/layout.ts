@@ -1,16 +1,11 @@
 import { sha256 } from '@noble/hashes/sha2.js'
 import { abytes } from '@noble/hashes/utils.js'
 import { DAG_PB_CODEC, RAW_CODEC, cidV1, cidV1Text, sha256Digest, varint } from './cid.ts'
+import type { HashableContent as Content } from './index.ts'
 
-// The same type as HashableContent in index.ts, which stays the one public declaration.
-type Content = AsyncGenerator<Uint8Array> | AsyncIterable<Uint8Array> | Uint8Array
-
-// The defaults of ipfs-unixfs-importer's balanced layout, which the content servers use:
-// fixed 262144-byte chunks, up to 174 children per node.
 export const CHUNK_SIZE_BYTES = 262_144
 export const MAX_CHILDREN_PER_NODE = 174
 
-// How many chunks are hashed at the same time. It also bounds the chunks a stream holds in memory.
 const MAX_CHUNKS_IN_FLIGHT = 16
 
 interface DagNode {
@@ -99,10 +94,11 @@ async function* chunksFromStream(content: AsyncIterable<Uint8Array>, chunkSize: 
       offset += chunkSize
       firstSize = chunkSize
     }
+    // Here no partial chunk is open: the bytes left start a new one.
     if (offset < incoming.length) {
-      partial = room(filled + incoming.length - offset)
-      partial.set(offset === 0 ? incoming : incoming.subarray(offset), filled)
-      filled += incoming.length - offset
+      filled = incoming.length - offset
+      partial = room(filled)
+      partial.set(offset === 0 ? incoming : incoming.subarray(offset))
     }
   }
 
@@ -165,7 +161,6 @@ async function hashChunks(
   maxChildrenPerNode: number
 ): Promise<string> {
   const builder = new BalancedTreeBuilder(maxChildrenPerNode)
-  // Digests start as the chunks arrive and join the tree in chunk order.
   const inFlight: Array<{ digest: Uint8Array | Promise<Uint8Array>; size: number }> = []
 
   for await (const chunk of chunks) {
@@ -180,7 +175,6 @@ async function hashChunks(
   return cidV1Text(builder.finalize().cid)
 }
 
-/** `hashV1` with the layout exposed, so tests reach deep trees with small inputs. Not exported by the package. */
 export async function hashV1WithLayout(
   content: Content,
   options: { chunkSize: number; maxChildrenPerNode: number }

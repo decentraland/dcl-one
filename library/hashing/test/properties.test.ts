@@ -140,12 +140,56 @@ it('V0 streaming crosses the collection limit without losing bytes', async () =>
   }
 })
 
+it('V0 uses one platform digest up to the collection limit and none above it', { skip: !globalThis.crypto?.subtle }, async () => {
+  const subtle = globalThis.crypto.subtle
+  const nativeDigest = subtle.digest
+  const digested: number[] = []
+  subtle.digest = (algorithm, data) => {
+    digested.push((data as Uint8Array).byteLength)
+    return nativeDigest.call(subtle, algorithm, data)
+  }
+  try {
+    const limit = 16 * 1024 * 1024
+    const data = bytes(limit + 1)
+    const atLimit = data.subarray(0, limit)
+    assert.equal(await hashV0(stream(atLimit, [1048576])), referenceV0(atLimit))
+    assert.deepEqual(digested, [limit])
+    assert.equal(await hashV0(stream(data, [1048576])), referenceV0(data))
+    assert.deepEqual(digested, [limit])
+  } finally { subtle.digest = nativeDigest }
+})
+
 it('hashes reused shared-memory stream chunks before advancing the producer', async () => {
   const data = bytes(3 * 262144 + 1)
   for (const sizes of [[262144], [300001], [4093, 262145]]) {
     assert.equal(await hashV1(stream(data, sizes, true, true)), referenceV1(data, 262144, 174))
     assert.equal(await hashV0(stream(data, sizes, true, true)), referenceV0(data))
   }
+})
+
+it('propagates native digest failures and closes the stream without retrying reused bytes', { skip: !globalThis.crypto?.subtle }, async () => {
+  const subtle = globalThis.crypto.subtle
+  const nativeDigest = subtle.digest
+  const failure = new Error('native digest failed')
+  let closed = false
+  let parts = 0
+  subtle.digest = () => Promise.reject(failure)
+  async function* reused() {
+    const buffer = new Uint8Array(262144)
+    try {
+      for (let i = 0; i < 32; i++) {
+        buffer.fill(i)
+        parts++
+        yield buffer
+      }
+    } finally { closed = true }
+  }
+  try {
+    await assert.rejects(hashV1(reused()), error => error === failure)
+    assert.equal(closed, true)
+    assert.ok(parts <= 16)
+    await assert.rejects(hashV0(new Uint8Array(4096)), error => error === failure)
+  } finally { subtle.digest = nativeDigest }
 })
 
 it('preserves chunk order and bounds concurrent native digests', { skip: !globalThis.crypto?.subtle }, async () => {

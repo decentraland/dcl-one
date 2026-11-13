@@ -95,8 +95,11 @@ def web(no_opt=False, engine_cache=None, shared_build=False):
            'RAYON_NUM_THREADS': os.environ.get('RAYON_NUM_THREADS', str(min(os.cpu_count() or 1, 16)))}
     revision = os.environ.get('GITHUB_SHA', 'local')
     with ThreadPoolExecutor(max_workers=2) as pool:
-        installations = [pool.submit(run, 'npm', 'ci', '--prefix', project, env=env)
-                         for project in ('react-web', 'react-web/bridge-scene')]
+        installations = [
+            pool.submit(run, 'npm', 'ci', '--prefix', 'react-web', env=env),
+            pool.submit(run, 'corepack', 'pnpm@11.27.0', '--dir', 'react-web/bridge-scene',
+                        'install', '--frozen-lockfile', '--ignore-scripts', env=env),
+        ]
         engine = prepare_engine(no_opt, engine_cache, shared_build, env)
         for installation in installations:
             installation.result()
@@ -113,7 +116,11 @@ def web(no_opt=False, engine_cache=None, shared_build=False):
     web_env = {**env, 'PUBLIC_URL': '', 'SCENE_BASE_URL': '../'}
     run('npm', 'run', 'build', '--prefix', 'react-web', env=web_env)
     run('npm', 'run', 'test', '--prefix', 'react-web', env=web_env)
-    run('npm', 'run', 'bundle', '--prefix', 'react-web/bridge-scene', env=web_env)
+    run('corepack', 'pnpm@11.27.0', '--dir', 'react-web/bridge-scene',
+        '--filter', '@dcl/hashing', 'build', env=web_env)
+    run('node', str(ROOT / 'tooling/check-local-hashing.mjs'),
+        str(SOURCE / 'react-web/bridge-scene'), env=web_env)
+    run('corepack', 'pnpm@11.27.0', '--dir', 'react-web/bridge-scene', 'run', 'bundle', env=web_env)
     output = APP / 'dist/web'
     if output.exists():
         shutil.rmtree(output)
