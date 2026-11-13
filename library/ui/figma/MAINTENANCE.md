@@ -8,7 +8,7 @@ Maintenance notes for the Figma pipeline in `library/ui/figma` (mapping rules, g
 | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `library/ui/figma/`                                 | Reads Figma data (snapshots), maps it, generates code. CLI `dcl-figma` (`pnpm figma <command>`) and MCP server (`pnpm figma:mcp`, `figma_*` tools).                                         |
 | `library/ui/figma/review/`                          | A gallery of the generated components, rendered live. It publishes no Figma imagery and does no visual comparison. Generated styling is changed through templates, never by editing output. |
-| `library/ui/components/`, `library/ui/foundations/` | The shared library: hand-written components (Button, Modal), promoted previews (`components/<Name>/`), their `*.figma.ts` mappings and the foundations.                                     |
+| `library/ui/components/`, `library/ui/foundations/` | The shared library: hand-written components (NavBar), their `*.figma.ts` mappings and the foundations.                                                                                      |
 | `library/ui/figma/agent-kit/`                       | The consumer skill kit (`implement-figma-design`).                                                                                                                                          |
 
 Figma file: PRUEBA-SKILL. Its key is private and never in a file; set `FIGMA_FILE_KEY` only to run the key guard's `key` check; mappings name it through the `<DCL_FIGMA_FILE>` placeholder. Page to category mapping lives in `library/ui/figma/figma.config.json`.
@@ -126,4 +126,4 @@ A component is flagged when the mapper cannot reproduce it confidently. Reasons 
 
 ## Preview output and local review
 
-New generated previews use custom React/browser primitives and co-located CSS Modules through `figma-module-runtime`. Existing snapshots and legacy previews are not automatically promoted. Keep pilot capture and output paths explicit with `--config`; paths resolve relative to that configuration. A forced state is a visual preview, not an implementation of keyboard, focus, click, validation or animation behavior. Real library components must implement those behaviors accessibly.
+New generated previews use custom React/browser primitives and co-located CSS Modules through `figma-module-runtime`. Previews, existing snapshots and legacy previews are not public components. Keep pilot capture and output paths explicit with `--config`; paths resolve relative to that configuration. A forced state is a visual preview, not an implementation of keyboard, focus, click, validation or animation behavior. Real library components must implement those behaviors accessibly.

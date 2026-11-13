@@ -260,6 +260,10 @@ pub enum RpcCall {
     ListPortables {
         response: RpcResultSender<Vec<SpawnResponse>>,
     },
+    /// The calling scene, if it is a portable experience, asks to be unloaded.
+    ExitPortable {
+        response: RpcResultSender<bool>,
+    },
     GetUserData {
         user: Option<String>,
         response: RpcResultSender<Result<SerializedProfile, ()>>,

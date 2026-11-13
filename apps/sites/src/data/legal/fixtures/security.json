@@ -1,0 +1,121 @@
+{
+  "source": "decentraland/sites@cfdfa1a51216f9dc90c5b148686a95e7ee9c2862",
+  "path": "/security",
+  "oracleA": {
+    "renderedFrom": "git archive cfdfa1a5, vite build and preview",
+    "capturedAt": "2026-11-04T02:33:12.566Z"
+  },
+  "oracleB": {
+    "url": "https://decentraland.org/security",
+    "bundle": "@dcl/sites/0.76.0",
+    "capturedAt": "2026-11-04T02:32:14.129Z"
+  },
+  "canonical": [
+    {
+      "tag": "a",
+      "href": "/brand",
+      "children": [
+        {
+          "text": "Logo and Name"
+        }
+      ]
+    },
+    {
+      "tag": "a",
+      "href": "/content",
+      "children": [
+        {
+          "text": "Content Policy"
+        }
+      ]
+    },
+    {
+      "tag": "a",
+      "href": "/ethics",
+      "children": [
+        {
+          "text": "Code of Ethics"
+        }
+      ]
+    },
+    {
+      "tag": "a",
+      "href": "/rewards-terms",
+      "children": [
+        {
+          "text": "Rewards Program"
+        }
+      ]
+    },
+    {
+      "tag": "a",
+      "href": "/credits-terms",
+      "children": [
+        {
+          "text": "Credits"
+        }
+      ]
+    },
+    {
+      "tag": "a",
+      "href": "/security",
+      "children": [
+        {
+          "text": "Security"
+        }
+      ]
+    },
+    {
+      "tag": "a",
+      "href": "/privacy",
+      "children": [
+        {
+          "text": "Privacy Policy"
+        }
+      ]
+    },
+    {
+      "tag": "a",
+      "href": "/referral-terms",
+      "children": [
+        {
+          "text": "Referral"
+        }
+      ]
+    },
+    {
+      "tag": "a",
+      "href": "/terms",
+      "children": [
+        {
+          "text": "Terms of Use"
+        }
+      ]
+    },
+    {
+      "tag": "h1",
+      "children": [
+        {
+          "text": "Vulnerability Disclosure Procedure"
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "At Decentraland, we take every measure necessary to ensure the security of the platform. If you are a security researcher and took a look at some of our code, contracts, or websites and found a vulnerability, please report it responsibly by emailing us at security@decentraland.org."
+        }
+      ]
+    },
+    {
+      "tag": "a",
+      "href": "mailto:security@decentraland.org",
+      "children": [
+        {
+          "text": "Report a security issue"
+        }
+      ]
+    }
+  ]
+}

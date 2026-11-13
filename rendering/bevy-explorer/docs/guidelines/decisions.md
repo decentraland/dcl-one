@@ -23,6 +23,29 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   at full resolution; `/screenshot` captures the window. The primary camera always keeps the
   depth prepass (the jump marker reads it); the normal prepass, and both on texture cameras, only
   while the avatar outline is on or the camera has SSAO (native only).
+- **Sun shadows keep bevy's default bias.** Unity's `DepthBias` (1.75 or 1.56 texels, times
+  URP's soft kernel radius 2.5) is a depth bias, not a normal bias, and carried over as bevy's
+  normal bias it offset each lookup about half a metre on Low at 60 m, dropping thin and contact
+  shadows. On the 1024 map, acne showed below a normal bias of 0.5 on Low and about 1 on High
+  (Genesis Plaza, low sun), so both qualities keep bevy's 0.02 m depth and 1.8 texel normal
+  bias.
+- **Sun shadow map stays at 4096.** Unity's main shadow resolution is 1024. Low's single
+  cascade spreads that over the whole shadow distance, and the bias is in texels, so past about
+  75 m on 1024 the avatar's shadow disappeared, and on 2048 it was a smudge at the feet. 4096
+  keeps it.
+- **Sun shadows block 0.65 of the sun.** Unity's sun shadow strength is 1, and its Trilight
+  ambient fills the shadow in. Our ambient is darker, so a full-strength shadow comes out far
+  darker than Unity's. `SHADOW_OPACITY` in `shadow_softening.wgsl` stays at 0.65 until Unity's
+  ambient lands, and the two get tuned together after that.
+- **Sun shadows hold a floor past the shadow distance.** URP fades the shadow out completely at
+  the shadow distance. We fade over the same squared-distance curve, but towards a partial
+  shadow (`CASCADE_FAR_SHADOW` in `shadow_softening.wgsl`) that holds past the distance, so the
+  worst-case change between near and far is smaller. Fading to no shadow looked worse about
+  half the time.
+- **Low shadows keep hardware 2x2 filtering.** Unity's soft shadows filter every quality. Low is
+  the default preset and the filter applies per view, spot shadows included, so Low keeps
+  bevy's `Hardware2x2` (one PCF sample) instead of `Gaussian` (nine) to stay cheap on weak GPUs
+  and web. High uses `Gaussian`.
 - **Jump marker reads the depth prepass.** Like Unity's projector, the blob (`BlobShadow.mat`)
   is projected onto the surface below, so it follows slopes, steps and ledges; a flat quad
   cut into rising ground. A depth bias does not fix that: it offsets the quad's depth test,
@@ -160,29 +183,81 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   the card, like the card's other actions, instead of as a toast. unity-explorer's variant of the
   PLACES tab button for owners and moderators is not ported.
   On the card's Members tab, a row opens the member's passport and carries unity-explorer's
-  friendship buttons; its ⋮ opens unity-explorer's member menu: View Profile, Chat, the owner's
-  and moderators' actions (Demote or Promote Moderator, Make Community Owner, Remove Member, Ban)
-  with unity-explorer's rules and confirmations, then Block and Report. Call, Gift and Invite to
-  Community are left out until private calls, gifting and invites exist (unity-explorer shows
-  Gift only behind its gifting flag). Chat is always offered in-world: unity-explorer greys it
+  friendship buttons; its ⋮ opens unity-explorer's member menu: View Profile, Chat, Call, the
+  owner's and moderators' actions (Demote or Promote Moderator, Make Community Owner, Remove
+  Member, Ban) with unity-explorer's rules and confirmations, then Block and Report, then Invite
+  to Community. Gift is left out until gifting exists (unity-explorer shows it only behind its
+  gifting flag). Chat is always offered in-world: unity-explorer greys it
   only while its chat area is down. unity-explorer's row shows no presence, so neither does
   this one; "N Mutual Friends" is not shown because no members API returns the count. A failed
   action shows its message on the card instead of as a toast, and the tab lists the first 100
   members without unity-explorer's paging.
   The Communities page's browse grid is unity-explorer's: 20 communities a page, the next read as
   the grid's end comes into view, the name searched on the server a second after typing stops (at
-  once on Enter), and each card's Public or Private, Join, Request to Join or Cancel, its
-  description on hover, and the first three of the user's friends in it. Whether a join request is
+  once on Enter), and each card's Public or Private, Join, Request to Join or Request Sent (Cancel
+  Request on hover, on the card too), its description on hover, and the first three of the user's
+  friends in it. A sent or cancelled request shows at once, before the community is read again,
+  and a failed join or request from the grid is toasted. Whether a join request is
   pending comes from the user's own join requests, read when the grid's first page loads and when a
   closed community's card opens, and kept from the request's answer, as unity-explorer's. The
   card always shows its member count; unity-explorer shows it only behind its members-counter
-  flag. The Voice
-  Streaming section is left out until community voice exists, and a card offers no accept or
-  reject for an invite until the invites task. A failed read shows unity-explorer's error toast
+  flag. Live streams show as a card's LIVE chip and the grid's Streaming filter, not as
+  unity-explorer's separate Voice Streaming section (for an invited card, see Community invites
+  below). A failed read shows unity-explorer's error toast
   and leaves the grid empty, with no count, where unity-explorer leaves its spinner running. A
   card shows no spinner while its join or request runs. My Communities is every membership, read
   apart from the grid; when that read fails the list stays as it was and the page asks again the
   next time it opens, without unity-explorer's "error loading My Communities" toast.
+- **Community invites and join requests.** As unity-explorer: the browser's Invites & Requests
+  opens Invites, Requests Received (only for a user who owns or moderates a community; one group
+  per community, each request with ACCEPT, REJECT and the member menu without owner actions) and
+  Requests Sent, each titled with its count, and "No pending invites or requests." when all are
+  empty. Its counter is the invites plus the requests received, and Requests Received's title
+  counts the same totals. Unlike unity-explorer, opening the page reads only the counter (each
+  read's total, one row asked for); the section is read in full when it opens, and again after
+  any answer or cancel and when an invite or request notification arrives while the page is open
+  (the counter alone until the section has been opened). A section that cannot be read says so,
+  with RETRY. Only private communities are read for join requests, a
+  community's first 100 (the service's page cap); one whose read fails is left out, and the list
+  fails only when none could be read. A card the user is invited to offers Accept and Reject
+  (asked first) instead of Join in the grid, and ACCEPT INVITE and REJECT INVITE on the community
+  card. The card's Members tab gives owners and moderators MEMBERS, BANNED (with UNBAN), JOIN
+  REQUESTS (private communities, with its counter) and INVITED (with CANCEL). Invite to Community,
+  in the user menus, the member menus and the passport but not the voice panel's, lists the
+  communities the user may invite the person to, is hidden when there are none, and is read again
+  after an invite. It opens beside its row, on the left or upward where there is no room, and from
+  the keyboard (a keyboard click on the row focuses its first community, Tab moves through them);
+  Cancel closes it before the menu around it. Clicking an invite, a request received or a request accepted notification opens the
+  community's card, and every opening of a card reads its community again, so an invite or an
+  accepted request that arrived since shows. An accepted request also reads My Communities, the
+  grid and that open card again. Call in the member menu closes the card first, as Chat does.
+  Answers and an unban are toasted when they fail. A request takes one answer at a time, released
+  when that answer settles, and a request answered here never comes back from an older read.
+  Differences: a Members section that cannot be read says so, with RETRY (unity-explorer keeps
+  what it showed and tries again on the next read, so a first read that fails looks empty); each section reads its first 100 rows without paging, as the Members list does;
+  the section shows a spinner, not unity-explorer's skeleton cards, while it loads; and a row's
+  buttons are disabled, with no spinner, while its answer runs.
+- **One answer to "banned or blocked?".** The `ban_block` crate is a facade: it reads the
+  social client's block sets and comms' scene admission and scene-room lists through one
+  `BanBlock` system parameter and owns only the platform-ban check, where unity-explorer keeps
+  `IUserBlockingCache`, `ApplicationBlocklistGuard` and `RoomMetadataCurrentScene` apart. A
+  blocked pair is blocked in either direction, as there. The last block sets stand across a
+  social reconnect until the next snapshot (unity-explorer also resets only on the next
+  `GetBlockingStatus`). The platform ban is read from the gatekeeper's public, unsigned
+  `GET /users/{address}/bans` (unity-explorer signs the same request, which the endpoint does
+  not need), on sign-in, on a realm change, on `/ban_block_refresh` and, as a periodic chance to
+  notice a ban while the client idles, every 300 s (unity-explorer checks at start-up only; no
+  push reaches an idle client here, and the period promises no freshness, as a failed check
+  fails open, as there, and the state says so instead of guessing); a ban whose record the
+  gatekeeper withholds (a device match) is still a ban. The endpoint matches the address only,
+  so a device ban shows only as a platform-scoped refusal of the scene adapter: that refusal
+  marks the platform ban, and the endpoint's "not banned" does not lift it while the refusal
+  stands. The local user's scene ban is the refusal of the
+  scene adapter, read from its status and body (the gatekeeper's 403 for a platform or scene
+  ban, the worlds server's 401 for a platform or world ban), where unity-explorer treats any 401
+  or 403 as forbidden access. The player is not moved out of a scene that refused them, as
+  there. Other players' scene bans and
+  the admins come from the room's metadata and count only while the room is connected, as there.
 - **Pulse only.** unity-explorer falls back to LiveKit-only after five failed start-up attempts,
   through dual-transport proxies and LiveKit broadcast targeting. Here Pulse is the only
   avatar-state transport and none of that exists, so a retryable failure is retried without limit.
@@ -263,6 +338,45 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   unity-explorer scales the scroll delta by 50 everywhere but macOS, per frame; here a wheel line
   (16 pixels of a trackpad's scroll, on every platform including web) zooms as Unity's 60 fps frame
   would, and a held bumper zooms at Unity's per-second rate, so neither depends on the frame rate.
+- **Smart wearable permissions are asked on use, not at equip.** unity-explorer asks once, when a
+  smart wearable is equipped (or at login for one already worn), to allow the permissions its
+  `requiredPermissions` declares, and refuses what it did not declare. Here a smart wearable is a
+  portable like any other: each restricted action goes through the stored rules and the per-use
+  prompt, which shows what is being done (the URL to open, the realm to change to). So
+  `requiredPermissions` is ignored, and nothing is asked before the scene starts. On native,
+  `fetch` and WebSocket are asked per use like the rest (`dcl_deno`); on web they are not
+  permission-gated for any scene (scene code can reach the page's raw `fetch`), so a
+  declared-permission check on them would be bypassable.
+- **`portableExperiences: disabled` pauses every listed portable.** unity-explorer unloads smart
+  wearables while the player stands in a scene that disables portable experiences and loads them
+  again on leaving. Here every portable the player can see (not startup ones, not the HUD's scene)
+  is paused through `RendererSceneContext.blocked` and its UI is hidden, so it keeps its state
+  across the crossing and nothing has to remember a portable that is not running.
+
+- **Donate is on `/play` only, and for web3 sign-ins only.** unity-explorer offers it to any
+  signed-in player through its wallet. Here only the Sites `/play` web shell holds a wallet that can
+  sign a transfer, so the Explorer's own HUD shows no Donate. MANA is shown to web3 wallet
+  sign-ins only (AGENTS.md), so an in-app (managed) sign-in sees no Donate either, and the shell
+  refuses one that asks. See [the ADR](../../../../docs/adr/2026-11-12-play-shell-signs-tips.md).
+- **The Donate panel is drawn by the web shell, over the app.** The amount is confirmed where the
+  wallet is, and the shell resolves the creator itself; the HUD names the place only.
+- **An unclear tip outcome is shown as processing, with no Try again.** unity-explorer's error
+  view always offers Try again. Here a failure that may have reached the chain (the relay's answer
+  lost or a 5xx after signing, a transaction not yet mined) shows the tip as processing and watches
+  it; Try again appears only after a clear failure (the wallet declined, nothing was signed, the
+  transaction reverted), so a player never tips twice. A tip still unconfirmed after 30 minutes
+  stays "still being processed" with no retry, and opening Donate again shows it until it settles.
+  There is no fallback to a transaction from the wallet: the relay's refusal fails the tip, and
+  trying again signs the same nonce (pinned), so at most one can land; once that nonce is used, the
+  next send signs nothing and watches the failed attempts until one is seen mined.
+- **The MANA price comes from the deployment.** unity-explorer reads the MANA/USD rate from
+  CoinGecko; the panel reads the catalyst's price service (`/price/api/v3/simple/price`), which
+  answers in the same shape.
+- **The creator is the scene's deployer.** The places service's `creator_address`, which the tip
+  goes to, is the deployer of the place's scene here.
+- **Donate's buttons.** The minimap's uses unity-explorer's tip icon, beside the collapse button;
+  the map's place panel has a DONATE text button under JUMP IN, whose art is not ported. The fourth
+  amount choice reads OTHER, and the minimum reads "Tips must be ≥ 1 MANA".
 
 ## Deliberate choices that look like mistakes
 

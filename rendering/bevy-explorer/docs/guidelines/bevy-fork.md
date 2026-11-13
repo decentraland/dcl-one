@@ -133,6 +133,33 @@ across workers:
   Genesis Plaza unload spent about a second capturing them.
 - `SceneSpawner` forgets child instances when their parent is gone, and `unregister_instance`
   cancels a spawn that hasn't happened yet.
+- `SceneSpawner::set_spawn_deadline`: queued `Scene` instances are written an entity at a time,
+  parents before children, one instance after another in request order, until the deadline. The
+  rest waits for the next run, and each run writes at least one entity. `None`, the default,
+  spawns them whole with stock bevy's `write_to_world_with`; dynamic scenes and `spawn_sync`
+  always do.
+  - The progress is on the entities: each one not written yet carries a sparse-set marker, and a
+    second, *ready* marker once its parent is written, the top-level ones first. Bevy shows a
+    child whose parent has no visibility yet, so a child is never written before its parent.
+  - A part-written instance's top-level entities are attached to the parent and kept
+    `Visibility::Hidden` until it is complete; a `HiddenSceneRoot` component holds their own
+    visibility, restored then unless something changed it meanwhile (none becomes `Inherited`).
+    A descendant with an explicit `Visibility::Visible` still shows; glTF nodes are `Inherited`.
+  - Its parent despawned, `despawn_instance` or `unregister_instance` despawn what was written,
+    and drop the instance if it is still queued.
+  - A scene replaced or removed mid-spawn starts the instance over. When none is ready although
+    some are unwritten, those whose parent was despawned go too and the instance completes with
+    what is left (its ready event fires); those the hierarchy does not reach are written in
+    slices. An instance that fails to write, sliced or whole, is despawned and forgotten.
+  - A part-written instance is finished in the world it started in: continuing it, despawning
+    it or running `scene_spawner_system` on another world meanwhile panics before anything
+    changes.
+  - `spawn_progress` reports the queue and the instance being written, for diagnostics.
+  - `spawn_as_child_hidden` keeps an instance hidden after it has spawned, until
+    `reveal_instance_sync`.
+  - The explorer sets the deadline each frame (`scene_runner::scene_spawn_slice`) and spawns glTF
+    containers hidden until `update_ready_gltfs` has processed them, a node at a time within the
+    same slice.
 - `mark_dirty_trees` keys its early-out on this run's tick, so transform propagation can run
   twice per frame (the explorer's early pass plus bevy's own).
 - `GlobalTransform::from(Transform)` and `mul_transform` sanitise the affine: a zero scale

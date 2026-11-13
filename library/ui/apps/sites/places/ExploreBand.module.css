@@ -1,0 +1,322 @@
+/* Full-bleed band: the page gradient darkened by a 20% black overlay, as the Figma's Explore section. */
+.band {
+  width: 100%;
+  margin-top: var(--dcl-space-48);
+  padding: var(--dcl-space-48) 0 var(--dcl-space-64);
+  background: var(--dcl-transparencies-black-20);
+  scroll-margin-top: 72px;
+}
+
+@media (min-width: 1024px) {
+  .band {
+    scroll-margin-top: 100px;
+  }
+}
+
+.content {
+  padding: 0 var(--dcl-space-16);
+}
+
+@media (min-width: 768px) {
+  .content {
+    padding: 0 var(--dcl-space-32);
+  }
+}
+
+/* Desktop: one row, sections left and search plus category right; phones stack them. */
+.toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--dcl-space-16);
+  margin-bottom: var(--dcl-space-24);
+}
+
+@media (min-width: 1024px) {
+  .toolbar {
+    flex-flow: row wrap;
+    align-items: center;
+  }
+}
+
+.tabs {
+  display: flex;
+  align-items: center;
+  gap: var(--dcl-space-16);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.tabs::-webkit-scrollbar {
+  display: none;
+}
+
+@media (min-width: 1024px) {
+  .tabs {
+    flex: none;
+    overflow-x: visible;
+  }
+}
+
+/* Source's "Experiences tabs" pill: 15px semibold caps at 1920, scaled with the viewport. */
+.tab {
+  composes: text6c6162656c2f736d2d63617073 from '../../../foundations/typography/text-styles.module.css';
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: clamp(6px, 0.417vw, 8px);
+  padding: clamp(6px, 0.417vw, 8px) clamp(12px, 0.833vw, 16px);
+  border: 0;
+  border-radius: var(--dcl-radius-full);
+  background: var(--dcl-transparencies-white-10);
+  color: var(--dcl-neutrals-snow);
+  cursor: pointer;
+  font-size: clamp(12px, 0.781vw, 15px);
+  letter-spacing: 0.46px;
+  line-height: 1.6;
+  white-space: nowrap;
+  transition: background-color 0.25s ease;
+}
+
+.tab:hover {
+  background: color-mix(in srgb, var(--dcl-neutrals-white) 16%, transparent);
+}
+
+.tabActive,
+.tabActive:hover {
+  background: var(--dcl-neutrals-snow);
+  color: var(--dcl-neutrals-shadow);
+}
+
+.tabIcon {
+  width: clamp(19px, 1.25vw, 24px);
+  height: clamp(19px, 1.25vw, 24px);
+}
+
+.tab:focus-visible,
+.filterButton:focus-visible,
+.chip:focus-visible,
+.drawerClose:focus-visible,
+.select:focus-visible {
+  outline: 2px solid var(--dcl-neutrals-snow);
+  outline-offset: 2px;
+}
+
+.controls {
+  display: flex;
+  align-items: center;
+  gap: var(--dcl-space-16);
+  width: 100%;
+}
+
+@media (min-width: 1024px) {
+  .controls {
+    flex: 1;
+    justify-content: flex-end;
+    width: auto;
+  }
+}
+
+.search {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+@media (min-width: 1024px) {
+  .search {
+    flex: 0 1 auto;
+    width: clamp(340px, 27.083vw, 520px);
+  }
+}
+
+.searchIcon {
+  position: absolute;
+  top: 50%;
+  left: var(--dcl-space-16);
+  width: clamp(19px, 1.25vw, 24px);
+  height: clamp(19px, 1.25vw, 24px);
+  transform: translateY(-50%);
+  color: var(--dcl-neutrals-snow);
+  pointer-events: none;
+}
+
+.searchInput {
+  composes: text626f64792f6d64 from '../../../foundations/typography/text-styles.module.css';
+  box-sizing: border-box;
+  width: 100%;
+  height: clamp(38px, 2.396vw, 46px);
+  padding: 0 var(--dcl-space-16) 0
+    calc(var(--dcl-space-16) + clamp(19px, 1.25vw, 24px) + var(--dcl-space-8));
+  border: 0.5px solid var(--dcl-neutrals-silver);
+  border-radius: var(--dcl-space-8);
+  background: var(--dcl-transparencies-black-20);
+  color: var(--dcl-neutrals-snow);
+  font-size: clamp(14px, 0.885vw, 17px);
+  letter-spacing: -0.2px;
+  appearance: none;
+}
+
+@media (min-width: 1024px) {
+  .searchInput {
+    border-radius: var(--dcl-radius-full);
+  }
+}
+
+.searchInput::placeholder {
+  color: var(--dcl-neutrals-snow);
+  opacity: 0.8;
+}
+
+.searchInput:hover {
+  border-color: var(--dcl-neutrals-snow);
+}
+
+.searchInput:focus {
+  border: 1px solid var(--dcl-action-primary);
+  outline: none;
+}
+
+.searchInput:-webkit-autofill {
+  -webkit-text-fill-color: var(--dcl-neutrals-snow);
+  box-shadow: 0 0 0 1000px var(--dcl-transparencies-black-20) inset;
+}
+
+.selectWrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.select {
+  composes: text626f64792f6d64 from '../../../foundations/typography/text-styles.module.css';
+  width: 100%;
+  min-width: clamp(120px, 7.813vw, 150px);
+  height: clamp(36px, 2.292vw, 44px);
+  padding: 0 clamp(32px, 2.083vw, 40px) 0 clamp(18px, 1.25vw, 24px);
+  border: 0;
+  border-radius: var(--dcl-radius-sm);
+  background: var(--dcl-transparencies-black-40);
+  color: var(--dcl-neutrals-pearl);
+  cursor: pointer;
+  font-size: clamp(13px, 0.833vw, 16px);
+  appearance: none;
+}
+
+.select option {
+  background: var(--dcl-neutrals-charcoal);
+  color: var(--dcl-neutrals-snow);
+}
+
+.selectIcon {
+  position: absolute;
+  top: 50%;
+  right: var(--dcl-space-12);
+  transform: translateY(-50%);
+  color: var(--dcl-neutrals-pearl);
+  pointer-events: none;
+}
+
+.desktopOnly {
+  display: none;
+}
+
+/* Phones open the filter drawer instead (Figma 2019:76192: 40×40, 8px radius). */
+.filterButton {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--dcl-radius-sm);
+  background: var(--dcl-transparencies-black-40);
+  color: var(--dcl-neutrals-snow);
+  cursor: pointer;
+}
+
+.filterButton:hover {
+  background: var(--dcl-transparencies-black-60);
+}
+
+@media (min-width: 1024px) {
+  .desktopOnly {
+    display: inline-flex;
+  }
+
+  .filterButton,
+  .chips {
+    display: none;
+  }
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--dcl-space-8);
+  margin-bottom: var(--dcl-space-16);
+}
+
+.chip {
+  composes: text6c6162656c2f736d2d63617073 from '../../../foundations/typography/text-styles.module.css';
+  display: inline-flex;
+  align-items: center;
+  gap: var(--dcl-space-8);
+  height: 32px;
+  padding: var(--dcl-space-4) var(--dcl-space-12);
+  border: 0;
+  border-radius: var(--dcl-radius-full);
+  background: var(--dcl-neutrals-snow);
+  color: var(--dcl-neutrals-shadow);
+  cursor: pointer;
+  font-size: 15px;
+  text-transform: none;
+}
+
+.chip:hover {
+  background: var(--dcl-neutrals-pearl);
+}
+
+.drawerHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.drawerTitle {
+  composes: text68656164696e672f34 from '../../../foundations/typography/text-styles.module.css';
+  margin: 0;
+}
+
+.drawerClose {
+  display: grid;
+  place-items: center;
+  padding: var(--dcl-space-4);
+  border: 0;
+  background: none;
+  color: var(--dcl-neutrals-snow);
+  cursor: pointer;
+}
+
+.drawerSection {
+  display: flex;
+  flex-direction: column;
+  gap: var(--dcl-space-8);
+}
+
+.drawerLabel {
+  composes: text6c6162656c2f6d642d63617073 from '../../../foundations/typography/text-styles.module.css';
+  color: var(--dcl-neutrals-pearl);
+}
+
+.drawerSection .selectWrap {
+  display: flex;
+}
+
+.visuallyHidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}

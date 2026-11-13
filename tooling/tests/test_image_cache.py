@@ -133,6 +133,30 @@ class WorkflowSetupTest(unittest.TestCase):
         self.assertIn('lfs: true', self.build[self.checkout:])
         self.assertNotIn('tooling/', before)
 
+    def test_sites_source_archive_keeps_public_ui_imports_without_design_tooling(self):
+        source = (Path(__file__).parents[2] / 'infra/packages/sites.nix').read_text()
+        archive = source.split('  src = lib.fileset.toSource {', 1)[1].split('  # A build', 1)[0]
+        roots = re.findall(r'root \+ /([^\s)]+)', archive)
+
+        def included(path):
+            return any(path == root or path.startswith(root + '/') for root in roots)
+
+        for path in ('library/ui/index.ts',
+                     'library/ui/css-modules.d.ts',
+                     'library/ui/components/NavBar/NavBar.tsx',
+                     'library/ui/components/NavBar/NavBar.module.css',
+                     'library/ui/components/Button/Button.tsx',
+                     'library/ui/components/Button/Button.module.css',
+                     'library/ui/apps/sites/chrome/SitesNotificationsDialog.tsx',
+                     'library/ui/foundations/foundations.css'):
+            with self.subTest(path=path):
+                self.assertTrue(included(path), f'Sites archive omits browser input: {path}')
+        for path in ('library/ui/figma/src/cli.ts',
+                     'library/ui/figma/review/src/main.tsx',
+                     'library/ui/.agent-work/private.txt'):
+            with self.subTest(path=path):
+                self.assertFalse(included(path), f'Sites archive includes tooling/private input: {path}')
+
     def test_sites_media_guard_rejects_pointer_text_and_accepts_materialized_binary(self):
         source = (Path(__file__).parents[2] / 'infra/packages/sites.nix').read_text()
         build = source.split("  buildPhase = ''", 1)[1]

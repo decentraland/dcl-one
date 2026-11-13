@@ -80,7 +80,7 @@ export class FakeDriver implements LoginDriver {
   send(msg: PageToScene): void {
     this.sent.push(msg)
     const welcome = this.welcome
-    if (msg.kind === 'getWelcome' && welcome != null) queueMicrotask(() => this.emit({ kind: 'welcome', ...welcome }))
+    if (msg.kind === 'getWelcome' && welcome != null) queueMicrotask(() => this.emit({ kind: 'welcome', ...welcome, ask: msg.ask }))
   }
   on(fn: (msg: SceneToPage) => void): () => void {
     this.listeners.add(fn)
@@ -199,6 +199,7 @@ export function fakeSession(): EngineSession {
     pickDestination: vi.fn(),
     welcome: { terms: false, newProfile: false, pending: false, saving: false, error: null, reroll: vi.fn(), showLook: vi.fn(), preloadLook: vi.fn(), lookPending: false, lastLook: null, expectLook: vi.fn(), accept: vi.fn(), openLegal: vi.fn() },
     sceneLoading: null,
+    connectivity: { state: null, retry: vi.fn() },
     loadingProgress: 0,
     travelError: null,
     dismissTravelError: vi.fn(),
@@ -224,9 +225,9 @@ export function fakeSession(): EngineSession {
     skybox: { open: false, toggle: vi.fn(), hours: 10, progressing: true, setHours: vi.fn(), setProgressing: vi.fn() },
     emotes: { list: [], open: false, toggle: vi.fn(), play: vi.fn(), equip: vi.fn() },
     backpack: { list: [], total: 0, loading: false, query: vi.fn(), equipped: [], setColor: vi.fn(), open: false, toggle: vi.fn(), equip: vi.fn(), saveError: null, retrySave: vi.fn(), revertSave: vi.fn(), preview: vi.fn(), focus: vi.fn(), stage: vi.fn(), emote: vi.fn(), rotate: vi.fn(), zoom: vi.fn(), outfitsLoaded: true, forceRender: [], setForceRender: vi.fn(), outfits: [], outfitSlots: 5, saveOutfit: vi.fn(), deleteOutfit: vi.fn(), equipOutfit: vi.fn(), outfitHistory: { canUndo: false, canRedo: false, rolling: false }, randomizeOutfit: vi.fn(), undoOutfit: vi.fn(), redoOutfit: vi.fn() },
-    communities: { list: [], browse: { search: '', items: [], total: 0, loading: false, loadingMore: false }, loadBrowse: vi.fn(), loadMoreBrowse: vi.fn(), open: false, toggle: vi.fn(), create: vi.fn(), update: vi.fn(), remove: vi.fn(), deleted: null, save: null, clearSave: vi.fn(), placeOptions: null, loadPlaceOptions: vi.fn(), clearPlaceOptions: vi.fn(), removePlace: vi.fn(), memberAction: vi.fn(), join: vi.fn(), requestToJoin: vi.fn(), cancelRequest: vi.fn(), leave: vi.fn(), error: null, detail: null, loadDetail: vi.fn(), cards: {}, fetch: vi.fn() },
+    communities: { list: [], browse: { search: '', items: [], total: 0, loading: false, loadingMore: false }, loadBrowse: vi.fn(), loadMoreBrowse: vi.fn(), open: false, toggle: vi.fn(), create: vi.fn(), update: vi.fn(), remove: vi.fn(), deleted: null, save: null, clearSave: vi.fn(), placeOptions: null, loadPlaceOptions: vi.fn(), clearPlaceOptions: vi.fn(), removePlace: vi.fn(), memberAction: vi.fn(), join: vi.fn(), requestToJoin: vi.fn(), cancelRequest: vi.fn(), leave: vi.fn(), error: null, detail: null, loadDetail: vi.fn(), cards: {}, fetch: vi.fn(), invites: null, loadInvites: vi.fn(), pendingCount: null, loadInvitesCount: vi.fn(), manageRequest: vi.fn(), memberSections: {}, cardOpen: vi.fn(), loadMemberSection: vi.fn(), invitable: null, loadInvitable: vi.fn(), invite: vi.fn(), unban: vi.fn() },
     map: { x: 0, y: 0, open: false, toggle: vi.fn(), teleport: vi.fn(), changeRealm: vi.fn(), teleportToPlace: vi.fn() },
-    minimap: { pose: { current: { x: 0, z: 0, yaw: 0, camYaw: 0 } }, satelliteView: GENESIS_SATELLITE_VIEW, sceneTitle: '', setConfig: vi.fn() },
+    minimap: { pose: { current: { x: 0, z: 0, yaw: 0, camYaw: 0 } }, satelliteView: GENESIS_SATELLITE_VIEW, sceneTitle: '', donatePlace: null, setConfig: vi.fn() },
     places: { open: false, toggle: vi.fn() },
     events: { open: false, toggle: vi.fn() },
     shop: { open: false, toggle: vi.fn() },
@@ -234,6 +235,7 @@ export function fakeSession(): EngineSession {
     photoMode: { snapshot: null, active: false, capture: null, set: vi.fn(), take: vi.fn() },
     permissions: { pending: [], visit: [], triggered: [], unseenDenied: 0, markSeen: vi.fn(), rules: null, loadRules: vi.fn(), setRule: vi.fn(), clearRule: vi.fn(), resetDefaults: vi.fn(), resolve: vi.fn() },
     worldPassword: { pending: null, resolve: vi.fn() },
+    portables: { list: [], stop: vi.fn(), restart: vi.fn() },
     create: { open: false, toggle: vi.fn(), show: vi.fn() },
     editor: { mode: 'off', setMode: vi.fn() },
     mic: { enabled: false, available: true, toggle: vi.fn() },

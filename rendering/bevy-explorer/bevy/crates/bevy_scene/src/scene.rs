@@ -11,7 +11,7 @@ use bevy_ecs::{
     relationship::RelationshipHookMode,
     world::World,
 };
-use bevy_reflect::TypePath;
+use bevy_reflect::{TypePath, TypeRegistry};
 
 /// A composition of [`World`] objects.
 ///
@@ -63,8 +63,33 @@ impl Scene {
         entity_map: &mut EntityHashMap<Entity>,
         type_registry: &AppTypeRegistry,
     ) -> Result<(), SceneSpawnError> {
-        let type_registry = type_registry.read();
+        self.write_to_world_with_types(world, entity_map, &type_registry.read())
+    }
 
+    /// [`Self::write_to_world_with`], with the type registry already read.
+    pub(crate) fn write_to_world_with_types(
+        &self,
+        world: &mut World,
+        entity_map: &mut EntityHashMap<Entity>,
+        type_registry: &TypeRegistry,
+    ) -> Result<(), SceneSpawnError> {
+        self.write_resources_to_world(world, type_registry)?;
+        self.allocate_entities(world, entity_map);
+        for archetype in self.world.archetypes().iter() {
+            for scene_entity in archetype.entities() {
+                self.write_entity_to_world(world, scene_entity.id(), entity_map, type_registry)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Copies the scene's resources into `world`.
+    pub(crate) fn write_resources_to_world(
+        &self,
+        world: &mut World,
+        type_registry: &TypeRegistry,
+    ) -> Result<(), SceneSpawnError> {
         let self_dqf_id = self
             .world
             .components()
@@ -100,70 +125,92 @@ impl Scene {
                     type_path: registration.type_info().type_path().to_string(),
                 }
             })?;
-            reflect_resource.copy(&self.world, world, &type_registry);
+            reflect_resource.copy(&self.world, world, type_registry);
         }
 
-        // Ensure that all scene entities have been allocated in the destination
-        // world before handling components that may contain references that need mapping.
+        Ok(())
+    }
+
+    /// Ensure that all scene entities have been allocated in the destination
+    /// world before handling components that may contain references that need mapping.
+    pub(crate) fn allocate_entities(
+        &self,
+        world: &mut World,
+        entity_map: &mut EntityHashMap<Entity>,
+    ) {
+        self.allocate_entities_with(world, entity_map, |world, _| world.spawn_empty().id());
+    }
+
+    /// [`Self::allocate_entities`], spawning each with `spawn`, given its scene entity.
+    pub(crate) fn allocate_entities_with(
+        &self,
+        world: &mut World,
+        entity_map: &mut EntityHashMap<Entity>,
+        mut spawn: impl FnMut(&mut World, Entity) -> Entity,
+    ) {
         for archetype in self.world.archetypes().iter() {
             for scene_entity in archetype.entities() {
                 entity_map
                     .entry(scene_entity.id())
-                    .or_insert_with(|| world.spawn_empty().id());
+                    .or_insert_with(|| spawn(world, scene_entity.id()));
             }
         }
+    }
 
-        for archetype in self.world.archetypes().iter() {
-            for scene_entity in archetype.entities() {
-                let entity = *entity_map
-                    .get(&scene_entity.id())
-                    .expect("should have previously spawned an entity");
+    /// Writes the components of one scene entity onto its entity in `world`. Every scene entity
+    /// must be allocated in `entity_map` first ([`Self::allocate_entities`]).
+    pub(crate) fn write_entity_to_world(
+        &self,
+        world: &mut World,
+        scene_entity: Entity,
+        entity_map: &mut EntityHashMap<Entity>,
+        type_registry: &TypeRegistry,
+    ) -> Result<(), SceneSpawnError> {
+        let entity = *entity_map
+            .get(&scene_entity)
+            .expect("should have previously spawned an entity");
+        let source = self.world.entity(scene_entity);
 
-                for component_id in archetype.components() {
-                    let component_info = self
-                        .world
-                        .components()
-                        .get_info(component_id)
-                        .expect("component_ids in archetypes should have ComponentInfo");
+        for component_id in source.archetype().components() {
+            let component_info = self
+                .world
+                .components()
+                .get_info(component_id)
+                .expect("component_ids in archetypes should have ComponentInfo");
 
-                    if *component_info.clone_behavior() == ComponentCloneBehavior::Ignore {
-                        continue;
-                    }
-
-                    let registration = type_registry
-                        .get(component_info.type_id().unwrap())
-                        .ok_or_else(|| SceneSpawnError::UnregisteredType {
-                            std_type_name: component_info.name().to_string(),
-                        })?;
-                    let reflect_component =
-                        registration.data::<ReflectComponent>().ok_or_else(|| {
-                            SceneSpawnError::UnregisteredComponent {
-                                type_path: registration.type_info().type_path().to_string(),
-                            }
-                        })?;
-
-                    let Some(component) = reflect_component
-                        .reflect(self.world.entity(scene_entity.id()))
-                        .map(|component| {
-                            clone_reflect_value(component.as_partial_reflect(), registration)
-                        })
-                    else {
-                        continue;
-                    };
-
-                    // If this component references entities in the scene,
-                    // update them to the entities in the world.
-                    SceneEntityMapper::world_scope(entity_map, world, |world, mapper| {
-                        reflect_component.apply_or_insert_mapped(
-                            &mut world.entity_mut(entity),
-                            component.as_partial_reflect(),
-                            &type_registry,
-                            mapper,
-                            RelationshipHookMode::Skip,
-                        );
-                    });
-                }
+            if *component_info.clone_behavior() == ComponentCloneBehavior::Ignore {
+                continue;
             }
+
+            let registration = type_registry
+                .get(component_info.type_id().unwrap())
+                .ok_or_else(|| SceneSpawnError::UnregisteredType {
+                    std_type_name: component_info.name().to_string(),
+                })?;
+            let reflect_component = registration.data::<ReflectComponent>().ok_or_else(|| {
+                SceneSpawnError::UnregisteredComponent {
+                    type_path: registration.type_info().type_path().to_string(),
+                }
+            })?;
+
+            let Some(component) = reflect_component
+                .reflect(source)
+                .map(|component| clone_reflect_value(component.as_partial_reflect(), registration))
+            else {
+                continue;
+            };
+
+            // If this component references entities in the scene,
+            // update them to the entities in the world.
+            SceneEntityMapper::world_scope(entity_map, world, |world, mapper| {
+                reflect_component.apply_or_insert_mapped(
+                    &mut world.entity_mut(entity),
+                    component.as_partial_reflect(),
+                    type_registry,
+                    mapper,
+                    RelationshipHookMode::Skip,
+                );
+            });
         }
 
         Ok(())

@@ -13,6 +13,8 @@ import {
   type Community,
   type CommunityChannel,
   type CommunityMember,
+  type CommunityMemberSection,
+  type CommunityRequestMember,
   type DmHistoryEntry,
   type Emote,
   type Envelope,
@@ -32,7 +34,7 @@ import {
 } from './protocol'
 import { applyProfileEdit } from './profileEdit'
 import { mentionName } from './mention'
-import type { Color3 } from './generated/index'
+import type { Color3, PortableInfo, PortableState } from './generated/index'
 import { GENESIS_SATELLITE_VIEW } from '../features/map/atlas'
 import { DEFAULT_REALM } from '@hud-host'
 
@@ -134,16 +136,24 @@ const mockLinkedPlaces = new Map<string, string[]>()
 const mockRemovedPlaces = new Map<string, Set<string>>()
 // The card's member actions by community: a member's new role, or null once kicked or banned.
 const mockMemberChanges = new Map<string, Map<string, string | null>>()
+// The Members tab's other sections, by community: join requests received, invites sent and bans.
+const mockPerson = (n: number, name: string): CommunityRequestMember => ({ address: `0x${(0xa0 + n).toString(16).padStart(40, '0')}`, name, role: 'none', requestId: `rq-${n}` })
+const mockSections: Record<CommunityMemberSection, Map<string, CommunityRequestMember[]>> = {
+  requests: new Map([['c8', [mockPerson(1, 'Fenix#a1b2'), mockPerson(2, 'Moonwalker'), mockPerson(3, 'Gaia#77fe')]]]),
+  invites: new Map([['c8', [mockPerson(4, 'Orbit'), mockPerson(5, 'Lumen#0c3d')]]]),
+  banned: new Map([['c8', [{ ...mockPerson(6, 'Troll#dead'), requestId: '' }]]])
+}
+const mockSection = (section: CommunityMemberSection, id: string): CommunityRequestMember[] => mockSections[section].get(id) ?? []
 
 const mockCommunities: Community[] = [
   { id: 'c1', name: 'Decentraland Foundation', description: 'The official Decentraland Foundation community. Stay up to date with events, releases and everything happening across the metaverse.', thumbnail: 'https://picsum.photos/seed/dcl/540/360', membersCount: 1242, role: 'member', ownerName: 'DCLOfficial', privacy: 'public' },
   { id: 'c2', name: 'Chiri Storytelling', description: "This space brings to life Chiri's adventures. Gathering cozy Social Gamers, Creators, Digi Fashion lovers, Virtual Citizens & more!", thumbnail: '', membersCount: 374, role: 'none', ownerName: 'Chiri', privacy: 'private' },
-  { id: 'c3', name: 'VTATV', description: 'Virtual television and live shows broadcast from inside Decentraland.', thumbnail: '', membersCount: 186, role: 'none', ownerName: 'VTATV' },
+  { id: 'c3', name: 'VTATV', description: 'Virtual television and live shows broadcast from inside Decentraland.', thumbnail: '', membersCount: 186, role: 'none', ownerName: 'VTATV', pendingInviteId: 'inv-c3' },
   { id: 'c4', name: 'ABC Decentraland', description: 'Adventures and education for newcomers to the metaverse.', thumbnail: '', membersCount: 436, role: 'none', ownerName: 'BillyTeacoin' },
   { id: 'c5', name: 'Toxic Events', description: 'The wildest parties and events in DCL.', thumbnail: '', membersCount: 601, role: 'member', ownerName: 'ToxicWaifu' },
-  { id: 'c6', name: 'Last Slice Creators', description: 'A community of pizza-loving 3D creators.', thumbnail: '', membersCount: 164, role: 'none', ownerName: 'Lastraum' },
+  { id: 'c6', name: 'Last Slice Creators', description: 'A community of pizza-loving 3D creators.', thumbnail: '', membersCount: 164, role: 'none', ownerName: 'Lastraum', privacy: 'private', pendingInviteId: 'inv-c6' },
   { id: 'c7', name: 'SheFi', description: 'Empowering women in web3 and DeFi.', thumbnail: '', membersCount: 310, role: 'none', ownerName: 'msjoedor' },
-  { id: 'c8', name: 'Community Building DCL', description: 'Helping communities grow in Decentraland.', thumbnail: '', membersCount: 639, role: 'owner', ownerName: 'TheCryptKeeper' },
+  { id: 'c8', name: 'Community Building DCL', description: 'Helping communities grow in Decentraland.', thumbnail: '', membersCount: 639, role: 'owner', ownerName: 'TheCryptKeeper', privacy: 'private' },
   // more than two browse pages (20 a page), every third private, some with friends in them
   ...Array.from({ length: 40 }, (_, i): Community => ({
     id: `b${i + 1}`,
@@ -500,6 +510,25 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     ch.postMessage({ to: 'page', msg } satisfies Envelope)
   }
 
+  // ?mockportables=1: the portables the mock engine lists. The jetpack runs until the player stops it
+  // (then it can be restarted); the pet is paused by the scene; the scene's portable failed to load.
+  const portables: PortableInfo[] = [
+    { hash: 'bafkmockjetpack-sw-male', pid: 'urn:decentraland:matic:collections-v2:0xmock:0', name: 'Jetpack', kind: 'smartWearable', state: 'running', reason: null, source: 'equipped' },
+    { hash: 'bafkmockpet-sw-male', pid: 'urn:decentraland:matic:collections-v2:0xmock:1', name: 'Pocket Pet', kind: 'smartWearable', state: 'blocked', reason: null, source: 'equipped' },
+    { hash: 'bafkmockminigame', pid: 'minigame.dcl.eth', name: 'Minigame', kind: 'scene', state: 'failed', reason: 'scene.json could not be loaded', source: null }
+  ]
+  const sendPortables = (): void => reply({ kind: 'portables', portables: portables.map((p) => ({ ...p })) })
+  // A stopped smart wearable is not loaded, so it has no scene hash until it runs again.
+  const loadedHash = new Map(portables.map((p) => [p.pid, p.hash]))
+  const setPortableState = (find: (p: PortableInfo) => boolean, state: PortableState): boolean => {
+    const p = portables.find(find)
+    if (p == null) return false
+    p.state = state
+    p.hash = state === 'stopped' ? null : (loadedHash.get(p.pid) ?? null)
+    sendPortables()
+    return true
+  }
+
   // An in-flight loginNew approval (so loginCancel/logout can abort it).
   let pendingAuth: { id: string; timer: ReturnType<typeof setTimeout> } | null = null
   // Drives the mock pose stream (see spawnPlayer) so the minimap is developable without an engine.
@@ -803,6 +832,8 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     if (new URLSearchParams(location.search).get('worldpw') === '1') {
       setTimeout(() => reply({ kind: 'worldPasswordRequest', world: 'secret-garden.dcl.eth' }), 3000)
     }
+    // ?mockportables=1 → the portables list, so the rail button and its popover are exercisable.
+    if (new URLSearchParams(location.search).get('mockportables') === '1') sendPortables()
     // ?perm=1 → fire a sample scene permission prompt so the dialog is exercisable in the mock, and
     // a few used permissions so the rail's permissions list has something to review.
     if (new URLSearchParams(location.search).get('perm') === '1') {
@@ -841,13 +872,19 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
 
     await wait(o.latency)
 
+    if (msg.kind === 'getConnectivity' || msg.kind === 'retryConnectivity') {
+      reply({ kind: 'connectivity', state: { connectionLost: false, probing: false, everConnected: playerSpawned, suppressed: !playerSpawned, rooms: [] } })
+      if (msg.kind === 'retryConnectivity') reply({ kind: 'connectivityRetry', requestId: msg.requestId })
+      return
+    }
+
     if (msg.kind === 'getHomeScene') {
       reply({ kind: 'homeScene', realm: DEFAULT_REALM, parcel: { x: 0, y: 0 } })
       return
     }
 
     if (msg.kind === 'getWelcome') {
-      reply({ kind: 'welcome', terms: o.welcome, newProfile: o.welcome })
+      reply({ kind: 'welcome', terms: o.welcome, newProfile: o.welcome, ask: msg.ask })
       return
     }
     if (msg.kind === 'acceptWelcome') {
@@ -1160,6 +1197,11 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       const changes = mockMemberChanges.get(msg.id) ?? new Map<string, string | null>()
       const role = { promote: 'moderator', demote: 'member', transfer: 'owner', kick: null, ban: null }[msg.action]
       changes.set(msg.address, role)
+      // as the bridge, a ban adds the member to the Banned section and sends it again
+      if (msg.action === 'ban') {
+        mockSections.banned.set(msg.id, [...mockSection('banned', msg.id), { address: msg.address, name: msg.address.slice(0, 10), role: 'none', requestId: '' }])
+        reply({ kind: 'communityMemberSection', id: msg.id, section: 'banned', members: mockSection('banned', msg.id), total: mockSection('banned', msg.id).length })
+      }
       mockMemberChanges.set(msg.id, changes)
       const c = mockCommunities.find((x) => x.id === msg.id)
       if (msg.action === 'transfer' && c != null) {
@@ -1169,6 +1211,80 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       }
       const reread: Envelope = { to: 'scene', msg: { kind: 'getCommunityDetail', id: msg.id } }
       setTimeout(() => void ch.onmessage?.(new MessageEvent('message', { data: reread })), 300)
+      return
+    }
+    // The Invites & Requests section: the invites, the requests the user's owned or moderated
+    // communities received, and the user's own requests.
+    const sendInvites = (): void => {
+      // as the bridge: only private communities take join requests
+      const managed = mockCommunities.filter((c) => (c.role === 'owner' || c.role === 'moderator') && c.privacy === 'private' && mockSection('requests', c.id).length > 0)
+      reply({
+        kind: 'communityInvites',
+        invites: mockCommunities.filter((c) => c.pendingInviteId != null).map((c) => ({ ...c })),
+        requestsReceived: managed.map((c) => ({ community: { ...c }, requests: mockSection('requests', c.id), total: mockSection('requests', c.id).length })),
+        requestsSent: mockCommunities.filter((c) => c.pendingRequestId != null).map((c) => ({ ...c })),
+        failed: []
+      })
+    }
+    if (msg.kind === 'unbanCommunityMember') {
+      mockSections.banned.set(msg.id, mockSection('banned', msg.id).filter((m) => m.address !== msg.address))
+      reply({ kind: 'communityMemberSection', id: msg.id, section: 'banned', members: mockSection('banned', msg.id), total: mockSection('banned', msg.id).length })
+      return
+    }
+    if (msg.kind === 'getCommunityInvitesCount') {
+      const invites = mockCommunities.filter((c) => c.pendingInviteId != null).length
+      const received = mockCommunities.filter((c) => (c.role === 'owner' || c.role === 'moderator') && c.privacy === 'private').reduce((n, c) => n + mockSection('requests', c.id).length, 0)
+      setTimeout(() => reply({ kind: 'communityInvitesCount', count: invites + received }), 300)
+      return
+    }
+    if (msg.kind === 'getCommunityInvites') {
+      setTimeout(sendInvites, 400)
+      return
+    }
+    if (msg.kind === 'getCommunityMemberSection') {
+      const members = mockSection(msg.section, msg.id)
+      setTimeout(() => reply({ kind: 'communityMemberSection', id: msg.id, section: msg.section, members, total: members.length }), 300)
+      return
+    }
+    if (msg.kind === 'manageCommunityRequest') {
+      const c = mockCommunities.find((x) => x.id === msg.id)
+      if (msg.address == null) {
+        // the user's own invite: accepting it joins
+        if (c != null) {
+          delete c.pendingInviteId
+          if (msg.intention === 'accepted') {
+            c.role = 'member'
+            c.membersCount += 1
+            reply({ kind: 'communityChannelAdded', community: { id: c.id, name: c.name, thumbnail: c.thumbnail ?? '', role: c.role } })
+          }
+          reply({ kind: 'community', community: { ...c } })
+          reply({ kind: 'communities', communities: mockMine() })
+        }
+      } else {
+        for (const section of ['requests', 'invites'] as const) {
+          mockSections[section].set(msg.id, mockSection(section, msg.id).filter((m) => m.requestId !== msg.requestId))
+          reply({ kind: 'communityMemberSection', id: msg.id, section, members: mockSection(section, msg.id), total: mockSection(section, msg.id).length })
+        }
+        // as the bridge, an accepted request reads the card's members and the community again
+        if (msg.intention === 'accepted' && c != null) {
+          c.membersCount += 1
+          reply({ kind: 'community', community: { ...c } })
+          const reread: Envelope = { to: 'scene', msg: { kind: 'getCommunityDetail', id: msg.id } }
+          setTimeout(() => void ch.onmessage?.(new MessageEvent('message', { data: reread })), 300)
+        }
+      }
+      sendInvites()
+      reply({ kind: 'communityRequestSettled', id: msg.id, requestId: msg.requestId })
+      return
+    }
+    if (msg.kind === 'getInvitableCommunities') {
+      const communities = mockCommunities.filter((c) => c.role === 'owner' || c.role === 'moderator').map((c) => ({ id: c.id, name: c.name }))
+      setTimeout(() => reply({ kind: 'invitableCommunities', address: msg.address, communities }), 300)
+      return
+    }
+    if (msg.kind === 'inviteToCommunity') {
+      mockSections.invites.set(msg.id, [...mockSection('invites', msg.id), { address: msg.address, name: msg.address.slice(0, 8), role: 'none', requestId: `rq-${Date.now()}` }])
+      setTimeout(() => reply({ kind: 'communityInviteSent', id: msg.id, address: msg.address, ok: true }), 300)
       return
     }
     if (msg.kind === 'getCommunityPlaceOptions') {
@@ -1254,6 +1370,7 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     if (msg.kind === 'requestToJoinCommunity') {
       const c = mockCommunities.find((x) => x.id === msg.id)
       if (c) c.pendingRequestId = `req-${c.id}`
+      reply({ kind: 'communityJoinRequest', id: msg.id, requestId: `req-${msg.id}` })
       if (c) reply({ kind: 'community', community: { ...c } })
       reply({ kind: 'communities', communities: mockMine() })
       return
@@ -1261,8 +1378,11 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     if (msg.kind === 'cancelJoinRequest') {
       const c = mockCommunities.find((x) => x.id === msg.id)
       if (c) delete c.pendingRequestId
+      reply({ kind: 'communityJoinRequest', id: msg.id })
       if (c) reply({ kind: 'community', community: { ...c } })
       reply({ kind: 'communities', communities: mockMine() })
+      // as the bridge, the Invites & Requests section loses the cancelled request
+      sendInvites()
       return
     }
     if (msg.kind === 'leaveCommunity') {
@@ -1434,6 +1554,28 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     }
     if (msg.kind === 'consoleCommand') {
       const args = msg.args ?? []
+      // A stopped smart wearable stays listed (still equipped); any other portable leaves the list.
+      if (msg.command === 'stop_portable' && args[0] != null) {
+        const hash = args[0]
+        const p = portables.find((e) => e.hash === hash)
+        if (p == null) {
+          reply({ kind: 'consoleReply', command: msg.command, args, ok: false, output: `not a listed portable: ${hash}` })
+          return
+        }
+        if (p.kind === 'smartWearable') setPortableState((e) => e === p, 'stopped')
+        else {
+          portables.splice(portables.indexOf(p), 1)
+          sendPortables()
+        }
+        reply({ kind: 'consoleReply', command: msg.command, args, ok: true, output: `stopped ${hash}` })
+        return
+      }
+      if (msg.command === 'smart_wearable' && args[0] === 'restart' && args[1] != null) {
+        const urn = args[1]
+        const ok = setPortableState((e) => e.kind === 'smartWearable' && e.pid === urn && e.state === 'stopped', 'running')
+        reply({ kind: 'consoleReply', command: msg.command, args, ok, output: ok ? `restarted ${urn}` : `unknown smart wearable: ${urn}` })
+        return
+      }
       const output =
         msg.command === 'help' && args.length === 0
           ? 'Available commands:\n  /help     - List available commands\n  /teleport - set location\n  /crdt_snapshot - (hidden by the HUD)'

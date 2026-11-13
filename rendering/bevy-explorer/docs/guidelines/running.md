@@ -134,6 +134,18 @@ with its HUD host, `apps/ui3/src/play`, which runs the same shared HUD as `react
 `rendering/bevy-explorer/README.md` for what each host keeps. Full DevTools logging needs DevTools open before the page loads.
 The engine console lives in the app iframe.
 
+To try a pull request's web build by hand, take its CI artifact (`bevy-explorer-web-<sha>`,
+built from the PR merged with main) and serve the folder on loopback with the headers the dev
+server sends (`coiHeadersExceptAuth` in `react-web/vite.config.ts`): none on the shell page,
+`Document-Isolation-Policy` on `app.html`, the isolation headers on everything else. The app
+frame is isolated, so drive it with the [web driver](#test-commands) rather than a page script;
+its window must stay visible, or Chrome throttles it. `?guest=1` signs in the engine's plain
+guest: the HUD's guest sign-in goes through thirdweb, which refuses origins it does not list. The HUD focuses the chat field on
+arrival, so release it (`/press_key Escape`) and check `keyboardClaimed` in `/world_state` before
+holding a movement key; a scene's own dialog can hold movement too. `/performance_state` gives the
+slowest frame and the frames over 50 ms of each 1,000 frames, and `/instantiation_state` what the
+spawner and glTF processing take.
+
 ## Headless
 
 ```
@@ -208,6 +220,38 @@ State, in every build:
   emote markers and direct messages are left out; `/dm_history` has those.
 - `/voice_state`: the mic (`available`, `enabled`) and, in LiveKit builds, each voice room's state
   and the addresses speaking.
+- `/connectivity_state`: `connectionLost`, `probing`, `everConnected`, `suppressed` and `rooms`
+  (`scope`, `state`, `retryAt`). Scope names identify realm, scene or private chat rooms without
+  adapter URLs or credentials. `/connectivity_retry` requests immediate recovery and a new
+  reachability check; terminal admission failures and intentional pauses stay stopped.
+  The Connectivity debug section exposes both. The HUD's Connection Lost alert has Retry and
+  Exit Application buttons; recovery dismisses it, while Exit signs out through the existing session flow.
+  Room states share the same calculation as voice and room diagnostics: first admission is
+  `connecting`, a refused dial is `failed`, and pauses and terminal refusals retain their
+  specific labels. Room diagnostic `attempts` counts failures since the last stable reset.
+  The HUD receives initial and changed snapshots over the SystemApi bridge stream and sends
+  Retry through that bridge; the console commands remain available for diagnostics.
+  The [modal reference](connection-lost-modal.md) records Unity assets, dimensions and platform differences.
+- `/bevy_variants`: the abgen Bevy variants client as JSON: `base` (the variants origin, `null`
+  when off), `state` (on, off and why, or waiting for the GPU's texture formats), `formats` (the
+  variant formats this build takes and those it does not), `manifestCounts` (manifests loaded,
+  none, failed, not eligible and pending), `manifests` (each entity's manifest state: scene,
+  wearable or emote), `served` (variants downloaded and read from the cache), `servedByFormat`
+  (the same per format: `ktx2-bc`, and `glb-br` on web), `fallbacks` (files that loaded their
+  original instead) and `recentFallbacks` (the last 20, with the file, its entity and the
+  reason).
+- `/ban_block_state [address]`: the ban and block status as JSON: the local user's address, the
+  social blocks (`state` live or unavailable with its `reason`, `blocked`, `blockedBy`), the
+  platform ban (`state` unknown, checked or failed, `isBanned`, `source`, `reason`,
+  `matchedOn` for a record the gatekeeper withheld, `customMessage`, `expiresAt`,
+  `checkedAgoSecs`, `error`), the local user's scene admission
+  (`state` unknown, allowed or refused, `scope` platform, world or scene, `message`, `sceneId`),
+  the scene room's lists (`state`, `sceneId`, `bannedAddresses`, `sceneAdmins`, while the room is
+  connected) and, with an address, its `lookup` (`isBlockedEitherWay`, `direction`,
+  `bannedInScene`, `adminPermissions`). Every `null` reading has its reason in `unavailable`,
+  keyed by field path. `/block_user <address>` and `/unblock_user <address>` change the blocks
+  through the social service and answer once it has; `/ban_block_refresh` re-checks the
+  platform ban now.
 - `/entity_screen_position <entity> [--bounds]`: where a scene entity is on screen, in the
   coordinates `/click_at` takes, `null` behind the camera. The scene is the one `/set_scene`
   picked, else the player's; the entity is as `/scene_entities` lists it. `--bounds` aims at the
@@ -261,6 +305,12 @@ The HUD and input:
   `picking` or `world`) once the sign-in has landed and the page is done, or fails with its error.
   The command is `library/explorer-core/lib/hudAutomation.ts` (`LOGIN_COMMANDS`, `provideHudLogin`); the
   session provides the sign-in in `library/ui/apps/hud/features/session/useEngineSession.ts`.
+- `/hud_logout` (web, under a test runner as `/hud_login` is): sign out through the HUD's own
+  flow, the engine included, back to the HUD's start page, where `/hud_login` takes a sign-in
+  again; a `/hud_login` still waiting for its answer fails with `signed out`. The engine's
+  `/logout` never reaches the HUD, which stays signed in and refuses a new `/hud_login`. A sign-in
+  the engine still holds keeps the next one waiting (`a sign-in is still finishing`) until the
+  engine answers it; one it never answers needs a page reload.
 - `/press_key <code> [--state down|up]`, with the key named as `KeyboardEvent.code` names it, and
   `/click_at <x> <y> [--button left|right|middle]`.
 - `/hover_entity <entity> [--bounds] [--frames N] [--timeout-frames N]`, `/hover_entity --clear`
