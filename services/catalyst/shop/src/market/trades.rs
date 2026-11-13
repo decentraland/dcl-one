@@ -1158,16 +1158,17 @@ pub async fn trades_of_address(
 ) -> Result<Vec<Trade>, sqlx::Error> {
     let address = address.to_lowercase();
     let heads = sqlx::query(sqlx::AssertSqlSafe(format!(
-        "SELECT {TRADE_COLUMNS} FROM shop.trades t \
-         WHERE {served} AND id IN ( \
-            (SELECT id FROM shop.trades WHERE signer = $1 AND {signer_counted} ORDER BY created_at DESC LIMIT $2) \
+        "SELECT {TRADE_COLUMNS} FROM shop.trades \
+         WHERE id IN ( \
+            (SELECT s.id FROM shop.trades s WHERE s.signer = $1 AND {signer_counted} AND {signer_served} ORDER BY s.created_at DESC LIMIT $2) \
             UNION \
             (SELECT ta.trade_id FROM shop.trade_assets ta JOIN shop.trades t ON t.id = ta.trade_id \
-             WHERE ta.beneficiary = $1 AND {beneficiary_counted} ORDER BY ta.created_at DESC LIMIT $2)) \
+             WHERE ta.beneficiary = $1 AND {beneficiary_counted} AND {beneficiary_served} ORDER BY ta.created_at DESC LIMIT $2)) \
          ORDER BY created_at DESC LIMIT $2",
-        signer_counted = counted_sql("", "$3"),
+        signer_counted = counted_sql("s.", "$3"),
         beneficiary_counted = counted_sql("t.", "$3"),
-        served = super::catalog::served_trade_sql("t"),
+        signer_served = super::catalog::served_trade_sql("s"),
+        beneficiary_served = super::catalog::served_trade_sql("t"),
     )))
     .bind(&address)
     .bind(limit)
@@ -1229,14 +1230,20 @@ pub async fn trades_of_address(
         .collect())
 }
 
-/// The trade `id` with its assets, when it counts at `since` ([`counted_sql`]).
+/// The trade `id` with its assets, when it counts at `since` ([`counted_sql`])
+/// and, with `served_only`, is one this node serves ([`super::catalog::served_trade_sql`]).
 pub async fn get_trade_by_id(
     pool: &PgPool,
     id: &str,
     since: Option<NaiveDateTime>,
+    served_only: bool,
 ) -> Result<Option<Trade>, sqlx::Error> {
     let counted = counted_sql("", "$2");
-    let served = super::catalog::served_trade_sql("t");
+    let served = if served_only {
+        super::catalog::served_trade_sql("t")
+    } else {
+        "TRUE".to_string()
+    };
     let Some(head) = sqlx::query(sqlx::AssertSqlSafe(format!(
         "SELECT {TRADE_COLUMNS} FROM shop.trades t WHERE id = $1::uuid AND {counted} AND {served}"
     )))
@@ -1347,7 +1354,7 @@ pub async fn get_trade(State(state): State<SharedState>, Path(id): Path<String>)
         return envelope;
     }
     let since = mirrored_since(&state.settings, Utc::now().naive_utc());
-    match get_trade_by_id(&state.pool, &id, since).await {
+    match get_trade_by_id(&state.pool, &id, since, true).await {
         Ok(Some(trade)) => Json(json!({ "ok": true, "data": trade })).into_response(),
         Ok(None) => (
             axum::http::StatusCode::NOT_FOUND,

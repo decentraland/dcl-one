@@ -164,8 +164,10 @@ async fn corroborated(http: &Outbound, sources: &Sources, source: &str, next: f6
     false
 }
 
-/// The largest move against the previous fresh snapshot a pass publishes;
-/// a larger one waits until that snapshot ages out of the freshness budget.
+/// The largest move against the previous fresh snapshot a pass publishes
+/// alone; a larger one needs another source to agree. With no
+/// `PRICE_FALLBACK_SOURCES` configured nothing can agree, so the move is held
+/// only until the previous snapshot ages out of the freshness budget.
 pub const MAX_MOVE_FRACTION: f64 = 0.3;
 
 /// Whether `next` moved from a still-fresh `previous` by more than [`MAX_MOVE_FRACTION`].

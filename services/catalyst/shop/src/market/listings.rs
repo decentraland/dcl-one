@@ -1137,20 +1137,30 @@ static TRADE_LIMITER: std::sync::LazyLock<RateLimiter> = std::sync::LazyLock::ne
     RateLimiter::new(30, std::time::Duration::from_secs(60)).with_max_buckets(200_000)
 });
 
-/// Trades the process accepts per minute across signers (fresh wallets cost nothing).
-static ALL_TRADES_LIMITER: std::sync::LazyLock<RateLimiter> =
-    std::sync::LazyLock::new(|| RateLimiter::new(600, std::time::Duration::from_secs(60)));
+/// Trades one client address may post per minute, across the wallets it signs
+/// with (fresh wallets cost nothing); a request whose address is unknown or
+/// shared (a gateway) is not counted here.
+static TRADE_IP_LIMITER: std::sync::LazyLock<RateLimiter> = std::sync::LazyLock::new(|| {
+    RateLimiter::new(120, std::time::Duration::from_secs(60)).with_max_buckets(200_000)
+});
 
 async fn post_trade_inner(
     state: &MarketplaceState,
     headers: &HeaderMap,
+    peer: Option<std::net::SocketAddr>,
     body: &str,
 ) -> Result<Response, ApiError> {
+    if let Some(ip) = crate::shared::client_ip::distinct_client_ip(
+        headers,
+        peer,
+        &state.settings.market.tips.trusted_proxy_cidrs,
+    ) && TRADE_IP_LIMITER.check(&ip) == RateLimitDecision::Deny
+    {
+        return Err(ApiError::http(429, "rate limit exceeded".to_string()));
+    }
     require_auth_metadata(headers, MARKETPLACE_AUTH_SIGNERS, Some(CREATE_TRADE_INTENT))?;
     let recovered = require_signer(headers, "post", "/v1/trades").await?;
-    if TRADE_LIMITER.check(&recovered.to_ascii_lowercase()) == RateLimitDecision::Deny
-        || ALL_TRADES_LIMITER.check("all") == RateLimitDecision::Deny
-    {
+    if TRADE_LIMITER.check(&recovered.to_ascii_lowercase()) == RateLimitDecision::Deny {
         return Err(ApiError::http(429, "rate limit exceeded".to_string()));
     }
     let trade: TradeCreation = serde_json::from_str(body)
@@ -1192,10 +1202,12 @@ async fn post_trade_inner(
 
 pub async fn post_trade(
     State(state): State<SharedState>,
+    peer: Option<axum::Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,
     headers: HeaderMap,
     body: String,
 ) -> Response {
-    post_trade_inner(&state, &headers, &body)
+    let peer = peer.map(|axum::Extension(axum::extract::ConnectInfo(p))| p);
+    post_trade_inner(&state, &headers, peer, &body)
         .await
         .unwrap_or_else(IntoResponse::into_response)
 }
@@ -1445,6 +1457,27 @@ mod tests {
             format!("0x{:x}", keccak256(b"0xabc")),
             "odd hex keeps the text hash"
         );
+    }
+
+    /// The post limit is per client address: one address flooding the route
+    /// is refused, and another client is not.
+    #[tokio::test]
+    async fn one_client_address_cannot_exhaust_trade_posts_for_others() {
+        let state = crate::market::tests::support::state_without_db();
+        let status = |ip: &str| {
+            let (state, peer) = (state.clone(), format!("{ip}:443").parse().ok());
+            async move {
+                match post_trade_inner(&state, &HeaderMap::new(), peer, "{}").await {
+                    Ok(r) => r.status().as_u16(),
+                    Err(e) => e.into_response().status().as_u16(),
+                }
+            }
+        };
+        for _ in 0..120 {
+            assert_ne!(status("203.0.113.71").await, 429);
+        }
+        assert_eq!(status("203.0.113.71").await, 429);
+        assert_ne!(status("203.0.113.72").await, 429, "another client posts");
     }
 
     #[tokio::test]

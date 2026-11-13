@@ -535,10 +535,34 @@ fn sales_and_credits_spends_are_paid_calls() {
         params: vec![to.to_string(), data],
     };
     let credits_manager = "0x8b3a40ca1b6f5cafc99d112a4d02e897d1fd8cc5";
+    let meta = |inner: Vec<u8>| {
+        format!(
+            "0x{}",
+            hex::encode(
+                executeMetaTransactionCall {
+                    userAddress: VICTIM.parse().unwrap(),
+                    functionSignature: inner.into(),
+                    sigR: Default::default(),
+                    sigS: Default::default(),
+                    sigV: 27,
+                }
+                .abi_encode()
+            )
+        )
+    };
+    let mut use_credits = crate::policy_entry::USE_CREDITS_SELECTOR.to_vec();
+    use_credits.extend([0u8; 32]);
     assert!(super::transaction::is_paid_call(
         &settings,
-        &call(credits_manager, "0x00".into())
+        &call(credits_manager, meta(use_credits))
     ));
+    assert!(
+        !super::transaction::is_paid_call(
+            &settings,
+            &call(credits_manager, meta(vec![0xde, 0xad, 0xbe, 0xef]))
+        ),
+        "the manager's other functions are free calls"
+    );
     assert!(
         !super::transaction::is_paid_call(&settings, &call(COLLECTION, "0xa22cb465".into())),
         "an approval on a collection is a free call"

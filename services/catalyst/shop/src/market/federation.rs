@@ -912,6 +912,7 @@ static SNAPSHOT: std::sync::Mutex<Option<(i64, std::time::Instant, MarketSnapsho
     std::sync::Mutex::new(None);
 
 const SNAPSHOT_MAX_AGE: Duration = Duration::from_secs(30);
+static SNAPSHOT_COMPUTE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 /// The snapshot walks the whole log, so it is recomputed when the log grew
 /// (any writer, any replica) or after 30 s (a row whose `seq` committed late);
@@ -921,11 +922,21 @@ pub async fn cached_snapshot(pool: &PgPool) -> Result<MarketSnapshot, sqlx::Erro
         .fetch_one(pool)
         .await?
         .unwrap_or(0);
-    if let Some((seq, at, snap)) = SNAPSHOT.lock().unwrap().as_ref()
-        && *seq == newest
-        && at.elapsed() < SNAPSHOT_MAX_AGE
-    {
-        return Ok(snap.clone());
+    let cached = || {
+        SNAPSHOT
+            .lock()
+            .unwrap()
+            .as_ref()
+            .filter(|(seq, at, _)| *seq >= newest && at.elapsed() < SNAPSHOT_MAX_AGE)
+            .map(|(_, _, snap)| snap.clone())
+    };
+    if let Some(snap) = cached() {
+        return Ok(snap);
+    }
+    // One walk at a time: the requests that waited reuse it.
+    let _computing = SNAPSHOT_COMPUTE.lock().await;
+    if let Some(snap) = cached() {
+        return Ok(snap);
     }
     let snap = snapshot_view(pool).await?;
     *SNAPSHOT.lock().unwrap() = Some((newest, std::time::Instant::now(), snap.clone()));

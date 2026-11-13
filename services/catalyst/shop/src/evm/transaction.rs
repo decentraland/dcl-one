@@ -464,12 +464,12 @@ impl TransactionComponent {
         let contract = contract_address.to_lowercase();
         let window_start = now - chrono::Duration::seconds(QUOTA_WINDOW_SECS);
         let mut tx = self.pool.begin().await?;
-        if let Some(budget) = free_budget {
+        if let Some(budget) = free_budget.filter(|b| *b > 0) {
             // Global lock first, then the user's: one order, no deadlock.
             sqlx::query("SELECT pg_advisory_xact_lock(hashtext('relay-free-budget'))")
                 .execute(&mut *tx)
                 .await?;
-            if budget > 0 {
+            {
                 let used: i64 = sqlx::query_scalar(
                     "SELECT count(*) FROM (SELECT 1 FROM economy.transactions \
                      WHERE free_call AND created_at >= $1 LIMIT $2) used",
@@ -859,22 +859,26 @@ fn check_sale_price(settings: &Settings, tx: &TransactionData) -> Result<(), Api
     Ok(())
 }
 
-/// A sale that passes the floor, or a call to a credits manager: never held
-/// back by the relayer's budget for free calls.
+/// A sale that passes the floor, or a credits manager's `useCredits`: never
+/// held back by the relayer's budget for free calls. A sale at the floor
+/// between two wallets of one owner counts as paid too: the floor is its cost.
 pub fn is_paid_call(settings: &Settings, tx: &TransactionData) -> bool {
     let Ok(contract) = tx.params[0].trim().parse::<Address>() else {
         return false;
     };
+    let full_data = hex_to_bytes(&tx.params[1]).unwrap_or_default();
     let credits_manager = super::meta_tx::audited_domains_for(settings.collections_chain_id)
         .iter()
         .any(|(a, d)| *a == contract && d.label.starts_with("CreditsManager"));
     if credits_manager {
-        return true;
+        // Only a credits spend; the manager's other functions are free calls.
+        return abi::decode_meta_tx(&full_data).is_some_and(|inner| {
+            inner.get(..4) == Some(&crate::policy_entry::USE_CREDITS_SELECTOR[..])
+        });
     }
     let Some(kind) = abi::sale_target(settings.collections_chain_id, contract) else {
         return false;
     };
-    let full_data = hex_to_bytes(&tx.params[1]).unwrap_or_default();
     abi::get_sale_price(&full_data, settings.collections_chain_id, kind).is_some()
 }
 
