@@ -75,8 +75,18 @@ impl Plugin for WebCachePlugin {
     }
 }
 
-fn apply_cap(config: Res<AppConfig>, cap_override: Res<WebCacheCapOverride>) {
-    web_cache::set_cap(web_cache::effective_cap(config.cache_bytes, cap_override.0));
+// `AppConfig` changes with every setting: only a new cap asks for a trim (the first run, at start, too).
+fn apply_cap(
+    config: Res<AppConfig>,
+    cap_override: Res<WebCacheCapOverride>,
+    mut applied: Local<Option<u64>>,
+) {
+    let cap = web_cache::effective_cap(config.cache_bytes, cap_override.0);
+    if *applied == Some(cap) {
+        return;
+    }
+    *applied = Some(cap);
+    web_cache::set_cap(cap);
     IoTaskPool::get()
         .spawn_compat(async {
             web_cache::request_trim(false).await;

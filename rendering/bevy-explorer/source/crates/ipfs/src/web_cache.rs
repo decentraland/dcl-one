@@ -93,6 +93,62 @@ pub struct TrimReport {
     pub target_unreachable: bool,
 }
 
+/// The service worker's answer to a trim request.
+#[derive(Clone, Debug, PartialEq)]
+pub enum TrimReply {
+    /// No worker answered: none controls the page, or it has no listener.
+    Missing,
+    /// The worker failed, or its reply lacked a reading.
+    Failed(String),
+    /// A regular trim that stopped for a quota-error request: nothing ran but the cap it bounded.
+    Preempted {
+        cap_bytes: f64,
+    },
+    Done(TrimReport),
+}
+
+/// Reads the worker's reply (`trimContentCache`), as JSON: `JSON.stringify` writes an infinite
+/// quota as null.
+pub fn parse_trim_reply(value: &serde_json::Value) -> TrimReply {
+    if value.is_null() {
+        return TrimReply::Missing;
+    }
+    if let Some(error) = value.get("error") {
+        return TrimReply::Failed(
+            error
+                .as_str()
+                .map_or_else(|| error.to_string(), str::to_owned),
+        );
+    }
+    let number = |name: &str| value.get(name).and_then(serde_json::Value::as_f64);
+    let flag = |name: &str| value.get(name).and_then(serde_json::Value::as_bool) == Some(true);
+    let Some(cap_bytes) = number("capBytes") else {
+        return TrimReply::Failed(format!("a reply without capBytes: {value}"));
+    };
+    if flag("preempted") {
+        return TrimReply::Preempted { cap_bytes };
+    }
+    let report = (|| {
+        Some(TrimReport {
+            cap_bytes,
+            usage: number("usage")?,
+            quota: match value.get("quota")? {
+                serde_json::Value::Null => f64::INFINITY,
+                quota => quota.as_f64()?,
+            },
+            caches_usage: number("cachesUsage")?,
+            evicted_entries: number("evictedEntries")?,
+            evicted_bytes: number("evictedBytes")?,
+            persisted: flag("persisted"),
+            target_unreachable: flag("targetUnreachable"),
+        })
+    })();
+    report.map_or_else(
+        || TrimReply::Failed(format!("a reply missing a reading: {value}")),
+        TrimReply::Done,
+    )
+}
+
 /// The engine side's readings, for the debug panel.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct WebCacheState {
@@ -164,7 +220,8 @@ pub use io::*;
 mod io {
     use super::{
         crosses_interval, forced_trim_allowed, keys, names, page_content_cache_trim,
-        trim_interval_for, TrimReport, WebCacheState, WEB_CACHE_CAP_BYTES,
+        parse_trim_reply, trim_interval_for, TrimReply, TrimReport, WebCacheState,
+        WEB_CACHE_CAP_BYTES,
     };
     use js_sys::Uint8Array;
     use std::sync::{
@@ -329,7 +386,23 @@ mod io {
             .await
             .map_err(|e| bevy::log::warn!("content cache trim failed: {e:?}"))
             .ok()?;
-        let report = report_from_js(&reply)?;
+        let json = js_sys::JSON::stringify(&reply)
+            .ok()
+            .and_then(|text| text.as_string())
+            .and_then(|text| serde_json::from_str(&text).ok())
+            .unwrap_or(serde_json::Value::Null);
+        let report = match parse_trim_reply(&json) {
+            TrimReply::Done(report) => report,
+            TrimReply::Preempted { cap_bytes } => {
+                WORKER_CAP_BYTES.store(cap_bytes as u64, Ordering::Relaxed);
+                return None;
+            }
+            TrimReply::Failed(error) => {
+                bevy::log::warn!("content cache trim failed in the service worker: {error}");
+                return None;
+            }
+            TrimReply::Missing => return None,
+        };
         TRIMS.fetch_add(1, Ordering::Relaxed);
         WORKER_CAP_BYTES.store(report.cap_bytes as u64, Ordering::Relaxed);
         EVICTED_ENTRIES.fetch_add(report.evicted_entries as u64, Ordering::Relaxed);
@@ -400,30 +473,6 @@ mod io {
                 request_trim(false).await;
             });
         }
-    }
-
-    fn report_from_js(value: &JsValue) -> Option<TrimReport> {
-        if value.is_null() || value.is_undefined() {
-            return None;
-        }
-        let get = |name: &str| js_sys::Reflect::get(value, &name.into()).ok();
-        if let Some(error) = get("error").and_then(|e| e.as_string()) {
-            bevy::log::warn!("content cache trim failed in the service worker: {error}");
-            return None;
-        }
-        let number = |name: &str| get(name).and_then(|v| v.as_f64());
-        Some(TrimReport {
-            cap_bytes: number("capBytes")?,
-            usage: number("usage")?,
-            quota: number("quota")?,
-            caches_usage: number("cachesUsage")?,
-            evicted_entries: number("evictedEntries")?,
-            evicted_bytes: number("evictedBytes")?,
-            persisted: get("persisted").and_then(|v| v.as_bool()).unwrap_or(false),
-            target_unreachable: get("targetUnreachable")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false),
-        })
     }
 }
 
@@ -541,6 +590,56 @@ mod tests {
         assert_eq!(json["evictedMiB"], 3.1);
         assert_eq!(json["persisted"], true);
         assert_eq!(json["targetUnreachable"], true);
+    }
+
+    #[test]
+    fn a_trim_reply_is_read_with_an_infinite_quota_as_null() {
+        let reply = serde_json::json!({
+            "capBytes": 1000.0, "usage": 900.0, "quota": null, "cachesUsage": 800.0,
+            "evictedEntries": 3.0, "evictedBytes": 300.0, "persisted": true,
+            "targetUnreachable": false, "preempted": false,
+        });
+        assert_eq!(
+            parse_trim_reply(&reply),
+            TrimReply::Done(TrimReport {
+                cap_bytes: 1000.0,
+                usage: 900.0,
+                quota: f64::INFINITY,
+                caches_usage: 800.0,
+                evicted_entries: 3.0,
+                evicted_bytes: 300.0,
+                persisted: true,
+                target_unreachable: false,
+            })
+        );
+    }
+
+    #[test]
+    fn a_preempted_trim_keeps_only_its_cap() {
+        let reply = serde_json::json!({
+            "capBytes": 500.0, "usage": 900.0, "quota": 1e9, "cachesUsage": 800.0,
+            "evictedEntries": 0.0, "evictedBytes": 0.0, "preempted": true,
+        });
+        assert_eq!(
+            parse_trim_reply(&reply),
+            TrimReply::Preempted { cap_bytes: 500.0 }
+        );
+    }
+
+    #[test]
+    fn no_reply_an_error_and_a_short_reply_are_not_reports() {
+        assert_eq!(
+            parse_trim_reply(&serde_json::Value::Null),
+            TrimReply::Missing
+        );
+        assert_eq!(
+            parse_trim_reply(
+                &serde_json::json!({ "error": "capBytes must be a non-negative number" })
+            ),
+            TrimReply::Failed("capBytes must be a non-negative number".into())
+        );
+        let short = serde_json::json!({ "capBytes": 500.0, "usage": 900.0 });
+        assert!(matches!(parse_trim_reply(&short), TrimReply::Failed(_)));
     }
 
     #[test]

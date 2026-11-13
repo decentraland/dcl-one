@@ -69,4 +69,26 @@ describe('content cache page functions', () => {
     installContentCachePageFunctions(target as never)
     expect(typeof target.__contentCacheTrim).toBe('function')
   })
+
+  it('forwards the cap and the quota-error flag from the installed page function', async () => {
+    const posted: unknown[] = []
+    vi.stubGlobal('navigator', {
+      serviceWorker: {
+        controller: {
+          postMessage(msg: unknown, [port]: MessagePort[]) {
+            posted.push(msg)
+            port.postMessage({ ok: true })
+          }
+        }
+      }
+    })
+    try {
+      const target: Record<string, (capBytes: number, quotaError: boolean) => Promise<unknown>> = {}
+      installContentCachePageFunctions(target as never)
+      expect(await target.__contentCacheTrim(4096, true)).toEqual({ ok: true })
+      expect(posted).toEqual([{ type: 'content-cache-trim', capBytes: 4096, quotaError: true }])
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
 })
