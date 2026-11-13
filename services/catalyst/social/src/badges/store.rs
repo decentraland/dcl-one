@@ -15,6 +15,7 @@ use serde_json::Value;
 use sqlx::Row;
 use sqlx::postgres::PgPool;
 
+use super::evaluators::has_evaluator;
 use super::progress::{Applied, ApplyOptions, apply_progress};
 use super::types::{
     AchievedTier, Assets, BadgeData, BadgeProgress, CatalogBadge, LastCompletedTier,
@@ -271,6 +272,24 @@ impl BadgesStore {
             });
         }
         Ok(Catalog { defs })
+    }
+
+    /// Startup check (upstream's observer registry): warns about every active
+    /// badge this build cannot grant automatically; it is still served.
+    pub async fn warn_ahead_of_code(&self) -> Result<Vec<String>, sqlx::Error> {
+        let ids: Vec<String> = sqlx::query_scalar(
+            "SELECT d.id FROM social.badge_definitions d \
+             WHERE d.published_at IS NOT NULL AND d.archived_at IS NULL \
+               AND NOT EXISTS (SELECT 1 FROM social.presence_badges p WHERE p.badge_id = d.id) \
+             ORDER BY d.id",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        let ahead: Vec<String> = ids.into_iter().filter(|id| !has_evaluator(id)).collect();
+        for id in &ahead {
+            tracing::warn!(badge = %id, "a published badge has no evaluator, backfill import or presence configuration in this build; only console grants award it");
+        }
+        Ok(ahead)
     }
 
     /// `GET /badges`: every published badge, archived ones marked.

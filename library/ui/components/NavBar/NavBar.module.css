@@ -332,7 +332,7 @@
     flex-direction: column;
     gap: var(--dcl-space-24);
     overflow-y: auto;
-    width: min(100%, 360px);
+    width: 100%;
     padding: var(--dcl-space-12) var(--dcl-space-16) var(--dcl-space-24);
     background: var(--dcl-bg-surface);
     color: var(--dcl-text-primary);

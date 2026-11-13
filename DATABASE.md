@@ -1310,6 +1310,31 @@ IP and links. Addresses are lower-cased and checked by the table; the handler
 normalises the body's. The bootstrap defines the table; an existing database
 gains it from the object pass, so no step exists.
 
+## Camera reel photo events workload
+
+`camera_reel.photo_events` (`schemas/50_create.sql`) is the append-only outbox
+of the photo events camera-reel-service published to SNS: `photo-taken`, one
+row per finalised upload, written in the transaction that sets
+`camera_reel.images.ranking_published` (public and private photos alike), and
+`photo-privacy-changed`, one row per visibility change, written in the
+statement that changes it. `payload` is the upstream body `{type: "camera",
+subType, key, timestamp, metadata}`. Writes follow the upload rate.
+
+Readers are in-process consumers (`camera_reel::events::read_after`): each
+pages `id > $cursor ORDER BY id LIMIT n` on the primary key and keeps its
+cursor in its own schema, committed with its own effects; the outbox holds no
+consumer state. No consumer reads it yet; the credits program reads it for
+its photo goals once it has one. The community photo counts are applied
+directly in the upload's finalising transaction and do not read the outbox.
+
+Invariants: rows are never updated; the leased
+`camera-photo-events-retention` job deletes rows older than 30 days, 1000 per
+statement by `created_at` (its index), at most 100 statements an hourly pass,
+so the table holds about 30 days of events and a consumer further behind
+misses events. `user_address` is the photo's owner, lowercase. The bootstrap
+defines the table; an existing database gains it from the object pass, so no
+step exists.
+
 ## Badges catalog and progress workload
 
 The catalog (`social.badge_definitions`, `badge_tiers`, `presence_badges`;
@@ -1456,9 +1481,9 @@ published block for the sales logs), and for the id cursors
 `badges_processor_cursor_gaps` and `badges_processor_cursor_oldest_gap_seconds`:
 a cursor that stops advancing shows as a growing lag, and a horizon held by a
 transaction left open on the cluster as gaps that keep ageing. A deployment stored
-more than `BADGES_DEPLOYMENT_MAX_LAG_SECS` (default a day) after its entity
-timestamp is history a syncing node caught up on and is passed without
-effect; `BADGES_EVENT_MAX_AGE_SECS` (default off) is upstream's
+more than `BADGES_DEPLOYMENT_MAX_LAG_SECS` (default off, as upstream had no
+such filter) after its entity timestamp is history a syncing node caught up
+on and is passed without effect; `BADGES_EVENT_MAX_AGE_SECS` (default off) is upstream's
 `EVENT_PROCESSING_MAX_AGE_IN_SECONDS`. Step `0038_social_badge_processor`
 adds `seq`; the object pass creates `social.badge_cursors`,
 `social.badge_cursor_gaps` and both indexes.
@@ -1539,18 +1564,24 @@ catalog rows, and the bootstrap seed reaches only new databases.
    tier a wallet holds, or switch a badge with player rows between single and
    tiered, is a 409 and changes nothing; a removed tier nobody holds is
    deleted from `badge_tiers`. Player rows are never written: a lowered
-   target awards on the wallet's next progress write, not retroactively, and
-   a tier added above a completed badge leaves it complete until that write.
+   target awards on the wallet's next progress write (for a processor badge
+   other than traveler, the next one that gains steps, one tier per step or
+   event), not retroactively, and a tier added above a completed badge
+   leaves it complete until such a write.
    A badge takes at most 32 tiers, each `2d` or `3d` at most 8 files, and
-   the badges routes refuse bodies over 1 MiB (413).
+   the badges routes refuse bodies over 1 MiB (413), the backfill's over
+   64 MiB.
 2. Make the art reachable: upload it to the CDN that
    `BADGES_PUBLIC_ASSET_BASE_URL` names (upstream's by default), or mirror it
    into `BADGES_ASSETS_DIR` under the same relative paths when the base is
    `<node>/badges/assets`.
 3. `PATCH /badges/badges/{id}` `{"published": true}`. The badge is listed and
-   awardable.
+   awardable. An active badge with no evaluator, backfill import or presence
+   configuration (`social.presence_badges`) is named in a warning at startup,
+   since only console grants award it.
 4. Grant it per wallet with the console grant (`POST
-   /badges/users/{address}/badges/{id}`), the one caller of `apply_progress`.
+   /badges/users/{address}/badges/{id}`), which awards it through
+   `apply_progress`.
 
 Retire a badge with `PATCH {"archived": true}`: it stays listed and kept by
 its earners, and `apply_progress` answers `NotAwardable`. `{"archived":

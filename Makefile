@@ -1,6 +1,6 @@
 .PHONY: check figma-key-guard owners bevy-web bevy-headless catalyst-build catalyst-test sites-install sites-build
 
-NODE_CRATES = --workspace --exclude dcl-scene-cli --exclude dcl-scene-authoring --exclude dcl-scene-build --exclude dcl-preview-tunnel --exclude dcl-preview-tunnel-protocol
+NODE_CRATES = --workspace --exclude dcl-scene-cli --exclude dcl-scene-authoring --exclude dcl-scene-build --exclude dcl-preview-tunnel --exclude dcl-preview-tunnel-protocol --features catalyst/test-support
 
 check:
 	bash services/catalyst/scripts/check-module-dag.sh

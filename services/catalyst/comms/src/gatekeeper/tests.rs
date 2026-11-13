@@ -643,10 +643,15 @@ async fn a_lookup_without_a_device_id_is_widened_to_the_recorded_device() {
     assert!(m.is_banned_for_connection(&s.banned, None).await.unwrap());
     assert!(!m.is_banned_for_connection(&s.clean, None).await.unwrap());
     assert!(
-        !m.is_banned_for_connection(&s.same_device, Some("some-other-device"))
+        m.is_banned_for_connection(&s.same_device, Some("some-other-device"))
             .await
             .unwrap(),
-        "a device id the caller does send is the one matched"
+        "a fresh device id the caller sends never hides the recorded one"
+    );
+    assert!(
+        !m.is_banned_for_connection(&s.clean, Some("some-other-device"))
+            .await
+            .unwrap()
     );
     assert!(matches!(
         m.platform_ban_decision(&[s.clean.clone(), s.same_device.clone()])
@@ -2839,6 +2844,9 @@ async fn the_island_feed_needs_no_switch() {
 
     #[async_trait::async_trait]
     impl NatsBus for Recorded {
+        async fn statistics_control(&self, payload: Vec<u8>) -> Result<Vec<u8>, RequestError> {
+            self.bus.statistics_control(payload).await
+        }
         fn is_enabled(&self) -> bool {
             self.bus.is_enabled()
         }
@@ -3114,7 +3122,7 @@ async fn deny_listed_wallet_is_refused_by_every_world_mint_and_private_messages(
     }
     let path = "/private-messages/token";
     let error = voice::private_messages_token(
-        State(state),
+        State(state.clone()),
         at(path),
         signed(KEY, "get", path, metadata).await,
         None,
@@ -3122,7 +3130,145 @@ async fn deny_listed_wallet_is_refused_by_every_world_mint_and_private_messages(
     .await
     .unwrap_err();
     assert_eq!(error.code, 401);
+    let path = "/get-scene-adapter";
+    let scene_meta = meta("main", "bafkreidenylisted", None);
+    let error = handlers::get_scene_adapter(
+        State(state.clone()),
+        at(path),
+        signed(KEY, "post", path, &scene_meta).await,
+        writes_on(),
+        axum::body::Bytes::new(),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(error.code, 401);
+    let Json(_) = handlers::get_scene_adapter(
+        State(state.clone()),
+        at(path),
+        signed(OUTSIDER_KEY, "post", path, &scene_meta).await,
+        writes_on(),
+        axum::body::Bytes::new(),
+    )
+    .await
+    .expect("an unlisted wallet still gets the scene room");
+    let denied = Address::parse(&address_of(KEY)).unwrap();
+    let outsider = Address::parse(&address_of(OUTSIDER_KEY)).unwrap();
+    let error = voice::get_private_voice_chat_room_credentials(
+        &state,
+        &Uuid::new_v4().to_string(),
+        &[outsider, denied],
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(
+        (error.code, error.message.as_str()),
+        (401, voice::DENY_LISTED_MSG)
+    );
     server.abort();
+}
+
+/// A refused connection never records its fresh device id, so a retry stays refused.
+#[tokio::test]
+async fn a_refused_scene_adapter_retry_keeps_the_recorded_banned_device() {
+    let Some(pool) = scratch().await else { return };
+    let state = state_with(pool.clone(), Settings::for_tests());
+    let key = random_key();
+    let me = Address::parse(&address_of(&key)).unwrap();
+    let device = format!("banned-device-{}", tag());
+    state
+        .moderation
+        .upsert_connection(UpsertPlayerConnection {
+            address: me.clone(),
+            ip_address: None,
+            device_id: Some(device.clone()),
+        })
+        .await
+        .unwrap();
+    state
+        .moderation
+        .create_ban(CreateBan {
+            banned_address: wallet(),
+            banned_by: wallet().as_str().into(),
+            reason: "abuse".into(),
+            custom_message: None,
+            banned_device_id: Some(device.clone()),
+            duration_ms: None,
+        })
+        .await
+        .unwrap();
+    let headers = signed(
+        &key,
+        "post",
+        "/get-scene-adapter",
+        &meta("main", &format!("bafkrei{}", tag()), Some("fresh-device")),
+    )
+    .await;
+    for attempt in 0..2 {
+        let err = handlers::get_scene_adapter(
+            State(state.clone()),
+            at("/get-scene-adapter"),
+            headers.clone(),
+            writes_on(),
+            axum::body::Bytes::new(),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(
+            (err.code, err.message.as_str()),
+            (403, PLATFORM_BANNED_MSG),
+            "attempt {attempt}"
+        );
+    }
+    let recorded: Option<String> =
+        sqlx::query_scalar("SELECT device_id FROM social.player_connections WHERE address = $1")
+            .bind(&me)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(recorded.as_deref(), Some(device.as_str()));
+
+    // The private-messages token keeps the same rule.
+    let other_key = random_key();
+    let other = Address::parse(&address_of(&other_key)).unwrap();
+    state
+        .moderation
+        .upsert_connection(UpsertPlayerConnection {
+            address: other.clone(),
+            ip_address: None,
+            device_id: Some(device.clone()),
+        })
+        .await
+        .unwrap();
+    let path = "/private-messages/token";
+    let headers = signed(
+        &other_key,
+        "get",
+        path,
+        &meta("main", "bafkreiunused", Some("fresh-device")),
+    )
+    .await;
+    for attempt in 0..2 {
+        let err = voice::private_messages_token(
+            State(state.clone()),
+            at(path),
+            headers.clone(),
+            writes_on(),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(
+            (err.code, err.message.as_str()),
+            (403, PLATFORM_BANNED_MSG),
+            "attempt {attempt}"
+        );
+    }
+    let recorded: Option<String> =
+        sqlx::query_scalar("SELECT device_id FROM social.player_connections WHERE address = $1")
+            .bind(&other)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(recorded.as_deref(), Some(device.as_str()));
 }
 
 #[tokio::test]

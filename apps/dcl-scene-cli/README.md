@@ -46,8 +46,9 @@ set beside them); with `--watch`, `--skip-type-check` or a custom `scripts.build
 says so. `--watch` applies the `--ignoreComposite` and `--customEntryPoint` of an SDK `scripts.build`,
 as `start` does. The check runs the scene's own `typescript`: 5.x, 6.x or 7.x (the Go port); the
 vendored one is 6.x. A tsconfig TypeScript 6 only
-deprecates (`baseUrl`, say) is checked once more with `--ignoreDeprecations 6.0`, and said so;
-TypeScript 7 has removed those options, and the error's steps name the edit.
+deprecates (`baseUrl`, say) is checked with `--ignoreDeprecations 6.0`, and said so: at once when
+the tsconfig shows it (`baseUrl` alone) or an earlier check found it (`.dcl-cache/`), after one
+failing run otherwise. TypeScript 7 has removed those options, and the error's steps name the edit.
 
 ### Custom build scripts
 
@@ -61,8 +62,15 @@ exit zero and leave a nonempty bundle at `scene.json.main`. `DCL_SCENE_CLI_PRODU
 serialize build and deploy of one scene. `build --built-in` forces the SDK pipeline (also from inside
 a script); `--skip-build` skips the initial run.
 
+A scene with no `node_modules` folder (a fresh clone) gets the vendored SDK restored before the
+built-in pipeline runs, with a line saying so and a second one when `package.json` pins another
+`@dcl/sdk`; `--skip-install` turns that off, and an existing `node_modules` is never touched.
+
 The built-in pipeline bundles to `bin/index.js`, type-checks beside the build with incremental tsc
 (`.dcl-cache/`), and encodes `main.crdt` in Rust (`DCL_ONE_CRDT_VERIFY=1` compares with node).
+A watcher (`start`, `build --watch`) keeps one node process with tsc 5.x or 6.x loaded and the last
+program in memory, so the check after a save covers the edit alone; it reports what a spawned tsc
+does, ends with the watcher, and with TypeScript 7 each check spawns tsc.
 
 ## Preview it
 
@@ -74,7 +82,8 @@ dcl-scene-cli start [--dir D] [-p|--port N] [--skip-build] [--no-watch] [-m|--mo
                     [--no-livekit | --livekit-url WS_URL --livekit-api-key KEY
                      --livekit-api-secret SECRET|--livekit-api-secret-file F] [--livekit-room NAME]
                     [--no-asset-bundles] [--no-mcp] [--mcp-port N] [--error-source-lines-context N]
-                    [--no-host] [--tunnel WSS_URL] [--talk [--player URL]] [-- EXPLORER_PARAMS...]
+                    [--no-host] [--tunnel WSS_URL] [--public-url URL] [--talk [--player URL]]
+                    [--skip-install] [-- EXPLORER_PARAMS...]
 ```
 
 Serves a local realm on 8000 and reloads the client on save. `http://127.0.0.1:8000` is the launch
@@ -95,6 +104,63 @@ names another realm in the desktop deep links; `--position X,Y` picks the parcel
 on; `--hub`, `-n` and `--landscape-terrain-enabled` add the matching `=true` deep-link knobs. The
 upstream flags `--skip-auth-screen`, `--local-scene`, `--debug`, `--no-debug`/`-d` and `--web3` are
 accepted and do nothing (the first two are already on every deep link).
+
+### Addresses
+
+The preview answers on every interface and describes itself (`/about`, content and comms URLs, join
+links, QR code) as the address each request arrived at, so one running `start` serves all of these:
+
+| Reached as | What to do | Notes |
+| --- | --- | --- |
+| `http://127.0.0.1:8000`, `http://localhost:8000` | nothing | the only addresses that get the write token by page load, and a secure context for the web explorer |
+| `http://<LAN address>:8000` | nothing; `--mobile` prints the QR code | desktop and mobile clients join; the hosted web explorer cannot (below) |
+| `https://<your domain>` behind a reverse proxy | `--public-url https://<your domain>` (or `DCL_SCENE_CLI_PUBLIC_URL`) | prints that address's join links; voice needs `--livekit-url wss://…` |
+| a public URL with no proxy of your own | `--tunnel` ([Share it](#share-it)) | voice needs `--livekit-url` |
+
+A proxy that sends `X-Forwarded-Proto`, `X-Forwarded-Host` and, when it serves the preview under a
+path, `X-Forwarded-Prefix` (the prefix stripped before forwarding) needs no flag. `--public-url`
+covers the proxy that sends none of them: a request whose `Host` is that address is answered as that
+origin, scheme and path prefix included. Websockets (`/`, `/mini-comms/*`, `/data-layer`) must be
+proxied as upgrades.
+
+```
+preview.example.com {
+    reverse_proxy 127.0.0.1:8000
+}
+```
+
+```
+dcl-scene-cli start --public-url https://preview.example.com
+```
+
+A browser lets a page served over https fetch plain http from loopback only. The hosted web explorer
+is https, so it plays a preview at `127.0.0.1`/`localhost` or one served over https, and is blocked
+on `http://<LAN address>`: the launch page says so in place of the hint and `/play` answers 409 with
+the same steps. Editing routes still need the token off loopback: open a link `start` printed, which
+carries `#token=`.
+
+### Problems
+
+Every failure is printed as what failed, why, and one or more `→ try:` steps; `--verbose` adds the
+full cause chain. An error with no steps of its own still names its root cause and, for the common
+ones (refused or dropped connections, DNS, timeouts, TLS, a taken port, permissions, a full disk, a
+missing path), the step for it. Exit codes: 1 for a failed command, 2 for a usage error.
+
+A running `start` survives a failed rebuild, type errors and errors the scene throws: each prints as
+a `warning:` and stays open until it stops being true (the next clean rebuild, the next passing type
+check, the reload that replaces the throwing code). The open ones are on every preview page, above
+the content, and at `GET /api/problems`:
+
+```json
+{ "revision": 3,
+  "problems": [ { "id": 2, "topic": "types", "at": 1794563175854,
+                  "what": "type check failed — 1 error",
+                  "why": "src/index.ts(1,32): error TS2322: …",
+                  "steps": ["fix the type errors above …"] } ] }
+```
+
+`topic` is `build`, `types`, `scene` or `preview`; `revision` moves when the list does. Scene errors
+need a client with its MCP port on (the default deep link).
 
 ### Play
 
@@ -257,8 +323,9 @@ Ports: 8000 preview, 5147 abgen, 7880-7882 LiveKit. Scene files (never deployed)
 Environment: `DCL_SCENE_CLI_CATALYST` (default `https://interconnected.online`),
 `DCL_SCENE_CLI_CATALYST_ROTATION`, `DCL_SCENE_CLI_WORLD_BASE`, `DCL_SCENE_CLI_SOCIAL_API`,
 `DCL_SCENE_CLI_FEATURE_FLAGS`, `DCL_SCENE_CLI_CONTENT_CACHE_MAX`, `DCL_SCENE_CLI_WEB_EXPLORER`,
-`DCL_SCENE_CLI_ALLOWED_ORIGINS`, `DCL_SCENE_CLI_LINKER_HOST`, `DCL_PRIVATE_KEY`, `ABGEN_BIN`; build
-time `PLAY_EMBED_DIR` and `DCL_SCENE_CLI_SITE` (the operator's site origin, no default).
+`DCL_SCENE_CLI_ALLOWED_ORIGINS`, `DCL_SCENE_CLI_PUBLIC_URL`, `DCL_SCENE_CLI_LINKER_HOST`,
+`DCL_PRIVATE_KEY`, `ABGEN_BIN`; build time `PLAY_EMBED_DIR` and `DCL_SCENE_CLI_SITE` (the
+operator's site origin, no default).
 
 `--json` anywhere on the line prints the command's result as one JSON document on stdout and
 nothing else there: `export-static` gives `{scenesUrn, destination, entities}` as upstream does,
