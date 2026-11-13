@@ -4,7 +4,6 @@ import dataclasses
 import datetime
 import gzip
 import hashlib
-import importlib.util
 import io
 import json
 import os
@@ -21,18 +20,14 @@ import urllib.error
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
-if __name__ == "__main__":
-    sys.modules["tooling.tests.test_migration"] = sys.modules[__name__]
 
 from tooling.tests.migration_comms_cases import CommsMigrationCases
 from tooling.tests.migration_social_cases import SocialMigrationCases
 from tooling.tests.migration_worlds_cases import WorldsMigrationCases
 from tooling.tests.migration_financial_cases import FinancialMigrationCases
+from tooling.tests.migration_content_cases import ContentMigrationCases
 
-spec = importlib.util.spec_from_file_location('migrate', ROOT / 'tooling/migration/migrate.py')
-migrate = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(migrate)
-blobs = migrate.load_blobs_module()
+from tooling.tests.migration_harness import blobs, migrate
 CHUNK = blobs.CHUNK_SIZE
 
 
@@ -92,6 +87,19 @@ def write_source(root, files=FILES, name='toy'):
     for file, text in files.items():
         (directory / file).write_text(text)
     return directory
+
+
+class HarnessImports(unittest.TestCase):
+    def test_when_imported_both_ways_it_should_share_one_engine(self):
+        script = ("import importlib, sys\n"
+                  "sys.path[:0] = ['tooling/tests', '.']\n"
+                  "first = importlib.import_module(sys.argv[1])\n"
+                  "second = importlib.import_module(sys.argv[2])\n"
+                  "assert first.migrate.MigrationError is second.migrate.MigrationError\n")
+        names = ('test_migration', 'tooling.tests.migration_harness')
+        for order in (names, names[::-1]):
+            with self.subTest(first=order[0]):
+                subprocess.run([sys.executable, '-c', script, *order], cwd=ROOT, check=True)
 
 
 class Manifests(unittest.TestCase):
@@ -810,7 +818,8 @@ SERVER_ENV = 'MIGRATION_TEST_SERVER_URL'
 @unittest.skipUnless(shutil.which('psql') and (os.environ.get(SERVER_ENV) or
                                                (shutil.which('initdb') and shutil.which('pg_ctl'))),
                      'PostgreSQL binaries are not on PATH')
-class AgainstPostgres(CommsMigrationCases, SocialMigrationCases, WorldsMigrationCases, FinancialMigrationCases, unittest.TestCase):
+class AgainstPostgres(CommsMigrationCases, SocialMigrationCases, WorldsMigrationCases, FinancialMigrationCases,
+                      ContentMigrationCases, unittest.TestCase):
     """A throwaway cluster: the toy source end to end, and every real manifest's load against the schema."""
 
     @classmethod

@@ -3,7 +3,7 @@
 
 class CommsMigrationCases:
     def comms_load(self, step):
-        from tooling.tests import test_migration as harness
+        from tooling.tests import migration_harness as harness
         return (harness.migrate.SOURCES / 'comms-gatekeeper' / f'{step}.load.sql').read_text()
 
     def comms_fixture(self):
@@ -42,7 +42,7 @@ class CommsMigrationCases:
         self.assertEqual(self.sql(db,'SELECT place_id FROM social.scene_bans ORDER BY place_id;').strip(), 'genesis-entity\ntest.eth:2,0')
 
     def test_comms_moderation_aborts_on_unresolved_or_ambiguous_identity(self):
-        from tooling.tests import test_migration as harness
+        from tooling.tests import migration_harness as harness
         db = self.comms_fixture()
         for step in ('scene_admin','scene_ban'):
             for identity in ('missing.eth','33333333-3333-4333-8333-333333333333'):
@@ -73,7 +73,7 @@ class CommsMigrationCases:
     def test_comms_alias_precedence_survives_requested_single_row_batches(self):
         import os
         from unittest import mock
-        from tooling.tests import test_migration as harness
+        from tooling.tests import migration_harness as harness
         db = self.comms_fixture()
         src = self.fresh_db('worlds_fix_comms_source')
         self.sql(db, '''INSERT INTO explore.place(id,base_position,raw) VALUES

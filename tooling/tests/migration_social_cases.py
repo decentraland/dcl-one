@@ -23,7 +23,7 @@ class SocialMigrationCases:
         return src, tgt
 
     def test_when_importing_referrals_it_should_preserve_quota_tiers_and_transition_times(self):
-        from tooling.tests import test_migration as harness
+        from tooling.tests import migration_harness as harness
         src, tgt = self.social_referral_dbs()
         invited, referrer = self.wallet('a'), self.wallet('b')
         self.sql(src, f"""INSERT INTO referral_progress VALUES (
@@ -44,7 +44,7 @@ class SocialMigrationCases:
             FROM social.referral_progress;''').strip(), 'tier_granted\tt\ttrue\t1\tt\tt')
 
     def test_when_legacy_referrals_have_equal_status_it_should_repair_granted_state_without_rebinding(self):
-        from tooling.tests import test_migration as harness
+        from tooling.tests import migration_harness as harness
         src, tgt = self.social_referral_dbs('referral-server')
         invited, referrer = self.wallet('a'), self.wallet('b')
         self.sql(src, f"""INSERT INTO referral_progress VALUES (
@@ -63,7 +63,7 @@ class SocialMigrationCases:
                          f"{self.wallet('c')}\trejected_ip_match")
 
     def test_when_importing_reward_images_it_should_keep_all_snapshots_without_reissuing_rewards(self):
-        from tooling.tests import test_migration as harness
+        from tooling.tests import migration_harness as harness
         src, tgt = self.social_referral_dbs()
         self.sql(src, f"""INSERT INTO referral_reward_images VALUES
             ('00000000-0000-4000-8000-000000000001', '{self.wallet('a').upper()}', 'https://example.com/1.png', 1, 1767225600000),
@@ -78,7 +78,7 @@ class SocialMigrationCases:
         self.assertEqual(self.count(tgt, 'social.notification_deliveries'), 0)
 
     def test_when_converting_old_broadcast_copies_it_should_preserve_reads_and_unrelated_rows(self):
-        from tooling.tests import test_migration as harness
+        from tooling.tests import migration_harness as harness
         _, tgt = self.notifications_dbs()
         wallet = self.wallet('a')
         self.sql(tgt, f"""INSERT INTO social.notifications

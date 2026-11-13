@@ -3,7 +3,7 @@
 
 class WorldsMigrationCases:
     def migration_sql(self, source, step, kind):
-        from tooling.tests import test_migration as harness
+        from tooling.tests import migration_harness as harness
         return (harness.migrate.SOURCES / source / f'{step}.{kind}.sql').read_text()
 
     def permission_fixture(self):
@@ -34,7 +34,7 @@ class WorldsMigrationCases:
         self.assertEqual(self.sql(db, 'SELECT count(*) FROM worlds.world_permission_parcels;').strip(), '0')
 
     def test_world_permissions_reject_invalid_scope_without_widening_existing_grant(self):
-        from tooling.tests import test_migration as harness
+        from tooling.tests import migration_harness as harness
         db = self.permission_fixture()
         load = self.migration_sql('worlds-content-server', 'world_permission', 'load')
         self.sql(db, "INSERT INTO public.world_permission_parcels VALUES (1, '1,2');")

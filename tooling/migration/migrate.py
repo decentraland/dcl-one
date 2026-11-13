@@ -923,9 +923,17 @@ def cmd_status(args, sources):
 # ── blobs ───────────────────────────────────────────────────────────────────
 
 def load_blobs_module():
-    spec = importlib.util.spec_from_file_location('dcl_migration_blobs', HERE / 'blobs.py')
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    # Cached, so every caller sees one module and one set of its classes.
+    module = sys.modules.get('dcl_migration_blobs')
+    if module is None:
+        spec = importlib.util.spec_from_file_location('dcl_migration_blobs', HERE / 'blobs.py')
+        module = importlib.util.module_from_spec(spec)
+        sys.modules['dcl_migration_blobs'] = module
+        try:
+            spec.loader.exec_module(module)
+        except BaseException:
+            del sys.modules['dcl_migration_blobs']
+            raise
     return module
 
 
