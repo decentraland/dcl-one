@@ -104,8 +104,13 @@ then roll back each batch without advancing checkpoints.
 Photo UUID, normalized owner, timestamp at microsecond precision, privacy,
 metadata JSON, canonical basename, explicit original MIME and both original byte
 streams are retained.
-An exact UUID replay is a no-op; differing target facts abort the batch without
-updates. Existing moderation remains untouched. Historical rows explicitly set
+An exact UUID replay retains the image facts; differing immutable target facts
+abort the batch without updates. The importer records the last visibility it
+wrote in `dcl_migration.camera_reel_image_loaded`. Later source visibility changes
+follow only while the target still matches that recorded value; local visibility
+edits remain intact. Existing UUIDs without an import marker require exact facts
+and visibility and are never silently adopted or overwritten. Existing moderation
+remains untouched, including when source visibility changes. Historical rows explicitly set
 `ranking_published=true`, without new photo events, ranking increments or rewards.
 A failed batch rolls back its rows and checkpoint together.
 

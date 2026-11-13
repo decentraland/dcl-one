@@ -17,7 +17,9 @@ same nine files byte for byte).
 - `is_private` is stored the way the node's writes store it: true unless the
   list has a `view` grant to `*`. Reads derive it from the ACL anyway.
   `permission` is NULL (the node never writes it).
-- A list's grants are replaced by the source's grants each time the list loads.
+- A list the node changed later (its `updated_at`, or `created_at` when NULL,
+  is newer than upstream's) keeps its fields and grants.
+- A list's grants are otherwise replaced by the source's grants each time the list loads.
   Upstream triggers bump `lists.updated_at` (the watermark) on every grant or
   pick change, so `--since` sees revocations. Picks deleted upstream after a
   run are not removed.
@@ -25,7 +27,7 @@ same nine files byte for byte).
   overwritten (upstream leaves it without a `*` grant). Picks into it move.
 - If the node already has a list with the same `(name, owner)` under another id,
   the node's list is kept. The upstream list, its grants and its picks are
-  skipped.
+  skipped, and the run prints a NOTICE with how many lists and picks it skipped.
 - `timestamp` columns hold UTC. A NULL `updated_at` stays NULL; the watermark
   falls back to `created_at`.
 

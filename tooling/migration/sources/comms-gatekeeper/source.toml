@@ -21,8 +21,10 @@ whole source set so aliases of one target identity are resolved together;
 re-scan other steps with --restart. Scene unbans are upstream DELETEs and are
 not propagated: use a frozen snapshot into an empty destination or explicitly
 reconcile deletions before activation. scene_stream_access retires
-(active = false) any other active target credential of a place whose
-upstream active credential it loads, to keep the one-active index.
+(active = false) any older active target credential of a place whose
+upstream active credential it loads, to keep the one-active index, and queues
+the retired credential's ingress cleanup. Re-runs keep node-side lifts,
+admin revocations/grants and retired credentials.
 """
 
 [[step]]

@@ -16,6 +16,29 @@ DO $missing$ DECLARE n bigint; BEGIN
   IF n > 0 THEN RAISE EXCEPTION
     'worlds-content-server/world: % thumbnails are not in dcl_migration.blob_inventory; copy the blobs first', n;
   ELSE NULL; END IF; END $missing$;
+-- Worlds whose access setting was not representable became empty allow-lists.
+DO $coerced$ DECLARE n bigint; names text; BEGIN
+  SELECT count(*), string_agg(name, ', ' ORDER BY name) FILTER (WHERE rn <= 20) INTO n, names
+    FROM (SELECT name, row_number() OVER (ORDER BY name) AS rn FROM stage WHERE access_coerced) c;
+  IF n > 0 THEN RAISE NOTICE
+    'worlds-content-server/world: % worlds had an unknown or incomplete access setting and became empty allow-lists: %', n, names;
+  END IF; END $coerced$;
+
+-- The worlds this batch writes: new, mirrored, or local rows whose settings
+-- the node did not change after upstream's row (settings_version bumps on
+-- every settings write; a bare row from a grant edit keeps 0).
+CREATE TEMP TABLE wcs_world_apply AS
+SELECT s.name
+FROM stage s LEFT JOIN worlds.worlds w ON w.name = s.name
+WHERE w.name IS NULL OR w.mirror_source IS NOT NULL
+   OR w.updated_at <= s.updated_at AT TIME ZONE 'UTC'
+   OR w.settings_version <= greatest(coalesce(s.settings_version, 0), 0);
+
+DO $kept$ DECLARE n bigint; BEGIN
+  SELECT count(*) INTO n FROM stage s WHERE NOT EXISTS (SELECT 1 FROM wcs_world_apply a WHERE a.name = s.name);
+  IF n > 0 THEN RAISE NOTICE 'worlds-content-server/world: kept % worlds whose settings changed on the node', n;
+  END IF; END $kept$;
+
 INSERT INTO worlds.worlds AS w (
     name, owner, access_type, access_secret_hash, access_nft, spawn_coordinates,
     title, description, content_rating, skybox_time, categories, single_player,
@@ -34,7 +57,7 @@ SELECT
     NULL,
     s.created_at AT TIME ZONE 'UTC',
     s.updated_at AT TIME ZONE 'UTC'
-FROM stage s
+FROM stage s JOIN wcs_world_apply a ON a.name = s.name
 ON CONFLICT (name) DO UPDATE SET
     owner = EXCLUDED.owner,
     access_type = EXCLUDED.access_type,
@@ -57,20 +80,24 @@ ON CONFLICT (name) DO UPDATE SET
 -- The allow-list wallets are `access` grants; the row carries the whole list,
 -- so the world's set is replaced (with their parcel rows, by cascade).
 DELETE FROM worlds.world_permissions p
-USING stage s
+USING stage s JOIN wcs_world_apply a ON a.name = s.name
 WHERE p.world_name = s.name AND p.permission = 'access'
   AND NOT (p.address = ANY (s.access_wallets));
 
 INSERT INTO worlds.world_permissions (world_name, permission, address, created_at, updated_at)
 SELECT s.name, 'access', a, s.updated_at AT TIME ZONE 'UTC', s.updated_at AT TIME ZONE 'UTC'
-FROM stage s CROSS JOIN LATERAL unnest(s.access_wallets) a
+FROM stage s JOIN wcs_world_apply w ON w.name = s.name
+CROSS JOIN LATERAL unnest(s.access_wallets) a
 ON CONFLICT (world_name, permission, address) DO NOTHING;
 
 DELETE FROM worlds.world_access_communities c
-USING stage s
+USING stage s JOIN wcs_world_apply a ON a.name = s.name
 WHERE c.world_name = s.name AND NOT (c.community_id::text = ANY (s.access_communities));
 
 INSERT INTO worlds.world_access_communities (world_name, community_id, created_at)
 SELECT s.name, c::uuid, s.updated_at AT TIME ZONE 'UTC'
-FROM stage s CROSS JOIN LATERAL unnest(s.access_communities) c
+FROM stage s JOIN wcs_world_apply w ON w.name = s.name
+CROSS JOIN LATERAL unnest(s.access_communities) c
 ON CONFLICT (world_name, community_id) DO NOTHING;
+
+DROP TABLE wcs_world_apply;

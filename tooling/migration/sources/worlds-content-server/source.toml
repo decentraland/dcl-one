@@ -29,9 +29,12 @@ Deletes: world_scene deletes the local row of a scene upstream marks
 UNDEPLOYED, and the mirrored (mirror_source IS NOT NULL) scenes of a world it
 imports, as a local publish does, and retires the identities of scenes so
 removed. world replaces each imported world's `access` grants
-and access communities, and world_permission each grant's parcel scope, with
-the upstream list (one row carries the whole list). Removed
-deployment/streaming grants and lifted quota blocks are not detected.
+and access communities with the upstream list (one row carries the whole
+list), unless the node changed the world's settings after upstream last did.
+world_permission reads every deployment/streaming grant each run and deletes
+the grants it imported that upstream no longer holds; grants made or edited
+on the node are kept (dcl_migration.world_permission_loaded). Lifted quota
+blocks are not detected.
 """
 
 [[step]]
@@ -49,6 +52,7 @@ columns = [
   { name = "access_nft", type = "text" },
   { name = "access_wallets", type = "text[]" },
   { name = "access_communities", type = "text[]" },
+  { name = "access_coerced", type = "boolean" },
   { name = "spawn_coordinates", type = "text" },
   { name = "title", type = "text" },
   { name = "description", type = "text" },
@@ -102,7 +106,8 @@ targets = ["worlds.world_permissions", "worlds.world_permission_parcels"]
 extract = "world_permission.extract.sql"
 load = "world_permission.load.sql"
 key = ["world_name", "permission", "address"]
-watermark = "updated_at"
+# Upstream deletes a revoked grant; only the whole set shows it is gone.
+whole = true
 columns = [
   { name = "world_name", type = "text" },
   { name = "permission", type = "text" },

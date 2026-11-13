@@ -10,7 +10,8 @@ stopped.
 | Step | Upstream | Target |
 | --- | --- | --- |
 | `cutover_guard` | `usd_purchase_intents`, `stripe_orders`, Stripe dispute/refund facts | nothing (refuses the run) |
-| `wallet` | `users`, `flagged_wallets` | `credits.wallets` flags |
+| `wallet` | `users` | `credits.wallets.has_started_program` |
+| `wallet_flag` | `flagged_wallets` (live `multi-account`) | `credits.wallet_flags` |
 | `purchase` | `stripe_orders` + their `user_credits` | `credits.purchases` |
 | `ledger` | USD `user_credits`, SETTLED `usd_purchase_intents` | `credits.ledger`, `credits.wallets` balances |
 
@@ -75,8 +76,22 @@ holds by construction. A credited order is `paid` until its net reversal
 later Stripe reversal processed by the node claws back only the remainder.
 Uncredited orders become `failed` or `abandoned`.
 
-`wallet`: `has_started_program = opted_out_at IS NULL`;
-`is_blocked_for_claiming` = a live (unexpired) captcha or multi-account flag.
+`wallet`: `has_started_program = opted_out_at IS NULL`. The ledger step
+creates any other wallet with `has_started_program = false`, as the node does.
+`is_blocked_for_claiming` is the node operator's block (it refuses spends too)
+and is never imported.
+
+`wallet_flag`: each live `multi-account` flag becomes a `credits.wallet_flags`
+row (claims blocked, spending allowed, as upstream) with source
+`credits-server:multi-account`, IP and linked addresses from `reason`. The
+node's flags never expire, so an expiring multi-account flag stays until an
+operator unflags it. `captcha` flags are short-lived throttles and are not
+imported. Each run drops imported flags that upstream no longer holds and
+never re-adds one an operator lifted (`user.unflag`/`user.unblock` audited
+after its `flagged_at`); flags raised on the node are left alone.
+
+`purchases` are not overwritten when the node row's `updated_at` is newer
+(the node refunded or abandoned it).
 
 ## Not migrated
 

@@ -32,6 +32,8 @@ Pinned at `452af1e06cf103ffa4e5b115b002120e98d375c7` (migrations through
   NULL; addresses are lowercased. An item whose collection is missing
   upstream becomes a loose draft (`collection_id` NULL).
 - Timestamps: upstream `timestamp without time zone`, read as UTC.
+- A collection, item or project the node wrote after upstream's last save
+  (its `updated_at` is newer) is kept on re-runs.
 - `projects`: rows without `eth_address` (ownerless legacy rows) are skipped;
   NULL statistics become 0, NULL description `''`; `thumbnail` is not carried
   (upstream holds a file name in the project's S3 folder, the node an upload

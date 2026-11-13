@@ -42,10 +42,13 @@ Notes:
 - `deleted_at` is `timestamp` (UTC) upstream; the other event and schedule
   timestamps are `timestamptz`. `profile_settings.created_at/updated_at` are
   `timestamp` (gatsby `Type.TimeStampTZ`) and are read as UTC.
-- Profile `permissions` are trusted: upstream's admins are their only
-  writers, so a non-empty list is imported with `permissions_granted = true`
-  (`schemas/migrations/0014`). A row saved on this node after upstream's last
-  save keeps its own permissions and grant.
+- Profile `permissions` are trusted: upstream's admins (and
+  `edit_any_profile` holders) are their only writers, so a non-empty list is
+  imported with `permissions_granted = true`. `schemas/migrations/0014`
+  revokes values the node's own profile endpoint let users write; it does
+  not apply to imported rows. Each batch reports how many grants it imports,
+  by permission, for operator review. A row saved on this node after
+  upstream's last save keeps its own permissions and grant.
   `email_verified_at` and `email_updated_at` are also preserved as UTC, including nulls.
 - Browser subscription endpoints, users and push keys are retained for the existing
   settings/subscription APIs; the target does not send browser pushes. The source

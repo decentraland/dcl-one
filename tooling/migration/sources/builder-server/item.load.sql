@@ -2,6 +2,7 @@
 -- draft: builder.items.collection_id is a declared FK. Empty strings upstream
 -- writes for "unset" price/beneficiary become NULL; rarity is compared
 -- lowercase. in_catalyst and catalyst_content_hash are node-maintained.
+-- A row the node wrote after upstream's last save is kept.
 INSERT INTO builder.items AS i
     (id, collection_id, eth_address, name, description, thumbnail, video, type, rarity,
      price, beneficiary, data, metrics, utility, mappings, urn_suffix, blockchain_item_id,
@@ -69,4 +70,5 @@ WHERE (i.collection_id, i.eth_address, i.name, i.description, i.thumbnail, i.vid
        EXCLUDED.beneficiary, EXCLUDED.data, EXCLUDED.metrics, EXCLUDED.utility, EXCLUDED.mappings,
        EXCLUDED.urn_suffix, EXCLUDED.blockchain_item_id, EXCLUDED.is_published,
        EXCLUDED.curation_status, EXCLUDED.total_supply, EXCLUDED.local_content_hash,
-       EXCLUDED.content_hash, EXCLUDED.created_at, EXCLUDED.updated_at);
+       EXCLUDED.content_hash, EXCLUDED.created_at, EXCLUDED.updated_at)
+  AND i.updated_at <= EXCLUDED.updated_at;

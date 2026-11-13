@@ -1,5 +1,5 @@
--- Drafts are the creator's local authority on the node; an upstream re-run
--- overwrites the imported columns. publication_pending starts false: the
+-- Drafts are the creator's local authority on the node: a row the node wrote
+-- after upstream's last save is kept. publication_pending starts false: the
 -- upstream `lock` is a short-lived publish lock, not a durable state.
 INSERT INTO builder.collections AS c
     (id, name, eth_address, salt, contract_address, urn_suffix, third_party_id,
@@ -24,4 +24,5 @@ WHERE (c.name, c.eth_address, c.salt, c.contract_address, c.urn_suffix, c.third_
       IS DISTINCT FROM
       (EXCLUDED.name, EXCLUDED.eth_address, EXCLUDED.salt, EXCLUDED.contract_address, EXCLUDED.urn_suffix,
        EXCLUDED.third_party_id, EXCLUDED.is_published, EXCLUDED.is_approved, EXCLUDED.created_at,
-       EXCLUDED.updated_at);
+       EXCLUDED.updated_at)
+  AND c.updated_at <= EXCLUDED.updated_at;

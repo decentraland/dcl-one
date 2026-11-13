@@ -1,5 +1,6 @@
 -- files_version and manifest_revision stay the node's: an existing row keeps
 -- its counters so a client's ETag/If-Match is not invalidated by a re-run.
+-- A row the node wrote after upstream's last save is kept.
 INSERT INTO builder.projects AS p
     (id, eth_address, title, description, scene_id, cols, rows, parcels, transforms,
      gltf_shapes, nft_shapes, scripts, entities, creation_coords, is_public, is_template,
@@ -38,4 +39,5 @@ WHERE (p.eth_address, p.title, p.description, p.scene_id, p.cols, p.rows, p.parc
        EXCLUDED.rows, EXCLUDED.parcels, EXCLUDED.transforms, EXCLUDED.gltf_shapes,
        EXCLUDED.nft_shapes, EXCLUDED.scripts, EXCLUDED.entities, EXCLUDED.creation_coords,
        EXCLUDED.is_public, EXCLUDED.is_template, EXCLUDED.template_status, EXCLUDED.video,
-       EXCLUDED.is_deleted, EXCLUDED.created_at, EXCLUDED.updated_at);
+       EXCLUDED.is_deleted, EXCLUDED.created_at, EXCLUDED.updated_at)
+  AND p.updated_at <= EXCLUDED.updated_at;

@@ -5,8 +5,9 @@ database_env = "CREDITS_SERVER_DATABASE_URL"
 after = []
 notes = """
 Imports the USD Credits balance as a ledger (credits.ledger, all in the
-'paid' bucket) and its wallet projections, the wallets' program flags and the
-Stripe orders. See MAPPING.md. Run at cutover, with upstream writes stopped:
+'paid' bucket) and its wallet projections, the wallets' program flags, the
+live multi-account flags (credits.wallet_flags, claim-only) and the Stripe
+orders. See MAPPING.md. Run at cutover, with upstream writes stopped:
 cutover_guard refuses PENDING/EXPIRED USD intents, in-flight Stripe orders,
 unresolved disputes and unreconciled dispute/refund facts.
 
@@ -37,7 +38,9 @@ Not migrated, by reason:
   usage_index_cursor.
 
 No step has a watermark; every run re-scans and the loads are idempotent
-(ledger rows by tx_ref, purchases by order_id, wallets by address).
+(ledger rows by tx_ref, purchases by order_id, wallets and flags by address).
+A row the node changed later (a purchase with a newer updated_at, a flag
+lifted by an operator) is kept.
 """
 
 [[step]]
@@ -60,9 +63,22 @@ key = ["address"]
 columns = [
   { name = "address", type = "text" },
   { name = "has_started_program", type = "boolean" },
-  { name = "is_blocked_for_claiming", type = "boolean" },
   { name = "created_at", type = "timestamptz" },
   { name = "updated_at", type = "timestamptz" },
+]
+
+[[step]]
+name = "wallet_flag"
+targets = ["credits.wallet_flags"]
+extract = "wallet_flag.extract.sql"
+load = "wallet_flag.load.sql"
+key = ["address"]
+whole = true
+columns = [
+  { name = "address", type = "text" },
+  { name = "ip", type = "text" },
+  { name = "linked_addresses", type = "text[]" },
+  { name = "flagged_at", type = "timestamptz" },
 ]
 
 [[step]]

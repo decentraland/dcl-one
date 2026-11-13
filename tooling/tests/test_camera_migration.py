@@ -14,7 +14,8 @@ from unittest.mock import patch
 import urllib.parse
 import uuid
 
-from tooling.tests.test_migration import migrate, blobs, pattern, private_postgres_cluster, SERVER_ENV
+from tooling.tests.migration_harness import (migrate, blobs, pattern, private_postgres_cluster,
+                                             validate_test_server, SERVER_ENV)
 
 PHOTO = '12345678-1234-5678-9012-123456789012'
 OWNER = '0x' + 'a' * 40
@@ -272,6 +273,7 @@ class CameraDatabase(CameraFiles):
     def setUpClass(cls):
         cls.admin_url = os.environ.get('CATALYST_TEST_DATABASE_URL') or os.environ.get(SERVER_ENV)
         if cls.admin_url:
+            validate_test_server(cls.admin_url)
             parsed = urllib.parse.urlsplit(cls.admin_url)
             cls.admin_url = urllib.parse.urlunsplit(parsed._replace(path=parsed.path or '/postgres'))
         else:
@@ -345,12 +347,47 @@ CREATE TABLE camera_reel.photo_events (id bigint);
         self.sql("UPDATE camera_reel.images SET review_status='rejected';")
         self.run_import()
         self.assertEqual(self.sql('SELECT review_status FROM camera_reel.images;').strip(), 'rejected')
-        self.sql('UPDATE images SET is_public=true;')
+        self.sql("UPDATE images SET metadata = metadata || '{\"realmName\":\"changed\"}'::jsonb;")
         before = self.sql('SELECT row_to_json(c) FROM dcl_migration.checkpoint c;')
         with self.assertRaises(migrate.MigrationError):
             self.run_import()
         self.assertEqual(self.sql('SELECT row_to_json(c) FROM dcl_migration.checkpoint c;'), before)
         self.assertEqual(self.sql('SELECT is_public FROM camera_reel.images;').strip(), 'f')
+
+    def test_cli_preserves_escaped_metadata_through_source_and_target_copy(self):
+        metadata = dict(META, userName='Unicode café 雪 "quoted"\nline\ttab\\backslash',
+                        opaque={'literal': '\\n', 'actual': '\n\t', 'quote': '"'})
+        self.sql('UPDATE images SET metadata=' + migrate.literal(json.dumps(metadata)) + '::jsonb;')
+        args = ['run', migrate.CAMERA, '--storage-root', str(self.store.contents.parent)]
+        self.assertEqual(migrate.main(args), 0)
+        self.assertEqual(json.loads(self.sql('SELECT metadata FROM camera_reel.images;')), metadata)
+
+    def test_source_visibility_follows_tracked_import_and_preserves_rejection(self):
+        self.run_import()
+        self.sql("UPDATE camera_reel.images SET review_status='rejected'; UPDATE images SET is_public=true;")
+        self.run_import()
+        self.assertEqual(self.sql('SELECT is_public, review_status FROM camera_reel.images;').strip(), 't\trejected')
+        self.assertEqual(self.sql('SELECT is_public FROM dcl_migration.camera_reel_image_loaded;').strip(), 't')
+        self.assertEqual(self.sql('SELECT count(*) FROM camera_reel.photo_events;').strip(), '0')
+
+    def test_local_visibility_edit_is_preserved_on_source_replay(self):
+        self.run_import()
+        self.sql('UPDATE camera_reel.images SET is_public=true;')
+        self.run_import()
+        self.assertEqual(self.sql('SELECT is_public FROM camera_reel.images;').strip(), 't')
+        self.assertEqual(self.sql('SELECT is_public FROM dcl_migration.camera_reel_image_loaded;').strip(), 'f')
+
+    def test_untracked_uuid_exact_replay_never_adopts_or_overwrites_visibility(self):
+        self.run_import()
+        self.sql('DELETE FROM dcl_migration.camera_reel_image_loaded;')
+        self.run_import()
+        self.assertEqual(self.sql('SELECT count(*) FROM dcl_migration.camera_reel_image_loaded;').strip(), '0')
+        self.sql('UPDATE images SET is_public=true;')
+        before = self.sql('SELECT row_to_json(c) FROM dcl_migration.checkpoint c;')
+        with self.assertRaises(migrate.MigrationError):
+            self.run_import()
+        self.assertEqual(self.sql('SELECT is_public FROM camera_reel.images;').strip(), 'f')
+        self.assertEqual(self.sql('SELECT row_to_json(c) FROM dcl_migration.checkpoint c;'), before)
 
     def test_disappeared_blob_and_dry_run_leave_no_rows_or_checkpoint(self):
         self.run_import(dry=True)

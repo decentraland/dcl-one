@@ -5,11 +5,11 @@ Pinned at `33d2e28aefad26b72902a8c5d694129df0de3b77` (`src/migrations/` up to
 
 | Upstream | Target | Notes |
 | --- | --- | --- |
-| `scene_admin` | `social.scene_admins` | One row per `(place_id, lower(admin))`: the active grant, else the newest revoked one. Upstream keeps no revocation time; `removed_at` = grant time for revoked rows. Upstream `id` is dropped (the node derives a v5 id from the key). |
+| `scene_admin` | `social.scene_admins` | One row per `(place_id, lower(admin))`: the active grant, else the newest revoked one. Upstream keeps no revocation time; `removed_at` = grant time for revoked rows. Upstream `id` is dropped (the node derives a v5 id from the key). A node grant or revocation later than the upstream grant time is kept on re-runs. |
 | `scene_bans` | `social.scene_bans` | Upstream `id` dropped; key `(place_id, banned_address)`. |
-| `scene_stream_access` | `social.scene_stream_access` | Same `id`. Epoch ms → timestamps; `streaming_checked_at = 0` → NULL; `ingress_id = ''` (Cast 2.0) → NULL; missing `generated_by` → `''`; `streaming` only on active rows. Upstream lease columns are dropped and `cleanup_retry_at` starts NULL. |
+| `scene_stream_access` | `social.scene_stream_access` | Same `id`. Epoch ms → timestamps; `streaming_checked_at = 0` → NULL; `ingress_id = ''` (Cast 2.0) → NULL; missing `generated_by` → `''`; `streaming` only on active rows. Upstream lease columns are dropped and `cleanup_retry_at` starts NULL. A credential the node retired stays retired, and node streaming state with a higher `streaming_state_version` is kept. An upstream active credential retires the place's older active one with a cleanup intent (no notice); one older than the node's active credential lands inactive with the same intent. |
 | `scene_stream_access` with `ingress_cleanup_pending` | `social.scene_stream_cleanup` | An unfinished ingress deletion becomes a due cleanup intent with no catalogue context; `ingress_cleanup_expired` → `notification_kind = 'streaming_key_expired'`, else no notification. A NotFound ingress counts as deleted. |
-| `user_bans` | `social.user_bans` | Same `id`; timestamps read as UTC. |
+| `user_bans` | `social.user_bans` | Same `id`; timestamps read as UTC. A lift recorded on the node (`lifted_at`, `lifted_by`) is never cleared by a re-run; loads take the node's per-address ban lock. |
 | `user_warnings` | `social.user_warnings` | Same `id`; upstream `created_at` has no target column. |
 | `player_connection_info` | `social.player_connections` | Watermark `updated_at`; a null never erases a known value, a newer node row wins. Holds IP addresses and device ids. |
 

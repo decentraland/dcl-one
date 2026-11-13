@@ -1,5 +1,5 @@
 -- This mapping requires the filename-origin schema capability. It never
--- overwrites target facts, moderation, or replay markers.
+-- overwrites immutable target facts or moderation. Visibility follows tracked imports only.
 DO $capability$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM information_schema.columns
                  WHERE table_schema = 'camera_reel' AND table_name = 'images'
@@ -56,6 +56,7 @@ DO $urls$ BEGIN
   END IF;
 END $urls$;
 
+WITH inserted AS (
 INSERT INTO camera_reel.images
     (id, user_address, image_hash, thumbnail_hash, original_filename, image_content_type,
      is_public, review_status, ranking_published, metadata, created_at)
@@ -64,6 +65,11 @@ SELECT s.id, s.user_address, bi.hash, bt.hash, s.original_filename, bi.content_t
 FROM camera_import s
 JOIN dcl_migration.blob_inventory bi ON bi.source = 'camera-reel-service' AND bi.object_key = s.image_key
 JOIN dcl_migration.blob_inventory bt ON bt.source = 'camera-reel-service' AND bt.object_key = s.thumbnail_key
+ON CONFLICT (id) DO NOTHING
+RETURNING id, is_public
+)
+INSERT INTO dcl_migration.camera_reel_image_loaded (id, is_public)
+SELECT id, is_public FROM inserted
 ON CONFLICT (id) DO NOTHING;
 
 -- Check after INSERT so a concurrent insert is also compared. Moderation is
@@ -75,11 +81,22 @@ DO $conflict$ BEGIN
     JOIN dcl_migration.blob_inventory bi ON bi.source = 'camera-reel-service' AND bi.object_key = s.image_key
     JOIN dcl_migration.blob_inventory bt ON bt.source = 'camera-reel-service' AND bt.object_key = s.thumbnail_key
     WHERE (i.user_address, i.image_hash, i.thumbnail_hash, i.original_filename,
-           i.is_public, i.metadata, i.created_at, i.ranking_published, i.image_content_type)
+           i.metadata, i.created_at, i.ranking_published, i.image_content_type)
       IS DISTINCT FROM
           (s.user_address, bi.hash, bt.hash, s.original_filename,
-           s.is_public, s.metadata, s.created_at AT TIME ZONE 'UTC', true, bi.content_type)
+           s.metadata, s.created_at AT TIME ZONE 'UTC', true, bi.content_type)
+    OR (i.is_public IS DISTINCT FROM s.is_public AND NOT EXISTS
+        (SELECT 1 FROM dcl_migration.camera_reel_image_loaded l WHERE l.id = i.id))
   ) THEN RAISE EXCEPTION 'camera UUID conflicts with existing target facts; no rows overwritten';
   END IF;
 END $conflict$;
+-- Follow upstream visibility only while the node still has our last value.
+-- Rows that predate the importer are never adopted as importer-owned rows.
+UPDATE camera_reel.images i SET is_public = s.is_public
+FROM camera_import s, dcl_migration.camera_reel_image_loaded l
+WHERE i.id = s.id AND l.id = i.id AND i.is_public = l.is_public;
+
+UPDATE dcl_migration.camera_reel_image_loaded l SET is_public = s.is_public
+FROM camera_import s JOIN camera_reel.images i USING (id)
+WHERE l.id = s.id AND i.is_public = s.is_public;
 DROP TABLE camera_import;

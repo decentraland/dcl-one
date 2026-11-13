@@ -4,8 +4,8 @@ import dataclasses
 import datetime
 import gzip
 import hashlib
-import importlib.util
 import io
+import itertools
 import json
 import os
 from pathlib import Path
@@ -18,28 +18,19 @@ import tempfile
 import textwrap
 import unittest
 import urllib.error
+import urllib.parse
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
-# Discovery imports this file as test_migration; Camera and the mixins use its
-# package name. Both must share the same dynamically loaded exception classes.
-for module_name in ("test_migration", "tooling.tests.test_migration"):
-    sys.modules[module_name] = sys.modules[__name__]
 
 from tooling.tests.migration_comms_cases import CommsMigrationCases
 from tooling.tests.migration_social_cases import SocialMigrationCases
 from tooling.tests.migration_worlds_cases import WorldsMigrationCases
 from tooling.tests.migration_financial_cases import FinancialMigrationCases
+from tooling.tests.migration_content_cases import ContentMigrationCases
 
-spec = importlib.util.spec_from_file_location('migrate', ROOT / 'tooling/migration/migrate.py')
-migrate = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(migrate)
-blobs = migrate.load_blobs_module()
+from tooling.tests.migration_harness import blobs, migrate, pattern, private_postgres_cluster, validate_test_server
 CHUNK = blobs.CHUNK_SIZE
-
-
-def pattern(n):
-    return (bytes(range(251)) * (n // 251 + 1))[:n]
 
 
 def put_upstream(root, key, data):
@@ -96,19 +87,19 @@ def write_source(root, files=FILES, name='toy'):
     return directory
 
 
-class ModuleIdentity(unittest.TestCase):
-    def test_discovery_and_package_imports_share_the_migration_harness(self):
-        for first, second in (('test_migration', 'tooling.tests.test_migration'),
-                              ('tooling.tests.test_migration', 'test_migration')):
-            with self.subTest(first=first):
-                subprocess.run([sys.executable, '-c',
-                    "import importlib,sys; sys.path.insert(0,sys.argv[1]); "
-                    "a=importlib.import_module(sys.argv[2]); b=importlib.import_module(sys.argv[3]); "
-                    "c=importlib.import_module('tooling.tests.test_camera_migration'); "
-                    "assert a is b; assert a.migrate is c.migrate; "
-                    "assert isinstance(a.migrate.MigrationError('fixture'), b.migrate.MigrationError)",
-                    str(ROOT / 'tooling/tests'), first, second], cwd=ROOT, check=True,
-                    capture_output=True, text=True)
+class HarnessImports(unittest.TestCase):
+    def test_when_imported_both_ways_it_should_share_one_engine(self):
+        script = ("import importlib, sys\n"
+                  "sys.path[:0] = ['tooling/tests', '.']\n"
+                  "first = importlib.import_module(sys.argv[1])\n"
+                  "second = importlib.import_module(sys.argv[2])\n"
+                  "assert first.migrate.MigrationError is second.migrate.MigrationError\n"
+                  "camera = importlib.import_module('tooling.tests.test_camera_migration')\n"
+                  "assert camera.migrate is first.migrate\n")
+        names = ('test_migration', 'tooling.tests.migration_harness')
+        for order in (names, names[::-1]):
+            with self.subTest(first=order[0]):
+                subprocess.run([sys.executable, '-c', script, *order], cwd=ROOT, check=True)
 
 
 class Manifests(unittest.TestCase):
@@ -271,12 +262,74 @@ class Connections(unittest.TestCase):
         self.assertIn('default_transaction_read_only=on', env['PGOPTIONS'])
         self.assertIn('TimeZone=UTC', env['PGOPTIONS'])
 
+    def test_when_a_remote_url_names_no_sslmode_it_should_verify_the_certificate(self):
+        with unittest.mock.patch.dict(os.environ, {}, clear=True):
+            env = migrate.connection_env('postgres://reader@db.example/places')
+        self.assertEqual(env['PGSSLMODE'], 'verify-full')
+
+    def test_when_the_operator_sets_pgsslmode_it_should_keep_it(self):
+        with unittest.mock.patch.dict(os.environ, {'PGSSLMODE': 'require', 'PGPASSWORD': 'stale'}, clear=True):
+            env = migrate.connection_env('postgres://reader@db.example/places')
+        self.assertEqual((env['PGSSLMODE'], env.get('PGPASSWORD')), ('require', None))
+
+    def test_when_the_host_is_local_it_should_leave_sslmode_to_libpq(self):
+        with unittest.mock.patch.dict(os.environ, {}, clear=True):
+            env = migrate.connection_env('postgres://postgres@127.0.0.1:5432/places')
+        self.assertNotIn('PGSSLMODE', env)
+
+    def test_when_quoting_a_path_for_psql_it_should_survive_quotes_and_spaces(self):
+        self.assertEqual(migrate.psql_path("/tmp/a b/it's.sql"), "'/tmp/a b/it''s.sql'")
+
     def test_when_given_an_unknown_parameter_it_should_refuse(self):
         with self.assertRaisesRegex(migrate.MigrationError, 'unsupported'):
             migrate.connection_env('postgres://h/db?weird=1')
 
     def test_when_quoting_a_literal_it_should_double_single_quotes(self):
         self.assertEqual(migrate.literal("it's"), "'it''s'")
+
+
+class AfterOrder(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp)
+        write_source(self.tmp)
+        child = {**FILES, 'source.toml': MANIFEST.replace('name = "toy"', 'name = "child"\nafter = ["toy"]')
+                 .replace('TOY_DATABASE_URL', 'CHILD_DATABASE_URL')}
+        write_source(self.tmp, child, 'child')
+        self.sources = migrate.discover(self.tmp)
+        env = unittest.mock.patch.dict(os.environ, {'TOY_DATABASE_URL': 'postgres://toy/x',
+                                                    'CHILD_DATABASE_URL': 'postgres://child/x',
+                                                    'TARGET_DATABASE_URL': 'postgres://target/x'})
+        env.start()
+        self.addCleanup(env.stop)
+
+    def run_child(self, checkpoints, *extra):
+        args = migrate.parser().parse_args(['run', 'child', *extra])
+        with unittest.mock.patch.object(migrate, 'ensure_checkpoint_table'), \
+                unittest.mock.patch.object(migrate, 'read_checkpoints', return_value=checkpoints), \
+                unittest.mock.patch.object(migrate, 'run_step', return_value=(0, 'no writes')) as run, \
+                contextlib.redirect_stdout(io.StringIO()):
+            migrate.cmd_run(args, self.sources)
+        return [(c.args[0].source, c.args[0].name) for c in run.call_args_list]
+
+    def test_when_the_parent_never_completed_it_should_refuse(self):
+        with self.assertRaisesRegex(migrate.MigrationError, 'child runs after toy'):
+            self.run_child({})
+
+    def test_when_the_parent_completed_earlier_it_should_run_alone(self):
+        done = migrate.Checkpoint(walk_started_at='2026-01-01T00:00:00Z', completed_at='2026-01-01T00:01:00Z',
+                                  last_completed_walk_started_at='2026-01-01T00:00:00Z')
+        self.assertEqual(self.run_child({('toy', 'things'): done, ('toy', 'tags'): done}),
+                         [('child', 'things'), ('child', 'tags')])
+
+    def test_when_the_parent_is_skipped_as_unconfigured_it_should_refuse(self):
+        with unittest.mock.patch.dict(os.environ, {'TOY_DATABASE_URL': ''}):
+            args = migrate.parser().parse_args(['run', 'toy', 'child', '--skip-unconfigured'])
+            with unittest.mock.patch.object(migrate, 'ensure_checkpoint_table'), \
+                    unittest.mock.patch.object(migrate, 'read_checkpoints', return_value={}), \
+                    contextlib.redirect_stdout(io.StringIO()), \
+                    self.assertRaisesRegex(migrate.MigrationError, 'child runs after toy'):
+                migrate.cmd_run(args, self.sources)
 
 
 class Walks(unittest.TestCase):
@@ -297,16 +350,42 @@ class Walks(unittest.TestCase):
         walk = self.plan(self.watermarked, cp)
         self.assertEqual((walk.cursor, walk.fresh, walk.rows), (cp.cursor, False, 10))
 
-    def test_when_a_different_since_is_given_it_should_start_a_new_walk(self):
-        cp = migrate.Checkpoint(cursor=['x', '1'], walk_started_at='2026-02-01T00:00:00Z')
+    def test_when_a_different_since_is_given_after_a_completed_walk_it_should_start_a_new_walk(self):
+        cp = migrate.Checkpoint(cursor=['2026-01-31 00:00:00+00', '1'], walk_started_at='2026-02-01T00:00:00Z',
+                                completed_at='2026-02-01T01:00:00Z',
+                                last_completed_walk_started_at='2026-02-01T00:00:00Z')
         walk = self.plan(self.watermarked, cp, since='2026-01-01T00:00:00Z')
         self.assertEqual((walk.cursor, walk.since, walk.fresh), (None, '2026-01-01T00:00:00Z', True))
 
+    def test_when_a_different_since_is_given_over_an_interrupted_walk_it_should_refuse(self):
+        cp = migrate.Checkpoint(cursor=['2026-01-31 00:00:00+00', '1'], walk_started_at='2026-02-01T00:00:00Z')
+        with self.assertRaisesRegex(migrate.MigrationError, 'interrupted.*--restart'):
+            self.plan(self.watermarked, cp, since='2026-01-01T00:00:00Z')
+
     def test_when_since_is_last_it_should_subtract_the_overlap(self):
-        cp = migrate.Checkpoint(cursor=['x', '1'], walk_started_at='2026-02-01T00:00:00Z',
+        cp = migrate.Checkpoint(cursor=['2026-02-01 00:30:00+00', '1'], walk_started_at='2026-02-01T00:00:00Z',
                                 completed_at='2026-02-01T01:00:00Z',
                                 last_completed_walk_started_at='2026-02-01T00:00:00Z')
         self.assertEqual(self.plan(self.watermarked, cp, since_last=True).since, '2026-01-31T23:50:00Z')
+
+    def test_when_continuing_a_completed_walk_it_should_reread_the_overlap(self):
+        cp = migrate.Checkpoint(cursor=['2026-02-01 00:30:00+00', '1'], walk_started_at='2026-02-01T00:00:00Z',
+                                completed_at='2026-02-01T01:00:00Z',
+                                last_completed_walk_started_at='2026-02-01T00:00:00Z')
+        walk = self.plan(self.watermarked, cp)
+        self.assertEqual((walk.cursor, walk.since, walk.fresh), (None, '2026-01-31T23:50:00Z', True))
+
+    def test_when_the_last_cursor_is_older_than_the_walk_it_should_reread_from_the_cursor(self):
+        cp = migrate.Checkpoint(cursor=['2026-01-01 06:00:00+00', '1'], walk_started_at='2026-02-01T00:00:00Z',
+                                completed_at='2026-02-01T01:00:00Z',
+                                last_completed_walk_started_at='2026-02-01T00:00:00Z')
+        self.assertEqual(self.plan(self.watermarked, cp).since, '2026-01-01T05:50:00Z')
+
+    def test_when_since_is_last_before_any_walk_completed_it_should_resume_the_interrupted_one(self):
+        cp = migrate.Checkpoint(cursor=['2026-01-01 00:00:00+00', '7'], walk_started_at='2026-02-01T00:00:00Z',
+                                walk_rows=10)
+        walk = self.plan(self.watermarked, cp, since_last=True)
+        self.assertEqual((walk.cursor, walk.fresh, walk.rows), (cp.cursor, False, 10))
 
     def test_when_a_step_has_no_watermark_it_should_rescan_after_completing(self):
         cp = migrate.Checkpoint(cursor=['T9'], walk_started_at='2026-02-01T00:00:00Z', completed_at='2026-02-01T00:01:00Z')
@@ -820,62 +899,86 @@ def free_port():
         return s.getsockname()[1]
 
 
-# A throwaway server to use instead of initdb (e.g. a disposable container); its databases are dropped.
+# A throwaway server to use instead of initdb (e.g. a disposable container). Tests create and drop
+# databases there, so a non-local one also needs DISPOSABLE_ENV=1.
 SERVER_ENV = 'MIGRATION_TEST_SERVER_URL'
+DISPOSABLE_ENV = 'MIGRATION_TEST_SERVER_DISPOSABLE'
+# CI must run these tests: there a missing binary or a schema that does not apply fails instead of skipping.
+IN_CI = bool(os.environ.get('CI'))
 
 
-@contextlib.contextmanager
-def private_postgres_cluster():
-    """A caller-owned cluster; fixed fixture database names never reach another suite's server."""
-    if not all(shutil.which(binary) for binary in ('psql', 'initdb', 'pg_ctl')):
-        raise unittest.SkipTest('PostgreSQL binaries are not on PATH')
-    with tempfile.TemporaryDirectory(prefix='migration-pg-') as tmp:
-        root = Path(tmp)
-        data = root / 'pg'
-        initdb = subprocess.run(['initdb', '-D', str(data), '-U', 'postgres', '--auth=trust', '-E', 'UTF8',
-                                 '--locale=C'], capture_output=True, text=True)
-        if initdb.returncode != 0:
-            if os.environ.get('CI'):
-                raise RuntimeError(f'initdb failed: {initdb.stderr.strip()}')
-            raise unittest.SkipTest(f'initdb cannot create a cluster here: {initdb.stderr.strip()[:200]}')
-        port = free_port()
-        with (data / 'postgresql.conf').open('a') as conf:
-            conf.write(f"port={port}\nlisten_addresses='127.0.0.1'\nunix_socket_directories=''\nfsync=off\n")
-        try:
-            subprocess.run(['pg_ctl', '-D', str(data), '-l', str(root / 'log'), '-w', 'start'],
-                           check=True, capture_output=True)
-            yield f'postgres://postgres@127.0.0.1:{port}'
-        finally:
-            subprocess.run(['pg_ctl', '-D', str(data), '-m', 'immediate', 'stop'], capture_output=True)
-
-
-@unittest.skipUnless(shutil.which('psql') and (os.environ.get(SERVER_ENV) or
-                                               (shutil.which('initdb') and shutil.which('pg_ctl'))),
+@unittest.skipUnless(IN_CI or (shutil.which('psql') and (os.environ.get(SERVER_ENV) or
+                                                        (shutil.which('initdb') and shutil.which('pg_ctl')))),
                      'PostgreSQL binaries are not on PATH')
-class AgainstPostgres(CommsMigrationCases, SocialMigrationCases, WorldsMigrationCases, FinancialMigrationCases, unittest.TestCase):
+class AgainstPostgres(CommsMigrationCases, SocialMigrationCases, WorldsMigrationCases, FinancialMigrationCases,
+                      ContentMigrationCases, unittest.TestCase):
     """A throwaway cluster: the toy source end to end, and every real manifest's load against the schema."""
 
     @classmethod
     def setUpClass(cls):
+        if not shutil.which('psql'):
+            raise RuntimeError('psql is not on PATH')
         cls.tmp = Path(tempfile.mkdtemp())
         cls.addClassCleanup(shutil.rmtree, cls.tmp)
+        # Per-run database names, so concurrent runs on one server never touch each other's.
+        cls.suffix = f'_t{os.getpid()}_{os.urandom(3).hex()}'
         server = os.environ.get(SERVER_ENV)
         if server:
+            validate_test_server(server)
             cls.base = server.rstrip('/').rsplit('/', 1)[0] if server.count('/') > 2 else server.rstrip('/')
+            cls.addClassCleanup(cls.drop_fixture_databases)
         else:
             cls.base = cls.enterClassContext(private_postgres_cluster())
 
+    @classmethod
+    def drop_fixture_databases(cls):
+        names = migrate.psql(f'{cls.base}/postgres', "SELECT datname FROM pg_database WHERE datname LIKE"
+                             f" {migrate.literal('%' + cls.suffix)};\n").split()
+        for name in names:
+            migrate.psql(f'{cls.base}/postgres', f'DROP DATABASE IF EXISTS {name} WITH (FORCE);\n')
+
+    @classmethod
+    def db_name(cls, db):
+        return db if db == 'postgres' else f'{db}{cls.suffix}'
+
     def url(self, db):
-        return f'{self.base}/{db}'
+        return f'{self.base}/{self.db_name(db)}'
+
+    def mark_parents_completed(self, db, source):
+        """Records every source `source` runs after as completed on `db`, so it may run alone."""
+        self.seed_parents(self.url(db), [source])
+
+    @staticmethod
+    def seed_parents(target_url, names):
+        sources = migrate.discover(migrate.SOURCES)
+        values = ', '.join(f'({migrate.literal(dep)}, {migrate.literal(step.name)}, now(), now(), now())'
+                           for name in names if name in sources for dep in sources[name].after
+                           if dep not in names for step in sources[dep].steps)
+        if values:
+            migrate.ensure_checkpoint_table(target_url)
+            migrate.psql(target_url, 'INSERT INTO dcl_migration.checkpoint (source, step, walk_started_at,'
+                         f' completed_at, last_completed_walk_started_at) VALUES {values} ON CONFLICT DO NOTHING;\n')
+
+    def schema_unavailable(self, message):
+        if IN_CI:
+            self.fail(message)
+        self.skipTest(message)
 
     def sql(self, db, script):
         return migrate.psql(self.url(db), script)
 
     def fresh_db(self, name):
-        self.sql('postgres', f'DROP DATABASE IF EXISTS {name};\nCREATE DATABASE {name};\n')
+        real = self.db_name(name)
+        self.sql('postgres', f'DROP DATABASE IF EXISTS {real};\nCREATE DATABASE {real};\n')
         return name
 
-    def migrate(self, *args, sources_dir):
+    def migrate(self, *args, sources_dir, seed_parents=True):
+        """Runs the CLI. A `run` of real sources first records the sources they run after as
+        completed (the order rule has its own tests), unless `seed_parents` is false."""
+        target = os.environ.get('TARGET_DATABASE_URL')
+        if args and args[0] == 'run' and seed_parents and target and sources_dir == migrate.SOURCES:
+            names = list(itertools.takewhile(lambda a: not a.startswith('-'), args[1:]))
+            self.seed_parents(target, names)
         if args and args[0] == 'run' and '--worlds-blocked-names' not in args:
             fixture = self.tmp / 'empty-world-blocklist.json'
             fixture.write_text('[]')
@@ -961,8 +1064,57 @@ class AgainstPostgres(CommsMigrationCases, SocialMigrationCases, WorldsMigration
         self.sql(src, "INSERT INTO things VALUES (999, 'late', timestamp '2026-04-01');\n")
         code, out = self.migrate('run', 'toy', '--step', 'things', sources_dir=sources)
         self.assertEqual(code, 0, out)
-        self.assertIn('batch 1: 1 rows', out)
+        self.assertIn('catching up: since 2026-01-01T05:50:00Z', out)
         self.assertEqual(self.count(tgt, 'app.things'), 251)
+
+    def test_when_a_row_commits_late_below_the_cursor_it_should_be_read_by_the_next_run(self):
+        sources, src, tgt = self.toy()
+        self.assertEqual(self.migrate('run', 'toy', '--step', 'things', sources_dir=sources)[0], 0)
+        self.sql(src, "INSERT INTO things VALUES (998, 'late', timestamp '2026-01-01 05:55');\n")
+        code, out = self.migrate('run', 'toy', '--step', 'things', sources_dir=sources)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.sql(tgt, 'SELECT title FROM app.things WHERE id = 998;\n').strip(), 'late')
+
+    def test_when_two_extract_rows_share_a_cursor_it_should_stop_before_loading_them(self):
+        sources, src, tgt = self.toy()
+        self.sql(src, 'ALTER TABLE tags DROP CONSTRAINT tags_pkey;\n'
+                      "INSERT INTO tags VALUES ('t5', 99);\n")
+        code, _ = self.migrate('run', 'toy', '--step', 'tags', '--batch-size', '4', sources_dir=sources)
+        self.assertEqual(code, 1)
+        self.assertLess(self.count(tgt, 'app.tags'), 30)
+
+    def test_when_the_source_fails_mid_walk_it_should_not_complete_the_walk(self):
+        sources, src, tgt = self.toy()
+        self.sql(src, "UPDATE things SET title = 'boom' WHERE id = 230;\n")
+        failing = {**FILES, 'things.extract.sql': "SELECT id, CASE WHEN title = 'boom' THEN (1/0)::text"
+                                                  " ELSE title END AS title, updated_at AT TIME ZONE 'UTC'"
+                                                  " AS updated_at FROM things\n"}
+        fail_dir = self.tmp / 'failing'
+        if not fail_dir.exists():
+            write_source(fail_dir, failing)
+        code, _ = self.migrate('run', 'toy', '--step', 'things', sources_dir=fail_dir)
+        self.assertEqual(code, 1)
+        self.assertEqual(self.sql(tgt, "SELECT to_regclass('dcl_migration.checkpoint') IS NULL OR NOT EXISTS ("
+                                       "SELECT 1 FROM dcl_migration.checkpoint WHERE step = 'things'"
+                                       " AND completed_at IS NOT NULL);\n").strip(), 't')
+
+    def test_when_restarting_it_should_walk_everything_again(self):
+        sources, _, tgt = self.toy()
+        self.assertEqual(self.migrate('run', 'toy', '--step', 'things', sources_dir=sources)[0], 0)
+        self.sql(tgt, 'DELETE FROM app.things WHERE id <= 10;\n')
+        code, out = self.migrate('run', 'toy', '--step', 'things', '--restart', sources_dir=sources)
+        self.assertEqual(code, 0, out)
+        self.assertIn('restart', out)
+        self.assertEqual(self.count(tgt, 'app.things'), 250)
+
+    def test_when_running_since_last_it_should_reread_from_the_last_walk(self):
+        sources, src, tgt = self.toy()
+        self.assertEqual(self.migrate('run', 'toy', '--step', 'things', sources_dir=sources)[0], 0)
+        self.sql(src, "UPDATE things SET title = 'again' WHERE id = 6;\n")
+        code, out = self.migrate('run', 'toy', '--step', 'things', '--since', 'last', sources_dir=sources)
+        self.assertEqual(code, 0, out)
+        self.assertIn('since last', out)
+        self.assertEqual(self.sql(tgt, 'SELECT title FROM app.things WHERE id = 6;\n').strip(), 'again')
 
     def test_when_a_checkpoint_moves_under_a_run_it_should_stop(self):
         sources, _, tgt = self.toy()
@@ -987,12 +1139,11 @@ class AgainstPostgres(CommsMigrationCases, SocialMigrationCases, WorldsMigration
         try:
             self.sql(db, schema)
         except migrate.MigrationError as e:
-            self.skipTest(f'schemas/ does not apply on this cluster: {str(e)[:200]}')
+            self.schema_unavailable(f'schemas/ does not apply on this cluster: {str(e)[:200]}')
         env = {s.database_env: '' for s in sources.values()}
         env['TARGET_DATABASE_URL'] = self.url(db)
         env['CAMERA_REEL_IMPORT_API_URL'] = 'https://camera.example.test'
-        # The Camera mapping depends on the additive filename-origin runtime capability.
-        # Supply it for branches preceding that schema change; rejection is tested separately.
+        # This mapping depends on the additive runtime filename and MIME capabilities.
         self.sql(db, 'ALTER TABLE camera_reel.images ADD COLUMN IF NOT EXISTS original_filename text; '
                      'ALTER TABLE camera_reel.images ADD COLUMN IF NOT EXISTS image_content_type text;')
         with unittest.mock.patch.dict(os.environ, env):
@@ -1028,9 +1179,10 @@ class AgainstPostgres(CommsMigrationCases, SocialMigrationCases, WorldsMigration
             try:
                 self.sql('catalyst_template', schema)
             except migrate.MigrationError as e:
-                self.skipTest(f'schemas/ does not apply on this cluster: {str(e)[:200]}')
+                self.schema_unavailable(f'schemas/ does not apply on this cluster: {str(e)[:200]}')
             cls.template_ready = True
-        self.sql('postgres', f'DROP DATABASE IF EXISTS {name};\nCREATE DATABASE {name} TEMPLATE catalyst_template;\n')
+        real, template = self.db_name(name), self.db_name('catalyst_template')
+        self.sql('postgres', f'DROP DATABASE IF EXISTS {real};\nCREATE DATABASE {real} TEMPLATE {template};\n')
         return name
 
     def wcs(self):
