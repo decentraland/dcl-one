@@ -446,12 +446,25 @@ pub struct WorldsConfig {
     #[arg(long, env = "DENYLIST_JSON_URL", hide = true)]
     pub denylist_json_url: Option<String>,
 
+    /// Comma-separated full world names refused as the DAO name deny list
+    /// refuses a name (upstream's `BLOCKED_WORLD_NAMES`): each entry trimmed
+    /// and lowercased, compared with the whole lowercased name, and applied
+    /// even while that list cannot be read.
+    #[arg(long, env = "BLOCKED_WORLD_NAMES", default_value = "")]
+    pub blocked_world_names: String,
+
     /// The NATS broker `serve` (comms' one link) and `catalyst pulse` meet on; unset, no island is ever delivered.
     #[arg(long, env = "NATS_URL")]
     pub nats_url: Option<String>,
 
-    #[arg(long, env = "ISLAND_CHANGED_DEDUP_MS", default_value_t = 10_000)]
-    pub island_changed_dedup_ms: u64,
+    #[arg(
+        long,
+        env = "ISLAND_CHANGED_DEDUP_MS",
+        default_value = "10000",
+        value_parser = parse_island_changed_dedup_ms,
+        allow_hyphen_values = true
+    )]
+    pub island_changed_dedup_ms: f64,
 
     #[arg(long, env = "CLUSTER_TAKEOVER_RETRY_DELAY_MS", default_value_t = 100)]
     pub cluster_takeover_retry_delay_ms: u64,
@@ -520,12 +533,131 @@ pub struct WorldsFedConfig {
     pub worlds_fed_allow_insecure_loopback_peers: bool,
 }
 
+/// Decimal prefix accepted by the connector's numeric environment setting, including
+/// signed infinity. Only ECMAScript whitespace is skipped; an absent value is defaulted
+/// by the caller, while an explicitly empty value is invalid.
+pub fn parse_island_changed_dedup_ms(input: &str) -> Result<f64, String> {
+    let value = input.trim_start_matches(|c| {
+        matches!(c,
+        '\u{0009}'..='\u{000d}' | '\u{0020}' | '\u{00a0}' | '\u{1680}' |
+        '\u{2000}'..='\u{200a}' | '\u{2028}' | '\u{2029}' | '\u{202f}' |
+        '\u{205f}' | '\u{3000}' | '\u{feff}')
+    });
+    let bytes = value.as_bytes();
+    let mut end = usize::from(matches!(bytes.first(), Some(b'+' | b'-')));
+    if value[end..].starts_with("Infinity") {
+        return Ok(if bytes.first() == Some(&b'-') {
+            f64::NEG_INFINITY
+        } else {
+            f64::INFINITY
+        });
+    }
+    let mut digits = 0;
+    while bytes.get(end).is_some_and(u8::is_ascii_digit) {
+        end += 1;
+        digits += 1;
+    }
+    if bytes.get(end) == Some(&b'.') {
+        end += 1;
+        while bytes.get(end).is_some_and(u8::is_ascii_digit) {
+            end += 1;
+            digits += 1;
+        }
+    }
+    if digits == 0 {
+        return Err("ISLAND_CHANGED_DEDUP_MS must start with a number".into());
+    }
+    if matches!(bytes.get(end), Some(b'e' | b'E')) {
+        let mut exponent = end + 1;
+        if matches!(bytes.get(exponent), Some(b'+' | b'-')) {
+            exponent += 1;
+        }
+        let start = exponent;
+        while bytes.get(exponent).is_some_and(u8::is_ascii_digit) {
+            exponent += 1;
+        }
+        if exponent > start {
+            end = exponent;
+        }
+    }
+    value[..end]
+        .parse::<f64>()
+        .map_err(|_| "ISLAND_CHANGED_DEDUP_MS must start with a number".into())
+}
+
 #[cfg(test)]
 mod tests {
     use crate::config::Config;
 
     fn parse(args: &[&str]) -> Result<Config, clap::Error> {
         Config::parse_for_tests(args)
+    }
+    #[test]
+    fn island_dedup_uses_ecmascript_numeric_prefixes() {
+        for (text, expected) in [
+            (".5", 0.5_f64),
+            ("1.", 1.0),
+            ("+12.5ms", 12.5),
+            ("1e2suffix", 100.0),
+            ("1e", 1.0),
+            ("1e+", 1.0),
+            ("0x10", 0.0),
+            ("-0", -0.0),
+            ("-1e-9999", -0.0),
+            ("1e9999", f64::INFINITY),
+            ("+Infinitysuffix", f64::INFINITY),
+            ("-Infinity", f64::NEG_INFINITY),
+            ("\u{feff}\u{2028}2", 2.0),
+        ] {
+            let config = parse(&[
+                "catalyst",
+                "--database-url",
+                "postgres://localhost/test",
+                "--island-changed-dedup-ms",
+                text,
+            ])
+            .unwrap_or_else(|e| panic!("{text:?}: {e}"));
+            assert_eq!(
+                config.worlds.island_changed_dedup_ms.to_bits(),
+                expected.to_bits(),
+                "{text:?}"
+            );
+        }
+        for text in [
+            "",
+            " ",
+            "NaN",
+            "inf",
+            "infinity",
+            "+",
+            ".",
+            "\u{85}1",
+            "\u{180e}1",
+        ] {
+            assert!(
+                parse(&[
+                    "catalyst",
+                    "--database-url",
+                    "postgres://localhost/test",
+                    "--island-changed-dedup-ms",
+                    text
+                ])
+                .is_err(),
+                "{text:?}"
+            );
+        }
+    }
+    #[test]
+    fn negative_island_dedup_configuration_is_accepted() {
+        let config = parse(&[
+            "catalyst",
+            "--database-url",
+            "postgres://localhost/test",
+            "--island-changed-dedup-ms",
+            "-1",
+        ])
+        .unwrap();
+        assert_eq!(config.worlds.island_changed_dedup_ms, -1.0);
     }
 
     #[test]
@@ -565,6 +697,24 @@ mod tests {
                 config.worlds.pg_component_stream_query_timeout
             ),
             (0, 0, 0)
+        );
+    }
+
+    #[test]
+    fn blocked_world_names_defaults_empty_and_keeps_the_raw_list() {
+        let defaults = parse(&["x", "--database-url", "postgres:///c"]).unwrap();
+        assert_eq!(defaults.worlds.blocked_world_names, "");
+        let config = parse(&[
+            "x",
+            "--database-url",
+            "postgres:///c",
+            "--blocked-world-names",
+            " Blocked.dcl.eth, , other.eth",
+        ])
+        .unwrap();
+        assert_eq!(
+            config.worlds.blocked_world_names,
+            " Blocked.dcl.eth, , other.eth"
         );
     }
 
@@ -777,7 +927,7 @@ mod tests {
         );
         assert_eq!(
             (c.worlds.handshake_timeout, c.worlds.island_changed_dedup_ms),
-            (60_000, 10_000)
+            (60_000, 10_000.0)
         );
         assert!(
             c.worlds.deny_list().is_none()
