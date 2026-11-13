@@ -766,7 +766,7 @@ async fn every_route_outside_upstreams_cors_methods_is_exempt() {
 /// case rewrite.
 #[test]
 fn every_content_route_is_listed_once() {
-    let source = include_str!("lib.rs");
+    let source = include_str!("lib.rs").replace("\r\n", "\n");
     let body = source
         .split("fn content_routes(")
         .nth(1)
@@ -1674,4 +1674,89 @@ async fn history_reads_over_seeded_rows() {
     assert!(body.as_array().unwrap().len() <= 1);
 
     unseed(&pool, tag).await;
+}
+
+#[tokio::test]
+async fn ordinary_content_routes_keep_value_metadata_projection() {
+    let node = TestNode::with_db("ordered-metadata")
+        .await
+        .expect("test database required");
+    let pool = &node.state.pool;
+    let id = format!("ordered-{}", uuid::Uuid::new_v4());
+    let pointer = id.to_lowercase();
+    let metadata = r#"{"v":{"z":1,"a":2,"nested":{"z":true,"a":null}}}"#;
+    sqlx::query("INSERT INTO content.deployments (deployer_address,version,entity_type,entity_id,entity_metadata,entity_timestamp,entity_pointers,local_timestamp,auth_chain) VALUES ('0x0000000000000000000000000000000000000001','v3','scene',$1,$2::json,to_timestamp(1),$3,to_timestamp(1),'[]'::json)")
+        .bind(&id).bind(metadata).bind(vec![pointer.clone()]).execute(pool).await.unwrap();
+    sqlx::query("INSERT INTO content.active_pointers (pointer,entity_id,entity_type) VALUES ($1,$2,'scene')").bind(&pointer).bind(&id).execute(pool).await.unwrap();
+    let expected = format!(
+        r#"{{"id":"{id}","type":"scene","pointers":["{pointer}"],"content":[],"version":"v3","timestamp":1000,"metadata":{{"a":2,"nested":{{"a":null,"z":true}},"z":1}}}}"#
+    );
+    for selector in [
+        json!({"pointers":[pointer.to_uppercase(),pointer]}),
+        json!({"ids":[id]}),
+    ] {
+        for path in ["/entities/active", "/content/entities/active"] {
+            let (status, _, body) = send(
+                node.router(),
+                Request::post(path)
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(selector.to_string()))
+                    .unwrap(),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(String::from_utf8(body).unwrap(), format!("[{expected}]"));
+        }
+    }
+    let ids = vec![id.clone()];
+    let pointers = vec![pointer.to_uppercase(), pointer.clone()];
+    let columns = crate::queries::MaskedColumns {
+        content: true,
+        metadata: true,
+    };
+    for docs in [
+        crate::queries::active_entity_docs_by_ids(pool, &ids)
+            .await
+            .unwrap(),
+        crate::queries::masked_entity_docs_by_ids(pool, &ids, columns)
+            .await
+            .unwrap(),
+        crate::queries::masked_entity_docs_by_pointers(pool, &pointers, columns)
+            .await
+            .unwrap(),
+        crate::queries::active_entity_docs_by_prefix(pool, &pointer, 0, 10)
+            .await
+            .unwrap()
+            .entities,
+    ] {
+        assert_eq!(docs.len(), 1);
+        assert_eq!(docs[0].json.as_ref(), expected.as_bytes());
+    }
+    let ordered =
+        crate::queries::active_entity_docs_with_ordered_metadata_by_pointers(pool, &pointers)
+            .await
+            .unwrap();
+    assert_eq!(ordered.len(), 1);
+    assert_eq!(ordered[0].id, id);
+    assert!(
+        std::str::from_utf8(&ordered[0].json)
+            .unwrap()
+            .ends_with(r#""metadata":{"z":1,"a":2,"nested":{"z":true,"a":null}}}"#)
+    );
+    // Stored order is authoritative here: already normalized rows are not repaired.
+    sqlx::query("UPDATE content.deployments SET entity_metadata=$2::json WHERE entity_id=$1")
+        .bind(&id)
+        .bind(r#"{"v":{"a":2,"z":1}}"#)
+        .execute(pool)
+        .await
+        .unwrap();
+    let ordered =
+        crate::queries::active_entity_docs_with_ordered_metadata_by_pointers(pool, &pointers)
+            .await
+            .unwrap();
+    assert!(
+        std::str::from_utf8(&ordered[0].json)
+            .unwrap()
+            .ends_with(r#""metadata":{"a":2,"z":1}}"#)
+    );
 }

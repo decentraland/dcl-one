@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "components": [
+    {
+      "name": "asset-packs::Placeholder",
+      "data": {
+        "0": {
+          "json": {
+            "src": "{assetPath}/ambient_sound.glb"
+          }
+        }
+      }
+    },
+    {
+      "name": "core-schema::Name",
+      "data": {
+        "0": {
+          "json": {
+            "value": "Music"
+          }
+        }
+      }
+    },
+    {
+      "name": "core::AudioSource",
+      "data": {
+        "0": {
+          "json": {
+            "audioClipUrl": "{assetPath}/medieval_2.mp3",
+            "playing": true,
+            "loop": true,
+            "volume": 1,
+            "global": true
+          }
+        }
+      }
+    }
+  ]
+}

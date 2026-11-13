@@ -1,0 +1,615 @@
+import future from 'fp-future';
+import * as BABYLON from '@babylonjs/core';
+import { GLTFFileLoader, GLTFLoaderAnimationStartMode } from '@babylonjs/loaders';
+import type { GLTFLoader } from '@babylonjs/loaders/glTF/2.0';
+import { registerGLTFExtension } from '@babylonjs/loaders/glTF/2.0';
+import type { PBGltfContainer } from '@dcl/ecs';
+import { ComponentType } from '@dcl/ecs';
+
+import { markAsCollider } from '../colliders-utils';
+import type { ComponentOperation } from '../component-operations';
+import { EcsEntity } from '../EcsEntity';
+import type { SceneContext } from '../SceneContext';
+import { CAMERA, PLAYER } from '../../../sdk/tree';
+import { applyVideoPlayerMaterialToGltf } from './video-player';
+
+let sceneContext: WeakRef<SceneContext>;
+
+export const resourcesByPath = new Map<string, Set<string>>();
+
+/**
+ * Tracks load versions per entity to invalidate stale async GLTF callbacks.
+ * Incremented when a GLTF is removed or a new load starts. If the version at
+ * callback time doesn't match the version captured at load start, the load is
+ * stale and its results should be discarded.
+ */
+const gltfLoadVersion = new WeakMap<EcsEntity, number>();
+
+function getLoadVersion(entity: EcsEntity): number {
+  return gltfLoadVersion.get(entity) ?? 0;
+}
+
+function incrementLoadVersion(entity: EcsEntity): number {
+  const version = getLoadVersion(entity) + 1;
+  gltfLoadVersion.set(entity, version);
+  return version;
+}
+
+// A scene file is handed to the loader as `<path>?sceneId=..&base=<dir>`, so every dependency
+// it asks for (textures, .bin buffers) can be resolved against the GLTF's own directory and
+// read back through the inspector's virtual file system.
+function getLoaderFile(loader: GLTFLoader): { gltfFilename: string; base: string } | null {
+  const file: string = (loader as any)._fileName;
+  const [gltfFilename, strParams] = file.split('?');
+  if (!strParams) return null;
+  return { gltfFilename, base: new URLSearchParams(strParams).get('base') || '' };
+}
+
+// Optimized GLBs point at the optimizer's shared texture folder, so their URIs climb out of the
+// model's directory (`../../../optimized-textures/x.png`). Collapse those segments — the data
+// layer keys files by their project-relative path and has no notion of `.`/`..`.
+function normalizeScenePath(path: string): string {
+  const segments: string[] = [];
+  for (const segment of path.split('/')) {
+    if (!segment || segment === '.') continue;
+    if (segment === '..') segments.pop();
+    else segments.push(segment);
+  }
+  return segments.join('/');
+}
+
+async function resolveGltfDependency(
+  gltfFilename: string,
+  base: string,
+  uri: string,
+): Promise<Uint8Array> {
+  const ctx = sceneContext?.deref();
+  const filePath = normalizeScenePath(`${base}/${uri}`);
+  const content = ctx ? await ctx.getFile(filePath) : null;
+  if (!content) throw new Error('Cannot resolve file ' + uri);
+
+  // This is a hack to get the resources loaded by the gltf file
+  if (!resourcesByPath.has(gltfFilename)) {
+    resourcesByPath.set(gltfFilename, new Set());
+  }
+  resourcesByPath.get(gltfFilename)!.add(filePath);
+  return content;
+}
+
+// Babylon's glTF loader rejects any URI containing `..` in `GLTFLoader._ValidateUri`, and it does
+// so BEFORE `preprocessUrlAsync` runs — so an optimized GLB's sidecar texture URIs would fail the
+// whole asset container and the model would never appear. `_loadUriAsync` on a loader extension is
+// consulted ahead of that validation, which makes it the only hook that can serve those files.
+const DCL_FILE_RESOLVER = 'DCL_file_resolver';
+
+registerGLTFExtension(DCL_FILE_RESOLVER, false, loader => ({
+  name: DCL_FILE_RESOLVER,
+  enabled: true,
+  dispose: () => {},
+  _loadUriAsync: (_context: string, _property: unknown, uri: string) => {
+    if (uri.startsWith('data:')) return null;
+    const file = getLoaderFile(loader);
+    if (!file) return null;
+    return resolveGltfDependency(file.gltfFilename, file.base, uri);
+  },
+}));
+
+BABYLON.SceneLoader.OnPluginActivatedObservable.add(function (plugin) {
+  if (plugin instanceof GLTFFileLoader) {
+    plugin.animationStartMode = GLTFLoaderAnimationStartMode.NONE;
+    plugin.compileMaterials = true;
+    plugin.validate = false;
+    plugin.createInstances = true;
+    plugin.animationStartMode = 0;
+    plugin.preprocessUrlAsync = async function (url: string) {
+      // HERE BE DRAGONS 🐉:
+      //  To hack the GLTF loader to use Decentraland's file system, we must
+      //  access private properties to get the parent context to resolve individual
+      //  files.
+      //
+      //  This Hack prevents the engine from caching the entire GLB/GLTF because
+      //  query parameters are added to them. it is RECOMMENDED that the engine
+      //  caches all the files by their name (CIDv1)
+      //
+      //  glTF 2.0 dependencies are served by the DCL_file_resolver extension above and never
+      //  reach this; it stays as the fallback for anything else the loader routes through it.
+      const loader: GLTFLoader = (plugin as any)._loader;
+      const file = getLoaderFile(loader);
+      if (file) {
+        const content = await resolveGltfDependency(file.gltfFilename, file.base, url);
+        // TODO: this works with File, but it doesn't match the types (it requires string)
+        return new File([content as BlobPart], file.gltfFilename) as any;
+      }
+      throw new Error('Cannot resolve file ' + url);
+    };
+  }
+});
+
+export const putGltfContainerComponent: ComponentOperation = (entity, component) => {
+  if (component.componentType === ComponentType.LastWriteWinElementSet) {
+    const newValue = component.getOrNull(entity.entityId) as PBGltfContainer | null;
+    updateGltfForEntity(entity, newValue);
+  }
+};
+
+export const updateGltfForEntity = (entity: EcsEntity, newValue: PBGltfContainer | null) => {
+  const currentValue = entity.ecsComponentValues.gltfContainer;
+  entity.ecsComponentValues.gltfContainer = newValue || undefined;
+
+  const shouldLoadGltf = !!newValue && currentValue?.src !== newValue?.src;
+  const shouldRemoveGltf = !newValue || shouldLoadGltf;
+
+  if (shouldRemoveGltf) removeGltf(entity);
+  if (shouldLoadGltf) void loadGltf(entity, newValue.src);
+};
+
+export async function loadGltf(entity: EcsEntity, value: string) {
+  const context = entity.context.deref();
+  if (!context) return;
+
+  if (entity.gltfContainer) {
+    removeGltf(entity);
+  }
+
+  // store a WeakRef to the sceneContext to enable file resolver
+  if (!sceneContext) {
+    sceneContext = entity.context;
+  }
+
+  let root = entity.getRoot();
+  let attempts = 0;
+
+  while (root === null && attempts++ < 10) {
+    // waiting for nodes to be loaded...
+    await new Promise(resolve => setTimeout(resolve, 100));
+    root = entity.getRoot();
+  }
+
+  const shouldHide = root === PLAYER || root === CAMERA;
+
+  const loadingSpinner: BABYLON.Mesh | null = shouldHide
+    ? null
+    : createLoadingSpinner(entity, context.scene);
+
+  try {
+    await tryLoadGltfAsync(context.loadableScene.id, entity, value);
+  } catch (error) {
+    console.error('Error trying to load gltf ' + value, error);
+  } finally {
+    if (shouldHide) {
+      entity.setVisibility(false);
+    } else {
+      loadingSpinner?.dispose(false, true);
+    }
+  }
+}
+
+export function removeGltf(entity: EcsEntity) {
+  const context = entity.context.deref();
+  if (!context) return;
+
+  // Invalidate any in-flight async GLTF loads for this entity
+  incrementLoadVersion(entity);
+
+  if (entity.gltfContainer) {
+    entity.gltfContainer.setEnabled(false);
+    entity.gltfContainer.parent = null;
+    entity.gltfContainer.dispose(false, true);
+    delete entity.gltfContainer;
+  }
+
+  if (entity.gltfAssetContainer) {
+    cleanupAssetContainer(context.scene, entity.gltfAssetContainer);
+  }
+}
+
+async function tryLoadGltfAsync(sceneId: string, entity: EcsEntity, filePath: string) {
+  const content = await entity.context.deref()!.getFile(filePath);
+  if (!content) {
+    return;
+  }
+
+  const contextStillAlive = sceneContext.deref();
+  if (!contextStillAlive) {
+    return;
+  }
+
+  if (entity.isGltfPathLoading()) {
+    await entity.getGltfPathLoading();
+  }
+
+  entity.setGltfPathLoading();
+
+  const base = filePath.split('/').slice(0, -1).join('/');
+  const finalSrc =
+    filePath + '?sceneId=' + encodeURIComponent(sceneId) + '&base=' + encodeURIComponent(base);
+
+  const file = new File([content as BlobPart], finalSrc);
+  const extension = filePath.toLowerCase().endsWith('.gltf') ? '.gltf' : '.glb';
+
+  const loadAssetFuture = future<void>();
+  const scene = entity.getScene();
+  const loadVersion = incrementLoadVersion(entity);
+
+  loadAssetContainer(
+    file,
+    scene,
+    assetContainer => {
+      // Guard: entity disposed or GLTF invalidated during async load → clean up and abort
+      if (entity.isDisposed() || getLoadVersion(entity) !== loadVersion) {
+        cleanupAssetContainer(scene, assetContainer);
+        entity.resolveGltfPathLoading(filePath);
+        loadAssetFuture.resolve();
+        return;
+      }
+
+      processGLTFAssetContainer(assetContainer);
+
+      /*
+        The purpose of this is to solve the following issue:
+        When the scene is reloaded, the gltfs are loaded from two places, a useEffect in the Renderer.tsx component, and the CRDT messages coming from the engine.
+        That could cause GLTFs from being loaded twice in the babylon engine, so in order to avoid that, the loop below empties the entity from any previous GLTF loaded, so if it was loaded twice, the second time would clear the first load and it wouldn't end up duplicated.
+        The problem with that approach is that it would also remove any other entity that was nested onto the parent, and this would mess up the entity tree when the scene is loaded for the first time, that's why the loop needs to skip any node that is an EcsEntity, so it doesn't remove the entity from the tree.
+      */
+      const prevChildren = entity.getChildren();
+      for (const child of prevChildren) {
+        if (child instanceof EcsEntity || child.id.startsWith('BoundingMesh')) continue; // skip EcsEntity nodes, only remove gltf related stuff
+        child.setEnabled(false);
+        child.dispose(false, true);
+      }
+
+      // Find the main mesh and add it as the BasicShape.nameInEntity component.
+      assetContainer.meshes
+        .filter($ => $.name === '__root__')
+        .forEach(mesh => {
+          mesh.parent = entity;
+          entity.setGltfContainer(mesh);
+        });
+
+      entity.resolveGltfPathLoading(filePath);
+      entity.setGltfAssetContainer(assetContainer);
+      entity.generateBoundingBox();
+
+      // Apply video player material if entity has VideoPlayer component
+      void applyVideoPlayerMaterialToGltf(entity);
+
+      loadAssetFuture.resolve();
+    },
+    undefined,
+    (_scene, message, _exception) => {
+      console.error('Error while calling LoadAssetContainer: ', message, _exception);
+      entity.resolveGltfPathLoading(filePath);
+      loadAssetFuture.reject(new Error(message));
+    },
+    extension,
+  );
+
+  return loadAssetFuture;
+}
+
+export function loadAssetContainer(
+  file: File,
+  scene: BABYLON.Scene,
+  onSuccess?: (assetContainer: BABYLON.AssetContainer) => void,
+  onProgress?: (event: BABYLON.ISceneLoaderProgressEvent) => void,
+  onError?: (scene: BABYLON.Scene, message: string, exception?: any) => void,
+  pluginExtension?: string,
+  name?: string,
+) {
+  BABYLON.SceneLoader.LoadAssetContainer(
+    '',
+    file,
+    scene,
+    onSuccess,
+    onProgress,
+    onError,
+    pluginExtension,
+    name,
+  );
+}
+
+/**
+ * Loads a bundled GLB asset from a data URL without RPC calls.
+ * Used for loading placeholder assets that are bundled with the inspector.
+ */
+export function loadBundledGltf(
+  entity: EcsEntity,
+  dataUrl: string,
+  name: string = 'bundled-asset.glb',
+): Promise<BABYLON.AssetContainer> {
+  return new Promise((resolve, reject) => {
+    // Convert data URL to Blob
+    const fetchPromise = fetch(dataUrl)
+      .then(response => response.blob())
+      .then(blob => {
+        const file = new File([blob], name);
+        const scene = entity.getScene();
+
+        loadAssetContainer(
+          file,
+          scene,
+          assetContainer => {
+            processGLTFAssetContainer(assetContainer);
+            resolve(assetContainer);
+          },
+          undefined,
+          (_scene, message, exception) => {
+            console.error('Error loading bundled GLB:', message, exception);
+            reject(new Error(message));
+          },
+          '.glb',
+        );
+      })
+      .catch(error => {
+        console.error('Error converting data URL to blob:', error);
+        reject(error);
+      });
+
+    return fetchPromise;
+  });
+}
+
+export function processGLTFAssetContainer(assetContainer: BABYLON.AssetContainer) {
+  assetContainer.meshes.forEach(mesh => {
+    if (mesh instanceof BABYLON.Mesh) {
+      if (mesh.geometry && !assetContainer.geometries.includes(mesh.geometry)) {
+        assetContainer.geometries.push(mesh.geometry);
+      }
+    }
+    mesh.subMeshes &&
+      mesh.subMeshes.forEach(subMesh => {
+        const mesh = subMesh.getMesh();
+        if (mesh instanceof BABYLON.Mesh) {
+          if (mesh.geometry && !assetContainer.geometries.includes(mesh.geometry)) {
+            assetContainer.geometries.push(mesh.geometry);
+          }
+        }
+      });
+
+    // Find all the materials from all the meshes and add to $.materials
+    mesh.cullingStrategy = BABYLON.AbstractMesh.CULLINGSTRATEGY_BOUNDINGSPHERE_ONLY;
+    if (mesh.material) {
+      if (!assetContainer.materials.includes(mesh.material)) {
+        assetContainer.materials.push(mesh.material);
+      }
+    }
+  });
+
+  processColliders(assetContainer);
+
+  // Find the textures in the materials that share the same domain as the context
+  // then add the textures to the $.textures
+  assetContainer.materials.forEach((material: BABYLON.Material | BABYLON.PBRMaterial) => {
+    for (const i in material) {
+      const t = (material as any)[i];
+
+      if (i.endsWith('Texture') && t instanceof BABYLON.Texture) {
+        if (!assetContainer.textures.includes(t)) {
+          // if (isSceneTexture(t)) {
+          assetContainer.textures.push(t);
+          // }
+        }
+      }
+    }
+
+    if ('albedoTexture' in material) {
+      if (material.alphaMode === 2) {
+        if (material.albedoTexture) {
+          material.albedoTexture.hasAlpha = true;
+          material.useAlphaFromAlbedoTexture = true;
+        }
+      }
+    }
+  });
+
+  for (const ag of assetContainer.animationGroups) {
+    ag.stop();
+    for (const animatable of ag.animatables) {
+      animatable.weight = 0;
+    }
+  }
+
+  assetContainer.addAllToScene();
+}
+
+// eslint-disable-next-line @typescript-eslint/ban-types
+function disposeDelegate($: { dispose: Function }) {
+  $.dispose();
+}
+
+function disposeNodeDelegate($: BABYLON.Node | null) {
+  if (!$) return;
+  $.setEnabled(false);
+  $.parent = null;
+  $.dispose(false);
+}
+
+function disposeSkeleton($: BABYLON.Skeleton) {
+  $.dispose();
+  $.bones.forEach($ => {
+    $.parent = null;
+    $.dispose();
+  });
+}
+
+function disposeAnimatable($: BABYLON.Animatable | null) {
+  if (!$) return;
+  $.disposeOnEnd = true;
+  $.loopAnimation = false;
+  $.stop();
+  $._animate(0);
+}
+
+export function disposeAnimationGroups(scene: BABYLON.Scene, $: BABYLON.AnimationGroup) {
+  $.animatables.forEach(disposeAnimatable);
+
+  $.targetedAnimations.forEach($ => {
+    disposeAnimatable(scene.getAnimatableByTarget($.target));
+  });
+
+  $.dispose();
+}
+
+export function cleanupAssetContainer(scene: BABYLON.Scene, $: BABYLON.AssetContainer) {
+  if ($) {
+    $.removeAllFromScene();
+    $.transformNodes && $.transformNodes.forEach(disposeNodeDelegate);
+    $.rootNodes && $.rootNodes.forEach(disposeNodeDelegate);
+    $.meshes && $.meshes.forEach(disposeNodeDelegate);
+    // Textures disposals are handled by monkeyLoader.ts
+    // NOTE: $.textures && $.textures.forEach(disposeDelegate)
+    $.animationGroups && $.animationGroups.forEach($ => disposeAnimationGroups(scene, $));
+    $.multiMaterials && $.multiMaterials.forEach(disposeDelegate);
+    $.sounds && $.sounds.forEach(disposeDelegate);
+    $.skeletons && $.skeletons.forEach(disposeSkeleton);
+    $.materials && $.materials.forEach(disposeDelegate);
+    $.lights && $.lights.forEach(disposeDelegate);
+  }
+}
+
+function processColliders($: BABYLON.AssetContainer) {
+  for (let i = 0; i < $.meshes.length; i++) {
+    const mesh = $.meshes[i];
+
+    if (mesh.name.toLowerCase().includes('collider')) {
+      mesh.checkCollisions = true;
+      mesh.visibility = 0;
+      mesh.isPickable = false;
+      markAsCollider(mesh);
+    } else {
+      mesh.isPickable = true;
+    }
+  }
+}
+
+function createSemiTorus(
+  radius: number,
+  tube: number,
+  radialSegments: number,
+  tubularSegments: number,
+  arc: number,
+  color: BABYLON.Color3,
+  scene: BABYLON.Scene,
+): BABYLON.Mesh {
+  const positions = [];
+  const indices = [];
+
+  const angleStep = arc / radialSegments;
+  const radiusStep = tube / tubularSegments;
+
+  for (let i = 0; i <= radialSegments; i++) {
+    const angle = i * angleStep;
+    const cosAngle = Math.cos(angle);
+    const sinAngle = Math.sin(angle);
+
+    for (let j = 0; j <= tubularSegments; j++) {
+      const currentRadius = radius + j * radiusStep;
+      const x = currentRadius * cosAngle;
+      const y = currentRadius * sinAngle;
+      const z = 0;
+
+      positions.push(x, y, z);
+
+      if (i < radialSegments && j < tubularSegments) {
+        const nextRow = tubularSegments + 1;
+        const nextIndex = i * nextRow + j;
+
+        indices.push(nextIndex, nextIndex + nextRow, nextIndex + 1);
+        indices.push(nextIndex + nextRow, nextIndex + nextRow + 1, nextIndex + 1);
+      }
+    }
+  }
+
+  const semiTorus = new BABYLON.Mesh('semiTorus', scene);
+  const vertexData = new BABYLON.VertexData();
+
+  vertexData.positions = positions;
+  vertexData.indices = indices;
+
+  vertexData.applyToMesh(semiTorus);
+
+  const material = new BABYLON.StandardMaterial('semiTorusMaterial', scene);
+  material.diffuseColor = color;
+
+  semiTorus.material = material;
+
+  return semiTorus;
+}
+
+/**
+ * Creates a loading spinner mesh.
+ * @param entity - The entity to attach the loading spinner to.
+ * @param scene - The BABYLON.Scene instance.
+ * @param radius - The radius of the loading spinner.
+ * @param tube - The tube diameter of the loading spinner.
+ * @param radialSegments - The number of radial segments of the loading spinner.
+ * @param tubularSegments - The number of tubular segments of the loading spinner.
+ * @returns The created loading spinner mesh.
+ */
+function createLoadingSpinner(
+  entity: EcsEntity,
+  scene: BABYLON.Scene,
+  radius: number = 0.15,
+  tube: number = 0.05,
+  radialSegments: number = 32,
+  tubularSegments: number = 16,
+): BABYLON.Mesh {
+  const CIRCLE = Math.PI * 2;
+  const LIGHT_GRAY = new BABYLON.Color3(0.9, 0.9, 0.9);
+  const torusOutline = createSemiTorus(
+    radius,
+    tube,
+    radialSegments,
+    tubularSegments,
+    CIRCLE,
+    LIGHT_GRAY,
+    scene,
+  );
+  torusOutline.position.copyFrom(entity.getAbsolutePosition());
+  torusOutline.position.y += 1;
+  torusOutline.rotation.x = Math.PI;
+  torusOutline.billboardMode = BABYLON.Mesh.BILLBOARDMODE_ALL;
+
+  const LIGHT_RED = new BABYLON.Color3(1, 45 / 255, 85 / 255);
+  const semiTorus = createSemiTorus(
+    radius,
+    tube,
+    radialSegments,
+    tubularSegments,
+    CIRCLE / 4,
+    LIGHT_RED,
+    scene,
+  );
+  semiTorus.position.z += 0.001;
+  semiTorus.parent = torusOutline;
+
+  const rotationAnimation = new BABYLON.Animation(
+    'semiTorusRotation',
+    'rotation.z',
+    30,
+    BABYLON.Animation.ANIMATIONTYPE_FLOAT,
+    BABYLON.Animation.ANIMATIONLOOPMODE_CYCLE,
+  );
+
+  rotationAnimation.setKeys([
+    { frame: 0, value: 0 },
+    { frame: 100, value: CIRCLE },
+  ]);
+
+  const animationGroup = new BABYLON.AnimationGroup('loadingSpinnerAnimation', scene);
+  animationGroup.addTargetedAnimation(rotationAnimation, semiTorus);
+  animationGroup.play(true);
+
+  torusOutline.onDisposeObservable.add(() => {
+    animationGroup.dispose();
+    if (torusOutline.material) {
+      torusOutline.material.dispose();
+    }
+    if (semiTorus.material) {
+      semiTorus.material.dispose();
+    }
+    semiTorus.dispose(false, true);
+  });
+
+  return torusOutline;
+}

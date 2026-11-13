@@ -5,64 +5,33 @@
 //! path no route matches (an unknown name or another case). The router's
 //! other paths (`/outfits`, `/explorer`, `/v1/trades`) keep the shared CORS.
 
-use axum::body::Body;
 use axum::extract::Request;
-use axum::http::{HeaderValue, Method, StatusCode, header};
+use axum::http::{StatusCode, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 
-use crate::shared::cors;
+use crate::shared::cors::{self, HttpServerCors};
 
-const MAX_AGE: &str = "36000";
+/// lamb2's CORS under `/lambdas/`: `*` for any origin, no credentials and
+/// no exposed headers; a preflight is 204 with no `Allow-Methods`, origin
+/// `*` for a request with `Origin`, and the requested headers reflected
+/// with their `Vary` when the request names them.
+const LAMBDAS_CORS: HttpServerCors = HttpServerCors {
+    methods: None,
+    max_age: "36000",
+    nosniff: true,
+    preflight_echoes_request: true,
+};
 
 /// The page the peer's nginx answers for a path it does not route to lamb2.
 const NGINX_NOT_FOUND: &str = "<html>\n<head><title>404 Not Found</title></head>\n<body>\n<center><h1>404 Not Found</h1></center>\n<hr><center>nginx</center>\n</body>\n</html>\n";
 
-/// lamb2's CORS under `/lambdas/`: `*` for any origin, no credentials and
-/// no exposed headers; a preflight is 204 with the requested headers
-/// reflected and no `Allow-Methods`. Every other path gets the shared CORS.
+/// [`LAMBDAS_CORS`] under `/lambdas/`; every other path gets the shared CORS.
 pub async fn cors_middleware(req: Request, next: Next) -> Response {
     if !req.uri().path().starts_with("/lambdas/") {
         return cors::cors_middleware(req, next).await;
     }
-    let has_origin = req.headers().contains_key(header::ORIGIN);
-    let mut resp = if req.method() == Method::OPTIONS {
-        let requested_headers = req
-            .headers()
-            .get(header::ACCESS_CONTROL_REQUEST_HEADERS)
-            .cloned();
-        let mut resp = Response::builder()
-            .status(StatusCode::NO_CONTENT)
-            .body(Body::empty())
-            .unwrap();
-        let h = resp.headers_mut();
-        if let Some(requested) = requested_headers {
-            h.insert(header::ACCESS_CONTROL_ALLOW_HEADERS, requested);
-            h.insert(
-                header::VARY,
-                HeaderValue::from_static("Access-Control-Request-Headers"),
-            );
-        }
-        h.insert(
-            header::ACCESS_CONTROL_MAX_AGE,
-            HeaderValue::from_static(MAX_AGE),
-        );
-        resp
-    } else {
-        next.run(req).await
-    };
-    let h = resp.headers_mut();
-    if has_origin {
-        h.insert(
-            header::ACCESS_CONTROL_ALLOW_ORIGIN,
-            HeaderValue::from_static("*"),
-        );
-    }
-    h.insert(
-        header::X_CONTENT_TYPE_OPTIONS,
-        HeaderValue::from_static("nosniff"),
-    );
-    resp
+    LAMBDAS_CORS.run(req, next).await
 }
 
 /// `/lambdas/{*rest}`: a path under `/lambdas/` that no route matches.
@@ -79,6 +48,8 @@ pub async fn not_found() -> Response {
 mod tests {
     use super::*;
     use crate::market::tests::support::state_without_db;
+    use axum::body::Body;
+    use axum::http::Method;
     use tower::ServiceExt;
 
     async fn send(request: Request) -> Response {
