@@ -61,3 +61,6 @@ result-*
 /services/catalyst/docs/crates/agents/*-evidence.md
 /services/catalyst/docs/crates/agents/tools/
 /services/catalyst/docs/crates/*.html
+
+# For temporal working notes/documents in the work process. Never committed
+temp/
