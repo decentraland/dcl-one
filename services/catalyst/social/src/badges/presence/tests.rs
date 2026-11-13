@@ -1108,7 +1108,7 @@ async fn the_sink_keeps_events_of_a_scene_redeployed_after_its_snapshot() {
         ..room_event(ALICE, id)
     };
     assert_eq!(
-        sink.store(PresenceEvent::from_room_event(&scene("EV_before", SCENE)).unwrap())
+        sink.record(PresenceEvent::from_room_event(&scene("EV_before", SCENE)).unwrap())
             .await
             .unwrap(),
         1,

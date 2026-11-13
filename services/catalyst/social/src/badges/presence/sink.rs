@@ -215,7 +215,7 @@ impl EventSink {
     }
 
     /// Stores the event when a badge could count it; the rows inserted.
-    pub async fn store(&self, event: PresenceEvent) -> Result<u64, sqlx::Error> {
+    pub async fn record(&self, event: PresenceEvent) -> Result<u64, sqlx::Error> {
         let mut batch = vec![event];
         self.counted(&mut batch).await;
         insert(&self.pool, &batch).await
@@ -228,7 +228,7 @@ impl RoomEventStore for EventSink {
         let Some(event) = PresenceEvent::from_room_event(event) else {
             return Ok(());
         };
-        self.store(event).await?;
+        self.record(event).await?;
         Ok(())
     }
 }
