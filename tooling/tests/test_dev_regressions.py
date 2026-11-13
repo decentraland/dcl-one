@@ -17,6 +17,36 @@ spec.loader.exec_module(guard)
 
 
 class InventoryTests(unittest.TestCase):
+    def test_assignment_fifo_bodies_cannot_disappear_or_be_ignored(self):
+        cases = {
+            ("archipelago_feed_stats", "test"): [
+                "assignment_pressure_preserves_fifo_and_rejects_oversize",
+            ],
+            ("catalyst_comms", "lib"): [
+                "archipelago::registry::mailbox::tests::capacity_follows_accepted_assignments_through_validation_until_drop",
+                "archipelago::registry::mailbox::tests::occupancy_deadline_survives_handoff_and_resets_only_after_release",
+                "archipelago::ws::io::bounds_tests::full_queue_preserves_accepted_frames_and_rejects_later_assignments",
+            ],
+            ("archipelago_ws_island_dedup", "test"): [
+                "assignment_fifo_crosses_mailbox_validation_and_physical_writer_in_order",
+                "assignment_capacity_stays_charged_through_validation_and_physical_flush",
+                "full_assignment_budget_keeps_terminal_kick_and_releases_cancelled_work",
+                "an_assignment_backlog_preserves_every_accepted_room_in_order",
+                "source_contract_dedup_compares_received_assignment_bytes",
+                "a_suppressed_repeat_does_not_extend_the_original_acceptance_window",
+            ],
+        }
+        for target, names in cases.items():
+            required = guard.MANDATORY_ARCHIPELAGO[target]
+            normal = "".join(f"{name}: test\n" for name in required)
+            guard.verify(required, normal, "", str(target))
+            for name in names:
+                self.assertIn(name, required)
+                for changed, ignored in [(normal.replace(f"{name}: test\n", ""), ""),
+                                         (normal, f"{name}: test\n")]:
+                    with self.subTest(target=target, name=name), self.assertRaises(ValueError):
+                        guard.verify(required, changed, ignored, str(target))
+
     def test_configured_socket_catalog_and_guards_resolve_current_source_names(self):
         target = "archipelago_control_extensions_websocket"
         catalog = json.loads((ROOT / "tooling/dev-regressions.json").read_text(encoding="utf-8"))

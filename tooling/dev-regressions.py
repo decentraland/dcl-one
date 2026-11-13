@@ -27,6 +27,10 @@ EXTERNAL = [
 EXACT_ARCHIPELAGO = {("stats_metrics_engine", "test")}
 MANDATORY_ARCHIPELAGO = {
     ("catalyst_comms", "lib"): [
+        "archipelago::registry::mailbox::tests::capacity_follows_accepted_assignments_through_validation_until_drop",
+        "archipelago::registry::mailbox::tests::occupancy_deadline_survives_handoff_and_resets_only_after_release",
+        "archipelago::ws::io::bounds_tests::full_queue_preserves_accepted_frames_and_rejects_later_assignments",
+        "archipelago::ws::io::bounds_tests::congestion_requires_ten_continuously_full_seconds_and_emits_1013_at_a_frame_boundary",
         "archipelago::ws::raw_transport::tests::production_partial_write_retirement_keeps_capacity_until_the_reader_drops",
         "archipelago::ws::raw_transport::tests::axum_reader_and_writer_cannot_drain_a_partial_frame_after_retirement",
         "archipelago::ws::io::tests::capacity_is_retained_until_both_shared_transport_directions_drop",
@@ -232,7 +236,18 @@ MANDATORY_ARCHIPELAGO = {
         "configured_close_during_blocked_room_sql_does_not_claim_from_authentication",
         "historical_contract_authentication_keeps_verified_principal_and_configured_fences",
     ],
+    ("archipelago_feed_stats", "test"): [
+        "assignment_pressure_preserves_fifo_and_rejects_oversize",
+    ],
     ("archipelago_ws_island_dedup", "test"): [
+        "assignment_fifo_crosses_mailbox_validation_and_physical_writer_in_order",
+        "assignment_capacity_stays_charged_through_validation_and_physical_flush",
+        "full_assignment_budget_keeps_terminal_kick_and_releases_cancelled_work",
+        "an_assignment_backlog_preserves_every_accepted_room_in_order",
+        "source_contract_dedup_compares_received_assignment_bytes",
+        "a_suppressed_repeat_does_not_extend_the_original_acceptance_window",
+        "replacement_socket_has_no_predecessor_delivery_state_or_delayed_predecessor_updates",
+        "an_expired_window_delivers_the_identical_assignment_again",
         "a_later_authentication_completion_replaces_the_same_sessions_socket",
     ],
     ("pulse_cluster_lookup", "test"): [

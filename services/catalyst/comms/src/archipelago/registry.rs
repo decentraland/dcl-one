@@ -4,8 +4,10 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 mod mailbox;
-pub(crate) use mailbox::AssignmentSend;
 use mailbox::MailboxSender;
+#[cfg(test)]
+pub(crate) use mailbox::OUTPUT_CAPACITY;
+pub(crate) use mailbox::{AssignmentSend, OutputBudget, OutputCredit, ReceivedSocketEvent};
 pub use mailbox::{MAX_ASSIGNMENT_BYTES, SocketEvents};
 
 /// What a live socket is handed. An island assignment arrives by call from the island subscriber
@@ -131,10 +133,9 @@ impl PeerLink {
 
     pub fn send(&self, event: SocketEvent) -> bool {
         match event {
-            SocketEvent::IslandChanged(bytes, stamp) => matches!(
-                self.send_assignment(&bytes, stamp),
-                AssignmentSend::Queued | AssignmentSend::Coalesced
-            ),
+            SocketEvent::IslandChanged(bytes, stamp) => {
+                matches!(self.send_assignment(&bytes, stamp), AssignmentSend::Queued)
+            }
             SocketEvent::Kicked => self.tx.kick(),
         }
     }
@@ -205,9 +206,18 @@ impl AdmissionState {
 }
 
 impl AdmissionTicket {
+    #[cfg(test)]
     pub(crate) fn commit(
+        self,
+        session: &str,
+    ) -> Option<(PeerLink, SocketEvents, Option<PeerLink>)> {
+        self.commit_with_budget(session, Arc::default())
+    }
+
+    pub(crate) fn commit_with_budget(
         mut self,
         session: &str,
+        budget: Arc<OutputBudget>,
     ) -> Option<(PeerLink, SocketEvents, Option<PeerLink>)> {
         let registry = Arc::clone(&self.registry);
         let mut admissions = registry.admissions.lock();
@@ -229,7 +239,7 @@ impl AdmissionTicket {
             .expect("an active admission ticket remains registered")
             .committed
             .insert(session.to_owned(), self.sequence);
-        let connected = registry.on_peer_connected(&self.address, session);
+        let connected = registry.on_peer_connected_with_budget(&self.address, session, budget);
         admissions.retire(&self.address, self.sequence);
         Some(connected)
     }
@@ -277,7 +287,16 @@ impl PeersRegistry {
         address: &str,
         session: &str,
     ) -> (PeerLink, SocketEvents, Option<PeerLink>) {
-        let (link, rx) = self.new_link(session);
+        self.on_peer_connected_with_budget(address, session, Arc::default())
+    }
+
+    pub(crate) fn on_peer_connected_with_budget(
+        &self,
+        address: &str,
+        session: &str,
+        budget: Arc<OutputBudget>,
+    ) -> (PeerLink, SocketEvents, Option<PeerLink>) {
+        let (link, rx) = self.new_link(session, budget);
         let mut peers = self.peers.lock();
         let sessions = peers.entry(address.to_string()).or_default();
         let previous = sessions
@@ -327,7 +346,7 @@ impl PeersRegistry {
         connection_epoch: u64,
     ) -> (PeerLink, SocketEvents) {
         let registry_session = v4_registry_session(session, connection_id);
-        let (link, rx) = self.new_link(&registry_session);
+        let (link, rx) = self.new_link(&registry_session, Arc::default());
         let mut peers = self.v4_peers.lock();
         let sessions = peers.entry(address.to_string()).or_default();
         // Registration can arrive after a newer authority claim completed. Only the highest
@@ -354,8 +373,8 @@ impl PeersRegistry {
         (link, rx)
     }
 
-    fn new_link(&self, session: &str) -> (PeerLink, SocketEvents) {
-        let (tx, rx) = MailboxSender::channel();
+    fn new_link(&self, session: &str, budget: Arc<OutputBudget>) -> (PeerLink, SocketEvents) {
+        let (tx, rx) = MailboxSender::channel(budget);
         let link = PeerLink {
             session: session.to_string(),
             id: self.next_id.fetch_add(1, Ordering::SeqCst) + 1,

@@ -89,8 +89,8 @@ pub fn decode_islands_report(data: &[u8]) -> Result<Vec<IslandReport>, BusError>
 pub enum Routed {
     /// Accepted by the socket mailbox, not a WebSocket write or a client receipt.
     Delivered,
-    /// Replaced a pending absolute assignment; arrival order is not a source revision.
-    Coalesced,
+    /// No output credit was available; this assignment was not accepted.
+    Full,
     TooLarge,
     NoSessionSocket,
     NoSocket,
@@ -215,7 +215,7 @@ fn undecodable(state: &AppState, subject: &str, error: &BusError) -> Routed {
 }
 
 /// The island subscriber's hand-off: every assignment it mints reaches the connector's sockets
-/// through this call. Queued or coalesced into a socket's mailbox is a delivery; no socket of
+/// through this call. Accepted into a socket's bounded mailbox is a local delivery; no socket of
 /// that wallet (or session) here, a closed one or an oversized assignment is not.
 impl IslandSockets for AppStateInner {
     fn selected_transport_is_current(
@@ -248,7 +248,7 @@ impl IslandSockets for AppStateInner {
             assignment,
             pulse_admission.cloned(),
         ) {
-            Routed::Delivered | Routed::Coalesced => IslandDelivery::Delivered,
+            Routed::Delivered => IslandDelivery::Delivered,
             _ => IslandDelivery::Undelivered,
         }
     }
@@ -304,10 +304,7 @@ fn deliver(
     }
     let outcome = match link.send_assignment(&data, pulse_admission) {
         AssignmentSend::Queued => Routed::Delivered,
-        AssignmentSend::Coalesced => {
-            state.feed.coalesced.fetch_add(1, Ordering::Relaxed);
-            Routed::Coalesced
-        }
+        AssignmentSend::Full => return Routed::Full,
         AssignmentSend::TooLarge => {
             state
                 .feed
