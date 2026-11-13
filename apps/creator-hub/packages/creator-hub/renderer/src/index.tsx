@@ -17,6 +17,7 @@ import { dark, ThemeProvider } from 'decentraland-ui2/dist/theme';
 import { TranslationProvider } from '/@/components/TranslationProvider';
 
 import { AuthProvider } from '/@/components/AuthProvider';
+import { AiSharingUploader } from '/@/hooks/useAiSharingUploader';
 
 import { AiChatWindow } from '/@/components/AiChatWindow';
 import { ConsoleWindow } from '/@/components/ConsoleWindow';
@@ -65,6 +66,9 @@ if (import.meta.env.PROD) {
         replayIntegration({
           mutationLimit: 500,
           blockAllMedia: true,
+          // Set explicitly so an SDK default change can't start recording AI prompts and replies.
+          maskAllText: true,
+          maskAllInputs: true,
           beforeErrorSampling(event) {
             const source = event.tags?.source;
             // Only capture replays for UX-critical errors
@@ -121,6 +125,7 @@ if (isAiChatWindow || isConsoleWindow) {
                 <Router>
                   <ScrollToTop />
                   <AuthProvider>
+                    <AiSharingUploader />
                     <RouteErrorBoundary>
                       <Routes>
                         <Route

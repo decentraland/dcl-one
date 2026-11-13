@@ -20,6 +20,7 @@ import { useDispatch, useSelector } from '#store';
 import { settings as settingsPreload, misc } from '#preload';
 import { TabsModal } from '../TabsModal';
 import { ScenesTab, EditorTab, AiTab, ExperimentalTab, AboutTab } from './Tabs';
+import { AiSharingSection } from './Tabs/AiTab/AiSharingSection';
 
 import './styles.css';
 
@@ -196,7 +197,9 @@ export function AppSettings({
           <AiTab
             settings={settings}
             updateSettings={handleUpdateSettings}
-          />
+          >
+            <AiSharingSection />
+          </AiTab>
         );
       case SettingsTab.EXPERIMENTAL:
         return (
