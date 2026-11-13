@@ -708,7 +708,6 @@ mod tests {
             world.entity_mut(root).insert(RendererSceneContext::new(
                 dcl_types::SceneId(root),
                 hash.clone(),
-                String::new(),
                 false,
                 0,
                 hash.clone(),

@@ -72,7 +72,6 @@ fn init_scene(init: RelayInit) -> bool {
         scene_context,
         scene_js,
         crdt_component_interfaces,
-        storage_root,
         scene_origin,
         is_super,
     } = init;
@@ -91,7 +90,6 @@ fn init_scene(init: RelayInit) -> bool {
         // the relay attaches the scene's id on the engine side; the tag here is dropped
         renderer_sender: SceneResponseSender::new(SceneId::DUMMY, renderer_sender),
         global_update_receiver: global_rx,
-        storage_root,
         super_user,
         scene_origin,
         kill_flag: kill_flag.clone(),

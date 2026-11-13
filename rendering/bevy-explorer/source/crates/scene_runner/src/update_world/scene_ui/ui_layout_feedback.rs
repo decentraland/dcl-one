@@ -155,7 +155,6 @@ mod tests {
         RendererSceneContext::new(
             SceneId::DUMMY,
             "hash".to_owned(),
-            "storage_root".to_owned(),
             false,
             0,
             "title".to_owned(),

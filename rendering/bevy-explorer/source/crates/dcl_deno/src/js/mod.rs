@@ -213,14 +213,11 @@ pub fn create_runtime(
     }
 }
 
-pub struct StorageRoot(pub String);
-
 // main scene processing thread - constructs an isolate and runs the scene
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn scene_thread(
     initial_crdt_store: CrdtStore,
     scene_context: CrdtContext,
-    storage_root: String,
     scene_js: SceneJsFile,
     crdt_component_interfaces: CrdtComponentInterfaces,
     thread_sx: SceneResponseSender,
@@ -247,7 +244,6 @@ pub(crate) fn scene_thread(
         &mut *state.borrow_mut(),
         initial_crdt_store,
         scene_context,
-        storage_root,
         scene_js,
         crdt_component_interfaces,
         thread_sx,

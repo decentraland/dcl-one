@@ -16,7 +16,6 @@ pub struct RelayInit {
     pub scene_context: CrdtContext,
     pub scene_js: String,
     pub crdt_component_interfaces: CrdtComponentInterfaces,
-    pub storage_root: String,
     pub scene_origin: bevy::prelude::Vec3,
     // the scene gets a SystemApi sender; A forwards only if it holds the engine's
     pub is_super: bool,

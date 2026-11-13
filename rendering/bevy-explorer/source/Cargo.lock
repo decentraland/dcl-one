@@ -4449,12 +4449,10 @@ dependencies = [
  "rmp-serde",
  "serde",
  "serde-wasm-bindgen",
- "serde_json",
  "system_bridge",
  "tokio",
  "wasm-bindgen",
  "wasm-bindgen-futures",
- "web-sys",
 ]
 
 [[package]]

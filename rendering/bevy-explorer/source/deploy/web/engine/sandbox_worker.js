@@ -116,11 +116,8 @@ function createJsContext(wasmApi, context) {
   delete self.Worker;
   delete self.SharedWorker;
 
-  // OPFS is the origin's storage: config.json, the ipfs cache and every scene's localStorage all
-  // hang off the one root that navigator.storage.getDirectory() hands out. The scene's own storage
-  // no longer goes through it from here — crates/dcl_wasm/src/inner/local_storage.rs took a handle
-  // to just the local_storage/ subtree during wasm_init_scene, above, and that handle stays live
-  // once the accessor is gone.
+  // OPFS is the origin's storage: config.json and the ipfs cache hang off the one root that
+  // navigator.storage.getDirectory() hands out. Scenes get no persistent storage of any kind.
   //
   // `delete navigator.storage` would return true and do nothing: WorkerNavigator exposes it on its
   // prototype, so the own-property delete succeeds against a property that was never there. Walk to
@@ -261,10 +258,6 @@ function createJsContext(wasmApi, context) {
   Object.defineProperty(jsContext, "require", {
     configurable: false,
     value: require,
-  });
-  Object.defineProperty(jsContext, "localStorage", {
-    configurable: false,
-    value: createWebStorageProxy(ops),
   });
 
   // if (!isSuper) {
@@ -800,67 +793,3 @@ self.onmessage = async (event) => {
     tearDown();
   }
 };
-
-function createWebStorageProxy(ops) {
-  return new Proxy(
-    {},
-    {
-      get(_target, prop, _receiver) {
-        if (prop === "length") {
-          return ops.op_webstorage_length();
-        }
-
-        if (prop === "getItem") {
-          return (key) => ops.op_webstorage_get(String(key));
-        }
-        if (prop === "setItem") {
-          return (key, value) =>
-            ops.op_webstorage_set(String(key), String(value));
-        }
-        if (prop === "key") {
-          return (index) => ops.op_webstorage_key(index);
-        }
-        if (prop === "removeItem") {
-          return (key) => ops.op_webstorage_remove(String(key));
-        }
-        if (prop === "clear") {
-          return () => ops.op_webstorage_clear();
-        }
-
-        // Handle direct property access like `localStorage.myKey`
-        return ops.op_storage_get(String(prop));
-      },
-
-      set(_target, prop, value, _receiver) {
-        ops.op_storage_set(String(prop), String(value));
-        return true;
-      },
-
-      deleteProperty(_target, prop) {
-        ops.op_webstorage_remove(String(prop));
-        return true;
-      },
-
-      ownKeys(_target) {
-        return ops.op_webstorage_iterate_keys();
-      },
-
-      getOwnPropertyDescriptor(_target, prop) {
-        if (ops.op_webstorage_has(String(prop))) {
-          return {
-            value: ops.op_webstorage_get(String(prop)),
-            writable: true,
-            enumerable: true,
-            configurable: true,
-          };
-        }
-        return undefined;
-      },
-
-      has(_target, prop) {
-        return ops.op_webstorage_has(String(prop));
-      },
-    }
-  );
-}
-

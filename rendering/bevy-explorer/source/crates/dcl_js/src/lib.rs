@@ -177,7 +177,6 @@ pub fn init_state(
     state: &mut impl State,
     initial_crdt_store: CrdtStore,
     scene_context: CrdtContext,
-    storage_root: String,
     scene_js: SceneJsFile,
     crdt_component_interfaces: CrdtComponentInterfaces,
     thread_sx: SceneResponseSender,
@@ -219,7 +218,6 @@ pub fn init_state(
     state.put(scene_context);
     state.put(allocator);
     state.put(scene_js);
-    state.put(storage_root);
     state.put(crdt_component_interfaces);
     state.put(thread_sx);
     state.put(Arc::new(Mutex::new(thread_rx)));

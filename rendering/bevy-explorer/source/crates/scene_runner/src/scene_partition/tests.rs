@@ -85,7 +85,6 @@ fn scene_with_parcels(world: &mut World, parcels: &[IVec2]) -> Entity {
     let context = RendererSceneContext::new(
         SceneId(root),
         "hash".to_owned(),
-        String::new(),
         false,
         0,
         String::new(),

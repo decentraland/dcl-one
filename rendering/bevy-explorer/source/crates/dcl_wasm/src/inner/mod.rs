@@ -1,5 +1,4 @@
 pub mod gotham_state;
-pub mod local_storage;
 pub mod op_wrappers;
 pub mod relay;
 pub mod relay_proto;
@@ -33,7 +32,6 @@ pub struct SceneInitializationData {
     pub crdt_component_interfaces: CrdtComponentInterfaces,
     pub renderer_sender: SceneResponseSender,
     pub global_update_receiver: tokio::sync::broadcast::Receiver<GlobalCrdtStateUpdate>,
-    pub storage_root: String,
     pub super_user: Option<tokio::sync::mpsc::UnboundedSender<SystemApi>>,
     pub scene_origin: bevy::prelude::Vec3,
     pub kill_flag: KillFlag,
@@ -72,7 +70,6 @@ pub fn spawn_scene(
     crdt_component_interfaces: CrdtComponentInterfaces,
     renderer_sender: SceneResponseSender,
     global_update_receiver: tokio::sync::broadcast::Receiver<GlobalCrdtStateUpdate>,
-    storage_root: String,
     _inspect: bool,
     super_user: Option<tokio::sync::mpsc::UnboundedSender<SystemApi>>,
     scene_origin: bevy::prelude::Vec3,
@@ -103,7 +100,6 @@ pub fn spawn_scene(
                     crdt_component_interfaces,
                     renderer_sender,
                     global_update_receiver,
-                    storage_root,
                     super_user,
                     scene_origin,
                     kill_flag: kill_flag.clone(),
@@ -157,7 +153,6 @@ pub async fn wasm_init_scene() -> Result<WorkerContext, JsValue> {
         &mut *context.state.borrow_mut(),
         scene_initialization_data.initial_crdt_store,
         scene_initialization_data.scene_context,
-        scene_initialization_data.storage_root,
         scene_initialization_data.scene_js,
         scene_initialization_data.crdt_component_interfaces,
         scene_initialization_data.renderer_sender,
@@ -169,8 +164,6 @@ pub async fn wasm_init_scene() -> Result<WorkerContext, JsValue> {
     );
 
     context.state.borrow_mut().put(SceneStatsFlush(0.0));
-
-    local_storage::init(&context).await;
 
     Ok(context)
 }

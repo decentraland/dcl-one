@@ -140,7 +140,6 @@ fn test_insert_audio_stream() {
         .spawn(RendererSceneContext::new(
             SceneId::DUMMY,
             "hash".to_owned(),
-            "storage_root".to_owned(),
             false,
             0,
             "title".to_owned(),
@@ -200,7 +199,6 @@ fn test_insert_empty_audio_stream() {
         .spawn(RendererSceneContext::new(
             SceneId::DUMMY,
             "hash".to_owned(),
-            "storage_root".to_owned(),
             false,
             0,
             "title".to_owned(),
@@ -260,7 +258,6 @@ fn test_insert_livekit_audio_stream() {
         .spawn(RendererSceneContext::new(
             SceneId::DUMMY,
             "hash".to_owned(),
-            "storage_root".to_owned(),
             false,
             0,
             "title".to_owned(),
@@ -320,7 +317,6 @@ fn test_insert_video_player() {
         .spawn(RendererSceneContext::new(
             SceneId::DUMMY,
             "hash".to_owned(),
-            "storage_root".to_owned(),
             false,
             0,
             "title".to_owned(),
@@ -380,7 +376,6 @@ fn test_insert_empty_video_player() {
         .spawn(RendererSceneContext::new(
             SceneId::DUMMY,
             "hash".to_owned(),
-            "storage_root".to_owned(),
             false,
             0,
             "title".to_owned(),
@@ -440,7 +435,6 @@ fn test_insert_livekit_video_player() {
         .spawn(RendererSceneContext::new(
             SceneId::DUMMY,
             "hash".to_owned(),
-            "storage_root".to_owned(),
             false,
             0,
             "title".to_owned(),
@@ -500,7 +494,6 @@ fn test_removing_video_player() {
         .spawn(RendererSceneContext::new(
             SceneId::DUMMY,
             "hash".to_owned(),
-            "storage_root".to_owned(),
             false,
             0,
             "title".to_owned(),
@@ -580,7 +573,6 @@ fn test_removing_livekit_video_player() {
         .spawn(RendererSceneContext::new(
             SceneId::DUMMY,
             "hash".to_owned(),
-            "storage_root".to_owned(),
             false,
             0,
             "title".to_owned(),
@@ -660,7 +652,6 @@ fn test_livekit_video_player_without_should_be_playing_should_not_be_receiver() 
         .spawn(RendererSceneContext::new(
             SceneId::DUMMY,
             "hash".to_owned(),
-            "storage_root".to_owned(),
             false,
             0,
             "title".to_owned(),
@@ -796,7 +787,6 @@ pub(super) fn test_source_change() {
         .spawn(RendererSceneContext::new(
             SceneId::DUMMY,
             "hash".to_owned(),
-            "storage_root".to_owned(),
             false,
             0,
             "title".to_owned(),
@@ -994,7 +984,6 @@ fn test_despawn_av_player() {
         .spawn(RendererSceneContext::new(
             SceneId::DUMMY,
             "hash".to_owned(),
-            "storage_root".to_owned(),
             false,
             0,
             "title".to_owned(),

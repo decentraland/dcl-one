@@ -58,6 +58,11 @@
 import { initEngine, start, prepareRender, applyOptionsToUrlParams, engine_home_scene, engine_terms_accepted, engine_crash_event, engine_set_pulse_certificate_hash, engine_set_perf_stream, engine_perf_take } from './engine.js'
 import { createPerfStream } from './perf_stream.js'
 
+// Scenes get no persistent storage; remove the OPFS folder older builds kept it in.
+navigator.storage?.getDirectory?.()
+  .then((root) => root.removeEntry('local_storage', { recursive: true }))
+  .catch((e) => { if (e?.name !== 'NotFoundError') console.warn('[boot] could not remove scene storage:', e) })
+
 // ---- boot progress (replaces ui.js's DOM loading steps) -----------------------------------------
 // Weight of each step in the overall bar (sums to 100). Step ids are read by the React login bar
 // (LoadingAndLogin STEP_LABEL) — keep in sync.

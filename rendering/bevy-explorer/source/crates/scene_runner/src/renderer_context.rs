@@ -55,7 +55,6 @@ pub enum SceneState {
 pub struct RendererSceneContext {
     pub scene_id: SceneId,
     pub hash: Arc<str>,
-    pub storage_root: String,
     pub is_portable: bool,
     pub start_tick: u32,
     pub title: String,
@@ -200,7 +199,6 @@ impl RendererSceneContext {
     pub fn new(
         scene_id: SceneId,
         hash: String,
-        storage_root: String,
         is_portable: bool,
         start_tick: u32,
         title: String,
@@ -219,7 +217,6 @@ impl RendererSceneContext {
         let mut new_context = Self {
             scene_id,
             hash: hash.into(),
-            storage_root,
             is_portable,
             start_tick,
             title,
