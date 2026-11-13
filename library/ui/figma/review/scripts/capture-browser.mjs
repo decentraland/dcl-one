@@ -157,6 +157,7 @@ async function openSession(executable, { signal } = {}) {
       }
       await delay(100)
     }
+    signal?.throwIfAborted()
     if (!validPortObserved) throw new Error('Capture browser did not start')
     phase = 'endpoint'
     const tab = await fetch(`http://127.0.0.1:${port}/json/new?about:blank`, {

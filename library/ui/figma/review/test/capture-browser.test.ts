@@ -462,6 +462,26 @@ describe('when capture startup waits for a usable port record', () => {
       await cleaned(fixture)
     })
 
+  for (const record of ['', '1', 'not-a-port\n'])
+    it(`should preserve cancellation identity on the final polling delay for ${JSON.stringify(record)}`, async (t) => {
+      const fixture = await startup(t, [record])
+      const controller = new AbortController()
+      const reason = Object.freeze(new Error('cancelled final startup delay'))
+      t.mock.method(timers, 'setTimeout', (async (ms: number) => {
+        fixture.delays.push(ms)
+        if (fixture.delays.length === 100) controller.abort(reason)
+      }) as typeof timers.setTimeout)
+      syncBuiltinESMExports()
+      await assert.rejects(
+        fixture.open('capture-fixture', { signal: controller.signal }),
+        (error) => error === reason
+      )
+      assert.equal(fixture.reads(), 100)
+      assert.deepEqual(fixture.delays, Array(100).fill(100))
+      assert.deepEqual(fixture.endpoints, [])
+      assert.deepEqual(fixture.diagnostics, [])
+      await cleaned(fixture)
+    })
   it('should preserve cancellation identity between readable invalid records and clean up when logging throws', async (t) => {
     const fixture = await startup(t, ['1'])
     const controller = new AbortController()
