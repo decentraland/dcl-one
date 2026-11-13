@@ -8,9 +8,9 @@ use serde::de::DeserializeOwned;
 /// serde_v8 unwraps every property read, so a getter, proxy or `toString` that throws
 /// while it walks a value panics inside the op, which aborts the process. The copy is made
 /// with every read checked: own enumerable data only, null-prototype objects and arrays,
-/// and no symbols, boxed primitives, proxies or functions. Buffers are re-wrapped over the
-/// same memory with a null prototype, so no scene code runs while serde_v8 decodes; the
-/// decode still runs under `catch_unwind`.
+/// and no symbols, boxed primitives, proxies, functions or resizable buffers. Buffers are
+/// re-wrapped over the same memory with a null prototype, so no scene code runs while
+/// serde_v8 decodes; the decode still runs under `catch_unwind`.
 pub struct Plain<T>(pub T);
 
 #[derive(Debug)]
@@ -164,17 +164,21 @@ fn rewrap_buffer<'s>(
     scope: &mut v8::HandleScope<'s>,
     value: v8::Local<'s, v8::Value>,
 ) -> Option<v8::Local<'s, v8::Object>> {
+    // scene code can shrink a resizable buffer under a view, leaving it out of bounds;
+    // serde_v8 refuses them anyway
     if let Ok(buffer) = v8::Local::<v8::ArrayBuffer>::try_from(value) {
         let store = buffer.get_backing_store();
+        if store.is_resizable_by_user_javascript() {
+            return None;
+        }
         return Some(v8::ArrayBuffer::with_backing_store(scope, &store).into());
     }
     let view = v8::Local::<v8::ArrayBufferView>::try_from(value).ok()?;
     let buffer = view.buffer(scope).filter(|buffer| !buffer.was_detached())?;
-    let offset = view.byte_offset();
-    // a shrunk resizable buffer can leave the view out of bounds
-    if offset + view.byte_length() > buffer.byte_length() {
+    if buffer.get_backing_store().is_resizable_by_user_javascript() {
         return None;
     }
+    let offset = view.byte_offset();
     macro_rules! same_type {
         ($($ty:ident),*) => {$(
             if let Ok(typed) = v8::Local::<v8::$ty>::try_from(value) {

@@ -63,18 +63,38 @@ fn add_ops_wrap_instead_of_overflowing() {
     assert!(names.contains(&"op_add") && names.contains(&"op_add_async"));
 }
 
-/// A view left out of bounds by shrinking its resizable buffer is refused, not rebuilt.
+/// Buffers scene code can resize are refused, so no view is rebuilt over memory it no
+/// longer covers; a fixed-length buffer's view decodes.
 #[test]
-fn an_out_of_bounds_view_is_refused() {
-    assert_refused(
-        r#"
-        const buffer = new ArrayBuffer(16, { maxByteLength: 16 });
-        const view = new Uint8Array(buffer, 8, 4);
-        buffer.resize(4);
-        Deno.core.ops.op_log_test_plan(view);
-        "#,
-        "cannot be passed",
+fn resizable_buffers_are_refused() {
+    use crate::js::plain::Plain;
+    use deno_core::{serde_v8::JsBuffer, v8, FromV8};
+
+    let mut runtime = JsRuntime::new(Default::default());
+    let mut decode = |setup: &str| {
+        let value = runtime.execute_script("<test>", format!("{{ {setup} }}")).unwrap();
+        let scope = &mut runtime.handle_scope();
+        let value = v8::Local::new(scope, value);
+        Plain::<JsBuffer>::from_v8(scope, value)
+            .map(|Plain(bytes)| bytes.to_vec())
+            .map_err(|e| e.to_string())
+    };
+    assert_eq!(
+        decode("const v = new Uint8Array(new ArrayBuffer(16), 8, 4); v.set([1, 2, 3, 4]); v"),
+        Ok(vec![1, 2, 3, 4])
     );
+    for setup in [
+        // out of bounds once shrunk
+        "const b = new ArrayBuffer(16, { maxByteLength: 16 }); const v = new Uint8Array(b, 8, 4); b.resize(4); v",
+        "const b = new ArrayBuffer(16, { maxByteLength: 16 }); new Uint8Array(b, 8, 4)",
+        "new ArrayBuffer(16, { maxByteLength: 32 })",
+    ] {
+        let refused = decode(setup);
+        assert!(
+            matches!(&refused, Err(e) if e.contains("cannot be passed")),
+            "{setup}: {refused:?}"
+        );
+    }
 }
 
 /// Each voice chat action decodes through `Plain` in its tagged-enum shape.
@@ -623,6 +643,60 @@ fn performance_now_takes_a_misaligned_buffer() {
         "#,
     )
     .unwrap();
+}
+
+/// A runtime's open streams share one byte budget: two together cannot pass it, and
+/// closing a stream returns its bytes for the next.
+#[test]
+fn open_streams_share_one_byte_budget() {
+    let (mut runtime, _) = create_runtime(false, false, "test-stream-budget", false, Default::default());
+    runtime.op_state().borrow_mut().put(context(true));
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let _guard = rt.enter();
+    runtime
+        .execute_script(
+            "<test>",
+            r#"
+            const ops = Deno.core.ops;
+            const MiB = 1024 * 1024;
+            const fill = async (sink, n) => {
+                const chunk = new Uint8Array(MiB);
+                for (let i = 0; i < n; i++) {
+                    if (!(await ops.op_readable_stream_resource_write_buf(sink, chunk))) return;
+                }
+                ops.op_readable_stream_resource_close(sink);
+            };
+            const take = async (mib) => {
+                const rid = ops.op_readable_stream_resource_allocate();
+                const sink = ops.op_readable_stream_resource_get_sink(rid);
+                const [read] = await Promise.allSettled([ops.op_read_all(rid), fill(sink, mib)]);
+                return [rid, read.status === "fulfilled" ? String(read.value.length) : String(read.reason)];
+            };
+            (async () => {
+                // the server budget is 10 MiB
+                const [a, first] = await take(6);
+                const [b, second] = await take(6);
+                Deno.core.close(a);
+                Deno.core.close(b);
+                const [, third] = await take(6);
+                globalThis.__budget = [first, second.includes("budget"), third].join(" ");
+            })().catch((e) => { globalThis.__budget = String(e); });
+            "#,
+        )
+        .unwrap();
+    rt.block_on(async {
+            tokio::time::timeout(Duration::from_secs(20), runtime.run_event_loop(Default::default()))
+                .await
+                .expect("the streams did not settle")
+        })
+        .unwrap();
+    assert_eq!(
+        eval_string(&mut runtime, "String(globalThis.__budget)"),
+        "6291456 true 6291456"
+    );
 }
 
 /// A runtime holds a bounded number of streams, and a stream reserves its sink's slot so
