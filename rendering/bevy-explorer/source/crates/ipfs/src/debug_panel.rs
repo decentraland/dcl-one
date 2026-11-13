@@ -249,7 +249,11 @@ fn web_state(mut input: ConsoleCommand<WebState>, ipfs: Res<IpfsResource>, confi
                 "cached": IPFS_CACHED.load(Ordering::Relaxed),
                 "local": IPFS_NON_IPFS.load(Ordering::Relaxed),
                 "failed": IPFS_FAILED.load(Ordering::Relaxed),
-                "missingForSession": ipfs.failed_remotes.lock().unwrap().session_len(),
+                "missingForSession": ipfs
+                    .failed_remotes
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .session_len(),
                 "connectFailed": connect_failed,
                 "available": ipfs.request_slots.available_permits(),
                 "slots": config.max_concurrent_remotes,

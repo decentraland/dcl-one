@@ -410,7 +410,7 @@ impl IpfsIo {
                 };
                 self.failed_remotes
                     .lock()
-                    .unwrap()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .record(remote.clone(), session, Instant::now());
                 return ipfs_io_read_state.send_failure(Err(AssetReaderError::Io(Arc::new(
                     std::io::Error::other(format!(

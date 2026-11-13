@@ -775,3 +775,31 @@ async fn a_loopback_404_is_answered_from_memory_only_within_the_retry_window() {
     .await
     .expect("loopback failure was not answered from memory");
 }
+
+#[tokio::test]
+async fn a_poisoned_failure_memory_keeps_answering() {
+    timeout(LIMIT, async {
+        let io = ipfs();
+        let server = Server::start().await;
+        let path = loopback_realm(&io, &server).await;
+        let poisoner = std::thread::scope(|scope| {
+            scope
+                .spawn(|| {
+                    let _held = io.failed_remotes.lock().unwrap();
+                    panic!("poison the failure memory");
+                })
+                .join()
+        });
+        assert!(poisoner.is_err());
+        assert!(io.failed_remotes.is_poisoned());
+        assert!(read_missing(&io, &server, &path).await.is_err());
+        let second = io.read(&path).await.map(|_| ()).unwrap_err();
+        assert!(
+            second.to_string().contains("repeat request for failed"),
+            "{second}"
+        );
+        assert_eq!(io.request_metrics.attempts.load(Ordering::Relaxed), 1);
+    })
+    .await
+    .expect("a poisoned failure memory stopped answering");
+}

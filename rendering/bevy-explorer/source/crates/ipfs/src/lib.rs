@@ -2130,7 +2130,10 @@ impl IpfsIo {
             // a failure is answered from memory for the retry window, or for the session when the
             // server said a content hash's url is wrong; preview always asks again
             let repeat = {
-                let mut failed = self.failed_remotes.lock().unwrap();
+                let mut failed = self
+                    .failed_remotes
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 if self.is_preview {
                     failed.forget(&remote);
                     None

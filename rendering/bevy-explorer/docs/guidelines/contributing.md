@@ -181,6 +181,7 @@ fails the check. For a targeted run, `--filter TEXT` selects matching tests and
 | A departed hash ranks last while any request of it is alive, including a retry after its queue drained | `a_departed_hash_ranks_last_for_a_retry_after_its_queue_drained` |
 | The gate keeps granting after a poisoned lock, and a release skips a queue entry without its ticket instead of panicking in a destructor | `a_poisoned_gate_keeps_granting_and_releasing`, `a_queue_entry_without_its_ticket_is_skipped_inside_a_release` |
 | A content hash's definitive client error is answered from memory for the session; other failures, url-keyed reads and loopback keep the retry window; preview asks again | `a_content_hash_that_answers_a_client_error_is_remembered_for_the_session`, `transient_and_url_keyed_failures_keep_the_retry_window`, `a_loopback_404_is_answered_from_memory_only_within_the_retry_window`, `a_session_failure_is_answered_by_read_without_a_request`, `a_preview_client_ignores_a_session_failure`, `a_preview_client_does_not_keep_a_content_failure_for_the_session`, `a_preview_client_asks_again_for_a_missing_file_at_once` |
+| The failure memory keeps answering after a poisoned lock | `a_poisoned_failure_memory_keeps_answering` |
 
 Give each test its own gate and counters so it can run alongside other tests. Trace destructor
 paths for nested locks or file I/O under a lock. When changing diagnostics, check the units
