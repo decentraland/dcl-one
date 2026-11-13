@@ -457,6 +457,19 @@ pub async fn op_read_world_access_stream(
 }
 
 #[wasm_bindgen]
+pub async fn op_get_platform_ban_stream(state: &WorkerContext) -> u32 {
+    dcl_js::system_api::op_get_platform_ban_stream(state.rc()).await
+}
+
+#[wasm_bindgen]
+pub async fn op_read_platform_ban_stream(
+    state: &WorkerContext,
+    rid: u32,
+) -> Result<JsValue, WasmError> {
+    serde_result!(dcl_js::system_api::op_read_platform_ban_stream(state.rc(), rid).await)
+}
+
+#[wasm_bindgen]
 pub fn op_set_world_password(state: &WorkerContext, password: Option<String>) {
     dcl_js::system_api::op_set_world_password(state.rc(), password);
 }

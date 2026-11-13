@@ -183,6 +183,8 @@ pub enum SystemApi {
     GetWorldAccessStream(RpcStreamSender<WorldAccessEvent>),
     /// Answers the password prompt: the password, or `None` when the player gives up.
     SetWorldPassword(Option<world_access::WorldPassword>),
+    /// The signed-in wallet's platform ban: now, then again on every change.
+    GetPlatformBanStream(RpcStreamSender<PlatformBanNotice>),
     SetInteractableArea(Vec4),
     GetMicState(RpcResultSender<MicState>),
     SetMicEnabled(bool),

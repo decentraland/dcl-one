@@ -7,6 +7,7 @@
 //! or a component.
 
 mod debug;
+mod entry_gate;
 mod platform_ban;
 
 use alloy_core::primitives::Address;
@@ -27,6 +28,7 @@ pub struct BanBlockPlugin;
 impl Plugin for BanBlockPlugin {
     fn build(&self, app: &mut App) {
         platform_ban::register(app);
+        entry_gate::register(app);
         debug::register(app);
     }
 }

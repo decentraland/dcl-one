@@ -66,8 +66,8 @@ use common::{
     rpc::{RpcResultReceiver, RpcResultSender},
     sets::RealmLifecycle,
     structs::{
-        server_mode, AppConfig, CommsConfig, CurrentRealm, PreviewMode, ServerConfiguration,
-        WorldHold,
+        server_mode, AppConfig, CommsConfig, CurrentRealm, PlatformBanEntryGate, PreviewMode,
+        ServerConfiguration, WorldHold, PLATFORM_BANNED,
     },
     util::TaskCompat,
 };
@@ -780,6 +780,7 @@ pub fn change_realm(
     wallet: Option<Res<Wallet>>,
     prompter: Option<Res<WorldPasswordPrompter>>,
     mut world_secret: ResMut<WorldCommsSecret>,
+    ban_gate: Option<Res<PlatformBanEntryGate>>,
     mut commands: Commands,
 ) {
     // Polled before the realm watch: a change's result is sent after its realm config, so a
@@ -908,10 +909,15 @@ pub fn change_realm(
                 .and_then(|_| world_secret.0.clone());
             let prompter = prompter.as_deref().cloned();
             let client = ipfs.client();
+            let banned = ban_gate.is_some_and(|gate| gate.banned);
             IoTaskPool::get()
                 .spawn_compat(async move {
                     let mut superseded = superseded;
                     let result = async {
+                        // a known platform ban keeps the player where they are, the hold included
+                        if banned {
+                            return Err(PLATFORM_BANNED.to_owned());
+                        }
                         let secret = match &world {
                             Some((world, wallet)) => {
                                 world_access::check_world_access(

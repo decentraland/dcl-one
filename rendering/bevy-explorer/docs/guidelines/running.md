@@ -248,7 +248,8 @@ State, in every build:
   social blocks (`state` live or unavailable with its `reason`, `blocked`, `blockedBy`), the
   platform ban (`state` unknown, checked or failed, `isBanned`, `source`, `reason`,
   `matchedOn` for a record the gatekeeper withheld, `customMessage`, `expiresAt`,
-  `checkedAgoSecs`, `error`), the local user's scene admission
+  `checkedAgoSecs`, `error`), `entryGate` (`closed` while a known platform ban refuses every
+  realm change, else `open`), the local user's scene admission
   (`state` unknown, allowed or refused, `scope` platform, world or scene, `message`, `sceneId`),
   the scene room's lists (`state`, `sceneId`, `bannedAddresses`, `sceneAdmins`, while the room is
   connected) and, with an address, its `lookup` (`isBlockedEitherWay`, `direction`,
