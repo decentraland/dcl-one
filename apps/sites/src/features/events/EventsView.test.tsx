@@ -338,6 +338,49 @@ describe("EventsView", () => {
   });
 });
 
+describe("when calendar occupancy is available or unknown", () => {
+  it.each([
+    { connected: undefined, expected: null, state: "missing" },
+    { connected: null, expected: null, state: "null" },
+    { connected: [], expected: "0 online", state: "known zero" },
+    {
+      connected: ["0xABC", "0xabc", "0xDEF"],
+      expected: "2 online",
+      state: "known distinct users",
+    },
+  ])("should use $state occupancy without substituting registrations", async ({ connected, expected }) => {
+    calendar = [
+      {
+        ...soon("occupancy", "Occupancy check", -0.5),
+        live: true,
+        total_attendees: 26,
+        connected_addresses: connected,
+      } as Event,
+    ];
+    setup("/events");
+    const title = await screen.findByRole("link", {
+      name: "Occupancy check",
+    });
+    const card = title.closest("article")!;
+    expect(within(card).getByText("LIVE")).toBeTruthy();
+    expect(within(card).queryByText("26 online")).toBeNull();
+    if (expected) expect(within(card).getByText(expected)).toBeTruthy();
+    else expect(within(card).queryByText(/online$/)).toBeNull();
+  });
+
+  it("should not present future event registrations as current occupancy", async () => {
+    calendar = [soon("future", "Future registration count")];
+    calendar[0]!.total_attendees = 26;
+    setup("/events");
+    const title = await screen.findByRole("link", {
+      name: "Future registration count",
+    });
+    const card = title.closest("article")!;
+    expect(within(card).queryByText(/online$/)).toBeNull();
+    expect(within(card).queryByText("LIVE")).toBeNull();
+  });
+});
+
 describe("columnsFor", () => {
   it("should show five days on wide screens, four from desktop, two on tablets and a list on phones", () => {
     expect([1920, 1536, 1535, 1024, 1023, 768, 767, 390].map(columnsFor)).toEqual([5, 5, 4, 4, 2, 2, 1, 1]);

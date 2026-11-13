@@ -289,7 +289,7 @@ export function EventsView({ sid, platform, origin, initial }: EventsViewProps) 
         image: event.image,
         href,
         onOpen: open(href, event.id),
-        users: users ?? (occurrence.live ? (event.total_attendees ?? undefined) : undefined),
+        users,
         usersLabel: users === undefined ? undefined : usersLabel(users),
         creator: eventCreator(event, profiles),
         live: occurrence.live,
