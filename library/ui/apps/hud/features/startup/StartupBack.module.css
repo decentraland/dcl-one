@@ -1,4 +1,4 @@
-/* A 36px square at white 3% (10% on hover), the word 14px after it. */
+/* A 36px square in the sign-in film, the word 14px after it. */
 .back {
   gap: 14px;
   height: 36px;
@@ -18,9 +18,9 @@
   width: 36px;
   height: 36px;
   border-radius: var(--r-button);
-  background: var(--white-3);
+  background: var(--signin-film);
   transition: background-color var(--dur-fast) ease;
 }
 .back:hover .square {
-  background: var(--white-10);
+  background: var(--signin-film-hover);
 }

@@ -194,12 +194,12 @@
   background: var(--fill-5);
 }
 
-/* whisper: an almost clear fill (the sign-in screens' Back) */
+/* whisper: a faint grey film (the sign-in screens' body type button) */
 .whisper {
-  background: var(--white-3);
+  background: var(--signin-film);
 }
 .whisper:hover:not(:disabled) {
-  background: var(--white-10);
+  background: var(--signin-film-hover);
 }
 /* method: a sign-in method (GOOGLE, METAMASK, the More options row): black 60%, grows a little on hover */
 .method {

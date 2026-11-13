@@ -39,6 +39,10 @@
   --signin-select: #ff7439; /* a picked starting look's ring, the sign-in checkmarks */
   --signin-option-hover: #cdcbd1; /* the body type menu's option, hovered */
   --signin-name-placeholder: #716b7c; /* the new account's name field placeholder */
+  /* the faint fill of the sign-in screens' BACK square and body type button: white 3% (10% on hover)
+     blended in linear light, which over the purple reads as this grey film */
+  --signin-film: rgba(150, 160, 180, 0.3);
+  --signin-film-hover: rgba(170, 170, 180, 0.5);
   --shop-card-hover: rgba(255, 255, 255, 0.2); /* DCL/White20% — the Shop cart's hovered card */
   --pale-black: #43404a; /* DCL/Pale Black — the Shop toast's rim */
   --silver: #a09ba8; /* DCL/Silver — the NAME field's placeholder and suffix, an empty nametag */
