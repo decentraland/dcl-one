@@ -31,6 +31,7 @@ pub fn override_ops() -> Vec<OpDecl> {
         op_serialize(),
         op_deserialize(),
         op_structured_clone(),
+        op_drain_pending_rejections(),
         op_eval_context(),
         op_message_port_post_message(),
         op_url_parse(),
@@ -142,9 +143,6 @@ pub const REVIEWED_UPSTREAM_OPS: &[&str] = &[
     "op_set_captured_bootstrap",
     "op_lazy_load_esm",
     "op_load_ext_script",
-    // fills a holey array under a borrow; init.js keeps index setters off its prototypes for
-    // sealed (server) scenes
-    "op_drain_pending_rejections",
     "op_dispatch_exception",
     "op_destructure_error",
     "op_run_microtasks",
@@ -396,6 +394,15 @@ fn op_structured_clone<'s>(
     Ok(deserializer
         .read_value(context)
         .ok_or_else(|| anyhow::anyhow!("could not deserialize value"))?)
+}
+
+/// The original fills a new holey array while it holds the rejection queue's borrow, so an
+/// index setter on `Array.prototype` runs scene code there, and a rejection inside it takes the
+/// borrow again and aborts the process. Returning nothing leaves every rejection queued for the
+/// event loop's own dispatch, which takes the queue first and passes it as arguments.
+#[op2]
+fn op_drain_pending_rejections<'s>(scope: &mut v8::PinScope<'s, '_>) -> v8::Local<'s, v8::Value> {
+    v8::undefined(scope).into()
 }
 
 /// Compiles and runs `source` as a classic script, returning `[result, error]` where `error`

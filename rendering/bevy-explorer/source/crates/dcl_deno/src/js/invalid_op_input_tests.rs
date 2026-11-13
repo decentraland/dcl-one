@@ -76,76 +76,64 @@ fn cancel_handles_are_capped_and_print_does_not_reach_stdout() {
     run_scene(false, r#"Deno.core.print("x".repeat(10000), true);"#).unwrap();
 }
 
-/// An index accessor on the array prototypes would run inside deno_core's rejection drain.
-#[test]
-fn prototype_index_accessors_are_refused() {
-    for is_server in [false, true] {
-        run_scene(
-            is_server,
-            r#"
-            const attempts = {
-                defineProperty: () => Object.defineProperty(Array.prototype, "0", { set() {}, configurable: true }),
-                numberKey: () => Object.defineProperty(Object.prototype, 5, { get() {}, configurable: true }),
-                defineProperties: () => Object.defineProperties(Array.prototype, { 1: { set() {}, configurable: true } }),
-                defineSetter: () => Array.prototype.__defineSetter__("2", () => {}),
-                defineGetter: () => Object.prototype.__defineGetter__(3, () => {}),
-                setPrototypeOf: () => Object.setPrototypeOf(Array.prototype, { set 0(v) {} }),
-                protoAssign: () => { Array.prototype.__proto__ = { set 0(v) {} }; },
-            };
-            for (const [name, attempt] of Object.entries(attempts)) {
-                let threw = false;
-                try { attempt(); } catch (e) { threw = e instanceof TypeError; }
-                if (!threw) { throw new Error(`${name} was allowed`); }
-            }
-            if (Reflect.defineProperty(Array.prototype, "0", { set() {}, configurable: true })) {
-                throw new Error("Reflect.defineProperty was allowed");
-            }
-            if (Reflect.setPrototypeOf(Array.prototype, {})) { throw new Error("Reflect.setPrototypeOf was allowed"); }
-            // named keys, other objects and plain index writes still work
-            Object.defineProperty(Array.prototype, "extra", { value: 1, configurable: true });
-            Object.defineProperties(Object.prototype, { extra2: { value: 2, configurable: true } });
-            Object.defineProperty([], "0", { get() { return 1; } });
-            Object.setPrototypeOf({}, null);
-            Array.prototype[3] = 1;
-            delete Array.prototype[3];
-            "#,
-        )
-        .unwrap();
-    }
-}
-
-/// Rejections still drain once the scene has tried to put a setter in the drain's path.
+/// An index setter on the array prototypes, put there by any route a scene has, never runs
+/// while deno_core drains rejections, and the rejections are still reported.
 #[test]
 fn a_rejection_drain_runs_no_scene_setter() {
-    let (mut runtime, _) = create_runtime(false, false, Default::default());
-    {
-        let state = runtime.op_state();
-        let mut state = state.borrow_mut();
-        state.put(context(true));
-        state.put(dcl_types::SceneResourceCounters::default());
-        state.put(Vec::<dcl_types::SceneLogMessage>::default());
-        state.put(dcl_types::SceneElapsedTime(0.0));
+    let setter = r#"{ set() { Promise.reject(1); }, configurable: true }"#;
+    let routes = [
+        format!(r#"Object.defineProperty(Array.prototype, "2", {setter})"#),
+        format!(r#"__bootstrap.primordials.ObjectDefineProperty(Array.prototype, "2", {setter})"#),
+        format!(r#"__bootstrap.primordials.ReflectDefineProperty(Object.prototype, "2", {setter})"#),
+        format!(r#"__bootstrap.primordials.ObjectDefineProperties(Array.prototype, {{ 2: {setter} }})"#),
+        r#"__bootstrap.primordials.ObjectPrototype__defineSetter__(Array.prototype, "2", () => Promise.reject(1))"#.to_owned(),
+        format!(r#"__bootstrap.primordials.ObjectSetPrototypeOf(Array.prototype, Object.defineProperty({{}}, "2", {setter}))"#),
+        format!(r#"const U = function () {{}}; Object.defineProperty(U.prototype, "2", {setter}); __bootstrap.primordials.makeSafe(U, {{ prototype: Array.prototype }})"#),
+    ];
+    for is_server in [false, true] {
+        for route in &routes {
+            let (mut runtime, _) = create_runtime(false, false, Default::default());
+            {
+                let state = runtime.op_state();
+                let mut state = state.borrow_mut();
+                state.put(context(is_server));
+                state.put(dcl_types::SceneResourceCounters::default());
+                state.put(Vec::<dcl_types::SceneLogMessage>::default());
+                state.put(dcl_types::SceneElapsedTime(0.0));
+            }
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            let _guard = rt.enter();
+            let script = format!(
+                r#"
+                {route};
+                // a rejection inside a timer reaches the drain on its own turn
+                setTimeout(() => {{
+                    Promise.reject(0);
+                    Promise.resolve().then(() => {{ globalThis.__done = true; }});
+                }}, 0);
+                "#
+            );
+            runtime.execute_script("<test>", script).unwrap();
+            rt.block_on(runtime.run_event_loop(Default::default()))
+                .unwrap();
+            assert_eq!(
+                eval_string(&mut runtime, "String(globalThis.__done)"),
+                "true",
+                "{route}"
+            );
+            let state = runtime.op_state();
+            let state = state.borrow();
+            let logs = state.borrow::<Vec<dcl_types::SceneLogMessage>>();
+            assert!(
+                logs.iter()
+                    .any(|log| log.message.contains("Unhandled promise rejection")),
+                "{route}: rejection not reported"
+            );
+        }
     }
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap();
-    let _guard = rt.enter();
-    runtime
-        .execute_script(
-            "<test>",
-            r#"
-            try {
-                Object.defineProperty(Array.prototype, "0", { set() { Promise.reject(1); }, configurable: true });
-            } catch {}
-            setTimeout(() => Promise.reject(0), 0);
-            setTimeout(() => { globalThis.__done = true; }, 5);
-            "#,
-        )
-        .unwrap();
-    rt.block_on(runtime.run_event_loop(Default::default()))
-        .unwrap();
-    assert_eq!(eval_string(&mut runtime, "String(globalThis.__done)"), "true");
 }
 
 #[test]
@@ -367,7 +355,7 @@ fn op_arguments_that_run_js_while_read_are_refused() {
         r#"
         let ran = false;
         try { Deno.core.ops.op_log_test_plan({ get tests() { ran = true; return []; } }); } catch {}
-        __bootstrap.primordials.ObjectDefineProperty(Array.prototype, 1, { get() { ran = true; return "x"; }, configurable: true });
+        Object.defineProperty(Array.prototype, 1, { get() { ran = true; return "x"; }, configurable: true });
         try { Deno.core.ops.op_url_stringify_search_params([["k", "v"], , ["a", "b"]]); } catch {}
         delete Array.prototype[1];
         if (ran) { throw new Error("a getter ran while an op read its argument"); }

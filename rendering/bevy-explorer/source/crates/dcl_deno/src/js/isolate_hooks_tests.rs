@@ -360,26 +360,22 @@ fn dropped_blobs_free_their_storage() {
 /// `require` reads what it evaluated from arrays it owns, whatever Array.prototype holds.
 #[test]
 fn the_seal_holds_against_array_prototype_accessors() {
-    // scenes cannot define these (init.js refuses index keys there), so host code does
-    super::run_scene_after(
-        false,
+    run_scene(
         true,
         r#"
-        globalThis.__reached = false;
-        const steal = function (...args) { if (args.length > 5 && args[5]) { globalThis.__reached = true; } };
+        let reached = false;
+        const steal = function (...args) { if (args.length > 5 && args[5]) { reached = true; } };
         for (const index of [0, 1]) {
-            __bootstrap.primordials.ObjectDefineProperty(Array.prototype, index, {
+            Object.defineProperty(Array.prototype, index, {
                 get() { return index === 0 ? steal : null; },
                 set(_) {},
                 configurable: true,
             });
         }
-        "#,
-        r#"
         try { require("~system/Testing"); } catch {}
         delete Array.prototype[0];
         delete Array.prototype[1];
-        if (globalThis.__reached) { throw new Error("internals reached scene code"); }
+        if (reached) { throw new Error("internals reached scene code"); }
         if (typeof Deno !== "undefined") { throw new Error("`Deno` is reachable"); }
         "#,
     )
