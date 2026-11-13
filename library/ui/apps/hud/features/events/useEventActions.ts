@@ -4,9 +4,10 @@
 import { useMemo } from 'react'
 import { showToast } from '../../design'
 import type { EventData } from '@explorer-core/engine/protocol'
+import { eventDestination } from '@explorer-core/features/events/eventsApi'
 import { track } from '@explorer-core/lib/analytics'
 import { useSession } from '../session/SessionContext'
-import { eventAnalytics, eventCalendarUrl, eventCopyLink, eventShareUrl, eventWorldName, createEventUrl } from './eventFormat'
+import { eventAnalytics, eventCalendarUrl, eventCopyLink, eventShareUrl, createEventUrl } from './eventFormat'
 
 export interface EventActions {
   remind: (event: EventData) => void
@@ -41,14 +42,13 @@ export function useEventActions(): EventActions {
         track('event_added_to_calendar', eventAnalytics(event))
       },
       jumpIn: (event) => {
-        if (event.world) {
-          const world = eventWorldName(event)
-          if (world == null) {
-            showToast('This event’s world cannot be reached.', { tone: 'error' })
-            return false
-          }
-          changeRealm(world)
-        } else teleportToPlace(event.x, event.y)
+        const dest = eventDestination(event)
+        if (dest == null) {
+          showToast('This event’s world cannot be reached.', { tone: 'error' })
+          return false
+        }
+        if (dest.kind === 'world') changeRealm(dest.realm)
+        else teleportToPlace(dest.x, dest.y)
         track('event_jumped_in', eventAnalytics(event))
         if (open) toggle()
         return true

@@ -5,11 +5,11 @@
 //         the event now (`with_connected_users`).
 //       + the places service for an event's place (POST /api/destinations with the ids).
 import { serviceBase, signed } from '../http'
+import { destinationsByIds } from '../destinations'
 import type { Ctx } from '../bridge'
 import type { EventData, EventPlace, GetEventsRequest } from '@explorer-core/engine/protocol'
 
 type EventRaw = Partial<EventData> & { id: string }
-type PlaceRaw = { id: string; title?: string | null; world_name?: string | null; base_position?: string | null }
 
 function mapEvent(e: EventRaw): EventData {
   return {
@@ -63,17 +63,8 @@ async function setAttending(eventId: string, attending: boolean): Promise<void> 
   await signed(url, attending ? 'POST' : 'DELETE')
 }
 
-// The places service refuses more ids than this in one request.
-const PLACES_PAGE = 100
-
 async function places(ids: string[]): Promise<EventPlace[]> {
-  const url = `${await serviceBase('places')}/api/destinations`
-  const rows: PlaceRaw[] = []
-  for (let i = 0; i < ids.length; i += PLACES_PAGE) {
-    const page = await signed<PlaceRaw[]>(url, 'POST', ids.slice(i, i + PLACES_PAGE))
-    if (!Array.isArray(page)) throw new Error('places answer has no list')
-    rows.push(...page)
-  }
+  const rows = await destinationsByIds(`${await serviceBase('places')}/api/destinations`, ids)
   return rows.map((p) => ({ id: p.id, title: p.title ?? '', world_name: p.world_name ?? null, base_position: p.base_position ?? null }))
 }
 

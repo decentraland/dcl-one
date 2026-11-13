@@ -11,8 +11,8 @@
   font-family: var(--font-family);
 }
 .glow {
-  -webkit-mask: url('../../assets/events/radial-glow.png') center / 100% 100% no-repeat;
-  mask: url('../../assets/events/radial-glow.png') center / 100% 100% no-repeat;
+  -webkit-mask-image: var(--glow-mask);
+  mask-image: var(--glow-mask);
   position: absolute;
   bottom: -329px;
   left: calc(50% - 662.5px);

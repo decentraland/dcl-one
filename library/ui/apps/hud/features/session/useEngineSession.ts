@@ -4446,6 +4446,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     : mapOpen ? 'Map'
     : placesOpen ? 'Places'
     : galleryOpen ? 'Gallery'
+    : eventsOpen ? 'Events'
     : null
   useEffect(() => {
     if (phase !== 'world' && phase !== 'entering' && phase !== 'lobby' && phase !== 'welcome') return

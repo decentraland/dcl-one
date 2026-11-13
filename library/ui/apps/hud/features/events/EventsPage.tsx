@@ -2,7 +2,7 @@
 // events beside it, and one day's events in a grid. Every visit opens on the calendar at today.
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { TintButton, MaskIcon } from '../../design'
+import { Button, MaskIcon } from '../../design'
 import type { EventData } from '@explorer-core/engine/protocol'
 import { track } from '@explorer-core/lib/analytics'
 import { MainMenuShell } from '../menu/MainMenuShell'
@@ -94,13 +94,13 @@ export function EventsPage({
         <header className={styles.header}>
           <div className={styles.headerFrame}>
             <h1 className={styles.title}>Events</h1>
-            <TintButton radius="pill" tone="glass" className={styles.today} aria-label="Go to today" onClick={() => showCalendar(startOfDay(new Date()))}>
+            <Button size="bare" radius="pill" variant="glass" className={styles.today} aria-label="Go to today" onClick={() => showCalendar(startOfDay(new Date()))}>
               Today
-            </TintButton>
-            <TintButton radius="md" tone="dark" className={styles.create} onClick={() => actions.createEvent(true)}>
+            </Button>
+            <Button size="bare" radius="md" variant="scrim" className={styles.create} onClick={() => actions.createEvent(true)}>
               <MaskIcon src={addIcon} size={12} />
               CREATE EVENT
-            </TintButton>
+            </Button>
           </div>
         </header>
         <div className={styles.content}>

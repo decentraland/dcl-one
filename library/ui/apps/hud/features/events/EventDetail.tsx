@@ -3,7 +3,7 @@
 // reminder set here shows on the card too.
 
 import { useEffect } from 'react'
-import { TintButton, MaskIcon, openPopup } from '../../design'
+import { Button, MaskIcon, openPopup } from '../../design'
 import closeIcon from '../../assets/events/close-icn-thin.png'
 import calendarAddIcon from '../../assets/events/add-to-calendar-icn.png'
 import jumpInIcon from '../../assets/events/jump-in-outline.png'
@@ -69,16 +69,16 @@ function EventDetail({ eventId, onClose }: { eventId: string; onClose: () => voi
             <div className={styles.place}>
               <MaskIcon src={pinIcon} size={24} className={styles.icon} />
               <span className={styles.placeName}>{eventPlaceText(event, place)}</span>
-              <TintButton radius="button" tone="brand" className={styles.placeJump} aria-label={`Jump in to ${eventPlaceText(event, place)}`} onClick={jumpIn}>
+              <Button size="bare" radius="button" variant="primary" className={styles.placeJump} aria-label={`Jump in to ${eventPlaceText(event, place)}`} onClick={jumpIn}>
                 <span>JUMP IN</span>
                 <MaskIcon src={jumpInIcon} size={20} />
-              </TintButton>
+              </Button>
             </div>
           </div>
         </div>
-        <TintButton radius="md" tone="shade" className={styles.close} aria-label="Close event detail" onClick={onClose}>
+        <Button size="bare" radius="md" variant="shade" className={styles.close} aria-label="Close event detail" onClick={onClose}>
           <MaskIcon src={closeIcon} size={14} />
-        </TintButton>
+        </Button>
     </div>
   )
 }

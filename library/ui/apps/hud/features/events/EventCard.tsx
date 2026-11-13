@@ -2,13 +2,13 @@
 // banner in the highlighted carousel, and the empty slot that offers to create one.
 
 import { useState, type CSSProperties } from 'react'
-import { TintButton, Avatar, ContextMenu, MaskIcon, Skeleton, Tooltip, openPopup } from '../../design'
+import { Button, Avatar, ContextMenu, MaskIcon, Skeleton, Tooltip, openPopup } from '../../design'
 import type { EventData, Friend } from '@explorer-core/engine/protocol'
 import type { EventCommunity } from '../session/useEngineSession'
 import addGradientIcon from '../../assets/events/add-icn-gradient.png'
 import calendarAddIcon from '../../assets/events/add-to-calendar-icn.png'
 import calendarIcon from '../../assets/events/calendar-icn.png'
-import defaultImage from '../../assets/events/default-image-place.png'
+import defaultImage from '../../assets/events/default-image-place.webp'
 import jumpInIcon from '../../assets/events/jump-in-outline.png'
 import linkIcon from '../../assets/events/link-icn.png'
 import liveEventIcon from '../../assets/events/live-event.png'
@@ -174,9 +174,9 @@ export function EventActionButtons({
   return (
     <span className={`${styles.actions} ${size === 'small' ? styles.actionsSmall : styles.actionsLarge} ${className}`.trim()}>
       {!event.live && (
-        <TintButton
+        <Button size="bare"
           radius={radius}
-          tone={tone}
+          variant={tone}
           className={`${remind} ${styles.remind}`}
           aria-label="Remind me"
           aria-pressed={event.attending}
@@ -186,22 +186,22 @@ export function EventActionButtons({
         >
           <MaskIcon src={event.attending ? reminderOnIcon : reminderOffIcon} size={icon} />
           {remindLabel && <span>REMIND ME</span>}
-        </TintButton>
+        </Button>
       )}
       {!event.live && (
-        <TintButton radius={radius} tone={tone} className={box} aria-label="Add to calendar" onClick={() => actions.addToCalendar(event)}>
+        <Button size="bare" radius={radius} variant={tone} className={box} aria-label="Add to calendar" onClick={() => actions.addToCalendar(event)}>
           <MaskIcon src={calendarAddIcon} size={icon} />
-        </TintButton>
+        </Button>
       )}
       {event.live && (
-        <TintButton radius={radius} tone="brand" className={variant === 'detail' ? styles.jumpInDetail : styles.jumpIn} onClick={() => actions.jumpIn(event)}>
+        <Button size="bare" radius={radius} variant="primary" className={variant === 'detail' ? styles.jumpInDetail : styles.jumpIn} onClick={() => actions.jumpIn(event)}>
           <span>JUMP IN</span>
           <MaskIcon src={jumpInIcon} size={24} />
-        </TintButton>
+        </Button>
       )}
-      <TintButton radius={radius} tone={tone} className={box} aria-label="Share" aria-haspopup="menu" onClick={(e) => openShareMenu(e.currentTarget, event, actions)}>
+      <Button size="bare" radius={radius} variant={tone} className={box} aria-label="Share" aria-haspopup="menu" onClick={(e) => openShareMenu(e.currentTarget, event, actions)}>
         <MaskIcon src={shareIcon} size={icon} />
-      </TintButton>
+      </Button>
     </span>
   )
 }

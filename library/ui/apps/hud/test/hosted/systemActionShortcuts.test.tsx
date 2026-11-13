@@ -233,6 +233,15 @@ describe('system-action menu shortcuts', () => {
     expect(focus).toEqual([true, true, true, false])
   })
 
+  it('reports the Events page as the open menu, so a scene can open it with openExplorerUi', async () => {
+    const h = await world()
+    h.driver.clearSent()
+    h.driver.emit(action('Events'))
+    await waitFor(() => expect(h.driver.last('uiFocus')).toMatchObject({ kind: 'uiFocus', covered: true, menu: 'Events' }))
+    h.driver.emit(action('Events'))
+    await waitFor(() => expect(h.driver.last('uiFocus')).toMatchObject({ kind: 'uiFocus', covered: false, menu: null }))
+  })
+
   it("declares uiFocus to the engine: panels/popups set ui, a full-screen page sets covered, a focused text field sets text", async () => {
     const h = await world()
     h.driver.clearSent()

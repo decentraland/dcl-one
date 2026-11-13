@@ -138,12 +138,6 @@ export function createEventUrl(): string {
   return out(`https://${BASE_DOMAIN}/whats-on/new-event`)
 }
 
-/** The world a world event is held in: its `server` when that is a world's name. The events
- *  service takes any text there, and the engine reads anything but a name as a realm's address. */
-export function eventWorldName(event: EventData): string | null {
-  return event.server != null && /^[a-z0-9-]+(\.dcl)?\.eth$/i.test(event.server) ? event.server : null
-}
-
 /** The link that drops a visitor at the event's place, crediting `referrer` (the sharer's address). */
 export function eventJumpLink(event: EventData, referrer: string | null): string {
   const link = event.world ? `https://${BASE_DOMAIN}/jump/?realm=${encodeURIComponent(event.server ?? '')}` : `https://${BASE_DOMAIN}/jump/?position=${event.x},${event.y}`

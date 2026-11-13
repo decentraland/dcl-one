@@ -2,7 +2,7 @@
 // events' carousel in place of the last day when there are any.
 
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
-import { TintButton, EmptyState, MaskIcon, ScrollThumb } from '../../design'
+import { Button, EmptyState, MaskIcon, ScrollThumb } from '../../design'
 import type { EventData, Friend } from '@explorer-core/engine/protocol'
 import type { EventCommunity } from '../session/useEngineSession'
 import arrowDownIcon from '../../assets/events/arrow-down.png'
@@ -177,26 +177,26 @@ export function EventsCalendar({
           const day = addDays(startDay, i)
           return <DayPill key={day.getTime()} day={day} onClick={() => onDay(day)} />
         })}
-        <TintButton
+        <Button size="bare"
           radius="pill"
-          tone="clear"
+          variant="clear"
           className={`${styles.rangeArrow} ${styles.rangePrev}`}
           aria-label="Previous days"
           disabled={arrowsLocked || atToday}
           onClick={() => onStartDay(previous.getTime() < today.getTime() ? today : previous)}
         >
           <MaskIcon src={arrowLeftIcon} size={20} />
-        </TintButton>
-        <TintButton
+        </Button>
+        <Button size="bare"
           radius="pill"
-          tone="clear"
+          variant="clear"
           className={`${styles.rangeArrow} ${styles.rangeNext}`}
           aria-label="Next days"
           disabled={arrowsLocked}
           onClick={() => onStartDay(addDays(startDay, days))}
         >
           <MaskIcon src={arrowRightIcon} size={20} />
-        </TintButton>
+        </Button>
       </div>
       <div className={styles.columns}>
         {failed ? (

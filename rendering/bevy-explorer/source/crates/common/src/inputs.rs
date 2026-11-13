@@ -81,6 +81,7 @@ pub enum HudPanel {
     Gallery,
     Communities,
     Places,
+    Events,
 }
 
 impl HudPanel {
@@ -92,6 +93,7 @@ impl HudPanel {
             Self::Gallery => SystemAction::Gallery,
             Self::Communities => SystemAction::Communities,
             Self::Places => SystemAction::Places,
+            Self::Events => SystemAction::Events,
         }
     }
 }

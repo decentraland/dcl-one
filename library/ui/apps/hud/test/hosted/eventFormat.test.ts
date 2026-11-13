@@ -12,13 +12,13 @@ import {
   eventPlaceText,
   eventShareUrl,
   eventTimeText,
-  eventWorldName,
   rangeParam,
   scheduleDates,
   scheduleText,
   startOfDay
 } from '../../features/events/eventFormat'
 import { BASE_DOMAIN } from '@hud-host'
+import { eventDestination } from '@explorer-core/features/events/eventsApi'
 import { eventAt } from './eventFixtures'
 
 // local dates throughout, so the suite reads the same in any time zone
@@ -124,10 +124,11 @@ describe('event links', () => {
     expect(eventCopyLink({ ...upcoming, id: 'a&b' }, null)).toBe(`https://${BASE_DOMAIN}/whats-on/?id=a%26b`)
   })
 
-  it('takes a world event\'s server for its world only when it is a world name', () => {
-    expect(eventWorldName({ ...upcoming, world: true, server: 'Fest.dcl.eth' })).toBe('Fest.dcl.eth')
-    expect(eventWorldName({ ...upcoming, world: true, server: 'fest.eth' })).toBe('fest.eth')
-    for (const server of ['https://realm.example/about', 'fest.dcl.eth&position=1,2', 'fest.dcl.eth/about', '', null]) expect(eventWorldName({ ...upcoming, world: true, server })).toBeNull()
+  it('jumps to a world event\'s server only when it is a world name, else to its parcel', () => {
+    expect(eventDestination({ ...upcoming, world: true, server: 'Fest.dcl.eth' })).toEqual({ kind: 'world', realm: 'Fest.dcl.eth' })
+    expect(eventDestination({ ...upcoming, world: true, server: 'fest.eth' })).toEqual({ kind: 'world', realm: 'fest.eth' })
+    for (const server of ['https://realm.example/about', 'fest.dcl.eth&position=1,2', 'fest.dcl.eth/about', '', null]) expect(eventDestination({ ...upcoming, world: true, server })).toBeNull()
+    expect(eventDestination({ ...upcoming, world: false, server: 'https://realm.example', x: 10, y: -4 })).toEqual({ kind: 'parcel', x: 10, y: -4 })
   })
 
   it('shares on X with the name, the hashtag and the link', () => {

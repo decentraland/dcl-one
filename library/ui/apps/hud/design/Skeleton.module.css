@@ -24,10 +24,10 @@
 }
 @keyframes sweep {
   from {
-    transform: translateX(-130%);
+    transform: translateX(calc(-1 * var(--skeleton-sweep, 130%)));
   }
   to {
-    transform: translateX(130%);
+    transform: translateX(var(--skeleton-sweep, 130%));
   }
 }
 @media (prefers-reduced-motion: reduce) {

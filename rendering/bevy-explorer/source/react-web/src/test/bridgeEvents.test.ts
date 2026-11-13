@@ -90,4 +90,13 @@ describe('bridge events', () => {
     expect(signed).toHaveBeenCalledTimes(1)
     expect(h.sent[1]).toEqual({ kind: 'eventPlaces', request: 6, places: [] })
   })
+
+  it('reads the places 100 ids at a time, and skips a page answered with no body', async () => {
+    const h = fakeCtx()
+    const ids = Array.from({ length: 150 }, (_, i) => `p${i}`)
+    signed.mockResolvedValueOnce(undefined).mockResolvedValueOnce([{ id: 'p120', title: 'Hall', world_name: 'hall.dcl.eth' }])
+    await h.req({ kind: 'getEventPlaces', request: 8, placeIds: ids })
+    expect(signed.mock.calls.map((c) => (c[2] as string[]).length)).toEqual([100, 50])
+    expect(h.sent[0]).toEqual({ kind: 'eventPlaces', request: 8, places: [{ id: 'p120', title: 'Hall', world_name: 'hall.dcl.eth', base_position: null }] })
+  })
 })

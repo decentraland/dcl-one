@@ -1,6 +1,6 @@
 // One day's events, in a grid of big cards.
 
-import { TintButton, EmptyState, MaskIcon } from '../../design'
+import { Button, EmptyState, MaskIcon } from '../../design'
 import type { EventData } from '@explorer-core/engine/protocol'
 import arrowLeftIcon from '../../assets/events/arrow-left.png'
 import emptyArt from '../../assets/events/empty-events-img.png'
@@ -34,9 +34,9 @@ export function EventsByDay({
   return (
     <div className={styles.byDay}>
       <div className={styles.top}>
-        <TintButton radius="md" tone="dark" className={styles.back} aria-label="Back to the calendar" onClick={onBack}>
+        <Button size="bare" radius="md" variant="scrim" className={styles.back} aria-label="Back to the calendar" onClick={onBack}>
           <MaskIcon src={arrowLeftIcon} size={20} />
-        </TintButton>
+        </Button>
         <h2 className={styles.counter}>{loaded ? `${label} (${events.length})` : label}</h2>
       </div>
       <div className={styles.results} aria-busy={status === 'loading'}>
@@ -55,9 +55,9 @@ export function EventsByDay({
             <img src={emptyArt} alt="" width={100} height={100} draggable={false} />
             <p className={styles.emptyTitle}>No plans here yet</p>
             <p className={styles.emptyText}>Skip ahead and see what’s coming up next.</p>
-            <TintButton radius="md" tone="brand" className={styles.nextDay} onClick={onNextDay}>
+            <Button size="bare" radius="md" variant="primary" className={styles.nextDay} onClick={onNextDay}>
               GO TO NEXT DAY
-            </TintButton>
+            </Button>
           </div>
         ) : (
           <div className={styles.grid}>

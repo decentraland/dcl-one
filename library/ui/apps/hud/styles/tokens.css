@@ -81,6 +81,21 @@
   /* ---- modal (the shared violet design-system dialog: permissions, communities, etc.) ---- */
   --modal-bg: linear-gradient(160deg, #3a1660 0%, #25103f 55%, #1a0c2e 100%);
   --modal-scrim: rgba(18, 7, 33, 0.6);
+  /* a soft round glow, as an alpha mask (an ellipse in a non-square box) */
+  --glow-mask: radial-gradient(
+    closest-side,
+    rgba(0, 0, 0, 0.886) 0%,
+    rgba(0, 0, 0, 0.86) 10%,
+    rgba(0, 0, 0, 0.76) 20%,
+    rgba(0, 0, 0, 0.64) 30%,
+    rgba(0, 0, 0, 0.5) 40%,
+    rgba(0, 0, 0, 0.34) 50%,
+    rgba(0, 0, 0, 0.2) 60%,
+    rgba(0, 0, 0, 0.11) 70%,
+    rgba(0, 0, 0, 0.05) 80%,
+    rgba(0, 0, 0, 0.01) 90%,
+    transparent 100%
+  );
   /* Connection Lost modal colors, shared by both HUD builds. */
   --connection-modal-bg: #4c147c;
   --connection-modal-scrim: rgba(0, 0, 0, 0.8);

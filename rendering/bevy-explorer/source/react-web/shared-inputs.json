@@ -1353,7 +1353,7 @@
           "kind": "regular"
         },
         {
-          "name": "default-image-place.png",
+          "name": "default-image-place.webp",
           "kind": "regular"
         },
         {
@@ -1382,10 +1382,6 @@
         },
         {
           "name": "players-icn.png",
-          "kind": "regular"
-        },
-        {
-          "name": "radial-glow.png",
           "kind": "regular"
         },
         {
@@ -2327,14 +2323,6 @@
           "kind": "regular"
         },
         {
-          "name": "TintButton.module.css",
-          "kind": "regular"
-        },
-        {
-          "name": "TintButton.tsx",
-          "kind": "regular"
-        },
-        {
           "name": "Toast.module.css",
           "kind": "regular"
         },
@@ -2858,10 +2846,6 @@
         },
         {
           "name": "modal-light.png",
-          "kind": "regular"
-        },
-        {
-          "name": "radial-glow.png",
           "kind": "regular"
         }
       ]
@@ -4250,6 +4234,10 @@
       "sha256": "4725764b6afa53a81c6f5f9161a0cb5a5f3f5f0cc6a0be68bbcf46fc3ae39805"
     },
     {
+      "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/destinations.ts",
+      "sha256": "ea1af6442252aa9733ecdcafb8954bb1b1a9b1cd3501ad53982a90753d4a2bde"
+    },
+    {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/avatarDraft.ts",
       "sha256": "a5d2aa00bd530208e6348b1de17c24df318ad9446dbb34023feed9103950ac33"
     },
@@ -4259,7 +4247,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/communities.ts",
-      "sha256": "69407d1fe4c85b8358bcb6505fb7c685e9da4784f2b4420813b2ba8a13175125"
+      "sha256": "11803c812477585a9cffeffe25beb22e7afdb5ce43281bea547cc71737bb1ca5"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/connectivity.ts",
@@ -4275,7 +4263,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/events.ts",
-      "sha256": "84017fefa3e988ce0ea37716561fd726450cd20721a811aba24413e79e3ca19f"
+      "sha256": "8177427b3bbdc481b552e80b01ab79da31000b8771b8048f613a184ace59c3cc"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/friends.ts",
@@ -4463,7 +4451,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeEvents.test.ts",
-      "sha256": "64c4341bdf974c2b1cdf5c144a44f38eef8c7562aa65e0fa49c7281a567b5ab7"
+      "sha256": "9f2cb697c7141dc5d7c320c28689e53b86a4a6d3b8775bc33d37c1d6f2f98565"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeFriends.test.ts",
@@ -4888,7 +4876,7 @@
     },
     {
       "path": "library/explorer-core/features/events/eventsApi.ts",
-      "sha256": "ef62b8c34ec5e0fd43e9d9dc527e1744a50c0c8d8bc48d12aa8257562cddd8d4"
+      "sha256": "9d380acf26a9a7f5a19d12bc1e97b2040d9ba154e3268d671fdaaa9055b520f9"
     },
     {
       "path": "library/explorer-core/features/friends/friendEvents.ts",
@@ -4896,7 +4884,7 @@
     },
     {
       "path": "library/explorer-core/features/lobby/lobbyApi.ts",
-      "sha256": "e8d2d8668fab4d745ce59c783652c5b9840f6e716891ea331037334b427b141b"
+      "sha256": "3a5e928e33876baf974fddb683090657958d36da3c3b1344ef6d651dc207d821"
     },
     {
       "path": "library/explorer-core/features/login/storedProfile.ts",
@@ -5567,8 +5555,8 @@
       "sha256": "9d751af8ec2813679a81ed185aff4ab3e13ba046b9537a3a35c3aad948016fae"
     },
     {
-      "path": "library/ui/apps/hud/assets/events/default-image-place.png",
-      "sha256": "23c578b4b6b0699e9337c3ce80084187899ac220081e9efdcdd9b2bef542ceab"
+      "path": "library/ui/apps/hud/assets/events/default-image-place.webp",
+      "sha256": "8b2ab524e11a16268cfb36d16d0113bbac211c0dd72cc5b93a7615687b50546f"
     },
     {
       "path": "library/ui/apps/hud/assets/events/empty-events-img.png",
@@ -5597,10 +5585,6 @@
     {
       "path": "library/ui/apps/hud/assets/events/players-icn.png",
       "sha256": "00c5a1f61d3768694ddc9bbd37a789409916c81dc7c01e21e4682adde8b2b0fb"
-    },
-    {
-      "path": "library/ui/apps/hud/assets/events/radial-glow.png",
-      "sha256": "e130cfd61d8c3ce39f492a972ed2029b8a45a6584d80291586b311f4634bac28"
     },
     {
       "path": "library/ui/apps/hud/assets/events/remind-me-event.png",
@@ -6160,11 +6144,11 @@
     },
     {
       "path": "library/ui/apps/hud/design/Button.module.css",
-      "sha256": "bff362b0bc48a6d0c5c011b99bf2785aeea766af559ea1500e0706bf652e1da2"
+      "sha256": "a051dfb44c8848a42853e0fa0b6580ae2ea2b4f40fc2091c16204f5ca46b8555"
     },
     {
       "path": "library/ui/apps/hud/design/Button.tsx",
-      "sha256": "8ba7fd34bf781d95a8da97bf4c59ff4cf891fddb366056600ff09f6ea9838870"
+      "sha256": "308be3bfcc7d771eb001d3f1c130f25df9326d51f27d68b93b8055ae5136ed28"
     },
     {
       "path": "library/ui/apps/hud/design/CharCounter.module.css",
@@ -6396,15 +6380,15 @@
     },
     {
       "path": "library/ui/apps/hud/design/Showcase.tsx",
-      "sha256": "e0ac08ad987025e716068c86ba76d590af590e13826c70e01903b4d29e39fc1d"
+      "sha256": "3447c6b8fdc95da38be944b771de524440f8c09001457313039e891a4702bc7e"
     },
     {
       "path": "library/ui/apps/hud/design/Skeleton.module.css",
-      "sha256": "82f6898e265a7071528fcdbd672f92e97cb2fcf75ffbc41aeacc673c55497a47"
+      "sha256": "8f4fc80f5157213711a1643f7c8683ca1a3521524a607995bf8fb3fa36bf231b"
     },
     {
       "path": "library/ui/apps/hud/design/Skeleton.tsx",
-      "sha256": "ec2751ef99c5e5fc8b351139afbe9a1e6a3f51c5a33a49ddfb78b02ac16c15c0"
+      "sha256": "79e830f93fe22331dbf23c05b3c4b9c5b0db6c1aaa2346d26df5d17abca7d897"
     },
     {
       "path": "library/ui/apps/hud/design/Slider.module.css",
@@ -6463,14 +6447,6 @@
       "sha256": "7667ba0dfaa41e28c1c3b2f607c4cf78ea64cd5575dc3abc71f92663db5651c7"
     },
     {
-      "path": "library/ui/apps/hud/design/TintButton.module.css",
-      "sha256": "1bd399974b6c2a38546defd75040cc5a2f82be6c5790e4cfac2dcee490f4b28a"
-    },
-    {
-      "path": "library/ui/apps/hud/design/TintButton.tsx",
-      "sha256": "67a300a69fc911ad86974bc1b741b80ff9f29c566517cba9c7eb38311f9a1421"
-    },
-    {
       "path": "library/ui/apps/hud/design/Toast.module.css",
       "sha256": "0f48af1036680ccbe0dbcbbb2e6c725efd28cfb7042540337e10fb496137dee9"
     },
@@ -6516,7 +6492,7 @@
     },
     {
       "path": "library/ui/apps/hud/design/index.ts",
-      "sha256": "c05f4c394ad0e076acc67555f9fba0c27d8b5071739c4ae6c26776de0b0d5827"
+      "sha256": "5eea5eaabbbb57b79c7469845d108293ab2ad352bc25bf40b3c5e9201b76f654"
     },
     {
       "path": "library/ui/apps/hud/design/popups.module.css",
@@ -6540,11 +6516,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/backpack/BackpackPage.module.css",
-      "sha256": "8603f1e4efa0dc3ddd81f064a9c38399986f24cb6f861aa366b82af113faed27"
+      "sha256": "78fa1dc3ad2a7995fafd4c156a5240d6f94f591e3193be019c9430133ba22d79"
     },
     {
       "path": "library/ui/apps/hud/features/backpack/BackpackPage.tsx",
-      "sha256": "24f024ddb4abf8621e6e9899faff5b0a08b3ac485b18b688814defdb6849bc14"
+      "sha256": "2ac33fa1788053b0e731ba57c069ebc6b0a406cb2d9913f4ff9618e51b2162e3"
     },
     {
       "path": "library/ui/apps/hud/features/backpack/categoryIcons.tsx",
@@ -6764,7 +6740,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/error/ConnectivityFeedback.module.css",
-      "sha256": "27c3b6e4ea99506a1e3d24f0ee50713662680aa43fc46465b38bdde89459011a"
+      "sha256": "ac1d7b9600bab63bdda502498c9ae43475c950b2878b204cabfc67d99cdd219f"
     },
     {
       "path": "library/ui/apps/hud/features/error/ConnectivityFeedback.tsx",
@@ -6803,24 +6779,20 @@
       "sha256": "5833efc69f395cd94af5ffdf5edd29388e4d43d16d5d3a959567b0f629bbdd67"
     },
     {
-      "path": "library/ui/apps/hud/features/error/radial-glow.png",
-      "sha256": "e130cfd61d8c3ce39f492a972ed2029b8a45a6584d80291586b311f4634bac28"
-    },
-    {
       "path": "library/ui/apps/hud/features/events/EventCard.module.css",
-      "sha256": "cc8f3a776d6d97968e7b69c3eba631cef69ea4cccaecefbd6b1528cbeb0b883c"
+      "sha256": "3418ac1b42c991696b550e59c312e447fd251a35bb9a819e5338eeaa8fcbad69"
     },
     {
       "path": "library/ui/apps/hud/features/events/EventCard.tsx",
-      "sha256": "4f8368da548616d9f1bec8d15d557afc5cf48dbe876b411d10366baea22cafd0"
+      "sha256": "511a49a434ccd34a252fc3b12766a9297929557fe87d82e06118435fb4ac422e"
     },
     {
       "path": "library/ui/apps/hud/features/events/EventDetail.module.css",
-      "sha256": "d52cf18c0b491e194582507250de07951df5de538fd5dda82ff4e32acfe17382"
+      "sha256": "0d40c58e01a4dd7d33791f3ff5263a366e15808092b0d579959ef560fe9e212f"
     },
     {
       "path": "library/ui/apps/hud/features/events/EventDetail.tsx",
-      "sha256": "dc74de4bcdc734216f5d28c97311ba98ebb01c50f0f0cb6e1cbfb16aed5f56c6"
+      "sha256": "789ac8cab7a1d7646430746e9b6e30440918eef60175ad81b9402f07e84f7728"
     },
     {
       "path": "library/ui/apps/hud/features/events/EventsByDay.module.css",
@@ -6828,7 +6800,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/events/EventsByDay.tsx",
-      "sha256": "96253c0c8fc89ee3957f8b4eba00576aa88f5d15ee901f8a4a8cc4b7523f2910"
+      "sha256": "664e2ac652b887a427a73912c4e2a720092664cef7c8e0d1c83ef29140838877"
     },
     {
       "path": "library/ui/apps/hud/features/events/EventsCalendar.module.css",
@@ -6836,7 +6808,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/events/EventsCalendar.tsx",
-      "sha256": "ac51b8c97778252881a2e9687a12736933f2163819746eb0febbf7c48c14da0f"
+      "sha256": "c7e920c1a01e9e12ffe03f7276cf334e5ddc7afebe17be06bca111de44b4cf78"
     },
     {
       "path": "library/ui/apps/hud/features/events/EventsPage.module.css",
@@ -6844,11 +6816,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/events/EventsPage.tsx",
-      "sha256": "6b24458a0b8a0e9a6095827ec8cc581630b09b350f91719767ae6c99a056ebd0"
+      "sha256": "c16ac954fac2aaf0088488c5979338492c3fd79cf7ff00f01cb78bf9aa76638b"
     },
     {
       "path": "library/ui/apps/hud/features/events/eventFormat.ts",
-      "sha256": "d5506d8c4c9e62a51d5485f83fba5c1bffd823a8dee06e65e7ddc968ca2990c7"
+      "sha256": "d0a1b315d68731607b38c172330081cb2ad4318be54c89d1d94db8d998c2e1c7"
     },
     {
       "path": "library/ui/apps/hud/features/events/eventsStore.ts",
@@ -6856,7 +6828,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/events/useEventActions.ts",
-      "sha256": "5447ba4121b4f0748694615f65991038c1df2d1fb6bb7434eb776febeba05d72"
+      "sha256": "b9956c6a35bf835cbf9578b5dd089160826eb0e560751ee7bc5c737a721fd875"
     },
     {
       "path": "library/ui/apps/hud/features/events/useEventsData.ts",
@@ -7212,7 +7184,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "eda136e6c3a40760bbf4296a5da144ace63832819e9682a10d65669438b8f33f"
+      "sha256": "f20ad6d17f36f5a6c6170b3e80aaab82dda603cdd71099afe223de6874c9faea"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -7336,7 +7308,7 @@
     },
     {
       "path": "library/ui/apps/hud/styles/tokens.css",
-      "sha256": "8a91647e4d2930195b3a95be01e6d31b18e07c2964bd63ed369b836184a127e7"
+      "sha256": "4732f5123165e2ade5f4138f89fc665211f2943e6470cd7d482f475bc322fbb3"
     },
     {
       "path": "library/ui/apps/hud/test/avatar.test.tsx",
@@ -7536,7 +7508,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/eventFormat.test.ts",
-      "sha256": "3f5f7ad0332d712180aaeff3beb7cb66e15a378b6e7c53df2a37478cc96b17ec"
+      "sha256": "a0639f4dba27a62ff225bfcc0bb7d0b14e07d5f198df2ec95b3eeea0db4c3d62"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/events.test.tsx",
@@ -7580,7 +7552,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/lobby.test.tsx",
-      "sha256": "737f77fb2116a96747b055f738cf5da8b146a430df14d8aaf599aee25ec3abef"
+      "sha256": "632632b4db06109ea844fdd05105cc3afec0b1293bb681e6bc3a998a834e5f1d"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/login.clicks.test.tsx",
@@ -7700,7 +7672,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/systemActionShortcuts.test.tsx",
-      "sha256": "7faeaf0fb2c736d26390a19a277c56cd244550e8e67275755c6f8a6a8a50e496"
+      "sha256": "147544d9988c8b869070d790c4688a869ce2a94233eb31835d399a9843ee49be"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/voiceChat.test.tsx",
@@ -11724,21 +11696,6 @@
     },
     {
       "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/TintButton.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/TintButton.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/TintButton.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
       "to": "library/ui/apps/hud/design/Toggle.tsx",
       "kind": "native:runtime"
     },
@@ -12050,21 +12007,6 @@
     {
       "from": "library/ui/apps/hud/design/TextInput.tsx",
       "to": "library/ui/apps/hud/design/icons.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/TintButton.tsx",
-      "to": "library/ui/apps/hud/design/TintButton.module.css",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/TintButton.tsx",
-      "to": "library/ui/apps/hud/design/TintButton.module.css",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/TintButton.tsx",
-      "to": "library/ui/apps/hud/design/TintButton.module.css",
       "kind": "test:runtime"
     },
     {
@@ -13070,21 +13012,6 @@
     {
       "from": "library/ui/apps/hud/design/index.ts",
       "to": "library/ui/apps/hud/design/TextInput.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/index.ts",
-      "to": "library/ui/apps/hud/design/TintButton.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/index.ts",
-      "to": "library/ui/apps/hud/design/TintButton.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/index.ts",
-      "to": "library/ui/apps/hud/design/TintButton.tsx",
       "kind": "test:runtime"
     },
     {
@@ -17154,17 +17081,17 @@
     },
     {
       "from": "library/ui/apps/hud/features/events/EventCard.tsx",
-      "to": "library/ui/apps/hud/assets/events/default-image-place.png",
+      "to": "library/ui/apps/hud/assets/events/default-image-place.webp",
       "kind": "native:runtime"
     },
     {
       "from": "library/ui/apps/hud/features/events/EventCard.tsx",
-      "to": "library/ui/apps/hud/assets/events/default-image-place.png",
+      "to": "library/ui/apps/hud/assets/events/default-image-place.webp",
       "kind": "production:runtime"
     },
     {
       "from": "library/ui/apps/hud/features/events/EventCard.tsx",
-      "to": "library/ui/apps/hud/assets/events/default-image-place.png",
+      "to": "library/ui/apps/hud/assets/events/default-image-place.webp",
       "kind": "test:runtime"
     },
     {
@@ -17930,6 +17857,21 @@
     {
       "from": "library/ui/apps/hud/features/events/eventsStore.ts",
       "to": "library/ui/apps/hud/features/events/eventFormat.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/useEventActions.ts",
+      "to": "library/explorer-core/features/events/eventsApi.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/useEventActions.ts",
+      "to": "library/explorer-core/features/events/eventsApi.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/useEventActions.ts",
+      "to": "library/explorer-core/features/events/eventsApi.ts",
       "kind": "test:runtime"
     },
     {
@@ -26720,6 +26662,21 @@
     {
       "from": "library/ui/apps/hud/test/hosted/emotes.test.tsx",
       "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/eventFormat.test.ts",
+      "to": "library/explorer-core/features/events/eventsApi.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/eventFormat.test.ts",
+      "to": "library/explorer-core/features/events/eventsApi.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/eventFormat.test.ts",
+      "to": "library/explorer-core/features/events/eventsApi.ts",
       "kind": "test:runtime"
     },
     {
@@ -31224,11 +31181,6 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
-      "to": "library/ui/apps/hud/design/TintButton.tsx",
-      "kind": "type"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/design/Toast.tsx",
       "kind": "type"
     },
@@ -34099,17 +34051,17 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/assets/events/default-image-place.png",
+      "to": "library/ui/apps/hud/assets/events/default-image-place.webp",
       "kind": "native:asset"
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/assets/events/default-image-place.png",
+      "to": "library/ui/apps/hud/assets/events/default-image-place.webp",
       "kind": "production:asset"
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/assets/events/default-image-place.png",
+      "to": "library/ui/apps/hud/assets/events/default-image-place.webp",
       "kind": "test:asset"
     },
     {
@@ -34215,21 +34167,6 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/hud/assets/events/players-icn.png",
-      "kind": "test:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/assets/events/radial-glow.png",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/assets/events/radial-glow.png",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/assets/events/radial-glow.png",
       "kind": "test:asset"
     },
     {
@@ -36240,21 +36177,6 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/hud/features/error/modal-light.png",
-      "kind": "test:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/features/error/radial-glow.png",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/features/error/radial-glow.png",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/features/error/radial-glow.png",
       "kind": "test:asset"
     }
   ]
