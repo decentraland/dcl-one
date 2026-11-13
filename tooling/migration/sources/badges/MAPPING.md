@@ -25,6 +25,12 @@ missing) instead of importing without them; an empty batch is a no-op.
 Upstream's catalog becomes the node's; the node reads its catalog from these
 tables, so every imported badge is served with no code change.
 
+- A badge whose definition or tiers were edited on the node after the last
+  import is kept and reported: the load records a fingerprint of what it
+  wrote per badge in `dcl_migration.badge_catalog_loaded` and skips a badge
+  that no longer matches it. A badge with no record (seed rows, first
+  import) takes upstream's content.
+
 - Ids are upstream's, for badges and tiers alike, so `user_progress` and the
   earned tiers match them directly.
 - Every badge is imported, published or not, archived or not, with

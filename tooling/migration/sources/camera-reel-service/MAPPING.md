@@ -20,6 +20,10 @@ Pinned at `3e8bd0b099400e7c15b95477c1f003c63042d461` (migrations through
   hash as the thumbnail.
 - `review_status` is `ok` on insert and never overwritten (upstream has no
   moderation); `withheld_blobs` stays the node's.
+- `is_public` follows upstream until the owner toggles it on the node: the
+  load records the value it wrote in `dcl_migration.camera_reel_image_loaded`,
+  and a row that no longer matches it keeps the node's value. Rows imported
+  before that record existed follow upstream once more.
 - A photo whose `metadata.userAddress` differs from `user_address` even
   ignoring case is skipped (the node's CHECK holds them together) and
   counted in a NOTICE.

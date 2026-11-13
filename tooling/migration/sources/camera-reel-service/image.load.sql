@@ -26,6 +26,8 @@ DO $owner$ DECLARE n bigint; BEGIN
   ELSE NULL; END IF; END $owner$;
 
 -- review_status is the node moderator's: set on insert, never overwritten.
+-- is_public no longer matching what this load last wrote was toggled on the
+-- node, and is kept.
 INSERT INTO camera_reel.images AS i
     (id, user_address, image_hash, thumbnail_hash, is_public, review_status, metadata, created_at)
 SELECT s.id, lower(s.user_address), bi.hash, COALESCE(bt.hash, bi.hash), s.is_public, 'ok',
@@ -40,10 +42,18 @@ ON CONFLICT (id) DO UPDATE SET
     user_address = EXCLUDED.user_address,
     image_hash = EXCLUDED.image_hash,
     thumbnail_hash = EXCLUDED.thumbnail_hash,
-    is_public = EXCLUDED.is_public,
+    is_public = CASE WHEN EXISTS (SELECT 1 FROM dcl_migration.camera_reel_image_loaded l
+                                  WHERE l.id = i.id AND l.is_public <> i.is_public)
+                     THEN i.is_public ELSE EXCLUDED.is_public END,
     metadata = EXCLUDED.metadata,
     created_at = EXCLUDED.created_at
 WHERE (i.user_address, i.image_hash, i.thumbnail_hash, i.is_public, i.metadata, i.created_at)
       IS DISTINCT FROM
       (EXCLUDED.user_address, EXCLUDED.image_hash, EXCLUDED.thumbnail_hash, EXCLUDED.is_public,
        EXCLUDED.metadata, EXCLUDED.created_at);
+
+INSERT INTO dcl_migration.camera_reel_image_loaded (id, is_public)
+SELECT s.id, s.is_public
+FROM stage s
+JOIN camera_reel.images i ON i.id = s.id AND i.is_public = s.is_public
+ON CONFLICT (id) DO UPDATE SET is_public = EXCLUDED.is_public;

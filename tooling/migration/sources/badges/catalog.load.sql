@@ -8,7 +8,9 @@
 -- against its public asset base; a tiered badge has none of its own, as
 -- upstream. `migrate.py blobs badges` mirrors the art they name. A presence
 -- badge upstream refuses to serve (tiered, or its steps differ from its
--- configuration's) is imported unpublished.
+-- configuration's) is imported unpublished. A badge whose definition or
+-- tiers no longer match what this load last wrote was edited on the node
+-- and is kept (reported).
 --
 -- The publication columns and criteria_steps come with the badge catalog
 -- schema; on a schema without them a non-empty batch stops instead of
@@ -19,6 +21,7 @@ DECLARE
   n bigint;
   kept text;
   refused_id text;
+  edited_ids text;
 BEGIN
   SELECT string_agg(c, ', ' ORDER BY c) INTO lacking
   FROM unnest(ARRAY['criteria_steps', 'published_at', 'archived_at', 'created_at']) c
@@ -49,6 +52,24 @@ BEGIN
   LEFT JOIN LATERAL (SELECT (t ->> 'steps')::integer AS steps FROM jsonb_array_elements(s.tiers) t
                      WHERE t ->> 'asset_slot' = 'root' LIMIT 1) r ON true;
 
+  -- What a badge holds on the node: its definition and tiers.
+  CREATE TEMP VIEW catalog_fingerprint AS
+  SELECT d.id, md5(row(d.name, d.description, d.category, d.is_tier, d.assets, d.criteria_steps, d.published_at,
+                       d.archived_at, d.created_at,
+                       (SELECT jsonb_agg(jsonb_build_array(t.tier_id, t.tier_name, t.description, t.assets,
+                                                           t.criteria_steps, t.ordinal) ORDER BY t.tier_id)
+                        FROM social.badge_tiers t WHERE t.badge_id = d.id))::text) AS fingerprint
+  FROM social.badge_definitions d;
+
+  ALTER TABLE catalog_badge ADD COLUMN edited boolean NOT NULL DEFAULT false;
+  UPDATE catalog_badge b SET edited = true
+  FROM catalog_fingerprint f JOIN dcl_migration.badge_catalog_loaded l ON l.id = f.id
+  WHERE f.id = b.id AND f.fingerprint <> l.fingerprint;
+  SELECT string_agg(id, ', ' ORDER BY id) INTO edited_ids FROM catalog_badge WHERE edited;
+  IF edited_ids IS NOT NULL THEN
+    RAISE NOTICE 'badges/catalog: kept badge(s) % as edited on the node', edited_ids;
+  END IF;
+
   FOR refused_id IN SELECT id FROM catalog_badge WHERE refused AND published_at IS NOT NULL ORDER BY id LOOP
     RAISE NOTICE 'badges/catalog: badge % not published: its presence configuration does not match a single badge '
                  'with the same steps', refused_id;
@@ -60,7 +81,7 @@ BEGIN
          u ->> 'asset_slot' AS asset_slot
   FROM catalog_badge b
   CROSS JOIN LATERAL jsonb_array_elements(b.tiers) u
-  WHERE b.is_tier;
+  WHERE b.is_tier AND NOT b.edited;
 
   -- Upstream's CDN_HOST layout (legacy-assets.ts): a single badge's art sits
   -- in its own directory, a tiered badge's in one directory per tier slot.
@@ -82,6 +103,7 @@ BEGIN
          b.created_at AT TIME ZONE 'UTC'
   FROM catalog_badge b
   LEFT JOIN catalog_assets a ON a.dir = b.id AND NOT b.is_tier
+  WHERE NOT b.edited
   ON CONFLICT (id) DO UPDATE SET
       name = EXCLUDED.name,
       description = EXCLUDED.description,
@@ -107,7 +129,7 @@ BEGIN
   -- holds is deleted.
   DELETE FROM social.badge_tiers t
   USING catalog_badge b
-  WHERE t.badge_id = b.id
+  WHERE t.badge_id = b.id AND NOT b.edited
     AND (NOT b.is_tier OR NOT EXISTS (SELECT 1 FROM catalog_tier u
                                       WHERE u.badge_id = t.badge_id AND u.tier_id = t.tier_id
                                         AND u.ordinal = t.ordinal));
@@ -140,6 +162,11 @@ BEGIN
     END IF;
   END IF;
 
+  INSERT INTO dcl_migration.badge_catalog_loaded (id, fingerprint)
+  SELECT f.id, f.fingerprint FROM catalog_fingerprint f JOIN catalog_badge b ON b.id = f.id AND NOT b.edited
+  ON CONFLICT (id) DO UPDATE SET fingerprint = EXCLUDED.fingerprint;
+
+  DROP VIEW catalog_fingerprint;
   DROP TABLE catalog_assets;
   DROP TABLE catalog_tier;
   DROP TABLE catalog_badge;
