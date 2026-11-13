@@ -15,9 +15,10 @@ a single valid `X-Real-IP`. An
 empty setting trusts no forwarded header and therefore buckets traffic behind
 a gateway under that gateway's peer address: every deployer then shares one
 deploy limit. `/auth-api` instead skips its per-network cap for an untrusted
-private or loopback peer, keeps only its global cap and logs one warning
-the first time it sees such a peer. The API logs one
-warning when an untrusted private or loopback peer forwards `X-Real-IP`. Missing or malformed X-Real-IP from a trusted peer
+private or loopback peer and keeps only its global cap. Each of these paths
+logs one warning per process: `/auth-api` the first time it sees an untrusted
+private or loopback peer, the content limits when such a peer forwards
+`X-Real-IP`. Missing or malformed X-Real-IP from a trusted peer
 fails closed. This API-side setting is separate from
 `GATEWAY_TRUSTED_PROXY_CIDRS`, which controls the gateway's upstream CDN trust.
 Verify the deployed trust chain and client bucket separation before cutover:

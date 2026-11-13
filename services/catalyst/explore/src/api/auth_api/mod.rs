@@ -414,11 +414,20 @@ pub(super) fn request_source(
     peer: Option<std::net::SocketAddr>,
     trusted_proxies: &[ipnet::IpNet],
 ) -> Option<String> {
+    request_source_with(headers, peer, trusted_proxies, &UNTRUSTED_PEER_WARNED)
+}
+
+fn request_source_with(
+    headers: &HeaderMap,
+    peer: Option<std::net::SocketAddr>,
+    trusted_proxies: &[ipnet::IpNet],
+    warned: &std::sync::atomic::AtomicBool,
+) -> Option<String> {
     let peer = peer?.ip().to_canonical();
     let ip = if is_trusted_proxy(peer, trusted_proxies) {
         single_real_ip(headers).unwrap_or(peer)
     } else if is_internal(peer) {
-        warn_untrusted_internal_peer_once(peer, &UNTRUSTED_PEER_WARNED);
+        warn_untrusted_internal_peer_once(peer, warned);
         return None;
     } else {
         peer
@@ -1308,6 +1317,22 @@ mod tests {
             StatusCode::CREATED,
             "answered requests do not count"
         );
+    }
+
+    #[test]
+    fn an_untrusted_private_peer_without_x_real_ip_warns() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let peer = |s: &str| Some(s.parse::<std::net::SocketAddr>().unwrap());
+        let warned = AtomicBool::new(false);
+        let public = request_source_with(&HeaderMap::new(), peer("203.0.113.5:1"), &[], &warned);
+        assert_eq!(public.as_deref(), Some("203.0.113.5"));
+        assert!(
+            !warned.load(Ordering::Relaxed),
+            "a public peer is not warned about"
+        );
+        let private = request_source_with(&HeaderMap::new(), peer("172.17.0.1:1"), &[], &warned);
+        assert_eq!(private, None);
+        assert!(warned.load(Ordering::Relaxed));
     }
 
     #[test]
