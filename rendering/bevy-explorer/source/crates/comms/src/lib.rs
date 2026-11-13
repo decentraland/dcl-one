@@ -11,6 +11,7 @@ pub mod global_crdt;
 pub mod livekit;
 pub mod moderation;
 pub mod movement_compressed;
+pub mod nearby_mutes;
 pub mod preview;
 #[cfg(feature = "livekit")]
 pub mod private_chat;
@@ -114,6 +115,7 @@ impl Plugin for CommsPlugin {
             UserProfilePlugin,
             PreviewPlugin,
             automation::CommsAutomationPlugin,
+            nearby_mutes::NearbyMutesPlugin,
             scene_topics::SceneTopicsPlugin,
         ));
 

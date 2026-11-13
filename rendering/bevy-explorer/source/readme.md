@@ -266,6 +266,9 @@ Replies are JSON where the command says so; a failed command rejects (web) or an
   nearby one is the `Microphone` key) and `/voice promote|demote|kick|deny <address>`. Each only
   queues the request; read `/voice_state` `call` for the outcome. The debug panel's "Voice call"
   section shows the call and binds these actions.
+- Saved mutes for nearby voice: `/nearby_mute on|off <address>` mutes or unmutes a wallet, as the
+  profile menu's Hush and Hear do, and `/nearby_mutes` reports the account's list. The debug
+  panel's "Nearby voice mutes" section shows it and binds both.
 - In development builds the lower-right bug button toggles the debug panel. In all builds,
   open **Sidebar settings (•••) → Debug panel** or type `/debug` in chat. Search by
   section or control, or enter `/debug Performance` directly. Expanded sections refresh

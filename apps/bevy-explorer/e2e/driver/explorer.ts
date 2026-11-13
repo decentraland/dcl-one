@@ -223,6 +223,16 @@ export interface VoiceState {
   call: VoiceCallState | null
 }
 
+/** The saved mutes for nearby voice (`/nearby_mutes`). */
+export interface NearbyMutes {
+  /** Null while signed out. */
+  account: string | null
+  load: 'idle' | 'loading' | 'loaded' | 'failed'
+  count: number
+  /** Lowercased addresses, sorted; the first 32. */
+  muted: string[]
+}
+
 export interface ConnectivityState {
   connectionLost: boolean
   probing: boolean
@@ -767,6 +777,15 @@ export class Explorer {
    *  refusals). Only queues the request: `/voice_state` `call` follows. */
   async voice(...action: VoiceAction): Promise<void> {
     await this.run(['/voice', ...action].join(' '))
+  }
+
+  nearbyMutes(): Promise<NearbyMutes> {
+    return this.json<NearbyMutes>('/nearby_mutes')
+  }
+
+  /** Mute or unmute a wallet's nearby voice, as the profile menu's Hush and Hear do. */
+  async nearbyMute(address: string, muted: boolean): Promise<void> {
+    await this.run(`/nearby_mute ${muted ? 'on' : 'off'} ${address}`)
   }
 
   /** The sky time: `/time` reports; with `hours` (and `speed`, 0 stops the clock) it sets. */
