@@ -566,22 +566,11 @@ fn deploy_client(
 /// A direct client on a public address, or a local one sending no header, is
 /// not one.
 fn looks_like_an_untrusted_proxy(headers: &HeaderMap, peer: std::net::IpAddr) -> bool {
-    use std::net::IpAddr;
-    let internal = match peer.to_canonical() {
-        IpAddr::V4(v4) => {
-            let [a, b, ..] = v4.octets();
-            // RFC 6598 shared space (100.64.0.0/10) is also used inside clusters.
-            v4.is_private()
-                || v4.is_loopback()
-                || v4.is_link_local()
-                || (a == 100 && b & 0xc0 == 64)
-        }
-        IpAddr::V6(v6) => {
-            let first = v6.segments()[0];
-            v6.is_loopback() || first & 0xfe00 == 0xfc00 || first & 0xffc0 == 0xfe80
-        }
-    };
-    internal && headers.contains_key("x-real-ip")
+    use crate::shared::client_ip::{is_internal, single_real_ip};
+    // A header equal to the peer is the server's own pin, not a proxy's.
+    is_internal(peer)
+        && headers.contains_key("x-real-ip")
+        && single_real_ip(headers) != Some(peer.to_canonical())
 }
 
 /// Once per process: a node without the setting cannot tell its proxy from a
@@ -1037,6 +1026,12 @@ mod tests {
             let peer = peer.parse().unwrap();
             assert!(!looks_like_an_untrusted_proxy(&forwarded, peer), "{peer}");
         }
+        let mut pinned = HeaderMap::new();
+        pinned.insert("x-real-ip", header::HeaderValue::from_static("172.18.0.4"));
+        assert!(
+            !looks_like_an_untrusted_proxy(&pinned, "172.18.0.4".parse().unwrap()),
+            "the server's own pin"
+        );
     }
 
     #[test]

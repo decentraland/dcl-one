@@ -3556,18 +3556,26 @@ async fn signer_mismatch_is_a_403_and_a_signed_wallet_reads_its_credits() {
     assert!(v["usd"].get("held").is_none(), "nothing pledged");
     assert!(v["credits"].as_array().unwrap().is_empty());
 
-    // The old service behind nginx saw the route-local path: a signature over it verifies too.
-    let route_signed = signed_headers(
-        &wallet,
-        "get",
-        &format!("/users/{}/progress", wallet.address),
-    )
-    .await;
+    // A signature over the route-local path verifies only when the proxy says
+    // the client asked for it (a prefix-stripping host).
+    let local = format!("/users/{}/progress", wallet.address);
+    let route_signed = signed_headers(&wallet, "get", &local).await;
     let (status, _, v) = send(
         &app,
         "GET",
         &format!("/credits/users/{}/progress", wallet.address),
-        route_signed,
+        route_signed.clone(),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{v}");
+    let mut proxied = route_signed;
+    proxied.insert("x-original-path", local.parse().unwrap());
+    let (status, _, v) = send(
+        &app,
+        "GET",
+        &format!("/credits/users/{}/progress", wallet.address),
+        proxied,
         None,
     )
     .await;
