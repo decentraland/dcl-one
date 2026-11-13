@@ -147,6 +147,10 @@ fn serve(
             "{switching}{upgrade}{accept_header}X-Pad: {}\r\n\r\n",
             "a".repeat(70 * 1024)
         ),
+        // lines ended by a bare LF, which httparse accepts
+        "/lfhead" => format!(
+            "HTTP/1.1 101 Switching Protocols\nUpgrade: websocket\nConnection: Upgrade\nSec-WebSocket-Accept: {accept}\n\n"
+        ),
         _ => format!("{switching}{upgrade}{accept_header}{protocol}\r\n"),
     };
     let mut response = response.into_bytes();
@@ -190,7 +194,7 @@ fn serve(
             echo(&mut *conn, &stop);
         }
         ["drop"] => {}
-        ["headandframe"] => echo(&mut *conn, &stop),
+        ["headandframe" | "lfhead"] => echo(&mut *conn, &stop),
         // one message, then a clean close and the end of the connection
         ["bye"] => {
             let _ = write_frame(&mut *conn, true, 1, b"hi");
@@ -1378,4 +1382,36 @@ fn a_frame_sent_with_the_handshake_response_is_delivered() {
         server.url("/headandframe")
     ));
     assert_eq!(outcome, "early");
+}
+
+/// A response head whose lines end in a bare LF still completes the handshake.
+#[test]
+fn a_bare_lf_response_head_connects() {
+    let server = WsServer::start();
+    assert_eq!(
+        echo_outcome(Scene::DesktopSystem, &server.url("/lfhead")),
+        "ping 1000 true"
+    );
+}
+
+/// Once a socket reports its end, its unread payload and queue are freed, even if the
+/// scene never closes the rid.
+#[test]
+fn a_finished_socket_frees_its_buffers() {
+    let server = WsServer::start();
+    let outcome = Harness::new(Scene::DesktopSystem).run(&format!(
+        r#"
+        const ops = Deno.core.ops;
+        const rid = ops.op_ws_create({:?}, "");
+        await ops.op_ws_connect(rid);
+        const kinds = [await ops.op_ws_next_event(rid), await ops.op_ws_next_event(rid)];
+        const unread = ops.op_ws_get_buffer_as_string(rid) === "hi" ? "kept" : "freed";
+        let next = "resolved";
+        try {{ await ops.op_ws_next_event(rid); }} catch (e) {{ next = String(e); }}
+        Deno.core.close(rid);
+        return [kinds.join(","), unread, next].join(" ");
+        "#,
+        server.url("/bye")
+    ));
+    assert_eq!(outcome, "0,2 freed Error: WebSocket is not open");
 }

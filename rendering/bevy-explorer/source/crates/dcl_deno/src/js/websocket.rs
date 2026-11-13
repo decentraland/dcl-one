@@ -528,11 +528,10 @@ async fn upgrade(
     let mut buf = Vec::new();
     let mut scanned = 0usize;
     let (head_len, response) = loop {
-        // parse only once the head can be complete, so a trickling server costs one scan
-        if buf[scanned.saturating_sub(3)..]
-            .windows(4)
-            .any(|w| w == b"\r\n\r\n")
-        {
+        // parse only once the head can be complete, so a trickling server costs one scan;
+        // httparse also ends a head at a bare LF, so `\n\n` and `\n\r\n` both qualify
+        let fresh = &buf[scanned.saturating_sub(2)..];
+        if fresh.windows(2).any(|w| w == b"\n\n") || fresh.windows(3).any(|w| w == b"\n\r\n") {
             if let Some(parsed) = Response::try_parse(&buf)? {
                 break parsed;
             }
@@ -763,8 +762,16 @@ async fn write(
     backlog: Arc<Backlog>,
     closing: &Notify,
 ) {
+    // after an I/O error the reader, which meets the same failure, reports how the
+    // connection ended; later sends are discarded
+    let mut broken = false;
     while let Some(next) = outbound.recv().await {
         let result = match next {
+            Outbound::Message(_, len) if broken => {
+                backlog.release(len);
+                continue;
+            }
+            Outbound::Close(_) if broken => continue,
             Outbound::Message(message, len) => {
                 let result = sink.send(message).await;
                 backlog.release(len);
@@ -780,6 +787,11 @@ async fn write(
             Ok(()) => {}
             // the reader reports the end of the connection
             Err(tungstenite::Error::ConnectionClosed | tungstenite::Error::AlreadyClosed) => {}
+            Err(tungstenite::Error::Io(_)) => {
+                broken = true;
+                // bounds the wait for the reader
+                closing.notify_one();
+            }
             Err(e) => {
                 let _ = inbound.send(Inbound::Error(e.to_string())).await;
                 return;
@@ -960,6 +972,12 @@ pub async fn op_ws_next_event(
             KIND_CLOSE
         }
     };
+    if kind == KIND_CLOSE || kind == KIND_ERROR {
+        // the socket is finished: free what a scene that never closes the rid would hold
+        *RcRef::map(&resource, |r| &r.inbound).borrow_mut().await = None;
+        resource.text.borrow_mut().take();
+        resource.binary.borrow_mut().take();
+    }
     Ok(kind)
 }
 
