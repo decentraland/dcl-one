@@ -25,15 +25,19 @@ export function EventInfo({
   const [sharing, setSharing] = useState(false)
   const current = useRef(event)
   current.current = event
+  const reminds = useRef(0)
   const live = event.live === true
   const attending = event.attending === true
 
   const remind = (): void => {
+    const run = ++reminds.current
     const before = current.current
     const next = before.attending !== true
     const count = (before.total_attendees ?? 0) + (next ? 1 : -1)
     onEventChange({ ...before, attending: next, total_attendees: Math.max(0, count) })
-    setEventAttending(before.id, next).catch(() => onEventChange({ ...current.current, attending: before.attending, total_attendees: before.total_attendees }))
+    setEventAttending(before.id, next).catch(() => {
+      if (run === reminds.current) onEventChange({ ...current.current, attending: before.attending, total_attendees: before.total_attendees })
+    })
   }
 
   return (

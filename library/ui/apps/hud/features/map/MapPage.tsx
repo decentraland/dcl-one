@@ -131,7 +131,7 @@ export function MapPage({
     (pin: ScenePin): void => {
       setSelected(null)
       // the place under the pin opens fresh, then again as a parcel picked on the map
-      void nav.selectParcel(pin.parcel, false).then(() => nav.selectParcel(pin.parcel, true))
+      void nav.selectParcel(pin.parcel, false).then((shown) => shown && nav.selectParcel(pin.parcel, true))
     },
     [nav]
   )

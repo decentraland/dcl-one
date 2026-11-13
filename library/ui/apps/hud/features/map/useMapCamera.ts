@@ -68,6 +68,7 @@ export function useMapCamera(): MapCamera {
   const zoomBlocked = useRef(false)
   const dragState = useRef<DragState | null>(null)
   const glide = useRef(0)
+  const zoomStep = useRef(0)
   const inertia = useRef(0)
   const velocity = useRef({ x: 0, y: 0 })
 
@@ -150,7 +151,13 @@ export function useMapCamera(): MapCamera {
     [place, write]
   )
 
-  useEffect(() => stopMotion, [stopMotion])
+  useEffect(
+    () => () => {
+      stopMotion()
+      cancelAnimationFrame(zoomStep.current)
+    },
+    [stopMotion]
+  )
 
   const setPosition = useCallback(
     (coords: Vec2): void => {
@@ -171,15 +178,13 @@ export function useMapCamera(): MapCamera {
       const step = (now: number): void => {
         const t = Math.min(1, (now - start) / (seconds * 1000))
         const e = easeOutQuart(t)
-        // the glide is not clamped on the way: it ends on a clamped target
-        v.x = from.x + (target.x - from.x) * e
-        v.y = from.y + (target.y - from.y) * e
-        write()
+        // clamped each frame: a zoom step during the glide narrows the bounds
+        place(from.x + (target.x - from.x) * e, from.y + (target.y - from.y) * e)
         if (t < 1) glide.current = requestAnimationFrame(step)
       }
       glide.current = requestAnimationFrame(step)
     },
-    [stopMotion, write]
+    [place, stopMotion]
   )
 
   const zoom = useCallback(
@@ -197,15 +202,18 @@ export function useMapCamera(): MapCamera {
       const step = (now: number): void => {
         const t = Math.min(1, (now - start) / (ZOOM_STEP_SECONDS * 1000))
         setZoomValue(from + (to - from) * t)
-        if (t < 1) requestAnimationFrame(step)
+        if (t < 1) zoomStep.current = requestAnimationFrame(step)
         else scaling.current = false
       }
-      requestAnimationFrame(step)
+      zoomStep.current = requestAnimationFrame(step)
     },
     [setZoomValue]
   )
 
   const resetZoom = useCallback((): void => {
+    // a step still running would write its own target over the reset
+    cancelAnimationFrame(zoomStep.current)
+    scaling.current = false
     levelRef.current = DEFAULT_ZOOM_LEVEL
     setLevel(DEFAULT_ZOOM_LEVEL)
     setZoomValue(normalizedZoom(DEFAULT_ZOOM_LEVEL))

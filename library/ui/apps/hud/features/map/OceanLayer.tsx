@@ -122,6 +122,9 @@ export function OceanLayer({ view }: { view: { current: MapView } }): React.JSX.
     let drawn = ''
     const draw = (now: number): void => {
       frame = requestAnimationFrame(draw)
+      const v = view.current
+      const key = `${v.x},${v.y},${v.ortho},${v.width},${v.height}`
+      if (still && key === drawn) return
       const rect = canvas.getBoundingClientRect()
       if (rect.width === 0 || rect.height === 0) return
       const scale = Math.min(1, MAX_WIDTH / rect.width)
@@ -132,12 +135,7 @@ export function OceanLayer({ view }: { view: { current: MapView } }): React.JSX.
         canvas.height = height
         gl.viewport(0, 0, width, height)
       }
-      const v = view.current
-      if (still) {
-        const key = `${v.x},${v.y},${v.ortho},${width},${height}`
-        if (key === drawn) return
-        drawn = key
-      }
+      drawn = key
       gl.uniform2f(uCamera, v.x, v.y)
       gl.uniform1f(uOrtho, v.ortho)
       gl.uniform2f(uResolution, width, height)

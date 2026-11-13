@@ -5115,7 +5115,7 @@
     },
     {
       "path": "library/explorer-core/features/map/clusters.ts",
-      "sha256": "0ae6df1b14f79f5eae525fc57be1956bf1371fe616059380bcc7627d9acd7844"
+      "sha256": "e270e2b27fc08f135b5659ab77c1731a202ff095d0ac4af93f27cb409ea86731"
     },
     {
       "path": "library/explorer-core/features/map/home.ts",
@@ -5147,7 +5147,7 @@
     },
     {
       "path": "library/explorer-core/features/map/navmap.ts",
-      "sha256": "aa565d7e6c15606c5bdffe265cec3ce8b67b8e022d6888bdddd564b055b1a6f4"
+      "sha256": "77f34d03e072692d8800374ab442f78cf739adb84627d490a2a2a061563ba3d7"
     },
     {
       "path": "library/explorer-core/features/map/parcelsCenter.ts",
@@ -5159,7 +5159,7 @@
     },
     {
       "path": "library/explorer-core/features/map/shareLinks.ts",
-      "sha256": "4c960ad3c41339454f5222286a7d5f53885dcba57cf7adca837764377d98b21f"
+      "sha256": "23da22c21339c0adcb4d9ac539fb7981b857457251dcae58a96d1e4c0a4bf13f"
     },
     {
       "path": "library/explorer-core/features/minimap/minimapPlaces.ts",
@@ -5403,7 +5403,7 @@
     },
     {
       "path": "library/explorer-core/test/navmap.test.ts",
-      "sha256": "305050253bcef7ab116bfef0f522f31255b7b216f10ecc9e9d71b5134878b3b8"
+      "sha256": "14fb815c7f5f8283f67aae785caab1eb6d573e9c5fd02b0751d20c2c33ee14f7"
     },
     {
       "path": "library/explorer-core/test/outfitRandomizer.test.ts",
@@ -7303,7 +7303,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/map/MapCanvas.tsx",
-      "sha256": "00263d0cab15dd41d4b68c7bfe3231bd82426a1b70ef9f410cb6166f85364a31"
+      "sha256": "6aa51e00947c76d02e4f9024a684d6c151f30a8a7e51726929b33885a058f7c3"
     },
     {
       "path": "library/ui/apps/hud/features/map/MapChrome.module.css",
@@ -7319,7 +7319,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/map/MapPage.tsx",
-      "sha256": "5d39c1db9c9c62138effcb58c6e48d129fc8df700ab076d5840bf765728403cd"
+      "sha256": "a27a92fb633bd4e762e33f6c191874b377efe77ef3337f6e372fb0f30723c028"
     },
     {
       "path": "library/ui/apps/hud/features/map/MapToolbar.tsx",
@@ -7327,7 +7327,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/map/OceanLayer.tsx",
-      "sha256": "2e52eb79fc17b0b1358ee394cdd618665e6079c7c059bb47deefc7872194a063"
+      "sha256": "80aa6394863454844aa9473e88e1b81427f4052948c5089c5a9934028dd95f9c"
     },
     {
       "path": "library/ui/apps/hud/features/map/PinsLayer.tsx",
@@ -7351,7 +7351,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/map/panel/EventInfo.tsx",
-      "sha256": "1a903191e12a1e1763fb9529b44ebff95299759e4fe9c8aa08e59cd20c3c46e1"
+      "sha256": "064d3407645091325961d702e3abb722070009c724b14dbb8a33ef27043b50d7"
     },
     {
       "path": "library/ui/apps/hud/features/map/panel/MapPanel.module.css",
@@ -7359,7 +7359,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/map/panel/PlaceInfo.tsx",
-      "sha256": "8d1c6ed501d78386fe2d26b934e887ff0b915c641a4a68813ea58ff1f1b354fb"
+      "sha256": "48b768d31b1f88e1745d1ff36ff079855e16710b608de7e67fbf7d7d0e3accb9"
     },
     {
       "path": "library/ui/apps/hud/features/map/panel/RightPanel.tsx",
@@ -7383,7 +7383,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/map/useMapCamera.ts",
-      "sha256": "2e945bf4f8594733907a99c61c76729d34952824206b7505b27a833450be1a52"
+      "sha256": "fabff6a9f52efcc8662017971a8ca702425a0a840cd7e75b96c854e4db122958"
     },
     {
       "path": "library/ui/apps/hud/features/map/useMapLayerData.ts",

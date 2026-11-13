@@ -419,6 +419,71 @@ describe('map history', () => {
     await settle()
     expect(nav.getSnapshot().results.places).toEqual([CLUB])
   })
+
+  it('tells a parcel that opened from one a newer pick replaced', async () => {
+    let answerFirst!: (place: MapPlace | null) => void
+    const fetchPlaceAt = vi
+      .fn()
+      .mockImplementationOnce(() => new Promise<MapPlace | null>((resolve) => (answerFirst = resolve)))
+      .mockImplementation(async () => CLUB)
+    const { nav } = setup({ fetchPlaceAt })
+    const first = nav.selectParcel({ x: 0, y: 0 }, false)
+    const second = nav.selectParcel({ x: -20, y: 60 }, true)
+    answerFirst(PLAZA)
+    expect(await first).toBe(false)
+    expect(await second).toBe(true)
+    expect(nav.getSnapshot().place?.place).toBe(CLUB)
+  })
+
+  it('tells a parcel replaced while its events were being read', async () => {
+    let answerEvents!: (events: MapEvent[]) => void
+    const fetchEventsAt = vi
+      .fn()
+      .mockImplementationOnce(() => new Promise<MapEvent[]>((resolve) => (answerEvents = resolve)))
+      .mockImplementation(async () => [])
+    const fetchPlaceAt = vi.fn().mockImplementationOnce(async () => PLAZA).mockImplementation(async () => CLUB)
+    const { nav } = setup({ fetchPlaceAt, fetchEventsAt })
+    const first = nav.selectParcel({ x: 0, y: 0 }, false)
+    await settle()
+    expect(nav.getSnapshot().place?.place).toBe(PLAZA)
+    const second = nav.selectParcel({ x: -20, y: 60 }, true)
+    await settle()
+    answerEvents([])
+    expect(await first).toBe(false)
+    expect(await second).toBe(true)
+    expect(nav.getSnapshot().place?.place).toBe(CLUB)
+  })
+
+  it('leaves a place whose events arrive after an event was opened out of the history', async () => {
+    let answerEvents!: (events: MapEvent[]) => void
+    const { nav } = setup({ fetchEventsAt: vi.fn(() => new Promise<MapEvent[]>((resolve) => (answerEvents = resolve))) })
+    const opened = nav.selectPlace(CLUB)
+    await settle()
+    await nav.selectEvent(event('e', 0, 0), PLAZA)
+    answerEvents([event('late', -20, 60, { live: true })])
+    expect(await opened).toBe(false)
+    expect(nav.getSnapshot().section).toBe('event')
+    await nav.back()
+    expect(nav.getSnapshot().input).toMatchObject({ text: '', interactable: true, back: false })
+  })
+
+  it('leaves an event whose place arrives after a place was opened out of the panel', async () => {
+    let answerPlace!: (place: MapPlace | null) => void
+    const { nav } = setup({ fetchPlaceAt: vi.fn(() => new Promise<MapPlace | null>((resolve) => (answerPlace = resolve))) })
+    void nav.selectEvent(event('e', 0, 0))
+    await settle()
+    await nav.selectPlace(CLUB)
+    answerPlace(PLAZA)
+    await settle()
+    const s = nav.getSnapshot()
+    expect(s.section).toBe('place')
+    expect(s.input.text).toBe('Sugar Club')
+    expect(s.event).toBeNull()
+    await nav.back()
+    await settle()
+    expect(nav.getSnapshot().section).toBe('place')
+    expect(nav.getSnapshot().input).toMatchObject({ interactable: true, back: false })
+  })
 })
 
 describe('map panel handle', () => {

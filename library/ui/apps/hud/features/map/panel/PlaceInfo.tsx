@@ -55,10 +55,14 @@ function ActionButton({ label, on, icon, iconOn, disabled, size, flipped, onClic
 function EventRow({ event, placeUsers, referrer, onOpen }: { event: MapEvent; placeUsers: number; referrer: string | undefined; onOpen: () => void }): React.JSX.Element {
   const [attending, setAttending] = useState(event.attending === true)
   const [sharing, setSharing] = useState(false)
+  const reminds = useRef(0)
   const remind = (): void => {
+    const run = ++reminds.current
     const next = !attending
     setAttending(next)
-    setEventAttending(event.id, next).catch(() => setAttending(!next))
+    setEventAttending(event.id, next).catch(() => {
+      if (run === reminds.current) setAttending(!next)
+    })
   }
   return (
     <li className={styles.eventRow}>
@@ -217,6 +221,9 @@ export function PlaceInfo({ view, referrer, isHome, navigating, onPlaceChange, o
   // the latest place, for a write that lands after another has changed it
   const current = useRef(place)
   current.current = place
+  // an answer to a toggle the player has since toggled again is dropped
+  const votes = useRef(0)
+  const favourites = useRef(0)
   const base = parseParcel(place.base_position)
   // Shown where the host can sign a tip and the place has a creator to tip.
   const donate = useDonate(isWorldPlace(place) || isEmptyPlace(place) || base == null ? null : { parcel: base })
@@ -229,19 +236,29 @@ export function PlaceInfo({ view, referrer, isHome, navigating, onPlaceChange, o
   const image = !imageFailed && place.image != null && place.image !== '' ? place.image : PANEL_ART.defaultPlace
 
   const vote = (like: boolean | null): void => {
+    const run = ++votes.current
     const before = current.current
     onPlaceChange({ ...before, user_like: like === true, user_dislike: like === false })
     setPlaceLike(before.id, like)
-      .then((r) => onPlaceChange({ ...current.current, ...r, like_rate: likeRateOf(r.likes, r.dislikes) }))
-      .catch(() => onPlaceChange({ ...current.current, user_like: before.user_like, user_dislike: before.user_dislike }))
+      .then((r) => {
+        if (run === votes.current) onPlaceChange({ ...current.current, ...r, like_rate: likeRateOf(r.likes, r.dislikes) })
+      })
+      .catch(() => {
+        if (run === votes.current) onPlaceChange({ ...current.current, user_like: before.user_like, user_dislike: before.user_dislike })
+      })
   }
   const favourite = (): void => {
     const before = current.current
     const next = before.user_favorite !== true
     onPlaceChange({ ...before, user_favorite: next })
+    const run = ++favourites.current
     setPlaceFavorite(before.id, next)
-      .then((r) => onPlaceChange({ ...current.current, ...r }))
-      .catch(() => onPlaceChange({ ...current.current, user_favorite: before.user_favorite }))
+      .then((r) => {
+        if (run === favourites.current) onPlaceChange({ ...current.current, ...r })
+      })
+      .catch(() => {
+        if (run === favourites.current) onPlaceChange({ ...current.current, user_favorite: before.user_favorite })
+      })
   }
   const selectTab = (next: Tab): void => {
     if (next === tab) return

@@ -4,7 +4,8 @@
 
 import { PARCEL_UNITS, type Vec2 } from './mapCoords'
 
-// Cell size, in parcels, for each zoom level (0 = farthest).
+// Cell size, in parcels, for each zoom level (0 = farthest). Level 2 is coarser than level 1 by
+// intent: rendering/bevy-explorer/docs/guidelines/decisions.md.
 const ZOOM_TO_CELL_SIZE = [35, 25, 27, 12, 7, 4, 1]
 
 export function clusterCellSize(zoomLevel: number): number {

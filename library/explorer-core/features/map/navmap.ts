@@ -158,11 +158,8 @@ export class Navmap {
   private searchText = ''
   private category: CategoryKey | null = null
   private favorites = false
-  // a newer request of the same kind supersedes one still in flight
-  private searchRun = 0
-  private placeRun = 0
-  private eventRun = 0
-  private backRun = 0
+  // the panel shows one view at a time, so a newer request of any kind supersedes one still in flight
+  private viewRun = 0
   private visits = 0
   private effects: NavmapEffects = { moveCamera: () => {} }
 
@@ -194,10 +191,7 @@ export class Navmap {
 
   deactivate(): void {
     this.history = []
-    this.searchRun++
-    this.placeRun++
-    this.eventRun++
-    this.backRun++
+    this.viewRun++
     this.clearInput()
   }
 
@@ -279,7 +273,7 @@ export class Navmap {
 
   /** A `fresh` search enters the history once its places are listed, so a place opened from the list has it to go back to. */
   private async showSearch(entry: Extract<Entry, { type: 'search' }>, fresh = false): Promise<void> {
-    const run = ++this.searchRun
+    const run = ++this.viewRun
     const { params } = entry
     this.favorites = params.favorites
     this.set({
@@ -304,7 +298,7 @@ export class Navmap {
     } catch {
       entry.result = { places: [], total: 0 }
     }
-    if (run !== this.searchRun) return
+    if (run !== this.viewRun) return
     const { places, total } = entry.result
     this.set({ results: { ...this.state.results, loading: false, places, total } })
     if (fresh) this.push(entry)
@@ -323,7 +317,7 @@ export class Navmap {
       }
       entry.live = live
     }
-    if (run !== this.searchRun) return
+    if (run !== this.viewRun) return
     this.set({ results: { ...this.state.results, live: entry.live } })
 
     const markers = resultMarkers(places)
@@ -333,7 +327,7 @@ export class Navmap {
 
   /** A search still on its way no longer lands over what is being opened; one already listed stays. */
   private supersedeSearch(): void {
-    this.searchRun++
+    this.viewRun++
     if (this.state.results.loading) this.set({ results: NO_RESULTS })
   }
 
@@ -348,7 +342,8 @@ export class Navmap {
     void this.selectPlace(place, { fromSearch: true })
   }
 
-  async selectPlace(place: MapPlace, options: { fromSearch?: boolean; origin?: Vec2 | null; landOnOrigin?: boolean } = {}): Promise<void> {
+  /** Resolves to false when something newer was opened before the place was shown. */
+  async selectPlace(place: MapPlace, options: { fromSearch?: boolean; origin?: Vec2 | null; landOnOrigin?: boolean } = {}): Promise<boolean> {
     const { fromSearch = false, origin = null, landOnOrigin = false } = options
     this.supersedeSearch()
     if (!fromSearch) this.set({ searchMarkers: [], categoryMarkers: [], resultHover: null, resultSelected: null })
@@ -357,40 +352,42 @@ export class Navmap {
       if (first != null) this.effects.moveCamera(first, CAMERA_MOVE_SECONDS)
     }
     const entry: Entry = { type: 'place', place, events: null }
-    if (await this.showPlace(entry, { fromSearch, origin, landOnOrigin })) this.push(entry)
+    const shown = await this.showPlace(entry, { fromSearch, origin, landOnOrigin })
+    if (shown) this.push(entry)
+    return shown
   }
 
   /** A parcel picked on the map: its place, or an empty one. */
-  async selectParcel(parcel: Vec2, fromSearch: boolean): Promise<void> {
-    const run = ++this.placeRun
+  async selectParcel(parcel: Vec2, fromSearch: boolean): Promise<boolean> {
+    const run = ++this.viewRun
     let place: MapPlace | null = null
     try {
       place = await this.api.fetchPlaceAt(parcel)
     } catch {
       place = null
     }
-    if (run !== this.placeRun) return
-    await this.selectPlace(place ?? emptyPlace(parcel), { fromSearch, origin: parcel })
+    if (run !== this.viewRun) return false
+    return this.selectPlace(place ?? emptyPlace(parcel), { fromSearch, origin: parcel })
   }
 
   /** Open the home parcel's place; Jump In from it lands on that parcel. */
-  async selectParcelAsHome(parcel: Vec2): Promise<void> {
-    const run = ++this.placeRun
+  async selectParcelAsHome(parcel: Vec2): Promise<boolean> {
+    const run = ++this.viewRun
     let place: MapPlace | null = null
     try {
       place = await this.api.fetchPlaceAt(parcel)
     } catch {
       place = null
     }
-    if (run !== this.placeRun) return
-    await this.selectPlace(place ?? emptyPlace(parcel), { fromSearch: true, origin: parcel, landOnOrigin: true })
+    if (run !== this.viewRun) return false
+    return this.selectPlace(place ?? emptyPlace(parcel), { fromSearch: true, origin: parcel, landOnOrigin: true })
   }
 
   private async showPlace(
     entry: Extract<Entry, { type: 'place' }>,
     params: { fromSearch: boolean; origin: Vec2 | null; landOnOrigin: boolean } | null
   ): Promise<boolean> {
-    const run = ++this.placeRun
+    const run = ++this.viewRun
     const { place } = entry
     this.set({
       section: 'place',
@@ -411,7 +408,7 @@ export class Navmap {
         entry.events = []
       }
     }
-    if (run !== this.placeRun) return false
+    if (run !== this.viewRun) return false
     const view = this.state.place
     if (view != null && view.place === place && entry.events.length > 0) this.set({ place: { ...view, liveEvent: entry.events[0] } })
     return true
@@ -433,7 +430,7 @@ export class Navmap {
   }
 
   private async showEvent(entry: Extract<Entry, { type: 'event' }>): Promise<boolean> {
-    const run = ++this.eventRun
+    const run = ++this.viewRun
     const { event } = entry
     this.set({ section: 'event', expanded: true, handle: 'collapse' })
     if (entry.place == null) {
@@ -444,7 +441,7 @@ export class Navmap {
         entry.place = emptyPlace(at)
       }
     }
-    if (run !== this.eventRun) return false
+    if (run !== this.viewRun) return false
     this.set({
       event: { event, place: entry.place, visit: ++this.visits },
       input: { ...this.state.input, text: event.name, interactable: false, back: true, category: null }
@@ -468,21 +465,14 @@ export class Navmap {
   }
 
   async back(): Promise<void> {
-    const run = ++this.backRun
     const last = this.history.pop()
     if (last == null) return
-    if (last.type === 'search') {
-      this.searchRun++
-      this.set({ results: NO_RESULTS })
-    } else if (last.type === 'place') {
-      this.placeRun++
-      this.setInput({ interactable: true, back: false })
-    } else {
-      this.eventRun++
-      this.clearInput()
-    }
+    this.viewRun++
+    if (last.type === 'search') this.set({ results: NO_RESULTS })
+    else if (last.type === 'place') this.setInput({ interactable: true, back: false })
+    else this.clearInput()
     const top = this.history[this.history.length - 1]
-    if (top == null || run !== this.backRun) return
+    if (top == null) return
     if (top.type === 'search') await this.showSearch(top)
     else if (top.type === 'place') await this.showPlace(top, null)
     else await this.showEvent(top)

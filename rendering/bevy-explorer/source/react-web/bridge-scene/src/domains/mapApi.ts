@@ -15,6 +15,7 @@ import { HttpError, serviceBase } from '../http'
 
 const META = JSON.stringify({})
 
+// Not `signed` from ../http, which unwraps `data`: the map reads `total` beside it.
 async function call(url: string, method: 'GET' | 'POST' | 'PATCH' | 'DELETE' = 'GET', body?: object): Promise<unknown> {
   const result = await BevyApi.kernelFetch({
     url,
@@ -30,6 +31,7 @@ async function call(url: string, method: 'GET' | 'POST' | 'PATCH' | 'DELETE' = '
 }
 
 async function run(request: MapApiRequest): Promise<unknown> {
+  const id = 'id' in request ? encodeURIComponent(request.id) : ''
   switch (request.op) {
     case 'places': {
       const positions = request.positions.map((p) => `positions=${p}`).join('&')
@@ -40,13 +42,13 @@ async function run(request: MapApiRequest): Promise<unknown> {
     case 'events':
       return call(`${await serviceBase('events')}/api/events?${request.query}`)
     case 'placeLike':
-      return call(`${await serviceBase('places')}/api/places/${request.id}/likes`, 'PATCH', { like: request.like })
+      return call(`${await serviceBase('places')}/api/places/${id}/likes`, 'PATCH', { like: request.like })
     case 'placeFavorite':
-      return call(`${await serviceBase('places')}/api/places/${request.id}/favorites`, 'PATCH', { favorites: request.favorite })
+      return call(`${await serviceBase('places')}/api/places/${id}/favorites`, 'PATCH', { favorites: request.favorite })
     case 'eventAttend':
-      return call(`${await serviceBase('events')}/api/events/${request.id}/attendees`, request.attending ? 'POST' : 'DELETE')
+      return call(`${await serviceBase('events')}/api/events/${id}/attendees`, request.attending ? 'POST' : 'DELETE')
     case 'placePhotos':
-      return call(`${await serviceBase('cameraReel')}/api/places/${request.id}/images?limit=${request.limit}&offset=${request.offset}`)
+      return call(`${await serviceBase('cameraReel')}/api/places/${id}/images?limit=${request.limit}&offset=${request.offset}`)
   }
 }
 

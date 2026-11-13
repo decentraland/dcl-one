@@ -2,7 +2,7 @@
 // atlas chunks carry their map position as custom properties and place themselves from the
 // camera's, which useMapCamera writes on the viewport.
 
-import { memo, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { GRID, PARCELS_CHUNK_PARCELS, PARCELS_PER_TILE, parcelsChunks, satelliteChunkCenter, tileUrl } from '@explorer-core/features/map/atlas'
 import { clusterMarkers, type Cluster } from '@explorer-core/features/map/clusters'
 import { PARCEL_UNITS, parcelCenter, parcelKey, playerMarkerPosition, type Vec2 } from '@explorer-core/features/map/mapCoords'
@@ -104,6 +104,7 @@ function useParcelsChunks(enabled: boolean): readonly Chunk[] {
 type PinKind = 'category' | 'poi' | 'search'
 
 interface PinProps {
+  id: string
   kind: PinKind
   position: Vec2
   title: string
@@ -112,10 +113,10 @@ interface PinProps {
   /** The results list is pointing at it. */
   hot: boolean
   layer: string
-  onClick: () => void
+  onPick: (id: string) => void
 }
 
-const Pin = memo(function Pin({ kind, position, title, icon, selected, hot, layer, onClick }: PinProps): React.JSX.Element {
+const Pin = memo(function Pin({ id, kind, position, title, icon, selected, hot, layer, onPick }: PinProps): React.JSX.Element {
   return (
     <button
       type="button"
@@ -126,7 +127,7 @@ const Pin = memo(function Pin({ kind, position, title, icon, selected, hot, laye
       aria-pressed={selected}
       onClick={(e) => {
         e.stopPropagation()
-        onClick()
+        onPick(id)
       }}
     >
       <span className={styles.scaler}>
@@ -186,6 +187,13 @@ function PinLayer<T extends { id: string; key: Vec2; position: Vec2; title: stri
   onCluster
 }: PinLayerProps<T>): React.JSX.Element {
   const { visible, clusters } = useMemo(() => clusterMarkers(markers, level), [markers, level])
+  const pick = useCallback(
+    (id: string): void => {
+      const marker = visible.find((m) => m.id === id)
+      if (marker != null) onPick(marker)
+    },
+    [visible, onPick]
+  )
   return (
     <div className={`${styles.layer} ${styles[`layer_${layer}`] ?? ''}`.trim()}>
       {clusters.map((c) => (
@@ -194,6 +202,7 @@ function PinLayer<T extends { id: string; key: Vec2; position: Vec2; title: stri
       {visible.map((m) => (
         <Pin
           key={m.id}
+          id={m.id}
           kind={kind}
           layer={layer}
           position={m.position}
@@ -201,7 +210,7 @@ function PinLayer<T extends { id: string; key: Vec2; position: Vec2; title: stri
           icon={icon}
           selected={selected === `${layer}:${m.id}` || hotSelected === parcelKey(m.key)}
           hot={hot === parcelKey(m.key)}
-          onClick={() => onPick(m)}
+          onPick={pick}
         />
       ))}
     </div>
@@ -273,6 +282,14 @@ export function MapCanvas(props: MapCanvasProps): React.JSX.Element {
   const parcelsOn = layers.has('parcels')
   const parcels = useParcelsChunks(parcelsOn)
 
+  // stable, so the pointer moving over the map re-renders no pin
+  const { onPlace } = props
+  const pickSearch = useCallback((m: PlaceMarker): void => onPlace('search', m), [onPlace])
+  const pickCategory = useCallback((m: PlaceMarker): void => onPlace('category', m), [onPlace])
+  const pickPoi = useCallback((m: PlaceMarker): void => onPlace('pois', m), [onPlace])
+  const { zoom } = camera
+  const zoomIn = useCallback((): void => zoom(true), [zoom])
+
   const overMarker = (target: EventTarget | null): boolean => target instanceof Element && target.closest('[data-marker]') != null
 
   const onPointerDown = (e: React.PointerEvent): void => {
@@ -322,7 +339,6 @@ export function MapCanvas(props: MapCanvasProps): React.JSX.Element {
   const onWheel = (e: React.WheelEvent): void => {
     if (e.deltaY !== 0) camera.zoom(e.deltaY < 0)
   }
-  const zoomIn = (): void => camera.zoom(true)
 
   return (
     <div
@@ -368,7 +384,7 @@ export function MapCanvas(props: MapCanvasProps): React.JSX.Element {
         selected={selected}
         hot={props.resultHover}
         hotSelected={props.resultSelected}
-        onPick={(m) => props.onPlace('search', m)}
+        onPick={pickSearch}
         onCluster={zoomIn}
       />
       {props.categoryLayer && (
@@ -382,7 +398,7 @@ export function MapCanvas(props: MapCanvasProps): React.JSX.Element {
           selected={selected}
           hot={props.resultHover}
           hotSelected={props.resultSelected}
-          onPick={(m) => props.onPlace('category', m)}
+          onPick={pickCategory}
           onCluster={zoomIn}
         />
       )}
@@ -396,7 +412,7 @@ export function MapCanvas(props: MapCanvasProps): React.JSX.Element {
           icon={MARKER_ART.poi}
           label="points of interest"
           selected={selected}
-          onPick={(m) => props.onPlace('pois', m)}
+          onPick={pickPoi}
           onCluster={zoomIn}
         />
       )}

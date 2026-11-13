@@ -31,7 +31,7 @@ export function placeShareLinks(place: MapPlace, referrer: string | undefined): 
 
 /** A live event shares its place; one yet to start shares its own page. */
 export function eventShareLinks(event: MapEvent, referrer: string | undefined): ShareLinks {
-  const copy = event.live === true ? jumpInLink(event.x, event.y, referrer) : siteUrl(`/whats-on/?id=${event.id}`)
+  const copy = event.live === true ? jumpInLink(event.x, event.y, referrer) : siteUrl(`/whats-on/?id=${encodeURIComponent(event.id)}`)
   return { copy, x: postOnX(event.name, copy) }
 }
 
