@@ -67,14 +67,32 @@ CREATE SCHEMA worlds;
 -- nft-ownership; an allow-list's wallets are world_permissions rows with
 -- permission = 'access' and its communities world_access_communities rows.
 -- `settings_version` is bumped by every settings-affecting write (deploy
--- refresh, PUT /settings, access edits, mirror ingest) under the row lock so
--- a settings consumer can refuse an out-of-order update.
+-- refresh, PUT /settings, access edits) under the row lock so a settings
+-- consumer can refuse an out-of-order update. A mirrored row takes its
+-- source's counter, or its own plus one when a copied setting changes and the
+-- source's is not ahead, so it never goes back; a copied access change bumps
+-- it too. `access_set_here` is set by the owner's access writes on this node
+-- (POST /permissions/access and the allow-list edits, core::store) and
+-- `settings_set_here` by a PUT /settings that changes a setting the mirror
+-- copies; `*_set_by` is the owner that wrote it. The worlds mirror leaves
+-- either setting as it is while that owner holds the name, as this node's
+-- own owner lookup says (Policy::current_owner, never the source's
+-- /permissions owner, which trails a sale; core::store::mirror_keeps_local,
+-- under the row lock it already takes). It clears the pair and copies the
+-- source's once the name has another holder. A row marked before the setter
+-- was recorded (`*_set_by` NULL) takes the holder of the next pass as its
+-- setter, and an unknown holder keeps every mark.
+-- No index: they are read only with the row by its primary key.
 CREATE TABLE worlds.worlds (
     name text NOT NULL,
     owner text,
     access_type text NOT NULL DEFAULT 'unrestricted',
     access_secret_hash text,
     access_nft text,
+    access_set_here boolean NOT NULL DEFAULT false,
+    access_set_by text,
+    settings_set_here boolean NOT NULL DEFAULT false,
+    settings_set_by text,
     blocked_since timestamp without time zone,
     spawn_coordinates text,
     title text,

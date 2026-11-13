@@ -86,6 +86,8 @@ function nodeProxy(): Record<string, ProxyOptions> {
     "/builder-api": to(),
     "/camera-reel-service": to(),
     "/transactions-api": to(),
+    // The tip forward (/play's Donate), signed by the login: the node tells the creator `tip_received`.
+    "/events-notifier/": to(),
     "/price/": to(),
     "/_play": to(),
     "/auth-api": to(),

@@ -1,14 +1,11 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use crate::protocol::bus::control_position::ControlPosition;
-
+use crate::protocol::bus::control_position::{ControlPosition, LegacyRoomIntent};
 use crate::protocol::pulse::decentraland::common::Vector3;
 
 pub(crate) const SUPPORTED_TRANSPORT_PEERS: usize = 4095 + 4096;
-const CONTROL_POSITION_CHURN_RESERVE: usize = SUPPORTED_TRANSPORT_PEERS;
-pub const DEFAULT_CONTROL_POSITION_CAPACITY: usize =
-    SUPPORTED_TRANSPORT_PEERS + CONTROL_POSITION_CHURN_RESERVE;
+pub const DEFAULT_CONTROL_POSITION_CAPACITY: usize = SUPPORTED_TRANSPORT_PEERS * 2;
 pub const CONTROL_POSITION_TTL: Duration = Duration::from_secs(10);
 pub const CONTROL_TOMBSTONE_TTL: Duration = Duration::from_secs(300);
 const CONTROL_SWEEP_INTERVAL: Duration = Duration::from_secs(1);
@@ -19,6 +16,7 @@ pub struct ControlMember {
     pub wallet: String,
     pub session: String,
     pub epoch: u64,
+    pub origin: i32,
     pub realm: String,
     pub position: Vector3,
 }
@@ -35,8 +33,7 @@ pub struct ControlOwner {
     pub closed: bool,
 }
 
-struct Entry {
-    slot: u32,
+struct Head {
     session: String,
     epoch: u64,
     sequence: u64,
@@ -44,6 +41,11 @@ struct Entry {
     position: Option<Vector3>,
     closed: bool,
     observed: Instant,
+}
+
+struct Entry {
+    slot: u32,
+    heads: [Option<Head>; 2],
 }
 
 pub(crate) struct ControlPositions {
@@ -97,51 +99,60 @@ impl ControlPositions {
     pub(crate) fn is_enabled(&self) -> bool {
         self.audience.is_some()
     }
-
     pub(crate) fn ingest(&mut self, update: ControlPosition) -> bool {
         self.ingest_at(update, Instant::now())
     }
-
+    pub(crate) fn ingest_intent(&mut self, update: LegacyRoomIntent) -> bool {
+        if update.encode().is_none() {
+            return false;
+        }
+        self.ingest_version_at(update.position_update(), 1, Instant::now())
+    }
     fn ingest_at(&mut self, update: ControlPosition, now: Instant) -> bool {
+        self.ingest_version_at(update, 0, now)
+    }
+    fn ingest_version_at(&mut self, update: ControlPosition, version: usize, now: Instant) -> bool {
         if self.audience.as_deref() != Some(update.audience.as_str()) || update.encode().is_none() {
             return false;
         }
         let wallet = update.wallet.to_ascii_lowercase();
-        if let Some(current) = self.entries.get_mut(&wallet) {
-            expire_entry(current, now, self.live_ttl);
-            if (update.epoch, update.sequence) <= (current.epoch, current.sequence) {
+        if !self.entries.contains_key(&wallet) {
+            if now.saturating_duration_since(self.last_sweep) >= CONTROL_SWEEP_INTERVAL {
+                self.expire_at(now);
+            }
+            if self.free_slots.is_empty() {
+                self.expire_at(now);
+            }
+            let Some(slot) = self.free_slots.pop() else {
+                return false;
+            };
+            self.entries.insert(
+                wallet.clone(),
+                Entry {
+                    slot,
+                    heads: [None, None],
+                },
+            );
+        }
+        let head = &mut self.entries.get_mut(&wallet).unwrap().heads[version];
+        if let Some(current) = head {
+            expire_head(current, now, self.live_ttl);
+            if (update.epoch, update.sequence) <= (current.epoch, current.sequence)
+                || (update.epoch == current.epoch
+                    && (current.closed || !current.session.eq_ignore_ascii_case(&update.session)))
+            {
                 return false;
             }
-            current.session = update.session.to_ascii_lowercase();
-            current.epoch = update.epoch;
-            current.sequence = update.sequence;
-            current.realm = update.realm;
-            current.position = update.position.map(vector);
-            current.closed = current.position.is_none();
-            current.observed = now;
-            return true;
         }
-
-        self.sweep_if_due(now);
-        if self.free_slots.is_empty() {
-            self.expire_at(now);
-        }
-        let Some(slot) = self.allocate_slot() else {
-            return false;
-        };
-        self.entries.insert(
-            wallet,
-            Entry {
-                slot,
-                session: update.session.to_ascii_lowercase(),
-                epoch: update.epoch,
-                sequence: update.sequence,
-                realm: update.realm,
-                position: update.position.map(vector),
-                closed: update.position.is_none(),
-                observed: now,
-            },
-        );
+        *head = Some(Head {
+            session: update.session.to_ascii_lowercase(),
+            epoch: update.epoch,
+            sequence: update.sequence,
+            realm: update.realm,
+            position: update.position.map(vector),
+            closed: update.position.is_none(),
+            observed: now,
+        });
         true
     }
 
@@ -149,7 +160,38 @@ impl ControlPositions {
         self.snapshot_at(Instant::now())
     }
 
-    pub(crate) fn allows_assignment(
+    // No production common allocator attestation exists yet. Both heads are
+    // retained, but neither can supply mixed authority by audience text alone.
+    fn winner(entry: &Entry) -> Option<(usize, &Head)> {
+        match (&entry.heads[0], &entry.heads[1]) {
+            (Some(head), None) => Some((0, head)),
+            (None, Some(head)) => Some((1, head)),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn allows_selected(
+        &self,
+        wallet: &str,
+        session: &str,
+        realm: &str,
+        epoch: u64,
+        origin: i32,
+    ) -> bool {
+        let Some((version, head)) = self.entries.get(wallet).and_then(Self::winner) else {
+            return false;
+        };
+        origin == version as i32 + 2
+            && head.epoch == epoch
+            && head.realm == realm
+            && head.session == session
+            && !head.closed
+            && head.position.is_some()
+            && head.observed.elapsed() < self.live_ttl
+    }
+
+    #[cfg(test)]
+    fn allows_assignment(
         &self,
         wallet: &str,
         session: &str,
@@ -157,52 +199,53 @@ impl ControlPositions {
         epoch: u64,
         native: bool,
     ) -> bool {
-        let Some(entry) = self.entries.get(wallet) else {
-            return native;
-        };
-        let live =
-            !entry.closed && entry.position.is_some() && entry.observed.elapsed() < self.live_ttl;
-        live && entry.session == session
-            && (native || (entry.epoch == epoch && entry.realm == realm))
+        !native && self.allows_selected(wallet, session, realm, epoch, 2)
     }
 
     fn snapshot_at(&mut self, now: Instant) -> ControlSnapshot {
         self.expire_at(now);
         let mut snapshot = ControlSnapshot::default();
-        snapshot.members.reserve(self.entries.len());
-        snapshot.owners.reserve(self.entries.len());
         for (wallet, entry) in &self.entries {
+            let Some((version, head)) = Self::winner(entry) else {
+                continue;
+            };
             snapshot.owners.insert(
                 wallet.clone(),
                 ControlOwner {
-                    session: entry.session.clone(),
-                    closed: entry.closed,
+                    session: head.session.clone(),
+                    closed: head.closed,
                 },
             );
-            let Some(position) = entry.position else {
-                continue;
-            };
-            snapshot.members.push(ControlMember {
-                slot: entry.slot,
-                wallet: wallet.clone(),
-                session: entry.session.clone(),
-                epoch: entry.epoch,
-                realm: entry.realm.clone(),
-                position,
-            });
+            if let Some(position) = head.position {
+                snapshot.members.push(ControlMember {
+                    slot: entry.slot,
+                    wallet: wallet.clone(),
+                    session: head.session.clone(),
+                    epoch: head.epoch,
+                    origin: version as i32 + 2,
+                    realm: head.realm.clone(),
+                    position,
+                });
+            }
         }
-        snapshot.members.sort_unstable_by_key(|member| member.slot);
+        snapshot.members.sort_unstable_by_key(|m| m.slot);
         snapshot
     }
 
     fn expire_at(&mut self, now: Instant) {
-        for entry in self.entries.values_mut() {
-            expire_entry(entry, now, self.live_ttl);
-        }
         let mut removed = Vec::new();
         self.entries.retain(|_, entry| {
-            let retain = entry.position.is_some()
-                || now.saturating_duration_since(entry.observed) < self.tombstone_ttl;
+            for head in &mut entry.heads {
+                if let Some(value) = head {
+                    expire_head(value, now, self.live_ttl);
+                    if value.position.is_none()
+                        && now.saturating_duration_since(value.observed) >= self.tombstone_ttl
+                    {
+                        *head = None;
+                    }
+                }
+            }
+            let retain = entry.heads.iter().any(Option::is_some);
             if !retain {
                 removed.push(entry.slot);
             }
@@ -211,29 +254,15 @@ impl ControlPositions {
         self.free_slots.extend(removed);
         self.last_sweep = now;
     }
-
-    fn sweep_if_due(&mut self, now: Instant) {
-        if now.saturating_duration_since(self.last_sweep) >= CONTROL_SWEEP_INTERVAL {
-            self.expire_at(now);
-        }
-    }
-
-    fn allocate_slot(&mut self) -> Option<u32> {
-        if let Some(slot) = self.free_slots.pop() {
-            return Some(slot);
-        }
-        None
-    }
 }
 
-fn expire_entry(entry: &mut Entry, now: Instant, live_ttl: Duration) {
-    if entry.position.is_some() && now.saturating_duration_since(entry.observed) >= live_ttl {
-        entry.position = None;
-        entry.closed = false;
-        entry.observed = now;
+fn expire_head(head: &mut Head, now: Instant, live_ttl: Duration) {
+    if head.position.is_some() && now.saturating_duration_since(head.observed) >= live_ttl {
+        head.position = None;
+        head.closed = false;
+        head.observed = now;
     }
 }
-
 fn vector(position: [f32; 3]) -> Vector3 {
     Vector3 {
         x: position[0],
@@ -245,6 +274,244 @@ fn vector(position: [f32; 3]) -> Vector3 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn native_aba_preserves_cleanup_across_terminal_and_expired_control_heads() {
+        use crate::pulse::cluster::feed::{CurrentAssignment, CurrentAssignments};
+        use crate::pulse::snapshot::IdentityBoard;
+        use std::sync::{Arc, Mutex};
+        for origin in [2, 3] {
+            for same_session in [false, true] {
+                for terminal in [false, true] {
+                    for before_native in [false, true] {
+                        let now = Instant::now();
+                        let controls = Mutex::new(ControlPositions::default());
+                        controls.lock().unwrap().enable("realm-a").unwrap();
+                        let current = Arc::new(CurrentAssignments::default());
+                        let mut identity = IdentityBoard::new(1);
+                        identity.attach_assignments(current.clone());
+                        let version = (origin - 2) as usize;
+                        let mut input = update(1, 8, 1, Some([0.0; 3]));
+                        let assignment = |input: &ControlPosition| CurrentAssignment {
+                            wallet: input.wallet.clone(),
+                            session: input.session.clone(),
+                            cluster_id: "room".into(),
+                            realm: input.realm.clone(),
+                            owner_epoch: input.epoch,
+                            selected_origin: origin,
+                            owner_peer: 0,
+                            registration: None,
+                        };
+                        assert!(controls.lock().unwrap().ingest_version_at(
+                            input.clone(),
+                            version,
+                            now
+                        ));
+                        current.replace_checked(
+                            1,
+                            Duration::from_secs(30),
+                            vec![assignment(&input)],
+                            Some(&controls),
+                        );
+                        input.epoch = 9;
+                        input.session = format!("0x{:040x}", 99);
+                        assert!(controls.lock().unwrap().ingest_version_at(
+                            input.clone(),
+                            version,
+                            now
+                        ));
+                        current.replace_checked(
+                            2,
+                            Duration::from_secs(30),
+                            vec![assignment(&input)],
+                            Some(&controls),
+                        );
+                        let before = current
+                            .lookup_checked(&input.wallet, &input.session, Some(&controls))
+                            .unwrap();
+                        assert_eq!(before.pending_takeovers.len(), 1);
+                        let invalidate_control = || {
+                            let mut controls = controls.lock().unwrap();
+                            if terminal {
+                                let mut withdrawal = input.clone();
+                                withdrawal.sequence = 2;
+                                withdrawal.position = None;
+                                withdrawal.realm.clear();
+                                assert!(controls.ingest_version_at(withdrawal, version, now));
+                            } else {
+                                controls.snapshot_at(now + CONTROL_POSITION_TTL);
+                            }
+                        };
+                        if before_native {
+                            invalidate_control();
+                        }
+                        identity.set_with_session(
+                            0,
+                            input.wallet.clone(),
+                            if same_session {
+                                input.session.clone()
+                            } else {
+                                format!("0x{:040x}", 100)
+                            },
+                        );
+                        if !before_native {
+                            invalidate_control();
+                        }
+                        identity.remove(0);
+                        // No pass or lookup occurs between native arrival and departure.
+                        let retained = current
+                            .lookup_checked(&input.wallet, &input.session, Some(&controls))
+                            .unwrap();
+                        assert_eq!(retained.assignment_state, 2);
+                        assert_eq!(retained.pending_takeovers, before.pending_takeovers);
+                        assert_eq!(retained.token_not_before, before.token_not_before);
+                        let completion =
+                            crate::protocol::pulse::decentraland::pulse::TakeoverCompleted {
+                                takeover_id: retained.pending_takeovers[0].takeover_id.clone(),
+                                revoke_before: 100,
+                            };
+                        assert!(
+                            current
+                                .complete_checked(&input.wallet, &completion, Some(&controls))
+                                .is_none()
+                        );
+                        assert!(
+                            current
+                                .lookup_checked(&input.wallet, &input.session, Some(&controls))
+                                .is_none()
+                        );
+                        input.sequence = 3;
+                        if terminal {
+                            assert!(!controls.lock().unwrap().ingest_version_at(
+                                input.clone(),
+                                version,
+                                now + CONTROL_POSITION_TTL
+                            ));
+                            input.epoch += 1;
+                        }
+                        assert!(controls.lock().unwrap().ingest_version_at(
+                            input.clone(),
+                            version,
+                            now + CONTROL_POSITION_TTL
+                        ));
+                        assert!(
+                            current
+                                .lookup_checked(&input.wallet, &input.session, Some(&controls))
+                                .is_none(),
+                            "new live control alone cannot restore the invalidated assignment"
+                        );
+                        current.replace_checked(
+                            3,
+                            Duration::from_secs(30),
+                            vec![assignment(&input)],
+                            Some(&controls),
+                        );
+                        let restored = current
+                            .lookup_checked(&input.wallet, &input.session, Some(&controls))
+                            .unwrap();
+                        assert_eq!(restored.assignment_state, 1);
+                        assert!(restored.assignment_version > before.assignment_version);
+                        assert_eq!(restored.token_not_before, Some(100));
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn versions_share_wallet_capacity_and_unproved_mixed_heads_never_select() {
+        let now = Instant::now();
+        let mut positions = ControlPositions::new(1, CONTROL_POSITION_TTL, CONTROL_TOMBSTONE_TTL);
+        positions.enable("realm-a").unwrap();
+        let first = update(1, 7, 1, Some([0.0; 3]));
+        assert!(positions.ingest_at(first.clone(), now));
+        let mut intent = first.clone();
+        intent.epoch = 9;
+        assert!(positions.ingest_version_at(intent.clone(), 1, now));
+        assert!(positions.snapshot_at(now).members.is_empty());
+        assert!(!positions.ingest_at(update(2, 10, 1, Some([0.0; 3])), now));
+        intent.position = None;
+        intent.realm.clear();
+        intent.sequence = 2;
+        assert!(positions.ingest_version_at(intent, 1, now));
+        let mut older = first;
+        older.sequence = 2;
+        assert!(positions.ingest_at(older, now));
+        assert!(
+            positions.snapshot_at(now).members.is_empty(),
+            "withdrawal never reveals older class"
+        );
+        assert_eq!(positions.entries.len(), 1);
+    }
+
+    #[test]
+    fn duplicate_does_not_refresh_live_expiry_for_either_version() {
+        let now = Instant::now();
+        for version in 0..2 {
+            let mut positions = ControlPositions::default();
+            positions.enable("realm-a").unwrap();
+            let first = update(1, 7, 1, Some([0.0; 3]));
+            assert!(positions.ingest_version_at(first.clone(), version, now));
+            assert!(!positions.ingest_version_at(first, version, now + Duration::from_secs(9)));
+            assert!(
+                positions
+                    .snapshot_at(now + CONTROL_POSITION_TTL)
+                    .members
+                    .is_empty()
+            );
+        }
+    }
+
+    #[test]
+    fn explicit_withdrawal_is_terminal_but_live_expiry_can_resume() {
+        let mut positions = ControlPositions::default();
+        positions.enable("realm-a").unwrap();
+        let now = Instant::now();
+        let first = update(1, 7, 1, Some([1.0, 2.0, 3.0]));
+        assert!(positions.ingest_at(first.clone(), now));
+        let mut close = first.clone();
+        close.sequence = 2;
+        close.position = None;
+        close.realm.clear();
+        assert!(positions.ingest_at(close, now));
+        let mut resume = first.clone();
+        resume.sequence = 3;
+        assert!(
+            !positions.ingest_at(resume, now),
+            "explicit close cannot resurrect"
+        );
+
+        let mut positions = ControlPositions::default();
+        positions.enable("realm-a").unwrap();
+        assert!(positions.ingest_at(first.clone(), now));
+        assert!(
+            positions
+                .snapshot_at(now + CONTROL_POSITION_TTL)
+                .members
+                .is_empty()
+        );
+        let mut resume = first;
+        resume.sequence = 2;
+        assert!(positions.ingest_at(resume, now + CONTROL_POSITION_TTL));
+        assert_eq!(
+            positions
+                .snapshot_at(now + CONTROL_POSITION_TTL)
+                .members
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn same_epoch_session_is_fixed() {
+        let mut positions = ControlPositions::default();
+        positions.enable("realm-a").unwrap();
+        let first = update(1, 7, 1, Some([1.0, 2.0, 3.0]));
+        assert!(positions.ingest(first.clone()));
+        let mut changed = first;
+        changed.sequence = 2;
+        changed.session = format!("0x{:040x}", 999);
+        assert!(!positions.ingest(changed));
+    }
 
     #[test]
     fn live_lookup_guard_rejects_epoch_replacement_release_and_expiry_before_next_pass() {
@@ -257,8 +524,10 @@ mod tests {
         assert!(positions.ingest(first.clone()));
         assert!(!positions.allows_assignment(&first.wallet, &first.session, "main", 7, false));
         assert!(positions.allows_assignment(&first.wallet, &first.session, "main", 8, false));
-        positions.entries.get_mut(&first.wallet).unwrap().observed =
-            Instant::now() - CONTROL_POSITION_TTL;
+        positions.entries.get_mut(&first.wallet).unwrap().heads[0]
+            .as_mut()
+            .unwrap()
+            .observed = Instant::now() - CONTROL_POSITION_TTL;
         assert!(!positions.allows_assignment(&first.wallet, &first.session, "main", 8, false));
         first.epoch = 9;
         first.position = None;

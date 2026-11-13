@@ -22,7 +22,7 @@ pub struct CommsSendBudget {
     pub sent: usize,
 }
 
-fn try_spend_budget(state: &mut impl State) -> bool {
+pub(crate) fn try_spend_budget(state: &mut impl State) -> bool {
     if !state.has::<CommsSendBudget>() {
         state.put(CommsSendBudget::default());
     }

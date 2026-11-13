@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 import { pathToFileURL } from 'node:url'
-import { ConsoleError, FakeConsole, commandOf, normalizeLine, redactLine, scrubCredentials, secretOf } from '../driver/console.ts'
+import { ConsoleError, FakeConsole, commandOf, normalizeLine, redact, redactLine, scrubCredentials, secretsOf } from '../driver/console.ts'
 import { WEB_DRIVER } from '../driver/paths.ts'
 
 describe('normalizeLine', () => {
@@ -51,34 +51,103 @@ describe('FakeConsole', () => {
 
 describe('ConsoleError', () => {
   test('keeps a login payload out of its line, its output and its message', () => {
-    const error = new ConsoleError('/login_identity eyJhIjoxfQ== --name tester', 'the identity eyJhIjoxfQ== is not base64 JSON')
+    const error = new ConsoleError('/login_identity eyJlcGhlbWVyYWxJZGVudGl0eSI6MX0= --name tester', 'the identity eyJlcGhlbWVyYWxJZGVudGl0eSI6MX0= is not base64 JSON')
     assert.equal(error.line, '/login_identity <redacted> --name tester')
     assert.equal(error.output, 'the identity <redacted> is not base64 JSON')
     assert.equal(error.message, '`/login_identity <redacted> --name tester` failed: the identity <redacted> is not base64 JSON')
   })
 
-  test('the credential is the first word that is not a bare flag, as the web driver has it', async () => {
-    const lines = [
-      '/hud_login eyJhIjoxfQ== --guest',
-      '/hud_login --guest eyJhIjoxfQ== --look 1',
-      '/hud_login --name tester --look 1 eyJhIjoxfQ== --guest',
-      '/login_identity --look 3 eyJhIjoxfQ==',
-      'login_identity eyJhIjoxfQ==',
-      '/hud_login "eyJhIjoxfQ==" --guest',
-      '/teleport 1 2',
-      '/hud_login'
+  test('the credentials are what decodes as an identity, wherever it is, as the web driver has it', async () => {
+    const id = 'eyJlcGhlbWVyYWxJZGVudGl0eSI6MX0='
+    // `{ "`, pretty-printed JSON and JSON after whitespace, which the commands decode as well
+    const spaced = 'eyAiZXBoZW1lcmFsSWRlbnRpdHkiOjF9'
+    const pretty = 'ewogICJlcGhlbWVyYWxJZGVudGl0eSI6IDF9'
+    const afterWhitespace = ['IHsiZXBoZW1lcmFsSWRlbnRpdHkiOjF9', 'CnsiZXBoZW1lcmFsSWRlbnRpdHkiOjF9', 'CXsiZXBoZW1lcmFsSWRlbnRpdHkiOjF9', 'DQp7ImVwaGVtZXJhbElkZW50aXR5IjoxfQ==']
+    const raw = '{"ephemeralIdentity":{"privateKey":"0x56"}}'
+    // an identity long enough to wrap, as `base64` wraps it at 76 characters, or split by spaces;
+    // its JSON padded to whole groups, so no `=` ends it and only its content tells where it stops
+    const json = JSON.stringify({ ephemeralIdentity: { address: '0x' + '12'.repeat(20), publicKey: '0x04' + '34'.repeat(64), privateKey: '0x' + '56'.repeat(32) } })
+    const long = Buffer.from(json + ' '.repeat((3 - (json.length % 3)) % 3)).toString('base64')
+    assert.ok(!long.endsWith('='))
+    const pieces = long.match(/.{1,76}/g) ?? []
+    // a character mistyped in a piece: `/` starting a group decodes to a byte no JSON has
+    const mistype = (piece: string): string => piece.slice(0, 40) + '/' + piece.slice(41)
+    const mistypedFirst = [mistype(pieces[0]!), ...pieces.slice(1)]
+    const mistypedThird = [...pieces.slice(0, 2), mistype(pieces[2]!), ...pieces.slice(3)]
+    assert.ok(Buffer.from(mistype(pieces[2]!), 'base64').some((byte) => byte > 0x7e))
+    // each case: the line, and the line as it may be logged
+    const cases: [string, string][] = [
+      [`/hud_login ${id} --guest`, '/hud_login <redacted> --guest'],
+      [`/hud_login --guest ${id} --look 1`, '/hud_login --guest <redacted> --look 1'],
+      [`/hud_login --name tester --look 1 ${id} --guest`, '/hud_login --name tester --look 1 <redacted> --guest'],
+      [`/login_identity --look 3 ${id}`, '/login_identity --look 3 <redacted>'],
+      [`login_identity ${id}`, 'login_identity <redacted>'],
+      [`/hud_login "${id}" --guest`, '/hud_login "<redacted>" --guest'],
+      [`/hud_login '${id}'`, "/hud_login '<redacted>'"],
+      [`/hud_login ${spaced}`, '/hud_login <redacted>'],
+      [`/login_identity ${pretty} --guest`, '/login_identity <redacted> --guest'],
+      ...afterWhitespace.map((encoded): [string, string] => [`/hud_login ${encoded}`, '/hud_login <redacted>']),
+      // a realm's or a name's long value is no identity, though base64 characters spell it, even
+      // one with `eyI`..`eyL` (`{"`) inside
+      [`/hud_login ${id} --realm example-world-name.dcl.eth`, '/hud_login <redacted> --realm example-world-name.dcl.eth'],
+      [`/hud_login ${id} --realm ezra-test-world-2025.dcl.eth --default-on-error`, '/hud_login <redacted> --realm ezra-test-world-2025.dcl.eth --default-on-error'],
+      [`/hud_login ${id} --realm moneyLand-world-2025.dcl.eth`, '/hud_login <redacted> --realm moneyLand-world-2025.dcl.eth'],
+      [`/hud_login ${id} --name greyKnight-tester01 --look 1`, '/hud_login <redacted> --name greyKnight-tester01 --look 1'],
+      // in a flag's value slot: the identity, never the word the flags leave over
+      [`/hud_login --name ${id} --look 1`, '/hud_login --name <redacted> --look 1'],
+      // pasted twice, wrapped, split, quoted or mistyped, the first piece short too: all of it, up
+      // to the next flag, and the words up to it as well (a bare realm name, a stray word)
+      [`/hud_login ${id} ${pretty}`, '/hud_login <redacted>'],
+      [`/hud_login ${pieces.join('\n')} --guest`, '/hud_login <redacted> --guest'],
+      [`/hud_login ${pieces.join(' ')}`, '/hud_login <redacted>'],
+      [`/hud_login "${pieces.join('\n')}" --guest`, '/hud_login "<redacted>" --guest'],
+      [`/hud_login '${pieces.join(' ')}'`, "/hud_login '<redacted>'"],
+      [`/hud_login ${mistypedFirst.join('\n')}`, '/hud_login <redacted>'],
+      // a typo in the outer key, and one in the inner key too: still all of it
+      [`/hud_login ${long.slice(0, 3)}/${long.slice(4)} --realm main`, '/hud_login <redacted> --realm main'],
+      [`/hud_login ${long.slice(0, 3)}/${long.slice(4, 29)}Q${long.slice(30)} --realm main`, '/hud_login <redacted> --realm main'],
+      [`/hud_login ${mistypedThird.join('\n')} --guest`, '/hud_login <redacted> --guest'],
+      [`/hud_login ${long.slice(0, 8)} ${long.slice(8)}`, '/hud_login <redacted>'],
+      [`/hud_login ${long} my-long-world-name-2025.dcl.eth`, '/hud_login <redacted>'],
+      [`/hud_login ${long} tester`, '/hud_login <redacted>'],
+      [`/hud_login ${long} -default-on-error`, '/hud_login <redacted> -default-on-error'],
+      // raw JSON, which the commands refuse after it was logged, closed or cut
+      [`/hud_login ${raw} --guest`, '/hud_login <redacted>'],
+      [`/hud_login ${raw.slice(0, 30)}`, '/hud_login <redacted>'],
+      // an empty or short word is no identity: nothing would be safe to replace
+      ['/hud_login ""', '/hud_login ""'],
+      ["/hud_login ''", "/hud_login ''"],
+      ['/hud_login "', '/hud_login "'],
+      ['/hud_login --look 1', '/hud_login --look 1'],
+      ['/hud_login eyJhIjoxfQ==', '/hud_login eyJhIjoxfQ=='],
+      ['/hud_login {}', '/hud_login {}'],
+      // glued to other text: from where it starts
+      [`/hud_login x${id}`, '/hud_login x<redacted>'],
+      [`/hud_login -${id}`, '/hud_login -<redacted>'],
+      [`/hud_login https://a/${id}`, '/hud_login https://a/<redacted>'],
+      [`/teleport ${id}`, `/teleport ${id}`],
+      ['/teleport 1 2', '/teleport 1 2'],
+      ['/hud_login', '/hud_login']
     ]
-    const expected = ['eyJhIjoxfQ==', 'eyJhIjoxfQ==', 'eyJhIjoxfQ==', 'eyJhIjoxfQ==', 'eyJhIjoxfQ==', 'eyJhIjoxfQ==', undefined, undefined]
-    assert.deepEqual(lines.map(secretOf), expected)
-    assert.equal(redactLine('/hud_login --guest eyJhIjoxfQ=='), '/hud_login --guest <redacted>')
-    assert.equal(redactLine('/hud_login --name tester --look 1 eyJhIjoxfQ=='), '/hud_login --name tester --look 1 <redacted>')
+    for (const [line, logged] of cases) assert.equal(redactLine(line), logged, line)
+    // a later piece of a wrapped identity is a secret of its own, wherever text quotes it, the
+    // pieces after a mistyped one too
+    assert.ok(pieces.length >= 4)
+    assert.equal(redact(`/hud_login ${pieces.join('\n')}`, `bad piece ${pieces[2]}`), 'bad piece <redacted>')
+    assert.equal(redact(`/hud_login ${mistypedThird.join('\n')}`, `bad piece ${pieces[3]}`), 'bad piece <redacted>')
+    // what goes with an identity on its line is no secret of its own: later text naming it stays
+    for (const after of ['my-long-world-name-2025.dcl.eth', 'tester']) assert.equal(redact(`/hud_login ${long} ${after}`, `connected to ${after}`), `connected to ${after}`)
+    for (const value of ['moneyLand-world-2025.dcl.eth', 'greyKnight-tester01']) {
+      assert.equal(redact(`/hud_login ${id} --realm ${value}`, `connected to ${value}`), `connected to ${value}`)
+    }
     // the web driver's command line redacts by the same rule
-    const driver = (await import(pathToFileURL(WEB_DRIVER).href)) as { secretOf: (line: string) => string | undefined }
-    assert.deepEqual(lines.map(driver.secretOf), expected)
+    const driver = (await import(pathToFileURL(WEB_DRIVER).href)) as { secretsOf: (line: string) => string[] }
+    const lines = cases.map(([line]) => line)
+    assert.deepEqual(lines.map(driver.secretsOf), lines.map(secretsOf))
   })
 
   test('keeps a /hud_login payload out as well', () => {
-    const error = new ConsoleError('/hud_login eyJhIjoxfQ== --guest --realm https://realm.example', 'profile fetch failed for eyJhIjoxfQ==')
+    const error = new ConsoleError('/hud_login eyJlcGhlbWVyYWxJZGVudGl0eSI6MX0= --guest --realm https://realm.example', 'profile fetch failed for eyJlcGhlbWVyYWxJZGVudGl0eSI6MX0=')
     assert.equal(error.line, '/hud_login <redacted> --guest --realm https://realm.example')
     assert.equal(error.output, 'profile fetch failed for <redacted>')
   })

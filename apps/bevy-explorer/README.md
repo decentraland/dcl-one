@@ -42,6 +42,10 @@ make headless     # headless engine + sidecar -> dist/headless/native
 python3 build-headless.py --target x86_64-unknown-linux-gnu
 ```
 
+Windows has no `make`, and `python3` there is a Microsoft Store stub: run `python build-web.py`
+(`--no-opt` for `web-dev`) from PowerShell or Git Bash, or `make web PYTHON=python` where make is
+installed. It needs Git for Windows: the bindings script runs in Git's bash, never WSL's.
+
 Native dev loop: in the source directory, `just setup-cef`, then `just native-release` or
 `just native-debug`. For packaging, follow the checked-in
 [desktop workflow](../../.github/workflows/bevy-explorer-desktop.yml) and

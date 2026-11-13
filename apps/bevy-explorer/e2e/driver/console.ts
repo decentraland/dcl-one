@@ -11,23 +11,109 @@ export interface Console {
   evidence?(): Promise<{ console: string[]; screenshot: Buffer | undefined }>
 }
 
-/** The credential a line carries: the payload of `/login_identity` or `/hud_login`, an
- *  AuthIdentity (an ephemeral private key and a signed delegation that stays valid for days):
- *  the first word that is neither a flag nor the value of one that takes a value, as a
- *  hand-typed line may put `--guest` or `--name x` first (the commands refuse such a line, but
- *  after it was logged). The web driver's `driver.mjs` has the same rule, which a test keeps in
- *  step. */
-export function secretOf(line: string): string | undefined {
-  const token = /^\s*\/?(?:login_identity|hud_login)\s+(?:--(?:name|look|realm|position)\s+\S+\s+|--\S+\s+)*([^-\s]\S*)/.exec(line)?.[1]
-  // without the quotes a hand-typed line may put around it, so a bare quote of it is found too
-  return token?.replace(/^["']|["']$/g, '')
+/** A whole run of base64 characters (either alphabet). */
+const BASE64_RUN = /(?<![A-Za-z0-9+/_-])[A-Za-z0-9+/_-]{4,}={0,2}/g
+const BASE64_WORD = /^[A-Za-z0-9+/_-]+={0,2}$/
+/** Where an AuthIdentity's JSON may start once its base64 is decoded, as the commands parse it:
+ *  any whitespace, then `{` and a quote. */
+const OBJECT_START = /^\s*\{\s*"/
+/** What makes it one: that object's first key, closed and followed by its colon. */
+const OBJECT_KEY = /^\s*\{\s*"[\x20\x21\x23-\x5b\x5d-\x7e]{1,64}"\s*:/
+/** JSON text: printable ASCII and whitespace. */
+const JSON_TEXT = /^[\t\n\r\x20-\x7e]*$/
+/** Where an identity's words end on its line: at the next word that starts with `-`, a flag or a
+ *  typo of one. */
+const NEXT_FLAG = /\s+-/
+/** The quotes and punctuation a hand-typed line may close a word with. */
+const CLOSERS = /["'`,;)\]]+$/
+/** A payload sent as raw JSON, which the commands refuse after it was logged: the line's first
+ *  `{` to its end, closed or cut. */
+const RAW_JSON = /\{.*/s
+/** Shorter than this, it could be part of other text; an identity is hundreds of characters. */
+const MIN_SECRET = 16
+/** An object's start with no readable key (a typo in each first key) is an identity this long. */
+const LONG_IDENTITY = 128
+
+const decoded = (base64: string): string => Buffer.from(base64, 'base64').toString('latin1')
+
+/** Whether the bytes `length` base64 characters at `offset` of `joined` add are JSON text: a piece
+ *  of the identity as it was meant, not one a typo changed. */
+function jsonTextAt(joined: string, offset: number, length: number): boolean {
+  const from = offset === 0 ? 0 : Math.floor((offset * 3) / 4) + 1
+  return JSON_TEXT.test(decoded(joined.slice(0, offset + length)).slice(from))
 }
 
-/** `text` with the line's credential replaced wherever it appears: a reply, an error or a timeout
- *  may quote the line. */
+/** The identity a line carries from `start`, if one starts there (its base64 `minimum` characters
+ *  long or more, and with its first key readable when `keyed`): the text it spans on the line, up
+ *  to the next flag (wrapped, split, quoted or mistyped, all of it), its pieces of base64, and how
+ *  far into the line they go (a second identity after its padding is found on its own). */
+function identityAt(line: string, start: number, first: string, minimum: number, keyed: boolean): { span: string; pieces: [number, string][]; joined: string; end: number } | undefined {
+  const rest = line.slice(start)
+  const flag = NEXT_FLAG.exec(rest)
+  const span = (flag == null ? rest : rest.slice(0, flag.index)).trimEnd().replace(CLOSERS, '')
+  let joined = first
+  const pieces: [number, string][] = [[0, first]]
+  const word = /\s+(\S+)/y
+  word.lastIndex = first.length
+  let end = first.length
+  for (let next = word.exec(span); next != null; next = word.exec(span)) {
+    const piece = next[1]!.replace(CLOSERS, '')
+    if (joined.endsWith('=') || !BASE64_WORD.test(piece)) break
+    pieces.push([joined.length, piece])
+    joined += piece
+    end = word.lastIndex
+  }
+  if (joined.length < minimum || (keyed && !OBJECT_KEY.test(decoded(joined.slice(0, 128))))) return undefined
+  return { span, pieces, joined, end: start + end }
+}
+
+/** The credentials a line carries: the payload of `/login_identity` or `/hud_login`, an
+ *  AuthIdentity (an ephemeral private key and a signed delegation that stays valid for days),
+ *  found by what it decodes to wherever a hand-typed line puts it: after flags, as a flag's value,
+ *  quoted, glued to other text, twice, wrapped, split or mistyped, or as raw JSON (the commands
+ *  refuse such a line, but after it was logged). Once one starts, the line is a secret up to the
+ *  next flag, so no piece of it is left; each piece is one of its own too, when its bytes are JSON
+ *  text, for text that quotes it alone. Nothing else is one, so an empty or short word, or a
+ *  realm's name, never turns lines into `<redacted>`. The web driver's `driver.mjs` has the same
+ *  rule, which a test keeps in step. */
+export function secretsOf(line: string): string[] {
+  if (!/^\s*\/?(?:login_identity|hud_login)(?:\s|$)/.test(line)) return []
+  const secrets = new Set<string>()
+  let covered = 0
+  for (const { 0: run, index } of line.matchAll(BASE64_RUN)) {
+    if (index < covered) continue
+    // the run holds an identity when any object's start in it has its first key readable; it then
+    // starts at the run's first object start, so a typo in the outer key leaves nothing before
+    // the inner object in clear. With no key readable (a typo in each), a long one is one still.
+    let first = -1
+    let keyed = false
+    for (let at = 0; at + 4 <= run.length && !keyed; at++) {
+      if (!OBJECT_START.test(decoded(run.slice(at, at + 64)))) continue
+      if (first < 0) first = at
+      keyed = identityAt(line, index + at, run.slice(at), MIN_SECRET, true) != null
+    }
+    if (first < 0) continue
+    const identity = identityAt(line, index + first, run.slice(first), keyed ? MIN_SECRET : LONG_IDENTITY, false)
+    if (identity == null) continue
+    secrets.add(identity.span)
+    for (const [offset, piece] of identity.pieces) if (piece.length >= MIN_SECRET && jsonTextAt(identity.joined, offset, piece.length)) secrets.add(piece)
+    covered = identity.end
+  }
+  const raw = RAW_JSON.exec(line)?.[0].trimEnd()
+  if (raw !== undefined && raw.length >= MIN_SECRET) secrets.add(raw)
+  return [...secrets]
+}
+
+/** `text` with each of `secrets` replaced wherever it appears, the longest first, so one that
+ *  holds another is never left in part. */
+export function replaceSecrets(secrets: Iterable<string>, text: string): string {
+  return [...secrets].sort((a, b) => b.length - a.length).reduce((out, secret) => out.split(secret).join('<redacted>'), text)
+}
+
+/** `text` with the line's credentials replaced wherever they appear: a reply, an error or a
+ *  timeout may quote the line. */
 export function redact(line: string, text: string): string {
-  const secret = secretOf(line)
-  return secret === undefined ? text : text.split(secret).join('<redacted>')
+  return replaceSecrets(secretsOf(line), text)
 }
 
 /** The line as it may be logged. */
