@@ -24,10 +24,13 @@ use std::ops::Range;
 /// `(1, 1, 1, w)`. URP (`ColorUtils.PrepareShadowsMidtonesHighlights`) adds `4w` to the rgb
 /// multiplier and the LUT (`LutBuilderHdr.shader`) multiplies the colour by it, weighted by
 /// `1 - smoothstep(shadowsStart, shadowsEnd, luma)`; so it is a gain on dark pixels, not an
-/// additive lift. bevy weights its shadow band as a near-step at `GRADING_MIDTONES_RANGE.start`
-/// where URP tapers from 0, so the band just under 0.3 brightens slightly more than in Unity.
+/// additive lift.
 pub const GRADING_SHADOWS_WEIGHT: f32 = 0.098987624;
-pub const GRADING_MIDTONES_RANGE: Range<f32> = 0.3..0.55;
+/// unity: the same override's limits: shadows from 0 to 0.3, highlights from 0.55. bevy fades
+/// its shadows section out in a straight line from 0.1 under the range's start to 0.1 over it
+/// (`sectional_color_grading`), so the start is the middle of Unity's fade: the two weights
+/// then differ by under 0.08 at any brightness.
+pub const GRADING_MIDTONES_RANGE: Range<f32> = 0.15..0.55;
 
 pub fn unity_color_grading() -> ColorGrading {
     ColorGrading {

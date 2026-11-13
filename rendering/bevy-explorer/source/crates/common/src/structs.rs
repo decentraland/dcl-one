@@ -2045,6 +2045,59 @@ mod tests {
         assert_eq!(g.global.midtones_range, GRADING_MIDTONES_RANGE);
     }
 
+    const TONEMAPPING_SHADER: &str = include_str!(concat!(
+        env!("DCL_ONE_ROOT"),
+        "/rendering/bevy-explorer/bevy/crates/bevy_core_pipeline/src/tonemapping/tonemapping_shared.wgsl"
+    ));
+
+    /// bevy_core_pipeline's `sectional_color_grading` (tonemapping_shared.wgsl): the weight of
+    /// the shadows section for a colour whose channels average `level`.
+    fn bevy_shadows_weight(level: f32) -> f32 {
+        const LEVEL_MARGIN: f32 = 0.1;
+        let midtones = (level - GRADING_MIDTONES_RANGE.start) / (2.0 * LEVEL_MARGIN) + 0.5;
+        1.0 - midtones.clamp(0.0, 1.0)
+    }
+
+    /// The shader the function above stands for: the shadows section fades into the midtones.
+    /// With the fade given to the highlights instead, the shadow gain ends at a hard step, and
+    /// a pixel just above the step comes out darker than one just below it: a dark rim along
+    /// every shadow edge, and blotches wherever a shaded surface straddles the step.
+    #[test]
+    fn bevy_fades_the_shadows_section_into_the_midtones() {
+        assert!(TONEMAPPING_SHADER.contains("const LEVEL_MARGIN: f32 = 0.1;"));
+        let fade = TONEMAPPING_SHADER
+            .split("level < midtone_range.x + LEVEL_MARGIN")
+            .nth(1)
+            .and_then(|rest| rest.split("} else if").next())
+            .expect("the shadows to midtones fade");
+        assert!(fade.contains("levels.x = 1.0 - levels.y;"), "{fade}");
+    }
+
+    #[test]
+    fn grading_shadow_band_follows_unity() {
+        // urp: LutBuilderHdr.shader, `1 - smoothstep(shadowsStart, shadowsEnd, luma)` with the
+        // profile's limits, 0 and 0.3
+        let unity = |level: f32| {
+            let t = (level / 0.3).clamp(0.0, 1.0);
+            1.0 - t * t * (3.0 - 2.0 * t)
+        };
+        for step in 0..=100 {
+            let level = step as f32 / 100.0;
+            let (ours, theirs) = (bevy_shadows_weight(level), unity(level));
+            assert!((ours - theirs).abs() < 0.08, "{level}: {ours} vs {theirs}");
+        }
+    }
+
+    #[test]
+    fn grading_never_darkens_a_brighter_pixel() {
+        let gain = unity_color_grading().shadows.gain;
+        let graded = |level: f32| level * (1.0 + (gain - 1.0) * bevy_shadows_weight(level));
+        for step in 0..1000 {
+            let (darker, brighter) = (step as f32 / 1000.0, (step + 1) as f32 / 1000.0);
+            assert!(graded(darker) < graded(brighter), "{darker}");
+        }
+    }
+
     /// bevy_core_pipeline's `compute_blend_factor` (bloom/mod.rs): the blend constant of the
     /// upsample pass that adds mip `mip` of `max_mip` into the finer one; mip 0 is the composite.
     fn bevy_bloom_blend(b: &bevy::core_pipeline::bloom::Bloom, mip: f32, max_mip: f32) -> f32 {
