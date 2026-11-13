@@ -408,7 +408,8 @@ CREATE TABLE shop.nft_contract (
 -- nftAddress for the three legacy order kinds, whose emitter is the
 -- marketplace); `amount` is the order price or the v1 issued id; `detail`
 -- the legacy order id, the v1 wearable id, the registered subdomain or the
--- Update's data string.
+-- Update's data string; `tx_hash` the transaction of an `order_successful`
+-- (NULL on other kinds and on rows indexed before it was recorded).
 CREATE TABLE shop.nft_event (
     network text NOT NULL,
     block_number bigint NOT NULL,
@@ -423,6 +424,7 @@ CREATE TABLE shop.nft_event (
     amount numeric(78,0),
     expires_at bigint,
     detail text,
+    tx_hash varchar(66),
     PRIMARY KEY (network, block_number, log_index),
     CONSTRAINT nft_event_network_known CHECK (network IN ('ethereum', 'matic')),
     CONSTRAINT nft_event_kind_known CHECK (kind IN (
