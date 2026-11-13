@@ -147,7 +147,7 @@ afterAll(async () => {
   await preparation?.catch(() => undefined)
   const opened = await startup?.catch(() => undefined)
   await releaseHarness({ session: opened, server, scratch })
-})
+}, 30_000)
 
 describe('when a public NavBar composes app-owned controls in Chromium', () => {
   for (const width of [390, 768, 1440]) {
@@ -283,7 +283,9 @@ describe('when a public NavBar composes app-owned controls in Chromium', () => {
           })
         }
         if (width < 1024) {
+          await evaluate("document.documentElement.style.scrollbarGutter = 'auto'")
           await click('button[aria-label="Open menu"]')
+          expect(await evaluate('document.documentElement.clientWidth')).toBe(width)
           const measure = await evaluate(
             `(()=>{const d=document.querySelector('[role=dialog]'),layer=d.parentElement,r=d.getBoundingClientRect(),l=layer.getBoundingClientRect();return{dialog:{x:r.x,y:r.y,width:r.width,height:r.height},layer:{x:l.x,y:l.y,width:l.width,height:l.height},background:getComputedStyle(d).backgroundColor,bottomInside:d.contains(document.elementFromPoint(innerWidth-1,innerHeight-1)),bottomBackdrop:document.elementFromPoint(1,innerHeight-1)===layer.firstElementChild}})()`
           )
