@@ -206,6 +206,11 @@ class DevTest(unittest.TestCase):
         env = dev.pulse_env(self.config, self.state / 'cert.pem', self.state / 'key.pem')
         self.assertEqual(env['COMMS_MODERATOR_TOKEN'], token)
         self.assertEqual(env['PULSE_BANS_URL'], f"http://127.0.0.1:{self.config['port']}/comms-gatekeeper/bans")
+        self.assertNotIn('AUTHORITATIVE_SERVER_ADDRESS', env)
+        host = '0x1111111111111111111111111111111111111111'
+        hosted = dev.pulse_env({**self.config, 'AUTHORITATIVE_SERVER_ADDRESS': host},
+                               self.state / 'cert.pem', self.state / 'key.pem')
+        self.assertEqual(hosted['AUTHORITATIVE_SERVER_ADDRESS'], host)
         older = {k: v for k, v in self.config.items() if k != 'MODERATOR_TOKEN'}
         dev.save_json(dev.SETTINGS, older)
         self.assertEqual({k: dev.settings()[k] for k in older}, older, 'a stack from before the token keeps its secrets')
