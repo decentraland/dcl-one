@@ -8,7 +8,8 @@ const CUSTOM_HEADER = 'X-IPFS';
 // Stand-in origin for entries shared across content servers. `.invalid` is reserved, so no real
 // server's own entries can land on these keys.
 const SHARED_ORIGIN = 'https://shared.invalid';
-// Set on responses answered from the cache.
+// Set on responses answered from the cache, to the key the response came from: the engine records
+// that entry as used.
 const CACHED_HEADER = 'X-IPFS-Cached';
 
 // The scene editor's preview realm (PREVIEW_REALM.md): urls under <scope>preview/ are answered
@@ -131,7 +132,8 @@ const CONTENT_CACHE_TOUCH = 'content-cache-touch';
 const CONTENT_CACHE_INDEX_DB = 'dcl-content-cache-index-v1';
 const CONTENT_CACHE_INDEX_STORE = 'lastUsed';
 // Only this many keys of a message are looked at: the engine sends at most 1024. A key is an
-// http(s) url of at most this many characters, as the engine builds them.
+// http(s) url of at most this many characters, as the engine builds them. The engine does not send
+// longer keys (crates/ipfs/src/web_cache.rs `USED_KEY_MAX`); such entries rank as never used.
 const CONTENT_CACHE_TOUCH_MAX = 4096;
 const CONTENT_CACHE_KEY_MAX = 2048;
 // The index is an aid: an operation on it that has not finished by then is given up, so a trim
@@ -246,8 +248,8 @@ function withinIndexTimeout(promise) {
 function finished(transaction) {
     return new Promise((resolve, reject) => {
         transaction.oncomplete = () => resolve();
-        transaction.onerror = () => reject(transaction.error);
-        transaction.onabort = () => reject(transaction.error);
+        transaction.onerror = () => reject(transaction.error ?? new Error('content cache index transaction failed'));
+        transaction.onabort = () => reject(transaction.error ?? new Error('content cache index transaction failed'));
     });
 }
 
@@ -411,7 +413,8 @@ async function cacheFirstStrategy(request) {
     const cachedResponse = sharedResponse ?? (await cache.match(originKey));
     if (cachedResponse) {
         const headers = new Headers(cachedResponse.headers);
-        headers.set(CACHED_HEADER, '1');
+        // the engine records this key as used
+        headers.set(CACHED_HEADER, sharedResponse ? sharedKey : originKey);
         return new Response(cachedResponse.body, {
             status: cachedResponse.status,
             statusText: cachedResponse.statusText,

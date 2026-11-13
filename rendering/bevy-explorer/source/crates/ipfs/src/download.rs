@@ -423,7 +423,12 @@ impl IpfsIo {
 
         #[cfg(target_arch = "wasm32")]
         {
-            sw_cached = fetched.headers.contains_key(web_cache::CACHED_HEADER);
+            let served = fetched.headers.get(web_cache::CACHED_HEADER);
+            sw_cached = served.is_some();
+            // a hit the worker answered is a use too
+            if let Some(key) = served.and_then(|value| value.to_str().ok()) {
+                web_cache::note_served(&remote, key);
+            }
         }
 
         #[cfg(not(target_arch = "wasm32"))]

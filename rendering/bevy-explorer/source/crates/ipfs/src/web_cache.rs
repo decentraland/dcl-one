@@ -43,6 +43,13 @@ fn names(url: &str, hash: &str) -> bool {
     keys(url).is_some_and(|[shared, _]| shared == format!("{SHARED_ORIGIN}/{hash}"))
 }
 
+// The key a response the worker answered from its cache came from, as its `CACHED_HEADER` value
+// names it: one of `url`'s two keys, else none (an older worker sends `1`).
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+fn served_key(url: &str, header: &str) -> Option<String> {
+    keys(url)?.into_iter().find(|key| key == header)
+}
+
 /// The most the content cache keeps on web, whatever `AppConfig::cache_bytes` says.
 pub const WEB_CACHE_CAP_BYTES: u64 = 1 << 30;
 const MIB: u64 = 1 << 20;
@@ -153,6 +160,17 @@ extern "C" {
     fn page_content_cache_touch(keys: &js_sys::Array) -> js_sys::Promise;
 }
 
+/// Whether the uses waiting are sent ahead of a trim: not ahead of a quota trim, which a write is
+/// waiting on and which the worker would queue behind them.
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+fn sends_uses_before_trim(quota_error: bool) -> bool {
+    !quota_error
+}
+
+// The longest key the worker records: it drops longer ones. MUST match the worker's
+// `CONTENT_CACHE_KEY_MAX`. Such entries are never recorded, so they rank as unused.
+const USED_KEY_MAX: usize = 2048;
+
 // When this many distinct keys are waiting they are sent at once, so the set stays small.
 const USED_KEYS_FLUSH_AT: usize = 1024;
 
@@ -161,9 +179,10 @@ const USED_KEYS_FLUSH_AT: usize = 1024;
 struct UsedKeys(std::collections::HashSet<String>);
 
 impl UsedKeys {
-    /// Notes `key`; true when the set is full and should be flushed.
+    /// Notes `key`, unless the worker would drop it; true when the set is full and should be
+    /// flushed.
     fn note(&mut self, key: &str) -> bool {
-        if !self.0.contains(key) {
+        if key.len() <= USED_KEY_MAX && !self.0.contains(key) {
             self.0.insert(key.to_owned());
         }
         self.0.len() >= USED_KEYS_FLUSH_AT
@@ -185,8 +204,8 @@ pub use io::*;
 mod io {
     use super::{
         crosses_interval, forced_trim_allowed, keys, names, page_content_cache_touch,
-        page_content_cache_trim, trim_interval, TrimReport, UsedKeys, WebCacheState,
-        WEB_CACHE_CAP_BYTES,
+        page_content_cache_trim, sends_uses_before_trim, served_key, trim_interval, TrimReport,
+        UsedKeys, WebCacheState, WEB_CACHE_CAP_BYTES,
     };
     use js_sys::Uint8Array;
     use std::sync::{
@@ -345,9 +364,12 @@ mod io {
     /// Asks the service worker for a trim to the current cap and keeps its report.
     pub async fn request_trim(quota_error: bool) -> Option<TrimReport> {
         // posted first, not awaited: the page and the worker keep arrival order, so the trim sees
-        // these uses, and a write waiting on a quota trim never waits on them
-        if let Some(touch) = post_used() {
-            wasm_bindgen_futures::spawn_local(log_unrecorded(touch));
+        // these uses. Not before a quota trim: a write waits on it, and the worker would queue it
+        // behind the uses (the next flush sends them).
+        if sends_uses_before_trim(quota_error) {
+            if let Some(touch) = post_used() {
+                wasm_bindgen_futures::spawn_local(log_unrecorded(touch));
+            }
         }
         let cap = CAP_BYTES.load(Ordering::Relaxed) as f64;
         let reply = JsFuture::from(page_content_cache_trim(cap, quota_error))
@@ -443,6 +465,13 @@ mod io {
         })
     }
 
+    /// Records the entry the worker answered `url` from (its `CACHED_HEADER` value) as used.
+    pub fn note_served(url: &str, header: &str) {
+        if let Some(key) = served_key(url, header) {
+            note_used(&key);
+        }
+    }
+
     fn note_used(key: &str) {
         let full = USED
             .lock()
@@ -465,8 +494,17 @@ mod io {
     }
 
     async fn log_unrecorded(touch: js_sys::Promise) {
-        if let Err(e) = JsFuture::from(touch).await {
-            bevy::log::debug!("content cache uses not recorded: {e:?}");
+        match JsFuture::from(touch).await {
+            Err(e) => bevy::log::debug!("content cache uses not recorded: {e:?}"),
+            // the worker answers a failed task with `{ error }`
+            Ok(reply) => {
+                if let Some(error) = js_sys::Reflect::get(&reply, &"error".into())
+                    .ok()
+                    .and_then(|e| e.as_string())
+                {
+                    bevy::log::debug!("content cache uses not recorded: {error}");
+                }
+            }
         }
     }
 
@@ -666,5 +704,33 @@ mod tests {
             serde_json::from_str(&state_json(&state).to_string()).unwrap();
         assert!(json["indexedEntries"].is_null());
         assert!(json["unavailable"]["indexedEntries"].is_string());
+    }
+
+    #[test]
+    fn the_served_key_is_one_of_the_urls_keys() {
+        let shared = "https://shared.invalid/bafkreihash";
+        assert_eq!(
+            served_key("https://peer.example/contents/bafkreihash", shared),
+            Some(shared.to_owned())
+        );
+        let own = "https://worlds.example/contents/bafkreihash?v=1";
+        assert_eq!(served_key(own, own), Some(own.to_owned()));
+        assert_eq!(served_key(own, "1"), None);
+        assert_eq!(served_key(own, "https://shared.invalid/other"), None);
+    }
+
+    #[test]
+    fn a_quota_trim_does_not_send_uses_ahead_of_it() {
+        assert!(sends_uses_before_trim(false));
+        assert!(!sends_uses_before_trim(true));
+    }
+
+    #[test]
+    fn a_key_too_long_to_record_is_not_noted() {
+        let mut used = UsedKeys::default();
+        used.note(&"k".repeat(USED_KEY_MAX + 1));
+        assert_eq!(used.len(), 0);
+        used.note(&"k".repeat(USED_KEY_MAX));
+        assert_eq!(used.len(), 1);
     }
 }

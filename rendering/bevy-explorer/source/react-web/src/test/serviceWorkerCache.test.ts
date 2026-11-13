@@ -39,7 +39,16 @@ function serviceWorker(seeded: Record<string, string> = {}) {
     const response = await reply!
     return { body: await response.text(), cached: response.headers.has('X-IPFS-Cached') }
   }
-  return { asset, network, keys: () => [...store.keys()] }
+  // the value of the header that names the entry a request was answered from
+  const servedFrom = async (url: string): Promise<string | null> => {
+    let reply: Promise<Response> | undefined
+    listeners.fetch({
+      request: new Request(url, { headers: { 'X-IPFS': '1' } }),
+      respondWith: (r: Promise<Response>) => (reply = r)
+    })
+    return (await reply!).headers.get('X-IPFS-Cached')
+  }
+  return { asset, servedFrom, network, keys: () => [...store.keys()] }
 }
 
 describe('service worker asset cache', () => {
@@ -92,6 +101,14 @@ describe('service worker asset cache', () => {
   it('keys a request by where its path ends, not by what follows a `#`', async () => {
     const { asset } = serviceWorker({ [`${SHARED}/bafkreitarget`]: 'target' })
     expect(await asset(`https://evil.example/contents/bafkreitarget#${path}`)).toEqual({ body: 'target', cached: true })
+  })
+
+  it('names the entry it answered from in the cached header', async () => {
+    const shared = serviceWorker({ [`${SHARED}/${hash}`]: 'checked' })
+    expect(await shared.servedFrom(`https://peer.example${path}`)).toBe(`${SHARED}/${hash}`)
+    const own = `https://peer.example${path}?v=1`
+    const origin = serviceWorker({ [own]: 'peer' })
+    expect(await origin.servedFrom(own)).toBe(own)
   })
 
   it('answers nothing but a GET from an entry', async () => {
