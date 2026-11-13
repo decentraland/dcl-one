@@ -453,7 +453,7 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
           )}
           {chrome && <Sidebar session={session} onViewProfile={viewMyProfile} />}
           {/* Not gated by `chrome`: mounted while a menu page, photo mode or the editor is open. */}
-          <DebugPanelHost session={session} belowMenuBar={pageOpen} />
+          <DebugPanelHost session={session} underPage={pageOpen} />
           {chrome && <VoiceChatPanel />}
           {chrome && <SceneVoiceChatBanner />}
           {chrome && (

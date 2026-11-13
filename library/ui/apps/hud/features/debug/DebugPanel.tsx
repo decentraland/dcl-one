@@ -303,12 +303,12 @@ function DebugPanel({ run, initial, className }: { run: RunCommand; initial: str
   )
 }
 
-/** Renders the open panel outside the popup stack: no backdrop, no focus trap. `belowMenuBar`
- *  starts it under a menu page's top bar. */
-export function DebugPanelHost({ session, belowMenuBar = false }: { session: EngineSession; belowMenuBar?: boolean }) {
+/** Renders the open panel outside the popup stack: no backdrop, no focus trap. `underPage`
+ *  stacks it below the lobby and menu pages, keeping it open. */
+export function DebugPanelHost({ session, underPage = false }: { session: EngineSession; underPage?: boolean }) {
   const { state, run, developmentBuild } = useDebugPanel(session)
   let className = styles.panel
   if (developmentBuild) className += ` ${styles.besideLauncher}`
-  if (belowMenuBar) className += ` ${styles.belowMenuBar}`
+  if (underPage) className += ` ${styles.underPage}`
   return state && <DebugPanel key={state.opened} run={run} initial={state.target} className={className} />
 }

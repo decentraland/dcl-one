@@ -4966,7 +4966,7 @@
     },
     {
       "path": "library/ui/apps/hud/App.tsx",
-      "sha256": "95b704cb89fcbdc292d6b63bd781e0fa7c6a6a0fe97584eac64b168531c66935"
+      "sha256": "20e1a842a78cefb76ae9ae067bba797ad7ee044d028027aba521b2230c0e76d5"
     },
     {
       "path": "library/ui/apps/hud/assets/backpack/add-gradient.webp",
@@ -6346,11 +6346,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/debug/DebugPanel.module.css",
-      "sha256": "50ecf1aef042482343375bf8ff681006c5043a6223ec54256d6f53ded014858d"
+      "sha256": "9633c7c38bc527a050139f2676a76a10d8a9828b0c55bb5294ac4068f9649e81"
     },
     {
       "path": "library/ui/apps/hud/features/debug/DebugPanel.tsx",
-      "sha256": "7dfdb496b93bff299789499442e3b1334bd73e63b5df4c1be4057bfa8b76d55a"
+      "sha256": "139cf143bb5ca5e8385fe12a1c5237d72bfd94828da99934a1a6477b3d94f406"
     },
     {
       "path": "library/ui/apps/hud/features/debug/FpsMeter.module.css",
