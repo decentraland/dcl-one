@@ -61,16 +61,7 @@ export function ProfileErrorBoundary() {
 
   useEffect(
     () => () => {
-      // A departing boundary releases its failed read, not newer data or another owner's request.
-      void client.resetQueries({
-        queryKey: profileKeys.profile(address),
-        exact: true,
-        type: "inactive",
-        predicate: ({ state }) =>
-          state.status === "error" &&
-          state.data === undefined &&
-          state.fetchStatus === "idle",
-      });
+      void client.resetQueries({ queryKey: profileKeys.profile(address), exact: true });
     },
     [client, address],
   );
