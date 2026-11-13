@@ -1,0 +1,74 @@
+:global(body) {
+  margin: 0;
+}
+@layer dcl.components {
+  .canvas {
+    composes: text626f64792f6d64 from '../../foundations/typography/text-styles.module.css';
+    min-height: 100vh;
+    background: var(--dcl-bg-page);
+    color: var(--dcl-text-primary);
+  }
+  .canvas p {
+    margin: 0;
+    padding: 16px;
+  }
+  .search,
+  .sort,
+  .credits,
+  .icon {
+    font: inherit;
+  }
+  .search {
+    box-sizing: border-box;
+    width: 100%;
+    height: 44px;
+    border: 1px solid var(--dcl-transparencies-white-20);
+    border-radius: 24px;
+    padding: 8px 16px;
+    background: var(--dcl-transparencies-white-10);
+    color: var(--dcl-text-primary);
+  }
+  .sort,
+  .credits,
+  .icon {
+    box-sizing: border-box;
+    height: 44px;
+    border: 0;
+    border-radius: 8px;
+    color: var(--dcl-text-primary);
+    background: var(--dcl-transparencies-black-40);
+  }
+  .sort {
+    width: 125px;
+  }
+  .credits {
+    width: 141px;
+  }
+  .icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    padding: 0;
+    width: 44px;
+  }
+  @media (max-width: 767px) {
+    .credits {
+      display: none;
+    }
+    .sort {
+      width: 104px;
+    }
+  }
+}
+
+@layer dcl.components {
+  .canvas[data-external-selection] {
+    min-height: 2000px;
+  }
+  .outside {
+    position: fixed;
+    bottom: 16px;
+    right: 16px;
+  }
+}

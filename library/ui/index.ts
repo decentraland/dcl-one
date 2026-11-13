@@ -22,3 +22,6 @@ export { Tabs } from './components/Tabs/Tabs'
 export type { TabsProps } from './components/Tabs/Tabs'
 export { InputExplorerNames } from './components/InputExplorerNames/InputExplorerNames'
 export type { InputExplorerNamesProps } from './components/InputExplorerNames/InputExplorerNames'
+
+export { TabsBar } from './components/TabsBar/TabsBar'
+export type { TabsBarProps, TabsBarItem, TabsBarLinkProps } from './components/TabsBar/TabsBar'
