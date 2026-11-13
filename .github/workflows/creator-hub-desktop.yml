@@ -1,27 +1,64 @@
 name: Creator Hub
 on:
   workflow_call:
+    secrets:
+      CREATOR_HUB_RELEASES_APP_PRIVATE_KEY:
+        required: false
+      ES_PASSWORD:
+        required: false
+      ES_TOTP_SECRET:
+        required: false
+      ES_USERNAME:
+        required: false
+      MACOS_CSC_KEY_PASSWORD:
+        required: false
+      MACOS_CSC_LINK:
+        required: false
+      MACOS_NOTARIZATION_APPLE_ID:
+        required: false
+      MACOS_NOTARIZATION_PWD:
+        required: false
+      MACOS_NOTARIZATION_TEAM_ID:
+        required: false
+      SDK_TEAM_AWS_REGION:
+        required: false
+      SDK_TEAM_S3_BASE_URL:
+        required: false
+      SDK_TEAM_S3_BUCKET:
+        required: false
+      SENTRY_AUTH_TOKEN:
+        required: false
+      SENTRY_DSN:
+        required: false
+      VITE_ALLOWED_EXTERNAL_ORIGINS:
+        required: false
+      VITE_SEGMENT_CREATORS_HUB_API_KEY:
+        required: false
+      VITE_SEGMENT_INSPECTOR_API_KEY:
+        required: false
+      WINDOWS_CREDENTIAL_ID_SIGNER:
+        required: false
     inputs:
       dry-run:
-        description: 'Compiles the app but not upload artifacts to distribution server'
+        description: "Compiles the app but not upload artifacts to distribution server"
         default: false
         required: false
         type: boolean
       inspector_s3_bucket_key:
-        description: 'S3 bucket key for the inspector package'
+        description: "S3 bucket key for the inspector package"
         required: true
         type: string
       inspector_version:
-        description: 'Version of the inspector package'
+        description: "Version of the inspector package"
         required: true
         type: string
       inspector_changed:
-        description: 'Whether the version of the inspector package has changed'
+        description: "Whether the version of the inspector package has changed"
         required: true
         type: boolean
     outputs:
       version:
-        description: 'Version of the installers this run built (and, on main, published)'
+        description: "Version of the installers this run built (and, on main, published)"
         value: ${{ jobs.build.outputs.version }}
 
 concurrency:
@@ -30,7 +67,7 @@ concurrency:
 
 defaults:
   run:
-    shell: 'bash'
+    shell: "bash"
     working-directory: apps/creator-hub
 
 jobs:
@@ -39,7 +76,7 @@ jobs:
       # One leg failing must not show up as a cancellation of the other.
       fail-fast: false
       matrix:
-        os: [ macos-latest, windows-latest ]
+        os: [macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     # Signing, notarization and the release-repo token live in the main-only environment.
     environment: ${{ github.ref == 'refs/heads/main' && 'creator-hub-release' || '' }}
@@ -64,13 +101,13 @@ jobs:
       - uses: ./.github/actions/creator-hub-setup
         id: setup
         with:
-          cache-electron: 'true'
+          cache-electron: "true"
 
       - name: install
         if: steps.setup.outputs.node-modules-cache-hit != 'true'
         run: npm i --silent && make install-creator-hub
         env:
-          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
 
       - name: install inspector
         working-directory: apps/creator-hub/packages/creator-hub
@@ -104,7 +141,7 @@ jobs:
       - name: build
         run: make build-creator-hub
         env:
-          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
           NODE_OPTIONS: "--max-old-space-size=8192"
           MODE: ${{ !inputs.dry-run && 'production' || 'development' }}
           VITE_SEGMENT_CREATORS_HUB_API_KEY: ${{ secrets.VITE_SEGMENT_CREATORS_HUB_API_KEY }}
@@ -184,7 +221,7 @@ jobs:
         if: ${{github.ref == 'refs/heads/main' && matrix.os == 'windows-latest' && !inputs.dry-run}}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: 'SSLcom/esigner-codesign'
+          repository: "SSLcom/esigner-codesign"
           # Its dist/index.js runs with the eSigner credentials and the release token, so it is
           # pinned like any third-party action (default-branch head on 2025-06-23).
           ref: b7f8ff36fc0de8690fbbab8e5b4421d29802f747
@@ -199,7 +236,7 @@ jobs:
           max_attempts: 6
           retry_wait_seconds: 15
           retry_on: error
-          shell: 'bash'
+          shell: "bash"
           command: cd apps/creator-hub && npx electron-builder --project packages/creator-hub --config electron-builder.cjs --config.extraMetadata.version=${{ steps.version.outputs.version }} ${{ matrix.os == 'macos-latest' && format('--config.mac.notarize={0}', true) || '' }} --publish ${{ inputs.dry-run && 'never' || 'always' }}
         env:
           # Disable hard links to avoid issues with npm
@@ -314,7 +351,7 @@ jobs:
         id: fc
         with:
           issue-number: ${{ github.event.pull_request.number }}
-          comment-author: 'github-actions[bot]'
+          comment-author: "github-actions[bot]"
           body-includes: Test this pull request on ${{ matrix.os }}
 
       - name: Create or update comment

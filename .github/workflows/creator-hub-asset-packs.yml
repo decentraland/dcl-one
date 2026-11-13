@@ -1,6 +1,15 @@
 name: Asset Packs
 on:
   workflow_call:
+    secrets:
+      BUILDER_ITEMS_S3_BUCKET_PRD:
+        required: false
+      SDK_TEAM_AWS_REGION:
+        required: false
+      SDK_TEAM_S3_BASE_URL:
+        required: false
+      SDK_TEAM_S3_BUCKET:
+        required: false
     outputs:
       s3_bucket_key:
         description: "S3 bucket key for the published Asset Packs package"
@@ -14,7 +23,7 @@ on:
 
 defaults:
   run:
-    shell: 'bash'
+    shell: "bash"
     working-directory: apps/creator-hub
 
 jobs:
@@ -74,7 +83,7 @@ jobs:
         if: steps.setup.outputs.node-modules-cache-hit != 'true'
         run: npm i --silent && make install-asset-packs
         env:
-          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
 
       - name: validate
         run: make validate-asset-packs
@@ -109,7 +118,7 @@ jobs:
         if: steps.setup.outputs.node-modules-cache-hit != 'true'
         run: npm i --silent && make install-asset-packs
         env:
-          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
 
       - name: build
         run: make build-asset-packs
@@ -144,11 +153,11 @@ jobs:
           file-path: apps/creator-hub/packages/asset-packs/${{ steps.npm-pack.outputs.pack-filename }}
           bucket: ${{ secrets.SDK_TEAM_S3_BUCKET }}
           region: ${{ secrets.SDK_TEAM_AWS_REGION }}
-          prefix: 'creator-hub/branch/${{ github.head_ref || github.ref }}/@dcl/asset-packs'
+          prefix: "creator-hub/branch/${{ github.head_ref || github.ref }}/@dcl/asset-packs"
           role-to-assume: ${{ vars.CREATOR_HUB_SDK_BUCKET_ROLE_ARN }}
-          content-type: 'application/gzip'
-          acl: 'public-read'
-          cache-control: 'max-age=0,private'
+          content-type: "application/gzip"
+          acl: "public-read"
+          cache-control: "max-age=0,private"
 
       - name: publish to npm registry
         if: ${{ github.ref == 'refs/heads/main' }}
@@ -156,8 +165,8 @@ jobs:
         id: npm-publish
         with:
           working-directory: apps/creator-hub/packages/asset-packs
-          initial-tag: 'latest'
-          access: 'public'
+          initial-tag: "latest"
+          access: "public"
 
   upload:
     runs-on: ubuntu-latest
@@ -177,7 +186,7 @@ jobs:
         if: steps.setup.outputs.node-modules-cache-hit != 'true'
         run: npm i --silent && make install-asset-packs
         env:
-          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
 
       - name: build
         run: make build-asset-packs
@@ -207,7 +216,7 @@ jobs:
         id: fc
         with:
           issue-number: ${{ github.event.pull_request.number }}
-          comment-author: 'github-actions[bot]'
+          comment-author: "github-actions[bot]"
           body-includes: Test @dcl/asset-packs package
 
       - name: create or update comment
@@ -247,11 +256,11 @@ jobs:
         with:
           previous_version: ${{ needs.version.outputs.previous_version }}
           current_version: ${{ needs.version.outputs.version }}
-          paths: 'apps/creator-hub/packages/asset-packs'
-          section_names: 'Asset Packs Changes'
-          release_title: '@dcl/asset-packs'
+          paths: "apps/creator-hub/packages/asset-packs"
+          section_names: "Asset Packs Changes"
+          release_title: "@dcl/asset-packs"
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          tag_prefix: '@dcl/asset-packs@'
+          tag_prefix: "@dcl/asset-packs@"
 
       - name: update release description
         if: ${{ github.ref == 'refs/heads/main' }}

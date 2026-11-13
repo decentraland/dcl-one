@@ -1,20 +1,23 @@
 name: Drop pre-release
 on:
   workflow_call:
+    secrets:
+      CREATOR_HUB_RELEASES_APP_PRIVATE_KEY:
+        required: false
     inputs:
       dry-run:
-        description: 'Compiles the app but not upload artifacts to distribution server'
+        description: "Compiles the app but not upload artifacts to distribution server"
         default: false
         required: false
         type: boolean
       unfinished-only:
-        description: 'Delete only pre-releases with no creator-hub@X.Y.Z tag in this repository'
+        description: "Delete only pre-releases with no creator-hub@X.Y.Z tag in this repository"
         default: false
         required: false
         type: boolean
       keep:
-        description: 'Version of a pre-release that is never deleted (the one this run published)'
-        default: ''
+        description: "Version of a pre-release that is never deleted (the one this run published)"
+        default: ""
         required: false
         type: string
 
@@ -26,7 +29,7 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 defaults:
   run:
-    shell: 'bash'
+    shell: "bash"
     working-directory: apps/creator-hub
 jobs:
   drop:
@@ -55,7 +58,7 @@ jobs:
         uses: ./.github/actions/creator-hub-delete-prereleases
         with:
           pattern: '^[0-9]+\.[0-9]+\.[0-9]+$'
-          dry_run: 'false'
+          dry_run: "false"
           keep: ${{ inputs.keep }}
           unfinished_only: ${{ inputs.unfinished-only }}
           repository: decentraland/creator-hub

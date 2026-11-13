@@ -11,9 +11,9 @@ on:
   push:
     branches: [main]
     paths:
-      - 'apps/creator-hub/**'
-      - '.github/workflows/creator-hub-*'
-      - '.github/actions/creator-hub-*/**'
+      - "apps/creator-hub/**"
+      - ".github/workflows/creator-hub-*"
+      - ".github/actions/creator-hub-*/**"
   pull_request:
 
 permissions:
@@ -55,28 +55,32 @@ jobs:
             echo "creator-hub=false" >> "$GITHUB_OUTPUT"
           fi
   build:
-    needs: [ changes ]
+    needs: [changes]
     if: needs.changes.outputs.creator-hub == 'true'
     uses: ./.github/workflows/creator-hub-build.yml
   lint:
-    needs: [ changes ]
+    needs: [changes]
     if: needs.changes.outputs.creator-hub == 'true'
     uses: ./.github/workflows/creator-hub-lint.yml
   typechecking:
-    needs: [ build ]
+    needs: [build]
     uses: ./.github/workflows/creator-hub-typechecking.yml
   tests:
-    needs: [ build ]
+    needs: [build]
     uses: ./.github/workflows/creator-hub-tests.yml
   e2e:
-    needs: [ build, tests ]
+    needs: [build, tests]
     uses: ./.github/workflows/creator-hub-e2e.yml
-    secrets: inherit
+    secrets:
+      E2E_LAND: ${{ secrets.E2E_LAND }}
+      E2E_NAME: ${{ secrets.E2E_NAME }}
+      E2E_PRIVATE_KEY: ${{ secrets.E2E_PRIVATE_KEY }}
   drop_pre_release:
     name: drop pre-release
-    needs: [ lint, typechecking, tests ]
+    needs: [lint, typechecking, tests]
     uses: ./.github/workflows/creator-hub-drop.yml
-    secrets: inherit
+    secrets:
+      CREATOR_HUB_RELEASES_APP_PRIVATE_KEY: ${{ secrets.CREATOR_HUB_RELEASES_APP_PRIVATE_KEY }}
     with:
       # dry-run == false only if we are on main branch and the event is a push or workflow_dispatch
       dry-run: ${{ !((github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref_name == 'main') }}
@@ -84,21 +88,46 @@ jobs:
       # run can rebuild that version. A finished one, possibly awaiting promote approval, stays.
       unfinished-only: true
   asset-packs:
-    needs: [ drop_pre_release ]
+    needs: [drop_pre_release]
     uses: ./.github/workflows/creator-hub-asset-packs.yml
-    secrets: inherit
+    secrets:
+      BUILDER_ITEMS_S3_BUCKET_PRD: ${{ secrets.BUILDER_ITEMS_S3_BUCKET_PRD }}
+      SDK_TEAM_AWS_REGION: ${{ secrets.SDK_TEAM_AWS_REGION }}
+      SDK_TEAM_S3_BASE_URL: ${{ secrets.SDK_TEAM_S3_BASE_URL }}
+      SDK_TEAM_S3_BUCKET: ${{ secrets.SDK_TEAM_S3_BUCKET }}
   inspector:
-    needs: [ asset-packs ]
+    needs: [asset-packs]
     uses: ./.github/workflows/creator-hub-inspector.yml
-    secrets: inherit
+    secrets:
+      SDK_TEAM_AWS_REGION: ${{ secrets.SDK_TEAM_AWS_REGION }}
+      SDK_TEAM_S3_BASE_URL: ${{ secrets.SDK_TEAM_S3_BASE_URL }}
+      SDK_TEAM_S3_BUCKET: ${{ secrets.SDK_TEAM_S3_BUCKET }}
     with:
       asset_packs_s3_bucket_key: ${{ needs.asset-packs.outputs.s3_bucket_key }}
       asset_packs_version: ${{ needs.asset-packs.outputs.version }}
       asset_packs_changed: ${{ needs.asset-packs.outputs.changed == 'true' }}
   creator-hub:
-    needs: [ inspector ]
+    needs: [inspector]
     uses: ./.github/workflows/creator-hub-desktop.yml
-    secrets: inherit
+    secrets:
+      CREATOR_HUB_RELEASES_APP_PRIVATE_KEY: ${{ secrets.CREATOR_HUB_RELEASES_APP_PRIVATE_KEY }}
+      ES_PASSWORD: ${{ secrets.ES_PASSWORD }}
+      ES_TOTP_SECRET: ${{ secrets.ES_TOTP_SECRET }}
+      ES_USERNAME: ${{ secrets.ES_USERNAME }}
+      MACOS_CSC_KEY_PASSWORD: ${{ secrets.MACOS_CSC_KEY_PASSWORD }}
+      MACOS_CSC_LINK: ${{ secrets.MACOS_CSC_LINK }}
+      MACOS_NOTARIZATION_APPLE_ID: ${{ secrets.MACOS_NOTARIZATION_APPLE_ID }}
+      MACOS_NOTARIZATION_PWD: ${{ secrets.MACOS_NOTARIZATION_PWD }}
+      MACOS_NOTARIZATION_TEAM_ID: ${{ secrets.MACOS_NOTARIZATION_TEAM_ID }}
+      SDK_TEAM_AWS_REGION: ${{ secrets.SDK_TEAM_AWS_REGION }}
+      SDK_TEAM_S3_BASE_URL: ${{ secrets.SDK_TEAM_S3_BASE_URL }}
+      SDK_TEAM_S3_BUCKET: ${{ secrets.SDK_TEAM_S3_BUCKET }}
+      SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+      SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+      VITE_ALLOWED_EXTERNAL_ORIGINS: ${{ secrets.VITE_ALLOWED_EXTERNAL_ORIGINS }}
+      VITE_SEGMENT_CREATORS_HUB_API_KEY: ${{ secrets.VITE_SEGMENT_CREATORS_HUB_API_KEY }}
+      VITE_SEGMENT_INSPECTOR_API_KEY: ${{ secrets.VITE_SEGMENT_INSPECTOR_API_KEY }}
+      WINDOWS_CREDENTIAL_ID_SIGNER: ${{ secrets.WINDOWS_CREDENTIAL_ID_SIGNER }}
     with:
       # dry-run == false only if we are on main branch and the event is a push or workflow_dispatch
       dry-run: ${{ !((github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref_name == 'main') }}
@@ -109,9 +138,10 @@ jobs:
   # that fails part-way leaves the previous pre-release in place, still promotable.
   prune_pre_releases:
     name: prune pre-releases
-    needs: [ creator-hub ]
+    needs: [creator-hub]
     uses: ./.github/workflows/creator-hub-drop.yml
-    secrets: inherit
+    secrets:
+      CREATOR_HUB_RELEASES_APP_PRIVATE_KEY: ${{ secrets.CREATOR_HUB_RELEASES_APP_PRIVATE_KEY }}
     with:
       dry-run: ${{ !((github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref_name == 'main') }}
       keep: ${{ needs.creator-hub.outputs.version }}
@@ -122,7 +152,20 @@ jobs:
   result:
     name: Creator Hub CI
     if: always()
-    needs: [ changes, build, lint, typechecking, tests, e2e, drop_pre_release, asset-packs, inspector, creator-hub, prune_pre_releases ]
+    needs:
+      [
+        changes,
+        build,
+        lint,
+        typechecking,
+        tests,
+        e2e,
+        drop_pre_release,
+        asset-packs,
+        inspector,
+        creator-hub,
+        prune_pre_releases,
+      ]
     runs-on: ubuntu-latest
     permissions: {}
     steps:
