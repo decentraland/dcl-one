@@ -692,7 +692,9 @@ impl Database {
     }
 
     /// The place ids of a world name (`name.dcl.eth`), the places listing's
-    /// `?names=` answer as a local read, memoised for `WORLD_PLACES_TTL`.
+    /// `?names=` answer as a local read, memoised for `WORLD_PLACES_TTL`:
+    /// the world's scenes, not its catalogue row (`id = lower(world_name)`),
+    /// which the places API leaves out of that answer too.
     pub async fn world_place_ids(&self, world_name: &str) -> Result<Vec<String>, sqlx::Error> {
         let key = world_name.to_lowercase();
         if let Some(ids) = cache_get(&self.world_places, &key) {
@@ -701,6 +703,7 @@ impl Database {
         let ids: Vec<String> = sqlx::query_scalar(
             "SELECT id FROM explore.place_indexed \
              WHERE disabled IS FALSE AND world IS TRUE AND lower(world_name) = $1 \
+               AND id <> lower(world_name) \
                AND (world IS FALSE OR COALESCE(NULLIF(raw->'show_in_places', 'null'::jsonb) = 'true'::jsonb, true) IS TRUE) \
              ORDER BY id",
         )

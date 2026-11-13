@@ -12,13 +12,17 @@
 //! `api_url`), signed fetch through the shared verifier
 //! (`shared::signed_fetch`, the 6.x payload then the legacy one, as the old
 //! crate's `accept_legacy_payload(&[])` did) with the process's EIP-1654
-//! validator, and `explore.place_indexed` for a world name's place ids (the
-//! old HTTP hop to the places API is a local read, [`db::Database::world_place_ids`]).
+//! validator, and `explore.place_indexed` for a world
+//! name's place ids (the old HTTP hop to the places API is a local read,
+//! [`db::Database::world_place_ids`]; a failed lookup is upstream's 502).
 //!
-//! Every write goes behind `CREATE_WRITES_ENABLED` ([`writes`]; default
-//! false, 503 with `Retry-After`, built the way `social::writes` gates the
-//! social writes); the reads (galleries, metadata, blobs, the batch place
-//! gallery behind `POST /api/places/images`) serve either way.
+//! Every write route goes behind `CREATE_WRITES_ENABLED` ([`writes`];
+//! default false, 503 with `Retry-After`, built the way `social::writes`
+//! gates the social writes); the reads (galleries, metadata, blobs, the
+//! batch place gallery behind `POST /api/places/images`) serve either way.
+//! CORS is actix-cors's as upstream configured it ([`cors`]); the query and
+//! JSON body rejections are actix's plain-text 400/413 ([`extract`]); a path
+//! or method no route serves is an empty 404.
 //!
 //! Authorization contracts kept exactly: an upload's `metadata.userAddress`
 //! must be the signer (and the row's CHECK holds the pair together);
@@ -77,9 +81,11 @@ pub(crate) use catalyst_storage as storage;
 pub(crate) use dcl_auth as auth;
 
 pub mod admin;
+pub mod cors;
 pub mod db;
 pub mod docs;
 pub mod dto;
+pub mod extract;
 pub mod handlers;
 pub mod http;
 pub mod writes;
@@ -248,19 +254,40 @@ async fn health() -> axum::Json<&'static str> {
     axum::Json("alive")
 }
 
-/// The merged `/api` and `/admin` trees plus the executable's `/health`,
-/// wrapped in the [`writes::guard`] with the state's `CREATE_WRITES_ENABLED`.
+async fn not_found() -> axum::http::StatusCode {
+    axum::http::StatusCode::NOT_FOUND
+}
+
+/// axum lists the served methods in `Allow` on its method fallback; the 404
+/// that fallback answers here carries no such header, as upstream's.
+async fn without_allow(mut res: axum::response::Response) -> axum::response::Response {
+    if res.status() == axum::http::StatusCode::NOT_FOUND {
+        res.headers_mut().remove(axum::http::header::ALLOW);
+    }
+    res
+}
+
+/// The merged `/api` and `/admin` trees plus the executable's `/health`.
+/// Each write route's methods sit behind [`writes::route`] with the state's
+/// `CREATE_WRITES_ENABLED`; a path or a method no route serves is an empty
+/// 404, as upstream's actix default service answers; [`cors::layer`] wraps
+/// it all, refusals and 404s included.
 pub fn router(state: SharedState) -> Router {
+    let on = state.settings.writes_enabled;
+    let gated = |route| writes::route(route, on);
     let api = Router::new()
-        .route("/images", post(handlers::images::upload_image))
-        .route("/images-json", post(handlers::images::upload_image_json))
+        .route("/images", gated(post(handlers::images::upload_image)))
+        .route(
+            "/images-json",
+            gated(post(handlers::images::upload_image_json)),
+        )
         .route(
             "/images/{image_id}",
-            get(handlers::images::get_image).delete(handlers::images::delete_image),
+            get(handlers::images::get_image).merge(gated(delete(handlers::images::delete_image))),
         )
         .route(
             "/images/{image_id}/visibility",
-            patch(handlers::images::update_image_visibility),
+            gated(patch(handlers::images::update_image_visibility)),
         )
         .route(
             "/images/{image_id}/metadata",
@@ -285,25 +312,32 @@ pub fn router(state: SharedState) -> Router {
         )
         .route("/docs/openapi.json", get(docs::openapi_json))
         .route("/docs/ui", get(docs::swagger_ui))
+        .route("/docs/ui/", get(docs::swagger_ui))
         .route("/docs/ui/{*rest}", get(docs::swagger_ui));
 
     let admin = Router::new()
         .route(
             "/admin/images/{image_id}",
-            delete(handlers::images::admin_delete_image),
+            gated(delete(handlers::images::admin_delete_image)),
         )
         .route(
             "/admin/images/{image_id}/review",
-            patch(handlers::images::admin_update_image_review),
+            gated(patch(handlers::images::admin_update_image_review)),
         );
 
-    let writes_enabled = state.settings.writes_enabled;
     let router = Router::new()
         .route("/health", get(health))
         .route("/health/live", get(health))
         .nest("/api", api)
         .merge(admin)
+        .fallback(not_found)
+        .method_not_allowed_fallback(not_found)
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
         .with_state(state);
-    writes::guard(router, writes_enabled)
+    // Wrapped whole (a layer on `router` itself would run inside each route's
+    // method dispatch, before the `Allow` header is added).
+    let router = Router::new()
+        .fallback_service(router)
+        .layer(axum::middleware::map_response(without_allow));
+    cors::layer(router)
 }

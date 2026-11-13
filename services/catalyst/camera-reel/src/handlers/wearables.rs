@@ -5,13 +5,14 @@
 //! non-rejected filter is not one a caller can lift.
 
 use axum::Json;
-use axum::extract::{Path, Query, State};
+use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 
 use crate::SharedState;
 use crate::dto::{GetWearableImagesResponse, Image};
+use crate::extract::Query;
 use crate::handlers::{capped_limit, default_limit, default_offset};
 use crate::http::ApiError;
 

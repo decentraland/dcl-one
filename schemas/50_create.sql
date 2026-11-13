@@ -526,8 +526,9 @@ CREATE TABLE builder.asset_contents (
 
 -- ==== section: camera_reel ====
 -- World-name galleries (`name.dcl.eth`) resolve to place ids through
--- explore.place_indexed (lower(world_name) = lower($1)), the old HTTP hop to
--- the places API made a local read; no cache table.
+-- explore.place_indexed (lower(world_name) = lower($1), without the world's
+-- catalogue row `id = lower(world_name)`), the old HTTP hop to the places
+-- API made a local read; no cache table.
 --
 -- A blob this node withholds everywhere because the camera reel's moderation
 -- said so: the image and thumbnail hashes of a rejected row (`reason` =
@@ -579,4 +580,5 @@ $$;
 CREATE INDEX images_wearable_items_idx ON camera_reel.images
     USING gin (camera_reel.image_wearable_items(metadata))
     WHERE is_public AND review_status <> 'rejected';
+
 -- ==== end section: camera_reel ====

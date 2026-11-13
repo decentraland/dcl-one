@@ -1,5 +1,5 @@
 use axum::Json;
-use axum::extract::{OriginalUri, Path, Query, State};
+use axum::extract::{OriginalUri, Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
@@ -7,6 +7,7 @@ use serde::Deserialize;
 use crate::dto::{
     GalleryImage, GetGalleryImagesResponse, GetImagesResponse, Image, UserDataResponse,
 };
+use crate::extract::Query;
 use crate::handlers::{PageQuery, default_compact, default_limit, default_offset, next_cursor};
 use crate::http::ApiError;
 use crate::{SharedState, SignedPath, signed_path};
@@ -40,6 +41,8 @@ pub async fn get_user_data(
     OriginalUri(uri): OriginalUri,
     headers: HeaderMap,
     Path(user_address): Path<String>,
+    // Parsed as upstream does, so a malformed page query is its 400; unused.
+    Query(_): Query<GetImagesQuery>,
 ) -> Result<Response, ApiError> {
     let path = signed_path(&uri, format!("/api/users/{user_address}"));
     let only_public = only_public_for(&state, &headers, "get", &path, &user_address).await;
