@@ -10,24 +10,15 @@ import {
 import { t } from '/@/modules/store/translation/utils';
 import { EMAIL_MAX_LENGTH, HELP_FAQ_URL, isValidContact, parseContact } from '/@/modules/utils';
 
-import { Required } from '../../EarnPage/ContactInfoForm.styled';
+import { FieldError, Required } from '../../EarnPage/ContactInfoForm.styled';
+import { ExternalLink } from '../../ExternalLink';
 import { WarningIcon } from '../../EarnPage/icons/WarningIcon';
 import { SelectCheckbox } from '../../LandDetailPage/SelectCheckbox';
-import { Field } from '../../LandDetailPage/DetailsTab/DetailsTab.styled';
+import { Field, FieldTitle } from '../../LandDetailPage/DetailsTab/DetailsTab.styled';
 import { FormTextInput } from '../../TextInput';
 import { CheckRow } from '../../WorldDetailPage/SettingsTab/SettingsTab.styled';
 import { DefaultModal } from '../DefaultModal';
-import {
-  ContactHint,
-  Counter,
-  DescriptionBox,
-  ErrorLine,
-  Form,
-  HelpLink,
-  Hint,
-  Label,
-  LogsOption,
-} from './ReportIssue.styled';
+import styles from './ReportIssue.module.css';
 
 type Status = 'editing' | 'sending' | FeedbackDelivery | 'failed';
 
@@ -144,13 +135,17 @@ export function ReportIssue({ open, source, associatedEventId, onClose }: Props)
         onClick: () => void send(),
       }}
     >
-      <Form>
+      <div className={styles.form}>
         <Field>
-          <Label htmlFor={descriptionId}>
+          <FieldTitle
+            className={styles.label}
+            htmlFor={descriptionId}
+          >
             {t('modal.report_issue.description.label')}
             <Required aria-hidden> *</Required>
-          </Label>
-          <DescriptionBox
+          </FieldTitle>
+          <FormTextInput
+            className={styles.description}
             id={descriptionId}
             multiline
             inputComponent={NATIVE_TEXTAREA}
@@ -165,7 +160,8 @@ export function ReportIssue({ open, source, associatedEventId, onClose }: Props)
             onBlur={() => setDescriptionFocused(false)}
             inputProps={{ 'aria-invalid': overLimit, 'aria-describedby': counterId }}
           />
-          <Counter
+          <FieldError
+            className={`${styles.errorLine} ${styles.counter}`}
             id={counterId}
             data-state={counter}
           >
@@ -175,11 +171,21 @@ export function ReportIssue({ open, source, associatedEventId, onClose }: Props)
                 count: String(message.length),
                 max: String(FEEDBACK_MESSAGE_MAX_LENGTH),
               })}
-          </Counter>
+          </FieldError>
         </Field>
         <Field>
-          <Label htmlFor={contactId}>{t('modal.report_issue.contact.label')}</Label>
-          <ContactHint id={contactHintId}>{t('modal.report_issue.contact.hint')}</ContactHint>
+          <FieldTitle
+            className={styles.label}
+            htmlFor={contactId}
+          >
+            {t('modal.report_issue.contact.label')}
+          </FieldTitle>
+          <span
+            className={styles.contactHint}
+            id={contactHintId}
+          >
+            {t('modal.report_issue.contact.hint')}
+          </span>
           <FormTextInput
             id={contactId}
             type="text"
@@ -199,16 +205,17 @@ export function ReportIssue({ open, source, associatedEventId, onClose }: Props)
             }}
           />
           {contact && showContactError && (
-            <ErrorLine
+            <FieldError
+              className={styles.errorLine}
               id={contactErrorId}
               role="alert"
             >
               <WarningIcon />
               {t(`modal.report_issue.contact.${contact.method}_invalid`)}
-            </ErrorLine>
+            </FieldError>
           )}
         </Field>
-        <LogsOption>
+        <div className={styles.logsOption}>
           <CheckRow>
             <SelectCheckbox
               checked={includeLogs}
@@ -218,16 +225,22 @@ export function ReportIssue({ open, source, associatedEventId, onClose }: Props)
             />
             {t('modal.report_issue.logs.label')}
           </CheckRow>
-          <Hint id={logsHintId}>{t('modal.report_issue.logs.hint')}</Hint>
-        </LogsOption>
-        <HelpLink
+          <span
+            className={styles.hint}
+            id={logsHintId}
+          >
+            {t('modal.report_issue.logs.hint')}
+          </span>
+        </div>
+        <ExternalLink
+          className={styles.helpLink}
           href={HELP_FAQ_URL}
           onOpen={() => void analytics.track('Report Issue Help Center Clicked', { source })}
         >
           {t('modal.report_issue.help_center')}
           <span aria-hidden> →</span>
-        </HelpLink>
-      </Form>
+        </ExternalLink>
+      </div>
     </DefaultModal>
   );
 }
