@@ -4,7 +4,22 @@
 Best effort: a pass means no CSS-in-JS import or new same-name component
 stylesheet was detected in the changed files, not that they follow every rule
 in docs/ui-standards.md.
+
+`--tokens PATH...` is a report instead of a check (exit 0): for every stylesheet
+and CSS Module under the given paths it counts the raw colour literals (hex,
+rgb/rgba, hsl/hsla and named colours other than transparent, currentColor and
+inherit), the px lengths equal to a `--dcl-space-*` or `--dcl-radius-*` token,
+the `font-family` declarations, the `var(--dcl-` uses and the `no token` drift
+comments, then prints the totals. It measures how far a surface has moved onto
+the shared foundations (docs/ui-standards.md, "Verification").
+
+`--token-floor` is a check: for every stylesheet under FLOOR_PATHS it fails when
+the `var(--dcl-` uses drop below, or the `var()` uses of an apps/ui3
+atoms/primitives.css property rise above, what tooling/ui-token-floor.json
+records (a stylesheet it does not list may use no primitives property).
+`--write-token-floor` records the current counts after a deliberate change.
 """
+import json
 import argparse
 import re
 import subprocess
@@ -33,10 +48,8 @@ TOKEN = re.compile(
     re.S,
 )
 
-
 def is_ui_source(path):
     return path.endswith(EXTENSIONS) and path.startswith(UI_ROOTS) and not path.startswith(NON_WEB_ROOTS)
-
 
 def tokens(text):
     """Split source into words, punctuation and string literals, dropping comments."""
@@ -49,11 +62,9 @@ def tokens(text):
         result.append((kind, value[1:-1] if kind == 'string' else value))
     return result
 
-
 STATEMENT_WORDS = {'const', 'let', 'var', 'function', 'class', 'return', 'if', 'for', 'while', 'switch',
                    'interface', 'enum', 'default', 'export', 'import', 'await', 'async', 'new'}
 EMOTION_PRAGMA = re.compile(r'@jsxImportSource\s+@emotion/react\b')
-
 
 def import_clause(items, start):
     """Read an import/export clause from items[start:] up to its specifier.
@@ -85,7 +96,6 @@ def import_clause(items, start):
         previous = (kind, value)
     return None
 
-
 def destructured_before(items, index):
     """Names destructured on the left of `= [await] require(...)` / `= await import(...)`."""
     cursor = index - 1
@@ -102,7 +112,6 @@ def destructured_before(items, index):
             names.add(items[cursor][1])
         cursor -= 1
     return names
-
 
 def forbidden_imports(text):
     """Return the module specifiers of the CSS-in-JS imports in source text."""
@@ -139,7 +148,6 @@ def forbidden_imports(text):
             found.append(f'{namespace}.styled')
     return found
 
-
 def mentions_css_in_js(text):
     """Whether added text could belong to a CSS-in-JS import, so the whole file needs a scan."""
     if EMOTION_PRAGMA.search(text):
@@ -147,7 +155,6 @@ def mentions_css_in_js(text):
     return any((kind == 'word' and value == 'styled')
                or (kind == 'string' and (CSS_IN_JS_MODULE.match(value) or MUI_MODULE.match(value)))
                for kind, value in tokens(text))
-
 
 def is_component_stylesheet(path, paths):
     if not path.endswith('.css') or path.endswith('.module.css'):
@@ -158,10 +165,8 @@ def is_component_stylesheet(path, paths):
     normalized = {name.casefold() for name in paths}
     return any(base + extension in normalized for extension in COMPONENT_EXTENSIONS)
 
-
 def is_plain_stylesheet(path):
     return path.endswith('.css') and not path.endswith('.module.css')
-
 
 def added_lines(diff):
     """Return the added lines of a unified diff, skipping the file headers."""
@@ -176,15 +181,12 @@ def added_lines(diff):
             lines.append(line[1:])
     return lines
 
-
 def git(*args):
     return subprocess.run(['git', '-c', 'core.quotePath=false', *args], cwd=ROOT, check=True,
                           capture_output=True, text=True).stdout
 
-
 def names(command, *args):
     return {name for name in git(*command, '-z', *args).split('\0') if name}
-
 
 def new_files(diff, base):
     """Paths added since base, plus renames whose old path was not already a plain stylesheet."""
@@ -204,14 +206,12 @@ def new_files(diff, base):
             index += 2
     return result
 
-
 def verify(revision):
     try:
         git('rev-parse', '--verify', '--quiet', '--end-of-options', f'{revision}^{{commit}}')
         return True
     except subprocess.CalledProcessError:
         return False
-
 
 def default_base():
     """The merge base with origin/main, so local runs see committed branch changes as CI does."""
@@ -221,7 +221,6 @@ def default_base():
         print('UI standards: origin/main is not available; checking uncommitted changes only (pass --base)',
               file=sys.stderr)
         return 'HEAD'
-
 
 def resolve_base(base):
     """Resolve the base revision.
@@ -245,7 +244,6 @@ def resolve_base(base):
         fallback = 'HEAD'
     print(f'UI standards: base {base!r} is not a reachable commit; comparing with {fallback}', file=sys.stderr)
     return fallback
-
 
 def check(base='HEAD', staged=False):
     """List violations in changes from base to the working tree, or to the index when staged."""
@@ -294,12 +292,155 @@ def check(base='HEAD', staged=False):
             issues.append(f'{name}: new CSS-in-JS imports are not allowed')
     return issues
 
+TOKENS_CSS = ROOT / 'library' / 'ui' / 'foundations' / 'spacing' / 'spacing.css'
+SKIPPED_DIRECTORIES = {'node_modules', 'build', 'dist', '.react-router'}
+# The CSS named colours, less the keywords that are not a literal value (transparent, currentColor, inherit).
+NAMED_COLOURS = frozenset("""
+aliceblue antiquewhite aqua aquamarine azure beige bisque black blanchedalmond blue blueviolet brown burlywood
+cadetblue chartreuse chocolate coral cornflowerblue cornsilk crimson cyan darkblue darkcyan darkgoldenrod darkgray
+darkgreen darkgrey darkkhaki darkmagenta darkolivegreen darkorange darkorchid darkred darksalmon darkseagreen
+darkslateblue darkslategray darkslategrey darkturquoise darkviolet deeppink deepskyblue dimgray dimgrey dodgerblue
+firebrick floralwhite forestgreen fuchsia gainsboro ghostwhite gold goldenrod gray green greenyellow grey honeydew
+hotpink indianred indigo ivory khaki lavender lavenderblush lawngreen lemonchiffon lightblue lightcoral lightcyan
+lightgoldenrodyellow lightgray lightgreen lightgrey lightpink lightsalmon lightseagreen lightskyblue lightslategray
+lightslategrey lightsteelblue lightyellow lime limegreen linen magenta maroon mediumaquamarine mediumblue
+mediumorchid mediumpurple mediumseagreen mediumslateblue mediumspringgreen mediumturquoise mediumvioletred
+midnightblue mintcream mistyrose moccasin navajowhite navy oldlace olive olivedrab orange orangered orchid
+palegoldenrod palegreen paleturquoise palevioletred papayawhip peachpuff peru pink plum powderblue purple
+rebeccapurple red rosybrown royalblue saddlebrown salmon sandybrown seagreen seashell sienna silver skyblue
+slateblue slategray slategrey snow springgreen steelblue tan teal thistle tomato turquoise violet wheat white
+whitesmoke yellow yellowgreen
+""".split())
+CSS_COMMENT = re.compile(r'/\*.*?\*/', re.S)
+# A declaration: a property (custom properties included) and its value, up to the next ; { or }.
+DECLARATION = re.compile(r'(?<![\w-])((?:--)?[\w-]+)\s*:\s*([^;{}]*)')
+QUOTED_OR_URL = re.compile(r'url\([^)]*\)|"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'')
+VAR_NAME = re.compile(r'var\(\s*--[\w-]+')
+HEX_COLOUR = re.compile(r'#[0-9a-fA-F]{3,8}\b')
+FUNCTION_COLOUR = re.compile(r'\b(?:rgba?|hsla?)\(')
+WORD = re.compile(r'[A-Za-z]+')
+PX_LENGTH = re.compile(r'(?<![\w.-])(\d+(?:\.\d+)?)px\b')
+TOKEN_USE = re.compile(r'var\(\s*--dcl-')
+TOKEN_LENGTH = re.compile(r'--dcl-(?:space|radius)-[\w-]+:\s*(\d+(?:\.\d+)?)px')
+COLUMNS = ('colours', 'lengths', 'fonts', 'tokens', 'drift')
+HEADINGS = ('colour literals', 'token px', 'font-family', 'var(--dcl-', 'no token')
+
+def token_lengths(css=None):
+    """The px values of the --dcl-space-* and --dcl-radius-* tokens, read from the foundations' spacing.css."""
+    text = TOKENS_CSS.read_text(encoding='utf-8') if css is None else css
+    return {float(value) for value in TOKEN_LENGTH.findall(text)}
+
+def colour_literals(value):
+    """Count the raw colours in a declaration value: hex, rgb()/hsl() calls and named colours."""
+    value = VAR_NAME.sub('var(', QUOTED_OR_URL.sub(' ', value))
+    named = sum(1 for word in WORD.findall(value) if word.lower() in NAMED_COLOURS)
+    return len(HEX_COLOUR.findall(value)) + len(FUNCTION_COLOUR.findall(value)) + named
+
+def stylesheet_report(text, lengths):
+    """Per-stylesheet counts: colour literals, token-equal px lengths, font-family declarations, token uses, drift comments."""
+    body = CSS_COMMENT.sub(' ', text)
+    counts = {'colours': 0, 'lengths': 0, 'fonts': 0, 'tokens': len(TOKEN_USE.findall(body)),
+              'drift': sum(1 for comment in CSS_COMMENT.findall(text) if 'no token' in comment.lower())}
+    for prop, value in DECLARATION.findall(body):
+        if prop == 'font-family':
+            counts['fonts'] += 1
+        counts['colours'] += colour_literals(value)
+        counts['lengths'] += sum(1 for px in PX_LENGTH.findall(QUOTED_OR_URL.sub(' ', value)) if float(px) in lengths)
+    return counts
+
+def stylesheets(paths):
+    """Every .css file under the given files and directories, in path order, skipping build output."""
+    result = set()
+    for given in paths:
+        path = ROOT / given
+        if path.is_file():
+            if path.suffix == '.css':
+                result.add(path)
+            continue
+        for file in path.rglob('*.css'):
+            if not SKIPPED_DIRECTORIES.intersection(file.relative_to(path).parts):
+                result.add(file)
+    return sorted(result)
+
+def relative(path):
+    try:
+        return path.relative_to(ROOT).as_posix()
+    except ValueError:
+        return path.as_posix()
+
+def tokens_report(paths, lengths=None):
+    """The --tokens report as lines: one per stylesheet, then the totals."""
+    lengths = token_lengths() if lengths is None else lengths
+    rows = [(relative(file), stylesheet_report(file.read_text(encoding='utf-8', errors='replace'), lengths))
+            for file in stylesheets(paths)]
+    rows.append((f'total ({len(rows)} files)', {column: sum(counts[column] for _, counts in rows) for column in COLUMNS}))
+    width = max(len(name) for name, _ in rows)
+    lines = [' '.join([' ' * width] + [heading.rjust(15) for heading in HEADINGS]).rstrip()]
+    for name, counts in rows:
+        lines.append(' '.join([name.ljust(width)] + [str(counts[column]).rjust(15) for column in COLUMNS]))
+    return lines
+
+FLOOR_FILE = ROOT / 'tooling' / 'ui-token-floor.json'
+PRIMITIVES_CSS = ROOT / 'apps' / 'ui3' / 'src' / 'atoms' / 'primitives.css'
+# The parity pages, their chrome and the shared components: surfaces that have moved onto library/ui.
+FLOOR_PATHS = ('apps/sites/src/features', 'apps/ui3/src/web', 'apps/ui3/src/explorer/pages',
+               'apps/ui3/src/landings', 'library/ui/components')
+PROPERTY_DEFINITION = re.compile(r'(?<![\w-])(--[\w-]+)\s*:')
+VAR_USE = re.compile(r'var\(\s*(--[\w-]+)')
+
+def primitive_names(css=None):
+    """The custom properties apps/ui3 atoms/primitives.css defines."""
+    text = PRIMITIVES_CSS.read_text(encoding='utf-8') if css is None else css
+    return set(PROPERTY_DEFINITION.findall(CSS_COMMENT.sub(' ', text)))
+
+def floor_counts(text, primitives):
+    """A stylesheet's var(--dcl- uses and its var() uses of a primitives property."""
+    body = CSS_COMMENT.sub(' ', text)
+    return {'tokens': len(TOKEN_USE.findall(body)),
+            'primitives': sum(1 for name in VAR_USE.findall(body) if name in primitives)}
+
+def current_floor(primitives=None):
+    primitives = primitive_names() if primitives is None else primitives
+    return {relative(file): floor_counts(file.read_text(encoding='utf-8', errors='replace'), primitives)
+            for file in stylesheets(FLOOR_PATHS)}
+
+def floor_issues(floor, current):
+    """Each stylesheet whose token uses fell below, or whose primitives uses rose above, its floor."""
+    issues = []
+    for name, counts in sorted(current.items()):
+        recorded = floor.get(name, {'tokens': 0, 'primitives': 0})
+        if counts['tokens'] < recorded['tokens']:
+            issues.append(f"{name}: {counts['tokens']} var(--dcl- uses, the floor is {recorded['tokens']}")
+        if counts['primitives'] > recorded['primitives']:
+            issues.append(f"{name}: {counts['primitives']} uses of atoms/primitives.css properties, "
+                          f"the ceiling is {recorded['primitives']}")
+    return issues
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--base', help='Compare changes with this Git revision (default: merge base with origin/main)')
     parser.add_argument('--staged', action='store_true', help='Check the index instead of the working tree')
+    parser.add_argument('--tokens', nargs='+', metavar='PATH',
+                        help='Report token coverage for the stylesheets under these paths instead of checking')
+    parser.add_argument('--token-floor', action='store_true',
+                        help='Check the token floor of the stylesheets under FLOOR_PATHS instead')
+    parser.add_argument('--write-token-floor', action='store_true',
+                        help='Record the current token counts as the floor')
     args = parser.parse_args()
+    if args.tokens:
+        print('\n'.join(tokens_report(args.tokens)))
+        return 0
+    if args.write_token_floor:
+        FLOOR_FILE.write_text(json.dumps(current_floor(), indent=2, sort_keys=True) + '\n', encoding='utf-8')
+        return 0
+    if args.token_floor:
+        current = current_floor()
+        issues = floor_issues(json.loads(FLOOR_FILE.read_text(encoding='utf-8')), current)
+        if issues:
+            print('\n'.join(issues), file=sys.stderr)
+            return 1
+        print(f'UI standards: token floor holds for {len(current)} stylesheets')
+        return 0
     try:
         issues = check(args.base or default_base(), staged=args.staged)
     except (OSError, ValueError, subprocess.CalledProcessError) as error:
@@ -310,7 +451,6 @@ def main():
         return 1
     print('UI standards: checked changed files for CSS-in-JS imports and new component stylesheets')
     return 0
-
 
 if __name__ == '__main__':
     sys.exit(main())

@@ -1559,3 +1559,49 @@ any wallet has a row of it. Each upsert (with the definition it wrote) and
 each publication or archive transition appends a row to
 `social.badge_catalog_audit`; `badge_admin_audit` keeps per-wallet grants and
 revokes, whose `address` a catalog write does not have.
+
+## Player report intake workload
+
+The report form (`/report`, the node area `/report-user`,
+`services/catalyst/comms/src/gatekeeper/reports.rs`) is a human writing a
+handful of rows into `social.player_reports` and
+`social.player_report_evidence` (`schemas/40_social.sql`). The order is
+slots first, report last, so the tables share no FK: a presign inserts one
+to five evidence slots under a fresh report id (`report_id`, `evidence_key`
+`<position>-<sanitized filename>`, `reporter_address`, the declared type and
+size) in one transaction; each evidence `PUT` (at most 5 MB, the client's
+limit, exactly the declared bytes and type) stores the bytes once in the
+shared hash-addressed blob store and fills that slot's `content_hash` and
+`uploaded_at`; the filing locks the slots (`FOR UPDATE`), checks every
+planned key is uploaded and inserts the `player_reports` row (`status`
+`open`, `evidence_keys` the slot keys in order). Volume is a few reports a
+day; every statement is a primary-key read or write. The moderator read
+(`GET /api/reports`, the moderator token or a listed moderator wallet) lists
+filed reports newest first (`player_reports_created_idx`), optionally for one
+reported wallet (`player_reports_reported_idx`), and loads their evidence
+rows with one `= ANY` by report id, in `evidence_keys` order; the evidence
+bytes come from the store by `content_hash`.
+
+Limits, each checked under a per-reporter transaction advisory lock so two
+concurrent requests cannot both pass: a wallet files at most 5 reports per
+rolling hour (`REPORTS_PER_HOUR`, counted on `player_reports_reporter_idx`;
+the presign refuses early and the filing refuses again, both `429`), and
+holds at most 25 unfiled slots minted in the last 24 hours
+(`PENDING_SLOTS_PER_REPORTER`, counted on
+`player_report_evidence_reporter_idx` against `NOT EXISTS` of the report
+row; `429` at presign). Slots older than that window no longer count, so an
+abandoned form never locks a wallet out for good.
+
+Invariants: a slot's `reporter_address` is the wallet that signed the
+presign and never changes; an evidence `PUT` and the filing are refused for
+any other signer (`403`), and once the report row exists (`409`); a filing
+names exactly the presigned keys, all uploaded, so a filed report has
+complete evidence; the reason is one of the form's five values and the texts
+keep the form's 500-character limits; a repeat `PUT` before filing replaces
+the slot's bytes. Slots whose client never files stay (the orphan sweep on
+`player_report_evidence_created_idx`, oldest first in batches, is a
+follow-up; the rows are small and the queue reads filed reports only). The
+bytes are content-addressed and rooted by `content_hash`
+(`services/catalyst/storage/src/gc.rs`), so two reports attaching the same
+file share one blob and a report's deletion never removes bytes another one
+references.

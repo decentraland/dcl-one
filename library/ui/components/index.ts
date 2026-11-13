@@ -1,0 +1,17 @@
+// The shared components and the text-style classes, imported as `@dcl/one-ui/components`
+// (docs/ui-standards.md, Integration). `@dcl/one-ui` itself stays the foundations entry.
+export * from './Button/Button'
+export * from './CardActionButton/CardActionButton'
+export * from './JumpInCTA/JumpInCTA'
+export * from './NavCreditsBalance/NavCreditsBalance'
+export * from './NavMenuItem/NavMenuItem'
+export * from './NavMenuTab/NavMenuTab'
+export * from './NavNotificationsButton/NavNotificationsButton'
+export * from './NavProfileButton/NavProfileButton'
+export * from './PlaceCard/PlaceCard'
+export * from './SearchBar/SearchBar'
+export * from './Skeleton/Skeleton'
+export * from './Spinner/Spinner'
+export * from './Tabs/Tabs'
+export * from './TabsBar/TabsBar'
+export * from './text-styles'

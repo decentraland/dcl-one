@@ -348,13 +348,23 @@ export async function local_participant_publish_track(local_participant, local_t
 }
 
 /**
+ * Whether the room's token lets this participant publish at all. A listen-only
+ * room (a stage, a world the token admits as audience) says no, and the engine
+ * then never opens a microphone track for it.
+ */
+export function local_participant_can_publish(local_participant) {
+    return local_participant.permissions?.canPublish ?? true;
+}
+
+/**
  * 
  * @param {livekit.LocalParticipant} local_participant
  * @param {livekit.LocalTrack} local_track
  * @returns livekit.LocalTrackPublication
  */
 export async function local_participant_unpublish_track(local_participant, local_track) {
-    return await local_participant.unpublishTrack(local_track, true);
+    // undefined when the track was never published: the caller reads null as that.
+    return (await local_participant.unpublishTrack(local_track, true)) ?? null;
 }
 
 /**
@@ -480,7 +490,7 @@ export function remote_track_publication_track(remote_track_publication) {
  * @returns string
  */
 export function local_track_publication_sid(local_track_publication) {
-    return local_track_publication.trackSid;
+    return local_track_publication?.trackSid ?? "";
 }
 
 /**

@@ -122,6 +122,8 @@ pub const CONFIG_READ_RETRY_PAUSE: std::time::Duration = std::time::Duration::fr
 
 pub mod headless;
 pub mod launch;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod offline_app;
 
 pub struct DecentralandApp(App);
 

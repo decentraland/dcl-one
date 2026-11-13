@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("../shop/host", () => ({ default: () => null }));
 
 const UI3_PUBLIC = fileURLToPath(new URL("../../../../ui3/public", import.meta.url));
-const SHOP_THEME = fileURLToPath(new URL("../../../../ui3/src/shop/discovery/frames/shoptheme.css", import.meta.url));
+const SHOP_THEME = fileURLToPath(new URL("../../../../ui3/src/atoms/inter.css", import.meta.url));
 
 describe("the Shop's Inter", () => {
   it("preloads a font file that ships, and the one the Shop's Latin text is set in", async () => {

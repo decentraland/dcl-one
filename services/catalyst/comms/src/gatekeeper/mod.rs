@@ -1,13 +1,14 @@
 //! The comms gatekeeper (the old `catalyrst-comms`, upstream
 //! comms-gatekeeper), a service inside `catalyst serve`, through local calls
-//! and shared SQL over the ONE pool. Seven submodules: `admission` (LiveKit
+//! and shared SQL over the ONE pool. Eight submodules: `admission` (LiveKit
 //! admission for scenes and worlds, the world mints, the Pulse relay
 //! authority and the island feed), `moderation` (scene admins and bans,
 //! platform bans and warnings), `voice` (private-message and
 //! voice tokens, community voice rooms), `streaming` (a place's RTMP ingress
 //! credential), `webhook` (the LiveKit webhook that drives presence),
-//! `events` (the participant events handed to worlds) and `revocation` (the
-//! one entry point that evicts revoked participants from the live rooms).
+//! `events` (the participant events handed to worlds), `revocation` (the
+//! one entry point that evicts revoked participants from the live rooms) and
+//! `reports` (the player report intake `serve` nests at `/report-user`).
 //!
 //! What it needs from the crates above it comes in through
 //! [`crate::interfaces`]: world access, the protected wallets of a world
@@ -60,6 +61,7 @@ pub mod events;
 pub use crate::shared::livekit;
 pub mod moderation;
 pub(crate) mod removal;
+pub mod reports;
 pub mod revocation;
 pub mod streaming;
 pub mod voice;
