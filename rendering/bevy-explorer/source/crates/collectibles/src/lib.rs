@@ -341,6 +341,9 @@ pub fn request_collectibles<T: CollectibleType>(
                         }),
                         entity.metadata.as_ref().map(ToString::to_string),
                     );
+                    // abgen's variants of the wearable's or emote's files, as for a scene: its
+                    // models and textures read as their variants once the manifest is in
+                    ipfas.ipfs().request_bevy_variants(&entity.id);
 
                     let Some(metadata) = entity.metadata else {
                         warn!("no metadata on wearable");

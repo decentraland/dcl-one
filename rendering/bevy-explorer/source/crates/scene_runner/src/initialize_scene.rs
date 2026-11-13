@@ -170,19 +170,28 @@ pub(crate) fn load_scene_entity(
             None => commands.spawn_empty(),
         };
 
-        let h_scene = match &event.location {
-            SceneIpfsLocation::Hash(hash) => ipfas.load_hash::<EntityDefinition>(hash),
+        let (h_scene, id) = match &event.location {
+            SceneIpfsLocation::Hash(hash) => (
+                ipfas.load_hash::<EntityDefinition>(hash),
+                Some(hash.clone()),
+            ),
             SceneIpfsLocation::Urn(urn) => match ipfas.load_urn::<EntityDefinition>(urn) {
-                Ok(h_scene) => h_scene,
+                Ok(h_scene) => (
+                    h_scene,
+                    IpfsPath::new_from_urn::<EntityDefinition>(urn)
+                        .ok()
+                        .and_then(|path| path.context_free_hash().ok().flatten()),
+                ),
                 Err(e) => {
                     warn!("failed to parse urn: {e}");
                     commands.try_insert(SceneLoading::Failed);
                     continue;
                 }
             },
+            // a smart wearable's scene: the wearable entity's manifest covers its files
             SceneIpfsLocation::ContentFile { hash, file } => {
                 match ipfas.load_content_file::<EntityDefinition>(file, hash) {
-                    Ok(h_scene) => h_scene,
+                    Ok(h_scene) => (h_scene, Some(hash.clone())),
                     Err(e) => {
                         warn!("failed to load {file} of {hash}: {e}");
                         commands.try_insert(SceneLoading::Failed);
@@ -191,6 +200,11 @@ pub(crate) fn load_scene_entity(
                 }
             }
         };
+        // the scene's Bevy variants manifest, alongside its entity file rather than after it:
+        // the entity id is all it needs (`load_urn` has registered a urn's own content server)
+        if let Some(id) = id {
+            ipfas.ipfs().request_bevy_variants(&id);
+        }
 
         commands.try_insert((
             SceneLoading::SceneEntity,

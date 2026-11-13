@@ -83,6 +83,7 @@ pub mod portables;
 pub mod primary_entities;
 pub mod renderer_context;
 pub mod scene_partition;
+pub mod scene_spawn_slice;
 mod scene_traffic;
 #[cfg(test)]
 pub mod test;
@@ -445,6 +446,7 @@ impl Plugin for SceneRunnerPlugin {
             app.add_plugins(LightsPlugin);
         }
         app.add_plugins(AssetPreloadPlugin);
+        app.add_plugins(scene_spawn_slice::SceneSpawnSlicePlugin);
 
         app.add_systems(Update, update_scene_room.in_set(SceneSets::PostLoop));
         app.init_resource::<load_timing::FirstRingTiming>();

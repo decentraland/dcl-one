@@ -61,6 +61,7 @@ import { DIALOG_TITLE, isDialogSource } from '@explorer-core/features/error/fata
 import { openEntryParamsDialog } from './features/gate/EntryParamsDialog'
 import { EDITOR_BUILD, editorOffered, FEATURES_PARAM } from '@explorer-core/features/editorHost/config'
 import { EditorOffered } from './features/editorHost/EditorOffered'
+import { useTipEmote } from './features/donate/useDonate'
 // The scene editor's host and Create page: loaded once Create is first opened. lazy() keeps a
 // failed load, so a crash swaps in a fresh one for the next open.
 const loadEditorHost = () => lazy(() => import('./features/editorHost/EditorHost'))
@@ -242,6 +243,8 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
   }, [])
 
   const session = useEngineSession(createDriver)
+  // The tip emote once the host says a tip was sent (Donate, where the host can sign one).
+  useTipEmote(session.emotes.play)
   // The signed-in account the places discovery reads for its favourites, once the profile names it.
   const discoveryAccount = session.profile.data?.address
   // mounted for good once wanted: `?editor`, or Create opened
