@@ -475,10 +475,9 @@ fn request_capacity_refusal(
             continue;
         }
         live += 1;
-        if source.is_some()
-            && record.source.as_deref() == source
-            && matches!(record.status, ChallengeStatus::Pending)
-        {
+        // Every unexpired record, answered or not, as the global cap counts:
+        // outcomes need no signature, so a sender could free its own slots.
+        if source.is_some() && record.source.as_deref() == source {
             from_source += 1;
         }
     }
@@ -1314,8 +1313,8 @@ mod tests {
         let (status, _) = call(&app, post("203.0.113.5:4002")).await;
         assert_eq!(
             status,
-            StatusCode::CREATED,
-            "answered requests do not count"
+            StatusCode::TOO_MANY_REQUESTS,
+            "answered requests still hold their network's slots until they expire"
         );
     }
 

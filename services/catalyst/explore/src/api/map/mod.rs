@@ -147,16 +147,30 @@ impl Grid {
 type CachedBody = (Instant, Arc<Vec<u8>>);
 
 struct ResponseCache {
-    entries: parking_lot::Mutex<HashMap<String, CachedBody>>,
+    entries: parking_lot::Mutex<CachedBodies>,
     ttl: Duration,
     max_entries: usize,
     max_bytes: usize,
 }
 
+#[derive(Default)]
+struct CachedBodies {
+    map: HashMap<String, CachedBody>,
+    bytes: usize,
+}
+
+impl CachedBodies {
+    fn remove(&mut self, key: &str) -> Option<Arc<Vec<u8>>> {
+        let (_, body) = self.map.remove(key)?;
+        self.bytes -= body.len();
+        Some(body)
+    }
+}
+
 impl ResponseCache {
     fn new(ttl: Duration, max_entries: usize, max_bytes: usize) -> Self {
         Self {
-            entries: parking_lot::Mutex::new(HashMap::new()),
+            entries: parking_lot::Mutex::new(CachedBodies::default()),
             ttl,
             max_entries,
             max_bytes,
@@ -165,7 +179,7 @@ impl ResponseCache {
 
     fn get_fresh(&self, key: &str) -> Option<Arc<Vec<u8>>> {
         let entries = self.entries.lock();
-        let (at, body) = entries.get(key)?;
+        let (at, body) = entries.map.get(key)?;
         (at.elapsed() < self.ttl).then(|| body.clone())
     }
 
@@ -173,32 +187,54 @@ impl ResponseCache {
         if body.len() > self.max_bytes {
             return;
         }
-        let mut entries = self.entries.lock();
-        entries.remove(&key);
-        entries.retain(|_, (at, _)| at.elapsed() < self.ttl);
-        let mut bytes: usize = entries.values().map(|(_, b)| b.len()).sum();
-        while !entries.is_empty()
-            && (entries.len() >= self.max_entries || bytes + body.len() > self.max_bytes)
+        // Evicted bodies are freed after the lock is released.
+        let mut evicted = Vec::new();
         {
-            let oldest = entries
-                .iter()
-                .min_by_key(|(_, (at, _))| *at)
-                .map(|(k, _)| k.clone())
-                .expect("a non-empty map has an oldest entry");
-            if let Some((_, b)) = entries.remove(&oldest) {
-                bytes -= b.len();
+            let mut entries = self.entries.lock();
+            evicted.extend(entries.remove(&key));
+            let full = |e: &CachedBodies| {
+                e.map.len() >= self.max_entries || e.bytes + body.len() > self.max_bytes
+            };
+            if full(&entries) {
+                let expired: Vec<String> = entries
+                    .map
+                    .iter()
+                    .filter(|(_, (at, _))| at.elapsed() >= self.ttl)
+                    .map(|(k, _)| k.clone())
+                    .collect();
+                for k in expired {
+                    evicted.extend(entries.remove(&k));
+                }
             }
+            while !entries.map.is_empty() && full(&entries) {
+                let oldest = entries
+                    .map
+                    .iter()
+                    .min_by_key(|(_, (at, _))| *at)
+                    .map(|(k, _)| k.clone())
+                    .expect("a non-empty map has an oldest entry");
+                evicted.extend(entries.remove(&oldest));
+            }
+            entries.bytes += body.len();
+            entries.map.insert(key, (Instant::now(), body));
         }
-        entries.insert(key, (Instant::now(), body));
+        drop(evicted);
     }
 
     fn clear(&self) {
-        self.entries.lock().clear();
+        let old = std::mem::take(&mut *self.entries.lock());
+        drop(old);
     }
 
     #[cfg(test)]
     fn bytes(&self) -> usize {
-        self.entries.lock().values().map(|(_, b)| b.len()).sum()
+        let entries = self.entries.lock();
+        assert_eq!(
+            entries.bytes,
+            entries.map.values().map(|(_, b)| b.len()).sum::<usize>(),
+            "the byte count follows the entries"
+        );
+        entries.bytes
     }
 }
 
@@ -484,15 +520,29 @@ mod tests {
     }
 
     #[test]
+    fn response_cache_serves_nothing_past_its_ttl_and_reuses_the_room() {
+        let cache = ResponseCache::new(Duration::ZERO, 2, 100);
+        cache.insert("a".into(), Arc::new(vec![0; 60]));
+        assert!(
+            cache.get_fresh("a").is_none(),
+            "an expired body is not served"
+        );
+        cache.insert("b".into(), Arc::new(vec![0; 60]));
+        assert_eq!(cache.bytes(), 60, "the expired body made room");
+        cache.clear();
+        assert_eq!(cache.bytes(), 0);
+    }
+
+    #[test]
     fn response_cache_stays_within_its_entry_cap() {
         let cache = ResponseCache::new(Duration::from_secs(60), 3, 1 << 20);
         for i in 0..10 {
             cache.insert(format!("k{i}"), Arc::new(vec![1]));
         }
-        assert_eq!(cache.entries.lock().len(), 3);
+        assert_eq!(cache.entries.lock().map.len(), 3);
         cache.insert("k9".into(), Arc::new(vec![2]));
         assert_eq!(
-            cache.entries.lock().len(),
+            cache.entries.lock().map.len(),
             3,
             "replacing a key needs no room"
         );

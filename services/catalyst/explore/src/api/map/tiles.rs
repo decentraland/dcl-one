@@ -652,6 +652,17 @@ mod tests {
             "distinct areas keep distinct keys"
         );
         assert_ne!(key(&[("include", "x")]), key(&[("include", "y")]));
+        assert_eq!(
+            key(&[("x1", "-200"), ("x2", "10"), ("y1", "5"), ("y2", "500")]),
+            key(&[("x1", "-150"), ("x2", "10"), ("y1", "5"), ("y2", "150")]),
+            "a partly overlapping bbox keys as its part inside the grid"
+        );
+        let legacy = |pairs: &[(&str, &str)]| canonical_key("v1", &query(pairs), bounds, 1);
+        assert_eq!(
+            legacy(&[("include", "x")]),
+            legacy(&[("exclude", "owner")]),
+            "the legacy shape ignores the projection"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
