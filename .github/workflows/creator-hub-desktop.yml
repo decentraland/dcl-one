@@ -345,4 +345,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: creator-hub@${{ needs.build.outputs.version }}
-        run: gh api "repos/${GITHUB_REPOSITORY}/git/refs" -f "ref=refs/tags/${TAG}" -f "sha=${GITHUB_SHA}"
+        # A re-run of a finished run finds the tag already there; that is success only when it
+        # points at this commit.
+        run: |
+          if existing=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" --jq .object.sha 2>/dev/null); then
+            if [ "$existing" = "$GITHUB_SHA" ]; then
+              echo "${TAG} already points at ${GITHUB_SHA}"; exit 0
+            fi
+            echo "::error::${TAG} already exists at ${existing}, not ${GITHUB_SHA}"; exit 1
+          fi
+          gh api "repos/${GITHUB_REPOSITORY}/git/refs" -f "ref=refs/tags/${TAG}" -f "sha=${GITHUB_SHA}"

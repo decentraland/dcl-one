@@ -123,6 +123,20 @@ runs:
         INITIAL_TAG="${{ inputs.initial-tag }}"
         REGISTRY_BASE=$(echo "${{ inputs.registry }}" | sed 's|/*$||')
 
+        # The version tag is created by a later job, so a run can publish and then fail before
+        # tagging; the next run computes the same version, and npm refuses to publish it twice. A
+        # re-run of that same commit skips the publish and goes on to tag it. Any other commit
+        # stops here, naming the commit to tag by hand.
+        if [ "${{ inputs.dry-run }}" != "true" ] && [ -n "$(npm view "$PACKAGE_NAME@$VERSION" version 2>/dev/null)" ]; then
+          PUBLISHED_FROM=$(npm view "$PACKAGE_NAME@$VERSION" gitHead 2>/dev/null)
+          if [ -n "$PUBLISHED_FROM" ] && [ "$PUBLISHED_FROM" = "$GITHUB_SHA" ]; then
+            echo "$PACKAGE_NAME@$VERSION is already published from this commit; skipping the publish"
+            exit 0
+          fi
+          echo "::error::$PACKAGE_NAME@$VERSION is already on npm (from ${PUBLISHED_FROM:-an unknown commit}) but has no version tag. Tag that commit with its version, then re-run."
+          exit 1
+        fi
+
         # Prepare publish command
         PUBLISH_CMD="npm publish --provenance --access ${{ inputs.access }} --tag $INITIAL_TAG"
 

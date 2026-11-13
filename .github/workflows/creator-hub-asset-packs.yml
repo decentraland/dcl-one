@@ -22,7 +22,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write
     outputs:
       changed: ${{ steps.version.outputs.changed }}
       version: ${{ steps.version.outputs.version }}
@@ -227,8 +226,10 @@ jobs:
             > **Note:** If new assets are added in this PR, they won't be available on the CDN until the PR is merged. This package can be used to test changes to the library code or `catalog.json`, but won't work for testing newly added items.
           edit-mode: replace
 
+  # Tags the version only once its media is on the production CDN (`upload`, main only): a failed
+  # upload leaves the version untagged, so the next run uploads it again.
   release:
-    needs: [version, publish]
+    needs: [version, publish, upload]
     if: ${{ needs.version.outputs.changed == 'true' }}
     runs-on: ubuntu-latest
     permissions:
