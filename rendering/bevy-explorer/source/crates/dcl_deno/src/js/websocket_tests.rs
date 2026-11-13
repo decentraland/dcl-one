@@ -129,10 +129,33 @@ fn serve(
             .unwrap_or_default(),
     };
     log.lock().unwrap().handshakes.push(request.clone());
-    let response = format!(
-        "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: {accept}\r\n{protocol}\r\n"
-    );
-    if conn.write_all(response.as_bytes()).is_err() {
+    let switching = "HTTP/1.1 101 Switching Protocols\r\n";
+    let upgrade = "Upgrade: websocket\r\nConnection: Upgrade\r\n";
+    let accept_header = format!("Sec-WebSocket-Accept: {accept}\r\n");
+    let response = match path.as_str() {
+        "/status" => "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_owned(),
+        "/badaccept" => format!(
+            "{switching}{upgrade}Sec-WebSocket-Accept: {}\r\n\r\n",
+            tokio_tungstenite::tungstenite::handshake::derive_accept_key(b"other")
+        ),
+        "/noupgrade" => format!("{switching}Connection: Upgrade\r\n{accept_header}\r\n"),
+        "/noconnection" => format!("{switching}Upgrade: websocket\r\n{accept_header}\r\n"),
+        "/extensions" => format!(
+            "{switching}{upgrade}{accept_header}Sec-WebSocket-Extensions: permessage-deflate\r\n\r\n"
+        ),
+        "/bighead" => format!(
+            "{switching}{upgrade}{accept_header}X-Pad: {}\r\n\r\n",
+            "a".repeat(70 * 1024)
+        ),
+        _ => format!("{switching}{upgrade}{accept_header}{protocol}\r\n"),
+    };
+    let mut response = response.into_bytes();
+    if path == "/headandframe" {
+        // the head and a first text frame in one write
+        response.extend_from_slice(&[0x81, 5]);
+        response.extend_from_slice(b"early");
+    }
+    if conn.write_all(&response).is_err() {
         return;
     }
 
@@ -167,6 +190,25 @@ fn serve(
             echo(&mut *conn, &stop);
         }
         ["drop"] => {}
+        ["headandframe"] => echo(&mut *conn, &stop),
+        // one message, then a clean close and the end of the connection
+        ["bye"] => {
+            let _ = write_frame(&mut *conn, true, 1, b"hi");
+            let _ = write_frame(&mut *conn, true, 8, &[&1000u16.to_be_bytes()[..], b"bye"].concat());
+        }
+        // answers the scene's close with `code`, which may be one never allowed on the wire
+        ["reply", code] => {
+            while let Some((opcode, _)) = read_frame(&mut *conn, &stop) {
+                if opcode == 8 {
+                    let payload = match code.parse::<u16>() {
+                        Ok(code) => code.to_be_bytes().to_vec(),
+                        Err(_) => Vec::new(),
+                    };
+                    let _ = write_frame(&mut *conn, true, 8, &payload);
+                    return;
+                }
+            }
+        }
         // reads everything and never answers, a close frame included
         ["silent"] => {
             let mut buf = [0u8; 4096];
@@ -1074,10 +1116,14 @@ fn self_signed_wss_is_refused() {
         WsServer::start_with(Some(native_tls::TlsAcceptor::new(identity).unwrap()));
     let mut harness = Harness::new(Scene::DesktopSystem);
     let outcome = harness.run(&format!(
-        "const r = await connect('wss://localhost:{}/echo'); return r.ok ? 'open' : r.code;",
+        "const r = await connect('wss://localhost:{}/echo'); return r.ok ? 'open' : r.code + ' ' + r.error;",
         server.addr.port()
     ));
-    assert_eq!(outcome, "1006");
+    // the certificate is what fails, not some other part of the TLS path
+    assert!(
+        outcome.starts_with("1006 ") && outcome.to_lowercase().contains("certificate"),
+        "{outcome}"
+    );
     assert_eq!(server.connections(), 1);
     assert_eq!(server.handshakes().len(), 0);
     assert_eq!(harness.counters().ws_failed, 1);
@@ -1087,25 +1133,27 @@ fn self_signed_wss_is_refused() {
 fn server_close_codes_reach_the_scene_mapped() {
     let server = WsServer::start();
     for (path, expected) in [
-        ("/close/1000", "1000 bye"),
-        ("/close/3000", "3000 bye"),
-        ("/close/4999", "4999 bye"),
-        ("/close/1001", "1001 bye"),
-        ("/close/999", "1002 "),
-        ("/close/1004", "1002 "),
-        ("/close/1005", "1002 "),
-        ("/close/1006", "1002 "),
-        ("/close/1015", "1002 "),
-        ("/close/5000", "1002 "),
-        ("/close/none", "1005 "),
-        ("/drop", "1006 "),
+        ("/close/1000", "1000 bye true"),
+        ("/close/3000", "3000 bye true"),
+        ("/close/4999", "4999 bye true"),
+        ("/close/1001", "1001 bye true"),
+        ("/close/1002", "1002 bye true"),
+        // a code never allowed on the wire fails the connection, as in browsers
+        ("/close/999", "1006  false"),
+        ("/close/1004", "1006  false"),
+        ("/close/1005", "1006  false"),
+        ("/close/1006", "1006  false"),
+        ("/close/1015", "1006  false"),
+        ("/close/5000", "1006  false"),
+        ("/close/none", "1005  true"),
+        ("/drop", "1006  false"),
     ] {
         let outcome = Harness::new(Scene::DesktopSystem).run(&format!(
             r#"
             const {{ ws, ok, error }} = await connect({:?});
             if (!ok) return "refused " + error;
             const event = await closed(ws);
-            return event.code + " " + (event.code === 1002 ? "" : event.reason);
+            return [event.code, event.reason, event.wasClean].join(" ");
             "#,
             server.url(path)
         ));
@@ -1196,3 +1244,138 @@ fn direct_op_calls_are_validated() {
     assert_eq!(harness.sockets(), 0);
 }
 
+
+/// A send racing the peer's clean close is discarded; the scene still sees that close.
+#[test]
+fn a_send_after_the_peer_closed_keeps_the_clean_close() {
+    let server = WsServer::start();
+    let outcome = Harness::new(Scene::DesktopSystem).run(&format!(
+        r#"
+        const ws = new WebSocket({:?});
+        const log = track(ws);
+        ws.addEventListener("message", () => ws.send("reply"));
+        let done = false;
+        const tick = () => {{ if (done) return; if (ws.readyState === WebSocket.OPEN) ws.send("tick"); setTimeout(tick, 1); }};
+        tick();
+        const event = await closed(ws);
+        done = true;
+        return log.join(",") + " " + event.reason;
+        "#,
+        server.url("/bye")
+    ));
+    assert_eq!(outcome, "open,close:1000:true bye");
+
+    // the same race made certain: the pump has ended before the send
+    let outcome = Harness::new(Scene::DesktopSystem).run(&format!(
+        r#"
+        const ops = Deno.core.ops;
+        const rid = ops.op_ws_create({:?}, "");
+        await ops.op_ws_connect(rid);
+        const kinds = [await ops.op_ws_next_event(rid)];
+        // the close is queued and the connection has ended
+        await new Promise((r) => setTimeout(r, 200));
+        let sent = "accepted";
+        try {{ ops.op_ws_send_text(rid, "late"); }} catch (e) {{ sent = String(e); }}
+        kinds.push(await ops.op_ws_next_event(rid));
+        const code = ops.op_ws_get_close_code(rid);
+        const reason = ops.op_ws_get_error(rid);
+        Deno.core.close(rid);
+        return [sent, kinds.join(","), code, reason].join(" ");
+        "#,
+        server.url("/bye")
+    ));
+    assert_eq!(outcome, "accepted 0,2 1000 bye");
+}
+
+/// A peer's reply to our close follows the same code rules as a close it starts.
+#[test]
+fn reply_close_codes_reach_the_scene_mapped() {
+    let server = WsServer::start();
+    for (path, expected) in [
+        ("/reply/1000", "1000 true"),
+        ("/reply/none", "1005 true"),
+        ("/reply/1005", "1006 false"),
+        ("/reply/1006", "1006 false"),
+    ] {
+        let outcome = Harness::new(Scene::DesktopSystem).run(&format!(
+            r#"
+            const {{ ws, ok, error }} = await connect({:?});
+            if (!ok) return "refused " + error;
+            const event = await close(ws, 1000);
+            return event.code + " " + event.wasClean;
+            "#,
+            server.url(path)
+        ));
+        assert_eq!(outcome, expected, "{path}");
+    }
+}
+
+/// A Blob still being read when `close()` runs is sent before the close frame, and sends
+/// after `close()` are discarded without throwing.
+#[test]
+fn close_sends_pending_blobs_first_and_later_sends_are_discarded() {
+    let server = WsServer::start();
+    let outcome = Harness::new(Scene::DesktopSystem).run(&format!(
+        r#"
+        const {{ ws, ok, error }} = await connect({:?});
+        if (!ok) return "refused " + error;
+        const Blob = (await message(ws)).constructor;
+        const received = [];
+        ws.addEventListener("message", async (e) => received.push([...new Uint8Array(await e.data.arrayBuffer())].join(",")));
+        ws.send(new Blob([new Uint8Array([1, 2, 3])]));
+        const c = closed(ws);
+        ws.close(1000);
+        let threw = [];
+        try {{ ws.send("closing"); }} catch (e) {{ threw.push(String(e)); }}
+        const event = await c;
+        try {{ ws.send("closed"); }} catch (e) {{ threw.push(String(e)); }}
+        await new Promise((r) => setTimeout(r, 20));
+        return [received.join(";"), event.code, event.wasClean, threw.length].join(" ");
+        "#,
+        server.url("/frame/1")
+    ));
+    assert_eq!(outcome, "1,2,3 1000 true 0");
+}
+
+/// The opening handshake refuses every malformed response.
+#[test]
+fn malformed_handshake_responses_are_refused() {
+    let server = WsServer::start();
+    for (path, needle) in [
+        ("/status", "HTTP 200"),
+        ("/badaccept", "wrong accept key"),
+        ("/noupgrade", "does not upgrade to websocket"),
+        ("/noconnection", "does not upgrade the connection"),
+        ("/extensions", "extension that was not requested"),
+        ("/bighead", "too large"),
+    ] {
+        let outcome = Harness::new(Scene::DesktopSystem).run(&format!(
+            r#"
+            const {{ ok, error, code }} = await connect({:?});
+            return ok ? "open" : code + " " + error;
+            "#,
+            server.url(path)
+        ));
+        assert!(
+            outcome.starts_with("1006 ") && outcome.contains(needle),
+            "{path}: {outcome}"
+        );
+    }
+}
+
+/// A first frame that arrives in the same read as the response head is not lost.
+#[test]
+fn a_frame_sent_with_the_handshake_response_is_delivered() {
+    let server = WsServer::start();
+    let outcome = Harness::new(Scene::DesktopSystem).run(&format!(
+        r#"
+        const ws = new WebSocket({:?});
+        const first = message(ws);
+        const data = await first;
+        await close(ws);
+        return data;
+        "#,
+        server.url("/headandframe")
+    ));
+    assert_eq!(outcome, "early");
+}

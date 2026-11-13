@@ -55,6 +55,8 @@ understand the change in one sitting.
   selectors include the test, including any explicit opt-in, and that the job has the tools
   and files the test needs. Check path filters against changes to the test's inputs, including
   routing sources outside the engine workspace.
+- `dcl_deno`'s `self_signed_wss_is_refused` runs the `openssl` command to make its
+  certificate, so the machine running `cargo test` needs it on `PATH`.
 - Parse structured output; never string-compare it. Serialisation order is not stable across
   feature unification.
 - For anything animated or staged, test what lands mid-way, not only the happy path. Enumerate

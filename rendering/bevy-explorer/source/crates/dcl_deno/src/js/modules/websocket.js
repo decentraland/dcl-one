@@ -1,6 +1,23 @@
 // Copyright 2018-2024 the Deno authors. All rights reserved. MIT license.
-// Adapted from deno 1.46 ext/websocket/01_websocket.js: client role only, on this
-// runtime's own ops.
+// Adapted from robtfm/deno@3ee34819c57653610521dc6501ddf8e2cf0c5aaa (deno 1.46)
+// ext/websocket/01_websocket.js: client role only, on this runtime's own ops.
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy of this
+// software and associated documentation files (the "Software"), to deal in the Software
+// without restriction, including without limitation the rights to use, copy, modify,
+// merge, publish, distribute, sublicense, and/or sell copies of the Software, and to
+// permit persons to whom the Software is furnished to do so, subject to the following
+// conditions:
+//
+// The above copyright notice and this permission notice shall be included in all copies
+// or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+// PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+// HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF
+// CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE
+// OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 import { core, primordials } from "ext:core/mod.js";
 const {
@@ -120,6 +137,8 @@ const _fail = Symbol("[[fail]]");
 const _failSend = Symbol("[[failSend]]");
 const _sendNow = Symbol("[[sendNow]]");
 const _closedWhileConnecting = Symbol("[[closedWhileConnecting]]");
+const _pendingClose = Symbol("[[pendingClose]]");
+const _closeNow = Symbol("[[closeNow]]");
 
 class WebSocket extends EventTarget {
   constructor(url, protocols = []) {
@@ -318,8 +337,12 @@ class WebSocket extends EventTarget {
     webidl.requiredArguments(arguments.length, 1, prefix);
     data = webidl.converters.WebSocketSend(data, prefix, "Argument 1");
 
-    if (this[_readyState] !== OPEN) {
+    if (this[_readyState] === CONNECTING) {
       throw new DOMException("readyState not OPEN", "InvalidStateError");
+    }
+    if (this[_readyState] !== OPEN) {
+      // CLOSING or CLOSED: the data is discarded, as browsers do
+      return;
     }
 
     if (this[_sendQueue].length === 0) {
@@ -386,14 +409,22 @@ class WebSocket extends EventTarget {
       }
     } else if (this[_readyState] === OPEN) {
       this[_readyState] = CLOSING;
-
-      try {
-        op_ws_close(this[_rid], code, reason);
-      } catch (err) {
-        this[_readyState] = CLOSED;
-        this[_fail](err);
-        core.tryClose(this[_rid]);
+      if (this[_sendQueue].length > 0) {
+        // queued sends (Blobs being read) go out before the close frame
+        this[_pendingClose] = { code, reason };
+      } else {
+        this[_closeNow](code, reason);
       }
+    }
+  }
+
+  [_closeNow](code, reason) {
+    try {
+      op_ws_close(this[_rid], code, reason);
+    } catch (err) {
+      this[_readyState] = CLOSED;
+      this[_fail](err);
+      core.tryClose(this[_rid]);
     }
   }
 
@@ -543,8 +574,8 @@ class WebSocket extends EventTarget {
           // deno-lint-ignore prefer-primordials
           data = await data.slice().arrayBuffer();
         }
-        if (this[_readyState] !== OPEN) {
-          // closed while a Blob was read: the rest is never sent
+        if (this[_readyState] === CLOSED) {
+          // the connection ended while a Blob was read: the rest is never sent
           queue.length = 0;
           return;
         }
@@ -554,6 +585,11 @@ class WebSocket extends EventTarget {
         return;
       }
       ArrayPrototypeShift(queue);
+    }
+    const pending = this[_pendingClose];
+    if (pending !== undefined && this[_readyState] === CLOSING) {
+      this[_pendingClose] = undefined;
+      this[_closeNow](pending.code, pending.reason);
     }
   }
 

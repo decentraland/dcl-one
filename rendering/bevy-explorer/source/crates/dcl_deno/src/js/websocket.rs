@@ -67,7 +67,6 @@ const CLOSE_TIMEOUT: Duration = Duration::from_secs(5);
 const CLOSE_DRAIN_TIMEOUT: Duration = Duration::from_secs(60);
 const MAX_URL_BYTES: usize = 8 * 1024;
 const MAX_PROTOCOLS_BYTES: usize = 4 * 1024;
-const USER_AGENT: &str = "DCLExplorer/0.1";
 
 const KIND_TEXT: u16 = 0;
 const KIND_BINARY: u16 = 1;
@@ -76,7 +75,6 @@ const KIND_ERROR: u16 = 3;
 
 const CLOSE_NO_STATUS: u16 = 1005;
 const CLOSE_ABNORMAL: u16 = 1006;
-const CLOSE_PROTOCOL_ERROR: u16 = 1002;
 
 pub fn ops() -> Vec<OpDecl> {
     vec![
@@ -271,12 +269,7 @@ fn parse_target(url: &str, protocols: &str, allow_private: bool) -> Result<WsTar
         }
     }
 
-    let tls_host = secure.then(|| {
-        host.strip_prefix('[')
-            .and_then(|h| h.strip_suffix(']'))
-            .unwrap_or(&host)
-            .to_owned()
-    });
+    let tls_host = secure.then(|| common::util::strip_ipv6_brackets(&host).to_owned());
     Ok(WsTarget {
         uri,
         origin,
@@ -519,7 +512,8 @@ async fn upgrade(
     // the path is URL-serialized and the protocols are checked tokens, so neither holds CR or LF
     let mut request = format!(
         "GET {path} HTTP/1.1\r\nHost: {host}\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\
-         Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: {key}\r\nUser-Agent: {USER_AGENT}\r\n"
+         Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: {key}\r\nUser-Agent: {}\r\n",
+        common::util::USER_AGENT
     );
     if !target.protocols.is_empty() {
         request.push_str(&format!(
@@ -532,10 +526,18 @@ async fn upgrade(
     stream.flush().await?;
 
     let mut buf = Vec::new();
+    let mut scanned = 0usize;
     let (head_len, response) = loop {
-        if let Some(parsed) = Response::try_parse(&buf)? {
-            break parsed;
+        // parse only once the head can be complete, so a trickling server costs one scan
+        if buf[scanned.saturating_sub(3)..]
+            .windows(4)
+            .any(|w| w == b"\r\n\r\n")
+        {
+            if let Some(parsed) = Response::try_parse(&buf)? {
+                break parsed;
+            }
         }
+        scanned = buf.len();
         if buf.len() > MAX_RESPONSE_HEAD_BYTES {
             anyhow::bail!("WebSocket handshake response is too large");
         }
@@ -727,12 +729,19 @@ async fn read(mut stream: SplitStream<Socket>, inbound: mpsc::Sender<Inbound>, c
             Ok(Message::Text(text)) => Inbound::Text(text.as_str().to_owned()),
             Ok(Message::Binary(data)) => Inbound::Binary(data.to_vec()),
             Ok(Message::Close(frame)) => {
-                closing.notify_one();
-                let (code, reason) = match frame {
-                    Some(frame) => (u16::from(frame.code), frame.reason.as_str().to_owned()),
-                    None => (CLOSE_NO_STATUS, String::new()),
+                let event = match frame {
+                    None => Inbound::Close(CLOSE_NO_STATUS, String::new()),
+                    Some(frame) if valid_close(&frame) => {
+                        Inbound::Close(frame.code.into(), frame.reason.as_str().to_owned())
+                    }
+                    Some(_) => Inbound::Error("WebSocket peer sent an invalid close code".into()),
                 };
-                Inbound::Close(received_close_code(code), reason)
+                if inbound.send(event).await.is_err() {
+                    return;
+                }
+                // the close timer starts once the scene can see the peer's close
+                closing.notify_one();
+                continue;
             }
             Ok(Message::Ping(_) | Message::Pong(_) | Message::Frame(_)) => continue,
             Err(tungstenite::Error::ConnectionClosed | tungstenite::Error::AlreadyClosed) => break,
@@ -779,15 +788,12 @@ async fn write(
     }
 }
 
-/// A received close code a scene may see: no code is 1005, and a code that may not appear on
-/// the wire is a protocol error.
-fn received_close_code(code: u16) -> u16 {
-    match code {
-        CLOSE_NO_STATUS => CLOSE_NO_STATUS,
-        1004 | 1006 | 1015 => CLOSE_PROTOCOL_ERROR,
-        1000..=4999 => code,
-        _ => CLOSE_PROTOCOL_ERROR,
-    }
+/// Whether a received close frame carries a code that may appear on the wire. While open,
+/// tungstenite replaces a disallowed code with 1002 "Protocol violation"; a reply to our own
+/// close arrives as sent.
+fn valid_close(frame: &CloseFrame) -> bool {
+    frame.code.is_allowed()
+        && !(frame.code == CloseCode::Protocol && frame.reason.as_str() == "Protocol violation")
 }
 
 /// Queues a message of `len` payload bytes; `message` is built only once the send is accepted.
@@ -818,8 +824,9 @@ fn send(
     }
     resource.backlog.bytes.fetch_add(len, Ordering::SeqCst);
     if outbound.send(Outbound::Message(message(), len)).is_err() {
+        // the connection ended and its close event is queued; the data is discarded
         resource.backlog.release(len);
-        anyhow::bail!("WebSocket is closed");
+        return Ok(());
     }
     count(state, |c| {
         c.ws_msgs_out += 1;
