@@ -127,12 +127,14 @@ pub async fn private_messages_token(
     };
     let (banned, privacy) = tokio::join!(
         async {
-            // Gate before recording so a fresh device id cannot replace the recorded one first.
+            // Record only an admitted connection: a refused one must not replace the recorded device.
             let banned = state
                 .moderation
                 .is_banned_for_connection(&identity, device_id.as_deref())
                 .await;
-            upsert.await;
+            if matches!(banned, Ok(false)) {
+                upsert.await;
+            }
             banned
         },
         state.social.private_messages_privacy(&identity)
@@ -194,6 +196,18 @@ pub struct PrivateVoiceChatBody {
 /// checked against the platform ban first, then the call row opened with
 /// both `not_connected`. `room_id` is the call id (`social.private_voice_chats`
 /// keys it as a uuid, so the friends module's ids are the wire's).
+pub const DENY_LISTED_MSG: &str = "Access denied, deny-listed wallet.";
+
+/// Voice mints refuse a deny-listed participant like the other mint paths.
+async fn refuse_deny_listed(state: &CommsState, addresses: &[Address]) -> Result<(), ApiError> {
+    for address in addresses {
+        if state.deny_list.is_denied(address.as_str()).await {
+            return Err(forbidden(DENY_LISTED_MSG));
+        }
+    }
+    Ok(())
+}
+
 pub async fn get_private_voice_chat_room_credentials(
     state: &CommsState,
     room_id: &str,
@@ -228,6 +242,7 @@ async fn private_voice_chat_room_credentials(
             "Invalid request body, user_addresses must name two different wallets",
         ));
     }
+    refuse_deny_listed(state, user_addresses).await?;
     state
         .moderation
         .platform_ban_decision(user_addresses)
@@ -466,6 +481,7 @@ pub async fn community_voice_credentials_for(
         .as_deref()
         .unwrap_or(CLAIMED_ROLE_WHEN_OMITTED)
         .to_lowercase();
+    refuse_deny_listed(state, std::slice::from_ref(&claimed_wallet)).await?;
     state
         .moderation
         .platform_ban_decision(std::slice::from_ref(&claimed_wallet))

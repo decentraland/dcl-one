@@ -1,7 +1,10 @@
 //! `/scene-stream-access` (GET/POST/PUT/DELETE, scene signed): the RTMP
 //! ingress credential of a place's stream. The signer must own or
-//! administer the place the signed metadata stands on (a world by its realm
-//! name, a Genesis place by its parcel); list, add and reset are refused to
+//! administer the place the signed metadata stands on. List, add and reset
+//! require the signed scene to be the current deployment on its parcel and
+//! authorize against that deployment's footprint; remove needs only the
+//! place (a world by its realm name, a Genesis place by its parcel), so a
+//! key outlives no redeploy. List, add and reset are refused to
 //! a platform-banned wallet BEFORE that check, because LiveKit honours the
 //! key without re-checking the wallet, and remove stays ungated (upstream's
 //! `*-scene-stream-access-handler.ts`). One active row per place in
@@ -121,33 +124,50 @@ pub async fn scene_stream_access(
     .await?;
     let realm_name = realm_name_from_metadata(&sf.metadata)
         .ok_or_else(|| ApiError::bad_request("invalid signed-fetch request, no realmName"))?;
-    if !is_world_realm_name(&realm_name) && meta_str(&sf.metadata, "parcel").is_none() {
-        return Err(ApiError::bad_request(
-            "invalid signed-fetch request, no parcel",
-        ));
-    }
     let device_id = device_identifier(&sf.metadata);
-    if matches!(method, Method::GET | Method::POST | Method::PUT) {
+    if method != Method::DELETE {
         refuse_if_platform_banned(&state, &sf.signer, device_id.as_deref()).await?;
+        if state.deny_list.is_denied(sf.signer.as_str()).await {
+            return Err(forbidden(NOT_AUTHORIZED_TO_STREAM_MSG));
+        }
     }
-    if meta_str(&sf.metadata, "sceneId").is_none() {
-        return Err(ApiError::bad_request(
-            "invalid signed-fetch request, no sceneId",
-        ));
-    }
-    if matches!(method, Method::GET | Method::POST | Method::PUT)
-        && state.deny_list.is_denied(sf.signer.as_str()).await
-    {
-        return Err(forbidden(NOT_AUTHORIZED_TO_STREAM_MSG));
-    }
-    // One resolution binds the signed scene to its parcel; room and place both follow it.
-    let bound = Context::resolve(&state, &sf.metadata).await?;
-    let parcel = bound.parcel.canonical();
-    let world = bound.world_scene.as_ref().map(|(world, _)| world);
-    let place_id = resolve_place_id(&state.pool, world, &parcel)
+    let (place_id, place, room) = if method == Method::DELETE {
+        // Revocation needs no current deployment: the place row's own footprint authorizes it.
+        let world = if is_world_realm_name(&realm_name) {
+            Some(
+                WorldName::parse(&realm_name)
+                    .map_err(|_| ApiError::bad_request("Invalid realm name"))?,
+            )
+        } else {
+            None
+        };
+        let parcel = meta_str(&sf.metadata, "parcel");
+        if world.is_none() && parcel.is_none() {
+            return Err(ApiError::bad_request(
+                "invalid signed-fetch request, no parcel",
+            ));
+        }
+        let place_id = resolve_place_id(
+            &state.pool,
+            world.as_ref(),
+            parcel.as_deref().unwrap_or_default(),
+        )
         .await?
         .ok_or_else(|| ApiError::not_found("place not found for this scene"))?;
-    let place = PlaceLookup::new(&state, &place_id);
+        let place = PlaceLookup::new(&state, &place_id);
+        (place_id, place, None)
+    } else {
+        // One resolution binds the signed scene to its parcel; the room and the
+        // authorizing footprint both come from it.
+        let bound = Context::resolve(&state, &sf.metadata).await?;
+        let world = bound.world_scene.as_ref().map(|(world, _)| world);
+        let base = bound.footprint.base_position.clone().unwrap_or_default();
+        let place_id = resolve_place_id(&state.pool, world, &base)
+            .await?
+            .ok_or_else(|| ApiError::not_found("place not found for this scene"))?;
+        let place = PlaceLookup::resolved(&state, &place_id, bound.footprint);
+        (place_id, place, Some(bound.room))
+    };
     match scene::scene_owner_or_admin_decision(&state, &place, &sf.signer).await {
         PermissionDecision::Allowed => {}
         PermissionDecision::Refused(AuthorityNotEstablished::RefusedLacksAuthority { .. }) => {
@@ -155,7 +175,7 @@ pub async fn scene_stream_access(
         }
         PermissionDecision::Refused(why) => return Err(why.into()),
     }
-    let room = bound.room;
+    let room = room.unwrap_or_default();
     let ingress = state.ingress();
     match method {
         Method::GET => match active_access(&state.pool, &place_id).await? {
@@ -234,10 +254,15 @@ async fn resolve_place_id(
         .fetch_optional(pool)
         .await?);
     }
-    Ok(sqlx::query_scalar("SELECT id FROM explore.place WHERE raw->'positions' @> jsonb_build_array($1::text) LIMIT 1")
-        .bind(parcel)
-        .fetch_optional(pool)
-        .await?)
+    // A live Genesis place on the parcel, preferring the one based there.
+    Ok(sqlx::query_scalar(
+        "SELECT id FROM explore.place WHERE NOT world AND NOT disabled \
+         AND raw->'positions' @> jsonb_build_array($1::text) \
+         ORDER BY base_position = $1 DESC, deployed_at DESC NULLS LAST, id LIMIT 1",
+    )
+    .bind(parcel)
+    .fetch_optional(pool)
+    .await?)
 }
 
 async fn active_access(pool: &PgPool, place_id: &str) -> Result<Option<AccessRow>, sqlx::Error> {

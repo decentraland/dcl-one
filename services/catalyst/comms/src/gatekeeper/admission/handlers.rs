@@ -106,6 +106,9 @@ pub async fn get_scene_adapter(
     .map_err(|_| unauthorized("Access denied, invalid signed-fetch request"))?;
     let body: SceneAdapterRequest = serde_json::from_slice(&raw_body).unwrap_or_default();
     let identity = sf.signer;
+    if state.deny_list.is_denied(identity.as_str()).await {
+        return Err(unauthorized(super::world_mint::DENY_LISTED));
+    }
     let realm_name = realm_name_from(&sf.metadata, &body)
         .ok_or_else(|| unauthorized("Access denied, invalid signed-fetch request, no realmName"))?;
     let scene_id = scene_id_from(&sf.metadata, &body).ok_or_else(|| {
@@ -141,12 +144,12 @@ pub async fn get_scene_adapter(
     let record = crate::writes::side_refusal(switch).is_none();
     let (gate, world_allowed) = tokio::join!(
         async {
-            // Gate before recording so a fresh device id cannot replace the recorded one first.
+            // Record only an admitted connection: a refused one must not replace the recorded device.
             let gate = state
                 .moderation
                 .connection_gate(&identity, device_id.as_deref(), resolved_scene_id)
                 .await;
-            if record {
+            if record && gate.is_allowed() {
                 record_connection(&state, &identity, &headers, device_id.as_deref()).await;
             }
             gate
@@ -168,9 +171,6 @@ pub async fn get_scene_adapter(
         },
     );
     gate.into_result()?;
-    if state.deny_list.is_denied(identity.as_str()).await {
-        return Err(unauthorized(super::world_mint::DENY_LISTED));
-    }
     if !world_allowed? {
         return Err(unauthorized(
             "Access denied, you are not authorized to access this world",

@@ -1117,6 +1117,38 @@ mod stream_access {
             (status, body["error"].as_str()),
             (StatusCode::FORBIDDEN, Some(NOT_AUTHORIZED_TO_STREAM_MSG))
         );
+        // Overlapping catalogue rows (one based elsewhere, one disabled) never authorize.
+        let stranger_address = Address::parse(&address_of(&stranger)).unwrap();
+        for (base, positions, disabled) in [
+            (
+                victim_parcel.clone(),
+                vec![parcel.clone(), victim_parcel.clone()],
+                false,
+            ),
+            (parcel.clone(), vec![parcel.clone()], true),
+        ] {
+            let stale = Uuid::new_v4().to_string();
+            sqlx::query(
+                "INSERT INTO explore.place (id, base_position, raw, disabled) VALUES ($1, $2, $3::jsonb, $4)",
+            )
+            .bind(&stale)
+            .bind(&base)
+            .bind(serde_json::json!({ "world": false, "positions": positions }))
+            .bind(disabled)
+            .execute(&pool)
+            .await
+            .unwrap();
+            state
+                .moderation
+                .add_admin(&stale, &stranger_address, &stranger_address)
+                .await
+                .unwrap();
+        }
+        let (status, body) = call(&app, &stranger, "POST", &metadata).await;
+        assert_eq!(
+            (status, body["error"].as_str()),
+            (StatusCode::FORBIDDEN, Some(NOT_AUTHORIZED_TO_STREAM_MSG))
+        );
 
         let device = format!("stream-device-{}", Uuid::new_v4().simple());
         state
@@ -1148,7 +1180,9 @@ mod stream_access {
                 "{method}"
             );
         }
-        let (status, _) = call(&app, &admin_key, "DELETE", &metadata).await;
+        // Remove needs only the place: a scene id no longer deployed still revokes.
+        let stale_scene = serde_json::json!({ "signer": SCENE_SIGNER, "realmName": "main", "parcel": parcel, "sceneId": "bafkreinolongerdeployed" }).to_string();
+        let (status, _) = call(&app, &admin_key, "DELETE", &stale_scene).await;
         assert_eq!(
             status,
             StatusCode::NO_CONTENT,

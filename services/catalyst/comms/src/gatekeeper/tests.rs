@@ -3148,7 +3148,81 @@ async fn deny_listed_wallet_is_refused_by_every_world_mint_and_private_messages(
     )
     .await
     .expect("an unlisted wallet still gets the scene room");
+    let denied = Address::parse(&address_of(KEY)).unwrap();
+    let outsider = Address::parse(&address_of(OUTSIDER_KEY)).unwrap();
+    let error = voice::get_private_voice_chat_room_credentials(
+        &state,
+        &Uuid::new_v4().to_string(),
+        &[outsider, denied],
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(
+        (error.code, error.message.as_str()),
+        (403, voice::DENY_LISTED_MSG)
+    );
     server.abort();
+}
+
+/// A refused connection never records its fresh device id, so a retry stays refused.
+#[tokio::test]
+async fn a_refused_scene_adapter_retry_keeps_the_recorded_banned_device() {
+    let Some(pool) = scratch().await else { return };
+    let state = state_with(pool.clone(), Settings::for_tests());
+    let key = random_key();
+    let me = Address::parse(&address_of(&key)).unwrap();
+    let device = format!("banned-device-{}", tag());
+    state
+        .moderation
+        .upsert_connection(UpsertPlayerConnection {
+            address: me.clone(),
+            ip_address: None,
+            device_id: Some(device.clone()),
+        })
+        .await
+        .unwrap();
+    state
+        .moderation
+        .create_ban(CreateBan {
+            banned_address: wallet(),
+            banned_by: wallet().as_str().into(),
+            reason: "abuse".into(),
+            custom_message: None,
+            banned_device_id: Some(device.clone()),
+            duration_ms: None,
+        })
+        .await
+        .unwrap();
+    let headers = signed(
+        &key,
+        "post",
+        "/get-scene-adapter",
+        &meta("main", &format!("bafkrei{}", tag()), Some("fresh-device")),
+    )
+    .await;
+    for attempt in 0..2 {
+        let err = handlers::get_scene_adapter(
+            State(state.clone()),
+            at("/get-scene-adapter"),
+            headers.clone(),
+            writes_on(),
+            axum::body::Bytes::new(),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(
+            (err.code, err.message.as_str()),
+            (403, PLATFORM_BANNED_MSG),
+            "attempt {attempt}"
+        );
+    }
+    let recorded: Option<String> =
+        sqlx::query_scalar("SELECT device_id FROM social.player_connections WHERE address = $1")
+            .bind(&me)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(recorded.as_deref(), Some(device.as_str()));
 }
 
 #[tokio::test]
