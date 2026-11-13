@@ -5,12 +5,17 @@
 ## Agent work and commits
 
 - Keep accepted architecture in `docs/adr/` and reusable instructions in this tree.
+- Keep agent instructions and skills usable across LLM providers and models; omit provider-specific metadata files.
 - Keep plans, briefs, handoffs, task reports and review evidence in ignored `.agent-work/`; follow `services/catalyst/docs/comms/README.md` for specialist reporting. `services/catalyst/docs/comms/plans/` and `.superpowers/` stay local too.
 - Before committing, capture accepted public architectural choices in ADRs and check the staged paths for working documents and sensitive data.
 - Never commit working documents unless the user asks.
 - Tracked documentation must stand alone without local plans or private ledger exports.
 - For tracked documentation, ADRs, agent instructions, comments and PR prose, apply the [public-prose rule](rendering/bevy-explorer/docs/guidelines/contributing.md#public-prose), including its pre-publication search.
 - Make focused edits; preserve other agents' work.
+
+For formal verification of LiveKit or networking decisions, or maintenance of
+their proof evidence, use
+[verify-dcl-networking](.claude/skills/verify-dcl-networking/SKILL.md).
 
 ## Agentic roles documentation
 

@@ -1,4 +1,4 @@
-/* Over the app's iframe (which is fixed at inset 0 before it in the page). */
+/* A shell dialog over the app's iframe (which is fixed at inset 0 before it in the page): the Shop's and Donate's. */
 .overlay {
   position: fixed;
   inset: 0;

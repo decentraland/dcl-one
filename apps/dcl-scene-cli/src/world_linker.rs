@@ -8,7 +8,7 @@
 //! instead of killing the CLI.
 
 use crate::deploy::{caused, read_server_message, refusal};
-use crate::linker::{DoneSender, LinkerOptions, finish, fmt_wait, linker_bind_host, spawn_browser};
+use crate::linker::{LinkerOptions, finish, fmt_wait, linker_bind_host, spawn_browser};
 use crate::ux::{self, TrySteps, UserError};
 use crate::world::{WorldAction, browser_headers, signed_fetch_payload_meta};
 use anyhow::{Context, Result};
@@ -28,6 +28,9 @@ pub struct WorldSignRequest {
     pub name: String,
     pub action: WorldAction,
 }
+
+/// The world flows answer the CLI with the outcome line alone.
+pub(crate) type DoneSender = tokio::sync::oneshot::Sender<Result<String>>;
 
 pub struct WorldLinkerState {
     req: WorldSignRequest,
@@ -62,8 +65,16 @@ pub fn router(state: Arc<WorldLinkerState>) -> Router {
         .with_state(state)
 }
 
-async fn page() -> Html<&'static str> {
-    Html(PAGE)
+async fn page() -> Html<String> {
+    document(PAGE)
+}
+
+/// A world page is one document with nothing to fetch: the ui3 elements, the
+/// CLI tokens and the sheet both world pages share go ahead of its own rules.
+pub(crate) fn document(page: &str) -> Html<String> {
+    use crate::start::chrome::{TOKENS, ui3};
+    let shared = format!("<style>{}{TOKENS}{}", ui3(), include_str!("world_page.css"));
+    Html(page.replacen("<style>", &shared, 1))
 }
 
 async fn info(State(st): State<Arc<WorldLinkerState>>) -> Json<Value> {
@@ -334,29 +345,14 @@ const PAGE: &str = r##"<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>dcl-scene-cli world — sign</title>
 <style>
-  :root{color-scheme:dark}
-  body{margin:0;background:#0b0e16;color:#e6ebf2;font:15px/1.5 system-ui,sans-serif;
-       display:flex;min-height:100vh;align-items:center;justify-content:center}
-  .card{width:min(720px,92vw);background:#12151e;border:1px solid #24314d;border-radius:16px;
-        padding:28px 30px;box-shadow:0 20px 60px #0008;margin:24px 0}
-  h1{margin:0 0 4px;font-size:20px}
-  h1 .t{color:#22e6d0}
-  .sub{color:#8ea1c0;margin:0 0 20px;font-size:13px}
-  .kv{display:grid;grid-template-columns:130px 1fr;gap:6px 12px;font-size:13px;margin:14px 0}
-  .kv b{color:#8ea1c0;font-weight:500}
-  code{font-family:ui-monospace,monospace;word-break:break-all;color:#cfe}
-  ul{margin:6px 0 0;padding-left:18px;color:#b9c6dd;font-size:12px}
-  button{margin-top:18px;width:100%;padding:13px;border:0;border-radius:10px;cursor:pointer;
-         font-size:15px;font-weight:600;background:#22e6d0;color:#04121a}
-  button:disabled{opacity:.5;cursor:default}
-  #status{margin-top:16px;padding:12px 14px;border-radius:10px;font-size:13px;white-space:pre-wrap;display:none}
-  .ok{background:#0e2a1e;border:1px solid #1f6b46;color:#8ff0bf}
-  .err{background:#2a1414;border:1px solid #6b2626;color:#ff9a9a}
-  .info{background:#101a2c;border:1px solid #24314d;color:#a9c0e6}
-  a{color:#22e6d0}
+  body{align-items:center}
+  .sheet{max-width:720px}
+  .kv{display:grid;grid-template-columns:130px 1fr;gap:var(--s-1-5) var(--s-3);font-size:var(--fs-13)}
+  .kv b{color:var(--ink-6);font-weight:var(--fw-medium)}
+  ul{margin:0;padding-left:var(--s-4);color:var(--ink-7);font-size:var(--fs-12)}
 </style></head>
-<body><div class="card">
-  <h1>World change <span class="t">·</span> signature required</h1>
+<body><div class="ui-card sheet">
+  <h1>World change <span>·</span> signature required</h1>
   <p class="sub">Connect the wallet that owns this world (or holds the needed permission) and sign. The command line waits until you finish here.</p>
   <div class="kv">
     <b>World</b><code id="world">…</code>
@@ -365,7 +361,7 @@ const PAGE: &str = r##"<!doctype html>
     <b>Request</b><code id="req">…</code>
     <b>Server</b><code id="cs">…</code>
   </div>
-  <button id="go" disabled>Connect wallet &amp; sign</button>
+  <div class="act"><button class="btn btn--primary btn--lg" id="go" disabled>Connect wallet &amp; sign</button></div>
   <div id="status"></div>
 </div>
 <script>
@@ -429,6 +425,11 @@ load();
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_page_is_built_from_the_ui3_elements() {
+        crate::world_access::assert_built_from_ui3(super::PAGE, &["btn btn--primary btn--lg"]);
+    }
+
     #[tokio::test]
     async fn standalone_signing_drains_the_response_before_returning() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -458,6 +459,7 @@ mod tests {
                 port: Some(port),
                 open_browser: false,
                 timeout: std::time::Duration::from_secs(5),
+                programmatic: false,
                 host: None,
             },
         ));

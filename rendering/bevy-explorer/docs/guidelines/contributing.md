@@ -34,7 +34,8 @@ understand the change in one sitting.
 - Limit each `Drop` implementation to one blocking operation. Release a lock before taking
   another or doing file I/O. Put multi-step cleanup in an explicit completion path.
 - Reuse what exists: protocol and SDK types, the existing scheduling, picking and loading
-  paths. Hand-rolled parallels are the main source of drift.
+  paths, helpers such as `scene_runner::parcel_to_vec3` and `vec3_to_parcel`. Hand-rolled
+  parallels are the main source of drift.
 - You should not need to add a schedule set or ordering step. If you think you do, raise it
   first; the [scheduling guide](scheduling.md) explains the current setup.
 - If something works better with a change in a dependency, change the dependency. Upstream it
@@ -73,6 +74,8 @@ understand the change in one sitting.
   diff in an hour.
 - Screenshots before and after for rendering changes. There is no visual regression suite for
   the 3D side.
+- Measurements in the description or an ADR describe the merged code: re-run them at the head
+  after the last change to the measured path, merged with main.
 - Explain the chosen behavior, constants, alternatives and verification in this engine's own
   terms. Follow [public prose](#public-prose); for ports, use [Porting from Unity](porting-from-unity.md).
 - Follow the repository PR template, including its test instructions and checks run; omit a chronological work narrative.
@@ -127,6 +130,10 @@ this engine's design using its requirements and tests.
   are errors in CI.
 - The wasm build, only if the change has platform-sensitive code: `#[cfg]` branches,
   threading, atomics, blocking calls, timers, filesystem or network access, wasm-specific deps.
+- A change that limits per-frame work (a budget, slicing) is tried in the web build by hand,
+  where frames are slowest and a fixed cost takes the largest share of one: that run is part of
+  the case for the change, and CI only shows that it compiles. Say in the description what you
+  saw and the worst frames. Other changes to per-frame work need no manual web run.
 - Web-only engine switches are a page param plus a wasm export, not a launch option.
 
 ## Dependencies

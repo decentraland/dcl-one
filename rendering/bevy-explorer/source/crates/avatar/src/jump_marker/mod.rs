@@ -367,62 +367,21 @@ mod tests {
     #[test]
     #[ignore = "needs a GPU; run with --ignored"]
     fn jump_marker_pipeline_compiles() {
-        use bevy::{
-            asset::RenderAssetUsages,
-            image::Image,
-            log::LogPlugin,
-            render::{
-                camera::RenderTarget,
-                pipelined_rendering::PipelinedRenderingPlugin,
-                render_resource::{
-                    CachedPipelineState, Extent3d, PipelineCache, TextureDimension, TextureFormat,
-                    TextureUsages,
-                },
-                RenderApp,
-            },
-            window::ExitCondition,
-            winit::WinitPlugin,
-        };
-        use std::time::{Duration, Instant};
+        use assets::test_support::{compile_pipelines, headless_app, render_target};
+        use bevy::render::camera::RenderTarget;
 
-        let mut app = App::new();
-        app.add_plugins(
-            DefaultPlugins
-                .build()
-                .disable::<LogPlugin>()
-                .disable::<WinitPlugin>()
-                // keeps the render app in this app, so the pipeline cache is readable
-                .disable::<PipelinedRenderingPlugin>()
-                .set(WindowPlugin {
-                    primary_window: None,
-                    exit_condition: ExitCondition::DontExit,
-                    close_when_requested: false,
-                }),
-        );
+        let mut app = headless_app();
         app.add_plugins((
             console::ConsolePlugin {
                 add_bevy_console: false,
             },
-            assets::EmbedAssetsPlugin,
             JumpMarkerPlugin,
         ));
         app.finish();
         app.cleanup();
 
+        let target = render_target(&mut app);
         let world = app.world_mut();
-        let mut target = Image::new_fill(
-            Extent3d {
-                width: 64,
-                height: 64,
-                depth_or_array_layers: 1,
-            },
-            TextureDimension::D2,
-            &[0, 0, 0, 0],
-            TextureFormat::Bgra8UnormSrgb,
-            RenderAssetUsages::all(),
-        );
-        target.texture_descriptor.usage |= TextureUsages::RENDER_ATTACHMENT;
-        let target = world.resource_mut::<Assets<Image>>().add(target);
         world.spawn((
             Camera3d::default(),
             bevy::core_pipeline::prepass::DepthPrepass,
@@ -450,44 +409,7 @@ mod tests {
         ));
 
         // a few frames queue the pipeline; then it compiles in the background
-        for _ in 0..10 {
-            app.update();
-        }
-        let started = Instant::now();
-        let mut ok;
-        let mut errors = Vec::new();
-        loop {
-            app.update();
-            let cache = app.sub_app(RenderApp).world().resource::<PipelineCache>();
-            ok = 0;
-            errors.clear();
-            let mut pending = 0;
-            for pipeline in cache.pipelines() {
-                match &pipeline.state {
-                    CachedPipelineState::Ok(_) => ok += 1,
-                    CachedPipelineState::Err(error) => errors.push(error.to_string()),
-                    _ => pending += 1,
-                }
-            }
-            if pending == 0 {
-                break;
-            }
-            assert!(
-                started.elapsed() < Duration::from_secs(60),
-                "{pending} pipelines still compiling"
-            );
-        }
-        println!("{ok} pipelines compiled");
-        assert!(
-            errors.is_empty(),
-            "pipeline errors:
-{}",
-            errors.join(
-                "
-
-"
-            )
-        );
+        let ok = compile_pipelines(&mut app);
         assert!(ok >= 1, "no pipeline compiled");
     }
 }
