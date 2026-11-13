@@ -64,7 +64,12 @@ async function runPreviewCleanup(app: App, generated: GenerateResult) {
     if (liveHead !== plan.head)
       throw new Error('HEAD changed during preview cleanup; nothing was written')
     // Recheck source/provenance and surviving consumers immediately before publishing the verified stage.
-    await previewCleanupPlan(root, staged.stagedDir, true)
+    const finalPlan = await previewCleanupPlan(root, staged.stagedDir, true)
+    if (
+      finalPlan.head !== plan.head ||
+      JSON.stringify(finalPlan.removed) !== JSON.stringify(plan.removed)
+    )
+      throw new Error('Preview cleanup plan changed during validation; nothing was written')
     const before = await diffFiles(app.resolveOutDir(), generated.files)
     await writeFiles(app.resolveOutDir(), generated.files)
     const catalog = 'figma/review/src/review/catalog.json'
@@ -72,12 +77,12 @@ async function runPreviewCleanup(app: App, generated: GenerateResult) {
     if (!catalogBytes) throw new Error('Fresh Review catalog disappeared')
     await atomicWrite(await resolveContained(root, catalog), catalogBytes)
     // Only exact, recomputed generated derivatives leave. Source identities and public APIs are untouched.
-    for (const file of plan.removed) await rm(await resolveContained(root, file))
+    for (const file of finalPlan.removed) await rm(await resolveContained(root, file))
     return {
       outDir: app.resolveOutDir(),
       diff: { ...before, removed: [] },
       summary: generated.summary,
-      pruned: plan.removed
+      pruned: finalPlan.removed
     }
   } finally {
     await staged.cleanup()

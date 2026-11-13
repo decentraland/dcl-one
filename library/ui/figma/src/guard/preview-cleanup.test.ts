@@ -8,6 +8,7 @@ import { generateAll } from '../generators/index.js'
 import { writeFiles } from '../sync.js'
 import { writeReviewManifest } from '../review-manifest.js'
 import { previewCleanupPlan } from './preview-cleanup.js'
+import * as previewPlans from './preview-cleanup.js'
 import { createHash } from 'node:crypto'
 import { readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import path from 'node:path'
@@ -394,7 +395,9 @@ describe('when a dynamic import uses a stored module specifier', () => {
     "const modulePath='./figma/review/src/generated/components/page/Second.js'; export const load=()=>import(modulePath)",
     "const modulePath='@preview/page/Second.js'; export const load=()=>import(modulePath)",
     "const original='@preview/page/Second.js'; const modulePath=(original as string); export const load=()=>import(modulePath)",
-    "let modulePath='./components/page/First.js'; modulePath='@preview/page/Second.js'; export const load=()=>import(modulePath)"
+    "let modulePath='./components/page/First.js'; modulePath='@preview/page/Second.js'; export const load=()=>import(modulePath)",
+    "const paths={value:'@preview/page/Second.js'}; export const load=()=>import(paths.value)",
+    "const paths={value:'@preview/page/Second.js'}; export const load=()=>import(paths['value'])"
   ])(
     'should preserve every byte when a surviving consumer loads excluded output: %s',
     async (consumer) => {
@@ -422,6 +425,73 @@ describe('when a dynamic import uses a stored module specifier', () => {
       "const modulePath='./components/page/Second.js'; export const load=()=>import(modulePath)"
     )
     expect((await cleanup()).pruned).toContain(`${GEN}/page/Second.tsx`)
+    expect(await read('components/page/Second.tsx')).toContain('export const Second')
+  })
+})
+
+describe('when review-round edge cases affect cleanup', () => {
+  it('should ignore unrelated relative fixture strings naming an excluded component', async () => {
+    await put(root, 'fixture.ts', "export const cases=[{from:'./Second'},{from:'../Second.js'}]")
+    expect((await cleanup()).pruned).toContain(`${GEN}/page/Second.tsx`)
+  })
+  it('should respect lexical binding shadows in dynamic imports', async () => {
+    await put(
+      root,
+      'consumer.ts',
+      "const modulePath='./Second'; export function load(){const modulePath='./components/page/Second.js';return import(modulePath)}"
+    )
+    expect((await cleanup()).pruned).toContain(`${GEN}/page/Second.tsx`)
+  })
+  it('should require a full checkout rather than omit missing tracked consumers', async () => {
+    await put(root, 'outside.ts', 'export const value=1')
+    await fixtureCommit(root, 'test: track an external consumer')
+    await promisify(execFile)('git', ['-C', root, 'update-index', '--skip-worktree', 'outside.ts'])
+    await rm(path.join(root, 'outside.ts'))
+    const before = await fixtureBytes(root)
+    await expect(cleanup()).rejects.toThrow(/requires a full checkout/)
+    expect(await fixtureBytes(root)).toEqual(before)
+  })
+  it('should refuse publication if the final verified removal set differs', async () => {
+    const css = await read(`${GEN}/page/Second.module.css`)
+    const asset = css.match(/\.\.\/assets\/([a-f0-9]+\.svg)/)?.[1]
+    expect(asset).toBeDefined()
+    const assetFile = path.join(root, GEN, 'assets', asset!)
+    const originalAsset = await readFile(assetFile)
+    await rm(assetFile)
+    const beforeIndex = await read(`${GEN}/index.ts`)
+    const beforeCatalog = await read('figma/review/src/review/catalog.json')
+    const original = previewPlans.previewCleanupPlan
+    let calls = 0
+    vi.spyOn(previewPlans, 'previewCleanupPlan').mockImplementation(async (...args) => {
+      if (++calls === 3) await writeFile(assetFile, originalAsset)
+      return original(...args)
+    })
+    await expect(cleanup()).rejects.toThrow(/plan changed during validation/)
+    expect(await read(`${GEN}/index.ts`)).toBe(beforeIndex)
+    expect(await read('figma/review/src/review/catalog.json')).toBe(beforeCatalog)
+    expect(await read(`${GEN}/page/Second.tsx`)).toContain('export const Second')
+  })
+  it('should recover after aggregates and catalog are published but stale removals are pending', async () => {
+    const original = fsSafe.atomicWrite
+    const catalog = path.join(root, 'figma/review/src/review/catalog.json')
+    const source = await read(`${SNAP}/components/Page.json`)
+    const publicIndex = await read('index.ts')
+    const retirement = await read('figma/ledger/retirements.json')
+    const failure = vi.spyOn(fsSafe, 'atomicWrite').mockImplementation(async (file, ...args) => {
+      await original(file, ...args)
+      if (file === catalog)
+        throw Object.assign(new Error('interrupted after catalog publish'), { code: 'EIO' })
+    })
+    await expect(cleanup()).rejects.toMatchObject({ code: 'EIO' })
+    expect(await read(`${GEN}/index.ts`)).not.toContain('./page/Second')
+    expect(await read(catalog.replace(root + path.sep, ''))).not.toContain('"name": "Second"')
+    expect(await read(`${GEN}/page/Second.tsx`)).toContain('export const Second')
+    failure.mockRestore()
+    expect((await cleanup()).pruned).toContain(`${GEN}/page/Second.tsx`)
+    expect((await cleanup()).pruned).toEqual([])
+    expect(await read(`${SNAP}/components/Page.json`)).toBe(source)
+    expect(await read('index.ts')).toBe(publicIndex)
+    expect(await read('figma/ledger/retirements.json')).toBe(retirement)
     expect(await read('components/page/Second.tsx')).toContain('export const Second')
   })
 })

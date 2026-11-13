@@ -49,6 +49,11 @@ async function gitContext(root: string) {
     await execute('git', ['-C', root, 'rev-parse', '--show-toplevel'])
   ).stdout.trim()
   const head = (await execute('git', ['-C', root, 'rev-parse', 'HEAD'])).stdout.trim()
+  const skipped = (await execute('git', ['-C', repository, 'ls-files', '-t', '-z'])).stdout
+    .split('\0')
+    .find((entry) => entry.startsWith('S '))
+  if (skipped)
+    throw new Error('Preview cleanup requires a full checkout to audit every tracked consumer')
   const prefix = toPosix(path.relative(await realpath(repository), await realpath(root)))
   if (prefix.startsWith('..'))
     throw new Error('Preview cleanup needs a repository-contained library')
@@ -71,29 +76,48 @@ async function gitContext(root: string) {
 function storedDynamicSpecifiers(file: string, text: string): string[] {
   if (!/\bimport(?:\s|\/\*[\s\S]*?\*\/)*\(/.test(text)) return []
   const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true)
-  const bindings = new Map<string, ts.Expression[]>()
   const imports: ts.Expression[] = []
-  const bind = (name: ts.Identifier, value: ts.Expression) =>
-    bindings.set(name.text, [...(bindings.get(name.text) ?? []), value])
-  const visit = (node: ts.Node) => {
-    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer)
-      bind(node.name, node.initializer)
-    if (
-      ts.isBinaryExpression(node) &&
-      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-      ts.isIdentifier(node.left)
-    )
-      bind(node.left, node.right)
+  const collect = (node: ts.Node) => {
     if (
       ts.isCallExpression(node) &&
       node.expression.kind === ts.SyntaxKind.ImportKeyword &&
       node.arguments[0]
     )
       imports.push(node.arguments[0])
+    ts.forEachChild(node, collect)
+  }
+  collect(source)
+  if (!imports.length) return []
+  const options: ts.CompilerOptions = { noLib: true, noResolve: true, allowJs: true }
+  const host = ts.createCompilerHost(options)
+  host.getSourceFile = (name) => (name === file ? source : undefined)
+  host.fileExists = (name) => name === file
+  host.readFile = (name) => (name === file ? text : undefined)
+  const checker = ts.createProgram([file], options, host).getTypeChecker()
+  // Property accesses may instantiate fresh symbols; declarations retain their lexical identity.
+  const bindings = new Map<ts.Declaration, ts.Expression[]>()
+  const symbolAt = (node: ts.Node) =>
+    ts.isElementAccessExpression(node) && ts.isStringLiteralLike(node.argumentExpression)
+      ? checker.getPropertyOfType(
+          checker.getTypeAtLocation(node.expression),
+          node.argumentExpression.text
+        )
+      : checker.getSymbolAtLocation(node)
+  const bind = (name: ts.Node, value: ts.Expression) => {
+    const symbol = symbolAt(name)
+    for (const declaration of symbol?.declarations ?? [])
+      bindings.set(declaration, [...(bindings.get(declaration) ?? []), value])
+  }
+  const visit = (node: ts.Node) => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer)
+      bind(node.name, node.initializer)
+    if (ts.isPropertyAssignment(node)) bind(node.name, node.initializer)
+    if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken)
+      bind(node.left, node.right)
     ts.forEachChild(node, visit)
   }
   visit(source)
-  const values = (node: ts.Expression, seen: ReadonlySet<string>): string[] => {
+  const values = (node: ts.Expression, seen: ReadonlySet<ts.Declaration>): string[] => {
     if (ts.isStringLiteralLike(node)) return [node.text]
     if (
       ts.isParenthesizedExpression(node) ||
@@ -103,9 +127,12 @@ function storedDynamicSpecifiers(file: string, text: string): string[] {
       ts.isNonNullExpression(node)
     )
       return values(node.expression, seen)
-    if (!ts.isIdentifier(node) || seen.has(node.text)) return []
-    const next = new Set([...seen, node.text])
-    return (bindings.get(node.text) ?? []).flatMap((value) => values(value, next))
+    const declarations = symbolAt(node)?.declarations ?? []
+    return declarations.flatMap((declaration) => {
+      if (seen.has(declaration)) return []
+      const next = new Set([...seen, declaration])
+      return (bindings.get(declaration) ?? []).flatMap((value) => values(value, next))
+    })
   }
   return imports.flatMap((node) => values(node, new Set()))
 }
@@ -163,8 +190,7 @@ function importedTargets(tree: Tree, repository: string, excludedNames: Readonly
     if (/\.[cm]?[jt]sx?$/.test(file)) {
       const specifiers = new Set([
         ...ts.preProcessFile(text, true, true).importedFiles.map((entry) => entry.fileName),
-        ...storedDynamicSpecifiers(file, text),
-        ...[...text.matchAll(/['"]((?:\.\.?\/)[^'"\n]+)['"]/g)].map((match) => match[1]!)
+        ...storedDynamicSpecifiers(path.join(repository, file), text)
       ])
       for (const specifier of specifiers) {
         const target = resolve(file, specifier) ?? resolveImport(file, specifier)

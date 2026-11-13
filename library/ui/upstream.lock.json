@@ -605,7 +605,7 @@
       },
       "files": {
         "library/ui/figma/MAINTENANCE.md": {
-          "sha256": "0f5804748b2f2830be9d0a180b564ce8664bf4ed242f46d4ccc4595a24eb535c",
+          "sha256": "10d2ed48cd629c350233fc09c7959743a88da83dba1aacf16797e7576acf2a9d",
           "fds": null,
           "deviation": [
             "live-access-removed",
@@ -3243,14 +3243,14 @@
           ]
         },
         "library/ui/figma/src/guard/preview-cleanup.test.ts": {
-          "sha256": "45ec20c021ff6a525a257ae504b306039dc15103a0d236e33ed102630d1ea9fe",
+          "sha256": "d6b22d4156ca77fc74879b7f86d07f1b27d1a2aac712ab05ce775a381657c871",
           "fds": null,
           "deviation": [
             "preview-selection-cleanup"
           ]
         },
         "library/ui/figma/src/guard/preview-cleanup.ts": {
-          "sha256": "b6154f19f3bb97bcc33e903581cc408dc417cdc565b97f4d7615c2cd8a0beba3",
+          "sha256": "19d9dd45b18dedebee861d152b5d1227a9e97eb0954a9474504fd695f831a889",
           "fds": null,
           "deviation": [
             "preview-selection-cleanup"
@@ -3721,7 +3721,7 @@
           ]
         },
         "library/ui/figma/src/preview-cleanup.ts": {
-          "sha256": "181f887598e479047bec4728352dbc4f78bdb300310340bce82714fd1764c3b5",
+          "sha256": "22850f5a98602819b25a1624b81f2a4b2ee87999661513f9bc7486452605bd56",
           "fds": null,
           "deviation": [
             "preview-selection-cleanup"
