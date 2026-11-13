@@ -1,4 +1,5 @@
 mod batch_sizes;
+pub mod bevy_variants;
 pub mod content_hash;
 mod debug_panel;
 mod download;
@@ -288,12 +289,44 @@ impl ContentMap {
         self.0.insert(Self::key(&file), hash);
         self
     }
+
+    /// The map as a scene packed under `prefix` sees it: every `{prefix}{file}` entry becomes
+    /// `{file}` and wins over an unprefixed entry of the same name; unprefixed entries are kept;
+    /// entries under another prefix (the other body shape of a smart wearable) are dropped.
+    pub fn strip_prefix(&self, prefix: &str, other_prefixes: &[&str]) -> Self {
+        let prefix = prefix.to_lowercase();
+        let mut map = HashMap::<String, String>::default();
+        for (file, hash) in self.0.iter() {
+            if file.starts_with(&prefix) {
+                continue;
+            }
+            if other_prefixes
+                .iter()
+                .any(|other| file.starts_with(&other.to_lowercase()))
+            {
+                continue;
+            }
+            map.insert(file.clone(), hash.clone());
+        }
+        for (file, hash) in self.0.iter() {
+            if let Some(stripped) = file.strip_prefix(&prefix) {
+                map.insert(stripped.to_owned(), hash.clone());
+            }
+        }
+        Self(map)
+    }
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub enum SceneIpfsLocation {
     Hash(String),
     Urn(String),
+    /// A content file of a registered collection whose loader produces the definition (a smart
+    /// wearable's scene, `{shape}.smart_wearable` in the wearable's collection).
+    ContentFile {
+        hash: String,
+        file: String,
+    },
 }
 
 #[derive(Resource, Clone)]
@@ -633,6 +666,7 @@ impl Plugin for IpfsIoPlugin {
 
         app.add_console_command::<ChangeRealmCommand, _>(change_realm_command);
         debug_panel::register(app, self.preview);
+        bevy_variants::build(app);
 
         app.register_diagnostic(Diagnostic::new(IPFS_IN_FLIGHT_DIAGNOSTIC_PATH));
         app.register_diagnostic(Diagnostic::new(IPFS_SUCCESS_DIAGNOSTIC_PATH));
@@ -652,6 +686,7 @@ impl Plugin for IpfsIoPlugin {
             .init_asset::<SceneJsFile>()
             .init_asset_loader::<EntityDefinitionLoader>()
             .init_asset_loader::<SceneJsLoader>();
+        bevy_variants::finish(app);
 
         if let Some(realm) = &self.starting_realm {
             let ipfs = app.world().resource::<IpfsResource>().clone();
@@ -1033,6 +1068,7 @@ pub struct IpfsIo {
     client: reqwest::Client,
     // downloads under way, by url (`share_download`)
     in_flight: InFlightDownloads,
+    pub(crate) bevy_variants: bevy_variants::BevyVariants,
     #[cfg(feature = "ipfs_debug")]
     debug_overlay_sender: tokio::sync::mpsc::UnboundedSender<IpfsDebug>,
 }
@@ -1075,6 +1111,7 @@ impl IpfsIo {
                 .build()
                 .unwrap(),
             in_flight: Default::default(),
+            bevy_variants: Default::default(),
             #[cfg(feature = "ipfs_debug")]
             debug_overlay_sender,
         }
@@ -1361,18 +1398,49 @@ impl IpfsIo {
         modifier: Option<IpfsModifier>,
         metadata: Option<String>,
     ) {
-        let mut write = self.context.blocking_write();
+        Self::insert_collection(
+            &mut self.context.blocking_write(),
+            hash,
+            collection,
+            modifier,
+            metadata,
+        );
+    }
 
+    /// [`Self::add_collection`] for async code (an asset loader), which must not block.
+    pub async fn add_collection_async(
+        &self,
+        hash: String,
+        collection: ContentMap,
+        modifier: Option<IpfsModifier>,
+        metadata: Option<String>,
+    ) {
+        Self::insert_collection(
+            &mut *self.context.write().await,
+            hash,
+            collection,
+            modifier,
+            metadata,
+        );
+    }
+
+    fn insert_collection(
+        context: &mut IpfsContext,
+        hash: String,
+        collection: ContentMap,
+        modifier: Option<IpfsModifier>,
+        metadata: Option<String>,
+    ) {
         let entity = IpfsEntity {
             collection,
             metadata,
         };
 
         if let Some(modifier) = modifier {
-            write.modifiers.insert(hash.clone(), modifier);
+            context.modifiers.insert(hash.clone(), modifier);
         }
 
-        write.entities.insert(hash, entity);
+        context.entities.insert(hash, entity);
     }
 
     /// Merge additional path→hash entries into an existing collection (creating it if absent),
@@ -1421,6 +1489,22 @@ impl IpfsIo {
         let mut buffer = Vec::default();
         reader.read_to_end(&mut buffer).await?;
         Ok(Some(buffer))
+    }
+
+    /// Drops the cached bytes under `key`, if there are any (native only: on web the worker's
+    /// cache entry goes through `web_cache`).
+    #[cfg(not(target_arch = "wasm32"))]
+    async fn forget_disk_cache(&self, key: &CacheKey) -> Result<(), std::io::Error> {
+        let Some(cached) = self
+            .cache_path()
+            .and_then(|root| root.join_relative(key.name()))
+        else {
+            return Ok(());
+        };
+        match async_fs::remove_file(&cached).await {
+            Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error),
+            _ => Ok(()),
+        }
     }
 
     // load entities from pointers and cache urls
@@ -1925,6 +2009,15 @@ impl IpfsIo {
                 ipfs_io_read_state.send_failure(file.read_to_end(&mut daft_buffer).await)?;
                 ipfs_io_read_state.send_cached(daft_buffer.len());
                 return Ok(Box::new(VecReader::new(daft_buffer)));
+            }
+
+            // a content file (scene, wearable or emote) abgen has a verified variant of reads as
+            // what that variant decodes to (a texture's DDS)
+            if let Some(variant) = self.read_bevy_variant(&ipfs_path, path).await {
+                if variant.cached {
+                    ipfs_io_read_state.send_cached(variant.bytes.len());
+                }
+                return Ok(Box::new(VecReader::new(variant.bytes)));
             }
 
             let cache_key = ipfs_path.cache_key(&*self.context.read().await);

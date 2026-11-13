@@ -56,6 +56,7 @@ const INTERNAL_PARAMS = [
   'previousLogin',
   'perm',
   'worldpw',
+  'mockportables',
   ANALYTICS_SESSION_PARAM,
   AUTH_RETURN_PARAM,
   // dev only (lib/systemScene.ts)

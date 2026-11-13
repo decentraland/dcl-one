@@ -4,6 +4,8 @@
 @layer dcl.components {
   .root {
     box-sizing: border-box;
+    position: relative;
+    isolation: isolate;
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -11,16 +13,21 @@
     min-height: var(--dcl-space-64);
     block-size: 64px;
     padding: var(--dcl-space-12) var(--dcl-layout-margin-x);
-    background: var(--dcl-bg-navbar-mobile);
-    box-shadow:
-      0 4px 8px -1px var(--dcl-transparencies-black-20),
-      0 8px 24px 0 var(--dcl-transparencies-black-10);
+    background: transparent;
+    box-shadow: none;
     color: var(--dcl-text-primary);
   }
 
-  /* Keep the foreground band readable over bright artwork; positioning belongs to the app. */
-  .root[data-surface='overlay'] {
-    background: linear-gradient(180deg, var(--dcl-neutrals-black) 70%, transparent 100%);
+  /* Filtering a decoration preserves the fixed drawer's viewport containing block. */
+  .root::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    background: var(--dcl-bg-navbar-mobile);
+    -webkit-backdrop-filter: saturate(1.8) blur(20px);
+    backdrop-filter: saturate(1.8) blur(20px);
   }
 
   .root *,
@@ -436,7 +443,16 @@
       min-height: 80px;
       block-size: 80px;
       padding-block: var(--dcl-space-16);
+    }
+
+    .root::before {
       background: var(--dcl-bg-navbar);
+    }
+
+    .root[data-surface='overlay']::before {
+      background: transparent;
+      -webkit-backdrop-filter: none;
+      backdrop-filter: none;
     }
 
     .sections,

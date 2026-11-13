@@ -54,9 +54,12 @@ export function parseRemoteFlags(body: unknown): RemoteFlagsAnswer {
 /** How a host fetches the flags file: a GET of `url`, its status and body as text. */
 export type FlagsTransport = (url: string, init: { signal?: AbortSignal }) => Promise<{ status: number; body: string }>;
 
-/** The flags file at `service` (the host's, normalized), read once through `transport`. */
-export async function readFlagsFile(service: string, transport: FlagsTransport, signal?: AbortSignal): Promise<RemoteFlagsAnswer> {
-  const res = await transport(`${service}/${FLAGS_APP}.json`, { signal });
+/**
+ * One app's flags file at `service` (the host's, normalized), read once through `transport`: the Shop's `dapps`
+ * unless another app is named (the Explorer's `explorer`).
+ */
+export async function readFlagsFile(service: string, transport: FlagsTransport, signal?: AbortSignal, app: string = FLAGS_APP): Promise<RemoteFlagsAnswer> {
+  const res = await transport(`${service}/${app}.json`, { signal });
   if (res.status < 200 || res.status >= 300) throw new Error(`feature flags: HTTP ${res.status}`);
   return parseRemoteFlags(JSON.parse(res.body));
 }

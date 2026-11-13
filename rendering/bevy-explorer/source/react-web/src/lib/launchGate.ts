@@ -46,6 +46,17 @@ const GATES: Record<string, Gate> = {
       'Fetches every scene and asset from this server instead of the realm’s own. Whoever runs it decides what you see and what runs.',
     read: () => new URLSearchParams(location.search).get('contentServer'),
     isTrusted: isTrustedContentServer
+  },
+  // Swaps the textures and models of scenes, wearables and emotes for the ones this server
+  // lists. They are trusted by their path on this server and rejected only when they fail to
+  // decode: nothing checks them against the original files, so the server decides what scenes
+  // and avatars look like. Same rule as the content server.
+  bevyVariants: {
+    warning:
+      'Replaces the textures and models of the scenes you visit and the avatars you see with versions from this server. Whoever runs it decides what they look like.',
+    read: () => new URLSearchParams(location.search).get('bevyVariants'),
+    // `off` only turns the default (the asset-bundle generator's CDN) off
+    isTrusted: (url) => url.trim().toLowerCase() === 'off' || isTrustedContentServer(url)
   }
 }
 

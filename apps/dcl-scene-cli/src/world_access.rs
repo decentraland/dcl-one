@@ -16,14 +16,14 @@
 use crate::deploy::{
     encode_segment, now_ms, read_server_message, refusal, send_text, with_headers,
 };
-use crate::linker::{DoneSender, LinkerOptions};
+use crate::linker::LinkerOptions;
 use crate::ux::{self, TrySteps, UserError};
 use crate::world::{self, BrowserOptions, WorldAction, signed_fetch_payload_meta};
+use crate::world_linker::DoneSender;
 use anyhow::{Context, Result};
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
-    response::Html,
     routing::{get, post},
 };
 use serde::{Deserialize, Serialize};
@@ -785,7 +785,7 @@ fn editor_state(
 
 fn editor_router(state: Arc<EditorState>) -> Router {
     Router::new()
-        .route("/", get(|| async { Html(PAGE) }))
+        .route("/", get(|| async { crate::world_linker::document(PAGE) }))
         .route("/api/state", get(api_state))
         .route("/api/lookup", get(api_lookup))
         .route("/api/communities/search", get(api_search))
@@ -1011,6 +1011,7 @@ pub async fn edit(name: &str, target_content: Option<&str>, browser: BrowserOpti
         port: browser.port,
         open_browser: !browser.no_browser && !browser.ci,
         timeout: crate::linker::linker_timeout(),
+        programmatic: false,
         host: None,
     };
     let message =
@@ -1025,84 +1026,50 @@ const PAGE: &str = r##"<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>dcl-scene-cli world — who can enter</title>
 <style>
-  :root{color-scheme:dark;--bg:#0b0e16;--card:#12151e;--line:#24314d;--ink:#e6ebf2;--dim:#8ea1c0;--soft:#b9c6dd;--acc:#22e6d0;--acc-ink:#04121a;--well:#0e1220}
-  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 system-ui,sans-serif;display:flex;min-height:100vh;align-items:flex-start;justify-content:center}
-  .card{width:min(820px,94vw);background:var(--card);border:1px solid var(--line);border-radius:16px;padding:26px 28px;box-shadow:0 20px 60px #0008;margin:24px 0}
-  h1{margin:0 0 4px;font-size:20px}
-  h1 .t{color:var(--acc)}
-  h2{margin:22px 0 8px;font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:var(--dim);font-weight:600}
-  .sub{color:var(--dim);margin:0 0 14px;font-size:13px}
-  code{font-family:ui-monospace,monospace;word-break:break-all;color:#cfe;font-size:12px}
-  .now{background:var(--well);border:1px solid var(--line);border-radius:10px;padding:10px 14px;font-size:13px;color:var(--soft)}
-  .me{display:flex;align-items:center;gap:12px;margin-top:12px;padding:10px 14px;background:var(--well);border:1px solid var(--line);border-radius:10px}
-  .me .who{flex:1;min-width:0}
-  .me .who b{display:block}
-  .face{width:40px;height:40px;border-radius:50%;background:#1a2032;object-fit:cover;flex:none}
-  .thumb{width:40px;height:40px;border-radius:8px;background:#1a2032;object-fit:cover;flex:none}
-  .badge{font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid var(--line);color:var(--soft);white-space:nowrap}
-  .badge.ok{border-color:#1f6b46;color:#8ff0bf}
-  .badge.warn{border-color:#6b4a26;color:#ffcf8a}
-  .modes{display:grid;gap:8px;margin-top:6px}
-  .mode{display:flex;gap:12px;align-items:flex-start;padding:12px 14px;border:1px solid var(--line);border-radius:10px;cursor:pointer;background:var(--well)}
-  .mode:has(input:checked){border-color:var(--acc);box-shadow:inset 0 0 0 1px var(--acc)}
-  .mode input{margin-top:4px}
-  .mode b{display:block}
-  .mode span{font-size:13px;color:var(--soft)}
-  .panel{display:none;margin-top:6px}
-  .panel.on{display:block}
-  .row{display:flex;gap:8px;margin-top:8px}
-  input[type=text],input[type=password]{flex:1;padding:10px 12px;border-radius:8px;border:1px solid var(--line);background:#0b0e16;color:var(--ink);font:inherit}
-  input:focus{outline:2px solid var(--acc);outline-offset:-1px}
-  .list{display:flex;flex-direction:column;gap:6px;margin-top:8px}
-  .item{display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--line);border-radius:10px;background:var(--well)}
-  .item .who{flex:1;min-width:0}
-  .item .who b{display:block;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .item .who small{color:var(--dim);font-size:12px}
-  .item button{margin:0;width:auto;padding:6px 10px;font-size:12px}
-  .item button.x{background:transparent;color:var(--dim);border:1px solid var(--line)}
-  .item button.x:hover{color:#ff9a9a;border-color:#6b2626}
-  .empty{color:var(--dim);font-size:13px;padding:8px 2px}
-  .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
-  .chip{display:inline-flex;align-items:center;gap:6px;padding:4px 10px 4px 4px;border-radius:999px;border:1px solid var(--line);background:var(--well);cursor:pointer;font-size:13px}
+  h2{margin:var(--s-5) 0 var(--s-2);color:var(--ink-6);font-size:var(--fs-13);font-weight:var(--fw-semibold);letter-spacing:.06em;text-transform:uppercase}
+  .well{display:flex;flex-wrap:wrap;align-items:center;gap:var(--s-3);padding:var(--s-2-5) var(--s-3);border:1px solid var(--line);border-radius:var(--r-control);background:var(--fill-1)}
+  .well b{display:block}
+  .me,.summary{margin-top:var(--s-3)}
+  .mode{flex-wrap:nowrap;align-items:flex-start;cursor:pointer}
+  .mode:has(:checked){border-color:var(--brand);box-shadow:inset 0 0 0 1px var(--brand)}
+  .mode input{margin-top:var(--s-1);accent-color:var(--brand)}
+  .who{flex:1 1 140px;min-width:0;overflow-wrap:anywhere}
+  .thumb{width:40px;height:40px;flex:none;border-radius:var(--s-2);background:var(--fill-3);object-fit:cover}
+  .list,.row,.chips{display:flex;gap:var(--s-2);margin-top:var(--s-2)}
+  .list{flex-direction:column}
+  .chips{flex-wrap:wrap}
+  .row input{flex:1;min-width:0;padding:var(--s-2-5) var(--s-3);border:1px solid var(--line-ctl);border-radius:var(--r-control);background:var(--fill-1);color:inherit;font:inherit}
+  .row input:focus-visible{outline:var(--focus-ring-width) solid var(--focus-ring-color)}
+  .chip{display:inline-flex;align-items:center;gap:var(--s-1-5);cursor:pointer}
   .chip img{width:22px;height:22px;border-radius:50%}
-  .chip:hover{border-color:var(--acc)}
-  .chip.in{opacity:.45;cursor:default}
-  button{margin-top:18px;width:100%;padding:13px;border:0;border-radius:10px;cursor:pointer;font-size:15px;font-weight:600;background:var(--acc);color:var(--acc-ink)}
-  button.ghost{background:transparent;color:var(--acc);border:1px solid var(--line);font-weight:500;font-size:13px;padding:8px 12px;width:auto;margin-top:8px}
-  button:disabled{opacity:.5;cursor:default}
-  #status{margin-top:16px;padding:12px 14px;border-radius:10px;font-size:13px;white-space:pre-wrap;display:none}
-  .ok{background:#0e2a1e;border:1px solid #1f6b46;color:#8ff0bf}
-  .err{background:#2a1414;border:1px solid #6b2626;color:#ff9a9a}
-  .info{background:#101a2c;border:1px solid var(--line);color:#a9c0e6}
-  .summary{margin-top:18px;padding:12px 14px;border-radius:10px;background:var(--well);border:1px solid var(--line);font-size:14px}
-  details{margin-top:8px}
-  details summary{cursor:pointer;color:var(--dim);font-size:13px}
-  .hint{font-size:12px;color:var(--dim);margin-top:6px}
-  a{color:var(--acc)}
+  .in{opacity:.45;cursor:default}
+  .empty{flex-basis:100%}
+  .hint{margin-top:var(--s-1-5)}
+  #mine-all{white-space:normal}
 </style></head>
-<body><div class="card">
-  <h1>Who can enter <span class="t" id="world">…</span></h1>
+<body><div class="ui-card sheet">
+  <h1>Who can enter <span id="world">…</span></h1>
   <p class="sub">Change the access rule of this world and sign it with the wallet that owns it. The command line waits until you finish here.</p>
-  <div class="now" id="now">Loading the current rule…</div>
+  <div class="well hint" id="now">Loading the current rule…</div>
 
-  <div class="me" id="me" style="display:none">
-    <img class="face" id="me-face" alt=""/>
+  <div class="well me" id="me" style="display:none">
+    <span class="u-avatar"><img class="u-avatar__img" id="me-face" alt=""/></span>
     <div class="who"><b id="me-name">…</b><code id="me-addr"></code></div>
-    <span class="badge" id="me-badge"></span>
+    <span class="u-pill u-pill--default" id="me-badge"></span>
   </div>
-  <button class="ghost" id="connect">Connect wallet</button>
+  <div class="row"><button class="btn btn--secondary btn--sm" id="connect">Connect wallet</button></div>
 
   <h2>Rule</h2>
-  <div class="modes">
-    <label class="mode"><input type="radio" name="kind" value="unrestricted"/><div><b>Anyone</b><span>Everyone with the link can walk in.</span></div></label>
-    <label class="mode"><input type="radio" name="kind" value="allow-list"/><div><b>Only people and communities on a list</b><span>Named avatars, wallet addresses, and every member of the communities you choose. You, the owner, always get in.</span></div></label>
-    <label class="mode"><input type="radio" name="kind" value="shared-secret"/><div><b>Anyone with a password</b><span>Visitors type it at the door. The current one cannot be read back, only replaced.</span></div></label>
+  <div class="list">
+    <label class="well mode"><input type="radio" name="kind" value="unrestricted"/><div><b>Anyone</b><small>Everyone with the link can walk in.</small></div></label>
+    <label class="well mode"><input type="radio" name="kind" value="allow-list"/><div><b>Only people and communities on a list</b><small>Named avatars, wallet addresses, and every member of the communities you choose. You, the owner, always get in.</small></div></label>
+    <label class="well mode"><input type="radio" name="kind" value="shared-secret"/><div><b>Anyone with a password</b><small>Visitors type it at the door. The current one cannot be read back, only replaced.</small></div></label>
   </div>
 
-  <div class="panel" id="p-list">
+  <div id="p-list" hidden>
     <h2>People</h2>
     <div class="list" id="people"></div>
-    <div class="row"><input type="text" id="who" placeholder="Add by avatar name or 0x address, then Enter" autocomplete="off"/><button class="ghost" id="who-go" style="margin-top:0">Add</button></div>
+    <div class="row"><input type="text" id="who" placeholder="Add by avatar name or 0x address, then Enter" autocomplete="off"/><button class="btn btn--secondary btn--sm" id="who-go">Add</button></div>
     <div class="hint" id="who-hint"></div>
 
     <h2>Communities</h2>
@@ -1112,18 +1079,18 @@ const PAGE: &str = r##"<!doctype html>
     <div id="mine-wrap" style="display:none">
       <div class="hint" id="mine-title">Communities you belong to</div>
       <div class="chips" id="mine"></div>
-      <button class="ghost" id="mine-all">Include private ones (signs a read request)</button>
+      <div class="row"><button class="btn btn--secondary btn--sm" id="mine-all">Include private ones (signs a read request)</button></div>
     </div>
   </div>
 
-  <div class="panel" id="p-secret">
+  <div id="p-secret" hidden>
     <div class="row"><input type="password" id="secret" placeholder="New password" autocomplete="new-password"/></div>
     <div class="row"><input type="password" id="secret2" placeholder="Repeat it" autocomplete="new-password"/></div>
     <div class="hint">Share it with visitors out of band; the server keeps only a hash.</div>
   </div>
 
-  <div class="summary" id="summary">…</div>
-  <button id="go" disabled>Connect wallet &amp; sign</button>
+  <div class="well summary" id="summary">…</div>
+  <div class="act"><button class="btn btn--primary btn--lg" id="go" disabled>Connect wallet &amp; sign</button></div>
   <div id="status"></div>
 </div>
 <script>
@@ -1134,6 +1101,7 @@ function hide(){$("status").style.display="none";}
 function short(a){return a.slice(0,6)+"…"+a.slice(-4);}
 function el(tag,cls,text){const e=document.createElement(tag);if(cls)e.className=cls;if(text!=null)e.textContent=text;return e;}
 function img(cls,src){const i=el("img",cls);i.alt="";i.loading="lazy";if(src){i.src=src;i.onerror=()=>{i.style.visibility="hidden";};}else if(!cls){i.style.display="none";}return i;}
+function face(src){const a=el("span","u-avatar");if(src)a.append(img("u-avatar__img",src));return a;}
 function personLabel(p){return p.name?(p.claimed?p.name:p.name+" (unclaimed)"):"(no profile)";}
 function describeNow(a){
   if(!a)return "";
@@ -1146,25 +1114,25 @@ function renderPeople(){
   const box=$("people");box.replaceChildren();
   if(!S.people.size){box.append(el("div","empty","Nobody yet — add avatars below, or pick members of a community."));return;}
   for(const p of S.people.values()){
-    const it=el("div","item");it.append(img("face",p.face));
-    const who=el("div","who");who.append(el("b",null,personLabel(p)));who.append(el("small",null,p.address));it.append(who);
-    const x=el("button","x","Remove");x.onclick=()=>{S.people.delete(p.address);render();};it.append(x);box.append(it);
+    const it=el("div","well");it.append(face(p.face));
+    const who=el("div","who");who.append(el("b","u-truncate",personLabel(p)));who.append(el("small",null,p.address));it.append(who);
+    const x=el("button","btn btn--secondary btn--sm","Remove");x.dataset.tone="danger";x.onclick=()=>{S.people.delete(p.address);render();};it.append(x);box.append(it);
   }
 }
 function renderCommunities(){
   const box=$("communities");box.replaceChildren();
   if(!S.communities.size){box.append(el("div","empty","No communities yet — search below, or pick one of yours."));}
   for(const c of S.communities.values()){
-    const it=el("div","item");it.append(img("thumb",c.thumbnail));
-    const who=el("div","who");who.append(el("b",null,c.name));
+    const it=el("div","well");it.append(img("thumb",c.thumbnail));
+    const who=el("div","who");who.append(el("b","u-truncate",c.name));
     who.append(el("small",null,[c.members!=null?c.members+" members":null,c.privacy,c.owner_name?"by "+c.owner_name:null].filter(Boolean).join(" · ")));it.append(who);
-    const pick=el("button","ghost","Pick members…");pick.style.marginTop="0";pick.onclick=()=>pickMembers(c,it);it.append(pick);
-    const x=el("button","x","Remove");x.onclick=()=>{S.communities.delete(c.id);render();};it.append(x);box.append(it);
+    const pick=el("button","btn btn--secondary btn--sm","Pick members…");pick.onclick=()=>pickMembers(c,it);it.append(pick);
+    const x=el("button","btn btn--secondary btn--sm","Remove");x.dataset.tone="danger";x.onclick=()=>{S.communities.delete(c.id);render();};it.append(x);box.append(it);
   }
   renderMine();
 }
 function chip(c,onclick){
-  const ch=el("span","chip"+(S.communities.has(c.id)?" in":""));ch.append(img("",c.thumbnail));
+  const ch=el("span","u-pill u-pill--default chip"+(S.communities.has(c.id)?" in":""));ch.append(img("",c.thumbnail));
   ch.append(document.createTextNode(c.name+(c.members!=null?" · "+c.members:"")+(c.role?" · "+c.role:"")));
   if(!S.communities.has(c.id))ch.onclick=onclick;return ch;
 }
@@ -1183,7 +1151,7 @@ async function pickMembers(c,anchor){
   if(r.error){list.append(el("div","empty",r.error));return;}
   if(!r.people.length){list.append(el("div","empty","No members listed."));return;}
   for(const p of r.people){
-    const ch=el("span","chip"+(S.people.has(p.address)?" in":""));ch.append(img("",p.face));ch.append(document.createTextNode(personLabel(p)+(p.name?"":" "+short(p.address))));
+    const ch=el("span","u-pill u-pill--default chip"+(S.people.has(p.address)?" in":""));ch.append(img("",p.face));ch.append(document.createTextNode(personLabel(p)+(p.name?"":" "+short(p.address))));
     if(!S.people.has(p.address))ch.onclick=()=>{S.people.set(p.address,p);render();};
     list.append(ch);
   }
@@ -1197,8 +1165,8 @@ function summary(){
   return "Only "+p+" "+(p===1?"person":"people")+" and the members of "+c+" "+(c===1?"community":"communities")+" will be able to enter "+S.info.world+". You always can.";
 }
 function render(){
-  $("p-list").classList.toggle("on",S.kind==="allow-list");
-  $("p-secret").classList.toggle("on",S.kind==="shared-secret");
+  $("p-list").hidden=S.kind!=="allow-list";
+  $("p-secret").hidden=S.kind!=="shared-secret";
   renderPeople();renderCommunities();
   $("summary").textContent=S.info?summary():"…";
   const over=S.people.size>S.limits.wallets||S.communities.size>S.limits.communities;
@@ -1257,7 +1225,7 @@ async function loadMine(signed){
   if(r.error){$("mine-title").textContent=r.error;return;}
   S.mine=r.communities;S.mineSigned=r.signed;
   $("mine-title").textContent=r.signed?"All communities you belong to":"Public communities you belong to";
-  $("mine-all").style.display=r.signed?"none":"inline-block";
+  $("mine-all").style.display=r.signed?"none":"";
   renderMine();
 }
 $("mine-all").onclick=async()=>{try{await loadMine(true);}catch(e){show("err","✗ "+(e&&e.message?e.message:e));}};
@@ -1271,11 +1239,11 @@ async function connect(){
   S.me=r.person||{address,name:null,claimed:false,face:null};
   S.isOwner=!!(S.info&&S.info.owner&&S.info.owner.address===address);
   $("me").style.display="flex";$("connect").style.display="none";
-  $("me-face").src=S.me.face||"";$("me-name").textContent=personLabel(S.me);$("me-addr").textContent=address;
+  $("me-face").src=S.me.face||"";$("me-face").style.visibility=S.me.face?"":"hidden";$("me-name").textContent=personLabel(S.me);$("me-addr").textContent=address;
   const b=$("me-badge");
-  if(S.isOwner){b.className="badge ok";b.textContent="owner of "+S.info.world;}
-  else if(S.info&&S.info.owner){b.className="badge warn";b.textContent="not the owner — "+(S.info.owner.name||short(S.info.owner.address))+" is";}
-  else{b.className="badge";b.textContent="owner unknown";}
+  if(S.isOwner){b.className="u-pill u-pill--online";b.textContent="owner of "+S.info.world;}
+  else if(S.info&&S.info.owner){b.className="u-pill u-pill--accent";b.textContent="not the owner — "+(S.info.owner.name||short(S.info.owner.address))+" is";}
+  else{b.className="u-pill u-pill--default";b.textContent="owner unknown";}
   hide();render();
   loadMine(false).catch(()=>{});
   return S.me;
@@ -1316,9 +1284,47 @@ load();
 </script></body></html>
 "##;
 
+/// A world page keeps no palette of its own: its colours are ui3 tokens and
+/// its controls are ui3 elements.
+#[cfg(test)]
+pub(crate) fn assert_built_from_ui3(page: &str, classes: &[&str]) {
+    let own = &page[page.find("<style>").unwrap()..page.find("</style>").unwrap()];
+    let hex = |s: &str| s.starts_with(|c: char| c.is_ascii_hexdigit());
+    assert!(
+        !own.contains("rgb") && !own.split('#').skip(1).any(hex),
+        "{own}"
+    );
+    let html = crate::world_linker::document(page).0;
+    for class in [
+        ".btn--primary {",
+        ".u-pill--default {",
+        "--ui-panel: var(--panel)",
+        "#status {",
+    ] {
+        assert!(html.contains(class), "the page lost {class}");
+    }
+    for class in ["class=\"ui-card sheet\""].iter().chain(classes) {
+        assert!(page.contains(class), "the page lost {class}");
+    }
+    assert!(!html.contains("@import"), "the page must stand alone");
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_page_is_built_from_the_ui3_elements() {
+        assert_built_from_ui3(
+            PAGE,
+            &[
+                "btn btn--secondary btn--sm",
+                "u-pill u-pill--online",
+                "u-pill u-pill--accent",
+                "u-avatar__img",
+            ],
+        );
+    }
     use axum::http::HeaderMap;
     use axum::routing::get as aget;
 
