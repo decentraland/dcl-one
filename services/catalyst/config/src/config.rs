@@ -12,7 +12,7 @@ pub use crate::{
     presence::PresenceConfig,
     price::PriceConfig,
     shop::{EconomyConfig, MarketUpstreamsConfig, MarketplaceConfig, ShopConfig},
-    social::{RoomAuthorityConfig, SocialConfig},
+    social::{RoomAuthorityConfig, SocialConfig, presence_badges},
     worlds::{WorldsConfig, WorldsContentConfig, WorldsFedConfig},
 };
 
