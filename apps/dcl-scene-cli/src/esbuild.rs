@@ -11,13 +11,18 @@ pub struct EsbuildOptions {
     pub externals: Vec<String>,
 }
 
-#[cfg(feature = "rolldown")]
 pub async fn bundle(project: &Project, opts: &EsbuildOptions) -> Result<()> {
+    bundle_tracked(project, opts).await.map(|_| ())
+}
+
+/// Bundle, and name every file the bundler loaded to do it.
+#[cfg(feature = "rolldown")]
+pub async fn bundle_tracked(project: &Project, opts: &EsbuildOptions) -> Result<Vec<PathBuf>> {
     crate::rolldown_backend::run(project, opts).await
 }
 
 #[cfg(not(feature = "rolldown"))]
-pub async fn bundle(_project: &Project, _opts: &EsbuildOptions) -> Result<()> {
+pub async fn bundle_tracked(_project: &Project, _opts: &EsbuildOptions) -> Result<Vec<PathBuf>> {
     use crate::ux::{TrySteps, UserError};
     Err(UserError::new(
         "this binary was built without the rolldown backend",

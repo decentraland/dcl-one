@@ -1,25 +1,12 @@
-//! Where a pass reads. The old collector polled archipelago (`/peers`,
-//! `/islands`, `/hot-scenes`), comms (`/scene-participants?pointer=&realm_name=`,
-//! `/scene-participants?realm_name=<world>`) and the worlds server
-//! (`/live-data`) over HTTP with a client and retry ladder of its own. In v2
-//! all three are modules of this process, so [`Sources`] is answered by
-//! [`ModuleSources`] over their states: the same rows those routes serialize,
-//! without the hop, the JSON or the retries (a module call either answers or
-//! fails the pass, and the periodic job retries the pass). The tests answer
-//! it with a fake.
-
-use std::collections::HashMap;
+//! Archive reads retain one complete Pulse statistics view across content I/O.
 use std::sync::Arc;
 
 use async_trait::async_trait;
 
 use super::model::{HotScene, Island, Peer};
-use crate::comms::archipelago;
-use crate::comms::archipelago::content::Scene;
-use crate::comms::archipelago::feed::IslandReport;
-use crate::comms::archipelago::peers::{PeerState, to_parcel};
 use crate::comms::gatekeeper;
 use crate::comms::gatekeeper::admission::handlers::{ParticipantsQuery, participants};
+use crate::comms::{protocol::bus::statistics::Peer as StatisticalPeer, stats};
 
 /// The worlds presence map as `/live-data` serves it.
 #[derive(Debug, Clone, PartialEq)]
@@ -30,12 +17,7 @@ pub struct LiveData {
 
 #[async_trait]
 pub trait Sources: Send + Sync {
-    /// Archipelago's connected peers.
-    async fn peers(&self) -> anyhow::Result<Vec<Peer>>;
-    /// Archipelago's islands, each counting the members this replica knows.
-    async fn islands(&self) -> anyhow::Result<Vec<Island>>;
-    /// The Genesis scenes with peers on their parcels, busiest first.
-    async fn hot_scenes(&self) -> anyhow::Result<Vec<HotScene>>;
+    async fn statistics(&self) -> anyhow::Result<Statistics>;
     /// The wallets in the room of the Genesis scene at `pointer` in `realm`,
     /// as reported (the collector lowercases and deduplicates them); `None`
     /// when no scene is deployed there (the old 404, which skipped the
@@ -53,19 +35,25 @@ pub trait Sources: Send + Sync {
 
 /// [`Sources`] over the in-process archipelago, comms and worlds states.
 pub struct ModuleSources {
-    pub archipelago: archipelago::AppState,
+    pub statistics: Arc<stats::Reader>,
+    pub content: Arc<dyn stats::content::Source>,
+    pub content_url: String,
     pub comms: gatekeeper::SharedState,
     pub worlds: crate::worlds::core::SharedState,
 }
 
 impl ModuleSources {
     pub fn new(
-        archipelago: archipelago::AppState,
+        statistics: Arc<stats::Reader>,
+        content: Arc<dyn stats::content::Source>,
+        content_url: String,
         comms: gatekeeper::SharedState,
         worlds: crate::worlds::core::SharedState,
     ) -> Arc<Self> {
         Arc::new(Self {
-            archipelago,
+            statistics,
+            content,
+            content_url,
             comms,
             worlds,
         })
@@ -82,43 +70,8 @@ impl ModuleSources {
 
 #[async_trait]
 impl Sources for ModuleSources {
-    async fn peers(&self) -> anyhow::Result<Vec<Peer>> {
-        Ok(self
-            .archipelago
-            .peers
-            .peers_snapshot()
-            .iter()
-            .map(peer_of)
-            .collect())
-    }
-
-    async fn islands(&self) -> anyhow::Result<Vec<Island>> {
-        let known = self.archipelago.peers.peers_by_address();
-        Ok(self
-            .archipelago
-            .feed
-            .islands()
-            .iter()
-            .map(|i| island_of(i, &known))
-            .collect())
-    }
-
-    async fn hot_scenes(&self) -> anyhow::Result<Vec<HotScene>> {
-        let peers = self.archipelago.peers.peers_snapshot();
-        let per_tile = peers_per_tile(&peers);
-        let tiles: Vec<String> = per_tile.keys().cloned().collect();
-        let scenes = self
-            .archipelago
-            .content
-            .fetch_scenes(&tiles)
-            .await
-            .map_err(|_| {
-                anyhow::anyhow!(
-                    "hot-scenes: the scene lookup for {} occupied tiles failed",
-                    tiles.len()
-                )
-            })?;
-        Ok(hot_scenes_of(&per_tile, scenes))
+    async fn statistics(&self) -> anyhow::Result<Statistics> {
+        statistics(&self.statistics, self.content.as_ref(), &self.content_url).await
     }
 
     async fn scene_participants(
@@ -153,73 +106,88 @@ impl Sources for ModuleSources {
     }
 }
 
-/// The `/peers` row: `parcel` from the heartbeat position, `lastPing` in ms.
-pub fn peer_of(p: &PeerState) -> Peer {
-    let [px, py, pz] = p.position;
-    let [x, y] = to_parcel(px, pz);
-    Peer {
-        address: p.address.clone(),
-        parcel_x: Some(x),
-        parcel_y: Some(y),
-        position_x: Some(px as f64),
-        position_y: Some(py as f64),
-        position_z: Some(pz as f64),
-        last_ping: Some(p.last_heartbeat.timestamp_millis()),
-    }
+pub struct Statistics {
+    pub peers: Vec<Peer>,
+    pub islands: Vec<Island>,
+    pub hot_scenes: Vec<HotScene>,
 }
-
-/// The `/islands` row: a member this replica never heard a heartbeat from is
-/// left out of the count, as the route leaves it out of the list.
-pub fn island_of(i: &IslandReport, known: &HashMap<String, PeerState>) -> Island {
-    Island {
-        island_id: i.id.clone(),
-        peer_count: i.peers.iter().filter(|a| known.contains_key(*a)).count() as i32,
-        max_peers: Some(i.max_peers as i32),
-        center_x: Some(i.center[0] as f64),
-        center_y: Some(i.center[1] as f64),
-        center_z: Some(i.center[2] as f64),
-        radius: Some(i.radius as f64),
-    }
-}
-
-/// Peers per parcel `x,y`, from the heartbeat positions.
-pub fn peers_per_tile(peers: &[PeerState]) -> HashMap<String, u32> {
-    let mut per_tile: HashMap<String, u32> = HashMap::new();
-    for p in peers {
-        let [px, _py, pz] = p.position;
-        let [x, y] = to_parcel(px, pz);
-        *per_tile.entry(format!("{x},{y}")).or_insert(0) += 1;
-    }
-    per_tile
-}
-
-pub const HOT_SCENES_LIMIT: usize = 100;
-
-/// The `/hot-scenes` rows: each scene's headcount is the sum over its
-/// parcels, busiest first, at most [`HOT_SCENES_LIMIT`].
-pub fn hot_scenes_of(per_tile: &HashMap<String, u32>, scenes: Vec<Scene>) -> Vec<HotScene> {
-    let mut hot: Vec<(u32, HotScene)> = scenes
+/// Acquire once before content I/O; every projection uses this same retained Arc.
+pub async fn statistics(
+    reader: &stats::Reader,
+    content: &dyn stats::content::Source,
+    url: &str,
+) -> anyhow::Result<Statistics> {
+    let snapshot = reader.snapshot();
+    let tiles = stats::render::tiles(&snapshot);
+    let documents = if tiles.is_empty() {
+        Vec::new()
+    } else {
+        content
+            .fetch(&tiles.iter().map(|(key, _)| key.clone()).collect::<Vec<_>>())
+            .await
+            .map_err(|_| anyhow::anyhow!("archive active content query failed"))?
+    };
+    let hot_scenes = stats::content::project_hot_scenes(&documents, &tiles, url)
+        .map_err(|_| anyhow::anyhow!("archive hot scene projection failed"))?
         .into_iter()
         .map(|scene| {
-            let users: u32 = scene
-                .parcels
-                .iter()
-                .map(|tile| per_tile.get(tile).copied().unwrap_or(0))
-                .sum();
-            let row = HotScene {
-                scene_id: scene.id,
-                name: scene.name,
-                base_x: Some(scene.base[0]),
-                base_y: Some(scene.base[1]),
-                users_count: Some(users as i32),
-                parcel_count: scene.parcels.len() as i32,
-                creator: scene.creator,
-                description: scene.description,
-            };
-            (users, row)
+            Ok(HotScene {
+                scene_id: scene
+                    .id
+                    .and_then(crate::content::OrderedJson::as_str)
+                    .ok_or_else(|| anyhow::anyhow!("archive scene id is not a string"))?
+                    .to_owned(),
+                name: scene
+                    .name
+                    .and_then(crate::content::OrderedJson::as_str)
+                    .map(str::to_owned),
+                base_x: scene.base_coords.first().copied().and_then(integer),
+                base_y: scene.base_coords.get(1).copied().and_then(integer),
+                users_count: Some(i32::try_from(scene.users_total_count)?),
+                parcel_count: i32::try_from(scene.parcels.len())?,
+                creator: scene
+                    .creator
+                    .and_then(crate::content::OrderedJson::as_str)
+                    .map(str::to_owned),
+                description: scene
+                    .description
+                    .and_then(crate::content::OrderedJson::as_str)
+                    .map(str::to_owned),
+            })
         })
-        .collect();
-    hot.sort_by_key(|(users, _)| std::cmp::Reverse(*users));
-    hot.truncate(HOT_SCENES_LIMIT);
-    hot.into_iter().map(|(_, row)| row).collect()
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    Ok(Statistics {
+        peers: snapshot.peers.iter().map(peer_of).collect(),
+        islands: stats::render::public_islands(&snapshot)
+            .into_iter()
+            .map(|island| {
+                Ok(Island {
+                    island_id: island.id,
+                    peer_count: i32::try_from(island.peers.len())?,
+                    max_peers: Some(i32::try_from(island.max_peers)?),
+                    center_x: island.center[0].is_finite().then_some(island.center[0]),
+                    center_y: island.center[1].is_finite().then_some(island.center[1]),
+                    center_z: island.center[2].is_finite().then_some(island.center[2]),
+                    radius: island.radius.is_finite().then_some(island.radius),
+                })
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?,
+        hot_scenes,
+    })
+}
+fn integer(value: f64) -> Option<i32> {
+    (value.is_finite() && value >= i32::MIN as f64 && value <= i32::MAX as f64)
+        .then_some(value as i32)
+}
+pub fn peer_of(peer: &StatisticalPeer) -> Peer {
+    let [x, y] = stats::render::parcel(peer);
+    Peer {
+        address: peer.address.clone(),
+        parcel_x: integer(x),
+        parcel_y: integer(y),
+        position_x: peer.position[0].is_finite().then_some(peer.position[0]),
+        position_y: peer.position[1].is_finite().then_some(peer.position[1]),
+        position_z: peer.position[2].is_finite().then_some(peer.position[2]),
+        last_ping: Some(peer.time),
+    }
 }

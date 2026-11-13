@@ -1,0 +1,153 @@
+.Container.Scene .content svg {
+  cursor: pointer;
+}
+
+.Container.Scene .Block.underlined {
+  border-bottom: 1px solid var(--base-14);
+}
+
+.Container.Scene .Block.underlined .Label {
+  font-size: 14px;
+}
+
+.Container.Scene .SpawnPointContainer > .content {
+  padding: 12px;
+  border-radius: 4px;
+  border: 1px solid #303031;
+  background: var(--tree-bg-color);
+  align-items: stretch;
+}
+
+/* Spawn Area Card */
+.Container.Scene .SpawnAreaContainer {
+  position: relative;
+  transition: border-color 0.2s ease;
+}
+
+.Container.Scene .SpawnAreaContainer > .content {
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.Container.Scene .SpawnAreaContainer .SpawnAreaHeaderRight {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.Container.Scene .Tabs.SceneTabs .TabIcon {
+  width: 16px;
+  height: 16px;
+  background-position: center;
+  background-size: contain;
+  background-repeat: repeat;
+}
+
+.Container.Scene .Tabs.SceneTabs .TabIcon.details-icon {
+  background-image: url(./icons/details.svg);
+}
+
+.Container.Scene .Tabs.SceneTabs .TabIcon.layout-icon {
+  background-image: url(./icons/layout.svg);
+}
+
+.Container.Scene .Tabs.SceneTabs .TabIcon.cog-icon {
+  background-image: url(./icons/settings.svg);
+}
+
+.Container.Scene .ThumbnailRow {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.Container.Scene .ThumbnailRow .ImportAssetField {
+  min-width: 0;
+  width: 100%;
+}
+
+.Container.Scene .SpawnPointContainer {
+  position: relative;
+  cursor: pointer;
+  transition: border-color 0.2s ease;
+}
+
+.Container.Scene .SpawnPointContainer:hover > .content {
+  border-color: #505052;
+}
+
+.Container.Scene .SpawnPointContainer.selected > .content {
+  border-color: #00ced1;
+  background: rgba(0, 206, 209, 0.1);
+}
+
+.Container.Scene .SpawnPointContainer .RightContent {
+  position: absolute;
+  right: 8px;
+  top: 4px;
+}
+
+.Container.Scene .SpawnAreaContainer.selected {
+  border-color: #8860c6;
+}
+
+.Container.Scene .CreatorAddrressContainer > .content {
+  display: flex;
+  flex-direction: column;
+  padding: 12px;
+  gap: 8px;
+  border-radius: 4px;
+  border: 1px solid #303031;
+  background: var(--tree-bg-color);
+}
+
+.Container.Scene .CreatorAddrressContainer > .content > * {
+  width: 100%;
+}
+
+.Container.Scene .CreatorAddrressContainer .CreatorAddrressLabel {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--base-10);
+  text-wrap: wrap;
+  width: 100%;
+}
+
+.Container.Scene .MultiplayerStatus {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--base-10);
+  text-wrap: wrap;
+}
+
+.Container.Scene .MultiplayerStatus.error {
+  color: var(--error-main);
+}
+
+.Container.Scene .LogsAccess {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.Container.Scene .LogsAccessHint {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--base-10);
+  text-wrap: wrap;
+}
+
+.Container.Scene .LogsAccessHint.error {
+  color: var(--error-main);
+}
+
+.Container.Scene .LogsAccessList {
+  display: flex;
+  flex-direction: column;
+}
+
+.Container.Scene .ProfileRow .Avatar {
+  cursor: default;
+}
