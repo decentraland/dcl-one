@@ -462,3 +462,22 @@ body.editing .cover-edit:hover .cover { border-color: var(--ink-45); }
 .lay__media-fields { display: flex; align-items: center; flex-wrap: wrap; gap: var(--s-3); }
 .lay__media-fields input { flex: 1 1 280px; min-width: 0; }
 @media (max-width: 600px) { .lay__media { padding: var(--s-4); } }
+.problems {
+  width: 100%; max-width: 1120px; margin: var(--s-5) auto 0; padding: 0 var(--s-6);
+  display: grid; gap: var(--s-3);
+}
+.problems[hidden] { display: none; }
+.problem {
+  display: grid; gap: var(--s-2); padding: var(--s-3) var(--s-4); border-radius: var(--r-card);
+  border: 1px solid var(--err-line); background: var(--err-wash);
+}
+.problem--preview, .problem--types { border-color: var(--warn-line); background: var(--warn-wash); }
+.problem__what { font-size: var(--fs-14); font-weight: var(--fw-semibold); color: var(--text); overflow-wrap: anywhere; }
+.problem__topic { color: var(--error); }
+.problem--preview .problem__topic, .problem--types .problem__topic { color: var(--warning); }
+.problem__why {
+  margin: 0; font-size: var(--fs-13); color: var(--ink-7); white-space: pre-wrap;
+  overflow-wrap: anywhere; max-height: 40vh; overflow: auto;
+}
+.problem__steps { margin: 0; padding: 0; list-style: none; display: grid; gap: var(--s-1); font-size: var(--fs-13); }
+.problem__steps li::before { content: "\2192  try: "; color: var(--ink-6); }

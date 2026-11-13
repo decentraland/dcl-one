@@ -191,7 +191,13 @@ fn install_metrics(raw: &str) -> anyhow::Result<comms::metrics::PrometheusHandle
     Ok(handle)
 }
 
-pub async fn serve(mut config: Config) -> anyhow::Result<()> {
+/// Run with Stats prepared before creating workers. The unsafe preparation
+/// contract applies through every route clone, canceled blocking operation and
+/// final isolate teardown; an arbitrary preexisting runtime is not supported.
+pub async fn serve(
+    mut config: Config,
+    prepared: crate::metrics_matcher::PreparedStats,
+) -> anyhow::Result<()> {
     config.node.init_tracing();
     let metrics_handle = install_metrics(&config.node.serve_metrics_bind)?;
     tracing::info!("{}", catalyst_config::posture::startup_line(&config));
@@ -854,6 +860,7 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         .await
         .context("loading camera_reel.withheld_blobs")?;
     camera_reel.spawn_ranking_job(&jobs);
+    camera_reel::events::spawn_retention_job(&camera_reel, &jobs);
     tracing::info!(
         builder = %builder.sources_label(),
         camera_reel_api_url = %camera_reel.settings.api_url,
@@ -921,7 +928,8 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
             .with_land_operators(land_operators)
             .with_land_authz(Some(land.clone()))
             .with_max_parcels(config.worlds.max_parcels)
-            .with_ens(ens, i64::from(config.worlds.ens_max_size) * 1024 * 1024),
+            .with_ens(ens, i64::from(config.worlds.ens_max_size) * 1024 * 1024)
+            .with_name_deny_list(worlds.names.clone()),
     );
     worlds.attach_policy(policy.clone());
     // A world read-through holds each mirrored scene's signer to this policy and shares the
@@ -996,7 +1004,7 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
 
     match about_comms {
         Some(about) => {
-            about.attach_core(comms_stage.archipelago.clone());
+            about.attach_core(comms_stage.archipelago.statistics.clone());
             about.spawn_jobs(&jobs, http_client.raw().clone());
             tracing::info!(adapter = %about.settings.fixed_adapter, sfu_probe = %about.sfu.target(), "/about advertises comms");
             content.attach_about_comms(about);
@@ -1138,7 +1146,12 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
             config.presence.presence_retention_days,
         ),
         presence::sources::ModuleSources::new(
-            comms_stage.archipelago.clone(),
+            comms_stage.archipelago.statistics.clone(),
+            Arc::new(comms::stats::content::Content {
+                pool: pool.clone(),
+                denylist: content.denylist.clone(),
+            }),
+            prepared.settings.content_url.clone(),
             comms_stage.gatekeeper.clone(),
             stage5.core.clone(),
         ),
@@ -1370,10 +1383,17 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     // presence archive under /presence, the paths the sites call. The
     // connector answers at the root and under /archipelago-ea-stats; its
     // socket routes only on the primary.
-    let socket_restart = comms_stage.archipelago.restart.clone();
-    let socket_drain = comms_stage.archipelago.sockets.clone();
-    let socket_cap = comms_stage.archipelago.settings.server.max_sockets;
-    let archipelago = crate::comms::archipelago::mounts(comms_stage.archipelago, primary);
+    let connector_shutdown = comms_stage.archipelago.clone();
+    let connector_lifecycle = comms_stage.archipelago.clone();
+    let (statistics_settings, statistics_matcher) = prepared.into_parts();
+    let archipelago = crate::comms::archipelago::mounts(
+        comms_stage.archipelago,
+        primary,
+        statistics_settings,
+        statistics_matcher,
+        content.denylist.clone(),
+    );
+    let statistics = archipelago.statistics.clone();
     let blobs = content.clone();
     let app = content::build_router(content)
         .merge(shop::market::router(market.clone()))
@@ -1414,8 +1434,11 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         .nest("/events", explore::router(explore))
         .merge(worlds::app_router(worlds, blobs, &stage5))
         .merge(live_presence_routes(live_presence, stage5.writes_enabled))
-        .merge(archipelago.root)
-        .nest("/archipelago-ea-stats", archipelago.stats)
+        .merge(if primary {
+            comms::archipelago::socket_router(connector_lifecycle.clone())
+        } else {
+            axum::Router::new()
+        })
         .merge(explore::api::router(explorer_api))
         // The gatekeeper's mounts, where `social::router` held them: the Pulse
         // room authority, the world comms mints and the LiveKit webhook (the
@@ -1487,13 +1510,18 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     // their case, and its `Allow` list on a 405 (also under
     // /worlds-content-server/). Other paths pass untouched.
     let app = content::routing::upstream_routing(app);
-    // The old executable trimmed trailing slashes outside its router
-    // (`/api/events/` is what the explorer requests), so the layer wraps the
-    // finished app rather than any one router.
-    let app = tower_http::normalize_path::NormalizePath::trim_trailing_slash(app);
+    let app = comms::stats::http::mount_services(
+        app,
+        statistics,
+        archipelago.stats,
+        archipelago.connector,
+    );
     let listener = tokio::net::TcpListener::bind(&addr)
         .await
         .with_context(|| format!("binding {addr} (HTTP_SERVER_HOST + HTTP_SERVER_PORT)"))?;
+    connector_lifecycle
+        .started
+        .store(true, std::sync::atomic::Ordering::Release);
     let shutdown = shutdown_signal();
     tracing::info!(%addr, "catalyst listening");
     let shutdown_jobs = jobs.clone();
@@ -1505,23 +1533,10 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     )
     .with_graceful_shutdown(async move {
         shutdown.await;
-        socket_restart.cancel();
-        // Workers first, so cursors and batches settle while the listener
-        // still answers; then the listener drains.
+        comms::archipelago::shutdown(&connector_shutdown).await;
         let aborted = shutdown_jobs.shutdown(JOBS_SHUTDOWN_TIMEOUT).await;
         if !aborted.is_empty() {
             tracing::warn!(?aborted, "jobs aborted at shutdown");
-        }
-        // Upgraded WebSockets outlive their HTTP requests. Wait for the writers themselves,
-        // whose permits cover a 5s in-flight frame plus a 5s terminal message and 5s close.
-        match tokio::time::timeout(
-            Duration::from_secs(16),
-            socket_drain.acquire_many_owned(socket_cap),
-        )
-        .await
-        {
-            Ok(Ok(_writers_stopped)) => {}
-            _ => tracing::warn!("socket writer drain exceeded its shutdown budget"),
         }
         tracing::info!("workers stopped; closing the listener");
     })
@@ -1764,6 +1779,24 @@ fn forwarder(
     Ok(Some(forwarder))
 }
 
+/// The asset-bundle converter `POST /reprocess-ab` hands world scenes to: the
+/// abgen runtime at `ABGEN_ADMIN_URL`, which must be a loopback address (the
+/// operator console's rule). Unset, the route answers 500.
+fn reprocess_converter(
+    config: &Config,
+    http_client: &http::Outbound,
+) -> anyhow::Result<Option<worlds::core::reprocess::Converter>> {
+    let Some(url) = Config::non_empty(&config.admin.abgen_admin_url) else {
+        return Ok(None);
+    };
+    let abgen =
+        ops::admin::console::Abgen::parse(&url, None, http_client).context("ABGEN_ADMIN_URL")?;
+    Ok(Some(worlds::core::reprocess::Converter::new(
+        abgen.base(),
+        http_client.raw().clone(),
+    )))
+}
+
 /// The stage-5 worlds states: the product surface (publish, permissions,
 /// settings, presence, operator routes), the world/player/env storage, the
 /// authoritative scene host (behind `SCENE_HOST_ENABLED`) and the worlds
@@ -1872,6 +1905,7 @@ async fn worlds_states(
             ))),
             &config.worlds.builder_url,
         ))
+        .with_converter(reprocess_converter(config, http_client)?)
         .with_forwarder(forwarder(
             "WORLDS_FORWARD_UPSTREAM_URL",
             config.worlds.worlds_forward_upstream_url.as_deref(),
@@ -2264,7 +2298,12 @@ mod registry_mount_tests {
             Outbound::for_tests(),
             crate::shop::market::Settings::for_tests(),
         ));
-        let app = registry_profiles(market).merge(crate::explore::api::router(api));
+        // `serve` merges both halves into an app with a fallback of its own
+        // (the content 404); the Registry prefix keeps the gateway's.
+        let app = axum::Router::new()
+            .fallback(|| async { (StatusCode::IM_A_TEAPOT, "app fallback") })
+            .merge(registry_profiles(market))
+            .merge(crate::explore::api::router(api));
         for (method, path, body, expected) in [
             (
                 "POST",
@@ -2316,6 +2355,92 @@ mod registry_mount_tests {
                 expected,
                 "{method} {path}"
             );
+        }
+        // The gateway half's status-check probes, and the Registry's own CORS
+        // preflight on a route of each half.
+        for (path, expected) in [
+            ("/asset-bundle-registry/health/live", "alive"),
+            (
+                "/asset-bundle-registry/health/ready",
+                crate::shared::health::SERVER_PASS,
+            ),
+            (
+                "/asset-bundle-registry/health/startup",
+                crate::shared::health::SERVER_PASS,
+            ),
+        ] {
+            let response = app
+                .clone()
+                .oneshot(Request::get(path).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "{path}");
+            let body = to_bytes(response.into_body(), 1 << 20).await.unwrap();
+            assert_eq!(body.as_ref(), expected.as_bytes(), "{path}");
+        }
+        for path in [
+            "/asset-bundle-registry/profiles/metadata",
+            "/asset-bundle-registry/entities/active",
+            // A path neither half routes: the gateway half's fallback.
+            "/asset-bundle-registry/nope",
+        ] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method("OPTIONS")
+                        .uri(path)
+                        .header("origin", "https://example.org")
+                        .header("access-control-request-method", "POST")
+                        .header("access-control-request-headers", "content-type")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::NO_CONTENT, "{path}");
+            let headers = response.headers();
+            assert_eq!(headers["access-control-allow-origin"], "*", "{path}");
+            assert_eq!(
+                headers["access-control-allow-methods"], "GET,HEAD,OPTIONS,DELETE,POST,PUT",
+                "{path}"
+            );
+            assert_eq!(
+                headers["access-control-allow-headers"], "content-type",
+                "{path}"
+            );
+            assert_eq!(headers["access-control-max-age"], "86400", "{path}");
+        }
+        for (path, status, body, origin) in [
+            (
+                "/asset-bundle-registry/nope",
+                StatusCode::NOT_FOUND,
+                "Not found",
+                Some("*"),
+            ),
+            ("/nope", StatusCode::IM_A_TEAPOT, "app fallback", None),
+        ] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::get(path)
+                        .header("origin", "https://example.org")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), status, "{path}");
+            assert_eq!(
+                response
+                    .headers()
+                    .get("access-control-allow-origin")
+                    .map(|value| value.to_str().unwrap()),
+                origin,
+                "{path}"
+            );
+            let bytes = to_bytes(response.into_body(), 1 << 20).await.unwrap();
+            assert_eq!(bytes.as_ref(), body.as_bytes(), "{path}");
         }
         let _ = std::fs::remove_dir_all(&files);
     }

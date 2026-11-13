@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { BackpackModal } from '../../features/backpack/BackpackModal'
 import modalStyles from '../../features/backpack/BackpackModal.module.css'
 import { LobbyHome } from '../../features/lobby/LobbyHome'
-import { fetchHomePlace, fetchRecents } from '@explorer-core/features/lobby/lobbyApi'
+import { fetchHomePlace, fetchLiveEvents, fetchRecents } from '@explorer-core/features/lobby/lobbyApi'
 import type { DiscoverPlace } from '@explorer-core/features/places/placesApi'
 import { receiveProfile, resetProfileStore, setProfileRequester } from '../../features/session/profileStore'
 import { SessionProvider } from '../../features/session/SessionContext'
@@ -42,6 +42,30 @@ describe('lobby controls', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Customize' }))
     expect(session.backpack.toggle).toHaveBeenCalledOnce()
     await waitFor(() => expect(screen.getByRole('button', { name: /jump in/i })).toBeInTheDocument())
+  })
+
+  it("jumps to a live world event only when its server is a world's name", async () => {
+    vi.mocked(fetchLiveEvents).mockResolvedValueOnce([
+      { id: 'good', name: 'Good Fest', x: 0, y: 0, world: true, live: true, server: 'fest.dcl.eth' },
+      { id: 'bad', name: 'Bad Fest', x: 0, y: 0, world: true, live: true, server: 'https://realm.example/about' }
+    ])
+    // the live events' Rail scrolls its viewport, which jsdom does not implement
+    const scrollTo = HTMLElement.prototype.scrollTo
+    HTMLElement.prototype.scrollTo = function (): void {}
+    try {
+      const session = fakeSession()
+      const onPick = vi.fn()
+      render(
+        <SessionProvider value={session}>
+          <LobbyHome onPick={onPick} setEngineViewport={session.setEngineViewport} />
+        </SessionProvider>
+      )
+      expect(await screen.findByRole('button', { name: /Bad Fest/ })).toBeDisabled()
+      fireEvent.click(await screen.findByRole('button', { name: /Good Fest/ }))
+      expect(onPick).toHaveBeenCalledWith({ kind: 'world', realm: 'fest.dcl.eth' })
+    } finally {
+      HTMLElement.prototype.scrollTo = scrollTo
+    }
   })
 
   it('loads the landing card when the native home arrives after mount', async () => {

@@ -152,7 +152,10 @@ impl Gate {
     }
 }
 
-async fn gate(State(gate): State<Gate>, req: Request, next: Next) -> Response {
+/// The gate as a middleware function, for a router that layers it on its
+/// write routes alone (`MethodRouter::route_layer`) rather than through
+/// [`guard_with`].
+pub async fn gate(State(gate): State<Gate>, req: Request, next: Next) -> Response {
     if gate.covers(req.method(), req.uri().path())
         && let Some(refusal) = gate.refusal()
     {

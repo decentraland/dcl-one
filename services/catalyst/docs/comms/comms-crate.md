@@ -26,7 +26,8 @@ separate from the current runtime described here.
 | Module | Runs in | Owns |
 |---|---|---|
 | `pulse` | `catalyst pulse` | avatar sync over ENet UDP (default `:9000`) and WebTransport (`:7743`); islands (`cluster`); the dormant [application relay implementation](../../comms/src/pulse/application_relay/README.md); ban snapshots (`bans`, ETag poll of `GET /bans`); remote flags and per-IP admission (`flags`) |
-| `archipelago` | primary `serve` | `/ws`; peer, island and hot-scene stats; the `/about` comms block (`CommsCore`) |
+| `archipelago` | primary `serve` | `/ws`, authenticated observations, socket registrations and enforcement room assignments |
+| `stats` | every `serve` | complete read-only Pulse statistics snapshots, HTTP projections, `CommsCore` and archive views; uncached enrichment through the existing content pool |
 | `gatekeeper::admission` | `serve` | scene, server-scene, world (`world_mint`) and island tokens; the Pulse room authority (`relay_authority`) |
 | `gatekeeper::moderation`, `removal` | `serve` | bans, warnings, scene admins, durable ban kicks, disabled-place cleanup, room metadata repair |
 | `gatekeeper::voice`, `streaming`, `streaming_jobs` | `serve` | private and community voice; stream access, LiveKit Ingress, streaming expiry; `/cast/*` answers 501 |
@@ -52,6 +53,7 @@ player report routes, `POST /auth/challenge`, `/auth/livekit-token` and
 | `interfaces::SocialDirectory` | `social::comms_directory::Directory` | privacy, friendships, community roles; notices inserted on the caller's transaction |
 | `interfaces::NameOwnerReader` | shop `MarketplaceState` | name ownership for Admin Toolkit targets |
 | `gatekeeper::events::RoomEventSink` | `worlds::core::CoreState` | worlds' join/leave access log |
+| `stats::http::MetricsMatcher` | root `metrics_matcher` | fallible configured route evaluation on the pinned embedded engine; one async permit retained inside each submitted blocking operation |
 
 | Comms offers | Consumers |
 |---|---|
@@ -89,16 +91,59 @@ re-announce sweep's 30 s cadence), beyond it 503 with `Retry-After: 5`; `WS_MAX_
 `HTTP_TRUSTED_PROXY_CIDRS`, beyond it 429; an unattributable upgrade (a gateway peer outside that
 list, or no `X-Real-IP`) is not counted, logs one warning and increments
 `archipelago_ws_unattributed_upgrades_total`; positions coalesce
-to one per 500 ms; a flooding socket closes with 1008; a 64-frame send queue in which a newer
+for ownership control to one per 500 ms; statistical observations retain every decoded position; a flooding socket closes with 1008; a 64-frame send queue in which a newer
 `island_changed` replaces the queued one and `kicked` is never dropped, full for 10 s closes
 with 1013; undecodable frames 1007; restart closes every socket with 1012.
 
 **Deployment.**
-- One primary is a release gate. Every API replica sets `FLEET_JOBS_ENABLED=false` (default true). The proxy sends `/ws`, `/parcels`, `/peers`, `/peers/{id}`, `/islands`, `/islands/{id}` (at the root and under `/comms` and `/stats`), `/hot-scenes`, `/stats/health` (root and `/archipelago-ea-stats`) and `/lambdas/explore/realms` to the primary alone; a replica answers 404 for all but the last. Stop the primary before its successor starts.
+- One primary is a release gate. Every API replica sets `FLEET_JOBS_ENABLED=false` (default true). Only the primary serves WebSockets; every serve supplies read-only statistics, about and realms from its retained complete snapshot. Stop the primary before its successor starts.
+- The gateway's subdomain-prefix mapping sends `archipelago-ea-stats.<domain>` to `/archipelago-ea-stats/*` and `archipelago-ea-ws-connector.<domain>` to `/archipelago-ea-ws-connector/*`. Route both connector hosts and WebSockets to the primary. Additional host aliases require explicit proxy mappings. The complete standalone mounts sit outside shared path normalization and CORS; root content `/status` remains unchanged. Existing `/ws` and `/archipelago-ea-stats/ws` entrypoints remain, with `/archipelago-ea-ws-connector/ws` available at the connector mount. No public Pulse listener is added. Shared-root `/stats/*` aliases, including `/stats/health`, remain available at the root and are excluded from the standalone Stats mount. Optional WebSocket subprotocol names are echoed in offered order; they never select authentication or enable extended control fields.
 - Key separation: only the gatekeeper holds the LiveKit secret; the dormant relay implementation requires a room-authority answer and has no production activation; `multiplayer-hosting` will hold the authoritative key; engines run as a separate user with a scrubbed environment.
 - Configured legacy ownership uses `ARCHIPELAGO_CONTROL_V4_AUDIENCE`. Pulse accepts that audience or `PULSE_V4_AUDIENCE` for its shared NATS control-position bridge; conflicting values fail startup. Neither setting enables public V4 authentication.
 - `DENY_LIST_URL` (or upstream's name `DENYLIST_JSON_URL`) is required in production; `NODE_POSTURE=mirror` defaults it to `https://config.decentraland.org/denylist.json`. Unset, the node warns at start and runs with the list off.
 - `PULSE_FLAGS_URL` (HTTPS or numeric-loopback HTTP, polled every 60 s) may set only the four `PULSE_IP_LIMITER_*` values (`ENABLED` false, `MAX_CONCURRENCY` 10, `SCENE_LISTENER_MAX_CONCURRENCY` 2, `WHITELIST` empty by default).
+
+## Statistics ownership and runtime
+
+Pulse owns a separate legacy statistics population. Authenticated decoded positions enter a
+bounded 1,024-event connector queue before ownership, realm and finite-position filtering.
+A serialized publisher assigns a process UUID and increasing sequence; each socket disconnect
+emits a removal, including duplicate devices and replaced sockets. Publish rejection or timeout
+is counted and logged without retry. These observations cannot authorize room ownership.
+Connector assignments exist only for moderation and participant removal; fenced delivery records
+the issued room under the existing local ownership guard after Pulse and SQL authorization.
+
+Every serve subscribes to ordered statistical changes and complete recovery frames.
+Contiguous changes become visible at subscription callback completion; no periodic
+timer delays the healthy change path. A gap retains the previous view until a
+watermarked complete recovery arrives. HTTP, about/realms and each archive pass
+retain one immutable snapshot across projection and content I/O. Cold state remains an empty
+successful view, and an outage retains the last complete snapshot without public peer expiry.
+Social keeps its existing topology subscription and LiveKit keeps occupancy authority.
+Hot-scene HTTP and archive enrichment use serve's existing content pool and shared
+content denylist, preserving selected local document order before projection,
+stable count sorting and top-100 selection. `CONTENT_URL` supplies thumbnail
+construction; local SQL determines the corpus and dependency failures. The
+[local content source ADR](../../../../docs/adr/2026-11-12-stats-local-content-source.md)
+records the accepted source semantics and preserved rendering and snapshot obligations.
+The discovery subscription and original frame validation remain for transport compatibility;
+they no longer maintain a connector statistics cache.
+
+Recovery deadlines are checked between transfers. One captured checkpoint follows
+its finite queued revision prefix before later changes; ongoing observations cannot
+postpone it. The five-second recovery cadence excludes the current transfer, prefix
+drain, encoding and checkpoint send time. Each send has a 15-second deadline;
+encoding is outside it. Overflow or failed publication discards the pending prefix
+and checkpoint in favor of a new complete recovery. Sequential encoding awaits do
+not prevent an already-started blocking encode from outliving publisher cancellation.
+
+Stats and connector hosts have separate real request registries, bearer-protected scrapes,
+optional operating-system collectors, and reset after the first successful scrape strictly
+past the previous reset's local midnight plus 24 hours. Histogram maintenance runs
+at each recording boundary, independent of successful scrapes. Readiness reports
+the original `server` check from the actual listener lifecycle;
+NATS and content add no probes. Rust exposes actual available process measurements rather than
+invented Node/V8 series. Node-specific default runtime metrics remain a compatibility gap.
 
 ## Bus messages
 
@@ -109,8 +154,11 @@ Types, subjects and caps: `comms::protocol::bus`. Record reviewed channel contra
 | Cluster change | Pulse → primary island subscriber (one unqueued subscription) | `peer.{wallet}.cluster_change` | 64 KiB; coalescing outbox | fresh lookup; rotating retained-pending hints | Pulse pub, `serve` sub |
 | Cluster lookup | `serve` → Pulse, reply on private `_INBOX.` | `peer.{wallet}.cluster_lookup` | exact session request; complete reply ≤64 KiB; 2 s deadline | active re-announcement and retained pending cleanup | `serve` pub, Pulse sub; both pub/sub `_INBOX.>` |
 | Takeover completion | gatekeeper → Pulse | `peer.{wallet}.takeover_completed` | 1–4096 bytes; ID 1–64 bytes | resend identical ID/cutoff until authoritative acknowledgment | `serve` pub, Pulse sub |
-| Islands snapshot | Pulse → connector stats, `presence` | `engine.islands` | 1 MiB, 1 s | next snapshot; online expires 5 s after the last valid one | Pulse pub, `serve` sub |
-| Discovery beacon | Pulse → `/core-status`, `/about` | `engine.discovery` | 10 s | healthy while < 90 s old | Pulse pub, `serve` sub |
+| Islands snapshot | Pulse → social topology in every `serve` | `engine.islands` | 1 MiB, 1 s | next snapshot; online expires 5 s after the last valid one | Pulse pub, `serve` sub |
+| Discovery beacon | Pulse → retained connector discovery subscription | `engine.discovery` | 10 s | next beacon; no statistics cache | Pulse pub, `serve` sub |
+| Statistics producer control | connector ↔ Pulse | `archipelago.statistics.producer.v2`, private `_INBOX` replies | ≤64 KiB and broker limit; existing bounded request queue/deadline | lazy incarnation probe, candidate grant, exact confirmation; idempotent registration only | `serve` request/private reply sub, Pulse sub/private reply pub |
+| Statistics observation | connector → Pulse | `archipelago.statistics.observations.v2` | ≤64 KiB and broker limit; queue 1,024; 2 s including registration | Pulse incarnation/generation and increasing cursor; at most once; no event retry | `serve` pub, Pulse sub |
+| Statistics changes and recovery | Pulse → every `serve` | `archipelago.statistics.snapshots.v1` | each frame ≤min(64 KiB, broker limit); transfer ≤64 MiB; changes on observation; recovery requested every 5 s at transfer boundaries | finite queued prefix, then complete checkpoint; retain last complete view on gaps | Pulse pub, `serve` sub |
 | Control position | connector → Pulse | `archipelago.control.position.v1` | 640 B | next heartbeat | `serve` pub, Pulse sub |
 | Room event | webhook → `multiplayer-hosting` | `comms.room_events.v1` | 4 KiB | reconcile via `GET /scene-participants` | `serve` pub, `multiplayer-hosting` sub only |
 
@@ -289,6 +337,14 @@ and expiry; unchanged passes preserve identity. Live registration and control-ow
 invalidate stale active lookups between passes. Ready snapshots record potential credential
 exposure, so an intermediate assignment blocked by cleanup does not invent another predecessor.
 
+Snapshots and persisted admission stamps retain selected origin and exact identity. Native
+registration reserves precedence even without usable coordinates and invalidates earlier legacy
+evidence until a completed pass installs a fresh version. Unknown and cleanup-only evidence
+cannot mint or refresh credentials. Legacy v1/v2 readers share the wallet capacity; mixed
+authority is withheld without a grounded common allocator-domain proof. The ordinary connector
+continues emitting v1, so reader support does not establish final native SQL ownership or a
+producer cutover ([selected evidence ADR](../../../../docs/adr/2026-11-12-pulse-selected-room-evidence.md)).
+
 Pulse budgets 24,573 simultaneous distinct transport/control wallets and one equally sized
 churn cohort, for 49,146 retained wallet records, with at most 32 pending operations per
 wallet. Complete plans are bounded to 64 KiB; overflow never becomes a truncated ready reply.
@@ -365,3 +421,5 @@ as `authoritative-server`):
 ## Acceptance evidence
 
 Read the architecture decisions, divergence findings and readiness evidence supplied for the task before planning or claiming deployment. Record missing implementation, measured capacity, live-client verification and required private security review there. Public ownership guidance does not itself establish readiness.
+
+Default process metrics use actual OS data: fractional user/system/total CPU, process start time and resident bytes on Windows and Linux; Linux additionally exposes virtual/data-segment bytes and open/max file descriptors. The Linux CPU source has kernel clock-tick resolution. Unavailable measurements are omitted; Node/V8 runtime measurements are not synthesized. `WKC_METRICS_COLLECT_DEFAULT=false` disables these collectors.
