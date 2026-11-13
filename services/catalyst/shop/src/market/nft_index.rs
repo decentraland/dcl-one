@@ -135,6 +135,8 @@ pub struct NftEvent {
     pub amount: Option<String>,
     pub expires_at: Option<i64>,
     pub detail: Option<String>,
+    /// The transaction of an `order_successful`.
+    pub tx_hash: Option<String>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -202,6 +204,7 @@ pub fn decode_log(log: &RpcLog, block_time: i64) -> Result<Option<NftEvent>, Dec
         amount: None,
         expires_at: None,
         detail: None,
+        tx_hash: None,
     };
     let event = match topic0.as_str() {
         TOPIC_TRANSFER => {
@@ -284,6 +287,10 @@ pub fn decode_log(log: &RpcLog, block_time: i64) -> Result<Option<NftEvent>, Dec
                 to_address: buyer,
                 amount: Some(price.to_string()),
                 detail: Some(format!("{id:#x}")),
+                tx_hash: log
+                    .transaction_hash
+                    .as_ref()
+                    .map(|h| h.to_ascii_lowercase()),
                 ..base(KIND_ORDER_SUCCESSFUL, format!("{nft:#x}"), token)
             }
         }
@@ -360,10 +367,10 @@ pub async fn insert_events(
     for chunk in rows.chunks(1_000) {
         let r = sqlx::query(
             "INSERT INTO shop.nft_event \
-                 (network, block_number, log_index, block_time, kind, emitter, contract_address, token_id, from_address, to_address, amount, expires_at, detail) \
-             SELECT $1, b, i, t, k, em, c, tok::numeric, f, tt, a::numeric, x, d \
-             FROM UNNEST($2::bigint[], $3::int[], $4::bigint[], $5::text[], $6::text[], $7::text[], $8::text[], $9::text[], $10::text[], $11::text[], $12::bigint[], $13::text[]) \
-                  AS u(b, i, t, k, em, c, tok, f, tt, a, x, d) \
+                 (network, block_number, log_index, block_time, kind, emitter, contract_address, token_id, from_address, to_address, amount, expires_at, detail, tx_hash) \
+             SELECT $1, b, i, t, k, em, c, tok::numeric, f, tt, a::numeric, x, d, h \
+             FROM UNNEST($2::bigint[], $3::int[], $4::bigint[], $5::text[], $6::text[], $7::text[], $8::text[], $9::text[], $10::text[], $11::text[], $12::bigint[], $13::text[], $14::text[]) \
+                  AS u(b, i, t, k, em, c, tok, f, tt, a, x, d, h) \
              ON CONFLICT (network, block_number, log_index) DO NOTHING",
         )
         .bind(net.db_name())
@@ -379,6 +386,7 @@ pub async fn insert_events(
         .bind(chunk.iter().map(|r| r.amount.clone()).collect::<Vec<_>>())
         .bind(chunk.iter().map(|r| r.expires_at).collect::<Vec<_>>())
         .bind(chunk.iter().map(|r| r.detail.clone()).collect::<Vec<_>>())
+        .bind(chunk.iter().map(|r| r.tx_hash.clone()).collect::<Vec<_>>())
         .execute(&mut *conn)
         .await?;
         written += r.rows_affected() as usize;
@@ -1283,7 +1291,7 @@ pub(crate) mod tests {
             ev.detail.as_deref(),
             Some(format!("0x{}", "42".repeat(32)).as_str())
         );
-        let sold = log(
+        let mut sold = log(
             market,
             vec![
                 TOPIC_ORDER_SUCCESSFUL.into(),
@@ -1295,10 +1303,15 @@ pub(crate) mod tests {
             23,
             0,
         );
+        sold.transaction_hash = Some(format!("0x{}", "AB".repeat(32)));
         let ev = decode_log(&sold, 1).unwrap().unwrap();
         assert_eq!(
-            (ev.kind, ev.to_address.as_deref()),
-            (KIND_ORDER_SUCCESSFUL, Some(c))
+            (ev.kind, ev.to_address.as_deref(), ev.tx_hash),
+            (
+                KIND_ORDER_SUCCESSFUL,
+                Some(c),
+                Some(format!("0x{}", "ab".repeat(32)))
+            )
         );
         let cancelled = log(
             market,

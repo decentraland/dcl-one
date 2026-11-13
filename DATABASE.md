@@ -1400,9 +1400,12 @@ default, and social writes are), each a reader of tables other areas own, with o
 - `shop.sale_event` (`mint`, `bid_accepted`), `shop.trade_event` (`traded`)
   and `shop.nft_event` (`order_successful`) on Polygon by (block, log index),
   each up to the block its index published in `shop.chain_cursor`
-  (emotionista, fashionista; one step per transaction hash, the legacy order's
-  chain position standing in for its missing hash). A sale of an item
-  `shop.items` lacks holds its log's cursor until the item is mirrored or the
+  (emotionista, fashionista; one step per transaction hash, a legacy order
+  indexed before `nft_event.tx_hash` was recorded counted by its chain
+  position). An off-chain good counts for its `beneficiary` in
+  `trade_event.assets`; a legacy order bought by a fiat or cross-chain relay
+  counts for the token's last `transfer` recipient in the same block (one
+  `nft_event_token_idx` probe per such order). A sale of an item `shop.items` lacks holds its log's cursor until the item is mirrored or the
   items mirror completes a pass an hour after the sale (a pass walks every
   item, minutes at the defaults); then it is passed without effect. Without
   `MARKETPLACE_MIRRORS_ENABLED` no pass ever completes, so the sales job is
