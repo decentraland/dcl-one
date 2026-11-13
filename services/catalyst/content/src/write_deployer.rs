@@ -582,6 +582,20 @@ impl WriteDeployer {
             .is_some_and(|held| held.contains(pointer))
     }
 
+    /// The ones of `pointers` of `etype` another deploy of this process holds,
+    /// in the entity's order; takes nothing.
+    fn busy_pointers(&self, etype: &str, pointers: &[String]) -> Vec<String> {
+        let in_flight = self.pointers_in_flight.lock();
+        let Some(held) = in_flight.get(etype) else {
+            return Vec::new();
+        };
+        pointers
+            .iter()
+            .filter(|p| held.contains(*p))
+            .cloned()
+            .collect()
+    }
+
     /// Claims `pointers` of `etype` for one deploy; `Err` names the ones
     /// another deploy of this process holds, in the entity's order.
     fn claim_pointers<'a>(
@@ -901,6 +915,9 @@ impl WriteDeployer {
     }
 }
 
+/// The most parcels a scene may name: every parcel of the -150..=150 map.
+pub(crate) const MAX_SCENE_POINTERS: usize = 301 * 301;
+
 /// `REQUEST_TTL_BACKWARDS`'s default.
 pub(crate) const REQUEST_TTL_BACKWARDS_MS: i64 = 20 * 60 * 1000;
 
@@ -1035,22 +1052,31 @@ impl WriteDeployer {
 
         let auth_chain: AuthChain = serde_json::from_value(auth_chain)
             .map_err(|e| vec![format!("invalid auth chain: {e}")])?;
-        // Upstream's order: the signature at the entity's timestamp, then
-        // the pointers, the in-flight claim and the server checks (newer
-        // entity, rate limit, request TTLs), then the validator.
+        // The signature at the entity's timestamp, the pointers and the
+        // server checks (newer entity, rate limit, request TTLs), then the
+        // validator; the in-flight claim follows validation.
         self.check_signature(entity_id, &auth_chain, entity.timestamp)
             .await?;
         if entity.pointers.is_empty() {
             return Err(vec!["The entity does not have any pointer.".to_string()].into());
         }
-        let _claim = self
-            .claim_pointers(entity.entity_type.as_str(), &entity.pointers)
-            .map_err(|busy| {
-                vec![format!(
-                    "The following pointers are currently being deployed: '{}'. Please try again in a few seconds.",
-                    busy.join(",")
-                )]
-            })?;
+        let in_flight = |busy: Vec<String>| {
+            vec![format!(
+                "The following pointers are currently being deployed: '{}'. Please try again in a few seconds.",
+                busy.join(",")
+            )]
+        };
+        // Upstream's early refusal, without taking a claim.
+        let busy = self.busy_pointers(entity.entity_type.as_str(), &entity.pointers);
+        if !busy.is_empty() {
+            return Err(in_flight(busy).into());
+        }
+        if entity.entity_type == EntityType::Scene && entity.pointers.len() > MAX_SCENE_POINTERS {
+            return Err(vec![format!(
+                "A scene may name at most {MAX_SCENE_POINTERS} parcels."
+            )]
+            .into());
+        }
 
         // An early refusal, as upstream's; the write's own check is binding,
         // so a failed lookup goes on to it.
@@ -1148,6 +1174,11 @@ impl WriteDeployer {
         }
 
         let validation_us = validation_started.elapsed().as_micros() as u64;
+        // Claimed once validation passed, so a deploy without rights never holds a pointer;
+        // the deploy function's per-pointer locks stay the binding serializer.
+        let _claim = self
+            .claim_pointers(entity.entity_type.as_str(), &entity.pointers)
+            .map_err(in_flight)?;
         let persist_started = Instant::now();
         // Released on a failed or no-op write, so only an accepted deploy holds its pointers.
         let Some(reservation) =
@@ -1439,10 +1470,46 @@ impl WriteDeployer {
         if let Some(forwarder) = forward {
             query = query.bind(forwarder.target());
         }
-        let outcome = query
-            .fetch_one(&self.pool)
+        let write_failed = |e: sqlx::Error| unavailable(format!("deployment write failed: {e}"));
+        let mut tx = self.pool.begin().await.map_err(write_failed)?;
+        // The collector unlinks under the exclusive side: a reused stored file stays until commit.
+        crate::storage::gc::lock_store_shared(&mut tx)
             .await
-            .map_err(|e| unavailable(format!("deployment write failed: {e}")))?;
+            .map_err(write_failed)?;
+        let uploaded: HashSet<&str> = uploads
+            .iter()
+            .flat_map(|u| [u.v0.as_str(), u.v1.as_str()])
+            .collect();
+        let reused: Vec<&str> = hashes
+            .iter()
+            .map(String::as_str)
+            .filter(|h| !uploaded.contains(h))
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect();
+        let stored = self
+            .storage
+            .exist_multiple(&reused)
+            .await
+            .map_err(|e| unavailable(format!("checking stored content: {e}")))?;
+        let mut gone: Vec<&str> = reused
+            .into_iter()
+            .filter(|h| !stored.get(*h).copied().unwrap_or(false))
+            .collect();
+        if !gone.is_empty() {
+            gone.sort_unstable();
+            return Err(DeployFailure::Rejected(
+                gone.into_iter()
+                    .map(|h| {
+                        format!(
+                            "This hash is referenced in the entity but was not uploaded or previously available: {h}"
+                        )
+                    })
+                    .collect(),
+            ));
+        }
+        let outcome = query.fetch_one(&mut *tx).await.map_err(write_failed)?;
+        tx.commit().await.map_err(write_failed)?;
 
         tracing::debug!(target: "catalyst_perf", phase="persist", entity_id=%entity.id, storage_us, db_us=db_started.elapsed().as_micros() as u64);
 

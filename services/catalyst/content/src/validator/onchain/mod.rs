@@ -411,8 +411,22 @@ impl Chain {
         out
     }
 
-    /// The Checker's `multicall` over `calls` at `block`; all false when it reverts.
+    /// The Checker's `multicall` over `calls` at `block`, [`CALLS_PER_BATCH`] calls per
+    /// `eth_call`; a batch that reverts answers all false.
     async fn multicall(
+        &self,
+        checker: Address,
+        calls: Vec<Vec<u8>>,
+        block: u64,
+    ) -> Result<Vec<bool>, ValidatorError> {
+        let mut out = Vec::with_capacity(calls.len());
+        for chunk in calls.chunks(CALLS_PER_BATCH) {
+            out.extend(self.multicall_batch(checker, chunk.to_vec(), block).await?);
+        }
+        Ok(out)
+    }
+
+    async fn multicall_batch(
         &self,
         checker: Address,
         calls: Vec<Vec<u8>>,

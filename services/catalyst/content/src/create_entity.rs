@@ -351,12 +351,25 @@ async fn read_form(
 /// `entity_id`), for the unsynced copy's per-type gate; the deployer checks
 /// the same file in full.
 fn entity_type_of(files: &[Bytes], entity_id: &str) -> Option<String> {
+    entity_file_of(files, entity_id).and_then(|v| v.get("type")?.as_str().map(str::to_string))
+}
+
+fn entity_file_of(files: &[Bytes], entity_id: &str) -> Option<Value> {
     files
         .iter()
         .filter(|f| f.first() == Some(&b'{'))
         .find(|f| crate::auth::verify_hash(f, entity_id))
         .and_then(|f| serde_json::from_slice::<Value>(f).ok())
-        .and_then(|v| v.get("type")?.as_str().map(str::to_string))
+}
+
+/// The most pointers an undecided deploy may name and still be refunded: one
+/// access-check batch. A larger request can drive its own check past its deadline.
+const REFUNDABLE_MAX_POINTERS: usize = 100;
+
+fn is_refundable(files: &[Bytes], entity_id: &str) -> bool {
+    entity_file_of(files, entity_id)
+        .and_then(|v| v.get("pointers")?.as_array().map(Vec::len))
+        .is_some_and(|n| n <= REFUNDABLE_MAX_POINTERS)
 }
 
 pub fn deployment_failure_response(failure: DeployFailure) -> Response {
@@ -651,7 +664,8 @@ struct Request<'a> {
 }
 
 /// An admitted deploy's answer: [`Answer::Undecided`] is the deployer's
-/// 503 for this node's own state, which the client's quota gets back.
+/// 503 for this node's own state on a request small enough not to have
+/// caused it, which the client's quota gets back.
 enum Answer {
     Decided(Response),
     Undecided(Response),
@@ -791,6 +805,7 @@ async fn deploy_regular(
         "POST /entities - Deploying entity (multipart)"
     );
 
+    let refundable = is_refundable(&files, &entity_id);
     let multipart_us = request_started.elapsed().as_micros() as u64;
     let deploy_started = std::time::Instant::now();
     match deployer
@@ -812,7 +827,7 @@ async fn deploy_regular(
         }
         Err(failure) => {
             tracing::warn!(entity_id = %entity_id, errors = ?failure.errors(), "POST /entities - Deployment failed");
-            let undecided = matches!(failure, DeployFailure::Unavailable(_));
+            let undecided = refundable && matches!(failure, DeployFailure::Unavailable(_));
             let response = deployment_failure_response(failure);
             Ok(if undecided {
                 Answer::Undecided(response)

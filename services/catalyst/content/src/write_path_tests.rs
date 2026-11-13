@@ -2123,6 +2123,30 @@ async fn deploys_the_node_cannot_decide_are_given_back() {
     assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "a 400 is kept");
 }
 
+/// An undecided deploy naming more parcels than one access batch keeps its
+/// quota charge: the request itself can drive the check past its deadline.
+#[tokio::test]
+async fn an_undecided_oversized_deploy_keeps_its_quota_charge() {
+    let settings = Settings {
+        post_entities_daily_quota_max: 1,
+        ..Settings::for_tests()
+    };
+    let node = deploying_node("quota-oversized", settings).await;
+    let router = node.router();
+    let signer = PrivateKeySigner::random();
+    let parcels: Vec<String> = (0..101).map(|x| format!("{x},0")).collect();
+    let parcels: Vec<&str> = parcels.iter().map(String::as_str).collect();
+    let (file, id, chain) = signed_entity(&signer, scene(&parcels, &[])).await;
+    let mut req = deploy_request("/content/entities", &id, &chain, &[(&id, &file)]);
+    req.headers_mut()
+        .insert("x-real-ip", HeaderValue::from_static("203.0.113.15"));
+    let (status, _, body) = call(&router, req).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body:?}");
+    assert_eq!(node.state.deploy_quota.counted_for("203.0.113.15"), 1);
+    let (status, _, _) = call(&router, form_request("203.0.113.15", &entity_form())).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+}
+
 #[tokio::test]
 async fn a_request_without_a_client_address_skips_the_quota() {
     let settings = Settings {
@@ -2295,9 +2319,9 @@ async fn a_deploy_skips_the_request_timeout_and_answers_503_at_its_processing_de
     server.abort();
 }
 
-/// A deploy stalled after its pointer claim (the newer-entity lookup on a
-/// database that never answers) holds its upload budget, its source's share
-/// and its pointer until its processing deadline, then lets all three go.
+/// A deploy stalled before validation (the newer-entity lookup on a database
+/// that never answers) holds its upload budget and its source's share until
+/// its processing deadline, then lets both go; it never holds its pointer.
 #[tokio::test]
 async fn a_deploy_past_its_processing_deadline_releases_its_budget_share_and_claim() {
     let cap = super::create_entity::MAX_DEPLOYMENT_BYTES as u64;
@@ -2321,16 +2345,18 @@ async fn a_deploy_past_its_processing_deadline_releases_its_budget_share_and_cla
     };
 
     let deployer = node.state.deployer().unwrap().clone();
+    let (budget, sources) = (&node.state.upload_budget, &node.state.source_uploads);
     let mut waited = 0;
-    while !deployer.holds_pointer("scene", parcel) {
-        assert!(waited < 150, "the deploy never claimed its pointer");
+    while budget.try_reserve(cap).is_some() {
+        assert!(waited < 150, "the deploy never reserved its upload");
         waited += 1;
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
-    let (budget, sources) = (&node.state.upload_budget, &node.state.source_uploads);
+    // Past the form, into the stalled lookup.
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
     assert!(
-        budget.try_reserve(cap).is_none(),
-        "the deploy holds its reservation"
+        !deployer.holds_pointer("scene", parcel),
+        "an unvalidated deploy holds no pointer"
     );
     assert!(
         sources.try_acquire("203.0.113.41", 1).is_err(),

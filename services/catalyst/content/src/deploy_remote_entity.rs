@@ -43,6 +43,10 @@ const BUDGET_GROWTH_WAIT: std::time::Duration = std::time::Duration::from_secs(6
 /// ([`stream_body`]), so a body spooled to disk never has its wire bytes and its decoded bytes
 /// in memory at once, and the caller caps the decoded size so a compression bomb cannot
 /// outgrow its body cap.
+/// Compressed bytes inflated per step; deflate expands at most ~1032x, so one step yields
+/// at most ~264 KiB.
+const GZIP_INPUT_STEP_BYTES: usize = 256;
+
 pub(crate) enum TransferDecoder {
     Identity,
     Gzip(Box<flate2::write::MultiGzDecoder<Vec<u8>>>),
@@ -59,15 +63,27 @@ impl TransferDecoder {
         }
     }
 
-    /// Appends what `chunk` decodes to (so far) onto `out`.
-    pub(crate) fn push(&mut self, chunk: &[u8], out: &mut Vec<u8>) -> Result<(), String> {
+    /// Appends what `chunk` decodes to (so far) onto `out`, failing once `out` passes
+    /// `limit` bytes: gzip input is fed in small steps, so a compression bomb overshoots the
+    /// limit by at most one step's output, never by a whole wire chunk's.
+    pub(crate) fn push(
+        &mut self,
+        chunk: &[u8],
+        out: &mut Vec<u8>,
+        limit: usize,
+    ) -> Result<(), String> {
         match self {
             Self::Identity => out.extend_from_slice(chunk),
             Self::Gzip(decoder) => {
-                decoder
-                    .write_all(chunk)
-                    .map_err(|e| format!("gzip transfer decoding failed: {e}"))?;
-                out.append(decoder.get_mut());
+                for step in chunk.chunks(GZIP_INPUT_STEP_BYTES) {
+                    decoder
+                        .write_all(step)
+                        .map_err(|e| format!("gzip transfer decoding failed: {e}"))?;
+                    out.append(decoder.get_mut());
+                    if out.len() > limit {
+                        return Err(format!("decoded body exceeds the {limit} bytes left"));
+                    }
+                }
             }
         }
         Ok(())
@@ -144,7 +160,14 @@ pub(crate) async fn stream_body<S: DecodedSink>(
             return Err(format!("response body exceeds the {cap} byte cap"));
         }
         run.clear();
-        decoder.push(&chunk, &mut run)?;
+        let left = (cap as u64).saturating_sub(stats.decoded_len) as usize;
+        decoder.push(&chunk, &mut run, left).map_err(|e| {
+            if run.len() > left {
+                format!("decoded body exceeds {cap} byte cap")
+            } else {
+                e
+            }
+        })?;
         stats.decoded_len += run.len() as u64;
         if stats.decoded_len > cap as u64 {
             return Err(format!("decoded body exceeds {cap} byte cap"));
@@ -1177,10 +1200,27 @@ mod tests {
         let mut decoder = TransferDecoder::for_encoding(encoding)?;
         let mut out = Vec::new();
         for chunk in wire.chunks(piece.max(1)) {
-            decoder.push(chunk, &mut out)?;
+            decoder.push(chunk, &mut out, usize::MAX)?;
         }
         decoder.finish(&mut out)?;
         Ok(out)
+    }
+
+    #[test]
+    fn a_gzip_bomb_stops_near_the_limit_within_one_wire_chunk() {
+        let wire = gzip(&vec![0u8; 64 << 20]);
+        assert!(wire.len() < 128 << 10, "{}", wire.len());
+        let mut decoder = TransferDecoder::for_encoding(Some("gzip")).unwrap();
+        let mut out = Vec::new();
+        let err = decoder.push(&wire, &mut out, 1 << 20).unwrap_err();
+        assert!(err.contains("exceeds"), "{err}");
+        assert!(out.len() < 2 << 20, "inflated {} bytes", out.len());
+
+        let mut decoder = TransferDecoder::for_encoding(Some("gzip")).unwrap();
+        let mut out = Vec::new();
+        decoder.push(&wire, &mut out, 64 << 20).unwrap();
+        decoder.finish(&mut out).unwrap();
+        assert_eq!(out.len(), 64 << 20);
     }
 
     #[test]

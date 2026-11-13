@@ -422,19 +422,28 @@ async fn two_concurrent_deploys_of_one_entity_both_answer_its_stored_timestamp()
     let _ = std::fs::remove_dir_all(&tmp);
 }
 
-/// The first deploy holds its pointer while it is in flight (a database that accepts
-/// connections and never answers), so a concurrent deploy to that pointer is refused with
-/// upstream's in-flight text, unqueued; a cancelled deploy lets its pointers go.
+/// The first deploy holds its pointer from validation to its write (here a database that
+/// accepts the write's connection and never answers), so a concurrent deploy to that pointer
+/// is refused with upstream's in-flight text, unqueued; a cancelled deploy lets its pointers
+/// go. Every other connection fails at once, so the newer-entity lookups go on without it.
 #[tokio::test]
 async fn of_two_concurrent_deploys_to_one_pointer_the_second_is_refused_as_in_flight() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let (connected_tx, connected_rx) = tokio::sync::oneshot::channel();
     let silent = tokio::spawn(async move {
-        let (socket, _) = listener.accept().await.unwrap();
-        connected_tx.send(()).unwrap();
-        std::future::pending::<()>().await;
-        drop(socket);
+        let mut connected_tx = Some(connected_tx);
+        let mut held = Vec::new();
+        let mut accepted = 0;
+        while let Ok((socket, _)) = listener.accept().await {
+            accepted += 1;
+            if accepted == 2 {
+                held.push(socket);
+                if let Some(tx) = connected_tx.take() {
+                    tx.send(()).unwrap();
+                }
+            }
+        }
     });
     let pool = sqlx::postgres::PgPoolOptions::new()
         .acquire_timeout(Duration::from_secs(60))
@@ -483,6 +492,37 @@ async fn of_two_concurrent_deploys_to_one_pointer_the_second_is_refused_as_in_fl
         "a cancelled deploy releases its claim"
     );
     silent.abort();
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+/// A content deploy writes under the shared store lock: while an unlink batch holds the
+/// exclusive side the write waits, and it commits once the batch ends.
+#[tokio::test]
+async fn a_content_deploy_waits_for_an_unlink_batch() {
+    let Some(pool) = test_pool(4).await else {
+        return;
+    };
+    let (storage, tmp) = temp_storage("store-lock").await;
+    let deployer = WriteDeployer::new(pool.clone(), storage, Arc::new(NoEip1654));
+    let pointers = Scope::new().pointers(&["9,9"]);
+    let (bytes, id, chain) = signed_scene(&pointers, chrono::Utc::now().timestamp_millis()).await;
+
+    let batch = crate::storage::gc::lock_store_exclusive(&pool)
+        .await
+        .unwrap();
+    let deploy = deployer.deploy_entity(vec![bytes], &id, chain, "LOCAL");
+    tokio::pin!(deploy);
+    assert!(
+        tokio::time::timeout(Duration::from_millis(500), &mut deploy)
+            .await
+            .is_err(),
+        "the write waits for the batch"
+    );
+    batch.rollback().await.unwrap();
+    tokio::time::timeout(Duration::from_secs(10), deploy)
+        .await
+        .expect("the write proceeds once the batch ends")
+        .expect("the deploy commits");
     let _ = std::fs::remove_dir_all(&tmp);
 }
 
