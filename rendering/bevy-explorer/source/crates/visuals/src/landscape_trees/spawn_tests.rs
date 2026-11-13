@@ -735,8 +735,8 @@ fn landscape_tree_shader_compiles() {
             camera::RenderTarget,
             pipelined_rendering::PipelinedRenderingPlugin,
             render_resource::{
-                CachedPipelineState, Extent3d, PipelineCache, TextureDimension, TextureFormat,
-                TextureUsages,
+                CachedPipelineState, Extent3d, PipelineCache, PipelineDescriptor, ShaderDefVal,
+                TextureDimension, TextureFormat, TextureUsages,
             },
             RenderApp,
         },
@@ -853,17 +853,35 @@ fn landscape_tree_shader_compiles() {
         app.update();
     }
     let started = Instant::now();
+    // whether a pipeline's fragment shader is the stones' variant
+    let is_stone = |descriptor: &PipelineDescriptor| {
+        let PipelineDescriptor::RenderPipelineDescriptor(descriptor) = descriptor else {
+            return false;
+        };
+        descriptor.fragment.as_ref().is_some_and(|fragment| {
+            fragment.shader_defs.iter().any(
+                |def| matches!(def, ShaderDefVal::Bool(name, true) if name == "LANDSCAPE_STONE"),
+            )
+        })
+    };
     let mut ok;
+    let mut stone_ok;
     let mut errors = Vec::new();
     loop {
         app.update();
         let cache = app.sub_app(RenderApp).world().resource::<PipelineCache>();
         ok = 0;
+        stone_ok = 0;
         errors.clear();
         let mut pending = 0;
         for pipeline in cache.pipelines() {
             match &pipeline.state {
-                CachedPipelineState::Ok(_) => ok += 1,
+                CachedPipelineState::Ok(_) => {
+                    ok += 1;
+                    if is_stone(&pipeline.descriptor) {
+                        stone_ok += 1;
+                    }
+                }
                 CachedPipelineState::Err(error) => errors.push(error.to_string()),
                 _ => pending += 1,
             }
@@ -884,4 +902,5 @@ fn landscape_tree_shader_compiles() {
     );
     // the three surfaces' main, depth and normal prepass, and shadow passes
     assert!(ok >= 9, "only {ok} pipelines compiled");
+    assert!(stone_ok >= 1, "no stone pipeline compiled");
 }

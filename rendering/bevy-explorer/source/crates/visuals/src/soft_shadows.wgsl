@@ -78,7 +78,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
 #ifdef LANDSCAPE_STONE
     let base = pbr_input.material.base_color;
     pbr_input.material.base_color = vec4(
-        stone_color(base.rgb, ground, in.world_position.y, pbr_input.world_normal.y),
+        stone_color(base.rgb, ground, in.world_position.y, normalize(pbr_input.world_normal).y),
         base.a,
     );
 #endif
