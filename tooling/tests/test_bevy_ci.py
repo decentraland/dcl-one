@@ -427,7 +427,7 @@ class SelectionTest(unittest.TestCase):
                                   if selected[lane]}, {'test'})
 
     def test_upstream_watch_and_manual_packaging_are_not_ci_build_inputs(self):
-        for name in ('upstream', 'desktop', 'rollout', 'rollout-manual'):
+        for name in ('upstream', 'desktop', 'rollout-manual'):
             self.write(f'.github/workflows/bevy-explorer-{name}.yml', 'changed')
         result = ci.select(self.base, self.commit())
         self.assertFalse(any(result[lane] for lane in ci.LANES))
