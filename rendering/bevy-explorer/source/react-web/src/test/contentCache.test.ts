@@ -122,6 +122,9 @@ describe('content cache page functions', () => {
       installContentCachePageFunctions(target as never)
       expect(await target.__contentCacheTrim(4096, true)).toEqual({ ok: true })
       expect(posted).toEqual([{ type: 'content-cache-trim', capBytes: 4096, quotaError: true }])
+      // and the uses a quota-error trim carries, when there are any
+      expect(await (target.__contentCacheTrim as (...args: unknown[]) => Promise<unknown>)(4096, true, ['https://a.example/x'])).toEqual({ ok: true })
+      expect(posted[1]).toEqual({ type: 'content-cache-trim', capBytes: 4096, quotaError: true, usedNow: ['https://a.example/x'] })
     } finally {
       vi.unstubAllGlobals()
     }

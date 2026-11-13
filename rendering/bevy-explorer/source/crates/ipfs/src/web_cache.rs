@@ -227,10 +227,15 @@ pub fn state_json(state: &WebCacheState) -> serde_json::Value {
 #[wasm_bindgen::prelude::wasm_bindgen(js_namespace = self)]
 extern "C" {
     /// deploy/web/engine/content_cache.js: asks the service worker to trim the cache to
-    /// `cap_bytes`, freeing at least a quarter of it when `quota_error`. Resolves with the worker's
-    /// report, or null when no worker answered.
+    /// `cap_bytes`, freeing at least a quarter of it when `quota_error`, ranking `used_now` (keys
+    /// not sent yet) as used now. Resolves with the worker's report, or null when no worker
+    /// answered.
     #[wasm_bindgen::prelude::wasm_bindgen(js_name = "__contentCacheTrim")]
-    fn page_content_cache_trim(cap_bytes: f64, quota_error: bool) -> js_sys::Promise;
+    fn page_content_cache_trim(
+        cap_bytes: f64,
+        quota_error: bool,
+        used_now: &js_sys::Array,
+    ) -> js_sys::Promise;
 
     /// deploy/web/engine/content_cache.js: records `keys` (cache key urls) as used now.
     #[wasm_bindgen::prelude::wasm_bindgen(js_name = "__contentCacheTouch")]
@@ -238,7 +243,8 @@ extern "C" {
 }
 
 /// Whether the uses waiting are sent ahead of a trim: not ahead of a quota trim, which a write is
-/// waiting on and which the worker would queue behind them.
+/// waiting on and which the worker would queue behind them. A quota trim carries them instead,
+/// and they stay waiting for the next flush.
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 fn sends_uses_before_trim(quota_error: bool) -> bool {
     !quota_error
@@ -267,6 +273,12 @@ impl UsedKeys {
 
     fn take(&mut self) -> Vec<String> {
         self.0.drain().collect()
+    }
+
+    /// The keys waiting, which stay waiting.
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    fn waiting(&self) -> Vec<String> {
+        self.0.iter().cloned().collect()
     }
 
     fn len(&self) -> usize {
@@ -446,14 +458,23 @@ mod io {
     pub async fn request_trim(quota_error: bool) -> Option<TrimReport> {
         // posted first, not awaited: the page and the worker keep arrival order, so the trim sees
         // these uses. Not before a quota trim: a write waits on it, and the worker would queue it
-        // behind the uses (the next flush sends them).
+        // behind the uses. That trim carries them instead; the next flush records them.
+        let used_now = js_sys::Array::new();
         if sends_uses_before_trim(quota_error) {
             if let Some(touch) = post_used() {
                 wasm_bindgen_futures::spawn_local(log_unrecorded(touch));
             }
+        } else {
+            let waiting = USED
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .waiting();
+            for key in waiting {
+                used_now.push(&JsValue::from_str(&key));
+            }
         }
         let cap = CAP_BYTES.load(Ordering::Relaxed) as f64;
-        let reply = JsFuture::from(page_content_cache_trim(cap, quota_error))
+        let reply = JsFuture::from(page_content_cache_trim(cap, quota_error, &used_now))
             .await
             .map_err(|e| bevy::log::warn!("content cache trim failed: {e:?}"))
             .ok()?;
@@ -909,6 +930,14 @@ mod tests {
     fn a_quota_trim_does_not_send_uses_ahead_of_it() {
         assert!(sends_uses_before_trim(false));
         assert!(!sends_uses_before_trim(true));
+    }
+
+    #[test]
+    fn the_keys_waiting_stay_waiting_when_read() {
+        let mut used = UsedKeys::default();
+        used.note("a");
+        assert_eq!(used.waiting(), ["a"]);
+        assert_eq!(used.len(), 1);
     }
 
     #[test]

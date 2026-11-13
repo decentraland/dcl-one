@@ -4030,7 +4030,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/deploy/web/engine/content_cache.js",
-      "sha256": "1d5f9d191453a1667605939a218ad10e41bb0a6873b51e7e9e3f684687b5d7f5"
+      "sha256": "d7a77abde8ffa99ceae7fb29212eb0cef12fb11529d6c9049a10b3d7720d12a7"
     },
     {
       "path": "rendering/bevy-explorer/source/deploy/web/engine/engine.js",
@@ -4322,7 +4322,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/contentCache.test.ts",
-      "sha256": "cac08f96e68d26a4cf1adceb38c1a822d9d1690534f1a92a3b480b3d5e349123"
+      "sha256": "c7f213e0d4f5377ca2620bc3762215a90579c86aed1a760429015c4f9bb03591"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/editorHost.test.tsx",
@@ -4382,7 +4382,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/serviceWorkerContentCache.test.ts",
-      "sha256": "9e26640473c26b9975ce0cfe750249b456cfce582012d4f49972b6241d54efe9"
+      "sha256": "225622d972b4dcb865c50692d5d94bcfe20d10bccbde8f9d70179548d6ac6c6c"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/session.test.tsx",

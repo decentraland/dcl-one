@@ -173,9 +173,14 @@ self.addEventListener('message', (event) => {
     const data = event.data;
     let task;
     let quotaError = false;
+    // work a task leaves running after its reply (a quota-error trim's prune): kept alive below
+    const background = [];
     if (data?.type === CONTENT_CACHE_TRIM) {
         quotaError = data.quotaError === true;
-        task = () => trimContentCache(data.capBytes, quotaError);
+        // the uses the engine has not sent yet: a quota-error trim carries them instead of queueing
+        // a touch ahead of itself
+        const usedNow = quotaError ? validContentCacheKeys(data.usedNow) : [];
+        task = () => trimContentCache(data.capBytes, quotaError, usedNow, (work) => background.push(work));
     } else if (data?.type === CONTENT_CACHE_TOUCH) {
         task = () => recordContentCacheUse(data.keys);
     } else {
@@ -192,7 +197,7 @@ self.addEventListener('message', (event) => {
     event.waitUntil(run.then(
         (report) => port?.postMessage(report),
         (e) => port?.postMessage({ error: String(e?.message ?? e) }),
-    ));
+    ).then(() => Promise.all(background)));
 });
 
 // How much to free. `cachesUsage` is the origin's Cache Storage usage; `quota` bounds the cap.
@@ -328,16 +333,25 @@ async function writeContentCacheUses(put, remove) {
     }
 }
 
-async function recordContentCacheUse(keys) {
-    if (!Array.isArray(keys)) throw new Error('keys must be an array');
-    const valid = keys
+// The keys of a message the worker looks at: the first CONTENT_CACHE_TOUCH_MAX that are short
+// http(s) urls; none when `keys` is not an array.
+function validContentCacheKeys(keys) {
+    if (!Array.isArray(keys)) return [];
+    return keys
         .slice(0, CONTENT_CACHE_TOUCH_MAX)
         .filter((key) => typeof key === 'string' && key.length <= CONTENT_CACHE_KEY_MAX && /^https?:\/\//.test(key));
+}
+
+async function recordContentCacheUse(keys) {
+    if (!Array.isArray(keys)) throw new Error('keys must be an array');
+    const valid = validContentCacheKeys(keys);
     await writeContentCacheUses(valid, []);
     return { recorded: valid.length };
 }
 
-async function trimContentCache(capBytes, quotaError) {
+// `usedNow`: keys used since the engine's last touch, ranked as used now without being recorded.
+// `keepAlive(promise)`: work to keep the worker alive for after the reply.
+async function trimContentCache(capBytes, quotaError, usedNow = [], keepAlive = () => {}) {
     if (!(typeof capBytes === 'number' && capBytes >= 0)) throw new Error('capBytes must be a non-negative number');
     const { usage = 0, quota = Infinity, usageDetails } = await navigator.storage.estimate();
     // usageDetails leaves out a storage system with no usage
@@ -356,8 +370,11 @@ async function trimContentCache(capBytes, quotaError) {
     // insertion order: oldest written first (a put over a key moves it to the end)
     const requests = await cache.keys();
     const lastUsed = await readContentCacheUses(quotaError ? CONTENT_CACHE_QUOTA_INDEX_TIMEOUT_MS : undefined);
-    const ordered = contentCacheEvictionOrder(requests, lastUsed);
-    report.indexedEntries = requests.filter((r) => lastUsed.has(r.url)).length;
+    const ranked = new Map(lastUsed);
+    const now = Date.now();
+    for (const key of usedNow) ranked.set(key, now);
+    const ordered = contentCacheEvictionOrder(requests, ranked);
+    report.indexedEntries = requests.filter((r) => ranked.has(r.url)).length;
     // Size before deleting: `cachesUsage` also counts other caches (and, without usageDetails, all
     // storage), which no eviction here reaches.
     const sized = [];
@@ -404,7 +421,8 @@ async function trimContentCache(capBytes, quotaError) {
     const stale = [...lastUsed.keys()].filter((key) => !present.has(key));
     const pruned = writeContentCacheUses([], [...evicted.map((key) => key.url), ...stale])
         .catch((e) => console.warn('[IPFS Cache Service Worker]: content cache index not pruned', e));
-    if (!quotaError) await pruned;
+    if (quotaError) keepAlive(pruned);
+    else await pruned;
     return report;
 }
 

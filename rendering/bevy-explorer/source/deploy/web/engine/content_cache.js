@@ -35,10 +35,14 @@ export function askServiceWorker(message, container = navigator.serviceWorker, t
   });
 }
 
-/** `__contentCacheTrim`: trim to `capBytes`, freeing at least a quarter after a quota error. */
-export function contentCacheTrim(capBytes, quotaError, container, timeoutMs) {
+/**
+ * `__contentCacheTrim`: trim to `capBytes`, freeing at least a quarter after a quota error. `usedNow`
+ * (a quota-error trim's): keys used since the last touch, which the trim ranks as used now.
+ */
+export function contentCacheTrim(capBytes, quotaError, container, timeoutMs, usedNow) {
+  const used = usedNow ? Array.from(usedNow) : [];
   return askServiceWorker(
-    { type: CONTENT_CACHE_TRIM, capBytes, quotaError: quotaError === true },
+    { type: CONTENT_CACHE_TRIM, capBytes, quotaError: quotaError === true, ...(used.length > 0 ? { usedNow: used } : {}) },
     container,
     timeoutMs ?? (quotaError === true ? QUOTA_ERROR_REPLY_TIMEOUT_MS : undefined)
   );
@@ -62,6 +66,7 @@ export async function requestPersistentStorage(storage = navigator.storage) {
 
 /** Defines the page functions on `target` (a window). */
 export function installContentCachePageFunctions(target = window) {
-  target.__contentCacheTrim = (capBytes, quotaError) => contentCacheTrim(capBytes, quotaError);
+  target.__contentCacheTrim = (capBytes, quotaError, usedNow) =>
+    contentCacheTrim(capBytes, quotaError, undefined, undefined, usedNow);
   target.__contentCacheTouch = (keys) => contentCacheTouch(keys);
 }

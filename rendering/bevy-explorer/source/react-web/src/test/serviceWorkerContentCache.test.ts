@@ -10,7 +10,7 @@ import { describe, expect, it, vi } from 'vitest'
 const CONTENT_CACHE = 'ipfs-path-cache-v2'
 const OTHER_CACHES = ['dcl-editor-preview-v1', 'dcl-editor-scene-v1', 'dcl-editor-storage-v1']
 
-type Message = { type: string; capBytes?: unknown; quotaError?: boolean }
+type Message = { type: string; capBytes?: unknown; quotaError?: boolean; usedNow?: unknown }
 type Pure = {
   contentCacheTarget: (input: { capBytes: number; quota: number; cachesUsage: number; quotaError: boolean }) => {
     cap: number
@@ -425,6 +425,42 @@ describe('content cache last use', () => {
     expect(report.error).toBeUndefined()
   })
 
+  it('ranks the uses a quota-error trim carries as used now', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      const sw = serviceWorker()
+      for (let n = 0; n < 4; n++) sw.seed(n)
+      await sw.touch([entryUrl(1), entryUrl(2), entryUrl(3)])
+      vi.setSystemTime(Date.now() + 60_000)
+      // entry 0 was written since the engine's last flush: the trim carries it, not a touch
+      const { port } = await sw.trim({ capBytes: 1000, quotaError: true, usedNow: [entryUrl(0), 42, 'ftp://x.example/y'] })
+      expect(sw.remaining()).toEqual(['bafkrei0', 'bafkrei2', 'bafkrei3'])
+      expect(port.postMessage).toHaveBeenCalledWith(expect.objectContaining({ evictedEntries: 1, indexedEntries: 4 }))
+      // only a touch records a use
+      expect(await recordedKeys(sw.indexedDB as IDBFactory)).toEqual([entryUrl(2), entryUrl(3)].sort())
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('ignores the uses a regular trim carries', async () => {
+    const sw = serviceWorker()
+    for (let n = 0; n < 4; n++) sw.seed(n)
+    await sw.touch([entryUrl(1), entryUrl(2), entryUrl(3)])
+    await sw.trim({ capBytes: 350, usedNow: [entryUrl(0)] })
+    expect(sw.remaining()).toEqual(['bafkrei1', 'bafkrei2', 'bafkrei3'])
+  })
+
+  it('prunes the index after a quota-error trim too', async () => {
+    const sw = serviceWorker()
+    sw.seed(0)
+    sw.seed(1)
+    await sw.touch([entryUrl(0), entryUrl(1)])
+    const { port } = await sw.trim({ capBytes: 1000, quotaError: true })
+    expect(port.postMessage).toHaveBeenCalledWith(expect.objectContaining({ evictedEntries: 1 }))
+    expect(await recordedKeys(sw.indexedDB as IDBFactory)).toEqual([entryUrl(1)])
+  })
+
   it('prunes the records of entries that are gone', async () => {
     const sw = serviceWorker()
     sw.seed(0)
@@ -521,20 +557,20 @@ describe('content cache index that does not answer', () => {
       const factory = neverOpens()
       const sw = serviceWorker({ indexedDB: factory })
       for (let n = 0; n < 4; n++) sw.seed(n)
-      const trimmed = sw.trim({ capBytes: 1000, quotaError: true })
-      await vi.advanceTimersByTimeAsync(0)
-      let done = false
-      void trimmed.then(() => (done = true))
+      const { done } = sw.sendAsync({ type: 'content-cache-trim', capBytes: 1000, quotaError: true })
       await vi.advanceTimersByTimeAsync(999)
-      expect(done).toBe(false)
+      expect(sw.replies).toEqual([])
       await vi.advanceTimersByTimeAsync(1)
-      expect(done).toBe(true)
-      const { port } = await trimmed
       // a quarter of 400 bytes, oldest written first
       expect(sw.remaining()).toEqual(['bafkrei1', 'bafkrei2', 'bafkrei3'])
-      expect(port.postMessage.mock.calls[0][0]).toMatchObject({ evictedEntries: 1, indexedEntries: 0 })
-      // the read given up on and the prune settle later, without an error
+      expect(sw.replies.map(({ message }) => message)).toEqual([expect.objectContaining({ evictedEntries: 1, indexedEntries: 0 })])
+      // the worker is kept alive for the prune, which gives up on the index the same way
+      let settled = false
+      void done.then(() => (settled = true))
+      await vi.advanceTimersByTimeAsync(0)
+      expect(settled).toBe(false)
       await vi.advanceTimersByTimeAsync(10_000)
+      expect(settled).toBe(true)
     } finally {
       vi.useRealTimers()
     }
