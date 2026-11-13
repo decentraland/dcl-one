@@ -1456,8 +1456,8 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         .nest("/camera-reel-service", camera_reel::router(camera_reel));
     // The operator plane under the old gateway's prefixes: credits under
     // /credits only (its /users, /cart and /checkout would collide at the root; the
-    // handlers verify a signed fetch over the public path and the route-local
-    // one), the relay under /rpc (rpc.<domain>/x -> /rpc/x),
+    // handlers verify a signed fetch over the request path or a matching
+    // x-original-path), the relay under /rpc (rpc.<domain>/x -> /rpc/x),
     // the imposter zips under /bvimposters (the prefix baked into the explorer
     // wasm), the console API at the root (/admin/auth, /admin/api/*).
     let app = app
@@ -1478,6 +1478,9 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     // its body is drained, not reset: nginx writes a buffered upload after
     // the answer, and a reset fails that write, answers 502 and counts the
     // process down. Up to the largest body a route admits (a deployment).
+    // Forwarding headers name the client only from a loopback or listed proxy.
+    let app =
+        shared::client_ip::pin_client_headers(app, config.node.http_trusted_proxy_cidrs.clone());
     let app = shared::drain::drain_unread(
         app,
         content::create_entity::MAX_DEPLOYMENT_BYTES

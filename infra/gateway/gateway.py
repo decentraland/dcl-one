@@ -404,10 +404,13 @@ http {{
     }}
     # The telemetry dash entries guard the old serve's routes: they leave with the
     # gateway redeploy once no old serve runs (DATABASE.md, the sink's rollout).
+    # An admin segment under an API mount is a bearer-only route; /events/admin pages stay public.
     map $uri $operator_path {{
         volatile;
         default 0;
         "~*^/(admin|server)(\\\\W|$)" 1;
+        "~*^/((shop-api|marketplace-api|transactions-api|signatures-api|credits|rpc|price|badges|builder-api|camera-reel-service|worlds-content-server|world-storage|presence|social-api|social-rpc|comms-gatekeeper)/)?((v1|api)/)?admin(\\\\W|$)" 1;
+        "~*^/(places|events)/(v1|api)/admin(\\\\W|$)" 1;
         "~*^/metabase(/|\\\\.|$)" 1;
         "~*^/telemetry/dash/(sql|flag|group/target)(\\\\.data)?/?$" 1;
         "~*^/telemetry/dash/admin(/|\\\\.|$)" 1;

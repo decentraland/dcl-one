@@ -118,6 +118,7 @@ impl Config {
             let from_file = std::env::var_os(format!("{name}_FILE")).is_some_and(|p| !p.is_empty());
             Self::refuse_plain_signing_key(name, slot.as_deref(), from_file)?;
             Self::read_secret_file(name, slot)?;
+            Self::refuse_short_operator_secret(name, slot.as_deref())?;
         }
         self.default_rpc_urls();
         self.derive_trade_rpc_urls();
@@ -179,6 +180,30 @@ impl Config {
         if !entries.is_empty() {
             self.marketplace.trade_rpc_urls = Some(entries.join(","));
         }
+    }
+
+    /// The fewest bytes an operator secret (an admin bearer, `SESSION_SECRET`) may have.
+    pub const MIN_OPERATOR_SECRET_BYTES: usize = 32;
+
+    /// The admin bearers and the console's session key: a short one is
+    /// guessable or brute-forced offline, so startup refuses it.
+    pub fn is_operator_secret(name: &str) -> bool {
+        name == "SESSION_SECRET"
+            || name.ends_with("_ADMIN_TOKEN")
+            || name.ends_with("_ADMIN_AUTH_TOKEN")
+    }
+
+    fn refuse_short_operator_secret(name: &str, value: Option<&str>) -> anyhow::Result<()> {
+        let Some(value) = value.map(str::trim).filter(|v| !v.is_empty()) else {
+            return Ok(());
+        };
+        if Self::is_operator_secret(name) && value.len() < Self::MIN_OPERATOR_SECRET_BYTES {
+            anyhow::bail!(
+                "{name} is shorter than {} bytes; set a random value (for example `openssl rand -hex 32`)",
+                Self::MIN_OPERATOR_SECRET_BYTES
+            );
+        }
+        Ok(())
     }
 
     fn refuse_plain_signing_key(
@@ -731,6 +756,27 @@ mod tests {
     /// slot (read from `<NAME>_FILE`, refused on argv). `DATABASE_URL` is the
     /// one hidden non-slot: a required peer-auth DSN `schema apply` and the
     /// tests pass on the command line.
+    #[test]
+    fn short_operator_secrets_are_refused() {
+        let long = "a".repeat(Config::MIN_OPERATOR_SECRET_BYTES);
+        let short = "a".repeat(Config::MIN_OPERATOR_SECRET_BYTES - 1);
+        for name in [
+            "SESSION_SECRET",
+            "CATALYRST_RPC_ADMIN_TOKEN",
+            "MARKET_ADMIN_TOKEN",
+            "PLACES_ADMIN_AUTH_TOKEN",
+        ] {
+            let error = Config::refuse_short_operator_secret(name, Some(&short))
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains(name) && !error.contains(&short), "{error}");
+            assert!(Config::refuse_short_operator_secret(name, Some(&long)).is_ok());
+            assert!(Config::refuse_short_operator_secret(name, None).is_ok());
+            assert!(Config::refuse_short_operator_secret(name, Some(" ")).is_ok());
+        }
+        assert!(Config::refuse_short_operator_secret("STRIPE_SECRET_KEY", Some("x")).is_ok());
+    }
+
     #[test]
     fn analytics_token_file_resolves_without_exposing_the_secret() {
         const CHILD: &str = "CATALYST_TEST_ANALYTICS_FILE_CHILD";

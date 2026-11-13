@@ -48,15 +48,29 @@ pub fn encode_is_valid_signature(hash: &[u8], signature: &[u8]) -> Vec<u8> {
     buf
 }
 
+/// True only for one ABI word: the magic value followed by 28 zero bytes.
 pub fn is_magic_return(hex_response: &str) -> bool {
     let hex = hex_response.strip_prefix("0x").unwrap_or(hex_response);
-    if hex.len() < 8 {
-        return false;
-    }
-    let Ok(first4) = hex::decode(&hex[..8]) else {
+    let Ok(word) = hex::decode(hex) else {
         return false;
     };
-    first4.as_slice() == EIP1271_MAGIC_VALUE
+    word.len() == 32 && word[..4] == EIP1271_MAGIC_VALUE && word[4..].iter().all(|&b| b == 0)
+}
+
+/// A 20-byte hex address that is not in the precompile range.
+pub fn is_contract_signer_address(address: &str) -> bool {
+    let hex = address
+        .strip_prefix("0x")
+        .or_else(|| address.strip_prefix("0X"))
+        .unwrap_or(address);
+    if hex.len() != 40 {
+        return false;
+    }
+    let Ok(bytes) = hex::decode(hex) else {
+        return false;
+    };
+    // 0x00..00 to 0x00..ff are precompiles or reserved for them.
+    bytes[..19].iter().any(|&b| b != 0)
 }
 
 pub struct RpcEip1654Validator {
@@ -107,6 +121,9 @@ impl RpcEip1654Validator {
             )));
         }
 
+        if !is_contract_signer_address(contract_address) {
+            return Ok(false);
+        }
         let calldata = encode_is_valid_signature(hash, signature);
         match self.eth_call(contract_address, &calldata, block).await {
             Ok(result_hex) => Ok(is_magic_return(&result_hex)),
@@ -194,6 +211,8 @@ fn is_revert(code: i64, message: &str) -> bool {
 mod tests {
     use super::*;
 
+    const WALLET: &str = "0x5a0b54d5dc17e0aadc383d2db43b0a0d3e029c4c";
+
     #[test]
     fn encode_roundtrip() {
         let hash = [0xABu8; 32];
@@ -258,6 +277,82 @@ mod tests {
     }
 
     #[test]
+    fn a_magic_prefix_with_trailing_data_is_rejected() {
+        let echoed = format!(
+            "0x{}",
+            hex::encode(encode_is_valid_signature(&[7u8; 32], &[1u8; 65]))
+        );
+        assert!(!is_magic_return(&echoed));
+        assert!(!is_magic_return(&format!("0x1626ba7e{}01", "0".repeat(54))));
+        assert!(!is_magic_return(&format!("0x1626ba7e{}", "0".repeat(120))));
+        assert!(!is_magic_return(&format!("0x1626ba7e{}", "0".repeat(54))));
+    }
+
+    #[test]
+    fn precompiles_and_non_addresses_are_not_contract_signers() {
+        assert!(!is_contract_signer_address(
+            "0x0000000000000000000000000000000000000004"
+        ));
+        assert!(!is_contract_signer_address(
+            "0x0000000000000000000000000000000000000001"
+        ));
+        assert!(!is_contract_signer_address(
+            "0x00000000000000000000000000000000000000ff"
+        ));
+        assert!(!is_contract_signer_address(
+            "0x0000000000000000000000000000000000000000"
+        ));
+        assert!(!is_contract_signer_address("0xabc"));
+        assert!(!is_contract_signer_address(
+            "0xzz0b54d5dc17e0aadc383d2db43b0a0d3e029c4c"
+        ));
+        assert!(is_contract_signer_address(
+            "0x0000000000000000000000000000000000000100"
+        ));
+        assert!(is_contract_signer_address(WALLET));
+    }
+
+    /// A node whose callee returns its calldata, as the identity precompile does.
+    async fn echo_node() -> String {
+        use axum::{Json, Router, routing::post};
+        let app = Router::new().route(
+            "/",
+            post(|Json(body): Json<Value>| async move {
+                let data = body["params"][0]["data"].clone();
+                Json(serde_json::json!({ "jsonrpc": "2.0", "id": 1, "result": data }))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        url
+    }
+
+    #[tokio::test]
+    async fn a_contract_that_echoes_calldata_is_not_a_valid_signer() {
+        let v = RpcEip1654Validator::new(echo_node().await, Client::new());
+        assert!(
+            !v.validate_signature(WALLET, &[7u8; 32], &[1u8; 65])
+                .await
+                .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn the_identity_precompile_is_refused_before_any_rpc() {
+        let v = RpcEip1654Validator::new("http://127.0.0.1:9/", Client::new());
+        assert!(
+            !v.validate_signature(
+                "0x0000000000000000000000000000000000000004",
+                &[7u8; 32],
+                &[1u8; 65]
+            )
+            .await
+            .unwrap()
+        );
+    }
+
+    #[test]
     fn zero_return_rejected() {
         let hex = "0x0000000000000000000000000000000000000000000000000000000000000000";
         assert!(!is_magic_return(hex));
@@ -271,7 +366,7 @@ mod tests {
             Duration::from_secs(5),
         );
         let err = v
-            .validate_signature("0xabc", &[0u8; 32], &[0u8; 65])
+            .validate_signature(WALLET, &[0u8; 32], &[0u8; 65])
             .await
             .unwrap_err();
         let text = err.to_string();
@@ -318,12 +413,12 @@ mod tests {
         let v = RpcEip1654Validator::new(fake_wallet(Some(prefixed)).await, Client::new());
         let raw = alloy_primitives::keccak256(message);
         assert!(
-            !v.validate_signature("0xabc", raw.as_slice(), &[0u8; 65])
+            !v.validate_signature(WALLET, raw.as_slice(), &[0u8; 65])
                 .await
                 .unwrap()
         );
         assert!(
-            super::super::eip1654::verify_eip1654(&v, "0xabc", message, &[0u8; 65])
+            super::super::eip1654::verify_eip1654(&v, WALLET, message, &[0u8; 65])
                 .await
                 .unwrap()
         );
@@ -333,7 +428,7 @@ mod tests {
     #[tokio::test]
     async fn a_failing_rpc_never_accepts() {
         let v = RpcEip1654Validator::new(fake_wallet(None).await, Client::new());
-        let err = super::super::eip1654::verify_eip1654(&v, "0xabc", b"m", &[0u8; 65])
+        let err = super::super::eip1654::verify_eip1654(&v, WALLET, b"m", &[0u8; 65])
             .await
             .unwrap_err();
         assert!(
@@ -383,14 +478,14 @@ mod tests {
         let v = RpcEip1654Validator::new(fake_chain(hash, 500, true).await, Client::new());
         let sig = [0u8; 65];
 
-        assert!(!v.validate_signature("0xabc", &hash, &sig).await.unwrap());
+        assert!(!v.validate_signature(WALLET, &hash, &sig).await.unwrap());
         assert!(
-            v.validate_signature_at_block("0xabc", &hash, &sig, 500)
+            v.validate_signature_at_block(WALLET, &hash, &sig, 500)
                 .await
                 .unwrap()
         );
         assert!(
-            !v.validate_signature_at_block("0xabc", &hash, &sig, 501)
+            !v.validate_signature_at_block(WALLET, &hash, &sig, 501)
                 .await
                 .unwrap()
         );
@@ -401,7 +496,7 @@ mod tests {
         let hash = [0x42u8; 32];
         let v = RpcEip1654Validator::new(fake_chain(hash, 999, false).await, Client::new());
         let err = v
-            .validate_signature_at_block("0xabc", &hash, &[0u8; 65], 500)
+            .validate_signature_at_block(WALLET, &hash, &[0u8; 65], 500)
             .await
             .unwrap_err();
         assert!(
@@ -414,7 +509,7 @@ mod tests {
     async fn short_hash_is_refused_before_any_rpc() {
         let v = RpcEip1654Validator::new("http://127.0.0.1:9/", Client::new());
         let err = v
-            .validate_signature("0xabc", &[0u8; 31], &[0u8; 65])
+            .validate_signature(WALLET, &[0u8; 31], &[0u8; 65])
             .await
             .unwrap_err();
         assert!(matches!(err, AuthError::Eip1654ValidationFailed(m) if m.contains("32 bytes")));

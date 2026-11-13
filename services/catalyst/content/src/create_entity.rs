@@ -482,7 +482,10 @@ fn looks_like_an_untrusted_proxy(headers: &HeaderMap, peer: std::net::IpAddr) ->
             v6.is_loopback() || first & 0xfe00 == 0xfc00 || first & 0xffc0 == 0xfe80
         }
     };
-    internal && headers.contains_key("x-real-ip")
+    // A header equal to the peer is the server's own pin, not a proxy's.
+    internal
+        && headers.contains_key("x-real-ip")
+        && crate::shared::client_ip::single_real_ip(headers) != Some(peer.to_canonical())
 }
 
 /// Once per process: a node without the setting cannot tell its proxy from a
