@@ -327,17 +327,9 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   (`source/react-web/bridge-scene/src/domains/settings.ts`) assumes the engine defaults are its Low
   preset, and the default here is Unity's 1000 m, so mapping it would show every fresh install as
   Custom.
-- **The satellite floor** keeps unity-explorer's layout, height (y -0.205) and 2400 m cut-off,
-  and differs in three ways.
-  - It is unlit and shows the map at every distance. Unity's material is lit and fades to a tiled
-    grass texture within 100 to 500 m of the camera. The floor lies under the ground everywhere
-    the ground draws, so the near-camera grass is rarely seen; the ground's own textures come with
-    the landscape texture work.
-  - The images are uploaded uncompressed (RGBA8, 64 MiB of GPU memory for the 64 tiles), where
-    Unity's import compresses them. They load only the first time the floor is wanted, so a
-    session that never enters Genesis City does not pay for them.
-  - Each tile appears once its own image has loaded, and a tile that fails to load is simply
-    missing. Unity waits for all 64 and shows nothing if one fails.
+- **No satellite floor.** unity-explorer lays the minimap's satellite images flat at 0.205 m under the
+  terrain in Genesis City; here the terrain covers that plane out to the landscape distance, so the
+  floor would never be seen and is not shipped.
 - **The baked trees, bushes and stones** keep unity-explorer's layouts (Genesis City's and the
   Worlds'), prototypes, scale ranges, footprints, first level of detail, collider shapes and
   material values, and differ in these ways.

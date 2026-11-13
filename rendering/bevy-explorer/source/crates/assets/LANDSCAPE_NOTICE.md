@@ -7,9 +7,9 @@ into the build as `embedded://landscape/...`. They are stored in Git LFS (see th
 checkout (`git lfs pull --include="rendering/bevy-explorer/source/crates/assets/src/assets/landscape/**"`),
 so the build embeds the files rather than their pointers; a local checkout needs `git lfs pull`.
 
-That repository is licensed under the Apache License 2.0 (its `LICENSE` file). The satellite map
-images are Decentraland's own map data, the tree layouts Decentraland's own placement data, and the
-tree, bush and stone models and their textures Decentraland's own art, published there.
+That repository is licensed under the Apache License 2.0 (its `LICENSE` file). The tree layouts are
+Decentraland's own placement data, and the tree, bush and stone models and their textures
+Decentraland's own art, published there.
 
 Unity paths are relative to `Explorer/Assets/` in that repository.
 
@@ -21,7 +21,6 @@ writes the image at 512x512 with its stored values unchanged.
 
 | Files here | Unity repository and commit | Unity source path | Licence | Conversion | Tool and version |
 | --- | --- | --- | --- | --- | --- |
-| `src/assets/landscape/satellite/{x},{y}.jpg`, x and y each 0 to 7 (64 files, 512x512 JPEG) | decentraland/unity-explorer `206efdac5b8d447899e70dd732f45af9482ed97b` | `DCL/MapRenderer/MapLayers/Atlas/SatelliteAtlasFallbackImages/{x},{y}.jpg` (same names) | Apache-2.0 | none (copied byte for byte; the `.meta` files are not copied) | `cp` (GNU coreutils 8.32) |
 | `src/assets/landscape/layout/genesis.trees` (2,215,004 bytes) | decentraland/unity-explorer `206efdac5b8d447899e70dd732f45af9482ed97b` | `StreamingAssets/GenesisTrees.bin` | Apache-2.0 | none (copied, renamed; the `.meta` file is not copied) | `cp` (GNU coreutils 8.32) |
 | `src/assets/landscape/layout/worlds.trees` (2,215,004 bytes) | decentraland/unity-explorer `206efdac5b8d447899e70dd732f45af9482ed97b` | `StreamingAssets/WorldsTrees.bin` | Apache-2.0 | none (copied, renamed; the `.meta` file is not copied) | `cp` (GNU coreutils 8.32) |
 | `src/assets/landscape/trees/tree01.glb` (143,696 bytes) | decentraland/unity-explorer `206efdac5b8d447899e70dd732f45af9482ed97b` | `DCL/Landscape/Assets/TreeOptimisation/TreeOptimizationAssets/TreeOptimized_v01.fbx` | Apache-2.0 | `mesh --fbx $U/DCL/Landscape/Assets/TreeOptimisation/TreeOptimizationAssets/TreeOptimized_v01.fbx --object BirchOptimized_v01 --material LeafYellow --material Trunk --out src/assets/landscape/trees/tree01.glb` | Blender 4.5.9 LTS |

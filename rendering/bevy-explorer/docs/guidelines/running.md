@@ -247,13 +247,10 @@ State, in every build:
 - `/tree_wind [true|false]`: whether the landscape's trees and bushes sway in the wind. Still,
   they stand in their rest pose, so two frames of them agree whenever they were taken; the visual
   scenarios hold them still for their frames. The debug panel's "Landscape" section toggles it ("Tree wind").
-- `/landscape [ground|trees|grass|satellite] [true|false]`: the landscape layers as JSON:
-  `ground`, `trees`, `grass` and `satellite` (each layer's toggle), `treeCount`, `grassParcels`,
-  `loadDistance`, `treeWind` (whether the trees sway, as `/tree_wind` sets it), and `satelliteShown` (the satellite floor is drawn: a realm is loaded, the world is
-  not held, the realm is not a World, and its toggle is on). With a layer and a value it shows or hides that layer, in preview
-  mode only. The satellite floor is the city's satellite map laid at y -0.205 under Genesis City,
-  under the ground and scene floors, so it shows only where neither is drawn. The debug panel's
-  "Landscape" section binds it.
+- `/landscape [ground|trees|grass] [true|false]`: the landscape layers as JSON:
+  `ground`, `trees` and `grass` (each layer's toggle), `treeCount`, `grassParcels`,
+  `loadDistance`, and `treeWind` (whether the trees sway, as `/tree_wind` sets it). With a layer and a value it shows or hides that layer, in preview
+  mode only. The debug panel's "Landscape" section binds it.
 
 The HUD and input:
 

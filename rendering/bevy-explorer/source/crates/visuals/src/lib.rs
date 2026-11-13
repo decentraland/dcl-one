@@ -4,7 +4,6 @@ mod day_night;
 mod debug_panel;
 mod landscape_trees;
 mod nishita_cloud;
-mod satellite_floor;
 pub mod shell_texturing;
 mod sky_envmap;
 mod solids;
@@ -42,7 +41,6 @@ use crate::{
     coast::CoastPlugin,
     day_night::DayNightPlugin,
     landscape_trees::LandscapeTreesPlugin,
-    satellite_floor::SatelliteFloorPlugin,
     shell_texturing::ShellTexturingPlugin,
     sky_envmap::{SkyEnvmapPlugin, SkyEnvmapSettings},
     solids::SolidsPlugin,
@@ -76,7 +74,7 @@ impl Plugin for VisualsPlugin {
             .add_plugins(ShellTexturingPlugin)
             .add_plugins(TerrainPlugin)
             .add_plugins(CoastPlugin)
-            .add_plugins((LandscapeTreesPlugin, SolidsPlugin, SatelliteFloorPlugin))
+            .add_plugins((LandscapeTreesPlugin, SolidsPlugin))
             .add_systems(Update, apply_global_light)
             .add_systems(Update, update_dof)
             .add_systems(Startup, setup.in_set(SetupSets::Main));
