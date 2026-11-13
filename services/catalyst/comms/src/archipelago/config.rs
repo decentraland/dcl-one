@@ -20,9 +20,16 @@ impl Default for ClusterConfig {
     }
 }
 
+pub const DEFAULT_MAX_SOCKETS_PER_IP: u32 = 64;
+
 #[derive(Clone, Debug)]
 pub struct ServerConfig {
     pub max_sockets: u32,
+    /// `WS_MAX_SOCKETS_PER_IP`: sockets one client address may hold, pending handshakes
+    /// included; 0 is unlimited.
+    pub max_sockets_per_ip: u32,
+    /// `HTTP_TRUSTED_PROXY_CIDRS`: proxies whose `X-Real-IP` names the client.
+    pub trusted_proxy_cidrs: Vec<ipnet::IpNet>,
     /// `ISLAND_CHANGED_DEDUP_MS`: the window inside which the same room handed to the same socket
     /// twice is the client's own assignment arriving again through the re-announce path; it
     /// already holds a token for it.
@@ -33,6 +40,8 @@ impl Default for ServerConfig {
     fn default() -> Self {
         Self {
             max_sockets: 3000,
+            max_sockets_per_ip: DEFAULT_MAX_SOCKETS_PER_IP,
+            trusted_proxy_cidrs: Vec::new(),
             island_changed_dedup_ms: 10_000.0,
         }
     }
@@ -73,6 +82,10 @@ pub struct Settings {
 pub struct RawSettings {
     /// WS_MAX_SOCKETS; zero is not an unlimited mode.
     pub max_sockets: u32,
+    /// `WS_MAX_SOCKETS_PER_IP`; zero is unlimited.
+    pub max_sockets_per_ip: u32,
+    /// `HTTP_TRUSTED_PROXY_CIDRS`.
+    pub trusted_proxy_cidrs: Vec<ipnet::IpNet>,
     /// `HANDSHAKE_TIMEOUT` in ms; 0 keeps the default.
     pub handshake_timeout_ms: u64,
     /// `DENY_LIST_URL`.
@@ -96,6 +109,8 @@ impl Settings {
             .filter(|v| !v.is_empty());
         let server = ServerConfig {
             max_sockets: raw.max_sockets.max(1),
+            max_sockets_per_ip: raw.max_sockets_per_ip,
+            trusted_proxy_cidrs: raw.trusted_proxy_cidrs,
             island_changed_dedup_ms: raw.island_changed_dedup_ms,
         };
         Self {

@@ -1972,3 +1972,90 @@ async fn source_contract_inbound_message_limit_is_16_kib() {
         );
     }
 }
+
+/// One socket per client source behind a trusted proxy, with a short handshake deadline.
+async fn per_source_server() -> u16 {
+    let mut settings = Settings::for_tests();
+    settings.server.max_sockets_per_ip = 1;
+    settings.server.trusted_proxy_cidrs = vec!["127.0.0.1/32".parse().unwrap()];
+    settings.auth.handshake_timeout_ms = 300;
+    let state = archipelago::state(settings).await;
+    let mounts = catalyst::comms::archipelago::mounts(
+        state,
+        true,
+        Default::default(),
+        catalyst::comms::stats::http::test_support::matcher(),
+        std::sync::Arc::new(catalyst::content::Denylist::default()),
+    );
+    let app = axum::Router::new().merge(mounts.root);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .await
+        .unwrap();
+    });
+    port
+}
+
+async fn connect_from(port: u16, client: &str) -> Result<Socket, (u16, Option<String>)> {
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+    let mut request = format!("ws://127.0.0.1:{port}/ws")
+        .into_client_request()
+        .unwrap();
+    request
+        .headers_mut()
+        .insert("x-real-ip", client.parse().unwrap());
+    match tokio_tungstenite::connect_async(request).await {
+        Ok((socket, _)) => Ok(socket),
+        Err(Error::Http(response)) => Err((
+            response.status().as_u16(),
+            response
+                .headers()
+                .get("retry-after")
+                .map(|v| v.to_str().unwrap().to_owned()),
+        )),
+        Err(other) => panic!("unexpected upgrade error {other}"),
+    }
+}
+
+async fn wait_admitted(port: u16, client: &str) -> Socket {
+    tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            if let Ok(socket) = connect_from(port, client).await {
+                return socket;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("the source's slot was never released")
+}
+
+#[tokio::test]
+async fn a_client_source_holds_its_socket_cap_through_a_trusted_proxy() {
+    let port = per_source_server().await;
+    let first = connect_from(port, "203.0.113.7").await.unwrap();
+    assert_eq!(
+        connect_from(port, "203.0.113.7").await.err(),
+        Some((429, Some("5".into())))
+    );
+    let _other = connect_from(port, "203.0.113.8").await.unwrap();
+    let _v6 = connect_from(port, "2001:db8::1").await.unwrap();
+    assert_eq!(
+        connect_from(port, "2001:db8::2")
+            .await
+            .err()
+            .map(|(s, _)| s),
+        Some(429),
+        "an IPv6 /64 is one source"
+    );
+    // A closed socket frees its slot.
+    drop(first);
+    let _silent = wait_admitted(port, "203.0.113.7").await;
+    // A handshake that never starts times out and frees its slot while the client keeps it open.
+    let _again = wait_admitted(port, "203.0.113.7").await;
+}

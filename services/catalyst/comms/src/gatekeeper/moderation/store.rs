@@ -25,13 +25,14 @@ pub const PLATFORM_BANNED_MSG: &str = "Access denied, platform-banned user";
 pub const SCENE_BANNED_MSG: &str = "User is banned from this scene";
 
 /// Boolean expression over `$1` (the lowercase address), `$2` (the device id
-/// the caller sent, or NULL to fall back to the device recorded for the
-/// address) and `$3` (now).
+/// the caller sent, or NULL) and `$3` (now). The device recorded for the
+/// address is always matched too: a sent id never replaces it.
 pub(crate) const CONNECTION_BAN_EXISTS: &str = "EXISTS (SELECT 1 FROM social.user_bans ub \
      WHERE (ub.banned_address = $1 \
-            OR ub.banned_device_id = COALESCE($2::text, (SELECT NULLIF(p.device_id, '') \
-                                                         FROM social.player_connections p \
-                                                         WHERE p.address = $1))) \
+            OR ub.banned_device_id = $2::text \
+            OR ub.banned_device_id = (SELECT NULLIF(p.device_id, '') \
+                                      FROM social.player_connections p \
+                                      WHERE p.address = $1)) \
        AND ub.lifted_at IS NULL \
        AND (ub.expires_at IS NULL OR ub.expires_at > $3))";
 
@@ -365,8 +366,8 @@ impl Moderation {
         })
     }
 
-    /// Upstream's `getActiveBanForConnection`: the device the caller sent,
-    /// else the one recorded for the address, matched alongside the address.
+    /// Upstream's `getActiveBanForConnection`: the address, the device the
+    /// caller sent and the one recorded for the address.
     pub async fn is_banned_for_connection(
         &self,
         address: &Address,
