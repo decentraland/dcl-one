@@ -11,7 +11,9 @@ use super::helpers::{
 use crate::auth::is_eth_address;
 use crate::notifications::{NewNotification, insert_notifications};
 use crate::rpc::context::{Context, PairScope};
-use crate::rpc::db::record_friendship_action;
+use crate::rpc::db::{
+    DbError, friendship_probe_on, lock_friendship_pair, record_friendship_action,
+};
 use crate::rpc::drpc::service_module_definition::ProcedureContext;
 use crate::rpc::proto::errors::InvalidFriendshipAction;
 use crate::rpc::proto::v2::*;
@@ -54,8 +56,9 @@ pub(crate) async fn apply_friendship_action(
         tracing::warn!(actor = %me, target = %other, "friendship mutation rate limited");
         return Err(Refusal::RateLimited(FRIENDSHIP_RATE_LIMIT_MESSAGE.into()));
     }
-    let db = ctx.db();
-    let probe = db.friendship_probe(me, other).await?;
+    let mut tx = ctx.db().pool().begin().await.map_err(DbError::from)?;
+    lock_friendship_pair(&mut *tx, me, other).await?;
+    let probe = friendship_probe_on(&mut *tx, me, other).await?;
     if probe.blocked || probe.blocked_by {
         return Err(Refusal::Forbidden(BLOCKED_MESSAGE.into()));
     }
@@ -65,7 +68,7 @@ pub(crate) async fn apply_friendship_action(
     }
     let action_id = uuid::Uuid::new_v4();
     let (id, created_at) = record_friendship_action(
-        db.pool(),
+        &mut *tx,
         action_id,
         me,
         other,
@@ -75,6 +78,7 @@ pub(crate) async fn apply_friendship_action(
         message,
     )
     .await?;
+    tx.commit().await.map_err(DbError::from)?;
     let created_ms = created_at.timestamp_millis();
     let mut my_profile = ctx.profiles().friend_profile(me).await;
     // Raw/JSON updates identify the actor wallet. RPC delivery resolves the

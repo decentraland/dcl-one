@@ -488,37 +488,7 @@ impl Db {
         me: &str,
         other: &str,
     ) -> Result<FriendshipProbe, DbError> {
-        let row = sqlx::query(sqlx::AssertSqlSafe(format!(
-            r#"
-            SELECT f.id AS friendship_id, f.is_active AS is_active,
-                   fa.action AS action, fa.acting_user AS acting_user,
-                   EXISTS (SELECT 1 FROM social.blocks
-                           WHERE blocker_address = $1 AND blocked_address = $2) AS blocked,
-                   EXISTS (SELECT 1 FROM social.blocks
-                           WHERE blocker_address = $2 AND blocked_address = $1) AS blocked_by
-            FROM (SELECT 1) AS one
-            LEFT JOIN LATERAL (
-              SELECT id, is_active FROM social.friendships
-              WHERE {PAIR_COND}
-              LIMIT 1
-            ) f ON TRUE
-            LEFT JOIN LATERAL (
-              SELECT action, acting_user FROM social.friendship_actions
-              WHERE friendship_id = f.id ORDER BY "timestamp" DESC, id DESC LIMIT 1
-            ) fa ON TRUE
-            "#
-        )))
-        .bind(me.to_lowercase())
-        .bind(other.to_lowercase())
-        .fetch_one(&self.pool)
-        .await?;
-        Ok(FriendshipProbe {
-            last: row
-                .get::<Option<Uuid>, _>("friendship_id")
-                .map(|_| last_action_from_row(&row)),
-            blocked: row.get::<bool, _>("blocked"),
-            blocked_by: row.get::<bool, _>("blocked_by"),
-        })
+        friendship_probe_on(&self.pool, me, other).await
     }
 
     /// Records the block and reads the previous action; the transactional
@@ -552,6 +522,7 @@ impl Db {
         blocked: &str,
     ) -> Result<(DateTime<Utc>, bool), DbError> {
         let mut tx = self.pool.begin().await?;
+        lock_friendship_pair(&mut *tx, blocker, blocked).await?;
         let (blocked_at, last) = block_and_last(&mut *tx, blocker, blocked).await?;
         if let Some(last) = &last {
             record_friendship_action(
@@ -580,6 +551,7 @@ impl Db {
         blocked: &str,
     ) -> Result<Option<bool>, DbError> {
         let mut tx = self.pool.begin().await?;
+        lock_friendship_pair(&mut *tx, blocker, blocked).await?;
         let Some(last) = unblock_and_last(&mut *tx, blocker, blocked).await? else {
             return Ok(None);
         };
@@ -1254,6 +1226,68 @@ impl Db {
             })
             .collect())
     }
+}
+
+/// Serializes friendship and block writes on one unordered pair until the
+/// transaction ends, so a probe and the write it decides stay consistent.
+pub(crate) async fn lock_friendship_pair<'e, E>(
+    executor: E,
+    a: &str,
+    b: &str,
+) -> Result<(), DbError>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+{
+    sqlx::query(
+        "SELECT pg_advisory_xact_lock(hashtextextended('social.friendship:' || LEAST($1, $2) || ':' || GREATEST($1, $2), 0))",
+    )
+    .bind(a.to_lowercase())
+    .bind(b.to_lowercase())
+    .execute(executor)
+    .await?;
+    Ok(())
+}
+
+/// [`Db::friendship_probe`] on any executor.
+pub(crate) async fn friendship_probe_on<'e, E>(
+    executor: E,
+    me: &str,
+    other: &str,
+) -> Result<FriendshipProbe, DbError>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+{
+    let row = sqlx::query(sqlx::AssertSqlSafe(format!(
+        r#"
+        SELECT f.id AS friendship_id, f.is_active AS is_active,
+               fa.action AS action, fa.acting_user AS acting_user,
+               EXISTS (SELECT 1 FROM social.blocks
+                       WHERE blocker_address = $1 AND blocked_address = $2) AS blocked,
+               EXISTS (SELECT 1 FROM social.blocks
+                       WHERE blocker_address = $2 AND blocked_address = $1) AS blocked_by
+        FROM (SELECT 1) AS one
+        LEFT JOIN LATERAL (
+          SELECT id, is_active FROM social.friendships
+          WHERE {PAIR_COND}
+          LIMIT 1
+        ) f ON TRUE
+        LEFT JOIN LATERAL (
+          SELECT action, acting_user FROM social.friendship_actions
+          WHERE friendship_id = f.id ORDER BY "timestamp" DESC, id DESC LIMIT 1
+        ) fa ON TRUE
+        "#
+    )))
+    .bind(me.to_lowercase())
+    .bind(other.to_lowercase())
+    .fetch_one(executor)
+    .await?;
+    Ok(FriendshipProbe {
+        last: row
+            .get::<Option<Uuid>, _>("friendship_id")
+            .map(|_| last_action_from_row(&row)),
+        blocked: row.get::<bool, _>("blocked"),
+        blocked_by: row.get::<bool, _>("blocked_by"),
+    })
 }
 
 /// [`Db::block_user_and_last`] on any executor (the pool, or the block's

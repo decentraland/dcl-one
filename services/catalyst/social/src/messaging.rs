@@ -19,7 +19,8 @@
 //! it into the `/comms-gatekeeper` nest, so the routes answer exactly as
 //! when they were part of that router.
 
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
+use std::time::Duration;
 
 use axum::body::Bytes;
 use axum::extract::{Extension, OriginalUri, Path, Query, State};
@@ -37,6 +38,7 @@ use crate::Address;
 use crate::auth::eip1654::Eip1654Validator;
 use crate::comms::gatekeeper::auth::require_signer;
 use crate::comms::gatekeeper::errors::{ApiError, forbidden, service_unavailable, unauthorized};
+use crate::comms::limits::{RateLimitDecision, RateLimiter};
 use crate::mls;
 use crate::shared::now_utc;
 use crate::shared::signed_fetch::SignedPath;
@@ -150,8 +152,30 @@ pub fn router(state: SharedState) -> Router {
 const MAX_OPAQUE_BYTES: usize = 256 * 1024;
 const MAX_KEY_PACKAGES: usize = 100;
 const MAX_COMMITS_PAGE: i64 = 500;
-const MEMBER_EXISTS: &str = "EXISTS (SELECT 1 FROM social.mls_group_members \
-     WHERE group_id = $1 AND member = $2 AND removed_epoch IS NULL)";
+/// A current roster member; in a community-bound group also a member of the
+/// community who is not banned from it.
+const MEMBER_EXISTS: &str = "EXISTS (SELECT 1 FROM social.mls_group_members gm \
+     JOIN social.mls_groups gg ON gg.group_id = gm.group_id \
+     WHERE gm.group_id = $1 AND gm.member = $2 AND gm.removed_epoch IS NULL \
+       AND (gg.community_id IS NULL OR (\
+         EXISTS (SELECT 1 FROM social.community_members cm \
+                 WHERE cm.community_id = gg.community_id AND cm.member_address = $2) \
+         AND NOT EXISTS (SELECT 1 FROM social.community_bans cb \
+                 WHERE cb.community_id = gg.community_id AND cb.banned_address = $2 AND cb.active))))";
+
+/// Key-package claims per claimer and per owner.
+static CLAIMS_BY_CLAIMER: LazyLock<RateLimiter> =
+    LazyLock::new(|| RateLimiter::new(30, Duration::from_secs(600)));
+static CLAIMS_OF_OWNER: LazyLock<RateLimiter> =
+    LazyLock::new(|| RateLimiter::new(60, Duration::from_secs(3600)));
+
+fn claim_rate_limited() -> ApiError {
+    ApiError::labeled(
+        429,
+        "rate limit exceeded",
+        "too many key package claims; retry later",
+    )
+}
 
 fn b64(bytes: &[u8]) -> String {
     base64::engine::general_purpose::STANDARD.encode(bytes)
@@ -290,7 +314,7 @@ pub async fn publish_key_packages(
         let cred = String::from_utf8_lossy(&parsed.credential_identity)
             .trim()
             .to_lowercase();
-        if !cred.is_empty() && cred != signer && cred != signer.trim_start_matches("0x") {
+        if cred != signer && cred != signer.trim_start_matches("0x") {
             return Err(forbidden(
                 "key package credential identity does not match the authenticated wallet",
             ));
@@ -328,7 +352,7 @@ pub async fn claim_key_package(
     if !crate::auth::is_eth_address(&owner) {
         return Err(ApiError::bad_request("owner must be an eth address"));
     }
-    auth(
+    let claimer = auth(
         &state,
         &headers,
         "get",
@@ -338,16 +362,26 @@ pub async fn claim_key_package(
     if let Some(refusal) = crate::comms::writes::side_refusal(switch) {
         return Ok(crate::writes::refused_response(&refusal));
     }
+    if CLAIMS_BY_CLAIMER.check(&claimer) == RateLimitDecision::Deny
+        || CLAIMS_OF_OWNER.check(&owner) == RateLimitDecision::Deny
+    {
+        return Err(claim_rate_limited());
+    }
+    // A block either way answers as an empty stock.
     let row: Option<(String, Vec<u8>, i32)> = sqlx::query_as(
         "UPDATE social.mls_key_packages SET consumed_at = $2 \
          WHERE id = ( \
             SELECT id FROM social.mls_key_packages \
             WHERE owner = $1 AND consumed_at IS NULL \
+              AND NOT EXISTS (SELECT 1 FROM social.blocks \
+                    WHERE (blocker_address = $1 AND blocked_address = $3) \
+                       OR (blocker_address = $3 AND blocked_address = $1)) \
             ORDER BY created_at ASC LIMIT 1 FOR UPDATE SKIP LOCKED \
          ) RETURNING ref_hash, key_package, ciphersuite",
     )
     .bind(&owner)
     .bind(now_utc())
+    .bind(&claimer)
     .fetch_optional(&state.pool)
     .await?;
     match row {
@@ -544,8 +578,16 @@ pub async fn submit_commit(
     .await?;
     let b: CommitBody =
         serde_json::from_slice(&body).map_err(|e| ApiError::bad_request(e.to_string()))?;
-    let (epoch_author, current_epoch, is_member): (String, i64, bool) = sqlx::query_as(sqlx::AssertSqlSafe(format!(
-        "SELECT g.epoch_author, g.current_epoch, {MEMBER_EXISTS} FROM social.mls_groups g WHERE g.group_id = $1"
+    let (epoch_author, current_epoch, is_member, group_kind, community_id, creator): (
+        String,
+        i64,
+        bool,
+        String,
+        Option<uuid::Uuid>,
+        String,
+    ) = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT g.epoch_author, g.current_epoch, {MEMBER_EXISTS}, g.group_kind, g.community_id, g.creator \
+         FROM social.mls_groups g WHERE g.group_id = $1"
     )))
     .bind(&group_id)
     .bind(&signer)
@@ -584,12 +626,6 @@ pub async fn submit_commit(
         .as_deref()
         .map(|w| decode_b64(w, "welcome"))
         .transpose()?;
-    let commit_hash = mls::content_hash(&commit_bytes);
-    let commit_cid = store_blob(&state, commit_bytes).await?;
-    let welcome_cid = match welcome_bytes {
-        Some(w) => Some(store_blob(&state, w).await?),
-        None => None,
-    };
     let mut added: Vec<String> = b
         .added_members
         .iter()
@@ -598,7 +634,22 @@ pub async fn submit_commit(
         .collect();
     added.sort();
     added.dedup();
-    let removed: Vec<String> = b.removed_members.iter().map(|m| m.to_lowercase()).collect();
+    let mut removed: Vec<String> = b.removed_members.iter().map(|m| m.to_lowercase()).collect();
+    removed.sort();
+    removed.dedup();
+    let group = GroupShape {
+        id: &group_id,
+        kind: &group_kind,
+        community: community_id,
+        creator: &creator,
+    };
+    check_roster_change(&state.pool, &group, &signer, &added, &removed).await?;
+    let commit_hash = mls::content_hash(&commit_bytes);
+    let commit_cid = store_blob(&state, commit_bytes).await?;
+    let welcome_cid = match welcome_bytes {
+        Some(w) => Some(store_blob(&state, w).await?),
+        None => None,
+    };
     let now = now_utc();
     let locked: i64 = sqlx::query_scalar(
         "WITH g AS ( \
@@ -640,6 +691,91 @@ pub async fn submit_commit(
     Ok(Json(
         json!({ "group_id": group_id, "epoch": b.epoch, "commit_hash": commit_hash }),
     ))
+}
+
+struct GroupShape<'a> {
+    id: &'a str,
+    kind: &'a str,
+    community: Option<uuid::Uuid>,
+    creator: &'a str,
+}
+
+/// The roster a commit declares stays within the group's rules: a `dm` keeps
+/// its original pair, a community-bound group admits only members who are
+/// not banned, and others are removed only by the group's creator (or a
+/// community owner or moderator); anyone may remove themselves, and a
+/// wallet no longer entitled to a community-bound group may be removed by
+/// any member.
+async fn check_roster_change(
+    pool: &PgPool,
+    group: &GroupShape<'_>,
+    signer: &str,
+    added: &[String],
+    removed: &[String],
+) -> Result<(), ApiError> {
+    if !added.is_empty() {
+        let admitted: i64 = if group.kind == "dm" {
+            sqlx::query_scalar(
+                "SELECT count(DISTINCT member) FROM social.mls_group_members \
+                 WHERE group_id = $1 AND member = ANY($2)",
+            )
+            .bind(group.id)
+            .bind(added)
+            .fetch_one(pool)
+            .await?
+        } else if let Some(community) = group.community {
+            entitled_count(pool, community, added).await?
+        } else {
+            added.len() as i64
+        };
+        if admitted != added.len() as i64 {
+            return Err(forbidden(if group.kind == "dm" {
+                "a 'dm' group keeps its two members"
+            } else {
+                "only members of the community who are not banned may be added"
+            }));
+        }
+    }
+    let others: Vec<String> = removed.iter().filter(|m| *m != signer).cloned().collect();
+    if others.is_empty() || (group.kind != "dm" && signer == group.creator) {
+        return Ok(());
+    }
+    if group.kind != "dm"
+        && let Some(community) = group.community
+    {
+        let manager: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM social.community_members \
+             WHERE community_id = $1 AND member_address = $2 AND role IN ('owner', 'moderator', 'mod'))",
+        )
+        .bind(community)
+        .bind(signer)
+        .fetch_one(pool)
+        .await?;
+        if manager || entitled_count(pool, community, &others).await? == 0 {
+            return Ok(());
+        }
+    }
+    Err(forbidden(
+        "only the group's creator or a community manager may remove other members",
+    ))
+}
+
+/// How many of `wallets` are members of `community` and not banned from it.
+async fn entitled_count(
+    pool: &PgPool,
+    community: uuid::Uuid,
+    wallets: &[String],
+) -> Result<i64, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT count(DISTINCT cm.member_address) FROM social.community_members cm \
+         WHERE cm.community_id = $1 AND cm.member_address = ANY($2) \
+           AND NOT EXISTS (SELECT 1 FROM social.community_bans cb \
+                 WHERE cb.community_id = cm.community_id AND cb.banned_address = cm.member_address AND cb.active)",
+    )
+    .bind(community)
+    .bind(wallets)
+    .fetch_one(pool)
+    .await
 }
 
 #[derive(Debug, Deserialize)]
@@ -919,13 +1055,17 @@ mod tests {
     }
 
     fn member() -> Member {
+        member_with(|address| address.as_bytes().to_vec())
+    }
+
+    fn member_with(identity: impl Fn(&str) -> Vec<u8>) -> Member {
         let key = random_key();
         let address = address_of(&key);
         let provider = OpenMlsRustCrypto::default();
         let signer = SignatureKeyPair::new(mls::PINNED_CIPHERSUITE.signature_algorithm()).unwrap();
         signer.store(provider.storage()).unwrap();
         let credential = CredentialWithKey {
-            credential: BasicCredential::new(address.clone().into_bytes()).into(),
+            credential: BasicCredential::new(identity(&address)).into(),
             signature_key: signer.public().into(),
         };
         Member {
@@ -1215,6 +1355,152 @@ mod tests {
     /// ciphertext; Bob reads the commits, the history and the blob, an
     /// outsider reads nothing; a community channel needs the service token.
     #[tokio::test]
+    async fn key_packages_name_their_publisher_and_skip_blocked_claimers() {
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        let dir = std::env::temp_dir().join(format!("mls-kp-{}", uuid::Uuid::new_v4().simple()));
+        let here = app("peer-kp", pool.clone(), &dir).await;
+        let anonymous = member_with(|_| Vec::new());
+        let (status, _) = call(
+            &here,
+            &anonymous.key,
+            "POST",
+            "/mls/key-packages",
+            Some(json!({ "key_packages": [b64(&key_package(&anonymous))] })),
+            None,
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::FORBIDDEN,
+            "an empty credential identity"
+        );
+
+        let (owner, friend, blocked) = (member(), member(), member());
+        let packages: Vec<String> = (0..2).map(|_| b64(&key_package(&owner))).collect();
+        let (status, body) = call(
+            &here,
+            &owner.key,
+            "POST",
+            "/mls/key-packages",
+            Some(json!({ "key_packages": packages })),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        sqlx::query("INSERT INTO social.blocks (blocker_address, blocked_address) VALUES ($1, $2)")
+            .bind(&owner.address)
+            .bind(&blocked.address)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let claim_path = format!("/mls/key-packages/{}", owner.address);
+        let (status, _) = call(&here, &blocked.key, "GET", &claim_path, None, None).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "a blocked claimer");
+        let (status, _) = call(&here, &friend.key, "GET", &claim_path, None, None).await;
+        assert_eq!(status, StatusCode::OK);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn a_community_channel_admits_only_entitled_members() {
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        let dir =
+            std::env::temp_dir().join(format!("mls-community-{}", uuid::Uuid::new_v4().simple()));
+        let here = app("peer-community", pool.clone(), &dir).await;
+        let (owner, member, banned, outsider) = (member(), member(), member(), member());
+        let community = uuid::Uuid::new_v4();
+        sqlx::query("INSERT INTO social.communities (id, name, description, owner_address, private, unlisted) VALUES ($1, 'MLS', 'd', $2, FALSE, FALSE)")
+            .bind(community)
+            .bind(&owner.address)
+            .execute(&pool)
+            .await
+            .unwrap();
+        for (wallet, role) in [
+            (&owner.address, "owner"),
+            (&member.address, "member"),
+            (&banned.address, "member"),
+        ] {
+            sqlx::query("INSERT INTO social.community_members (community_id, member_address, role) VALUES ($1, $2, $3)")
+                .bind(community)
+                .bind(wallet)
+                .bind(role)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        let mut group = MlsGroup::new(
+            &owner.provider,
+            &owner.signer,
+            &MlsGroupCreateConfig::builder()
+                .ciphersuite(mls::PINNED_CIPHERSUITE)
+                .build(),
+            owner.credential.clone(),
+        )
+        .unwrap();
+        let group_id = hex::encode(group.group_id().as_slice());
+        let (status, body) = call(
+            &here,
+            &owner.key,
+            "POST",
+            "/mls/groups",
+            Some(json!({ "group_id": group_id, "group_kind": "channel", "community_id": community.to_string(), "initial_members": [owner.address, member.address, banned.address] })),
+            Some("svc"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        sqlx::query("INSERT INTO social.community_bans (community_id, banned_address, banned_by) VALUES ($1, $2, $3)")
+            .bind(community)
+            .bind(&banned.address)
+            .bind(&owner.address)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let commits_path = format!("/mls/groups/{group_id}/commits");
+        let (status, _) = call(&here, &banned.key, "GET", &commits_path, None, None).await;
+        assert_eq!(
+            status,
+            StatusCode::FORBIDDEN,
+            "a banned wallet loses access"
+        );
+
+        // The service reads only the routing of the bytes it relays.
+        let commit = b64(&group
+            .create_message(&owner.provider, &owner.signer, b"routing only")
+            .unwrap()
+            .tls_serialize_detached()
+            .unwrap());
+        let submit = |key: &str, change: Value| {
+            let mut body = json!({ "epoch": 1, "commit": commit });
+            body.as_object_mut()
+                .unwrap()
+                .extend(change.as_object().unwrap().clone());
+            let (here, key) = (here.clone(), key.to_string());
+            let path = commits_path.clone();
+            async move { call(&here, &key, "POST", &path, Some(body), None).await.0 }
+        };
+        assert_eq!(
+            submit(&member.key, json!({ "added_members": [outsider.address] })).await,
+            StatusCode::FORBIDDEN,
+            "a wallet outside the community"
+        );
+        assert_eq!(
+            submit(&member.key, json!({ "removed_members": [owner.address] })).await,
+            StatusCode::FORBIDDEN,
+            "a plain member cannot evict others"
+        );
+        assert_eq!(
+            submit(&owner.key, json!({ "removed_members": [member.address] })).await,
+            StatusCode::OK,
+            "the creator may"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
     async fn a_dm_group_round_trips_key_packages_commits_and_messages() {
         let Some(pool) = crate::db::scratch::pool(4).await else {
             return;
@@ -1421,6 +1707,25 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::OK, "{body}");
         group.merge_pending_commit(&alice.provider).unwrap();
+        let replayed = b64(&commit.tls_serialize_detached().unwrap());
+        for (change, what) in [
+            (
+                json!({ "added_members": [address_of(&outsider)] }),
+                "a dm keeps its pair",
+            ),
+            (
+                json!({ "removed_members": [bob.address] }),
+                "a dm member cannot evict the other",
+            ),
+        ] {
+            let mut body = json!({ "epoch": 2, "commit": replayed });
+            body.as_object_mut()
+                .unwrap()
+                .extend(change.as_object().unwrap().clone());
+            let (status, _) =
+                call(&here, &alice.key, "POST", &commits_path, Some(body), None).await;
+            assert_eq!(status, StatusCode::FORBIDDEN, "{what}");
+        }
 
         let ciphertext = group
             .create_message(&alice.provider, &alice.signer, b"hello bob")

@@ -1599,40 +1599,149 @@ async fn request_status(ctx: &Ctx<'_>, id: &str, request: &str) -> Response {
     if m.request_id != request {
         return bad("request_id mismatch");
     }
-    if let Err(r) =
-        require_at_least(ctx.state, community, &signer, CommunityStanding::Moderator).await
-    {
-        return *r;
-    }
     let status = match m.status.as_str() {
         s @ ("accepted" | "rejected" | "cancelled") => s,
         _ => return bad("invalid request status"),
     };
+    let request_uuid = Uuid::parse_str(&m.request_id).ok();
+    let pending: Option<(Uuid, Address, String)> = match request_uuid {
+        Some(id) => match sqlx::query_as(
+            "SELECT community_id, member_address, type FROM social.community_requests WHERE id = $1 AND status = 'pending'",
+        )
+        .bind(id)
+        .fetch_optional(&ctx.state.pool)
+        .await
+        {
+            Ok(row) => row,
+            Err(e) => return db_err(e),
+        },
+        None => None,
+    };
+    if pending
+        .as_ref()
+        .is_some_and(|(c, _, _)| *c != community.as_uuid())
+    {
+        return err_json(
+            StatusCode::NOT_FOUND,
+            "request does not belong to this community",
+        );
+    }
+    // A pending request follows the client route's authority; anything else
+    // is only logged, by a moderator.
+    let refused = match &pending {
+        Some((_, member, kind)) => {
+            request_authority(ctx.state, community, &signer, member, kind, status).await
+        }
+        None => require_at_least(ctx.state, community, &signer, CommunityStanding::Moderator)
+            .await
+            .err()
+            .map(|r| *r),
+    };
+    if let Some(refused) = refused {
+        return refused;
+    }
     let signature_hash = signed.signature_hash();
+    let joined = pending
+        .as_ref()
+        .filter(|_| status == "accepted")
+        .map(|(_, member, _)| member.clone());
     let applied: sqlx::Result<Option<Response>> = async {
-        let mut tx = ctx.state.pool.begin().await?;
-        if let Ok(request_uuid) = Uuid::parse_str(&m.request_id) {
-            let owner: Option<Uuid> = sqlx::query_scalar("SELECT community_id FROM social.community_requests WHERE id = $1").bind(request_uuid).fetch_optional(&mut *tx).await?;
-            if owner.is_some_and(|c| c != community.as_uuid()) {
-                return Ok(Some(err_json(StatusCode::NOT_FOUND, "request does not belong to this community")));
+        let mut guard = super::write_support::acquire_membership(&ctx.state.pool, community).await?;
+        let mut tx = guard.begin().await?;
+        if let Some(member) = &joined {
+            let banned: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM social.community_bans WHERE community_id = $1 AND banned_address = $2 AND active)")
+                .bind(community)
+                .bind(member)
+                .fetch_one(&mut *tx)
+                .await?;
+            if banned {
+                return Ok(Some(err_json(StatusCode::FORBIDDEN, "banned from community")));
             }
-            sqlx::query("UPDATE social.community_requests SET status = $2, updated_at = timezone('UTC', now()) WHERE id = $1 AND community_id = $3 AND status = 'pending'")
+        }
+        if let Some(request_uuid) = request_uuid {
+            let settled = sqlx::query("UPDATE social.community_requests SET status = $2, updated_at = timezone('UTC', now()) WHERE id = $1 AND community_id = $3 AND status = 'pending'")
                 .bind(request_uuid)
                 .bind(status)
                 .bind(community)
                 .execute(&mut *tx)
-                .await?;
+                .await?
+                .rows_affected();
+            if let Some(member) = &joined
+                && settled == 1
+            {
+                sqlx::query("INSERT INTO social.community_members (community_id, member_address, role) VALUES ($1, $2, 'member') ON CONFLICT (community_id, member_address) DO NOTHING")
+                    .bind(community)
+                    .bind(member)
+                    .execute(&mut *tx)
+                    .await?;
+            }
         }
         let entry = Entry { kind: "request_status", target: Some(m.request_id.clone()), action: Some(status.to_string()), ..Default::default() };
         record(&mut tx, &signature_hash, &m.community_id, community, &signer, signed.signed_at, &payload(m), &entry).await?;
         tx.commit().await?;
+        drop(guard);
         Ok(None)
     }
     .await;
     match applied {
         Ok(Some(refused)) => refused,
-        Ok(None) => ok(signature_hash),
+        Ok(None) => {
+            if let Some(member) = &joined {
+                ctx.state
+                    .member_status_changed(community, member, true)
+                    .await;
+            }
+            ok(signature_hash)
+        }
         Err(e) => db_err(e),
+    }
+}
+
+/// The client route's matrix: the invitee accepts or rejects an invite and
+/// a manager cancels it; the requester cancels a request to join and a
+/// manager accepts or rejects it.
+async fn request_authority(
+    state: &CommunitiesState,
+    community: CommunityId,
+    signer: &Address,
+    member: &Address,
+    kind: &str,
+    status: &str,
+) -> Option<Response> {
+    let member_may = matches!(
+        (kind, status),
+        ("invite", "accepted" | "rejected") | ("request_to_join", "cancelled")
+    );
+    let manager_may = matches!(
+        (kind, status),
+        ("invite", "cancelled") | ("request_to_join", "accepted" | "rejected")
+    );
+    if member == signer {
+        return (!member_may).then(|| {
+            err_json(
+                StatusCode::FORBIDDEN,
+                "the invited or requesting user cannot settle this request this way",
+            )
+        });
+    }
+    if !manager_may {
+        return Some(err_json(
+            StatusCode::FORBIDDEN,
+            "only the invited or requesting user may settle this request this way",
+        ));
+    }
+    match authority_standing(state, community, signer).await {
+        Ok(standing)
+            if standing.has(CommunityPermission::AcceptRequests)
+                && standing.has(CommunityPermission::RejectRequests) =>
+        {
+            None
+        }
+        Ok(_) => Some(err_json(
+            StatusCode::FORBIDDEN,
+            format!("The user {signer} doesn't have permission to accept and reject requests"),
+        )),
+        Err(r) => Some(*r),
     }
 }
 
@@ -3530,6 +3639,42 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(settled, "rejected", "a settled request is not reopened");
+
+        // Only the invitee settles an invite, and accepting it adds them.
+        let invitee = PrivateKeySigner::random();
+        let invite = Uuid::new_v4();
+        sqlx::query("INSERT INTO social.community_requests (id, community_id, member_address, type) VALUES ($1, $2, $3, 'invite')").bind(invite).bind(id).bind(address(&invitee)).execute(&pool).await.unwrap();
+        let accept_invite = |w: &PrivateKeySigner| {
+            env(
+                w,
+                CommunityRequestStatusUpdate {
+                    community_id: hex_id.clone(),
+                    request_id: invite.to_string(),
+                    status: "accepted".into(),
+                },
+            )
+        };
+        let invite_path = format!("{base}/requests/{invite}");
+        let (status, _) = send(&app, &owner, "PATCH", &invite_path, &accept_invite(&owner)).await;
+        assert_eq!(
+            status,
+            StatusCode::FORBIDDEN,
+            "a manager cannot accept for the invitee"
+        );
+        assert_eq!(role_of(&pool, id, &invitee).await, None);
+        let (status, body) = send(
+            &app,
+            &invitee,
+            "PATCH",
+            &invite_path,
+            &accept_invite(&invitee),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(
+            role_of(&pool, id, &invitee).await.as_deref(),
+            Some("member")
+        );
 
         let (status, body) = send(
             &app,
