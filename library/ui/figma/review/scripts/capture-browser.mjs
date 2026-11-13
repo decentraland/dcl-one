@@ -5,6 +5,7 @@ import { constants } from 'node:fs'
 import { access, readFile, mkdtemp } from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
+import { StringDecoder } from 'node:string_decoder'
 import { setTimeout as delay } from 'node:timers/promises'
 import { browserArgs } from './browser-args.mjs'
 import { cleanupCapture, removeProfile, stopBrowser } from './capture-teardown.mjs'
@@ -39,9 +40,66 @@ async function findBrowser(candidates) {
   throw new Error('A Chromium browser is required. Set BROWSER_PATH to Chrome or Chromium.')
 }
 
+function redactStartup(text) {
+  text = text
+    .split(String.fromCharCode(27))
+    .map((part) => part.replace(/^\[[0-?]*[ -/]*[@-~]/, ''))
+    .join('')
+  for (const value of [process.env.FIGMA_FILE_KEY, os.homedir()]) {
+    if (value)
+      text = text.replace(
+        new RegExp(value.replace(/[.*+?^$()|[\]\\{}]/g, '\\$&'), 'gi'),
+        '[redacted]'
+      )
+  }
+  return text.replace(/\b(?:https?|wss?|file):\/\/[^\s"'<>]+/gi, '[redacted-url]')
+}
+
+function startupOutput() {
+  const decoder = new StringDecoder('utf8')
+  let retained = ''
+  let pending = ''
+  let omitted = false
+  let version
+  const append = (line) => {
+    const safe = redactStartup(line)
+    version ??= safe.match(/\b(?:Chromium|Google Chrome|Brave Browser) (\d+(?:\.\d+){1,3})\b/)?.[1]
+    retained = (retained + safe).slice(-4096)
+  }
+  return {
+    write(chunk) {
+      for (const part of decoder.write(chunk).split(/(?<=\n)/)) {
+        if (!omitted) {
+          pending += part
+          if (pending.length > 4096) {
+            pending = ''
+            omitted = true
+          }
+        }
+        if (part.endsWith('\n')) {
+          append(omitted ? '[stderr line omitted]\n' : pending)
+          pending = ''
+          omitted = false
+        }
+      }
+    },
+    finish() {
+      pending += decoder.end()
+      append(omitted ? '[stderr line omitted]' : pending)
+      return { stderr: retained, version: version ?? null }
+    }
+  }
+}
+
 async function openSession(executable, { signal } = {}) {
   const profile = await mkdtemp(path.join(os.tmpdir(), 'dcl-visual-'))
-  const browser = spawn(executable, browserArgs(profile), { stdio: 'ignore' })
+  const output = startupOutput()
+  const browser = spawn(executable, browserArgs(profile), { stdio: ['ignore', 'ignore', 'pipe'] })
+  browser.stderr?.on('data', output.write)
+  let phase = 'port-file'
+  let portState = 'not-read'
+  let lastFsError = null
+  let validPortObserved = false
   let socket
   let closing
   const pending = new Map()
@@ -73,13 +131,28 @@ async function openSession(executable, { signal } = {}) {
       if (browser.exitCode !== null || browser.signalCode !== null)
         throw new Error('Capture browser exited during startup')
       try {
-        port = (await readFile(path.join(profile, 'DevToolsActivePort'), 'utf8')).split('\n')[0]
+        const contents = await readFile(path.join(profile, 'DevToolsActivePort'), 'utf8')
+        port = contents.split('\n')[0]
+        lastFsError = null
+        const complete = contents.includes('\n')
+        validPortObserved =
+          complete && /^\d+$/.test(port) && Number(port) > 0 && Number(port) <= 65535
+        portState = !contents
+          ? 'empty'
+          : !complete
+            ? 'partial'
+            : validPortObserved
+              ? 'valid'
+              : 'invalid'
         break
-      } catch {
+      } catch (error) {
+        lastFsError = error?.code ?? 'UNKNOWN'
+        portState = error?.code === 'ENOENT' ? 'missing' : 'unreadable'
         await delay(100)
       }
     }
     if (!port) throw new Error('Capture browser did not start')
+    phase = 'endpoint'
     const tab = await fetch(`http://127.0.0.1:${port}/json/new?about:blank`, {
       method: 'PUT',
       signal: signal
@@ -87,6 +160,7 @@ async function openSession(executable, { signal } = {}) {
         : AbortSignal.timeout(10_000)
     }).then((response) => response.json())
     signal?.throwIfAborted()
+    phase = 'socket'
     socket = new WebSocket(tab.webSocketDebuggerUrl)
     await new Promise((resolve, reject) => {
       const abort = () => {
@@ -299,6 +373,7 @@ async function openSession(executable, { signal } = {}) {
         )
       return result.result?.value
     }
+    phase = 'initialize'
     await session.send('Page.enable')
     mainFrame = (await session.send('Page.getFrameTree'))?.frameTree?.frame?.id
     await session.send('Runtime.enable')
@@ -307,9 +382,30 @@ async function openSession(executable, { signal } = {}) {
     await session.send('Emulation.setDefaultBackgroundColorOverride', {
       color: { r: 0, g: 0, b: 0, a: 0 }
     })
+    browser.stderr?.off('data', output.write)
+    browser.stderr?.resume()
     return session
   } catch (error) {
+    const diagnostic = {
+      executable: redactStartup(path.basename(executable)),
+      phase,
+      exitCode: browser.exitCode,
+      signal: browser.signalCode,
+      port: { state: portState, lastFsError, validObserved: validPortObserved }
+    }
     await cleanupCapture(error, close)
+    browser.stderr?.off('data', output.write)
+    browser.stderr?.resume()
+    if (!signal?.aborted) {
+      try {
+        console.error(
+          'Capture browser startup diagnostics:',
+          JSON.stringify({ ...diagnostic, ...output.finish() })
+        )
+      } catch {
+        // Diagnostics must not replace the primary startup failure.
+      }
+    }
     throw error
   }
 }
