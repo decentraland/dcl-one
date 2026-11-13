@@ -298,12 +298,23 @@ fn refuse_clone_extras(
     transferred_array_buffers: Option<v8::Local<v8::Value>>,
 ) -> Result<(), AnyError> {
     if host_objects.is_some() || transferred_array_buffers.is_some() {
-        bail!("structured clone of host objects or transfers is not available to scenes");
+        return Err(super::errors::type_error(
+            "structured clone of host objects or transfers is not available to scenes",
+        ));
     }
     Ok(())
 }
 
 struct SceneClone;
+
+/// Throws a TypeError, which the structured clone script turns into a DataCloneError; the
+/// defaults throw plain Errors.
+fn refuse_clone(scope: &mut v8::PinScope, what: &str) {
+    if let Some(message) = v8::String::new(scope, &format!("#<{what}> could not be cloned.")) {
+        let error = v8::Exception::type_error(scope, message);
+        scope.throw_exception(error);
+    }
+}
 
 impl v8::ValueSerializerImpl for SceneClone {
     fn throw_data_clone_error<'s>(
@@ -313,6 +324,34 @@ impl v8::ValueSerializerImpl for SceneClone {
     ) {
         let error = v8::Exception::type_error(scope, message);
         scope.throw_exception(error);
+    }
+
+    fn write_host_object<'s>(
+        &self,
+        scope: &mut v8::PinScope<'s, '_>,
+        _object: v8::Local<'s, v8::Object>,
+        _value_serializer: &dyn v8::ValueSerializerHelper,
+    ) -> Option<bool> {
+        refuse_clone(scope, "Object");
+        None
+    }
+
+    fn get_shared_array_buffer_id<'s>(
+        &self,
+        scope: &mut v8::PinScope<'s, '_>,
+        _shared_array_buffer: v8::Local<'s, v8::SharedArrayBuffer>,
+    ) -> Option<u32> {
+        refuse_clone(scope, "SharedArrayBuffer");
+        None
+    }
+
+    fn get_wasm_module_transfer_id(
+        &self,
+        scope: &mut v8::PinScope<'_, '_>,
+        _module: v8::Local<v8::WasmModuleObject>,
+    ) -> Option<u32> {
+        refuse_clone(scope, "WebAssembly.Module");
+        None
     }
 }
 
@@ -389,11 +428,11 @@ fn op_structured_clone<'s>(
     let deserializer = v8::ValueDeserializer::new(scope, Box::new(SceneClone), &bytes);
     let context = scope.get_current_context();
     if !deserializer.read_header(context).unwrap_or_default() {
-        bail!("could not deserialize value");
+        return Err(super::errors::type_error("could not deserialize value").into());
     }
     Ok(deserializer
         .read_value(context)
-        .ok_or_else(|| anyhow::anyhow!("could not deserialize value"))?)
+        .ok_or_else(|| super::errors::type_error("could not deserialize value"))?)
 }
 
 /// The original fills a new holey array while it holds the rejection queue's borrow, so an

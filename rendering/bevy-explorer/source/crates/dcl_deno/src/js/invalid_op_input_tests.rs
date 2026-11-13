@@ -449,6 +449,27 @@ fn structured_clone_refuses_what_it_cannot_copy() {
     .unwrap();
 }
 
+/// What structured clone cannot copy fails as a DataCloneError, never a plain Error.
+#[test]
+fn structured_clone_failures_are_data_clone_errors() {
+    run_scene(
+        false,
+        r#"
+        const { structuredClone } = Deno.core.loadExtScript("ext:deno_web/02_structured_clone.js");
+        const wasm = new WebAssembly.Module(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]));
+        for (const value of [new SharedArrayBuffer(1), new Proxy({}, {}), () => {}, Symbol("s"), wasm]) {
+            let name = "none";
+            try { structuredClone({ value }); } catch (e) { name = `${e.name} ${e.message}`; }
+            if (!name.startsWith("DataCloneError")) { throw new Error(`${String(value)}: ${name}`); }
+        }
+        let hostRefusal;
+        try { Deno.core.ops.op_serialize(1, []); } catch (e) { hostRefusal = e; }
+        if (!(hostRefusal instanceof TypeError)) { throw new Error(`host objects: ${hostRefusal}`); }
+        "#,
+    )
+    .unwrap();
+}
+
 #[test]
 fn structured_clone_ignores_the_host_object_brand() {
     run_scene(
