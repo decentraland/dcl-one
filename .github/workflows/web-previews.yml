@@ -1,0 +1,139 @@
+name: Web previews / Build
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+permissions:
+  contents: read
+concurrency:
+  group: web-previews-${{ github.event.pull_request.number }}-${{ github.event.action == 'edited' && github.event.changes.base == null && github.run_id || 'build' }}
+  cancel-in-progress: true
+jobs:
+  changes:
+    if: github.event.action != 'edited' || github.event.changes.base != null
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      sites: ${{ steps.changes.outputs.sites }}
+      reviewer: ${{ steps.changes.outputs.reviewer }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check preview selection and publication rules
+        run: python3 -m unittest discover -s tooling/tests -p test_web_preview.py -v
+      - id: changes
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: python3 tooling/web-preview.py select --base "$BASE_SHA" --head "$HEAD_SHA" >> "$GITHUB_OUTPUT"
+  reviewer:
+    name: UI reviewer
+    needs: changes
+    if: needs.changes.outputs.reviewer == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          lfs: false
+          persist-credentials: false
+      - name: Fetch reviewer product fonts
+        env:
+          READ_TOKEN: ${{ github.token }}
+        run: |
+          test -n "${READ_TOKEN:-}"
+          header=$(printf 'x-access-token:%s' "$READ_TOKEN" | base64 | tr -d '\n')
+          echo "::add-mask::$header"
+          GIT_CONFIG_COUNT=1 \
+          GIT_CONFIG_KEY_0=http.https://github.com/.extraheader \
+          GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $header" \
+          git lfs pull --include='library/ui/foundations/typography/fonts/inter-cyrillic-ext-wght-normal.woff2,library/ui/foundations/typography/fonts/inter-cyrillic-wght-normal.woff2,library/ui/foundations/typography/fonts/inter-greek-ext-wght-normal.woff2,library/ui/foundations/typography/fonts/inter-greek-wght-normal.woff2,library/ui/foundations/typography/fonts/inter-latin-ext-wght-normal.woff2,library/ui/foundations/typography/fonts/inter-latin-wght-normal.woff2,library/ui/foundations/typography/fonts/inter-vietnamese-wght-normal.woff2' --exclude=''
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - name: Verify pinned Figma source and port record
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$HEAD_SHA"
+          base_sha="$(git merge-base "$HEAD_SHA" "refs/remotes/origin/$DEFAULT_BRANCH")"
+          node library/ui/figma/lock-digests.mjs
+          node library/ui/figma/port-verification.mjs --base "$base_sha" --head "$HEAD_SHA"
+      - name: Enable the pinned package manager
+        working-directory: library/ui
+        run: corepack enable
+      - name: Install reviewer dependencies
+        working-directory: library/ui
+        run: pnpm install --frozen-lockfile
+      - name: Build the static reviewer with relative assets
+        working-directory: library/ui
+        run: pnpm review:build --base ./
+      - name: Verify functional gallery navigation under a versioned CDN path
+        run: node library/ui/figma/review/scripts/check-build.mjs library/ui/figma/review/review-dist --prefix /@scope/package/0.1.0-preview/
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: web-preview-reviewer
+          path: library/ui/figma/review/review-dist/
+          if-no-files-found: error
+          retention-days: 7
+          overwrite: true
+  summary:
+    name: Preview status
+    needs: [changes, reviewer, sites]
+    if: always() && needs.changes.result != 'skipped'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+          sparse-checkout: tooling/web-preview.py
+          sparse-checkout-cone-mode: false
+      - name: Explain preview availability independently of publication
+        env:
+          SELECTION_RESULT: ${{ needs.changes.result }}
+          REVIEWER_RESULT: ${{ needs.reviewer.result }}
+          SITES_RESULT: ${{ needs.sites.result }}
+          PUBLICATION_ENABLED: ${{ vars.WEB_PREVIEW_REVIEWER_ENABLED }}
+        run: python3 tooling/web-preview.py build-summary
+  sites:
+    name: Sites
+    needs: changes
+    if: needs.changes.outputs.sites == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Fetch Sites media
+        run: git lfs pull --include='apps/sites/**,apps/ui3/**'
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - name: Enable project package managers
+        run: corepack enable
+      - name: Install Sites UI dependencies
+        working-directory: apps/ui3
+        run: pnpm install --frozen-lockfile
+      - name: Install Sites dependencies
+        working-directory: apps/sites
+        run: pnpm install --frozen-lockfile
+      - name: Build Sites
+        working-directory: apps/sites
+        run: pnpm build
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: web-preview-sites
+          path: apps/sites/build/
+          if-no-files-found: error
+          retention-days: 7
+          overwrite: true
