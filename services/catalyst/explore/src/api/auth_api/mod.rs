@@ -418,9 +418,7 @@ pub(super) fn request_source(
     let ip = if is_trusted_proxy(peer, trusted_proxies) {
         single_real_ip(headers).unwrap_or(peer)
     } else if is_internal(peer) {
-        if headers.contains_key("x-real-ip") {
-            warn_untrusted_proxy_once(peer);
-        }
+        warn_untrusted_internal_peer_once(peer, &UNTRUSTED_PEER_WARNED);
         return None;
     } else {
         peer
@@ -429,16 +427,26 @@ pub(super) fn request_source(
 }
 
 /// Once per process, as content warns for deploys.
-fn warn_untrusted_proxy_once(peer: std::net::IpAddr) {
-    static WARNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-    if !WARNED.swap(true, std::sync::atomic::Ordering::Relaxed) {
-        tracing::warn!(
-            %peer,
-            "/auth-api: a private or loopback peer forwards X-Real-IP but is not in \
-             HTTP_TRUSTED_PROXY_CIDRS, so sign-ins behind it get no per-network cap; \
-             list the backend proxy networks there"
-        );
+static UNTRUSTED_PEER_WARNED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Once per process, for any untrusted private or loopback peer: a proxy
+/// missing from the setting, or clients that all arrive from private
+/// addresses. `true` when this call logged.
+fn warn_untrusted_internal_peer_once(
+    peer: std::net::IpAddr,
+    warned: &std::sync::atomic::AtomicBool,
+) -> bool {
+    use std::sync::atomic::Ordering;
+    if warned.load(Ordering::Relaxed) || warned.swap(true, Ordering::Relaxed) {
+        return false;
     }
+    tracing::warn!(
+        %peer,
+        "/auth-api: a private or loopback peer is not in HTTP_TRUSTED_PROXY_CIDRS, so \
+         sign-ins from it get no per-network cap; list the backend proxy networks there"
+    );
+    true
 }
 
 /// Refuses a new request once the relay or its network holds too many
@@ -1300,6 +1308,14 @@ mod tests {
             StatusCode::CREATED,
             "answered requests do not count"
         );
+    }
+
+    #[test]
+    fn the_untrusted_peer_warning_is_logged_once() {
+        let warned = std::sync::atomic::AtomicBool::new(false);
+        let peer: std::net::IpAddr = "10.0.0.5".parse().unwrap();
+        assert!(warn_untrusted_internal_peer_once(peer, &warned));
+        assert!(!warn_untrusted_internal_peer_once(peer, &warned));
     }
 
     #[test]
