@@ -197,6 +197,30 @@ static CLAIMS_BY_CLAIMER: LazyLock<RateLimiter> =
 static CLAIMS_OF_OWNER: LazyLock<RateLimiter> =
     LazyLock::new(|| RateLimiter::new(60, Duration::from_secs(3600)));
 
+/// Owners with a claim in flight on this node. One claim per owner runs at a
+/// time, so the owner's budget is read and spent atomically; a concurrent
+/// claim is refused at once instead of queueing on a pooled connection.
+static CLAIMS_IN_FLIGHT: LazyLock<std::sync::Mutex<std::collections::HashSet<String>>> =
+    LazyLock::new(Default::default);
+
+struct ClaimSlot(String);
+
+impl ClaimSlot {
+    fn take(owner: &str) -> Option<Self> {
+        let mut owners = CLAIMS_IN_FLIGHT.lock().unwrap_or_else(|e| e.into_inner());
+        owners
+            .insert(owner.to_string())
+            .then(|| Self(owner.to_string()))
+    }
+}
+
+impl Drop for ClaimSlot {
+    fn drop(&mut self) {
+        let mut owners = CLAIMS_IN_FLIGHT.lock().unwrap_or_else(|e| e.into_inner());
+        owners.remove(&self.0);
+    }
+}
+
 fn claim_rate_limited() -> ApiError {
     ApiError::labeled(
         429,
@@ -393,15 +417,10 @@ pub async fn claim_key_package(
     if CLAIMS_BY_CLAIMER.check(&claimer) == RateLimitDecision::Deny {
         return Err(claim_rate_limited());
     }
-    // Claims of one owner run one at a time, so the owner's budget is read
-    // and spent atomically, and only by a package handed out.
-    let mut tx = state.pool.begin().await?;
-    sqlx::query(
-        "SELECT pg_advisory_xact_lock(hashtextextended('social.mls_key_package_claims:' || $1, 0))",
-    )
-    .bind(&owner)
-    .execute(&mut *tx)
-    .await?;
+    // The owner's budget is spent only by a package handed out.
+    let Some(_slot) = ClaimSlot::take(&owner) else {
+        return Err(claim_rate_limited());
+    };
     if CLAIMS_OF_OWNER.is_rate_limited(&owner) {
         return Err(claim_rate_limited());
     }
@@ -420,9 +439,8 @@ pub async fn claim_key_package(
     .bind(&owner)
     .bind(now_utc())
     .bind(&claimer)
-    .fetch_optional(&mut *tx)
+    .fetch_optional(&state.pool)
     .await?;
-    tx.commit().await?;
     if row.is_some() {
         CLAIMS_OF_OWNER.check(&owner);
     }
@@ -1472,9 +1490,26 @@ mod tests {
             let (status, _) = call(&here, &blocked.key, "GET", &claim_path, None, None).await;
             assert_eq!(status, StatusCode::NOT_FOUND, "a blocked claimer");
         }
+        let held = ClaimSlot::take(&owner.address).unwrap();
+        let (status, _) = call(&here, &friend.key, "GET", &claim_path, None, None).await;
+        assert_eq!(
+            status,
+            StatusCode::TOO_MANY_REQUESTS,
+            "a concurrent claim is refused, not queued"
+        );
+        drop(held);
         let (status, _) = call(&here, &friend.key, "GET", &claim_path, None, None).await;
         assert_eq!(status, StatusCode::OK);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_claim_slot_is_held_until_dropped() {
+        let owner = address_of(&random_key());
+        let first = ClaimSlot::take(&owner).unwrap();
+        assert!(ClaimSlot::take(&owner).is_none());
+        drop(first);
+        assert!(ClaimSlot::take(&owner).is_some());
     }
 
     #[tokio::test]
