@@ -18,6 +18,7 @@ ipfs = { workspace = true }
 bevy = { workspace = true }
 bevy_atmosphere = { git = "https://github.com/robtfm/bevy_atmosphere", branch = "0.16-2" }
 bevy_console = { workspace = true }
+boimp = { workspace = true }
 
 clap = { workspace = true }
 chrono = { workspace = true }

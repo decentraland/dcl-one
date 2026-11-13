@@ -337,9 +337,28 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
     occupied parcels and parcels outside the terrain count as occupied. Unity reads a static
     occupancy map of the whole city, so inside the city, beyond the resolved parcels, it has trees
     where bevy has none.
-  - Each instance is an entity, spawned when it is within the Landscape Distance of the player
-    (horizontally) and checked again when the player changes parcel; bevy batches the shared
-    meshes. Unity hands the whole layout to a GPU instancing package that culls by distance.
+  - Each instance within the Landscape Distance of the player (horizontally, checked again when
+    the player changes parcel) is listed, and one that draws its model or its impostor is an
+    entity with that as its child; bevy batches the shared meshes. Unity hands the whole layout
+    to a GPU instancing package that culls by distance.
+  - The trees and bushes far off draw impostors baked with boimp, the explorer's own impostor
+    library, from the converted models, instead of Unity's impostors, which come from a bought
+    package and are not read. They switch at the screen heights of Unity's own level-of-detail
+    groups, measured as Unity measures them, at a quality bias of 1, that of Unity's middle
+    preset (its three set 0.75, 1 and 1.25; here no preset changes it), and under the camera's
+    field of view as it is (Unity scales its bias so that zooming does not move the switches).
+  - The impostors are blended, as the scene impostors are, since the depth prepass would hide a
+    cut-out one behind its own box, and they cast and receive no shadows. They are lit by bevy's
+    standard lighting, without the sky light and softened sun shadows the models' material adds.
+    An impostor's size lives in its material, so each prototype has 16 materials over its scale
+    range and an instance draws the nearest, at most a thirtieth of the range off its own scale.
+  - The stones draw their one model down to the screen height of the last of Unity's three
+    meshes, and nothing below it; they have no impostor in Unity either.
+  - An instance that draws nothing has no entity and no colliders. Unity keeps the colliders
+    near the characters only; the nearest anything stops drawing is a stone about 80 m out.
+  - The classes are worked out again only once the camera has moved a metre, and an instance's
+    only once the camera has moved as far as its nearest switch or a hundredth of its distance,
+    so a far instance may switch up to that late.
   - Bevy's lit material replaces Unity's simple Blinn-Phong one. Colour, texture, cut-off,
     culling and normal maps carry over; the trunk and the stones take a roughness of one minus
     their smoothness. The leaves are fully rough: their Unity smoothness of 1 is a pin-point
