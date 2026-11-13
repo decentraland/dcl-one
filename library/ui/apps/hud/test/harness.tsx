@@ -194,6 +194,7 @@ export function fakeSession(): EngineSession {
     phase: 'world',
     playerReady: true,
     lobbyStageReady: false,
+    signinStageReady: false,
     lobbyPage: { open: false, toggle: vi.fn(), travel: vi.fn() },
     homeScene: () => null,
     avatarPreviewRect: null,

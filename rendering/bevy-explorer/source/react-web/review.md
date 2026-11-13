@@ -194,6 +194,12 @@ these by hand (or have an agent drive the Chrome extension against a live world)
       Customize opens the Backpack modal with the avatar through its hole and hands the stage back on
       close; Jump In loads the world (the hold is released) and a failed trip returns to the lobby.
       The `lobby` baseline only shows the stand-in (mock has no engine).
+- [ ] **Sign-in stage** (`avatarPreview.tsx`, signin region): a new account's look and name screens
+      show its avatar on the golden podium at the right, over the sign-in background (vignette and
+      drifting logo pattern) drawn by the engine across the whole screen. The page's background fades
+      out only once the engine reports `signinStageReady`, and comes back at once on Back. Picking a
+      look or body type changes the avatar in place. Check a 16:9 window and a much wider or taller one.
+      Mock has no engine, so the page's background stays.
 
 ---
 

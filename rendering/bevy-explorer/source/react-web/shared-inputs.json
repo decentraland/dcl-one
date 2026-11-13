@@ -5033,7 +5033,7 @@
     },
     {
       "path": "library/explorer-core/engine/protocol.ts",
-      "sha256": "1217c967b57da8540e2a80854423212dcf7d56a4642526f30985c5434e116940"
+      "sha256": "a23a590494d7818647d81a30ec06dce6745d43cd55a09fb88da17cded9ef87c3"
     },
     {
       "path": "library/explorer-core/features/auth/authReturn.ts",
@@ -6949,7 +6949,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/backpack/BackpackPage.tsx",
-      "sha256": "2ac33fa1788053b0e731ba57c069ebc6b0a406cb2d9913f4ff9618e51b2162e3"
+      "sha256": "1186355594735b9b6fb989d7b5727311f7a46428134ee432324f5d40f9e10469"
     },
     {
       "path": "library/ui/apps/hud/features/backpack/categoryIcons.tsx",
@@ -7165,7 +7165,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/engine/EngineViewport.tsx",
-      "sha256": "e376921c94dc6339e0e953ef97b4b27fe6614309dcf15b0474ba5b3f814adb91"
+      "sha256": "98cf5fe8d3efc5540df99ccd857356a8a64a3a8e7e945096dc3c43ba5ad370ab"
     },
     {
       "path": "library/ui/apps/hud/features/error/ConnectivityFeedback.module.css",
@@ -7361,7 +7361,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyHome.tsx",
-      "sha256": "8faac7e7e81b842b3d9a85c387fe275e4ee59af0171c89fe534d6901cef61ed3"
+      "sha256": "42cf626d98008f2c51db7d3d39546a570d5ef1141aa96c55eb0ee4fcd52d0faf"
     },
     {
       "path": "library/ui/apps/hud/features/login/useStoredProfile.ts",
@@ -7401,7 +7401,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/minimap/Minimap.tsx",
-      "sha256": "ae42dfa24c7edfb7c29815c0c9956620b8a6d6d897107d090ff7e7b128d22e82"
+      "sha256": "5fa2eb065eb962af3899e8ece1c3bff2846aa5ea1cd28baa84e2062ca1d054fe"
     },
     {
       "path": "library/ui/apps/hud/features/minimap/MinimapSettings.module.css",
@@ -7601,7 +7601,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "2c87d8aeb078e3dfd0b27dc408d471a6d60aaa454f8e37c91f15cca9b65ed1d9"
+      "sha256": "f831c84e11fee2af032081448f22d51017ed7b2f8e0f70ebe25962256f9b8a99"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -7693,11 +7693,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/startup/StartupFlow.module.css",
-      "sha256": "ca3781fab405aaaf1f86035d2afe61e5407f20972be7ebafd9b137cc7156cdd3"
+      "sha256": "41ff0ae16a90ebf42ff9423d50958e16e919517c39de21dd2782689212513fbb"
     },
     {
       "path": "library/ui/apps/hud/features/startup/StartupFlow.tsx",
-      "sha256": "00e253747dfbc1cd3839c5cf13ca2fefd6ba961331812a39d2e2bc6687f3fa6f"
+      "sha256": "d054e92ea9964f9f01e10d0242b0b67fa9ec83a8897d7df976a4ef7ac7f263e5"
     },
     {
       "path": "library/ui/apps/hud/features/startup/StartupFooter.module.css",
@@ -7865,7 +7865,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/harness.tsx",
-      "sha256": "6581f07b280c907b656a704ff233d7a584e0d707679d7ac8369918df267667fb"
+      "sha256": "6c004f252d28112da86f29d71f81728b9c87dc00a9dc31fb6ec402c4076c6614"
     },
     {
       "path": "library/ui/apps/hud/test/host.ts",
@@ -8093,7 +8093,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/newAccount.test.tsx",
-      "sha256": "8530d6c17153d5676f5ad70ab17af87fde6cd4618d47ee7976181ee4c781fbf6"
+      "sha256": "6fcdcc7bc74d0e7a19116870ab66736b148419d6cbf1fd0cb390d8242a351fb8"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/notifications.clicks.test.tsx",

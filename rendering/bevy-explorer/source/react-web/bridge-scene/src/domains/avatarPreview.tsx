@@ -7,6 +7,10 @@
 //
 // The preview wears the Backpack's look (./avatarDraft), which equipping edits, so equipping in the
 // Backpack reflects here before anything is deployed. Mounted via ReactEcsRenderer in index.ts.
+//
+// The sign-in screens open the same stage (region 'signin') for a new account's starting look, but
+// draw the sign-in background over the whole screen behind it, so the avatar and its podium stand
+// on that background; the page fades its own copy out once told (signinStageReady).
 import ReactEcs, { UiEntity } from '@dcl/react-ecs'
 import { AssetLoadLoadingState, AvatarShape, CameraLayer, CameraLayers, Material, MaterialTransparencyMode, MeshRenderer, PrimaryPointerInfo, TextureCamera, Transform, engine } from '@dcl/sdk/ecs'
 import { Color4, Quaternion, Vector3 } from '@dcl/sdk/math'
@@ -64,6 +68,21 @@ const LOBBY_VIGNETTE = 'images/lobby-vignette.png'
 // The Shop's stage (the HUD's assets/shop/stage.jpg, the same file): drawn behind the avatar where the page
 // says it draws it, so the avatar's window in the page shows no seam.
 const SHOP_STAGE = 'images/shop-stage.jpg'
+// The sign-in background, as the page draws it: the purple vignette, the logo pattern drifting over it
+// at 7% (650px tiles, one tile right every 5.65 s and up every 8.02 s), faded out towards the edges by
+// the vignette drawn again over it with the pattern's mask as its transparency.
+const SIGNIN_VIGNETTE = 'images/signin-vignette.png'
+const SIGNIN_VIGNETTE_EDGE = 'images/signin-vignette-edge.png'
+const SIGNIN_PATTERN = 'images/signin-pattern.jpg'
+const SIGNIN_PATTERN_TINT = Color4.create(1, 1, 1, 0.07)
+const SIGNIN_TILE = 650
+const SIGNIN_DRIFT_X_SECONDS = 5.65
+const SIGNIN_DRIFT_Y_SECONDS = 8.02
+// enough tiles, one tile of drift either side, for a 4K screen in CSS pixels
+const SIGNIN_TILES_X = 8
+const SIGNIN_TILES_Y = 5
+// frames for the background's images to arrive before the page drops its own
+const SIGNIN_SETTLE_FRAMES = 30
 const LOBBY_SHADE_FROM = FLOOR_SHADE_STOPS[0][0]
 const LOBBY_SHADE_BAND_PX = 4
 const LOBBY_TARGET_Y = 0.8
@@ -113,6 +132,9 @@ function floorShade(height: number): Array<{ top: number; height: number; color:
 
 type Stage = 'backpack' | 'lobby'
 let stage: Stage = 'backpack'
+// The page's region on show: the sign-in screens' is the Backpack's stage on their own background.
+type Region = 'avatarPreview' | 'lobby' | 'signin'
+let region: Region = 'avatarPreview'
 
 let rect: Rect | null = null
 // Frames until a closed region's stage is dropped: a page handing the stage to the next one (the
@@ -353,6 +375,12 @@ async function announceLobbyStage(ctx: Ctx): Promise<void> {
   if (current()) ctx.send({ kind: 'lobbyStageReady' })
 }
 
+async function announceSigninStage(ctx: Ctx): Promise<void> {
+  const generation = ++stageGeneration
+  await waitFrames(SIGNIN_SETTLE_FRAMES)
+  if (generation === stageGeneration && region === 'signin' && rect != null) ctx.send({ kind: 'signinStageReady' })
+}
+
 function lobbyShadow(): Entity {
   const e = engine.addEntity()
   MeshRenderer.setCylinder(e, 1, 1)
@@ -541,16 +569,18 @@ function pollStage(dt: number): void {
 
 export function registerAvatarPreview(ctx: Ctx): void {
   ctx.on('engineViewport', (msg) => {
-    if (msg.region !== 'avatarPreview' && msg.region !== 'lobby') return
+    if (msg.region !== 'avatarPreview' && msg.region !== 'lobby' && msg.region !== 'signin') return
     const nextStage: Stage = msg.region === 'lobby' ? 'lobby' : 'backpack'
     // a region closing after another took over (lobby → Backpack) must not dispose the new one
-    if (msg.rect == null && nextStage !== stage) return
+    if (msg.rect == null && msg.region !== region) return
     if (nextStage !== stage) {
       disposePreview()
       stage = nextStage
       framing = framingFrom = framingTo = FRAMING.body
       framingT = 1
     }
+    const opened = msg.rect != null && (msg.region !== region || rect == null)
+    region = msg.region
     if (msg.rect == null) {
       if (avatarEntity != null) disposeIn = DISPOSE_FRAMES
       else rect = null
@@ -576,6 +606,11 @@ export function registerAvatarPreview(ctx: Ctx): void {
     if (stage === 'lobby') {
       announceLobbyStage(ctx).catch((e) => {
         console.error('[avatarPreview] lobby stage', e)
+      })
+    }
+    if (region === 'signin' && opened) {
+      announceSigninStage(ctx).catch((e) => {
+        console.error('[avatarPreview] sign-in stage', e)
       })
     }
   })
@@ -789,10 +824,47 @@ function renderLobbyStage(r: Rect, camera: Entity): ReactEcs.JSX.Element {
   )
 }
 
+// The sign-in background over the whole screen, and the avatar at the page's column.
+function renderSigninStage(r: Rect, camera: Entity): ReactEcs.JSX.Element {
+  const seconds = Date.now() / 1000
+  const driftX = ((seconds / SIGNIN_DRIFT_X_SECONDS) % 1) * SIGNIN_TILE
+  const driftY = -((seconds / SIGNIN_DRIFT_Y_SECONDS) % 1) * SIGNIN_TILE
+  const tiles: Array<{ key: string; left: number; top: number }> = []
+  for (let i = 0; i < SIGNIN_TILES_X; i++) {
+    for (let j = 0; j < SIGNIN_TILES_Y; j++) {
+      tiles.push({ key: `${i}:${j}`, left: (i - 1) * SIGNIN_TILE + driftX, top: j * SIGNIN_TILE + driftY })
+    }
+  }
+  return (
+    <UiEntity
+      uiTransform={{ positionType: 'absolute', position: { left: 0, top: 0 }, width: '100%', height: '100%', overflow: 'hidden' }}
+      uiBackground={{ texture: { src: SIGNIN_VIGNETTE }, textureMode: 'stretch' }}
+    >
+      {tiles.map((tile) => (
+        <UiEntity
+          key={tile.key}
+          uiTransform={{ positionType: 'absolute', position: { left: tile.left, top: tile.top }, width: SIGNIN_TILE, height: SIGNIN_TILE }}
+          uiBackground={{ texture: { src: SIGNIN_PATTERN }, textureMode: 'stretch', color: SIGNIN_PATTERN_TINT }}
+        />
+      ))}
+      <UiEntity
+        uiTransform={{ positionType: 'absolute', width: '100%', height: '100%' }}
+        uiBackground={{ texture: { src: SIGNIN_VIGNETTE_EDGE }, textureMode: 'stretch' }}
+      />
+      <UiEntity
+        uiTransform={{ positionType: 'absolute', position: { left: r.x, top: r.y }, width: r.width, height: r.height }}
+        uiBackground={{ videoTexture: { videoPlayerEntity: camera }, textureMode: 'stretch' }}
+        onMouseDragLocked={rotateAvatar}
+      />
+    </UiEntity>
+  )
+}
+
 export function renderAvatarPreview(): ReactEcs.JSX.Element | null {
   if (rect == null || cameraEntity == null) return null
   const r = rect
   if (stage === 'lobby') return renderLobbyStage(r, cameraEntity)
+  if (region === 'signin') return renderSigninStage(r, cameraEntity)
   return (
     // Full-screen opaque base: the live world can never show through React's transparent
     // avatar cutout, even if the reported rect and the cutout don't line up to the pixel.

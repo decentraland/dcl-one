@@ -85,7 +85,8 @@ export function StartupFlow({
     return (
       <StartupFrame
         music={music}
-        stage={<EngineViewport region="avatarPreview" report={session.setEngineViewport} />}
+        stage={<EngineViewport region="signin" report={session.setEngineViewport} />}
+        stageReady={session.signinStageReady}
       >
         {step === 'look' ? (
           <NewAccountLook
@@ -166,20 +167,23 @@ export function StartupFlow({
 }
 
 /** The sign-in screens' frame: the pattern on the vignette and the footer, on the 1920x1080 canvas.
- *  `stage` is a new account's avatar: the engine draws it in the column on the right, which the
- *  background leaves clear. */
+ *  `stage` is a new account's avatar: the engine draws the same background over the whole screen, with
+ *  the avatar on its podium in the stage's column, and once it has (`stageReady`) this background
+ *  fades out to show it. */
 function StartupFrame({
   music,
   stage,
+  stageReady = false,
   children
 }: {
   music: LoginMusic
   stage?: React.ReactNode
+  stageReady?: boolean
   children: React.ReactNode
 }): React.JSX.Element {
   return (
-    <div className={`${styles.root} ${stage != null ? styles.withStage : ''}`}>
-      <div className={styles.backdrop}>
+    <div className={styles.root}>
+      <div className={`${styles.backdrop} ${stage != null && stageReady ? styles.backdropAway : ''}`.trim()}>
         <LogoPattern />
       </div>
       <div className={styles.canvas}>

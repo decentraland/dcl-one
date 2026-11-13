@@ -9,7 +9,7 @@ import type { LaunchHostOptions } from '@explorer-core/engine/engineRpc'
 import { recordVisit } from '@explorer-core/features/lobby/lobbyApi'
 import type { PortableInfo, PortableState, SatelliteView } from '@explorer-core/engine/generated'
 import type { AvatarLook } from '@explorer-core/engine/avatarEquip'
-import type { PhotoModeSnapshot, PhotoModeSource, PreviewFocus } from '@explorer-core/engine/protocol'
+import type { EngineViewportRegion, PhotoModeSnapshot, PhotoModeSource, PreviewFocus } from '@explorer-core/engine/protocol'
 import { clickButton, screenViewed, sessionId, track } from '@explorer-core/lib/analytics'
 import { useStoredProfile } from '../login/useStoredProfile'
 import { inShell, postToShell } from '@explorer-core/lib/shell'
@@ -955,6 +955,9 @@ export interface EngineSession {
   playerReady: boolean
   /** The engine has drawn the lobby stage and avatar, so the page's stand-in can fade out. */
   lobbyStageReady: boolean
+  /** The engine has drawn the sign-in stage (a new account's avatar on the sign-in background), so the
+   *  page's own background can fade out. */
+  signinStageReady: boolean
   /** The lobby reopened in-world from the menu. */
   lobbyPage: { open: boolean; toggle: () => void; travel: (dest: Destination) => void }
   /** The Backpack avatar preview's on-screen rect (CSS px), while it is open. */
@@ -1028,7 +1031,7 @@ export interface EngineSession {
   nav: (action: NavAction) => void
   /** Report (or clear) the screen rect where the scene should render an engine view. */
   setEngineViewport: (
-    region: 'map' | 'avatarPreview' | 'lobby',
+    region: EngineViewportRegion,
     rect: { x: number; y: number; width: number; height: number } | null,
     dpr?: number
   ) => void
@@ -1140,6 +1143,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const [lobby, setLobby] = useState(false)
   const lobbyRef = useRef(false)
   const [lobbyStageReady, setLobbyStageReady] = useState(false)
+  const [signinStageReady, setSigninStageReady] = useState(false)
   lobbyRef.current = lobby
   // The welcome page: asked of the engine after each sign-in, null until it answers (or once accepted).
   const [welcome, setWelcome] = useState<{ terms: boolean; newProfile: boolean } | null>(null)
@@ -2228,6 +2232,9 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
         case 'lobbyStageReady':
           setLobbyStageReady(true)
           setAvatarLoaded(true)
+          break
+        case 'signinStageReady':
+          setSigninStageReady(true)
           break
         case 'welcome': {
           // an answer to an ask from before a sign-out is the signed-out account's: no page of a
@@ -3900,8 +3907,10 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   // Where the Backpack's avatar shows through, so the lobby under its modal can open the same hole.
   const [avatarPreviewRect, setAvatarPreviewRect] = useState<{ x: number; y: number; width: number; height: number } | null>(null)
   const setEngineViewport = useCallback(
-    (region: 'map' | 'avatarPreview' | 'lobby', rect: { x: number; y: number; width: number; height: number } | null, dpr?: number) => {
+    (region: EngineViewportRegion, rect: { x: number; y: number; width: number; height: number } | null, dpr?: number) => {
       if (region === 'avatarPreview') setAvatarPreviewRect(rect)
+      // a closed sign-in stage is drawn again from scratch: the page keeps its background until then
+      if (region === 'signin' && rect == null) setSigninStageReady(false)
       driverRef.current?.send({ kind: 'engineViewport', region, rect, dpr })
     },
     []
@@ -4560,6 +4569,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     phase,
     playerReady,
     lobbyStageReady,
+    signinStageReady,
     lobbyPage: { open: lobbyOpen, toggle: toggleLobby, travel: travelFromLobbyInWorld },
     homeScene,
     avatarPreviewRect,

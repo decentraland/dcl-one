@@ -53,6 +53,19 @@ describe('after sign-in', () => {
     expect(session.logout).toHaveBeenCalled()
   })
 
+  it("opens the engine's sign-in stage for the avatar, keeping the page's background until the engine has drawn its own", async () => {
+    const session = welcomeSession({ pending: false, newProfile: true })
+    await show(session)
+    expect(session.setEngineViewport).toHaveBeenCalledWith('signin', expect.objectContaining({ width: expect.any(Number) }), expect.any(Number))
+    const backdrop = document.querySelector('[class*="backdrop"]')
+    expect(backdrop?.className).not.toMatch(/backdropAway/)
+  })
+
+  it('fades the background out once the sign-in stage is drawn', async () => {
+    await show(welcomeSession({ pending: false, newProfile: true }, { signinStageReady: true }))
+    expect(document.querySelector('[class*="backdrop"]')?.className).toMatch(/backdropAway/)
+  })
+
   it('the name screen: JUMP IN needs a valid name and the terms; the newsletter is only for an email account', async () => {
     const session = welcomeSession({ pending: false, newProfile: true, email: 'player@example.com' })
     await show(session)
@@ -110,6 +123,17 @@ describe('the session after sign-in', () => {
     expect(h.session().login.status).toBe('sign-in-or-guest')
     expect(h.session().login.error).toBe('verifying timed out')
     expect(driver.calls).toContain('logout')
+  })
+
+  it('the sign-in stage is ready once the engine says so, and again only after it is closed and redrawn', async () => {
+    const h = renderSession({ userId: null })
+    await waitFor(() => expect(h.session().login.status).toBe('sign-in-or-guest'))
+    act(() => h.session().setEngineViewport('signin', { x: 0, y: 0, width: 10, height: 10 }, 1))
+    expect(h.session().signinStageReady).toBe(false)
+    act(() => h.driver.emit({ kind: 'signinStageReady' }))
+    await waitFor(() => expect(h.session().signinStageReady).toBe(true))
+    act(() => h.session().setEngineViewport('signin', null))
+    expect(h.session().signinStageReady).toBe(false)
   })
 
   it("an email account's newsletter opt-in goes to the builder service with the address", async () => {

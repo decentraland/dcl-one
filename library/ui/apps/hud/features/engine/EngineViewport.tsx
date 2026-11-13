@@ -6,6 +6,7 @@
 import { useLayoutEffect, useRef } from 'react'
 import { subscribeHudScale } from '@explorer-core/lib/hudScale'
 import styles from './EngineViewport.module.css'
+import type { EngineViewportRegion } from '@explorer-core/engine/protocol'
 
 type Rect = { x: number; y: number; width: number; height: number }
 
@@ -13,10 +14,10 @@ export function EngineViewport({
   region,
   report
 }: {
-  region: 'map' | 'avatarPreview' | 'lobby'
+  region: EngineViewportRegion
   /** Stable callback (useCallback) — reports the rect (in CSS pixels) and the current
    *  `devicePixelRatio`, or null to clear. */
-  report: (region: 'map' | 'avatarPreview' | 'lobby', rect: Rect | null, dpr?: number) => void
+  report: (region: EngineViewportRegion, rect: Rect | null, dpr?: number) => void
 }): React.JSX.Element {
   const ref = useRef<HTMLDivElement>(null)
 

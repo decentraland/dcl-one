@@ -931,6 +931,12 @@ export interface LobbyStageReadyMessage {
   kind: 'lobbyStageReady'
 }
 
+/** The sign-in stage (its background and the new account's avatar podium) has been drawn (scene →
+ *  page), so the page's own background can fade out. */
+export interface SigninStageReadyMessage {
+  kind: 'signinStageReady'
+}
+
 /** The look `default<look>` (a `showLook`) is on the lobby stage, loaded and facing front (scene →
  *  page): the next RANDOMIZE can go. */
 export interface LookShownMessage {
@@ -1150,6 +1156,11 @@ export interface PermissionResolveRequest {
   realm: string
 }
 
+/** The engine-backed views a page can open: the rich map, the Backpack's avatar preview, the lobby
+ *  stage, and the sign-in stage (the whole screen's background, with a new account's avatar in the
+ *  rect). */
+export type EngineViewportRegion = 'map' | 'avatarPreview' | 'lobby' | 'signin'
+
 /**
  * Tells the scene to render an engine-backed view (the rich map, or the avatar
  * preview) into a screen rectangle that a React page has carved out as transparent.
@@ -1157,7 +1168,7 @@ export interface PermissionResolveRequest {
  */
 export interface EngineViewportRequest {
   kind: 'engineViewport'
-  region: 'map' | 'avatarPreview' | 'lobby'
+  region: EngineViewportRegion
   rect: { x: number; y: number; width: number; height: number } | null
   /** `devicePixelRatio` at the time the rect was measured. The rect is in CSS pixels, so this is
    *  what turns it into the physical pixels the scene should actually render — without it a
@@ -2256,6 +2267,7 @@ export type SceneToPage =
   | RealmInfoMessage
   | SceneInfoMessage
   | LobbyStageReadyMessage
+  | SigninStageReadyMessage
   | LookShownMessage
   | GalleryMessage
   | GalleryPhotoMessage

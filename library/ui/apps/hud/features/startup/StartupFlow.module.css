@@ -6,16 +6,18 @@
   font-family: var(--font-family);
   color: var(--text);
 }
-/* the vignette and its pattern, the whole screen, or left of a new account's avatar column */
+/* the vignette and its pattern, the whole screen; under a new account's stage, only until the engine
+   has drawn the same background with the avatar */
 .backdrop {
   position: absolute;
   inset: 0;
   overflow: hidden;
   background: var(--loading-vignette);
 }
-.withStage .backdrop {
-  right: auto;
-  width: calc((50% - 86px * var(--ui-scale)));
+/* fades away to the engine's copy, but comes back at once: the engine's goes with its stage */
+.backdropAway {
+  opacity: 0;
+  transition: opacity var(--dur-mid) ease;
 }
 /* the avatar's column, 1026 wide and the full height, its centre (where the avatar stands) at x 1387
    of the 1920 canvas */
