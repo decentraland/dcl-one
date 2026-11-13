@@ -20,7 +20,9 @@ use uuid::Uuid;
 
 use crate::api::Shared as AppState;
 use crate::auth::AuthChain;
-use crate::shared::client_ip::{client_ip, normalize_ip, peer_client_ip, source_key};
+use crate::shared::client_ip::{
+    client_ip, is_internal, is_trusted_proxy, normalize_ip, single_real_ip, source_key,
+};
 
 mod identities;
 mod validation;
@@ -137,7 +139,7 @@ pub struct ChallengeRecord {
     pub requires_validation: bool,
     pub status: ChallengeStatus,
     /// The creating network's [`request_source`] key, for the pending cap.
-    pub source: String,
+    pub source: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -400,25 +402,50 @@ pub fn sweep_expired_requests(state: &AppState, now: DateTime<Utc>) {
         .retain(|_, record| record.expiration >= horizon);
 }
 
-/// The network a request comes from, for the pending caps: the TCP peer or
-/// a trusted proxy's `X-Real-IP`, IPv6 by its /64. Requests whose source is
-/// unknown share one key. The request chain is not bound to the request, so
-/// the caps never key on the signer.
+/// The network a request comes from, for the pending caps, IPv6 by its /64:
+/// a trusted proxy's `X-Real-IP` (the proxy itself when it sends none), or a
+/// public peer. An untrusted private peer is most likely an unlisted gateway
+/// whose address would put every client in one bucket, so it, like a request
+/// without a socket, has no source and only the global cap applies. The
+/// request chain is not bound to the request, so the caps never key on the
+/// signer.
 pub(super) fn request_source(
     headers: &HeaderMap,
     peer: Option<std::net::SocketAddr>,
     trusted_proxies: &[ipnet::IpNet],
-) -> String {
-    peer_client_ip(headers, peer, trusted_proxies)
-        .map(|ip| source_key(&ip))
-        .unwrap_or_default()
+) -> Option<String> {
+    let peer = peer?.ip().to_canonical();
+    let ip = if is_trusted_proxy(peer, trusted_proxies) {
+        single_real_ip(headers).unwrap_or(peer)
+    } else if is_internal(peer) {
+        if headers.contains_key("x-real-ip") {
+            warn_untrusted_proxy_once(peer);
+        }
+        return None;
+    } else {
+        peer
+    };
+    Some(source_key(&ip.to_string()))
+}
+
+/// Once per process, as content warns for deploys.
+fn warn_untrusted_proxy_once(peer: std::net::IpAddr) {
+    static WARNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if !WARNED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        tracing::warn!(
+            %peer,
+            "/auth-api: a private or loopback peer forwards X-Real-IP but is not in \
+             HTTP_TRUSTED_PROXY_CIDRS, so sign-ins behind it get no per-network cap; \
+             list the backend proxy networks there"
+        );
+    }
 }
 
 /// Refuses a new request once the relay or its network holds too many
 /// unexpired pending ones.
 fn request_capacity_refusal(
     state: &AppState,
-    source: &str,
+    source: Option<&str>,
     now: DateTime<Utc>,
 ) -> Option<Response> {
     if state.auth_api.requests.len() >= MAX_PENDING_REQUESTS {
@@ -431,7 +458,10 @@ fn request_capacity_refusal(
             continue;
         }
         live += 1;
-        if record.source == source && matches!(record.status, ChallengeStatus::Pending) {
+        if source.is_some()
+            && record.source.as_deref() == source
+            && matches!(record.status, ChallengeStatus::Pending)
+        {
             from_source += 1;
         }
     }
@@ -477,7 +507,7 @@ async fn create_request(
         peer.map(|Extension(ConnectInfo(p))| p),
         &state.settings.trusted_proxy_cidrs,
     );
-    if let Some(refusal) = request_capacity_refusal(&state, &source, now) {
+    if let Some(refusal) = request_capacity_refusal(&state, source.as_deref(), now) {
         return refusal;
     }
 
@@ -1223,7 +1253,7 @@ mod tests {
             expiration,
             requires_validation: false,
             status: ChallengeStatus::Pending,
-            source: source.into(),
+            source: Some(source.into()),
         }
     }
 
@@ -1250,8 +1280,16 @@ mod tests {
         assert_eq!(
             status,
             StatusCode::CREATED,
-            "an unknown source is its own bucket"
+            "a request without a source has no per-network cap"
         );
+        for _ in 0..MAX_REQUESTS_PER_SOURCE {
+            let (status, _) = call(&app, post("10.0.0.9:4000")).await;
+            assert_eq!(
+                status,
+                StatusCode::CREATED,
+                "an unlisted private gateway does not put every client in one bucket"
+            );
+        }
 
         for mut entry in state.auth_api.requests.iter_mut() {
             entry.status = ChallengeStatus::Fulfilled;
@@ -1278,16 +1316,26 @@ mod tests {
         );
         let spoofed = headers(&[("x-real-ip", "198.51.100.7")]);
         assert_eq!(
-            request_source(&spoofed, peer("203.0.113.5:1"), &[]),
-            "203.0.113.5",
-            "an untrusted peer's header is ignored"
+            request_source(&spoofed, peer("203.0.113.5:1"), &[]).as_deref(),
+            Some("203.0.113.5"),
+            "a public untrusted peer's header is ignored"
         );
-        let proxies = ["203.0.113.0/24".parse().unwrap()];
+        let proxies = ["10.0.0.0/8".parse().unwrap()];
         assert_eq!(
-            request_source(&spoofed, peer("203.0.113.5:1"), &proxies),
-            "198.51.100.7"
+            request_source(&spoofed, peer("10.0.0.5:1"), &proxies).as_deref(),
+            Some("198.51.100.7")
         );
-        assert_eq!(request_source(&spoofed, None, &proxies), "");
+        assert_eq!(
+            request_source(&none, peer("10.0.0.5:1"), &proxies).as_deref(),
+            Some("10.0.0.5"),
+            "a trusted proxy without X-Real-IP is its own source"
+        );
+        assert_eq!(
+            request_source(&spoofed, peer("10.0.0.5:1"), &[]),
+            None,
+            "an unlisted private gateway gives no source"
+        );
+        assert_eq!(request_source(&spoofed, None, &proxies), None);
     }
 
     #[tokio::test]
@@ -1303,7 +1351,7 @@ mod tests {
                 .insert(id.clone(), record(&id, &format!("s{i}"), in_grace));
         }
         assert!(
-            request_capacity_refusal(&state, "new", now).is_none(),
+            request_capacity_refusal(&state, Some("new"), now).is_none(),
             "expired requests in their grace window hold no slot"
         );
         let live = now + Duration::seconds(REQUEST_TTL_SECONDS);
@@ -1311,7 +1359,7 @@ mod tests {
             entry.expiration = live;
         }
         assert_eq!(
-            request_capacity_refusal(&state, "new", now).map(|r| r.status()),
+            request_capacity_refusal(&state, None, now).map(|r| r.status()),
             Some(StatusCode::SERVICE_UNAVAILABLE)
         );
     }
@@ -1387,7 +1435,7 @@ mod tests {
                     identity_id: format!("i{i}"),
                     identity: Value::Null,
                     ip_address: String::new(),
-                    source: "203.0.113.5".into(),
+                    source: Some("203.0.113.5".into()),
                     is_mobile: false,
                     created_at: now,
                     expiration: now + Duration::seconds(3600),

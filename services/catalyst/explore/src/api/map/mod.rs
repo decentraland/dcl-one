@@ -42,6 +42,7 @@ const PNG_CACHE_ENTRIES: usize = 256;
 const TILES_CACHE_ENTRIES: usize = 512;
 const PNG_CACHE_BYTES: usize = 128 << 20;
 const TILES_CACHE_BYTES: usize = 256 << 20;
+const FLIGHT_PRUNE_AT: usize = 64;
 
 pub struct Grid {
     pub tiles: HashMap<String, Tile>,
@@ -206,6 +207,8 @@ pub struct MapState {
     png_cache: ResponseCache,
     tiles_cache: ResponseCache,
     tiles_flights: parking_lot::Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+    #[cfg(test)]
+    tiles_builds: std::sync::atomic::AtomicUsize,
 }
 
 impl Default for MapState {
@@ -225,6 +228,8 @@ impl MapState {
                 TILES_CACHE_BYTES,
             ),
             tiles_flights: Default::default(),
+            #[cfg(test)]
+            tiles_builds: Default::default(),
         }
     }
 
@@ -243,8 +248,22 @@ impl MapState {
     /// The lock a tiles miss holds while building `key`'s body.
     pub fn tiles_flight(&self, key: &str) -> Arc<tokio::sync::Mutex<()>> {
         let mut flights = self.tiles_flights.lock();
-        flights.retain(|_, lock| Arc::strong_count(lock) > 1);
+        // Idle locks are dropped in batches, not on every call.
+        if flights.len() >= FLIGHT_PRUNE_AT {
+            flights.retain(|_, lock| Arc::strong_count(lock) > 1);
+        }
         flights.entry(key.to_string()).or_default().clone()
+    }
+
+    #[cfg(test)]
+    pub fn tiles_builds(&self) -> usize {
+        self.tiles_builds.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    pub(super) fn count_tiles_build(&self) {
+        #[cfg(test)]
+        self.tiles_builds
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 
     pub fn content_tag(&self) -> u64 {
@@ -487,9 +506,11 @@ mod tests {
         assert!(Arc::ptr_eq(&a, &map.tiles_flight("k")));
         assert!(!Arc::ptr_eq(&a, &map.tiles_flight("other")));
         drop(a);
-        map.tiles_flight("third");
+        for i in 0..1_000 {
+            map.tiles_flight(&format!("idle-{i}"));
+        }
         assert!(
-            map.tiles_flights.lock().len() <= 1,
+            map.tiles_flights.lock().len() <= FLIGHT_PRUNE_AT + 1,
             "idle locks are dropped"
         );
     }

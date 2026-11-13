@@ -45,7 +45,7 @@ pub struct IdentityRecord {
     pub identity: Value,
     pub ip_address: String,
     /// The creating network's `request_source` key, for the pending cap.
-    pub source: String,
+    pub source: Option<String>,
     pub is_mobile: bool,
     pub created_at: DateTime<Utc>,
     pub expiration: DateTime<Utc>,
@@ -169,7 +169,7 @@ pub(super) async fn create_identity(
             continue;
         }
         live += 1;
-        if record.source == source {
+        if source.is_some() && record.source == source {
             from_source += 1;
         }
     }

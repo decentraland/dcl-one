@@ -401,6 +401,7 @@ async fn serve_tiles(
     if let Some(body) = state.map.cached_tiles(&key) {
         return cached_json(body, last, &key);
     }
+    state.map.count_tiles_build();
     let mut map = Map::new();
     for (id, value) in filter_tiles(&grid.tiles, q) {
         let value = if legacy {
@@ -651,5 +652,43 @@ mod tests {
             "distinct areas keep distinct keys"
         );
         assert_ne!(key(&[("include", "x")]), key(&[("include", "y")]));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_tile_misses_build_the_body_exactly_once() {
+        let state = crate::api::tests_support::state_without_db().await;
+        let mut tiles = HashMap::new();
+        for x in 0..50 {
+            for y in 0..50 {
+                let mut t = owned_tile();
+                t.id = coords_to_id(x, y);
+                t.x = x;
+                t.y = y;
+                tiles.insert(t.id.clone(), t);
+            }
+        }
+        state.map.set(super::super::Grid::from_tiles(
+            tiles,
+            1,
+            None,
+            chrono::Utc::now().naive_utc(),
+        ));
+        let barrier = Arc::new(tokio::sync::Barrier::new(16));
+        let calls: Vec<_> = (0..16)
+            .map(|_| {
+                let state = state.clone();
+                let barrier = barrier.clone();
+                tokio::spawn(async move {
+                    barrier.wait().await;
+                    serve_tiles(&state, &HeaderMap::new(), &HashMap::new(), false)
+                        .await
+                        .status()
+                })
+            })
+            .collect();
+        for call in calls {
+            assert_eq!(call.await.unwrap(), StatusCode::OK);
+        }
+        assert_eq!(state.map.tiles_builds(), 1);
     }
 }

@@ -430,6 +430,23 @@ mod tests {
         assert_eq!(map.len(), 100);
     }
 
+    #[tokio::test(start_paused = true)]
+    async fn a_map_of_one_keeps_only_the_newest_entry() {
+        let map: TtlMap<u32, u32> = TtlMap::bounded(Duration::from_secs(60), 1);
+        for k in 0..5 {
+            map.insert(k, k);
+            tokio::time::advance(Duration::from_millis(1)).await;
+            assert_eq!(map.len(), 1);
+            assert_eq!(map.get_fresh(&k), Some(k));
+        }
+        assert_eq!(
+            map.get_or_fetch(9, || async { Ok::<_, ()>(9) }).await,
+            Ok(9)
+        );
+        assert_eq!(map.len(), 1);
+        assert_eq!(map.get_fresh(&9), Some(9));
+    }
+
     #[tokio::test]
     async fn a_full_map_evicts_in_batches_not_per_insert() {
         let map: TtlMap<u32, u32> = TtlMap::bounded(Duration::from_secs(60), 100);
