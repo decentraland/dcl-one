@@ -53,6 +53,8 @@ import { EDITOR_BUILD } from '@explorer-core/features/editorHost/config'
 import { editorEntry } from '@explorer-core/features/editorHost/source'
 import { hudActsOn, type EditorHudMode } from '@explorer-core/features/editorHost/hudMode'
 import { streamHere } from '../voiceChat/streamHere'
+import { donatePlaceOf, donateSceneKey } from '@explorer-core/features/donate/place'
+import type { DonatePlace } from '@explorer-core/hostContract'
 import type {
   AvatarColorTarget,
   AppNotification,
@@ -414,6 +416,9 @@ export interface MinimapState {
    *  parcel (the header falls back to "Empty parcel"). Updates as the player crosses into
    *  another scene — unlike the entry overlay's title, which never does. */
   sceneTitle: string
+  /** The place the player stands in, as Donate names it (a Genesis City parcel or a World); null in a preview,
+   *  a local realm or between scenes. */
+  donatePlace: DonatePlace | null
   /** Relay the current style/rotation/zoom to the scene. Only the Camera style needs the
    *  engine; on the DOM styles the scene disposes its TextureCamera. */
   setConfig: (config: { style: MinimapStyle; rotation: MinimapRotation; visibleMeters: number }) => void
@@ -1388,6 +1393,10 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const poseRef = useRef<PlayerPose>({ x: 0, z: 0, yaw: 0, camYaw: 0 })
   const [satelliteView, setSatelliteView] = useState<SatelliteView | null>(null)
   const [sceneTitle, setSceneTitle] = useState('')
+  // Kept as its key, so a scene report for the same place leaves the minimap's state as it was.
+  const [donatePlaceKey, setDonatePlaceKey] = useState<string | null>(null)
+  /** The scene (realm and hash) Donate's place was last taken from. */
+  const donateSceneRef = useRef<string | null>(null)
   const [placesOpen, setPlacesOpen] = useState(false)
   // The lobby reopened in-world: over the running world, under the panels it opens.
   const [lobbyOpen, setLobbyOpen] = useState(false)
@@ -2211,6 +2220,16 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
         case 'sceneInfo':
           setSceneTitle(msg.title)
           setScenePlace(msg.parcel == null ? null : { parcel: `${msg.parcel.x},${msg.parcel.y}`, realm: msg.realm ?? '' })
+          {
+            // Donate's place changes with the scene, not with each parcel crossed inside it (the bridge reports
+            // every parcel), so the host is asked once per scene; a parcel with no scene names none.
+            const sceneKey = donateSceneKey(msg)
+            if (sceneKey !== donateSceneRef.current) {
+              donateSceneRef.current = sceneKey
+              const place = sceneKey ? donatePlaceOf(msg) : null
+              setDonatePlaceKey(place ? JSON.stringify(place) : null)
+            }
+          }
           // Leaving a scene forgets its visit answers (a neighbour's are kept until the player leaves
           // that one); the used permissions and the badge are the current scene's only.
           if (msg.scene !== currentScene.current) {
@@ -4333,8 +4352,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     [mapParcel, mapOpen, toggleMap, teleport, changeRealm, teleportToPlace]
   )
   const minimapSlice = useMemo(
-    () => ({ pose: poseRef, satelliteView, sceneTitle, setConfig: setMinimapConfig }),
-    [satelliteView, sceneTitle, setMinimapConfig]
+    () => ({ pose: poseRef, satelliteView, sceneTitle, donatePlace: donatePlaceKey ? (JSON.parse(donatePlaceKey) as DonatePlace) : null, setConfig: setMinimapConfig }),
+    [satelliteView, sceneTitle, donatePlaceKey, setMinimapConfig]
   )
 
   return {
