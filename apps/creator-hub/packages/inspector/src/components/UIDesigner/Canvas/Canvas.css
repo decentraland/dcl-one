@@ -70,6 +70,25 @@
   touch-action: manipulation;
 }
 
+.ui-designer-canvas-node.textured {
+  isolation: isolate;
+}
+
+.ui-designer-canvas-texture {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  pointer-events: none;
+  background-repeat: no-repeat;
+}
+
+.ui-designer-canvas-texture-filter {
+  position: absolute;
+  width: 0;
+  height: 0;
+}
+
 .ui-designer-canvas-node:hover {
   outline-color: var(--ui-designer-accent-40);
 }

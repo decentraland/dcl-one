@@ -336,7 +336,11 @@ export const STYLE_GROUP = {
       kind: 'enum' as const,
       core: true,
       options: TEXTURE_MODE_OPTIONS,
-      hiddenWhen: (v: Record<string, unknown>) => !v.texture,
+      hiddenWhen: (v: Record<string, unknown>) => {
+        const fill = (v.texture as { tex?: { $case?: string } } | undefined)?.tex?.$case;
+        if (fill) return fill !== 'texture';
+        return v.textureMode === undefined || !!v.color;
+      },
       info: 'How the texture fills the box: cropped to the middle, sliced, or stretched.',
       defaultValue: 1,
     },

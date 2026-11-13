@@ -2381,6 +2381,7 @@ Drift (checked): the code's no-GUI state matches the copy and chips; its empty-G
 | --- | --- |
 | Copy | Figma's copy is used exactly as drawn (user decision). |
 | Pulse | ✱ The drawn rings (65 and 31, Blue Light 1 at 30%, color-dodge) scale out and fade over 1.6s ease-out, looping until a GUI or a node is added; under `prefers-reduced-motion`, the static rings with no animation (user decision). |
+| Empty Image | ✱ An Image with no texture yet paints nothing on the canvas, as in-world: only its dotted node marker, and the selection frame while selected (user decision). No board draws an Image without a texture. |
 
 ### Canvas drop (UI Editor — Screens)
 
@@ -2743,6 +2744,7 @@ The mode control draws five cells, Video among them, in every variant; the code 
 | Topic | Rule |
 | --- | --- |
 | Tiled fill | Tiled takes a Tiles X / Y count (user decision). Figma draws neither the option nor the fields; the ✱ row above is the nearest drawn pattern. |
+| Image fill | An Image stays an Image whatever its fill: Solid colour or No fill changes only the fill, and a Container that picks Image file becomes an Image (user decision). No fill on an Image is stored as a clear colour, transparent black `{ r: 0, g: 0, b: 0, a: 0 }`, beside the texture mode; any other colour at 0% opacity stays Solid colour and keeps its colour (user decision). The Image panel `3493:163461` draws the fill modes, not what the node becomes. |
 
 ### Border (UI Editor — PropertiesSubsections)
 
@@ -4544,6 +4546,8 @@ Code that doesn't follow Figma or these conventions yet. Every row is open: no P
 | 3D Hierarchy | The lock and eye spacing is not Figma's `CTAs` pair: 16px buttons on a 20px pitch with the eye 4px from the row edge, where NodeTypeHierarchy draws 16px boxes on a 24px pitch with the eye's box 10px from the edge. The row height (22 vs 24px) is open too | `Tree/ActionArea/ActionArea.css`, `Hierarchy/` | inspector specialist | open |
 | 3D Hierarchy, LockLayerToggle | The 3D lock keeps its `react-icons` glyphs: the open lock carries a keyhole dot that LockLayerToggle `21068:32238` doesn't draw. Colours and the hover fill already follow the set | `Tree/ActionArea/ActionArea.tsx`, `Hierarchy/` | inspector specialist | open |
 | 3D Hierarchy | The info triggers (Player, Camera, the scene root: a `div.action-button` around a hover `InfoTooltip`) are not keyboard reachable. Each becomes a `<button>` in the row's roving actions, with the 1px Snow `--focus-ring`, the tooltip on focus as well as hover, and Escape to close. Their accessible names (such as "About Player") are the user's call | `Tree/ActionArea/ActionArea.tsx`, `Hierarchy/` | inspector specialist; names: the user | open |
+| Fill (UI Editor) | The Image source is a "Path" label over a dropdown reading "None", where Fill's Image variant (`3493:163461`) draws a "Search" input (Onix, `Search` 10 glyph, White 40 placeholder) with the round `Link` and `LocalAssets` buttons beside it. The mode control sits on its own row under "Fill", where Figma puts it at the right of the "Fill" label on one h 20 header row. For the #1645 layer | `RightPanel/PropertyPanel/FillField/FillField.tsx` | inspector specialist (#1645) | open |
+| Fill (UI Editor) | Scale Type offers "Cropped", "Sliced" and "Stretched" but no Tiled, which Fill's Decisions record as a scale type with a Tiles X / Y count (user decision). For the #1431 layer | `RightPanel/PropertyPanel/field-configs.constants.ts` (`TEXTURE_MODE_OPTIONS`) | inspector specialist (#1431) | open |
 | LeftPanel2D, HierarchySections (UI Editor) | The rail's search field is not mapped in code, and the rail header (`.ui-designer-rail-header`, 32 tall, 11px / 400 White 50) is drift from HierarchySections | `LeftPanel/LeftPanel.tsx`, `UIDesigner.css` | inspector specialist | open |
 | Toolbar (Viewport Toolbar) | Neither bar has `role="toolbar"` with arrow-key roving focus | `Toolbar/`, `UIDesigner/Toolbar/` | inspector specialist | open |
 | Toolbar, Menu | The snap card (`Gizmos.css`) copies the old `OptionList` shadow literal `0px 3px 5px -1px rgba(0,0,0,.4)` instead of `--menu-shadow`; the CameraModeTooltip paints `#fff` and `rgb(0 0 0 / 40%)` literals (`Toolbar.css`) | `Toolbar/Gizmos/Gizmos.css`, `Toolbar/Toolbar.css` | inspector specialist | open |

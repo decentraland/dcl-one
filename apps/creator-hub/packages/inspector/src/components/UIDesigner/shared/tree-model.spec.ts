@@ -57,6 +57,11 @@ describe('classifyNode', () => {
     expect(classifyNode({ type: 'UiEntity', uiBackground })).toBe('Image');
   });
 
+  it('classifies a UiEntity whose background sets a texture mode as an Image, before any texture', () => {
+    expect(classifyNode({ type: 'UiEntity', uiBackground: { textureMode: 1 } })).toBe('Image');
+    expect(classifyNode({ type: 'UiEntity', uiBackground: { textureMode: 0 } })).toBe('Image');
+  });
+
   it('classifies a UiEntity without a texture as a Container', () => {
     expect(classifyNode({ type: 'UiEntity' })).toBe('Container');
     expect(classifyNode({ type: 'UiEntity', uiBackground: { color: { r: 1 } } })).toBe('Container');
