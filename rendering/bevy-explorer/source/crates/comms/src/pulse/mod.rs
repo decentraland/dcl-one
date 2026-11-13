@@ -237,7 +237,7 @@ struct Subject {
     /// update for that baseline, so later gaps cannot displace the first one we can bridge.
     pending_delta: Option<pulse::PlayerStateDeltaTier0>,
     /// A displaced update can still be newer than the state we recover. Remember its destination
-    /// so a stopped peer cannot leave us stranded after its payload has been dropped.
+    /// so recovery requests it after the nearest missing link has been supplied.
     latest_pending_seq: u32,
 }
 
@@ -258,7 +258,7 @@ impl Subject {
             self.pending_delta = Some(delta);
             return false;
         }
-        if delta.baseline_seq != self.last_seq || delta.new_seq <= self.last_seq {
+        if delta.baseline_seq != self.last_seq {
             return false;
         }
         self.apply_delta(&delta);
@@ -796,8 +796,9 @@ impl PulseDecoder {
         events
     }
 
-    /// A response can advance the baseline without reaching the held update. Keep recovery
-    /// live even if the remote player stops sending movement at that point.
+    /// A response can advance the baseline without reaching the latest observed destination.
+    /// Request that remaining gap from the new baseline. A failed send releases the request
+    /// gate and relies on a later update to retry; there is no timed retry here.
     fn resync_buffered_delta(&mut self, subject_id: u32) -> Vec<PulseEvent> {
         let Some(subject) = self.subjects.get(&subject_id) else {
             return Vec::new();

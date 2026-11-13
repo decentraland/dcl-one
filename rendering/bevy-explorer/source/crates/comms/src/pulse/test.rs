@@ -1166,6 +1166,13 @@ fn buffered_delta_applies_when_a_delta_reaches_its_baseline() {
     decoder.handle(delta(SUBJECT, 7, 8, 1700, 5.0));
 
     let events = decoder.handle(delta(SUBJECT, 5, 7, 1600, 3.0));
+    assert!(
+        matches!(
+            events.as_slice(),
+            [PulseEvent::Movement { timestamp, .. }] if *timestamp == 1.7
+        ),
+        "{events:?}"
+    );
     let movement = only_movement(events);
     approx(movement.position_x, 165.0);
     assert!(decoder.pending_resync.is_empty());
@@ -1320,7 +1327,44 @@ fn buffered_delta_preserves_a_teleport_and_its_new_realm() {
         ),
         "{events:?}"
     );
-    approx(only_movement(events).position_x, 165.0);
+    let movement = only_movement(events);
+    approx(movement.position_x, 165.0);
+    let precision = movement
+        .position_precision
+        .expect("replayed delta precision");
+    assert_eq!(precision.x, 16.0 / 255.0 * 0.5);
+    assert_eq!(precision.y, 200.0 / 8191.0 * 0.5);
+    assert_eq!(precision.z, 16.0 / 255.0 * 0.5);
+}
+
+#[test]
+fn buffered_delta_is_discarded_when_a_teleport_passes_its_destination() {
+    let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
+    decoder.handle(server_msg(joined_in_realm(
+        SUBJECT,
+        WALLET,
+        "home",
+        (1.0, 2.0, 3.0),
+    )));
+    decoder.handle(delta(SUBJECT, 7, 8, 1700, 5.0));
+
+    let events = decoder.handle(teleported(9, 1800, "elsewhere"));
+    assert!(
+        matches!(events.as_slice(), [
+            PulseEvent::Joined { realm: joined_realm, .. },
+            PulseEvent::Movement { realm, teleport: true, timestamp, .. },
+        ] if &**joined_realm == "elsewhere" && &**realm == "elsewhere" && *timestamp == 1.8
+        ),
+        "{events:?}"
+    );
+    let movement = only_movement(events);
+    approx(movement.position_x, 164.0);
+    assert!(movement.position_precision.is_none());
+    assert!(decoder.pending_resync.is_empty());
+    approx(
+        only_movement(decoder.handle(bare_delta(9, 10, 1900))).position_x,
+        164.0,
+    );
 }
 
 #[test]
