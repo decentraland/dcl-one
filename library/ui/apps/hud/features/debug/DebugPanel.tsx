@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import { Button, ModalShell, Select, TextInput, Toggle, openPopup } from '../../design'
+import { Button, ModalShell, Select, TextInput, Toggle } from '../../design'
+import type { EngineSession } from '../session/useEngineSession'
+import { closeDebugPanel, useDebugPanel } from './useDebugPanel'
 import styles from './DebugPanel.module.css'
 
 type RunCommand = (line: string) => Promise<string>
@@ -273,8 +275,9 @@ function SectionRow({ section, run, open, toggle }: {
   )
 }
 
-function DebugPanel({ run, close, initial }: { run: RunCommand; close: () => void; initial: string }) {
+function DebugPanel({ run, initial }: { run: RunCommand; initial: string }) {
   const { value: sections, error } = useCommandResult<DebugSection[]>(run, '/debug_panel', false)
+  const { value: developmentBuild } = useCommandResult<boolean>(run, '/debug_panel --dev-build', false)
   const [filter, setFilter] = useState(initial)
   const [expanded, setExpanded] = useState<string[]>(initial ? [initial.toLowerCase()] : [])
   const isOpen = (s: DebugSection) => expanded.includes(s.title.toLowerCase())
@@ -287,7 +290,8 @@ function DebugPanel({ run, close, initial }: { run: RunCommand; close: () => voi
     ...s.actions.map(([label]) => label), ...(s.inputs ?? []).flatMap(i => i.kind.type === 'actionButton'
       ? [i.label, i.kind.options.enable[0], i.kind.options.disable[0]] : [i.label])].some((label) => label.toLowerCase().includes(term)))
   return (
-    <ModalShell title="Debug panel" ariaLabel="Debug panel" onClose={close} className={styles.panel}>
+    <ModalShell title="Debug panel" ariaLabel="Debug panel" modal={false} onClose={closeDebugPanel}
+      className={developmentBuild === true ? `${styles.panel} ${styles.besideLauncher}` : styles.panel}>
       <TextInput type="search" aria-label="Find debug controls" placeholder="Find a section or control"
         value={filter} onChange={setFilter} />
       {error ? <p role="status">Could not load debug sections. {error}</p> :
@@ -300,10 +304,9 @@ function DebugPanel({ run, close, initial }: { run: RunCommand; close: () => voi
   )
 }
 
-export function openDebugPanel(run: RunCommand, initial: string, onClose: () => void,
-  launcherLayer: (element: HTMLDivElement | null) => void): () => void {
-  return openPopup((close) => <>
-    <div className={styles.launcherLayer} ref={launcherLayer} />
-    <DebugPanel run={run} close={close} initial={initial} />
-  </>, { dim: false, onClose })
+/** The open panel, beside the world rather than on the popup stack: it holds no input, so the
+ *  player keeps moving, clicking the world and using the HUD while its readings update. */
+export function DebugPanelHost({ session }: { session: EngineSession }) {
+  const { state, run } = useDebugPanel(session)
+  return state && <DebugPanel key={state.opened} run={run} initial={state.target} />
 }

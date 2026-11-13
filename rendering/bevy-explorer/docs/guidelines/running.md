@@ -174,6 +174,9 @@ sections you want to watch. Collapsing a section stops its queries. Download tot
 connection rates include traffic from before you opened the panel. Current Scene charts
 show up to 256 completed ticks from the player's current parcel scene. Entering a different
 scene starts its own history.
+The panel stays open while you play: you can walk, look around, click the world and use the
+HUD while its readings update. Close it with its close button, the bug button, `/debug`, the
+Sidebar entry or Cancel (Escape).
 Pulse and LiveKit rooms show one connection button. It changes from **Disconnect**
 to **Connect** when paused, and is disabled when there is no controllable connection.
 

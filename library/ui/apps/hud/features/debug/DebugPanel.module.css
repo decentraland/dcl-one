@@ -1,5 +1,7 @@
 .panel {
   position: fixed;
+  /* Over the world HUD and menu pages, under popups. */
+  z-index: calc(var(--z-modal) + 1);
   top: 12px;
   right: 12px;
   max-width: calc((100vw - 24px) / var(--ui-scale));
@@ -13,7 +15,7 @@
   border-top: 1px solid var(--line);
 }
 /* Leave room for the development build's lower-right toggle while the panel scrolls. */
-.launcherLayer:not(:empty) + .panel {
+.besideLauncher {
   max-height: calc((100dvh - 20px) / var(--ui-scale) - 44px);
 }
 .chart { margin: 0; font-size: var(--fs-xs); }

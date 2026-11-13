@@ -1,6 +1,8 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { expect, it, vi } from 'vitest'
-import { PopupHost, resetPopups } from '../../design/popups'
+import { hasOpenPopup } from '../../design/popups'
+import { dispatchCancelLayer } from '@explorer-core/lib/cancelLayers'
+import { DebugPanelHost } from '../../features/debug/DebugPanel'
 import { Sidebar } from '../../features/sidebar/Sidebar'
 import { requestDebugPanel } from '../../features/debug/useDebugPanel'
 import { fakeSession } from '../harness'
@@ -9,7 +11,7 @@ it.each([true, false])('gates the direct debug launcher on the engine developmen
   const session = fakeSession()
   session.runDebugCommand = vi.fn(async (line: string) =>
     line === '/debug_panel --dev-build' ? String(development) : '[]')
-  render(<><Sidebar session={session} /><PopupHost /></>)
+  render(<><Sidebar session={session} /><DebugPanelHost session={session} /></>)
   await waitFor(() => expect(session.runDebugCommand).toHaveBeenCalledWith('/debug_panel --dev-build'))
   const button = { name: 'Toggle debug panel' }
   if (!development) {
@@ -46,12 +48,12 @@ it('discovers plugin sections, samples expanded sections and dispatches their ac
   })
   session.runDebugCommand = command
   try {
-    render(<><Sidebar session={session} /><PopupHost /></>)
+    render(<><Sidebar session={session} /><DebugPanelHost session={session} /></>)
     fireEvent.click(screen.getByRole('button', { name: 'Sidebar settings' }))
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Debug panel' })) })
     expect(screen.getByRole('dialog', { name: 'Debug panel' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Transport' })).toHaveAttribute('aria-expanded', 'false')
-    expect(command.mock.calls).toEqual([['/debug_panel --dev-build'], ['/debug_panel']])
+    expect(command.mock.calls).toEqual([['/debug_panel --dev-build'], ['/debug_panel'], ['/debug_panel --dev-build']])
     const clock = screen.getByRole('button', { name: 'Clock' })
     const sectionHeaders = () => screen.getAllByRole('button', { name: /^(Transport|Clock|Session)$/ })
     const originalOrder = sectionHeaders()
@@ -73,7 +75,6 @@ it('discovers plugin sections, samples expanded sections and dispatches their ac
     fireEvent.click(screen.getByRole('button', { name: 'Close' }))
     expect(screen.queryByRole('dialog', { name: 'Debug panel' })).toBeNull()
   } finally {
-    act(() => resetPopups())
     vi.useRealTimers()
   }
 })
@@ -87,7 +88,7 @@ it('opens a named section from chat and applies plugin-declared values', async (
   ] }
   session.runDebugCommand = vi.fn(async (line: string) => line === '/debug_panel' ? JSON.stringify([section]) :
     line === '/metrics' ? JSON.stringify({ scale: 0.800000011920929, fog: true, mode: 'low', gpu: { samples: [1, 3, 2], unit: 'ms' } }) : 'Updated')
-  render(<><Sidebar session={session} /><PopupHost /></>)
+  render(<><Sidebar session={session} /><DebugPanelHost session={session} /></>)
   await act(async () => requestDebugPanel('Graphics', vi.fn()))
   expect(screen.getByRole('img', { name: 'GPU history' })).toBeInTheDocument()
   expect(screen.getByRole('spinbutton', { name: 'Scale' })).toHaveDisplayValue('0.8')
@@ -122,7 +123,7 @@ it('shows only the next connection action and follows changes from the engine', 
     return 'Applied'
   })
   try {
-    render(<><Sidebar session={session} /><PopupHost /></>)
+    render(<><Sidebar session={session} /><DebugPanelHost session={session} /></>)
     await act(async () => requestDebugPanel('Pulse', vi.fn()))
     const action = (name: string) => screen.queryByRole('button', { name })
     expect(action('Connect')).toBeNull()
@@ -144,7 +145,6 @@ it('shows only the next connection action and follows changes from the engine', 
     expect(screen.getByText(/No session/)).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Close' }))
   } finally {
-    act(() => resetPopups())
     vi.useRealTimers()
   }
 })
@@ -155,7 +155,7 @@ it('keeps the caption with each number and separates unlabelled tuples too', asy
   session.runDebugCommand = vi.fn(async (line: string) => line === '/debug_panel'
     ? JSON.stringify([{ title: 'Entity Requests', query: '/counts', fields, actions: [] }])
     : JSON.stringify({ batch: [9, 269.114, 430], pair: [0, -2.5] }))
-  render(<><Sidebar session={session} /><PopupHost /></>)
+  render(<><Sidebar session={session} /><DebugPanelHost session={session} /></>)
   await act(async () => requestDebugPanel('Entity Requests', vi.fn()))
   const group = within(screen.getByRole('list', { name: 'Scene definitions per batch' })).getAllByRole('listitem')
   expect(group.map(cell => cell.textContent?.trim())).toEqual(['min 9', 'mean 269.11', 'max 430'])
@@ -173,7 +173,7 @@ it('explains absent readings once per cause and replaces the explanation when da
     : JSON.stringify({ room, count: 0, muted: false, unavailable: {
       'room.peer': 'Select a peer', room: 'Waiting for a room', '': 'No sample yet'
     } }))
-  render(<><Sidebar session={session} /><PopupHost /></>)
+  render(<><Sidebar session={session} /><DebugPanelHost session={session} /></>)
   await act(async () => requestDebugPanel('Room', vi.fn()))
   expect(screen.getAllByText('Waiting for a room')).toHaveLength(1)
   expect(screen.getByText('Select a peer')).toBeInTheDocument()
@@ -186,13 +186,35 @@ it('explains absent readings once per cause and replaces the explanation when da
   fireEvent.click(screen.getByRole('button', { name: 'Close' }))
 })
 
-it('closes the panel and its subscriptions when the world sidebar unmounts', async () => {
+it('stays open while the player uses the world and the HUD, and closes on Cancel', async () => {
   const session = fakeSession()
   session.runDebugCommand = vi.fn(async () => '[]')
-  const tree = render(<><Sidebar session={session} /><PopupHost /></>)
+  render(<><Sidebar session={session} /><DebugPanelHost session={session} /></>)
+  await act(async () => requestDebugPanel('', vi.fn()))
+  const dialog = screen.getByRole('dialog', { name: 'Debug panel' })
+  expect(dialog).toHaveAttribute('aria-modal', 'false')
+  expect(hasOpenPopup()).toBe(false)
+  fireEvent.click(document.body)
+  fireEvent.click(screen.getByRole('button', { name: 'Sidebar settings' }))
+  expect(screen.getByRole('button', { name: 'Debug panel' })).toBeInTheDocument()
+  expect(screen.getByRole('dialog', { name: 'Debug panel' })).toBe(dialog)
+  // the settings panel opened last, so Cancel closes it first
+  act(() => { expect(dispatchCancelLayer()).toBe(true) })
+  expect(screen.queryByRole('button', { name: 'Debug panel' })).toBeNull()
+  expect(screen.getByRole('dialog', { name: 'Debug panel' })).toBe(dialog)
+  act(() => { expect(dispatchCancelLayer()).toBe(true) })
+  expect(screen.queryByRole('dialog', { name: 'Debug panel' })).toBeNull()
+})
+
+it('keeps the panel open when the world sidebar unmounts and closes it with its host', async () => {
+  const session = fakeSession()
+  session.runDebugCommand = vi.fn(async () => '[]')
+  const tree = render(<><Sidebar session={session} /><DebugPanelHost session={session} /></>)
   fireEvent.click(screen.getByRole('button', { name: 'Sidebar settings' }))
   await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Debug panel' })) })
   expect(screen.getByRole('button', { name: 'Session' })).toBeInTheDocument()
-  tree.rerender(<><PopupHost /></>)
+  tree.rerender(<>{null}<DebugPanelHost session={session} /></>)
+  expect(screen.getByRole('dialog', { name: 'Debug panel' })).toBeInTheDocument()
+  tree.rerender(<></>)
   expect(screen.queryByRole('dialog', { name: 'Debug panel' })).toBeNull()
 })

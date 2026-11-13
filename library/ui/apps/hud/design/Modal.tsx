@@ -13,6 +13,8 @@ interface ModalProps {
   width?: number
   ariaLabel?: string
   role?: string
+  /** `false` for a card that sits beside the world and leaves the rest of the HUD usable. */
+  modal?: boolean
   className?: string
 }
 
@@ -24,6 +26,7 @@ export function Modal({
   width = 420,
   ariaLabel,
   role = 'dialog',
+  modal = true,
   className = ''
 }: ModalProps): React.JSX.Element {
   return (
@@ -31,7 +34,7 @@ export function Modal({
       className={`${styles.card} ${className}`.trim()}
       style={{ width }}
       role={role}
-      aria-modal="true"
+      aria-modal={modal}
       aria-label={ariaLabel}
       onClick={(e) => e.stopPropagation()}
     >
@@ -219,6 +222,7 @@ interface ModalShellProps {
   className?: string
   ariaLabel?: string
   role?: string
+  modal?: boolean
   bodyless?: boolean
   bodyClassName?: string
   header?: ReactNode
@@ -245,6 +249,7 @@ export function ModalShell({
   className = '',
   ariaLabel,
   role = 'dialog',
+  modal = true,
   bodyless = false,
   bodyClassName = '',
   header,
@@ -301,7 +306,7 @@ export function ModalShell({
   )
 
   return (
-    <Modal width={resolvedWidth} className={`${styles.shell} ${className}`.trim()} ariaLabel={ariaLabel} role={role}>
+    <Modal width={resolvedWidth} className={`${styles.shell} ${className}`.trim()} ariaLabel={ariaLabel} role={role} modal={modal}>
       {headerNode}
       {body}
       {footerNode}
