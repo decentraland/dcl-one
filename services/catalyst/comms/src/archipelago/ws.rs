@@ -21,6 +21,7 @@ mod control_position;
 mod io;
 mod legacy_decode;
 mod legacy_fence;
+pub mod raw_transport;
 
 const MAX_CLIENT_MESSAGE_BYTES: usize = 16 * 1024;
 const AUTHORITY_OPERATION_TIMEOUT: Duration = Duration::from_secs(2);
@@ -34,8 +35,8 @@ pub(super) fn connector_routes(
 ) -> Router<AppState> {
     Router::new().route(
         "/ws",
-        axum::routing::any(move |method, uri, headers, ws, state| {
-            connector_upgrade(method, uri, headers, ws, state, http.clone())
+        axum::routing::any(move |method, uri, headers, ws, raw, state| {
+            connector_upgrade(method, uri, headers, ws, raw, state, http.clone())
         }),
     )
 }
@@ -45,6 +46,7 @@ async fn connector_upgrade(
     uri: axum::http::Uri,
     headers: axum::http::HeaderMap,
     ws: Result<WebSocketUpgrade, axum::extract::ws::rejection::WebSocketUpgradeRejection>,
+    raw: Option<axum::Extension<raw_transport::Signal>>,
     State(state): State<AppState>,
     http: std::sync::Arc<super::handlers::ConnectorHttp>,
 ) -> axum::response::Response {
@@ -56,7 +58,9 @@ async fn connector_upgrade(
         return http.respond(method, uri, headers).await;
     }
     match ws {
-        Ok(ws) => ws_upgrade(ws, State(state), headers).await.into_response(),
+        Ok(ws) => ws_upgrade(ws, State(state), headers, raw)
+            .await
+            .into_response(),
         Err(error) => error.into_response(),
     }
 }
@@ -65,6 +69,7 @@ async fn ws_upgrade(
     ws: WebSocketUpgrade,
     State(state): State<AppState>,
     headers: axum::http::HeaderMap,
+    raw: Option<axum::Extension<raw_transport::Signal>>,
 ) -> impl IntoResponse {
     let start = std::time::Instant::now();
     // Optional protocol names never select the authentication or packet decoder.
@@ -80,7 +85,12 @@ async fn ws_upgrade(
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
-    let response = upgrade(ws, state.clone(), protocols);
+    let response = upgrade(
+        ws,
+        state.clone(),
+        protocols,
+        raw.map(|axum::Extension(raw)| raw),
+    );
     state
         .connector_metrics
         .observe_connector(crate::stats::http::Observation {
@@ -97,6 +107,7 @@ fn upgrade(
     ws: WebSocketUpgrade,
     state: AppState,
     protocols: Vec<String>,
+    raw: Option<raw_transport::Signal>,
 ) -> axum::response::Response {
     let handler = state.handlers.clone().try_acquire_owned();
     let permit = match state.sockets.clone().try_acquire_owned() {
@@ -109,6 +120,9 @@ fn upgrade(
                 .into_response();
         }
     };
+    if let Some(raw) = &raw {
+        raw.arm();
+    }
     let ws = ws.protocols(protocols);
     ws.read_buffer_size(16 * 1024)
         .write_buffer_size(0)
@@ -116,7 +130,7 @@ fn upgrade(
         .max_message_size(MAX_CLIENT_MESSAGE_BYTES)
         .max_frame_size(MAX_CLIENT_MESSAGE_BYTES)
         .on_upgrade(move |socket| async move {
-            let socket = io::WebSocket::new(socket, state.clone(), permit);
+            let socket = io::WebSocket::new(socket, state.clone(), permit, raw);
             handle_socket(socket, state).await;
             drop(handler);
         })
@@ -620,7 +634,7 @@ mod tests {
                     async move {
                         upgrade.on_upgrade(move |transport| async move {
                             let permit = state.sockets.clone().acquire_owned().await.unwrap();
-                            let mut socket = WebSocket::new(transport, state.clone(), permit);
+                            let mut socket = WebSocket::new(transport, state.clone(), permit, None);
                             let (link, _events, _) =
                                 state.registry.on_peer_connected("wallet", "session");
                             socket.bind_owner(&link);

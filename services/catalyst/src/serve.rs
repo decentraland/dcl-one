@@ -1524,10 +1524,13 @@ pub async fn serve(
     let shutdown = shutdown_signal();
     tracing::info!(%addr, "catalyst listening");
     let shutdown_jobs = jobs.clone();
+    let app = app.layer(axum::middleware::from_fn(
+        comms::archipelago::ws::raw_transport::connection_info,
+    ));
     axum::serve(
-        listener,
+        comms::archipelago::ws::raw_transport::Listener(listener),
         axum::ServiceExt::<axum::extract::Request>::into_make_service_with_connect_info::<
-            std::net::SocketAddr,
+            comms::archipelago::ws::raw_transport::Connection,
         >(app),
     )
     .with_graceful_shutdown(async move {

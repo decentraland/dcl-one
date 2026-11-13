@@ -27,6 +27,17 @@ EXTERNAL = [
 EXACT_ARCHIPELAGO = {("stats_metrics_engine", "test")}
 MANDATORY_ARCHIPELAGO = {
     ("catalyst_comms", "lib"): [
+        "archipelago::ws::raw_transport::tests::production_partial_write_retirement_keeps_capacity_until_the_reader_drops",
+        "archipelago::ws::raw_transport::tests::axum_reader_and_writer_cannot_drain_a_partial_frame_after_retirement",
+        "archipelago::ws::io::tests::capacity_is_retained_until_both_shared_transport_directions_drop",
+        "archipelago::ws::raw_transport::tests::positive_raw_reads_observe_partial_headers_masks_and_payloads",
+        "archipelago::ws::raw_transport::tests::admission_consumes_http_read_ahead_once_and_terminal_input_cannot_rearm",
+        "archipelago::ws::raw_transport::tests::zero_and_error_reads_never_advance_activity_or_generation",
+        "archipelago::ws::raw_transport::tests::ordinary_output_and_clean_close_still_reach_the_lower_transport",
+        "archipelago::ws::raw_transport::tests::an_observed_read_wins_idle_retirement_and_terminal_state_is_permanent",
+        "archipelago::ws::raw_transport::tests::mounted_partial_header_mask_and_payload_reset_idle_before_parsing",
+        "archipelago::ws::raw_transport::tests::mounted_http_read_ahead_is_consumed_once_before_partial_frame_activity",
+        "archipelago::ws::raw_transport::tests::ordinary_http_preserves_peer_address_and_stays_unarmed",
         "archipelago::ws::legacy_decode::tests::locked_buffer_decoder_differential_corpus",
         "stats::tests::http_tests::source_handler_fixtures_match_pulse_state_and_all_http_aliases",
         "stats::tests::every_contiguous_change_is_visible_at_callback_completion_and_gaps_require_recovery",
@@ -165,6 +176,7 @@ MANDATORY_ARCHIPELAGO = {
         "a_retried_deployment_keeps_its_record_until_its_write_commits",
     ],
     ("archipelago_socket_bounds", "test"): [
+        "initial_http_read_ahead_preserves_partial_frame_and_ordinary_challenge",
         "repeated_and_unknown_wire_fields_reach_the_socket_statistics_boundary",
         "unknown_auth_field_does_not_replace_a_valid_legacy_signature",
         "sustained_excess_heartbeats_close_the_real_socket_with_1008",

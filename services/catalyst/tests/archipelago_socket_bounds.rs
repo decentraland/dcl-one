@@ -36,7 +36,14 @@ async fn server(cap: u32) -> (u16, AppState) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
     tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
+        use catalyst::comms::archipelago::ws::raw_transport;
+        let app = app.layer(axum::middleware::from_fn(raw_transport::connection_info));
+        axum::serve(
+            raw_transport::Listener(listener),
+            app.into_make_service_with_connect_info::<raw_transport::Connection>(),
+        )
+        .await
+        .unwrap();
     });
     (port, state)
 }
@@ -619,6 +626,10 @@ async fn claimed_deny_and_verified_deny_or_ban_fail_before_admission() {
 }
 
 async fn raw_upgrade(port: u16) -> Socket {
+    raw_upgrade_with_prefix(port, &[]).await
+}
+
+async fn raw_upgrade_with_prefix(port: u16, prefix: &[u8]) -> Socket {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let mut tcp = tokio::net::TcpStream::connect(("127.0.0.1", port))
         .await
@@ -627,7 +638,9 @@ async fn raw_upgrade(port: u16) -> Socket {
         "GET /ws HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n"
     );
     eprintln!("CLOSE_WIRE request={request:?}");
-    tcp.write_all(request.as_bytes()).await.unwrap();
+    let mut request = request.into_bytes();
+    request.extend_from_slice(prefix);
+    tcp.write_all(&request).await.unwrap();
     let mut response = vec![];
     tokio::time::timeout(Duration::from_secs(3), async {
         while !response.ends_with(b"\r\n\r\n") {
@@ -648,6 +661,39 @@ async fn raw_upgrade(port: u16) -> Socket {
         None,
     )
     .await
+}
+
+#[tokio::test]
+async fn initial_http_read_ahead_preserves_partial_frame_and_ordinary_challenge() {
+    use tokio::io::AsyncWriteExt;
+    let (port, state) = server(1).await;
+    // The request and first frame byte enter the same HTTP read-ahead buffer.
+    let mut socket = raw_upgrade_with_prefix(port, &[0x89]).await;
+    let tokio_tungstenite::MaybeTlsStream::Plain(tcp) = socket.get_mut() else {
+        panic!("plaintext test transport expected")
+    };
+    // Complete a masked Ping only after receiving the HTTP upgrade response.
+    tcp.write_all(&[0x81, 1, 2, 3, 4, b'p' ^ 1]).await.unwrap();
+    assert_eq!(
+        socket.next().await.unwrap().unwrap(),
+        Message::Pong(b"p".to_vec().into())
+    );
+    socket
+        .send(packet(client_packet::Message::ChallengeRequest(
+            ChallengeRequestMessage {
+                address: "0x0000000000000000000000000000000000000001".into(),
+            },
+        )))
+        .await
+        .unwrap();
+    assert!(matches!(
+        receive(&mut socket).await,
+        server_packet::Message::ChallengeResponse(_)
+    ));
+    let (bytes, ended) = raw_peer_close(&mut socket, "read-ahead").await;
+    assert_eq!(&bytes[..2], &[0x88, 12]);
+    assert!(ended.is_ok());
+    wait(|| state.sockets.available_permits() == 1).await;
 }
 
 // Write the masked control frame directly and keep TCP open until the server ends it.
