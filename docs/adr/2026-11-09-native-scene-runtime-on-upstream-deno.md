@@ -107,6 +107,7 @@ rest.
   `String(opResult)` is `[object Object]`, `Error.prepareStackTrace` is not called, a Blob,
   File or DOMException structured-cloned (a `performance.mark` detail, a tee'd stream chunk)
   comes back as a plain object, index properties cannot be defined on `Array.prototype` or
-  `Object.prototype` and `Array.prototype`'s prototype cannot be replaced, and
+  `Object.prototype` and `Array.prototype`'s prototype cannot be replaced (deno_core's rejection
+  drain writes through them; a client scene can still reach them with its primordials), and
   `WebAssembly.compileStreaming`/`instantiateStreaming` are absent. New globals from V8 15:
   `Temporal`, `DisposableStack`, `AsyncDisposableStack` and `SuppressedError`.

@@ -142,7 +142,8 @@ pub const REVIEWED_UPSTREAM_OPS: &[&str] = &[
     "op_set_captured_bootstrap",
     "op_lazy_load_esm",
     "op_load_ext_script",
-    // fills a holey array under a borrow; init.js keeps index setters off its prototypes
+    // fills a holey array under a borrow; init.js keeps index setters off its prototypes for
+    // sealed (server) scenes
     "op_drain_pending_rejections",
     "op_dispatch_exception",
     "op_destructure_error",

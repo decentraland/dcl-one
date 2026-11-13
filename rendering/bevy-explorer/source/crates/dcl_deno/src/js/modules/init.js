@@ -342,7 +342,8 @@ if (typeof Temporal === "object") {
 // deno_core drains pending rejections into a new holey array while it holds the queue's
 // borrow, so an index accessor on Array.prototype or Object.prototype would run scene code
 // there, and a rejection inside it aborts the process. Index keys and a new prototype for
-// Array.prototype are refused; plain index assignment still works.
+// Array.prototype are refused; plain index assignment still works. A client scene keeps the
+// primordials, whose ObjectDefineProperty this does not reach.
 {
     const {
         ObjectDefineProperty,
