@@ -104,6 +104,12 @@ fn mib(bytes: f64) -> f64 {
 pub fn state_json(state: &WebCacheState) -> serde_json::Value {
     let last = state.last;
     let reason = "The service worker has not answered a trim yet: it does not control this page, or none ran.";
+    // a quota the browser leaves out reaches the page as infinity, which JSON writes as null
+    let quota_reason = if last.is_some() {
+        "The browser reported no quota."
+    } else {
+        reason
+    };
     serde_json::json!({
         "capMiB": mib(state.cap_bytes as f64),
         "overrideMiB": state.override_bytes.map(|b| mib(b as f64)),
@@ -112,14 +118,14 @@ pub fn state_json(state: &WebCacheState) -> serde_json::Value {
         "trims": state.trims,
         "workerCapMiB": last.map(|r| mib(r.cap_bytes)),
         "usageMiB": last.map(|r| mib(r.usage)),
-        "quotaMiB": last.map(|r| mib(r.quota)),
+        "quotaMiB": last.and_then(|r| r.quota.is_finite().then(|| mib(r.quota))),
         "cachesMiB": last.map(|r| mib(r.caches_usage)),
         "evictedEntries": last.map(|r| r.evicted_entries),
         "evictedMiB": last.map(|r| mib(r.evicted_bytes)),
         "persisted": last.map(|r| r.persisted),
         "unavailable": {
             "overrideMiB": "No override: the configured cap applies.",
-            "workerCapMiB": reason, "usageMiB": reason, "quotaMiB": reason, "cachesMiB": reason,
+            "workerCapMiB": reason, "usageMiB": reason, "quotaMiB": quota_reason, "cachesMiB": reason,
             "evictedEntries": reason, "evictedMiB": reason, "persisted": reason,
         },
     })
@@ -496,5 +502,40 @@ mod tests {
             serde_json::from_str(&state_json(&state).to_string()).unwrap();
         assert_eq!(json["evictedMiB"], 3.1);
         assert_eq!(json["persisted"], true);
+    }
+
+    #[test]
+    fn a_report_without_a_quota_says_the_browser_gave_none() {
+        let state = WebCacheState {
+            last: Some(TrimReport {
+                usage: 1048576.0,
+                quota: f64::INFINITY,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let json: serde_json::Value =
+            serde_json::from_str(&state_json(&state).to_string()).unwrap();
+        assert!(json["quotaMiB"].is_null());
+        assert_eq!(
+            json["unavailable"]["quotaMiB"],
+            "The browser reported no quota."
+        );
+        // the other readings are the report's, not missing
+        assert_eq!(json["usageMiB"], 1.0);
+    }
+
+    #[test]
+    fn a_report_with_a_quota_shows_it() {
+        let state = WebCacheState {
+            last: Some(TrimReport {
+                quota: 2.0 * 1048576.0,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let json: serde_json::Value =
+            serde_json::from_str(&state_json(&state).to_string()).unwrap();
+        assert_eq!(json["quotaMiB"], 2.0);
     }
 }

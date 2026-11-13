@@ -183,7 +183,8 @@ async function trimContentCache(capBytes, quotaError) {
     const { usage = 0, quota = Infinity, usageDetails } = await navigator.storage.estimate();
     // usageDetails leaves out a storage system with no usage
     const cachesUsage = usageDetails ? (usageDetails.caches ?? 0) : usage;
-    const persisted = await navigator.storage.persisted();
+    // only for the report: a browser without it, or one that refuses, must not stop the trim
+    const persisted = (await navigator.storage.persisted?.().catch(() => false)) ?? false;
     const { cap, bytesToFree } = contentCacheTarget({ capBytes, quota, cachesUsage, quotaError });
     const report = { capBytes: cap, usage, quota, cachesUsage, evictedEntries: 0, evictedBytes: 0, persisted };
     if (bytesToFree <= 0) return report;

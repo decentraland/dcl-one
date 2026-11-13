@@ -42,7 +42,7 @@ function fakeCache(seed: [string, Response][] = []) {
 }
 type FakeCache = ReturnType<typeof fakeCache>
 
-function serviceWorker(options: { quota?: number; usage?: number; usageDetails?: object | null; others?: boolean } = {}) {
+function serviceWorker(options: { quota?: number; usage?: number; usageDetails?: object | null; others?: boolean; persisted?: 'absent' | 'rejects' } = {}) {
   const listeners: Record<string, (event: unknown) => void> = {}
   const content = fakeCache()
   const fakes = new Map<string, FakeCache>([[CONTENT_CACHE, content]])
@@ -70,7 +70,10 @@ function serviceWorker(options: { quota?: number; usage?: number; usageDetails?:
     quota: options.quota ?? 1e9,
     ...(options.usageDetails === null ? {} : { usageDetails: options.usageDetails ?? { caches: cachesUsage() } })
   }))
-  const navigator = { storage: { estimate, persisted: async () => false } }
+  const storage: Record<string, unknown> = { estimate }
+  if (options.persisted === 'rejects') storage.persisted = async () => Promise.reject(new Error('not allowed'))
+  else if (options.persisted !== 'absent') storage.persisted = async () => false
+  const navigator = { storage }
   const self = {
     addEventListener: (type: string, fn: (event: unknown) => void) => (listeners[type] = fn),
     registration: { scope: 'https://play.example/' }
@@ -216,5 +219,29 @@ describe('content cache trim message', () => {
     for (let n = 0; n < 3; n++) sw.seed(n)
     const { port } = await sw.trim({ capBytes: 1000 })
     expect(port.postMessage).toHaveBeenCalledWith(expect.objectContaining({ cachesUsage: 0, evictedEntries: 0 }))
+  })
+  it('falls back to usage when usageDetails is missing altogether', async () => {
+    const sw = serviceWorker({ usage: 1000, usageDetails: null })
+    for (let n = 0; n < 10; n++) sw.seed(n)
+    const { port } = await sw.trim({ capBytes: 500 })
+    expect(port.postMessage).toHaveBeenCalledWith(expect.objectContaining({ cachesUsage: 1000, evictedEntries: 6 }))
+  })
+
+  it('still trims when navigator.storage.persisted is missing', async () => {
+    const sw = serviceWorker({ persisted: 'absent' })
+    for (let n = 0; n < 10; n++) sw.seed(n)
+    const { port } = await sw.trim({ capBytes: 500 })
+    expect(port.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ evictedEntries: 6, persisted: false })
+    )
+  })
+
+  it('still trims when navigator.storage.persisted rejects', async () => {
+    const sw = serviceWorker({ persisted: 'rejects' })
+    for (let n = 0; n < 10; n++) sw.seed(n)
+    const { port } = await sw.trim({ capBytes: 500 })
+    expect(port.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ evictedEntries: 6, persisted: false })
+    )
   })
 })

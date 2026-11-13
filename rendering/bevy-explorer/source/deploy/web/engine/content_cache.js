@@ -5,6 +5,8 @@
 
 export const CONTENT_CACHE_TRIM = 'content-cache-trim';
 const REPLY_TIMEOUT_MS = 30_000;
+// A write that hit the quota waits for its trim: do not hold it for long on a worker that never answers.
+const QUOTA_ERROR_REPLY_TIMEOUT_MS = 5_000;
 
 /**
  * Posts `message` to the controlling service worker and resolves with its reply, or null when
@@ -34,7 +36,11 @@ export function askServiceWorker(message, container = navigator.serviceWorker, t
 
 /** `__contentCacheTrim`: trim to `capBytes`, freeing at least a quarter after a quota error. */
 export function contentCacheTrim(capBytes, quotaError, container, timeoutMs) {
-  return askServiceWorker({ type: CONTENT_CACHE_TRIM, capBytes, quotaError: quotaError === true }, container, timeoutMs);
+  return askServiceWorker(
+    { type: CONTENT_CACHE_TRIM, capBytes, quotaError: quotaError === true },
+    container,
+    timeoutMs ?? (quotaError === true ? QUOTA_ERROR_REPLY_TIMEOUT_MS : undefined)
+  );
 }
 
 /**

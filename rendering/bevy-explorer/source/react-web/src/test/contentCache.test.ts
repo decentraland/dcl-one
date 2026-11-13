@@ -36,6 +36,24 @@ describe('content cache page functions', () => {
     expect(await pending).toBeNull()
   })
 
+  it('gives up on a quota-error request after 5 s, while a regular one waits 30 s', async () => {
+    vi.useFakeTimers()
+    const container = { controller: { postMessage: vi.fn() } }
+    let quotaDone = false
+    let regularDone = false
+    const quota = contentCacheTrim(100, true, container as never).then(() => (quotaDone = true))
+    const regular = contentCacheTrim(100, false, container as never).then(() => (regularDone = true))
+    await vi.advanceTimersByTimeAsync(4_999)
+    expect(quotaDone).toBe(false)
+    await vi.advanceTimersByTimeAsync(1)
+    await quota
+    expect(quotaDone).toBe(true)
+    expect(regularDone).toBe(false)
+    await vi.advanceTimersByTimeAsync(25_000)
+    await regular
+    expect(regularDone).toBe(true)
+  })
+
   it('asks for persistence only when not persisted', async () => {
     const persisted = { persisted: vi.fn(async () => true), persist: vi.fn(async () => false) }
     expect(await requestPersistentStorage(persisted as never)).toBe(true)
