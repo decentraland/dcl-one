@@ -255,9 +255,10 @@ State, in every build:
   are culled once past their model's range). With a layer and a value it shows or hides that
   layer, or switches the impostors, in preview mode only. The debug panel's "Landscape" section
   binds it.
-- `/bake_landscape_impostors <out_dir>` (native): bakes the trees' and bushes' impostors into
-  `<out_dir>/<model>.boimp`, as the embedded ones were made, and answers with the files written.
-  The trees hold still while it runs.
+- `/bake_landscape_impostors <out_dir>` (native, outside preview mode): bakes the trees' and
+  bushes' impostors into `<out_dir>/<model>.boimp`, as the embedded ones were made, replacing
+  the old files, and answers with the files written, or fails if one was not written or the bake
+  took over 300 s. The trees hold still while it runs.
 
 The HUD and input:
 

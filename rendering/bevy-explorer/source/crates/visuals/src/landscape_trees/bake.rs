@@ -5,8 +5,9 @@
 //! test runs it in a renderer with no window, which is how the embedded files are made.
 
 use std::{
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex},
+    time::{Duration, Instant, SystemTime},
 };
 
 use bevy::prelude::*;
@@ -38,6 +39,8 @@ pub(crate) const PALETTE_RMSE: f32 = 10.0;
 /// view of one reaches another.
 const ORIGIN: Vec3 = Vec3::new(0.0, -5000.0, 0.0);
 const SPACING: f32 = 200.0;
+/// How long a bake may take before it gives up (a headless bake of all five takes seconds).
+const DEADLINE: Duration = Duration::from_secs(300);
 
 /// The radius a bake frames: the model's bounds seen from any side.
 pub(crate) fn bake_radius(prototype: usize) -> f32 {
@@ -59,6 +62,10 @@ pub(crate) struct ImpostorBake {
     /// The wind as it was before the bake held the trees still.
     wind: bool,
     reply: Option<RpcResultSender<Result<String, String>>>,
+    /// When the bake started, on the clock and on the file system's.
+    started: Option<(Instant, SystemTime)>,
+    /// Why the bake failed.
+    error: Option<String>,
     /// Per baked prototype, the height in metres its silhouette covers in the side views.
     pub(crate) heights: Arc<Mutex<Vec<(usize, f32)>>>,
 }
@@ -79,8 +86,65 @@ impl ImpostorBake {
             subjects: Vec::new(),
             wind: true,
             reply: None,
+            started: None,
+            error: None,
             heights: Default::default(),
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn error(&self) -> Option<&str> {
+        self.error.as_deref()
+    }
+
+    /// End the bake: the models and any bake camera go, the wind comes back, and the reply says
+    /// what was written or why nothing was.
+    fn finish(
+        &mut self,
+        commands: &mut Commands,
+        wind: &mut TreeWind,
+        result: Result<Vec<String>, String>,
+    ) {
+        for (_, root) in self.subjects.drain(..) {
+            commands.entity(root).despawn();
+        }
+        if let Stage::Baking {
+            camera: Some(camera),
+            ..
+        } = self.stage
+        {
+            commands.entity(camera).despawn();
+        }
+        wind.0 = self.wind;
+        let reply = match result {
+            Ok(written) => {
+                info!("landscape impostors baked: {written:?}");
+                Ok(json!({ "written": written }).to_string())
+            }
+            Err(error) => {
+                warn!("landscape impostor bake failed: {error}");
+                self.error = Some(error.clone());
+                Err(error)
+            }
+        };
+        if let Some(sender) = self.reply.take() {
+            sender.send(reply);
+        }
+        self.stage = Stage::Finished;
+    }
+
+    /// The files this bake wrote: each must exist, be newer than the bake's start and read as an
+    /// archive (boimp's writer only logs its errors).
+    fn written(&self) -> Result<Vec<String>, String> {
+        let since = self
+            .started
+            .map_or(SystemTime::UNIX_EPOCH, |(_, since)| since);
+        baked_prototypes()
+            .map(|prototype| {
+                let path = self.path(prototype);
+                check_written(&path, since).map(|()| path.display().to_string())
+            })
+            .collect()
     }
 
     #[cfg(test)]
@@ -92,6 +156,22 @@ impl ImpostorBake {
         self.out_dir
             .join(format!("{}.boimp", PROTOTYPES[prototype].asset))
     }
+}
+
+/// A file written at or after `since` that reads as a zip archive, as boimp stores an impostor.
+pub(crate) fn check_written(path: &Path, since: SystemTime) -> Result<(), String> {
+    let fail = |why: String| format!("{}: {why}", path.display());
+    let modified = std::fs::metadata(path)
+        .and_then(|metadata| metadata.modified())
+        .map_err(|error| fail(error.to_string()))?;
+    if modified < since {
+        return Err(fail("not written by this bake".to_owned()));
+    }
+    let bytes = std::fs::read(path).map_err(|error| fail(error.to_string()))?;
+    if !bytes.starts_with(b"PK\x03\x04") {
+        return Err(fail("not an impostor archive".to_owned()));
+    }
+    Ok(())
 }
 
 pub(crate) fn add_bake_command(app: &mut App) {
@@ -195,8 +275,31 @@ fn drive_bake(
     let (Some(assets), Some(materials)) = (assets, materials) else {
         return;
     };
+    if let Some((started, _)) = bake.started {
+        if bake.stage != Stage::Finished && started.elapsed() > DEADLINE {
+            let stage = bake.stage;
+            bake.finish(
+                &mut commands,
+                &mut wind,
+                Err(format!("no bake after {DEADLINE:?}, at {stage:?}")),
+            );
+            return;
+        }
+    }
     match bake.stage {
         Stage::Start => {
+            bake.started = Some((Instant::now(), SystemTime::now()));
+            // the files this bake writes replace the old ones, so none can pass for new
+            for prototype in baked_prototypes() {
+                let path = bake.path(prototype);
+                if let Err(error) = std::fs::remove_file(&path) {
+                    if error.kind() != std::io::ErrorKind::NotFound {
+                        let error = format!("{}: {error}", path.display());
+                        bake.finish(&mut commands, &mut wind, Err(error));
+                        return;
+                    }
+                }
+            }
             bake.wind = wind.0;
             wind.0 = false;
             bake.subjects = baked_prototypes()
@@ -250,18 +353,8 @@ fn drive_bake(
                 return;
             }
             let Some(&(prototype, _)) = bake.subjects.get(next) else {
-                for (_, root) in bake.subjects.drain(..) {
-                    commands.entity(root).despawn();
-                }
-                wind.0 = bake.wind;
-                let written: Vec<_> = baked_prototypes()
-                    .map(|prototype| bake.path(prototype).display().to_string())
-                    .collect();
-                info!("landscape impostors baked: {written:?}");
-                if let Some(reply) = bake.reply.take() {
-                    reply.send(Ok(json!({ "written": written }).to_string()));
-                }
-                bake.stage = Stage::Finished;
+                let written = bake.written();
+                bake.finish(&mut commands, &mut wind, written);
                 return;
             };
             let slot = Vec3::X * SPACING * next as f32;

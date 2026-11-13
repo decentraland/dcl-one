@@ -585,6 +585,7 @@ fn spawned_meshes_wear_the_surface_materials() {
     .init_asset::<TreeLayout>()
     .init_asset::<TreeMaterial>()
     .init_asset::<boimp::Imposter>()
+    .init_asset::<super::impostor::TreeImpostor>()
     .init_resource::<TreeWind>()
     .add_systems(Startup, setup)
     .add_systems(PostUpdate, dress_trees);

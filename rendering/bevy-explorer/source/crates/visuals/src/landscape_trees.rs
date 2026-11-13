@@ -14,9 +14,7 @@ use bevy::{
     render::{mesh::MeshAabb, render_resource::ShaderRef, view::VisibilitySystems},
 };
 use bevy_console::ConsoleCommand;
-use boimp::{
-    bake::ImposterBakeMaterialPlugin, Imposter, ImposterBakePlugin, ImposterLoaderSettings,
-};
+use boimp::{Imposter, ImposterBakePlugin, ImposterLoaderSettings, ImposterRenderPlugin};
 use common::{
     partition::PARCEL_SIZE,
     sets::RealmLifecycle,
@@ -30,6 +28,7 @@ use scene_runner::{
 use serde_json::json;
 
 use crate::terrain::{TerrainSet, TerrainSurface};
+use impostor::{tree_impostor_plugin, TreeImpostor};
 use layout::{hidden_by_occupancy, TreeLayout, TreeLayoutLoader};
 use lod::{
     impostor_step_scale, update_lods, ImpostorDraw, ImpostorsEnabled, TreeInstances,
@@ -40,6 +39,7 @@ use prototypes::PROTOTYPES;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod bake;
+pub(crate) mod impostor;
 pub(crate) mod layout;
 pub(crate) mod lod;
 pub(crate) mod material;
@@ -53,15 +53,16 @@ pub(crate) struct LandscapeTreesPlugin;
 impl Plugin for LandscapeTreesPlugin {
     fn build(&self, app: &mut App) {
         embed_shaders(app);
-        // drawing and baking impostors; the scene impostors, built later, need the same plugin
-        if !app.is_plugin_added::<ImposterBakePlugin>() {
-            app.add_plugins(ImposterBakePlugin);
-        }
+        let preview = app
+            .world()
+            .get_resource::<common::structs::PreviewMode>()
+            .is_some_and(|preview| preview.is_preview);
+        add_impostor_plugins(app, !preview);
         app.init_asset::<TreeLayout>()
             .init_asset_loader::<TreeLayoutLoader>()
             .add_plugins((
                 MaterialPlugin::<TreeMaterial>::default(),
-                ImposterBakeMaterialPlugin::<TreeMaterial>::default(),
+                tree_impostor_plugin(),
             ))
             .init_resource::<TreeWind>()
             .add_console_command::<TreeWindCommand, _>(tree_wind_command)
@@ -72,8 +73,27 @@ impl Plugin for LandscapeTreesPlugin {
                 dress_trees.before(VisibilitySystems::CalculateBounds),
             );
         #[cfg(not(target_arch = "wasm32"))]
-        bake::add_bake_command(app);
+        if !preview {
+            bake::add_bake_command(app);
+        }
         add_spawn_systems(app);
+    }
+}
+
+/// boimp's plugins. Drawing needs its render plugin (its shaders and loader); outside preview
+/// mode the scene impostors bake, and their plugin's bake plugin brings the render plugin with
+/// it, so it is added here in its place, whichever of the two plugins is built first. The tree
+/// material bakes on native builds outside preview mode, where the bake command runs.
+fn add_impostor_plugins(app: &mut App, scenes_bake: bool) {
+    let bake = app.is_plugin_added::<ImposterBakePlugin>();
+    if scenes_bake && !bake {
+        app.add_plugins(ImposterBakePlugin);
+    } else if !bake && !app.is_plugin_added::<ImposterRenderPlugin>() {
+        app.add_plugins(ImposterRenderPlugin);
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    if scenes_bake {
+        app.add_plugins(boimp::bake::ImposterBakeMaterialPlugin::<TreeMaterial>::default());
     }
 }
 
@@ -118,6 +138,18 @@ fn embed_shaders(app: &mut App) {
     embedded_asset!(app, "landscape_tree.wgsl");
     embedded_asset!(app, "soft_shadows.wgsl");
     embedded_asset!(app, "landscape_tree_bake.wgsl");
+    embedded_asset!(app, "landscape_tree_impostor.wgsl");
+}
+
+/// The fragment stage the impostors draw with.
+pub(crate) fn tree_impostor_shader() -> ShaderRef {
+    ShaderRef::Path(
+        format!(
+            "embedded://{}",
+            embedded_path!("landscape_tree_impostor.wgsl").display()
+        )
+        .into(),
+    )
 }
 
 /// The tree material's fragment stage when it is baked into an impostor.
@@ -193,7 +225,7 @@ fn setup(
     asset_server: Res<AssetServer>,
     mut materials: ResMut<Assets<TreeMaterial>>,
     wind: Res<TreeWind>,
-    (mut meshes, imposters): (ResMut<Assets<Mesh>>, Res<Assets<Imposter>>),
+    (mut meshes, impostor_materials): (ResMut<Assets<Mesh>>, Res<Assets<TreeImpostor>>),
 ) {
     let mut textures = Vec::new();
     let surfaces: Vec<_> = ALL_SURFACES
@@ -239,7 +271,7 @@ fn setup(
         materials: std::array::from_fn(|index| {
             if PROTOTYPES[index].lod.impostor.is_some() {
                 (0..IMPOSTOR_SCALES)
-                    .map(|_| imposters.reserve_handle())
+                    .map(|_| impostor_materials.reserve_handle())
                     .collect()
             } else {
                 Vec::new()
@@ -260,13 +292,13 @@ fn setup(
     });
 }
 
-/// Impostors as the scene impostors load theirs: blended, so the depth check against the depth
-/// prepass sees the scene's depth rather than the impostor's own box, and kept on the GPU only.
+/// Impostors loaded for `TreeImpostor`, which takes their bindings and cuts them out itself (the
+/// loader's alpha mode is unused), with their images kept on the GPU only.
 pub(crate) fn impostor_loader_settings() -> ImposterLoaderSettings {
     ImposterLoaderSettings {
         multisample: false,
         alpha: 1.0,
-        alpha_blend: 0.0,
+        alpha_blend: impostor::IMPOSTOR_CUTOFF,
         multisample_amount: 0.0,
         asset_usages: RenderAssetUsages::RENDER_WORLD,
         ..default()
@@ -279,7 +311,7 @@ fn scale_impostors(
     mut events: EventReader<AssetEvent<Imposter>>,
     assets: Option<Res<LandscapeTreeAssets>>,
     draw: Option<Res<ImpostorDraw>>,
-    mut imposters: ResMut<Assets<Imposter>>,
+    (imposters, mut materials): (Res<Assets<Imposter>>, ResMut<Assets<TreeImpostor>>),
 ) {
     let (Some(assets), Some(draw)) = (assets, draw) else {
         events.clear();
@@ -296,13 +328,13 @@ fn scale_impostors(
         else {
             continue;
         };
-        let Some(base) = imposters.get(*id).cloned() else {
+        let Some(base) = imposters.get(*id).map(TreeImpostor::from) else {
             continue;
         };
         for (step, handle) in draw.materials[prototype].iter().enumerate() {
             let mut scaled = base.clone();
             scaled.data.center_and_scale.w *= impostor_step_scale(prototype, step);
-            imposters.insert(handle.id(), scaled);
+            materials.insert(handle.id(), scaled);
         }
     }
 }
@@ -521,7 +553,7 @@ fn update_trees(
         let desired = desired_trees(layout, position, distance.0, |parcel| {
             surface.contains(parcel) && matches!(pointers.get(parcel), Some(PointerResult::Nothing))
         });
-        instances.replace(&mut commands, desired);
+        instances.replace(&mut commands, &surface, desired);
     }
 
     // parcels whose values reach a tree's parcel through bilinear sampling

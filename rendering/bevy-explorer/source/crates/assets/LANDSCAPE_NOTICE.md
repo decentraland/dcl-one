@@ -30,10 +30,11 @@ at an RGB error budget of 10. It runs as a test in a renderer with no window, fr
 `rendering/bevy-explorer/source` on a machine with a GPU:
 
 ```sh
-LANDSCAPE_IMPOSTORS_OUT="$PWD/crates/assets/src/assets/landscape/impostors"   cargo test -p visuals bake_landscape_impostors -- --ignored --nocapture
+LANDSCAPE_IMPOSTORS_OUT="$PWD/crates/assets/src/assets/landscape/impostors" cargo test -p visuals bake_landscape_impostors -- --ignored --nocapture
 ```
 
-The client's `/bake_landscape_impostors <out_dir>` console command (native only) runs the same bake.
+The client's `/bake_landscape_impostors <out_dir>` console command (native builds outside preview
+mode) runs the same bake. Both delete the old files first and check each was written anew.
 A bake is not byte-for-byte repeatable: the GPU's sampling and the palette's ordering vary the
 bytes from run to run.
 

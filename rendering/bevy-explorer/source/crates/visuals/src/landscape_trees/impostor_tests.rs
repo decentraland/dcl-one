@@ -22,11 +22,12 @@ use boimp::{
 };
 
 use super::{
-    bake::{bake_radius, baked_prototypes, ImpostorBake, Stage, TILE_SIZE},
+    bake::{bake_radius, baked_prototypes, check_written, ImpostorBake, Stage, TILE_SIZE},
+    impostor::{tree_impostor_plugin, TreeImpostor},
     layout::TreeLayout,
     lod::{
-        impostor_step_scale, impostor_transform, lod_for, screen_height, ImpostorDraw,
-        ImpostorsEnabled, Lod, IMPOSTOR_SCALES,
+        impostor_step_scale, impostor_transform, lod_for, screen_height, switch_distance,
+        ImpostorDraw, ImpostorsEnabled, Lod, IMPOSTOR_SCALES,
     },
     material::TreeMaterial,
     prototypes::PROTOTYPES,
@@ -78,23 +79,21 @@ fn rocks_have_no_impostor() {
     }
 }
 
-/// The screen height is the group's size over the view's height at its distance: Tree01 at
-/// scale 1 leaves its model about 92 m out under the player camera's 60 degrees.
+/// The screen height is the group's size over the view's height at its distance, under the
+/// player camera's default 60 degrees: Tree01 at scale 1 leaves its model about 92 m out.
 #[test]
 fn screen_height_follows_the_view() {
     let fov = PI / 3.0;
     let switch = 21.718613 * 0.5 / (0.2036845 * (fov * 0.5).tan());
     assert!((switch - 92.35).abs() < 0.05, "{switch}");
+    assert!((switch_distance(5, 0.2036845) - switch).abs() < 1e-3);
+    assert_eq!(lod_for(5, screen_height(5, 1.0, switch - 0.01)), Lod::Mesh);
     assert_eq!(
-        lod_for(5, screen_height(5, 1.0, switch - 0.01, fov)),
-        Lod::Mesh
-    );
-    assert_eq!(
-        lod_for(5, screen_height(5, 1.0, switch + 0.01, fov)),
+        lod_for(5, screen_height(5, 1.0, switch + 0.01)),
         Lod::Impostor
     );
     // twice as big, twice as far
-    assert!((screen_height(5, 2.0, 200.0, fov) - screen_height(5, 1.0, 100.0, fov)).abs() < 1e-6);
+    assert!((screen_height(5, 2.0, 200.0) - screen_height(5, 1.0, 100.0)).abs() < 1e-6);
 }
 
 /// An impostor scale step is never more than half a step from the instance's scale.
@@ -329,7 +328,7 @@ fn drawn(app: &mut App, key: (IVec2, u32)) -> Option<(Entity, bool, Vec<Drawn>)>
             if world.get::<SceneRoot>(child).is_some() {
                 Drawn::Model
             } else {
-                assert!(world.get::<MeshMaterial3d<Imposter>>(child).is_some());
+                assert!(world.get::<MeshMaterial3d<TreeImpostor>>(child).is_some());
                 Drawn::Impostor
             }
         })
@@ -383,6 +382,34 @@ fn impostors_off_culls_past_the_mesh() {
     assert_eq!(drawn(&mut app, key).expect("impostor").2, [Drawn::Impostor]);
 }
 
+/// Zooming the camera changes no instance's class and works nothing out again: the switches are
+/// measured under the player camera's default field of view.
+#[test]
+fn zoom_leaves_the_classes_alone() {
+    use super::lod::TreeInstances;
+
+    let mut app = open_land(6, Vec3::ZERO);
+    app.update();
+    let (_, position) = a_tree01(&mut app);
+    look_from(&mut app, position + Vec3::new(150.0, 2.0, 0.0));
+    let counts = app.world().resource::<TreeInstances>().counts();
+    let passes = app.world().resource::<TreeInstances>().passes();
+    for fov in [10f32, 120.0, 60.0] {
+        let mut projection = app
+            .world_mut()
+            .query_filtered::<&mut Projection, With<common::structs::PrimaryCamera>>();
+        *projection.single_mut(app.world_mut()).unwrap() =
+            Projection::Perspective(PerspectiveProjection {
+                fov: fov.to_radians(),
+                ..default()
+            });
+        app.update();
+        let instances = app.world().resource::<TreeInstances>();
+        assert_eq!(instances.counts(), counts, "at {fov} degrees");
+        assert_eq!(instances.passes(), passes, "at {fov} degrees");
+    }
+}
+
 /// The plugin gives each loaded impostor a material per scale step, sized to the step.
 #[test]
 fn impostor_materials_follow_the_scale() {
@@ -404,6 +431,7 @@ fn impostor_materials_follow_the_scale() {
     .init_asset::<TreeLayout>()
     .init_asset::<TreeMaterial>()
     .init_asset::<Imposter>()
+    .init_asset::<TreeImpostor>()
     .register_asset_loader(ImposterLoader)
     .init_resource::<TreeWind>()
     .add_systems(Startup, setup)
@@ -427,6 +455,7 @@ fn impostor_materials_follow_the_scale() {
     let assets = app.world().resource::<LandscapeTreeAssets>();
     let draw = app.world().resource::<ImpostorDraw>();
     let imposters = app.world().resource::<Assets<Imposter>>();
+    let scaled_materials = app.world().resource::<Assets<TreeImpostor>>();
     for (prototype, base) in assets.impostors.iter().enumerate() {
         let materials = &draw.materials[prototype];
         let Some(base) = base else {
@@ -436,7 +465,7 @@ fn impostor_materials_follow_the_scale() {
         assert_eq!(materials.len(), IMPOSTOR_SCALES);
         let radius = imposters.get(base).unwrap().data.center_and_scale.w;
         for (step, material) in materials.iter().enumerate() {
-            let scaled = imposters.get(material).expect("a scaled material");
+            let scaled = scaled_materials.get(material).expect("a scaled material");
             let expected = radius * impostor_step_scale(prototype, step);
             assert!((scaled.data.center_and_scale.w - expected).abs() < 1e-4);
         }
@@ -464,6 +493,7 @@ fn gpu_app() -> App {
         ImposterBakePlugin,
         MaterialPlugin::<TreeMaterial>::default(),
         ImposterBakeMaterialPlugin::<TreeMaterial>::default(),
+        tree_impostor_plugin(),
     ));
     super::embed_shaders(&mut app);
     app
@@ -554,21 +584,17 @@ fn tree_bake_shader_compiles() {
     let unit = world
         .resource_mut::<Assets<Mesh>>()
         .add(Cuboid::from_length(1.0));
-    for (x, prototype) in [(-0.5, 0), (0.5, 5)] {
-        let impostor = server.load_with_settings::<Imposter, boimp::ImposterLoaderSettings>(
-            format!("{IMPOSTOR_DIR}/{}.boimp", PROTOTYPES[prototype].asset),
-            |settings| *settings = super::impostor_loader_settings(),
-        );
-        textures.push(impostor.clone().untyped());
-        // as the trees draw them: boimp's shader has no shadow pass
-        world.spawn((
-            Mesh3d(unit.clone()),
-            MeshMaterial3d(impostor),
-            Transform::from_xyz(x, 1.5, 0.0),
-            bevy::pbr::NotShadowCaster,
-            bevy::pbr::NotShadowReceiver,
-        ));
-    }
+    let impostors: Vec<_> = [(-0.5, 0), (0.5, 5)]
+        .into_iter()
+        .map(|(x, prototype)| {
+            let impostor = server.load_with_settings::<Imposter, boimp::ImposterLoaderSettings>(
+                format!("{IMPOSTOR_DIR}/{}.boimp", PROTOTYPES[prototype].asset),
+                |settings| *settings = super::impostor_loader_settings(),
+            );
+            textures.push(impostor.clone().untyped());
+            (x, impostor)
+        })
+        .collect();
 
     let started = Instant::now();
     while textures
@@ -581,6 +607,18 @@ fn tree_bake_shader_compiles() {
         );
         app.update();
         std::thread::sleep(Duration::from_millis(1));
+    }
+    // drawn as the trees draw them
+    for (x, impostor) in impostors {
+        let world = app.world_mut();
+        let material =
+            TreeImpostor::from(world.resource::<Assets<Imposter>>().get(&impostor).unwrap());
+        let material = world.resource_mut::<Assets<TreeImpostor>>().add(material);
+        world.spawn((
+            Mesh3d(unit.clone()),
+            MeshMaterial3d(material),
+            Transform::from_xyz(x, 1.5, 0.0),
+        ));
     }
     let mut camera = ImposterBakeCamera {
         radius: 2.0,
@@ -601,23 +639,34 @@ fn tree_bake_shader_compiles() {
         .id();
 
     let started = Instant::now();
-    let (ok, baking, errors) = loop {
+    let impostor_shader = match super::tree_impostor_shader() {
+        bevy::render::render_resource::ShaderRef::Path(path) => server.load::<Shader>(path).id(),
+        _ => unreachable!(),
+    };
+    let (ok, baking, drawing, errors) = loop {
         app.update();
         let cache = app.sub_app(RenderApp).world().resource::<PipelineCache>();
-        let (mut ok, mut baking, mut pending) = (0, 0, 0);
+        let (mut ok, mut baking, mut drawing, mut pending) = (0, 0, 0, 0);
         let mut errors = Vec::new();
         for pipeline in cache.pipelines() {
-            let bake = match &pipeline.descriptor {
-                PipelineDescriptor::RenderPipelineDescriptor(descriptor) => descriptor
-                    .label
-                    .as_ref()
-                    .is_some_and(|label| label.contains("imposter_bake_pipeline")),
-                _ => false,
+            let (bake, impostor) = match &pipeline.descriptor {
+                PipelineDescriptor::RenderPipelineDescriptor(descriptor) => (
+                    descriptor
+                        .label
+                        .as_ref()
+                        .is_some_and(|label| label.contains("imposter_bake_pipeline")),
+                    descriptor
+                        .fragment
+                        .as_ref()
+                        .is_some_and(|fragment| fragment.shader.id() == impostor_shader),
+                ),
+                _ => (false, false),
             };
             match &pipeline.state {
                 CachedPipelineState::Ok(_) => {
                     ok += 1;
                     baking += usize::from(bake);
+                    drawing += usize::from(impostor);
                 }
                 CachedPipelineState::Err(error) => errors.push(error.to_string()),
                 _ => pending += 1,
@@ -628,7 +677,7 @@ fn tree_bake_shader_compiles() {
             .get::<ImposterBakeCamera>(baker)
             .is_some_and(|camera| camera.state == BakeState::Finished);
         if pending == 0 && (finished || !errors.is_empty()) {
-            break (ok, baking, errors);
+            break (ok, baking, drawing, errors);
         }
         assert!(
             started.elapsed() < Duration::from_secs(120),
@@ -636,7 +685,7 @@ fn tree_bake_shader_compiles() {
         );
         std::thread::sleep(Duration::from_millis(1));
     };
-    println!("{ok} pipelines compiled, {baking} of them baking");
+    println!("{ok} pipelines compiled, {baking} of them baking, {drawing} drawing impostors");
     assert!(
         errors.is_empty(),
         "pipeline errors:\n{}",
@@ -644,6 +693,8 @@ fn tree_bake_shader_compiles() {
     );
     // the leaf (cut out) and the trunk (opaque) bake
     assert!(baking >= 2, "only {baking} bake pipelines compiled");
+    // the two stored formats, in the main pass only
+    assert!(drawing >= 2, "only {drawing} impostor pipelines compiled");
 }
 
 /// Bakes the impostors the client embeds, into `LANDSCAPE_IMPOSTORS_OUT` (the system's temporary
@@ -682,6 +733,7 @@ fn bake_landscape_impostors() {
     add_bake_systems(&mut app);
     app.finish();
     app.cleanup();
+    let since = std::time::SystemTime::now();
     app.insert_resource(ImpostorBake::new(out_dir.clone()));
 
     let started = Instant::now();
@@ -698,6 +750,7 @@ fn bake_landscape_impostors() {
         std::thread::sleep(Duration::from_millis(1));
     }
     assert!(app.world().resource::<TreeWind>().0, "the wind is back");
+    assert_eq!(app.world().resource::<ImpostorBake>().error(), None);
 
     let heights = app
         .world()
@@ -710,9 +763,9 @@ fn bake_landscape_impostors() {
     for prototype in baked_prototypes() {
         let prototype_ = &PROTOTYPES[prototype];
         let path = out_dir.join(format!("{}.boimp", prototype_.asset));
-        let bytes = std::fs::metadata(&path)
-            .unwrap_or_else(|error| panic!("{}: {error}", path.display()))
-            .len();
+        // written by this run, not left from an earlier one
+        check_written(&path, since).unwrap();
+        let bytes = std::fs::metadata(&path).unwrap().len();
         let height = heights
             .iter()
             .find(|(baked, _)| *baked == prototype)
@@ -743,7 +796,8 @@ fn bake_landscape_impostors() {
     assert!(misfits.is_empty(), "{misfits:#?}");
 }
 
-/// What the classes cost at the farthest landscape distance, from the city's east edge with every
+/// What the classes cost at the default and the farthest landscape distance, from the city's east
+/// edge with every
 /// parcel of the layout counted as empty land (more than the client ever has in range): the
 /// first pass, which spawns what draws, a pass after each one-step move, and a frame with the
 /// camera still. Timings in this build's profile; run in release for the client's figures:
@@ -754,6 +808,12 @@ fn bake_landscape_impostors() {
 #[test]
 #[ignore = "a measurement; run with --ignored"]
 fn lod_pass_cost() {
+    for distance in [1000.0, 7000.0] {
+        lod_cost_at(distance);
+    }
+}
+
+fn lod_cost_at(distance: f32) {
     use common::{
         structs::{PrimaryCamera, PLAYER_CAMERA_FOV},
         terrain::TerrainTargets,
@@ -764,7 +824,7 @@ fn lod_pass_cost() {
 
     let layout = TreeLayout::parse(GENESIS).unwrap();
     let edge = Vec3::new(150.0 * 16.0 + 8.0, 0.0, -8.0);
-    let desired = desired_trees(&layout, edge, 7000.0, |_| true);
+    let desired = desired_trees(&layout, edge, distance, |_| true);
     let total = desired.len();
 
     let mut app = App::new();
@@ -792,9 +852,10 @@ fn lod_pass_cost() {
         ))
         .id();
     app.update();
+    let surface = TerrainSurface::settled(&TerrainTargets::default());
     app.world_mut()
         .resource_scope(|world, mut instances: Mut<TreeInstances>| {
-            instances.replace(&mut world.commands(), desired);
+            instances.replace(&mut world.commands(), &surface, desired);
         });
     app.world_mut().flush();
 
@@ -816,21 +877,63 @@ fn lod_pass_cost() {
         app.update();
     }
     let still = started.elapsed() / steps;
+    let (model_batches, impostor_batches, impostors) =
+        app.world().resource::<TreeInstances>().batches();
 
     // the player crossing into the next parcel: the instances in range again, and the change
     let started = Instant::now();
-    let next = desired_trees(&layout, edge - Vec3::X * 16.0, 7000.0, |_| true);
+    let next = desired_trees(&layout, edge - Vec3::X * 16.0, distance, |_| true);
     let scan = started.elapsed();
     let started = Instant::now();
     app.world_mut()
         .resource_scope(|world, mut instances: Mut<TreeInstances>| {
-            instances.replace(&mut world.commands(), next);
+            instances.replace(&mut world.commands(), &surface, next);
         });
     app.world_mut().flush();
     let replace = started.elapsed();
     println!(
-        "{total} instances in range; mesh / impostor / culled {counts:?}; first pass {first:?}, \
-         a frame after a step {moving:?}, a still frame {still:?}; on a parcel change, the scan \
-         {scan:?} and the update of the list {replace:?}"
+        "at {distance} m: {total} instances in range; mesh / impostor / culled {counts:?}; \
+         first pass {first:?}, a frame after a step {moving:?}, a still frame {still:?}; \
+         on a parcel change, the scan {scan:?} and the update of the list {replace:?}; \
+         batches: {model_batches} of models, {impostor_batches} of impostors over {impostors} impostors"
     );
+}
+
+/// boimp's plugins go in once whichever of the landscape and the scene impostors is built first,
+/// and preview mode, where the scenes do not bake, gets the render plugin alone.
+#[test]
+fn impostor_plugins_are_added_once() {
+    use boimp::ImposterRenderPlugin;
+
+    use super::add_impostor_plugins;
+
+    let base = || {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, AssetPlugin::default()))
+            .init_asset::<Shader>()
+            .init_asset::<Mesh>()
+            .init_asset::<Image>();
+        app
+    };
+    // the scene impostors' plugin adds the bake plugin unless it is in already
+    let scenes = |app: &mut App| {
+        if !app.is_plugin_added::<ImposterBakePlugin>() {
+            app.add_plugins(ImposterBakePlugin);
+        }
+    };
+
+    let mut landscape_first = base();
+    add_impostor_plugins(&mut landscape_first, true);
+    scenes(&mut landscape_first);
+    assert!(landscape_first.is_plugin_added::<ImposterBakePlugin>());
+
+    let mut scenes_first = base();
+    scenes(&mut scenes_first);
+    add_impostor_plugins(&mut scenes_first, true);
+    assert!(scenes_first.is_plugin_added::<ImposterRenderPlugin>());
+
+    let mut preview = base();
+    add_impostor_plugins(&mut preview, false);
+    assert!(preview.is_plugin_added::<ImposterRenderPlugin>());
+    assert!(!preview.is_plugin_added::<ImposterBakePlugin>());
 }

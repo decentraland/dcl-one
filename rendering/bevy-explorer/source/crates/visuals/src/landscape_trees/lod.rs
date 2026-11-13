@@ -4,18 +4,19 @@
 //! An instance that draws something is one entity carrying its place and its colliders, with its
 //! model or its impostor as a child; the child changes only when the instance's class changes,
 //! and a culled instance has no entity at all, so the far landscape costs nothing but its entry
-//! in the list. The classes are worked out again only when the camera has moved a step, its
-//! field of view has changed, the instances in range have changed, or impostors are switched.
+//! in the list. The classes are worked out again only when the camera has moved a step, the
+//! instances in range have changed, or impostors are switched. As in the reference, the switches
+//! do not follow the camera's zoom: screen heights are measured under the player camera's
+//! default field of view.
 
 use bevy::{
     pbr::{NotShadowCaster, NotShadowReceiver},
     platform::collections::HashMap,
     prelude::*,
 };
-use boimp::Imposter;
 use common::structs::{PrimaryCamera, PLAYER_CAMERA_FOV};
 
-use super::{prototypes::PROTOTYPES, LandscapeTreeAssets, Tree};
+use super::{impostor::TreeImpostor, prototypes::PROTOTYPES, LandscapeTreeAssets, Tree};
 use crate::{
     solids::{prototype_solids, Solid},
     terrain::TerrainSurface,
@@ -56,11 +57,20 @@ pub(crate) fn lod_for(prototype: usize, screen_height: f32) -> Lod {
     }
 }
 
+/// The vertical field of view screen heights are measured under, whatever the camera's zoom: the
+/// reference scales its bias by the zoom so that it cancels out.
+pub(crate) const REFERENCE_FOV: f32 = PLAYER_CAMERA_FOV;
+
 /// The share of the view's height that a prototype's group covers at `scale`, `distance` metres
-/// from a camera with the vertical field of view `fov` (radians), as the reference measures it.
-pub(crate) fn screen_height(prototype: usize, scale: f32, distance: f32, fov: f32) -> f32 {
+/// from the camera, as the reference measures it.
+pub(crate) fn screen_height(prototype: usize, scale: f32, distance: f32) -> f32 {
     let size = PROTOTYPES[prototype].lod.size * scale;
-    size * 0.5 / (distance.max(1e-3) * (fov * 0.5).tan()) * LOD_BIAS
+    size * 0.5 / (distance.max(1e-3) * (REFERENCE_FOV * 0.5).tan()) * LOD_BIAS
+}
+
+/// The distance at which a prototype at scale 1 covers `height` of the view.
+pub(crate) fn switch_distance(prototype: usize, height: f32) -> f32 {
+    PROTOTYPES[prototype].lod.size * 0.5 * LOD_BIAS / (height * (REFERENCE_FOV * 0.5).tan())
 }
 
 /// The impostor scale nearest to `scale`.
@@ -108,7 +118,7 @@ impl Default for ImpostorsEnabled {
 #[derive(Resource, Default)]
 pub(crate) struct ImpostorDraw {
     pub cube: Handle<Mesh>,
-    pub materials: [Vec<Handle<Imposter>>; 8],
+    pub materials: [Vec<Handle<TreeImpostor>>; 8],
 }
 
 /// An instance of the layout in range on confirmed empty land.
@@ -139,6 +149,8 @@ pub(crate) struct TreeInstances {
     cells: HashMap<IVec2, Cell>,
     /// Something changed that the classes have not followed yet.
     changed: bool,
+    /// Passes over the cells so far.
+    passes: u64,
 }
 
 impl TreeInstances {
@@ -165,11 +177,47 @@ impl TreeInstances {
         self.changed = true;
     }
 
+    #[cfg(test)]
+    pub(crate) fn passes(&self) -> u64 {
+        self.passes
+    }
+
+    /// What the drawn instances batch into: the distinct (mesh, material) pairs of the models,
+    /// the distinct impostor materials, and the impostors.
+    #[cfg(test)]
+    pub(crate) fn batches(&self) -> (usize, usize, usize) {
+        let mut models = bevy::platform::collections::HashSet::new();
+        let mut materials = bevy::platform::collections::HashSet::new();
+        let mut impostors = 0;
+        for instance in self.instances() {
+            match instance.lod {
+                Lod::Mesh => {
+                    models.insert(instance.prototype);
+                }
+                Lod::Impostor => {
+                    impostors += 1;
+                    let scale = instance.transform.scale.y;
+                    materials.insert((
+                        instance.prototype,
+                        impostor_scale_step(instance.prototype, scale),
+                    ));
+                }
+                Lod::Culled => {}
+            }
+        }
+        let model_batches = models
+            .iter()
+            .map(|prototype| PROTOTYPES[*prototype].surfaces.len())
+            .sum();
+        (model_batches, materials.len(), impostors)
+    }
+
     /// Keep the instances `keep` takes, which it removes from its set, drop the others with their
-    /// entities, and add what is left in `keep` as culled instances.
+    /// entities, and add what is left in `keep` as culled instances, on the terrain.
     pub(crate) fn replace(
         &mut self,
         commands: &mut Commands,
+        surface: &TerrainSurface,
         mut keep: HashMap<(IVec2, u32), (usize, Transform)>,
     ) {
         self.cells.retain(|_, cell| {
@@ -184,7 +232,9 @@ impl TreeInstances {
             });
             !cell.instances.is_empty()
         });
-        for ((parcel, index), (prototype, transform)) in keep {
+        for ((parcel, index), (prototype, mut transform)) in keep {
+            let translation = &mut transform.translation;
+            translation.y = surface.height(translation.x, -translation.z);
             let cell = self
                 .cells
                 .entry(parcel.div_euclid(IVec2::splat(CELL_PARCELS)))
@@ -235,7 +285,6 @@ pub(crate) const LOD_TOLERANCE: f32 = 0.01;
 #[derive(Default)]
 pub(crate) struct LodState {
     camera: Option<Vec3>,
-    fov: f32,
     enabled: bool,
 }
 
@@ -244,7 +293,7 @@ pub(crate) struct LodState {
 pub(crate) fn update_lods(
     mut commands: Commands,
     mut instances: ResMut<TreeInstances>,
-    camera: Query<(&GlobalTransform, Option<&Projection>), With<PrimaryCamera>>,
+    camera: Query<&GlobalTransform, With<PrimaryCamera>>,
     (enabled, draw, assets, surface): (
         Res<ImpostorsEnabled>,
         Res<ImpostorDraw>,
@@ -253,35 +302,29 @@ pub(crate) fn update_lods(
     ),
     mut state: Local<LodState>,
 ) {
-    let Ok((camera, projection)) = camera.single() else {
+    let Ok(camera) = camera.single() else {
         return;
     };
     let position = camera.translation();
     if !position.is_finite() {
         return;
     }
-    let fov = match projection {
-        Some(Projection::Perspective(perspective)) => perspective.fov,
-        _ => PLAYER_CAMERA_FOV,
-    };
     let moved = state
         .camera
         .is_none_or(|last| last.distance_squared(position) >= LOD_STEP * LOD_STEP);
-    let switches_moved = fov != state.fov || enabled.0 != state.enabled;
+    let switches_moved = enabled.0 != state.enabled;
     if !(moved || instances.changed || switches_moved) {
         return;
     }
     *state = LodState {
         camera: Some(position),
-        fov,
         enabled: enabled.0,
     };
     instances.changed = false;
+    instances.passes += 1;
 
     // the distances at which each prototype at scale 1 leaves its model, and draws nothing
-    let switch = |prototype: usize, height: f32| {
-        PROTOTYPES[prototype].lod.size * 0.5 * LOD_BIAS / (height * (fov * 0.5).tan())
-    };
+    let switch = switch_distance;
     let switches: [(f32, f32); 8] = std::array::from_fn(|prototype| {
         let lod = &PROTOTYPES[prototype].lod;
         let mesh = switch(prototype, lod.mesh);
@@ -309,7 +352,7 @@ pub(crate) fn update_lods(
                 .abs()
                 .min((distance - far * scale).abs());
             slack = slack.min(nearest.max(distance * LOD_TOLERANCE));
-            let height = screen_height(instance.prototype, scale, distance, fov);
+            let height = screen_height(instance.prototype, scale, distance);
             let mut lod = lod_for(instance.prototype, height);
             if lod == Lod::Impostor && !enabled.0 {
                 lod = Lod::Culled;
