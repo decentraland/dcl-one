@@ -26,7 +26,7 @@ fn variant_bytes() -> Vec<u8> {
 fn served_path_of(format: &str, id: &str) -> String {
     let prefix = match format {
         "glb-br" => "m2",
-        "glb" => "g1",
+        "glb" => "g4",
         _ => "t2",
     };
     format!("bevy/{prefix}/{ORIGINAL_CID}_{}", &id[id.len() - 6..])
@@ -60,7 +60,8 @@ fn parses_a_v3_manifest() {
                 "{ORIGINAL_CID}": [
                     "bevy/t2/{ORIGINAL_CID}_srgb",
                     "bevy/m1/{ORIGINAL_CID}",
-                    "bevy/g1/{ORIGINAL_CID}",
+                    "bevy/g4/{ORIGINAL_CID}",
+                    "bevy/g4z9e12/{ORIGINAL_CID}_0123456789abcdef",
                     "bevy/x1/{ORIGINAL_CID}",
                     "bevy/../etc/passwd",
                     "bevy/t2/a.br",
@@ -91,7 +92,12 @@ fn parses_a_v3_manifest() {
                 "ktx2-bc"
             ),
             (&*format!("bevy/m1/{ORIGINAL_CID}"), "model", "glb-br"),
-            (&*format!("bevy/g1/{ORIGINAL_CID}"), "model", "glb"),
+            (&*format!("bevy/g4/{ORIGINAL_CID}"), "model", "glb"),
+            (
+                &*format!("bevy/g4z9e12/{ORIGINAL_CID}_0123456789abcdef"),
+                "model",
+                "glb"
+            ),
         ]
     );
 }
@@ -141,10 +147,15 @@ fn selects_the_first_variant_this_client_takes() {
         Some(served_path(OTHER_CID))
     );
 
-    // `glb` embeds KTX2 under KHR_texture_basisu, which the glTF loader rejects: never taken
+    // `glb` (its embedded images BC KTX2, rewritten to DDS) is taken for a `.glb`, on a GPU
+    // with BC textures
     let glb = [variant(VARIANT_CID, "model", "glb")];
-    assert!(supported_format(&glb[0]).is_none());
-    assert!(select_variant(&glb, "models/a.glb", true, none_bad).is_none());
+    assert!(supported_format(&glb[0]).is_some());
+    assert!(select_variant(&glb, "models/a.glb", true, none_bad).is_some());
+    assert!(select_variant(&glb, "models/A.GLB", true, none_bad).is_some());
+    assert!(select_variant(&glb, "models/a.glb", false, none_bad).is_none());
+    assert!(select_variant(&glb, "models/a.gltf", true, none_bad).is_none());
+    assert!(select_variant(&glb, "images/a.png", true, none_bad).is_none());
     // `glb-br` is fetched as a Brotli copy only a browser decodes: native leaves it untaken and
     // loads the original model (the web build takes it for `.glb` files)
     let brotli = [variant(VARIANT_CID, "model", "glb-br")];
@@ -152,9 +163,10 @@ fn selects_the_first_variant_this_client_takes() {
     assert!(select_variant(&brotli, "models/a.glb", true, none_bad).is_none());
     assert_eq!(
         taken_formats(),
-        "ktx2-bc (BC1/BC5/BC7, unwrapped to DDS by the image loaders); not glb-br, glb"
+        "ktx2-bc (BC1/BC5/BC7, unwrapped to DDS by the image loaders), \
+         glb (embedded BC1/BC5/BC7, rewritten to DDS for the glTF loader); not glb-br"
     );
-    assert!(!could_have_variant("a.glb"));
+    assert!(could_have_variant("a.glb"));
     // the earlier mesh format is not in the schema any more
     assert!(supported_format(&variant(VARIANT_CID, "model", "glb-meshopt")).is_none());
     // a kind/format pair the schema does not have
@@ -561,6 +573,90 @@ async fn a_missing_variant_falls_back_to_the_original() {
     assert_eq!(session.fallbacks, 1);
     assert!(session.recent[0].reason.starts_with("fetch:"));
     drop(session);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+/// A `g` variant: a GLB whose embedded image is a BC KTX2, served at its own path (native has
+/// no Brotli decoder).
+fn glb_variant(image: &[u8]) -> (Vec<u8>, String) {
+    let file = super::glb::tests::with_one_ktx2(image);
+    let cid = crate::content_hash::raw_cid(&file);
+    (file, cid)
+}
+
+#[tokio::test]
+async fn a_glb_variant_is_cached_as_served_and_read_with_its_images_as_dds() {
+    let (io, dir) = io_with_cache("glb");
+    let (bc7, _, _) = super::ktx2::tests::bc7_two_levels();
+    let (served, cid) = glb_variant(&bc7);
+    let variant_route = format!("/{}", served_path_of("glb", &cid));
+    let original_route = format!("/contents/{ORIGINAL_CID}");
+    let (base, log) = serve(vec![
+        (variant_route.clone(), served.clone()),
+        (original_route.clone(), b"original glb".to_vec()),
+    ])
+    .await;
+    scene_with_variant_of(&io, &base, "models/a.glb", "model", "glb", &cid).await;
+    let path = content_path("models/a.glb");
+
+    // the loader reads the GLB with its KTX2 unwrapped to DDS
+    let (rewritten, _) = super::glb::bc_glb_dds(&served).unwrap();
+    assert_ne!(rewritten, served);
+    assert_eq!(read_all(&io, &path).await, rewritten);
+    assert!(io.served_bevy_variant(&path));
+    // the cache holds the variant as served, under a digest of its url, and is rewritten on
+    // every read
+    let name = cache_name(&base, &served_path_of("glb", &cid));
+    assert_eq!(std::fs::read(dir.join(&name)).unwrap(), served);
+    assert!(!dir.join(ORIGINAL_CID).exists());
+    assert_eq!(read_all(&io, &path).await, rewritten);
+
+    assert_eq!(requests_for(&log, &variant_route), 1);
+    assert_eq!(requests_for(&log, &original_route), 0);
+    let session = io.bevy_variants.session.lock().unwrap();
+    assert_eq!(session.served_by_format.get("glb"), Some(&[1, 1]));
+    assert_eq!(
+        session.glb_images,
+        super::glb::EmbeddedImages {
+            bc7: 2,
+            ..Default::default()
+        }
+    );
+    drop(session);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+/// A `g` variant whose KTX2 does not unwrap (here sRGB BC7) cannot be loaded at all: the
+/// original is read instead, the copy dropped and the variant not asked for again.
+#[tokio::test]
+async fn a_glb_variant_whose_ktx2_does_not_unwrap_falls_back_to_the_original() {
+    let (io, dir) = io_with_cache("glb-not-bc");
+    let (_, level0, level1) = super::ktx2::tests::bc7_two_levels();
+    let (served, cid) = glb_variant(&super::ktx2::tests::ktx2(146, 8, 4, &[level0, level1]));
+    let variant_route = format!("/{}", served_path_of("glb", &cid));
+    let original_route = format!("/contents/{ORIGINAL_CID}");
+    let (base, log) = serve(vec![
+        (variant_route.clone(), served),
+        (original_route.clone(), b"original glb".to_vec()),
+    ])
+    .await;
+    scene_with_variant_of(&io, &base, "models/a.glb", "model", "glb", &cid).await;
+    let path = content_path("models/a.glb");
+
+    assert_eq!(read_all(&io, &path).await, b"original glb");
+    assert!(!io.served_bevy_variant(&path));
+    let name = cache_name(&base, &served_path_of("glb", &cid));
+    assert!(!dir.join(&name).exists());
+    {
+        let session = io.bevy_variants.session.lock().unwrap();
+        assert!(session.recent[0].reason.starts_with("invalid glb variant"));
+        assert!(session.recent[0].reason.contains("vkFormat 146"));
+        assert_eq!(session.fallbacks_by_format.get("glb"), Some(&1));
+        assert!(session.bad.contains(&served_path_of("glb", &cid)));
+    }
+    assert_eq!(read_all(&io, &path).await, b"original glb");
+    assert_eq!(requests_for(&log, &variant_route), 1);
+    assert_eq!(requests_for(&log, &original_route), 2);
     std::fs::remove_dir_all(dir).unwrap();
 }
 

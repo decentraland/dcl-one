@@ -14,26 +14,29 @@
 //! manifest names no hash for them, so a variant is trusted by its path and rejected only by
 //! what it decodes to. A texture variant is a BC KTX2 whose header names its BC format, handed
 //! to the image loaders as it is; they unwrap it to the DDS they decode (`ktx2`), inside the
-//! asset load. Anything else, at any step, reads the original. A variant that fails to decode
-//! is marked bad for the session, its cached copy dropped, and its asset reloaded from the
-//! original. Manifests and variants are fetched in a single attempt with short timeouts: the
-//! original is their retry. An entity's files wait for its manifest for at
-//! most [`MANIFEST_DEADLINE`] from the request, then read their originals.
+//! asset load. A `g` model variant is cached as it is served and rewritten on every read
+//! (`glb`): each embedded BC KTX2 image becomes the DDS the glTF loader decodes, so its
+//! textures stay BC in memory. Anything else, at any step, reads the original. A variant that
+//! fails to decode is marked bad for the session, its cached copy dropped, and its asset (a
+//! texture or a GLB) reloaded from the original. Manifests and variants are fetched in a
+//! single attempt with short timeouts: the original is their retry. An entity's files wait for
+//! its manifest for at most [`MANIFEST_DEADLINE`] from the request, then read their originals.
 //!
 //! The formats taken are the [`SUPPORTED_FORMATS`] table: a manifest variant is loaded when its
 //! `kind`/`format` pair has a row whose file types, GPU needs and decoder this client has: BC
-//! KTX2 textures everywhere, and on web `glb-br` models, the original `.glb` byte for byte,
-//! fetched as its Brotli copy (`{path}.br`, stored with `Content-Encoding: br`) which the
-//! browser decodes. Native leaves `glb-br` to a later change (it has no Brotli decoder on its
-//! http client) and loads the original model. `glb` embeds its textures as KTX2 under
-//! `KHR_texture_basisu`, which the glTF loader rejects when a file requires it, and is ignored,
-//! so its original loads.
+//! KTX2 textures and `glb` models with BC KTX2 images everywhere, and on web `glb-br` models,
+//! the original `.glb` byte for byte. A `glb` variant is fetched at its own path everywhere:
+//! its Brotli copy exists only when it is smaller, and the server sends it to a browser that
+//! accepts `br`. On web a `glb-br` variant is fetched as its Brotli copy (`{path}.br`, stored
+//! with `Content-Encoding: br`) which the browser decodes. Native leaves `glb-br` to a later
+//! change (it has no Brotli decoder on its http client), loading the original model.
 //!
 //! Preview mode, local scenes (`b64-` ids) and entities served from a loopback or file content
 //! server never ask for a manifest; in preview mode that includes the wearables and emotes, so a
 //! preview always shows the deployed files.
 
 mod debug_panel;
+pub mod glb;
 pub mod ktx2;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests;
@@ -47,6 +50,7 @@ use std::{
 
 use bevy::{
     asset::{io::AssetReaderError, AssetLoadFailedEvent},
+    gltf::Gltf,
     image::CompressedImageFormats,
     prelude::*,
     render::renderer::RenderCapabilities,
@@ -70,8 +74,7 @@ use crate::{
 const TEXTURE_EXTENSIONS: [&str; 5] = ["png", "jpg", "jpeg", "webp", "ktx2"];
 /// Every variant class the manifest schema (v3) names by a path's prefix letter, taken or not.
 const SCHEMA_FORMATS: [&str; 3] = ["ktx2-bc", "glb-br", "glb"];
-/// Model paths a `glb-br` variant stands in for: only a binary glTF, which is what it holds.
-#[cfg(target_arch = "wasm32")]
+/// Model paths a model variant stands in for: only a binary glTF, which is what it holds.
 const MODEL_EXTENSIONS: [&str; 1] = ["glb"];
 const RECENT_FALLBACKS: usize = 20;
 
@@ -85,6 +88,9 @@ pub enum Decoded {
     /// decodes, handed to the glTF loader of the original path. Web only.
     #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     BrotliGlb,
+    /// A `glb` model: the original GLB with its embedded images as BC KTX2, which the reader
+    /// rewrites to DDS (`glb::bc_glb_dds`) before the glTF loader of the original path reads it.
+    BcGlb,
 }
 
 /// A variant class this client takes: its `kind`/`format` (from the path's prefix letter), the
@@ -123,6 +129,14 @@ pub const SUPPORTED_FORMATS: &[SupportedFormat] = &[
         needs_bc: true,
         decoded: Decoded::BcTexture,
     },
+    SupportedFormat {
+        kind: "model",
+        format: "glb",
+        extensions: &MODEL_EXTENSIONS,
+        without_extension: false,
+        needs_bc: true,
+        decoded: Decoded::BcGlb,
+    },
     // web only: the browser decodes the Brotli copy; native has no decoder on its http client
     #[cfg(target_arch = "wasm32")]
     SupportedFormat {
@@ -156,6 +170,7 @@ pub fn taken_formats() -> String {
         let how = match row.decoded {
             Decoded::BcTexture => "BC1/BC5/BC7, unwrapped to DDS by the image loaders",
             Decoded::BrotliGlb => "Brotli, decoded by the browser",
+            Decoded::BcGlb => "embedded BC1/BC5/BC7, rewritten to DDS for the glTF loader",
         };
         match groups.iter_mut().find(|(_, group_how)| *group_how == how) {
             Some((formats, _)) => formats.push(row.format),
@@ -400,14 +415,24 @@ struct Session {
     cached: u64,
     /// [downloaded, from cache] by variant format.
     served_by_format: BTreeMap<String, [u64; 2]>,
+    /// The embedded images of the `glb` variants read, by what the rewrite made of them.
+    glb_images: glb::EmbeddedImages,
     fallbacks: u64,
+    /// Fallbacks from a variant that was chosen, by its format.
+    fallbacks_by_format: BTreeMap<String, u64>,
     recent: VecDeque<Fallback>,
 }
 
 impl Session {
-    fn fallback(&mut self, scene: &str, file: &str, reason: String) {
+    fn fallback(&mut self, scene: &str, file: &str, format: Option<&str>, reason: String) {
         debug!("bevy variant fallback for `{file}` in {scene}: {reason}");
         self.fallbacks += 1;
+        if let Some(format) = format {
+            *self
+                .fallbacks_by_format
+                .entry(format.to_owned())
+                .or_default() += 1;
+        }
         if self.recent.len() == RECENT_FALLBACKS {
             self.recent.pop_front();
         }
@@ -506,10 +531,13 @@ impl BevyVariants {
 
     fn fail(&self, scene: &str, file: &str, variant: Option<&str>, reason: String) {
         let mut session = self.session.lock().unwrap();
+        let format = variant
+            .and_then(Variant::from_path)
+            .map(|variant| variant.format);
         if let Some(variant) = variant {
             session.bad.insert(variant.to_owned());
         }
-        session.fallback(scene, file, reason);
+        session.fallback(scene, file, format.as_deref(), reason);
     }
 
     fn served(&self, path: &Path, served: ServedVariant, cached: bool) {
@@ -540,14 +568,15 @@ impl BevyVariants {
         session.fallback(
             &served.scene,
             &served.file,
+            Some(&served.format),
             format!("{} variant failed to load: {error}", served.format),
         );
         Some(served.url)
     }
 }
 
-/// What the loader reads for a variant (a BC texture's KTX2, a model's own bytes), and whether
-/// it came from the cache.
+/// What the loader reads for a variant (a BC texture's KTX2, a `glb` model rewritten with DDS
+/// images, a `glb-br` model's own bytes), and whether it came from the cache.
 pub(crate) struct VariantRead {
     pub(crate) bytes: Vec<u8>,
     pub(crate) cached: bool,
@@ -741,10 +770,11 @@ impl IpfsIo {
 
         // the manifest names no hash for a variant, so its bytes are cached under a digest of
         // the url they came from, never under a content hash
-        // a `glb-br` variant is fetched as its Brotli copy: a CDN does not choose it by
-        // `Accept-Encoding`, so it is asked for by name and the browser decodes it
+        // a `glb-br` variant is fetched as its Brotli copy, asked for by name, which the
+        // browser decodes; a `glb` variant's Brotli copy exists only when it is smaller, so its
+        // own path is fetched and the server sends the copy to a client that accepts `br`
         let url = match decoded {
-            Decoded::BcTexture => format!("{base}/{}", variant.path),
+            Decoded::BcTexture | Decoded::BcGlb => format!("{base}/{}", variant.path),
             Decoded::BrotliGlb => format!("{base}/{}.br", variant.path),
         };
         let key = CacheKey::Url(content_hash::url_cache_name(&url));
@@ -800,8 +830,9 @@ impl IpfsIo {
             }
         };
 
-        // checks that need no decoding; a copy that fails them is dropped from the cache too,
-        // so a later session does not read it again
+        // checks that need no decoding (and a `glb`'s rewrite); a copy that fails them is
+        // dropped from the cache too, so a later session does not read it again
+        let mut rewritten = None;
         let rejected = match decoded {
             // the loaders unwrap the KTX2 (`ktx2::bc_ktx2_dds`), inside the asset load; here
             // only its header is read, so a file that is not a BC KTX2 at all falls back
@@ -821,13 +852,29 @@ impl IpfsIo {
                     )
                 })
             }
+            // the glTF loader decodes embedded DDS but not KTX2: the cached copy is the variant
+            // as served, and every read unwraps its KTX2 images here. One that does not unwrap
+            // fails the variant before the loader sees it
+            Decoded::BcGlb => match glb::bc_glb_dds(&fetched) {
+                Ok(glb) => {
+                    rewritten = Some(glb);
+                    None
+                }
+                Err(reason) => Some(format!("invalid glb variant: {reason}")),
+            },
         };
         if let Some(reason) = rejected {
             self.forget_variant(&served.url).await;
             variants.fail(scene, file, Some(&variant.path), reason);
             return None;
         }
-        let bytes = Arc::try_unwrap(fetched.0).unwrap_or_else(|shared| shared.as_ref().clone());
+        let bytes = match rewritten {
+            Some((bytes, images)) => {
+                variants.session.lock().unwrap().glb_images.merge(images);
+                bytes
+            }
+            None => Arc::try_unwrap(fetched.0).unwrap_or_else(|shared| shared.as_ref().clone()),
+        };
         variants.served(path, served, from_cache);
         Some(VariantRead {
             bytes,
@@ -841,13 +888,19 @@ pub(crate) fn build(app: &mut App) {
     debug_panel::register(app);
 }
 
-/// After the asset plugins exist: an app without images has nothing to fall back.
+/// After the asset plugins exist: an app without images or glTFs has nothing to fall back.
 pub(crate) fn finish(app: &mut App) {
     if app
         .world()
         .contains_resource::<Events<AssetLoadFailedEvent<Image>>>()
     {
-        app.add_systems(Update, fall_back_from_failed_variants);
+        app.add_systems(Update, fall_back_from_failed_variants::<Image>);
+    }
+    if app
+        .world()
+        .contains_resource::<Events<AssetLoadFailedEvent<Gltf>>>()
+    {
+        app.add_systems(Update, fall_back_from_failed_variants::<Gltf>);
     }
 }
 
@@ -868,13 +921,14 @@ fn detect_gpu_formats(
     let _ = ipfs.bevy_variants.bc.set(bc);
 }
 
-/// Reloads from its original each texture whose variant failed to load.
-fn fall_back_from_failed_variants(
-    mut images: EventReader<AssetLoadFailedEvent<Image>>,
+/// Reloads from its original each texture or GLB whose variant failed to load. A GLB that
+/// never loaded reloads whole; a scene's container retries it (`retry_repaired_gltfs`).
+fn fall_back_from_failed_variants<A: Asset>(
+    mut failed: EventReader<AssetLoadFailedEvent<A>>,
     ipfs: Res<IpfsResource>,
     server: Res<AssetServer>,
 ) {
-    for event in images.read() {
+    for event in failed.read() {
         if let Some(url) = ipfs
             .bevy_variants
             .decode_failed(event.path.path(), &event.error.to_string())
