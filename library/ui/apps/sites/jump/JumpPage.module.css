@@ -1,0 +1,44 @@
+/* Its own stacking context, so the backdrop stays behind this page and never above the footer. */
+.root {
+  position: relative;
+  isolation: isolate;
+  box-sizing: border-box;
+  display: flex;
+  min-height: calc(100vh - var(--site-header-h, 64px));
+  min-height: calc(100svh - var(--site-header-h, 64px));
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: var(--dcl-space-96) var(--dcl-space-24) var(--dcl-space-64);
+  background: var(--dcl-background-web-dark);
+  color: var(--dcl-text-primary);
+}
+
+.backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+}
+
+.content {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+@media (max-width: 1023px) {
+  .root {
+    align-items: stretch;
+    padding: var(--dcl-space-64) 0 0;
+  }
+}
+
+@media (max-width: 767px) {
+  .root {
+    padding-top: 0;
+  }
+}

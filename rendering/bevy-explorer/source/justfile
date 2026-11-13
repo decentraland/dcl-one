@@ -26,7 +26,7 @@ wasm: ts-bindings
     cd react-web && npm run dev -- --open
 
 # regenerate the TypeScript bindings for the ~system/BevyExplorerApi boundary from the Rust
-# structs in crates/system_api_types, into react-web/src/engine/generated (+ a barrel index.ts).
+# structs in crates/system_api_types, into library/explorer-core/engine/generated (+ a barrel index.ts).
 ts-bindings:
     {{justfile_directory()}}/scripts/gen-ts-bindings.sh
 

@@ -7340,6 +7340,16 @@ async fn a_blocked_wallet_refuses_a_spend_but_its_settlement_debit_lands() {
 /// operation id tests build two over one database, the second with the
 /// catalogue or the feed gone, to show an operation is recovered without them.
 async fn opid_lane(pool: &PgPool, contract: &str, market: FakeMarket) -> Router {
+    opid_lane_with(pool, contract, market, None).await
+}
+
+/// [`opid_lane`] under a trial (`CREDITS_TRIAL_MODE`) whose buyers are `trial`.
+async fn opid_lane_with(
+    pool: &PgPool,
+    contract: &str,
+    market: FakeMarket,
+    trial: Option<super::trial::TrialBuyers>,
+) -> Router {
     let mut settings = Settings::parse(RawSettings {
         writes_enabled: true,
         mock_card: true,
@@ -7360,6 +7370,7 @@ async fn opid_lane(pool: &PgPool, contract: &str, market: FakeMarket) -> Router 
         contract: Some(contract.to_string()),
         ..super::usage::Settings::default()
     };
+    settings.trial = trial;
     let state: SharedState = Arc::new(
         State::with_sources(
             pool.clone(),
@@ -8390,4 +8401,374 @@ async fn the_stale_processing_report_survives_a_failed_pass_and_waits_for_the_st
         "the failed pass already reported today"
     );
     own.drop().await;
+}
+
+/// `w`'s request as the explorer signs it after a login: `w` (the root) signs a fresh
+/// ephemeral key, and that key signs the request.
+async fn signed_through_ephemeral(w: &Wallet, method: &str, path: &str) -> HeaderMap {
+    let ephemeral = PrivateKeySigner::random();
+    let login = format!(
+        "Decentraland Login\nEphemeral address: {:#x}\nExpiration: 2099-01-01T00:00:00.000Z",
+        ephemeral.address()
+    );
+    let login_signature = w
+        .signer
+        .sign_message(login.as_bytes())
+        .await
+        .unwrap()
+        .to_string();
+    let timestamp = chrono::Utc::now().timestamp_millis().to_string();
+    let payload = build_payload_v6(method, path, &timestamp, "{}");
+    let signature = ephemeral
+        .sign_message(payload.as_bytes())
+        .await
+        .unwrap()
+        .to_string();
+    let chain = [
+        AuthLink {
+            link_type: AuthLinkType::SIGNER,
+            payload: w.address.clone(),
+            signature: None,
+        },
+        AuthLink {
+            link_type: AuthLinkType::EcdsaEphemeral,
+            payload: login,
+            signature: Some(login_signature),
+        },
+        AuthLink {
+            link_type: AuthLinkType::EcdsaSignedEntity,
+            payload,
+            signature: Some(signature),
+        },
+    ];
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        AUTH_TIMESTAMP_HEADER,
+        HeaderValue::from_str(&timestamp).unwrap(),
+    );
+    headers.insert(AUTH_METADATA_HEADER, HeaderValue::from_static("{}"));
+    for (i, link) in chain.iter().enumerate() {
+        headers.insert(
+            axum::http::HeaderName::from_bytes(format!("{AUTH_CHAIN_HEADER_PREFIX}{i}").as_bytes())
+                .unwrap(),
+            HeaderValue::from_str(&serde_json::to_string(link).unwrap()).unwrap(),
+        );
+    }
+    headers
+}
+
+/// A trial authorizes new credits only for its buyers, judged on the root signer of the auth
+/// chain: a buyer on the list gets one (through a fresh ephemeral key too); taken off the list,
+/// the same buyer still recovers the operation it already has (same credit, nothing pledged) and
+/// the same id with other lines is still 409, but a new operation, a request with no id or a
+/// batch is refused with nothing pledged or signed. An empty list admits no one.
+#[tokio::test]
+async fn a_trial_authorizes_new_credits_only_for_its_buyers_and_keeps_their_recovery() {
+    let Some((db, _open_lane, wallet)) = opid_setup("trial_buyers").await else {
+        return;
+    };
+    let pool = db.pool.clone();
+    let market = || {
+        FakeMarket::default()
+            .with_item(COLLECTION, "200", "4000000000000000000", true)
+            .with_item(COLLECTION, "95", "1900000000000000000", true)
+            .with_mana_usd("0.5")
+    };
+    let listed =
+        super::trial::TrialBuyers::parse(Some(&wallet.address.to_uppercase().replace("0X", "0x")))
+            .unwrap();
+    let on_list = opid_lane_with(&pool, OPID_MANAGER, market(), Some(listed)).await;
+    let off_list = opid_lane_with(
+        &pool,
+        OPID_MANAGER,
+        market(),
+        Some(
+            super::trial::TrialBuyers::parse(Some("0x00000000000000000000000000000000000000aa"))
+                .unwrap(),
+        ),
+    )
+    .await;
+    let nobody = opid_lane_with(
+        &pool,
+        OPID_MANAGER,
+        market(),
+        Some(super::trial::TrialBuyers::default()),
+    )
+    .await;
+    let path = "/credits/credits/authorize";
+    let op = "2b9e5c3a-7f1d-4c2b-9a8e-1d2c3b4a5f60";
+
+    // On the list, through a fresh ephemeral key: the root signer is the buyer.
+    let headers = signed_through_ephemeral(&wallet, "post", path).await;
+    let (status, _, first) = send(
+        &on_list,
+        "POST",
+        path,
+        headers,
+        Some(opid_item(200, "200", Some(op))),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{first}");
+    assert_eq!(authorized_count(&pool, &wallet.address).await, 1);
+
+    // Taken off the list: the operation it has is recovered, the same credit, nothing new.
+    let (status, again) = call(
+        &off_list,
+        &wallet,
+        "post",
+        path,
+        &[],
+        Some(opid_item(200, "200", Some(op))),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{again}");
+    assert_eq!(
+        again["credit"], first["credit"],
+        "the operation's own credit"
+    );
+    assert_eq!(authorized_count(&pool, &wallet.address).await, 1);
+    // The same id with other lines is still a reused operation, not a trial refusal.
+    let (status, other) = call(
+        &off_list,
+        &wallet,
+        "post",
+        path,
+        &[],
+        Some(opid_item(95, "95", Some(op))),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{other}");
+    assert_eq!(other["code"], "operation_reused", "{other}");
+
+    // Anything new is refused before a pledge or a signature.
+    let fresh = "3b9e5c3a-7f1d-4c2b-9a8e-1d2c3b4a5f60";
+    for (lane, body, at) in [
+        (&off_list, opid_item(200, "200", Some(fresh)), path),
+        (&off_list, opid_item(200, "200", None), path),
+        (
+            &off_list,
+            json!({ "operationId": fresh, "items": [opid_item(200, "200", None)] }),
+            "/credits/credits/authorize/batch",
+        ),
+        (&nobody, opid_item(200, "200", Some(fresh)), path),
+    ] {
+        let (status, refused) = call(lane, &wallet, "post", at, &[], Some(body)).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{at}: {refused}");
+        assert_eq!(refused["code"], "not_a_trial_buyer", "{refused}");
+        assert!(refused.get("credit").is_none(), "{refused}");
+    }
+    assert_eq!(
+        authorized_count(&pool, &wallet.address).await,
+        1,
+        "no refused request pledged anything"
+    );
+    assert_eq!(rows_of(&pool, &wallet.address).await, 1);
+}
+
+/// CREDITS_TRIAL_MODE starts only closed and able to write: OPS_WRITES_ENABLED, no card rail, no
+/// mock card, a revoker, and buyers that are all addresses. An empty list is a trial that issues nothing; outside a trial the list is
+/// ignored. The refusals name variables, never values.
+#[test]
+fn a_trial_starts_only_closed() {
+    const A: &str = "0x00000000000000000000000000000000000000aa";
+    let trial = || RawSettings {
+        trial_mode: true,
+        writes_enabled: true,
+        credits_onchain_authorize_enabled: true,
+        credits_signer_key: Some(
+            "0x4c0883a69102937d6231471b5dbb6204fe512961708279f2e3e8a5d4b8e3e3e3".into(),
+        ),
+        credits_manager_contract: Some("0xe21289022b9324f9b9145a91ee59297ceb040c06".into()),
+        usage_index_enabled: true,
+        usage_rpc_url: Some("https://polygon-rpc.example.org".into()),
+        credits_revoker_key: Some(
+            "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d".into(),
+        ),
+        trial_buyers: Some(A.into()),
+        ..RawSettings::default()
+    };
+    let started = Settings::parse(trial()).unwrap();
+    assert!(started.trial.as_ref().is_some_and(|t| t.admits(A)));
+
+    for (needs, open) in [
+        (
+            "OPS_WRITES_ENABLED",
+            RawSettings {
+                writes_enabled: false,
+                ..trial()
+            },
+        ),
+        (
+            "STRIPE_SECRET_KEY",
+            RawSettings {
+                stripe_secret_key: Some("sk_test_LEAKED".into()),
+                ..trial()
+            },
+        ),
+        (
+            "STRIPE_WEBHOOK_SECRET",
+            RawSettings {
+                stripe_webhook_secret: Some("whsec_LEAKED".into()),
+                ..trial()
+            },
+        ),
+        (
+            "CREDITS_ONCHAIN_AUTHORIZE_ENABLED",
+            RawSettings {
+                credits_onchain_authorize_enabled: false,
+                ..trial()
+            },
+        ),
+        (
+            "CREDITS_SIGNER_KEY_FILE",
+            RawSettings {
+                credits_signer_key: None,
+                ..trial()
+            },
+        ),
+        (
+            "CREDITS_MANAGER_CONTRACT",
+            RawSettings {
+                credits_manager_contract: None,
+                ..trial()
+            },
+        ),
+        (
+            "CREDITS_USAGE_INDEX_ENABLED",
+            RawSettings {
+                usage_index_enabled: false,
+                ..trial()
+            },
+        ),
+        (
+            "CREDITS_MOCK_CARD",
+            RawSettings {
+                mock_card: true,
+                usage_chain_id: super::usage::CHAIN_AMOY,
+                ..trial()
+            },
+        ),
+        (
+            "CREDITS_REVOKER_KEY_FILE",
+            RawSettings {
+                credits_revoker_key: None,
+                ..trial()
+            },
+        ),
+        (
+            "valid CREDITS_REVOKER_KEY_FILE",
+            RawSettings {
+                credits_revoker_key: Some("0xnot-a-key-LEAKED".into()),
+                ..trial()
+            },
+        ),
+        (
+            "valid CREDITS_REVOKER_KEY_FILE",
+            RawSettings {
+                credits_revoker_key: Some(format!("0x{}", "0".repeat(64))),
+                ..trial()
+            },
+        ),
+        (
+            "valid CREDITS_REVOKER_KEY_FILE",
+            RawSettings {
+                credits_revoker_key: Some(
+                    "0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141".into(),
+                ),
+                ..trial()
+            },
+        ),
+        (
+            "CREDITS_TRIAL_BUYERS",
+            RawSettings {
+                trial_buyers: Some(format!("{A},0xnot-LEAKED")),
+                ..trial()
+            },
+        ),
+    ] {
+        let why = Settings::parse(open)
+            .err()
+            .map(|e| e.to_string())
+            .unwrap_or_default();
+        assert!(
+            why.contains(needs) && !why.contains("LEAKED"),
+            "{needs}: {why}"
+        );
+    }
+
+    let empty = Settings::parse(RawSettings {
+        trial_buyers: None,
+        ..trial()
+    })
+    .unwrap();
+    assert!(
+        empty
+            .trial
+            .as_ref()
+            .is_some_and(|t| t.is_empty() && !t.admits(A))
+    );
+    let off = Settings::parse(RawSettings {
+        trial_mode: false,
+        ..trial()
+    })
+    .unwrap();
+    assert!(off.trial.is_none(), "outside a trial the list is ignored");
+}
+
+/// Under a trial the MANA top-up, its quote and the cart's broker checkout refuse before any work:
+/// an unsigned POST gets the trial's 403, not the signed-fetch refusal. Outside a trial the quote
+/// answers as before.
+#[tokio::test]
+async fn a_trial_refuses_mana_top_ups_and_the_broker_checkout_before_any_work() {
+    let Some((db, open_lane, _wallet)) = opid_setup("trial_topup").await else {
+        return;
+    };
+    let market = FakeMarket::default().with_mana_usd("0.5");
+    let trial_lane = opid_lane_with(
+        &db.pool,
+        OPID_MANAGER,
+        market,
+        Some(super::trial::TrialBuyers::default()),
+    )
+    .await;
+    let (status, _, body) = send(
+        &trial_lane,
+        "GET",
+        "/credits/topup/mana/quote?credits=10",
+        HeaderMap::new(),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    let (status, _, body) = send(
+        &trial_lane,
+        "POST",
+        "/credits/topup/mana",
+        HeaderMap::new(),
+        Some(json!({ "txHash": format!("0x{}", "ab".repeat(32)) })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    assert!(body.to_string().contains("CREDITS_TRIAL_MODE"), "{body}");
+    // The cart's broker checkout spends ledger credits off chain: refused before any work too.
+    let (status, _, body) = send(
+        &trial_lane,
+        "POST",
+        "/credits/checkout",
+        HeaderMap::new(),
+        Some(json!({ "items": [] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    assert!(body.to_string().contains("cart checkout"), "{body}");
+
+    let (status, _, body) = send(
+        &open_lane,
+        "GET",
+        "/credits/topup/mana/quote?credits=10",
+        HeaderMap::new(),
+        None,
+    )
+    .await;
+    assert_ne!(status, StatusCode::FORBIDDEN, "{body}");
 }

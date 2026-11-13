@@ -11,9 +11,11 @@ import {
 } from "react-router";
 
 import "@ui/atoms/primitives.css";
+import "@dcl/one-ui/foundations.css";
 import logo from "@ui/atoms/assets/decentraland-logo.svg?url";
 
 import SignInModalHost from "@/features/components/auth/SignInModalHost";
+import { QUERY_CLIENT_CONFIG } from "@/core/lib/query/defaults";
 import ChromeAuthBridge from "@/features/components/chrome/ChromeAuthBridge";
 import ChromeNavBridge from "@/features/components/chrome/ChromeNavBridge";
 import RoutePending, { NAV_PENDING_SCRIPT } from "@/features/components/chrome/RoutePending";
@@ -23,13 +25,17 @@ import SyncEngineBridge from "@/features/components/creator-hub/SyncEngineBridge
 import StatusPage from "@ui/components/StatusPage";
 import { EMBED_BOOT_SCRIPT } from "@ui/web/frames/embed";
 import type { ShouldRevalidateFunctionArgs } from "react-router";
+import { pageSid, sessionMiddleware } from "@/core/lib/telemetry/session";
 import { readWallet } from "@/data/lib/auth/wallet-cookie";
 import { browserCatalystBase } from "@/data/lib/catalyst/bases";
 import { isCommitteeMember } from "@/data/lib/catalyst/creator-hub/committee-membership.server";
 import { serverShopApiMode } from "@/data/lib/shop/mode";
 import type { Route } from "./+types/root";
 
-export async function loader({ request }: Route.LoaderArgs) {
+/** Reads or mints the session id once per request, before every loader, and sets its cookie once. */
+export const middleware = [sessionMiddleware];
+
+export async function loader({ request, context }: Route.LoaderArgs) {
   const thirdwebClientId =
     (typeof process !== "undefined" && process.env.THIRDWEB_CLIENT_ID) || "";
   const walletConnectProjectId = process.env.WALLETCONNECT_PROJECT_ID || "";
@@ -56,6 +62,11 @@ export async function loader({ request }: Route.LoaderArgs) {
     shopApiMode,
     wallet,
     committee,
+    /**
+     * The session id, also on a first visit, for a page whose own loader does not run on a client
+     * navigation. Null on a response a shared cache may store (the docs).
+     */
+    sid: pageSid(request, context),
   };
 }
 
@@ -256,9 +267,7 @@ export default function App() {
   // The @ui components read profiles and the like through react-query hooks
   // (ui3/src/data/hooks); one client per request on the server, one per page
   // in the browser, so SSR never shares a cache between visitors.
-  const [queryClient] = useState(
-    () => new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: 30_000 } } }),
-  );
+  const [queryClient] = useState(() => new QueryClient(QUERY_CLIENT_CONFIG));
   useEffect(() => {
     appHydrated = true;
     document.documentElement.removeAttribute("data-nav-loading");

@@ -24,7 +24,11 @@ pub(crate) fn texture_handle(
     load_context: &mut LoadContext,
     uri_resolver: Option<&GltfUriResolver>,
 ) -> Handle<Image> {
-    match texture.source().source() {
+    // no image (`allow_empty_texture`): `load_image` registers a placeholder under the label
+    let Some(image) = texture.source() else {
+        return load_context.get_label_handle(texture_label(texture).to_string());
+    };
+    match image.source() {
         Source::View { .. } => load_context.get_label_handle(texture_label(texture).to_string()),
         Source::Uri { uri, .. } => {
             let uri = percent_encoding::percent_decode_str(uri)

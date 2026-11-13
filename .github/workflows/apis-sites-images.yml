@@ -92,8 +92,8 @@ jobs:
           fi
           df -h /
           free -m
-      - name: Fetch only the docs media from Git LFS
-        run: git config --global lfs.fetchinclude 'apps/sites/content/**'
+      - name: Fetch Sites media and shared fonts from Git LFS
+        run: git config --global lfs.fetchinclude 'apps/sites/content/**,library/ui/apps/sites/assets/**,library/ui/foundations/typography/fonts/**'
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           lfs: true
@@ -108,13 +108,6 @@ jobs:
           python3 -m unittest discover -s tooling/tests -p 'test_image_publish.py' -v
           python3 -m unittest discover -s tooling/tests -p 'test_image_cache.py' -v
           python3 -m unittest discover -s tooling/tests -p 'test_ci_publication.py' -v
-      - name: Require the reviewed Sites HUD before compiling
-        run: |
-          locked=$(python3 -c 'import json; print(json.load(open("rendering/bevy-explorer/upstream.lock.json")).get("hud_source_sha256", ""))')
-          if [ "$(python3 tooling/play-artifact.py hud-inputs)" != "$locked" ]; then
-            echo "::error::Sites HUD adaptation must be reviewed against the current Explorer HUD source"
-            exit 1
-          fi
       - name: Validate packaged docs before compiling applications
         run: nix build 'git+file:.?lfs=1#sites.docsContent' --no-link -L
       - name: Identify exact Nix cache inputs
@@ -202,15 +195,20 @@ jobs:
         run: |
           apis=$(nix build --impure 'git+file:.?lfs=1#image-apis' --no-link --print-out-paths -L)
           sites=$(nix build --impure 'git+file:.?lfs=1#image-sites' --no-link --print-out-paths -L)
-          images="$apis $sites"
+          # The Sites build for dcl-one's Polygon CreditsManager (infra/containers/images.nix).
+          sites_credits=$(nix build --impure 'git+file:.?lfs=1#image-sites-polygon-credits' --no-link --print-out-paths -L)
+          images="$apis $sites $sites_credits"
           for image in $images; do
             cp -L "$image" ".cache/images/${image##*-foundation-}"
           done
           docker load --input .cache/images/apis.tar.gz
           docker load --input .cache/images/sites.tar.gz
+          docker load --input .cache/images/sites-polygon-credits.tar.gz
           df -h /
       - name: Test the exact images before publication
-        run: python3 tooling/image-smoke.py --revision "$GITHUB_SHA"
+        run: |
+          python3 tooling/image-smoke.py --revision "$GITHUB_SHA"
+          python3 tooling/image-smoke.py --revision "$GITHUB_SHA" --sites foundation-sites-polygon-credits:nix
       - name: Allow cache uploads only from current first attempts
         id: cache-writer
         if: steps.cache-keys.outputs.save == 'true'

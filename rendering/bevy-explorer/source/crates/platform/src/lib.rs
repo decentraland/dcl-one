@@ -41,4 +41,4 @@ pub struct DmHistoryReaction {
 }
 
 pub mod http;
-pub use http::{fetch, FetchError, FetchedResponse, TracedJsonResponse};
+pub use http::{fetch, within, FetchError, FetchedResponse, TracedJsonResponse};

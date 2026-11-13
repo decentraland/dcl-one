@@ -1,0 +1,3 @@
+BlogRichText.tsx and blogLinks.ts follow decentraland/sites (https://github.com/decentraland/sites) at revision 5aabce35423428332c81a4a78a7a9c2b486446b5, src/components/Blog/RichText (RichText.tsx, RichText.renderers.tsx, RichText.helpers.ts): the Contentful rich-text node and mark set the blog renders, a node outside it rendering its children, and the hyperlink allowlist (http, https and mailto open in a new tab, #anchors and site paths stay in place, other schemes render as text). The markup and styles are this library's own.
+
+That source is licensed under the Apache License 2.0; the license is included at ../assets/LICENSE.

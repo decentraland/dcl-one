@@ -26,6 +26,9 @@ export class MetaTransactionError extends Error {
   constructor(
     message: string,
     readonly code: string,
+    /** The relay's HTTP status, and whether it answered with an explicit refusal (`ok: false`). */
+    readonly status?: number,
+    readonly refused?: boolean,
   ) {
     super(message);
   }
@@ -80,7 +83,8 @@ export function executeMetaTransactionData(kind: MetaTxKind, from: string, signa
   return encodeFunctionData({ abi: EXECUTE_ABI, functionName: "executeMetaTransaction", args: [from as `0x${string}`, functionData, r, s, v] });
 }
 
-async function readNonce(contract: ContractData, from: string): Promise<bigint> {
+/** The contract's meta-transaction nonce for `from`: the one its next meta-transaction signs. */
+export async function readNonce(contract: ContractData, from: string): Promise<bigint> {
   const data = encodeFunctionData({ abi: NONCE_ABI, functionName: "getNonce", args: [from as `0x${string}`] });
   const raw = await rpc<string>(contract.chainId, "eth_call", [{ to: contract.address, data }, "latest"]);
   return BigInt(raw);
@@ -96,9 +100,11 @@ export async function sendMetaTransaction(opts: {
   kind: MetaTxKind;
   functionData: `0x${string}`;
   fetchImpl?: typeof fetch;
+  /** The nonce to sign instead of the contract's current one (a retry that must replace, never add to, a signed one). */
+  nonce?: bigint;
 }): Promise<string> {
   const from = await walletAccount(opts.provider);
-  const nonce = await readNonce(opts.contract, from);
+  const nonce = opts.nonce ?? (await readNonce(opts.contract, from));
   const signature = await signTypedData(opts.provider, from, metaTransactionTypedData(opts.contract, opts.kind, from, nonce, opts.functionData));
   const txData = executeMetaTransactionData(opts.kind, from, signature, opts.functionData);
   const res = await (opts.fetchImpl ?? fetch)(`${relayBase()}/transactions`, {
@@ -108,7 +114,7 @@ export async function sendMetaTransaction(opts: {
   });
   const body = (await res.json().catch(() => null)) as { ok?: boolean; txHash?: string; message?: string; code?: string } | null;
   if (!body || body.ok === false || !body.txHash) {
-    throw new MetaTransactionError(body?.message ?? `The relay answered ${res.status}`, body?.code ?? String(res.status));
+    throw new MetaTransactionError(body?.message ?? `The relay answered ${res.status}`, body?.code ?? String(res.status), res.status, body?.ok === false);
   }
   return body.txHash;
 }

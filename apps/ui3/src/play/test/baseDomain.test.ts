@@ -47,13 +47,16 @@ describe('engineServiceOptions', () => {
 
   it('behind the gateway: every service by its gateway url, and no base domain the engine would refuse', async () => {
     const m = await load(true)
-    const { SERVICES } = await import('../engine/generated')
+    const { SERVICES } = await import('@explorer-core/engine/generated')
     const options = m.engineServiceOptions()
     expect(window.location.host).toContain(':') // a dev host with a port, like 127.0.0.1:5222
     expect(options.baseDomain).toBeUndefined()
     for (const s of SERVICES) expect(options[s.name], s.name).toBe(m.serviceUrl(s.name))
     expect(options.realmProvider).toBe(`${window.location.origin}/realm-provider-ea`)
     expect(options.reels).toBe(`${window.location.origin}/reels`)
+    // not through the gateway yet (#631): Decentraland's public host, never one built from the
+    // page's own host and port
+    expect(options.abgenCdn).toBe('https://abgen-cdn.decentraland.org')
   })
 
   it('upstream: only the base domain, which the engine composes every service from', async () => {

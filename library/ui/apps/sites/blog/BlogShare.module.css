@@ -1,0 +1,46 @@
+.share {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--dcl-space-8);
+}
+
+.label {
+  margin-right: var(--dcl-space-4);
+  color: var(--dcl-transparencies-white-60);
+  font-size: var(--dcl-font-size-heading-4);
+  text-transform: uppercase;
+}
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid var(--dcl-border-default);
+  border-radius: var(--dcl-radius-full);
+  background: var(--dcl-bg-surface);
+  color: var(--dcl-text-primary);
+  cursor: pointer;
+}
+
+.button:hover {
+  background: var(--dcl-bg-surface-raised);
+}
+
+.button:focus-visible {
+  outline: 2px solid var(--dcl-text-primary);
+  outline-offset: 2px;
+}
+
+.status {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: var(--dcl-space-4);
+  color: var(--dcl-text-secondary);
+  font-size: var(--dcl-font-size-body-sm);
+  white-space: nowrap;
+}

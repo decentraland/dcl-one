@@ -10,7 +10,7 @@ pub(crate) use net::{
     DocAnswer, ProgressState, UploadDestination, UploadEntity, UploadProgress, VERBOSE_HINT,
     all_world_scene_pages, client, denied_parcels_in, deployment_permission_in_doc,
     entity_content_hashes, entity_title, host_of, parse_world_scenes, read_server_message, refusal,
-    send_text, stored_cids, unreachable_server, upload_entity_to, with_headers,
+    send_text, stored_cids, unreachable_server, upload_entity_with_chain_to, with_headers,
     world_scenes_page_url,
 };
 pub use net::{
@@ -40,6 +40,11 @@ pub struct DeployOptions {
     pub target_content: Option<String>,
     pub sign_key: Option<PathBuf>,
     pub skip_build: bool,
+    /// Skip the local checks before signing (media permissions, the per-file
+    /// size limit); also implied by a custom target, whose limits are its own.
+    pub skip_validations: bool,
+    /// Send every file, even those the server already stores.
+    pub force_upload: bool,
     pub dry_run: bool,
     pub timestamp: Option<i64>,
     pub entity_out: Option<PathBuf>,
@@ -65,6 +70,13 @@ pub struct DeployOptions {
     /// UASTC KTX2, staged after the build and before the payload is read
     /// ([`crate::textures`]).
     pub textures: crate::textures::Overrides,
+    /// A program drives the run: no browser, stdout carries one JSON line
+    /// when the signing server is ready and one with the final state, and
+    /// the CLI ends with the deployment.
+    pub programmatic: bool,
+    /// What `X-Deploy-Token` must carry to cancel through `DELETE
+    /// /api/deploy`; random per run when `None`.
+    pub deploy_token: Option<String>,
 }
 
 /// A throwaway key the wallet authorized once, and the proof it did; signs
@@ -283,13 +295,13 @@ fn collect_files(root: &Path) -> Result<(Vec<String>, Vec<String>)> {
 }
 
 /// The chunk files a dcl-scene-cli loader stub evaluates: every
-/// `var __dclOne…ChunkPath = '<rel>'` declaration with a non-empty path
+/// `var __dcl…ChunkPath = '<rel>'` declaration with a non-empty path
 /// (see `split::loader_stub`). Any other entry point declares none.
 fn stub_chunk_paths(entry: &str) -> Vec<String> {
     entry
         .lines()
         .filter_map(|line| {
-            let rest = line.trim_start().strip_prefix("var __dclOne")?;
+            let rest = line.trim_start().strip_prefix("var __dcl")?;
             let (_, rest) = rest.split_once("ChunkPath = '")?;
             let (rel, _) = rest.split_once('\'')?;
             (!rel.is_empty()).then(|| rel.to_string())
@@ -639,6 +651,23 @@ mod media_permission_tests {
     use serde_json::json;
 
     #[test]
+    fn skip_validations_lets_a_mismatched_media_permission_through() {
+        let t = TempTree::new("skip-validations");
+        t.write(
+            "scene.json",
+            r#"{"runtimeVersion":"7","main":"bin/index.js","display":{"title":"X"},"scene":{"parcels":["0,0"],"base":"0,0"},"requiredPermissions":["ALLOW_MEDIA_HOSTNAMES"]}"#,
+        );
+        t.write("bin/index.js", "1");
+        let project = Project::load(&t.0).unwrap();
+        let err = crate::ux::render(&build_metadata(&project).unwrap_err(), false, false);
+        assert!(err.contains("allowedMediaHostnames"), "{err}");
+        assert!(build_metadata_checked(&project, false).is_ok());
+        assert!(prepare(&project).is_err());
+        let prepared = prepare_checked(&project, false).unwrap();
+        assert_eq!(prepared.pointers, vec!["0,0".to_string()]);
+    }
+
+    #[test]
     fn media_schema_dependency_is_checked_before_signing() {
         for hosts in [
             json!(null),
@@ -671,6 +700,11 @@ mod media_permission_tests {
 }
 
 pub fn build_metadata(project: &Project) -> Result<JsValue> {
+    build_metadata_checked(project, true)
+}
+
+/// `validate` false skips the media-permission check (`--skip-validations`).
+pub fn build_metadata_checked(project: &Project, validate: bool) -> Result<JsValue> {
     let scene_path = project.root.join("scene.json");
     let raw = std::fs::read_to_string(&scene_path)
         .with_context(|| format!("reading {}", scene_path.display()))?;
@@ -683,7 +717,9 @@ pub fn build_metadata(project: &Project) -> Result<JsValue> {
             .why("deploy uses a strict parser to hash-match the upstream toolchain"),
         )
     })?;
-    validate_media_permissions(&serde_json::from_str::<serde_json::Value>(&raw)?)?;
+    if validate {
+        validate_media_permissions(&serde_json::from_str::<serde_json::Value>(&raw)?)?;
+    }
     let JsValue::Object(entries) = scene else {
         return Err(UserError::new(
             "scene.json must be a JSON object",
@@ -804,9 +840,10 @@ pub(crate) fn tree_payload_files(root: &Path, mut rels: Vec<String>) -> Vec<Stri
     rels
 }
 
-/// The payload's paths, with the optimized-texture overlay applied when the
-/// project enables one.
-fn with_release_files(root: &Path, rels: Vec<String>) -> Vec<String> {
+/// The payload's paths: the tree's publishable files plus any the release
+/// build alone emits, with the optimized-texture overlay applied when the
+/// project enables one. Read each through [`payload_path`].
+pub fn with_release_files(root: &Path, rels: Vec<String>) -> Vec<String> {
     crate::textures::publishable(root, tree_payload_files(root, rels))
 }
 
@@ -839,6 +876,12 @@ pub(crate) fn tree_payload_path(root: &Path, rel: &str) -> PathBuf {
 }
 
 pub fn prepare(project: &Project) -> Result<Prepared> {
+    prepare_checked(project, true)
+}
+
+/// `validate` false skips the media-permission check and the per-file size
+/// limit (`--skip-validations`, or a custom target with limits of its own).
+pub fn prepare_checked(project: &Project, validate: bool) -> Result<Prepared> {
     crate::build_script::command(&project.root)?;
     let rel_paths = with_release_files(&project.root, collect_publishable_files(&project.root)?);
     let main = project.main_output()?;
@@ -863,7 +906,7 @@ pub fn prepare(project: &Project) -> Result<Prepared> {
         let p = payload_path(&project.root, rel);
         let bytes =
             std::fs::read(&p).with_context(|| format!("reading content file {}", p.display()))?;
-        if bytes.len() > MAX_FILE_SIZE_BYTES {
+        if validate && bytes.len() > MAX_FILE_SIZE_BYTES {
             return Err(UserError::new(
                 format!(
                     "{rel} is {}, over the 50 MB per-file limit",
@@ -878,7 +921,7 @@ pub fn prepare(project: &Project) -> Result<Prepared> {
         Ok((rel.clone(), hash, bytes))
     });
     let files = hashed.into_iter().collect::<Result<Vec<_>>>()?;
-    let metadata = build_metadata(project)?;
+    let metadata = build_metadata_checked(project, validate)?;
     let pointers = extract_pointers(&metadata)?;
     Ok(Prepared {
         files,

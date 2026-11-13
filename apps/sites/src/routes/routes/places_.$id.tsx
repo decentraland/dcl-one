@@ -23,12 +23,12 @@ import type { Route } from "./+types/places_.$id";
 
 export const handle = { agentMarkdown: "placeDetail" } satisfies AgentMarkdownHandle;
 
-export async function loader({ request, params }: Route.LoaderArgs) {
+export async function loader({ request, context, params }: Route.LoaderArgs) {
   const { id } = params;
 
   const { sid, wrap, data } = await pageLoaderWith(
     request,
-    
+    context,
     { variant: "base" },
     async () => {
       let place: Place | null = null;
