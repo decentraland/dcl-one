@@ -1335,6 +1335,36 @@ misses events. `user_address` is the photo's owner, lowercase. The bootstrap
 defines the table; an existing database gains it from the object pass, so no
 step exists.
 
+## Camera reel import workload
+
+`catalyst camera-reel import` (`camera_reel::import`) copies
+camera-reel-service's `images` table into `camera_reel.images`. Inputs: the
+source table read in pages of `--batch` rows (default 500) by its
+`(created_at, id)` keyset, and two bucket objects per new photo, fetched at
+most `--concurrency` (default 8) at once. The source has no index on that
+order, so each page sorts the table's matching rows; this is a cost on the old
+database during the copy window, unmeasured. Per page, one primary-key read
+of the local rows (`id = ANY`) decides what is new; a photo already here is
+not fetched again. Writes: per new photo, its blobs in the store, then one
+transaction inserting the `images` row and its `camera_reel.imported_images`
+row; per changed imported photo, one `UPDATE` of `is_public` and `metadata`
+guarded by `review_status = 'ok'` and the provenance row. No
+`photo_events` row is written and `ranking_published` is true, so the
+community photo counts and the ranking repair never see an imported photo.
+
+`camera_reel.imported_images` is the import's provenance: which local photos
+the source may change or `--prune` may delete. It is a separate relation and
+not a column of `images`: it is a fact about the copy, read only by the
+import by primary key, and the gallery rows stay as they are. Its foreign key
+cascades from `images` (same schema, same lifecycle), so a delete of the
+photo removes it. `--prune` collects the ids of one complete pass in memory
+(16 bytes each) and deletes each imported row the pass did not read through
+the owner-delete statement, which records the blobs in `withheld_blobs`. A
+running `serve` loads that relation at boot, so a pruned photo's bytes are
+withheld on `/contents/{hash}` after its next start; its reel route answers
+404 within the servable memo's minute. The bootstrap defines the table; an
+existing database gains it from the object pass, so no step exists.
+
 ## Badges catalog and progress workload
 
 The catalog (`social.badge_definitions`, `badge_tiers`, `presence_badges`;

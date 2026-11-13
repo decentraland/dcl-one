@@ -33,6 +33,7 @@ use crate::storage::Storage;
 use tokio::time::{Duration, Instant};
 
 mod captures;
+mod import;
 
 const API_URL: &str = "http://127.0.0.1:5149/camera-reel-service";
 const PREFIX: &str = "/camera-reel-service";

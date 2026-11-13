@@ -74,6 +74,10 @@
 //! path, and the `x-original-path` the proxy sets when it ends with the
 //! route).
 //!
+//! Photos copied from camera-reel-service by `catalyst camera-reel import`
+//! ([`import`]) keep their ids, owners, documents, visibility and dates;
+//! the import records them in `camera_reel.imported_images`.
+//!
 //! Deliberate differences from camera-reel-service @ 3e8bd0b:
 //! - images are addressed by blob hash: the wire `url`/`thumbnailUrl` are
 //!   `<api_url>/api/images/<hash>`. `GET /api/images/{key}` takes a hash or
@@ -131,6 +135,7 @@ pub mod events;
 pub mod extract;
 pub mod handlers;
 pub mod http;
+pub mod import;
 pub mod writes;
 
 #[cfg(test)]
