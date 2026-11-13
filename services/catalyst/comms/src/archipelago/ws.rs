@@ -1,5 +1,7 @@
 use crate::archipelago::feed::FeedCache;
-use crate::archipelago::registry::{MAX_ASSIGNMENT_BYTES, PeerLink, SocketEvent, SocketEvents};
+use crate::archipelago::registry::{
+    MAX_ASSIGNMENT_BYTES, PeerLink, ReceivedSocketEvent, SocketEvent, SocketEvents,
+};
 use crate::archipelago::session::{is_address, is_session_key, session_key_of};
 use crate::archipelago::state::AppState;
 use crate::auth::AuthChain;
@@ -198,9 +200,9 @@ fn is_repeat(last: Option<&(Vec<u8>, i64)>, assignment: &[u8], now: i64, dedup_m
 
 /// Never resolves before the handshake completes, which keeps a socket with no registration out of
 /// the select without a second copy of the loop.
-async fn next_event(rx: Option<&mut SocketEvents>) -> Option<SocketEvent> {
+async fn next_event(rx: Option<&mut SocketEvents>) -> Option<ReceivedSocketEvent> {
     match rx {
-        Some(rx) => rx.recv().await,
+        Some(rx) => rx.recv_credited().await,
         None => std::future::pending().await,
     }
 }
@@ -372,8 +374,11 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
                                         if state.restart.is_cancelled() || tokio::time::Instant::now() >= handshake_deadline {
                                             break;
                                         }
+                                        // Reserve the welcome before exposing a mailbox to concurrent producers.
+                                        let Some(welcome_credit) = socket.output_budget().reserve() else { break };
+                                        socket.accept_credit(Some(welcome_credit));
                                         // Final policy completion elects the exact transport synchronously.
-                                        let admitted = state.registry.begin_admission(&signer).and_then(|ticket| ticket.commit(&session))
+                                        let admitted = state.registry.begin_admission(&signer).and_then(|ticket| ticket.commit_with_budget(&session, socket.output_budget()))
                                             .map(|(link, rx, previous)| (link, rx, previous,
                                                 state.gatekeeper.cluster.control_v4_audience.as_ref().map(|_| legacy_fence::LegacyFence::new())));
                                         let Some((link, rx, previous, fence)) = admitted else {
@@ -459,7 +464,7 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
                 break;
             }
             event = next_event(events.as_mut()) => {
-                let Some(event) = event else { break };
+                let Some(ReceivedSocketEvent { event, credit }) = event else { break };
                 match event {
                     SocketEvent::IslandChanged(payload, stamp) => {
                         if registration.as_ref().is_some_and(|current| current.fence.is_some()) {
@@ -474,9 +479,10 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
                             continue;
                         }
                         socket.bind_pulse(stamp.clone());
+                        socket.accept_credit(credit);
                         if !send_packet(
                             &mut socket,
-                            server_packet::Message::IslandChanged(assignment.clone()),
+                            server_packet::Message::IslandChanged(assignment),
                             registration.as_ref().map(|current| &current.link),
                             &state.feed,
                         )
@@ -648,3 +654,6 @@ mod tests {
         ));
     }
 }
+
+#[cfg(feature = "test-support")]
+pub use io::assignment_test_support;

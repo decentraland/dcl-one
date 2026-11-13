@@ -22,7 +22,18 @@
       "recovery::a_move_during_token_mint_rolls_back_then_recovers_the_current_room",
       "recovery::same_room_recovery_renews_expired_credentials_without_periodic_churn"
     ],
+    "archipelago_feed_stats": [
+      "assignment_pressure_preserves_fifo_and_rejects_oversize"
+    ],
     "archipelago_ws_island_dedup": [
+      "assignment_fifo_crosses_mailbox_validation_and_physical_writer_in_order",
+      "assignment_capacity_stays_charged_through_validation_and_physical_flush",
+      "full_assignment_budget_keeps_terminal_kick_and_releases_cancelled_work",
+      "an_assignment_backlog_preserves_every_accepted_room_in_order",
+      "source_contract_dedup_compares_received_assignment_bytes",
+      "a_suppressed_repeat_does_not_extend_the_original_acceptance_window",
+      "replacement_socket_has_no_predecessor_delivery_state_or_delayed_predecessor_updates",
+      "an_expired_window_delivers_the_identical_assignment_again",
       "same_room_refreshes_deliver_the_entire_assignment_to_only_the_named_session"
     ]
   },

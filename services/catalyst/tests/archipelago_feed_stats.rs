@@ -221,23 +221,25 @@ async fn stats_health_carries_the_feed_counters_the_runbook_reads() {
 }
 
 #[tokio::test]
-async fn assignment_pressure_counts_coalescing_and_rejects_oversize() {
+async fn assignment_pressure_preserves_fifo_and_rejects_oversize() {
     use catalyst::comms::archipelago::registry::{MAX_ASSIGNMENT_BYTES, SocketEvent};
     let (port, state) = start_server().await;
     let (link, mut events, _) = state.registry.on_peer_connected("wallet", "session");
     let deliver =
         |assignment: &IslandChangedMessage| route_island(&state, "wallet", "session", assignment);
     assert_eq!(deliver(&island("first")), Routed::Delivered);
-    assert_eq!(deliver(&island("last")), Routed::Coalesced);
+    assert_eq!(deliver(&island("last")), Routed::Delivered);
     let oversized = IslandChangedMessage {
         conn_str: "x".repeat(MAX_ASSIGNMENT_BYTES),
         ..island("oversized")
     };
     assert_eq!(deliver(&oversized), Routed::TooLarge);
-    let SocketEvent::IslandChanged(bytes, _) = events.try_recv().unwrap() else {
-        panic!("expected the last valid assignment");
-    };
-    assert_eq!(bytes, island("last").encode_to_vec());
+    for name in ["first", "last"] {
+        let SocketEvent::IslandChanged(bytes, _) = events.try_recv().unwrap() else {
+            panic!("expected an accepted assignment");
+        };
+        assert_eq!(bytes, island(name).encode_to_vec());
+    }
     assert!(
         link.needs_assignment(),
         "queue acceptance is not a WebSocket write"
@@ -245,7 +247,7 @@ async fn assignment_pressure_counts_coalescing_and_rejects_oversize() {
     let (status, body) = get_json(port, "/stats/health").await;
     assert_eq!(status, 200);
     assert_eq!(body["feed_delivered"], 2);
-    assert_eq!(body["feed_assignment_coalesced"], 1);
+    assert_eq!(body["feed_assignment_coalesced"], 0);
     assert_eq!(body["feed_assignment_oversized"], 1);
     assert_eq!(body["feed_undecodable"], 0);
     assert_eq!(body["socket_assignments_written"], 0);

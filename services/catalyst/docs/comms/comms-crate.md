@@ -87,8 +87,9 @@ the repository structure checks. Higher crates implement comms' traits, keeping 
 
 `/ws` limits : `WS_MAX_SOCKETS` (default 3,000, sized by the 10 ms-per-socket
 re-announce sweep's 30 s cadence), beyond it 503 with `Retry-After: 5`; positions coalesce
-for ownership control to one per 500 ms; statistical observations retain every decoded position; a flooding socket closes with 1008; a 64-frame send queue in which a newer
-`island_changed` replaces the queued one and `kicked` is never dropped, full for 10 s closes
+for ownership control to one per 500 ms; statistical observations retain every decoded position; a flooding socket closes with 1008; one 64-item output budget across assignment mailboxes, validation and the physical writer;
+accepted assignments retain arrival order, exhaustion rejects new mailbox assignments, and
+`kicked` has a separate terminal slot. Full for 10 s closes
 with 1013; undecodable frames 1007; restart closes every socket with 1012.
 
 **Deployment.**

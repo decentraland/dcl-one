@@ -691,29 +691,52 @@ async fn an_oversized_assignment_is_counted_without_breaking_the_live_socket() {
 }
 
 #[tokio::test]
-async fn an_assignment_backlog_keeps_only_the_latest_pending_room() {
-    let (port, state, _) = start_server(0).await;
+async fn an_assignment_backlog_preserves_every_accepted_room_in_order() {
+    let (port, state, _) = start_server(10_000).await;
     let wallet = PrivateKeySigner::random();
     let address = format!("{:#x}", wallet.address());
     let device = Device::new();
     let mut ws = handshake(port, &wallet, &device).await;
     let session = device.session();
-    for index in 0..1_024 {
-        route_island(
-            &state,
-            &address,
-            &session,
-            &island(&format!("island-{index}")),
+    for index in 0..64 {
+        assert_eq!(
+            route_island(
+                &state,
+                &address,
+                &session,
+                &island(&format!("island-{index}"))
+            ),
+            Routed::Delivered
         );
     }
     assert_eq!(
+        route_island(&state, &address, &session, &island("overflow")),
+        Routed::Full
+    );
+    for index in 0..64 {
+        assert_eq!(
+            recv_island(&mut ws, Duration::from_secs(3)).await,
+            Some(format!("island-{index}"))
+        );
+    }
+    assert_eq!(recv_island(&mut ws, Duration::from_millis(100)).await, None);
+    assert_eq!(state.feed.coalesced_count(), 0);
+    assert_eq!(state.feed.socket_assignments_written_count(), 64);
+    // Exhaustion rejected this item before dedup acceptance; it can be sent after release.
+    assert_eq!(
+        route_island(&state, &address, &session, &island("overflow")),
+        Routed::Delivered
+    );
+    assert_eq!(
         recv_island(&mut ws, Duration::from_secs(3)).await,
-        Some("island-1023".into()),
-        "a paused consumer must not replay an unbounded history of old rooms"
+        Some("overflow".into())
+    );
+    assert_eq!(
+        route_island(&state, &address, &session, &island("overflow")),
+        Routed::Delivered
     );
     assert_eq!(recv_island(&mut ws, Duration::from_millis(100)).await, None);
-    assert_eq!(state.feed.coalesced_count(), 1_023);
-    assert_eq!(state.feed.socket_assignments_written_count(), 1);
+    assert_eq!(state.feed.deduplicated_count(), 1);
 }
 
 #[tokio::test]
@@ -1319,22 +1342,34 @@ async fn source_contract_dedup_compares_received_assignment_bytes() {
     link.send(
         catalyst::comms::archipelago::registry::SocketEvent::IslandChanged(bytes.clone(), None),
     );
-    assert_eq!(
-        recv_island(&mut socket, Duration::from_secs(3))
-            .await
-            .as_deref(),
-        Some("same-fields")
-    );
-    // An unknown protobuf field changes the delivered payload, although known fields are equal.
+    let expected = ServerPacket {
+        request_sequence: 0,
+        message: Some(server_packet::Message::IslandChanged(island("same-fields"))),
+    }
+    .encode_to_vec();
+    let first = tokio::time::timeout(Duration::from_secs(3), socket.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert_eq!(first, WsMessage::Binary(expected.clone().into()));
+    // Distinct received bytes remain eligible even when their decoded output is equal.
     bytes.extend_from_slice(&[0x98, 0x06, 0x01]);
     link.send(
         catalyst::comms::archipelago::registry::SocketEvent::IslandChanged(bytes.clone(), None),
     );
+    let frame = tokio::time::timeout(Duration::from_secs(3), socket.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    let WsMessage::Binary(wire) = frame else {
+        panic!("binary assignment expected")
+    };
     assert_eq!(
-        recv_island(&mut socket, Duration::from_secs(3))
-            .await
-            .as_deref(),
-        Some("same-fields")
+        wire.as_ref(),
+        expected.as_slice(),
+        "output removes unknown fields through decoded ServerPacket serialization"
     );
     link.send(
         catalyst::comms::archipelago::registry::SocketEvent::IslandChanged(bytes.clone(), None),
@@ -1344,4 +1379,155 @@ async fn source_contract_dedup_compares_received_assignment_bytes() {
             .await
             .is_none()
     );
+    assert_eq!(state.feed.socket_assignments_written_count(), 2);
+    assert_eq!(state.feed.deduplicated_count(), 1);
+}
+
+#[tokio::test]
+async fn assignment_fifo_crosses_mailbox_validation_and_physical_writer_in_order() {
+    use axum::extract::ws::Message;
+    use catalyst::comms::archipelago::ws::assignment_test_support::AssignmentWriter;
+    let mut writer = AssignmentWriter::new(archipelago::state(test_config(0)).await).await;
+    let payloads: Vec<_> = ["A", "B", "C"]
+        .into_iter()
+        .map(|name| island(name).encode_to_vec())
+        .collect();
+    for payload in &payloads {
+        assert!(writer.send(payload));
+    }
+    writer.take_for_validation().await;
+    assert_eq!(writer.available(), 61);
+    assert!(writer.admit().await);
+    writer.step().await;
+    assert!(
+        writer.frames().is_empty(),
+        "physical readiness is still held"
+    );
+    assert!(writer.admit().await);
+    // A is in the physical writer, B in its queue, C in the mailbox.
+    assert_eq!(writer.available(), 61);
+    writer.readiness(true, true);
+    writer.step().await;
+    assert!(writer.admit().await);
+    writer.step().await;
+    let frames = writer.frames();
+    assert_eq!(frames.len(), 3);
+    for (frame, payload) in frames.iter().zip(&payloads) {
+        let Message::Binary(bytes) = frame else {
+            panic!("assignment frame")
+        };
+        assert_eq!(
+            ServerPacket::decode(bytes.clone()).unwrap().message,
+            Some(server_packet::Message::IslandChanged(
+                IslandChangedMessage::decode(payload.as_slice()).unwrap()
+            ))
+        );
+    }
+    assert_eq!(writer.available(), 64);
+    writer.finish().await;
+}
+
+#[tokio::test]
+async fn assignment_capacity_stays_charged_through_validation_and_physical_flush() {
+    use catalyst::comms::archipelago::ws::assignment_test_support::AssignmentWriter;
+    let mut writer = AssignmentWriter::new(archipelago::state(test_config(0)).await).await;
+    for value in 0..64 {
+        assert!(writer.send(&island(&value.to_string()).encode_to_vec()));
+    }
+    let rejected = island("exact-rejected-bytes").encode_to_vec();
+    writer.take_for_validation().await;
+    assert!(!writer.send(&rejected));
+    assert!(writer.admit().await);
+    writer.step().await;
+    assert!(!writer.send(&rejected));
+    writer.readiness(true, false);
+    writer.step().await;
+    assert_eq!(writer.frames().len(), 1);
+    assert!(
+        !writer.send(&rejected),
+        "start_send does not release the flush credit"
+    );
+    writer.readiness(true, true);
+    writer.step().await;
+    assert_eq!(writer.available(), 1);
+    assert!(writer.send(&rejected));
+    assert_eq!(writer.available(), 0);
+    writer.take_for_validation().await;
+    writer.reject_validation();
+    assert_eq!(writer.available(), 1);
+    writer.finish().await;
+    assert_eq!(
+        writer.available(),
+        64,
+        "retirement clears the mailbox and writer"
+    );
+}
+
+#[tokio::test]
+async fn full_assignment_budget_keeps_terminal_kick_and_releases_cancelled_work() {
+    use axum::extract::ws::Message;
+    use catalyst::comms::archipelago::registry::SocketEvent;
+    use catalyst::comms::archipelago::ws::assignment_test_support::AssignmentWriter;
+    for partial in [false, true] {
+        let mut writer = AssignmentWriter::new(archipelago::state(test_config(0)).await).await;
+        for value in 0..64 {
+            assert!(writer.send(&island(&value.to_string()).encode_to_vec()));
+        }
+        assert!(writer.admit().await);
+        writer.readiness(partial, false);
+        writer.step().await;
+        if !partial {
+            assert!(writer.owner.send(SocketEvent::Kicked));
+        }
+        writer.finish().await;
+        assert_eq!(writer.available(), 64);
+        let frames = writer.frames();
+        if partial {
+            assert_eq!(
+                frames.len(),
+                1,
+                "a cancelled partial frame cannot drain more output"
+            );
+        } else {
+            assert_eq!(frames.len(), 2);
+            let Message::Binary(bytes) = &frames[0] else {
+                panic!("terminal kick")
+            };
+            assert!(matches!(
+                ServerPacket::decode(bytes.clone()).unwrap().message,
+                Some(server_packet::Message::Kicked(_))
+            ));
+            assert!(matches!(frames[1], Message::Close(None)));
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_suppressed_repeat_does_not_extend_the_original_acceptance_window() {
+    let (port, state, _) = start_server(2_000).await;
+    let wallet = PrivateKeySigner::random();
+    let address = format!("{:#x}", wallet.address());
+    let device = Device::new();
+    let mut socket = handshake(port, &wallet, &device).await;
+    let assignment = island("original-window");
+    route_island(&state, &address, &device.session(), &assignment);
+    assert_eq!(
+        recv_island(&mut socket, Duration::from_secs(3)).await,
+        Some("original-window".into())
+    );
+    tokio::time::sleep(Duration::from_millis(1_000)).await;
+    route_island(&state, &address, &device.session(), &assignment);
+    assert!(
+        recv_msg(&mut socket, Duration::from_millis(50))
+            .await
+            .is_none()
+    );
+    assert_eq!(state.feed.deduplicated_count(), 1);
+    tokio::time::sleep(Duration::from_millis(1_200)).await;
+    route_island(&state, &address, &device.session(), &assignment);
+    assert_eq!(
+        recv_island(&mut socket, Duration::from_secs(3)).await,
+        Some("original-window".into())
+    );
+    assert_eq!(state.feed.deduplicated_count(), 1);
 }
