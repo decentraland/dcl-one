@@ -12,6 +12,7 @@ let server: Server
 let scratch: string
 let origin: string
 let session: Awaited<ReturnType<typeof openSession>>
+let preparation: Promise<void> | undefined
 let startup: ReturnType<typeof openSession> | undefined
 const startupController = new AbortController()
 
@@ -23,6 +24,12 @@ async function evaluate<T = unknown>(expression: string): Promise<T> {
   })) as { result: { value: T }; exceptionDetails?: { text: string } }
   if (result.exceptionDetails) throw new Error(result.exceptionDetails.text)
   return result.result.value
+}
+
+async function resolveWash(token: string): Promise<string> {
+  return evaluate(
+    `(()=>{const probe=document.createElement('span');probe.style.backgroundColor='var('+${JSON.stringify(token)}+')';document.body.append(probe);const color=getComputedStyle(probe).backgroundColor;probe.remove();return color})()`
+  )
 }
 
 async function click(selector: string) {
@@ -59,7 +66,12 @@ async function key(value: 'Tab' | 'Escape', shift = false) {
     })
 }
 
-beforeAll(async () => {
+beforeAll(() => {
+  preparation = prepareHarness()
+  return preparation
+}, 30_000)
+
+async function prepareHarness() {
   const root = path.resolve(import.meta.dirname, '..')
   scratch = await mkdtemp(path.join(tmpdir(), 'navbar-composition-'))
   const environment = process.env.NODE_ENV
@@ -86,6 +98,7 @@ beforeAll(async () => {
     if (environment === undefined) delete process.env.NODE_ENV
     else process.env.NODE_ENV = environment
   }
+  startupController.signal.throwIfAborted()
   server = createServer((request, response) => {
     void (async () => {
       const pathname = new URL(request.url ?? '/', 'http://fixture.local').pathname
@@ -127,10 +140,11 @@ beforeAll(async () => {
       { signal: startupController.signal }
     ))()
   session = await startup
-}, 30_000)
+}
 
 afterAll(async () => {
   startupController.abort(new Error('NavBar composition fixture disposed'))
+  await preparation?.catch(() => undefined)
   const opened = await startup?.catch(() => undefined)
   await releaseHarness({ session: opened, server, scratch })
 })
@@ -230,28 +244,31 @@ describe('when a public NavBar composes app-owned controls in Chromium', () => {
           deviceScaleFactor: 1,
           mobile: false
         })
+        const errorStart = session.runtimeErrors.length
         await session.navigate(origin + '?surface-proof&surface=' + surface)
         await evaluate(
-          `(async()=>{for(let n=0;n<100&&!document.querySelector('#balance-action');n++)await new Promise(r=>setTimeout(r,50));await document.fonts.ready})()`
+          `(async()=>{for(let n=0;n<100&&!document.querySelector('#balance-action');n++)await new Promise(r=>setTimeout(r,50));await document.fonts.ready;document.documentElement.style.scrollbarGutter='stable'})()`
         )
-        expect(session.runtimeErrors).toEqual([])
+        expect(session.runtimeErrors.slice(errorStart)).toEqual([])
         const minimal = width >= 1024 && surface === 'overlay'
         const expectedWash = minimal
           ? 'rgba(0, 0, 0, 0)'
-          : width >= 1024
-            ? 'rgba(22, 21, 24, 0.4)'
-            : 'rgba(22, 21, 24, 0.75)'
+          : await resolveWash(width >= 1024 ? '--dcl-bg-navbar' : '--dcl-bg-navbar-mobile')
         for (const scroll of [0, 50, 200, 400, ...(minimal ? [1000] : [])]) {
           await evaluate(
             `scrollTo(0,${scroll});new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))`
           )
+          const availableWidth = await evaluate<number>('document.documentElement.clientWidth')
+          expect(await evaluate('innerWidth')).toBe(width)
+          expect(await evaluate('document.documentElement.scrollWidth')).toBe(availableWidth)
           const measured = await evaluate(
-            `(()=>{const nav=document.querySelector('nav[aria-label="Main"]'),root=getComputedStyle(nav),layer=getComputedStyle(nav,'::before'),r=nav.getBoundingClientRect();return{y:r.y,height:r.height,width:r.width,background:root.backgroundColor,image:root.backgroundImage,shadow:root.boxShadow,filter:root.backdropFilter,transform:root.transform,contain:root.contain,layerBackground:layer.backgroundColor,layerFilter:layer.backdropFilter,layerShadow:layer.boxShadow,layerPointer:layer.pointerEvents,opacity:layer.opacity}})()`
+            `(()=>{const nav=document.querySelector('nav[aria-label="Main"]'),root=getComputedStyle(nav),layer=getComputedStyle(nav,'::before'),r=nav.getBoundingClientRect();return{x:r.x,y:r.y,height:r.height,width:r.width,background:root.backgroundColor,image:root.backgroundImage,shadow:root.boxShadow,filter:root.backdropFilter,transform:root.transform,contain:root.contain,layerBackground:layer.backgroundColor,layerFilter:layer.backdropFilter,layerShadow:layer.boxShadow,layerPointer:layer.pointerEvents,opacity:layer.opacity}})()`
           )
           expect(measured).toMatchObject({
+            x: 0,
             y: 0,
             height: width >= 1024 ? 80 : 64,
-            width,
+            width: availableWidth,
             background: 'rgba(0, 0, 0, 0)',
             image: 'none',
             shadow: 'none',
@@ -310,7 +327,7 @@ describe('when a public NavBar composes app-owned controls in Chromium', () => {
             )
           ).toBe(true)
         }
-        expect(session.runtimeErrors).toEqual([])
+        expect(session.runtimeErrors.slice(errorStart)).toEqual([])
       }, 30_000)
     }
   }
@@ -329,7 +346,7 @@ describe('when a public NavBar composes app-owned controls in Chromium', () => {
       await evaluate(
         `(()=>{const p=getComputedStyle(document.querySelector('nav[aria-label="Main"]'),'::before');return{wash:p.backgroundColor,filter:p.backdropFilter}})()`
       )
-    ).toEqual({ wash: 'rgba(22, 21, 24, 0.75)', filter: 'none' })
+    ).toEqual({ wash: await resolveWash('--dcl-bg-navbar-mobile'), filter: 'none' })
   }, 30_000)
 
   for (const width of [991, 992, 1023, 1024, 1440]) {
