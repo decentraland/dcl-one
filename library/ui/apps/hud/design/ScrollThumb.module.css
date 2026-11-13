@@ -30,3 +30,6 @@
   width: auto;
   height: 14px;
 }
+.dark .thumb {
+  background: var(--scroll-thumb-dark);
+}

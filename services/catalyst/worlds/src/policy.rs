@@ -312,6 +312,12 @@ pub struct Policy {
     ens_max_size_bytes: i64,
     /// World key -> the authority's admission-time answer or fault, single-flight.
     admission_owners: TtlMap<String, Result<Option<Address>, String>>,
+    /// The DAO name deny list and `BLOCKED_WORLD_NAMES`, which
+    /// [`AccessPolicy::world_admission`](crate::comms::interfaces::AccessPolicy::world_admission)
+    /// applies (upstream `isWorldValid`'s `checkNameDenyList`). ONE list, with ONE memo, shared
+    /// with the world reads and the deploy core ([`Policy::names`]), as upstream shares one
+    /// `nameDenyListChecker`.
+    names: Arc<crate::core::names::NameDenyList>,
 }
 
 impl Policy {
@@ -344,7 +350,20 @@ impl Policy {
             ens: None,
             ens_max_size_bytes: DEFAULT_ENS_MAX_SIZE_BYTES,
             admission_owners: TtlMap::bounded(ADMISSION_OWNER_MEMO, ADMISSION_OWNER_MAX_ENTRIES),
+            names: Arc::default(),
         }
+    }
+
+    /// The name deny list this policy and its other consumers share (an empty
+    /// `BLOCKED_WORLD_NAMES` until set).
+    pub fn with_name_deny_list(mut self, names: Arc<crate::core::names::NameDenyList>) -> Self {
+        self.names = names;
+        self
+    }
+
+    /// The shared name deny list: `CoreState` reads this one instance.
+    pub fn names(&self) -> &Arc<crate::core::names::NameDenyList> {
+        &self.names
     }
 
     /// Turns on ENS worlds with their owner reader and size cap.
@@ -1434,6 +1453,16 @@ impl crate::comms::interfaces::AccessPolicy for Policy {
             .map_err(|e| store_unavailable("worlds.worlds", &e))?;
         Ok(match row {
             None => WorldAdmission::Unknown,
+            // Upstream `isWorldValid` asks the name deny list before the row; both answer the
+            // same invalid world, and the list never faults, so the order changes no answer.
+            Some(_)
+                if !self
+                    .names
+                    .check_name_deny_list(&self.pool, world.key())
+                    .await =>
+            {
+                WorldAdmission::Unknown
+            }
             Some(row) => {
                 let quota = self.live_quota_block(world, &row).await;
                 if world_blocked(row.blocked_since, quota, now) {
@@ -1847,6 +1876,51 @@ mod tests {
         assert_eq!(
             p.world_admission(&world, now()).await.unwrap(),
             WorldAdmission::Blocked
+        );
+    }
+
+    /// Upstream `isWorldValid` (`logic/worlds/component.ts:71-74`): a name the DAO
+    /// `banned-names` list holds, compared without its `.dcl`/`.eth` and case, or a
+    /// `BLOCKED_WORLD_NAMES` entry, compared as a whole name, is an invalid world.
+    #[tokio::test]
+    async fn world_admission_refuses_a_deny_listed_name() {
+        use crate::comms::interfaces::AccessPolicy;
+        let Some(p) = scratch().await else {
+            return;
+        };
+        let label = format!("d{}", &Uuid::new_v4().simple().to_string()[..10]);
+        let listed = WorldName::parse(&format!("{label}.dcl.eth")).unwrap();
+        let (blocked, open) = (world_name(), world_name());
+        let p = p.with_name_deny_list(Arc::new(crate::core::names::NameDenyList::new(&format!(
+            " {} ,",
+            blocked.key().to_uppercase()
+        ))));
+        for world in [&listed, &blocked, &open] {
+            seed_world(&p, world, None, AccessType::Unrestricted, None).await;
+        }
+        crate::explore::api::lists::set_local(
+            p.pool(),
+            crate::core::names::BANNED_NAMES_LIST,
+            &label,
+            true,
+        )
+        .await
+        .unwrap();
+        for name in [
+            listed.key().to_string(),
+            format!("{}.dcl.eth", label.to_uppercase()),
+            blocked.key().to_string(),
+        ] {
+            let world = WorldName::parse(&name).unwrap();
+            assert_eq!(
+                p.world_admission(&world, now()).await.unwrap(),
+                WorldAdmission::Unknown,
+                "{name}"
+            );
+        }
+        assert_eq!(
+            p.world_admission(&open, now()).await.unwrap(),
+            WorldAdmission::Open(AccessType::Unrestricted)
         );
     }
 

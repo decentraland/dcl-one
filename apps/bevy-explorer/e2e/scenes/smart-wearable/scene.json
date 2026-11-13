@@ -1,0 +1,23 @@
+{
+  "ecs7": true,
+  "runtimeVersion": "7",
+  "isPortableExperience": true,
+  "display": {
+    "title": "Smart Wearable Fixture",
+    "description": "End-to-end fixture: a smart wearable that shows one UI label"
+  },
+  "owner": "",
+  "contact": {
+    "name": "dcl-one e2e",
+    "email": ""
+  },
+  "main": "bin/index.js",
+  "tags": [],
+  "requiredPermissions": [],
+  "scene": {
+    "parcels": [
+      "204,0"
+    ],
+    "base": "204,0"
+  }
+}
