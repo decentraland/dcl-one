@@ -69,6 +69,9 @@ struct Chunks<'a> {
     rest: &'a [u8],
 }
 
+/// A GLB chunk: its type, its data and the offset just past it.
+type Chunk<'a> = (u32, &'a [u8], usize);
+
 fn chunks(glb: &[u8]) -> Result<Chunks<'_>, String> {
     if glb.len() < HEADER_BYTES || &glb[..4] != GLB_MAGIC {
         return Err("not a GLB".to_owned());
@@ -82,7 +85,7 @@ fn chunks(glb: &[u8]) -> Result<Chunks<'_>, String> {
         return Err(format!("GLB declares {length} bytes, has {}", glb.len()));
     }
     let glb = &glb[..length];
-    let chunk = |offset: usize| -> Result<Option<(u32, &[u8], usize)>, String> {
+    let chunk = |offset: usize| -> Result<Option<Chunk<'_>>, String> {
         if offset == glb.len() {
             return Ok(None);
         }
@@ -107,7 +110,7 @@ fn chunks(glb: &[u8]) -> Result<Chunks<'_>, String> {
 }
 
 fn pad(bytes: &mut Vec<u8>, with: u8) {
-    while bytes.len() % 4 != 0 {
+    while !bytes.len().is_multiple_of(4) {
         bytes.push(with);
     }
 }
