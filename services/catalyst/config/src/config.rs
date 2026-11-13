@@ -516,6 +516,14 @@ impl Config {
     pub const NETWORK_DEFAULTED_SECRETS: [&'static str; 2] =
         ["ETH_RPC_URL", "RPC_ENDPOINT_POLYGON"];
 
+    /// One secret outside a parsed config: `<NAME>`, else `<NAME>_FILE`'s trimmed contents,
+    /// with the same refusals as [`Config::resolve_secret_files`].
+    pub fn secret_from_env(name: &str) -> anyhow::Result<Option<String>> {
+        let mut slot = std::env::var(name).ok().filter(|v| !v.is_empty());
+        Self::read_secret_file(name, &mut slot)?;
+        Ok(slot)
+    }
+
     fn read_secret_file(name: &str, slot: &mut Option<String>) -> anyhow::Result<()> {
         let file_var = format!("{name}_FILE");
         let Some(path) = std::env::var_os(&file_var).filter(|p| !p.is_empty()) else {

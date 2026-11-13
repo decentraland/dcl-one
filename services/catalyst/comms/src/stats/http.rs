@@ -45,6 +45,8 @@ pub mod test_support {
 pub struct Settings {
     pub metrics_path: String,
     pub metrics_bearer_token: Option<String>,
+    /// Base of `/hot-scenes` thumbnails. `serve` sets it from `CONTENT_URL` or this
+    /// node's own `/content` (`stats_content_url`); the default serves tests.
     pub content_url: String,
 }
 impl Default for Settings {
@@ -64,19 +66,13 @@ impl Settings {
                 .ok()
                 .filter(|s| !s.is_empty())
                 .unwrap_or(defaults.metrics_path),
-            // The `_FILE` form too, as the config's secret slot reads it (serve checks its length).
-            metrics_bearer_token: std::env::var("WKC_METRICS_BEARER_TOKEN")
-                .ok()
-                .filter(|s| !s.is_empty())
-                .or_else(|| {
-                    let path = std::env::var_os("WKC_METRICS_BEARER_TOKEN_FILE")?;
-                    let token = std::fs::read_to_string(path).ok()?;
-                    Some(token.trim().to_string()).filter(|t| !t.is_empty())
-                }),
-            content_url: std::env::var("CONTENT_URL")
-                .ok()
-                .filter(|s| !s.is_empty())
-                .unwrap_or(defaults.content_url),
+            // The `_FILE` form too, read as the config's secret slot reads it.
+            metrics_bearer_token: catalyst_config::config::Config::secret_from_env(
+                "WKC_METRICS_BEARER_TOKEN",
+            )
+            .ok()
+            .flatten(),
+            content_url: defaults.content_url,
         }
     }
 }

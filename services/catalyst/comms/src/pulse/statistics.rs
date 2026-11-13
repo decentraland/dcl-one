@@ -8,6 +8,9 @@ use std::collections::{BTreeMap, HashMap, VecDeque};
 /// Exact-case wallet membership with Map insertion order and no expiry. Producer
 /// cursors suppress duplicate/out-of-order observations, not disconnected sessions:
 /// every accepted socket disconnect removes its wallet, regardless of other sockets.
+/// A handover keeps the outgoing writer's cursor until the next one, so its sockets'
+/// heartbeats and disconnects still count while it drains, as upstream Stats takes
+/// every connector's events.
 #[derive(Default)]
 pub struct Statistics {
     peers: BTreeMap<u64, Peer>,
@@ -16,6 +19,7 @@ pub struct Statistics {
     incarnation: uuid::Uuid,
     next_generation: u64,
     active: Option<(ProducerGrant, u64)>,
+    retiring: Option<(ProducerGrant, u64)>,
     pending: Option<ProducerGrant>,
     islands: Vec<u8>,
     discovery: Vec<u8>,
@@ -90,6 +94,12 @@ impl Statistics {
                     return rejected;
                 }
                 self.pending = None;
+                // Defensive: `Begin` answers `Active` to the producer that is already
+                // active, so a pending grant never shares the active producer today.
+                self.retiring = self
+                    .active
+                    .take()
+                    .filter(|(outgoing, _)| outgoing.producer != grant.producer);
                 self.active = Some((grant.clone(), 0));
                 ProducerReply::Active(grant)
             }
@@ -98,19 +108,27 @@ impl Statistics {
     /// `received_ms` is Pulse's wall clock at receipt, including backwards jumps.
     /// Sequence gaps are accepted: the internal core NATS link is at most once.
     pub fn observe(&mut self, observation: Observation, received_ms: i64) -> bool {
-        let accepted = observation.version == 2
+        let cursor = if observation.version == 2
             && observation.sequence > 0
             && observation.incarnation == self.incarnation
-            && self.active.as_ref().is_some_and(|(grant, cursor)| {
-                grant.producer == observation.producer
-                    && grant.generation == observation.generation
-                    && observation.sequence > *cursor
-            });
-        if !accepted {
+        {
+            [&mut self.active, &mut self.retiring]
+                .into_iter()
+                .flatten()
+                .find(|(grant, _)| {
+                    grant.producer == observation.producer
+                        && grant.generation == observation.generation
+                })
+                .map(|(_, cursor)| cursor)
+                .filter(|cursor| observation.sequence > **cursor)
+        } else {
+            None
+        };
+        let Some(cursor) = cursor else {
             crate::pulse::metrics::statistics_observation_rejected();
             return false;
-        }
-        self.active.as_mut().unwrap().1 = observation.sequence;
+        };
+        *cursor = observation.sequence;
         match observation.event {
             Event::Heartbeat { address, position } => {
                 let index = *self.order.entry(address.clone()).or_insert_with(|| {
@@ -399,10 +417,28 @@ mod tests {
             stats.control(ProducerRequest::Confirm(current.clone())),
             ProducerReply::Rejected { .. }
         ));
-        let mut stale = beat(999, "stale");
+        let mut replayed = beat(2, "continued");
+        replayed.producer = current.producer;
+        replayed.generation = current.generation;
+        assert!(
+            !stats.observe(replayed, 998),
+            "the outgoing writer keeps its cursor"
+        );
+        let mut draining = beat(999, "continued");
+        draining.producer = current.producer;
+        draining.generation = current.generation;
+        assert!(
+            stats.observe(draining, 999),
+            "the outgoing writer's sockets still count while it drains"
+        );
+        register(&mut stats, uuid::Uuid::new_v4());
+        let mut stale = beat(1000, "stale");
         stale.producer = current.producer;
         stale.generation = current.generation;
-        assert!(!stats.observe(stale, 999));
+        assert!(
+            !stats.observe(stale, 1000),
+            "only the latest outgoing writer is kept"
+        );
         let mut restarted = Statistics::with_incarnation(uuid::Uuid::new_v4());
         assert!(matches!(
             restarted.control(ProducerRequest::Confirm(current)),
@@ -433,6 +469,72 @@ mod tests {
             ),
             "generation overflow must fail closed rather than reuse a fence"
         );
+    }
+    #[test]
+    fn a_handover_keeps_the_outgoing_connectors_heartbeats_and_disconnects() {
+        let mut stats = registered();
+        assert!(stats.observe(beat(1, "old-socket"), 1));
+        let incoming = register(&mut stats, uuid::Uuid::from_u128(7));
+        let mut moved = beat(1, "new-socket");
+        moved.producer = incoming.producer;
+        moved.generation = incoming.generation;
+        assert!(stats.observe(moved, 2));
+        // The outgoing connector drains: its socket still moves, then closes.
+        assert!(stats.observe(beat(2, "old-socket"), 3));
+        assert_eq!(stats.snapshot().peers[0].time, 3);
+        assert!(stats.observe(
+            observation(
+                3,
+                Event::Disconnect {
+                    address: "old-socket".into()
+                }
+            ),
+            4
+        ));
+        assert_eq!(
+            stats
+                .snapshot()
+                .peers
+                .iter()
+                .map(|p| p.address.as_str())
+                .collect::<Vec<_>>(),
+            ["new-socket"],
+            "a drained connector leaves no ghost"
+        );
+    }
+    #[test]
+    fn a_draining_disconnect_drops_a_reconnected_wallet_until_its_next_heartbeat() {
+        let mut stats = registered();
+        assert!(stats.observe(beat(1, "w"), 1));
+        let incoming = register(&mut stats, uuid::Uuid::from_u128(7));
+        let through_new = |sequence| {
+            let mut beat = beat(sequence, "w");
+            beat.producer = incoming.producer;
+            beat.generation = incoming.generation;
+            beat
+        };
+        assert!(stats.observe(through_new(1), 2));
+        // The old socket closes after the wallet reconnected: as upstream, any
+        // connector's disconnect removes the peer.
+        let gone = Event::Disconnect {
+            address: "w".into(),
+        };
+        assert!(stats.observe(observation(2, gone), 3));
+        assert!(stats.snapshot().peers.is_empty());
+        assert!(stats.observe(through_new(2), 4));
+        assert_eq!(stats.snapshot().peers[0].address, "w");
+    }
+    #[test]
+    fn only_the_most_recent_outgoing_connector_drains() {
+        let mut stats = registered();
+        assert!(stats.observe(beat(1, "a"), 1));
+        register(&mut stats, uuid::Uuid::from_u128(7));
+        register(&mut stats, uuid::Uuid::from_u128(8));
+        let gone = Event::Disconnect {
+            address: "a".into(),
+        };
+        assert!(!stats.observe(observation(2, gone), 2));
+        assert_eq!(stats.snapshot().peers[0].address, "a");
     }
     fn register(stats: &mut Statistics, producer: uuid::Uuid) -> ProducerGrant {
         let ProducerReply::Grant(grant) = stats.control(ProducerRequest::Begin {

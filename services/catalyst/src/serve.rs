@@ -196,7 +196,7 @@ fn install_metrics(raw: &str) -> anyhow::Result<comms::metrics::PrometheusHandle
 /// final isolate teardown; an arbitrary preexisting runtime is not supported.
 pub async fn serve(
     mut config: Config,
-    prepared: crate::metrics_matcher::PreparedStats,
+    mut prepared: crate::metrics_matcher::PreparedStats,
 ) -> anyhow::Result<()> {
     config.node.init_tracing();
     let metrics_handle = install_metrics(&config.node.serve_metrics_bind)?;
@@ -237,6 +237,10 @@ pub async fn serve(
         storage.clone(),
         sync_status.clone(),
     ));
+    prepared.settings.content_url = stats_content_url(
+        config.node.content_url.as_deref(),
+        &content.settings.content_public_url,
+    );
 
     // ONE outbound client: peer sync and the RPC validator use it as is
     // (`raw`), every mirror and upstream reader through the guard.
@@ -1003,7 +1007,6 @@ pub async fn serve(
         &config,
         &pool,
         &http_client,
-        &content,
         &market,
         comms_settings,
         &policy,
@@ -2090,7 +2093,6 @@ async fn comms_states(
     config: &Config,
     pool: &sqlx::PgPool,
     http_client: &http::Outbound,
-    content: &Arc<content::ContentState>,
     market: &Arc<shop::market::MarketplaceState>,
     comms_settings: comms::gatekeeper::Settings,
     policy: &Arc<worlds::policy::Policy>,
@@ -2106,18 +2108,15 @@ async fn comms_states(
     use crate::comms::interfaces::AccessPolicy;
 
     let non_empty = Config::non_empty;
-    let archipelago_settings = archipelago::Settings::resolve(
-        archipelago::config::RawSettings {
-            max_sockets: config.worlds.ws_max_sockets,
-            max_sockets_per_ip: config.worlds.ws_max_sockets_per_ip,
-            trusted_proxy_cidrs: config.node.http_trusted_proxy_cidrs.clone(),
-            handshake_timeout_ms: config.worlds.handshake_timeout,
-            deny_list_url: config.worlds.deny_list(),
-            island_changed_dedup_ms: config.worlds.island_changed_dedup_ms,
-            commit_hash: config.node.commit_hash.clone(),
-        },
-        &content.settings.content_public_url,
-    );
+    let archipelago_settings = archipelago::Settings::resolve(archipelago::config::RawSettings {
+        max_sockets: config.worlds.ws_max_sockets,
+        max_sockets_per_ip: config.worlds.ws_max_sockets_per_ip,
+        trusted_proxy_cidrs: config.node.http_trusted_proxy_cidrs.clone(),
+        handshake_timeout_ms: config.worlds.handshake_timeout,
+        deny_list_url: config.worlds.deny_list(),
+        island_changed_dedup_ms: config.worlds.island_changed_dedup_ms,
+        commit_hash: config.node.commit_hash.clone(),
+    });
 
     let social_directory = Arc::new(social::comms_directory::Directory::new(pool.clone()));
     let gatekeeper = comms::gatekeeper::CommsState::new(
@@ -2282,6 +2281,42 @@ fn registry_profiles(market: shop::market::SharedState) -> axum::Router {
         "/asset-bundle-registry",
         shop::market::profiles::registry::router(market),
     )
+}
+
+/// The base of `/hot-scenes` thumbnails, the server the scenes are read from, as
+/// upstream Stats uses one URL for both. An operator's `CONTENT_URL` is kept as
+/// written, since upstream concatenates `${url}/contents/` literally. This node's
+/// own `/content/` loses its trailing slash, so `{base}/contents/{hash}` is a
+/// route the node serves (the nested `/content` route does not match `//`).
+fn stats_content_url(configured: Option<&str>, content_public_url: &str) -> String {
+    match configured.map(str::trim).filter(|url| !url.is_empty()) {
+        Some(url) => url.to_string(),
+        None => content_public_url.trim_end_matches('/').to_string(),
+    }
+}
+
+#[cfg(test)]
+mod stats_content_url_tests {
+    use super::stats_content_url;
+
+    #[test]
+    fn the_node_default_names_a_served_route_and_an_operator_value_is_kept() {
+        assert_eq!(
+            stats_content_url(None, "https://node.example/content/"),
+            "https://node.example/content"
+        );
+        assert_eq!(
+            stats_content_url(Some("  "), "https://node.example/content/"),
+            "https://node.example/content"
+        );
+        assert_eq!(
+            stats_content_url(
+                Some("https://cdn.example/content/"),
+                "https://cdn.example/content/"
+            ),
+            "https://cdn.example/content/"
+        );
+    }
 }
 
 #[cfg(test)]
