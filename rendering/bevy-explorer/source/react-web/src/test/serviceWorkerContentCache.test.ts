@@ -469,6 +469,31 @@ describe('content cache index that does not answer', () => {
     }
   })
 
+  it('holds a quota-error trim at most 1 s, and its reply does not wait for the prune', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      const factory = neverOpens()
+      const sw = serviceWorker({ indexedDB: factory })
+      for (let n = 0; n < 4; n++) sw.seed(n)
+      const trimmed = sw.trim({ capBytes: 1000, quotaError: true })
+      await vi.advanceTimersByTimeAsync(0)
+      let done = false
+      void trimmed.then(() => (done = true))
+      await vi.advanceTimersByTimeAsync(999)
+      expect(done).toBe(false)
+      await vi.advanceTimersByTimeAsync(1)
+      expect(done).toBe(true)
+      const { port } = await trimmed
+      // a quarter of 400 bytes, oldest written first
+      expect(sw.remaining()).toEqual(['bafkrei1', 'bafkrei2', 'bafkrei3'])
+      expect(port.postMessage.mock.calls[0][0]).toMatchObject({ evictedEntries: 1, indexedEntries: 0 })
+      // the read given up on and the prune settle later, without an error
+      await vi.advanceTimersByTimeAsync(10_000)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('closes a connection that opens after the wait was given up', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     try {

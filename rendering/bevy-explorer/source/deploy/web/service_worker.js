@@ -139,6 +139,9 @@ const CONTENT_CACHE_KEY_MAX = 2048;
 // The index is an aid: an operation on it that has not finished by then is given up, so a trim
 // never waits on it and falls back to oldest written first.
 const CONTENT_CACHE_INDEX_TIMEOUT_MS = 5000;
+// A write waits on a quota-error trim: that trim gives the index this long in all, then evicts
+// oldest written first, and does not wait for the index to be pruned.
+const CONTENT_CACHE_QUOTA_INDEX_TIMEOUT_MS = 1000;
 // Half the origin's quota stays for its other storage (OPFS, IndexedDB).
 const CONTENT_CACHE_QUOTA_SHARE = 0.5;
 // A trim goes down to this share of the cap, so the next one waits for real growth.
@@ -262,11 +265,11 @@ function openContentCacheIndex() {
     });
 }
 
-// Gives up on `promise` after CONTENT_CACHE_INDEX_TIMEOUT_MS.
-function withinIndexTimeout(promise) {
+// Gives up on `promise` after `timeoutMs`.
+function withinIndexTimeout(promise, timeoutMs = CONTENT_CACHE_INDEX_TIMEOUT_MS) {
     let timer;
     const timeout = new Promise((_, reject) => {
-        timer = setTimeout(() => reject(new Error('content cache index timed out')), CONTENT_CACHE_INDEX_TIMEOUT_MS);
+        timer = setTimeout(() => reject(new Error('content cache index timed out')), timeoutMs);
     });
     return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
@@ -286,19 +289,26 @@ function result(request) {
     });
 }
 
-// Every recorded use, or none when the index is gone or unreadable.
-async function readContentCacheUses() {
-    let db;
+// Every recorded use, or none when the index is gone, unreadable or not read within `timeoutMs`.
+async function readContentCacheUses(timeoutMs = 2 * CONTENT_CACHE_INDEX_TIMEOUT_MS) {
+    const read = (async () => {
+        let db;
+        try {
+            db = await openContentCacheIndex();
+            const store = db.transaction(CONTENT_CACHE_INDEX_STORE).objectStore(CONTENT_CACHE_INDEX_STORE);
+            const [keys, times] = await withinIndexTimeout(Promise.all([result(store.getAllKeys()), result(store.getAll())]));
+            return new Map(keys.map((key, i) => [key, times[i]]));
+        } finally {
+            db?.close();
+        }
+    })();
     try {
-        db = await openContentCacheIndex();
-        const store = db.transaction(CONTENT_CACHE_INDEX_STORE).objectStore(CONTENT_CACHE_INDEX_STORE);
-        const [keys, times] = await withinIndexTimeout(Promise.all([result(store.getAllKeys()), result(store.getAll())]));
-        return new Map(keys.map((key, i) => [key, times[i]]));
+        return await withinIndexTimeout(read, timeoutMs);
     } catch (e) {
+        // a read given up on still settles later: nobody waits for it
+        read.catch(() => {});
         console.warn('[IPFS Cache Service Worker]: content cache index unavailable, evicting oldest written first', e);
         return new Map();
-    } finally {
-        db?.close();
     }
 }
 
@@ -345,7 +355,7 @@ async function trimContentCache(capBytes, quotaError) {
     const cache = await caches.open(CACHE_NAME);
     // insertion order: oldest written first (a put over a key moves it to the end)
     const requests = await cache.keys();
-    const lastUsed = await readContentCacheUses();
+    const lastUsed = await readContentCacheUses(quotaError ? CONTENT_CACHE_QUOTA_INDEX_TIMEOUT_MS : undefined);
     const ordered = contentCacheEvictionOrder(requests, lastUsed);
     report.indexedEntries = requests.filter((r) => lastUsed.has(r.url)).length;
     // Size before deleting: `cachesUsage` also counts other caches (and, without usageDetails, all
@@ -375,11 +385,9 @@ async function trimContentCache(capBytes, quotaError) {
     report.evictedBytes = freed;
     const present = new Set(requests.map((r) => r.url));
     const stale = [...lastUsed.keys()].filter((key) => !present.has(key));
-    try {
-        await writeContentCacheUses([], [...picked.map((key) => key.url ?? key), ...stale]);
-    } catch (e) {
-        console.warn('[IPFS Cache Service Worker]: content cache index not pruned', e);
-    }
+    const pruned = writeContentCacheUses([], [...picked.map((key) => key.url ?? key), ...stale])
+        .catch((e) => console.warn('[IPFS Cache Service Worker]: content cache index not pruned', e));
+    if (!quotaError) await pruned;
     return report;
 }
 
