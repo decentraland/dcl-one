@@ -12,7 +12,7 @@
 6. **Shop, treasury, credits and marketplace datasets are excluded for security reasons.** Dependencies on them do not authorize expanding this migration.
 7. **No public activation yet.** The isolated follower exposes private migration endpoints only. Public API compatibility, signed paths, complete data scope, readiness enforcement and session/effect ownership remain unresolved.
 
-**Identity contract:** preserve imported Places UUIDs and generate new ones reproducibly from the creating deployment in both infrastructures. This removes random-ID divergence, but equivalent lifecycle state and ordered deployment coverage remain prerequisites; see [identity rules and limits](places-hybrid-commands.md#place-uuids-reproducible-creation-and-lifecycle-coverage).
+**Identity contract ([Places #902](https://github.com/decentraland/places/pull/902)):** preserve imported Places UUIDs and generate new ones reproducibly from the creating deployment in both infrastructures. This removes random-ID divergence, but equivalent lifecycle state and ordered deployment coverage remain prerequisites; see [identity rules and limits](places-hybrid-commands.md#place-uuids-reproducible-creation-and-lifecycle-coverage).
 
 ## Kept, removed and still needed
 

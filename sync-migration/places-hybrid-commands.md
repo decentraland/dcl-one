@@ -39,7 +39,7 @@ The opt-in vote handler currently resolves voting power before the source receip
 
 ## Place UUIDs: reproducible creation and lifecycle coverage
 
-The [reproducible identity decision](../docs/adr/2026-11-13-reproducible-place-identities.md) selects UUIDv5 for new Places identities in both infrastructures. Existing matched/imported UUIDs remain unchanged. The gateway's operation UUID identifies a request, not a place.
+Implemented in [Places #902](https://github.com/decentraland/places/pull/902) and [dcl-one #706](https://github.com/decentraland/dcl-one/pull/706). The [reproducible identity decision](../docs/adr/2026-11-13-reproducible-place-identities.md) selects UUIDv5 for new Places identities in both infrastructures. Existing matched/imported UUIDs remain unchanged. The gateway's operation UUID identifies a request, not a place.
 
 The shared input is the compact UTF-8 JSON array `["decentraland-place","v1",scope,entityId]`, under the standard UUID URL namespace. Scope is `genesis` or `world:<lowercase-world-name>`; entity ID is the immutable creating deployment ID, case-preserved. No clocks, local sequences or random fallback participate. Identical inputs produce identical IDs in TypeScript and Rust.
 
@@ -58,3 +58,9 @@ Reproducible generation does not supply missing deployment/undeployment events o
 Retired legacy bindings omitted by import or cleared on retirement cannot be recovered from a UUID hash. No footprint-based historical guessing is allowed. Broader historical continuity needs a separate binding-history contract. Player storage also remains restricted to its fixed approved scene bindings.
 
 Before public activation, verify new Genesis/world scenes, preserved legacy IDs, footprint changes, splits/merges, delayed dependent writes, reactivation and restart recovery through the actual deployment pipeline. Matching hash vectors alone are not proof of lifecycle convergence. If lifecycle decisions cannot be replayed equivalently, capture the source decision narrowly; do not add favorite/like row copying as a workaround.
+
+### Validation (2026-11-13)
+
+Both implementations use the same four golden vectors, independently checked with Python UUIDv5. Places passed 734 unit tests across 55 suites, six real PostgreSQL identity-persistence tests, source/test TypeScript checks and focused ESLint. dcl-one passed 177 Places tests (one existing ignored), 168 storage tests and the migration worker's 29 unit/CLI tests plus all five PostgreSQL integration suites. Clippy, four schema checks and the existing-database schema-upgrade regression passed.
+
+Coverage includes imported UUID preservation, same-base/equal-footprint updates, same-page splits/merges, stale or conflicting active bindings, deterministic retired reactivation, retained counters/curation and source moderation conflicts. No production rollout, multi-day lifecycle convergence or staging performance claim is made. Existing dcl-one databases must run the additive schema migration to install the deployment-cache index.

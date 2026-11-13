@@ -59,6 +59,6 @@ The Worlds residual adapter captures only owner/quota committed facts, including
 
 ## Reproducible Places identities
 
-The source Places generator and dcl-one's native Genesis/world-scene identity paths must use the same versioned UUIDv5 contract for newly created identities. Updating only the target cannot reproduce production's random UUIDs. Existing matched/imported IDs are preserved; reactivation and conflicting binding checks protect their linked data. No additional gateway route, client change or broad DB synchronization is required by this change.
+[Places #902](https://github.com/decentraland/places/pull/902) and [dcl-one #706](https://github.com/decentraland/dcl-one/pull/706) update the source generator and native Genesis/world-scene identity paths, which must use the same versioned UUIDv5 contract for newly created identities. Updating only the target cannot reproduce production's random UUIDs. Existing matched/imported IDs are preserved; reactivation and conflicting binding checks protect their linked data. No additional gateway route, client change or broad DB synchronization is required by this change.
 
 See [the identity contract and lifecycle limits](places-hybrid-commands.md#place-uuids-reproducible-creation-and-lifecycle-coverage). Matching generation does not synchronize skipped deployment transitions or expand the fixed migration scopes.
