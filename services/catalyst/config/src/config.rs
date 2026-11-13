@@ -189,7 +189,7 @@ impl Config {
     /// bearers, service tokens, the console's session key): a short one is
     /// guessable or brute-forced offline, so startup refuses it. Bearers this
     /// node sends elsewhere keep their issuer's length.
-    pub const OPERATOR_SECRETS: [&'static str; 19] = [
+    pub const OPERATOR_SECRETS: [&'static str; 26] = [
         "SESSION_SECRET",
         "CATALYRST_CONTENT_ADMIN_TOKEN",
         "COMMUNITIES_ADMIN_TOKEN",
@@ -209,6 +209,13 @@ impl Config {
         "PLACES_ADMIN_AUTH_TOKEN",
         "MODERATOR_TOKEN",
         "COMMS_GATEKEEPER_AUTH_TOKEN",
+        "SCENE_HOST_DEBUGGING_SECRET",
+        "NOTIFICATION_SERVICE_TOKEN",
+        "NOTIFICATIONS_GOVERNANCE_TOKEN",
+        "NOTIFICATIONS_REWARDS_TOKEN",
+        "ONBOARDING_API_KEY",
+        "DATA_TEAM_AUTH_TOKEN",
+        "WKC_METRICS_BEARER_TOKEN",
     ];
 
     pub fn is_operator_secret(name: &str) -> bool {
@@ -791,19 +798,85 @@ mod tests {
             assert!(Config::refuse_short_operator_secret(name, None).is_ok());
             assert!(Config::refuse_short_operator_secret(name, Some(" ")).is_ok());
         }
-        for outbound in [
-            "STRIPE_SECRET_KEY",
-            "AB_REGISTRY_ADMIN_TOKEN",
-            "SCENE_HOST_DELEGATION_MINTER_TOKEN",
-        ] {
-            assert!(Config::refuse_short_operator_secret(outbound, Some("x")).is_ok());
+        for other in OTHER_SECRETS {
+            assert!(Config::refuse_short_operator_secret(other, Some("x")).is_ok());
         }
+    }
+
+    /// Secret slots that are not this node's own inbound operator secrets: credentials it
+    /// sends elsewhere, keys and URLs whose shape another party sets.
+    const OTHER_SECRETS: &[&str] = &[
+        "SEGMENT_SIGNING_KEY",
+        "ETH_RPC_URL",
+        "LIVEKIT_API_KEY",
+        "LIVEKIT_API_SECRET",
+        "SLACK_BOT_TOKEN",
+        "ANALYTICS_API_TOKEN",
+        "OPEN_AI_API_KEY",
+        "SENDGRID_API_KEY",
+        "SIGNING_KEY",
+        "SLACK_WEBHOOK",
+        "PLACES_MODERATION_WEBHOOK",
+        "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_5",
+        "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_10",
+        "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_20",
+        "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_25",
+        "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_30",
+        "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_50",
+        "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_60",
+        "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_75",
+        "TURNSTILE_SECRET_KEY",
+        "NEWSLETTER_SERVICE_API_KEY",
+        "BUILDER_POLYGON_RPC_URL",
+        "ENCRYPTION_KEY",
+        "SCENE_HOST_AUTHORITATIVE_KEY",
+        "SCENE_HOST_DELEGATION_MINTER_TOKEN",
+        "SCENE_HOST_STORAGE_DELEGATION",
+        "PULSE_ROOM_AUTHORITY_KEY",
+        "RELAYER_PRIVATE_KEY",
+        "OZ_RELAYER_API_KEY",
+        "RPC_ENDPOINT_POLYGON",
+        "TRADE_RPC_URLS",
+        "CREDITS_CAPTCHA_SECRET",
+        "STRIPE_SECRET_KEY",
+        "STRIPE_WEBHOOK_SECRET",
+        "CREDITS_SIGNER_KEY",
+        "CREDITS_REVOKER_KEY",
+        "CREDITS_TRIAL_BUYERS",
+        "RPC_UPSTREAM_MAINNET",
+        "RPC_UPSTREAM_ETHEREUM",
+        "RPC_UPSTREAM_SEPOLIA",
+        "RPC_UPSTREAM_POLYGON",
+        "RPC_UPSTREAM_MATIC",
+        "RPC_UPSTREAM_AMOY",
+        "RPC_UPSTREAM_MUMBAI",
+        "RPC_UPSTREAM_ARBITRUM",
+        "RPC_UPSTREAM_OPTIMISM",
+        "RPC_UPSTREAM_AVALANCHE",
+        "RPC_UPSTREAM_BINANCE",
+        "RPC_UPSTREAM_FANTOM",
+        "AB_REGISTRY_ADMIN_TOKEN",
+        "TRANSLATE_BACKEND_API_KEY",
+        "TRANSLATE_LLM_API_KEY",
+        "THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL",
+    ];
+
+    /// A new secret slot is classified here: an inbound operator secret is length-checked.
+    #[test]
+    fn every_secret_slot_is_classified_once() {
         let (mut config, _) =
             Config::parse_with_matches_for_tests(&["catalyst", "--database-url", "postgres://x/y"])
                 .unwrap();
         let slots: Vec<&str> = config.secret_slots().into_iter().map(|(n, _)| n).collect();
-        for name in Config::OPERATOR_SECRETS {
-            assert!(slots.contains(&name), "{name} is a secret slot");
+        for slot in &slots {
+            let operator = Config::OPERATOR_SECRETS.contains(slot);
+            assert!(
+                operator != OTHER_SECRETS.contains(slot),
+                "{slot}: list it in exactly one of OPERATOR_SECRETS and OTHER_SECRETS"
+            );
+        }
+        for name in Config::OPERATOR_SECRETS.iter().chain(OTHER_SECRETS) {
+            assert!(slots.contains(name), "{name} is a secret slot");
         }
     }
 
