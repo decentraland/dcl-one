@@ -19,7 +19,7 @@ import * as nodeModule from 'node:module';
 import path from 'node:path';
 import { after, before, beforeEach, describe, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { acceptsBinding, findChrome, launch, redact, secretOf } from './driver.mjs';
+import { acceptsBinding, findChrome, launch, redact, secretsOf } from './driver.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE = path.join(HERE, 'fixture');
@@ -57,17 +57,69 @@ describe('acceptsBinding', () => {
 });
 
 describe('redact', () => {
+  const id = 'eyJlcGhlbWVyYWxJZGVudGl0eSI6MX0=';
+
   test("keeps a sign-in line's credential out of what the command line prints", () => {
-    assert.equal(secretOf('/hud_login eyJhIjoxfQ== --guest'), 'eyJhIjoxfQ==');
-    assert.equal(secretOf('login_identity eyJhIjoxfQ== --name tester'), 'eyJhIjoxfQ==');
-    assert.equal(secretOf('/teleport 1 2'), undefined);
-    assert.equal(secretOf('/hud_login --guest eyJhIjoxfQ== --look 1'), 'eyJhIjoxfQ==');
-    assert.equal(secretOf('/hud_login --name tester --look 1 eyJhIjoxfQ== --guest'), 'eyJhIjoxfQ==');
-    assert.equal(secretOf('/login_identity --look 3 eyJhIjoxfQ=='), 'eyJhIjoxfQ==');
-    assert.equal(secretOf('/hud_login "eyJhIjoxfQ==" --guest'), 'eyJhIjoxfQ==');
-    assert.equal(redact('/hud_login "eyJhIjoxfQ=="', 'said eyJhIjoxfQ== and "eyJhIjoxfQ=="'), 'said <redacted> and "<redacted>"');
-    assert.equal(redact('/hud_login eyJhIjoxfQ== --guest', '/hud_login eyJhIjoxfQ== --guest did not finish: eyJhIjoxfQ=='), '/hud_login <redacted> --guest did not finish: <redacted>');
+    assert.deepEqual(secretsOf(`/hud_login ${id} --guest`), [id]);
+    assert.deepEqual(secretsOf(`login_identity ${id} --name tester`), [id]);
+    assert.deepEqual(secretsOf('/teleport 1 2'), []);
+    assert.deepEqual(secretsOf(`/hud_login --guest ${id} --look 1`), [id]);
+    assert.deepEqual(secretsOf(`/hud_login --name tester --look 1 ${id} --guest`), [id]);
+    assert.deepEqual(secretsOf(`/login_identity --look 3 ${id}`), [id]);
+    assert.deepEqual(secretsOf(`/hud_login "${id}" --guest`), [id]);
+    assert.equal(redact(`/hud_login "${id}"`, `said ${id} and "${id}"`), 'said <redacted> and "<redacted>"');
+    assert.equal(redact(`/hud_login ${id} --guest`, `/hud_login ${id} --guest did not finish: ${id}`), '/hud_login <redacted> --guest did not finish: <redacted>');
     assert.equal(redact('/teleport 1 2', 'failed to set location'), 'failed to set location');
+  });
+
+  test('takes nothing that is not shaped as an identity, so no line is split between its characters', () => {
+    for (const line of ['/hud_login ""', "/hud_login ''", '/hud_login "', '/hud_login --look 1', '/hud_login eyJhIjoxfQ==', '/hud_login {}']) {
+      assert.deepEqual(secretsOf(line), [], line);
+      assert.equal(redact(line, 'the line 1 failed'), 'the line 1 failed', line);
+    }
+    // an identity in a flag's value slot is the secret, not the word the flags leave over
+    assert.deepEqual(secretsOf(`/hud_login --name ${id} --look 1`), [id]);
+    assert.equal(redact(`/hud_login --name ${id} --look 1`, `look 1 for ${id}`), 'look 1 for <redacted>');
+  });
+
+  test('takes every identity on the line, in whatever JSON spacing, and a raw JSON payload', () => {
+    const spaced = 'eyAiZXBoZW1lcmFsSWRlbnRpdHkiOjF9';
+    const pretty = 'ewogICJlcGhlbWVyYWxJZGVudGl0eSI6IDF9';
+    const afterNewline = 'CnsiZXBoZW1lcmFsSWRlbnRpdHkiOjF9';
+    assert.deepEqual(secretsOf(`/hud_login ${afterNewline}`), [afterNewline]);
+    // a realm's long name is no identity
+    assert.deepEqual(secretsOf(`/hud_login ${id} --realm example-world-name.dcl.eth`), [id]);
+    const raw = '{"ephemeralIdentity":{"privateKey":"0x56"}}';
+    assert.deepEqual(secretsOf(`/hud_login ${spaced}`), [spaced]);
+    assert.equal(redact(`/hud_login ${id} ${pretty}`, `${pretty} then ${id}`), '<redacted> then <redacted>');
+    // raw JSON from its `{` to the end of the line, closed or cut
+    assert.equal(redact(`/hud_login ${raw} --guest`, `/hud_login ${raw} --guest failed`), '/hud_login <redacted> failed');
+    assert.equal(redact(`/hud_login ${raw.slice(0, 30)}`, `/hud_login ${raw.slice(0, 30)}`), '/hud_login <redacted>');
+  });
+
+  test('takes a wrapped identity whole, and each of its pieces', () => {
+    const long = Buffer.from(JSON.stringify({ ephemeralIdentity: { privateKey: '0x' + '56'.repeat(32) }, expiration: '2099-01-01T00:00:00.000Z' })).toString('base64');
+    const pieces = long.match(/.{1,76}/g);
+    const line = `/hud_login ${pieces.join('\n')} --guest`;
+    assert.equal(redact(line, line), '/hud_login <redacted> --guest');
+    assert.equal(redact(line, `the second piece ${pieces[1]}`), 'the second piece <redacted>');
+  });
+
+  test('keeps what goes with an identity on its line out of later text, and finds one glued to other text', () => {
+    // padded to whole groups, so no `=` ends it
+    const json = JSON.stringify({ ephemeralIdentity: { privateKey: '0x' + '56'.repeat(32) } });
+    const long = Buffer.from(json + ' '.repeat((3 - (json.length % 3)) % 3)).toString('base64');
+    assert.ok(!long.endsWith('='));
+    for (const after of ['my-long-world-name-2025.dcl.eth', 'tester', '-default-on-error']) {
+      const line = `/hud_login ${long} ${after}`;
+      assert.ok(secretsOf(line).includes(long), after);
+      assert.equal(redact(line, `connected to ${after}`), `connected to ${after}`);
+    }
+    // the line itself is redacted up to the next flag
+    assert.equal(redact(`/hud_login ${long} tester`, `/hud_login ${long} tester`), '/hud_login <redacted>');
+    assert.equal(redact(`/hud_login x${id}`, `x${id}`), 'x<redacted>');
+    // a camelCase `eyL` in a realm's name is no identity
+    assert.equal(redact(`/hud_login ${id} --realm moneyLand-world-2025.dcl.eth`, 'mon moneyLand-world-2025'), 'mon moneyLand-world-2025');
   });
 });
 

@@ -148,6 +148,12 @@ impl<T: CollectibleType> CollectibleUrn<T> {
         Self::try_from(val)
     }
 
+    /// [`Self::new`] without the log line on failure, for input that is often not a collectible
+    /// urn (a preview wearable's off-chain id, a console argument).
+    pub fn new_quiet(val: &str) -> Result<Self, CollectibleUrnErr> {
+        Self::try_new_and_token(val).map(|(urn, _)| urn)
+    }
+
     pub fn chain(&self) -> Option<&str> {
         self.urn.split(':').nth(2)
     }
