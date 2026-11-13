@@ -10,15 +10,16 @@ import { INTER_FILES, SHARED_ALIASES, SHARED_DEDUPE, SHARED_TREES } from './vite
 // Dev-only: run the bridge scene's live preview (`sdk-commands start` on :8100 — the engine's
 // default systemScene in dev, with scene hot-reload) alongside vite, so `npm run dev` is the ONE
 // command. If :8100 is already serving (your own terminal, or Playwright's webServer), leave it
-// alone. The child is killed with the dev server (detached group so sdk-commands' own children
-// don't survive as orphans). BRIDGE_SCENE_PREVIEW=0 disables the auto-start entirely — Playwright
+// alone. The child outlives vite's restarts and is stopped when the dev server's process ends, with
+// sdk-commands' own children (a detached group on POSIX, taskkill's tree on Windows), so none
+// survive as orphans. BRIDGE_SCENE_PREVIEW=0 disables the auto-start entirely — Playwright
 // sets it because it runs :8100 as its own webServer, and a child spawned from here would outlive
 // its SIGKILL of the vite process group (own group, inherited stdio) and hang the test run's exit.
 function bridgeScenePreview(): Plugin {
   return {
     name: 'bridge-scene-preview',
     apply: 'serve',
-    configureServer(server) {
+    configureServer() {
       if (process.env.BRIDGE_SCENE_PREVIEW === '0') return
       const probe = createConnection({ port: 8100, host: '127.0.0.1' })
       probe.once('connect', () => probe.destroy()) // already running — reuse it
@@ -49,9 +50,12 @@ function bridgeScenePreview(): Plugin {
           stdio: ['ignore', 'inherit', 'inherit'],
           detached: !windows
         })
-        // Runs on both the server's close and process exit. On Windows, once the child is gone its
-        // pid may belong to another process, which taskkill /T /F would kill with its tree. A POSIX
-        // process group is not reused while a member lives, so its survivors are still stopped.
+        // Runs at process exit, not at the server's close: a restart (an edit to this file, `r`)
+        // builds the new server before it closes this one, so the new server's probe finds this
+        // preview on :8100 and reuses it, and stopping it at close would leave the dev loop without
+        // one. On Windows, once the child is gone its pid may belong to another process, which
+        // taskkill /T /F would kill with its tree. A POSIX process group is not reused while a
+        // member lives, so its survivors are still stopped.
         let stopped = false
         const stop = (): void => {
           if (stopped || child.pid == null) return
@@ -64,8 +68,11 @@ function bridgeScenePreview(): Plugin {
             /* already gone */
           }
         }
-        server.httpServer?.once('close', stop)
         process.once('exit', stop)
+        // Node runs no exit listener when SIGINT or SIGHUP ends it, and vite handles only SIGTERM.
+        // Ctrl+C would then leave the POSIX child running: its own group is out of the terminal's reach.
+        process.once('SIGINT', () => process.exit(130))
+        process.once('SIGHUP', () => process.exit(129))
       })
     }
   }
