@@ -1310,6 +1310,7 @@ mod bounds_tests {
                     .lock()
                     .push(fresh)
                     .unwrap_or_else(|_| panic!("space"));
+                queue.changed.notify_waiters();
                 assert!(futures::poll!(&mut job).is_pending());
                 assert_eq!(wire.lock().bytes, b"\x82\x06secret");
                 assert!(!owner.needs_assignment());
