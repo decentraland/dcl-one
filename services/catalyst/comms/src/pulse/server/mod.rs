@@ -208,6 +208,10 @@ pub struct PulseServer {
 
     pub max_scene_listener_parcels: usize,
 
+    /// Wallets (lowercase) that may hold a scene listener; `None` admits any
+    /// authenticated wallet and is for embedded use only.
+    pub scene_listener_wallets: Option<std::collections::HashSet<String>>,
+
     /// Live connection limits and trusted source IPs. The whitelist also exempts the parcel
     /// budget and is read on every listener announcement, including established sessions.
     pub ip_limiter_options: IpLimiterOptions,
@@ -289,6 +293,7 @@ impl PulseServer {
             ),
             max_realm_length: DEFAULT_MAX_REALM_LENGTH,
             max_scene_listener_parcels: scene_listener_max_parcels_from_env(),
+            scene_listener_wallets: None,
             ip_limiter_options: IpLimiterOptions::default(),
             ip_limiter: IpLimiter::default(),
             flag_snapshots: None,
@@ -581,6 +586,21 @@ impl PulseServer {
             Admission::Ok(a) => a,
             Admission::Deny(action) => return *action,
         };
+
+        if self
+            .scene_listener_wallets
+            .as_ref()
+            .is_some_and(|allowed| !allowed.contains(&admitted.wallet.to_ascii_lowercase()))
+        {
+            crate::pulse::metrics::handshake("legacy", "listener_not_allowed");
+            if let Some(state) = self.peers.get_mut(&peer) {
+                state.connection_state = PeerConnectionState::PendingDisconnect;
+            }
+            return Action::Reject {
+                reply: None,
+                reason: DisconnectReason::AuthFailed,
+            };
+        }
 
         let enforce_budget = self.enforces_listener_budget(peer, &req.aoi);
         let Some(listener) = self.build_listener(&req.aoi, enforce_budget) else {
