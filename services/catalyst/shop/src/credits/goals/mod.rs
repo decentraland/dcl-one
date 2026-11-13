@@ -200,6 +200,7 @@ pub async fn process_batch(state: &SharedState, limit: i64) -> Result<u64, ApiEr
     let round_complete = ids.len() < limit as usize || ids.last().is_some_and(|id| *id >= horizon);
     let mut processed = 0;
     let mut error = None;
+    let mut retry_after = None;
     for id in ids {
         match process_event(state, id, super::store::now()).await {
             Ok(applied) => {
@@ -209,10 +210,15 @@ pub async fn process_batch(state: &SharedState, limit: i64) -> Result<u64, ApiEr
             }
             Err(e) => {
                 tracing::warn!(event_id=id,error=%e,"photo goal event remains retryable");
+                retry_after = Some(retry_after.map_or(id.saturating_sub(1), |cursor: i64| {
+                    cursor.min(id.saturating_sub(1))
+                }));
                 error = Some(e);
-                break;
             }
         }
+    }
+    if let Some(cursor) = retry_after {
+        state.goal_scan_after.store(cursor, Ordering::Relaxed);
     }
     if round_complete && error.is_none() {
         state.goal_scan_after.store(horizon, Ordering::Relaxed);
