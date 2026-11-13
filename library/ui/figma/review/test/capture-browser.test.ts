@@ -4,6 +4,7 @@ import { chmod, mkdtemp, readFile, rm, writeFile, stat } from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
 import { EventEmitter } from 'node:events'
+import { execFileSync } from 'node:child_process'
 import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { browserArgs } from '../scripts/browser-args.mjs'
@@ -59,6 +60,204 @@ describe('when starting a capture browser', () => {
     await assert.rejects(stat(profile), { code: 'ENOENT' })
   })
 })
+describe('when startup diagnostics explain a failed browser launch', () => {
+  function report(calls: { arguments: unknown[] }[]) {
+    const call = calls.find(
+      (entry) => entry.arguments[0] === 'Capture browser startup diagnostics:'
+    )
+    assert.ok(call, 'a failed launch must report its bounded diagnostic')
+    return JSON.parse(String(call.arguments[1]))
+  }
+
+  it('should identify the executable, available version and child exit without disclosing its path', async (t) => {
+    const log = t.mock.method(console, 'error', () => {})
+    const { file } = await script(
+      'require("node:fs").writeSync(2,"Chromium 157.0.0.1\\nlaunch failed\\n");process.exit(7)'
+    )
+    await assert.rejects(openSession(file), /exited during startup/)
+    const diagnostic = report(log.mock.calls)
+    assert.equal(diagnostic.executable, 'browser')
+    assert.equal(diagnostic.version, '157.0.0.1')
+    assert.equal(diagnostic.exitCode, 7)
+    assert.equal(diagnostic.signal, null)
+    assert.equal(diagnostic.phase, 'port-file')
+    assert.match(diagnostic.stderr, /launch failed/)
+    assert.ok(!JSON.stringify(diagnostic).includes(path.dirname(file)))
+  })
+
+  it('should let the caller exit when a failed browser leaves an inherited stderr writer', async () => {
+    const { file } = await script(
+      'require("node:child_process").spawn(process.execPath,["-e","setTimeout(()=>{},8000)"],{stdio:["ignore","ignore",2]}).unref();process.exit(7)'
+    )
+    const source = new URL('../scripts/capture-browser.mjs', import.meta.url).href
+    const runner = `import {openSession} from ${JSON.stringify(source)};try{await openSession(${JSON.stringify(file)});process.exitCode=1}catch(error){if(!error.message.includes('exited during startup'))throw error}`
+    execFileSync(process.execPath, ['--input-type=module', '-e', runner], {
+      timeout: 3000,
+      stdio: 'pipe'
+    })
+  })
+
+  it('should report a child signal before cleanup changes its process state', async (t) => {
+    const log = t.mock.method(console, 'error', () => {})
+    const { file } = await script('process.kill(process.pid,"SIGTERM")')
+    await assert.rejects(openSession(file), /exited during startup/)
+    const diagnostic = report(log.mock.calls)
+    assert.equal(diagnostic.exitCode, null)
+    assert.equal(diagnostic.signal, 'SIGTERM')
+  })
+
+  it('should preserve an empty port failure and expose the empty-read state', async (t) => {
+    const log = t.mock.method(console, 'error', () => {})
+    const { file } = await script(
+      'const dir=process.argv.find(x=>x.startsWith("--user-data-dir=")).slice(16);require("node:fs").writeFileSync(dir+"/DevToolsActivePort","");setInterval(()=>{},1000)'
+    )
+    await assert.rejects(openSession(file), /did not start/)
+    const diagnostic = report(log.mock.calls)
+    assert.equal(diagnostic.port.state, 'empty')
+    assert.equal(diagnostic.port.validObserved, false)
+  })
+
+  it('should report a partial port read without changing the existing reader behavior', async (t) => {
+    const log = t.mock.method(console, 'error', () => {})
+    const { file } = await script(
+      'const dir=process.argv.find(x=>x.startsWith("--user-data-dir=")).slice(16);require("node:fs").writeFileSync(dir+"/DevToolsActivePort","not-a-port");setInterval(()=>{},1000)'
+    )
+    await assert.rejects(openSession(file), /URL|fetch/i)
+    const diagnostic = report(log.mock.calls)
+    assert.equal(diagnostic.port.state, 'partial')
+    assert.equal(diagnostic.port.validObserved, false)
+    assert.equal(diagnostic.port.lastFsError, null)
+    assert.equal(diagnostic.phase, 'endpoint')
+  })
+
+  it('should retain the last filesystem error when the unchanged polling budget expires', async (t) => {
+    const log = t.mock.method(console, 'error', () => {})
+    const { file } = await script(
+      'const dir=process.argv.find(x=>x.startsWith("--user-data-dir=")).slice(16);require("node:fs").mkdirSync(dir+"/DevToolsActivePort");setInterval(()=>{},1000)'
+    )
+    await assert.rejects(openSession(file), /did not start/)
+    const diagnostic = report(log.mock.calls)
+    assert.equal(diagnostic.port.lastFsError, 'EISDIR')
+    assert.equal(diagnostic.port.validObserved, false)
+    assert.equal(diagnostic.exitCode, null)
+    assert.equal(diagnostic.signal, null)
+  })
+
+  it('should sanitize split stderr lines and omit overlong lines before bounding the report', async (t) => {
+    const log = t.mock.method(console, 'error', () => {})
+    const key = 'capture-test-key'
+    const previous = process.env.FIGMA_FILE_KEY
+    process.env.FIGMA_FILE_KEY = key
+    try {
+      const url = ['https://', 'www.', 'figma', '.com/design/', key, '/private'].join('')
+      const payload =
+        'x'.repeat(6000) +
+        '\n' +
+        url +
+        '\n' +
+        key.toUpperCase() +
+        '\n' +
+        os.homedir() +
+        '/private-profile\nlaunch failed\n'
+      const split = 6000 + 24
+      const { file } = await script(
+        'require("node:fs").writeSync(2,' +
+          JSON.stringify(payload.slice(0, split)) +
+          ');setTimeout(()=>{require("node:fs").writeSync(2,' +
+          JSON.stringify(payload.slice(split)) +
+          ');process.exit(9)},20)'
+      )
+      await assert.rejects(openSession(file), /exited during startup/)
+      const diagnostic = report(log.mock.calls)
+      assert.ok(diagnostic.stderr.length <= 4096)
+      assert.ok(!diagnostic.stderr.toLowerCase().includes(key))
+      assert.ok(!diagnostic.stderr.includes(url))
+      assert.ok(!diagnostic.stderr.includes(os.homedir()))
+      assert.match(diagnostic.stderr, /omitted|redacted/)
+      assert.match(diagnostic.stderr, /launch failed/)
+    } finally {
+      if (previous === undefined) delete process.env.FIGMA_FILE_KEY
+      else process.env.FIGMA_FILE_KEY = previous
+    }
+  })
+
+  it('should redact a configured Unicode home split between stderr chunks', async (t) => {
+    const log = t.mock.method(console, 'error', () => {})
+    const home = '/test-home-caf' + String.fromCharCode(233)
+    t.mock.method(os, 'homedir', () => home)
+    const payload = Buffer.from(home + '/profile\nlaunch failed\n')
+    const split = payload.indexOf(Buffer.from(String.fromCharCode(233))) + 1
+    const { file } = await script(
+      'const data=Buffer.from(' +
+        JSON.stringify(payload.toString()) +
+        ');require("node:fs").writeSync(2,data.subarray(0,' +
+        split +
+        '));setTimeout(()=>{require("node:fs").writeSync(2,data.subarray(' +
+        split +
+        '));process.exit(8)},20)'
+    )
+    await assert.rejects(openSession(file), /exited during startup/)
+    const diagnostic = report(log.mock.calls)
+    assert.ok(!diagnostic.stderr.includes('test-home'))
+    assert.match(diagnostic.stderr, /redacted/)
+  })
+
+  it('should preserve startup failure and cleanup when home lookup fails', async (t) => {
+    const log = t.mock.method(console, 'error', () => {})
+    const { folder, file } = await script('process.exit(0)')
+    const marker = path.join(folder, 'profile')
+    await writeFile(
+      file,
+      `#!/bin/sh\nexec '${process.execPath}' -e 'const fs=require("node:fs");fs.writeFileSync(${JSON.stringify(marker)},process.argv.find(x=>x.startsWith("--user-data-dir=")).slice(16));fs.writeSync(2,"private startup details\\n");process.exit(8)' -- "$@"\n`
+    )
+    t.mock.method(os, 'homedir', () => {
+      throw new Error('home unavailable')
+    })
+    await assert.rejects(openSession(file), /exited during startup/)
+    await assert.rejects(stat(await readFile(marker, 'utf8')), { code: 'ENOENT' })
+    assert.ok(!report(log.mock.calls).stderr.includes('private startup details'))
+  })
+
+  it('should preserve diagnostic slashes when the home directory is the filesystem root', async (t) => {
+    const log = t.mock.method(console, 'error', () => {})
+    t.mock.method(os, 'homedir', () => '/')
+    const { file } = await script(
+      'require("node:fs").writeSync(2,"port /tmp/devtools\\n");process.exit(8)'
+    )
+    await assert.rejects(openSession(file), /exited during startup/)
+    assert.match(report(log.mock.calls).stderr, /port \/tmp\/devtools/)
+  })
+
+  it('should snapshot startup output before teardown noise is emitted', async (t) => {
+    const log = t.mock.method(console, 'error', () => {})
+    const { file } = await script(
+      'const fs=require("node:fs");const dir=process.argv.find(x=>x.startsWith("--user-data-dir=")).slice(16);fs.writeSync(2,"startup failure\\n");fs.writeFileSync(dir+"/DevToolsActivePort","not-a-port");process.on("SIGTERM",()=>{fs.writeSync(2,"shutdown noise\\n".repeat(500));process.exit(0)});setInterval(()=>{},1000)'
+    )
+    await assert.rejects(openSession(file), /URL|fetch/i)
+    assert.match(report(log.mock.calls).stderr, /startup failure/)
+    assert.ok(!report(log.mock.calls).stderr.includes('shutdown noise'))
+  })
+
+  it('should retain the primary failure if diagnostic logging is unavailable', async (t) => {
+    t.mock.method(console, 'error', () => {
+      throw new Error('logger unavailable')
+    })
+    const { file } = await script('process.exit(8)')
+    await assert.rejects(openSession(file), /exited during startup/)
+  })
+
+  it('should preserve an explicit abort reason without emitting a startup failure diagnostic', async (t) => {
+    const log = t.mock.method(console, 'error', () => {})
+    const controller = new AbortController()
+    const reason = new Error('expected test cancellation')
+    const { file } = await script('setInterval(()=>{},1000)')
+    const pending = openSession(file, { signal: controller.signal })
+    controller.abort(reason)
+    await assert.rejects(pending, (error) => error === reason)
+    assert.equal(log.mock.calls.length, 0)
+  })
+})
+
 describe('when capture cleanup also fails', () => {
   it('should preserve the primary failure and report the cleanup failure', async () => {
     const primary = new Error('capture failed')
