@@ -63,7 +63,10 @@ What else changes:
   reviewer. Promotion needs the `creator-hub@X.Y.Z` tag here, which the desktop workflow creates
   only after both installers built and passed the signature check: the installers upload before
   those checks end, so a pre-release alone may be half-built. A newer merge never cancels a
-  release in progress on `main`.
+  release in progress on `main`, but GitHub keeps only one *queued* run per concurrency group: when
+  several merges land during a release, only the newest of them gets a pre-release. Older
+  pre-releases are pruned only after a new one is fully published, so the last finished one, and
+  any rolled-back release, stays promotable.
 - **Windows update signatures.** Installed Windows apps check each update's signature against
   `publisherName` (`verifyUpdateCodeSignature: true`). The release job fails if the signed
   installer's certificate carries a different name, so it never gets the tag promotion needs.
