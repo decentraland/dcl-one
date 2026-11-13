@@ -73,8 +73,8 @@ impl NetPermissions for NP {
 }
 
 // DoS caps for the multi-tenant authoritative server, enforced only in is_server mode.
-// SERVER_MAX_BODY_BYTES bounds streamed request bodies too.
-const SERVER_MAX_BODY_BYTES: u64 = 10 * 1024 * 1024;
+// SERVER_MAX_BODY_BYTES bounds request bodies too.
+pub(super) const SERVER_MAX_BODY_BYTES: u64 = 10 * 1024 * 1024;
 const SERVER_MAX_ASSET_BYTES: u64 = 64 * 1024 * 1024;
 
 /// Counts Fetch calls waiting for permission, queued for a slot, or transferring.
@@ -190,12 +190,8 @@ where
     let method = Method::from_bytes(method.as_bytes())?;
     let mut request = client.request(method.clone(), &url);
 
-    if let Some(body) = &request_body {
-        let (size, upper) = body.0.size_hint();
-        if size > 0 && upper == Some(size) {
-            request = request.header(CONTENT_LENGTH, HeaderValue::from(size));
-        }
-    } else if !has_body && matches!(method, Method::POST | Method::PUT) {
+    // a streamed body is buffered before sending, so reqwest sets its Content-Length
+    if !has_body && matches!(method, Method::POST | Method::PUT) {
         request = request.header(CONTENT_LENGTH, HeaderValue::from(0));
     }
 
@@ -390,11 +386,14 @@ async fn send_request(
                 anyhow::bail!("request body exceeds {SERVER_MAX_BODY_BYTES} bytes ({url})");
             }
         } else {
-            // the client bounds neither request nor response bodies
+            // bounded by the stream resource's own byte cap
             body.into_async_read().read_to_end(&mut buf).await?;
         }
         request.body(buf)
     } else if let Some(body) = body_bytes {
+        if is_server && body.len() as u64 > SERVER_MAX_BODY_BYTES {
+            anyhow::bail!("request body exceeds {SERVER_MAX_BODY_BYTES} bytes ({url})");
+        }
         request.body(body)
     } else {
         request
