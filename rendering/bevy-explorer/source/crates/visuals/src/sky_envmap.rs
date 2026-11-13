@@ -1,6 +1,6 @@
 //! The environment maps attached as an `EnvironmentMapLight` to every camera that renders the
 //! sky: the reflection (specular) map generated from the atmosphere skybox whenever the sky is
-//! redrawn, and the diffuse map, which is not the sky at all but Unity's Trilight ambient
+//! redrawn, its brightest channel limited to 1 as Unity's reflection probe is not HDR, and the diffuse map, which is not the sky at all but Unity's Trilight ambient
 //! (`sky_preset::ambient_trilight`), written on the CPU as the three colours change.
 //!
 //! Only the upper hemisphere of the reflection map is generated. The pbr shaders' lookups
@@ -90,7 +90,8 @@ pub struct SkyEnvmapSettings {
     pub specular: f32,
     /// scale on the floor the lookups level the reflections towards, which comes from the ambient
     /// brightness setting. carried to the pbr shaders as the `AmbientLight`. unity: 0, the
-    /// skybox reflects as drawn (`reflectionIntensity 1`, no floor); `/envmap` sets it live
+    /// probe reflects as it holds the sky (`reflectionIntensity 1`, no floor); `/envmap` sets it
+    /// live
     pub floor: f32,
     /// how far reflected light above the floor is compressed towards it, in log space (0 = not
     /// at all, 1 = down to the floor). carried with the floor; unity: 0
@@ -284,7 +285,7 @@ fn ambient_cube_bytes(bands: [Vec3; 3], scale: f32) -> Vec<u8> {
 
 // the skybox material draws the cube without the view exposure, while the pbr
 // shader applies it to environment light. cancel it so a mirror reflects the
-// sky exactly as drawn.
+// sky as drawn, up to the limit the map is generated with (sky_envmap.wgsl).
 #[allow(clippy::type_complexity)]
 fn attach_sky_envmap(
     mut commands: Commands,
@@ -897,5 +898,46 @@ mod tests {
         let (top, bottom) = (texel(0, 4, 0), texel(0, 4, AMBIENT_SIZE - 1));
         assert!(top[2] > 0.5 && top[2] > 4.0 * top[0], "{top:?}");
         assert!(bottom[0] > 0.5 && bottom[0] > 4.0 * bottom[2], "{bottom:?}");
+    }
+
+    #[test]
+    #[ignore = "needs a GPU; run with --ignored"]
+    fn sky_envmap_pipelines_compile() {
+        use assets::test_support::{compile_pipelines, headless_app};
+
+        let mut app = headless_app();
+        load_internal_asset!(
+            app,
+            SKY_ENVMAP_SHADER_HANDLE,
+            "sky_envmap.wgsl",
+            Shader::from_wgsl
+        );
+        app.finish();
+        app.cleanup();
+        // the import the pbr shaders load in the app
+        let ground: Handle<Shader> = app
+            .world()
+            .resource::<AssetServer>()
+            .load("embedded://shaders/sky_envmap_ground.wgsl");
+        for _ in 0..600 {
+            if app.world().resource::<AssetServer>().is_loaded(&ground) {
+                break;
+            }
+            app.update();
+        }
+        app.sub_app_mut(RenderApp)
+            .init_resource::<SkyEnvmapPipelines>();
+        compile_pipelines(&mut app);
+        let render_world = app.sub_app(RenderApp).world();
+        let pipelines = render_world.resource::<SkyEnvmapPipelines>();
+        let cache = render_world.resource::<PipelineCache>();
+        for id in [
+            pipelines.downsample_sky,
+            pipelines.downsample,
+            pipelines.specular,
+            pipelines.trilight,
+        ] {
+            assert!(cache.get_compute_pipeline(id).is_some());
+        }
     }
 }
