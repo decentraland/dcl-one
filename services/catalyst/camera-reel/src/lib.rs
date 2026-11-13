@@ -10,9 +10,8 @@
 //! `auth::hash_bytes_v1` hash (the old per-service disk tree is gone; the
 //! wire's `url`/`thumbnailUrl` render from the stored hashes under
 //! `api_url`), signed fetch through the shared verifier
-//! (`shared::signed_fetch`, the 6.x payload then the legacy one, as the old
-//! crate's `accept_legacy_payload(&[])` did) with the process's EIP-1654
-//! validator, and `explore.place_indexed` for a world
+//! (`shared::signed_fetch`, the 6.x payload then the legacy one) with the
+//! process's EIP-1654 validator, and `explore.place_indexed` for a world
 //! name's place ids (the old HTTP hop to the places API is a local read,
 //! [`db::Database::world_place_ids`]; a failed lookup is upstream's 502).
 //!
@@ -64,11 +63,34 @@
 //! path, and the `x-original-path` the proxy sets when it ends with the
 //! route).
 //!
-//! Not carried (the plan): `dcl-scene-cli` and what only it consumes
+//! Deliberate differences from camera-reel-service @ 3e8bd0b:
+//! - images are addressed by blob hash, so the legacy `{uuid}-{file}` URLs
+//!   (`/api/images/{uuid}-{ts}.jpg`) do not resolve; `GET /api/images/{hash}`
+//!   answers 200 with the bytes unless `CAMERA_REEL_BUCKET_URL` is set (then
+//!   307 there), and 404 for a hash no non-rejected row names;
+//! - a refused signature is 401 JSON `{"message":"Unauthorized"}` (upstream:
+//!   text/plain `Unathorized`);
+//! - the shared signed-fetch verifier's policy is not upstream's
+//!   (dcl-crypto-middleware-rs 0.3.0): a symmetric 5 minute timestamp window
+//!   (upstream: up to 60 s old, any future one), `x-identity-metadata`
+//!   optional but a JSON object when present (upstream: required, any
+//!   string), and the scene signer `decentraland-kernel-scene` refused;
+//! - an upload's `metadata.userAddress` matches the signer whatever its
+//!   case (upstream compares it with the lowercase signer exactly), and so
+//!   does the owner check of the user routes;
+//! - multipart framework errors are 400 JSON `{message}` (upstream: actix's
+//!   text/plain messages); the image part is capped at 5 MiB and the whole
+//!   request at 25 MiB (upstream: actix-multipart's 2 MiB in-memory form
+//!   limit);
+//! - `HEAD` is answered on the `GET` routes, `GET /health` beside
+//!   `/health/live`, and the Swagger page loads swagger-ui from unpkg.
+//!
+//! Not carried: `dcl-scene-cli` and what only it consumes
 //! (`dcl-scene-authoring`, `dcl-preview-tunnel`,
 //! `dcl-preview-tunnel-protocol`) and `catalyrst-deploy-signer`; of this
-//! crate, the `ts` feature (ts-rs bindings), the per-service `/metrics` and
-//! the places-API client with its LRU (`PLACES_API_URL`, `PLACES_CACHE_*`).
+//! crate, the per-service `/metrics` (the process exporter serves the node's
+//! metrics) and the places-API client with its LRU (`PLACES_API_URL`,
+//! `PLACES_CACHE_*`).
 
 // The crates this one builds on, under their module names (AGENTS.md).
 #[cfg(test)]
@@ -118,7 +140,9 @@ pub struct Settings {
     /// Base of the rendered `url`/`thumbnailUrl` (old `API_URL`): the public
     /// URL of this router, `<PUBLIC_URL>/camera-reel-service`.
     pub api_url: String,
-    /// Old `BUCKET_URL`: when set, `GET /api/images/{hash}` redirects there.
+    /// When set, `GET /api/images/{hash}` redirects to `<bucket_url>/<hash>`:
+    /// a bucket that holds the ONE store's blobs by hash (not the legacy
+    /// `BUCKET_URL` bucket, whose keys are `{uuid}-{file}`).
     pub bucket_url: Option<String>,
     /// Old `MAX_IMAGES_PER_USER` (500).
     pub max_images_per_user: u64,

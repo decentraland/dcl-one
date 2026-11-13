@@ -1,4 +1,4 @@
-// from: camera-reel-service@69947bc697ee712c1b4cb4560ca5307773c14157 src/api/get.rs (get_wearable_images, is_item_id)
+// from: camera-reel-service@3e8bd0b099400e7c15b95477c1f003c63042d461 src/api/get.rs (get_wearable_images, is_item_id)
 //! `GET /api/wearables/{item}/images`: the public photos of people wearing
 //! a collection item. No auth: these are photos of other people, offered
 //! for an item rather than for the person in them, so the public,

@@ -1,7 +1,7 @@
 //! The wire shapes of camera-reel-service (`library/catalyst-api/camera-reel`
-//! was generated from the old crate's `ts` feature, which this package does
-//! not carry). `Image.url`/`thumbnailUrl` are rendered from the stored hashes
-//! by [`super::db`] as `<api_url>/api/images/<hash>`.
+//! is generated from them by the `ts` feature). `Image.url`/`thumbnailUrl`
+//! are rendered from the stored hashes by [`super::db`] as
+//! `<api_url>/api/images/<hash>`.
 
 use serde::{Deserialize, Serialize};
 
