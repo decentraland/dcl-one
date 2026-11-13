@@ -426,6 +426,12 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **Collectible cache retention must be generic** across wearables and emotes, and an emote's
   ownership is its membership of the avatar's animation graph. A pruning PR that special-cases
   emotes (#1323) is parked for that reason.
+- **A missing content file stays missing until restart.** When a server answers a client
+  error about the url for a content hash (400, 404, 410 and the like; not 401, 403, 407,
+  408, 425 or 429), the client answers later requests for that url from memory for the rest
+  of the session, because the bytes a hash names never change. Other failures, and content
+  requested by url rather than by hash, are asked for again after 10 s; preview mode and
+  loopback content servers keep their current retry behaviour. At most 4096 urls are held.
 - **Camera layers are identified by entity**, not by an explicit layer number; the cleanup in
   #1320 waits on the protocol change.
 - **`-logFile` with one dash is accepted** (rewritten to `--log-file` before clap, `main.rs`):

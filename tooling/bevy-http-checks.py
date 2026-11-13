@@ -23,6 +23,9 @@ REQUIRED = {
         "a_departed_hash_ranks_last_for_a_retry_after_its_queue_drained",
         "a_poisoned_gate_keeps_granting_and_releasing",
         "a_queue_entry_without_its_ticket_is_skipped_inside_a_release",
+        "a_content_hash_that_answers_a_client_error_is_remembered_for_the_session",
+        "transient_and_url_keyed_failures_keep_the_retry_window",
+        "a_loopback_404_is_answered_from_memory_only_within_the_retry_window",
     },
     "platform": {
         "grant_is_held_through_body_read_and_released_on_cancellation",
