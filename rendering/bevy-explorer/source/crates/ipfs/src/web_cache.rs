@@ -152,12 +152,16 @@ mod io {
         Ok(())
     }
 
-    /// Drops both entries for `url`, the shared one and the url's own, if there are any.
+    /// Drops both entries for `url`, the shared one and the url's own, if there are any. Every
+    /// entry is tried even when one delete fails; the first error is returned.
     pub async fn discard(cache: &Cache, url: &str) -> Result<(), JsValue> {
+        let mut result = Ok(());
         for key in keys(url).ok_or("not a url")? {
-            JsFuture::from(cache.delete_with_str(&key)).await?;
+            if let Err(error) = JsFuture::from(cache.delete_with_str(&key)).await {
+                result = result.and(Err(error));
+            }
         }
-        Ok(())
+        result
     }
 
     /// Stores `data`, the bytes `url` answered with, under the shared key for `hash`, if

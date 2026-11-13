@@ -31,6 +31,13 @@ pub fn matches_content_hash(hash: &str, bytes: &[u8]) -> bool {
     }
 }
 
+/// Whether `name` has the shape of a hash `matches_content_hash` can match: one ascii
+/// alphanumeric word with a known prefix. The cache files content under no other names.
+pub(crate) fn is_hash_name(name: &str) -> bool {
+    (name.starts_with("Qm") || name.starts_with("baf"))
+        && name.chars().all(|c| c.is_ascii_alphanumeric())
+}
+
 /// The raw-leaf CIDv1 (`bafkrei…`) of `bytes`, for fixtures that need a matching hash.
 #[cfg(test)]
 pub(crate) fn raw_cid(bytes: &[u8]) -> String {

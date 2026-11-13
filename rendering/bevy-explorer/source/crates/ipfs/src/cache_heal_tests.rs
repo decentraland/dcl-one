@@ -250,7 +250,7 @@ fn a_loader_rejecting_the_bytes_says_they_are_bad_unless_the_processor_repairs_i
 }
 
 #[test]
-fn an_entry_filed_under_a_hash_is_kept_while_its_bytes_match() {
+fn an_entry_is_kept_while_its_bytes_match_its_hash_or_its_name_is_no_hash() {
     assert!(!holds_other_bytes(
         FiledUnder::Hash(&raw_cid(b"png")),
         b"png"
@@ -259,7 +259,12 @@ fn an_entry_filed_under_a_hash_is_kept_while_its_bytes_match() {
         FiledUnder::Hash(&raw_cid(b"png")),
         b"DDS processed"
     ));
-    assert!(holds_other_bytes(FiledUnder::Hash("not-a-hash"), b"png"));
+    assert!(!holds_other_bytes(FiledUnder::Hash("not-a-hash"), b"png"));
+    assert!(!holds_other_bytes(FiledUnder::Hash("bafkrei/sub"), b"png"));
+    assert!(!holds_other_bytes(
+        FiledUnder::Hash("imposters/realms/x/0/0,0.boimp"),
+        b"png"
+    ));
     assert!(holds_other_bytes(FiledUnder::Url, b"png"));
 }
 
@@ -317,6 +322,23 @@ async fn a_cached_copy_that_matches_its_hash_is_kept() {
     assert_eq!(std::fs::read(dir.join(&hash)).unwrap(), b"original");
     assert!(!io.cache_entry_dropped(&hash));
     assert_eq!(io.cache_heals.counts(), (1, 0));
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[tokio::test]
+async fn a_name_that_is_no_hash_never_drops_a_cache_file() {
+    let (io, dir) = io_with_cache("not-a-hash");
+    let name = "imposters/realms/x/0/0,0.boimp";
+    scene_with(&io, "https://content.invalid", "a.png", name).await;
+    std::fs::create_dir_all(dir.join("imposters/realms/x/0")).unwrap();
+    std::fs::write(dir.join(name), b"imposter bytes").unwrap();
+
+    assert_eq!(
+        io.drop_bad_cached_entry(&content_path("a.png")).await,
+        Some(name.to_owned())
+    );
+    assert_eq!(std::fs::read(dir.join(name)).unwrap(), b"imposter bytes");
+    assert!(!io.cache_entry_dropped(name));
     std::fs::remove_dir_all(dir).unwrap();
 }
 
