@@ -12,11 +12,12 @@ pub(crate) const RETRY_AFTER: Duration = Duration::from_secs(10);
 /// Most urls held at once.
 const LIMIT: usize = 4096;
 
-/// A client error about the url itself, which asking again does not change. 408, 425 and 429
-/// ask the client to come back later and 421 for another connection; 401, 403 and 407 come from a
-/// CDN, firewall or proxy for an unsigned request, and those can lift.
+/// A client error about the url itself, which asking again does not change. Every other status
+/// keeps the retry window: 401, 403 and 407 come from a CDN, firewall or proxy; 408, 421, 425 and
+/// 429 ask to come back later or on another connection; 409, 413, 423 and 431 are about the
+/// request or the server's state.
 pub(crate) fn is_definitive(status: StatusCode) -> bool {
-    status.is_client_error() && !matches!(status.as_u16(), 401 | 403 | 407 | 408 | 421 | 425 | 429)
+    matches!(status.as_u16(), 400 | 404 | 405 | 410 | 414 | 451)
 }
 
 /// Why a request is answered from memory.
@@ -55,6 +56,8 @@ impl FailedRemotes {
     /// Remember that `remote` failed at `now`; `session` is the definitive status that keeps it
     /// for the session.
     pub(crate) fn record(&mut self, remote: String, session: Option<StatusCode>, now: Instant) {
+        let session =
+            session.or_else(|| self.entries.get(&remote).and_then(|failed| failed.session));
         if !self.entries.contains_key(&remote) && self.entries.len() >= self.limit {
             self.entries
                 .retain(|_, failed| failed.session.is_some() || !expired(failed.at, now));
@@ -118,9 +121,24 @@ mod tests {
         for n in [400, 404, 405, 410, 414, 451] {
             assert!(is_definitive(code(n)), "{n}");
         }
-        for n in [401, 403, 407, 408, 421, 425, 429, 500, 502, 503, 504] {
+        for n in [
+            401, 403, 407, 408, 409, 413, 421, 423, 425, 429, 431, 500, 502, 503, 504,
+        ] {
             assert!(!is_definitive(code(n)), "{n}");
         }
+    }
+
+    #[test]
+    fn a_later_short_lived_failure_keeps_a_session_entry() {
+        let t0 = Instant::now();
+        let mut failed = FailedRemotes::default();
+        failed.record(URL.into(), Some(StatusCode::NOT_FOUND), t0);
+        failed.record(URL.into(), None, t0 + Duration::from_secs(1));
+        assert_eq!(
+            failed.repeat(URL, t0 + Duration::from_secs(3600)),
+            Some(Repeat::Session(StatusCode::NOT_FOUND))
+        );
+        assert_eq!(failed.session_len(), 1);
     }
 
     #[test]
