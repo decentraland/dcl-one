@@ -441,13 +441,18 @@ pub struct WorldsConfig {
     #[arg(long, env = "SCENE_HOST_MAX_SCENES", default_value_t = 64)]
     pub scene_host_max_scenes: usize,
 
-    /// Load an unhosted scene with a local active deployment on first contact.
+    /// Load, for an admitted client, an unhosted scene with a local active
+    /// deployment that sets `authoritativeMultiplayer`.
     #[arg(long, env = "SCENE_HOST_AUTOLOAD", default_value_t = true, action = clap::ArgAction::Set)]
     pub scene_host_autoload: bool,
 
     /// The re-admission and redeploy sweep interval; 0 disables it.
     #[arg(long, env = "SCENE_HOST_SWEEP_INTERVAL_SECS", default_value_t = 30)]
     pub scene_host_sweep_interval_secs: u64,
+
+    /// Unload a hosted scene with no clients for this long; 0 disables it.
+    #[arg(long, env = "SCENE_HOST_IDLE_UNLOAD_SECS", default_value_t = 300)]
+    pub scene_host_idle_unload_secs: u64,
 
     // worlds/archipelago: the ws-connector (the old catalyrst-archipelago
     // names); LiveKit comes from the comms settings, the pool is the ONE pool.
@@ -922,9 +927,10 @@ mod tests {
                 c.worlds.scene_host_auth_timeout_secs,
                 c.worlds.scene_host_delegation_ttl_secs,
                 c.worlds.scene_host_max_scenes,
-                c.worlds.scene_host_sweep_interval_secs
+                c.worlds.scene_host_sweep_interval_secs,
+                c.worlds.scene_host_idle_unload_secs
             ),
-            (5, 3600, 64, 30)
+            (5, 3600, 64, 30, 300)
         );
         assert_eq!(
             (

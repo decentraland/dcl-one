@@ -380,6 +380,17 @@ pub async fn serve(
             "EVENTS_MIRROR_ADOPT adopts the mirrored events once the mirror is off: unset EVENTS_MIRROR_UPSTREAM first"
         );
     }
+    if config
+        .node
+        .public_url
+        .as_deref()
+        .is_none_or(|u| u.trim().is_empty())
+    {
+        tracing::warn!(
+            own_url = %config.node.own_url(),
+            "PUBLIC_URL is unset: place report upload URLs and asset links use the bind address"
+        );
+    }
     let explore_settings = explore::Settings {
         content_public_url: content.settings.content_public_url.clone(),
         asset_rewrite_domain: explore::Settings::asset_rewrite_domain_for(
@@ -441,6 +452,8 @@ pub async fn serve(
             .trim_end_matches('/')
             .to_string(),
         events_asset_base_url: explore::Settings::events_asset_base_for(&config.node.own_url()),
+        public_url: config.node.own_url().trim_end_matches('/').to_string(),
+        trusted_proxy_cidrs: config.node.http_trusted_proxy_cidrs.clone(),
         realm_name: config
             .node
             .realm_name
@@ -1508,8 +1521,8 @@ pub async fn serve(
         .nest("/camera-reel-service", camera_reel::router(camera_reel));
     // The operator plane under the old gateway's prefixes: credits under
     // /credits only (its /users, /cart and /checkout would collide at the root; the
-    // handlers verify a signed fetch over the public path and the route-local
-    // one), the relay under /rpc (rpc.<domain>/x -> /rpc/x),
+    // handlers verify a signed fetch over the request path or a matching
+    // x-original-path), the relay under /rpc (rpc.<domain>/x -> /rpc/x),
     // the imposter zips under /bvimposters (the prefix baked into the explorer
     // wasm), the console API at the root (/admin/auth, /admin/api/*).
     let app = app
@@ -1530,6 +1543,9 @@ pub async fn serve(
     // its body is drained, not reset: nginx writes a buffered upload after
     // the answer, and a reset fails that write, answers 502 and counts the
     // process down. Up to the largest body a route admits (a deployment).
+    // Forwarding headers name the client only from a loopback or listed proxy.
+    let app =
+        shared::client_ip::pin_client_headers(app, config.node.http_trusted_proxy_cidrs.clone());
     let app = shared::drain::drain_unread(
         app,
         content::create_entity::MAX_DEPLOYMENT_BYTES
@@ -2016,6 +2032,7 @@ async fn worlds_states(
                 max_scenes: config.worlds.scene_host_max_scenes,
                 autoload: config.worlds.scene_host_autoload,
                 sweep_interval_secs: config.worlds.scene_host_sweep_interval_secs,
+                idle_unload_secs: config.worlds.scene_host_idle_unload_secs,
             },
             http_client,
         )

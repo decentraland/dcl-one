@@ -725,7 +725,7 @@ impl SceneRuntime for JsRuntime {
             Err(InboundRefusal::Client) => return Err(InboundOverBudget),
             Err(InboundRefusal::Scene) => {
                 let drops = SCENE_BUDGET_DROPS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                if drops % 1000 == 0 {
+                if drops.is_multiple_of(1000) {
                     tracing::warn!(
                         scene = %self.handle.scene_hash,
                         drops = drops + 1,

@@ -11,15 +11,21 @@ Referral quotas, the `POST /entities` burst limit and daily quota, and the
 `HTTP_TRUSTED_PROXY_CIDRS` on the API process with the direct backend proxy
 networks (the gateway's container network), and ensure those proxies overwrite
 a single valid `X-Real-IP`. An
-empty setting trusts no forwarded header and therefore buckets traffic behind
-a gateway under that gateway's peer address: every deployer then shares one
-deploy limit. The API logs one warning when an untrusted private or loopback
-peer forwards `X-Real-IP`. Missing or malformed X-Real-IP from a trusted peer
+empty setting trusts no forwarded header (only a loopback peer may name the
+client to the other per-client limits and IP bindings) and therefore buckets
+traffic behind a non-loopback gateway under that gateway's peer address: every
+deployer then shares one deploy limit. The API logs one warning when an
+untrusted private or loopback peer forwards `X-Real-IP`. Missing or malformed X-Real-IP from a trusted peer
 fails closed. This API-side setting is separate from
 `GATEWAY_TRUSTED_PROXY_CIDRS`, which controls the gateway's upstream CDN trust.
 Verify the deployed trust chain and client bucket separation before cutover:
 without it every client behind the gateway shares one `/contents` budget
 (1000 requests a minute by default) and gets 429s past it.
+
+Place reports count against the reporter's wallet and, when its address names
+one client (a trusted proxy's `X-Real-IP` or a public peer), its network. Behind
+an unlisted private gateway only the wallet limit applies, and fresh wallets cost
+nothing, so set `HTTP_TRUSTED_PROXY_CIDRS` to keep the per-network report limit.
 
 Set `PUBLIC_URL` to the externally reachable node base URL, including any deployment prefix. Without it, the node uses its bind address (for example `http://0.0.0.0:<port>`), which is only a local fallback and cannot provide public image or notification links. See [event client and deployment guidance](../../services/catalyst/docs/events.md).
 
@@ -46,7 +52,7 @@ docker run --rm --network dcl-one --read-only --cap-drop ALL --security-opt no-n
 | `GATEWAY_STORAGE_ROOT` | empty | Content mount; API sets `STORAGE_X_ACCEL_BASE=/__protected_storage` |
 
 - Publish only port 8080; keep APIs and Sites private; terminate TLS before it.
-- Operator paths (`/admin`, `/server`, `/metabase`, telemetry admin) are gated on the normalized path; an allowed network does not authenticate.
+- Operator paths (`/admin`, `/server`, `/metabase`, telemetry admin, and an `admin` segment directly under an API mount or its `/v1` or `/api`, such as `/rpc/admin` or `/shop-api/v1/admin`, and the worlds `/worlds-content-server/gc` and `/reprocess-ab`) are gated on the normalized path; an allowed network does not authenticate.
 - Never trust arbitrary client networks as proxies; a trusted proxy must set `X-Forwarded-For` and `X-Forwarded-Proto`.
 - The gateway overwrites client IP, forwarding, `X-Catalyst-Admin-Gate` and `x-original-path` headers and removes `True-Client-IP`.
 - `/internal/pulse` and `/metrics` are not public; internal callers use the APIs' private address.
