@@ -86,6 +86,11 @@ describe('startup screens', () => {
     expect(screen.getByLabelText('Sign-in code')).toHaveTextContent('42')
   })
 
+  it('a checked email code waiting for the engine to boot shows Verifying, not a frozen code screen', async () => {
+    await renderSettled(startup(flow({ status: 'sign-in-or-guest', engineReady: false, emailQueued: true })))
+    expect(screen.getByText('Verifying your account...')).toBeInTheDocument()
+  })
+
   it('CTAs are disabled while busy', async () => {
     await renderSettled(startup(flow({ status: 'sign-in-or-guest', busy: true })))
     expect(screen.getByRole('button', { name: /PLAY AS GUEST/i })).toBeDisabled()

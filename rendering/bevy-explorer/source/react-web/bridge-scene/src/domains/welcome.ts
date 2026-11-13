@@ -31,15 +31,14 @@ export function registerWelcome(ctx: Ctx): void {
 
   // A curated default look, as the page fetched it, on the stage: signed in, on the draft (the
   // page's equipped set follows); not yet, as the stand-in. Applied a frame later, so the picks
-  // queued while the scene was not yet up (the page's rerolls before the engine ran) collapse to
-  // the last.
-  let queuedShow: { look: number; avatar: AvatarLook } | null = null
+  // queued while the scene was not yet up (picks made before the engine ran) collapse to the last.
+  let queuedShow: AvatarLook | null = null
   ctx.on('showLook', (msg) => {
-    queuedShow = { look: msg.look, avatar: msg.avatar }
+    queuedShow = msg.avatar
   })
   ctx.push(() => {
     if (queuedShow == null) return
-    const { avatar: look } = queuedShow
+    const look = queuedShow
     queuedShow = null
     if (getPlayer() == null) {
       setStandInLook(look)

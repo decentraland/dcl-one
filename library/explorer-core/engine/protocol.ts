@@ -872,9 +872,9 @@ export interface WelcomeMessage extends WelcomeState {
 }
 
 /** Put the curated default look `default<look>` on the lobby stage's avatar, as the page fetched it
- *  (the scene's own fetches are signed, so it can't before sign-in): a pick made before sign-in, or
- *  the welcome page's RANDOMIZE. Signed in it is the Backpack's unsaved look, deployed on
- *  `acceptWelcome`; before sign-in the stage wears it as a stand-in. */
+ *  (the scene's own fetches are signed, so it can't before sign-in): a new account's starting look.
+ *  Signed in it is the Backpack's unsaved look, deployed on `acceptWelcome`; before sign-in the
+ *  stage wears it as a stand-in. */
 export interface ShowLookRequest {
   kind: 'showLook'
   look: number

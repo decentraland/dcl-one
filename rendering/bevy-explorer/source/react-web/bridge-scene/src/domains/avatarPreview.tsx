@@ -420,7 +420,7 @@ export function syncShape(): void {
     wanted = null
     swapReady = false
     standbyWanted = false
-      if (shownYaw !== YAW_FRONT) startTurn(avatarEntity, shownYaw, YAW_FRONT)
+    if (shownYaw !== YAW_FRONT) startTurn(avatarEntity, shownYaw, YAW_FRONT)
     return
   }
   if (stage !== 'lobby' || standbyEntity == null || !AvatarShape.has(avatarEntity)) {
@@ -450,7 +450,7 @@ function startTurn(entity: Entity, from: number, to: number): void {
 }
 
 // Advance the turn under way; done, a look that was waiting for the shown avatar to face away
-// can take the stage, and a new one facing front is announced to the page.
+// can take the stage.
 function pollTurn(dt: number): void {
   if (turn == null) return
   turn.t = Math.min(1, turn.t + dt / TURN_SECONDS)

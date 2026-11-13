@@ -5045,7 +5045,7 @@
     },
     {
       "path": "library/explorer-core/engine/protocol.ts",
-      "sha256": "b135a6e79d533b0f55cbaeab3c27ac4e8ab89f0377fb4161cfcde0ceb83219e0"
+      "sha256": "7158cb78c8b815ee3511129897f6a44b7c3c2a83de5d4a03537eac69c20098cf"
     },
     {
       "path": "library/explorer-core/features/auth/authReturn.ts",
@@ -7681,7 +7681,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/startup/LoginSelection.tsx",
-      "sha256": "01179ed3e941352611ff862aeef70fd22b89ed34a4ad8736f77393e450b062c7"
+      "sha256": "b255c8a3d80e4b05ea390c7ed96ce7788161b6366e048df7aa4c19badf9bdb12"
     },
     {
       "path": "library/ui/apps/hud/features/startup/NewAccountLook.module.css",
@@ -7713,7 +7713,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/startup/StartupFlow.tsx",
-      "sha256": "01bf325af0486e467501732c7490374405187ddef05a40a71cdcad22c94c9431"
+      "sha256": "4fb1e348249373b036a524e817432fdbb8ca86439c62ce7682b966506fc448da"
     },
     {
       "path": "library/ui/apps/hud/features/startup/StartupFooter.module.css",
@@ -8081,7 +8081,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/login.clicks.test.tsx",
-      "sha256": "70ca43eafa8efb9753c4af92eafa397130a82097e56163ffce81e2980001d644"
+      "sha256": "8348a2c3326b266c77cb561b25b2dfaadac89b8edd81f5f97533dcd710cb9330"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/map.clicks.test.tsx",

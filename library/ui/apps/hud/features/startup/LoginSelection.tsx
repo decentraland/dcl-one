@@ -101,7 +101,7 @@ export function LoginSelection({
           {flow.authCode != null && (
             <>
               <p className={styles.codeHint}>Verify this code matches the one in your browser:</p>
-              <p className={styles.authCode} aria-label="Sign-in code">
+              <p className={styles.authCode} role="status" aria-label="Sign-in code">
                 {flow.authCode}
               </p>
             </>
