@@ -23,6 +23,7 @@ jobs:
       id-token: write
     steps:
       - name: verify PR is from trusted source
+        id: pr
         uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
         with:
           script: |
@@ -52,15 +53,24 @@ jobs:
             }
 
             core.info(`✅ Workflow authorized for @${author}'s PR by @${triggeredBy}`);
+            // The commit checked here is the one built below, so a push after the check can't slip in.
+            core.setOutput('sha', pr.head.sha);
 
       - name: checkout PR branch
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: refs/pull/${{ github.event.issue.number }}/head
+          ref: ${{ steps.pr.outputs.sha }}
           fetch-depth: 0
           filter: blob:none
+          persist-credentials: false
 
-      - uses: ./.github/actions/creator-hub-lfs
+      # No caches in this job. An `issue_comment` run saves caches in main's scope, after running
+      # the PR's own code, and main's release jobs restore them. So the media is pulled directly
+      # (not through the local creator-hub-lfs action, which this PR checkout could change) and
+      # setup-node gets no npm cache.
+      - name: check out the packs' media
+        working-directory: .
+        run: git lfs pull --include 'apps/creator-hub/packages/asset-packs/packs/**'
 
       # Manual /upload-assets flow on a checked-out PR branch: needs only asset-packs and
       # runs rarely, so it stays on setup-node directly rather than the ./.github/actions/creator-hub-setup
@@ -68,8 +78,6 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
-          cache: 'npm'
-          cache-dependency-path: apps/creator-hub/package-lock.json
 
       - name: install
         run: npm ci --silent && make install-asset-packs
