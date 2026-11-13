@@ -262,6 +262,28 @@ mod tests {
     }
 
     #[test]
+    fn a_slice_of_a_full_store_still_fits() {
+        let store = CappedBlobStore::with_cap(10);
+        let root = store.insert_part(Arc::new(InMemoryBlobPart::from(vec![1u8; 10])));
+        let slice = store.insert_slice(&root, 2, 3).unwrap();
+        assert_eq!(read(store.get_part(&slice).unwrap()), [1; 3]);
+        assert!(store.try_insert_with(1, || unreachable!()).is_err());
+    }
+
+    #[test]
+    fn a_surviving_slice_keeps_its_root_counted() {
+        let store = CappedBlobStore::with_cap(10);
+        let part = || Arc::new(InMemoryBlobPart::from(vec![0u8; 3])) as Part;
+        let root = store.insert_part(Arc::new(InMemoryBlobPart::from(vec![1u8; 8])));
+        let slice = store.insert_slice(&root, 0, 1).unwrap();
+        store.remove_part(&root);
+        assert!(store.try_insert_with(3, part).is_err());
+        assert_eq!(read(store.get_part(&slice).unwrap()), [1]);
+        store.remove_part(&slice);
+        assert!(store.try_insert_with(3, part).is_ok());
+    }
+
+    #[test]
     fn a_long_chain_of_slices_reads_and_drops() {
         let store = CappedBlobStore::default();
         let mut id = store.insert_part(Arc::new(InMemoryBlobPart::from(vec![7u8; 4])));
