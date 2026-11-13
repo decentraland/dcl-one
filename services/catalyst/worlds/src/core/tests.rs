@@ -291,6 +291,25 @@ async fn expect(app: &Router, case: Case, status: u16) -> Value {
     body
 }
 
+/// `/gc`'s answer; another test may hold the fleet-wide run lock for a moment.
+async fn gc(app: &Router, path: &str) -> Value {
+    let mut answer = None;
+    assert!(
+        crate::shared::test_wait::until(async || {
+            let (status, body) = hit(app, Case::new("post", path).bearer(ADMIN_TOKEN)).await;
+            if status == StatusCode::SERVICE_UNAVAILABLE {
+                return false;
+            }
+            assert_eq!(status, StatusCode::OK, "{body}");
+            answer = Some(body);
+            true
+        })
+        .await,
+        "{path} stayed busy"
+    );
+    answer.unwrap()
+}
+
 struct Deployment {
     body: Vec<u8>,
     content_type: String,
@@ -4473,12 +4492,7 @@ async fn every_route_answers_its_contract() {
     expect(app, Case::new("get", "/admin/worlds"), 401).await;
     expect(app, Case::new("post", "/admin/gc?dry_run=true"), 401).await;
     let gc_runs = GC_RUNS.lock().await;
-    let gc = expect(
-        app,
-        Case::new("post", "/gc?dry_run=true").bearer(ADMIN_TOKEN),
-        200,
-    )
-    .await;
+    let gc = gc(app, "/gc?dry_run=true").await;
     assert_eq!(
         (gc["dryRun"].as_bool(), gc["removed"].as_u64()),
         (Some(true), Some(0)),
@@ -4496,10 +4510,16 @@ async fn every_route_answers_its_contract() {
     );
     let unauthorized = expect(app, Case::new("post", "/gc").bearer("wrong"), 401).await;
     assert_eq!(unauthorized["message"], "Invalid authorization header");
-    let running = catalyst_storage::gc::try_lock_run(&f.pool)
-        .await
-        .unwrap()
-        .expect("no other run");
+    let mut running = None;
+    assert!(
+        crate::shared::test_wait::until(async || {
+            running = catalyst_storage::gc::try_lock_run(&f.pool).await.unwrap();
+            running.is_some()
+        })
+        .await,
+        "another gc run never ended"
+    );
+    let running = running.unwrap();
     let request = Request::builder()
         .method("POST")
         .uri("/gc?dry_run=true")
