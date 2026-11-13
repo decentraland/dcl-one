@@ -9,7 +9,7 @@ use catalyst::comms::gatekeeper::admission::cluster::sockets::{IslandDelivery, I
 use catalyst::comms::gatekeeper::admission::cluster::subscriber::{
     ClusterGateway, ClusterSubscriber, GatewayError, IslandOccupant,
 };
-use catalyst::comms::gatekeeper::bus::{InProcessBus, RequestError};
+use catalyst::comms::gatekeeper::bus::{InProcessBus, NatsBus, RequestError};
 use catalyst::comms::gatekeeper::livekit::Removal;
 use catalyst::comms::protocol::archipelago::archipelago::IslandChangedMessage;
 use catalyst::comms::protocol::pulse::decentraland::pulse::PeerClusterSnapshot;
@@ -28,6 +28,7 @@ struct RecordingGateway {
     occupant: Mutex<Option<IslandOccupant>>,
     mint_pause: Mutex<Option<Arc<Notify>>>,
     mint_entered: Notify,
+    multiple_wallets: bool,
 }
 
 #[async_trait]
@@ -64,7 +65,9 @@ impl ClusterGateway for RecordingGateway {
         fence: &TokenFence,
         _: Option<u64>,
     ) -> Result<String, GatewayError> {
-        assert_eq!(wallet, WALLET);
+        if !self.multiple_wallets {
+            assert_eq!(wallet, WALLET);
+        }
         self.fences.lock().unwrap().push(fence.clone());
         self.mint_entered.notify_one();
         let pause = self.mint_pause.lock().unwrap().clone();
@@ -146,7 +149,9 @@ impl RecoveryHarness {
         let replies = source.clone();
         let bus = Arc::new(InProcessBus::new());
         bus.respond_to_requests(Arc::new(move |subject, payload| {
-            assert_eq!(subject, format!("peer.{WALLET}.cluster_lookup"));
+            if subject != format!("peer.{WALLET}.cluster_lookup") {
+                return Err(RequestError::NoResponders);
+            }
             let snapshot = replies.lock().unwrap();
             if snapshot.session.as_bytes() != payload {
                 return Err(RequestError::NoResponders);
@@ -535,7 +540,9 @@ async fn periodic_native_retry_case(case: &str) {
     harness
         .bus
         .respond_to_requests(Arc::new(move |subject, payload| {
-            assert_eq!(subject, format!("peer.{WALLET}.cluster_lookup"));
+            if subject != format!("peer.{WALLET}.cluster_lookup") {
+                return Err(RequestError::NoResponders);
+            }
             if !available.load(Ordering::SeqCst)
                 || failures
                     .try_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
@@ -727,4 +734,531 @@ type PeriodicNativeOwnerRow = (
 async fn periodic_native_owner_row(fixture: &Fixture) -> Option<PeriodicNativeOwnerRow> {
     sqlx::query_as("SELECT owner_session,owner_epoch,assignment_revision,fencing_token,assignment_json,updated_at FROM social.archipelago_v4_assignments WHERE deployment_audience=$1 AND owner_address=$2 AND lane_key='realm'")
         .bind(AUDIENCE).bind(WALLET).fetch_optional(&fixture.pool).await.unwrap()
+}
+
+struct RetirementBus {
+    inner: Arc<InProcessBus>,
+    pause_negative: std::sync::atomic::AtomicBool,
+    negative_entered: Notify,
+    negative_release: Notify,
+}
+#[async_trait]
+impl catalyst::comms::gatekeeper::bus::NatsBus for RetirementBus {
+    fn is_enabled(&self) -> bool {
+        self.inner.is_enabled()
+    }
+    fn is_connected(&self) -> bool {
+        self.inner.is_connected()
+    }
+    fn is_ready(&self) -> bool {
+        self.inner.is_ready()
+    }
+    fn connect(&self) {
+        self.inner.connect();
+    }
+    fn subscribe(
+        &self,
+        subject: &str,
+        queue: Option<&str>,
+        handler: catalyst::comms::gatekeeper::bus::NatsHandler,
+    ) -> catalyst::comms::gatekeeper::bus::NatsSubscription {
+        self.inner.subscribe(subject, queue, handler)
+    }
+    async fn publish(
+        &self,
+        subject: &str,
+        bytes: Vec<u8>,
+    ) -> catalyst::comms::gatekeeper::bus::PublishOutcome {
+        self.inner.publish(subject, bytes).await
+    }
+    async fn request(&self, subject: &str, bytes: Vec<u8>) -> Result<Vec<u8>, RequestError> {
+        let reply = self.inner.request(subject, bytes).await?;
+        if subject.ends_with(".selection_retirement")
+            && self
+                .pause_negative
+                .swap(false, std::sync::atomic::Ordering::SeqCst)
+        {
+            self.negative_entered.notify_one();
+            self.negative_release.notified().await;
+        }
+        Ok(reply)
+    }
+}
+
+struct SelectedSourceSockets(Arc<catalyst::comms::pulse::cluster::feed::CurrentAssignments>);
+impl IslandSockets for SelectedSourceSockets {
+    fn selected_transport_is_current(&self, snapshot: &PeerClusterSnapshot) -> bool {
+        self.0.lookup(&snapshot.wallet, &snapshot.session).as_ref() == Some(snapshot)
+    }
+    fn deliver_island(
+        &self,
+        _: &str,
+        _: &str,
+        _: &IslandChangedMessage,
+        _: Option<&catalyst::comms::gatekeeper::admission::cluster::fence::PulseAdmissionStamp>,
+    ) -> IslandDelivery {
+        IslandDelivery::Undelivered
+    }
+}
+
+/// Real configured coordinator and complete Pulse authority; only NATS/media
+/// transport is replaced. Admission positives use the started subscriber; race
+/// fixtures invoke the same selected writer to control mutation ordering.
+struct RetirementHarness {
+    bus: Arc<RetirementBus>,
+    source: Arc<catalyst::comms::pulse::cluster::feed::CurrentAssignments>,
+    identity: catalyst::comms::pulse::snapshot::IdentityBoard,
+    subscriber: Arc<ClusterSubscriber>,
+    fence: Arc<super::PgAssignmentFence>,
+    gateway: Arc<RecordingGateway>,
+    runtime: catalyst::comms::gatekeeper::admission::cluster::ClusterRuntime,
+    jobs: catalyst::jobs::Jobs,
+    pass: u64,
+    lookup_available: Arc<std::sync::atomic::AtomicBool>,
+}
+impl RetirementHarness {
+    fn new(pool: sqlx::PgPool, limit: usize) -> Self {
+        use catalyst::comms::pulse::cluster::{
+            ClusterOptions, ClusterTracker,
+            feed::{ClusterFeedPublisher, RecordingClusterFeed},
+        };
+        let feed = Arc::new(RecordingClusterFeed::default());
+        let source = feed.current_assignments().unwrap();
+        let tracker = ClusterTracker::new(ClusterOptions::default(), 2, feed);
+        let mut identity = catalyst::comms::pulse::snapshot::IdentityBoard::new(2);
+        tracker.bind_identity(&mut identity);
+        let inner = Arc::new(InProcessBus::new());
+        let authority = source.clone();
+        let lookup_available = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let available = lookup_available.clone();
+        inner.respond_to_requests(Arc::new(move |subject, bytes| {
+            use catalyst::comms::protocol::bus::cluster::{
+                ClusterLookup, SelectionRetirementLookup,
+            };
+            if !available.load(std::sync::atomic::Ordering::SeqCst) {
+                return Err(RequestError::TimedOut);
+            }
+            if let Some(lookup) = SelectionRetirementLookup::decode(subject, bytes) {
+                return authority
+                    .lookup_retirement(&lookup)
+                    .and_then(|reply| reply.encode())
+                    .ok_or(RequestError::NoResponders);
+            }
+            let lookup =
+                ClusterLookup::decode(subject, bytes).map_err(|_| RequestError::Invalid)?;
+            authority
+                .lookup(&lookup.wallet, &lookup.session)
+                .map(|reply| reply.encode_to_vec())
+                .ok_or(RequestError::NoResponders)
+        }));
+        let bus = Arc::new(RetirementBus {
+            inner,
+            pause_negative: false.into(),
+            negative_entered: Notify::new(),
+            negative_release: Notify::new(),
+        });
+        let config = ClusterConfig {
+            nats_url: Some("nats://127.0.0.1:4222".into()),
+            control_v4_audience: Some(AUDIENCE.into()),
+            peer_state_max: limit,
+            drain_timeout_ms: 0,
+            ..Default::default()
+        };
+        let fence =
+            catalyst::comms::gatekeeper::admission::cluster::fence_for(pool.clone(), &config)
+                .unwrap()
+                .unwrap();
+        let gateway = Arc::new(RecordingGateway {
+            pool: Some(pool),
+            multiple_wallets: true,
+            ..Default::default()
+        });
+        let subscriber = ClusterSubscriber::new_with_assignment_fence(
+            bus.clone(),
+            gateway.clone(),
+            Arc::new(ClusterPeerState::new(
+                config.peer_state_max,
+                config.peer_state_ttl_ms,
+            )),
+            config,
+            Some(fence.clone()),
+        );
+        subscriber.attach_sockets(Arc::new(SelectedSourceSockets(source.clone())));
+        let runtime = catalyst::comms::gatekeeper::admission::cluster::ClusterRuntime {
+            subscriber: subscriber.clone(),
+            fence: Some(fence.clone()),
+        };
+        let jobs = catalyst::jobs::Jobs::new();
+        runtime.start(&jobs);
+        Self {
+            bus,
+            source,
+            identity,
+            subscriber,
+            fence,
+            gateway,
+            runtime,
+            jobs,
+            pass: 0,
+            lookup_available,
+        }
+    }
+    fn select(&mut self, wallet: &str, session: &str, native: bool) -> PeerClusterSnapshot {
+        use catalyst::comms::pulse::cluster::feed::CurrentAssignment;
+        self.pass += 1;
+        let epoch = if native {
+            self.identity
+                .set_with_session(0, wallet.into(), session.into());
+            self.identity.registration_by_peer(0)
+        } else {
+            self.pass
+        };
+        self.source.replace(
+            self.pass,
+            std::time::Duration::from_secs(120),
+            vec![CurrentAssignment {
+                wallet: wallet.into(),
+                session: session.into(),
+                realm: "realm-current".into(),
+                cluster_id: format!("current-{}", self.pass),
+                owner_epoch: epoch,
+                selected_origin: if native { 1 } else { 3 },
+                owner_peer: 0,
+                registration: native.then(|| self.identity.registration_guard(0)),
+            }],
+        );
+        self.source.lookup(wallet, session).unwrap()
+    }
+    async fn hint(&self, snapshot: &PeerClusterSnapshot) {
+        use catalyst::comms::gatekeeper::bus::NatsBus;
+        use catalyst::comms::protocol::bus::cluster::ClusterChange;
+        let change = ClusterChange {
+            wallet: snapshot.wallet.clone(),
+            change: catalyst::comms::protocol::pulse::decentraland::pulse::PeerClusterChange {
+                session: snapshot.session.clone(),
+                source_incarnation: snapshot.source_incarnation.clone(),
+                assignment_version: snapshot.assignment_version,
+                cluster_id: snapshot.cluster_id.clone(),
+                realm: snapshot.realm.clone(),
+                token_not_before: snapshot.token_not_before,
+                ..Default::default()
+            },
+        };
+        self.bus.publish(&change.subject(), change.encode()).await;
+    }
+    fn depart(&mut self, native: bool) {
+        if native {
+            self.identity.remove(0);
+        }
+        self.pass += 1;
+        self.source
+            .replace(self.pass, std::time::Duration::from_secs(120), vec![]);
+    }
+    async fn wait_retired(&self) {
+        use catalyst::comms::gatekeeper::admission::cluster::fence::AssignmentFence;
+        tokio::time::timeout(std::time::Duration::from_secs(8), async {
+            while !self.fence.selected_reconciliation_targets().is_empty() {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+            self.subscriber.settle().await;
+        })
+        .await
+        .expect("started runtime periodically retires exact completed selections");
+    }
+    async fn shutdown(self) {
+        self.jobs.shutdown(std::time::Duration::from_secs(2)).await;
+        drop(self.runtime);
+    }
+}
+
+#[tokio::test]
+async fn started_selected_periodic_retirement_reclaims_capacity_across_native_and_legacy_churn() {
+    use catalyst::comms::gatekeeper::admission::cluster::fence::AssignmentFence;
+    let fixture = Fixture::new()
+        .await
+        .expect("required disposable PostgreSQL");
+    let mut harness = RetirementHarness::new(fixture.pool.clone(), 2);
+    for n in 1..=8 {
+        let native = n % 2 == 1;
+        let wallet = format!("0x{n:040x}");
+        let selected = harness.select(&wallet, SESSION, native);
+        harness.hint(&selected).await;
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            harness.subscriber.settle(),
+        )
+        .await
+        .unwrap();
+        let before: PeriodicNativeOwnerRow = sqlx::query_as("SELECT owner_session,owner_epoch,assignment_revision,fencing_token,assignment_json,updated_at FROM social.archipelago_v4_assignments WHERE deployment_audience=$1 AND owner_address=$2 AND lane_key='realm'")
+            .bind(AUDIENCE).bind(&wallet).fetch_one(&fixture.pool).await.unwrap();
+        assert_eq!(before.0, SESSION);
+        assert_eq!(
+            before.4.as_ref().unwrap()["pulseAdmission"]["selectedOrigin"].as_str(),
+            Some(if native { "native" } else { "legacyIntentV2" })
+        );
+        assert_eq!(
+            harness.fence.selected_reconciliation_targets(),
+            vec![(wallet.clone(), SESSION.into())]
+        );
+        assert_eq!(harness.gateway.fences.lock().unwrap().len(), n as usize);
+        let outage_requests = harness.bus.inner.requested().len();
+        if n == 4 {
+            harness
+                .lookup_available
+                .store(false, std::sync::atomic::Ordering::SeqCst);
+        }
+        harness.depart(native);
+        if n == 4 {
+            tokio::time::timeout(std::time::Duration::from_secs(8), async {
+                while harness.bus.inner.requested().len() <= outage_requests {
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                }
+                harness.subscriber.settle().await;
+            })
+            .await
+            .expect("the actual periodic job observes the simulated source outage");
+            assert_eq!(
+                harness.fence.selected_reconciliation_targets(),
+                vec![(wallet.clone(), SESSION.into())],
+                "unknown during an outage retains the legacy retry"
+            );
+            // Reclaim source recovery records during the outage. Capacity
+            // recovery must not require an old departure record or another hint.
+            harness.pass += 1000;
+            harness
+                .source
+                .replace(harness.pass, std::time::Duration::from_secs(120), vec![]);
+            harness
+                .lookup_available
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+        harness.wait_retired().await;
+        let after: PeriodicNativeOwnerRow = sqlx::query_as("SELECT owner_session,owner_epoch,assignment_revision,fencing_token,assignment_json,updated_at FROM social.archipelago_v4_assignments WHERE deployment_audience=$1 AND owner_address=$2 AND lane_key='realm'")
+            .bind(AUDIENCE).bind(&wallet).fetch_one(&fixture.pool).await.unwrap();
+        assert_eq!(
+            after, before,
+            "retirement never releases or mutates a fresh SQL owner"
+        );
+    }
+    assert_eq!(
+        harness.bus.inner.published().len(),
+        8,
+        "one admission hint per wallet; departure needs no new publication or socket reconnect"
+    );
+    harness.shutdown().await;
+    fixture.finish().await;
+}
+
+#[tokio::test]
+async fn started_selected_retirement_rejects_a_delayed_negative_after_native_reconnect_or_successor()
+ {
+    use catalyst::comms::gatekeeper::admission::cluster::fence::AssignmentFence;
+    use std::sync::atomic::Ordering;
+    for same_session in [true, false] {
+        let fixture = Fixture::new()
+            .await
+            .expect("required disposable PostgreSQL");
+        let mut harness = RetirementHarness::new(fixture.pool.clone(), 1);
+        let first = harness.select(WALLET, SESSION, true);
+        harness.hint(&first).await;
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            harness.subscriber.settle(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(harness.gateway.fences.lock().unwrap().len(), 1);
+        harness.bus.pause_negative.store(true, Ordering::SeqCst);
+        harness.depart(true);
+        tokio::time::timeout(
+            std::time::Duration::from_secs(8),
+            harness.bus.negative_entered.notified(),
+        )
+        .await
+        .expect("periodic job captured a real authoritative absence before reconnect");
+        let session = if same_session { SESSION } else { STALE_SESSION };
+        let successor = harness.select(WALLET, session, true);
+        harness.hint(&successor).await;
+        if same_session {
+            // A real newer selected writer can race the delayed broker response.
+            // It is not used to drive retirement or the churn positive case.
+            let lease = harness.fence.lock_selected(&successor).await.unwrap();
+            assert!(
+                lease.token_fence().owner_epoch
+                    > harness.gateway.fences.lock().unwrap()[0].owner_epoch
+            );
+            drop(lease);
+        }
+        let before = periodic_native_owner_row(&fixture).await;
+        harness.lookup_available.store(false, Ordering::SeqCst);
+        harness.bus.negative_release.notify_one();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            harness.subscriber.settle(),
+        )
+        .await
+        .unwrap();
+        let targets = harness.fence.selected_reconciliation_targets();
+        assert!(
+            targets.contains(&(WALLET.into(), session.into())),
+            "stale absence cannot erase the newer desired tuple"
+        );
+        assert!(
+            targets.len() <= 2,
+            "only the desired and exact prior-owned sessions are retained"
+        );
+        if !same_session {
+            assert!(
+                targets.contains(&(WALLET.into(), SESSION.into())),
+                "prior-owned cleanup work remains retained beside the successor"
+            );
+        }
+        assert_eq!(
+            periodic_native_owner_row(&fixture).await,
+            before,
+            "stale absence and unknown successor lookup cannot mutate either owner"
+        );
+        assert_eq!(harness.gateway.fences.lock().unwrap().len(), 1);
+        harness.shutdown().await;
+        fixture.finish().await;
+    }
+}
+
+#[tokio::test]
+async fn started_selected_retirement_retains_uncertain_attempt_credit_until_exact_sql_settlement() {
+    use catalyst::comms::gatekeeper::admission::cluster::fence::{AssignmentFence, FenceError};
+    let fixture = Fixture::new()
+        .await
+        .expect("required disposable PostgreSQL");
+    let proxy = super::LostCommitProxy::start(&fixture.pool).await;
+    let mut harness = RetirementHarness::new(proxy.pool.clone(), 1);
+    harness
+        .lookup_available
+        .store(false, std::sync::atomic::Ordering::SeqCst);
+    let selected = harness.select(WALLET, SESSION, true);
+    proxy.lose_next_commit();
+    assert!(matches!(
+        harness.fence.lock_selected(&selected).await,
+        Err(FenceError::Unavailable)
+    ));
+    assert_eq!(harness.fence.unresolved_mutations(), 1);
+    let credit = Arc::downgrade(&harness.fence.retained_work_credit(WALLET).unwrap());
+    let mut held = fixture.pool.begin().await.unwrap();
+    sqlx::query("SELECT wallet FROM social.island_admission_fences WHERE wallet=$1 FOR UPDATE")
+        .bind(WALLET)
+        .fetch_one(&mut *held)
+        .await
+        .unwrap();
+    let before = periodic_native_owner_row(&fixture).await;
+    let asked = harness.bus.inner.requested().len();
+    harness.depart(true);
+    harness
+        .lookup_available
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        while !harness
+            .bus
+            .inner
+            .requested()
+            .iter()
+            .skip(asked)
+            .any(|(subject, _)| subject.ends_with(".selection_retirement"))
+        {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        harness.subscriber.settle().await;
+    })
+    .await
+    .expect("periodic retirement attempted, but blocked SQL cannot settle its uncertain mutation");
+    assert_eq!(harness.fence.unresolved_mutations(), 1);
+    assert!(
+        credit.upgrade().is_some(),
+        "unfinished attempt retains its original work credit"
+    );
+    assert_eq!(
+        harness.fence.selected_reconciliation_targets(),
+        vec![(WALLET.into(), SESSION.into())]
+    );
+    assert_eq!(periodic_native_owner_row(&fixture).await, before);
+    held.rollback().await.unwrap();
+    harness.wait_retired().await;
+    assert_eq!(harness.fence.unresolved_mutations(), 0);
+    assert!(
+        credit.upgrade().is_none(),
+        "exact conditional settlement returns the retained credit"
+    );
+    assert_eq!(
+        periodic_native_owner_row(&fixture).await,
+        before,
+        "settlement and retirement never restore or release SQL facts"
+    );
+    assert!(harness.gateway.fences.lock().unwrap().is_empty());
+    harness.shutdown().await;
+    proxy.pool.close().await;
+    drop(proxy);
+    fixture.finish().await;
+}
+
+#[tokio::test]
+async fn started_selected_retirement_waits_for_a_lease_and_preserves_a_real_foreign_successor() {
+    use catalyst::comms::archipelago::control_v4::{AssignmentAuthority, LaneKey, V4Owner};
+    use catalyst::comms::gatekeeper::admission::cluster::fence::AssignmentFence;
+    let fixture = Fixture::new()
+        .await
+        .expect("required disposable PostgreSQL");
+    let mut harness = RetirementHarness::new(fixture.pool.clone(), 1);
+    let selected = harness.select(WALLET, SESSION, true);
+    harness.hint(&selected).await;
+    tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        harness.subscriber.settle(),
+    )
+    .await
+    .unwrap();
+    let outstanding = harness.fence.lock_selected(&selected).await.unwrap();
+    let asked = harness.bus.inner.requested().len();
+    harness.depart(true);
+    tokio::time::timeout(std::time::Duration::from_secs(8), async {
+        while !harness
+            .bus
+            .inner
+            .requested()
+            .iter()
+            .skip(asked)
+            .any(|(subject, _)| subject.ends_with(".selection_retirement"))
+        {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        harness.subscriber.settle().await;
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        harness.fence.selected_reconciliation_targets(),
+        vec![(WALLET.into(), SESSION.into())],
+        "an outstanding selected lease prevents slot removal"
+    );
+    let authority = AssignmentAuthority::pg_with_namespace(fixture.pool.clone(), AUDIENCE)
+        .await
+        .unwrap();
+    let successor = V4Owner {
+        address: WALLET.into(),
+        session: STALE_SESSION.into(),
+        epoch: authority.next_connection_epoch().await.unwrap(),
+    };
+    authority
+        .claim_lanes(&successor, &[LaneKey::parse("realm").unwrap()])
+        .await
+        .unwrap();
+    let foreign = periodic_native_owner_row(&fixture).await;
+    drop(outstanding);
+    harness.wait_retired().await;
+    assert_eq!(
+        periodic_native_owner_row(&fixture).await,
+        foreign,
+        "retirement cannot renew, release or restore over a real additive API successor"
+    );
+    assert_eq!(harness.gateway.fences.lock().unwrap().len(), 1);
+    harness.shutdown().await;
+    fixture.finish().await;
 }

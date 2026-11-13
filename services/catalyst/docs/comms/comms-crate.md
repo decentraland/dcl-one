@@ -149,6 +149,7 @@ Types, subjects and caps: `comms::protocol::bus`. Record reviewed channel contra
 |---|---|---|---|---|---|
 | Cluster change | Pulse → primary island subscriber (one unqueued subscription) | `peer.{wallet}.cluster_change` | 64 KiB; coalescing outbox | fresh lookup; rotating retained-pending hints | Pulse pub, `serve` sub |
 | Cluster lookup | `serve` → Pulse, reply on private `_INBOX.` | `peer.{wallet}.cluster_lookup` | exact session request; complete reply ≤64 KiB; 2 s deadline | active re-announcement and retained pending cleanup | `serve` pub, Pulse sub; both pub/sub `_INBOX.>` |
+| Selection retirement | gatekeeper → Pulse, reply on private `_INBOX.` | `peer.{wallet}.selection_retirement` | exact source/session/version and optional observed identity; each direction ≤64 KiB; 2 s deadline | negative-only complete-view proof; unknown retains retry | `serve` pub, Pulse sub; both pub/sub `_INBOX.>` |
 | Takeover completion | gatekeeper → Pulse | `peer.{wallet}.takeover_completed` | 1–4096 bytes; ID 1–64 bytes | resend identical ID/cutoff until authoritative acknowledgment | `serve` pub, Pulse sub |
 | Islands snapshot | Pulse → social topology in every `serve` | `engine.islands` | 1 MiB, 1 s | next snapshot; online expires 5 s after the last valid one | Pulse pub, `serve` sub |
 | Discovery beacon | Pulse → retained connector discovery subscription | `engine.discovery` | 10 s | next beacon; no statistics cache | Pulse pub, `serve` sub |
@@ -350,6 +351,19 @@ Ownership loss stops renewal; the existing 90-second lease bounds residual autho
 paths require the coordinated maintenance cutover in the
 [selected evidence ADR](../../../../docs/adr/2026-11-12-pulse-selected-room-evidence.md);
 source implementation alone does not establish rollout readiness.
+
+Borrowing, conflict and unknown lookup retain a bounded selected retry obligation.
+Only an explicit same-incarnation retirement reply from Pulse's fresh complete
+selection view can end it: no current owner, blocked/pending cleanup, native
+reservation or newly ingested candidate may be present. Missing positive snapshots
+and cache or SQL expiry do not prove absence. The complete view retains every
+current and unfinished record, so departed-record or control-tombstone reclamation
+does not prevent a later absence proof. Gatekeeper settles exact SQL attempts and
+their credits before retiring the unchanged local slot; desired generation, selected
+identity and outstanding lease guards preserve concurrent successors. Retirement
+neither writes a foreign row nor releases a settled owner. Source restart remains
+unknown for an older incarnation; cross-incarnation retirement and lost-hint
+reconstruction remain unresolved within the finite selected bound.
 
 Pulse budgets 24,573 simultaneous distinct transport/control wallets and one equally sized
 churn cohort, for 49,146 retained wallet records, with at most 32 pending operations per

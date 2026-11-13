@@ -1432,10 +1432,11 @@ async fn common_endpoint_keeps_legacy_bytes_heartbeats_and_invalid_input_bounds(
             .published()
             .iter()
             .filter(|(subject, _)| {
-                subject == catalyst::comms::protocol::bus::control_position::SUBJECT
+                subject
+                    == catalyst::comms::protocol::bus::control_position::LegacyRoomIntent::SUBJECT
             })
             .filter_map(|(_, bytes)| {
-                catalyst::comms::protocol::bus::control_position::ControlPosition::decode(bytes)
+                catalyst::comms::protocol::bus::control_position::LegacyRoomIntent::decode(bytes)
             })
             .filter_map(|record| record.position)
             .last()

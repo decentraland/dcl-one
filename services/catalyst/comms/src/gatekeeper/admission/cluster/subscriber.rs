@@ -1269,9 +1269,23 @@ impl ClusterSubscriber {
         takeover: Option<&TakeoverTicket>,
         guard: Option<&RecoveryGuard>,
     ) {
+        let retirement = self
+            .assignment_fence
+            .as_ref()
+            .and_then(|authority| authority.selected_retirement_target(wallet, session));
         let Some(snapshot) = self.lookup_current(wallet, session).await else {
             if let Some(authority) = &self.assignment_fence {
                 authority.settle_idle(wallet).await;
+                if let Some(target) = retirement {
+                    if let Some(payload) = target.lookup.encode() {
+                        if let Ok(reply) = self.bus.request(&target.lookup.subject(), payload).await
+                        {
+                            if let Some(reply) = target.lookup.decode_reply(&reply) {
+                                authority.retire_selected(target, reply).await;
+                            }
+                        }
+                    }
+                }
             }
             crate::gatekeeper::admission::cluster::metrics::cluster_reannounce_unresolved();
             return;

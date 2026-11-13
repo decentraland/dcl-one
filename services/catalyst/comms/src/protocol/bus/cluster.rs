@@ -183,6 +183,96 @@ pub fn active_selection(reply: &PeerClusterSnapshot) -> bool {
     selected_evidence(reply) && reply.assignment_state == 1
 }
 
+/// Optional exact selected evidence learned from a positive lookup, never from SQL.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SelectedIdentity {
+    pub origin: i32,
+    pub identity: u64,
+}
+
+/// Internal negative-only lifecycle query. Existing cluster lookups retain their
+/// exact-session wire and unknown-on-silence contract. A hint-only caller has no
+/// selected identity; it must not manufacture one to ask about its source version.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SelectionRetirementLookup {
+    pub wallet: String,
+    pub session: String,
+    pub source_incarnation: String,
+    pub assignment_version: u64,
+    pub selected: Option<SelectedIdentity>,
+}
+
+impl SelectionRetirementLookup {
+    pub const SUBJECTS: &str = "peer.*.selection_retirement";
+
+    pub fn subject(&self) -> String {
+        format!("peer.{}.selection_retirement", self.wallet)
+    }
+    pub(crate) fn valid(&self) -> bool {
+        wallet_token(&self.wallet).as_deref() == Some(self.wallet.as_str())
+            && wallet_token(&self.session).as_deref() == Some(self.session.as_str())
+            && !self.source_incarnation.is_empty()
+            && self.source_incarnation.len() <= 256
+            && self.assignment_version > 0
+            && self.selected.as_ref().is_none_or(|selected| {
+                selected.identity > 0
+                    && match selected.origin {
+                        1 | 2 => true,
+                        3 => selected.identity <= i64::MAX as u64,
+                        _ => false,
+                    }
+            })
+    }
+    pub fn encode(&self) -> Option<Vec<u8>> {
+        if !self.valid() {
+            return None;
+        }
+        let bytes = serde_json::to_vec(self).ok()?;
+        (bytes.len() <= MAX_REPLY_BYTES).then_some(bytes)
+    }
+    pub fn decode(subject: &str, bytes: &[u8]) -> Option<Self> {
+        if bytes.len() > MAX_REPLY_BYTES {
+            return None;
+        }
+        let wallet = peer_subject_wallet(subject, "selection_retirement")?;
+        let value: Self = serde_json::from_slice(bytes).ok()?;
+        (value.wallet == wallet && value.valid()).then_some(value)
+    }
+    pub fn decode_reply(&self, bytes: &[u8]) -> Option<SelectionRetirementReply> {
+        if bytes.len() > MAX_REPLY_BYTES {
+            return None;
+        }
+        let reply: SelectionRetirementReply = serde_json::from_slice(bytes).ok()?;
+        (reply.lookup == *self && reply.valid()).then_some(reply)
+    }
+}
+
+/// Pulse explicitly found no selected owner or unfinished cleanup in a fresh
+/// completed view of this same incarnation. This cannot authorize credentials.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SelectionRetirementReply {
+    pub lookup: SelectionRetirementLookup,
+    pub pass: u64,
+    pub assignment_high_water: u64,
+}
+impl SelectionRetirementReply {
+    fn valid(&self) -> bool {
+        self.lookup.valid()
+            && self.pass > 0
+            && self.assignment_high_water >= self.lookup.assignment_version
+    }
+    pub fn encode(&self) -> Option<Vec<u8>> {
+        if !self.valid() {
+            return None;
+        }
+        let bytes = serde_json::to_vec(self).ok()?;
+        (bytes.len() <= MAX_REPLY_BYTES).then_some(bytes)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -190,6 +280,87 @@ mod tests {
 
     const WALLET: &str = "0xAbCdEf0123456789abcdef0123456789ABCDEF01";
     const WALLET_LOWER: &str = "0xabcdef0123456789abcdef0123456789abcdef01";
+
+    #[test]
+    fn selection_retirement_codec_is_exact_bounded_and_negative_only() {
+        let lookup = SelectionRetirementLookup {
+            wallet: WALLET_LOWER.into(),
+            session: WALLET_LOWER.into(),
+            source_incarnation: "pulse-one".into(),
+            assignment_version: 7,
+            selected: Some(SelectedIdentity {
+                origin: 3,
+                identity: 9,
+            }),
+        };
+        let bytes = lookup.encode().unwrap();
+        assert_eq!(
+            SelectionRetirementLookup::decode(&lookup.subject(), &bytes),
+            Some(lookup.clone())
+        );
+        assert!(
+            SelectionRetirementLookup::decode(
+                &format!("peer.{WALLET_LOWER}.cluster_lookup"),
+                &bytes
+            )
+            .is_none()
+        );
+        assert!(
+            SelectionRetirementLookup::decode(&lookup.subject(), &vec![b' '; MAX_REPLY_BYTES + 1])
+                .is_none()
+        );
+        let mut extra: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        extra["retire"] = true.into();
+        assert!(
+            SelectionRetirementLookup::decode(
+                &lookup.subject(),
+                &serde_json::to_vec(&extra).unwrap()
+            )
+            .is_none()
+        );
+        let reply = SelectionRetirementReply {
+            lookup: lookup.clone(),
+            pass: 11,
+            assignment_high_water: 9,
+        };
+        let reply_bytes = reply.encode().unwrap();
+        assert_eq!(lookup.decode_reply(&reply_bytes), Some(reply.clone()));
+        assert!(
+            lookup
+                .decode_reply(&vec![b' '; MAX_REPLY_BYTES + 1])
+                .is_none()
+        );
+        let mut extra_reply: serde_json::Value = serde_json::from_slice(&reply_bytes).unwrap();
+        extra_reply["active"] = true.into();
+        assert!(
+            lookup
+                .decode_reply(&serde_json::to_vec(&extra_reply).unwrap())
+                .is_none()
+        );
+        let mut changed = lookup.clone();
+        changed.source_incarnation = "pulse-restarted".into();
+        assert!(changed.decode_reply(&reply_bytes).is_none());
+        changed = lookup.clone();
+        changed.selected.as_mut().unwrap().identity += 1;
+        assert!(changed.decode_reply(&reply_bytes).is_none());
+        let mut invalid = reply;
+        invalid.assignment_high_water = 6;
+        assert!(invalid.encode().is_none());
+        let mut hint_only = lookup;
+        hint_only.selected = None;
+        assert!(
+            hint_only.encode().is_some(),
+            "a hint never fabricates selected identity"
+        );
+        hint_only.assignment_version = 0;
+        assert!(hint_only.encode().is_none());
+        assert!(
+            PeerClusterSnapshot::decode(reply_bytes.as_slice())
+                .ok()
+                .is_none_or(|snapshot| !active_selection(&snapshot)),
+            "a negative reply is not admission evidence"
+        );
+    }
 
     #[test]
     fn complete_selected_reply_boundaries_match_canonical_bytes_without_truncating_pending() {
