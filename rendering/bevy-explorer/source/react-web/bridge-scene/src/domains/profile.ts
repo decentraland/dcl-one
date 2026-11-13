@@ -318,19 +318,24 @@ async function fetchPhotos(address: string): Promise<string[] | undefined> {
 // picker offers exactly these; anything else is an unclaimed name.
 type NamesResponse = { elements?: Array<{ name?: string }> }
 
-let ownedNames: string[] | undefined
+// Keyed by account: a lookup that settles after a sign-in change must not answer for the new one.
+let ownedNames: { address: string; names: string[] } | undefined
 identity.onChange(() => {
   ownedNames = undefined
 })
-/** `fresh` skips this session's list, for a deploy that the catalyst checks against the chain. */
-export async function fetchOwnedNames(address: string, fresh = false): Promise<string[]> {
-  if (ownedNames != null && !fresh) return ownedNames
+/** The names `address` owns now, or undefined when the lookup failed. */
+export async function readOwnedNames(address: string): Promise<string[] | undefined> {
   const base = await catalystBase()
   const r = await getJson<NamesResponse>(`${base}/lambdas/users/${address}/names`).catch(() => undefined)
-  // Cached only on success: a failed lookup must not pin an empty picker for the whole session.
-  if (r == null) return []
-  ownedNames = (r.elements ?? []).map((e) => e.name).filter((n): n is string => typeof n === 'string' && n !== '')
-  return ownedNames
+  if (r == null) return undefined
+  const names = (r.elements ?? []).map((e) => e.name).filter((n): n is string => typeof n === 'string' && n !== '')
+  ownedNames = { address: address.toLowerCase(), names }
+  return names
+}
+/** This session's list for `address`, else a fresh one; a failed lookup is [] and not kept. */
+export async function fetchOwnedNames(address: string): Promise<string[]> {
+  if (ownedNames?.address === address.toLowerCase()) return ownedNames.names
+  return (await readOwnedNames(address)) ?? []
 }
 
 /**

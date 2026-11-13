@@ -3522,6 +3522,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     driverRef.current?.send({ kind: 'deleteOutfit', slot })
   }, [])
   const dismissOutfitError = useCallback(() => setOutfitError(null), [])
+  // A failed names lookup must not hide outfits already saved past the free slots.
+  const extraOutfitSlots = ownedNames.length > 0 || outfits.namesForExtraSlots.length > 0 || outfits.outfits.some((o) => o.slot >= 5)
   const equipOutfit = useCallback((slot: number) => {
     // The bridge resolves the outfit's wearables by urn and re-emits the full `wearables` set (incl.
     // items off the loaded catalog page), which becomes the authoritative equipped set — so no
@@ -4642,7 +4644,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     backpack: {
       list: catalogItems, total: catalogTotal, loading: catalogLoading, query: queryCatalog,
       equipped: equippedWearables, open: backpackOpen, toggle: toggleBackpack, bodyShape, colors: avatarColors, setColor: setAvatarColor, equip: equipWearables, saveError, retrySave, revertSave, preview: previewWearables, focus: focusPreview, stage: stagePreview, emote: emotePreview, rotate: rotatePreview, zoom: zoomPreview, forceRender, setForceRender,
-      outfits: outfits.outfits, outfitSlots: ownedNames.length > 0 ? 10 : 5, outfitsLoaded,
+      outfits: outfits.outfits, outfitSlots: extraOutfitSlots ? 10 : 5, outfitsLoaded,
       saveOutfit, deleteOutfit, outfitError, dismissOutfitError, equipOutfit,
       outfitHistory, randomizeOutfit, undoOutfit, redoOutfit
     },

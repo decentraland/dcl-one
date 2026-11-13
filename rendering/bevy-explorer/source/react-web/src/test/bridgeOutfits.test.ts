@@ -29,9 +29,9 @@ vi.mock('../../bridge-scene/src/http', async (importOriginal) => ({
   getJson: (url: string) => getJson(url)
 }))
 
-const fetchOwnedNames = vi.fn<(address: string, fresh?: boolean) => Promise<string[]>>()
+const readOwnedNames = vi.fn<(address: string) => Promise<string[] | undefined>>()
 vi.mock('../../bridge-scene/src/domains/profile', () => ({
-  fetchOwnedNames: (address: string, fresh?: boolean) => fetchOwnedNames(address, fresh)
+  readOwnedNames: (address: string) => readOwnedNames(address)
 }))
 
 let look: AvatarLook | null = null
@@ -56,6 +56,9 @@ const outfit = (wearables: string[]) => ({
   wearables,
   forceRender: []
 })
+// As deployed: Unity reads a missing alpha as transparent.
+const opaqueGrey = { color: { r: 0.5, g: 0.5, b: 0.5, a: 1 } }
+const deployed = (wearables: string[]) => ({ ...outfit(wearables), eyes: opaqueGrey, hair: opaqueGrey, skin: opaqueGrey })
 
 type Handler = (msg: PageToScene) => Promise<unknown>
 
@@ -87,7 +90,7 @@ describe('the bridge outfits domain', () => {
     getJson.mockResolvedValue({ metadata: stored })
     getOutfitThumbnails.mockResolvedValue([])
     deployOutfits.mockResolvedValue(undefined)
-    fetchOwnedNames.mockResolvedValue([])
+    readOwnedNames.mockResolvedValue([])
     captureAvatarThumbnail.mockResolvedValue(PICTURE)
     waitFrames.mockResolvedValue(undefined)
   })
@@ -107,8 +110,8 @@ describe('the bridge outfits domain', () => {
       await request({ kind: 'saveOutfit', slot: 1 })
       expect(deployOutfits).toHaveBeenCalledWith('0xA', {
         outfits: [
-          { slot: 0, outfit: outfit(['urn:old']) },
-          { slot: 1, outfit: outfit(['urn:a']) }
+          { slot: 0, outfit: deployed(['urn:old']) },
+          { slot: 1, outfit: deployed(['urn:a']) }
         ],
         namesForExtraSlots: []
       })
@@ -214,7 +217,7 @@ describe('the bridge outfits domain', () => {
     it('should deploy the new outfit alone', async () => {
       const { request, failures } = await bridge()
       await request({ kind: 'saveOutfit', slot: 2 })
-      expect(deployOutfits).toHaveBeenCalledWith('0xA', { outfits: [{ slot: 2, outfit: outfit(['urn:a']) }], namesForExtraSlots: [] })
+      expect(deployOutfits).toHaveBeenCalledWith('0xA', { outfits: [{ slot: 2, outfit: deployed(['urn:a']) }], namesForExtraSlots: [] })
       expect(failures()).toEqual([])
     })
   })
@@ -222,17 +225,17 @@ describe('the bridge outfits domain', () => {
   describe('when a name owner saves into an extra slot', () => {
     beforeEach(() => {
       player = { userId: '0xA', isGuest: false }
-      fetchOwnedNames.mockResolvedValue(['somename'])
+      readOwnedNames.mockResolvedValue(['somename'])
     })
 
     it('should deploy the outfits with the owned names', async () => {
       const { request, lastOutfits } = await bridge()
       await request({ kind: 'saveOutfit', slot: 6 })
-      expect(fetchOwnedNames).toHaveBeenCalledWith('0xA', true)
+      expect(readOwnedNames).toHaveBeenCalledWith('0xA')
       expect(deployOutfits).toHaveBeenCalledWith('0xA', {
         outfits: [
-          { slot: 0, outfit: outfit(['urn:old']) },
-          { slot: 6, outfit: outfit(['urn:a']) }
+          { slot: 0, outfit: deployed(['urn:old']) },
+          { slot: 6, outfit: deployed(['urn:a']) }
         ],
         namesForExtraSlots: ['somename']
       })
@@ -309,7 +312,7 @@ describe('the bridge outfits domain', () => {
       const { request } = await bridge()
       await request({ kind: 'saveOutfit', slot: 1 })
       expect(deployOutfits.mock.calls[0]?.[1].namesForExtraSlots).toEqual([])
-      expect(fetchOwnedNames).not.toHaveBeenCalled()
+      expect(readOwnedNames).not.toHaveBeenCalled()
     })
   })
 
@@ -318,7 +321,7 @@ describe('the bridge outfits domain', () => {
       player = { userId: '0xA', isGuest: false }
       stored = { outfits: [{ slot: 6, outfit: outfit(['urn:old']) }], namesForExtraSlots: ['sold'] }
       getJson.mockResolvedValue({ metadata: stored })
-      fetchOwnedNames.mockResolvedValue(['kept'])
+      readOwnedNames.mockResolvedValue(['kept'])
     })
 
     it('should deploy the names the player owns now', async () => {
@@ -328,18 +331,87 @@ describe('the bridge outfits domain', () => {
     })
   })
 
-  describe('when a refused deploy is followed by another save', () => {
+  describe('when a save is refused after an earlier one was deployed', () => {
     beforeEach(() => {
       player = { userId: '0xA', isGuest: false }
-      deployOutfits.mockRejectedValueOnce(new Error('failed to deploy'))
+      deployOutfits.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error('failed to deploy'))
     })
 
-    it('should read the catalyst again for the next save', async () => {
+    it('should build the next save on the earlier one, not on a lagging catalyst read', async () => {
       const { request } = await bridge()
       await request({ kind: 'saveOutfit', slot: 1 })
       await request({ kind: 'saveOutfit', slot: 2 })
-      expect(getJson).toHaveBeenCalledTimes(2)
-      expect(deployOutfits.mock.calls[1]?.[1].outfits.map((o) => o.slot)).toEqual([0, 2])
+      await request({ kind: 'saveOutfit', slot: 3 })
+      expect(getJson).toHaveBeenCalledTimes(1)
+      expect(deployOutfits.mock.calls[2]?.[1].outfits.map((o) => o.slot)).toEqual([0, 1, 3])
+    })
+  })
+
+  describe('when the names lookup fails for a player with an extra slot', () => {
+    beforeEach(() => {
+      player = { userId: '0xA', isGuest: false }
+      stored = { outfits: [{ slot: 6, outfit: outfit(['urn:old']) }], namesForExtraSlots: ['mine'] }
+      getJson.mockResolvedValue({ metadata: stored })
+      readOwnedNames.mockResolvedValue(undefined)
+    })
+
+    it('should deploy the names read with the outfits', async () => {
+      const { request, failures } = await bridge()
+      await request({ kind: 'saveOutfit', slot: 1 })
+      expect(deployOutfits.mock.calls[0]?.[1].namesForExtraSlots).toEqual(['mine'])
+      expect(failures()).toEqual([])
+    })
+  })
+
+  describe('when the same look is saved twice into a slot', () => {
+    beforeEach(() => {
+      player = { userId: '0xA', isGuest: false }
+    })
+
+    it('should deploy once and report no failure', async () => {
+      const { request, failures, lastOutfits } = await bridge()
+      await request({ kind: 'saveOutfit', slot: 1 })
+      await request({ kind: 'saveOutfit', slot: 1 })
+      expect(deployOutfits).toHaveBeenCalledTimes(1)
+      expect(failures()).toEqual([])
+      expect(lastOutfits()?.outfits.map((o) => o.slot)).toEqual([0, 1])
+    })
+  })
+
+  describe('when a stored outfit color carries its own alpha', () => {
+    beforeEach(() => {
+      player = { userId: '0xA', isGuest: false }
+      const eyes = { color: { r: 0.1, g: 0.2, b: 0.3, a: 0.5 } }
+      stored = { outfits: [{ slot: 0, outfit: { ...outfit(['urn:old']), eyes } }], namesForExtraSlots: [] }
+      getJson.mockResolvedValue({ metadata: stored })
+    })
+
+    it('should deploy it unchanged', async () => {
+      const { request } = await bridge()
+      await request({ kind: 'saveOutfit', slot: 1 })
+      expect(deployOutfits.mock.calls[0]?.[1].outfits[0]?.outfit.eyes).toEqual({ color: { r: 0.1, g: 0.2, b: 0.3, a: 0.5 } })
+    })
+  })
+
+  describe('when the engine pictures read fails once', () => {
+    let error: ReturnType<typeof vi.spyOn>
+
+    beforeEach(() => {
+      player = { userId: '0xA', isGuest: false }
+      getOutfitThumbnails.mockRejectedValueOnce(new Error('boom')).mockResolvedValue([{ slot: 0, thumbnail: PICTURE }])
+      error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    })
+
+    afterEach(() => {
+      error.mockRestore()
+    })
+
+    it('should read them again on the next request', async () => {
+      const { request, lastOutfits } = await bridge()
+      await request({ kind: 'getOutfits' })
+      await request({ kind: 'getOutfits' })
+      expect(lastOutfits()?.outfits[0]?.thumbnail).toBe(PICTURE)
+      expect(error.mock.calls).toEqual([['[outfits] thumbnails read failed', new Error('boom')]])
     })
   })
 
@@ -399,11 +471,12 @@ describe('the bridge outfits domain', () => {
       player = { userId: '0xB', isGuest: true }
     })
 
-    it('should keep the outfit for the session without deploying it', async () => {
+    it('should keep the outfit for the session without reading or deploying', async () => {
       const { request, lastOutfits, failures } = await bridge()
       await request({ kind: 'saveOutfit', slot: 1 })
+      expect(getJson).not.toHaveBeenCalled()
       expect(deployOutfits).not.toHaveBeenCalled()
-      expect(lastOutfits()?.outfits.map((o) => o.slot)).toEqual([0, 1])
+      expect(lastOutfits()?.outfits.map((o) => o.slot)).toEqual([1])
       expect(failures()).toEqual([])
     })
   })
