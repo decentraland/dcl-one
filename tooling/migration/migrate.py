@@ -8,12 +8,16 @@ resumes after the last committed batch. Talks to Postgres through `psql` only.
 """
 import argparse
 import contextlib
+import csv
 import dataclasses
 import datetime
 import importlib.util
+import itertools
 import json
 import os
 import re
+import shlex
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -68,8 +72,10 @@ CREATE TABLE IF NOT EXISTS dcl_migration.blob_inventory (
     object_key text NOT NULL,
     hash text NOT NULL,
     size bigint NOT NULL CHECK (size >= 0),
+    content_type text,
     PRIMARY KEY (source, object_key)
 );
+ALTER TABLE dcl_migration.blob_inventory ADD COLUMN IF NOT EXISTS content_type text;
 -- Objects the blob copy could not store: absent upstream, bytes that do not hash to the key, or a
 -- key that is no content id. The node serves them as missing, as upstream did.
 CREATE TABLE IF NOT EXISTS dcl_migration.blob_missing (
@@ -566,12 +572,199 @@ def null_check(step):
             'END $nulls$;')
 
 
+CAMERA = 'camera-reel-service'
+CAMERA_BATCH = 100
+STORE_LOCK_KEY = 0x53544F52455F4743  # services/catalyst/storage/src/gc.rs
+
+
+def camera_api_url():
+    value = os.environ.get('CAMERA_REEL_IMPORT_API_URL', '')
+    parsed = urllib.parse.urlsplit(value)
+    if (parsed.scheme not in ('http', 'https') or not parsed.netloc or parsed.query or parsed.fragment
+            or parsed.username or parsed.password or '?' in value or '#' in value
+            or any(ord(c) < 33 for c in value)):
+        raise MigrationError('set CAMERA_REEL_IMPORT_API_URL to the exact literal source and target API base')
+    return value
+
+
+def camera_rows(data, report=None):
+    """Validate canonical source facts without changing opaque metadata or URL bytes."""
+    prefix = camera_api_url() + '/api/images/'
+    blobs = load_blobs_module()
+    with Path(data).open(newline='') as stream:
+        for row in csv.reader(stream):
+            photo, owner, url, thumbnail, public, metadata, created = row
+            reason = None
+            if not created or public not in ('t', 'f'):
+                reason = 'NULL timestamp or privacy'
+            elif not re.fullmatch(r'0x[0-9a-f]{40}', owner):
+                reason = 'owner is not a normalized wallet'
+            elif not url.startswith(prefix + photo + '-'):
+                reason = 'noncanonical image URL or different API origin'
+            else:
+                filename = url[len(prefix + photo + '-'):]
+                if (not filename or not blobs.safe_filename(photo + '-' + filename)
+                        or not blobs.safe_filename(photo + '-thumbnail-' + filename)):
+                    reason = 'unsupported or ambiguous filename'
+                elif thumbnail != prefix + photo + '-thumbnail-' + filename:
+                    reason = 'missing or noncanonical thumbnail URL'
+            try:
+                doc = json.loads(metadata)
+                strings = ('userName', 'userAddress', 'dateTime', 'realm', 'placeId')
+                valid = (isinstance(doc, dict) and all(isinstance(doc.get(k), str) for k in strings)
+                         and doc['userAddress'].lower() == owner
+                         and isinstance(doc.get('scene'), dict) and isinstance(doc['scene'].get('name'), str)
+                         and isinstance(doc['scene'].get('location'), dict)
+                         and all(isinstance(doc['scene']['location'].get(k), str) for k in ('x', 'y'))
+                         and isinstance(doc.get('visiblePeople'), list))
+                if valid:
+                    for person in doc['visiblePeople']:
+                        valid = (isinstance(person, dict)
+                                 and all(isinstance(person.get(k), str) for k in ('userName', 'userAddress'))
+                                 and isinstance(person.get('wearables'), list)
+                                 and all(isinstance(w, str) for w in person['wearables'])
+                                 and isinstance(person.get('isGuest', False), bool)
+                                 and (person.get('isEmoting') is None or isinstance(person['isEmoting'], bool)))
+                        if valid and person.get('screenRect') is not None:
+                            rect = person['screenRect']
+                            valid = (isinstance(rect, dict) and all(
+                                isinstance(rect.get(k), (int, float)) and not isinstance(rect.get(k), bool)
+                                and abs(rect[k]) <= 3.4028234663852886e38
+                                for k in ('x', 'y', 'width', 'height')))
+                        if not valid:
+                            break
+                if not valid:
+                    reason = reason or 'metadata cannot decode as Camera Metadata or owner differs'
+            except (ValueError, TypeError):
+                reason = reason or 'invalid metadata'
+            if reason:
+                if report is not None:
+                    report(photo, reason)
+                    continue
+                raise MigrationError(f'camera photo {photo}: {reason}; inventory required, no fabricated values')
+            yield row, (url[len(prefix):], thumbnail[len(prefix):])
+
+
+CAMERA_CONTENT_TYPES = frozenset(('image/png', 'image/jpeg'))
+CAMERA_METADATA_LINE_BYTES = 4096
+
+
+def unique_json_fields(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError('duplicate JSON field')
+        result[key] = value
+    return result
+
+
+@contextlib.contextmanager
+def camera_object_metadata(path, directory, *, allow_unknown=False):
+    """Index a literal-key JSONL manifest on disk, with a 2 MiB SQLite page cache."""
+    if path is None:
+        raise MigrationError('camera blobs require --object-metadata JSONL from the original object snapshot')
+    blobs = load_blobs_module()
+    path = Path(path)
+    database = sqlite3.connect(Path(directory) / 'object-metadata.sqlite')
+    try:
+        database.execute('PRAGMA cache_size=-2048')
+        database.execute('PRAGMA temp_store=FILE')
+        database.execute('CREATE TABLE object_metadata (object_key TEXT PRIMARY KEY, content_type TEXT) WITHOUT ROWID')
+        try:
+            source = blobs.FolderSource(path.parent, exact_names=True)
+            with source.open(path.name) as stream, database:
+                line_number = 0
+                while line := stream.readline(CAMERA_METADATA_LINE_BYTES + 1):
+                    line_number += 1
+                    if len(line) > CAMERA_METADATA_LINE_BYTES:
+                        raise ValueError('record exceeds 4096 bytes')
+                    record = json.loads(line, object_pairs_hook=unique_json_fields)
+                    if not isinstance(record, dict) or set(record) != {'object_key', 'content_type'}:
+                        raise ValueError('expected exactly object_key and content_type')
+                    key, mime = record['object_key'], record['content_type']
+                    if not isinstance(key, str) or not blobs.safe_filename(key):
+                        raise ValueError('unsafe literal object key')
+                    if mime not in CAMERA_CONTENT_TYPES and not (allow_unknown and mime is None):
+                        raise ValueError('content_type must be image/png or image/jpeg')
+                    database.execute('INSERT INTO object_metadata VALUES (?, ?)', (key, mime))
+        except (blobs.Missing, OSError) as error:
+            raise MigrationError('object metadata must be a readable regular snapshot file, not a symlink') from error
+        except (ValueError, TypeError, sqlite3.IntegrityError) as error:
+            raise MigrationError(f'object metadata line {line_number}: {error}') from error
+        yield database
+    finally:
+        database.close()
+
+
+def object_content_type(metadata, key):
+    result = metadata.execute('SELECT content_type FROM object_metadata WHERE object_key=?', (key,)).fetchone()
+    return result[0] if result else None
+
+
+def camera_preflight(data, log=print, *, object_metadata=None):
+    errors = 0
+    def report(photo, reason):
+        nonlocal errors
+        errors += 1
+        log(f'camera photo {photo}: {reason}')
+    for row, keys in camera_rows(data, report):
+        if object_metadata is not None:
+            original, thumbnail = (object_content_type(object_metadata, key) for key in keys)
+            if original not in CAMERA_CONTENT_TYPES or thumbnail not in CAMERA_CONTENT_TYPES:
+                report(row[0], 'missing original-object MIME metadata; no byte sniffing or defaults')
+            elif original != thumbnail:
+                report(row[0], 'original and thumbnail object MIME metadata differ')
+    if errors:
+        raise MigrationError(f'camera preflight rejected {errors} rows; no fabricated values or skipped photos')
+
+
+def camera_source_preflight(source_url, step, target_url):
+    with tempfile.TemporaryDirectory(prefix='dcl-camera-preflight-') as tmp:
+        data = Path(tmp) / 'source.csv'
+        with data.open('wb') as stream:
+            psql(source_url, extract_sql(step, None, None, None), read_only=True, stdout=stream)
+        camera_preflight(data)
+        capability = psql(target_url, "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE "
+                          "table_schema='dcl_migration' AND table_name='blob_inventory' AND column_name='content_type');",
+                          read_only=True).strip()
+        if capability != 't':
+            raise MigrationError('Camera MIME inventory absent; run blobs camera-reel-service with --object-metadata first')
+        inventory = Path(tmp) / 'inventory.jsonl'
+        # Read-only: absence of the additive bookkeeping field requires a fresh
+        # explicit blob+metadata copy, never a guessed header during run.
+        with inventory.open('wb') as stream:
+            psql(target_url, "SELECT json_build_object('object_key', object_key, 'content_type', content_type) "
+                 "FROM dcl_migration.blob_inventory WHERE source='camera-reel-service';",
+                 read_only=True, stdout=stream)
+        with camera_object_metadata(inventory, tmp, allow_unknown=True) as metadata:
+            camera_preflight(data, object_metadata=metadata)
+
+
+def camera_publication(store, inventory):
+    """psql client-side file validation while its transaction holds the shared GC lock."""
+    prefix = camera_api_url() + '/api/images/'
+    command = shlex.join([sys.executable, str(HERE / 'blobs.py'), 'verify-publication',
+                          str(inventory), str(store.contents.parent.resolve())])
+    query = ("SELECT DISTINCT b.hash, b.size FROM stage s JOIN dcl_migration.blob_inventory b"
+             " ON b.source = 'camera-reel-service' AND b.object_key IN"
+             f" (substring(s.url FROM {len(prefix) + 1}), substring(s.thumbnail_url FROM {len(prefix) + 1}))")
+    return ["SET LOCAL lock_timeout = '30s';",
+            f'SELECT pg_advisory_xact_lock_shared({STORE_LOCK_KEY});',
+            f"\\copy ({query}) TO {literal(str(inventory))} WITH (FORMAT csv)",
+            'CREATE TEMP TABLE camera_verified (hash text, size bigint) ON COMMIT DROP;',
+            f"\\copy camera_verified FROM PROGRAM {literal(command)} WITH (FORMAT csv)",
+            'DROP TABLE camera_verified;']
+
+
 def step_vars(step, dry_run):
-    return [f'\\set source {literal(step.source)}', f'\\set step {literal(step.name)}',
-            f"\\set dry_run {'true' if dry_run else 'false'}"]
+    variables = [f'\\set source {literal(step.source)}', f'\\set step {literal(step.name)}',
+                 f"\\set dry_run {'true' if dry_run else 'false'}"]
+    if step.source == CAMERA:
+        variables.append(f'\\set camera_api_url {literal(camera_api_url())}')
+    return variables
 
 
-def batch_script(step, walk, *, batch_size, expected):
+def batch_script(step, walk, *, batch_size, expected, publication=(), dry=False):
     """The target-side script of one batch; the batch's CSV arrives on psql's stdin.
 
     `expected` is the checkpoint row this batch must find, (cursor, walk_started_at), or None
@@ -581,7 +774,9 @@ def batch_script(step, walk, *, batch_size, expected):
     col_list = ', '.join(ident(c) for c, _ in step.columns)
     last_cursor = ', '.join(f'{ident(c)}::text' for c in step.cursor)
     src, name = literal(step.source), literal(step.name)
-    lines = ['\\set ON_ERROR_STOP 1', *step_vars(step, False), "\\set batch_cursor ''", 'BEGIN;']
+    lines = ['\\set ON_ERROR_STOP 1', *step_vars(step, dry), "\\set batch_cursor ''", 'BEGIN;']
+    if dry:
+        lines.append(CHECKPOINT_DDL)
     if expected is None:
         found = 'NOT EXISTS (SELECT 1 FROM dcl_migration.checkpoint WHERE source = {0} AND step = {1})'
     else:
@@ -606,12 +801,14 @@ def batch_script(step, walk, *, batch_size, expected):
         ' AS batch_cursor \\gset',
         "\\echo '@@cursor' :batch_cursor",
         'ALTER TABLE stage DROP COLUMN _ord;',
+        *publication,
         "\\echo '@@load'",
         f'\\i {step.load}',
         "\\echo '@@loaded'",
     ]
-    lines.append(checkpoint_upsert(step, walk, batch_size, first_batch=expected is None or walk.fresh))
-    lines.append('COMMIT;')
+    if not dry:
+        lines.append(checkpoint_upsert(step, walk, batch_size, first_batch=expected is None or walk.fresh))
+    lines.append('ROLLBACK;' if dry else 'COMMIT;')
     return '\n'.join(lines) + '\n'
 
 
@@ -671,10 +868,14 @@ def source_now(source_url):
     return psql(source_url, 'SELECT now();\n', read_only=True).strip()
 
 
-def run_step(step, source_url, target_url, walk, checkpoint, *, batch_size, log):
+def run_step(step, source_url, target_url, walk, checkpoint, *, batch_size, log, store=None, dry=False):
     """Walks `step` batch by batch from `walk`; returns (rows, write summary)."""
     if step.whole:
         batch_size = None
+    if step.source == CAMERA:
+        if store is None:
+            raise MigrationError("camera import requires access to the target blob root")
+        batch_size = min(batch_size, CAMERA_BATCH)
     started_at = walk.started_at or iso(parse_timestamp(source_now(source_url)))
     walk = dataclasses.replace(walk, started_at=started_at)
     # The checkpoint row the first batch must find: what this run read, untouched.
@@ -689,8 +890,14 @@ def run_step(step, source_url, target_url, walk, checkpoint, *, batch_size, log)
             # mid-stream must not commit a truncated batch as if the walk had ended.
             with data.open('wb') as fh:
                 psql(source_url, extract_sql(step, walk.since, cursor, batch_size), read_only=True, stdout=fh)
+            publication = ()
+            if step.source == CAMERA:
+                for _ in camera_rows(data):
+                    pass
+                publication = camera_publication(store, Path(tmp) / 'verify.csv')
             script = Path(tmp) / 'batch.sql'
-            script.write_text(batch_script(step, batch_walk, batch_size=batch_size, expected=expected))
+            script.write_text(batch_script(step, batch_walk, batch_size=batch_size, expected=expected,
+                                           publication=publication, dry=dry))
             with data.open('rb') as fh:
                 out = psql(target_url, None, stdin=fh, extra=['-f', str(script)])
         rows, last, tags = parse_batch_output(out)
@@ -698,7 +905,8 @@ def run_step(step, source_url, target_url, walk, checkpoint, *, batch_size, log)
         rows_total += rows
         if last is not None:
             cursor = last
-        expected = (cursor, started_at)
+        if not dry:
+            expected = (cursor, started_at)
         log(f'    batch {batch_no}: {rows} rows ({summarize_tags(tags)})'
             + (f', cursor {json.dumps(cursor)}' if cursor else ''))
         if batch_size is None or rows < batch_size:
@@ -853,6 +1061,9 @@ def cmd_run(args, sources):
     if any(source.name == 'worlds-content-server' and os.environ.get(source.database_env)
            for source in selected):
         validate_worlds_blocked_names(args.worlds_blocked_names)
+    for source in selected:
+        if source.name == CAMERA and os.environ.get(source.database_env):
+            camera_source_preflight(database_url(source.database_env), source.steps[0], database_url(args.target_env))
     target_url = database_url(args.target_env)
     missing = [s.database_env for s in selected if not os.environ.get(s.database_env)]
     if missing and not args.skip_unconfigured:
@@ -879,11 +1090,17 @@ def cmd_run(args, sources):
     verify = sorted({step.source for step, _, _ in plans
                      if step.name in BLOB_SETS.get(step.source, {}).get('steps', ())})
     store = None
-    if verify and not args.dry_run:
+    if verify and (not args.dry_run or any(step.source == CAMERA for step, _, _ in plans)):
         store = load_blobs_module().Store(storage_root(args))
     if args.dry_run:
-        log('dry run (one transaction, rolled back):')
-        dry_run(plans, target_url, log)
+        for step, source_url, walk in plans:
+            if step.source == CAMERA:
+                run_step(step, source_url, target_url, walk, checkpoints.get((step.source, step.name)),
+                         batch_size=args.batch_size, log=log, store=store, dry=True)
+        other = [plan for plan in plans if plan[0].source != CAMERA]
+        if other or not plans:
+            log('dry run (one transaction, rolled back):')
+            dry_run(other, target_url, log)
     else:
         current = None
         for step, source_url, walk in plans:
@@ -892,9 +1109,11 @@ def cmd_run(args, sources):
                 log(f'{current}:')
             log(f'  {step.name}: {walk.reason}')
             rows, writes = run_step(step, source_url, target_url, walk,
-                                    checkpoints.get((step.source, step.name)), batch_size=args.batch_size, log=log)
+                                    checkpoints.get((step.source, step.name)), batch_size=args.batch_size, log=log, store=store)
             log(f'  {step.name}: done, {rows} rows in this walk; {writes}')
         for name in verify:
+            if name == CAMERA:
+                continue  # Each bounded Camera batch was hash-verified before publication.
             log(f'{name}: checking that the store holds every imported blob')
             # Objects upstream itself lost are served as missing, as upstream did.
             if verify_blobs(name, store, target_url, log, recorded_missing(name, target_url)):
@@ -934,6 +1153,11 @@ def load_blobs_module():
 # blobs (a `run` of one of them ends with the --verify check). Output is hex-encoded so a key
 # holding a line or field separator stays one value.
 BLOB_SETS = {
+    CAMERA: {
+        'target': "SELECT encode(convert_to(id::text, 'UTF8'), 'hex'), encode(convert_to(h, 'UTF8'), 'hex') "
+                  "FROM camera_reel.images CROSS JOIN LATERAL (VALUES (image_hash), (thumbnail_hash)) b(h)",
+        'steps': {'image'},
+    },
     'worlds-content-server': {
         'source': """
 SELECT encode(convert_to(k, 'UTF8'), 'hex') FROM (
@@ -989,16 +1213,30 @@ def storage_root(args):
     return Path(root)
 
 
-def record_blobs(target_url, source, stored, missing):
+def record_blobs(target_url, source, stored, missing, *, content_types=None):
     if not stored and not missing:
         return
     lines = ['BEGIN;']
     if stored:
-        values = ',\n'.join(f'({literal(source)}, {literal(k)}, {literal(h)}, {int(n)})' for k, h, n in stored)
-        lines += [f'INSERT INTO dcl_migration.blob_inventory (source, object_key, hash, size) VALUES\n{values}\n'
-                  'ON CONFLICT (source, object_key) DO UPDATE SET hash = EXCLUDED.hash, size = EXCLUDED.size;',
-                  f'DELETE FROM dcl_migration.blob_missing WHERE source = {literal(source)} AND object_key IN '
-                  f'({", ".join(literal(k) for k, _, _ in stored)});']
+        if source == CAMERA:
+            if content_types is None or any(content_types.get(key) not in CAMERA_CONTENT_TYPES for key, _, _ in stored):
+                raise MigrationError('Camera inventory writes require explicit original-object MIME metadata')
+            lines.append("SELECT pg_advisory_xact_lock(hashtextextended('dcl_migration:camera-blobs', 0));")
+            values = ',\n'.join(f'({literal(source)}, {literal(k)}, {literal(h)}, {int(n)}, {literal(content_types[k])})'
+                                for k, h, n in stored)
+            lines.append('INSERT INTO dcl_migration.blob_inventory AS b (source, object_key, hash, size, content_type) '
+                         f'VALUES {values} ON CONFLICT (source, object_key) DO UPDATE SET content_type=EXCLUDED.content_type '
+                         'WHERE b.content_type IS NULL AND (b.hash, b.size)=(EXCLUDED.hash, EXCLUDED.size);')
+            lines.append(f"DO $conflict$ BEGIN IF EXISTS (SELECT 1 FROM (VALUES {values}) AS v(source, object_key, hash, size, content_type) "
+                         "JOIN dcl_migration.blob_inventory b USING (source, object_key) "
+                         "WHERE (b.hash, b.size, b.content_type) IS DISTINCT FROM (v.hash, v.size::bigint, v.content_type)) THEN "
+                         "RAISE EXCEPTION 'camera source object or MIME changed; inventory not overwritten'; END IF; END $conflict$;")
+        else:
+            values = ',\n'.join(f'({literal(source)}, {literal(k)}, {literal(h)}, {int(n)})' for k, h, n in stored)
+            lines.append('INSERT INTO dcl_migration.blob_inventory (source, object_key, hash, size) '
+                         f'VALUES {values} ON CONFLICT (source, object_key) DO UPDATE SET hash=EXCLUDED.hash, size=EXCLUDED.size;')
+        lines.append(f'DELETE FROM dcl_migration.blob_missing WHERE source = {literal(source)} AND object_key IN '
+                     f'({", ".join(literal(k) for k, _, _ in stored)});')
     if missing:
         values = ',\n'.join(f'({literal(source)}, {literal(k)}, {literal(r)})' for k, r in missing)
         lines.append(f'INSERT INTO dcl_migration.blob_missing (source, object_key, reason) VALUES\n{values}\n'
@@ -1038,7 +1276,46 @@ def record_missing(record, missing, batch=RECORD_BATCH):
         record([], missing[i:i + batch])
 
 
+def cmd_camera_blobs(args, sources):
+    """Bounded filename extension of the existing copy/inventory pipeline, from an offline snapshot."""
+    if not args.from_dir or args.from_s3 or args.from_url or args.refresh:
+        raise MigrationError('camera blobs require --from-dir with an offline original-object snapshot')
+    camera_api_url()
+    blobs = load_blobs_module()
+    upstream, store = blobs.FolderSource(args.from_dir, exact_names=True), blobs.Store(storage_root(args))
+    source = sources[CAMERA]
+    step = source.steps[0]
+    source_url, target_url = database_url(source.database_env), database_url(args.target_env)
+    # Complete read-only preflight first. Disk spool bounds memory and fixes the row
+    # set for this copy; the source snapshot must be quiescent for the later run.
+    with tempfile.TemporaryDirectory(prefix='dcl-camera-blobs-') as tmp:
+        data = Path(tmp) / 'source.csv'
+        with data.open('wb') as stream:
+            psql(source_url, extract_sql(step, None, None, None), read_only=True, stdout=stream)
+        with camera_object_metadata(args.object_metadata, tmp) as metadata:
+            camera_preflight(data, object_metadata=metadata)
+            ensure_checkpoint_table(target_url)
+            outcomes = (blobs.copy_filename(upstream, store, key)
+                        for _, keys in camera_rows(data) for key in keys)
+            counts = dict.fromkeys(('copied', 'present', 'missing', 'corrupt', 'invalid', 'failed'), 0)
+            record = lambda stored, absent: record_blobs(target_url, CAMERA, stored, absent,
+                            content_types={key: object_content_type(metadata, key) for key, _, _ in stored})
+            while batch := list(itertools.islice(outcomes, CAMERA_BATCH)):
+                batch_counts, report, missing = record_outcomes(batch, record, len(batch), print, batch=CAMERA_BATCH)
+                for key, count in batch_counts.items():
+                    counts[key] += count
+                record_missing(record, missing)
+                for line in report:
+                    print(line)
+            print(f'camera objects: {dict(counts)}; inventory of unreferenced objects is a separate cutover prerequisite')
+            return int(any(counts[k] for k in ('missing', 'corrupt', 'invalid', 'failed')))
+
+
 def cmd_blobs(args, sources):
+    if getattr(args, 'object_metadata', None) and args.source != CAMERA:
+        raise MigrationError('--object-metadata applies only to Camera snapshot objects')
+    if args.source == CAMERA and not args.verify:
+        return cmd_camera_blobs(args, sources)
     if args.source == 'badges':
         return cmd_badge_art(args)
     if args.source not in BLOB_SETS:
@@ -1208,6 +1485,23 @@ def recorded_missing(source, target_url):
 def verify_blobs(source, store, target_url, log, skip=frozenset()):
     """Lists every imported row whose blobs the store lacks, but for the keys in `skip`; existence
     only, the copy hashed them."""
+    if source == CAMERA:
+        # Do not retain an unbounded target reference set in client memory.
+        with tempfile.TemporaryDirectory(prefix='dcl-camera-verify-') as tmp:
+            refs = Path(tmp) / 'refs.csv'
+            with refs.open('wb') as stream:
+                psql(target_url, f"COPY ({BLOB_SETS[source]['target']}) TO STDOUT WITH (FORMAT csv);",
+                     read_only=True, stdout=stream)
+            checked = missing = 0
+            with refs.open(newline='') as stream:
+                for owner, key in csv.reader(stream):
+                    owner, key = bytes.fromhex(owner).decode(), bytes.fromhex(key).decode()
+                    checked += 1
+                    if not store.has(key) or store.intact(key) is None:
+                        missing += 1
+                        log(f'{owner}: missing or corrupt Camera blob {key}')
+            log(f'{source}: {checked} references checked, {missing} missing or corrupt')
+            return int(missing > 0)
     lacking, checked = {}, {}
     for owner, key in hex_rows(psql(target_url, BLOB_SETS[source]['target'] + ';\n'), 2):
         if key in skip:
@@ -1422,6 +1716,7 @@ def parser():
     blobs.add_argument('source', help=f'one of: {", ".join(sorted([*BLOB_SETS, "badges"]))}')
     blobs.add_argument('--to', help='the node\'s STORAGE_ROOT_FOLDER (default: that variable); for badges,'
                                     ' its BADGES_ASSETS_DIR (default: that variable)')
+    blobs.add_argument('--object-metadata', type=Path, help='Camera: required JSONL with literal object_key and original content_type')
     blobs.add_argument('--from-dir', help='upstream storage folder (or a local sync of its bucket)')
     blobs.add_argument('--from-url', help='badges: upstream art base URL (default: its production CDN_HOST)')
     blobs.add_argument('--refresh', action='store_true',

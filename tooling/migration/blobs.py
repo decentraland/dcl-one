@@ -10,12 +10,16 @@ object's bytes are re-hashed before they are stored; the CID functions reproduce
 import base64
 import collections
 import contextlib
+import csv
 import dataclasses
+import errno
 import gzip
 import hashlib
 import itertools
 import os
 import re
+import stat
+import sys
 import time
 import urllib.error
 import urllib.request
@@ -104,17 +108,34 @@ class _Node:
     tsize: int
 
 
-def _reduce(nodes, cid_of):
-    while len(nodes) > 1:
-        parents = []
-        for i in range(0, len(nodes), MAX_CHILDREN):
-            batch = nodes[i:i + MAX_CHILDREN]
-            size = sum(c.file_size for c in batch)
-            block = _pb_node(_unixfs_file(size, [c.file_size for c in batch]), [(c.cid, c.tsize) for c in batch])
-            parents.append(_Node(cid_of(hashlib.sha256(block).digest()), size,
-                                 len(block) + sum(c.tsize for c in batch)))
-        nodes = parents
-    return nodes[0]
+class _Tree:
+    """Balanced UnixFS reducer retaining fewer than MAX_CHILDREN nodes per level."""
+    def __init__(self, cid_of):
+        self.cid_of = cid_of
+        self.levels = [[]]
+
+    def add(self, node, level=0):
+        if level == len(self.levels):
+            self.levels.append([])
+        self.levels[level].append(node)
+        if len(self.levels[level]) == MAX_CHILDREN:
+            self.promote(level)
+
+    def promote(self, level):
+        batch, self.levels[level] = self.levels[level], []
+        size = sum(c.file_size for c in batch)
+        block = _pb_node(_unixfs_file(size, [c.file_size for c in batch]),
+                         [(c.cid, c.tsize) for c in batch])
+        self.add(_Node(self.cid_of(hashlib.sha256(block).digest()), size,
+                       len(block) + sum(c.tsize for c in batch)), level + 1)
+
+    def finish(self, tail):
+        tree = _Tree(self.cid_of)
+        tree.levels = [list(level) for level in self.levels]
+        tree.add(tail)
+        while sum(map(len, tree.levels)) > 1:
+            tree.promote(next(i for i, level in enumerate(tree.levels) if level))
+        return next(level[0] for level in tree.levels if level)
 
 
 class Hasher:
@@ -125,15 +146,16 @@ class Hasher:
     def __init__(self, unixfs_v0=False):
         self.sha = hashlib.sha256()
         self.pending = bytearray()
-        self.v1_leaves, self.v0_leaves = [], []
+        self.v1_tree = _Tree(lambda digest: _cid_v1_bytes(0x70, digest))
+        self.v0_tree = _Tree(_multihash)
         self.unixfs_v0 = unixfs_v0
         self.size = 0
 
     def _leaf(self, chunk):
-        self.v1_leaves.append(_Node(_cid_v1_bytes(0x55, hashlib.sha256(chunk).digest()), len(chunk), len(chunk)))
+        self.v1_tree.add(_Node(_cid_v1_bytes(0x55, hashlib.sha256(chunk).digest()), len(chunk), len(chunk)))
         if self.unixfs_v0:
             block = _pb_node(_unixfs_leaf(chunk), [])
-            self.v0_leaves.append(_Node(_multihash(hashlib.sha256(block).digest()), len(chunk), len(block)))
+            self.v0_tree.add(_Node(_multihash(hashlib.sha256(block).digest()), len(chunk), len(block)))
 
     def update(self, data):
         self.sha.update(data)
@@ -150,11 +172,9 @@ class Hasher:
     def v1(self):
         if self.size <= CHUNK_SIZE:
             return _base32(_cid_v1_bytes(0x55, self.sha.digest()))
-        leaves = list(self.v1_leaves)
-        if self.pending:
-            leaves.append(_Node(_cid_v1_bytes(0x55, hashlib.sha256(self.pending).digest()),
-                                len(self.pending), len(self.pending)))
-        return _base32(_reduce(leaves, lambda d: _cid_v1_bytes(0x70, d)).cid)
+        tail = _Node(_cid_v1_bytes(0x55, hashlib.sha256(self.pending).digest()),
+                     len(self.pending), len(self.pending))
+        return _base32(self.v1_tree.finish(tail).cid)
 
     def v0(self):
         return _base58(_multihash(self.sha.digest()))
@@ -164,7 +184,7 @@ class Hasher:
         # The last chunk is always pending: a leaf is cut only when more bytes follow it.
         block = _pb_node(_unixfs_leaf(bytes(self.pending)), [])
         tail = _Node(_multihash(hashlib.sha256(block).digest()), len(self.pending), len(block))
-        return _base58(_reduce(self.v0_leaves + [tail], _multihash).cid)
+        return _base58(self.v0_tree.finish(tail).cid)
 
     def sha256_hex(self):
         return self.sha.hexdigest()
@@ -217,18 +237,55 @@ class FolderSource:
     """A WCS `STORAGE_FOLDER` (or an `aws s3 sync` of its bucket): `<dir>/<shard>/<id>` by
     default, `<dir>/<id>` with `disablePrefixHash`; `<id>.gzip` is a gzip-only copy."""
 
-    def __init__(self, root):
+    def __init__(self, root, *, exact_names=False):
+        self.exact_names = exact_names
         self.root = Path(root)
         if not self.root.is_dir():
             raise FileNotFoundError(f'{root} is not a directory')
 
     def open(self, key):
+        if self.exact_names:
+            return self._open_exact(key)
         for path in (self.root / shard(key) / key, self.root / key):
             if path.is_file():
                 return path.open('rb')
             if path.with_name(key + '.gzip').is_file():
                 return gzip.open(path.with_name(key + '.gzip'), 'rb')
         raise Missing('absent upstream')
+
+    def _open_exact(self, key):
+        """Read a regular snapshot leaf without following links or blocking on a FIFO."""
+        if not safe_filename(key):
+            raise Missing('unsafe snapshot object name')
+        try:
+            directory = os.open(self.root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            try:
+                before = os.stat(key, dir_fd=directory, follow_symlinks=False)
+                if not stat.S_ISREG(before.st_mode):
+                    raise Missing('snapshot object is not a regular file')
+                descriptor = os.open(key, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+                                     dir_fd=directory)
+                try:
+                    opened = os.fstat(descriptor)
+                    current = os.stat(key, dir_fd=directory, follow_symlinks=False)
+                    def identity(value):
+                        return (value.st_dev, value.st_ino, value.st_mode, value.st_size,
+                                value.st_mtime_ns, value.st_ctime_ns)
+                    if (not stat.S_ISREG(opened.st_mode) or identity(before) != identity(opened)
+                            or identity(opened) != identity(current)):
+                        raise Missing('snapshot object changed while opening')
+                    return os.fdopen(descriptor, 'rb')
+                except BaseException:
+                    os.close(descriptor)
+                    raise
+            finally:
+                os.close(directory)
+        except FileNotFoundError as error:
+            raise Missing('absent upstream') from error
+        except OSError as error:
+            if error.errno in (errno.ELOOP, errno.ENOTDIR):
+                raise Missing('snapshot path is a symlink or changed while opening') from error
+            raise Missing('snapshot object cannot be safely opened') from error
 
     def describe(self):
         return str(self.root)
@@ -353,7 +410,7 @@ def _read_into(source, store, key):
         raise
     except Exception as e:
         raise ReadError(f'{type(e).__name__}: {e}') from e
-    staged, out = store.staging(key)
+    staged, out = store.staging(hashlib.sha256(key.encode()).hexdigest())
     hasher = Hasher(unixfs_v0=key.startswith('Qm'))
     try:
         with contextlib.closing(stream), out:
@@ -374,12 +431,12 @@ def _read_into(source, store, key):
         raise
 
 
-def copy_one(source, store, key):
+def copy_one(source, store, key, *, filename=False):
     """Copies upstream object `key` (a CID, or a sha256 hex thumbnail) and verifies its bytes."""
-    if not (is_canonical_cid(key) or SHA256_HEX.fullmatch(key)):
+    if not (safe_filename(key) if filename else (is_canonical_cid(key) or SHA256_HEX.fullmatch(key))):
         return Outcome(key, 'invalid', reason=REASONS['invalid'])
     replace = False
-    if is_canonical_cid(key) and store.has(key):
+    if not filename and is_canonical_cid(key) and store.has(key):
         size = store.intact(key)
         if size is not None:
             return Outcome(key, 'present', key, size)
@@ -395,7 +452,7 @@ def copy_one(source, store, key):
                 return Outcome(key, 'failed', reason=f'read failed {READ_ATTEMPTS} times: {e}')
             time.sleep(RETRY_DELAY * 2 ** attempt)
     try:
-        cid = hasher.matches(key)
+        cid = hasher.v1() if filename else hasher.matches(key)
         if cid is None:
             staged.unlink()
             return Outcome(key, 'corrupt', reason=REASONS['corrupt'])
@@ -573,3 +630,37 @@ def copy_art(source, art_dir, path):
         staged.unlink(missing_ok=True)
         raise
     return Outcome(path, 'copied', path, len(data))
+
+
+# Camera object keys are immutable UUID filenames, not content hashes. Only
+# explicit filename mode may compute a new CID without matching the source key.
+def safe_filename(key):
+    return bool(key and len(key.encode()) <= 255 and key not in ('.', '..')
+                and not any(c in key for c in '/\\')
+                and all(ord(c) >= 32 and ord(c) != 127 for c in key))
+
+
+def copy_filename(source, store, key):
+    return copy_one(source, store, key, filename=True)
+
+
+def verify_publication(inventory, storage_root):
+    """Client-side psql backslash-copy helper. The parent psql holds the GC shared lock.
+
+    Fail before emitting any verification receipt if a staged CID vanished or
+    changed. No source access, image transformation, SQL, or network I/O.
+    """
+    store = Store(storage_root)
+    checked = []
+    with open(inventory, newline='') as stream:
+        for cid, size in csv.reader(stream):
+            if not is_canonical_cid(cid) or store.intact(cid) != int(size):
+                raise RuntimeError('staged blob missing or corrupt; recopy blobs before resuming')
+            checked.append((cid, size))
+    csv.writer(sys.stdout).writerows(checked)
+
+
+if __name__ == '__main__':
+    if len(sys.argv) != 4 or sys.argv[1] != 'verify-publication':
+        raise SystemExit('usage: blobs.py verify-publication INVENTORY STORAGE_ROOT')
+    verify_publication(sys.argv[2], sys.argv[3])

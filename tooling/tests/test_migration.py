@@ -969,6 +969,11 @@ class AgainstPostgres(CommsMigrationCases, SocialMigrationCases, WorldsMigration
             self.skipTest(f'schemas/ does not apply on this cluster: {str(e)[:200]}')
         env = {s.database_env: '' for s in sources.values()}
         env['TARGET_DATABASE_URL'] = self.url(db)
+        env['CAMERA_REEL_IMPORT_API_URL'] = 'https://camera.example.test'
+        # The Camera mapping depends on the additive filename-origin runtime capability.
+        # Supply it for branches preceding that schema change; rejection is tested separately.
+        self.sql(db, 'ALTER TABLE camera_reel.images ADD COLUMN IF NOT EXISTS original_filename text; '
+                     'ALTER TABLE camera_reel.images ADD COLUMN IF NOT EXISTS image_content_type text;')
         with unittest.mock.patch.dict(os.environ, env):
             code, out = self.migrate('check', sources_dir=migrate.SOURCES)
         self.assertEqual(code, 0, out)
