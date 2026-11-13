@@ -1687,11 +1687,12 @@ async fn request_status(ctx: &Ctx<'_>, id: &str, request: &str) -> Response {
         if let Some((request_uuid, member, _)) = pending.as_ref().filter(|_| fresh) {
             if status == "accepted" && is_banned_on(&mut tx, community, member).await? {
                 return Ok(Err(err_json(
-                    StatusCode::FORBIDDEN,
-                    "banned from community",
+                    StatusCode::UNAUTHORIZED,
+                    format!("The user {member} is banned from the community {community}"),
                 )));
             }
-            if let Err(refused) = super::requests::transition_request(
+            // Settled meanwhile by the client route: the entry is still logged.
+            match super::requests::transition_request(
                 &mut tx,
                 community,
                 *request_uuid,
@@ -1700,9 +1701,10 @@ async fn request_status(ctx: &Ctx<'_>, id: &str, request: &str) -> Response {
             )
             .await
             {
-                return Ok(Err(*refused));
+                Ok(()) => settled = true,
+                Err(refused) if refused.status() == StatusCode::NOT_FOUND => {}
+                Err(refused) => return Ok(Err(*refused)),
             }
-            settled = true;
         }
         tx.commit().await?;
         drop(guard);

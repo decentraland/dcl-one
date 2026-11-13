@@ -390,9 +390,19 @@ pub async fn claim_key_package(
     if let Some(refusal) = crate::comms::writes::side_refusal(switch) {
         return Ok(crate::writes::refused_response(&refusal));
     }
-    if CLAIMS_OF_OWNER.is_rate_limited(&owner)
-        || CLAIMS_BY_CLAIMER.check(&claimer) == RateLimitDecision::Deny
-    {
+    if CLAIMS_BY_CLAIMER.check(&claimer) == RateLimitDecision::Deny {
+        return Err(claim_rate_limited());
+    }
+    // Claims of one owner run one at a time, so the owner's budget is read
+    // and spent atomically, and only by a package handed out.
+    let mut tx = state.pool.begin().await?;
+    sqlx::query(
+        "SELECT pg_advisory_xact_lock(hashtextextended('social.mls_key_package_claims:' || $1, 0))",
+    )
+    .bind(&owner)
+    .execute(&mut *tx)
+    .await?;
+    if CLAIMS_OF_OWNER.is_rate_limited(&owner) {
         return Err(claim_rate_limited());
     }
     // A block either way answers as an empty stock.
@@ -410,8 +420,9 @@ pub async fn claim_key_package(
     .bind(&owner)
     .bind(now_utc())
     .bind(&claimer)
-    .fetch_optional(&state.pool)
+    .fetch_optional(&mut *tx)
     .await?;
+    tx.commit().await?;
     if row.is_some() {
         CLAIMS_OF_OWNER.check(&owner);
     }
@@ -540,8 +551,8 @@ pub async fn create_group(
     let created: bool = sqlx::query_scalar(
         "WITH g AS ( \
             INSERT INTO social.mls_groups \
-                (group_id, creator, group_kind, community_id, epoch_author, current_epoch, ciphersuite, created_at, updated_at) \
-            VALUES ($1, $2, $3, $4, $5, 0, $6, $12, $12) ON CONFLICT (group_id) DO NOTHING \
+                (group_id, creator, group_kind, community_id, epoch_author, current_epoch, last_commit_hash, ciphersuite, created_at, updated_at) \
+            VALUES ($1, $2, $3, $4, $5, CASE WHEN $8::text IS NULL THEN 0 ELSE 1 END, $10, $6, $12, $12) ON CONFLICT (group_id) DO NOTHING \
             RETURNING group_id \
          ), m AS ( \
             INSERT INTO social.mls_group_members (group_id, member, added_epoch) \
@@ -550,7 +561,7 @@ pub async fn create_group(
          ), c AS ( \
             INSERT INTO social.mls_commits \
                 (group_id, epoch, commit_cid, welcome_cid, committer, commit_hash, signed_at, received_at) \
-            SELECT g.group_id, 0, $8, $9, $2, $10, $11, $12 FROM g WHERE $8::text IS NOT NULL \
+            SELECT g.group_id, 1, $8, $9, $2, $10, $11, $12 FROM g WHERE $8::text IS NOT NULL \
             ON CONFLICT DO NOTHING \
          ) \
          SELECT EXISTS (SELECT 1 FROM g)",
@@ -572,11 +583,12 @@ pub async fn create_group(
     if !created {
         return Err(ApiError::http(409, "group already exists"));
     }
+    // An initial commit moves the group from epoch 0 to 1.
     Ok(Json(json!({
         "group_id": group_id,
         "group_kind": b.group_kind,
         "epoch_author": epoch_author,
-        "current_epoch": 0,
+        "current_epoch": i64::from(commit_cid.is_some()),
         "ciphersuite": mls::PINNED_CIPHERSUITE_ID,
         "members": members,
     })))
@@ -1577,6 +1589,94 @@ mod tests {
         let blob_path = format!("/mls/blobs/{}", sent["ciphertext_hash"].as_str().unwrap());
         let (status, _) = call(&here, &banned.key, "GET", &blob_path, None, None).await;
         assert_eq!(status, StatusCode::FORBIDDEN, "a banned wallet's blob read");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn a_group_created_with_its_first_commit_takes_the_next_one() {
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        let dir =
+            std::env::temp_dir().join(format!("mls-initial-{}", uuid::Uuid::new_v4().simple()));
+        let here = app("peer-initial", pool.clone(), &dir).await;
+        let (alice, bob) = (member(), member());
+        let bob_kp = KeyPackage::builder()
+            .build(
+                mls::PINNED_CIPHERSUITE,
+                &bob.provider,
+                &bob.signer,
+                bob.credential.clone(),
+            )
+            .unwrap()
+            .key_package()
+            .clone();
+        let mut group = MlsGroup::new(
+            &alice.provider,
+            &alice.signer,
+            &MlsGroupCreateConfig::builder()
+                .ciphersuite(mls::PINNED_CIPHERSUITE)
+                .build(),
+            alice.credential.clone(),
+        )
+        .unwrap();
+        let group_id = hex::encode(group.group_id().as_slice());
+        let (commit, welcome, _) = group
+            .add_members(&alice.provider, &alice.signer, &[bob_kp])
+            .unwrap();
+        let (status, created) = call(
+            &here,
+            &alice.key,
+            "POST",
+            "/mls/groups",
+            Some(json!({
+                "group_id": group_id,
+                "group_kind": "dm",
+                "initial_members": [alice.address, bob.address],
+                "initial_commit": b64(&commit.tls_serialize_detached().unwrap()),
+                "welcome": b64(&welcome.tls_serialize_detached().unwrap()),
+            })),
+            None,
+        )
+        .await;
+        assert_eq!(
+            (status, created["current_epoch"].as_i64()),
+            (StatusCode::OK, Some(1)),
+            "{created}"
+        );
+        group.merge_pending_commit(&alice.provider).unwrap();
+        // The service reads only the routing of the bytes it relays.
+        let next = group
+            .create_message(&alice.provider, &alice.signer, b"routing only")
+            .unwrap()
+            .tls_serialize_detached()
+            .unwrap();
+        let (status, body) = call(
+            &here,
+            &alice.key,
+            "POST",
+            &format!("/mls/groups/{group_id}/commits"),
+            Some(json!({ "epoch": 2, "commit": b64(&next) })),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let (_, commits) = call(
+            &here,
+            &bob.key,
+            "GET",
+            &format!("/mls/groups/{group_id}/commits"),
+            None,
+            None,
+        )
+        .await;
+        let epochs: Vec<i64> = commits["commits"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| c["epoch"].as_i64().unwrap())
+            .collect();
+        assert_eq!(epochs, [1, 2]);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
