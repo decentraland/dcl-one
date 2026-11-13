@@ -25,10 +25,11 @@ use super::admission::scene::{self, PlaceLookup, meta_str, realm_name_from_metad
 use super::auth::{SCENE_SIGNER, device_identifier, verify_signed_fetch};
 use super::errors::{ApiError, forbidden, service_unavailable};
 use super::livekit::IngressClient;
+use super::moderation::context::Context;
 use super::moderation::store::PLATFORM_BANNED_MSG;
 use super::{CommsState, SharedState};
 use crate::shared::signed_fetch::SignedPath;
-use crate::world_identity::is_world_realm_name;
+use crate::world_identity::{WorldName, is_world_realm_name};
 use crate::{Address, AuthorityNotEstablished, PermissionDecision};
 
 #[path = "streaming_jobs.rs"]
@@ -120,15 +121,30 @@ pub async fn scene_stream_access(
     .await?;
     let realm_name = realm_name_from_metadata(&sf.metadata)
         .ok_or_else(|| ApiError::bad_request("invalid signed-fetch request, no realmName"))?;
-    let parcel = meta_str(&sf.metadata, "parcel");
+    if !is_world_realm_name(&realm_name) && meta_str(&sf.metadata, "parcel").is_none() {
+        return Err(ApiError::bad_request(
+            "invalid signed-fetch request, no parcel",
+        ));
+    }
     let device_id = device_identifier(&sf.metadata);
     if matches!(method, Method::GET | Method::POST | Method::PUT) {
         refuse_if_platform_banned(&state, &sf.signer, device_id.as_deref()).await?;
     }
-    let raw_scene_id = meta_str(&sf.metadata, "sceneId")
-        .ok_or_else(|| ApiError::bad_request("invalid signed-fetch request, no sceneId"))?;
-    let resolved = scene::resolve_adapter_room(&state, &realm_name, &raw_scene_id).await?;
-    let place_id = resolve_place_id(&state.pool, &realm_name, parcel.as_deref())
+    if meta_str(&sf.metadata, "sceneId").is_none() {
+        return Err(ApiError::bad_request(
+            "invalid signed-fetch request, no sceneId",
+        ));
+    }
+    if matches!(method, Method::GET | Method::POST | Method::PUT)
+        && state.deny_list.is_denied(sf.signer.as_str()).await
+    {
+        return Err(forbidden(NOT_AUTHORIZED_TO_STREAM_MSG));
+    }
+    // One resolution binds the signed scene to its parcel; room and place both follow it.
+    let bound = Context::resolve(&state, &sf.metadata).await?;
+    let parcel = bound.parcel.canonical();
+    let world = bound.world_scene.as_ref().map(|(world, _)| world);
+    let place_id = resolve_place_id(&state.pool, world, &parcel)
         .await?
         .ok_or_else(|| ApiError::not_found("place not found for this scene"))?;
     let place = PlaceLookup::new(&state, &place_id);
@@ -139,7 +155,7 @@ pub async fn scene_stream_access(
         }
         PermissionDecision::Refused(why) => return Err(why.into()),
     }
-    let room = resolved.room;
+    let room = bound.room;
     let ingress = state.ingress();
     match method {
         Method::GET => match active_access(&state.pool, &place_id).await? {
@@ -200,26 +216,24 @@ async fn refuse_if_platform_banned(
     }
 }
 
-/// The place the signed metadata stands on: the world (published here or
-/// mirrored) by its name, else the Genesis place holding `parcel`.
+/// The place the bound scene stands on: its world (published here or
+/// mirrored) by name, else the Genesis place holding `parcel`.
 async fn resolve_place_id(
     pool: &PgPool,
-    realm_name: &str,
-    parcel: Option<&str>,
+    world: Option<&WorldName>,
+    parcel: &str,
 ) -> Result<Option<String>, ApiError> {
-    if is_world_realm_name(realm_name) {
+    if let Some(world) = world {
         return Ok(sqlx::query_scalar(
             "SELECT id FROM explore.place WHERE world AND lower(world_name) = lower($1) \
              UNION ALL \
              SELECT id FROM explore.place_world_local WHERE world AND lower(world_name) = lower($1) \
              LIMIT 1",
         )
-        .bind(realm_name)
+        .bind(world.display())
         .fetch_optional(pool)
         .await?);
     }
-    let parcel =
-        parcel.ok_or_else(|| ApiError::bad_request("invalid signed-fetch request, no parcel"))?;
     Ok(sqlx::query_scalar("SELECT id FROM explore.place WHERE raw->'positions' @> jsonb_build_array($1::text) LIMIT 1")
         .bind(parcel)
         .fetch_optional(pool)

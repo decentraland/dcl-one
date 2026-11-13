@@ -32,8 +32,12 @@ fn resolution_error(error: ResolveError) -> ApiError {
     }
 }
 
-pub(super) struct Context<'a> {
+pub(in crate::gatekeeper) struct Context<'a> {
     pub place: PlaceLookup<'a>,
+    /// The current scene's room at the bound parcel.
+    pub room: String,
+    /// The signed parcel, or the deployment's base without one.
+    pub parcel: Parcel,
     /// Where this scene's bans live; stable across a world scene's redeploys.
     pub ban_key: crate::access::SceneBanKey,
     pub rooms: Vec<String>,
@@ -178,12 +182,14 @@ impl<'a> Context<'a> {
             if let Some(world) = realm.world() {
                 rooms.push(crate::rooms::worlds_service_world_room(world));
             }
-            rooms.push(current.room);
+            rooms.push(current.room.clone());
         }
         let world_scene = realm
             .world()
             .map(|world| (world.clone(), deployment.scene_id.clone()));
         Ok(Self {
+            room: current.room,
+            parcel,
             world_scene,
             place: PlaceLookup::resolved(state, deployment.scene_id.as_str(), info),
             ban_key,
@@ -259,7 +265,7 @@ impl<'a> Context<'a> {
     }
 }
 
-pub(super) struct Input {
+pub(in crate::gatekeeper) struct Input {
     body: Map<String, Value>,
     query: BTreeMap<String, String>,
 }

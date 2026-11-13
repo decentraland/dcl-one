@@ -125,11 +125,16 @@ pub async fn private_messages_token(
             tracing::warn!(error = %e, address = %identity, "failed to store player connection info");
         }
     };
-    let ((), banned, privacy) = tokio::join!(
-        upsert,
-        state
-            .moderation
-            .is_banned_for_connection(&identity, device_id.as_deref()),
+    let (banned, privacy) = tokio::join!(
+        async {
+            // Gate before recording so a fresh device id cannot replace the recorded one first.
+            let banned = state
+                .moderation
+                .is_banned_for_connection(&identity, device_id.as_deref())
+                .await;
+            upsert.await;
+            banned
+        },
         state.social.private_messages_privacy(&identity)
     );
     let map_error = |e: sqlx::Error| {

@@ -139,15 +139,18 @@ pub async fn get_scene_adapter(
         &caller_ip
     };
     let record = crate::writes::side_refusal(switch).is_none();
-    let ((), gate, world_allowed) = tokio::join!(
+    let (gate, world_allowed) = tokio::join!(
         async {
+            // Gate before recording so a fresh device id cannot replace the recorded one first.
+            let gate = state
+                .moderation
+                .connection_gate(&identity, device_id.as_deref(), resolved_scene_id)
+                .await;
             if record {
                 record_connection(&state, &identity, &headers, device_id.as_deref()).await;
             }
+            gate
         },
-        state
-            .moderation
-            .connection_gate(&identity, device_id.as_deref(), resolved_scene_id),
         async {
             if !is_world {
                 return Ok(true);
@@ -165,6 +168,9 @@ pub async fn get_scene_adapter(
         },
     );
     gate.into_result()?;
+    if state.deny_list.is_denied(identity.as_str()).await {
+        return Err(unauthorized(super::world_mint::DENY_LISTED));
+    }
     if !world_allowed? {
         return Err(unauthorized(
             "Access denied, you are not authorized to access this world",

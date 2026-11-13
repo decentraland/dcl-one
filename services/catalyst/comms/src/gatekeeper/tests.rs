@@ -643,10 +643,15 @@ async fn a_lookup_without_a_device_id_is_widened_to_the_recorded_device() {
     assert!(m.is_banned_for_connection(&s.banned, None).await.unwrap());
     assert!(!m.is_banned_for_connection(&s.clean, None).await.unwrap());
     assert!(
-        !m.is_banned_for_connection(&s.same_device, Some("some-other-device"))
+        m.is_banned_for_connection(&s.same_device, Some("some-other-device"))
             .await
             .unwrap(),
-        "a device id the caller does send is the one matched"
+        "a fresh device id the caller sends never hides the recorded one"
+    );
+    assert!(
+        !m.is_banned_for_connection(&s.clean, Some("some-other-device"))
+            .await
+            .unwrap()
     );
     assert!(matches!(
         m.platform_ban_decision(&[s.clean.clone(), s.same_device.clone()])
@@ -3114,7 +3119,7 @@ async fn deny_listed_wallet_is_refused_by_every_world_mint_and_private_messages(
     }
     let path = "/private-messages/token";
     let error = voice::private_messages_token(
-        State(state),
+        State(state.clone()),
         at(path),
         signed(KEY, "get", path, metadata).await,
         None,
@@ -3122,6 +3127,27 @@ async fn deny_listed_wallet_is_refused_by_every_world_mint_and_private_messages(
     .await
     .unwrap_err();
     assert_eq!(error.code, 401);
+    let path = "/get-scene-adapter";
+    let scene_meta = meta("main", "bafkreidenylisted", None);
+    let error = handlers::get_scene_adapter(
+        State(state.clone()),
+        at(path),
+        signed(KEY, "post", path, &scene_meta).await,
+        writes_on(),
+        axum::body::Bytes::new(),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(error.code, 401);
+    let Json(_) = handlers::get_scene_adapter(
+        State(state.clone()),
+        at(path),
+        signed(OUTSIDER_KEY, "post", path, &scene_meta).await,
+        writes_on(),
+        axum::body::Bytes::new(),
+    )
+    .await
+    .expect("an unlisted wallet still gets the scene room");
     server.abort();
 }
 
