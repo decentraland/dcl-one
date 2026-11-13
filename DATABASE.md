@@ -1481,9 +1481,9 @@ published block for the sales logs), and for the id cursors
 `badges_processor_cursor_gaps` and `badges_processor_cursor_oldest_gap_seconds`:
 a cursor that stops advancing shows as a growing lag, and a horizon held by a
 transaction left open on the cluster as gaps that keep ageing. A deployment stored
-more than `BADGES_DEPLOYMENT_MAX_LAG_SECS` (default a day) after its entity
-timestamp is history a syncing node caught up on and is passed without
-effect; `BADGES_EVENT_MAX_AGE_SECS` (default off) is upstream's
+more than `BADGES_DEPLOYMENT_MAX_LAG_SECS` (default off, as upstream had no
+such filter) after its entity timestamp is history a syncing node caught up
+on and is passed without effect; `BADGES_EVENT_MAX_AGE_SECS` (default off) is upstream's
 `EVENT_PROCESSING_MAX_AGE_IN_SECONDS`. Step `0038_social_badge_processor`
 adds `seq`; the object pass creates `social.badge_cursors`,
 `social.badge_cursor_gaps` and both indexes.
@@ -1567,13 +1567,17 @@ catalog rows, and the bootstrap seed reaches only new databases.
    target awards on the wallet's next progress write, not retroactively, and
    a tier added above a completed badge leaves it complete until that write.
    A badge takes at most 32 tiers, each `2d` or `3d` at most 8 files, and
-   the badges routes refuse bodies over 1 MiB (413).
+   the badges routes refuse bodies over 1 MiB (413), the backfill's over
+   64 MiB.
 2. Make the art reachable: upload it to the CDN that
    `BADGES_PUBLIC_ASSET_BASE_URL` names (upstream's by default), or mirror it
    into `BADGES_ASSETS_DIR` under the same relative paths when the base is
    `<node>/badges/assets`.
-3. `PATCH /badges/badges/{id}` `{"published": true}`. The badge is listed and
-   awardable.
+3. `PATCH /badges/badges/{id}` `{"published": true}`. The badge is
+   awardable, and listed only once this build can grant it, as upstream
+   serves it: an evaluator, a backfill import or a presence configuration
+   (`social.presence_badges`). An active badge without one is left out of
+   every read route and named in a warning at startup.
 4. Grant it per wallet with the console grant (`POST
    /badges/users/{address}/badges/{id}`), the one caller of `apply_progress`.
 

@@ -15,6 +15,7 @@ use serde_json::Value;
 use sqlx::Row;
 use sqlx::postgres::PgPool;
 
+use super::evaluators::has_evaluator;
 use super::progress::{Applied, ApplyOptions, apply_progress};
 use super::types::{
     AchievedTier, Assets, BadgeData, BadgeProgress, CatalogBadge, LastCompletedTier,
@@ -217,11 +218,14 @@ impl BadgesStore {
 
     /// One statement, so a publish or archive never splits the snapshot. A
     /// tiered row without tiers is not a valid definition and is left out,
-    /// as upstream's catalog leaves out invalid rows.
+    /// as upstream's catalog leaves out invalid rows; so is an active badge
+    /// published ahead of its code (no evaluator, import or presence
+    /// configuration, upstream's `isPublishedAheadOfCode`).
     async fn load_catalog(&self) -> Result<Catalog, ApiError> {
         let rows = sqlx::query(
             "SELECT d.id, d.name, d.description, d.category, d.is_tier, d.criteria_steps, \
                     d.archived_at IS NOT NULL AS archived, d.assets, \
+                    EXISTS (SELECT 1 FROM social.presence_badges p WHERE p.badge_id = d.id) AS presence, \
                     COALESCE((SELECT jsonb_agg(jsonb_build_object( \
                                  'tier_id', t.tier_id, 'tier_name', t.tier_name, \
                                  'description', t.description, 'assets', t.assets, \
@@ -254,6 +258,11 @@ impl BadgesStore {
                 Vec::new()
             };
             let id: String = r.get("id");
+            if !r.get::<bool, _>("archived") && !r.get::<bool, _>("presence") && !has_evaluator(&id)
+            {
+                tracing::debug!(badge = %id, "badges: a badge published ahead of its code is left out");
+                continue;
+            }
             if is_tier && tiers.is_empty() {
                 tracing::warn!(badge = %id, "badges: a tiered badge without tiers is left out");
                 continue;
@@ -271,6 +280,24 @@ impl BadgesStore {
             });
         }
         Ok(Catalog { defs })
+    }
+
+    /// Startup check (upstream's observer registry): warns about every active
+    /// badge this build cannot grant, which the routes leave out.
+    pub async fn warn_ahead_of_code(&self) -> Result<Vec<String>, sqlx::Error> {
+        let ids: Vec<String> = sqlx::query_scalar(
+            "SELECT d.id FROM social.badge_definitions d \
+             WHERE d.published_at IS NOT NULL AND d.archived_at IS NULL \
+               AND NOT EXISTS (SELECT 1 FROM social.presence_badges p WHERE p.badge_id = d.id) \
+             ORDER BY d.id",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        let ahead: Vec<String> = ids.into_iter().filter(|id| !has_evaluator(id)).collect();
+        for id in &ahead {
+            tracing::warn!(badge = %id, "a published badge has no evaluator in this build and is not served");
+        }
+        Ok(ahead)
     }
 
     /// `GET /badges`: every published badge, archived ones marked.

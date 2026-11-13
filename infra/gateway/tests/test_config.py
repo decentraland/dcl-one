@@ -197,6 +197,21 @@ class ConfigurationTest(unittest.TestCase):
         self.assertEqual(gateway.WORLDS_DEPLOY_CAP, mib("deploy.rs", "MAX_UPLOAD_WIRE_SIZE_BYTES"))
         self.assertEqual(gateway.WORLDS_SETTINGS_CAP, mib("settings.rs", "MAX_SETTINGS_UPLOAD_WIRE_BYTES"))
 
+    def test_badges_backfill_cap_matches_the_route_limit(self):
+        source = (Path(__file__).parents[3] / "services/catalyst/social/src/badges/mod.rs").read_text()
+        expr = re.search(r"const MAX_BACKFILL_BODY_BYTES: usize = ([^;]+);", source)[1]
+        self.assertRegex(expr, r"^[\d\s*]+$")
+        self.assertEqual(gateway.BADGES_BACKFILL_CAP, f"{eval(expr) // (1024 * 1024)}m")
+        _, regexes = self.worlds_locations()
+        for path in ["/badges/badges/halloweeks_2026/backfill", "/badges/badges/traveler/backfill"]:
+            with self.subTest(path=path):
+                body = next(body for regex, body in regexes if regex.search(path))
+                self.assertIn(f"client_max_body_size {gateway.BADGES_BACKFILL_CAP};", body)
+        for path in ["/badges/badges/traveler", "/badges/users/0xab/badges/traveler",
+                     "/badges/badges/x/backfill/y", "/x/badges/badges/x/backfill"]:
+            with self.subTest(path=path):
+                self.assertFalse(any("64m" in body for regex, body in regexes if regex.search(path)))
+
     def test_the_content_deploy_cap_reaches_the_apps_route_limit(self):
         root = Path(__file__).parents[3] / "services/catalyst"
         source = (root / "content/src/create_entity.rs").read_text()

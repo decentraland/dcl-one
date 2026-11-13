@@ -46,11 +46,19 @@ use sqlx::PgPool;
 
 use crate::notifications::admin::AdminSecretSource;
 
-pub use progress::{Applied, ApplyOptions, Progress, ProgressChange, apply_progress};
+pub use progress::{
+    Applied, ApplyOptions, Progress, ProgressChange, TierGrant, apply_progress,
+    apply_progress_granting,
+};
 pub use store::{BadgesStore, DEFAULT_ASSET_BASE_URL};
 
-/// Request bodies of every route; the catalog's are far below it.
+/// Request bodies of every route but the backfill; the catalog's are far below it.
 pub const MAX_BODY_BYTES: usize = 1024 * 1024;
+/// The backfill's request body: upstream read it whole with no limit, so this
+/// only guards memory against a runaway import.
+pub const MAX_BACKFILL_BODY_BYTES: usize = 64 * 1024 * 1024;
+/// Upstream's CORS `maxAge`, in seconds.
+pub const CORS_MAX_AGE_SECS: u64 = 86_400;
 
 pub const ADMIN_TOKEN_ENV: &str = "CATALYRST_BADGES_ADMIN_TOKEN";
 
@@ -125,7 +133,7 @@ pub fn router(state: SharedState) -> Router {
         .route("/badges/{badge_id}/tiers", get(handlers::get_badge_tiers))
         .route(
             "/badges/{badge_id}/backfill",
-            post(backfill::backfill_badge),
+            post(backfill::backfill_badge).layer(DefaultBodyLimit::max(MAX_BACKFILL_BODY_BYTES)),
         )
         .route("/categories", get(handlers::get_categories))
         .route("/status", get(handlers::get_status))
@@ -139,7 +147,10 @@ pub fn router(state: SharedState) -> Router {
         )
         .route("/assets/{*path}", get(handlers::get_asset))
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
-        .layer(tower_http::cors::CorsLayer::permissive())
+        .layer(
+            tower_http::cors::CorsLayer::permissive()
+                .max_age(std::time::Duration::from_secs(CORS_MAX_AGE_SECS)),
+        )
         .layer(axum::middleware::map_response(preflight_no_content))
         .with_state(state)
 }

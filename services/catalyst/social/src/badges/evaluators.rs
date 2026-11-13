@@ -10,7 +10,8 @@
 
 use serde_json::{Map, Value, json};
 
-use super::Progress;
+use super::backfill::{self, Kind};
+use super::{Progress, TierGrant};
 
 pub const DCL_CITIZEN: &str = "dclcitizen";
 pub const TRAVELER: &str = "traveler";
@@ -61,6 +62,28 @@ pub const EVALUATED: [&str; 20] = [
     FASHIONISTA,
     REFERRAL,
 ];
+
+/// The tiers one evaluator write achieves: upstream's observers `find` one
+/// tier per event, except `traveler.ts`, which `filter`s every reached one.
+/// A client event or a sale is one write; a recount stands for one upstream
+/// event per step it adds.
+pub fn tier_grant(badge_id: &str) -> TierGrant {
+    match badge_id {
+        TRAVELER => TierGrant::Reached,
+        // One event adds its whole step count.
+        WALKABOUT_WANDERER => TierGrant::OnePerWrite,
+        _ => TierGrant::OnePerStep,
+    }
+}
+
+/// Upstream's `BADGE_EVALUATORS` rule: a badge this build can grant, through
+/// an evaluator here or a backfill import. A published badge that is neither
+/// (nor archived, nor presence-configured) was published ahead of its code
+/// and is not served.
+pub fn has_evaluator(badge_id: &str) -> bool {
+    EVALUATED.contains(&badge_id)
+        || backfill::kind(badge_id).is_some_and(|k| k != Kind::Unsupported)
+}
 
 /// `vertical-voyager.ts` `ELEVATION_GAIN_NEEDED`.
 pub const ELEVATION_NEEDED: f64 = 500.0;
@@ -365,12 +388,14 @@ pub fn buyer(p: &mut Progress, badge_id: &str, tx_hash: &str, sale_at_ms: i64) {
 
 /// `referral.ts` counted `steps++` per delivered event, so a redelivery
 /// counted twice; here `steps` is the count of the referrer's accepted
-/// invitations.
+/// invitations, never below the stored (imported) steps.
 pub fn referral(p: &mut Progress, accepted: i64) {
     if p.completed {
         return;
     }
-    p.steps = i32::try_from(accepted.max(0)).unwrap_or(i32::MAX);
+    p.steps = p
+        .steps
+        .max(i32::try_from(accepted.max(0)).unwrap_or(i32::MAX));
 }
 
 /// A profile's wearable as upstream fetched it (`badge-context.ts`
@@ -690,10 +715,13 @@ mod tests {
     }
 
     #[test]
-    fn referral_is_the_accepted_count() {
+    fn referral_is_the_accepted_count_never_below_the_stored_steps() {
+        let mut p = progress(3, json!({}));
+        referral(&mut p, 6);
+        assert_eq!(p.steps, 6);
         let mut p = progress(9, json!({}));
         referral(&mut p, 6);
-        assert_eq!(p.steps, 6, "upstream's double count is not kept");
+        assert_eq!(p.steps, 9, "imported steps are kept");
         let mut done = completed(100, json!({}));
         referral(&mut done, 120);
         assert_eq!(done.steps, 100);
@@ -738,6 +766,72 @@ mod tests {
         }
         for (id, _) in RARITY_BADGES {
             assert!(EVALUATED.contains(&id));
+        }
+    }
+
+    #[test]
+    fn the_evaluators_match_upstreams_declarations() {
+        // `badge-evaluators.ts`: (id, observer, import)
+        let declared = [
+            ("dclcitizen", true, false),
+            ("epic_ensemble", true, true),
+            ("regally_rare", true, true),
+            ("legendary_look", true, true),
+            ("mythic_model", true, true),
+            ("unique_unicorn", true, true),
+            ("exotic_elegance", true, true),
+            ("open_for_business", true, true),
+            ("traveler", true, false),
+            ("profile_pro", true, true),
+            ("emotionista", true, true),
+            ("fashionista", true, true),
+            ("event_enthusiast", false, true),
+            ("moves_master", true, true),
+            ("social_butterfly", true, true),
+            ("vertical_voyager", true, false),
+            ("walkabout_wanderer", true, false),
+            ("land_architect", true, true),
+            ("emote_creator", true, true),
+            ("wearable_designer", true, true),
+            ("referral", true, false),
+            ("music_festival_2024", false, true),
+            ("fashion_week_2025", false, true),
+            ("builder_talent_trail_2025", false, true),
+            ("music_talent_trail_2025", false, true),
+            ("game_night_2025", false, true),
+            ("career_quest_2025", false, true),
+            ("art_week_2025", false, true),
+            ("fright_night_2025", false, true),
+            ("music_festival_2025", false, true),
+            ("festive_trail_2025", false, true),
+            ("welcome_guide", false, true),
+            ("buildathon_friendzone", false, true),
+            ("halloweeks_2026", false, true),
+        ];
+        for (id, observer, import) in declared {
+            assert_eq!(EVALUATED.contains(&id), observer, "{id} observer");
+            let imported = backfill::kind(id).is_some_and(|k| k != Kind::Unsupported);
+            assert_eq!(imported, import, "{id} import");
+            assert!(has_evaluator(id), "{id}");
+        }
+        assert_eq!(EVALUATED.len(), declared.iter().filter(|d| d.1).count());
+        assert!(!has_evaluator("own_badge"));
+    }
+
+    #[test]
+    fn only_traveler_grants_every_reached_tier_per_write() {
+        assert_eq!(tier_grant(TRAVELER), TierGrant::Reached);
+        assert_eq!(tier_grant(WALKABOUT_WANDERER), TierGrant::OnePerWrite);
+        for id in [
+            MOVES_MASTER,
+            SOCIAL_BUTTERFLY,
+            EMOTIONISTA,
+            FASHIONISTA,
+            EMOTE_CREATOR,
+            WEARABLE_DESIGNER,
+            REFERRAL,
+        ] {
+            assert_eq!(tier_grant(id), TierGrant::OnePerStep, "{id}");
         }
     }
 }

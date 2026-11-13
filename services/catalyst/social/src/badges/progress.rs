@@ -8,10 +8,11 @@
 //! the award reads it archived and writes nothing; serializes writers of the
 //! same (address, badge) on a transaction advisory lock; hands the caller's
 //! closure the stored progress document; then writes the document and
-//! `steps_done`, every tier the new steps reach, completion, and one
-//! `badge_granted` notification per newly achieved tier (or per completion
-//! of a single badge) unless the caller suppresses them. Achieved tiers and
-//! completion are never taken back.
+//! `steps_done`, the tiers the new steps reach (all of them, or as many as
+//! the caller's [`TierGrant`] allows), completion once every tier is
+//! achieved, and one `badge_granted` notification per newly achieved tier
+//! (or per completion of a single badge) unless the caller suppresses them.
+//! Achieved tiers and completion are never taken back.
 
 use std::collections::HashSet;
 
@@ -74,6 +75,18 @@ pub struct ApplyOptions<'a> {
     pub granted_by: Option<&'a str>,
 }
 
+/// How many reached tiers one write achieves, lowest first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TierGrant {
+    /// Every reached tier (backfills, grants, `traveler.ts`'s `filter`).
+    Reached,
+    /// At most one: upstream's observers `find` one tier per event.
+    OnePerWrite,
+    /// At most one per step gained: a write standing for several upstream
+    /// events of one step each (a recount).
+    OnePerStep,
+}
+
 /// What [`apply_progress`] did.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Applied {
@@ -124,6 +137,21 @@ pub async fn apply_progress<F>(
     address: &Address,
     badge_id: &str,
     options: &ApplyOptions<'_>,
+    update: F,
+) -> Result<Applied, sqlx::Error>
+where
+    F: FnOnce(&mut Progress),
+{
+    apply_progress_granting(conn, address, badge_id, options, TierGrant::Reached, update).await
+}
+
+/// [`apply_progress`] achieving the reached tiers `grant` allows.
+pub async fn apply_progress_granting<F>(
+    conn: &mut PgConnection,
+    address: &Address,
+    badge_id: &str,
+    options: &ApplyOptions<'_>,
+    grant: TierGrant,
     update: F,
 ) -> Result<Applied, sqlx::Error>
 where
@@ -194,15 +222,24 @@ where
     let mut progress = before.clone();
     update(&mut progress);
 
+    let cap = match grant {
+        TierGrant::Reached => usize::MAX,
+        TierGrant::OnePerWrite => 1,
+        TierGrant::OnePerStep => {
+            usize::try_from(progress.steps.saturating_sub(steps_before)).unwrap_or(0)
+        }
+    };
     let new_tiers: Vec<&Tier> = tiers
         .iter()
         .filter(|t| t.steps <= progress.steps && !achieved.contains(&t.tier_id))
+        .take(cap)
         .collect();
+    let held = |t: &Tier| {
+        achieved.contains(&t.tier_id) || new_tiers.iter().any(|n| n.tier_id == t.tier_id)
+    };
     let complete_now = completed_at.is_none()
         && if is_tier {
-            tiers
-                .iter()
-                .all(|t| achieved.contains(&t.tier_id) || t.steps <= progress.steps)
+            tiers.iter().all(held)
         } else {
             progress.steps >= criteria_steps.unwrap_or(1)
         };
@@ -214,7 +251,7 @@ where
     let last_tier = tiers
         .iter()
         .rev()
-        .find(|t| achieved.contains(&t.tier_id) || t.steps <= progress.steps)
+        .find(|t| held(t))
         .map(|t| t.tier_id.clone());
     for tier in &new_tiers {
         sqlx::query(
