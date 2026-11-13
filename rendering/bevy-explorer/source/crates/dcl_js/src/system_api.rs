@@ -18,10 +18,11 @@ use system_bridge::{
     BlockingStatusData, ChatMessage, ChatReactionData, CommunityMemberConnectivityData,
     CommunityVoiceUpdate, ConnectivitySnapshot, DmHistoryEntryData, DmUserStateData,
     FriendConnectivityEvent, FriendData, FriendRequestData, FriendStatusData,
-    FriendshipEventUpdate, HomeScene, HoverEvent, LiveSceneInfo, PermanentPermissionItem,
-    PermissionRequestEvent, PhotoModeState, PortableInfo, ProfileChangedEvent, ProximityEvent,
-    SatelliteView, SceneLoadingUi, SetAvatarData, SetPermanentPermission, SetSinglePermission,
-    SystemApi, VoiceChatAction, VoiceChatState, VoiceMessage, WelcomeState, WorldAccessEvent,
+    FriendshipEventUpdate, HomeScene, HoverEvent, LiveSceneInfo, OutfitThumbnailData, OutfitsData,
+    PermanentPermissionItem, PermissionRequestEvent, PhotoModeState, PortableInfo,
+    ProfileChangedEvent, ProximityEvent, SatelliteView, SceneLoadingUi, SetAvatarData,
+    SetPermanentPermission, SetSinglePermission, SystemApi, VoiceChatAction, VoiceChatState,
+    VoiceMessage, WelcomeState, WorldAccessEvent,
 };
 use tokio::sync::Notify;
 
@@ -98,7 +99,7 @@ pub struct NewLogin {
     result: Option<RpcResultReceiver<Result<(), String>>>,
 }
 
-pub fn new_login(state: &mut impl State) -> &mut NewLogin {
+pub fn new_login(state: &mut impl State) -> Result<&mut NewLogin, anyhow::Error> {
     if !state.has::<NewLogin>() {
         state.put(NewLogin::default());
     }
@@ -108,17 +109,20 @@ pub fn new_login(state: &mut impl State) -> &mut NewLogin {
     if login.code.is_none() && login.result.is_none() {
         let (sc, code) = RpcResultSender::channel();
         let (sx, result) = RpcResultSender::channel();
-        state
+        let sent = state
             .borrow_mut::<SuperUserScene>()
-            .send(SystemApi::LoginNew(false, sc, sx))
-            .unwrap();
+            .send(SystemApi::LoginNew(false, sc, sx));
+        if sent.is_err() {
+            state.put(login);
+            anyhow::bail!("the engine is not accepting login requests");
+        }
 
         login.code = Some(code);
         login.result = Some(result);
     }
 
     state.put(login);
-    state.borrow_mut()
+    Ok(state.borrow_mut())
 }
 
 pub async fn op_login_new_code(
@@ -128,9 +132,10 @@ pub async fn op_login_new_code(
 
     let rx = {
         let mut state = state.borrow_mut();
-        let login = new_login(&mut *state);
-        login.code.take().unwrap()
-    };
+        let login = new_login(&mut *state)?;
+        login.code.take()
+    }
+    .ok_or_else(|| anyhow::anyhow!("this login's code was already requested"))?;
 
     rx.await
         .map_err(|e| anyhow::anyhow!(e))?
@@ -143,9 +148,10 @@ pub async fn op_login_new_success(state: Rc<RefCell<impl State>>) -> Result<(), 
 
     let rx = {
         let mut state = state.borrow_mut();
-        let login = new_login(&mut *state);
-        login.result.take().unwrap()
-    };
+        let login = new_login(&mut *state)?;
+        login.result.take()
+    }
+    .ok_or_else(|| anyhow::anyhow!("this login's result was already requested"))?;
 
     rx.await
         .map_err(|e| anyhow::anyhow!(e))?
@@ -241,6 +247,44 @@ pub async fn op_set_avatar(
         .send(SystemApi::SetAvatar(avatar, sx))?;
 
     rx.await?.map_err(|e| anyhow::anyhow!(e))
+}
+
+pub async fn op_deploy_outfits(
+    state: Rc<RefCell<impl State>>,
+    address: String,
+    outfits: OutfitsData,
+) -> Result<(), anyhow::Error> {
+    let (sx, rx) = RpcResultSender::channel();
+    state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::DeployOutfits(address, outfits, sx))?;
+    rx.await?.map_err(|e| anyhow::anyhow!(e))
+}
+
+pub async fn op_get_outfit_thumbnails(
+    state: Rc<RefCell<impl State>>,
+    address: String,
+) -> Result<Vec<OutfitThumbnailData>, anyhow::Error> {
+    let (sx, rx) = RpcResultSender::channel();
+    state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::GetOutfitThumbnails(address, sx))?;
+    rx.await.map_err(|e| anyhow::anyhow!(e))
+}
+
+pub fn op_set_outfit_thumbnail(
+    state: Rc<RefCell<impl State>>,
+    address: String,
+    slot: u32,
+    thumbnail: Option<String>,
+) {
+    // a closed channel means the engine is shutting down
+    let _ = state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::SetOutfitThumbnail(address, slot, thumbnail));
 }
 
 pub async fn op_native_input(state: Rc<RefCell<impl State>>) -> String {

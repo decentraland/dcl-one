@@ -121,6 +121,25 @@ module.exports.setAvatar = async function(avatar) {
     return await Deno.core.ops.op_set_avatar(avatar)
 }
 
+// signs and deploys the local player's catalyst `outfits` entity; refused when `address` is not
+// the signed-in account
+// outfits: { outfits: [{ slot, outfit: { bodyShape, eyes, hair, skin, wearables, forceRender } }], namesForExtraSlots }
+module.exports.deployOutfits = async function(address, outfits) {
+    return await Deno.core.ops.op_deploy_outfits(address, outfits)
+}
+
+// the local player's saved outfit pictures on this device => [{ slot, thumbnail }]; none when
+// `address` is not the signed-in account
+module.exports.getOutfitThumbnails = async function(address) {
+    return await Deno.core.ops.op_get_outfit_thumbnails(address)
+}
+
+// stores (a PNG data URL) or removes (null) one slot's picture; ignored when `address` is not the
+// signed-in account
+module.exports.setOutfitThumbnail = function(address, slot, thumbnail) {
+    Deno.core.ops.op_set_outfit_thumbnail(address, slot, thumbnail ?? null)
+}
+
 // any user's full profile (own, nearby or remote), resolved through the engine's profile cache
 // and fetch cascade. Rejects if the address can't be resolved.
 // address: string => SerializedProfile

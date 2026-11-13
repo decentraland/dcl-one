@@ -13,7 +13,7 @@ the public photo share page and `CameraReel` identifies the API that serves phot
 On desktop, native HTTP Fetch from the bundled bridge or a system scene selected by the
 operator can use loopback and LAN services outside preview. It uses the existing scene client
 and address policy with private-network access enabled. Link-local and metadata addresses
-remain blocked. Native scene WebSockets permit private resolved addresses only in preview.
+remain blocked. Native scene WebSockets apply the same private-network rule as native Fetch.
 The authoritative server and ordinary scenes use their existing scene network policies.
 
 A hostname beginning with `gateway.` selects the gateway virtual-host layout.

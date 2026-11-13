@@ -1,10 +1,8 @@
 use std::{
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::{Arc, Mutex},
-    time::Duration,
 };
 
-use base64::{prelude::BASE64_URL_SAFE_NO_PAD, Engine};
 use bevy::{
     prelude::*,
     tasks::{IoTaskPool, Task},
@@ -20,7 +18,6 @@ use ipfs::{
     ipfs_path::{IpfsPath, IpfsType},
     EntityDefinition, IpfsAssetServer,
 };
-use multihash_codetable::MultihashDigest;
 
 use crate::{
     initialize_scene::{LiveScenes, PointerResult, ScenePointers, SuperUserScene},
@@ -38,9 +35,29 @@ impl Plugin for SceneUtilPlugin {
         app.add_preview_console_command::<DebugDumpScene, _>(debug_dump_scene);
         app.add_console_command::<ReloadCommand, _>(reload_command);
         rapid_reload::register(app);
-        app.add_preview_console_command::<ClearStoreCommand, _>(clear_store_command);
         app.add_systems(Update, (console_relay, handle_preview_command));
     }
+}
+
+/// Scenes get no persistent storage; removes the folders older builds kept it in. The client and
+/// headless apps register this, not a plugin, so test apps never touch the real user profile.
+pub fn remove_scene_storage() {
+    let (Some(dirs), Some(pool)) = (platform::project_directories(), IoTaskPool::try_get()) else {
+        return;
+    };
+    // `LocalStorage_delete` is left by an interrupted `/clear_store` of those builds.
+    let folders =
+        ["LocalStorage", "LocalStorage_delete"].map(|name| dirs.data_local_dir().join(name));
+    pool.spawn(async move {
+        for folder in folders {
+            match std::fs::remove_dir_all(&folder) {
+                Ok(()) => info!("removed scene storage at {folder:?}"),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => warn!("could not remove scene storage at {folder:?}: {e}"),
+            }
+        }
+    })
+    .detach();
 }
 
 #[derive(Resource)]
@@ -259,76 +276,6 @@ impl ParcelReloadTarget<'_, '_> {
 
 fn reload_hash(scenes: &mut LiveScenes, hash: &str) -> bool {
     scenes.scenes.remove(hash).is_some()
-}
-
-#[derive(clap::Parser, ConsoleCommand)]
-#[command(name = "/clear_store")]
-struct ClearStoreCommand {
-    hash: Option<String>,
-}
-
-fn clear_store_command(
-    mut input: ConsoleCommand<ClearStoreCommand>,
-    mut live_scenes: ResMut<LiveScenes>,
-    contexts: Query<&RendererSceneContext>,
-    mut clear_task: Local<Option<Task<()>>>,
-) {
-    if let Some(mut task) = clear_task.take() {
-        if task.complete().is_some() {
-            live_scenes.block_new_scenes = false;
-        } else {
-            *clear_task = Some(task);
-            return;
-        }
-    }
-
-    let mut remove = |parent: &Path, file: &str| {
-        let storage_folder = parent.join(file);
-
-        if std::fs::exists(&storage_folder).unwrap_or_default() {
-            let temp = parent.join(format!("{file}_delete"));
-            *clear_task = Some(IoTaskPool::get().spawn(async move {
-                while let Err(e) = std::fs::rename(&storage_folder, &temp) {
-                    warn!("can't rename {temp:?}: {e}");
-                    async_std::task::sleep(Duration::from_millis(500)).await;
-                }
-
-                while let Err(e) = std::fs::remove_dir_all(&temp) {
-                    warn!("can't delete {temp:?}: {e}");
-                    async_std::task::sleep(Duration::from_millis(500)).await;
-                }
-            }));
-        }
-    };
-
-    if let Some(Ok(ClearStoreCommand { hash })) = input.take() {
-        let Some(project_directories) = platform::project_directories() else {
-            warn!("not implemented");
-            return;
-        };
-
-        if let Some(hash) = hash {
-            if let Some(ctx) = live_scenes
-                .scenes
-                .remove(&hash)
-                .and_then(|e| contexts.get(e).ok())
-            {
-                let storage_digest =
-                    multihash_codetable::Code::Sha2_256.digest(ctx.storage_root.as_bytes());
-                let storage_hash = BASE64_URL_SAFE_NO_PAD.encode(storage_digest.digest());
-                remove(
-                    &project_directories.data_local_dir().join("LocalStorage"),
-                    &storage_hash,
-                );
-            }
-            live_scenes.block_new_scenes = clear_task.is_some();
-        } else {
-            // all
-            live_scenes.scenes.clear();
-            remove(project_directories.data_local_dir(), "LocalStorage");
-            live_scenes.block_new_scenes = clear_task.is_some();
-        }
-    }
 }
 
 fn handle_preview_command(

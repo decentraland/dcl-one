@@ -40,9 +40,28 @@ pub fn terminate_scene(scene_id: SceneId) {
     }
 }
 
-/// must be called from main thread on linux before any isolates are created
+static PLATFORM_READY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Initialises V8's protected platform. Call it on the main thread before any scene thread
+/// is spawned: on hosts with memory protection keys, an isolate may only run on a thread
+/// descending from the one that initialised the platform.
 pub fn init_runtime() {
-    let _ = deno_core::v8::Platform::new(1, false);
+    deno_core::JsRuntime::init_platform(None);
+    PLATFORM_READY.store(true, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// libtest runs each test on a sibling thread, so tests use the unprotected platform. It
+/// does not drain V8's own foreground tasks (deno_core's platform hooks are private), which
+/// no test relies on.
+#[cfg(test)]
+pub(crate) fn test_platform() {
+    static INIT: std::sync::Once = std::sync::Once::new();
+    INIT.call_once(|| {
+        deno_core::JsRuntime::init_platform(Some(
+            deno_core::v8::new_unprotected_default_platform(0, false).make_shared(),
+        ));
+        PLATFORM_READY.store(true, std::sync::atomic::Ordering::SeqCst);
+    });
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -60,6 +79,13 @@ pub fn spawn_scene(
 ) -> UnboundedSender<RendererResponse> {
     let id = scene_context.scene_id;
     let (main_sx, thread_rx) = tokio::sync::mpsc::unbounded_channel::<RendererResponse>();
+
+    // V8 would otherwise initialise the platform lazily on the first scene thread, which
+    // the next scene thread does not descend from.
+    if !PLATFORM_READY.load(std::sync::atomic::Ordering::SeqCst) {
+        bevy::log::error!("init_runtime was not called before the first scene; calling it now");
+        init_runtime();
+    }
 
     std::thread::Builder::new()
         .name(format!("scene thread {:?}", id.0))

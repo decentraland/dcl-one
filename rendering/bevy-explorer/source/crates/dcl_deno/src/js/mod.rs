@@ -1,6 +1,6 @@
-use std::{cell::RefCell, collections::HashMap, rc::Rc, time::Duration};
+use crate::js::errors::{generic_error, OpError};
+use std::{cell::RefCell, collections::HashMap, rc::Rc, sync::Arc, time::Duration};
 
-use base64::{prelude::BASE64_URL_SAFE_NO_PAD, Engine};
 use bevy::log::{debug, error, info_span};
 use common::structs::GlobalCrdtStateUpdate;
 use dcl_js::{
@@ -12,16 +12,11 @@ use dcl_types::{
     RendererResponse, RpcCalls, SceneResourceCounters, SceneResponse, SceneResponseSender,
 };
 use deno_core::{
-    anyhow::anyhow,
-    ascii_str,
-    error::{generic_error, AnyError},
-    include_js_files, op2, v8, Extension, JsRuntime, OpDecl, OpState, PollEventLoopOptions,
-    RuntimeOptions,
+    ascii_str, error::AnyError, op2, v8, Extension, JsRuntime, OpDecl, OpState,
+    PollEventLoopOptions, RuntimeOptions,
 };
-use multihash_codetable::MultihashDigest;
-use platform::project_directories;
 use system_bridge::SystemApi;
-use tokio::{sync::mpsc::UnboundedReceiver, time::timeout};
+use tokio::sync::mpsc::UnboundedReceiver;
 
 use common::structs::SceneJsFile;
 
@@ -33,116 +28,94 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 #[cfg(not(feature = "inspect"))]
 pub struct InspectorServer;
 
-use self::{
-    fetch::{FP, NP, TP},
-    websocket::WebSocketPerms,
-};
-
+mod blob_store;
+mod errors;
 pub mod fetch;
+mod hardened_ops;
 #[cfg(feature = "inspect")]
 pub mod inspector;
-pub mod local_storage;
+mod isolate_hooks;
 pub mod op_wrappers;
+mod plain;
+mod sources;
+mod stream_resource;
 pub mod websocket;
+
+// a smaller heap cap for the runtimes this test thread creates
+#[cfg(test)]
+thread_local! {
+    static TEST_HEAP_LIMIT: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+    static TEST_ARRAY_BUFFER_LIMIT: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+}
 
 pub fn create_runtime(
     inspect: bool,
     super_user: bool,
-    storage_root: &str,
-    preview: bool,
     kill_flag: KillFlag,
 ) -> (JsRuntime, Option<InspectorServer>) {
-    // add fetch stack
-    let net = deno_net::deno_net::init_ops_and_esm::<NP>(None, None);
-    let web = deno_web::deno_web::init_ops_and_esm::<TP>(
-        std::sync::Arc::new(deno_web::BlobStore::default()),
-        None,
-    );
-    let webidl = deno_webidl::deno_webidl::init_ops_and_esm();
-    let url = deno_url::deno_url::init_ops_and_esm();
-    let console = deno_console::deno_console::init_ops_and_esm();
-    let fetch = deno_fetch::deno_fetch::init_ops_and_esm::<FP>(deno_fetch::Options::default());
-    let websocket = deno_websocket::deno_websocket::init_ops_and_esm::<WebSocketPerms>(
-        "bevy-explorer".to_owned(),
-        None,
-        None,
-    );
+    #[cfg(test)]
+    crate::test_platform();
 
-    let storage_digest = multihash_codetable::Code::Sha2_256.digest(storage_root.as_bytes());
-    let storage_hash = BASE64_URL_SAFE_NO_PAD.encode(storage_digest.digest());
-    let storage_folder = project_directories()
-        .unwrap()
-        .data_local_dir()
-        .join("LocalStorage")
-        .join(storage_hash);
-    let webstorage = deno_webstorage::deno_webstorage::init_ops_and_esm(Some(storage_folder));
+    // per runtime, so no Blob or BroadcastChannel state is shared between scenes
+    let blob_store = Arc::new(blob_store::CappedBlobStore::default());
+    let [webidl, web, fetch_ext] = web_extensions(blob_store.clone());
 
-    let mut ops = vec![op_require(), op_log(), op_error()];
+    let ops = own_ops(super_user);
+    let mut op_map: HashMap<_, _> = ops.iter().map(|op| (op.name, *op)).collect();
 
-    let op_sets: [Vec<deno_core::OpDecl>; 14] = [
-        op_wrappers::engine::ops(),
-        op_wrappers::restricted_actions::ops(),
-        op_wrappers::runtime::ops(),
-        fetch::ops(),
-        op_wrappers::portables::ops(),
-        op_wrappers::user_identity::ops(),
-        op_wrappers::player::ops(),
-        op_wrappers::events::ops(),
-        op_wrappers::comms::ops(),
-        op_wrappers::comms_api::ops(),
-        op_wrappers::testing::ops(),
-        op_wrappers::ethereum_controller::ops(),
-        op_wrappers::adaption_layer_helper::ops(),
-        op_wrappers::system_api::ops(super_user),
+    let override_sets: [Vec<deno_core::OpDecl>; 2] = [
+        hardened_ops::override_ops(),
+        stream_resource::override_ops(),
     ];
 
-    // add plugin registrations
-    let mut op_map = HashMap::new();
-    for set in op_sets {
-        for op in &set {
-            // explicitly record the ones we added so we can remove deno_fetch imposters
-            op_map.insert(op.name, *op);
-        }
-        ops.extend(set);
-    }
-
-    let override_sets: [Vec<deno_core::OpDecl>; 3] = [
-        fetch::override_ops(),
-        websocket::override_ops(),
-        local_storage::override_ops(),
-    ];
-
+    let mut overrides = HashMap::new();
     for set in override_sets {
         for op in set {
-            // explicitly record the ones we added so we can remove deno_fetch imposters
             op_map.insert(op.name, op);
+            overrides.insert(op.name, op);
         }
     }
-
-    let mut esm_files = include_js_files!(
-        BevyExplorer
-        dir "../dcl_js/src/modules",
-    )
-    .to_vec();
-
-    esm_files.extend(include_js_files!(
-        BevyExplorer
-        dir "src/js/modules",
-        "init.js",
+    // the middleware keeps the original's name and async-ness, so check each override fits
+    let pending_overrides = Rc::new(RefCell::new(overrides));
+    let pending_disabled = Rc::new(RefCell::new(
+        hardened_ops::DISABLED_OPS
+            .iter()
+            .copied()
+            .collect::<std::collections::HashSet<_>>(),
     ));
+    let override_problems = Rc::new(RefCell::new(Vec::new()));
 
     let ext = Extension {
         name: "decentraland",
         ops: ops.into(),
-        esm_files: esm_files.into(),
+        esm_files: sources::own().into(),
         esm_entry_point: Some("ext:BevyExplorer/init.js"),
-        middleware_fn: Some(Box::new(move |op: OpDecl| -> OpDecl {
-            if let Some(custom_op) = op_map.get(&op.name) {
-                debug!("replace: {}", op.name);
-                op.with_implementation_from(custom_op)
-            } else {
-                debug!("default: {}", op.name);
-                op
+        global_template_middleware: Some(hardened_ops::mark_timer_origin),
+        middleware_fn: Some(Box::new({
+            let pending_overrides = pending_overrides.clone();
+            let pending_disabled = pending_disabled.clone();
+            let override_problems = override_problems.clone();
+            move |op: OpDecl| -> OpDecl {
+                if pending_disabled.borrow_mut().remove(op.name) {
+                    debug!("disable: {}", op.name);
+                    return op.disable();
+                }
+                if let Some(custom_op) = pending_overrides.borrow_mut().remove(op.name) {
+                    // `arg_count` also counts state and scope parameters, so only async-ness compares
+                    if custom_op.is_async != op.is_async {
+                        override_problems.borrow_mut().push(format!(
+                            "override {} differs from the original in async-ness",
+                            op.name
+                        ));
+                    }
+                }
+                if let Some(custom_op) = op_map.get(&op.name) {
+                    debug!("replace: {}", op.name);
+                    op.with_implementation_from(custom_op)
+                } else {
+                    debug!("default: {}", op.name);
+                    op
+                }
             }
         })),
         ..Default::default()
@@ -153,31 +126,68 @@ pub fn create_runtime(
     // OOM-killing the shared sidecar (and every co-tenant scene with it). The near-limit
     // callback below terminates just that isolate instead of aborting the process.
     const MAX_SCENE_HEAP_BYTES: usize = 512 * 1024 * 1024;
+    // granted on each near-limit trip while the scene is being terminated
+    const HEAP_LIMIT_MARGIN: usize = 128 * 1024 * 1024;
+    #[cfg(not(test))]
+    let max_heap = MAX_SCENE_HEAP_BYTES;
+    #[cfg(test)]
+    let max_heap = TEST_HEAP_LIMIT.get().unwrap_or(MAX_SCENE_HEAP_BYTES);
+    // ArrayBuffers live outside the heap; past this an allocation fails, and V8 may then end
+    // the scene as it does at the heap cap. Memory ops hold natively (Blob parts, stream
+    // buffers, fetch bodies) has its own caps.
+    const MAX_SCENE_ARRAY_BUFFER_BYTES: usize = 512 * 1024 * 1024;
+    #[cfg(not(test))]
+    let max_array_buffers = MAX_SCENE_ARRAY_BUFFER_BYTES;
+    #[cfg(test)]
+    let max_array_buffers = TEST_ARRAY_BUFFER_LIMIT
+        .get()
+        .unwrap_or(MAX_SCENE_ARRAY_BUFFER_BYTES);
+    let (array_buffer_allocator, array_buffers) =
+        isolate_hooks::array_buffer_allocator(max_array_buffers);
 
     // create runtime
     #[allow(unused_mut)]
     let mut runtime = JsRuntime::new(RuntimeOptions {
-        extensions: vec![
-            webidl, url, console, web, net, fetch, websocket, webstorage, ext,
-        ],
+        extensions: vec![webidl, web, fetch_ext, ext],
         inspector: inspect,
         create_params: Some(
-            deno_core::v8::CreateParams::default().heap_limits(0, MAX_SCENE_HEAP_BYTES),
+            deno_core::v8::CreateParams::default()
+                .heap_limits(0, max_heap)
+                .array_buffer_allocator(array_buffer_allocator.make_shared()),
         ),
         ..Default::default()
     });
+    isolate_hooks::install(runtime.v8_isolate());
 
-    // Deno extension permission objects. These must be in the op state from the moment the
-    // runtime exists: the ops that consult them look the type up unconditionally, and a
-    // missing type is itself a panic -- which across the V8 boundary aborts the process
-    // rather than raising a JS error. Put here rather than at scene setup so no entry point
-    // can forget them.
     {
         let state = runtime.op_state();
         let mut state = state.borrow_mut();
-        state.put(TP);
-        state.put(NP);
-        state.put(WebSocketPerms { preview });
+        state.put(hardened_ops::take_timer_origin());
+        state.put(blob_store);
+        state.put(array_buffers);
+    }
+
+    {
+        let mut problems = override_problems.take();
+        problems.extend(
+            pending_overrides
+                .borrow()
+                .keys()
+                .map(|name| format!("override {name} replaces no registered op")),
+        );
+        problems.extend(
+            pending_disabled
+                .borrow()
+                .iter()
+                .map(|name| format!("disabled op {name} is not registered")),
+        );
+        for problem in &problems {
+            error!("{problem}");
+        }
+        runtime
+            .op_state()
+            .borrow_mut()
+            .put(OpOverrideProblems(problems));
     }
 
     // On approaching the cap, terminate this isolate's execution so its JS unwinds and the
@@ -189,7 +199,9 @@ pub fn create_runtime(
         runtime.add_near_heap_limit_callback(move |current, _initial| {
             let first_trip = !granted.swap(true, std::sync::atomic::Ordering::SeqCst);
             if first_trip {
-                bevy::prelude::error!("scene exceeded its {MAX_SCENE_HEAP_BYTES}-byte heap cap; terminating the scene isolate");
+                bevy::prelude::error!(
+                    "scene exceeded its {max_heap}-byte heap cap; terminating the scene isolate"
+                );
             }
             // termination alone only unwinds the current js: the heap stays rooted by the
             // scene globals and the scene loop keeps ticking through uncaught errors, so it
@@ -197,14 +209,13 @@ pub fn create_runtime(
             // drops the runtime and actually releases the heap.
             kill_flag.kill();
             terminate_handle.terminate_execution();
-            if first_trip {
-                // one-time margin so the termination unwind can run rather than hard-aborting
-                current + 8 * 1024 * 1024
-            } else {
-                // kill already latched: stop re-granting, so a scene that keeps allocating
-                // through termination can't ratchet the cap upward on every callback
-                current
-            }
+            // V8 aborts the process if an allocation in flight still does not fit, and the
+            // termination only runs once it does, so every trip grants a margin. The ceiling
+            // bounds what a scene that keeps allocating through termination can reach.
+            current
+                .saturating_add(HEAP_LIMIT_MARGIN)
+                .min(max_heap.saturating_mul(2))
+                .max(current)
         });
     }
 
@@ -232,7 +243,57 @@ pub fn create_runtime(
     }
 }
 
-pub struct StorageRoot(pub String);
+/// The ops this crate registers; every other op comes from deno_core, deno_webidl or deno_web.
+fn own_ops(super_user: bool) -> Vec<OpDecl> {
+    let mut ops = vec![op_require(), op_log(), op_error()];
+    for set in [
+        op_wrappers::engine::ops(),
+        op_wrappers::restricted_actions::ops(),
+        op_wrappers::runtime::ops(),
+        fetch::ops(),
+        op_wrappers::portables::ops(),
+        op_wrappers::user_identity::ops(),
+        op_wrappers::player::ops(),
+        op_wrappers::events::ops(),
+        op_wrappers::comms::ops(),
+        op_wrappers::comms_api::ops(),
+        op_wrappers::testing::ops(),
+        op_wrappers::ethereum_controller::ops(),
+        op_wrappers::adaption_layer_helper::ops(),
+        op_wrappers::system_api::ops(super_user),
+        websocket::ops(),
+    ] {
+        ops.extend(set);
+    }
+    ops
+}
+
+/// deno_webidl, deno_web and the vendored fetch scripts, with every script compiled in.
+fn web_extensions(blob_store: Arc<blob_store::CappedBlobStore>) -> [Extension; 3] {
+    let mut webidl = deno_webidl::deno_webidl::init();
+    let mut web = deno_web::deno_web::init(
+        blob_store,
+        None,
+        false,
+        deno_web::InMemoryBroadcastChannel::default(),
+    );
+    // The cppgc class constructors (DOMMatrix, ImageData, CSSStyleSheet, ...) wrap whatever
+    // `this` they are called on, so calling one without `new` corrupts the V8 heap. Scenes
+    // get none of these classes.
+    web.objects = Default::default();
+    sources::embed_upstream(&mut webidl);
+    sources::embed_upstream(&mut web);
+    let fetch = Extension {
+        name: "deno_fetch",
+        lazy_loaded_js_files: sources::deno_fetch().into(),
+        ..Default::default()
+    };
+    [webidl, web, fetch]
+}
+
+/// Overrides that did not replace an op exactly, logged at runtime creation.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) struct OpOverrideProblems(pub Vec<String>);
 
 // main scene processing thread - constructs an isolate and runs the scene
 #[allow(clippy::too_many_arguments)]
@@ -250,15 +311,16 @@ pub(crate) fn scene_thread(
     scene_origin: bevy::prelude::Vec3,
 ) {
     let scene_id = scene_context.scene_id;
-    let preview = scene_context.preview;
     let kill_flag = KillFlag::default();
-    let (mut runtime, inspector) = create_runtime(
-        inspect,
-        super_user.is_some(),
-        &storage_root,
-        preview,
-        kill_flag.clone(),
-    );
+    // V8 posts delayed tasks onto the tokio runtime that is current when the isolate is
+    // created, and aborts the process if there is none.
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .enable_io()
+        .build()
+        .unwrap();
+    let _rt_guard = rt.enter();
+    let (mut runtime, inspector) = create_runtime(inspect, super_user.is_some(), kill_flag.clone());
 
     // store handle
     let vm_handle = runtime.v8_isolate().thread_safe_handle();
@@ -298,15 +360,8 @@ pub(crate) fn scene_thread(
 
         runtime
             .inspector()
-            .borrow_mut()
             .wait_for_session_and_break_on_next_statement();
     }
-
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .enable_io()
-        .build()
-        .unwrap();
 
     // The first interval includes every startup operation counted below.
     let metrics_started = std::time::Instant::now();
@@ -391,8 +446,7 @@ pub(crate) fn scene_thread(
         // Only completed work publishes a sample. A hung update leaves a gap.
         // Sample heap and retained payloads together; these walks run at most every 5s.
         if last_stats.elapsed() >= Duration::from_secs(5) {
-            let mut heap = v8::HeapStatistics::default();
-            runtime.v8_isolate().get_heap_statistics(&mut heap);
+            let heap = runtime.v8_isolate().get_heap_statistics();
             let mut guard = state.borrow_mut();
             let stores = [
                 guard.borrow::<CrdtStore>(),
@@ -527,11 +581,11 @@ async fn run_script(
     runtime: &mut JsRuntime,
     script: &v8::Global<v8::Value>,
     fn_name: &str,
-    arg_fn: impl for<'a> Fn(&mut v8::HandleScope<'a>) -> Vec<v8::Local<'a, v8::Value>>,
+    arg_fn: impl for<'a, 'i> Fn(&mut v8::PinScope<'a, 'i>) -> Vec<v8::Local<'a, v8::Value>>,
 ) -> Result<(), AnyError> {
     // set up scene i/o
     let promise = {
-        let scope = &mut runtime.handle_scope();
+        deno_core::scope!(scope, runtime);
         let script_this = v8::Local::new(scope, script.clone());
         // get module
         let script = v8::Local::<v8::Object>::try_from(script_this).unwrap();
@@ -566,22 +620,12 @@ async fn run_script(
 
     let f = runtime.resolve(promise);
 
-    let result = if true {
-        runtime
-            .with_event_loop_promise(f, PollEventLoopOptions::default())
-            .await
-            .map(|_| ())
-    } else {
-        timeout(
-            Duration::from_secs(30),
-            runtime.with_event_loop_promise(f, PollEventLoopOptions::default()),
-        )
+    let result = runtime
+        .with_event_loop_promise(f, PollEventLoopOptions::default())
         .await
-        .map_err(|_| anyhow!("script timed out"))?
-        .map(|_| ())
-    };
+        .map(|_| ());
 
-    result
+    Ok(result?)
 }
 
 // synchronously returns a string containing JS code from the file system
@@ -590,7 +634,7 @@ async fn run_script(
 fn op_require(
     state: Rc<RefCell<OpState>>,
     #[string] module_spec: String,
-) -> Result<String, deno_core::error::AnyError> {
+) -> Result<String, OpError> {
     debug!("require(\"{module_spec}\")");
 
     match module_spec.as_str() {
@@ -601,9 +645,7 @@ fn op_require(
             if state.borrow().try_borrow::<SuperUserScene>().is_some() {
                 Ok(include_str!("../../../dcl_js/src/modules/SystemApi.js").to_owned())
             } else {
-                Err(generic_error(format!(
-                    "invalid module request `{module_spec}`"
-                )))
+                Err(generic_error(format!("invalid module request `{module_spec}`")).into())
             }
         }
         // core module load
@@ -644,9 +686,7 @@ fn op_require(
         "~system/AdaptationLayerHelper" => {
             Ok(include_str!("../../../dcl_js/src/modules/AdaptationLayerHelper.js").to_owned())
         }
-        _ => Err(generic_error(format!(
-            "invalid module request `{module_spec}`"
-        ))),
+        _ => Err(generic_error(format!("invalid module request `{module_spec}`")).into()),
     }
 }
 
@@ -665,13 +705,46 @@ mod tests {
     mod system_scene_network {
         include!("system_scene_network_tests.rs");
     }
+    mod invalid_op_input {
+        include!("invalid_op_input_tests.rs");
+    }
+    mod websocket {
+        include!("websocket_tests.rs");
+    }
+    mod runtime_surface {
+        include!("runtime_surface_tests.rs");
+    }
+    mod isolate_hooks {
+        include!("isolate_hooks_tests.rs");
+    }
     use std::sync::Arc;
 
     use common::structs::SceneJsFile;
     use dcl_types::{interface::crdt_context::CrdtContext, SceneId};
     use deno_core::ascii_str;
 
-    use super::create_runtime;
+    use deno_core::JsRuntime;
+
+    use super::InspectorServer;
+
+    /// `super::create_runtime` inside a tokio runtime, which V8's delayed tasks need.
+    fn create_runtime(
+        inspect: bool,
+        super_user: bool,
+        kill_flag: dcl_js::KillFlag,
+    ) -> (JsRuntime, Option<InspectorServer>) {
+        static RT: std::sync::LazyLock<tokio::runtime::Runtime> = std::sync::LazyLock::new(|| {
+            tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(1)
+                .enable_time()
+                .build()
+                .unwrap()
+        });
+        let _guard = tokio::runtime::Handle::try_current()
+            .is_err()
+            .then(|| RT.enter());
+        super::create_runtime(inspect, super_user, kill_flag)
+    }
 
     fn context(is_server: bool) -> CrdtContext {
         CrdtContext::new(
@@ -688,8 +761,11 @@ mod tests {
     /// is evaluated (`op_require("~scene.js")` -> `evalContext`). A `throw` in the scene
     /// surfaces as `Err`.
     fn run_scene(is_server: bool, scene_js: &str) -> Result<(), String> {
-        let (mut runtime, _) =
-            create_runtime(false, false, "test-scene-realm", false, Default::default());
+        run_scene_as(false, is_server, scene_js)
+    }
+
+    fn run_scene_as(super_user: bool, is_server: bool, scene_js: &str) -> Result<(), String> {
+        let (mut runtime, _) = create_runtime(false, super_user, Default::default());
         {
             let state = runtime.op_state();
             let mut state = state.borrow_mut();
@@ -704,8 +780,7 @@ mod tests {
 
     #[test]
     fn signed_fetch_scene_module_queues_only_rust_computed_body_hashes() {
-        let (mut runtime, _) =
-            create_runtime(false, false, "test-signed-fetch", false, Default::default());
+        let (mut runtime, _) = create_runtime(false, false, Default::default());
         let op_state = runtime.op_state();
         op_state.borrow_mut().put(context(false));
         op_state.borrow_mut().put(dcl_types::RpcCalls::default());
@@ -772,7 +847,7 @@ mod tests {
                 ascii_str!("JSON.stringify({done: __done, sent: JSON.parse(__sent)})"),
             )
             .unwrap();
-        let scope = &mut runtime.handle_scope();
+        deno_core::scope!(scope, runtime);
         let result: serde_json::Value = serde_json::from_str(
             &deno_core::v8::Local::new(scope, value).to_rust_string_lossy(scope),
         )
@@ -827,6 +902,125 @@ mod tests {
         .unwrap();
     }
 
+    /// The server seal does not depend on built-ins scene code can replace: `require` hands
+    /// the internals to `~system/*` modules without passing them through any of them.
+    #[test]
+    fn the_seal_holds_when_the_scene_replaces_builtins() {
+        run_scene(
+            true,
+            r#"
+            const RA = Reflect.apply;
+            const reached = [];
+            const internal = (v) => {
+                if (v === null || (typeof v !== "object" && typeof v !== "function")) { return false; }
+                return "core" in v || "ops" in v
+                    || (typeof v.name === "string" && v.name.startsWith("op_"));
+            };
+            const check = (self, args) => {
+                if (internal(self)) { reached.push("this"); }
+                for (let i = 0; i < args.length; i++) {
+                    if (internal(args[i])) { reached.push(`argument ${i}`); }
+                }
+            };
+            const wrap = (target, key) => {
+                const original = target[key];
+                target[key] = function (...args) {
+                    check(this, args);
+                    return RA(original, this, args);
+                };
+            };
+            const bind = Function.prototype.bind;
+            Function.prototype.call = function (self, ...args) {
+                check(self, args);
+                return RA(this, self, args);
+            };
+            Function.prototype.apply = function (self, args) {
+                check(self, args || []);
+                return RA(this, self, args || []);
+            };
+            Function.prototype.bind = function (self, ...args) {
+                check(self, args);
+                return RA(bind, this, [self].concat(args));
+            };
+            Reflect.apply = function (f, self, args) {
+                check(self, args);
+                return RA(f, self, args);
+            };
+            const iterator = Array.prototype[Symbol.iterator];
+            Array.prototype[Symbol.iterator] = function () {
+                check(this, this);
+                return RA(iterator, this, []);
+            };
+            wrap(String.prototype, "replace");
+            wrap(String.prototype, "substring");
+            wrap(RegExp.prototype, Symbol.replace);
+            wrap(RegExp.prototype, "exec");
+
+            const engine = require("~system/EngineApi");
+            const testing = require("~system/Testing");
+            if (typeof engine.crdtSendToRenderer !== "function" || typeof testing.plan !== "function") {
+                throw new Error("a system module did not load");
+            }
+            if (reached.length > 0) { throw new Error(`internals reached scene code: ${reached}`); }
+            if (typeof Deno !== "undefined") { throw new Error("`Deno` is reachable"); }
+            "#,
+        )
+        .unwrap();
+    }
+
+    const HEAP_LIMIT_CHILD: &str = "DCL_DENO_HEAP_LIMIT_CHILD";
+
+    /// A scene over its heap limit is terminated, not the process. Large single allocations
+    /// at the cap are the hard case: each must fit before the termination can run. Runs in a
+    /// child process, so a fatal out-of-memory fails this test instead of the whole run.
+    #[test]
+    fn a_scene_over_its_heap_limit_is_terminated_not_the_process() {
+        if std::env::var_os(HEAP_LIMIT_CHILD).is_some() {
+            heap_limit_child();
+            return;
+        }
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "js::tests::a_scene_over_its_heap_limit_is_terminated_not_the_process",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env(HEAP_LIMIT_CHILD, "1")
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "the process did not survive ({}):\n{stdout}\n{stderr}",
+            output.status
+        );
+        assert!(
+            stdout.contains("1 passed"),
+            "the child test did not run:\n{stdout}\n{stderr}"
+        );
+    }
+
+    fn heap_limit_child() {
+        super::TEST_HEAP_LIMIT.set(Some(64 * 1024 * 1024));
+        // under the cap: runs to the end
+        run_scene(
+            false,
+            "globalThis.keep = []; for (let i = 0; i < 2; i++) { keep.push(new Array(1e6).fill(1.5)); }",
+        )
+        .unwrap();
+        // 24 MB and 40 MB allocations until the cap: terminated
+        for length in ["3e6", "5e6"] {
+            let err = run_scene(
+                false,
+                &format!("globalThis.keep = []; for (;;) {{ keep.push(new Array({length}).fill(1.5)); }}"),
+            )
+            .expect_err("the scene ran past its heap limit");
+            assert!(err.contains("terminated"), "{length}: {err}");
+        }
+    }
+
     /// The seal is scoped to the authoritative server on purpose: the desktop client runs on
     /// the user's own machine, and narrowing the change keeps preview and every deployed
     /// scene behaving exactly as they do today. Pinned so the scoping is a decision rather
@@ -840,119 +1034,109 @@ mod tests {
         .unwrap();
     }
 
-    /// `deno_net`'s ops are registered, unwrapped, and reachable from any scene that gets at
-    /// the ops table. They used to `panic!()` in the permission check -- across the V8
-    /// boundary that is `panic_cannot_unwind`, i.e. SIGABRT, and on the client one sidecar
-    /// hosts every scene and losing it exits the engine. It must be an ordinary JS error.
+    /// Scenes get no persistent browser storage, on the client or the server, system scenes
+    /// included.
     #[test]
-    fn raw_socket_ops_raise_instead_of_aborting() {
-        let err = run_scene(
-            false,
-            r#"Deno.core.ops.op_net_listen_tcp({ hostname: "127.0.0.1", port: 9999, transport: "tcp" }, false, false)"#,
-        )
-        .expect_err("raw socket access must be refused");
-        assert!(err.contains("raw socket access"), "unexpected error: {err}");
-    }
-
-    /// A scene-supplied proxy is dialled instead of the URL host, so it walks straight past
-    /// the per-request `assert_public_url` check -- the check only ever sees the URL. On the
-    /// authoritative server the option must be refused outright.
-    #[test]
-    fn server_refuses_a_scene_supplied_proxy() {
-        let (mut runtime, _) = create_runtime(
-            false,
-            false,
-            "test-custom-client",
-            false,
-            Default::default(),
-        );
-        runtime.op_state().borrow_mut().put(context(true));
-        let err = runtime
-            .execute_script(
-                "<test>",
-                ascii_str!(
-                    r#"Deno.core.ops.op_fetch_custom_client({ caCerts: [], proxy: { url: "http://169.254.169.254:80" } })"#
-                ),
+    fn scene_has_no_persistent_storage() {
+        for (super_user, is_server) in [(false, false), (false, true), (true, false)] {
+            run_scene_as(
+                super_user,
+                is_server,
+                r#"
+                for (const name of ["localStorage", "sessionStorage", "indexedDB", "caches"]) {
+                    if (typeof globalThis[name] !== "undefined") { throw new Error(`${name} is reachable`); }
+                }
+                if (typeof navigator !== "undefined" && typeof navigator.storage !== "undefined") {
+                    throw new Error("navigator.storage is reachable");
+                }
+                "#,
             )
-            .expect_err("proxy must be refused on the authoritative server")
-            .to_string();
-        assert!(err.contains("proxy"), "unexpected error: {err}");
+            .unwrap();
+        }
     }
 
-    /// Same for a scene-supplied trust root: it would make the scene a CA for the server's
-    /// own outbound TLS.
+    /// Scenes cannot create HTTP clients, so a client rid passed to `op_fetch` is refused.
     #[test]
-    fn server_refuses_scene_supplied_ca_certs() {
-        let (mut runtime, _) = create_runtime(
-            false,
-            false,
-            "test-custom-client-ca",
-            false,
-            Default::default(),
-        );
-        runtime.op_state().borrow_mut().put(context(true));
-        let err = runtime
-            .execute_script(
-                "<test>",
-                ascii_str!(
-                    r#"Deno.core.ops.op_fetch_custom_client({ caCerts: ["-----BEGIN CERTIFICATE-----"] })"#
-                ),
-            )
-            .expect_err("ca_certs must be refused on the authoritative server")
-            .to_string();
-        assert!(err.contains("root certificates"), "unexpected error: {err}");
+    fn op_fetch_refuses_a_client_rid() {
+        for is_server in [false, true] {
+            let (mut runtime, _) = create_runtime(false, false, Default::default());
+            runtime.op_state().borrow_mut().put(context(is_server));
+            runtime
+                .op_state()
+                .borrow_mut()
+                .put(dcl_types::SceneResourceCounters::default());
+            let err = runtime
+                .execute_script(
+                    "<test>",
+                    ascii_str!(
+                        r#"Deno.core.ops.op_fetch("GET", "https://example.org/", [], 0, false, null, null)"#
+                    ),
+                )
+                .expect_err("a client rid must be refused")
+                .to_string();
+            assert!(
+                err.contains("custom HTTP clients"),
+                "unexpected error: {err}"
+            );
+            let removed = runtime
+                .execute_script(
+                    "<test>",
+                    ascii_str!("typeof Deno.core.ops.op_fetch_custom_client"),
+                )
+                .unwrap();
+            deno_core::scope!(scope, runtime);
+            assert_eq!(
+                deno_core::v8::Local::new(scope, removed).to_rust_string_lossy(scope),
+                "undefined"
+            );
+        }
     }
 
-    /// The desktop/web client runs on the user's own machine and keeps the old behaviour --
-    /// this restriction is server-only.
-    #[test]
-    fn client_still_allows_custom_clients() {
-        let (mut runtime, _) = create_runtime(
-            false,
-            false,
-            "test-custom-client-clientmode",
-            false,
-            Default::default(),
-        );
-        runtime.op_state().borrow_mut().put(context(false));
-        runtime
-            .execute_script(
-                "<test>",
-                ascii_str!(
-                    r#"Deno.core.ops.op_fetch_custom_client({ caCerts: [], proxy: { url: "http://localhost:8080" } })"#
-                ),
-            )
-            .expect("client mode must keep working");
+    /// A local server on two listeners: `/redirect` answers a 302 to `/target` on the second,
+    /// which answers 200 `arrived`. Returns both ports.
+    fn redirect_servers() -> [u16; 2] {
+        recording_redirect_servers().0
     }
 
-    /// Drive one scene `fetch` against a local server that answers `/redirect` with a 302 to
-    /// `/target` on a second listener, and `/target` with a 200. Returns `"<status> <body>"`.
-    /// Loopback needs `preview`; the fetch permission request that `op_fetch_send` parks on is
-    /// granted from a plain thread, as the renderer would (`RpcResultSender::send` blocks).
-    fn fetch_redirect_outcome(is_server: bool) -> String {
+    /// One request as a server received it: its port, request line and headers.
+    pub(super) struct ReceivedRequest {
+        pub port: u16,
+        pub head: String,
+    }
+
+    /// [`redirect_servers`], plus `/same`, a 302 to `/target` on the same listener, and every
+    /// request each listener received, in arrival order.
+    pub(super) fn recording_redirect_servers(
+    ) -> ([u16; 2], Arc<std::sync::Mutex<Vec<ReceivedRequest>>>) {
         use std::io::{Read, Write};
         use std::net::TcpListener;
-        use std::sync::mpsc;
 
         let listeners = [
             TcpListener::bind("127.0.0.1:0").unwrap(),
             TcpListener::bind("127.0.0.1:0").unwrap(),
         ];
         let ports = listeners.each_ref().map(|l| l.local_addr().unwrap().port());
+        let received = Arc::new(std::sync::Mutex::new(Vec::new()));
         for listener in listeners {
             let target_port = ports[1];
+            let received = received.clone();
             std::thread::spawn(move || {
+                let port = listener.local_addr().unwrap().port();
                 for stream in listener.incoming() {
                     let mut stream = stream.unwrap();
                     let mut buf = [0u8; 4096];
                     let n = stream.read(&mut buf).unwrap();
-                    let path = String::from_utf8_lossy(&buf[..n])
-                        .split_whitespace()
-                        .nth(1)
-                        .unwrap_or("/")
-                        .to_owned();
+                    let request = String::from_utf8_lossy(&buf[..n]).into_owned();
+                    let head = request.split("\r\n\r\n").next().unwrap_or("").to_owned();
+                    let path = head.split_whitespace().nth(1).unwrap_or("/").to_owned();
+                    received
+                        .lock()
+                        .unwrap()
+                        .push(ReceivedRequest { port, head });
                     let response = if path == "/redirect" {
                         format!("HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:{target_port}/target\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                    } else if path == "/same" {
+                        format!("HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:{port}/target\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
                     } else {
                         "HTTP/1.1 200 OK\r\nContent-Length: 7\r\nConnection: close\r\n\r\narrived"
                             .to_owned()
@@ -961,14 +1145,21 @@ mod tests {
                 }
             });
         }
+        (ports, received)
+    }
 
-        let (mut runtime, _) = create_runtime(
-            false,
-            false,
-            "test-fetch-redirect",
-            true,
-            Default::default(),
-        );
+    /// Runs `script`, which must set `globalThis.__outcome`, in a preview scene (loopback needs
+    /// it) and returns the outcome. Fetch permission requests are granted from a plain thread,
+    /// as the renderer would (`RpcResultSender::send` blocks). `client` replaces the scene's
+    /// HTTP client.
+    pub(super) fn fetch_outcome(
+        is_server: bool,
+        client: Option<reqwest::Client>,
+        script: String,
+    ) -> String {
+        use std::sync::mpsc;
+
+        let (mut runtime, _) = create_runtime(false, false, Default::default());
         {
             let state = runtime.op_state();
             let mut state = state.borrow_mut();
@@ -984,6 +1175,9 @@ mod tests {
             state.put(dcl_types::RpcCalls::default());
             state.put(Vec::<dcl_types::SceneLogMessage>::default());
             state.put(dcl_types::SceneElapsedTime(0.0));
+            if let Some(client) = client {
+                state.put(super::fetch::SceneHttpClient(client));
+            }
         }
 
         let (grant_sx, grant_rx) = mpsc::channel::<common::rpc::RpcResultSender<bool>>();
@@ -993,18 +1187,12 @@ mod tests {
             }
         });
 
-        let js = format!(
-            r#"globalThis.__outcome = fetch("http://127.0.0.1:{}/redirect")
-                .then(async (r) => `${{r.status}} ${{await r.text()}}`, (e) => `error ${{e}}`)
-                .then((s) => globalThis.__outcome = s);"#,
-            ports[0]
-        );
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .unwrap();
         rt.block_on(async {
-            runtime.execute_script("<test>", js).unwrap();
+            runtime.execute_script("<test>", script).unwrap();
             let op_state = runtime.op_state();
             let grant_permissions = async {
                 loop {
@@ -1032,20 +1220,33 @@ mod tests {
         let outcome = runtime
             .execute_script("<test>", ascii_str!("String(globalThis.__outcome)"))
             .unwrap();
-        let scope = &mut runtime.handle_scope();
+        deno_core::scope!(scope, runtime);
         deno_core::v8::Local::new(scope, outcome).to_rust_string_lossy(scope)
     }
 
-    /// The server never auto-follows a redirect: the scene gets the 3xx back. (Following
-    /// would also need the `URL` global, which this runtime does not install -- pinned here
-    /// so the outcome is the policy, not that accident.)
+    /// One scene `fetch` of `/redirect`. Returns `"<status> <body>"`.
+    fn fetch_redirect_outcome(is_server: bool) -> String {
+        let ports = redirect_servers();
+        fetch_outcome(
+            is_server,
+            None,
+            format!(
+                r#"fetch("http://127.0.0.1:{}/redirect")
+                .then(async (r) => `${{r.status}} ${{await r.text()}}`, (e) => `error ${{e}}`)
+                .then((s) => globalThis.__outcome = s);"#,
+                ports[0]
+            ),
+        )
+    }
+
+    /// The server never follows a redirect: the scene gets the 3xx back.
     #[test]
     fn server_hands_redirects_back_to_the_scene() {
         let outcome = fetch_redirect_outcome(true);
         assert!(outcome.starts_with("302 "), "unexpected outcome: {outcome}");
     }
 
-    /// The client keeps following, like the browser does.
+    /// The client follows, like the browser does; each hop goes back through `op_fetch`.
     #[test]
     fn client_follows_redirects() {
         assert_eq!(fetch_redirect_outcome(false), "200 arrived");

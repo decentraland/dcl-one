@@ -279,7 +279,16 @@ pub struct SceneResourceCounters {
     pub fetch_status_3xx: u64,
     pub fetch_status_4xx: u64,
     pub fetch_status_5xx: u64,
+    /// Scene sockets held: connecting, open, and closing until the connection is dropped.
     pub ws_open: u64,
+    /// Sockets refused by policy: URL or scheme, address, socket cap or the user.
+    pub ws_refused: u64,
+    /// Sockets that passed policy and failed to connect: resolution, TCP, TLS, handshake, timeout.
+    pub ws_failed: u64,
+    pub ws_msgs_in: u64,
+    pub ws_bytes_in: u64,
+    pub ws_msgs_out: u64,
+    pub ws_bytes_out: u64,
     pub comms_msgs_in: u64,
     pub comms_bytes_in: u64,
     pub updates_completed: u64,

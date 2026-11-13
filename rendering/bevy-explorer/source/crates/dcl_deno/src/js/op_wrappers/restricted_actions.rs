@@ -1,7 +1,11 @@
+use crate::js::errors::OpError;
+use crate::js::plain::JsPlain;
 use dcl_component::proto_components::common::Vector3 as DclVector3;
 use dcl_js::restricted_actions::UiFocusResult;
-use deno_core::{anyhow, error::AnyError, op2, OpDecl, OpState};
+use deno_core::{op2, OpDecl, OpState};
 use std::{cell::RefCell, rc::Rc};
+
+use crate::js::plain::Plain;
 
 // list of op declarations
 pub fn ops() -> Vec<OpDecl> {
@@ -21,59 +25,62 @@ pub fn ops() -> Vec<OpDecl> {
     ]
 }
 
-#[op2(async)]
+#[op2]
 async fn op_move_player_to(
     state: Rc<RefCell<OpState>>,
-    #[serde] position: DclVector3,
-    #[serde] camera_target: Option<DclVector3>,
-    #[serde] avatar_target: Option<DclVector3>,
+    #[scoped] position: Plain<DclVector3>,
+    #[scoped] camera_target: Plain<Option<DclVector3>>,
+    #[scoped] avatar_target: Plain<Option<DclVector3>>,
     duration: Option<f32>,
-) -> Result<bool, anyhow::Error> {
-    dcl_js::restricted_actions::op_move_player_to(
+) -> Result<bool, OpError> {
+    Ok(dcl_js::restricted_actions::op_move_player_to(
         state,
-        position,
-        camera_target,
-        avatar_target,
+        position.0,
+        camera_target.0,
+        avatar_target.0,
         duration,
     )
-    .await
+    .await?)
 }
 
-#[op2(async)]
+#[op2]
 async fn op_walk_player_to(
     state: Rc<RefCell<OpState>>,
-    #[serde] position: DclVector3,
+    #[scoped] position: Plain<DclVector3>,
     stop_threshold: f32,
     timeout: Option<f32>,
-) -> Result<bool, anyhow::Error> {
-    dcl_js::restricted_actions::op_walk_player_to(state, position, stop_threshold, timeout).await
+) -> Result<bool, OpError> {
+    Ok(
+        dcl_js::restricted_actions::op_walk_player_to(state, position.0, stop_threshold, timeout)
+            .await?,
+    )
 }
 
-#[op2(async)]
+#[op2]
 async fn op_teleport_to(
     state: Rc<RefCell<OpState>>,
     position_x: Option<i32>,
     position_y: Option<i32>,
     #[string] realm: Option<String>,
-) -> Result<bool, anyhow::Error> {
-    dcl_js::restricted_actions::op_teleport_to(state, position_x, position_y, realm).await
+) -> Result<bool, OpError> {
+    Ok(dcl_js::restricted_actions::op_teleport_to(state, position_x, position_y, realm).await?)
 }
 
-#[op2(async)]
+#[op2]
 async fn op_change_realm(
     state: Rc<RefCell<OpState>>,
     #[string] realm: String,
     #[string] message: Option<String>,
-) -> Result<bool, anyhow::Error> {
-    dcl_js::restricted_actions::op_change_realm(state, realm, message).await
+) -> Result<bool, OpError> {
+    Ok(dcl_js::restricted_actions::op_change_realm(state, realm, message).await?)
 }
 
-#[op2(async)]
+#[op2]
 async fn op_external_url(
     state: Rc<RefCell<OpState>>,
     #[string] url: String,
-) -> Result<bool, anyhow::Error> {
-    dcl_js::restricted_actions::op_external_url(state, url).await
+) -> Result<bool, OpError> {
+    Ok(dcl_js::restricted_actions::op_external_url(state, url).await?)
 }
 
 #[op2(fast)]
@@ -81,52 +88,55 @@ fn op_emote(
     op_state: &mut OpState,
     #[string] emote: String,
     upper_body: bool,
-) -> Result<(), anyhow::Error> {
-    dcl_js::restricted_actions::op_emote(op_state, emote, upper_body)
+) -> Result<(), OpError> {
+    Ok(dcl_js::restricted_actions::op_emote(
+        op_state, emote, upper_body,
+    )?)
 }
 
 #[op2(fast)]
-fn op_stop_emote(op_state: &mut OpState) -> Result<(), anyhow::Error> {
-    dcl_js::restricted_actions::op_stop_emote(op_state)
+fn op_stop_emote(op_state: &mut OpState) -> Result<(), OpError> {
+    Ok(dcl_js::restricted_actions::op_stop_emote(op_state)?)
 }
 
-#[op2(async)]
+#[op2]
 async fn op_scene_emote(
     op_state: Rc<RefCell<OpState>>,
     #[string] emote: String,
     looping: bool,
     upper_body: bool,
-) -> Result<(), anyhow::Error> {
-    dcl_js::restricted_actions::op_scene_emote(op_state, emote, looping, upper_body).await
+) -> Result<(), OpError> {
+    Ok(dcl_js::restricted_actions::op_scene_emote(op_state, emote, looping, upper_body).await?)
 }
 
-#[op2(async)]
+#[op2]
 async fn op_open_nft_dialog(
     op_state: Rc<RefCell<OpState>>,
     #[string] urn: String,
-) -> Result<(), AnyError> {
-    dcl_js::restricted_actions::op_open_nft_dialog(op_state, urn).await
+) -> Result<(), OpError> {
+    Ok(dcl_js::restricted_actions::op_open_nft_dialog(op_state, urn).await?)
 }
 
-#[op2(async)]
-async fn op_open_explorer_ui(op_state: Rc<RefCell<OpState>>, ui: i32) -> Result<i32, AnyError> {
-    dcl_js::restricted_actions::op_open_explorer_ui(op_state, ui).await
+#[op2]
+async fn op_open_explorer_ui(op_state: Rc<RefCell<OpState>>, ui: i32) -> Result<i32, OpError> {
+    Ok(dcl_js::restricted_actions::op_open_explorer_ui(op_state, ui).await?)
 }
 
-#[op2(async)]
-#[serde]
+#[op2]
 async fn op_ui_focus(
     op_state: Rc<RefCell<OpState>>,
     apply: bool,
     #[string] element_id: Option<String>,
-) -> Result<UiFocusResult, AnyError> {
-    dcl_js::restricted_actions::op_ui_focus(op_state, apply, element_id).await
+) -> Result<JsPlain<UiFocusResult>, OpError> {
+    Ok(JsPlain(
+        dcl_js::restricted_actions::op_ui_focus(op_state, apply, element_id).await?,
+    ))
 }
 
-#[op2(async)]
+#[op2]
 async fn op_copy_to_clipboard(
     op_state: Rc<RefCell<OpState>>,
     #[string] text: String,
-) -> Result<(), AnyError> {
-    dcl_js::restricted_actions::op_copy_to_clipboard(op_state, text).await
+) -> Result<(), OpError> {
+    Ok(dcl_js::restricted_actions::op_copy_to_clipboard(op_state, text).await?)
 }

@@ -1,0 +1,165 @@
+{
+  "registry": "https://crates.io",
+  "license": {
+    "spdx": "MIT",
+    "path": "LICENSE.md",
+    "sha256": "f62497fffecc0852960c8d3e6934b9db86d16396e9b604072e923892cae3a588"
+  },
+  "packages": [
+    {
+      "package": "deno_fetch",
+      "version": "0.284.0",
+      "crate_sha256": "752387783c99f75ea6962bb88af3735baba9f4a9e66716eacd39586db0e28d99",
+      "files": [
+        {
+          "path": "deno_fetch/20_headers.js",
+          "upstream_sha256": "9d15a8f8547b3a7a0d57900eeaa3d6232abf00b5705b55f830962f0470d3dbe1",
+          "sha256": "9d15a8f8547b3a7a0d57900eeaa3d6232abf00b5705b55f830962f0470d3dbe1"
+        },
+        {
+          "path": "deno_fetch/21_formdata.js",
+          "upstream_sha256": "0a557fb5e81be7f6b00c2a71d50bb0a6451ee98f590b52e0bee225f9f5068b20",
+          "sha256": "43475ed7b95b63967f7aec016f105dd763dbd1a2fc060a483103c97f5a528156",
+          "changes": [
+            "Load Headers from ext:deno_fetch/20_headers.js instead of reading the global"
+          ]
+        },
+        {
+          "path": "deno_fetch/22_body.js",
+          "upstream_sha256": "280ccc9bb1713350b3f8a108c34793618447503fcd0197e81455b6721f22cb7c",
+          "sha256": "f70c51d8ad94e5f802af7c7d5b30f51bd0d2c8e2b66c337c7688baa896a2644e",
+          "changes": [
+            "Load Blob from ext:deno_web/09_file.js instead of reading the global"
+          ]
+        },
+        {
+          "path": "deno_fetch/22_http_client.js",
+          "upstream_sha256": "e3554c6dbc2799cf4d52398ded1afec32f1c6fdbaad559df10e78e50960484d3",
+          "sha256": "aa72bfb22451358a3a306105c1520c41b847c2ed80137d7bec63fb504c35fb42",
+          "changes": [
+            "Replaced: scenes cannot create HTTP clients; only HttpClient/HttpClientPrototype remain for 23_request.js"
+          ]
+        },
+        {
+          "path": "deno_fetch/23_request.js",
+          "upstream_sha256": "6c12910b0c2aa1e746a000ab718769b42a411b91f28ce93686c0a31499562ba3",
+          "sha256": "6c12910b0c2aa1e746a000ab718769b42a411b91f28ce93686c0a31499562ba3"
+        },
+        {
+          "path": "deno_fetch/23_response.js",
+          "upstream_sha256": "d50a693c9661512944e76f1dc1b2b5b8570a0f3a6de2e60191763c3db2120360",
+          "sha256": "d50a693c9661512944e76f1dc1b2b5b8570a0f3a6de2e60191763c3db2120360"
+        },
+        {
+          "path": "deno_fetch/26_fetch.js",
+          "upstream_sha256": "f0b1453bd5dd41982016faea149ccfe588cc061a30ab0f032dceff4c2a0d679a",
+          "sha256": "8e6b77ed0d6ff2590bb0c23ed7d252c138729c09bc758a65094c46e5a482acce",
+          "changes": [
+            "Load URL from ext:deno_web/00_url.js instead of reading the global",
+            "Refuse a redirect from https to http",
+            "Drop x-identity-* and x-authoritative-scope (signed fetch) headers on a cross-origin redirect, with the existing sensitive headers"
+          ]
+        }
+      ]
+    },
+    {
+      "package": "deno_web",
+      "version": "0.291.0",
+      "crate_sha256": "8658d7955894408e10b53018f651435ca6418b873be2e0b7d98224f3493c20f2",
+      "files": [
+        {
+          "path": "deno_web/00_infra.js",
+          "upstream_sha256": "9e7af28dda103610318e055cedc27a4025e60b0f5b07b9485e1adcaa403a60e4",
+          "sha256": "9e7af28dda103610318e055cedc27a4025e60b0f5b07b9485e1adcaa403a60e4"
+        },
+        {
+          "path": "deno_web/00_url.js",
+          "upstream_sha256": "287bfc3bd3c69735db823802feaf845f928d651a4bc2334a7d5911b3e2e54d55",
+          "sha256": "287bfc3bd3c69735db823802feaf845f928d651a4bc2334a7d5911b3e2e54d55"
+        },
+        {
+          "path": "deno_web/01_console.js",
+          "upstream_sha256": "338b4977b1366a2e93dadac91b9910c638b4c4e42417af76ec51767a973be0f3",
+          "sha256": "338b4977b1366a2e93dadac91b9910c638b4c4e42417af76ec51767a973be0f3"
+        },
+        {
+          "path": "deno_web/01_dom_exception.js",
+          "upstream_sha256": "11a4aaa1dfba2faa9b869d0d59afd80dfd73afe409bcedd137099eca77fd0932",
+          "sha256": "11a4aaa1dfba2faa9b869d0d59afd80dfd73afe409bcedd137099eca77fd0932"
+        },
+        {
+          "path": "deno_web/01_mimesniff.js",
+          "upstream_sha256": "fb19ee5d4c9b29273984d0b3ae2065a1feab5736e51944a5f9a8353cc5f2dafc",
+          "sha256": "fb19ee5d4c9b29273984d0b3ae2065a1feab5736e51944a5f9a8353cc5f2dafc"
+        },
+        {
+          "path": "deno_web/02_event.js",
+          "upstream_sha256": "d2213f8eb208a3bf9068ff872544b6e26e2954cd10ea3a3d92c487f19850baf0",
+          "sha256": "d2213f8eb208a3bf9068ff872544b6e26e2954cd10ea3a3d92c487f19850baf0"
+        },
+        {
+          "path": "deno_web/02_structured_clone.js",
+          "upstream_sha256": "603508bbe0bfd3d6b2e92df0eb5583d560f9b9920f5e126475e79ef32228720d",
+          "sha256": "603508bbe0bfd3d6b2e92df0eb5583d560f9b9920f5e126475e79ef32228720d"
+        },
+        {
+          "path": "deno_web/02_timers.js",
+          "upstream_sha256": "430df6ab2f6f2038cda5b48f554b6c011b277aef3c25090eea17d56da1e534a9",
+          "sha256": "430df6ab2f6f2038cda5b48f554b6c011b277aef3c25090eea17d56da1e534a9"
+        },
+        {
+          "path": "deno_web/03_abort_signal.js",
+          "upstream_sha256": "24bae9830d93344f9cb363f27ef8d1e21ee2d680ed5c91aea6ba9af499461983",
+          "sha256": "24bae9830d93344f9cb363f27ef8d1e21ee2d680ed5c91aea6ba9af499461983"
+        },
+        {
+          "path": "deno_web/06_streams.js",
+          "upstream_sha256": "b35c039ee8cb6932b91f71d43e47d6f2fbd9d68e13cdedeb03ba60cca3369787",
+          "sha256": "b35c039ee8cb6932b91f71d43e47d6f2fbd9d68e13cdedeb03ba60cca3369787"
+        },
+        {
+          "path": "deno_web/08_text_encoding.js",
+          "upstream_sha256": "8c6e65f4cf52a4f1c8a60d80a4f65475927f6233f40989b0a1dcabcc996ac24c",
+          "sha256": "8c6e65f4cf52a4f1c8a60d80a4f65475927f6233f40989b0a1dcabcc996ac24c"
+        },
+        {
+          "path": "deno_web/09_file.js",
+          "upstream_sha256": "53bf526755ea1d7d32564cb8a7fdfc3838a697f3e5593b96b88708fa6fa45e05",
+          "sha256": "53bf526755ea1d7d32564cb8a7fdfc3838a697f3e5593b96b88708fa6fa45e05"
+        },
+        {
+          "path": "deno_web/12_location.js",
+          "upstream_sha256": "237c142f610cfe8bc662c30887354528bad4954916736b101adc98c113b92d8a",
+          "sha256": "237c142f610cfe8bc662c30887354528bad4954916736b101adc98c113b92d8a"
+        },
+        {
+          "path": "deno_web/13_message_port.js",
+          "upstream_sha256": "c6dc65a01d41e0f5afd9da8f4e806844a09b69d5e0f82abaefda0fc90411c4f4",
+          "sha256": "c6dc65a01d41e0f5afd9da8f4e806844a09b69d5e0f82abaefda0fc90411c4f4"
+        },
+        {
+          "path": "deno_web/15_performance.js",
+          "upstream_sha256": "30aa41363804c47eb26140a993a2f4c8d3e8d395fdfd82bed8911b132d9579cd",
+          "sha256": "30aa41363804c47eb26140a993a2f4c8d3e8d395fdfd82bed8911b132d9579cd"
+        }
+      ]
+    },
+    {
+      "package": "deno_webidl",
+      "version": "0.260.0",
+      "crate_sha256": "7de03e5cc0901f948592021dc9046b2c5ebe80956014eacd9198d2b05d55ec89",
+      "files": [
+        {
+          "path": "deno_webidl/00_webidl.js",
+          "upstream_sha256": "9b94137c7e48d21f2c635ea10537b0059106fcb6c77953c25db7682c61559372",
+          "sha256": "9b94137c7e48d21f2c635ea10537b0059106fcb6c77953c25db7682c61559372"
+        }
+      ]
+    }
+  ],
+  "update_instructions": [
+    "Copy the listed scripts from the exact crates.io release that Cargo.lock pins (deno_fetch is not a dependency; take the release matching the locked deno_web), and re-apply the listed changes.",
+    "deno_web and deno_webidl copies stay byte-identical: embedded_upstream_scripts_match_the_locked_crates fails otherwise.",
+    "Run the closure of core.loadExtScript specifiers from init.js and websocket.js; every reached ext:deno_web script needs a copy here and an entry in sources.rs."
+  ]
+}

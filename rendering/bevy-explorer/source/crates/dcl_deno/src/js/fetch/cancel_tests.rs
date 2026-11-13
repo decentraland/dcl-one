@@ -8,8 +8,7 @@ use tokio::{
 };
 
 fn client_runtime() -> JsRuntime {
-    let (mut runtime, _) =
-        crate::js::create_runtime(false, false, "test-fetch-abort", true, Default::default());
+    let (runtime, _) = crate::js::create_runtime(false, false, Default::default());
     let state = runtime.op_state();
     let mut state = state.borrow_mut();
     state.put(CrdtContext::new(
@@ -148,9 +147,9 @@ async fn abort_while_awaiting_permission_releases_the_call_before_a_reply() {
     let origin = format!("http://{}", listener.local_addr().unwrap());
     let script = runtime
         .load_side_es_module_from_code(
-            &deno_core::ModuleSpecifier::parse("ext:test/abort-upload.js").unwrap(),
+            &deno_core::ModuleSpecifier::parse("file:///test/abort-upload.js").unwrap(),
             format!(r#"
-                import {{ ReadableStream }} from "ext:deno_web/06_streams.js";
+                const {{ ReadableStream }} = Deno.core.loadExtScript("ext:deno_web/06_streams.js");
                 globalThis.controller = new AbortController();
                 const body = new ReadableStream({{cancel() {{ globalThis.uploadClosed = true; }} }});
                 fetch({origin:?}, {{method: "POST", body, signal: controller.signal}})

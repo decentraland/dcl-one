@@ -1,8 +1,12 @@
+use crate::js::errors::OpError;
+use crate::js::plain::JsPlain;
 use dcl_js::testing::{
     SceneTestPlan, SceneTestResult, TakeAndCompareSnapshotResponse,
     TestingScreenshotComparisonMethodRequest,
 };
-use deno_core::{error::AnyError, op2, OpDecl, OpState};
+use deno_core::{op2, OpDecl, OpState};
+
+use crate::js::plain::Plain;
 
 #[derive(Default)]
 pub struct TestPlan {
@@ -25,31 +29,36 @@ fn op_testing_enabled(op_state: &mut OpState) -> bool {
 }
 
 #[op2]
-fn op_log_test_plan(state: &mut OpState, #[serde] body: SceneTestPlan) -> Result<(), AnyError> {
-    dcl_js::testing::op_log_test_plan(state, body)
+fn op_log_test_plan(
+    state: &mut OpState,
+    #[scoped] body: Plain<SceneTestPlan>,
+) -> Result<(), OpError> {
+    Ok(dcl_js::testing::op_log_test_plan(state, body.0)?)
 }
 
 #[op2]
-fn op_log_test_result(state: &mut OpState, #[serde] body: SceneTestResult) -> Result<(), AnyError> {
-    dcl_js::testing::op_log_test_result(state, body)
+fn op_log_test_result(
+    state: &mut OpState,
+    #[scoped] body: Plain<SceneTestResult>,
+) -> Result<(), OpError> {
+    Ok(dcl_js::testing::op_log_test_result(state, body.0)?)
 }
 
 #[op2]
-#[serde]
 fn op_take_and_compare_snapshot(
     state: &mut OpState,
     #[string] name: String,
-    #[serde] camera_position: (f32, f32, f32),
-    #[serde] camera_target: (f32, f32, f32),
-    #[serde] snapshot_size: (u32, u32),
-    #[serde] method: TestingScreenshotComparisonMethodRequest,
-) -> Result<TakeAndCompareSnapshotResponse, AnyError> {
-    dcl_js::testing::op_take_and_compare_snapshot(
+    #[scoped] camera_position: Plain<(f32, f32, f32)>,
+    #[scoped] camera_target: Plain<(f32, f32, f32)>,
+    #[scoped] snapshot_size: Plain<(u32, u32)>,
+    #[scoped] method: Plain<TestingScreenshotComparisonMethodRequest>,
+) -> Result<JsPlain<TakeAndCompareSnapshotResponse>, OpError> {
+    Ok(JsPlain(dcl_js::testing::op_take_and_compare_snapshot(
         state,
         name,
-        camera_position,
-        camera_target,
-        snapshot_size,
-        method,
-    )
+        camera_position.0,
+        camera_target.0,
+        snapshot_size.0,
+        method.0,
+    )?))
 }

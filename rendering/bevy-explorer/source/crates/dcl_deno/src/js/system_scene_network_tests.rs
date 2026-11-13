@@ -18,8 +18,6 @@ fn run_scene(
     let (mut runtime, _) = create_runtime(
         false,
         super_user,
-        "system-scene-network-test",
-        false,
         Default::default(),
     );
     let state = runtime.op_state();
@@ -79,7 +77,7 @@ fn run_scene(
     let outcome = runtime
         .execute_script("<test>", "String(globalThis.result)")
         .unwrap();
-    let scope = &mut runtime.handle_scope();
+    deno_core::scope!(scope, runtime);
     deno_core::v8::Local::new(scope, outcome).to_rust_string_lossy(scope)
 }
 

@@ -1,5 +1,7 @@
 // this code is executed as the runtime is created, all scopes get these definitions
 
+import { internals } from "ext:core/mod.js";
+
 // required for async ops (engine.sendMessage is declared as async)
 // Deno.core.initializeAsyncOps();
 
@@ -7,6 +9,12 @@
 // global object (see `sealRealm` below). `require` is the only thing that keeps a
 // reference, and it hands it out only to `~system/*` modules -- never to scene code.
 const denoRef = Deno;
+
+// Scene code can replace any built-in it can reach, so `require` uses only these copies,
+// taken before the scene runs, on the paths that touch `denoRef`.
+import { primordials } from "ext:core/mod.js";
+const { ReflectApply, StringPrototypeCharCodeAt, StringPrototypeSlice } = primordials;
+const { op_eval_context: opEvalContext, op_require: opRequire } = denoRef.core.ops;
 
 // The scene bundle is untrusted code that runs in THIS realm, so every global reachable
 // here is reachable from it -- including the raw ops table, which is the whole API surface
@@ -44,14 +52,32 @@ function sealRealm() {
 // note that decentraland examples use ESM syntax which deno_core does support,
 // so i haven't gone very deep into making full support work.
 // this is a very simplified version of the deno_std/node `createRequire` implementation.
+// Drops a leading `#!` line, which is only valid at the very start of a script.
+function stripHashbang(source) {
+    if (StringPrototypeCharCodeAt(source, 0) !== 0x23 || StringPrototypeCharCodeAt(source, 1) !== 0x21) {
+        return source;
+    }
+    for (let i = 2; i < source.length; i++) {
+        const c = StringPrototypeCharCodeAt(source, i);
+        if (c === 0x0a) {
+            return StringPrototypeSlice(source, i + 1);
+        }
+        if (c === 0x0d || c === 0x2028 || c === 0x2029) {
+            return source;
+        }
+    }
+    return source;
+}
+
 function require(moduleName) {
+    moduleName = `${moduleName}`;
     // dynamically load the module source
-    var source = denoRef.core.ops.op_require(moduleName);
+    var source = opRequire(moduleName);
 
     // create a wrapper for the imported script
-    source = source.replace(/^#!.*?\n/, "");
-    const head = "(function (exports, require, module, __filename, __dirname, Deno) { (function (exports, require, module, __filename, __dirname, Deno) {";
-    const foot = "\n}).call(this, exports, require, module, __filename, __dirname, Deno); })";
+    source = stripHashbang(source);
+    const head = "(function (exports, require, module, __filename, __dirname, Deno) {";
+    const foot = "\n})";
     source = `${head}${source}${foot}`;
 
     // the scene bundle is the untrusted one; everything else here is ours. Hiding the
@@ -62,10 +88,12 @@ function require(moduleName) {
         sealRealm();
     }
 
-    const [wrapped, err] = denoRef.core.evalContext(source, "file://${moduleName}");
-    if (err) {
-        throw err.thrown;
+    // [result, null] or [null, [thrown, isNativeError, isCompileError]]
+    const evaluated = opEvalContext(source, "file://${moduleName}");
+    if (evaluated[1]) {
+        throw evaluated[1][0];
     }
+    const wrapped = evaluated[0];
 
     // create minimal context for the execution
     var module = {
@@ -73,15 +101,14 @@ function require(moduleName) {
     };
     // call the script
     // note: `require` function base path would need to be updated for proper support
-    wrapped.call(
-        module.exports,             // this
-        module.exports,             // exports
-        require,                    // require
-        module,                     // module
-        moduleName.substring(1),    // __filename
-        moduleName.substring(0, 1), // __dirname
-        hideInternals ? undefined : denoRef // Deno
-    );
+    ReflectApply(wrapped, module.exports, [
+        module.exports,                      // exports
+        require,                             // require
+        module,                              // module
+        StringPrototypeSlice(moduleName, 1),    // __filename
+        StringPrototypeSlice(moduleName, 0, 1), // __dirname
+        hideInternals ? undefined : denoRef, // Deno
+    ]);
 
     return module.exports;
 }
@@ -156,57 +183,166 @@ globalThis.require = require;
 globalThis.console = console;
 globalThis.self = {};
 
-// this does NOT seem like the nicest way to do re-exports but i can't figure out how to do it otherwise
+// The deno_web scripts load lazily; everything the scene uses is loaded here, before
+// `sealRealm` removes the internals they read.
+const loadExtScript = denoRef.core.loadExtScript;
+
 // Fetch's AbortSignal uses the DOMException global when a caller aborts or times out.
-import { DOMException } from "ext:deno_web/01_dom_exception.js";
-import { AbortController, AbortSignal } from "ext:deno_web/03_abort_signal.js";
+const { DOMException } = loadExtScript("ext:deno_web/01_dom_exception.js");
+const { AbortController, AbortSignal } = loadExtScript("ext:deno_web/03_abort_signal.js");
 globalThis.DOMException = DOMException;
 globalThis.AbortController = AbortController;
 globalThis.AbortSignal = AbortSignal;
 
-import { Request } from "ext:deno_fetch/23_request.js"
+// A key the scripts read and nobody set would walk to Object.prototype, where a scene getter
+// would get `internals` as `this`.
+Object.setPrototypeOf(internals, null);
+
+// The fetch scripts read their tracing hooks from these; scenes are never traced.
+internals.__telemetry ??= {
+    TRACING_ENABLED: false,
+    DID_NOT_ENTER: Symbol("DID_NOT_ENTER"),
+    PROPAGATORS: [],
+    ContextManager: { active() { return undefined; } },
+    builtinTracer() { return undefined; },
+    enterSpan() { return undefined; },
+    exitSpan() {},
+};
+internals.__telemetryUtil ??= {};
+
+const { Request } = loadExtScript("ext:deno_fetch/23_request.js");
 globalThis.Request = Request;
 
-import * as fetch from "ext:deno_fetch/26_fetch.js";
-// On the authoritative server a 3xx is never auto-followed (see `build_scene_client` in
-// fetch/mod.rs): the scene gets the redirect response back and re-issues the request itself,
-// so every hop is one it chose and one the per-request checks see. Decided per call -- the
-// scene context is not in place while this module is evaluated.
-globalThis.fetch = (input, init) =>
-    isAuthoritativeServer()
-        ? fetch.fetch(input, { ...init, redirect: "manual" })
-        : fetch.fetch(input, init);
+const { fetch } = loadExtScript("ext:deno_fetch/26_fetch.js");
+// On the authoritative server a 3xx is never followed: the scene gets the redirect response
+// back and re-issues the request itself. Decided per call, as the scene context is not in
+// place while this module is evaluated. The Request is built first so an `init` read through
+// getters (a Request, a class instance) keeps its method, headers and body.
+globalThis.fetch = (input, init) => {
+    if (!isAuthoritativeServer()) {
+        return fetch(input, init);
+    }
+    let request;
+    try {
+        request = new Request(input, init);
+    } catch (e) {
+        return Promise.reject(e);
+    }
+    return fetch(request, { redirect: "manual" });
+};
 
-import * as timers from "ext:deno_web/02_timers.js";
+const timers = loadExtScript("ext:deno_web/02_timers.js");
 globalThis.setTimeout = timers.setTimeout;
 globalThis.setInterval = timers.setInterval;
 globalThis.clearTimeout = timers.clearTimeout;
 
-import * as websocket from "ext:deno_websocket/01_websocket.js";
+import * as websocket from "ext:BevyExplorer/websocket.js";
 globalThis.WebSocket = websocket.WebSocket;
 
-import * as _10 from "ext:deno_websocket/02_websocketstream.js";
-
-import * as textEncoding from "ext:deno_web/08_text_encoding.js";
+const textEncoding = loadExtScript("ext:deno_web/08_text_encoding.js");
 globalThis.TextEncoder = textEncoding.TextEncoder;
 globalThis.TextDecoder = textEncoding.TextDecoder;
 
-// we need to ensure all modules are evaluated, else deno complains in debug mode
-import * as _0 from "ext:deno_url/01_urlpattern.js"
-import * as _1 from "ext:deno_web/02_structured_clone.js"
-import * as _2 from "ext:deno_web/04_global_interfaces.js"
-import * as _3 from "ext:deno_web/05_base64.js"
-import * as _5 from "ext:deno_web/10_filereader.js"
-import * as _6 from "ext:deno_web/13_message_port.js"
-import * as _7 from "ext:deno_web/14_compression.js"
-import * as _8 from "ext:deno_fetch/27_eventsource.js"
-import * as _9 from "ext:deno_web/16_image_data.js"
-
-import * as webstorage from "ext:deno_webstorage/01_webstorage.js"
-globalThis.localStorage = webstorage.localStorage();
-
-import * as performance from "ext:deno_web/15_performance.js"
+const performance = loadExtScript("ext:deno_web/15_performance.js");
+performance.setTimeOrigin();
 globalThis.performance = performance.performance;
+
+// `Date`, `Temporal.Now`, `Intl.DateTimeFormat` and `File` read the wall clock in V8, not
+// through an op; floor what they read to the ops' granularity (CLOCK_GRANULARITY in
+// hardened_ops.rs).
+const NativeDate = Date;
+const nativeNow = Date.now;
+const ReflectConstruct = Reflect.construct;
+const coarseNow = () => {
+    // CLOCK_GRANULARITY in hardened_ops.rs
+    const now = nativeNow();
+    return now - (now % 2);
+};
+const CoarseDate = function Date(...args) {
+    if (new.target === undefined) {
+        return new NativeDate(coarseNow()).toString();
+    }
+    return ReflectConstruct(NativeDate, args.length === 0 ? [coarseNow()] : args, new.target);
+};
+Object.defineProperties(CoarseDate, {
+    length: { value: NativeDate.length },
+    prototype: { value: NativeDate.prototype, writable: false },
+    now: { value: coarseNow, writable: true, configurable: true },
+    parse: { value: NativeDate.parse, writable: true, configurable: true },
+    UTC: { value: NativeDate.UTC, writable: true, configurable: true },
+});
+Object.defineProperty(NativeDate.prototype, "constructor", { value: CoarseDate });
+globalThis.Date = CoarseDate;
+
+const dateTimeFormat = Intl.DateTimeFormat.prototype;
+const nativeFormat = Object.getOwnPropertyDescriptor(dateTimeFormat, "format").get;
+const nativeFormatToParts = dateTimeFormat.formatToParts;
+const orNow = (date) => (date === undefined ? coarseNow() : date);
+const boundFormats = new WeakMap();
+Object.defineProperties(dateTimeFormat, {
+    format: {
+        get() {
+            let bound = boundFormats.get(this);
+            if (bound === undefined) {
+                const format = ReflectApply(nativeFormat, this, []);
+                bound = (date) => format(orNow(date));
+                boundFormats.set(this, bound);
+            }
+            return bound;
+        },
+        configurable: true,
+    },
+    formatToParts: {
+        value: function formatToParts(date) {
+            return ReflectApply(nativeFormatToParts, this, [orNow(date)]);
+        },
+        writable: true,
+        configurable: true,
+    },
+});
+
+// File defaults lastModified from the primordial Date, taken before CoarseDate, and every
+// File reads it through this getter. Explicit values are floored too.
+{
+    const filePrototype = loadExtScript("ext:deno_web/09_file.js").File.prototype;
+    const descriptor = Object.getOwnPropertyDescriptor(filePrototype, "lastModified");
+    const nativeLastModified = descriptor.get;
+    descriptor.get = function lastModified() {
+        // CLOCK_GRANULARITY in hardened_ops.rs
+        const time = ReflectApply(nativeLastModified, this, []);
+        return time - (((time % 2) + 2) % 2);
+    };
+    Object.defineProperty(filePrototype, "lastModified", descriptor);
+}
+
+if (typeof Temporal === "object") {
+    const { Instant, Now } = Temporal;
+    const fromEpochMilliseconds = Instant.fromEpochMilliseconds;
+    const timeZoneId = Now.timeZoneId;
+    const toZonedDateTimeISO = Instant.prototype.toZonedDateTimeISO;
+    const ZonedDateTime = Temporal.ZonedDateTime.prototype;
+    const toPlainDateTime = ZonedDateTime.toPlainDateTime;
+    const toPlainDate = ZonedDateTime.toPlainDate;
+    const toPlainTime = ZonedDateTime.toPlainTime;
+    const instant = () => fromEpochMilliseconds(coarseNow());
+    const zoned = (timeZone) =>
+        ReflectApply(toZonedDateTimeISO, instant(), [timeZone === undefined ? timeZoneId() : timeZone]);
+    const methods = {
+        instant,
+        zonedDateTimeISO: zoned,
+        plainDateTimeISO: (timeZone) => ReflectApply(toPlainDateTime, zoned(timeZone), []),
+        plainDateISO: (timeZone) => ReflectApply(toPlainDate, zoned(timeZone), []),
+        plainTimeISO: (timeZone) => ReflectApply(toPlainTime, zoned(timeZone), []),
+    };
+    for (const [name, method] of Object.entries(methods)) {
+        Object.defineProperty(Now, name, { value: method, writable: true, configurable: true });
+    }
+}
+
+// deno_core's wasm streaming handler needs a JS callback the runtime never registers, and
+// scenes have no use for streaming compilation.
+delete WebAssembly.compileStreaming;
+delete WebAssembly.instantiateStreaming;
 
 // Native super-user bridge transport. The web super-user scene gets a real BroadcastChannel from the
 // browser; native deno has none, so expose one backed by host ops (op_bridge_to_page + the page->scene
