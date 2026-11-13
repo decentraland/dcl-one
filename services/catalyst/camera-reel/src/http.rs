@@ -116,6 +116,13 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    #[test]
+    fn custom_methods_share_the_bounded_other_series() {
+        assert_eq!(metric_method(&axum::http::Method::GET), "GET");
+        assert_eq!(metric_method(&"FOO1".parse().unwrap()), "other");
+        assert_eq!(metric_method(&"FOO2".parse().unwrap()), "other");
+    }
+
     #[tokio::test]
     async fn error_envelope_wire_shape() {
         let resp = ApiError::MaxLimitReached("gallery is full".to_string()).into_response();
@@ -405,6 +412,15 @@ pub(crate) async fn metrics(
     state.metrics.render()
 }
 
+fn metric_method(method: &axum::http::Method) -> String {
+    match method.as_str() {
+        "GET" | "POST" | "PUT" | "DELETE" | "OPTIONS" | "HEAD" | "PATCH" | "TRACE" | "CONNECT" => {
+            method.as_str().to_owned()
+        }
+        _ => "other".to_owned(),
+    }
+}
+
 pub(crate) async fn observe(
     axum::extract::State(state): axum::extract::State<crate::SharedState>,
     request: axum::extract::Request,
@@ -444,7 +460,7 @@ pub(crate) async fn observe(
         }
     }
     let started = std::time::Instant::now();
-    let method = request.method().as_str().to_owned();
+    let method = metric_method(request.method());
     let handler = if request.uri().path() == "/metrics" {
         "*".to_owned()
     } else {

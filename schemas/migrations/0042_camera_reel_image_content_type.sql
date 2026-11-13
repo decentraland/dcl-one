@@ -4,4 +4,4 @@
 ALTER TABLE IF EXISTS camera_reel.images
     ADD COLUMN IF NOT EXISTS image_content_type text
         CONSTRAINT images_image_content_type_check
-        CHECK (image_content_type IN ('image/png', 'image/jpeg'));
+        CHECK (image_content_type IN ('image/png', 'image/jpeg')) NOT VALID;

@@ -118,7 +118,7 @@ handlebars = { version = "6.4.4", default-features = false }
 bcrypt = "0.19.3"
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "webp", "tiff"] }
 # Camera preserves the pinned service's format detection, codecs and thumbnails.
-image-camera = { package = "image", version = "=0.24.9" }
+image-camera = { package = "image", version = "=0.24.9", default-features = false, features = ["gif", "jpeg", "ico", "png", "pnm", "tga", "tiff", "webp", "bmp", "hdr", "dds", "farbfeld", "openexr", "qoi"] }
 alloy-sol-types = "1.7.3"
 getrandom = "0.4.3"
 v8 = "=152.2.0"

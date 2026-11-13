@@ -32,7 +32,7 @@ async fn only_public_for(
     path: &SignedPath,
     user_address: &str,
 ) -> bool {
-    !matches!(state.optional_auth(headers, method, path).await, Some(signer) if signer.as_str() == user_address)
+    !matches!(state.optional_auth(headers, method, path).await, Some(signer) if signer.as_str().eq_ignore_ascii_case(user_address))
 }
 
 pub async fn get_user_data(

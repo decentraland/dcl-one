@@ -257,7 +257,7 @@ async fn filename_migration_preserves_existing_hash_urls_and_can_be_reapplied() 
     s.db().insert_image(&old).await.unwrap();
     const MIGRATION: &str = include_str!(concat!(
         env!("DCL_ONE_ROOT"),
-        "/schemas/migrations/0040_camera_reel_original_filename.sql"
+        "/schemas/migrations/0043_camera_reel_original_filename.sql"
     ));
     sqlx::raw_sql(MIGRATION)
         .execute(s.db().pool())
@@ -408,7 +408,7 @@ async fn filename_urls_preserve_raw_names_in_upload_gallery_and_redirects() {
 async fn configured_bucket_preserves_known_and_unknown_object_names() {
     let mut settings = Settings::new(API_URL);
     settings.writes_enabled = true;
-    settings.bucket_url = Some("https://bucket.example".into());
+    settings.bucket_url = Some("https://bucket.example/api/files".into());
     let Some(mut s) = scratch(settings).await else {
         return;
     };
@@ -441,7 +441,10 @@ async fn configured_bucket_preserves_known_and_unknown_object_names() {
         assert_eq!(status, StatusCode::TEMPORARY_REDIRECT);
         assert_eq!(
             headers[header::LOCATION],
-            format!("https://bucket.example/{}", url.rsplit('/').next().unwrap())
+            format!(
+                "https://bucket.example/api/files/{}",
+                url.rsplit('/').next().unwrap()
+            )
         );
         assert!(s.state.storage.exist(hash).await.unwrap());
     }
@@ -456,7 +459,7 @@ async fn configured_bucket_preserves_known_and_unknown_object_names() {
     assert_eq!(status, StatusCode::TEMPORARY_REDIRECT);
     assert_eq!(
         headers[header::LOCATION],
-        "https://bucket.example/absent#file.png"
+        "https://bucket.example/api/files/absent#file.png"
     );
     s.done().await;
 }

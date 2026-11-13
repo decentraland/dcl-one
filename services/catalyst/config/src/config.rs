@@ -337,6 +337,10 @@ impl Config {
                 &mut self.create.catalyrst_camera_reel_admin_token,
             ),
             (
+                "CAMERA_REEL_METRICS_BEARER_TOKEN",
+                &mut self.create.camera_reel_metrics_bearer_token,
+            ),
+            (
                 "CATALYRST_WORLDS_ADMIN_TOKEN",
                 &mut self.worlds.catalyrst_worlds_admin_token,
             ),

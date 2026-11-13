@@ -152,7 +152,7 @@ async fn read_credits(
     if hide_flagged && blocked {
         return Ok((Vec::new(), 0.0, 0));
     }
-    let rows = sqlx::query("SELECT g.*,g.amount_wei::text AS amount, GREATEST(g.amount_wei-COALESCE(u.used,0),0)::text AS available, CASE WHEN u.used IS NULL THEN 'AVAILABLE' WHEN u.used>=g.amount_wei THEN 'FULLY_USED' ELSE 'PARTIALLY_USED' END AS status FROM credits.goal_grants g LEFT JOIN LATERAL(SELECT sum(value_wei) AS used FROM credits.usages u WHERE u.chain_id=g.chain_id AND u.contract=g.contract AND u.credit_id=g.credit_hash AND u.sender=g.address) u ON true WHERE g.address=$1 AND g.claimed_at IS NOT NULL AND g.expires_at>$2 ORDER BY g.created_at DESC")
+    let rows = sqlx::query("SELECT g.*,g.amount_wei::text AS amount, GREATEST(g.amount_wei-COALESCE(u.used,0),0)::text AS available, CASE WHEN u.used IS NULL THEN 'AVAILABLE' WHEN u.used>=g.amount_wei THEN 'FULLY_USED' ELSE 'PARTIALLY_USED' END AS status FROM credits.goal_grants g LEFT JOIN LATERAL(SELECT sum(value_wei) AS used FROM credits.usages u WHERE u.salt=g.salt AND u.chain_id=g.chain_id AND u.contract=g.contract AND u.credit_id=g.credit_hash AND u.sender=g.address) u ON true WHERE g.address=$1 AND g.claimed_at IS NOT NULL AND g.expires_at>$2 ORDER BY g.created_at DESC")
         .bind(address).bind(now).fetch_all(&state.credits.pool).await?;
     let mut items = Vec::new();
     let mut total = U256::ZERO;

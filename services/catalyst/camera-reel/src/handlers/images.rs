@@ -21,9 +21,9 @@ use crate::http::{ApiError, JsonBody};
 use crate::storage::{Storage, StorageError};
 use crate::{SharedState, signed_path};
 
-pub const MAX_MULTIPART_IMAGE_BYTES: usize = 5 * 1024 * 1024;
 pub const MAX_JSON_IMAGE_BYTES: usize = 15 * 1024 * 1024;
 const MAX_MULTIPART_MEMORY_BYTES: usize = 2 * 1024 * 1024;
+static IMAGE_DECODE_PERMITS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
 
 pub async fn upload_image(
     State(state): State<SharedState>,
@@ -211,12 +211,35 @@ pub async fn upload_image_json(
     .await
 }
 
-/// The source service's 640x360 thumbnail in the detected image format.
-/// Detection, decoding and encoding failures retain their distinct 400 errors.
+/// Source codec compatibility corpus; production uploads use the restricted decoder.
+#[cfg(test)]
 pub fn thumbnail_of(image_bytes: &[u8]) -> Result<Bytes, ApiError> {
     let format = guess_format(image_bytes)
         .map_err(|_| ApiError::BadRequest("invalid image format".to_string()))?;
-    let img = image::load_from_memory_with_format(image_bytes, format).map_err(|e| {
+    thumbnail_with_limits(image_bytes, format)
+}
+
+fn thumbnail_for_upload(image_bytes: &[u8]) -> Result<Bytes, ApiError> {
+    let format = guess_format(image_bytes)
+        .map_err(|_| ApiError::BadRequest("invalid image format".to_string()))?;
+    if !matches!(format, image::ImageFormat::Png | image::ImageFormat::Jpeg) {
+        return Err(ApiError::BadRequest("unsupported image format".to_string()));
+    }
+    thumbnail_with_limits(image_bytes, format)
+}
+
+/// Detection, decoding and encoding failures retain their distinct 400 errors.
+fn thumbnail_with_limits(
+    image_bytes: &[u8],
+    format: image::ImageFormat,
+) -> Result<Bytes, ApiError> {
+    let mut reader = image::io::Reader::with_format(Cursor::new(image_bytes), format);
+    let mut limits = image::io::Limits::default();
+    limits.max_image_width = Some(12_000);
+    limits.max_image_height = Some(12_000);
+    limits.max_alloc = Some(96 * 1024 * 1024);
+    reader.limits(limits);
+    let img = reader.decode().map_err(|e| {
         tracing::error!("failed to parse image: {e}");
         ApiError::BadRequest("invalid image".to_string())
     })?;
@@ -227,6 +250,22 @@ pub fn thumbnail_of(image_bytes: &[u8]) -> Result<Bytes, ApiError> {
         ApiError::BadRequest("couldn't create thumbnail".to_string())
     })?;
     Ok(Bytes::from(buffer.into_inner()))
+}
+
+async fn thumbnail_of_bounded(image_bytes: Bytes) -> Result<Bytes, ApiError> {
+    let permit = IMAGE_DECODE_PERMITS
+        .acquire()
+        .await
+        .map_err(|_| ApiError::Internal("image decoder unavailable".to_string()))?;
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        thumbnail_for_upload(&image_bytes)
+    })
+    .await
+    .map_err(|error| {
+        tracing::error!(%error, "image decoder task failed");
+        ApiError::Internal("image decoder failed".to_string())
+    })?
 }
 
 /// `hash` must be `auth::hash_bytes_v1(&data)`; an existing blob with that
@@ -260,8 +299,20 @@ async fn finalize_upload(
         "image/png" | "image/jpeg" => {}
         _ => return Err(ApiError::BadRequest("unsupported content type".to_string())),
     }
+    let format = guess_format(&image_bytes)
+        .map_err(|_| ApiError::BadRequest("invalid image format".to_string()))?;
+    let declared_format = if content_type == "image/png" {
+        image::ImageFormat::Png
+    } else {
+        image::ImageFormat::Jpeg
+    };
+    if format != declared_format {
+        return Err(ApiError::BadRequest(
+            "image format does not match content type".to_string(),
+        ));
+    }
 
-    let thumbnail = thumbnail_of(&image_bytes)?;
+    let thumbnail = thumbnail_of_bounded(image_bytes.clone()).await?;
 
     if image_file_name.is_some_and(|name| name.contains('/') || name.contains('\\')) {
         return Err(ApiError::BadRequest("invalid file name".to_string()));
@@ -657,9 +708,30 @@ pub async fn get_image(
     State(state): State<SharedState>,
     Path(image_id): Path<String>,
 ) -> Result<Response, ApiError> {
-    let location = match &state.settings.bucket_url {
+    if image_id.is_empty() || image_id.bytes().any(|b| b.is_ascii_control()) {
+        return Err(ApiError::NotFound("image not found".to_string()));
+    }
+    let bucket_url = state
+        .settings
+        .bucket_url
+        .as_deref()
+        .and_then(|value| reqwest::Url::parse(value).ok())
+        .filter(|url| {
+            matches!(url.scheme(), "http" | "https")
+                && url.host_str().is_some()
+                && url.username().is_empty()
+                && url.password().is_none()
+                && url.query().is_none()
+                && url.fragment().is_none()
+                && url.path().trim_end_matches('/') == "/api/files"
+        })
+        .map(|url| url.to_string().trim_end_matches('/').to_owned());
+    let location = match bucket_url {
         Some(bucket_url) => format!("{bucket_url}/{image_id}"),
-        None => format!("{}/api/files/{image_id}", state.settings.api_url),
+        None => format!(
+            "{}/api/files/{image_id}",
+            state.settings.api_url.trim_end_matches('/')
+        ),
     };
     Ok((
         StatusCode::TEMPORARY_REDIRECT,

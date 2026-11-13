@@ -81,7 +81,7 @@
 //! route).
 //!
 //! `/metrics` exposes this router's request counts and latency histograms.
-//! Scrapes require `WKC_METRICS_BEARER_TOKEN`; an unset token fails closed.
+//! Scrapes require `CAMERA_REEL_METRICS_BEARER_TOKEN`; an unset token fails closed.
 //! Documentation and Swagger UI assets are served locally under `/api/docs`.
 
 // The crates this one builds on, under their module names (AGENTS.md).
@@ -122,6 +122,12 @@ use crate::auth::eip1654::Eip1654Validator;
 use crate::content::Denylist;
 use crate::shared::signed_fetch::{self, SignedFetchError};
 use crate::storage::Storage;
+
+const SIGNED_TIMESTAMP_FUTURE_SKEW_MS: u128 = 60_000;
+
+fn signed_timestamp_is_too_far_in_future(signed_at_ms: u128, now_ms: u128) -> bool {
+    signed_at_ms > now_ms.saturating_add(SIGNED_TIMESTAMP_FUTURE_SKEW_MS)
+}
 
 use http::ApiError;
 
@@ -272,6 +278,9 @@ impl State {
                 now: now.timestamp(),
                 window_secs: 60,
             });
+        }
+        if signed_timestamp_is_too_far_in_future(signed_at, now.timestamp_millis() as u128) {
+            return Err(SignedFetchError::InvalidTimestamp(timestamp.to_owned()));
         }
 
         // Camera authorization uses the recovered address only. Metadata is

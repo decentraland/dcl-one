@@ -32,6 +32,16 @@ use crate::shared::signed_fetch::{
 use crate::storage::Storage;
 use tokio::time::{Duration, Instant};
 
+#[test]
+fn signed_timestamp_allows_only_one_minute_of_future_skew() {
+    assert!(!super::signed_timestamp_is_too_far_in_future(
+        160_000, 100_000
+    ));
+    assert!(super::signed_timestamp_is_too_far_in_future(
+        160_001, 100_000
+    ));
+}
+
 mod captures;
 
 const API_URL: &str = "http://127.0.0.1:5149/camera-reel-service";

@@ -109,46 +109,6 @@ pub async fn swagger_ui(uri: axum::http::Uri, nested: Option<Extension<NestedPat
             ))
             .as_slice(),
         ),
-        "swagger-ui-bundle.js.map" => (
-            "text/plain",
-            include_bytes!(concat!(
-                env!("DCL_ONE_ROOT"),
-                "/services/catalyst/camera-reel/swagger-ui/swagger-ui-bundle.js.map"
-            ))
-            .as_slice(),
-        ),
-        "swagger-ui-es-bundle-core.js" => (
-            "application/javascript",
-            include_bytes!(concat!(
-                env!("DCL_ONE_ROOT"),
-                "/services/catalyst/camera-reel/swagger-ui/swagger-ui-es-bundle-core.js"
-            ))
-            .as_slice(),
-        ),
-        "swagger-ui-es-bundle-core.js.map" => (
-            "text/plain",
-            include_bytes!(concat!(
-                env!("DCL_ONE_ROOT"),
-                "/services/catalyst/camera-reel/swagger-ui/swagger-ui-es-bundle-core.js.map"
-            ))
-            .as_slice(),
-        ),
-        "swagger-ui-es-bundle.js" => (
-            "application/javascript",
-            include_bytes!(concat!(
-                env!("DCL_ONE_ROOT"),
-                "/services/catalyst/camera-reel/swagger-ui/swagger-ui-es-bundle.js"
-            ))
-            .as_slice(),
-        ),
-        "swagger-ui-es-bundle.js.map" => (
-            "text/plain",
-            include_bytes!(concat!(
-                env!("DCL_ONE_ROOT"),
-                "/services/catalyst/camera-reel/swagger-ui/swagger-ui-es-bundle.js.map"
-            ))
-            .as_slice(),
-        ),
         "swagger-ui-standalone-preset.js" => (
             "application/javascript",
             include_bytes!(concat!(
@@ -157,43 +117,11 @@ pub async fn swagger_ui(uri: axum::http::Uri, nested: Option<Extension<NestedPat
             ))
             .as_slice(),
         ),
-        "swagger-ui-standalone-preset.js.map" => (
-            "text/plain",
-            include_bytes!(concat!(
-                env!("DCL_ONE_ROOT"),
-                "/services/catalyst/camera-reel/swagger-ui/swagger-ui-standalone-preset.js.map"
-            ))
-            .as_slice(),
-        ),
         "swagger-ui.css" => (
             "text/css",
             include_bytes!(concat!(
                 env!("DCL_ONE_ROOT"),
                 "/services/catalyst/camera-reel/swagger-ui/swagger-ui.css"
-            ))
-            .as_slice(),
-        ),
-        "swagger-ui.css.map" => (
-            "text/plain",
-            include_bytes!(concat!(
-                env!("DCL_ONE_ROOT"),
-                "/services/catalyst/camera-reel/swagger-ui/swagger-ui.css.map"
-            ))
-            .as_slice(),
-        ),
-        "swagger-ui.js" => (
-            "application/javascript",
-            include_bytes!(concat!(
-                env!("DCL_ONE_ROOT"),
-                "/services/catalyst/camera-reel/swagger-ui/swagger-ui.js"
-            ))
-            .as_slice(),
-        ),
-        "swagger-ui.js.map" => (
-            "text/plain",
-            include_bytes!(concat!(
-                env!("DCL_ONE_ROOT"),
-                "/services/catalyst/camera-reel/swagger-ui/swagger-ui.js.map"
             ))
             .as_slice(),
         ),

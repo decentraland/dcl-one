@@ -59,6 +59,10 @@ pub struct CreateConfig {
     )]
     pub catalyrst_camera_reel_admin_token: Option<String>,
 
+    /// Bearer for this service's metrics endpoint; unset fails closed.
+    #[arg(long, env = "CAMERA_REEL_METRICS_BEARER_TOKEN", hide_env_values = true)]
+    pub camera_reel_metrics_bearer_token: Option<String>,
+
     #[arg(long, env = "MAX_IMAGES_PER_USER", default_value_t = 500)]
     pub camera_reel_max_images_per_user: u64,
 
@@ -123,6 +127,7 @@ mod tests {
         );
         assert!(
             c.create.catalyrst_camera_reel_admin_token.is_none()
+                && c.create.camera_reel_metrics_bearer_token.is_none()
                 && c.create.camera_reel_bucket_url.is_none()
         );
         assert_eq!(

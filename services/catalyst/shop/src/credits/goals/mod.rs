@@ -212,7 +212,7 @@ pub async fn process_batch(state: &SharedState, limit: i64) -> Result<u64, ApiEr
 
 async fn process_event(state: &SharedState, id: i64, now: NaiveDateTime) -> Result<bool, ApiError> {
     let mut tx = state.credits.pool.begin().await?;
-    let Some(event) = sqlx::query("SELECT photo_id,user_address,payload FROM camera_reel.photo_events WHERE id=$1 AND kind='photo-taken' FOR UPDATE")
+    let Some(event) = sqlx::query("SELECT photo_id,user_address,payload,created_at FROM camera_reel.photo_events WHERE id=$1 AND kind='photo-taken' FOR UPDATE")
         .bind(id).fetch_optional(&mut *tx).await? else { return Ok(false); };
     let photo: Uuid = event.get("photo_id");
     let address: String = event.get::<String, _>("user_address").to_lowercase();
@@ -227,7 +227,8 @@ async fn process_event(state: &SharedState, id: i64, now: NaiveDateTime) -> Resu
     {
         return Ok(false);
     }
-    let season = current(&mut tx, now).await?;
+    let occurred_at: NaiveDateTime = event.get("created_at");
+    let season = current(&mut tx, occurred_at).await?;
     let mut outcome = if season.is_none() {
         Some("no-season")
     } else {
@@ -250,12 +251,12 @@ async fn process_event(state: &SharedState, id: i64, now: NaiveDateTime) -> Resu
     }
     let mut ordinal = None;
     let season_id = season.as_ref().map(|s| s.id);
-    let week = season.as_ref().map(|s| s.week(now).0);
+    let week = season.as_ref().map(|s| s.week(occurred_at).0);
     if outcome.is_none() {
         let season = season.as_ref().unwrap();
         let week = week.unwrap();
         initialize(&mut tx, &address, season.id, week).await?;
-        let progress = sqlx::query("SELECT completed_steps,total_steps FROM credits.goal_progress WHERE address=$1 AND season_id=$2 AND week_id=$3 AND goal_id=$4 FOR UPDATE")
+        let progress = sqlx::query("SELECT completed_steps,total_steps,reward_wei::text AS reward_wei FROM credits.goal_progress WHERE address=$1 AND season_id=$2 AND week_id=$3 AND goal_id=$4 FOR UPDATE")
             .bind(&address).bind(season.id).bind(week).bind(GOAL).fetch_optional(&mut *tx).await?;
         match progress {
             None => outcome = Some("no-goal"),
@@ -268,7 +269,8 @@ async fn process_event(state: &SharedState, id: i64, now: NaiveDateTime) -> Resu
                 sqlx::query("UPDATE credits.goal_progress SET completed_steps=$5,completed_at=$6 WHERE address=$1 AND season_id=$2 AND week_id=$3 AND goal_id=$4")
                     .bind(&address).bind(season.id).bind(week).bind(GOAL).bind(steps).bind(complete.then_some(now)).execute(&mut *tx).await?;
                 if complete {
-                    grant(&mut tx, state, &address, season, week, now).await?;
+                    let reward_wei: String = p.get("reward_wei");
+                    grant(&mut tx, state, &address, season, week, &reward_wei, now).await?;
                 }
                 ordinal = Some(steps);
             }
@@ -286,6 +288,7 @@ async fn grant(
     address: &str,
     season: &Season,
     week: i32,
+    amount: &str,
     now: NaiveDateTime,
 ) -> Result<(), ApiError> {
     let signer = state
@@ -311,9 +314,8 @@ async fn grant(
         .ok()
         .filter(|v| *v > 0)
         .ok_or_else(|| ApiError::service_unavailable("invalid Credits chain"))?;
-    // Source grants use the current assignment's reward, while the UI keeps its weekly snapshot.
-    let amount: String = sqlx::query_scalar("SELECT reward_wei::text FROM credits.season_goals WHERE season_id=$1 AND goal_id=$2 AND $3 BETWEEN start_week AND end_week")
-        .bind(season.id).bind(GOAL).bind(week).fetch_one(&mut *conn).await?;
+    // Progress snapshots the assignment so edits to its week range or reward
+    // cannot strand an in-flight goal or change its promised payout.
     let expires = (season.end_date + TimeDelta::days(i64::from(season.grace_days)))
         .with_nanosecond(0)
         .unwrap();
@@ -331,21 +333,21 @@ async fn grant(
             .map_err(|_| ApiError::Internal("invalid photo owner".into()))?,
         chain_id: chain,
         manager,
-        value: uint(&amount)?,
+        value: uint(amount)?,
         expires_at: expires_seconds,
         salt,
     };
     let signature = signer.sign_credit(&credit).map_err(ApiError::Internal)?;
     sqlx::query("INSERT INTO credits.goal_grants(address,season_id,week_id,goal_id,salt,chain_id,contract,credit_hash,amount_wei,signature,created_at,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::numeric,$10,$11,$12)")
         .bind(address).bind(season.id).bind(week).bind(GOAL).bind(format!("{salt:#x}")).bind(chain as i64).bind(format!("{manager:#x}"))
-        .bind(format!("{:#x}", credit.credit_hash())).bind(&amount).bind(signature).bind(now).bind(expires).execute(&mut *conn).await?;
+        .bind(format!("{:#x}", credit.credit_hash())).bind(amount).bind(signature).bind(now).bind(expires).execute(&mut *conn).await?;
     let notification = catalyst_social::notifications::NewNotification {
         id: Uuid::new_v5(&NOTIFICATION_NAMESPACE, key.as_bytes()),
         address: catalyst_social::Address::parse(address)
             .map_err(|_| ApiError::Internal("invalid photo owner".into()))?,
         kind: "credits_goal_completed".into(),
         occurred_at: now,
-        metadata: json!({"goalId":GOAL,"creditsObtained":mana_number(&amount)?,"image":"https://assets-cdn.decentraland.org/credits/notification-icon.png","title":"Weekly Goal Completed!","description":"Claim your Credits to unlock them"}),
+        metadata: json!({"goalId":GOAL,"creditsObtained":mana_number(amount)?,"image":"https://assets-cdn.decentraland.org/credits/notification-icon.png","title":"Weekly Goal Completed!","description":"Claim your Credits to unlock them"}),
     };
     catalyst_social::notifications::store::insert_keyed_notification(conn, &key, &notification)
         .await?;

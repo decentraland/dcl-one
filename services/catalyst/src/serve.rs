@@ -856,7 +856,7 @@ pub async fn serve(
             max_images_per_user: config.create.camera_reel_max_images_per_user,
             admin_token: Config::non_empty(&config.create.catalyrst_camera_reel_admin_token),
             writes_enabled: config.create.create_writes_enabled,
-            metrics_bearer_token: config.social.wkc_metrics_bearer_token.clone(),
+            metrics_bearer_token: config.create.camera_reel_metrics_bearer_token.clone(),
             places_cache_ttl_seconds: config.create.camera_reel_places_cache_ttl_seconds,
             places_cache_max_size: config.create.camera_reel_places_cache_max_size,
         },

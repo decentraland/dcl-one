@@ -96,7 +96,12 @@ impl Flags {
         for (i, result) in [dapps, explorer].into_iter().enumerate() {
             match result {
                 Ok(doc) => docs[i] = Some(doc),
-                Err(error) => errors.push(error.to_string()),
+                Err(error) => {
+                    // Do not keep a remotely enabled reward policy active forever
+                    // when its source becomes unreachable.
+                    docs[i] = None;
+                    errors.push(error.to_string());
+                }
             }
         }
         if !errors.is_empty() {
