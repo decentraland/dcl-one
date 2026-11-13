@@ -909,9 +909,9 @@ pub fn op_close_community_voice_update_stream(state: Rc<RefCell<OpState>>, #[smi
 #[op2]
 pub fn op_voice_chat_action(
     state: Rc<RefCell<OpState>>,
-    #[serde] action: VoiceChatAction,
+    #[from_v8] action: Plain<VoiceChatAction>,
 ) -> Result<(), AnyError> {
-    dcl_js::system_api::op_voice_chat_action(state, action)
+    dcl_js::system_api::op_voice_chat_action(state, action.0)
 }
 
 #[op2(async)]
