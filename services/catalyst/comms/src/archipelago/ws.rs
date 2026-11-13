@@ -41,15 +41,23 @@ async fn ws_upgrade(
         &headers,
         peer.map(|axum::Extension(axum::extract::ConnectInfo(peer))| peer),
         &state.settings.server.trusted_proxy_cidrs,
-    )
-    .and_then(|ip| ip.parse().ok());
-    upgrade(ws, state, client)
+    );
+    if client.is_none() && state.sockets_per_ip.enabled() {
+        static UNATTRIBUTED: std::sync::Once = std::sync::Once::new();
+        UNATTRIBUTED.call_once(|| {
+            tracing::warn!(
+                "a /ws upgrade has no attributable client address (gateway peer outside HTTP_TRUSTED_PROXY_CIDRS, or no X-Real-IP); WS_MAX_SOCKETS_PER_IP does not count such sockets"
+            )
+        });
+        metrics::counter!("archipelago_ws_unattributed_upgrades_total").increment(1);
+    }
+    upgrade(ws, state, client.as_deref())
 }
 
 fn upgrade(
     ws: WebSocketUpgrade,
     state: AppState,
-    client: Option<std::net::IpAddr>,
+    client: Option<&str>,
 ) -> axum::response::Response {
     let Ok(ip_slot) = state.sockets_per_ip.try_acquire(client) else {
         return (

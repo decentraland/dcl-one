@@ -168,11 +168,6 @@ impl Settings {
                 .filter(|n| *n > 0)
                 .ok_or_else(|| anyhow::anyhow!("WS_MAX_SOCKETS must be a positive integer"))?;
         }
-        if let Ok(v) = env::var("WS_MAX_SOCKETS_PER_IP") {
-            server.max_sockets_per_ip = v.trim().parse::<u32>().map_err(|_| {
-                anyhow::anyhow!("WS_MAX_SOCKETS_PER_IP must be a whole number, got {v:?}")
-            })?;
-        }
         if let Ok(v) = env::var("ISLAND_CHANGED_DEDUP_MS") {
             match v.trim().parse::<u64>() {
                 Ok(ms) => server.island_changed_dedup_ms = ms,

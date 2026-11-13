@@ -45,7 +45,7 @@ pub const SERVE_SLOTS: [&str; 11] = [
 /// copies this one line into abgen's credential), minted while abgen runs.
 pub const ABGEN_SLOT: &str = "AB_REGISTRY_ADMIN_TOKEN";
 /// The pulse file: the LiveKit pair and the room-authority key serve holds.
-pub const PULSE_SLOTS: [(&str, &str); 4] = [
+pub const PULSE_SLOTS: [(&str, &str); 5] = [
     ("PULSE_APPLICATION_RELAY_LIVEKIT_API_KEY", "LIVEKIT_API_KEY"),
     (
         "PULSE_APPLICATION_RELAY_LIVEKIT_SECRET",
@@ -53,6 +53,11 @@ pub const PULSE_SLOTS: [(&str, &str); 4] = [
     ),
     ("PULSE_ROOM_AUTHORITY_KEY", "PULSE_ROOM_AUTHORITY_KEY"),
     ("COMMS_MODERATOR_TOKEN", "MODERATOR_TOKEN"),
+    // Pulse admits scene listeners from this wallet.
+    (
+        "AUTHORITATIVE_SERVER_ADDRESS",
+        "AUTHORITATIVE_SERVER_ADDRESS",
+    ),
 ];
 
 /// What one run changed: the serve slots it minted (names only) and whether

@@ -33,17 +33,17 @@ pub struct AppStateInner {
 
 pub type AppState = Arc<AppStateInner>;
 
-/// Sockets held per client address; an address the request cannot attribute
-/// to one client is not counted.
+/// Sockets held per client source (an IPv4 address or an IPv6 /64); a request
+/// that cannot be attributed to one client is not counted.
 pub struct IpSlots {
     max: usize,
-    held: std::sync::Mutex<std::collections::HashMap<std::net::IpAddr, usize>>,
+    held: std::sync::Mutex<std::collections::HashMap<String, usize>>,
 }
 
-/// One socket's share of its address; released on drop.
+/// One socket's share of its source; released on drop.
 pub struct IpSlot {
     slots: Arc<IpSlots>,
-    ip: std::net::IpAddr,
+    source: String,
 }
 
 impl IpSlots {
@@ -56,33 +56,36 @@ impl IpSlots {
 
     /// `Err` when the address already holds its limit; `Ok(None)` when it is not counted.
     #[allow(clippy::result_unit_err)]
-    pub fn try_acquire(
-        self: &Arc<Self>,
-        ip: Option<std::net::IpAddr>,
-    ) -> Result<Option<IpSlot>, ()> {
-        let Some(ip) = ip.filter(|_| self.max > 0) else {
+    pub fn try_acquire(self: &Arc<Self>, client_ip: Option<&str>) -> Result<Option<IpSlot>, ()> {
+        let Some(ip) = client_ip.filter(|_| self.max > 0) else {
             return Ok(None);
         };
+        let source = crate::shared::client_ip::source_key(ip);
         let mut held = self.held.lock().unwrap_or_else(|e| e.into_inner());
-        let count = held.entry(ip).or_default();
+        let count = held.entry(source.clone()).or_default();
         if *count >= self.max {
             return Err(());
         }
         *count += 1;
         Ok(Some(IpSlot {
             slots: Arc::clone(self),
-            ip,
+            source,
         }))
+    }
+
+    /// Whether this cap counts anything at all.
+    pub fn enabled(&self) -> bool {
+        self.max > 0
     }
 }
 
 impl Drop for IpSlot {
     fn drop(&mut self) {
         let mut held = self.slots.held.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(count) = held.get_mut(&self.ip) {
+        if let Some(count) = held.get_mut(&self.source) {
             *count -= 1;
             if *count == 0 {
-                held.remove(&self.ip);
+                held.remove(&self.source);
             }
         }
     }
@@ -95,8 +98,8 @@ mod ip_slot_tests {
     #[test]
     fn an_address_holds_at_most_its_limit_and_frees_on_drop() {
         let slots = IpSlots::new(2);
-        let a = Some("203.0.113.7".parse().unwrap());
-        let b = Some("203.0.113.8".parse().unwrap());
+        let a = Some("203.0.113.7");
+        let b = Some("203.0.113.8");
         let first = slots.try_acquire(a).unwrap();
         let _second = slots.try_acquire(a).unwrap();
         assert!(slots.try_acquire(a).is_err());
@@ -108,5 +111,18 @@ mod ip_slot_tests {
         for _ in 0..4 {
             assert!(unlimited.try_acquire(a).unwrap().is_none());
         }
+    }
+
+    #[test]
+    fn an_ipv6_client_is_counted_by_its_64() {
+        let slots = IpSlots::new(1);
+        let _held = slots.try_acquire(Some("2001:db8:1:2::1")).unwrap();
+        assert!(slots.try_acquire(Some("2001:db8:1:2::ffff")).is_err());
+        assert!(
+            slots
+                .try_acquire(Some("2001:db8:1:3::1"))
+                .unwrap()
+                .is_some()
+        );
     }
 }

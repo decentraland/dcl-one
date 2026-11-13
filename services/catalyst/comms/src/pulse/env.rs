@@ -87,7 +87,7 @@ pub const ENV_DOCS: &[(&str, &str)] = &[
     ),
     (
         "PULSE_SCENE_LISTENER_WALLETS",
-        "comma-separated wallets allowed to open a scene listener; unset falls back to AUTHORITATIVE_SERVER_ADDRESS, and with neither every listener handshake is refused",
+        "comma-separated wallets allowed to open a scene listener, in addition to AUTHORITATIVE_SERVER_ADDRESS; with neither set every listener handshake is refused",
     ),
     (
         "PULSE_IP_LIMITER_ENABLED",
@@ -321,13 +321,8 @@ pub async fn run_from_env() -> anyhow::Result<()> {
         env_or("PULSE_DISCRETE_BURST", DEFAULT_DISCRETE_BURST)?,
     );
     server.aoi = SpatialAreaOfInterest::new(aoi);
-    let listeners = scene_listener_wallets_from(&|key| std::env::var(key).ok())?;
-    if listeners.is_empty() {
-        tracing::warn!(
-            "PULSE_SCENE_LISTENER_WALLETS and AUTHORITATIVE_SERVER_ADDRESS are unset; scene listeners are refused"
-        );
-    }
-    server.scene_listener_wallets = Some(listeners);
+    server.scene_listener_wallets =
+        Some(scene_listener_allow_list(&|key| std::env::var(key).ok())?);
     let fallback = limiter_options_from_lookup(&|key| std::env::var(key).ok())?;
     server.apply_ip_limiter_options(fallback.clone());
     if let Some(url) = env_value("PULSE_FLAGS_URL", std::env::var("PULSE_FLAGS_URL"))? {
@@ -374,31 +369,41 @@ fn limiter_options_from_lookup(
     })
 }
 
-/// The scene-listener wallets: `PULSE_SCENE_LISTENER_WALLETS`, else the
+/// The scene-listener wallets: `PULSE_SCENE_LISTENER_WALLETS` plus the
 /// authoritative server's address; empty refuses every listener.
 fn scene_listener_wallets_from(
     env: &dyn Fn(&str) -> Option<String>,
 ) -> anyhow::Result<std::collections::HashSet<String>> {
-    let (key, raw) = match env("PULSE_SCENE_LISTENER_WALLETS").filter(|v| !v.trim().is_empty()) {
-        Some(raw) => ("PULSE_SCENE_LISTENER_WALLETS", raw),
-        None => match env("AUTHORITATIVE_SERVER_ADDRESS").filter(|v| !v.trim().is_empty()) {
-            Some(raw) => ("AUTHORITATIVE_SERVER_ADDRESS", raw),
-            None => return Ok(Default::default()),
-        },
-    };
-    raw.split(',')
-        .map(str::trim)
-        .filter(|wallet| !wallet.is_empty())
-        .map(|wallet| {
-            let lower = wallet.to_ascii_lowercase();
-            let valid = lower.len() == 42
-                && lower.starts_with("0x")
-                && lower[2..].bytes().all(|b| b.is_ascii_hexdigit());
-            valid
-                .then_some(lower)
-                .ok_or_else(|| anyhow::anyhow!("{key} must list 0x wallet addresses"))
-        })
-        .collect()
+    let mut wallets = std::collections::HashSet::new();
+    for key in [
+        "PULSE_SCENE_LISTENER_WALLETS",
+        "AUTHORITATIVE_SERVER_ADDRESS",
+    ] {
+        for wallet in env(key)
+            .unwrap_or_default()
+            .split(',')
+            .map(str::trim)
+            .filter(|wallet| !wallet.is_empty())
+        {
+            let address = crate::Address::parse(wallet)
+                .map_err(|e| anyhow::anyhow!("{key} must list wallet addresses: {e}"))?;
+            wallets.insert(address.as_str().to_owned());
+        }
+    }
+    Ok(wallets)
+}
+
+/// The listener allow-list Pulse starts with; warns when it refuses every listener.
+fn scene_listener_allow_list(
+    env: &dyn Fn(&str) -> Option<String>,
+) -> anyhow::Result<std::collections::HashSet<String>> {
+    let listeners = scene_listener_wallets_from(env)?;
+    if listeners.is_empty() {
+        tracing::warn!(
+            "PULSE_SCENE_LISTENER_WALLETS and AUTHORITATIVE_SERVER_ADDRESS are unset; scene listeners are refused"
+        );
+    }
+    Ok(listeners)
 }
 
 fn ip_whitelist_from(raw: Option<String>) -> anyhow::Result<IpWhitelist> {
@@ -1010,9 +1015,10 @@ mod tests {
     }
 
     #[test]
-    fn scene_listener_wallets_fall_back_to_the_authoritative_server_and_fail_closed() {
-        let wallet = "0xAbCdEf0123456789abcdef0123456789ABCDEF01";
-        let lookup = |pairs: &'static [(&'static str, &'static str)]| {
+    fn scene_listener_wallets_join_the_authoritative_server_and_fail_closed() {
+        let host = "0xAbCdEf0123456789abcdef0123456789ABCDEF01";
+        let extra = "0x1111111111111111111111111111111111111111";
+        let lookup = |pairs: Vec<(&'static str, &'static str)>| {
             move |key: &str| {
                 pairs
                     .iter()
@@ -1020,34 +1026,30 @@ mod tests {
                     .map(|(_, v)| v.to_string())
             }
         };
+        let none = scene_listener_allow_list(&lookup(vec![])).unwrap();
         assert!(
-            scene_listener_wallets_from(&lookup(&[]))
-                .unwrap()
-                .is_empty()
+            none.is_empty(),
+            "no configured wallet refuses every listener"
         );
-        let fallback = scene_listener_wallets_from(&lookup(&[(
-            "AUTHORITATIVE_SERVER_ADDRESS",
-            "0xAbCdEf0123456789abcdef0123456789ABCDEF01",
-        )]))
-        .unwrap();
-        assert!(fallback.contains(&wallet.to_ascii_lowercase()));
-        let explicit = scene_listener_wallets_from(&lookup(&[
-            (
-                "PULSE_SCENE_LISTENER_WALLETS",
-                "0x1111111111111111111111111111111111111111",
-            ),
-            (
-                "AUTHORITATIVE_SERVER_ADDRESS",
-                "0xAbCdEf0123456789abcdef0123456789ABCDEF01",
-            ),
+        let host_only =
+            scene_listener_wallets_from(&lookup(vec![("AUTHORITATIVE_SERVER_ADDRESS", host)]))
+                .unwrap();
+        assert_eq!(host_only.len(), 1);
+        assert!(host_only.contains(&host.to_ascii_lowercase()));
+        let both = scene_listener_wallets_from(&lookup(vec![
+            ("PULSE_SCENE_LISTENER_WALLETS", extra),
+            ("AUTHORITATIVE_SERVER_ADDRESS", host),
         ]))
         .unwrap();
-        assert_eq!(explicit.len(), 1);
-        assert!(explicit.contains("0x1111111111111111111111111111111111111111"));
-        assert!(
-            scene_listener_wallets_from(&lookup(&[("PULSE_SCENE_LISTENER_WALLETS", "nope")]))
-                .is_err()
-        );
+        assert_eq!(both.len(), 2, "an extra listener never drops the host");
+        assert!(both.contains(extra) && both.contains(&host.to_ascii_lowercase()));
+        for bad in ["nope", "0x123"] {
+            assert!(
+                scene_listener_wallets_from(&lookup(vec![("PULSE_SCENE_LISTENER_WALLETS", bad)]))
+                    .is_err(),
+                "{bad}"
+            );
+        }
     }
 
     #[test]
