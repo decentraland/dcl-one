@@ -914,13 +914,14 @@
           ]
         },
         "library/ui/figma/review/scripts/capture-browser.mjs": {
-          "sha256": "53697bdb05da83b8a88997eb014ec7015aef5bb5cb265accbdea4a1c9ef36632",
+          "sha256": "0196bf4b9cd6d5ad1332a617b168490edc34681fa27301d4400c62bb740478e2",
           "fds": null,
           "deviation": [
             "bot-review-279-b",
             "evidence-removed",
             "navigation-settle",
-            "request-scope-hardening"
+            "request-scope-hardening",
+            "startup-diagnostics"
           ]
         },
         "library/ui/figma/review/scripts/capture-teardown.mjs": {
@@ -2238,11 +2239,12 @@
           }
         },
         "library/ui/figma/review/test/capture-browser.test.ts": {
-          "sha256": "6c92fd52fbcf22c27f36b04b7f5b8891e2a9eb1159d45c5dbcefe3c2a379e9c2",
+          "sha256": "7a67400c3e42e4de82932b179cb03a52eb0c2ac435824f156c9c88f13733c224",
           "fds": null,
           "deviation": [
             "dcl-one-only",
-            "bot-review-279-b"
+            "bot-review-279-b",
+            "startup-diagnostics"
           ]
         },
         "library/ui/figma/review/test/capture-teardown.test.ts": {
@@ -4446,6 +4448,7 @@
         "seal-removed": "port:9c6dfbe6 installs foundations through the installation subset of promotion/promote.ts. The seal is removed together with promotion manifests, promotion verification and release publication. The shared command generates only from the verified cache, preserves maintained files, stages a complete target, detects concurrent changes and rolls back failed publication. Dev2 extends this same command with components.",
         "single-component-module-pin": "The public component table pins components/generation.json once: output origins name the source and transform and do not repeat the generator module list, and the policy checks every module in that record against the source lock and the index. A table that still carries a per-output module map is refused.",
         "skill-kit-followups": "Consumer skill and kit follow-ups: the skill's plugin script reads boolean and text component properties, skips text layers of nested instances, collects only visible text (a TEXT property only when a visible layer shows it), drops a name two visible texts disagree on and reports it and refuses a node without a main component; design text goes in single quotes, never double quotes; the mapping-only scope and the preflight's expected exit 1 are stated. The kit refuses every conflict (foreign or unreadable skill, newer or unordered version, symlinked .claude or .claude/skills) before it writes, orders versions by semver, hashes paths with / and CRLF as LF with framed entries, and check names install --force for a newer install. resolve --batch reads a relative path from the directory the package's figma script was run in. Figma BOOLEAN properties travel apart from variants as booleanProperties (batch, MCP, --boolean): one the mapping does not read is an unmapped-figma-property warning, one it reads as a variant does not fit, an unread variant still refuses a name match, and usageFor and propTranslation report the booleans given. check reports an install hashed by an earlier kit as stale, not as edited; an unreadable manifest or one from another library's kit is refused without --force.",
+        "startup-diagnostics": "Local capture startup diagnostics retain bounded sanitized stderr, executable basename and available version, pre-cleanup process status and port-file observations. The existing polling budget, launch flags, abort behavior and primary failure are unchanged.",
         "verified-install": "Verified installation binds lock bytes before cache verification and compares them after every verification and source initialization. Tests reject invalid cache reads through a bypass App, preserve ignored target files and retain both errors and the previous tree when rollback fails."
       }
     }
