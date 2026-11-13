@@ -403,9 +403,11 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
     element error or an hls.js fatal error at any time starts the schedule, and a live stream that
     ends (its feed dropped) counts as a failure rather than a normal end. hls.js first recovers a
     fatal error in place once (`startLoad`, `recoverMediaError`); a second before a fragment
-    buffers again reopens the source.
+    buffers again reopens the source, and the element's own `error` is left to hls.js. A reopened
+    source that is not live resumes where it failed.
   - *Pause.* unity-explorer reopens a failed source whether or not it plays; here a pause cancels a
-    scheduled reopen, and the next play reopens at once with the count restarted.
+    scheduled or loading reopen, a failure while paused schedules none, and the next play
+    reopens at once with the count restarted.
   - *The screen.* unity-explorer renders black whenever a player is in `VsError` or `VsNone`; here
     the image turns black when the source gives up or a non-looping source ends, and keeps the
     last frame while a reopen is pending.

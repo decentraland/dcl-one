@@ -42,6 +42,10 @@ extern "C" {
     /// The source is a live stream.
     #[wasm_bindgen(method, getter)]
     fn live(this: &AttachedSource) -> bool;
+
+    /// The source plays through hls.js, which reports its own failures to `on_fatal`.
+    #[wasm_bindgen(method, getter)]
+    fn hls(this: &AttachedSource) -> bool;
 }
 
 thread_local! {
@@ -183,8 +187,10 @@ struct Source {
     last_error: Cell<Option<&'static str>>,
     /// Failed and not playable since: the element's own states are not reported.
     failed: Cell<bool>,
-    /// A reopen a pause cancelled, done on the next play.
+    /// A reopen a pause cancelled or a failure while paused, done on the next play.
     reopen_on_play: Cell<bool>,
+    /// Where a reopened source that is not live resumes.
+    resume_at: Cell<Option<f64>>,
     /// The scheduled reopen's timeout handle.
     timeout: Cell<Option<i32>>,
     /// The last scheduled reopen's callback, kept until the next one or the drop.
@@ -245,8 +251,16 @@ impl Source {
             .is_some_and(|attached| attached.live())
     }
 
+    fn uses_hls(&self) -> bool {
+        self.attached
+            .borrow()
+            .as_ref()
+            .is_some_and(|attached| attached.hls())
+    }
+
     /// A failure of the attached source: schedules its reopen, or gives up. Failures while a
-    /// reopen is scheduled or after giving up are ignored.
+    /// reopen is scheduled or after giving up are ignored; one while paused waits for the next
+    /// play.
     fn fail(self: &Rc<Self>, error: &'static str) {
         if self.url.is_none() {
             self.send_state(VideoState::VsError);
@@ -258,6 +272,12 @@ impl Source {
         }
         self.failed.set(true);
         self.last_error.set(Some(error));
+        if !self.wants_play.get() {
+            debug!("media {}: {error} while paused; reopen on play", self.id);
+            self.reopen_on_play.set(true);
+            self.send_retry(None);
+            return;
+        }
         let step = retry.fail(first_reopen_delay());
         self.retry.set(retry);
         match step {
@@ -276,9 +296,14 @@ impl Source {
         }
     }
 
-    /// The source can play: the reopen schedule starts again.
+    /// The source can play: a scheduled reopen is cancelled and the schedule starts again.
     fn opened(&self) {
         self.failed.set(false);
+        self.reopen_on_play.set(false);
+        self.cancel_reopen();
+        if let Some(time) = self.resume_at.take() {
+            self.media.set_current_time(time);
+        }
         let mut retry = self.retry.get();
         if retry.attempts() > 0 {
             retry.opened();
@@ -324,6 +349,10 @@ impl Source {
     fn reopen(self: &Rc<Self>) {
         debug!("media {}: reopening", self.id);
         self.reopen_on_play.set(false);
+        let time = self.media.current_time();
+        if !self.is_live() && time > 0.0 {
+            self.resume_at.set(Some(time));
+        }
         self.detach();
         self.open();
     }
@@ -394,6 +423,7 @@ impl HostMedia {
             last_error: Cell::new(None),
             failed: Cell::new(false),
             reopen_on_play: Cell::new(false),
+            resume_at: Cell::new(None),
             timeout: Cell::new(None),
             timer: RefCell::new(None),
         });
@@ -437,7 +467,12 @@ impl HostMedia {
         media.set_onpause(Some(&register(state(VideoState::VsPaused))));
         media.set_onerror(Some(&register({
             let source = source.clone();
-            Box::new(move || source.fail(media_error_label(&source.media)))
+            Box::new(move || {
+                // hls.js recovers its own errors first and reports the rest to `on_fatal`
+                if !source.uses_hls() {
+                    source.fail(media_error_label(&source.media));
+                }
+            })
         })));
         media.set_onended(Some(&register({
             let source = source.clone();
@@ -489,8 +524,9 @@ impl HostMedia {
             AVCommand::Pause => {
                 self.source.wants_play.set(false);
                 self.media.pause().report();
-                // a pause cancels a scheduled reopen; the next play reopens at once
-                if self.source.cancel_reopen() {
+                // a pause cancels a scheduled or loading reopen; the next play reopens at once
+                self.source.cancel_reopen();
+                if self.source.failed.get() && !self.source.retry.get().gave_up() {
                     let mut retry = self.source.retry.get();
                     retry.cancel();
                     self.source.retry.set(retry);

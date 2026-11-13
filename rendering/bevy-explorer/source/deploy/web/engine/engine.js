@@ -276,7 +276,7 @@ export async function initEngine() {
   // Attaches `src` to `video`, through hls.js for an HLS stream the browser cannot play itself.
   // hls.js recovers one fatal error in place (`startLoad`, `recoverMediaError`) until a fragment
   // buffers again; a second one is passed to `onFatal` with its type. Returns the source's
-  // `destroy()` and `live`.
+  // `destroy()`, `live` and `hls` (attached through hls.js).
   window.setVideoSource = (video, src, onFatal) => {
     let hls = null;
     let hlsLive = false;
@@ -294,6 +294,9 @@ export async function initEngine() {
       },
       get live() {
         return hlsLive || video.duration === Infinity;
+      },
+      get hls() {
+        return hls !== null;
       },
     };
 

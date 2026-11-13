@@ -14,8 +14,8 @@ import { Vector3 } from '@dcl/sdk/math'
  * video: the screens of `specs/media-retry.test.ts`, which serves this scene from a loopback realm
  * that fails the media files' first requests.
  *
- * Two planes at z = 12 facing the spawn, each playing (looped) one file of `media/` into its own
- * basic material: `recover` (`media/recover.webm`, x = 5) and `broken` (`media/broken.webm`,
+ * Two planes at z = 12 facing the spawn, each playing (looped) one file of `assets/` into its own
+ * basic material: `recover` (`assets/recover.webm`, x = 5) and `broken` (`assets/broken.webm`,
  * x = 11). Each logs `video <name> state=<VideoState name>` whenever its reported state changes,
  * and `video ready` once both exist.
  */
@@ -33,7 +33,7 @@ function screen(name: string, src: string, x: number): Entity {
 }
 
 export function main(): void {
-  screen('recover', 'media/recover.webm', 5)
-  screen('broken', 'media/broken.webm', 11)
+  screen('recover', 'assets/recover.webm', 5)
+  screen('broken', 'assets/broken.webm', 11)
   console.log('video ready')
 }

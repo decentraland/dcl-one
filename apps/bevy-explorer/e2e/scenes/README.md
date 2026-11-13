@@ -53,8 +53,8 @@ reference:
 
 `video`, parcel `0,24`, spawn at `(8, 0, 4)` facing the screens: the scene of
 `specs/media-retry.test.ts`, in the workspace but not in `SCENES`, so without a reference. Two
-planes at z = 12 each play one looped file of `media/` into a basic material: `recover`
-(`media/recover.webm`, x = 5) and `broken` (`media/broken.webm`, x = 11), 2 s, 64 by 64 VP8 of
+planes at z = 12 each play one looped file of `assets/` into a basic material: `recover`
+(`assets/recover.webm`, x = 5) and `broken` (`assets/broken.webm`, x = 11), 2 s, 64 by 64 VP8 of
 one colour each, so their bytes and content hashes differ. It logs `video ready` once both
 exist and `video <name> state=<VideoState>` (`VS_PLAYING`, `VS_ERROR`, ...) on every state the
 engine reports. The spec's realm fails the files' first GETs.
