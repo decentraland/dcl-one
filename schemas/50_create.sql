@@ -308,6 +308,9 @@ CREATE TABLE camera_reel.images (
     user_address text NOT NULL,
     image_hash text NOT NULL,
     thumbnail_hash text NOT NULL,
+    -- The client's basename renders UUID-prefixed image and thumbnail aliases.
+    -- NULL preserves the hash URLs of rows created without a filename.
+    original_filename text,
     is_public boolean NOT NULL DEFAULT false,
     review_status text NOT NULL DEFAULT 'ok',
     -- Old rows have no new ranking event. New uploads set false, then publish
@@ -337,7 +340,7 @@ CREATE INDEX images_user_created_idx ON camera_reel.images (user_address, create
 CREATE INDEX images_place_public_created_idx ON camera_reel.images (place_id, created_at DESC, id DESC)
     WHERE is_public AND review_status <> 'rejected';
 
--- GET /api/images/{hash}: a blob is served only while a non-rejected row
+-- GET /api/files/{hash}: a blob is served only while a non-rejected row
 -- names it as image or thumbnail (image_hash = $1 OR thumbnail_hash = $1,
 -- bitmap OR of the two).
 CREATE INDEX images_image_hash_idx ON camera_reel.images (image_hash);

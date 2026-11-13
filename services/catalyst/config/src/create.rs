@@ -67,7 +67,9 @@ pub struct CreateConfig {
     #[arg(long, env = "CAMERA_REEL_API_URL", default_value = "")]
     pub camera_reel_api_url: String,
 
-    /// Old BUCKET_URL: when set, `GET /api/images/{hash}` redirects there.
+    /// Public bucket origin for image redirects. Known photo aliases resolve
+    /// to their stored blob hash; unknown names keep their requested key.
+    /// Without this setting, redirects use the local protected byte route.
     #[arg(long, env = "CAMERA_REEL_BUCKET_URL")]
     pub camera_reel_bucket_url: Option<String>,
 }

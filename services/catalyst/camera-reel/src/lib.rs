@@ -7,50 +7,50 @@
 //!
 //! What it reuses rather than duplicates: the ONE pool ([`db`]), the ONE
 //! blob store (`storage`) for the image and thumbnail bytes by
-//! `auth::hash_bytes_v1` hash (the old per-service disk tree is gone; the
-//! wire's `url`/`thumbnailUrl` render from the stored hashes under
-//! `api_url`), signed fetch through the shared verifier
-//! (`shared::signed_fetch`, the 6.x payload then the legacy one, as the old
-//! crate's `accept_legacy_payload(&[])` did) with the process's EIP-1654
-//! validator, and `explore.place_indexed` for a world name's place ids (the
-//! old HTTP hop to the places API is a local read, [`db::Database::world_place_ids`]).
+//! `auth::hash_bytes_v1` hash. The wire URLs retain the upload's UUID and
+//! basename under `api_url`; rows without a retained basename keep hash URLs.
+//! Signed fetch uses the shared signature primitives with a one-minute
+//! expiration, mandatory raw metadata, the 6.x payload followed by legacy
+//! fallback, and the process's EIP-1654 validator. World names resolve through
+//! local `explore.place_indexed` reads ([`db::Database::world_place_ids`]).
 //!
 //! Every write goes behind `CREATE_WRITES_ENABLED` ([`writes`]; default
 //! false, 503 with `Retry-After`, built the way `social::writes` gates the
 //! social writes); the reads (galleries, metadata, blobs, the batch place
 //! gallery behind `POST /api/places/images`) serve either way.
 //!
-//! Authorization contracts kept exactly: an upload's `metadata.userAddress`
+//! Authorization: an upload's `metadata.userAddress`
 //! must be the signer (and the row's CHECK holds the pair together);
 //! private rows are listed only to their owner (an unverifiable chain reads
 //! as anonymous); delete and visibility are the owner's (403 for anyone
 //! else, 404 for an absent row); the admin routes take the bearer
 //! `CATALYRST_CAMERA_REEL_ADMIN_TOKEN` (403 unset, 401 wrong); a `rejected`
-//! row answers 404 from every reel read, and its blobs answer 404 on every
-//! route of the node that serves the ONE store: the reel's
-//! `GET /api/images/{hash}` (from `review_status`), the content server's
+//! row is omitted from public galleries and its metadata answers 404.
+//! Its blobs answer 404 on the protected byte routes of the ONE store:
+//! the reel's `GET /api/files/{name}` (from `review_status`), the content server's
 //! `/contents/{hash}` at the root and under the worlds nest and the
 //! builder's `/contents/{hash}` (from `camera_reel.withheld_blobs`, written
 //! in the review's and the delete's transaction and mirrored into the shared
 //! in-memory `content::Denylist`, refilled at boot by
-//! [`State::load_withheld`]). The old service could not leak a rejected or
-//! deleted photo through another route because its store was private; over
-//! the ONE store the withheld record is what keeps that contract. A hash is
+//! [`State::load_withheld`]). A hash is
 //! withheld only while no non-rejected row and no content file or builder
 //! upload names it, so an owner's delete cannot hide a deployed file of the
-//! same bytes. What stays as the old hash-as-capability rule: a private,
-//! non-rejected photo is served to whoever holds its hash, by the reel route
-//! as before and now by the content routes too. Two deliberate deviations:
-//! a delete never unlinks a blob (the store is
-//! shared with content, worlds and builder; a store-wide mark sweep is the
-//! candidate), and `GET /api/images/{hash}` serves only a hash some
-//! non-rejected row names (an "orphan stays servable" rule would expose any
-//! content file through this route). Beside the offset pages: a keyset page
+//! same bytes. A private, non-rejected photo is served to whoever holds its
+//! filename URL or hash. Deletion removes the gallery row and applies withholding
+//! without unlinking immutable shared blobs. `GET /api/files/{name}` serves only
+//! a hash a non-rejected camera row names; arbitrary content files cannot be
+//! downloaded through this route. Beside the offset pages: a keyset page
 //! (`?cursor=`) over the same order, `nextCursor` on the wire only when
 //! asked for.
 //!
-//! Mount: `.nest("/camera-reel-service", camera_reel::router(state))`, the
-//! prefix the old gateway stripped (`catalyrst/nixos/web-gateway.nix`);
+//! `GET /api/images/{name}` redirects whether or not the object exists.
+//! With no bucket origin configured, the target is `/api/files/{name}`,
+//! which resolves exact filename aliases and checks the underlying hash's
+//! denylist. With a configured bucket origin, known aliases redirect to their
+//! stored hash and unknown names keep their requested key. That origin must
+//! enforce its own object availability; this process only controls local bytes.
+//!
+//! Mount: `.nest("/camera-reel-service", camera_reel::router(state))`;
 //! the router's own paths are `/api/...`, `/admin/...`, `/health`. It is not
 //! merged at the root: `/api/places/{id}/...` is the explore places
 //! surface there. A per-vhost proxy for `camera-reel-service.<domain>`
@@ -60,11 +60,9 @@
 //! path, and the `x-original-path` the proxy sets when it ends with the
 //! route).
 //!
-//! Not carried (the plan): `dcl-scene-cli` and what only it consumes
-//! (`dcl-scene-authoring`, `dcl-preview-tunnel`,
-//! `dcl-preview-tunnel-protocol`) and `catalyrst-deploy-signer`; of this
-//! crate, the `ts` feature (ts-rs bindings), the per-service `/metrics` and
-//! the places-API client with its LRU (`PLACES_API_URL`, `PLACES_CACHE_*`).
+//! `/metrics` exposes this router's request counts and latency histograms.
+//! Scrapes require `WKC_METRICS_BEARER_TOKEN`; an unset token fails closed.
+//! Documentation and Swagger UI assets are served locally under `/api/docs`.
 
 // The crates this one builds on, under their module names (AGENTS.md).
 #[cfg(test)]
@@ -85,6 +83,8 @@ pub mod http;
 pub mod writes;
 
 #[cfg(test)]
+mod http_parity_tests;
+#[cfg(test)]
 mod tests;
 
 use std::sync::Arc;
@@ -97,7 +97,7 @@ use sqlx::PgPool;
 
 use crate::auth::eip1654::Eip1654Validator;
 use crate::content::Denylist;
-use crate::shared::signed_fetch::{self, PayloadPolicy, SignedFetchError, Signer};
+use crate::shared::signed_fetch::{self, SignedFetchError};
 use crate::storage::Storage;
 
 use http::ApiError;
@@ -112,7 +112,9 @@ pub struct Settings {
     /// Base of the rendered `url`/`thumbnailUrl` (old `API_URL`): the public
     /// URL of this router, `<PUBLIC_URL>/camera-reel-service`.
     pub api_url: String,
-    /// Old `BUCKET_URL`: when set, `GET /api/images/{hash}` redirects there.
+    /// Public blob origin. Known image filenames redirect to their stored hash;
+    /// unknown names are forwarded as requested. Without an external origin,
+    /// image URLs redirect to this service's protected `/api/files` route.
     pub bucket_url: Option<String>,
     /// Old `MAX_IMAGES_PER_USER` (500).
     pub max_images_per_user: u64,
@@ -120,6 +122,8 @@ pub struct Settings {
     pub admin_token: Option<String>,
     /// `CREATE_WRITES_ENABLED`.
     pub writes_enabled: bool,
+    /// Protects the service metrics endpoint; an unset token refuses scrapes.
+    pub metrics_bearer_token: Option<String>,
 }
 
 impl Settings {
@@ -130,6 +134,7 @@ impl Settings {
             max_images_per_user: DEFAULT_MAX_IMAGES_PER_USER,
             admin_token: None,
             writes_enabled: false,
+            metrics_bearer_token: None,
         }
     }
 }
@@ -144,6 +149,7 @@ pub struct State {
     /// `/api/images/{hash}` included.
     pub denylist: Arc<Denylist>,
     eip1654: Option<Arc<dyn Eip1654Validator>>,
+    metrics: http::Metrics,
 }
 
 pub type SharedState = Arc<State>;
@@ -168,6 +174,7 @@ impl State {
             storage,
             denylist,
             eip1654,
+            metrics: http::Metrics::default(),
         }
     }
 
@@ -197,15 +204,54 @@ impl State {
         headers: &HeaderMap,
         method: &str,
         path: &SignedPath,
-    ) -> Result<Signer, SignedFetchError> {
-        signed_fetch::require_signer_at(
-            headers,
+    ) -> Result<String, SignedFetchError> {
+        use crate::auth::signed_fetch::{LegacyPayload, SignatureRefusal, SignedRequest};
+
+        let chain = signed_fetch::extract_auth_chain(headers)?;
+        let timestamp = signed_fetch::header_str(headers, signed_fetch::AUTH_TIMESTAMP_HEADER)
+            .ok_or_else(|| SignedFetchError::InvalidTimestamp(String::new()))?;
+        let signed_at = timestamp
+            .parse::<u128>()
+            .map_err(|_| SignedFetchError::InvalidTimestamp(timestamp.to_owned()))?;
+        let metadata = signed_fetch::header_str(headers, signed_fetch::AUTH_METADATA_HEADER)
+            .ok_or_else(|| SignedFetchError::MalformedChain {
+                detail: "missing metadata".to_owned(),
+            })?;
+        let now = chrono::Utc::now();
+        if signed_at.saturating_add(60_000) < now.timestamp_millis() as u128 {
+            return Err(SignedFetchError::Expired {
+                signed_at: (signed_at / 1000).min(i64::MAX as u128) as i64,
+                now: now.timestamp(),
+                window_secs: 60,
+            });
+        }
+
+        // Camera authorization uses the recovered address only. Metadata is
+        // mandatory signed text; it does not grant or restrict access.
+        let paths = signed_fetch::candidate_paths(headers, path);
+        let request = SignedRequest {
             method,
-            path,
-            PayloadPolicy::V6ThenLegacy,
+            paths: &paths,
+            timestamp,
+            metadata,
+        };
+        crate::auth::signed_fetch::verify_signature(
+            &chain,
+            &request,
+            now.timestamp(),
+            LegacyPayload::Accepted,
             self.eip1654.as_deref(),
         )
         .await
+        .map_err(|error| match error {
+            SignatureRefusal::Invalid(Some(error)) | SignatureRefusal::Settled(error) => {
+                signed_fetch::map_auth_error(error)
+            }
+            SignatureRefusal::Invalid(None) | SignatureRefusal::LegacyKeysNotCanonical => {
+                SignedFetchError::InvalidSignature("invalid signature".to_owned())
+            }
+        })?;
+        Ok(chain[0].payload.to_lowercase())
     }
 
     /// The verified signer of a write; every refusal is 401.
@@ -214,10 +260,10 @@ impl State {
         headers: &HeaderMap,
         method: &str,
         path: &SignedPath,
-    ) -> Result<Signer, ApiError> {
+    ) -> Result<String, ApiError> {
         self.verify(headers, method, path).await.map_err(|e| {
             tracing::debug!(error = %e, "auth chain verification failed");
-            ApiError::Unauthorized
+            ApiError::SignedFetchUnauthorized
         })
     }
 
@@ -228,7 +274,7 @@ impl State {
         headers: &HeaderMap,
         method: &str,
         path: &SignedPath,
-    ) -> Option<Signer> {
+    ) -> Option<String> {
         headers.get(format!("{}0", signed_fetch::AUTH_CHAIN_HEADER_PREFIX))?;
         match self.verify(headers, method, path).await {
             Ok(signer) => Some(signer),
@@ -254,6 +300,7 @@ pub fn router(state: SharedState) -> Router {
     let api = Router::new()
         .route("/images", post(handlers::images::upload_image))
         .route("/images-json", post(handlers::images::upload_image_json))
+        .route("/files/{image_id}", get(handlers::images::get_image_bytes))
         .route(
             "/images/{image_id}",
             get(handlers::images::get_image).delete(handlers::images::delete_image),
@@ -283,9 +330,22 @@ pub fn router(state: SharedState) -> Router {
             "/wearables/{item}/images",
             get(handlers::wearables::get_wearable_images),
         )
-        .route("/docs/openapi.json", get(docs::openapi_json))
-        .route("/docs/ui", get(docs::swagger_ui))
-        .route("/docs/ui/{*rest}", get(docs::swagger_ui));
+        .route(
+            "/docs/openapi.json",
+            get(docs::openapi_json).head(|| async { axum::http::StatusCode::NOT_FOUND }),
+        )
+        .route(
+            "/docs/ui",
+            get(docs::swagger_ui).head(|| async { axum::http::StatusCode::NOT_FOUND }),
+        )
+        .route(
+            "/docs/ui/",
+            get(docs::swagger_ui).head(|| async { axum::http::StatusCode::NOT_FOUND }),
+        )
+        .route(
+            "/docs/ui/{*rest}",
+            get(docs::swagger_ui).head(|| async { axum::http::StatusCode::NOT_FOUND }),
+        );
 
     let admin = Router::new()
         .route(
@@ -301,9 +361,17 @@ pub fn router(state: SharedState) -> Router {
     let router = Router::new()
         .route("/health", get(health))
         .route("/health/live", get(health))
+        .route(
+            "/metrics",
+            get(http::metrics).head(|| async { axum::http::StatusCode::NOT_FOUND }),
+        )
         .nest("/api", api)
         .merge(admin)
+        .fallback(|| async { axum::http::StatusCode::NOT_FOUND })
+        .method_not_allowed_fallback(|| async { axum::http::StatusCode::NOT_FOUND })
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
-        .with_state(state);
+        .with_state(state.clone());
     writes::guard(router, writes_enabled)
+        .layer(axum::middleware::from_fn(http::cors))
+        .layer(axum::middleware::from_fn_with_state(state, http::observe))
 }

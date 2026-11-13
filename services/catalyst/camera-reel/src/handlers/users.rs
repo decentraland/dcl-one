@@ -1,5 +1,5 @@
 use axum::Json;
-use axum::extract::{OriginalUri, Path, Query, State};
+use axum::extract::{OriginalUri, Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
@@ -8,7 +8,7 @@ use crate::dto::{
     GalleryImage, GetGalleryImagesResponse, GetImagesResponse, Image, UserDataResponse,
 };
 use crate::handlers::{PageQuery, default_compact, default_limit, default_offset, next_cursor};
-use crate::http::ApiError;
+use crate::http::{ApiError, Query};
 use crate::{SharedState, SignedPath, signed_path};
 
 #[derive(Deserialize, Debug)]
@@ -32,7 +32,7 @@ async fn only_public_for(
     path: &SignedPath,
     user_address: &str,
 ) -> bool {
-    !matches!(state.optional_auth(headers, method, path).await, Some(signer) if signer.as_str().eq_ignore_ascii_case(user_address))
+    !matches!(state.optional_auth(headers, method, path).await, Some(signer) if signer.as_str() == user_address)
 }
 
 pub async fn get_user_data(
@@ -40,6 +40,7 @@ pub async fn get_user_data(
     OriginalUri(uri): OriginalUri,
     headers: HeaderMap,
     Path(user_address): Path<String>,
+    Query(_query): Query<GetImagesQuery>,
 ) -> Result<Response, ApiError> {
     let path = signed_path(&uri, format!("/api/users/{user_address}"));
     let only_public = only_public_for(&state, &headers, "get", &path, &user_address).await;
@@ -113,3 +114,7 @@ pub async fn get_user_images(
             .into_response())
     }
 }
+
+#[cfg(test)]
+#[path = "../read_parity_tests.rs"]
+mod read_parity_tests;

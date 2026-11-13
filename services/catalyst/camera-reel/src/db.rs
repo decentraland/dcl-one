@@ -1,8 +1,9 @@
 //! The statements over `camera_reel.images` (`schemas/50_create.sql`). Each
 //! write is one statement so its outcome (owned /
 //! not owned / absent, at the cap / under it) comes from one snapshot. The
-//! wire `url`/`thumbnailUrl` are rendered here from the stored hashes as
-//! `<api_url>/api/images/<hash>`, so a changed `API_URL` never strands a row.
+//! wire `url`/`thumbnailUrl` use each upload's UUID and retained basename.
+//! Older rows without a basename keep their hash URLs. Both render under
+//! `api_url`, so a changed public base URL never strands a row.
 //!
 //! Pages: the old `offset` shape as is, plus a keyset shape (`Page::After`)
 //! whose cursor is the last row's `(created_at, id)`, the order every page
@@ -54,6 +55,14 @@ pub struct DbImage {
     pub review_status: String,
 }
 
+impl DbImage {
+    fn with_public_urls(mut self, api_url: &str) -> Self {
+        self.url = image_url(api_url, &self.url);
+        self.thumbnail_url = image_url(api_url, &self.thumbnail_url);
+        self
+    }
+}
+
 /// What an upload inserts: the two blob hashes and the client's document.
 #[derive(Debug, Clone)]
 pub struct NewImage {
@@ -65,11 +74,18 @@ pub struct NewImage {
 }
 
 impl NewImage {
-    pub fn wire(&self, api_url: &str) -> Image {
+    pub fn wire(&self, api_url: &str, original_filename: Option<&str>) -> Image {
+        let (image_name, thumbnail_name) = match original_filename {
+            Some(filename) => (
+                format!("{}-{filename}", self.id),
+                format!("{}-thumbnail-{filename}", self.id),
+            ),
+            None => (self.image_hash.clone(), self.thumbnail_hash.clone()),
+        };
         Image {
             id: self.id.to_string(),
-            url: image_url(api_url, &self.image_hash),
-            thumbnail_url: image_url(api_url, &self.thumbnail_hash),
+            url: image_url(api_url, &image_name),
+            thumbnail_url: image_url(api_url, &thumbnail_name),
             is_public: self.is_public,
             metadata: self.metadata.clone(),
         }
@@ -77,7 +93,27 @@ impl NewImage {
 }
 
 pub fn image_url(api_url: &str, hash: &str) -> String {
-    format!("{}/api/images/{hash}", api_url.trim_end_matches('/'))
+    format!(
+        "{}/api/images/{}",
+        api_url.trim_end_matches('/'),
+        encode_path_segment(hash)
+    )
+}
+
+/// Keep the entire decoded object name in one URL path segment.
+pub(crate) fn encode_path_segment(name: &str) -> String {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    let mut encoded = String::with_capacity(name.len());
+    for byte in name.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
+            encoded.push(byte as char);
+        } else {
+            encoded.push('%');
+            encoded.push(HEX[(byte >> 4) as usize] as char);
+            encoded.push(HEX[(byte & 15) as usize] as char);
+        }
+    }
+    encoded
 }
 
 /// What one delete reports back: ownership outcome, the hashes the row
@@ -240,10 +276,8 @@ impl Database {
 
     fn select(&self) -> QueryBuilder<Postgres> {
         let mut qb = QueryBuilder::new(format!("SELECT {COLUMNS}, "));
-        qb.push_bind(&self.api_url)
-            .push("::text || '/api/images/' || image_hash AS url, ")
-            .push_bind(&self.api_url)
-            .push("::text || '/api/images/' || thumbnail_hash AS thumbnail_url");
+        qb.push("CASE WHEN original_filename IS NULL THEN image_hash ELSE id::text || '-' || original_filename END AS url, ")
+            .push("CASE WHEN original_filename IS NULL THEN thumbnail_hash ELSE id::text || '-thumbnail-' || original_filename END AS thumbnail_url");
         qb
     }
 
@@ -251,7 +285,10 @@ impl Database {
         let mut qb = self.select();
         qb.push(format!(" FROM {TABLE} WHERE id = "))
             .push_bind(parse_uuid(id)?);
-        qb.build_query_as::<DbImage>().fetch_one(&self.pool).await
+        qb.build_query_as::<DbImage>()
+            .fetch_one(&self.pool)
+            .await
+            .map(|image| image.with_public_urls(&self.api_url))
     }
 
     fn push_filter(
@@ -330,7 +367,7 @@ impl Database {
         };
         let images = rows
             .iter()
-            .map(DbImage::from_row)
+            .map(|row| DbImage::from_row(row).map(|image| image.with_public_urls(&self.api_url)))
             .collect::<Result<Vec<_>, _>>()?;
         let next = match page {
             Page::Offset(_) => None,
@@ -391,6 +428,11 @@ impl Database {
             .await
     }
 
+    pub async fn get_wearable_images_count(&self, item: &str) -> Result<u64, sqlx::Error> {
+        self.get_images_count(&Filter::WearableItem(item), true)
+            .await
+    }
+
     /// Public, non-rejected photos in which somebody wears `item`
     /// (`<contract>-<itemId>`), newest first; public whoever asks, since
     /// these are photos of other people offered for an item.
@@ -435,6 +477,16 @@ impl Database {
         image: &NewImage,
         max_images: u64,
     ) -> Result<Option<u64>, sqlx::Error> {
+        self.insert_image_within_limit_named(image, max_images, None)
+            .await
+    }
+
+    pub async fn insert_image_within_limit_named(
+        &self,
+        image: &NewImage,
+        max_images: u64,
+        original_filename: Option<&str>,
+    ) -> Result<Option<u64>, sqlx::Error> {
         let user = image.metadata.user_address.to_lowercase();
         let mut tx = self.pool.begin().await?;
         sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1))")
@@ -443,8 +495,8 @@ impl Database {
             .await?;
         let count = sqlx::query_scalar::<_, i64>(
             "WITH ins AS ( \
-                 INSERT INTO camera_reel.images (id, user_address, image_hash, thumbnail_hash, is_public, metadata, ranking_published) \
-                 SELECT $1, $2, $3, $4, $5, $6, false \
+                 INSERT INTO camera_reel.images (id, user_address, image_hash, thumbnail_hash, is_public, metadata, ranking_published, original_filename) \
+                 SELECT $1, $2, $3, $4, $5, $6, false, $8 \
                  WHERE (SELECT COUNT(*) FROM camera_reel.images WHERE user_address = $2) < $7 \
                  RETURNING id \
              ) \
@@ -457,6 +509,7 @@ impl Database {
         .bind(image.is_public)
         .bind(Json(&image.metadata))
         .bind(max_images.min(i64::MAX as u64) as i64)
+        .bind(original_filename)
         .fetch_optional(&mut *tx)
         .await?;
         tx.commit().await?;
@@ -609,6 +662,38 @@ impl Database {
         .await?;
         cache_put(&self.servable, hash.to_string(), servable, SERVABLE_TTL);
         Ok(servable)
+    }
+
+    /// Resolve only exact stored photo aliases, or a legacy hash a photo still
+    /// references. The UUID prefix uses the existing primary key; arbitrary
+    /// shared-storage hashes never become readable through this route.
+    pub async fn image_hash_for_name(&self, name: &str) -> Result<Option<String>, sqlx::Error> {
+        if let Some((id, suffix)) = name
+            .get(..36)
+            .and_then(|id| Uuid::parse_str(id).ok())
+            .zip(name.get(36..).and_then(|suffix| suffix.strip_prefix('-')))
+        {
+            if !name.starts_with(&id.to_string()) {
+                return Ok(None);
+            }
+            let row: Option<(String, String, Option<String>)> = sqlx::query_as(
+                "SELECT image_hash, thumbnail_hash, original_filename FROM camera_reel.images \
+                 WHERE id=$1 AND review_status <> 'rejected'",
+            )
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await?;
+            if let Some((image_hash, thumbnail_hash, Some(filename))) = row {
+                if suffix == filename {
+                    return Ok(Some(image_hash));
+                }
+                if suffix == format!("thumbnail-{filename}") {
+                    return Ok(Some(thumbnail_hash));
+                }
+            }
+            return Ok(None);
+        }
+        Ok(self.hash_is_servable(name).await?.then(|| name.to_string()))
     }
 
     fn forget_servable(&self, hash: &str) {

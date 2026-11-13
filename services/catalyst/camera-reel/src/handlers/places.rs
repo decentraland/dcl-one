@@ -1,5 +1,5 @@
 use axum::Json;
-use axum::extract::{Path, Query, State};
+use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 
@@ -9,7 +9,7 @@ use crate::dto::{
     GetMultiplePlacesImagesResponse, GetPlaceImagesResponse, PlaceDataResponse,
 };
 use crate::handlers::{PageQuery, next_cursor};
-use crate::http::ApiError;
+use crate::http::{ApiError, JsonBody, Query};
 
 pub const MAX_PLACES_IDS: usize = 100;
 
@@ -28,7 +28,7 @@ pub fn validate_places_ids(places_ids: &[String]) -> Result<(), ApiError> {
 async fn world_place_ids(state: &SharedState, name: &str) -> Result<Vec<String>, ApiError> {
     state.db.world_place_ids(name).await.map_err(|e| {
         tracing::error!("failed to resolve world name '{name}': {e}");
-        ApiError::Internal(format!("failed to resolve world name: {e}"))
+        ApiError::BadGateway(format!("failed to resolve world name: {e}"))
     })
 }
 
@@ -101,7 +101,7 @@ pub async fn get_place_images(
 pub async fn get_multiple_places_images(
     State(state): State<SharedState>,
     Query(q): Query<PageQuery>,
-    Json(body): Json<GetMultiplePlacesImagesBody>,
+    JsonBody(body): JsonBody<GetMultiplePlacesImagesBody>,
 ) -> Result<Response, ApiError> {
     validate_places_ids(&body.places_ids)?;
 

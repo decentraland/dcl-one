@@ -17,69 +17,116 @@ use crate::db::{BlobVerdict, DeletedImage, NewImage};
 use crate::dto::{
     Image, Metadata, UpdateReview, UpdateVisibility, UploadResponse, UserDataResponse,
 };
-use crate::http::ApiError;
+use crate::http::{ApiError, JsonBody};
 use crate::storage::{Storage, StorageError};
 use crate::{SharedState, signed_path};
 
 pub const MAX_MULTIPART_IMAGE_BYTES: usize = 5 * 1024 * 1024;
 pub const MAX_JSON_IMAGE_BYTES: usize = 15 * 1024 * 1024;
+const MAX_MULTIPART_MEMORY_BYTES: usize = 2 * 1024 * 1024;
 
 pub async fn upload_image(
     State(state): State<SharedState>,
     OriginalUri(uri): OriginalUri,
     headers: HeaderMap,
-    mut multipart: Multipart,
+    multipart: Result<Multipart, axum::extract::multipart::MultipartRejection>,
 ) -> Result<Response, ApiError> {
     let address = state
         .require_auth(&headers, "post", &signed_path(&uri, "/api/images"))
         .await?;
 
+    let mut multipart = multipart.map_err(|_| {
+        multipart_error(match headers.get(header::CONTENT_TYPE) {
+            None => "No Content-Type header found",
+            Some(value) if value.to_str().ok().is_none_or(|value| !value.contains('/')) => {
+                "Can not parse Content-Type header"
+            }
+            Some(_) => "Multipart boundary is not found",
+        })
+    })?;
+    let mut memory_remaining = MAX_MULTIPART_MEMORY_BYTES;
     let mut image_bytes: Option<Bytes> = None;
     let mut image_content_type: Option<String> = None;
+    let mut image_file_name: Option<String> = None;
     let mut metadata_bytes: Option<Bytes> = None;
-    let mut is_public = false;
+    let mut is_public = None;
 
-    while let Some(field) = multipart
-        .next_field()
-        .await
-        .map_err(|e| ApiError::BadRequest(format!("invalid multipart: {e}")))?
-    {
+    while let Some(mut field) = multipart.next_field().await.map_err(multipart_read_error)? {
+        if field.name().is_none()
+            || !field
+                .headers()
+                .get(header::CONTENT_DISPOSITION)
+                .and_then(|value| std::str::from_utf8(value.as_bytes()).ok())
+                .and_then(|value| value.split(';').next())
+                .is_some_and(|value| value.trim().eq_ignore_ascii_case("form-data"))
+        {
+            return Err(multipart_error("No Content-Disposition `form-data` header"));
+        }
+        if field
+            .content_type()
+            .is_some_and(|value| value.starts_with("multipart/"))
+        {
+            return Err(multipart_error("Nested multipart is not supported"));
+        }
         match field.name() {
-            Some("image") => {
-                image_content_type = field.content_type().map(|s| s.to_string());
-                let data = field
-                    .bytes()
-                    .await
-                    .map_err(|e| ApiError::BadRequest(format!("invalid image field: {e}")))?;
-                if data.len() > MAX_MULTIPART_IMAGE_BYTES {
-                    return Err(ApiError::BadRequest("image too large".to_string()));
+            Some("image") if image_bytes.is_none() => {
+                image_content_type = field.content_type().map(str::to_owned);
+                image_file_name = field.file_name().map(str::to_owned);
+                image_bytes = Some(read_form_bytes(field, &mut memory_remaining).await?);
+            }
+            Some("metadata") if metadata_bytes.is_none() => {
+                metadata_bytes = Some(read_form_bytes(field, &mut memory_remaining).await?);
+            }
+            Some("is_public") if is_public.is_none() => {
+                if field.content_type().is_some_and(|content_type| {
+                    content_type
+                        .split(';')
+                        .next()
+                        .unwrap_or("")
+                        .trim()
+                        .rsplit('/')
+                        .next()
+                        .unwrap_or("")
+                        .rsplit('+')
+                        .next()
+                        != Some("plain")
+                }) {
+                    return Err(multipart_error(
+                        "An error occurred processing field `is_public`: Content type error",
+                    ));
                 }
-                image_bytes = Some(data);
-            }
-            Some("metadata") => {
-                let data = field
-                    .bytes()
-                    .await
-                    .map_err(|e| ApiError::BadRequest(format!("invalid metadata field: {e}")))?;
-                metadata_bytes = Some(data);
-            }
-            Some("is_public") => {
-                let text = field
-                    .text()
-                    .await
-                    .map_err(|e| ApiError::BadRequest(format!("invalid is_public field: {e}")))?;
-                is_public = text.trim().parse::<bool>().unwrap_or(false);
+                let bytes = read_form_bytes(field, &mut memory_remaining).await?;
+                let text = std::str::from_utf8(&bytes).map_err(|error| multipart_error(format!(
+                    "An error occurred processing field `is_public`: UTF-8 decoding error: {error}"
+                )))?;
+                is_public = Some(text.parse::<bool>().map_err(|error| multipart_error(format!(
+                    "An error occurred processing field `is_public`: Plain text deserialize error: cannot parse boolean: {error}"
+                )))?);
             }
             _ => {
-                let _ = field.bytes().await;
+                // Unknown and duplicate fields are ignored; the first value wins.
+                while field.chunk().await.map_err(multipart_read_error)?.is_some() {}
             }
         }
     }
 
     let image_bytes =
-        image_bytes.ok_or_else(|| ApiError::BadRequest("missing image".to_string()))?;
+        image_bytes.ok_or_else(|| multipart_error("Field with name `image` is required"))?;
     let metadata_bytes =
-        metadata_bytes.ok_or_else(|| ApiError::BadRequest("missing metadata".to_string()))?;
+        metadata_bytes.ok_or_else(|| multipart_error("Field with name `metadata` is required"))?;
+
+    let max_images = state.settings.max_images_per_user;
+    if state
+        .db
+        .get_user_images_count(&address, false)
+        .await
+        .unwrap_or(0)
+        >= max_images
+    {
+        return Err(ApiError::MaxLimitReached(format!(
+            "you have reached the limit of {max_images} max images"
+        )));
+    }
 
     let metadata: Metadata = serde_json::from_slice(&metadata_bytes).map_err(|e| {
         tracing::error!("failed to parse metadata: {e}");
@@ -91,10 +138,37 @@ pub async fn upload_image(
         address.as_str(),
         image_bytes,
         image_content_type,
+        image_file_name.as_deref(),
         metadata,
-        is_public,
+        is_public.unwrap_or(false),
     )
     .await
+}
+
+fn multipart_error(message: impl Into<String>) -> ApiError {
+    ApiError::PlainText(StatusCode::BAD_REQUEST, message.into())
+}
+
+fn multipart_read_error(error: axum::extract::multipart::MultipartError) -> ApiError {
+    if error.status() == StatusCode::PAYLOAD_TOO_LARGE {
+        multipart_error("Payload reached size limit.")
+    } else {
+        multipart_error("Multipart stream is incomplete")
+    }
+}
+
+async fn read_form_bytes(
+    mut field: axum::extract::multipart::Field<'_>,
+    remaining: &mut usize,
+) -> Result<Bytes, ApiError> {
+    let mut bytes = bytes::BytesMut::new();
+    while let Some(chunk) = field.chunk().await.map_err(multipart_read_error)? {
+        *remaining = remaining
+            .checked_sub(chunk.len())
+            .ok_or_else(|| multipart_error("Payload reached size limit."))?;
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok(bytes.freeze())
 }
 
 #[derive(serde::Deserialize)]
@@ -130,6 +204,7 @@ pub async fn upload_image_json(
         address.as_str(),
         image_bytes,
         Some(req.content_type),
+        None,
         req.metadata,
         req.is_public,
     )
@@ -168,10 +243,19 @@ async fn finalize_upload(
     address: &str,
     image_bytes: Bytes,
     image_content_type: Option<String>,
+    image_file_name: Option<&str>,
     metadata: Metadata,
     is_public: bool,
 ) -> Result<Response, ApiError> {
-    if !metadata.user_address.eq_ignore_ascii_case(address) {
+    if metadata
+        .visible_people
+        .iter()
+        .filter_map(|person| person.screen_rect)
+        .any(|rect| !rect.is_valid())
+    {
+        return Err(ApiError::BadRequest("invalid metadata".to_string()));
+    }
+    if metadata.user_address != address {
         return Err(ApiError::BadRequest("invalid user address".to_string()));
     }
 
@@ -184,6 +268,10 @@ async fn finalize_upload(
 
     let thumbnail = thumbnail_of(&image_bytes)?;
 
+    if image_file_name.is_some_and(|name| name.contains('/') || name.contains('\\')) {
+        return Err(ApiError::BadRequest("invalid file name".to_string()));
+    }
+
     let new_image = NewImage {
         id: Uuid::new_v4(),
         image_hash: crate::auth::hash_bytes_v1(&image_bytes),
@@ -191,14 +279,15 @@ async fn finalize_upload(
         is_public,
         metadata,
     };
-    let image = new_image.wire(&state.settings.api_url);
+    let original_filename = image_file_name.unwrap_or("image.png");
+    let image = new_image.wire(&state.settings.api_url, Some(original_filename));
 
     // The row is the limit gate, so it lands before the blobs: a refused upload
     // never touches the store, and a failed blob write takes its row back out.
     let max_images = state.settings.max_images_per_user;
     let current_images = state
         .db
-        .insert_image_within_limit(&new_image, max_images)
+        .insert_image_within_limit_named(&new_image, max_images, Some(original_filename))
         .await
         .map_err(|e| {
             tracing::error!("failed to store image metadata: {e}");
@@ -213,10 +302,16 @@ async fn finalize_upload(
     let stored = async {
         store_blob(&state.storage, &new_image.image_hash, image_bytes)
             .await
-            .map_err(|e| ApiError::Internal(format!("failed to store image: {e}")))?;
+            .map_err(|error| {
+                tracing::error!(%error, "failed to store image");
+                ApiError::Internal("failed to upload image".to_owned())
+            })?;
         store_blob(&state.storage, &new_image.thumbnail_hash, thumbnail)
             .await
-            .map_err(|e| ApiError::Internal(format!("failed to store thumbnail: {e}")))
+            .map_err(|error| {
+                tracing::error!(%error, "failed to store thumbnail");
+                ApiError::Internal("failed to upload image".to_owned())
+            })
     }
     .await;
     if let Err(err) = stored {
@@ -514,7 +609,7 @@ pub async fn update_image_visibility(
     OriginalUri(uri): OriginalUri,
     headers: HeaderMap,
     Path(image_id): Path<String>,
-    Json(update): Json<UpdateVisibility>,
+    update: Result<JsonBody<UpdateVisibility>, ApiError>,
 ) -> Result<Response, ApiError> {
     let address = state
         .require_auth(
@@ -524,6 +619,7 @@ pub async fn update_image_visibility(
         )
         .await?;
 
+    let JsonBody(update) = update?;
     let owned = state
         .db
         .set_image_visibility(&image_id, address.as_str(), update.is_public)
@@ -540,32 +636,59 @@ pub async fn update_image_visibility(
     Ok(StatusCode::OK.into_response())
 }
 
-/// `GET /api/images/{hash}`: the blob, while a non-rejected row names it
-/// and the store does not withhold it (the operator's `content.denylist`
-/// or a reel verdict; the store's own reads refuse a listed hash too, this
-/// check keeps the bucket redirect from pointing at one).
+/// The public image URL redirects even when its target does not exist.
+/// The configured bucket owns its object responses; the local byte endpoint
+/// resolves photo aliases and enforces the shared store's moderation policy.
 pub async fn get_image(
     State(state): State<SharedState>,
     Path(image_id): Path<String>,
 ) -> Result<Response, ApiError> {
+    let location = match &state.settings.bucket_url {
+        Some(bucket_url) => {
+            // Public upload names resolve to immutable keys in the shared bucket.
+            // An absent row still redirects, leaving object existence to that origin.
+            let object = state
+                .db
+                .image_hash_for_name(&image_id)
+                .await
+                .unwrap_or_else(|error| {
+                    tracing::debug!(%error, "image redirect alias lookup unavailable");
+                    None
+                })
+                .unwrap_or_else(|| image_id.clone());
+            format!("{bucket_url}/{}", crate::db::encode_path_segment(&object))
+        }
+        None => format!(
+            "{}/api/files/{}",
+            state.settings.api_url,
+            crate::db::encode_path_segment(&image_id)
+        ),
+    };
+    Ok((
+        StatusCode::TEMPORARY_REDIRECT,
+        [(header::LOCATION, location)],
+    )
+        .into_response())
+}
+
+/// Serves only a stored photo alias or legacy hash whose bytes remain readable.
+/// Resolving the alias before checking the denylist keeps UUID filenames from
+/// bypassing a verdict recorded against the underlying immutable blob hash.
+pub async fn get_image_bytes(
+    State(state): State<SharedState>,
+    Path(image_id): Path<String>,
+) -> Result<Response, ApiError> {
+    let image_id = state
+        .db
+        .image_hash_for_name(&image_id)
+        .await
+        .map_err(|e| {
+            tracing::error!("failed to resolve image bytes: {e}");
+            ApiError::NotFound("image not found".to_string())
+        })?
+        .ok_or_else(|| ApiError::NotFound("image not found".to_string()))?;
     if state.storage.withholds(&image_id) {
         return Err(ApiError::NotFound("image not found".to_string()));
-    }
-    let servable = state.db.hash_is_servable(&image_id).await.map_err(|e| {
-        tracing::error!("failed to check image review status: {e}");
-        ApiError::NotFound("image not found".to_string())
-    })?;
-    if !servable {
-        return Err(ApiError::NotFound("image not found".to_string()));
-    }
-
-    if let Some(bucket_url) = &state.settings.bucket_url {
-        let location = format!("{}/{}", bucket_url.trim_end_matches('/'), image_id);
-        return Ok((
-            StatusCode::TEMPORARY_REDIRECT,
-            [(header::LOCATION, location)],
-        )
-            .into_response());
     }
 
     let bytes = state
@@ -673,3 +796,7 @@ pub async fn get_metadata(
     let image: Image = db_image.into();
     Ok((StatusCode::OK, Json(image)).into_response())
 }
+
+#[cfg(test)]
+#[path = "writes_parity_tests.rs"]
+mod parity_tests;

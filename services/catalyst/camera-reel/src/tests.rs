@@ -1799,13 +1799,8 @@ async fn upload_over_signed_fetch_is_served_back_and_owned() {
         Some((body.clone(), &ct)),
     )
     .await;
-    assert_eq!(
-        (status, json_of(&resp)),
-        (
-            StatusCode::UNAUTHORIZED,
-            json!({ "message": "Unauthorized" })
-        )
-    );
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(resp, b"Unathorized");
     let (other, other_ct) = multipart(
         &bytes,
         "image/png",
@@ -1838,21 +1833,25 @@ async fn upload_over_signed_fetch_is_served_back_and_owned() {
     assert_eq!(uploaded["currentImages"], 1);
     assert_eq!(uploaded["maxImages"], 500);
     let image_hash = hash_bytes_v1(&bytes);
+    let image_id = uploaded["image"]["id"].as_str().unwrap().to_string();
     assert_eq!(
         uploaded["image"]["url"],
-        format!("{API_URL}/api/images/{image_hash}")
+        format!("{API_URL}/api/images/{image_id}-shot.png")
     );
     assert_eq!(uploaded["image"]["isPublic"], false);
     assert_eq!(uploaded["image"]["metadata"]["placeId"], place);
-    let image_id = uploaded["image"]["id"].as_str().unwrap().to_string();
     let thumbnail_url = uploaded["image"]["thumbnailUrl"].as_str().unwrap();
-    let thumbnail_hash = thumbnail_url.rsplit('/').next().unwrap().to_string();
+    assert_eq!(
+        thumbnail_url,
+        format!("{API_URL}/api/images/{image_id}-thumbnail-shot.png")
+    );
+    let thumbnail_hash = s.db().get_image(&image_id).await.unwrap().thumbnail_hash;
 
     // the blobs, from the ONE store, typed by their bytes
     let (status, headers, served) = send(
         s.app(),
         "GET",
-        &format!("{PREFIX}/api/images/{image_hash}"),
+        &format!("{PREFIX}/api/files/{image_hash}"),
         vec![],
         None,
     )
@@ -1863,7 +1862,7 @@ async fn upload_over_signed_fetch_is_served_back_and_owned() {
     let (status, _, thumb) = send(
         s.app(),
         "GET",
-        &format!("{PREFIX}/api/images/{thumbnail_hash}"),
+        &format!("{PREFIX}/api/files/{thumbnail_hash}"),
         vec![],
         None,
     )
@@ -1998,7 +1997,7 @@ async fn upload_over_signed_fetch_is_served_back_and_owned() {
     let (status, _, _) = send(
         s.app(),
         "GET",
-        &format!("{PREFIX}/api/images/{image_hash}"),
+        &format!("{PREFIX}/api/files/{image_hash}"),
         vec![],
         None,
     )
@@ -2131,7 +2130,7 @@ async fn the_moderator_hides_a_rejected_row_and_its_blobs() {
     let (status, _, served) = send(
         s.app(),
         "GET",
-        &format!("{PREFIX}/api/images/{hash}"),
+        &format!("{PREFIX}/api/files/{hash}"),
         vec![],
         None,
     )
@@ -2166,7 +2165,7 @@ async fn the_moderator_hides_a_rejected_row_and_its_blobs() {
     let (status, _, _) = send(
         s.app(),
         "GET",
-        &format!("{PREFIX}/api/images/{hash}"),
+        &format!("{PREFIX}/api/files/{hash}"),
         vec![],
         None,
     )
@@ -2212,7 +2211,7 @@ async fn the_moderator_hides_a_rejected_row_and_its_blobs() {
     let (status, _, _) = send(
         s.app(),
         "GET",
-        &format!("{PREFIX}/api/images/{hash}"),
+        &format!("{PREFIX}/api/files/{hash}"),
         vec![],
         None,
     )
@@ -2285,7 +2284,7 @@ async fn node_around(s: &Scratch) -> Router {
 async fn bytes_everywhere(app: &Router, hash: &str) -> [(StatusCode, bool); 3] {
     let mut out = [(StatusCode::IM_A_TEAPOT, false); 3];
     for (i, path) in [
-        format!("{PREFIX}/api/images/{hash}"),
+        format!("{PREFIX}/api/files/{hash}"),
         format!("/contents/{hash}"),
         format!("/builder-api/contents/{hash}"),
     ]
@@ -2325,14 +2324,8 @@ async fn a_rejected_or_deleted_photo_is_withheld_on_every_contents_route() {
     let uploaded = json_of(&resp);
     let id = uploaded["image"]["id"].as_str().unwrap().to_string();
     let image_hash = s.hash(&hash_bytes_v1(&bytes));
-    let thumb_hash = s.hash(
-        uploaded["image"]["thumbnailUrl"]
-            .as_str()
-            .unwrap()
-            .rsplit('/')
-            .next()
-            .unwrap(),
-    );
+    let stored_thumbnail = s.db().get_image(&id).await.unwrap().thumbnail_hash;
+    let thumb_hash = s.hash(&stored_thumbnail);
     assert_ne!(image_hash, thumb_hash);
     let served = [(StatusCode::OK, true); 3];
     let withheld = [(StatusCode::NOT_FOUND, false); 3];
@@ -2826,3 +2819,6 @@ async fn the_wearable_gallery_is_the_public_photos_of_an_item_whoever_asks() {
     );
     s.done().await;
 }
+
+#[path = "storage_parity_tests.rs"]
+mod storage_parity_tests;

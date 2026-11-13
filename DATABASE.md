@@ -811,6 +811,15 @@ receipt's `(kind,event_key,community_id)` key serve different access patterns.
 Synthetic warm measurements and insertion costs are recorded in `METRICS.md`;
 they are not production capacity measurements.
 
+Camera uploads retain their multipart basename in `camera_reel.images.original_filename`.
+Gallery URLs combine the row UUID and basename; thumbnail names add `thumbnail-`.
+Alias downloads extract the UUID and use the existing primary key to resolve the
+shared image or thumbnail hash. The nullable column adds no index or backfill:
+existing rows retain their hash URLs. Migration `0040_camera_reel_original_filename`
+adds the column without replacing rows or blob bytes. Local `/api/files` downloads
+apply the camera row's review state and the shared blob denylist. An external public
+image origin is responsible for restricting its own copies.
+
 New camera uploads start with `ranking_published=false`. After both blobs are
 written, one transaction marks the row and applies local photo contributions.
 Existing photos receive `true` during migration, preserving the history boundary.
