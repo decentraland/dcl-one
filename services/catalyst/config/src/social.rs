@@ -679,8 +679,9 @@ pub struct SocialConfig {
 
     /// A deployment the node stored more than this many seconds after its
     /// entity timestamp is history a syncing node caught up on: the badge
-    /// processor passes it without effect; 0 keeps every deployment.
-    #[arg(long, env = "BADGES_DEPLOYMENT_MAX_LAG_SECS", default_value_t = 86_400)]
+    /// processor passes it without effect; 0 (the default, as upstream had
+    /// no such filter) keeps every deployment.
+    #[arg(long, env = "BADGES_DEPLOYMENT_MAX_LAG_SECS", default_value_t = 0)]
     pub badges_deployment_max_lag_secs: u64,
     /// Count the gatekeeper's room joins and leaves toward the presence
     /// badges (social.presence_badges): every process stores the events,

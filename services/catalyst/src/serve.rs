@@ -1158,6 +1158,15 @@ pub async fn serve(
     ));
     presence.spawn_jobs(&jobs);
     social.notifications.spawn_jobs(&jobs);
+    let catalog = social.badges.clone();
+    jobs.spawn("badges-catalog-check", move |ctx| async move {
+        tokio::select! {
+            _ = ctx.cancel.cancelled() => Ok(()),
+            checked = catalog.badges.warn_ahead_of_code() => {
+                checked.map(drop).context("badge catalog check failed")
+            }
+        }
+    });
     comms_stage.gatekeeper.spawn_jobs(&jobs);
     social.media.spawn_jobs(&jobs);
     social.rpc.spawn_jobs(&jobs);
