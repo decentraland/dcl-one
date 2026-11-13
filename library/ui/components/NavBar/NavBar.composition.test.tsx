@@ -77,6 +77,24 @@ describe('when NavBar accepts app-owned composition controls', () => {
     expect(screen.getByRole('link', { name: 'Decentraland home' })).toHaveFocus()
   })
 
+  it('should release the reduced-motion observer when the open menu leaves', async () => {
+    const reduced = { matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }
+    const desktop = { matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }
+    vi.stubGlobal('matchMedia', (query: string) =>
+      query.includes('prefers-reduced-motion') ? reduced : desktop
+    )
+    try {
+      render(<NavBar {...props} />)
+      await user.click(screen.getByRole('button', { name: 'Open menu' }))
+      expect(reduced.addEventListener).toHaveBeenCalledOnce()
+      const listener = reduced.addEventListener.mock.calls[0]![1]
+      await user.click(screen.getByRole('button', { name: 'Close menu' }))
+      expect(reduced.removeEventListener).toHaveBeenCalledExactlyOnceWith('change', listener)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
   it('should keep the one real header inside the open menu modal ownership', async () => {
     render(<NavBar {...props} />)
     const header = screen.getByRole('navigation', { name: 'Main' })

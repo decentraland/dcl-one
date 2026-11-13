@@ -353,6 +353,24 @@
     color: var(--dcl-text-primary);
   }
 
+  @keyframes drawerReveal {
+    from {
+      clip-path: inset(0 0 100% 0);
+    }
+    to {
+      clip-path: inset(0);
+    }
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .drawer {
+      animation: drawerReveal 180ms ease-out both;
+    }
+    .drawer[data-entry-revealed] {
+      animation: none;
+    }
+  }
+
   .drawerSections,
   .drawerItems {
     display: grid;

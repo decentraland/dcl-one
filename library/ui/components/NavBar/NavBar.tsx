@@ -462,6 +462,17 @@ function Drawer({
   children: ReactNode
 }) {
   const [top, setTop] = useState<number | null>(null)
+  const [entryRevealed, setEntryRevealed] = useState(false)
+  useLayoutEffect(() => {
+    if (typeof window.matchMedia !== 'function') return
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)')
+    const onChange = (event: MediaQueryListEvent) => {
+      if (event.matches) setEntryRevealed(true)
+    }
+    if (reducedMotion.matches) setEntryRevealed(true)
+    reducedMotion.addEventListener('change', onChange)
+    return () => reducedMotion.removeEventListener('change', onChange)
+  }, [])
   useLayoutEffect(() => {
     let frame = 0
     const measure = () => {
@@ -548,7 +559,15 @@ function Drawer({
         data-testid="navbar-backdrop"
         onClick={onClose}
       />
-      <div className={styles.drawer} data-testid="navbar-panel">
+      <div
+        className={styles.drawer}
+        data-testid="navbar-panel"
+        data-entry-revealed={entryRevealed || undefined}
+        onFocusCapture={() => setEntryRevealed(true)}
+        onAnimationEnd={(event) => {
+          if (event.target === event.currentTarget) setEntryRevealed(true)
+        }}
+      >
         {children}
       </div>
     </div>

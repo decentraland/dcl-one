@@ -32,7 +32,7 @@ async function resolveWash(token: string): Promise<string> {
   )
 }
 
-async function click(selector: string) {
+async function click(selector: string, waitForEntry = true) {
   const point = await evaluate<{ x: number; y: number }>(`(() => {
     const element = document.querySelector(${JSON.stringify(selector)});
     const rect = element.getBoundingClientRect();
@@ -53,6 +53,10 @@ async function click(selector: string) {
   await evaluate(
     'new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))'
   )
+  if (waitForEntry)
+    await evaluate(
+      `Promise.all(Array.from(document.querySelectorAll('[data-testid=navbar-panel]')).flatMap(panel=>panel.getAnimations().map(animation=>animation.finished.catch(()=>{}))))`
+    )
 }
 
 async function touch(selector: string) {
@@ -156,7 +160,10 @@ async function prepareHarness() {
 }
 
 afterEach(async () => {
-  if (session) await session.send('Emulation.setTouchEmulationEnabled', { enabled: false })
+  if (session) {
+    await session.send('Emulation.setTouchEmulationEnabled', { enabled: false })
+    await session.send('Emulation.setEmulatedMedia', { features: [] })
+  }
 })
 
 afterAll(async () => {
@@ -449,6 +456,188 @@ describe('when a public NavBar composes app-owned controls in Chromium', () => {
       `scrollTo(0,200);new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))`
     )
     expect(await evaluate('measureCalls')).toBeGreaterThan(0)
+    await key('Escape')
+  }, 30_000)
+
+  for (const width of [360, 390, 768, 1023]) {
+    for (const preference of ['no-preference', 'reduce']) {
+      it(`should reveal the whole lower panel downward with ${preference} motion at ${width}px`, async () => {
+        await session.send('Emulation.setDeviceMetricsOverride', {
+          width,
+          height: 844,
+          deviceScaleFactor: 1,
+          mobile: true
+        })
+        await session.send('Emulation.setTouchEmulationEnabled', { enabled: true })
+        await session.send('Emulation.setEmulatedMedia', {
+          features: [{ name: 'prefers-reduced-motion', value: preference }]
+        })
+        await session.navigate(origin + '?surface-proof&motion')
+        await evaluate(
+          `(async()=>{for(let n=0;n<100&&!document.querySelector('#page-under-motion');n++)await new Promise(r=>setTimeout(r,50))})()`
+        )
+        await click('button[aria-label="Open menu"]', false)
+        const reduced = preference === 'reduce'
+        expect(await evaluate(`matchMedia('(prefers-reduced-motion:reduce)').matches`)).toBe(
+          reduced
+        )
+        expect(
+          await evaluate(
+            `document.querySelector('[data-testid=navbar-panel]').getAnimations().length`
+          )
+        ).toBe(reduced ? 0 : 1)
+        if (!reduced)
+          await evaluate(
+            `(()=>{const a=document.querySelector('[data-testid=navbar-panel]').getAnimations()[0];a.pause();a.currentTime=0;window.entryAnimation=a})()`
+          )
+        const hit = () =>
+          evaluate(
+            `(()=>{const panel=document.querySelector('[data-testid=navbar-panel]'),modal=document.querySelector('[role=dialog]'),top=document.elementFromPoint(200,80),bottom=document.elementFromPoint(200,820),header=document.querySelector('button[aria-label="Close menu"]');return{top:panel.contains(top),bottom:panel.contains(bottom),owned:modal.contains(bottom),header:header.contains(document.elementFromPoint(header.getBoundingClientRect().x+20,32)),locked:document.body.style.overflow==='hidden',focus:modal.contains(document.activeElement),opacity:getComputedStyle(panel).opacity,y:panel.getBoundingClientRect().y,height:panel.getBoundingClientRect().height}})()`
+          )
+        expect(await hit()).toEqual({
+          top: reduced,
+          bottom: reduced,
+          owned: true,
+          header: true,
+          locked: true,
+          focus: true,
+          opacity: '1',
+          y: 64,
+          height: 780
+        })
+        if (!reduced) {
+          await evaluate(`entryAnimation.currentTime=90`)
+          expect(await hit()).toMatchObject({
+            top: true,
+            bottom: false,
+            owned: true,
+            header: true,
+            locked: true,
+            opacity: '1'
+          })
+          await evaluate(`entryAnimation.currentTime=180`)
+          expect(await hit()).toMatchObject({
+            top: true,
+            bottom: true,
+            owned: true,
+            header: true,
+            locked: true
+          })
+          await key('Escape')
+          await click('button[aria-label="Open menu"]', false)
+          await evaluate(
+            `(()=>{const a=document.querySelector('[data-testid=navbar-panel]').getAnimations()[0];a.pause();a.currentTime=90})()`
+          )
+        }
+        await touch('#page-under-motion')
+        expect(await evaluate('location.hash')).not.toBe('#under-motion')
+        if (await evaluate('!!document.querySelector("[role=dialog]")')) await key('Escape')
+        expect(await evaluate('document.activeElement.getAttribute("aria-label")')).toBe(
+          'Open menu'
+        )
+        expect(await evaluate('document.body.style.overflow')).not.toBe('hidden')
+      }, 30_000)
+    }
+  }
+
+  it('should immediately expose lower-panel keyboard focus during an unfinished entry', async () => {
+    await session.send('Emulation.setDeviceMetricsOverride', {
+      width: 390,
+      height: 844,
+      deviceScaleFactor: 1,
+      mobile: true
+    })
+    await session.send('Emulation.setEmulatedMedia', {
+      features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }]
+    })
+    await session.navigate(origin + '?surface-proof&motion')
+    await evaluate(
+      `(async()=>{for(let n=0;n<100&&!document.querySelector('#page-under-motion');n++)await new Promise(r=>setTimeout(r,50))})()`
+    )
+    await click('button[aria-label="Open menu"]', false)
+    await evaluate(
+      `(()=>{const a=document.querySelector('[data-testid=navbar-panel]').getAnimations()[0];a.pause();a.currentTime=0})()`
+    )
+    await key('Tab')
+    expect(await evaluate('document.activeElement.textContent')).toBe('Discover')
+    expect(
+      await evaluate(
+        `(()=>{const p=document.querySelector('[data-testid=navbar-panel]'),a=document.activeElement,r=a.getBoundingClientRect();return {animations:p.getAnimations().length,visible:a.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)),bottom:p.contains(document.elementFromPoint(200,820)),locked:document.body.style.overflow==='hidden',header:document.querySelector('nav[aria-label="Main"]').getBoundingClientRect().bottom}})()`
+      )
+    ).toEqual({ animations: 0, visible: true, bottom: true, locked: true, header: 64 })
+    await key('Tab', true)
+    expect(await evaluate('document.activeElement.getAttribute("aria-label")')).toBe('Close menu')
+    expect(
+      await evaluate(`document.querySelector('[data-testid=navbar-panel]').getAnimations().length`)
+    ).toBe(0)
+    await click('[data-testid=navbar-panel] a[href="#blog"]')
+    expect(await evaluate('location.hash')).toBe('#blog')
+    expect(await evaluate('document.activeElement.getAttribute("aria-label")')).toBe('Open menu')
+  }, 30_000)
+
+  it('should never restart entry after the reduced-motion preference completes it', async () => {
+    await session.send('Emulation.setDeviceMetricsOverride', {
+      width: 390,
+      height: 844,
+      deviceScaleFactor: 1,
+      mobile: true
+    })
+    await session.send('Emulation.setEmulatedMedia', {
+      features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }]
+    })
+    await session.navigate(origin + '?surface-proof&motion')
+    await evaluate(
+      `(async()=>{for(let n=0;n<100&&!document.querySelector('#page-under-motion');n++)await new Promise(r=>setTimeout(r,50))})()`
+    )
+    await click('button[aria-label="Open menu"]', false)
+    await evaluate(
+      `(()=>{const a=document.querySelector('[data-testid=navbar-panel]').getAnimations()[0];a.pause();a.currentTime=0})()`
+    )
+    for (const value of ['reduce', 'no-preference']) {
+      await session.send('Emulation.setEmulatedMedia', {
+        features: [{ name: 'prefers-reduced-motion', value }]
+      })
+      await evaluate('new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))')
+      expect(
+        await evaluate(
+          `(()=>{const p=document.querySelector('[data-testid=navbar-panel]');return {animations:p.getAnimations().length,bottom:p.contains(document.elementFromPoint(200,820))}})()`
+        )
+      ).toEqual({ animations: 0, bottom: true })
+    }
+    await key('Escape')
+  }, 30_000)
+
+  it('should finish its own entry without treating child animations as completion', async () => {
+    await session.send('Emulation.setDeviceMetricsOverride', {
+      width: 390,
+      height: 844,
+      deviceScaleFactor: 1,
+      mobile: true
+    })
+    await session.send('Emulation.setEmulatedMedia', {
+      features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }]
+    })
+    await session.navigate(origin + '?surface-proof&motion')
+    await evaluate(
+      `(async()=>{for(let n=0;n<100&&!document.querySelector('#page-under-motion');n++)await new Promise(r=>setTimeout(r,50))})()`
+    )
+    await click('button[aria-label="Open menu"]', false)
+    await evaluate(
+      `(()=>{const p=document.querySelector('[data-testid=navbar-panel]'),a=p.getAnimations()[0];a.pause();a.currentTime=0;p.querySelector('#balance-action').dispatchEvent(new AnimationEvent('animationend',{bubbles:true,animationName:'child'}));window.entryAnimation=a})()`
+    )
+    expect(
+      await evaluate(
+        `document.querySelector('[data-testid=navbar-panel]').hasAttribute('data-entry-revealed')`
+      )
+    ).toBe(false)
+    await evaluate(
+      `entryAnimation.finish();new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))`
+    )
+    expect(
+      await evaluate(
+        `(()=>{const p=document.querySelector('[data-testid=navbar-panel]');return {complete:p.hasAttribute('data-entry-revealed'),animations:p.getAnimations().length,bottom:p.contains(document.elementFromPoint(200,820))}})()`
+      )
+    ).toEqual({ complete: true, animations: 0, bottom: true })
     await key('Escape')
   }, 30_000)
 

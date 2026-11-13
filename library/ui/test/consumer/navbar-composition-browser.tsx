@@ -188,6 +188,15 @@ function CompositionExample() {
       >
         <p role="status">Connections: {connections}</p>
         <button id="page-outside">Outside page</button>
+        {params.has('motion') ? (
+          <a
+            id="page-under-motion"
+            href="#under-motion"
+            style={{ position: 'fixed', left: 180, bottom: 48, zIndex: 1, padding: 12 }}
+          >
+            Underlying page destination
+          </a>
+        ) : null}
         {geometry
           ? ['none', 'loading', 'zero', 'positive', 'iap'].map((mode) => (
               <button key={mode} data-chip-mode={mode} onClick={() => setChipMode(mode)}>
