@@ -1400,22 +1400,29 @@ async fn post(ctx: &Ctx<'_>, id: &str) -> Response {
     {
         return *r;
     }
-    let hash = m.content_hash.to_ascii_lowercase();
-    let body = uploaded_body(ctx.state, &hash, &signer).await;
-    let text = match body.as_deref().map(std::str::from_utf8) {
-        None => {
-            tracing::debug!(community_id = %m.community_id, content_hash = %m.content_hash, %signer, "CommunityPost accepted before its content body is here");
-            m.content_hash.clone()
-        }
-        Some(Ok(raw)) => match super::posts::validate_text(raw) {
-            Ok(text) => text,
-            Err(refused) => return refused,
-        },
-        Some(Err(_)) => return bad("content body is not valid UTF-8"),
-    };
+    // The logged hash must equal the signed one, and bodies are keyed lowercase.
+    if m.content_hash.bytes().any(|c| c.is_ascii_uppercase()) {
+        return bad("content_hash must be lowercase");
+    }
+    let hash = m.content_hash.clone();
     let signature_hash = signed.signature_hash();
-    let applied: sqlx::Result<()> = async {
+    // Under the uploads lock, so an upload or the collector racing this post
+    // sees it, and it sees them.
+    let applied: sqlx::Result<Result<bool, Response>> = async {
         let mut tx = ctx.state.pool.begin().await?;
+        lock_uploads(&mut tx).await?;
+        let body = uploaded_body(ctx.state, &mut tx, &hash, &signer).await?;
+        let text = match body.as_deref().map(std::str::from_utf8) {
+            None => {
+                tracing::debug!(community_id = %m.community_id, content_hash = %hash, %signer, "CommunityPost accepted before its content body is here");
+                hash.clone()
+            }
+            Some(Ok(raw)) => match super::posts::validate_text(raw) {
+                Ok(text) => text,
+                Err(refused) => return Ok(Err(refused)),
+            },
+            Some(Err(_)) => return Ok(Err(bad("content body is not valid UTF-8"))),
+        };
         let entry = Entry { kind: "post", content_hash: Some(hash.clone()), ..Default::default() };
         if record(&mut tx, &signature_hash, &m.community_id, community, &signer, signed.signed_at, &payload(m), &entry).await? {
             sqlx::query("INSERT INTO social.community_posts (id, community_id, author_address, content) VALUES ($1, $2, $3, $4) ON CONFLICT (id) DO NOTHING")
@@ -1431,17 +1438,15 @@ async fn post(ctx: &Ctx<'_>, id: &str) -> Response {
                 .execute(&mut *tx)
                 .await?;
         }
-        tx.commit().await
+        tx.commit().await?;
+        Ok(Ok(body.is_some()))
     }
     .await;
-    applied
-        .map(|_| {
-            ok_with(
-                signature_hash,
-                json!({ "content_body_local": body.is_some() }),
-            )
-        })
-        .unwrap_or_else(db_err)
+    match applied {
+        Ok(Ok(local)) => ok_with(signature_hash, json!({ "content_body_local": local })),
+        Ok(Err(refused)) => refused,
+        Err(e) => upload_lock_err(e),
+    }
 }
 
 /// `(community hex id, author)` of a logged post.
@@ -1811,22 +1816,28 @@ async fn published_cid(pool: &PgPool, hash: &str) -> sqlx::Result<Option<String>
 }
 
 /// A body `uploader` uploaded, the only one their post may take.
-async fn uploaded_body(state: &CommunitiesState, hash: &str, uploader: &Address) -> Option<Bytes> {
+async fn uploaded_body(
+    state: &CommunitiesState,
+    conn: &mut PgConnection,
+    hash: &str,
+    uploader: &Address,
+) -> sqlx::Result<Option<Bytes>> {
     if !is_valid_hash(hash) {
-        return None;
+        return Ok(None);
     }
-    let cid: String = sqlx::query_scalar(
+    let cid: Option<String> = sqlx::query_scalar(
         "SELECT cc.cid FROM social.community_contents cc \
          JOIN social.community_content_uploads u ON u.content_hash = cc.content_hash \
          WHERE cc.content_hash = $1 AND u.uploader = $2",
     )
     .bind(hash)
     .bind(uploader)
-    .fetch_optional(&state.pool)
-    .await
-    .ok()
-    .flatten()?;
-    state.storage.retrieve(&cid).await.ok().flatten()
+    .fetch_optional(conn)
+    .await?;
+    Ok(match cid {
+        Some(cid) => state.storage.retrieve(&cid).await.ok().flatten(),
+        None => None,
+    })
 }
 
 /// `POST /federation/communities/content` (signed by a community owner or
@@ -1890,15 +1901,33 @@ pub async fn put_content(
     match register_upload(&state, &hash, &cid, body, &signer).await {
         Ok(None) => Json(json!({ "ok": true, "content_hash": hash, "size": size })).into_response(),
         Ok(Some(refused)) => refused,
-        Err(e) => {
-            tracing::error!(error = %e, "community content upload failed");
-            err_json(StatusCode::INTERNAL_SERVER_ERROR, "io error")
-        }
+        Err(e) => match e.downcast::<sqlx::Error>() {
+            Ok(db) => upload_lock_err(db),
+            Err(e) => {
+                tracing::error!(error = %e, "community content store io error");
+                err_json(StatusCode::INTERNAL_SERVER_ERROR, "io error")
+            }
+        },
     }
 }
 
+/// A wait on the uploads lock past its timeout is a retryable 503.
+fn upload_lock_err(e: sqlx::Error) -> Response {
+    if e.as_database_error()
+        .and_then(|d| d.code())
+        .is_some_and(|code| code == "55P03")
+    {
+        return err_json(StatusCode::SERVICE_UNAVAILABLE, "content store busy; retry");
+    }
+    db_err(e)
+}
+
 /// Serializes uploads with the collector's deletes until the transaction ends.
+/// The wait is bounded so queued writers cannot hold pool connections long.
 async fn lock_uploads(conn: &mut PgConnection) -> sqlx::Result<()> {
+    sqlx::query("SET LOCAL lock_timeout = '2s'")
+        .execute(&mut *conn)
+        .await?;
     sqlx::query(
         "SELECT pg_advisory_xact_lock(hashtextextended('social.community_content_uploads', 0))",
     )
@@ -2067,8 +2096,8 @@ async fn collect(state: &CommunitiesState) -> anyhow::Result<Value> {
             break;
         }
         removed += dropped.len() as i64;
-        let held = crate::storage::gc::referenced_among(
-            &state.pool,
+        let held = crate::storage::gc::referenced_among_on(
+            &mut tx,
             crate::storage::gc::Pins::new(&state.storage, &[]),
             &dropped,
         )
@@ -4234,35 +4263,51 @@ mod tests {
             [json!(opened)]
         );
 
-        // A body arriving after its post is bound as posted and served; a
-        // post naming the hash in upper case is logged in lower case.
+        // A body arriving after its post is bound as posted, so it stays
+        // served past the collector; an upper-case hash is refused.
         let late = hex::encode(Sha256::digest(b"late body"));
-        let (status, body) = send(
-            &app,
-            &owner,
-            "POST",
-            &format!("/v1/communities/{private_id}/posts"),
-            &env(
+        let late_post = |hash: String| {
+            env(
                 &owner,
                 CommunityPost {
                     community_id: private_hex.clone(),
-                    content_hash: late.to_ascii_uppercase(),
+                    content_hash: hash,
                 },
-            ),
+            )
+        };
+        let posts_path = format!("/v1/communities/{private_id}/posts");
+        let (status, _) = send(
+            &app,
+            &owner,
+            "POST",
+            &posts_path,
+            &late_post(late.to_ascii_uppercase()),
         )
         .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "an upper-case hash");
+        let (status, body) =
+            send(&app, &owner, "POST", &posts_path, &late_post(late.clone())).await;
         assert_eq!(status, StatusCode::OK, "{body}");
         let (status, _) = upload(&app, &owner, "late body").await;
         assert_eq!(status, StatusCode::OK);
-        let posted: bool = sqlx::query_scalar(
-            "SELECT posted_at IS NOT NULL FROM social.community_content_uploads WHERE content_hash = $1",
-        )
-        .bind(&late)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-        assert!(posted, "the collector keeps it");
-        assert_eq!(get(late.clone()).await, StatusCode::OK);
+        for table in [
+            "community_content_uploads SET uploaded_at = uploaded_at",
+            "community_contents SET stored_at = stored_at",
+        ] {
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "UPDATE social.{table} - interval '2 hours' WHERE content_hash = $1"
+            )))
+            .bind(&late)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        collect(&state).await.unwrap();
+        assert_eq!(
+            get(late.clone()).await,
+            StatusCode::OK,
+            "the collector keeps it"
+        );
 
         // The collector drops unposted bodies past the age floor.
         let (status, stale) = upload(&app, &owner, "never posted").await;

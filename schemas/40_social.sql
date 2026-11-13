@@ -1300,7 +1300,7 @@ CREATE TABLE social.community_content_uploads (
     CONSTRAINT community_content_uploads_size_check CHECK (size >= 0 AND size <= 262144)
 );
 CREATE INDEX community_content_uploads_unposted_idx
-    ON social.community_content_uploads (uploader) INCLUDE (size) WHERE posted_at IS NULL;
+    ON social.community_content_uploads (uploader) INCLUDE (content_hash, size) WHERE posted_at IS NULL;
 
 -- The upstream communities mirror (src/social/communities/mirror.rs), the
 -- explore mirrors' pattern: an operator job pages an upstream social API's
