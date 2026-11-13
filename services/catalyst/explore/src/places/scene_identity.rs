@@ -54,6 +54,19 @@ pub async fn assign(
         .await?;
         return Ok(Some(kept));
     }
+    let minted = super::identity::new_place_id(Some(world), entity_id)
+        .ok_or_else(|| sqlx::Error::Protocol("invalid place identity inputs".into()))?;
+    let existing_active: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM explore.world_scene_place WHERE identity=$1 AND active)",
+    )
+    .bind(minted)
+    .fetch_one(&mut *conn)
+    .await?;
+    if existing_active {
+        return Err(sqlx::Error::Protocol(
+            "place identity is already bound to another active scene".into(),
+        ));
+    }
     sqlx::query(
         "UPDATE explore.world_scene_place SET active = false, entity_id = NULL, updated_at = timezone('UTC', now()) \
          WHERE identity = ANY($1)",
@@ -61,16 +74,24 @@ pub async fn assign(
     .bind(&overlapped)
     .execute(&mut *conn)
     .await?;
-    let minted = Uuid::new_v4();
-    sqlx::query(
-        "INSERT INTO explore.world_scene_place (world_name, identity, parcels, entity_id) VALUES ($1, $2, $3::text[], $4)",
+    let applied: Option<Uuid> = sqlx::query_scalar(
+        "INSERT INTO explore.world_scene_place (world_name, identity, parcels, entity_id) VALUES ($1, $2, $3::text[], $4) \
+         ON CONFLICT (identity) DO UPDATE SET active = true, parcels = EXCLUDED.parcels, entity_id = EXCLUDED.entity_id, \
+             updated_at = timezone('UTC', now()) \
+         WHERE explore.world_scene_place.world_name = EXCLUDED.world_name AND NOT explore.world_scene_place.active \
+         RETURNING identity",
     )
     .bind(world)
     .bind(minted)
     .bind(parcels)
     .bind(entity_id)
-    .execute(&mut *conn)
+    .fetch_optional(&mut *conn)
     .await?;
+    if applied != Some(minted) {
+        return Err(sqlx::Error::Protocol(
+            "place identity is already bound to another active scene".into(),
+        ));
+    }
     Ok(Some(minted))
 }
 
@@ -92,4 +113,95 @@ pub async fn retire_orphans(
     .execute(conn)
     .await?
     .rows_affected())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn deterministic_world_identity_preserves_legacy_and_reactivates() {
+        let Some(pool) = crate::db::scratch::pool(2).await else {
+            return;
+        };
+        let world = format!("identity-{}.dcl.eth", Uuid::new_v4().simple());
+        let mut tx = pool.begin().await.unwrap();
+        let legacy = Uuid::new_v4();
+        sqlx::query("INSERT INTO explore.world_scene_place(world_name,identity,entity_id,parcels) VALUES($1,$2,'legacy',ARRAY['0,0'])")
+            .bind(&world).bind(legacy).execute(&mut *tx).await.unwrap();
+        assert_eq!(
+            assign(
+                &mut tx,
+                &world,
+                "replacement",
+                &["0,0".into(), "0,1".into()]
+            )
+            .await
+            .unwrap(),
+            Some(legacy)
+        );
+        let id = assign(&mut tx, &world, "bafybeigdyrzt", &["9,9".into()])
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            id,
+            super::super::identity::new_place_id(Some(&world), "bafybeigdyrzt").unwrap()
+        );
+        sqlx::query(
+            "UPDATE explore.world_scene_place SET active=false,entity_id=NULL WHERE identity=$1",
+        )
+        .bind(id)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        assert_eq!(
+            assign(&mut tx, &world, "bafybeigdyrzt", &["9,9".into()])
+                .await
+                .unwrap(),
+            Some(id)
+        );
+        tx.rollback().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn deterministic_world_identity_does_not_steal_an_active_binding() {
+        let Some(pool) = crate::db::scratch::pool(2).await else {
+            return;
+        };
+        let world = format!("conflict-{}.dcl.eth", Uuid::new_v4().simple());
+        let id = super::super::identity::new_place_id(Some(&world), "original").unwrap();
+        let mut tx = pool.begin().await.unwrap();
+        sqlx::query("INSERT INTO explore.world_scene_place(world_name,identity,entity_id,parcels) VALUES($1,$2,'newer',ARRAY['0,0'])")
+            .bind(&world).bind(id).execute(&mut *tx).await.unwrap();
+        assert!(
+            assign(&mut tx, &world, "original", &["9,9".into()])
+                .await
+                .is_err()
+        );
+        let entity: String =
+            sqlx::query_scalar("SELECT entity_id FROM explore.world_scene_place WHERE identity=$1")
+                .bind(id)
+                .fetch_one(&mut *tx)
+                .await
+                .unwrap();
+        assert_eq!(entity, "newer");
+        let other = Uuid::new_v4();
+        sqlx::query("INSERT INTO explore.world_scene_place(world_name,identity,entity_id,parcels) VALUES($1,$2,'other',ARRAY['0,1'])")
+            .bind(&world).bind(other).execute(&mut *tx).await.unwrap();
+        assert!(
+            assign(&mut tx, &world, "original", &["0,0".into(), "0,1".into()])
+                .await
+                .is_err()
+        );
+        let active: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM explore.world_scene_place WHERE world_name=$1 AND active",
+        )
+        .bind(&world)
+        .fetch_one(&mut *tx)
+        .await
+        .unwrap();
+        assert_eq!(active, 2, "a conflict must not retire either overlap");
+        tx.rollback().await.unwrap();
+    }
 }

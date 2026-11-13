@@ -12,6 +12,7 @@ pub mod derive;
 pub mod destinations;
 pub mod handlers;
 pub mod interactions;
+pub mod identity;
 pub mod live;
 pub mod mirror;
 pub mod moderation;
