@@ -15,7 +15,7 @@ use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddCo
 use serde_json::json;
 
 use crate::{
-    landscape_trees::Tree,
+    landscape_trees::{Tree, TreeWind},
     satellite_floor,
     shell_texturing::{Ground, ParcelGrass},
     CloudCover,
@@ -74,6 +74,7 @@ pub(super) fn register(app: &mut App) {
         inputs: &[
             toggle("Ground", "ground", "/landscape ground {value}"),
             toggle("Trees", "trees", "/landscape trees {value}"),
+            toggle("Tree wind", "treeWind", "/tree_wind {value}"),
             toggle("Parcel grass", "grass", "/landscape grass {value}"),
             toggle(
                 "Satellite floor",
@@ -173,7 +174,7 @@ fn landscape_command(
     mut layers: ResMut<LandscapeLayers>,
     (load, landscape): (Res<SceneLoadDistance>, Res<LandscapeDistance>),
     (realm, held): (Res<CurrentRealm>, Option<Res<WorldHold>>),
-    trees: Query<(), With<Tree>>,
+    (trees, wind): (Query<(), With<Tree>>, Option<Res<TreeWind>>),
     grass: Query<(), With<ParcelGrass>>,
 ) {
     let Some(Ok(args)) = cmd.take() else { return };
@@ -191,7 +192,8 @@ fn landscape_command(
     }
     let satellite_shown = satellite_floor::shown(layers.satellite, &realm, held.is_some());
     cmd.reply_ok(json!({"ground":layers.ground, "trees":layers.trees, "grass":layers.grass, "satellite":layers.satellite,
-        "treeCount":trees.iter().len(), "grassParcels":grass.iter().len(), "loadDistance":load.load, "landscapeDistance":landscape.0, "satelliteShown":satellite_shown}).to_string());
+        "treeCount":trees.iter().len(), "grassParcels":grass.iter().len(), "loadDistance":load.load, "landscapeDistance":landscape.0, "satelliteShown":satellite_shown,
+        "treeWind":wind.is_some_and(|wind| wind.0)}).to_string());
 }
 
 type LandscapeObjects = Or<(With<Ground>, With<Tree>, With<ParcelGrass>)>;
