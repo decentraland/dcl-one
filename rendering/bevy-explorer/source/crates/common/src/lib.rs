@@ -1,5 +1,6 @@
 pub mod asset_cache;
 pub mod autopilot;
+pub mod backoff;
 pub mod base_domain;
 pub mod bounds_calc;
 pub mod dynamics;

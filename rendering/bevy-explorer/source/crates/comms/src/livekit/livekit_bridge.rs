@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use bevy::prelude::*;
 use common::structs::AudioDecoderError;
-use futures_lite::{future::yield_now, StreamExt};
+use futures_lite::StreamExt;
 use livekit::{
     prelude::RemoteTrackPublication,
     track::{RemoteAudioTrack, RemoteVideoTrack},
@@ -42,7 +42,7 @@ impl AudioTrackKiraBridge {
                     .build()
                     .unwrap();
 
-                let handle = runtime.spawn(async move {
+                let mut handle = runtime.spawn(async move {
                     while let Some(frame) = rtc_stream.next().await {
                         match sender.send(frame).await {
                             Ok(()) => (),
@@ -55,10 +55,14 @@ impl AudioTrackKiraBridge {
                 });
 
                 let rtc_track = audio_track.rtc_track();
-                while rtc_track.state() == RtcTrackState::Live {
-                    std::thread::sleep(Duration::from_millis(100));
-                    runtime.block_on(yield_now());
-                }
+                runtime.block_on(async {
+                    while rtc_track.state() == RtcTrackState::Live {
+                        tokio::select! {
+                            _ = &mut handle => break,
+                            _ = tokio::time::sleep(Duration::from_millis(100)) => {}
+                        }
+                    }
+                });
                 handle.abort();
 
                 debug!(
