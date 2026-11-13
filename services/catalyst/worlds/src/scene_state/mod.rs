@@ -202,6 +202,18 @@ pub struct RawSettings {
     pub crdt_max_components: usize,
     /// `WS_MAX_FRAME_BYTES` (2 MiB).
     pub ws_max_frame_bytes: usize,
+    /// `CRDT_MAX_VALUE_BYTES` (256 KiB): largest single component payload a scene's state keeps.
+    pub crdt_max_value_bytes: usize,
+    /// `CRDT_MAX_BYTES` (32 MiB): payload bytes one scene's state keeps.
+    pub crdt_max_bytes: usize,
+    /// `CLIENT_INBOUND_MAX_BYTES` (8 MiB): unread client bytes queued toward the scene, per client.
+    pub client_inbound_max_bytes: usize,
+    /// `SCENE_INBOUND_MAX_BYTES` (32 MiB): unread client bytes queued toward one scene.
+    pub scene_inbound_max_bytes: usize,
+    /// `CLIENT_OUTBOUND_MAX_BYTES` (8 MiB): scene bytes queued to one client.
+    pub client_outbound_max_bytes: usize,
+    /// `JS_ARRAY_BUFFER_LIMIT_MB` (128): ArrayBuffer memory one isolate holds outside its JS heap.
+    pub js_array_buffer_limit_mb: usize,
     /// `SCENE_HOST_STORAGE_URL`: the world-storage origin, the ONLY origin
     /// `~system/SignedFetch` may reach; unset disables scene storage.
     pub storage_url: Option<String>,
@@ -258,6 +270,12 @@ impl std::fmt::Debug for RawSettings {
             .field("client_inbound_max", &self.client_inbound_max)
             .field("crdt_max_components", &self.crdt_max_components)
             .field("ws_max_frame_bytes", &self.ws_max_frame_bytes)
+            .field("crdt_max_value_bytes", &self.crdt_max_value_bytes)
+            .field("crdt_max_bytes", &self.crdt_max_bytes)
+            .field("client_inbound_max_bytes", &self.client_inbound_max_bytes)
+            .field("scene_inbound_max_bytes", &self.scene_inbound_max_bytes)
+            .field("client_outbound_max_bytes", &self.client_outbound_max_bytes)
+            .field("js_array_buffer_limit_mb", &self.js_array_buffer_limit_mb)
             .field("storage_url", &self.storage_url)
             .field("storage_allow_http", &self.storage_allow_http)
             .field("authoritative_key", &set(&self.authoritative_key))
@@ -306,6 +324,12 @@ impl Default for RawSettings {
             client_inbound_max: 1024,
             crdt_max_components: 100_000,
             ws_max_frame_bytes: 2 * 1024 * 1024,
+            crdt_max_value_bytes: 256 * 1024,
+            crdt_max_bytes: 32 * 1024 * 1024,
+            client_inbound_max_bytes: 8 * 1024 * 1024,
+            scene_inbound_max_bytes: 32 * 1024 * 1024,
+            client_outbound_max_bytes: 8 * 1024 * 1024,
+            js_array_buffer_limit_mb: 128,
             storage_url: None,
             storage_allow_http: false,
             authoritative_key: None,
@@ -442,7 +466,12 @@ impl Settings {
                 fetch_max_body_bytes: raw.signed_fetch_max_body_bytes,
                 fetch_max_in_flight: raw.signed_fetch_max_in_flight,
                 fetch_timeout_ms: raw.signed_fetch_timeout_ms,
-                ..RuntimeLimits::default()
+                crdt_max_value_bytes: raw.crdt_max_value_bytes,
+                crdt_max_bytes: raw.crdt_max_bytes,
+                client_inbound_max_bytes: raw.client_inbound_max_bytes,
+                scene_inbound_max_bytes: raw.scene_inbound_max_bytes,
+                client_outbound_max_bytes: raw.client_outbound_max_bytes,
+                js_array_buffer_limit_mb: raw.js_array_buffer_limit_mb,
             },
             ws_max_frame_bytes: raw.ws_max_frame_bytes,
             storage,

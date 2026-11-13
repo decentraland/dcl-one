@@ -4,6 +4,7 @@
 //! relay until either side closes or the client is removed.
 
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{OriginalUri, Path, State};
@@ -240,6 +241,7 @@ async fn handle_socket(
     let (tx, mut rx) = mpsc::channel::<Vec<u8>>(state.settings.limits.client_outbound_max.max(1));
     let (client, init) = scene.add_client_admitted(authed.signer.as_str().to_string(), tx, grant);
     let index = client.index;
+    let meter = init.outbound_meter.clone();
 
     if init.size == 0 {
         tracing::error!(scene = %scene.name, index, address = %authed.signer, "no entity range available; refusing the connection");
@@ -270,7 +272,12 @@ async fn handle_socket(
 
             queued = rx.recv() => {
                 let Some(frame) = queued else { break };
-                if sink.send(Message::Binary(frame.into())).await.is_err() {
+                let len = frame.len();
+                let sent = sink.send(Message::Binary(frame.into())).await;
+                if let Some(meter) = &meter {
+                    let _ = meter.try_update(Ordering::SeqCst, Ordering::SeqCst, |n| Some(n.saturating_sub(len)));
+                }
+                if sent.is_err() {
                     break;
                 }
             }

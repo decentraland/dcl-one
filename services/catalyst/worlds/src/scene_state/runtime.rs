@@ -402,6 +402,9 @@ pub struct InitState {
     pub size: u32,
     pub reserved_local_entities: u32,
     pub crdt_state: Vec<u8>,
+    /// Bytes queued to this client's socket channel; the socket subtracts
+    /// what it writes. `None` when the runtime does not meter its frames.
+    pub outbound_meter: Option<std::sync::Arc<std::sync::atomic::AtomicUsize>>,
 }
 
 pub trait SceneRuntime: Send + Sync {
@@ -509,6 +512,7 @@ impl SceneRuntime for RelayRuntime {
             size,
             reserved_local_entities: self.config.reserved_local_entities,
             crdt_state: self.engine.lock().snapshot(),
+            outbound_meter: None,
         }
     }
 
@@ -604,6 +608,11 @@ impl SceneRuntime for JsRuntime {
         outbound: tokio::sync::mpsc::Sender<Vec<u8>>,
     ) -> InitState {
         self.handle.shared.outbound.insert(client_index, outbound);
+        let meter = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        self.handle
+            .shared
+            .outbound_meters
+            .insert(client_index, std::sync::Arc::clone(&meter));
         let cfg = *self.handle.shared.config.lock();
         let (start, size) = match cfg.try_range_for_client(client_index) {
             Some(range) => range,
@@ -628,6 +637,7 @@ impl SceneRuntime for JsRuntime {
             size,
             reserved_local_entities: cfg.reserved_local_entities,
             crdt_state: self.handle.shared.snapshot.lock().clone(),
+            outbound_meter: Some(meter),
         }
     }
 
@@ -655,6 +665,7 @@ impl SceneRuntime for JsRuntime {
             index: client_index,
         });
         self.handle.shared.outbound.remove(&client_index);
+        self.handle.shared.outbound_meters.remove(&client_index);
 
         if !self
             .handle
@@ -1097,6 +1108,15 @@ mod tests {
         );
     }
 
+    fn put_frame(entity: u32, data_len: usize) -> Vec<u8> {
+        encode_batch(&[CrdtMessage::Put {
+            entity,
+            component_id: 1,
+            timestamp: 1,
+            data: vec![7; data_len],
+        }])
+    }
+
     #[test]
     fn the_scene_budget_bounds_all_clients_together() {
         let limits = RuntimeLimits {
@@ -1106,25 +1126,28 @@ mod tests {
         };
         let rt = js_runtime(NEVER_READS, limits);
         let (a, b) = (js_open(&rt), js_open(&rt));
-        assert!(rt.on_client_crdt(a, &[0; 90]).is_ok());
-        assert!(rt.on_client_crdt(b, &[0; 50]).is_ok());
-        assert_eq!(rt.on_client_crdt(b, &[0; 20]), Err(InboundOverBudget));
+        // In-range frames the scene keeps until read: 1024.. for a, 1536.. for b.
+        let (fa, fb, fc) = (put_frame(1100, 66), put_frame(1600, 26), put_frame(1601, 0));
+        assert_eq!((fa.len(), fb.len(), fc.len()), (90, 50, 24));
+        assert!(rt.on_client_crdt(a, &fa).is_ok());
+        assert!(rt.on_client_crdt(b, &fb).is_ok());
+        assert_eq!(rt.on_client_crdt(b, &fc), Err(InboundOverBudget));
     }
 
     #[test]
-    fn frames_a_scene_cannot_read_do_not_count() {
+    fn before_the_observer_registers_only_a_share_of_the_budget_is_kept() {
         let limits = RuntimeLimits {
-            client_inbound_max_bytes: 100,
+            client_inbound_max_bytes: 800,
             ..RuntimeLimits::default()
         };
         let rt = js_runtime("module.exports.onUpdate = function (dt) {};", limits);
         let index = js_open(&rt);
-        for _ in 0..10 {
-            assert!(rt.on_client_crdt(index, &[0; 60]).is_ok());
-            assert!(
-                crate::shared::test_wait::until_blocking(|| rt.handle.shared.inbound.total() == 0),
-                "a scene without an observer drops what it can never read"
-            );
+        for i in 0..10 {
+            assert!(rt.on_client_crdt(index, &put_frame(1100 + i, 26)).is_ok());
         }
+        assert!(
+            crate::shared::test_wait::until_blocking(|| rt.handle.shared.inbound.total() == 100),
+            "the newest frames within an eighth of the client budget stay queued"
+        );
     }
 }

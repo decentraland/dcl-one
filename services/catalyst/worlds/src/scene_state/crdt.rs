@@ -556,6 +556,16 @@ impl CrdtEngine {
             return ApplyResult::Ignored;
         }
         let key = cell_key(entity, component_id);
+        // Over the byte budget the append is still relayed, just not retained.
+        let freed = match self.appends.get(&key) {
+            Some(channel) if channel.len() >= MAX_APPEND_VALUES_PER_CHANNEL => {
+                channel.front().map_or(0, Vec::len)
+            }
+            _ => 0,
+        };
+        if (self.bytes - freed).saturating_add(data.len()) > self.max_bytes {
+            return ApplyResult::Applied;
+        }
         if !self.appends.contains_key(&key) && self.appends.len() >= self.max_append_channels {
             match self.appends.keys().next_back() {
                 Some(&largest) if largest > key => {
@@ -573,11 +583,8 @@ impl CrdtEngine {
         {
             self.bytes -= oldest.len();
         }
-        // Over the byte budget the append is still relayed, just not retained.
-        if self.bytes.saturating_add(data.len()) <= self.max_bytes {
-            self.bytes += data.len();
-            channel.push_back(data.to_vec());
-        }
+        self.bytes += data.len();
+        channel.push_back(data.to_vec());
         ApplyResult::Applied
     }
 

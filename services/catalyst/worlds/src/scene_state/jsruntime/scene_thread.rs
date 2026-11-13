@@ -15,7 +15,7 @@ use super::array_buffers::{self, ArrayBufferBudget};
 use super::fetch::{FetchJob, FetchResult, FetchWiring, StorageCtx};
 use super::fetch_ops::{deliver_fetch_results, op_get_headers, op_signed_fetch};
 use super::handle::{
-    Command, SharedState, Watchdog, ensure_v8_initialized, finish, near_heap_limit_cb,
+    Command, SharedState, Watchdog, ensure_v8_initialized, finish, guard_oom, near_heap_limit_cb,
     watchdog_loop,
 };
 
@@ -81,11 +81,13 @@ pub(super) struct HostState {
 
     scene_hash: String,
 
-    client_inbound_max: usize,
-
     client_outbound_max: usize,
 
     client_outbound_max_bytes: usize,
+
+    /// What a client may queue before the scene registers its observer.
+    pre_register_bytes: usize,
+    pre_register_frames: usize,
 
     crdt_max_bytes: usize,
 
@@ -179,9 +181,10 @@ pub(super) fn run_scene_thread(
         clients: std::collections::BTreeMap::new(),
         realm_name,
         scene_hash: scene_hash.clone(),
-        client_inbound_max: limits.client_inbound_max,
         client_outbound_max: limits.client_outbound_max,
         client_outbound_max_bytes: limits.client_outbound_max_bytes,
+        pre_register_bytes: limits.client_inbound_max_bytes / 8,
+        pre_register_frames: (limits.client_inbound_max / 8).max(1),
         crdt_max_bytes: limits.crdt_max_bytes,
         inbound_budget: Arc::clone(&shared.inbound),
         array_buffers,
@@ -197,6 +200,7 @@ pub(super) fn run_scene_thread(
     isolate.set_data(0, host_ptr);
 
     *watchdog.isolate.lock() = Some(isolate.thread_safe_handle());
+    guard_oom(isolate, &shared, &watchdog, &scene_hash);
     let wd_ptr = Arc::as_ptr(&watchdog) as *mut c_void;
     isolate.add_near_heap_limit_callback(near_heap_limit_cb, wd_ptr);
 
@@ -215,6 +219,11 @@ pub(super) fn run_scene_thread(
     let scope = &mut v8::ContextScope::new(handle_scope, context);
 
     install_globals(scope, context);
+    if let Err(e) = run_script(scope, array_buffers::HARDEN_JS) {
+        tracing::error!(scene = %scene_hash, error = %e, "global hardening failed; not running the scene");
+        finish(&shared, &watchdog, wd_thread, &scene_hash);
+        return;
+    }
 
     watchdog.arm(budget_ms);
     let eval = eval_scene(scope, &source);
@@ -312,7 +321,6 @@ pub(super) fn run_scene_thread(
                 }
                 Ok(Command::ClientCrdt { index, body }) => {
                     let mut h = host.borrow_mut();
-                    let cap = h.client_inbound_max;
                     let floor = h.config.lock().network_floor();
                     let budget = Arc::clone(&h.inbound_budget);
                     let reserved = body.len();
@@ -330,11 +338,9 @@ pub(super) fn run_scene_thread(
                         );
                         continue;
                     };
-                    // Only the observer hands out client objects; without one nothing reads the queue.
-                    if !h.observer_registered {
-                        budget.release(index, reserved, 1);
-                        continue;
-                    }
+                    // Before the observer registers, keep only the newest few frames.
+                    let early = (!h.observer_registered)
+                        .then_some((h.pre_register_bytes, h.pre_register_frames));
                     let foreign: Vec<(u32, u32)> = h
                         .clients
                         .iter()
@@ -343,27 +349,27 @@ pub(super) fn run_scene_thread(
                         .collect();
 
                     if let Some(c) = h.clients.get_mut(&index) {
-                        if c.inbound.len() >= cap {
-                            tracing::warn!(
-                                scene = %scene_hash, index,
-                                "client inbound queue overflow; closing client"
-                            );
+                        let guard = AuthorityGuard {
+                            authority: Authority::Client { start, size },
+                            floor,
+                            foreign_ranges: &foreign,
+                        };
+                        let msgs = guard.filter(decode_client_batch(&body, start, size));
+                        if msgs.is_empty() {
                             budget.release(index, reserved, 1);
-                            c.closing = true;
                         } else {
-                            let guard = AuthorityGuard {
-                                authority: Authority::Client { start, size },
-                                floor,
-                                foreign_ranges: &foreign,
-                            };
-                            let msgs = guard.filter(decode_client_batch(&body, start, size));
-                            if msgs.is_empty() {
-                                budget.release(index, reserved, 1);
-                            } else {
-                                let kept = encode_batch(&msgs);
-                                budget.release(index, reserved.saturating_sub(kept.len()), 0);
-                                c.inbound_bytes += kept.len();
-                                c.inbound.push_back(kept);
+                            let kept = encode_batch(&msgs);
+                            budget.release(index, reserved.saturating_sub(kept.len()), 0);
+                            c.inbound_bytes += kept.len();
+                            c.inbound.push_back(kept);
+                        }
+                        if let Some((max_bytes, max_frames)) = early {
+                            while c.inbound_bytes > max_bytes || c.inbound.len() > max_frames {
+                                let Some(old) = c.inbound.pop_front() else {
+                                    break;
+                                };
+                                c.inbound_bytes -= old.len();
+                                budget.release(index, old.len(), 1);
                             }
                         }
                     }
@@ -464,20 +470,49 @@ pub(super) fn run_scene_thread(
     finish(&shared, &watchdog, wd_thread, &scene_hash);
 }
 
+/// Hands queued frames to each socket while the bytes it has not written
+/// stay within the client's outbound budget; the rest waits for a later tick.
 fn flush_outbound(host: &RefCell<HostState>, shared: &SharedState) {
     let mut host = host.borrow_mut();
+    let max_bytes = host.client_outbound_max_bytes;
     for (index, ch) in host.clients.iter_mut() {
         if ch.outbound.is_empty() {
             continue;
         }
-        if let Some(sender) = shared.outbound.get(index) {
-            while let Some(body) = ch.outbound.pop_front() {
-                let _ = sender.try_send(crate::scene_state::runtime::frame_crdt(&body));
-            }
-        } else {
+        let Some(sender) = shared.outbound.get(index) else {
             ch.outbound.clear();
+            ch.outbound_bytes = 0;
+            continue;
+        };
+        let meter = shared.outbound_meters.get(index).map(|m| Arc::clone(&m));
+        while let Some(body) = ch.outbound.front() {
+            let frame = crate::scene_state::runtime::frame_crdt(body);
+            if let Some(m) = &meter {
+                let in_flight = m.load(std::sync::atomic::Ordering::SeqCst);
+                if in_flight > 0 && in_flight.saturating_add(frame.len()) > max_bytes {
+                    break;
+                }
+                m.fetch_add(frame.len(), std::sync::atomic::Ordering::SeqCst);
+            }
+            let len = frame.len();
+            match sender.try_send(frame) {
+                Ok(()) => {}
+                Err(mpsc::error::TrySendError::Full(_)) => {
+                    if let Some(m) = &meter {
+                        m.fetch_sub(len, std::sync::atomic::Ordering::SeqCst);
+                    }
+                    break;
+                }
+                Err(mpsc::error::TrySendError::Closed(_)) => {
+                    if let Some(m) = &meter {
+                        m.fetch_sub(len, std::sync::atomic::Ordering::SeqCst);
+                    }
+                }
+            }
+            if let Some(sent) = ch.outbound.pop_front() {
+                ch.outbound_bytes = ch.outbound_bytes.saturating_sub(sent.len());
+            }
         }
-        ch.outbound_bytes = 0;
     }
 }
 
@@ -513,11 +548,26 @@ fn make_uint8array<'s>(
     bytes: &[u8],
 ) -> Option<v8::Local<'s, v8::Uint8Array>> {
     let budget = HostState::with(scope, |c| Arc::clone(&c.borrow().array_buffers));
+    if let Some(made) = array_buffers::uint8array(scope, &budget, bytes) {
+        return Some(made);
+    }
+    // V8 collects garbage before failing its own allocations; do the same.
+    scope.low_memory_notification();
     let made = array_buffers::uint8array(scope, &budget, bytes);
     if made.is_none() {
         throw_range_error(scope, "Array buffer allocation failed");
     }
     made
+}
+
+fn run_script(scope: &mut v8::PinScope, source: &str) -> Result<(), String> {
+    v8::tc_scope!(let tc, scope);
+    let code = v8::String::new(tc, source).ok_or("source too large")?;
+    let script = v8::Script::compile(tc, code, None).ok_or_else(|| caught(tc))?;
+    if script.run(tc).is_none() {
+        return Err(caught(tc));
+    }
+    Ok(())
 }
 
 fn crdt_max_bytes(scope: &mut v8::PinScope) -> usize {
@@ -1151,6 +1201,7 @@ fn deliver_client_events(scope: &mut v8::PinScope, context: v8::Local<v8::Contex
                 let mut h = c.borrow_mut();
                 for (other, ch) in h.clients.iter_mut() {
                     if *other != index && !ch.closed {
+                        ch.outbound_bytes += body.len();
                         ch.outbound.push_back(body.clone());
                     }
                 }
@@ -1158,7 +1209,9 @@ fn deliver_client_events(scope: &mut v8::PinScope, context: v8::Local<v8::Contex
         }
         HostState::with(scope, |c| {
             let mut h = c.borrow_mut();
+            let budget = Arc::clone(&h.inbound_budget);
             if let Some(ch) = h.clients.get_mut(&index) {
+                ch.release_inbound(&budget, index);
                 ch.closed = true;
             }
             h.slots.release(index);
@@ -1224,7 +1277,7 @@ fn op_client_send(
                 let Some(dropped) = ch.outbound.pop_front() else {
                     break;
                 };
-                ch.outbound_bytes -= dropped.len();
+                ch.outbound_bytes = ch.outbound_bytes.saturating_sub(dropped.len());
             }
             ch.outbound_bytes += payload.len();
             ch.outbound.push_back(payload);
@@ -1243,22 +1296,28 @@ fn op_client_get_messages(
         return;
     };
     let msgs: Vec<Vec<u8>> = HostState::with(scope, |c| {
-        let mut h = c.borrow_mut();
-        let budget = Arc::clone(&h.inbound_budget);
-        let Some(ch) = h.clients.get_mut(&index) else {
-            return Vec::new();
-        };
-        let msgs: Vec<Vec<u8>> = ch.inbound.drain(..).collect();
-        budget.release(index, ch.inbound_bytes, msgs.len());
-        ch.inbound_bytes = 0;
-        msgs
+        c.borrow()
+            .clients
+            .get(&index)
+            .map(|ch| ch.inbound.iter().cloned().collect())
+            .unwrap_or_default()
     });
     let arr = v8::Array::new(scope, msgs.len() as i32);
     for (i, m) in msgs.iter().enumerate() {
+        // On failure the queue stays as it was for the next call.
         let Some(ua) = make_uint8array(scope, m) else {
             return;
         };
         arr.set_index(scope, i as u32, ua.into());
     }
+    HostState::with(scope, |c| {
+        let mut h = c.borrow_mut();
+        let budget = Arc::clone(&h.inbound_budget);
+        if let Some(ch) = h.clients.get_mut(&index) {
+            let taken: usize = ch.inbound.drain(..msgs.len()).map(|m| m.len()).sum();
+            ch.inbound_bytes -= taken;
+            budget.release(index, taken, msgs.len());
+        }
+    });
     rv.set(arr.into());
 }

@@ -53,6 +53,8 @@ pub struct SharedState {
     pub config: Arc<Mutex<ServerTransportConfig>>,
 
     pub outbound: dashmap::DashMap<u32, mpsc::Sender<Vec<u8>>>,
+    /// Bytes handed to each client's socket channel and not yet written.
+    pub outbound_meters: dashmap::DashMap<u32, Arc<std::sync::atomic::AtomicUsize>>,
     pub running: AtomicBool,
 
     /// Bounded, recycled client indices. Shared with the scene thread, which
@@ -195,6 +197,7 @@ pub fn spawn(
         snapshot: Arc::clone(&snapshot),
         config: Arc::clone(&config),
         outbound: dashmap::DashMap::new(),
+        outbound_meters: dashmap::DashMap::new(),
         running: AtomicBool::new(true),
         slots: Arc::clone(&slots),
         inbound: Arc::new(InboundBudget::new(&limits)),
@@ -272,6 +275,48 @@ pub(super) extern "C" fn near_heap_limit_cb(
     }
 
     current_heap_limit + 32 * 1024 * 1024
+}
+
+type OomScene = (Arc<SharedState>, Arc<Watchdog>, String);
+
+thread_local! {
+    static OOM_SCENE: std::cell::RefCell<Option<OomScene>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Routes a fatal V8 OOM on this thread to `scene` instead of the process.
+pub(super) fn guard_oom(
+    isolate: &mut v8::Isolate,
+    shared: &Arc<SharedState>,
+    watchdog: &Arc<Watchdog>,
+    scene_hash: &str,
+) {
+    OOM_SCENE.with(|s| {
+        *s.borrow_mut() = Some((Arc::clone(shared), Arc::clone(watchdog), scene_hash.into()))
+    });
+    isolate.set_oom_error_handler(scene_oom);
+}
+
+/// V8 aborts the process if this returns, so the scene's thread is parked for good.
+unsafe extern "C" fn scene_oom(location: *const std::ffi::c_char, _details: &v8::OomDetails) {
+    let location = if location.is_null() {
+        String::new()
+    } else {
+        unsafe { std::ffi::CStr::from_ptr(location) }
+            .to_string_lossy()
+            .into_owned()
+    };
+    OOM_SCENE.with(|s| match s.try_borrow().ok().as_deref().and_then(Option::as_ref) {
+        Some((shared, watchdog, scene)) => {
+            tracing::error!(%scene, %location, "scene isolate out of memory; parking its thread");
+            shared.running.store(false, Ordering::SeqCst);
+            shared.slots.clear();
+            watchdog.stopped.store(true, Ordering::SeqCst);
+        }
+        None => tracing::error!(%location, "V8 out of memory off a scene thread; parking it"),
+    });
+    loop {
+        std::thread::park();
+    }
 }
 
 pub(super) fn finish(
@@ -355,6 +400,10 @@ mod tests {
     fn connect(handle: &JsRuntimeHandle, tx: mpsc::Sender<Vec<u8>>) -> u32 {
         let index = handle.acquire_client_index();
         handle.shared.outbound.insert(index, tx);
+        handle
+            .shared
+            .outbound_meters
+            .insert(index, Arc::new(std::sync::atomic::AtomicUsize::new(0)));
         let (start, size) = handle.shared.config.lock().range_for_client(index);
         handle
             .tx
@@ -1311,5 +1360,180 @@ mod tests {
         }
         drop(isolate);
         assert_eq!(budget.used(), 0, "dropping the isolate frees its buffers");
+    }
+
+    #[test]
+    fn a_full_buffer_budget_still_materialises_small_typed_array_buffers() {
+        let limits = RuntimeLimits {
+            js_array_buffer_limit_mb: 8,
+            ..RuntimeLimits::default()
+        };
+        assert!(
+            scene_reports(
+                "ab-full",
+                "var keep = []; for (var i = 0; i < 8; i++) keep.push(new Uint8Array(1 << 20)); \
+                 var small = []; for (var j = 0; j < 1000; j++) small.push(new Uint8Array(8).buffer); \
+                 ok = small[999].byteLength === 8;",
+                limits,
+            ),
+            "reading .buffer at a full budget neither throws nor aborts"
+        );
+    }
+
+    #[test]
+    fn buffers_outside_the_allocator_are_not_constructible() {
+        assert!(
+            scene_reports(
+                "harden",
+                "ok = typeof WebAssembly === 'undefined' \
+                   && typeof SharedArrayBuffer === 'undefined' \
+                   && typeof ArrayBuffer.prototype.resize === 'undefined' \
+                   && new ArrayBuffer(8, { maxByteLength: 1 << 30 }).resizable === false \
+                   && new (new Uint8Array(4).buffer.constructor)(8, { maxByteLength: 16 }).resizable === false \
+                   && new Uint8Array(4).buffer instanceof ArrayBuffer \
+                   && ArrayBuffer.isView(new Uint8Array(1)) \
+                   && new Uint8Array(new ArrayBuffer(16)).length === 16;",
+                RuntimeLimits::default(),
+            ),
+            "resizable, shared and wasm memory are gone while plain buffers work"
+        );
+    }
+
+    /// Forwards what each client sends to every client, and floods each
+    /// client with `FILL` every tick.
+    fn relay_flood(fill: &[u8]) -> String {
+        format!(
+            r#"
+            var clients = {{}};
+            var FILL = new Uint8Array({fill:?});
+            registerScene({CFG_512}, function (ev) {{
+              if (ev.type === 'open') {{ clients[ev.clientId] = ev.client; }}
+              if (ev.type === 'close') {{ delete clients[ev.clientId]; }}
+            }});
+            module.exports.onUpdate = function (dt) {{
+              for (var id in clients) {{
+                var msgs = clients[id].getMessages();
+                for (var i = 0; i < msgs.length; i++) {{
+                  for (var to in clients) {{ clients[to].sendCrdtMessage(msgs[i]); }}
+                }}
+              }}
+              for (var to in clients) {{
+                for (var k = 0; k < 8; k++) {{ clients[to].sendCrdtMessage(FILL); }}
+              }}
+            }};
+            "#
+        )
+    }
+
+    #[test]
+    fn a_reclaim_evicted_by_a_flood_does_not_corrupt_the_outbound_count() {
+        let fill = encode_batch(&[put(700, 1, 1, &[1])]);
+        let limits = RuntimeLimits {
+            client_outbound_max: 4,
+            ..RuntimeLimits::default()
+        };
+        let handle = spawn(
+            "reclaim-flood".into(),
+            relay_flood(&fill),
+            "dcl-test".into(),
+            limits,
+            Vec::new(),
+            None,
+        );
+        let (tx_a, _rx_a) = mpsc::channel::<Vec<u8>>(1024);
+        let (tx_b, _rx_b) = mpsc::channel::<Vec<u8>>(1024);
+        let a = connect(&handle, tx_a);
+        let _b = connect(&handle, tx_b);
+        handle
+            .tx
+            .send(Command::ClientCrdt {
+                index: a,
+                body: encode_batch(&[put(1100, 1, 1, &[5])]),
+            })
+            .unwrap();
+        assert!(wait_for(
+            || handle.shared.engine.lock().component_count() >= 2
+        ));
+        handle.tx.send(Command::ClientClose { index: a }).unwrap();
+        handle.shared.outbound.remove(&a);
+        assert!(wait_for(|| handle.shared.slots.live() == 1));
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        assert!(
+            handle.shared.running.load(Ordering::SeqCst),
+            "the scene keeps running after the reclaim is evicted"
+        );
+    }
+
+    #[test]
+    fn unwritten_socket_bytes_stay_within_the_outbound_budget() {
+        let fill = encode_batch(&[put(700, 1, 1, &[1; 100])]);
+        let limits = RuntimeLimits {
+            client_outbound_max_bytes: 1000,
+            ..RuntimeLimits::default()
+        };
+        let handle = spawn(
+            "outbound-meter".into(),
+            relay_flood(&fill),
+            "dcl-test".into(),
+            limits,
+            Vec::new(),
+            None,
+        );
+        let (tx, mut rx) = mpsc::channel::<Vec<u8>>(1024);
+        let index = connect(&handle, tx);
+        let meter = Arc::clone(&handle.shared.outbound_meters.get(&index).unwrap());
+        assert!(wait_for(|| meter.load(Ordering::SeqCst) > 0));
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        let mut queued = 0;
+        while let Ok(frame) = rx.try_recv() {
+            queued += frame.len();
+        }
+        assert!(queued > 0);
+        assert!(
+            queued <= 1000 + fill.len() + 1,
+            "{queued} bytes handed to a socket that never writes"
+        );
+    }
+
+    #[test]
+    fn frames_sent_before_a_late_register_scene_reach_the_scene() {
+        let js = format!(
+            r#"
+            var clients = {{}};
+            var ticks = 0;
+            module.exports.onUpdate = function (dt) {{
+              ticks++;
+              if (ticks === 15) {{
+                registerScene({CFG_512}, function (ev) {{
+                  if (ev.type === 'open') {{ clients[ev.clientId] = ev.client; }}
+                }});
+              }}
+              for (var id in clients) {{
+                var msgs = clients[id].getMessages();
+                for (var i = 0; i < msgs.length; i++) {{ clients[id].sendCrdtMessage(msgs[i]); }}
+              }}
+            }};
+            "#
+        );
+        let handle = spawn(
+            "late-register".into(),
+            js,
+            "dcl-test".into(),
+            RuntimeLimits::default(),
+            Vec::new(),
+            None,
+        );
+        let (tx, mut rx) = mpsc::channel::<Vec<u8>>(64);
+        let index = connect(&handle, tx);
+        let early = put(1100, 1, 1, &[9]);
+        handle
+            .tx
+            .send(Command::ClientCrdt {
+                index,
+                body: encode_batch(std::slice::from_ref(&early)),
+            })
+            .unwrap();
+        let frame = wait_for_recv(&mut rx).expect("the early frame is delivered once registered");
+        assert_eq!(decode_batch(&frame[1..]), vec![early]);
     }
 }
