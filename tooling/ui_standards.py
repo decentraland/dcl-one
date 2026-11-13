@@ -24,7 +24,8 @@ ENTRY_DIRECTORY = re.compile(r'^(?:apps/[^/]+/src|rendering/bevy-explorer/source
 # Files that already broke these rules when a whole project was imported (apps/creator-hub,
 # docs/adr/2026-11-09-creator-hub-in-dcl-one.md). They pass only as the files that change adds;
 # any later change to one is checked like every other file. The list is read from the base revision,
-# so nothing can be added to it after the change that created it (imported_paths).
+# so nothing can be added to it after the change that created it, and only that change is exempted
+# (imported_paths).
 IMPORTED = 'tooling/ui-standards-imported.txt'
 ZERO_SHA = re.compile(r'^0+$')
 COMMIT_SHA = re.compile(r'^[0-9a-f]{40}$')
@@ -261,19 +262,20 @@ def parse_imported(text):
 def imported_paths(base_text, current_text):
     """The import list's exempt paths, and the issues a change to the list raises.
 
-    The base revision's list is the one that counts, so a change can't exempt its own files by
-    listing them. Only the change that creates the list (none at base) exempts what it lists, and
-    the list can't be deleted afterwards, since deleting it would let the next change create it.
+    Only the change that creates the list (none at base) exempts what it lists. Once the list
+    exists, it exempts nothing: a listed path deleted and later re-added is checked like any new
+    file. The list can't grow or be deleted afterwards, since deleting it would let the next change
+    create it again.
     """
     base_paths = parse_imported(base_text)
     current_paths = parse_imported(current_text)
     if base_paths is None:
         return current_paths or frozenset(), []
     if current_paths is None:
-        return base_paths, [f'{IMPORTED}: the import list can\'t be deleted; empty it instead']
+        return frozenset(), [f'{IMPORTED}: the import list can\'t be deleted; empty it instead']
     if current_paths - base_paths:
-        return base_paths, [f'{IMPORTED}: paths can\'t be added to the import list']
-    return base_paths, []
+        return frozenset(), [f'{IMPORTED}: paths can\'t be added to the import list']
+    return frozenset(), []
 
 
 def check(base='HEAD', staged=False):
