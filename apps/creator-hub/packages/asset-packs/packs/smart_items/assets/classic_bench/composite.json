@@ -1,0 +1,138 @@
+{
+  "version": 1,
+  "components": [
+    {
+      "name": "core::Transform",
+      "data": {
+        "513": {
+          "json": {
+            "position": {
+              "x": -0.28,
+              "y": 0,
+              "z": 0.56
+            },
+            "rotation": {
+              "x": 0,
+              "y": -0.7071067690849304,
+              "z": 0,
+              "w": 0.7071067690849304
+            },
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            },
+            "parent": 0
+          }
+        },
+        "514": {
+          "json": {
+            "position": {
+              "x": -0.28,
+              "y": 0,
+              "z": -0.4
+            },
+            "rotation": {
+              "x": 0,
+              "y": -0.7071067690849304,
+              "z": 0,
+              "w": 0.7071067690849304
+            },
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            },
+            "parent": 0
+          }
+        }
+      }
+    },
+    {
+      "name": "core::GltfContainer",
+      "data": {
+        "0": {
+          "json": {
+            "src": "{assetPath}/Bench_01.glb",
+            "visibleMeshesCollisionMask": 0,
+            "invisibleMeshesCollisionMask": 3
+          }
+        }
+      }
+    },
+    {
+      "name": "asset-packs::Script",
+      "data": {
+        "0": {
+          "json": {
+            "value": [
+              {
+                "path": "{assetPath}/Seat.ts",
+                "priority": 0,
+                "layout": "{\"params\":{\"hoverText\":{\"type\":\"string\",\"optional\":true,\"value\":\"Sit Here\",\"tooltip\":\"Text shown when the player points at the seat.\"},\"takenMessage\":{\"type\":\"string\",\"optional\":true,\"value\":\"Seat is taken\",\"tooltip\":\"Text shown as the hover hint, and as an on-screen message when the Sit action is called, while every spot is taken. Leave empty for no message.\"}},\"actions\":[{\"methodName\":\"sit\",\"description\":\"Sits the player on the nearest free sit spot, or shows the taken message if every spot is taken\",\"params\":{}},{\"methodName\":\"markAsFree\",\"description\":\"Marks every sit spot of this seat as free\",\"params\":{}}]}"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "core-schema::Name",
+      "data": {
+        "0": {
+          "json": {
+            "value": "Classic Bench"
+          }
+        },
+        "513": {
+          "json": {
+            "value": "Sit Spot 1"
+          }
+        },
+        "514": {
+          "json": {
+            "value": "Sit Spot 2"
+          }
+        }
+      }
+    },
+    {
+      "name": "core-schema::Sync-Components",
+      "data": {
+        "513": {
+          "json": {
+            "componentIds": ["asset-packs::States"]
+          }
+        },
+        "514": {
+          "json": {
+            "componentIds": ["asset-packs::States"]
+          }
+        }
+      }
+    },
+    {
+      "name": "asset-packs::Actions",
+      "data": {
+        "0": {
+          "json": {
+            "id": "{self}",
+            "value": [
+              {
+                "type": "call_script_method",
+                "name": "Sit Here",
+                "jsonPayload": "{\"scriptPath\":\"{assetPath}/Seat.ts\",\"methodName\":\"sit\",\"params\":{}}",
+                "default": true
+              },
+              {
+                "type": "call_script_method",
+                "name": "Mark as free",
+                "jsonPayload": "{\"scriptPath\":\"{assetPath}/Seat.ts\",\"methodName\":\"markAsFree\",\"params\":{}}"
+              }
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

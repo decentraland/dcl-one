@@ -1,0 +1,394 @@
+name: Creator Hub
+on:
+  workflow_call:
+    secrets:
+      CREATOR_HUB_RELEASES_APP_PRIVATE_KEY:
+        required: false
+      ES_PASSWORD:
+        required: false
+      ES_TOTP_SECRET:
+        required: false
+      ES_USERNAME:
+        required: false
+      MACOS_CSC_KEY_PASSWORD:
+        required: false
+      MACOS_CSC_LINK:
+        required: false
+      MACOS_NOTARIZATION_APPLE_ID:
+        required: false
+      MACOS_NOTARIZATION_PWD:
+        required: false
+      MACOS_NOTARIZATION_TEAM_ID:
+        required: false
+      SDK_TEAM_AWS_REGION:
+        required: false
+      SDK_TEAM_S3_BASE_URL:
+        required: false
+      SDK_TEAM_S3_BUCKET:
+        required: false
+      SENTRY_AUTH_TOKEN:
+        required: false
+      SENTRY_DSN:
+        required: false
+      VITE_ALLOWED_EXTERNAL_ORIGINS:
+        required: false
+      VITE_SEGMENT_CREATORS_HUB_API_KEY:
+        required: false
+      VITE_SEGMENT_INSPECTOR_API_KEY:
+        required: false
+      WINDOWS_CREDENTIAL_ID_SIGNER:
+        required: false
+    inputs:
+      dry-run:
+        description: 'Compiles the app but not upload artifacts to distribution server'
+        default: false
+        required: false
+        type: boolean
+      inspector_s3_bucket_key:
+        description: 'S3 bucket key for the inspector package'
+        required: true
+        type: string
+      inspector_version:
+        description: 'Version of the inspector package'
+        required: true
+        type: string
+      inspector_changed:
+        description: 'Whether the version of the inspector package has changed'
+        required: true
+        type: boolean
+    outputs:
+      version:
+        description: 'Version of the installers this run built (and, on main, published)'
+        value: ${{ jobs.build.outputs.version }}
+
+concurrency:
+  group: creator-hub-desktop-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+defaults:
+  run:
+    shell: 'bash'
+    working-directory: apps/creator-hub
+
+jobs:
+  build:
+    strategy:
+      # One leg failing must not show up as a cancellation of the other.
+      fail-fast: false
+      matrix:
+        os: [ macos-latest, windows-latest ]
+    runs-on: ${{ matrix.os }}
+    # Signing, notarization and the release-repo token live in the main-only environment.
+    environment: ${{ github.ref == 'refs/heads/main' && 'creator-hub-release' || '' }}
+    permissions:
+      contents: read
+      pull-requests: write
+      id-token: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    env:
+      # Dependabot runs (and re-runs of them) and fork PRs get no repository secrets and a
+      # read-only token, so the S3 test build upload and its PR comment can't run there.
+      # The compile above them still runs, so the required build checks stay meaningful.
+      CAN_UPLOAD_PR_BUILD: ${{ secrets.SDK_TEAM_S3_BUCKET != '' && vars.CREATOR_HUB_SDK_BUCKET_ROLE_ARN != '' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          filter: blob:none
+
+      - uses: ./.github/actions/creator-hub-setup
+        id: setup
+        with:
+          cache-electron: 'true'
+
+      - name: install
+        if: steps.setup.outputs.node-modules-cache-hit != 'true'
+        run: npm i --silent && make install-creator-hub
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+
+      - name: install inspector
+        working-directory: apps/creator-hub/packages/creator-hub
+        env:
+          INSPECTOR_S3_KEY: ${{ inputs.inspector_s3_bucket_key }}
+          S3_BASE_URL: ${{ secrets.SDK_TEAM_S3_BASE_URL }}
+        run: |
+          # If the inspector version hasn't changed or we are on main branch, we need to install the latest version
+          # Otherwise, we need to install the version from the S3 bucket
+
+          if [[ "${{ github.ref }}" == "refs/heads/main" || ${{ inputs.inspector_changed }} == "false" ]]; then
+            echo "Installing latest inspector version: ${{ inputs.inspector_version }}"
+            # The inspector job published this version seconds ago and npm serves a CDN-cached
+            # packument for 300s, so resolution needs a forced revalidate and a wait longer than that.
+            for ((i = 1; i <= 10; i++)); do
+              npm install --prefer-online "@dcl/inspector@${{ inputs.inspector_version }}" && exit 0
+              echo "@dcl/inspector@${{ inputs.inspector_version }} not resolvable yet (attempt $i); retrying in 30s"
+              sleep 30
+            done
+            npm view @dcl/inspector versions --json | tail -5 || true
+            exit 1
+          elif [[ -n "$INSPECTOR_S3_KEY" ]]; then
+            echo "Installing inspector version from S3 bucket: $INSPECTOR_S3_KEY"
+            npm install "$S3_BASE_URL/$INSPECTOR_S3_KEY"
+          else
+            # No S3 package (fork or Dependabot PR): build against the last published inspector.
+            echo "::warning::No inspector package for this PR; building against @dcl/inspector@latest"
+            npm install @dcl/inspector@latest
+          fi
+
+      - name: build
+        run: make build-creator-hub
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+          NODE_OPTIONS: "--max-old-space-size=8192"
+          MODE: ${{ !inputs.dry-run && 'production' || 'development' }}
+          VITE_SEGMENT_CREATORS_HUB_API_KEY: ${{ secrets.VITE_SEGMENT_CREATORS_HUB_API_KEY }}
+          VITE_SEGMENT_INSPECTOR_API_KEY: ${{ secrets.VITE_SEGMENT_INSPECTOR_API_KEY }}
+          VITE_ALLOWED_EXTERNAL_ORIGINS: ${{ secrets.VITE_ALLOWED_EXTERNAL_ORIGINS }}
+          # Sentry AUTH Token
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          VITE_SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+
+      # macos-latest runners are arm64, so the install only pulls the host-arch oxc-parser
+      # native binding. electron-builder then packs BOTH the arm64 and x64 dmgs from that single
+      # node_modules, leaving the Intel build with no loadable parser ("Failed to load native
+      # binding"). Fetch the cross-arch binding straight from its tarball into node_modules
+      # (npm install --force would reconcile/prune the whole workspace right before packaging)
+      # so both dmgs ship a working parser.
+      - name: Provision cross-arch macOS oxc-parser binding
+        if: matrix.os == 'macos-latest'
+        run: |
+          set -euo pipefail
+          OXC=$(node -p "require('oxc-parser/package.json').version")
+          HOST=$(node -p process.arch)
+          OTHER=$([ "$HOST" = "arm64" ] && echo x64 || echo arm64)
+          DIR="node_modules/@oxc-parser/binding-darwin-$OTHER"
+          if [ ! -e "$DIR/parser.darwin-$OTHER.node" ]; then
+            echo "Host arch $HOST -> fetching @oxc-parser/binding-darwin-$OTHER@$OXC"
+            TMP=$(mktemp -d)
+            ( cd "$TMP" && npm pack "@oxc-parser/binding-darwin-$OTHER@$OXC" >/dev/null )
+            mkdir -p "$DIR"
+            tar -xzf "$TMP"/*.tgz -C "$DIR" --strip-components=1
+            rm -rf "$TMP"
+          fi
+          for A in arm64 x64; do
+            test -e "node_modules/@oxc-parser/binding-darwin-$A/parser.darwin-$A.node" \
+              || { echo "::error::missing @oxc-parser/binding-darwin-$A native binding"; exit 1; }
+          done
+
+      - name: Bump release version
+        id: version
+        uses: paulhatch/semantic-version@502226b17e3e242e4befd0a45690fcbb27dd1373 # v6.0.3
+        with:
+          tag_prefix: "creator-hub@"
+          version_format: ${major}.${minor}.${patch}
+          major_pattern: "/^(major|breaking).+/"
+          minor_pattern: "/^(minor|feat).+/"
+          bump_each_commit: false
+          bump_each_commit_patch_pattern: "/^(patch|fix).+/"
+          search_commit_body: true
+          user_format_type: "json"
+          change_path: "apps/creator-hub"
+
+      # With no `creator-hub@X.Y.Z` tag, semantic-version counts from 0.0.0, and a release on main
+      # would publish 0.1.0 installers. Tag the last released version first (cut-over runbook).
+      - name: Require a baseline version tag on main
+        if: github.ref == 'refs/heads/main'
+        env:
+          PREVIOUS_VERSION: ${{ steps.version.outputs.previous_version }}
+        run: |
+          if [ "$PREVIOUS_VERSION" = 0.0.0 ]; then
+            echo "::error::No creator-hub@X.Y.Z tag found; tag the last released version before releasing from main"
+            exit 1
+          fi
+
+      # Installers are published to decentraland/creator-hub, a release-only repository: every
+      # installed app's updater reads its GitHub releases (electron-builder.cjs `publish`).
+      - name: Token for the release repository
+        id: release-token
+        if: ${{ github.ref == 'refs/heads/main' && !inputs.dry-run }}
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: ${{ vars.CREATOR_HUB_RELEASES_APP_ID }}
+          private-key: ${{ secrets.CREATOR_HUB_RELEASES_APP_PRIVATE_KEY }}
+          owner: decentraland
+          repositories: creator-hub
+
+      # Download 'SSLcom/esigner-codesign' to a folder called 'esigner-codesign' in the root of the project
+      - name: Checkout esigner-codesign repository (Windows)
+        if: ${{github.ref == 'refs/heads/main' && matrix.os == 'windows-latest' && !inputs.dry-run}}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: 'SSLcom/esigner-codesign'
+          # Its dist/index.js runs with the eSigner credentials and the release token, so it is
+          # pinned like any third-party action (default-branch head on 2025-06-23).
+          ref: b7f8ff36fc0de8690fbbab8e5b4421d29802f747
+          path: esigner-codesign
+          persist-credentials: false
+
+      - name: Compile creator-hub artifacts ${{ inputs.dry-run && ' ' || 'and upload them to github release' }}
+        # I use this action because it is capable of retrying multiple times if there are any issues with the distribution server
+        uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60 # v4.0.0
+        with:
+          timeout_minutes: 60
+          max_attempts: 6
+          retry_wait_seconds: 15
+          retry_on: error
+          shell: 'bash'
+          command: cd apps/creator-hub && npx electron-builder --project packages/creator-hub --config electron-builder.cjs --config.extraMetadata.version=${{ steps.version.outputs.version }} ${{ matrix.os == 'macos-latest' && format('--config.mac.notarize={0}', true) || '' }} --publish ${{ inputs.dry-run && 'never' || 'always' }}
+        env:
+          # Disable hard links to avoid issues with npm
+          USE_HARD_LINKS: false
+          # Fix C++ standard for native dependencies
+          CXXFLAGS: "-std=gnu++17"
+          # On PRs, build only the unsigned .zip (skip the slow .dmg); see electron-builder.cjs
+          DRY_RUN: ${{ inputs.dry-run }}
+          # Code Signing params
+          # See https://www.electron.build/code-signing
+          CSC_LINK: ${{ secrets.MACOS_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.MACOS_CSC_KEY_PASSWORD }}
+          # Notarization params
+          # See https://www.electron.build/configuration/mac#NotarizeNotaryOptions
+          APPLE_ID: ${{ secrets.MACOS_NOTARIZATION_APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.MACOS_NOTARIZATION_TEAM_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.MACOS_NOTARIZATION_PWD }}
+          # Publishing artifacts
+          GH_TOKEN: ${{ steps.release-token.outputs.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          EP_PRE_RELEASE: true # Publish as pre-release
+          # The following are the parameters required by the esigner-codesign action to work, we must explicitly pass in even the optional ones since we're not using the action directly, but from the checked out repo
+          # Only set CODE_SIGN_SCRIPT_PATH on main (non-dry-run) to match the esigner-codesign checkout condition above
+          CODE_SIGN_SCRIPT_PATH: ${{ github.ref == 'refs/heads/main' && matrix.os == 'windows-latest' && !inputs.dry-run && format('{0}\\esigner-codesign\\dist\\index.js', github.workspace) || '' }}
+          INPUT_COMMAND: "sign"
+          INPUT_FILE_PATH: "${{ github.workspace }}\\apps\\creator-hub\\dist\\Decentraland Creator Hub-${{ steps.version.outputs.version }}-win-x64.exe"
+          INPUT_OVERRIDE: "true"
+          INPUT_MALWARE_BLOCK: "false"
+          INPUT_CLEAN_LOGS: "false"
+          INPUT_JVM_MAX_MEMORY: "1024M"
+          INPUT_ENVIRONMENT_NAME: "PROD"
+          INPUT_USERNAME: ${{ secrets.ES_USERNAME }}
+          INPUT_PASSWORD: ${{ secrets.ES_PASSWORD }}
+          INPUT_TOTP_SECRET: ${{ secrets.ES_TOTP_SECRET }}
+          INPUT_CREDENTIAL_ID: ${{ secrets.WINDOWS_CREDENTIAL_ID_SIGNER }}
+
+      # Installed Windows apps check each update's signature against `publisherName`
+      # (electron-builder.cjs `win.signtoolOptions`). A certificate whose name differs would make
+      # every Windows update fail, so a release whose installer doesn't match fails here, before
+      # anyone promotes it.
+      - name: Check the installer's signature matches the update check
+        if: ${{ github.ref == 'refs/heads/main' && matrix.os == 'windows-latest' && !inputs.dry-run }}
+        shell: pwsh
+        working-directory: apps/creator-hub/packages/creator-hub
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          $expected = node -p "require('./electron-builder.cjs').win.signtoolOptions.publisherName"
+          $signature = Get-AuthenticodeSignature "dist/Decentraland Creator Hub-$env:VERSION-win-x64.exe"
+          if ($signature.Status -ne 'Valid') { throw "The installer's signature is $($signature.Status)" }
+          $name = $signature.SignerCertificate.GetNameInfo([System.Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $false)
+          if ($name -ne $expected) { throw "The certificate is issued to '$name', but updates check for '$expected'" }
+          Write-Output "Signed by '$name', as updates expect"
+
+      - name: Move artifacts to upload folder
+        if: ${{ github.event.pull_request.number && env.CAN_UPLOAD_PR_BUILD == 'true' }}
+        working-directory: apps/creator-hub/packages/creator-hub
+        run: sh -c 'mkdir dist/upload && cp dist/*.dmg dist/*.exe dist/*.zip dist/upload 2> /dev/null || :'
+
+      - name: AWS role for the SDK bucket
+        if: ${{ github.event.pull_request.number && env.CAN_UPLOAD_PR_BUILD == 'true' }}
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
+        with:
+          role-to-assume: ${{ vars.CREATOR_HUB_SDK_BUCKET_ROLE_ARN }}
+          aws-region: ${{ secrets.SDK_TEAM_AWS_REGION }}
+
+      - name: Upload to S3
+        if: ${{ github.event.pull_request.number && env.CAN_UPLOAD_PR_BUILD == 'true' }}
+        id: upload
+        working-directory: apps/creator-hub/packages/creator-hub
+        env:
+          S3_BUCKET: ${{ secrets.SDK_TEAM_S3_BUCKET }}
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          npx @dcl/cdn-uploader@next \
+            --bucket "$S3_BUCKET" \
+            --local-folder dist/upload \
+            --bucket-folder "creator-hub/branch/${HEAD_REF}"
+
+      - name: Set specific windows instructions
+        if: ${{ github.event.pull_request.number && env.CAN_UPLOAD_PR_BUILD == 'true' && matrix.os == 'windows-latest' }}
+        id: windows-instructions
+        env:
+          S3_BASE_URL: ${{ secrets.SDK_TEAM_S3_BASE_URL }}
+          HEAD_REF: ${{ github.head_ref }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          echo "list<<EOF" >> $GITHUB_ENV
+          echo "[win-x64](${S3_BASE_URL}/creator-hub/branch/${HEAD_REF}/Decentraland%20Creator%20Hub-${VERSION}-win-x64.exe)" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+
+      - name: Set specific macos instructions
+        if: ${{ github.event.pull_request.number && env.CAN_UPLOAD_PR_BUILD == 'true' && matrix.os == 'macos-latest' }}
+        id: macos-instructions
+        env:
+          S3_BASE_URL: ${{ secrets.SDK_TEAM_S3_BASE_URL }}
+          HEAD_REF: ${{ github.head_ref }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          echo "list<<EOF" >> $GITHUB_ENV
+          echo "[mac-x64](${S3_BASE_URL}/creator-hub/branch/${HEAD_REF}/Decentraland%20Creator%20Hub-${VERSION}-mac-x64.zip)" >> $GITHUB_ENV
+          echo "[mac-arm64](${S3_BASE_URL}/creator-hub/branch/${HEAD_REF}/Decentraland%20Creator%20Hub-${VERSION}-mac-arm64.zip)" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+          content=$(cat "$GITHUB_WORKSPACE/.github/workflows/creator-hub-macos-instructions.md")
+          echo "macos-instructions<<EOF" >> $GITHUB_ENV
+          echo "$content" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+
+      - name: Find Comment
+        if: ${{ github.event.pull_request.number && env.CAN_UPLOAD_PR_BUILD == 'true' }}
+        uses: peter-evans/find-comment@b30e6a3c0ed37e7c023ccd3f1db5c6c0b0c23aad # v4.0.0
+        id: fc
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          comment-author: 'github-actions[bot]'
+          body-includes: Test this pull request on ${{ matrix.os }}
+
+      - name: Create or update comment
+        if: ${{ github.event.pull_request.number && env.CAN_UPLOAD_PR_BUILD == 'true' }}
+        uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
+        with:
+          comment-id: ${{ steps.fc.outputs.comment-id }}
+          issue-number: ${{ github.event.pull_request.number }}
+          body: |
+            # Test this pull request on ${{ matrix.os }}
+            #### Download the correct version for your architecture:
+              ${{ env.list }}
+
+              ${{ env.macos-instructions }}
+          edit-mode: replace
+
+  # The installers' releases live in decentraland/creator-hub, so nothing tags this repository.
+  # semantic-version reads `creator-hub@X.Y.Z` tags here to compute the next version.
+  tag:
+    needs: build
+    if: ${{ github.ref == 'refs/heads/main' && !inputs.dry-run }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Tag the released version
+        working-directory: .
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: creator-hub@${{ needs.build.outputs.version }}
+        # A re-run of a finished run finds the tag already there; that is success only when it
+        # points at this commit.
+        run: |
+          if existing=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" --jq .object.sha 2>/dev/null); then
+            if [ "$existing" = "$GITHUB_SHA" ]; then
+              echo "${TAG} already points at ${GITHUB_SHA}"; exit 0
+            fi
+            echo "::error::${TAG} already exists at ${existing}, not ${GITHUB_SHA}"; exit 1
+          fi
+          gh api "repos/${GITHUB_REPOSITORY}/git/refs" -f "ref=refs/tags/${TAG}" -f "sha=${GITHUB_SHA}"
