@@ -105,6 +105,32 @@ across workers:
 
 - `GltfLoader::uri_resolver` (`GltfPlugin::with_uri_resolver`): the host resolves every URI a
   glTF references. This is how content paths are contained; see the security page.
+- `KHR_texture_basisu`, `EXT_texture_webp` and `MSFT_texture_dds` are supported: `gltf`'s
+  `allow_empty_texture` feature lets a file that requires them (and textures with no `source`)
+  through. A texture with no `source` samples its extension image, KTX2 first when it has
+  several; one with a PNG/JPEG fallback keeps the fallback. A KTX2, by path or embedded,
+  decodes through `bevy_image`'s KTX2 route below; WebP and DDS through bevy's own decoders.
+- KTX2 transcoder hook (`bevy_image::set_ktx2_transcoder`, `Ktx2Transcoder`): one process-wide
+  host function, set once, that every KTX2 decode asks first. It gets the bytes and the asset
+  path: the one `ImageLoader` loaded it from, or the labelled path the glTF loader decodes an
+  embedded image at through `Image::from_buffer_at` (made public; `model.glb#Texture0`).
+  `Image::from_buffer` passes `None` (bevy's LUTs). It returns `None` (bevy's own KTX2
+  decode), bytes plus the format to decode them as instead (with the caller's `is_srgb`,
+  sampler and asset usage), or an error. A global because `Image::from_buffer` has no plugin
+  or loader to carry it. `image_processing` sets it to transcode UASTC to BC7, fails a KTX2
+  it can't transcode whenever a path is given (glTF content never reaches bevy's own KTX2
+  decode, which trusts the header), and uses the path to cache the result. Alongside it: KTX2 bytes are taken by their magic at any path,
+  whatever type was declared (also under the `Guess` format setting, which the `image` crate
+  can't guess for KTX2), so a KTX2 without a file extension or under another one loads too.
+  DDS bytes decode as DDS whatever was declared, so a transcode the host cached over the KTX2
+  bytes reads back from the same path.
+- Every compressed decode (basis, dds, ktx2) gets the caller's asset usage, which upstream
+  leaves at the default: a cached dds loads with `RENDER_WORLD` as its first load did.
+- The patched crates' tests (`bevy_image`, `bevy_gltf`) run in the explorer's CI ("Test the
+  patched vendored Bevy crates"): they are path dependencies, so `cargo test --all` never
+  compiles them. From `source`, seed the fork's workspace with this lock file and run them there:
+  `cp Cargo.lock ../bevy/Cargo.lock`, then `cargo test --manifest-path ../bevy/Cargo.toml -p
+  bevy_image -p bevy_gltf --lib --features bevy_gltf/dds,bevy_image/ktx2,bevy_image/zstd`.
 - Accessors with no `bufferView` are accepted (zero-filled per spec; Blender morph targets).
 - Texture decode is skipped when `load_materials` is empty, with a 1x1 placeholder under the
   normal label: headless servers keep geometry without pixels.
@@ -121,8 +147,41 @@ across workers:
 - `HierarchyPropagatePlugin`, `Propagate<C>`, `PropagateStop<C>`, `PropagateOver<C>` (upstream
   #17575): propagate a component down the hierarchy.
 - `children!` accepts more than twelve children (upstream #18865, #21099).
+- Ignored command errors build no `BevyError` (upstream #19718: `HandleError::ignore_error`,
+  `queue_silenced`): the `try_*` entity commands and the relationship hooks drop their error
+  instead of handing it to `ignore`. Building a `BevyError` captures a backtrace whenever
+  `RUST_BACKTRACE` is set, and despawning a hierarchy queues a failing `try_remove::<ChildOf>`
+  per child plus every on-remove observer's `try_remove`, nested as deep as the hierarchy; a
+  Genesis Plaza unload spent about a second capturing them.
 - `SceneSpawner` forgets child instances when their parent is gone, and `unregister_instance`
   cancels a spawn that hasn't happened yet.
+- `SceneSpawner::set_spawn_deadline`: queued `Scene` instances are written an entity at a time,
+  parents before children, one instance after another in request order, until the deadline. The
+  rest waits for the next run, and each run writes at least one entity. `None`, the default,
+  spawns them whole with stock bevy's `write_to_world_with`; dynamic scenes and `spawn_sync`
+  always do.
+  - The progress is on the entities: each one not written yet carries a sparse-set marker, and a
+    second, *ready* marker once its parent is written, the top-level ones first. Bevy shows a
+    child whose parent has no visibility yet, so a child is never written before its parent.
+  - A part-written instance's top-level entities are attached to the parent and kept
+    `Visibility::Hidden` until it is complete; a `HiddenSceneRoot` component holds their own
+    visibility, restored then unless something changed it meanwhile (none becomes `Inherited`).
+    A descendant with an explicit `Visibility::Visible` still shows; glTF nodes are `Inherited`.
+  - Its parent despawned, `despawn_instance` or `unregister_instance` despawn what was written,
+    and drop the instance if it is still queued.
+  - A scene replaced or removed mid-spawn starts the instance over. When none is ready although
+    some are unwritten, those whose parent was despawned go too and the instance completes with
+    what is left (its ready event fires); those the hierarchy does not reach are written in
+    slices. An instance that fails to write, sliced or whole, is despawned and forgotten.
+  - A part-written instance is finished in the world it started in: continuing it, despawning
+    it or running `scene_spawner_system` on another world meanwhile panics before anything
+    changes.
+  - `spawn_progress` reports the queue and the instance being written, for diagnostics.
+  - `spawn_as_child_hidden` keeps an instance hidden after it has spawned, until
+    `reveal_instance_sync`.
+  - The explorer sets the deadline each frame (`scene_runner::scene_spawn_slice`) and spawns glTF
+    containers hidden until `update_ready_gltfs` has processed them, a node at a time within the
+    same slice.
 - `mark_dirty_trees` keys its early-out on this run's tick, so transform propagation can run
   twice per frame (the explorer's early pass plus bevy's own).
 - `GlobalTransform::from(Transform)` and `mul_transform` sanitise the affine: a zero scale

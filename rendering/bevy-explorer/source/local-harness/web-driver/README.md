@@ -7,7 +7,7 @@ and CEF input give it:
 - **Console commands.** `console(line)` runs `await window.engine_console_command(line)` in the
   app frame and returns what it resolves with, or rejects with the page's message.
 - **Trusted input.** `/hud_click`, `/hud_fill`, `/press_key` and `/click_at` (page side:
-  `react-web/src/lib/hudAutomation.ts`) ask the runner for real input instead of dispatching DOM
+  `library/explorer-core/lib/hudAutomation.ts`) ask the runner for real input instead of dispatching DOM
   events, so the page sees `isTrusted` events.
 
 Chrome is started with `--remote-debugging-pipe`, never a port (the benchmark runner forbids
@@ -24,8 +24,9 @@ node driver.mjs --url <url> [--chrome <path>] [--headed] [--arg <flag>]... [comm
 ```
 
 One JSON line per command, `{"command", "ok", "output"}` or `{"command", "ok": false, "error"}`,
-with the credential of a `/login_identity` or `/hud_login` line (the first word that is neither a
-flag nor a flag's value, an identity valid for days) replaced by `<redacted>` wherever it appears;
+with the credentials of a `/login_identity` or `/hud_login` line (an identity valid for days, found
+by its shape wherever the line puts it: base64 of its JSON, every one on the line, or the JSON
+itself) replaced by `<redacted>` wherever they appear;
 without commands it reads them from stdin, one per line. Exit code 1 if a command failed, 2 for
 a bad command line. On Git Bash for Windows, pass commands on stdin: it rewrites an argument that
 starts with `/`.
@@ -63,7 +64,7 @@ one implementation of it.
 
 The page calls `window.__dclTrustedInput(json)`, a binding the runner installs in every frame
 with `Runtime.addBinding`, before the page's scripts run: the page registers `/hud_login` only if
-the binding is there when it installs its commands (`react-web/src/lib/hudAutomation.ts`). The
+the binding is there when it installs its commands (`library/explorer-core/lib/hudAutomation.ts`). The
 JSON is `{"id", "op", ...}`:
 
 | `op` | fields |

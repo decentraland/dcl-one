@@ -1,7 +1,7 @@
 // from: shop@94584a5c:app/src/lib/suggestions.spec.ts
 import { describe, expect, it } from "vitest"
 
-import type { CatalogItem } from "./catalogItem"
+import type { CatalogItem } from "@shop/discovery/lib/catalogItem"
 import { mergeSuggestions, SUGGESTIONS_TARGET } from "./suggestions"
 
 /**

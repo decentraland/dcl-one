@@ -13,40 +13,40 @@
 // watchGroup: its receipt, or the server's record of its credit) until it settles, across dialogs and
 // reloads. Buying an item again while one of it is unresolved shows that one instead.
 
-import type { AuthIdentity as SignerIdentity } from '../../../data/auth/identity'
 import { fetchProfile } from '../../../data/catalyst/profile'
 import type { Eip1193Provider } from '../../../data/auth/wallet'
-import { createShopClient, type ShopClient } from '../../../shop/api/shop'
+import { createShopClient, type ShopClient } from '@shop/api/shop'
 import { purchaseOfferSource } from '../../../shop/api/offers'
-import { identitySigner, type ShopSigner } from '../../../shop/api/signer'
-import { partitionCart, type CartGroup } from '../../../shop/cart/partition'
+import { type ShopSigner } from '@shop/api/signer'
+import { partitionCart, type CartGroup } from '@shop/cart/partition'
 import type { CartAddInput, CartStore } from '../../../shop/cart/store'
 import { shopChainReader, type ChainReader } from '../../../shop/checkout/chain/rpc'
 import { liveResolvers, reviewCart, type SettlementResolvers } from '../../../shop/checkout/purchase/cart'
 import { releaseAuthorizing, runGroup, watchGroup, type CheckoutDeps, type GroupResult } from '../../../shop/checkout/purchase/executor'
 import type { RailContext } from '../../../shop/checkout/purchase/rail'
-import { createSpendGuard } from '../../../shop/checkout/purchase/spend-guard'
-import { fetchUserPurchases, getUsdBalance, type UsdBalance } from '../../../shop/credits/credits'
+import { createSpendGuard } from '@shop/checkout/purchase/spend-guard'
+import { fetchUserPurchases, getUsdBalance, type UsdBalance } from '@shop/credits/credits'
 import type { OfferSource } from '../../../shop/detail/offers'
-import { fetchShopListingForItem } from '../../../shop/detail/api'
+import { fetchShopListingForItem } from '@shop/detail/api'
 import { ethereumChainId, settlementChainId } from '../../../shop/checkout/chain/config'
-import { fetchBannedNames } from '../../../shop/names/api'
-import { checkNameAvailability } from '../../../shop/names/names'
-import { quoteNameCredits } from '../../../shop/names/offer'
-import type { CatalogItem } from '../../../shop/discovery/lib/catalogItem'
+import { rpcReader } from '../../../shop/land/evm'
+import { readBannedNames } from '../../../shop/names/reads'
+import { checkNameAvailability } from '@shop/names/name'
+import { quoteNameCredits } from '@shop/names/api'
+import type { CatalogItem } from '@shop/discovery/lib/catalogItem'
 import { primeRemoteFlags, readRemoteFlags } from '../../../shop/discovery/lib/remoteFlags'
-import { parseEvmAddress } from '../../../shop/model/address'
-import { itemAsset } from '../../../shop/model/asset'
-import { creditsCeil, creditsFloor, type UsdCents } from '../../../shop/model/money'
-import type { CartLine, GroupProgress, GroupStatus, PurchaseOffer, PurchaseState } from '../../../shop/model/purchase'
-import type { Session } from '../../../shop/model/settlement'
-import { loginExpired, rootAddress, type StoredLogin } from '../../features/auth/sso'
+import { parseEvmAddress } from '@shop/model/address'
+import { itemAsset } from '@shop/model/asset'
+import { creditsCeil, creditsFloor, type UsdCents } from '@shop/model/money'
+import type { CartLine, GroupProgress, GroupStatus, PurchaseOffer, PurchaseState } from '@shop/model/purchase'
+import type { Session } from '@shop/model/settlement'
+import { loginExpired, rootAddress, type StoredLogin } from '@explorer-core/features/auth/sso'
 import type { ShopPurchaseItem, ShopPurchaseStep } from '../../features/shop/ui'
 import { siteUrl } from '../../lib/baseDomain'
 import {
   parseBuyRequest,
   parseOperationRef,
-  SHOP_BUSY,
+  shopBusy,
   SHOP_EVENT,
   SHOP_METHODS,
   SHOP_PROTOCOL,
@@ -66,11 +66,15 @@ import {
   type ShopOperationState,
   type ShopWalletKind
 } from '../../lib/shopProtocol'
-import { withUtm } from '../../lib/utm'
+import { withUtm } from '@explorer-core/lib/utm'
 import { trustedCreditsManager, type TrustedManager } from './config'
 import { createLedger, type OperationRecord } from './ledger'
 import { createNamePurchase, nameBuild, namesModeFor, type NameStanding } from './namePurchase'
 import { assertWalletAccount, guardedProvider, WalletRefusal, type PurchaseIntent } from './walletGuard'
+import { hostApiOptions } from '../../../shop/api/host'
+import { loginSigner } from '../loginSigner'
+import { webLock } from '../webLock'
+import { shopFlags } from '../../../shop/discovery/flags'
 
 /** The buyer's wallet, as the page hosting the shell resolves it (Sites: its sign-in session). */
 export interface ShellShopWallet {
@@ -202,6 +206,8 @@ export interface ShellShopDeps {
   openExternal(url: string): void
   /** Leaves for the sign-in, as the HUD's own sign-in does. */
   signIn(): void
+  /** Whether another dialog (Donate's) is up over the app: a purchase waits its turn. */
+  otherDialogOpen?(): boolean
   services?: Partial<ShellShopServices>
 }
 
@@ -221,18 +227,7 @@ const WATCH_BACKOFF_MS = [5_000, 10_000, 20_000, 40_000, 60_000]
  * purchase, so the answer is null: no purchase runs.
  */
 export function claimLock(locks: LockManager | undefined, id: string, wait = false): Promise<(() => void) | null> {
-  return new Promise((resolve) => {
-    if (!locks) return resolve(null)
-    locks
-      .request(`dcl-inworld-shop:operation:${id}`, wait ? {} : { ifAvailable: true }, (lock) => {
-        if (!lock) {
-          resolve(null)
-          return undefined
-        }
-        return new Promise<void>((release) => resolve(() => release()))
-      })
-      .catch(() => resolve(null))
-  })
+  return webLock(locks, `dcl-inworld-shop:operation:${id}`, wait)
 }
 /** A credit the server reports expired and unused, with no receipt for the hash, is read again this much later
  *  before the purchase is taken as never gone through: past the index's lag, an expired credit can't be spent. */
@@ -249,8 +244,9 @@ function defaultStorage(): Storage | null {
 }
 
 const LIVE: ShellShopServices = {
-  client: (signer) => createShopClient({ signer }),
-  fetchItem: (contract, itemId, client) => fetchShopListingForItem(contract, itemId, { client }),
+  client: (signer) => createShopClient(hostApiOptions({ signer })),
+  // The creator-sales switch as this document holds it, asked when the listing is mapped, as the read did itself.
+  fetchItem: (contract, itemId, client) => fetchShopListingForItem(contract, itemId, { client, creatorSales: () => shopFlags().creatorSales }),
   offers: (client) => purchaseOfferSource(client),
   balance: (account, client) => getUsdBalance(account, client),
   resolvers: (client) => liveResolvers(client),
@@ -287,10 +283,11 @@ const LIVE: ShellShopServices = {
     return 'quoted' in quote ? quote.quoted : null
   },
   nameStanding: async (name) => {
-    const banned = await fetchBannedNames({ signal: AbortSignal.timeout(NAME_READ_TIMEOUT_MS) })
+    const banned = await readBannedNames(AbortSignal.timeout(NAME_READ_TIMEOUT_MS))
     if (banned.some((b) => b.toLowerCase() === name.toLowerCase())) return 'banned'
     // On the chain the gate checked (namesModeFor), never another the land override names.
-    return (await checkNameAvailability(name, { signal: AbortSignal.timeout(NAME_READ_TIMEOUT_MS), chainId: ethereumChainId() })) === 'available' ? 'available' : 'taken'
+    const chainId = ethereumChainId()
+    return (await checkNameAvailability(name, { signal: AbortSignal.timeout(NAME_READ_TIMEOUT_MS), reader: rpcReader(chainId), chainId })) === 'available' ? 'available' : 'taken'
   },
   namesMode: () => namesModeFor(nameBuild(), { settles: settlementChainId(), ethereum: ethereumChainId() })
 }
@@ -300,20 +297,6 @@ const NO_WALLET: Eip1193Provider = {
   request: async () => {
     throw new WalletRefusal('Nothing is signed while a purchase is followed.', 4200)
   }
-}
-
-/** The shell's request signer for a login: its ephemeral key over its auth chain (ADR-44 headers). */
-export function loginSigner(login: StoredLogin | null): ShopSigner | null {
-  const key = login?.identity.ephemeralIdentity.privateKey
-  if (!login || !key || loginExpired(login)) return null
-  const { identity } = login
-  return identitySigner({
-    signer: rootAddress(identity),
-    ephemeral: { address: identity.ephemeralIdentity.address, privateKey: key as `0x${string}` },
-    expiration: String(identity.expiration),
-    // The stored chain is the auth site's JSON; its link types are the signer's own.
-    authChain: identity.authChain as SignerIdentity['authChain']
-  })
 }
 
 /** One login, as signed: a new sign-in (or its renewal) is another, even for the same account. */
@@ -430,6 +413,8 @@ type Operation = OperationRecord & {
 export interface ShellShop {
   /** Answers a `shop.*` request from the app frame. */
   request(method: string, params: unknown): Promise<unknown>
+  /** Whether the Shop's dialog is up over the app. */
+  dialogOpen(): boolean
 }
 
 export function createShellShop(deps: ShellShopDeps): ShellShop {
@@ -532,7 +517,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     session: nameSession,
     client: (key) => confirmedClient(key),
     slot,
-    busy: () => starting || running,
+    busy: () => starting || running || deps.otherDialogOpen?.() === true,
     post: deps.post,
     openExternal: deps.openExternal,
     services: {
@@ -1240,7 +1225,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
 
   const buy = async (params: unknown): Promise<ShopOperation> => {
     const req = parseBuyRequest(params)
-    if (starting || running || slot.open()) throw new Error(SHOP_BUSY)
+    if (starting || running || slot.open() || deps.otherDialogOpen?.()) throw shopBusy()
     starting = true
     try {
       const who = signedIn()
@@ -1269,14 +1254,14 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
 
   const capabilities = (): ShopCapabilities => {
     const login = deps.login()
-    if (!login || loginExpired(login)) return { v: SHOP_PROTOCOL, buyer: null, wallet: null, credits: false, reason: 'signedOut' }
+    if (!login || loginExpired(login)) return { v: SHOP_PROTOCOL, buyer: null, wallet: null, credits: false, reason: 'signedOut', codedErrors: true }
     const buyer = rootAddress(login.identity).toLowerCase()
-    if (login.guest) return { v: SHOP_PROTOCOL, buyer, wallet: null, credits: false, reason: 'guest' }
+    if (login.guest) return { v: SHOP_PROTOCOL, buyer, wallet: null, credits: false, reason: 'guest', codedErrors: true }
     const wallet = deps.wallet?.kind(buyer) ?? null
     const canPay = wallet != null && deps.wallet?.provider(buyer) != null && !!login.identity.ephemeralIdentity.privateKey
     const marketplace = canPay && wallet === 'web3' && deps.wallet?.marketplace?.(buyer) === true
     const namesMode = canPay ? nameSession()?.mode : undefined
-    return { v: SHOP_PROTOCOL, buyer, wallet, credits: canPay, marketplace, ...(namesMode ? { namesMode } : {}), ...(canPay ? {} : { reason: 'noWallet' as const }) }
+    return { v: SHOP_PROTOCOL, buyer, wallet, credits: canPay, marketplace, ...(namesMode ? { namesMode } : {}), ...(canPay ? {} : { reason: 'noWallet' as const }), codedErrors: true }
   }
 
   const balance = async (): Promise<ShopBalance | null> => {
@@ -1327,6 +1312,8 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
         default:
           throw new Error(`unknown request ${method}`)
       }
-    }
+    },
+    // A purchase still starting (before its dialog shows) counts: Donate must not open over it.
+    dialogOpen: () => starting || running || slot.holder() != null
   }
 }

@@ -38,7 +38,7 @@ pub struct NftShapePlugin;
 impl Plugin for NftShapePlugin {
     fn build(&self, app: &mut App) {
         app.register_asset_loader(NftLoader);
-        app.preregister_asset_loader::<ExtendedImageLoader>(&["image"]);
+        app.preregister_asset_loader::<ExtendedImageLoader>(extended_image_loader::EXTENSIONS);
         app.init_asset::<Nft>();
         app.add_crdt_lww_component::<PbNftShape, NftShape>(
             SceneComponentId::NFT_SHAPE,

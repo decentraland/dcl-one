@@ -10,10 +10,14 @@ difference not listed here is a gap, not a decision.
 
 ## HTTP
 
-- **Invalid world names.** The permission, settings and manifest routes
-  parse the world name first and answer 400 `Invalid world name: …` for a
-  name that is not a valid world key. The upstream service answers defaults
-  or 404 for such names.
+- **Invalid world names.** The permission, settings and manifest routes and
+  both undeploy routes (`DELETE /entities/{name}`,
+  `DELETE /world/{name}/scenes/{coordinate}`) parse the world name first
+  and answer 400 `Invalid world name: …` for a name that is not a valid
+  world key, before the signed fetch is checked. The upstream service
+  answers defaults or 404 for such names. A scene undeploy coordinate must
+  fit a 32-bit integer (400 otherwise; upstream checks the pattern only),
+  and that route answers 408 `request timed out` after 30 seconds.
 - **Wallet storage allowance.** `GET /wallet/{wallet}/stats`, the publish
   size cap and `GET /world/{name}/limits` count only scenes published here:
   mirrored worlds and scenes are left out. Personal worlds are outside the
@@ -90,8 +94,10 @@ difference not listed here is a gap, not a decision.
   a fixed 60-second window from the first attempt
   (`SHARED_SECRET_MAX_ATTEMPTS_PER_MINUTE`). Each attempt is reserved before
   the secret is checked and the count is cleared by a right secret
-  (upstream also clears it when the owner joins). If the counter cannot be
-  written the mint answers 503.
+  (upstream also clears it when the owner joins). A caller already out of
+  attempts gets 429 before any ban or access check, as upstream; that check
+  charges nothing. If the counter cannot be read or written the mint answers
+  503.
 - **Scene bans in the lobby.** A wallet banned from the world's active scene
   is refused the world lobby too (`/worlds/{name}/comms` and
   `/get-comms-adapter`, 401 `You are banned from world "<name>".`);
@@ -215,6 +221,56 @@ difference not listed here is a gap, not a decision.
   upstream does not have.
 - **Grantee publishes** resolve the world's NAME holder live. If the names
   authority cannot answer, the publish is refused with 503.
+- **Publish world names.** `POST /entities` takes a `.dcl.eth` world (and an
+  `.eth` one with `ALLOW_ENS_DOMAINS`); any other name answers 400
+  `Deployment failed: Only .dcl.eth world names are supported for
+  publishing (got "<name>")` (`.dcl.eth and .eth` with ENS on), checked
+  right after the scene schema. Upstream refuses such a name at the
+  permission check. `<address>.dcl.eth` is that address's personal world,
+  which the address may publish without holding a NAME.
+- **Authority faults on writes fail closed.** When the name authority
+  cannot answer, a publish answers 403 `Not authorized: could not verify
+  deployment permissions (deploy denied)` and the world undeploy its
+  authority status (503 for a store fault). A grantee publish whose NAME
+  has no owner answers 400 `Cannot deploy scene "<id>" to world "<name>":
+  owner address could not be resolved.`, and a storage allowance that
+  cannot be read answers 503 `Deployment failed: the storage allowance
+  could not be determined right now`. Upstream answers 500 for these (400
+  `Could not determine owner for world <name>` while sizing). A deploy 500
+  is `{"error": "Internal Server Error"}`.
+- **Publish auth chains.** A contract-wallet (EIP-1654) chain is verified
+  over `ETH_RPC_URL` when it is set, and answers 503 `The auth chain could
+  not be verified right now: …` when the RPC cannot answer; upstream
+  validates without a provider and refuses every such chain. Refusals use
+  `@dcl/crypto` 3.7.0's texts for a malformed chain, a signer mismatch, a
+  missing signature, an expired key and the final authority (an expired key
+  is named by the chain's first ephemeral link); an unrecoverable signature
+  and the shared verifier's structure rules (a signed-entity link before the
+  last) answer the verifier's own text, and of the `AuthChain` schema
+  errors only an unknown link type has upstream's text.
+- **Publish forms.** `POST /entities` reads only `multipart/form-data`
+  (upstream's parser also reads `application/x-www-form-urlencoded`); a
+  body cut short answers busboy's `Unexpected end of form`, any other
+  unreadable body the parser's own text. A part name longer than 200 bytes
+  answers 400 `Form field name longer than 200 bytes` (upstream's busboy
+  applies no name limit to multipart parts, only 16 KiB to a part's
+  headers). Its
+  uploads take a slot of `MAX_CONCURRENT_UPLOADS` (refused with upstream's
+  byte-budget 503, `Server is buffering too many uploads, please retry
+  shortly.`) and count files against `MAX_IN_FLIGHT_UPLOAD_FILES` instead of
+  upstream's 16 KiB charge per file. The gateway reads the whole body
+  before the app sees it, so a partial upload's first batch is dated when
+  its body has reached the app. The gateway also limits a client address to
+  5 deploys a second (burst 4) and 10 uploads in flight, which upstream does
+  not; past them it answers 429 with the per-source upload refusal and
+  `Retry-After: 5`, and a body over 360 MiB gets the app's 413 JSON.
+- **No deployment events.** Publishes and undeploys publish no SNS
+  `WorldDeploymentEvent`, `WORLD_SETTINGS_CHANGED`,
+  `WorldUndeploymentEvent` or `WorldScenesUndeploymentEvent`. Readers in this
+  tree (explore's places, the settings reads) read the worlds tables the
+  write commits; a publish also updates the scene identities and queues the
+  forward outbox in its transaction, and every publish and undeploy
+  re-checks the owner's storage block.
 - **Per-source upload limits** key on the gateway's `X-Real-IP` (IPv6 by
   /64), not `cf-connecting-ip`. Deploys and settings uploads share one
   per-source budget (`MAX_CONCURRENT_UPLOADS_PER_SOURCE`,
@@ -240,9 +296,6 @@ difference not listed here is a gap, not a decision.
   is already in progress.` to a second concurrent run.
 - **Partial uploads** follow the upstream contract and limits, with these
   differences:
-  - Files are keyed by the hash of their bytes. A batch carrying the same
-    file twice answers 400 `Duplicate form field '<hash>'`; upstream
-    refuses a repeated form field name.
   - A stored file is free of staging charges when any domain of the shared
     blob store names it, not only world scenes and thumbnails.
   - The collector keeps every file a pending upload names, expired uploads
@@ -358,8 +411,8 @@ difference not listed here is a gap, not a decision.
   `Retry-After: 3600` while `WORLDS_WRITES_ENABLED` is off, which is the
   default, and while the restore stamps do not vouch for this node
   (DATABASE.md, "Bootstrap, schema versions and local writes"). Reads,
-  `POST /entities/active`, the parcel-holder lookup and the comms mints stay
-  open. A node replacing the upstream service sets it once a restore of its
+  `POST /entities/active`, the parcel-holder lookup, the world-storage
+  export (`POST /world-storage/exports`) and the comms mints stay open. A node replacing the upstream service sets it once a restore of its
   database, blobs and credentials has been shown to work.
 - **`/about` configuration.** `GLOBAL_SCENES_URN` is split on runs of
   whitespace, so it never yields an empty URN, and an `ETH_NETWORK` other
@@ -399,3 +452,82 @@ difference not listed here is a gap, not a decision.
   any block of the stored owner), and `owner` is `null` for a world with no
   owner (bare names, mirrored worlds); `GET /wallet/contribute` answers the
   same `owner`.
+
+## World storage
+
+`/world-storage` follows
+[`decentraland/world-storage-service`](https://github.com/decentraland/world-storage-service)
+(compared at `d55f24c`).
+
+### Authorization
+
+- **Deployers.** A world's `deployment` grantee reaches a scene's storage
+  only when the grant covers that scene's whole footprint (a world-wide
+  grant covers every scene). Upstream admits every wallet in the world's
+  deployment allow-list, parcel-scoped grantees included, to every scene.
+- **Genesis collaborators.** A wallet in a Genesis scene's
+  `logsPermissions` is admitted only while the LAND index has complete,
+  fresh ownership history for the whole footprint and no parcel changed
+  owner after the scene was deployed. Upstream admits it on the active
+  deployment alone.
+
+### HTTP
+
+- **Deeply nested values.** A value nested deeper than about 4,500 levels
+  is accepted and stored, up to the depth Postgres' `jsonb` input accepts
+  (then 500 `{"error": "Internal Server Error"}`). Upstream answers 500 from
+  that depth on, where ajv's recursive validation and `JSON.stringify`
+  exhaust Node's stack.
+- **Schema errors of deep values.** When the non-finite number that fails
+  the value's `anyOf` sits more than 128 containers deep, or its error paths
+  exceed the 1 MiB budget, `data` holds only the outermost `anyOf` error at
+  `/value`. The budget counts six bytes per UTF-16 unit across seven path
+  copies per level, so a failing path over about 25,000 units also triggers
+  this fallback. Upstream lists every level's
+  errors, a body that grows with the square of the depth (6.7 MB at 1,000
+  levels).
+- **NUL in a query.** A `%00` in the query string (a list's `prefix`)
+  answers 400 `{"error": "request path or query contains a NUL byte"}`
+  before the signed fetch is checked. Upstream passes it to Postgres and
+  answers 500. A NUL in a key answers upstream's 400 after authorization.
+- **`GET /collaborator` lists local scenes only.** Mirrored world scenes
+  are left out, as their `logsPermissions` grant no storage access on this
+  node; upstream lists every scene its deployment consumer indexed.
+
+### Quotas, export and configuration
+
+- **Quotas of retired scenes.** A world's world, player and env quotas
+  count its active scenes and legacy scopes but not scenes retired by an
+  undeploy or by a redeploy into a new place (an inactive
+  `explore.world_scene_place` identity); the `/usage` routes report the
+  same numbers. Upstream counts every stored row of the world forever.
+  The retired scenes' rows are kept as a safety copy: no undeploy,
+  redeploy, world deletion, sweep or mirror deletes them, and the clear
+  routes reach only the active scene the request resolves to.
+- **Collaborators.** No deployment consumer (upstream's SQS queue of
+  world and catalyst deployments) maintains a collaborator table:
+  `GET /collaborator` and the collaborator grant read the active
+  deployments' `metadata.logsPermissions` (`worlds.logs_permissions_decoded`) on
+  every request.
+- **Exports.** Both row streams read one read-only repeatable-read
+  snapshot through a pooled connection; upstream reads the world rows and
+  the player rows as separate statements. Statuses, cooldown, timer,
+  caps, logging and the gzip stream otherwise follow upstream. The SQL statement
+  timeout follows `PG_COMPONENT_STREAM_QUERY_TIMEOUT` (zero disables it).
+  The idle-transaction guard follows `EXPORT_TIMEOUT_SECONDS` independently,
+  clamped to 1–2,147,483,647 ms. Both settings are transaction-local.
+- **Metrics.** The worlds routes record `http_requests_total`,
+  `http_request_duration_seconds` and `http_request_size_bytes` by
+  `method`, `handler` and `code`, as upstream's defaults; `handler` is the
+  matched route as this node mounts it (for example
+  `/world-storage/values/{key}`, upstream `/values/:key`), shared with the
+  node's other routes. The logger and pg metric families are not exported.
+- **Cache staleness (shared with upstream).** The single-value LRU is per
+  process; with several storage-serving processes, a read may be up to
+  `STORAGE_CACHE_TTL_SECONDS` stale after another process's write. Within
+  one process, a generation check prevents an in-flight read from repopulating
+  a value invalidated by a completed write or delete. An unrelated invalidation
+  may also discard a pending fill; it does not evict unrelated cached values.
+- **Encryption key.** `ENCRYPTION_KEY` is required, as upstream. This node
+  has no committed development key, so upstream's production refusal of
+  that key has no counterpart.

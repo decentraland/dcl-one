@@ -17,8 +17,8 @@ checklist**. Keep it current: when you add a domain or a rule, add it here.
 
 ```bash
 # from react-web/ — Node 24 (`.nvmrc`); on Node 20 vitest reports "no tests" and the SDK build fails
-npm run typecheck          # tsc, the app
-npm test                   # tier 1 — the unit tests present at this revision
+npm run typecheck          # tsc, the app and the shared HUD UI (library/ui/apps/hud)
+npm test                   # tier 1 — the unit tests present at this revision, the shared HUD UI's included
 # With the authorized visual suite and configuration present:
 npm run test:visual        # tier 1.5 — visual regression (headless, no engine)
 (cd bridge-scene && npm run build && npm run lint)   # the SDK's type check + eslint (must be 0 errors)
@@ -41,6 +41,17 @@ deterministically — they have their own tiers (§3, §4).
 ---
 
 ## 1. The testing tiers (why three)
+
+Connectivity feedback is engine-owned. `library/ui/apps/hud/test/hosted/connectivity.test.tsx` checks the shared
+SystemApi stream/retry bridge, subscription cleanup, stable unchanged snapshots, one Connection Lost alert dialog,
+pending Retry/Exit controls through bridge acknowledgement, reply timeout and session cleanup,
+failed-retry recovery controls, automatic dismissal,
+and scoped access messages. Runtime verification reads `/connectivity_state`, uses
+`/connectivity_retry`, and locates `alertdialog` named `Connection Lost`, buttons `Retry` and
+`Exit Application`, and status `Multiplayer status`. The engine's Connectivity debug section exposes the
+same safe snapshot and Retry action. Preview, held-world and terminal access failures must
+never become an offline alert. A reachable network with a failed or disconnected room shows its
+room status. An initial `connecting` room stays quiet during ordinary scene crossings.
 
 | Tier | Command | What it proves | Engine? | Deterministic? |
 |------|---------|----------------|---------|----------------|
@@ -78,6 +89,10 @@ each domain. Config: `playwright.visual.config.ts` (headless, 1600×900, `maxDif
 `panel-notifications` · `panel-emote-wheel` · `panel-communities` · `panel-map` ·
 `minimap-settings` · `backpack-wearables` · `backpack-emotes` · `passport-edit` · `name-edit`.
 
+Not yet baselined: the integrated-GPU guide (`features/gate/IntegratedGpuGuide.tsx`, opened over the
+lobby or world when the pre-boot probe sees an Intel adapter on Windows; `?mock=1&gpuGuide=1` forces
+it). Its contract is tier-1: `library/ui/apps/hud/test/integratedGpuGuide.test.tsx`, `library/explorer-core/lib/integratedGpu.test.ts`.
+
 **Updating baselines** (only when the change is intentional):
 ```bash
 npm run test:visual:update      # regenerates the PNGs
@@ -88,7 +103,7 @@ Never blind-update. A baseline refresh in a PR must be reviewed image-by-image.
 **Caveats / known limits**
 - **Baselines are platform-specific** (`*-chromium-darwin.png`). Font hinting differs across OSes, so
   generate/verify on the same platform CI uses (or add a Linux baseline set when CI is wired).
-- **Mock data is the ceiling.** A panel can only be as rich as `src/engine/mockBridge.ts` makes it.
+- **Mock data is the ceiling.** A panel can only be as rich as `library/explorer-core/engine/mockBridge.ts` makes it.
   - Enrich mock `getEmotes` with an OWNED collection (some with `slot`, varied `rarity`/`count`) so
     the new owned-grid + assign-to-slot are exercised, not just the 10 base emotes.
 - **Captures are viewport-sized, hover-free.** A scrolling panel is pinned only above the fold: the
@@ -122,8 +137,11 @@ or when touching the bridge protocol.
 
 **Still tier-1-only** (a fresh guest can't reach them, so they can't round-trip here): accepting a
 friend request, leaving a community, marking notifications read, community chat (the tabs come
-from the communities the account is a member of; `src/test/communityChat*.test.tsx`, and
-`apps/bevy-explorer/e2e/specs/community-chat.test.ts` with a member account) — these need seeded
+from the communities the account is a member of; `library/ui/apps/hud/test/hosted/communityChat*.test.tsx`, and
+`apps/bevy-explorer/e2e/specs/community-chat.test.ts` with a member account), creating, editing
+and deleting a community (it needs an account with a claimed NAME), linking places to it (an account
+that owns a LAND or a World with a deployed scene; `library/ui/apps/hud/test/hosted/communities.clicks.test.tsx` covers the
+form, the places picker, the card's ADD PLACE and place delete, the content-check screens, the picture checks, the card's Edit and Delete, the member row and menu, and the browse grid's search, paging and card buttons; `library/ui/apps/hud/test/hosted/communities.invites.test.tsx` covers the Invites & Requests section and its counter, accepting and rejecting invites, the card's Banned, Join Requests and Invited sections, the Invite to Community submenu and the notifications that open a card; acting on a member needs a second account in a community the first owns or moderates, an invite or a join request needs a second account too, and finding a community past the first browse page needs a service with more than 20) — these need seeded
 data and are covered deterministically in tier 1. **TODO to deepen tier 2** (would need engine query commands or
 fixtures): map *UI* teleport by clicking a parcel, a `/mic_state` query to confirm the mic toggle,
 logout via the profile chip.
@@ -158,6 +176,11 @@ these by hand (or have an agent drive the Chrome extension against a live world)
       community chat by a player standing nearby shows as their bubble with the community's name on
       a smaller, dimmer, left-aligned row above their name, cut short with an ellipsis (and over
       your own head for your own); a Nearby message shows no such row, and a DM no bubble at all.
+- [ ] **Hushed badge** (`bridge-scene/src/domains/{nearbyMutes,voice,nametags}.*`): while a player whose
+      nearby voice you muted (profile menu, Hush) is talking, their tag shows the red hushed icon in
+      place of the green speaking bars, and nothing when they are quiet; Hear brings the bars back.
+      The same player talking in a private call or community stream with you, which the mute leaves
+      audible, shows the green bars.
 - [ ] **Lobby stage** (`bridge-scene/src/domains/avatarPreview.tsx`, lobby region): after sign-in the
       page's stand-in (backdrop + snapshot) crossfades to the engine stage with the live avatar centred;
       Customize opens the Backpack modal with the avatar through its hole and hands the stage back on
@@ -172,7 +195,7 @@ Run through this on every diff (it encodes `AGENTS.md`):
 
 - [ ] **Design system** — no new hardcoded brand/status hex, `rgba()`, radius, or type size in a
       component (`grep` your diff for `#` and `rgba(`); each must be a `tokens.css` var or justified.
-      No bespoke `<button>`/control where a `src/design/` primitive exists.
+      No bespoke `<button>`/control where a `@hud/design` primitive exists.
 - [ ] **No dead code** — no unused exports/CSS classes/imports; no commented-out blocks; comments are
       sparse and explain *why*, not *what*.
 - [ ] **Structure** — one concern per file; reuse a primitive or *create* one rather than inlining a
@@ -191,15 +214,17 @@ Run through this on every diff (it encodes `AGENTS.md`):
       `alert`/`confirm`/`prompt`. On native the HUD is rendered offscreen and CEF paints popup
       widgets as a separate surface the engine never composites (`update_hud_texture` takes whatever
       paint arrives), so opening one replaces the whole HUD with the widget's bitmap. Use `Select`,
-      `DateField` and `showConfirm`/`showDialog` from `src/design/`.
+      `DateField` and `showConfirm`/`showDialog` from `@hud/design`.
 
 ---
 
 ## 6. Adding a domain
 
-1. Build it (token-driven, reusing `src/design/` primitives).
-2. Add the mock data in `src/engine/mockBridge.ts` so `?mock=1` renders it richly.
-3. Add a tier-1 test (`src/test/<domain>.test.tsx`) for its API contract + clicks.
+1. Build it (token-driven, reusing `@hud/design` primitives).
+2. Add the mock data in `library/explorer-core/engine/mockBridge.ts` so `?mock=1` renders it richly.
+3. Add a tier-1 test for its API contract + clicks beside the shared code: `library/explorer-core/test/`
+   for core code, `library/ui/apps/hud/test/hosted/` for UI and session code (`src/test/` only for this
+   host's own files).
 4. Add a screenshot to `e2e/visual.spec.ts` and run `npm run test:visual:update`.
 5. If it's world-space (engine-drawn), add a line to the §4 checklist instead of a screenshot.
 6. List its expectations here.
@@ -215,7 +240,7 @@ from HUD-side key matching. The rules:
 - **Never add a DOM hotkey or Escape handler.** Panel/menu keys arrive as `systemAction`
   messages (dispatcher in `useEngineSession`); add a `case` there. Cancel/close behaviour
   for leaf UI (a lightbox, an open dropdown) = register on the **cancel-layer stack**
-  (`src/lib/cancelLayers.ts`) while open — the dispatcher peels popup → layer → panels, one
+  (`library/explorer-core/lib/cancelLayers.ts`) while open — the dispatcher peels popup → layer → panels, one
   per press, keyboard and gamepad alike.
 - **The only DOM key handling allowed is inside a focused text field** (chat, map search),
   where the engine deliberately resolves nothing (`UiText`). There: match with
@@ -226,7 +251,7 @@ from HUD-side key matching. The rules:
   `inputLock`. If the engine can't see that your surface is active, scenes keep receiving
   input behind it.
 - **The scene editor stands the HUD down through `session.editor.setMode`** (Create or `?editor`,
-  `src/features/editorHost`): in `edit` the dispatcher acts on `Cancel` only and App unmounts the
+  `library/ui/apps/hud/features/editorHost`): in `edit` the dispatcher acts on `Cancel` only and App unmounts the
   sidebar, minimap, chat and pointer; `play` adds the reticle and the emote wheel. Not through
   `inputLock`: that declares `ui` focus, which would take the viewport's input from the editor's
   own scene. A new hotkey or persistent surface must respect the mode (`hudActsOn`).
@@ -234,6 +259,27 @@ from HUD-side key matching. The rules:
   engine-side reservation and gamepad scrolling all key off that.
 - Key **labels** come from `bindingLabels` (`keyHintFor`/`labelForInput`), never hardcoded
   letters — they follow the user's rebinds and keyboard layout.
+
+## Portables
+
+A portable experience runs beside the scene the player stands in: a smart wearable's scene
+while it is worn, or a portable another scene spawned. The engine decides and lists them; the HUD
+shows them and stops or restarts them (`bridge-scene/src/domains/portables.ts`). Expectations:
+
+- **List**: the engine's `portables` message (`getPortablesStream`), sent on subscribe and on every
+  change, never the HUD's own scene or a startup portable. No polling and no prompt of its own: a
+  portable's permissions are asked on use through the scene permission dialog.
+- **Rail**: the `Portable experiences` button shows while the list is non-empty; its tooltip reads
+  `N running`, plus `, M paused in this scene` while the scene the player stands in disables
+  portable experiences. Its popover lists one row per portable: name, kind (`Smart wearable` /
+  `Portable experience`) and state (`Loading`, `Running`, `Failed: <reason>`, `Paused in this
+  scene`, `Stopped`). `Stop <name>` on every row with a scene hash runs the console's
+  `/stop_portable <hash>`; a stopped smart wearable (still worn) shows `Restart <name>` instead,
+  `/smart_wearable restart <urn>`. The HUD's own command replies stay out of chat; a failed one is
+  toasted.
+- **Toasts**: entering running, paused, stopped or failed is toasted, from the list the player
+  arrived with (no burst at login).
+- Mock: `?mock=1&mockportables=1`. Tests: `library/ui/apps/hud/test/portables.test.tsx`.
 
 ## Analytics
 
@@ -277,6 +323,8 @@ back as `analyticsSession`). Expectations:
   {position, status} and LOADING_TIMEOUT after 90 s follow its own loading screen
   (`crates/analytics/src/loading.rs`), the one `sceneLoading` mirrors here.
 - **Social**: Friend Request, Friend Accept, Unfriend, Block User on the action.
+- **Nearby voice**: `nearby_voice_user_mute` {wallet_id, is_muted} on the profile menu's Hush or
+  Hear; not for the mutes read from the saved list, nor for a Hush or Hear the list already has.
 - **In world**: the engine's First Move In World (an `analytics` message over the bridge, which
   relays the engine's own Segment events by name; a metre walked since logging in), once per page load, with the terms accepted (the welcome
   flow's answer, or the engine's persisted config), posts `bevy-shell:in-world` {login_type,
@@ -291,9 +339,9 @@ back as `analyticsSession`). Expectations:
   none)}: the GA4 export's `user_pseudo_id` / `ga_session_id` on the Segment session, taken at the
   conversion (`shell/googleTag.ts` `onInWorld`, `listenForGoogleTag` over `lib/shell.ts`
   `onShellMessage`).
-- Tests: `src/test/analytics.test.ts` (stamping, the handoff, the rejected send, `Google Tag Linked`),
-  `src/test/analytics.boot.test.ts` (the boot events, `Install Attribution`),
-  `src/test/analytics.session.test.tsx` (the sequences above), `engineDriver.test.ts` (the session
+- Tests: `library/explorer-core/test/analytics.test.ts` (stamping, the handoff, the rejected send, `Google Tag Linked`),
+  `library/explorer-core/test/analytics.boot.test.ts` (the boot events, `Install Attribution`),
+  `library/ui/apps/hud/test/hosted/analytics.session.test.tsx` (the sequences above), `engineDriver.test.ts` (the session
   id at launch), `entryParams.test.ts` (campaign params).
 
 ## Photo mode
@@ -316,7 +364,26 @@ owns the mode as a surface. Expectations:
   storage-full notice in Shoot's place. Shoot is disabled while a photo is in flight, the storage
   is unknown or the capture effect plays; a capture plays the flash once per event seq and the
   photo flies into the Gallery button.
-- Tests: `src/test/photoMode.test.tsx` (the session contract above), `src/test/photoModeOverlay.test.tsx`
+- Tests: `library/ui/apps/hud/test/hosted/photoMode.test.tsx` (the session contract above), `library/ui/apps/hud/test/hosted/photoModeOverlay.test.tsx`
   (the overlay's buttons, bindings, notice and effect); the e2e camera scenarios
   (`apps/bevy-explorer/e2e/specs/camera.test.ts`) drive the real engine.
 
+
+## Donate
+
+Tipping a place's creator in MANA, where the host can sign a tip (`@hud-host`'s `donations`: the Sites `/play`
+web shell; null here, so this HUD shows no Donate). The shared HUD names a place and nothing else
+(`features/donate/useDonate.ts`); the shell resolves the creator, draws the panel and signs (`apps/ui3/src/play/shell/donate`,
+[ADR](../../../../docs/adr/2026-11-12-play-shell-signs-tips.md)). Expectations:
+
+- **Where it shows:** the minimap's header for the scene the player stands in (the session's
+  `minimap.donatePlace`: a Genesis City parcel or a World, none in a preview or a local realm), and the
+  map's place panel. Only when the host says the session may tip and the place has a creator; hidden while
+  the first answer is pending. Whether the session may tip is asked once per sign-in. The minimap's place
+  changes with the scene, not with each parcel crossed (none on a parcel with no scene), and its last answer
+  stays while the next scene is asked about; on the map a newly picked place hides it until answered.
+- **After a tip** the host's `onSent` plays the `money` base emote; a `tip_received` notification opens the
+  tipper's passport (`notifications/summary.ts` `tipTarget`).
+- Tests: `library/ui/apps/hud/test/donate.test.tsx` (gating, open, emote, notification),
+  `library/explorer-core/test/donatePlace.test.ts`; the shell's side in `apps/ui3/src/play/test/donateShell.test.ts`
+  and `donateGuard.test.ts`. No visual baseline: the panel is drawn by the `/play` shell, not by `?mock=1`.

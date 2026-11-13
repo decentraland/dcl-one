@@ -1,0 +1,35 @@
+.dialog {
+  width: min(28rem, calc(100vw - 2rem));
+  max-height: calc(100dvh - 2rem);
+  box-sizing: border-box;
+  padding: var(--dcl-space-24);
+  border: 1px solid var(--dcl-border-default);
+  border-radius: var(--dcl-radius-lg);
+  background: var(--dcl-bg-surface);
+  color: var(--dcl-text-primary);
+  font-family: var(--font-sans);
+}
+.dialog::backdrop {
+  background: var(--dcl-bg-backdrop);
+}
+.heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--dcl-space-16);
+}
+.heading h2 {
+  margin: 0;
+}
+.list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--dcl-space-8);
+  padding: var(--dcl-space-16) 0;
+  color: inherit;
+}

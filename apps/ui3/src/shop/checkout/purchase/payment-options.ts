@@ -10,10 +10,10 @@
 //     session without a web3 wallet. No credit price, no top-up, no combined rail.
 // `distributeCreditsAcrossUnits` stays a pure helper for the combined rail of a basket.
 
-import type { ManaWei, UsdCents } from "../../model/money";
-import { creditsFloor } from "../../model/money";
-import type { PaymentMethod as RuleMethod, Reason, WalletGuidance } from "../../model/settlement";
-import type { OptionState, PaymentPresentation } from "../../payment/present";
+import type { ManaWei, UsdCents } from "@shop/model/money";
+import { creditsFloor } from "@shop/model/money";
+import type { PaymentMethod as RuleMethod, Reason, WalletGuidance } from "@shop/model/settlement";
+import type { OptionState, PaymentPresentation } from "@shop/payment/present";
 
 export type PaymentMethod = "credits" | "mana" | "combined";
 

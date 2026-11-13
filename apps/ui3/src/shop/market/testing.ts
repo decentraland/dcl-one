@@ -6,8 +6,8 @@ import { decodeFunctionData, encodeFunctionResult, type Abi, type Hex } from "vi
 import { privateKeyToAccount } from "viem/accounts";
 
 import type { Eip1193Provider } from "../../data/auth/wallet";
-import { createShopClient, type ShopClient } from "../api/shop";
-import type { ChainId } from "../model/chain";
+import { createShopClient, type ShopClient } from "@shop/api/shop";
+import type { ChainId } from "@shop/model/chain";
 import { setRpcTransport } from "./lib/rpc";
 
 export const TEST_KEY: Hex = "0x4c0883a69102937d6231471b5dbb6204fe5129617082792ae468d01a3f362318";

@@ -218,12 +218,13 @@
     },
     {
       "id": "shop-ui",
-      "description": "Shop product UI",
+      "description": "Shop product UI and its portable core",
       "owners": [
         "@decentraland/web-applications"
       ],
       "paths": [
         "/apps/ui3/src/shop/",
+        "/library/shop/",
         "/apps/sites/src/routes/shop/",
         "/tooling/shop-parity/",
         "/tooling/shop-trade-journey/"
@@ -253,12 +254,14 @@
     },
     {
       "id": "explorer-client",
-      "description": "Explorer source, local app builds and component workflows",
+      "description": "Explorer source, its HUD UI and page core, local app builds and component workflows",
       "owners": [
         "@decentraland/client"
       ],
       "paths": [
         "/rendering/bevy-explorer/",
+        "/library/ui/apps/hud/",
+        "/library/explorer-core/",
         "/apps/bevy-explorer/",
         "/.github/workflows/bevy-explorer-*.yml",
         "/.github/actions/bevy-explorer-*/"
@@ -317,6 +320,17 @@
       ],
       "paths": [
         "/docs/"
+      ]
+    },
+    {
+      "id": "ui-library-workflow",
+      "description": "The shared UI library CI workflow that runs the provenance checks; owned by the library team together with infra, which owns the other workflows",
+      "owners": [
+        "@decentraland/web-applications",
+        "@decentraland/infra"
+      ],
+      "paths": [
+        "/.github/workflows/ui-library.yml"
       ]
     }
   ]

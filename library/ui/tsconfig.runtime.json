@@ -1,0 +1,8 @@
+{
+  // The browser surface consumers compile from source. Also checked with the apps' TypeScript
+  // version (typecheck:apps-ts), since consumers build it with their own compiler.
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "types": [] },
+  "include": ["index.ts", "css-modules.d.ts", "components", "apps/sites", "foundations"],
+  "exclude": ["**/*.test.ts", "**/*.test.tsx", "**/*.figma.ts"]
+}

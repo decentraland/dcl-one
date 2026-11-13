@@ -598,7 +598,10 @@ impl SceneSpawnerPlus<'_, '_> {
         }
 
         for scene_ent in self.scene_spawner.iter_instance_entities(instance) {
-            let (maybe_h_mat, maybe_h_mesh) = self.query.get(scene_ent).unwrap();
+            // an entity of the instance may be gone: glTF processing despawns directional lights
+            let Ok((maybe_h_mat, maybe_h_mesh)) = self.query.get(scene_ent) else {
+                continue;
+            };
             if maybe_h_mat.is_some_and(|h| !check_handle(&self.asset_server, h.as_asset_id())) {
                 return false;
             }
@@ -674,6 +677,29 @@ impl UrlLoopbackExt for url::Url {
 /// not loopback.
 pub fn is_loopback_url(url: &str) -> bool {
     url::Url::parse(url).is_ok_and(|url| url.is_loopback())
+}
+
+/// Replace every `access_token` query value with `REDACTED`, keeping the rest of the text: a
+/// LiveKit room url carries its credential there, and neither scenes nor logs may see it. A value
+/// ends at `&` or at anything that closes it in `Debug` output (a quote, bracket or whitespace), so
+/// this works on a formatted value as well as on a bare url.
+pub fn redact_access_token(text: &str) -> String {
+    const KEY: &str = "access_token=";
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find(KEY) {
+        let (head, tail) = rest.split_at(at + KEY.len());
+        out.push_str(head);
+        out.push_str("REDACTED");
+        let end = tail
+            .find(|c: char| {
+                matches!(c, '&' | '"' | '\'' | ')' | ']' | '}' | ',') || c.is_whitespace()
+            })
+            .unwrap_or(tail.len());
+        rest = &tail[end..];
+    }
+    out.push_str(rest);
+    out
 }
 
 /// True if an IP must never be reachable from scene-controlled requests (SSRF guard):
@@ -896,6 +922,25 @@ impl Curve {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn redacts_only_the_access_token() {
+        assert_eq!(
+            redact_access_token("livekit:wss://x/room?access_token=secret&x=1"),
+            "livekit:wss://x/room?access_token=REDACTED&x=1"
+        );
+        assert_eq!(
+            redact_access_token("livekit:wss://x?access_token=secret"),
+            "livekit:wss://x?access_token=REDACTED"
+        );
+        assert_eq!(redact_access_token("livekit:wss://x"), "livekit:wss://x");
+        assert_eq!(
+            redact_access_token(
+                r#"SpawnRoom("livekit:wss://x?access_token=a.b-c") and Some("y?access_token=d")"#
+            ),
+            r#"SpawnRoom("livekit:wss://x?access_token=REDACTED") and Some("y?access_token=REDACTED")"#
+        );
+    }
 
     /// The egress policy hinges on this split: `allow_private` opens loopback and
     /// the local network, but link-local — including cloud metadata `169.254.169.254` — is

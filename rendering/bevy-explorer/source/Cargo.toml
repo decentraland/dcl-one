@@ -31,7 +31,7 @@ gen-tests = []
 tracy = ["bevy/trace_tracy"]
 inspect = ["dcl_deno/inspect", "system_ui/inspect"]
 hot_reload = ["bevy/file_watcher", "bevy/embedded_watcher", "ipfs/hot_reload"]
-livekit = ["comms/livekit", "system_ui/livekit"]
+livekit = ["comms/livekit", "system_ui/livekit", "ban_block/livekit"]
 ffmpeg = ["av/ffmpeg"]
 social = ["social/social"]
 # The loopback console server (`--automation-token`, src/automation.rs `remote`): native only, in
@@ -99,6 +99,7 @@ common = { path = "crates/common" }
 assets = { path = "crates/assets" }
 avatar = { path = "crates/avatar" }
 comms = { path = "crates/comms" }
+ban_block = { path = "crates/ban_block" }
 input_manager = { path = "crates/input_manager" }
 ipfs = { path = "crates/ipfs" }
 system_ui = { path = "crates/system_ui" }
@@ -176,6 +177,7 @@ bevy_color = { version = "0.16.1", default-features = false, features = [
 bevy_transform = { version = "0.16.1", default-features = false }
 bevy_ecs = { version = "0.16.1", default-features = false, features = ["std"] }
 disqualified = "1.0"
+nonmax = "0.5"
 wgpu = "24"
 # Match wgpu-hal's ash/windows versions: the GPU memory queries use its native handles.
 ash = { version = "0.38", default-features = false }
@@ -194,6 +196,8 @@ rusty_enet = { path = "../../../library/vendor/rusty_enet", version = "0.4.0" }
 # share it. Vendored with local patches that bound sizes read from untrusted files; provenance
 # and the patches live beside it.
 basisu = { path = "vendor/basisu", version = "=0.1.0" }
+# Zstandard decoding of KTX2 levels; the same version and features the vendored basisu uses.
+ruzstd = { version = "0.9.1", default-features = false }
 # enables naga_oil function overrides on non-`virtual` bevy_pbr functions (e.g.
 # our shadow-darkness override in bound_material.wgsl). feature-unifies into the
 # naga_oil that bevy builds its shader composer with. version must match bevy's.
@@ -227,6 +231,7 @@ hyper-util = { version = "0.1", default-features = false, features = ["tokio"] }
 anyhow = "1.0.70"
 thiserror = "2.0"
 url = "2"
+livekit-signaling = "0.1.7"
 http = "1.4"
 urn = "0.7.0"
 futures-lite = "2.6"
@@ -405,6 +410,7 @@ tween = { workspace = true }
 scene_material = { workspace = true }
 world_ui = { workspace = true }
 collectibles = { workspace = true }
+ban_block = { workspace = true }
 social = { workspace = true }
 imposters = { workspace = true }
 system_bridge = { workspace = true }
@@ -511,6 +517,8 @@ wasm-bindgen-test = { workspace = true }
 # follow from the same checkout as the fork's path dependencies.
 livekit = { git = "https://github.com/robtfm/client-sdk-rust", branch = "decentraland-0.9.7" }
 livekit-api = { git = "https://github.com/robtfm/client-sdk-rust", branch = "decentraland-0.9.7" }
+# Typed admission errors use the signaling crate from the same locked SDK checkout.
+livekit-signaling = { git = "https://github.com/robtfm/client-sdk-rust", branch = "decentraland-0.9.7" }
 # naga_oil with deterministic override-emit order (redirect.rs HashMap ->
 # IndexMap). without it, function overrides (e.g. the toon shadow override) emit
 # composed shaders in random per-page-load order on wasm, so the gpu pipeline

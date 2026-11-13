@@ -348,7 +348,7 @@ async fn root_serves_a_landing_page_to_browsers() {
         sc.find(needle)
             .unwrap_or_else(|| panic!("missing on /scene: {needle}"))
     };
-    let layout = smust(r#"<div class="jn lay lay--info" id="scene-layout">"#);
+    let layout = smust(r#"<div class="ui-card jn lay lay--info" id="scene-layout">"#);
     assert!(
         layout < smust(r#"data-laytab="info""#)
             && smust(r#"data-laytab="info""#) < smust(r#"data-laytab="parcels""#)
@@ -517,8 +517,8 @@ async fn the_request_log_replays_a_hostile_path_escaped_and_newest_first() {
         "the count is the buffer's, plain text on the drawer that holds it: {body}"
     );
     assert!(
-        body.contains(r#"<b class="st st--warn">404</b>"#)
-            && body.contains(r#"<b class="st st--ok">200</b>"#),
+        body.contains(r#"<b class="reqs__st reqs__st--warn">404</b>"#)
+            && body.contains(r#"<b class="reqs__st reqs__st--ok">200</b>"#),
         "each row carries its own status tone"
     );
 }
@@ -614,6 +614,89 @@ async fn navigate(addr: SocketAddr, path: &str) -> reqwest::Response {
         .send()
         .await
         .unwrap()
+}
+
+/// A binary without the embedded explorer still answers `/play`: the browser
+/// is sent to the hosted web explorer with this preview as its realm.
+#[tokio::test]
+async fn play_without_an_embedded_explorer_goes_to_the_hosted_one() {
+    if crate::play_embed::present() {
+        return;
+    }
+    let (_tmp, _project, st) = one_scene("playhosted");
+    let (addr, server) = serve(&st).await;
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+    for path in ["/play", "/play/"] {
+        let resp = client
+            .get(format!("http://{addr}{path}"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.status(),
+            reqwest::StatusCode::TEMPORARY_REDIRECT,
+            "{path}"
+        );
+        let location = resp.headers()["location"].to_str().unwrap();
+        assert!(
+            location.starts_with(&joinblock::web_explorer_base()),
+            "{path} -> {location}"
+        );
+        let url = url::Url::parse(location).unwrap();
+        let pairs: std::collections::HashMap<_, _> = url.query_pairs().into_owned().collect();
+        assert_eq!(
+            pairs.get("preview").map(String::as_str),
+            Some("true"),
+            "{location}"
+        );
+        assert_eq!(
+            pairs.get("realm"),
+            Some(&format!("http://{addr}")),
+            "{location}"
+        );
+        assert_eq!(
+            pairs.get("position").map(String::as_str),
+            Some("0,0"),
+            "{location}"
+        );
+    }
+    server.abort();
+}
+
+/// `--position` moves the hosted `/play` fallback the way it moves the
+/// printed join links: the base parcel is only the default.
+#[tokio::test]
+async fn play_without_an_embedded_explorer_lands_on_the_position_flag() {
+    if crate::play_embed::present() {
+        return;
+    }
+    let tmp = Tmp::new("playposition");
+    let mut st = state(vec![member(&tmp, "scene-a", &["0,0"])]);
+    st.position = Some((3, -4));
+    let st = Arc::new(st);
+    let (addr, server) = serve(&st).await;
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+    let resp = client
+        .get(format!("http://{addr}/play"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), reqwest::StatusCode::TEMPORARY_REDIRECT);
+    let location = resp.headers()["location"].to_str().unwrap();
+    let url = url::Url::parse(location).unwrap();
+    let pairs: std::collections::HashMap<_, _> = url.query_pairs().into_owned().collect();
+    assert_eq!(
+        pairs.get("position").map(String::as_str),
+        Some("3,-4"),
+        "{location}"
+    );
+    server.abort();
 }
 
 /// With no client attached, `broadcast::send` reports zero receivers, and a

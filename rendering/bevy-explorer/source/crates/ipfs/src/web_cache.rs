@@ -137,6 +137,14 @@ mod io {
         store(&cache, &own, data).await
     }
 
+    /// Drops the entry under the url's own key, if there is one.
+    pub async fn forget(url: &str) -> Result<(), JsValue> {
+        let [_, own] = keys(url).ok_or("not a url")?;
+        let cache = open().await?;
+        JsFuture::from(cache.delete_with_str(&own)).await?;
+        Ok(())
+    }
+
     /// Stores `data`, the bytes `url` answered with, under the shared key for `hash`, if
     /// `matches_hash`: whether they are what `hash` names. The url's own entry, if an older
     /// worker left one, goes: it is dead weight beside the shared one.

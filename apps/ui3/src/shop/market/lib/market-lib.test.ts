@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { CHAIN } from "../../model/chain";
-import { BOOK } from "../../payment/fixtures";
+import { CHAIN } from "@shop/model/chain";
+import { BOOK } from "@shop/payment/fixtures";
 import { LISTS, MANA, OWNED_NAMES, OWNED_WEARABLES, RECEIVED_BIDS, MADE_BIDS, SALES, list } from "../fixtures";
 import { fakeShop } from "../testing";
 import { dataUnavailable, fetchBidsByAddress, fetchMyAssets, fetchOwnedToken, fetchUserSales, fetchVolume, fetchRankings } from "./api";

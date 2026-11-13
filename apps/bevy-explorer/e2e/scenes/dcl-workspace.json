@@ -50,6 +50,15 @@
     },
     {
       "path": "ui"
+    },
+    {
+      "path": "smart-wearable"
+    },
+    {
+      "path": "pointer-targets"
+    },
+    {
+      "path": "raycast-storm"
     }
   ]
 }
