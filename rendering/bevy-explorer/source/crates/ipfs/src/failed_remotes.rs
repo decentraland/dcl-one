@@ -59,10 +59,11 @@ impl FailedRemotes {
             self.entries
                 .retain(|_, failed| failed.session.is_some() || !expired(failed.at, now));
             if self.entries.len() >= self.limit {
+                // a short-lived entry goes first: a session entry is the costlier one to lose
                 let oldest = self
                     .entries
                     .iter()
-                    .min_by_key(|(_, failed)| failed.at)
+                    .min_by_key(|(_, failed)| (failed.session.is_some(), failed.at))
                     .map(|(url, _)| url.clone());
                 if let Some(oldest) = oldest {
                     self.entries.remove(&oldest);
@@ -190,5 +191,23 @@ mod tests {
         failed.record("f".into(), nf, secs(14));
         assert_eq!(failed.entries.len(), 3);
         assert_eq!(failed.repeat("d", secs(14)), session);
+    }
+
+    #[test]
+    fn a_full_map_drops_a_short_lived_entry_before_a_session_entry() {
+        let t0 = Instant::now();
+        let secs = |n| t0 + Duration::from_secs(n);
+        let nf = Some(StatusCode::NOT_FOUND);
+        let session = Some(Repeat::Session(StatusCode::NOT_FOUND));
+        let mut failed = FailedRemotes::with_limit(3);
+        failed.record("a".into(), nf, t0);
+        failed.record("b".into(), nf, secs(1));
+        failed.record("c".into(), None, secs(2));
+
+        failed.record("d".into(), nf, secs(3));
+        assert_eq!(failed.entries.len(), 3);
+        assert_eq!(failed.repeat("a", secs(3)), session);
+        assert_eq!(failed.repeat("b", secs(3)), session);
+        assert_eq!(failed.repeat("c", secs(3)), None);
     }
 }
