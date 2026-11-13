@@ -175,19 +175,9 @@ async fn render_limited<F>(
 where
     F: FnOnce(&Grid) -> Result<Vec<u8>, Box<Response>> + Send + 'static,
 {
-    let busy = || {
-        Box::new(
-            (
-                StatusCode::SERVICE_UNAVAILABLE,
-                [(header::RETRY_AFTER, "5")],
-                "map renderer busy",
-            )
-                .into_response(),
-        )
-    };
     let Ok(Ok(permit)) = tokio::time::timeout(RENDER_QUEUE_WAIT, renders.acquire_owned()).await
     else {
-        return Err(busy());
+        return Err(renderer_busy());
     };
     // The slot is held by the render itself, even if the request goes away.
     tokio::task::spawn_blocking(move || {
@@ -196,6 +186,17 @@ where
     })
     .await
     .unwrap_or_else(|e| Err(render_error(e.to_string())))
+}
+
+fn renderer_busy() -> Box<Response> {
+    Box::new(
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            [(header::RETRY_AFTER, "5")],
+            "map renderer busy",
+        )
+            .into_response(),
+    )
 }
 
 async fn cached_png_render<F>(
@@ -218,7 +219,15 @@ where
     let mut _rendering = None;
     if state.map.cached_png(&key).is_none() {
         flight = render_flight(&key);
-        _rendering = Some(flight.lock().await);
+        // Waiting behind another render of this key has the same deadline.
+        match tokio::time::timeout(RENDER_QUEUE_WAIT, flight.lock()).await {
+            Ok(guard) => _rendering = Some(guard),
+            Err(_) => {
+                let mut resp = *renderer_busy();
+                http_cache::apply(&mut resp, last, max_age, swr);
+                return resp;
+            }
+        }
     }
     let bytes = match state.map.cached_png(&key) {
         Some(b) => b,
