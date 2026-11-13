@@ -3,7 +3,7 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
-use tokio::sync::Notify;
+use tokio::sync::{Notify, OwnedSemaphorePermit, Semaphore};
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
@@ -13,6 +13,23 @@ pub const MAX_RUNNING_WORK: usize = 32;
 /// Contains the maximum 60 s token lifetime, LiveKit's 60 s verifier leeway, a two-second
 /// boundary margin, two removal phases and the source checks surrounding replacement minting.
 pub const WORK_DEADLINE: Duration = Duration::from_secs(150);
+
+pub struct WorkCredit {
+    _permit: OwnedSemaphorePermit,
+}
+impl WorkCredit {
+    pub(crate) fn reserve(budget: &Arc<Semaphore>) -> Option<Arc<Self>> {
+        budget
+            .clone()
+            .try_acquire_owned()
+            .ok()
+            .map(|permit| Arc::new(Self { _permit: permit }))
+    }
+}
+tokio::task_local! { static CURRENT_CREDIT: Arc<WorkCredit>; }
+pub(crate) fn current_work_credit() -> Option<Arc<WorkCredit>> {
+    CURRENT_CREDIT.try_with(Arc::clone).ok()
+}
 
 pub(super) type QueuedWork = futures::future::BoxFuture<'static, ()>;
 pub(super) type Completion = Box<dyn FnOnce() + Send>;
@@ -64,6 +81,7 @@ struct Work {
     _completed: Completed,
     owner: Ownership,
     expires: Instant,
+    credit: Arc<WorkCredit>,
 }
 
 #[derive(Default)]
@@ -84,10 +102,20 @@ struct State {
 /// wallet executes at once, and only a bounded number of tasks exist globally.
 /// Admission is synchronous, before scheduling, so accepted arrival order survives.
 /// No replica affinity or distributed publication ordering is implied.
-#[derive(Default)]
 pub struct WalletQueue {
     state: Mutex<State>,
     unscoped_owner: Arc<WorkOwner>,
+    credits: Arc<Semaphore>,
+}
+
+impl Default for WalletQueue {
+    fn default() -> Self {
+        Self {
+            state: Default::default(),
+            unscoped_owner: Default::default(),
+            credits: Arc::new(Semaphore::new(MAX_TOTAL_WORK)),
+        }
+    }
 }
 
 impl WalletQueue {
@@ -112,12 +140,41 @@ impl WalletQueue {
         work: QueuedWork,
         done: Completion,
     ) -> bool {
+        self.enqueue_scoped_with_credit(owner, wallet, work, done, None)
+    }
+
+    pub(super) fn enqueue_scoped_with_credit(
+        self: &Arc<Self>,
+        owner: Arc<WorkOwner>,
+        wallet: &str,
+        work: QueuedWork,
+        done: Completion,
+        retained: Option<Arc<WorkCredit>>,
+    ) -> bool {
+        let credit = match retained.or_else(|| {
+            self.credits
+                .clone()
+                .try_acquire_owned()
+                .ok()
+                .map(|permit| Arc::new(WorkCredit { _permit: permit }))
+        }) {
+            Some(credit) => credit,
+            None => {
+                crate::gatekeeper::admission::cluster::metrics::cluster_work_rejected(
+                    "global_full",
+                );
+                drop(work);
+                drop(Completed(Some(done)));
+                return false;
+            }
+        };
         owner.outstanding.fetch_add(1, Ordering::SeqCst);
         let mut work = Some(Work {
             future: Some(work),
             _completed: Completed(Some(done)),
             owner: Ownership(owner.clone()),
             expires: Instant::now() + WORK_DEADLINE,
+            credit,
         });
         let scheduled = {
             let mut state = self.state();
@@ -196,7 +253,7 @@ impl WalletQueue {
             crate::gatekeeper::admission::cluster::metrics::cluster_work_expired();
         } else {
             let future = work.future.take().unwrap();
-            tokio::select! {
+            CURRENT_CREDIT.scope(work.credit.clone(), async { tokio::select! {
                 biased;
                 _ = work.owner.0.cancelled.cancelled() => crate::gatekeeper::admission::cluster::metrics::cluster_work_cancelled(),
                 _ = tokio::time::sleep_until(work.expires) => crate::gatekeeper::admission::cluster::metrics::cluster_work_expired(),
@@ -205,7 +262,7 @@ impl WalletQueue {
                         tracing::error!(%wallet, "cluster work panicked; the lane continues");
                     }
                 }
-            }
+            }}).await;
         }
         let ready = {
             let mut state = self.state();

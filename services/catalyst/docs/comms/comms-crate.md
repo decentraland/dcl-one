@@ -338,8 +338,18 @@ registration reserves precedence even without usable coordinates and invalidates
 evidence until a completed pass installs a fresh version. Unknown and cleanup-only evidence
 cannot mint or refresh credentials. Legacy v1/v2 readers share the wallet capacity; mixed
 authority is withheld without a grounded common allocator-domain proof. The ordinary connector
-continues emitting v1, so reader support does not establish final native SQL ownership or a
-producer cutover ([selected evidence ADR](../../../../docs/adr/2026-11-12-pulse-selected-room-evidence.md)).
+emits v2 intents after independent verified-session registration. The newest completed live
+transport with a fresh valid heartbeat supplies the wallet candidate; replacement or promotion
+allocates a new sequence-backed candidate epoch. Gatekeeper acquires and renews only positively
+selected realm bindings, including native selection without `/ws`. It replaces only a known
+exact owned predecessor or a lapsed row. Fresh unknown same-session rows are borrowed read-only;
+fresh foreign sessions remain conflicts. Socket delivery retains the exact transport, immutable
+admission stamp and committed SQL fence. SQL timeouts retain before/after identities and their
+existing queue credit until conditional reconciliation. No old row is restored or broadly released.
+Ownership loss stops renewal; the existing 90-second lease bounds residual authority. These
+paths require the coordinated maintenance cutover in the
+[selected evidence ADR](../../../../docs/adr/2026-11-12-pulse-selected-room-evidence.md);
+source implementation alone does not establish rollout readiness.
 
 Pulse budgets 24,573 simultaneous distinct transport/control wallets and one equally sized
 churn cohort, for 49,146 retained wallet records, with at most 32 pending operations per

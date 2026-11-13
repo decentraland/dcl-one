@@ -47,6 +47,10 @@ pub(crate) struct ControlPositionPermit {
     epoch: u64,
     link_id: u64,
     close: bool,
+    binding: Option<(
+        crate::gatekeeper::admission::cluster::fence::TokenFence,
+        crate::gatekeeper::admission::cluster::fence::PulseAdmissionStamp,
+    )>,
 }
 
 impl ControlPositionPermit {
@@ -63,6 +67,29 @@ impl ControlPositionPermit {
     pub(crate) fn is_close(&self) -> bool {
         self.close
     }
+}
+
+#[derive(Clone)]
+pub(crate) struct LegacyCandidate {
+    pub address: String,
+    pub link: PeerLink,
+    pub realm: String,
+    pub position: [f32; 3],
+    pub updated: tokio::time::Instant,
+}
+
+#[derive(Clone)]
+struct LegacySample {
+    realm: String,
+    position: [f32; 3],
+    updated: tokio::time::Instant,
+}
+
+#[derive(Default)]
+struct LegacyRoomState {
+    samples: HashMap<u64, LegacySample>,
+    candidates: HashMap<String, (u64, u64)>,
+    bindings: HashMap<u64, ControlPositionPermit>,
 }
 
 struct V4Peer {
@@ -136,6 +163,7 @@ pub struct PeersRegistry {
     v4_peers: Mutex<HashMap<String, Vec<V4Peer>>>,
     next_id: AtomicU64,
     admissions: Mutex<AdmissionState>,
+    legacy_rooms: Mutex<LegacyRoomState>,
 }
 
 #[derive(Default)]
@@ -257,6 +285,11 @@ impl PeersRegistry {
             .position(|held| held.session == session)
             .map(|at| sessions.remove(at));
         sessions.push(link.clone());
+        if let Some(previous) = &previous {
+            let mut rooms = self.legacy_rooms.lock();
+            rooms.samples.remove(&previous.id);
+            rooms.bindings.remove(&previous.id);
+        }
         (link, rx, previous)
     }
 
@@ -341,9 +374,191 @@ impl PeersRegistry {
             return;
         };
         sessions.retain(|held| !(held.session == session && held.id == id));
+        {
+            let mut rooms = self.legacy_rooms.lock();
+            rooms.samples.remove(&id);
+            rooms.bindings.remove(&id);
+        }
         if sessions.is_empty() {
             peers.remove(address);
         }
+    }
+
+    pub(crate) fn offer_legacy_position(
+        &self,
+        address: &str,
+        link: &PeerLink,
+        realm: &str,
+        position: [f32; 3],
+    ) -> bool {
+        if !crate::protocol::bus::control_position::valid_realm(realm)
+            || position.iter().any(|v| !v.is_finite())
+        {
+            return false;
+        }
+        let peers = self.peers.lock();
+        if !peers
+            .get(address)
+            .is_some_and(|sessions| sessions.iter().any(|p| p.id == link.id && !p.is_closed()))
+        {
+            return false;
+        }
+        self.legacy_rooms.lock().samples.insert(
+            link.id,
+            LegacySample {
+                realm: realm.into(),
+                position,
+                updated: tokio::time::Instant::now(),
+            },
+        );
+        true
+    }
+
+    pub(crate) fn legacy_candidates(&self) -> Vec<LegacyCandidate> {
+        let peers = self.peers.lock();
+        let mut rooms = self.legacy_rooms.lock();
+        let live: std::collections::HashSet<u64> = peers
+            .values()
+            .flatten()
+            .filter(|p| !p.is_closed())
+            .map(|p| p.id)
+            .collect();
+        rooms.samples.retain(|id, sample| {
+            live.contains(id) && sample.updated.elapsed() < std::time::Duration::from_secs(10)
+        });
+        let candidates: Vec<_> = peers
+            .iter()
+            .filter_map(|(address, sessions)| {
+                let link = sessions
+                    .iter()
+                    .filter(|p| {
+                        !p.is_closed()
+                            && rooms.samples.get(&p.id).is_some_and(|sample| {
+                                sample.updated.elapsed() < std::time::Duration::from_secs(10)
+                            })
+                    })
+                    .max_by_key(|p| p.id)?;
+                let sample = rooms.samples.get(&link.id)?;
+                Some(LegacyCandidate {
+                    address: address.clone(),
+                    link: link.clone(),
+                    realm: sample.realm.clone(),
+                    position: sample.position,
+                    updated: sample.updated,
+                })
+            })
+            .collect();
+        rooms.candidates.retain(|address, (id, _)| {
+            candidates
+                .iter()
+                .any(|c| &c.address == address && c.link.id == *id)
+        });
+        candidates
+    }
+
+    pub(crate) fn bind_legacy_candidate(&self, candidate: &LegacyCandidate, epoch: u64) -> bool {
+        if epoch == 0 || epoch > i64::MAX as u64 {
+            return false;
+        }
+        let peers = self.peers.lock();
+        let mut rooms = self.legacy_rooms.lock();
+        let selected = peers.get(&candidate.address).and_then(|sessions| {
+            sessions
+                .iter()
+                .filter(|p| {
+                    !p.is_closed()
+                        && rooms.samples.get(&p.id).is_some_and(|sample| {
+                            sample.updated.elapsed() < std::time::Duration::from_secs(10)
+                        })
+                })
+                .max_by_key(|p| p.id)
+        });
+        if !selected.is_some_and(|p| p.id == candidate.link.id) {
+            return false;
+        }
+        rooms
+            .candidates
+            .insert(candidate.address.clone(), (candidate.link.id, epoch));
+        true
+    }
+
+    pub(crate) fn legacy_candidate_is_current(
+        &self,
+        address: &str,
+        session: &str,
+        link_id: u64,
+        epoch: u64,
+    ) -> bool {
+        let peers = self.peers.lock();
+        let rooms = self.legacy_rooms.lock();
+        rooms.candidates.get(address) == Some(&(link_id, epoch))
+            && peers
+                .get(address)
+                .and_then(|sessions| {
+                    sessions
+                        .iter()
+                        .filter(|p| {
+                            !p.is_closed()
+                                && rooms.samples.get(&p.id).is_some_and(|sample| {
+                                    sample.updated.elapsed() < std::time::Duration::from_secs(10)
+                                })
+                        })
+                        .max_by_key(|p| p.id)
+                })
+                .is_some_and(|p| p.id == link_id && p.session == session)
+    }
+
+    pub(crate) fn selected_legacy_is_current(
+        &self,
+        address: &str,
+        session: &str,
+        epoch: u64,
+    ) -> bool {
+        let Some(link) = self.peer_link(address, session) else {
+            return false;
+        };
+        self.legacy_candidate_is_current(address, session, link.id, epoch)
+    }
+
+    pub(crate) fn bind_selected_realm(
+        &self,
+        address: &str,
+        link: &PeerLink,
+        fence: crate::gatekeeper::admission::cluster::fence::TokenFence,
+        stamp: crate::gatekeeper::admission::cluster::fence::PulseAdmissionStamp,
+    ) -> Option<ControlPositionPermit> {
+        let peers = self.peers.lock();
+        if stamp.wallet != address
+            || stamp.session != link.session
+            || fence.owner_session != link.session
+            || !peers
+                .get(address)
+                .is_some_and(|sessions| sessions.iter().any(|p| p.id == link.id && !p.is_closed()))
+        {
+            return None;
+        }
+        let mut rooms = self.legacy_rooms.lock();
+        if stamp.selected_origin
+            == crate::gatekeeper::admission::cluster::fence::SelectedRoomOrigin::LegacyIntentV2
+            && rooms.candidates.get(address) != Some(&(link.id, stamp.selected_identity))
+        {
+            return None;
+        }
+        let permit = ControlPositionPermit {
+            address: address.into(),
+            session: link.session.clone(),
+            epoch: fence.owner_epoch,
+            link_id: link.id,
+            close: false,
+            binding: Some((fence, stamp)),
+        };
+        rooms.bindings.insert(link.id, permit.clone());
+        Some(permit)
+    }
+
+    pub(crate) fn detach_selected_realm(&self, link: &PeerLink) {
+        self.legacy_rooms.lock().bindings.remove(&link.id);
+        link.assignment_cleared();
     }
 
     pub fn on_v4_peer_disconnected(&self, address: &str, id: u64) {
@@ -481,6 +696,7 @@ impl PeersRegistry {
             epoch,
             link_id: peer.link.id,
             close,
+            binding: None,
         })
     }
 
@@ -496,6 +712,22 @@ impl PeersRegistry {
         permit: &ControlPositionPermit,
         apply: impl FnOnce(),
     ) -> bool {
+        if permit.binding.is_some() {
+            let peers = self.peers.lock();
+            let rooms = self.legacy_rooms.lock();
+            let Some(link) = peers.get(&permit.address).and_then(|sessions| {
+                sessions
+                    .iter()
+                    .find(|peer| peer.id == permit.link_id && peer.session == permit.session)
+            }) else {
+                return false;
+            };
+            let current = !permit.close && rooms.bindings.get(&permit.link_id) == Some(permit)
+                && permit.binding.as_ref().is_some_and(|(_, stamp)| stamp.selected_origin != crate::gatekeeper::admission::cluster::fence::SelectedRoomOrigin::LegacyIntentV2
+                    || (rooms.candidates.get(&permit.address) == Some(&(permit.link_id, stamp.selected_identity))
+                        && peers.get(&permit.address).and_then(|sessions| sessions.iter().filter(|p| !p.is_closed() && rooms.samples.get(&p.id).is_some_and(|sample| sample.updated.elapsed() < std::time::Duration::from_secs(10))).max_by_key(|p| p.id)).is_some_and(|p| p.id == permit.link_id)));
+            return current && link.while_open(apply);
+        }
         let held = self.v4_peers.lock();
         !permit.close
             && held
@@ -598,6 +830,34 @@ mod tests {
             id,
             connection_id: None,
         }
+    }
+
+    #[test]
+    fn legacy_candidates_follow_completion_rank_and_exact_generation() {
+        let registry = PeersRegistry::new();
+        let (first, _first_events, _) = registry.on_peer_connected("wallet", "first");
+        let (second, _second_events, _) = registry.on_peer_connected("wallet", "second");
+        assert!(registry.offer_legacy_position("wallet", &second, "main", [2.0; 3]));
+        assert!(registry.offer_legacy_position("wallet", &first, "main", [1.0; 3]));
+        let candidate = registry.legacy_candidates().pop().unwrap();
+        assert_eq!(candidate.link.id, second.id);
+        assert!(registry.bind_legacy_candidate(&candidate, 40));
+        assert!(registry.legacy_candidate_is_current("wallet", "second", second.id, 40));
+        second.close();
+        registry.on_peer_disconnected("wallet", "second", second.id);
+        let promoted = registry.legacy_candidates().pop().unwrap();
+        assert_eq!(promoted.link.id, first.id);
+        assert!(!registry.legacy_candidate_is_current("wallet", "first", first.id, 40));
+        assert!(!registry.bind_legacy_candidate(&candidate, 41));
+        assert!(registry.bind_legacy_candidate(&promoted, 42));
+        let (replacement, _events, _) = registry.on_peer_connected("wallet", "first");
+        assert!(!registry.offer_legacy_position("wallet", &first, "main", [3.0; 3]));
+        registry.on_peer_disconnected("wallet", "first", first.id);
+        assert_eq!(
+            registry.peer_link("wallet", "first").unwrap().id,
+            replacement.id
+        );
+        assert!(!registry.legacy_candidate_is_current("wallet", "first", first.id, 42));
     }
 
     #[test]

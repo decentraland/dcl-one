@@ -187,6 +187,7 @@ pub struct ClusterSubscriber {
     receipts: CleanupReceipts,
     safety: Option<super::safety::SafetyStore>,
     assignment_fence: Option<Arc<dyn AssignmentFence>>,
+    selected_reconcile_at: Mutex<tokio::time::Instant>,
     /// The connector's sockets ([`Self::attach_sockets`]); minted assignments go nowhere without.
     sockets: Mutex<Option<Arc<dyn IslandSockets>>>,
     /// Set once the missing sockets have been reported, so the warning is logged once.
@@ -313,6 +314,7 @@ impl ClusterSubscriber {
             receipts: CleanupReceipts::default(),
             safety,
             assignment_fence,
+            selected_reconcile_at: Mutex::new(tokio::time::Instant::now()),
             sockets: Mutex::new(None),
             unattached_reported: AtomicBool::new(false),
         })
@@ -388,6 +390,7 @@ impl ClusterSubscriber {
         };
         let Some(owner) = owner else { return };
         let budget = self.config.drain_timeout_ms;
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(budget);
         if budget > 0
             && tokio::time::timeout(Duration::from_millis(budget), owner.settle())
                 .await
@@ -401,6 +404,24 @@ impl ClusterSubscriber {
         }
         self.queue.cancel(&owner);
         owner.settle().await;
+        if let Some(fence) = &self.assignment_fence {
+            use futures::StreamExt;
+            let targets = fence.selected_reconciliation_targets();
+            let settlement = futures::stream::iter(targets)
+                .map(|(wallet, _)| async move {
+                    fence.settle_idle(&wallet).await;
+                })
+                .buffer_unordered(wallet_queue::MAX_RUNNING_WORK)
+                .collect::<Vec<_>>();
+            let _ = tokio::time::timeout_at(deadline, settlement).await;
+            let unresolved = fence.unresolved_mutations();
+            if unresolved > 0 {
+                tracing::warn!(
+                    unresolved,
+                    "selected realm SQL outcomes remain unresolved; credentials withheld and rows must lapse"
+                );
+            }
+        }
         tracing::info!("cluster subscriber stopped taking events");
     }
 
@@ -488,7 +509,11 @@ impl ClusterSubscriber {
         let me = self.clone();
         let queued: QueuedWork = Box::pin(async move { work(me.clone()).await });
         let settled = self.clone();
-        self.queue.enqueue_scoped(
+        let retained = self
+            .assignment_fence
+            .as_ref()
+            .and_then(|fence| fence.retained_work_credit(&wallet));
+        self.queue.enqueue_scoped_with_credit(
             owner,
             &wallet,
             queued,
@@ -496,6 +521,7 @@ impl ClusterSubscriber {
                 settled.in_flight.fetch_sub(1, Ordering::SeqCst);
                 settled.idle.notify_waiters();
             }),
+            retained,
         )
     }
 
@@ -513,6 +539,9 @@ impl ClusterSubscriber {
             return;
         }
 
+        if let Some(fence) = &self.assignment_fence {
+            fence.observe_selected_hint(&wallet, &change);
+        }
         self.recovery.invalidate(&wallet);
 
         let takeover = (self.config.self_hosted_token_quarantine
@@ -622,8 +651,8 @@ impl ClusterSubscriber {
     /// Consequently, owner replacements that would require destructive SFU work fail closed.
     ///
     /// Returns false for work the authority does not cover, which the caller takes down the
-    /// legacy path: a wallet no v4 socket has claimed, or a session that cannot be a v4 owner.
-    /// The same server admits unmodified v3 clients, and they write no authority row.
+    /// legacy path for an authority adapter that explicitly reports no realm owner.
+    /// The configured PostgreSQL path acquires only a positively selected binding.
     async fn process_fenced_cluster_change(
         &self,
         wallet: &str,
@@ -636,7 +665,16 @@ impl ClusterSubscriber {
             .assignment_fence
             .as_ref()
             .expect("fenced path requires authority");
-        let lease = match authority.lock_realm(wallet, &change.session).await {
+        let Some(selected) = self.lookup_current(wallet, &change.session).await else {
+            return true;
+        };
+        let Some(selected) = self.ready_floor(&selected).await else {
+            return true;
+        };
+        if !self.selected_transport_is_current(&selected) {
+            return true;
+        }
+        let lease = match authority.lock_selected(&selected).await {
             Ok(lease) => lease,
             Err(crate::gatekeeper::admission::cluster::fence::FenceError::Unowned) => return false,
             Err(error) => {
@@ -645,6 +683,9 @@ impl ClusterSubscriber {
                 return true;
             }
         };
+        if lease.read_only() {
+            return true;
+        }
         let Some(snapshot) = self.lookup_current(wallet, &change.session).await else {
             crate::gatekeeper::admission::cluster::metrics::cluster_reannounce_unresolved();
             return true;
@@ -670,9 +711,15 @@ impl ClusterSubscriber {
         let fence = lease.token_fence();
         let token_expires_at_unix =
             fenced_token_expires_at_unix(self.config.island_token_ttl_seconds);
+        if !self.selected_transport_is_current(&snapshot) {
+            return true;
+        }
         let Some(admission) = self.credential_stamp(&snapshot).await else {
             return true;
         };
+        if !self.selected_transport_is_current(&snapshot) {
+            return true;
+        }
         let not_before = admission.credential_not_before;
         let conn_str = match self
             .gateway
@@ -697,10 +744,12 @@ impl ClusterSubscriber {
             crate::gatekeeper::admission::cluster::metrics::cluster_recovery_stale();
             return true;
         };
-        if !snapshot_extends(&snapshot, &current)
+        if !self.selected_transport_is_current(&current)
+            || !snapshot_extends(&snapshot, &current)
             || current.token_not_before != snapshot.token_not_before
             || !current.pending_takeovers.is_empty()
             || !self.stamp_ready(&admission).await
+            || !self.selected_transport_is_current(&current)
             || floor_wait_ms(not_before, self.admission_now_ms()) != Some(0)
         {
             crate::gatekeeper::admission::cluster::metrics::cluster_recovery_stale();
@@ -1202,6 +1251,16 @@ impl ClusterSubscriber {
             .await;
     }
 
+    fn selected_transport_is_current(&self, snapshot: &PeerClusterSnapshot) -> bool {
+        snapshot.selected_origin == 1
+            || self
+                .sockets
+                .lock()
+                .unwrap()
+                .as_ref()
+                .is_some_and(|sockets| sockets.selected_transport_is_current(snapshot))
+    }
+
     async fn reconcile_with_guard(
         &self,
         wallet: &str,
@@ -1211,6 +1270,9 @@ impl ClusterSubscriber {
         guard: Option<&RecoveryGuard>,
     ) {
         let Some(snapshot) = self.lookup_current(wallet, session).await else {
+            if let Some(authority) = &self.assignment_fence {
+                authority.settle_idle(wallet).await;
+            }
             crate::gatekeeper::admission::cluster::metrics::cluster_reannounce_unresolved();
             return;
         };
@@ -1318,7 +1380,10 @@ impl ClusterSubscriber {
             .assignment_fence
             .as_ref()
             .expect("fenced recovery requires authority");
-        let lease = match authority.lock_realm(wallet, session).await {
+        if !self.selected_transport_is_current(initial) {
+            return true;
+        }
+        let lease = match authority.lock_selected(initial).await {
             Ok(lease) => lease,
             Err(crate::gatekeeper::admission::cluster::fence::FenceError::Unowned) => return false,
             Err(error) => {
@@ -1360,15 +1425,24 @@ impl ClusterSubscriber {
             crate::gatekeeper::admission::cluster::metrics::cluster_reannounce_suppressed();
             return true;
         }
+        if lease.read_only() {
+            return true;
+        }
         let Some(snapshot) = self.ready_floor(&snapshot).await else {
             return true;
         };
         let fence = lease.token_fence();
         let token_expires_at_unix =
             fenced_token_expires_at_unix(self.config.island_token_ttl_seconds);
+        if !self.selected_transport_is_current(&snapshot) {
+            return true;
+        }
         let Some(admission) = self.credential_stamp(&snapshot).await else {
             return true;
         };
+        if !self.selected_transport_is_current(&snapshot) {
+            return true;
+        }
         let not_before = admission.credential_not_before;
         let conn_str = match self
             .gateway
@@ -1400,10 +1474,12 @@ impl ClusterSubscriber {
             crate::gatekeeper::admission::cluster::metrics::cluster_recovery_stale();
             return true;
         };
-        if !snapshot_extends(&snapshot, &current)
+        if !self.selected_transport_is_current(&current)
+            || !snapshot_extends(&snapshot, &current)
             || current.token_not_before != snapshot.token_not_before
             || !current.pending_takeovers.is_empty()
             || !self.stamp_ready(&admission).await
+            || !self.selected_transport_is_current(&current)
             || floor_wait_ms(not_before, self.admission_now_ms()) != Some(0)
         {
             crate::gatekeeper::admission::cluster::metrics::cluster_recovery_stale();
@@ -1677,6 +1753,19 @@ impl ClusterSubscriber {
 }
 impl ClusterSubscriber {
     pub(crate) async fn replay_due(self: &Arc<Self>) {
+        let due = {
+            let mut next = self.selected_reconcile_at.lock().unwrap();
+            let due = tokio::time::Instant::now() >= *next;
+            if due {
+                *next = tokio::time::Instant::now() + Duration::from_secs(5);
+            }
+            due
+        };
+        if due && let Some(authority) = &self.assignment_fence {
+            for (wallet, session) in authority.selected_reconciliation_targets() {
+                self.announce_connect(&wallet, &session);
+            }
+        }
         let Some(store) = &self.safety else {
             return;
         };

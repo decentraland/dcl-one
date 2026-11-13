@@ -1,5 +1,7 @@
 """CI inventory fixtures and a dependency-free Cargo build-context regression."""
 import importlib.util
+import json
+import re
 import os
 from pathlib import Path
 import shutil
@@ -15,6 +17,17 @@ spec.loader.exec_module(guard)
 
 
 class InventoryTests(unittest.TestCase):
+    def test_configured_socket_catalog_and_guards_resolve_current_source_names(self):
+        target = "archipelago_control_extensions_websocket"
+        catalog = json.loads((ROOT / "tooling/dev-regressions.json").read_text(encoding="utf-8"))
+        required = set(catalog["catalyst"][target]) | set(guard.MANDATORY_ARCHIPELAGO[(target, "test")])
+        source = (ROOT / "services/catalyst/tests" / (target + ".rs")).read_text(encoding="utf-8")
+        bodies = re.findall(r"#\[(?:tokio::)?test(?:\([^\]]*\))?\]\s*(?:async\s+)?fn\s+(\w+)", source)
+        for name in sorted(required):
+            with self.subTest(name=name):
+                self.assertEqual(bodies.count(name), 1, "mandatory selectors must track the actual current socket test body")
+        self.assertIn("configured_replica_signaling_cannot_steal_a_fresh_foreign_room", required)
+
     def test_bot_review_bodies_are_bound_to_their_existing_targets(self):
         bodies = {
             ("catalyst_comms", "lib"): [

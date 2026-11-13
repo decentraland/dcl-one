@@ -4,52 +4,16 @@ use crate::archipelago::control_v4::{AssignmentPayload, LaneKey, V4Error, V4Owne
 pub(super) const POLL_INTERVAL: Duration = Duration::from_secs(2);
 
 pub(super) struct LegacyFence {
-    pub owner: V4Owner,
-    last_revision: u64,
-    delivered: bool,
+    last_fence: Option<crate::gatekeeper::admission::cluster::fence::TokenFence>,
 }
 
 fn realm() -> LaneKey {
     LaneKey::parse("realm").expect("static realm lane")
 }
 
-pub(super) async fn reserve(state: &AppState) -> Result<Option<u64>, V4Error> {
-    if state.control_v4.is_available() || state.gatekeeper.cluster.control_v4_audience.is_some() {
-        state.control_v4.next_connection_epoch().await.map(Some)
-    } else {
-        Ok(None)
-    }
-}
-
 impl LegacyFence {
-    pub async fn claim(
-        state: &AppState,
-        address: &str,
-        session: &str,
-        epoch: u64,
-    ) -> Result<(Self, PeerLink, SocketEvents), V4Error> {
-        let owner = V4Owner {
-            address: address.to_owned(),
-            session: session.to_owned(),
-            epoch,
-        };
-        state.control_v4.claim_lanes(&owner, &[realm()]).await?;
-        let (link, events) = state.registry.on_v4_peer_connected_with_realm_epoch(
-            address,
-            session,
-            &uuid::Uuid::new_v4().to_string(),
-            true,
-            epoch,
-        );
-        Ok((
-            Self {
-                owner,
-                last_revision: 0,
-                delivered: false,
-            },
-            link,
-            events,
-        ))
+    pub fn new() -> Self {
+        Self { last_fence: None }
     }
 
     pub async fn poll(
@@ -57,60 +21,74 @@ impl LegacyFence {
         state: &AppState,
         socket: &mut WebSocket,
         link: &PeerLink,
+        address: &str,
+        session: &str,
     ) -> bool {
-        let snapshot = match state.control_v4.snapshot(&self.owner, &realm()).await {
-            Ok(snapshot) => snapshot,
-            Err(V4Error::AuthorityConflict) => {
-                let _ = send_packet(socket, kicked_packet(), Some(link), &state.feed).await;
-                return false;
-            }
-            Err(_) => {
-                state
-                    .gatekeeper
-                    .announce_session(&self.owner.address, &self.owner.session);
-                return false;
-            }
-        };
-        if snapshot.assignment_revision <= self.last_revision && !link.needs_assignment() {
+        use sqlx::Row;
+        let Some(audience) = state.gatekeeper.cluster.control_v4_audience.as_ref() else {
             return true;
-        }
-        let Some(assignment) = snapshot.assignment else {
-            link.assignment_cleared();
-            return !self.delivered;
+        };
+        let row = sqlx::query(
+            "SELECT owner_epoch, assignment_revision, fencing_token, assignment_json
+            FROM social.archipelago_v4_assignments
+            WHERE deployment_audience=$1 AND owner_address=$2 AND lane_key='realm'
+              AND owner_session=$3 AND updated_at>=clock_timestamp()-interval '90 seconds'",
+        )
+        .bind(audience)
+        .bind(address)
+        .bind(session)
+        .fetch_optional(&state.gatekeeper.pool)
+        .await;
+        let assignment = row.ok().flatten().and_then(|row| {
+            let owner_epoch: i64 = row.try_get("owner_epoch").ok()?;
+            let revision: i64 = row.try_get("assignment_revision").ok()?;
+            let token: i64 = row.try_get("fencing_token").ok()?;
+            if owner_epoch <= 0 || revision <= 0 || token <= 0 {
+                return None;
+            }
+            let value: Option<serde_json::Value> = row.try_get("assignment_json").ok()?;
+            let assignment = serde_json::from_value::<AssignmentPayload>(value?).ok()?;
+            let fence = crate::gatekeeper::admission::cluster::fence::TokenFence {
+                audience: audience.clone(),
+                lane: "realm".into(),
+                owner_session: session.into(),
+                owner_epoch: owner_epoch as u64,
+                assignment_revision: revision as u64,
+                fencing_token: token as u64,
+            };
+            Some((assignment, fence))
+        });
+        let Some((assignment, token_fence)) = assignment else {
+            state.registry.detach_selected_realm(link);
+            self.last_fence = None;
+            return true;
         };
         let Some(stamp) = assignment.pulse_admission.as_ref() else {
-            link.assignment_cleared();
-            state
-                .gatekeeper
-                .announce_session(&self.owner.address, &self.owner.session);
+            state.registry.detach_selected_realm(link);
             return true;
         };
-        let valid = state.gatekeeper.verify_island_stamp(stamp).await;
-        if !valid
-            || stamp.wallet != self.owner.address
-            || stamp.session != self.owner.session
+        if !state.gatekeeper.verify_island_stamp(stamp).await
+            || stamp.wallet != address
+            || stamp.session != session
             || crate::rooms::island_room_name(&stamp.cluster_id) != assignment.island_id
         {
-            link.assignment_cleared();
-            state
-                .gatekeeper
-                .announce_session(&self.owner.address, &self.owner.session);
+            state.registry.detach_selected_realm(link);
             return true;
         }
-        let Some(audience) = state.gatekeeper.cluster.control_v4_audience.clone() else {
-            return false;
+        let Some(permit) =
+            state
+                .registry
+                .bind_selected_realm(address, link, token_fence.clone(), stamp.clone())
+        else {
+            state.registry.detach_selected_realm(link);
+            return true;
         };
-        let token_fence = crate::gatekeeper::admission::cluster::fence::TokenFence {
-            audience,
-            lane: "realm".into(),
-            owner_session: snapshot.owner_session.clone(),
-            owner_epoch: snapshot.owner_epoch,
-            assignment_revision: snapshot.assignment_revision,
-            fencing_token: snapshot.fencing_token,
-        };
+        if self.last_fence.as_ref() == Some(&token_fence) && !link.needs_assignment() {
+            return true;
+        }
+        socket.bind_selected_permit(permit);
         socket.bind_pulse(Some(stamp.clone()));
-        socket.bind_island_token_fence(token_fence);
-        socket.bind_fence(Some(&self.owner));
+        socket.bind_island_token_fence(token_fence.clone());
         if !send_packet(
             socket,
             server_packet::Message::IslandChanged(project(assignment)),
@@ -121,8 +99,7 @@ impl LegacyFence {
         {
             return false;
         }
-        self.last_revision = snapshot.assignment_revision;
-        self.delivered = true;
+        self.last_fence = Some(token_fence);
         true
     }
 }

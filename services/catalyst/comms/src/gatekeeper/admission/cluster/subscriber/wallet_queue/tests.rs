@@ -277,3 +277,38 @@ async fn cancelling_queued_work_does_not_wait_for_another_owners_active_work() {
     assert_eq!(queue.tracked_wallets(), 0);
     assert_eq!(done.load(Ordering::SeqCst), MAX_TOTAL_WORK + 1);
 }
+
+#[tokio::test]
+async fn retained_mutation_credit_survives_work_completion_and_can_schedule_its_own_settlement_at_capacity()
+ {
+    let queue = Arc::new(WalletQueue::default());
+    let done = Arc::new(AtomicUsize::new(0));
+    let (tx, mut rx) = mpsc::channel(1);
+    assert!(queue.enqueue(
+        "uncertain",
+        Box::pin(async move {
+            tx.send(current_work_credit().unwrap()).await.unwrap();
+        }),
+        completion(&done)
+    ));
+    let retained = rx.recv().await.unwrap();
+    completed(&done, 1).await;
+    assert_eq!(queue.credits.available_permits(), MAX_TOTAL_WORK - 1);
+    let others: Vec<_> = (0..MAX_TOTAL_WORK - 1)
+        .map(|_| queue.credits.clone().try_acquire_owned().unwrap())
+        .collect();
+    assert!(!queue.enqueue("new-wallet", Box::pin(async {}), completion(&done)));
+    assert!(queue.enqueue_scoped_with_credit(
+        queue.unscoped_owner.clone(),
+        "uncertain",
+        Box::pin(async {}),
+        completion(&done),
+        Some(retained.clone())
+    ));
+    completed(&done, 3).await;
+    assert_eq!(queue.credits.available_permits(), 0);
+    drop(retained);
+    assert_eq!(queue.credits.available_permits(), 1);
+    drop(others);
+    assert_eq!(queue.credits.available_permits(), MAX_TOTAL_WORK);
+}
