@@ -782,6 +782,8 @@ jobs:
     if: needs.build-deploy-web.outputs.publish == 'true'
     name: Publish the web package
     runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.web.outputs.version }}
     permissions:
       id-token: write
       contents: read
@@ -833,13 +835,6 @@ jobs:
           BRANCH_NAME: ${{ github.head_ref }}
           # The package comes from the build job; none of its scripts run beside the publish tokens.
           NPM_CONFIG_IGNORE_SCRIPTS: 'true'
-      - name: Roll out at decentraland.zone/play
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: decentraland/actions/cdn-deploy@c80272b77e7aacba162024f7f4b9c1b0d701f012 # cdn-deploy-v1.0.2
-        with:
-          package-name: '@dcl-regenesislabs/bevy-explorer-web'
-          version: ${{ steps.web.outputs.version }}
-          deployment-environments: '["zone"]'
       - name: Report a failed PR preview
         if: github.event_name == 'pull_request' && (steps.cdn.outcome == 'failure' || steps.publish.outcome == 'failure')
         run: echo '::warning::The PR preview did not publish; see the Upload to the CDN and Publish step logs.'
@@ -858,6 +853,28 @@ jobs:
     timeout-minutes: 60
     needs:
       - build-deploy-web
+  rollout-web:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    name: Roll out at decentraland.zone/play
+    runs-on: ubuntu-24.04
+    permissions:
+      id-token: write
+      contents: read
+      deployments: write
+      statuses: write
+    # Shared with bevy-explorer-rollout-manual.yml, which writes the same record outside the broker's lease.
+    concurrency:
+      group: bevy-explorer-cdn-rollout
+      cancel-in-progress: false
+    steps:
+      - uses: decentraland/actions/cdn-deploy@c80272b77e7aacba162024f7f4b9c1b0d701f012 # cdn-deploy-v1.0.2
+        with:
+          package-name: '@dcl-regenesislabs/bevy-explorer-web'
+          version: ${{ needs.publish-web.outputs.version }}
+          deployment-environments: '["zone"]'
+    timeout-minutes: 10
+    needs:
+      - publish-web
   headless-packages:
     name: Headless packages
     needs: [source, changes]

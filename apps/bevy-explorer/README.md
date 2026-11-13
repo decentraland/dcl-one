@@ -194,8 +194,9 @@ replays can overwrite tags. Desktop/headless `publish` creates a prerelease tagg
 manual headless run on main, a chosen `publish-tag` from a branch. npm trusted publishing (OIDC): each
 of the six names must list `decentraland/dcl-one` and its workflow on npmjs.com. Before the npm
 publish, `decentraland/actions/cdn-deploy` uploads the web package over OIDC without a rollout;
-once a main build's npm publish succeeds, it rolls that version out at `decentraland.zone/play`. Retry
-with "re-run failed jobs": the upload skips a version already on the CDN.
+once a main build's npm publish succeeds, the `rollout-web` job rolls that version out at
+`decentraland.zone/play`. Retry with "re-run failed jobs": the upload skips a version already on the
+CDN, and a failed rollout re-runs alone.
 
 Same-repo PRs publish under the `pr-<n>` dist-tag. The CI status *Build* section links the exact
 package version for the run after checking its npm commit against the web checkout SHA. It uses the
