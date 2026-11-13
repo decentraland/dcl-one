@@ -1431,3 +1431,39 @@ async fn block_and_unblock_roll_back_when_the_friendship_action_cannot_be_record
     .unwrap();
     cleanup_pair(&rig.db, &a, &b).await;
 }
+
+/// An accept racing a block lands either before it (and the block ends the
+/// friendship) or not at all: a blocked pair never ends up friends.
+#[tokio::test]
+async fn an_accept_racing_a_block_never_leaves_a_blocked_pair_friends() {
+    let Some(rig) = Rig::new().await else {
+        return;
+    };
+    for i in 0..10 {
+        let (a, b) = (addr(&format!("race{i}a")), addr(&format!("race{i}b")));
+        rig.upsert(&a, request(&b)).await;
+        let barrier = tokio::sync::Barrier::new(2);
+        tokio::join!(
+            async {
+                barrier.wait().await;
+                rig.upsert(&b, accept(&a)).await
+            },
+            async {
+                barrier.wait().await;
+                rig.block(&a, &b).await
+            },
+        );
+        let active: bool = sqlx::query_scalar(
+            "SELECT is_active FROM social.friendships \
+             WHERE LEAST(address_requester, address_requested) = LEAST($1, $2) \
+               AND GREATEST(address_requester, address_requested) = GREATEST($1, $2)",
+        )
+        .bind(&a)
+        .bind(&b)
+        .fetch_one(rig.db.pool())
+        .await
+        .unwrap();
+        assert!(!active, "round {i}");
+        cleanup_pair(&rig.db, &a, &b).await;
+    }
+}

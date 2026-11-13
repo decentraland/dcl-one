@@ -152,20 +152,48 @@ pub fn router(state: SharedState) -> Router {
 const MAX_OPAQUE_BYTES: usize = 256 * 1024;
 const MAX_KEY_PACKAGES: usize = 100;
 const MAX_COMMITS_PAGE: i64 = 500;
-/// A current roster member; in a community-bound group also a member of the
-/// community who is not banned from it.
-const MEMBER_EXISTS: &str = "EXISTS (SELECT 1 FROM social.mls_group_members gm \
-     JOIN social.mls_groups gg ON gg.group_id = gm.group_id \
-     WHERE gm.group_id = $1 AND gm.member = $2 AND gm.removed_epoch IS NULL \
-       AND (gg.community_id IS NULL OR (\
-         EXISTS (SELECT 1 FROM social.community_members cm \
-                 WHERE cm.community_id = gg.community_id AND cm.member_address = $2) \
-         AND NOT EXISTS (SELECT 1 FROM social.community_bans cb \
-                 WHERE cb.community_id = gg.community_id AND cb.banned_address = $2 AND cb.active))))";
+/// A current roster member of group `$g`; in a community-bound group also a
+/// member of the community who is not banned from it, and in a `dm` one
+/// whom the other party has not blocked (nor blocked them).
+macro_rules! member_exists {
+    ($g:literal, $m:literal) => {
+        concat!(
+            "EXISTS (SELECT 1 FROM social.mls_group_members gm \
+             JOIN social.mls_groups gg ON gg.group_id = gm.group_id \
+             WHERE gm.group_id = ",
+            $g,
+            " AND gm.member = ",
+            $m,
+            " AND gm.removed_epoch IS NULL \
+               AND (gg.community_id IS NULL OR (\
+                 EXISTS (SELECT 1 FROM social.community_members cm \
+                         WHERE cm.community_id = gg.community_id AND cm.member_address = ",
+            $m,
+            ") \
+                 AND NOT EXISTS (SELECT 1 FROM social.community_bans cb \
+                         WHERE cb.community_id = gg.community_id AND cb.banned_address = ",
+            $m,
+            " AND cb.active))) \
+               AND (gg.group_kind <> 'dm' OR NOT EXISTS (\
+                 SELECT 1 FROM social.mls_group_members o JOIN social.blocks b \
+                   ON (b.blocker_address = ",
+            $m,
+            " AND b.blocked_address = o.member) \
+                   OR (b.blocker_address = o.member AND b.blocked_address = ",
+            $m,
+            ") \
+                 WHERE o.group_id = gm.group_id AND o.member <> ",
+            $m,
+            ")))"
+        )
+    };
+}
+const MEMBER_EXISTS: &str = member_exists!("$1", "$2");
 
-/// Key-package claims per claimer and per owner.
+/// Key-package claims per claimer (sized for opening a large channel) and,
+/// spent only by a package actually handed out, per owner.
 static CLAIMS_BY_CLAIMER: LazyLock<RateLimiter> =
-    LazyLock::new(|| RateLimiter::new(30, Duration::from_secs(600)));
+    LazyLock::new(|| RateLimiter::new(500, Duration::from_secs(3600)));
 static CLAIMS_OF_OWNER: LazyLock<RateLimiter> =
     LazyLock::new(|| RateLimiter::new(60, Duration::from_secs(3600)));
 
@@ -362,8 +390,8 @@ pub async fn claim_key_package(
     if let Some(refusal) = crate::comms::writes::side_refusal(switch) {
         return Ok(crate::writes::refused_response(&refusal));
     }
-    if CLAIMS_BY_CLAIMER.check(&claimer) == RateLimitDecision::Deny
-        || CLAIMS_OF_OWNER.check(&owner) == RateLimitDecision::Deny
+    if CLAIMS_OF_OWNER.is_rate_limited(&owner)
+        || CLAIMS_BY_CLAIMER.check(&claimer) == RateLimitDecision::Deny
     {
         return Err(claim_rate_limited());
     }
@@ -384,6 +412,9 @@ pub async fn claim_key_package(
     .bind(&claimer)
     .fetch_optional(&state.pool)
     .await?;
+    if row.is_some() {
+        CLAIMS_OF_OWNER.check(&owner);
+    }
     match row {
         Some((ref_hash, kp, cs)) => Ok(Json(
             json!({ "owner": owner, "ref": ref_hash, "ciphersuite": cs, "key_package": b64(&kp) }),
@@ -407,7 +438,7 @@ pub async fn key_package_count(
     if !crate::auth::is_eth_address(&owner) {
         return Err(ApiError::bad_request("owner must be an eth address"));
     }
-    auth(
+    let caller = auth(
         &state,
         &headers,
         "get",
@@ -415,9 +446,13 @@ pub async fn key_package_count(
     )
     .await?;
     let n: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM social.mls_key_packages WHERE owner = $1 AND consumed_at IS NULL",
+        "SELECT count(*) FROM social.mls_key_packages WHERE owner = $1 AND consumed_at IS NULL \
+           AND NOT EXISTS (SELECT 1 FROM social.blocks \
+                 WHERE (blocker_address = $1 AND blocked_address = $2) \
+                    OR (blocker_address = $2 AND blocked_address = $1))",
     )
     .bind(&owner)
+    .bind(&caller)
     .fetch_one(&state.pool)
     .await?;
     Ok(Json(json!({ "owner": owner, "available": n })))
@@ -479,8 +514,9 @@ pub async fn create_group(
     let initial = match &b.initial_commit {
         Some(c) => {
             let commit_bytes = decode_b64(c, "initial_commit")?;
-            mls::parse_commit_routing(&commit_bytes)
+            let routing = mls::parse_commit_routing(&commit_bytes)
                 .map_err(|e| ApiError::bad_request(e.to_string()))?;
+            check_commit_routing(&routing, &group_id, 0)?;
             let welcome_bytes = b
                 .welcome
                 .as_deref()
@@ -620,7 +656,9 @@ pub async fn submit_commit(
     if commit_bytes.len() > MAX_OPAQUE_BYTES {
         return Err(ApiError::bad_request("commit too large"));
     }
-    mls::parse_commit_routing(&commit_bytes).map_err(|e| ApiError::bad_request(e.to_string()))?;
+    let routing = mls::parse_commit_routing(&commit_bytes)
+        .map_err(|e| ApiError::bad_request(e.to_string()))?;
+    check_commit_routing(&routing, &group_id, current_epoch)?;
     let welcome_bytes = b
         .welcome
         .as_deref()
@@ -693,6 +731,20 @@ pub async fn submit_commit(
     ))
 }
 
+/// A commit is sent in the epoch it advances from, to the group it names.
+fn check_commit_routing(
+    routing: &mls::MessageRouting,
+    group_id: &str,
+    epoch: i64,
+) -> Result<(), ApiError> {
+    if !routing.group_id_hex.eq_ignore_ascii_case(group_id) || routing.epoch as i64 != epoch {
+        return Err(ApiError::bad_request(format!(
+            "commit routing does not match the group and epoch (expected epoch {epoch})"
+        )));
+    }
+    Ok(())
+}
+
 struct GroupShape<'a> {
     id: &'a str,
     kind: &'a str,
@@ -700,6 +752,10 @@ struct GroupShape<'a> {
     creator: &'a str,
 }
 
+/// The commit itself may be encrypted, so the server cannot read its
+/// proposals: these rules bind the delivery roster it enforces (who may fetch,
+/// send and commit), not the MLS group state the members compute.
+///
 /// The roster a commit declares stays within the group's rules: a `dm` keeps
 /// its original pair, a community-bound group admits only members who are
 /// not banned, and others are removed only by the group's creator (or a
@@ -1007,12 +1063,12 @@ pub async fn fetch_blob(
         &SignedPath::at(&uri, format!("/mls/blobs/{hash}")),
     )
     .await?;
-    let (allowed, cid): (bool, Option<String>) = sqlx::query_as(
+    let (allowed, cid): (bool, Option<String>) = sqlx::query_as(concat!(
         "SELECT EXISTS (SELECT 1 FROM social.mls_message_refs r \
-                        JOIN social.mls_group_members m ON m.group_id = r.group_id \
-                        WHERE r.ciphertext_hash = $1 AND m.member = $2 AND m.removed_epoch IS NULL), \
-                (SELECT ciphertext_cid FROM social.mls_message_refs WHERE ciphertext_hash = $1 LIMIT 1)",
-    )
+                        WHERE r.ciphertext_hash = $1 AND ",
+        member_exists!("r.group_id", "$2"),
+        "), (SELECT ciphertext_cid FROM social.mls_message_refs WHERE ciphertext_hash = $1 LIMIT 1)",
+    ))
     .bind(&hash)
     .bind(&signer)
     .fetch_one(&state.pool)
@@ -1396,8 +1452,14 @@ mod tests {
             .await
             .unwrap();
         let claim_path = format!("/mls/key-packages/{}", owner.address);
-        let (status, _) = call(&here, &blocked.key, "GET", &claim_path, None, None).await;
-        assert_eq!(status, StatusCode::NOT_FOUND, "a blocked claimer");
+        let count_path = format!("{claim_path}/count");
+        let (_, count) = call(&here, &blocked.key, "GET", &count_path, None, None).await;
+        assert_eq!(count["available"], 0, "a blocked wallet sees no stock");
+        // Refused claims never spend the owner's budget (60 an hour).
+        for _ in 0..61 {
+            let (status, _) = call(&here, &blocked.key, "GET", &claim_path, None, None).await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "a blocked claimer");
+        }
         let (status, _) = call(&here, &friend.key, "GET", &claim_path, None, None).await;
         assert_eq!(status, StatusCode::OK);
         let _ = std::fs::remove_dir_all(&dir);
@@ -1490,13 +1552,31 @@ mod tests {
         assert_eq!(
             submit(&member.key, json!({ "removed_members": [owner.address] })).await,
             StatusCode::FORBIDDEN,
-            "a plain member cannot evict others"
+            "a plain member cannot remove others from the delivery roster"
         );
         assert_eq!(
             submit(&owner.key, json!({ "removed_members": [member.address] })).await,
             StatusCode::OK,
             "the creator may"
         );
+        let ciphertext = group
+            .create_message(&owner.provider, &owner.signer, b"after the ban")
+            .unwrap()
+            .tls_serialize_detached()
+            .unwrap();
+        let (status, sent) = call(
+            &here,
+            &owner.key,
+            "POST",
+            &format!("/mls/groups/{group_id}/messages"),
+            Some(json!({ "ciphertext": b64(&ciphertext) })),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{sent}");
+        let blob_path = format!("/mls/blobs/{}", sent["ciphertext_hash"].as_str().unwrap());
+        let (status, _) = call(&here, &banned.key, "GET", &blob_path, None, None).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "a banned wallet's blob read");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1707,7 +1787,26 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::OK, "{body}");
         group.merge_pending_commit(&alice.provider).unwrap();
-        let replayed = b64(&commit.tls_serialize_detached().unwrap());
+        let (status, _) = call(
+            &here,
+            &alice.key,
+            "POST",
+            &commits_path,
+            Some(json!({ "epoch": 2, "commit": b64(&commit.tls_serialize_detached().unwrap()) })),
+            None,
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::BAD_REQUEST,
+            "a commit routed from another epoch"
+        );
+        // The service reads only the routing of the bytes it relays.
+        let replayed = b64(&group
+            .create_message(&alice.provider, &alice.signer, b"routing only")
+            .unwrap()
+            .tls_serialize_detached()
+            .unwrap());
         for (change, what) in [
             (
                 json!({ "added_members": [address_of(&outsider)] }),
@@ -1715,7 +1814,7 @@ mod tests {
             ),
             (
                 json!({ "removed_members": [bob.address] }),
-                "a dm member cannot evict the other",
+                "a dm member cannot remove the other from the delivery roster",
             ),
         ] {
             let mut body = json!({ "epoch": 2, "commit": replayed });
@@ -1803,6 +1902,24 @@ mod tests {
             cid.starts_with("baf"),
             "the ciphertext is in the blob store, the row keeps its CID"
         );
+        sqlx::query("INSERT INTO social.blocks (blocker_address, blocked_address) VALUES ($1, $2)")
+            .bind(&bob.address)
+            .bind(&alice.address)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let (status, _) = call(
+            &here,
+            &alice.key,
+            "POST",
+            &messages_path,
+            Some(json!({ "ciphertext": b64(&ciphertext) })),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "a block closes the dm");
+        let (status, _) = call(&here, &bob.key, "GET", &blob_path, None, None).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "for both parties");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

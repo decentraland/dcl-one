@@ -57,7 +57,7 @@ pub(crate) async fn apply_friendship_action(
         return Err(Refusal::RateLimited(FRIENDSHIP_RATE_LIMIT_MESSAGE.into()));
     }
     let mut tx = ctx.db().pool().begin().await.map_err(DbError::from)?;
-    lock_friendship_pair(&mut *tx, me, other).await?;
+    lock_friendship_pair(&mut tx, me, other).await?;
     let probe = friendship_probe_on(&mut *tx, me, other).await?;
     if probe.blocked || probe.blocked_by {
         return Err(Refusal::Forbidden(BLOCKED_MESSAGE.into()));

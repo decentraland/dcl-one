@@ -498,7 +498,11 @@ impl Db {
         blocker: &str,
         blocked: &str,
     ) -> Result<(DateTime<Utc>, Option<LastAction>), DbError> {
-        block_and_last(&self.pool, blocker, blocked).await
+        let mut tx = self.pool.begin().await?;
+        lock_friendship_pair(&mut tx, blocker, blocked).await?;
+        let out = block_and_last(&mut *tx, blocker, blocked).await?;
+        tx.commit().await?;
+        Ok(out)
     }
 
     /// Removes a block and reads the previous action; use
@@ -508,7 +512,11 @@ impl Db {
         blocker: &str,
         blocked: &str,
     ) -> Result<Option<Option<LastAction>>, DbError> {
-        unblock_and_last(&self.pool, blocker, blocked).await
+        let mut tx = self.pool.begin().await?;
+        lock_friendship_pair(&mut tx, blocker, blocked).await?;
+        let out = unblock_and_last(&mut *tx, blocker, blocked).await?;
+        tx.commit().await?;
+        Ok(out)
     }
 
     /// The block and, when the pair has a friendship, its `block` action
@@ -522,7 +530,7 @@ impl Db {
         blocked: &str,
     ) -> Result<(DateTime<Utc>, bool), DbError> {
         let mut tx = self.pool.begin().await?;
-        lock_friendship_pair(&mut *tx, blocker, blocked).await?;
+        lock_friendship_pair(&mut tx, blocker, blocked).await?;
         let (blocked_at, last) = block_and_last(&mut *tx, blocker, blocked).await?;
         if let Some(last) = &last {
             record_friendship_action(
@@ -551,7 +559,7 @@ impl Db {
         blocked: &str,
     ) -> Result<Option<bool>, DbError> {
         let mut tx = self.pool.begin().await?;
-        lock_friendship_pair(&mut *tx, blocker, blocked).await?;
+        lock_friendship_pair(&mut tx, blocker, blocked).await?;
         let Some(last) = unblock_and_last(&mut *tx, blocker, blocked).await? else {
             return Ok(None);
         };
@@ -585,8 +593,10 @@ impl Db {
         message: Option<&str>,
     ) -> Result<(Uuid, DateTime<Utc>, Uuid), DbError> {
         let action_id = Uuid::new_v4();
+        let mut tx = self.pool.begin().await?;
+        lock_friendship_pair(&mut tx, acting_user, other).await?;
         let (id, at) = record_friendship_action(
-            &self.pool,
+            &mut *tx,
             action_id,
             acting_user,
             other,
@@ -596,6 +606,7 @@ impl Db {
             message,
         )
         .await?;
+        tx.commit().await?;
         Ok((id, at, action_id))
     }
 
@@ -623,26 +634,13 @@ impl Db {
     }
 
     pub async fn block_user(&self, blocker: &str, blocked: &str) -> Result<(), DbError> {
-        sqlx::query(
-            "INSERT INTO social.blocks (blocker_address, blocked_address) VALUES ($1, $2) \
-             ON CONFLICT (blocker_address, blocked_address) DO NOTHING",
-        )
-        .bind(blocker.to_lowercase())
-        .bind(blocked.to_lowercase())
-        .execute(&self.pool)
-        .await?;
-        Ok(())
+        self.block_user_and_last(blocker, blocked).await.map(|_| ())
     }
 
     pub async fn unblock_user(&self, blocker: &str, blocked: &str) -> Result<(), DbError> {
-        sqlx::query(
-            "DELETE FROM social.blocks WHERE blocker_address = $1 AND blocked_address = $2",
-        )
-        .bind(blocker.to_lowercase())
-        .bind(blocked.to_lowercase())
-        .execute(&self.pool)
-        .await?;
-        Ok(())
+        self.unblock_user_and_last(blocker, blocked)
+            .await
+            .map(|_| ())
     }
 
     pub async fn get_blocked_users(
@@ -1230,20 +1228,21 @@ impl Db {
 
 /// Serializes friendship and block writes on one unordered pair until the
 /// transaction ends, so a probe and the write it decides stay consistent.
-pub(crate) async fn lock_friendship_pair<'e, E>(
-    executor: E,
+/// The wait is bounded like the membership lock's.
+pub(crate) async fn lock_friendship_pair(
+    tx: &mut sqlx::PgConnection,
     a: &str,
     b: &str,
-) -> Result<(), DbError>
-where
-    E: sqlx::Executor<'e, Database = sqlx::Postgres>,
-{
+) -> Result<(), DbError> {
+    sqlx::query("SET LOCAL lock_timeout = '750ms'")
+        .execute(&mut *tx)
+        .await?;
     sqlx::query(
         "SELECT pg_advisory_xact_lock(hashtextextended('social.friendship:' || LEAST($1, $2) || ':' || GREATEST($1, $2), 0))",
     )
     .bind(a.to_lowercase())
     .bind(b.to_lowercase())
-    .execute(executor)
+    .execute(&mut *tx)
     .await?;
     Ok(())
 }
