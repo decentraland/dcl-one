@@ -277,10 +277,10 @@ a.creator:focus-visible {
 
 /* Upcoming */
 
-/* Source's compact card: 140px tall, the cover 42% of its width. */
+/* Compact covers occupy 42% of the width; the body can grow for its two-line title. */
 .smallCard {
   container-type: inline-size;
-  height: 140px;
+  min-height: 140px;
   background: var(--dcl-transparencies-black-40);
 }
 
@@ -306,6 +306,7 @@ a.creator:focus-visible {
 }
 
 .smallTitle {
+  flex: none;
   composes: text626f64792f6d642d7374726f6e67 from '../../../../foundations/typography/text-styles.module.css';
   display: -webkit-box;
   overflow: hidden;
@@ -323,6 +324,7 @@ a.creator:focus-visible {
   display: flex;
   align-items: center;
   gap: var(--dcl-space-4);
+  pointer-events: none;
 }
 
 .action {
@@ -338,6 +340,7 @@ a.creator:focus-visible {
   color: var(--dcl-neutrals-charcoal);
   text-decoration: none;
   cursor: pointer;
+  pointer-events: auto;
 }
 
 .action:hover:not(:disabled) {
@@ -360,19 +363,27 @@ a.creator:focus-visible {
 
 @media (hover: hover) and (min-width: 768px) {
   .card .actions {
-    visibility: hidden;
     opacity: 0;
     transition: opacity 0.2s;
   }
 
+  .card .action {
+    pointer-events: none;
+  }
+
+  .card:hover .action,
+  .card:focus-within .action {
+    pointer-events: auto;
+  }
+
   .card:hover .actions,
   .card:focus-within .actions {
-    visibility: visible;
     opacity: 1;
   }
 }
 
 .cardFooter {
+  pointer-events: none;
   position: relative;
   display: flex;
   align-items: center;
@@ -404,9 +415,6 @@ a.creator:focus-visible {
   }
 }
 @media (hover: hover) and (min-width: 768px) {
-  .cardFooter .time {
-    opacity: 1;
-  }
   .card:hover .cardFooter .time,
   .card:focus-within .cardFooter .time {
     opacity: 0;
@@ -464,7 +472,7 @@ a.creator:focus-visible {
 /* Touch users can read the start time and reach every action without a hover gesture. */
 @media (hover: none), (max-width: 767px) {
   .smallCard {
-    height: 176px;
+    min-height: 176px;
   }
   .cardFooter {
     flex-direction: column;

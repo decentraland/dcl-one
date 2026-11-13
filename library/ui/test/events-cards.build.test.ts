@@ -36,7 +36,7 @@ beforeAll(async () => {
     response.end(
       await server.transformIndexHtml(
         '/',
-        '<!doctype html><style>body{margin:0;background:#21102f}main{margin:0 auto;padding:0 32px;max-width:1280px}[data-day]{width:300px}</style><div id="root"></div><script type="module" src="/test/consumer/events-cards-browser.tsx"></script>'
+        '<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{margin:0;background:#21102f}main{margin:0 auto;padding:0 32px;max-width:1280px}[data-day]{width:300px}</style><div id="root"></div><script type="module" src="/test/consumer/events-cards-browser.tsx"></script>'
       )
     )
   })
@@ -113,7 +113,12 @@ describe('when Events cards reveal their controls', () => {
         deviceScaleFactor: 1,
         mobile: false
       })
+      await session.send('Emulation.setTouchEmulationEnabled', {
+        enabled: false,
+        configuration: 'desktop'
+      })
       await evaluate(`document.activeElement?.blur()`)
+      expect(await evaluate(`matchMedia('(hover: hover)').matches`)).toBe(true)
       await session.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 0, y: 0 })
       const selector = `article[class*="${variant}"]`
       const before = await rect(selector)
@@ -121,22 +126,106 @@ describe('when Events cards reveal their controls', () => {
       const after = await rect(selector)
       expect(after.width).toBeCloseTo(before.width, 1)
       expect(after.height).toBeCloseTo(before.height, 1)
-      const state = await evaluate<{ visible: string; time: string; buttons: number }>(
-        `(()=>{const card=document.querySelector(${JSON.stringify(selector)});return {visible:getComputedStyle(card.querySelector('[class*="actions"]')).visibility,time:getComputedStyle(card.querySelector('[class*="time"]')).opacity,buttons:card.querySelectorAll('button,a[aria-label*="calendar"]').length}})()`
+      const state = await evaluate<{ opacity: string; time: string; buttons: number }>(
+        `(()=>{const card=document.querySelector(${JSON.stringify(selector)});return {opacity:getComputedStyle(card.querySelector('[class*="actions"]')).opacity,time:getComputedStyle(card.querySelector('[class*="time"]')).opacity,buttons:card.querySelectorAll('button,a[aria-label*="calendar"]').length}})()`
       )
-      expect(state).toEqual({ visible: 'visible', time: '0', buttons: 3 })
+      expect(state).toEqual({ opacity: '1', time: '0', buttons: 3 })
       await session.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 0, y: 0 })
       await evaluate(
         `document.querySelector(${JSON.stringify(selector)}).querySelector('h3 a').focus()`
       )
       expect(
         await evaluate(
-          `getComputedStyle(document.querySelector(${JSON.stringify(selector)}).querySelector('[class*="actions"]')).visibility`
+          `getComputedStyle(document.querySelector(${JSON.stringify(selector)}).querySelector('[class*="actions"]')).opacity`
         )
-      ).toBe('visible')
+      ).toBe('1')
       expect((await rect(selector)).height).toBeCloseTo(before.height, 1)
     }
   )
+  it.each([390, 768, 1024, 1440])(
+    'should retain two complete title lines with and without a creator at %ipx',
+    async (width) => {
+      await session.send('Emulation.setDeviceMetricsOverride', {
+        width,
+        height: 1000,
+        deviceScaleFactor: 1,
+        mobile: width === 390
+      })
+      await session.send('Emulation.setTouchEmulationEnabled', {
+        enabled: width === 390,
+        maxTouchPoints: 1
+      })
+      const titles = await evaluate<
+        { height: number; lineHeight: number; footerInside: boolean; clamp: string }[]
+      >(
+        `(()=>[...document.querySelectorAll('article[class*="smallCard"]')].map(card=>{const title=card.querySelector('h3'),style=getComputedStyle(title),footer=card.querySelector('[class*="cardFooter"]');return {height:title.getBoundingClientRect().height,lineHeight:parseFloat(style.lineHeight),clamp:style.webkitLineClamp,footerInside:footer.getBoundingClientRect().bottom<=card.getBoundingClientRect().bottom}}))()`
+      )
+      expect(titles).toHaveLength(2)
+      for (const title of titles) {
+        expect(title.height).toBeGreaterThanOrEqual(title.lineHeight * 2 - 0.5)
+        expect(title.clamp).toBe('2')
+        expect(title.footerInside).toBe(true)
+      }
+    }
+  )
+  it('should keep desktop controls discoverable before hover and reachable by reverse Tab', async () => {
+    await session.send('Emulation.setDeviceMetricsOverride', {
+      width: 1440,
+      height: 1000,
+      deviceScaleFactor: 1,
+      mobile: false
+    })
+    await session.send('Emulation.setTouchEmulationEnabled', {
+      enabled: false,
+      configuration: 'desktop'
+    })
+    await session.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 0, y: 0 })
+    await evaluate(`document.activeElement?.blur()`)
+    const tree = (await session.send('Accessibility.getFullAXTree')) as {
+      nodes: { ignored: boolean; role?: { value: string }; name?: { value: string } }[]
+    }
+    expect(
+      tree.nodes.some(
+        (node) =>
+          !node.ignored &&
+          node.role?.value === 'button' &&
+          node.name?.value.startsWith('Remind me:')
+      )
+    ).toBe(true)
+    await evaluate(
+      `document.querySelectorAll('article[class*="smallCard"]')[1].querySelector('h3 a').focus()`
+    )
+    await session.send('Input.dispatchKeyEvent', {
+      type: 'keyDown',
+      key: 'Tab',
+      code: 'Tab',
+      modifiers: 8
+    })
+    await session.send('Input.dispatchKeyEvent', {
+      type: 'keyUp',
+      key: 'Tab',
+      code: 'Tab',
+      modifiers: 8
+    })
+    const focused = await evaluate<{ label: string; first: boolean; opacity: string }>(
+      `(()=>{const card=document.querySelector('article[class*="smallCard"]');return {label:document.activeElement.getAttribute('aria-label'),first:card.contains(document.activeElement),opacity:getComputedStyle(card.querySelector('[class*="actions"]')).opacity}})()`
+    )
+    expect(focused.label).toContain('Copy link:')
+    expect(focused.first).toBe(true)
+    await evaluate(`new Promise(r=>setTimeout(r,250))`)
+    expect(
+      await evaluate(
+        `getComputedStyle(document.querySelector('article[class*="smallCard"] [class*="actions"]')).opacity`
+      )
+    ).toBe('1')
+  })
+  it('should let uncovered footer space open the card instead of intercepting the pointer', async () => {
+    await hover('article[class*="smallCard"]')
+    const hit = await evaluate<boolean>(
+      `(()=>{const card=document.querySelector('article[class*="smallCard"]'),footer=card.querySelector('[class*="cardFooter"]').getBoundingClientRect(),target=document.elementFromPoint(footer.right-1,footer.top+footer.height/2);return target?.closest('a')===card.querySelector('h3 a')})()`
+    )
+    expect(hit).toBe(true)
+  })
   it('should keep every compact action inside its card at tablet width', async () => {
     await session.send('Emulation.setDeviceMetricsOverride', {
       width: 1024,

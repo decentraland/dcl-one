@@ -21,7 +21,18 @@ createRoot(document.getElementById('root')!).render(
         { ...base, id: 'other', live: false, jumpIn: { href: '/play' } }
       ]}
     />
-    <Upcoming cards={[base, { ...base, id: 'another' }]} />
+    <Upcoming
+      cards={[
+        base,
+        {
+          ...base,
+          id: 'another',
+          creator: undefined,
+          title:
+            'A deliberately very long event title which must be clamped after two complete lines without cutting the second line'
+        }
+      ]}
+    />
     <section data-day>
       <ExperienceCardSlot {...base} live={false} />
     </section>
