@@ -21,18 +21,41 @@ pub struct CappedBlobStore {
     inner: Mutex<Parts>,
 }
 
+/// A stored part: `len` bytes of `root` from `offset`. Slices and clones keep the root, so a
+/// part is never more than one view deep however often it is sliced.
 #[derive(Debug)]
 struct Entry {
-    part: Part,
-    /// The address and size of the bytes `part` reads from.
-    backing: usize,
-    backing_size: usize,
+    root: Part,
+    offset: usize,
+    len: usize,
+}
+
+impl Entry {
+    fn whole(root: Part) -> Self {
+        let len = root.size();
+        Self {
+            root,
+            offset: 0,
+            len,
+        }
+    }
+
+    fn view(&self) -> Part {
+        if self.offset == 0 && self.len == self.root.size() {
+            return self.root.clone();
+        }
+        Arc::new(SlicedPart {
+            part: self.root.clone(),
+            start: self.offset,
+            len: self.len,
+        })
+    }
 }
 
 #[derive(Debug, Default)]
 struct Parts {
     parts: HashMap<Uuid, Entry>,
-    /// How many ids hold each backing.
+    /// How many ids hold each root, by its address.
     holders: HashMap<usize, usize>,
     bytes: usize,
     /// `bytes` as last reported to V8.
@@ -44,31 +67,19 @@ fn address(part: &Part) -> usize {
 }
 
 impl Parts {
-    fn insert(&mut self, part: Part, backing: usize, backing_size: usize) -> Uuid {
+    fn insert(&mut self, entry: Entry) -> Uuid {
         let id = Uuid::new_v4();
-        let holders = self.holders.entry(backing).or_default();
+        let holders = self.holders.entry(address(&entry.root)).or_default();
         if *holders == 0 {
-            self.bytes = self.bytes.saturating_add(backing_size);
+            self.bytes = self.bytes.saturating_add(entry.root.size());
         }
         *holders += 1;
-        self.parts.insert(
-            id,
-            Entry {
-                part,
-                backing,
-                backing_size,
-            },
-        );
+        self.parts.insert(id, entry);
         id
-    }
-
-    fn insert_new(&mut self, part: Part) -> Uuid {
-        let (backing, size) = (address(&part), part.size());
-        self.insert(part, backing, size)
     }
 }
 
-/// `len` bytes of `part` from `start`, read without a copy.
+/// `len` bytes of a root part from `start`, read without a copy.
 #[derive(Debug)]
 struct SlicedPart {
     part: Part,
@@ -116,7 +127,7 @@ impl CappedBlobStore {
         if parts.bytes.saturating_add(size) > self.cap {
             return Err(full(&parts, self.cap));
         }
-        Ok(parts.insert_new(part()))
+        Ok(parts.insert(Entry::whole(part())))
     }
 
     /// The change in stored bytes since the last call, for V8's external memory count.
@@ -131,9 +142,13 @@ impl CappedBlobStore {
     pub fn insert_clone(&self, id: &Uuid) -> Option<(Uuid, usize)> {
         let mut parts = self.parts();
         let entry = parts.parts.get(id)?;
-        let (part, backing, backing_size) = (entry.part.clone(), entry.backing, entry.backing_size);
-        let size = part.size();
-        Some((parts.insert(part, backing, backing_size), size))
+        let clone = Entry {
+            root: entry.root.clone(),
+            offset: entry.offset,
+            len: entry.len,
+        };
+        let size = clone.len;
+        Some((parts.insert(clone), size))
     }
 
     /// Stores `len` bytes of the part `id` holds, from `start`, sharing its bytes.
@@ -143,19 +158,15 @@ impl CappedBlobStore {
             .parts
             .get(id)
             .ok_or_else(|| deno_core::anyhow::anyhow!("Blob part not found"))?;
-        if start
-            .checked_add(len)
-            .is_none_or(|end| end > entry.part.size())
-        {
+        if start.checked_add(len).is_none_or(|end| end > entry.len) {
             deno_core::anyhow::bail!("start + len can not be larger than blob part size");
         }
-        let part: Part = Arc::new(SlicedPart {
-            part: entry.part.clone(),
-            start,
+        let slice = Entry {
+            root: entry.root.clone(),
+            offset: entry.offset + start,
             len,
-        });
-        let (backing, backing_size) = (entry.backing, entry.backing_size);
-        Ok(parts.insert(part, backing, backing_size))
+        };
+        Ok(parts.insert(slice))
     }
 }
 
@@ -174,24 +185,25 @@ impl BlobStoreTrait for CappedBlobStore {
         if parts.bytes.saturating_add(part.size()) > self.cap {
             return Uuid::new_v4();
         }
-        parts.insert_new(part)
+        parts.insert(Entry::whole(part))
     }
 
     fn get_part(&self, id: &Uuid) -> Option<Part> {
-        self.parts().parts.get(id).map(|entry| entry.part.clone())
+        self.parts().parts.get(id).map(Entry::view)
     }
 
     fn remove_part(&self, id: &Uuid) -> Option<Part> {
         let mut parts = self.parts();
         let entry = parts.parts.remove(id)?;
-        if let Some(holders) = parts.holders.get_mut(&entry.backing) {
+        let root = address(&entry.root);
+        if let Some(holders) = parts.holders.get_mut(&root) {
             *holders -= 1;
             if *holders == 0 {
-                parts.holders.remove(&entry.backing);
-                parts.bytes = parts.bytes.saturating_sub(entry.backing_size);
+                parts.holders.remove(&root);
+                parts.bytes = parts.bytes.saturating_sub(entry.root.size());
             }
         }
-        Some(entry.part)
+        Some(entry.view())
     }
 
     fn get_object_url(&self, _url: Url) -> Option<Arc<Blob>> {
@@ -225,5 +237,41 @@ mod tests {
         let past = store.insert_part(Arc::new(InMemoryBlobPart::from(vec![0; 1])));
         assert!(store.get_part(&fits).is_some());
         assert!(store.get_part(&past).is_none());
+    }
+
+    fn read(part: Part) -> Vec<u8> {
+        deno_core::futures::FutureExt::now_or_never(part.read())
+            .unwrap()
+            .to_vec()
+    }
+
+    #[test]
+    fn slices_and_clones_keep_their_offsets_one_view_deep() {
+        let store = CappedBlobStore::default();
+        let root = store.insert_part(Arc::new(InMemoryBlobPart::from(
+            (0..10).collect::<Vec<u8>>(),
+        )));
+        let slice = store.insert_slice(&root, 2, 6).unwrap();
+        let inner = store.insert_slice(&slice, 1, 3).unwrap();
+        let (clone, size) = store.insert_clone(&inner).unwrap();
+        assert_eq!(size, 3);
+        assert_eq!(read(store.get_part(&slice).unwrap()), [2, 3, 4, 5, 6, 7]);
+        assert_eq!(read(store.get_part(&inner).unwrap()), [3, 4, 5]);
+        assert_eq!(read(store.get_part(&clone).unwrap()), [3, 4, 5]);
+        assert!(store.insert_slice(&inner, 2, 2).is_err());
+    }
+
+    #[test]
+    fn a_long_chain_of_slices_reads_and_drops() {
+        let store = CappedBlobStore::default();
+        let mut id = store.insert_part(Arc::new(InMemoryBlobPart::from(vec![7u8; 4])));
+        for _ in 0..100_000 {
+            let next = store.insert_slice(&id, 0, 4).unwrap();
+            store.remove_part(&id);
+            id = next;
+        }
+        assert_eq!(read(store.get_part(&id).unwrap()), [7; 4]);
+        store.remove_part(&id);
+        assert_eq!(store.take_external_change(), 0);
     }
 }
