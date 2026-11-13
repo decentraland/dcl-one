@@ -765,7 +765,20 @@ mod tests {
     }
 
     fn run_scene_as(super_user: bool, is_server: bool, scene_js: &str) -> Result<(), String> {
+        run_scene_after(super_user, is_server, "", scene_js)
+    }
+
+    /// Runs `setup` in the realm before the scene, as host code that init.js does not limit.
+    fn run_scene_after(
+        super_user: bool,
+        is_server: bool,
+        setup: &'static str,
+        scene_js: &str,
+    ) -> Result<(), String> {
         let (mut runtime, _) = create_runtime(false, super_user, Default::default());
+        runtime
+            .execute_script("<setup>", setup)
+            .map_err(|e| e.to_string())?;
         {
             let state = runtime.op_state();
             let mut state = state.borrow_mut();
