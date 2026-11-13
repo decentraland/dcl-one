@@ -6,8 +6,7 @@
 
 import { useCallback, useContext, useEffect, useState } from 'react'
 import { Button, ControlButton, IconButton, Panel, Toggle } from '../../design'
-import { toggleDebugPanel, useDebugPanelState } from '../debug/useDebugPanel'
-import { useCommandResult } from '../debug/DebugPanel'
+import { toggleDebugPanel, useDebugPanelState, useDevelopmentBuild } from '../debug/useDebugPanel'
 import type { IconName } from '../../design'
 import type { NavAction } from '@explorer-core/engine/protocol'
 import { keyHintFor, useBindingsSnapshot, type BindingsSnapshot } from '../../lib/bindingLabels'
@@ -369,7 +368,7 @@ export function Sidebar({
   const create = useContext(EditorOffered)
   const [configOpen, setConfigOpen] = useState(false)
   const debugPanelOpen = useDebugPanelState() != null
-  const { value: developmentBuild } = useCommandResult<boolean>(session.runDebugCommand, '/debug_panel --dev-build', false)
+  const developmentBuild = useDevelopmentBuild(session.runDebugCommand)
   const [voiceAnchor, setVoiceAnchor] = useState<HTMLElement | null>(null)
   const [permissionsAnchor, setPermissionsAnchor] = useState<HTMLElement | null>(null)
   const [portablesAnchor, setPortablesAnchor] = useState<HTMLElement | null>(null)
@@ -412,7 +411,7 @@ export function Sidebar({
       off()
     }
   }, [configOpen])
-  const launcher = developmentBuild === true && (
+  const launcher = developmentBuild && (
     <ControlButton variant="dark" className={styles.debugLauncher} aria-label="Toggle debug panel"
       title="Toggle debug panel" active={debugPanelOpen} onClick={() => toggleDebugPanel()}>
       <img src={debugIcon} width={28} height={28} alt="" draggable={false} />

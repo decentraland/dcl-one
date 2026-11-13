@@ -266,6 +266,18 @@ describe('system-action menu shortcuts', () => {
     expect(isDebugPanelOpen()).toBe(false)
   })
 
+  it("a 'Cancel' action closes the in-world lobby before the debug panel under it", async () => {
+    const h = await world()
+    act(() => toggleDebugPanel())
+    act(() => h.session().lobbyPage.toggle())
+    expect(h.session().lobbyPage.open).toBe(true)
+    act(() => h.driver.emit(action('Cancel')))
+    expect(h.session().lobbyPage.open).toBe(false)
+    expect(isDebugPanelOpen()).toBe(true)
+    act(() => h.driver.emit(action('Cancel')))
+    expect(isDebugPanelOpen()).toBe(false)
+  })
+
   it('Scroll edges scroll the hovered scrollable panel while held (gamepad/key scrolling)', async () => {
     const h = await world()
     const panel = document.createElement('div')

@@ -4458,8 +4458,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       if (hasOpenPopup()) closeTopPopup()
       // the lobby sits under the panels it opens: close those first, then the lobby
       else if (anyPanelOpenExceptLobby) panelSetters.forEach((set) => set(false))
-      // the debug panel closes after every popup, leaf layer and panel
-      else if (isDebugPanelOpen()) closeDebugPanel()
+      // the debug panel closes after every popup, leaf layer, panel and the lobby
+      else if (isDebugPanelOpen() && !lobbyOpen) closeDebugPanel()
       else setLobbyOpen(false)
       return
     }

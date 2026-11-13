@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useRef, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { bugReportUrl } from '@explorer-core/lib/bugReport'
 import { isNativeHud } from '@hud-host'
 import type { EngineSession } from '../session/useEngineSession'
-import { useCommandResult, type DebugSection } from './DebugPanel'
+import type { DebugSection } from './DebugPanel'
 
 const sessionSection: DebugSection = {
   title: 'Session', query: 'hud/session', fields: [['Phase', 'phase'], ['Engine ready', 'ready']],
@@ -15,7 +15,7 @@ type Request = { target: string; report: (message: string) => void }
 /** The open panel: `target` is the section it opened on, `opened` increases on each open. */
 export type DebugPanelState = { target: string; opened: number } | null
 
-// Module-level store, like the popup stack: the open state outlives every component that reads it.
+// Module-level store, like the popup stack: the open state lives outside any component.
 let panel: DebugPanelState = null
 let opened = 0
 const listeners = new Set<() => void>()
@@ -44,6 +44,25 @@ export function isDebugPanelOpen(): boolean {
 
 export function useDebugPanelState(): DebugPanelState {
   return useSyncExternalStore(subscribe, () => panel)
+}
+
+type RunDebugCommand = EngineSession['runDebugCommand']
+const developmentBuilds = new WeakMap<RunDebugCommand, Promise<boolean>>()
+
+/** Asks `/debug_panel --dev-build` once per command runner; `false` until it answers or if it fails. */
+export function useDevelopmentBuild(runDebugCommand: RunDebugCommand): boolean {
+  const [value, setValue] = useState(false)
+  useEffect(() => {
+    let active = true
+    let answer = developmentBuilds.get(runDebugCommand)
+    if (answer == null) {
+      answer = (async () => JSON.parse(await runDebugCommand('/debug_panel --dev-build')) === true)().catch(() => false)
+      developmentBuilds.set(runDebugCommand, answer)
+    }
+    void answer.then((next) => { if (active) setValue(next) })
+    return () => { active = false }
+  }, [runDebugCommand])
+  return value
 }
 
 /** The chat entry point uses the same in-world panel as the sidebar. */
@@ -83,6 +102,5 @@ export function useDebugPanel(session: EngineSession) {
     window.addEventListener(REQUEST, onRequest)
     return () => { window.removeEventListener(REQUEST, onRequest); closeDebugPanel() }
   }, [run])
-  const { value: developmentBuild } = useCommandResult<boolean>(run, '/debug_panel --dev-build', false)
-  return { state, run, developmentBuild: developmentBuild === true }
+  return { state, run, developmentBuild: useDevelopmentBuild(session.runDebugCommand) }
 }

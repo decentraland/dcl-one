@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Button, ModalShell, Select, TextInput, Toggle } from '../../design'
 import type { EngineSession } from '../session/useEngineSession'
 import { closeDebugPanel, useDebugPanel } from './useDebugPanel'
+import { isEditableTarget } from '../../lib/bindingLabels'
 import styles from './DebugPanel.module.css'
 
 type RunCommand = (line: string) => Promise<string>
@@ -275,6 +276,13 @@ function SectionRow({ section, run, open, toggle }: {
   )
 }
 
+/** After a pointer click (`detail > 0`), drops focus from the clicked control so a later Space or
+ *  Enter does not press it again; a text field keeps focus. */
+function releasePointerFocus(event: React.MouseEvent<HTMLElement>) {
+  const focused = document.activeElement
+  if (event.detail > 0 && focused instanceof HTMLElement && event.currentTarget.contains(focused) && !isEditableTarget(focused)) focused.blur()
+}
+
 function DebugPanel({ run, initial, className }: { run: RunCommand; initial: string; className: string }) {
   const { value: sections, error } = useCommandResult<DebugSection[]>(run, '/debug_panel', false)
   const [filter, setFilter] = useState(initial)
@@ -291,14 +299,16 @@ function DebugPanel({ run, initial, className }: { run: RunCommand; initial: str
   return (
     <ModalShell title="Debug panel" ariaLabel="Debug panel" modal={false} onClose={closeDebugPanel}
       className={className}>
-      <TextInput type="search" aria-label="Find debug controls" placeholder="Find a section or control"
-        value={filter} onChange={setFilter} />
-      {error ? <p role="status">Could not load debug sections. {error}</p> :
-        !sections ? <p>Loading debug sections…</p> :
-        sections.length === 0 ? <p>No plugins registered debug sections.</p> :
-        matches?.length === 0 ? <p>No matching controls.</p> :
-          matches?.map((section) =>
-            <SectionRow key={section.title} section={section} run={run} open={isOpen(section)} toggle={() => toggle(section)} />)}
+      <div onClick={releasePointerFocus}>
+        <TextInput type="search" aria-label="Find debug controls" placeholder="Find a section or control"
+          value={filter} onChange={setFilter} />
+        {error ? <p role="status">Could not load debug sections. {error}</p> :
+          !sections ? <p>Loading debug sections…</p> :
+          sections.length === 0 ? <p>No plugins registered debug sections.</p> :
+          matches?.length === 0 ? <p>No matching controls.</p> :
+            matches?.map((section) =>
+              <SectionRow key={section.title} section={section} run={run} open={isOpen(section)} toggle={() => toggle(section)} />)}
+      </div>
     </ModalShell>
   )
 }

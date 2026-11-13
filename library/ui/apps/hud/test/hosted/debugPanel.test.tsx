@@ -52,7 +52,7 @@ it('discovers plugin sections, samples expanded sections and dispatches their ac
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Debug panel' })) })
     expect(screen.getByRole('dialog', { name: 'Debug panel' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Transport' })).toHaveAttribute('aria-expanded', 'false')
-    expect(command.mock.calls).toEqual([['/debug_panel --dev-build'], ['/debug_panel --dev-build'], ['/debug_panel']])
+    expect(command.mock.calls).toEqual([['/debug_panel --dev-build'], ['/debug_panel']])
     const clock = screen.getByRole('button', { name: 'Clock' })
     const sectionHeaders = () => screen.getAllByRole('button', { name: /^(Transport|Clock|Session)$/ })
     const originalOrder = sectionHeaders()
@@ -200,10 +200,29 @@ it('opens as a non-modal card off the popup stack and leaves the sidebar usable'
   expect(screen.queryByRole('dialog', { name: 'Debug panel' })).toBeNull()
 })
 
-it('asks the engine for the development build once, not on every open', async () => {
+it('drops focus from a control clicked with the pointer and keeps it in the search field', async () => {
+  const session = fakeSession()
+  session.runDebugCommand = vi.fn(async (line: string) => line === '/debug_panel'
+    ? JSON.stringify([{ title: 'Clock', query: '/clock', fields: [], actions: [] }]) : '{}')
+  render(<DebugPanelHost session={session} />)
+  await act(async () => requestDebugPanel('', vi.fn()))
+  const header = screen.getByRole('button', { name: 'Clock' })
+  act(() => header.focus())
+  fireEvent.click(header, { detail: 1 })
+  expect(document.activeElement).not.toBe(header)
+  act(() => header.focus())
+  fireEvent.click(header, { detail: 0 })
+  expect(document.activeElement).toBe(header)
+  const search = screen.getByRole('searchbox', { name: 'Find debug controls' })
+  act(() => search.focus())
+  fireEvent.click(search, { detail: 1 })
+  expect(document.activeElement).toBe(search)
+})
+
+it('asks the engine for the development build once for the sidebar and every open', async () => {
   const session = fakeSession()
   session.runDebugCommand = vi.fn(async (line: string) => line === '/debug_panel --dev-build' ? 'true' : '[]')
-  render(<DebugPanelHost session={session} />)
+  render(<><Sidebar session={session} /><DebugPanelHost session={session} /></>)
   await act(async () => requestDebugPanel('', vi.fn()))
   await act(async () => requestDebugPanel('', vi.fn()))
   await act(async () => requestDebugPanel('', vi.fn()))
