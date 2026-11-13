@@ -31,11 +31,33 @@ pub fn routes() -> Router<AppState> {
     Router::new().route("/ws", get(ws_upgrade))
 }
 
-async fn ws_upgrade(ws: WebSocketUpgrade, State(state): State<AppState>) -> impl IntoResponse {
-    upgrade(ws, state)
+async fn ws_upgrade(
+    ws: WebSocketUpgrade,
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+    peer: Option<axum::Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,
+) -> impl IntoResponse {
+    let client = crate::shared::client_ip::distinct_client_ip(
+        &headers,
+        peer.map(|axum::Extension(axum::extract::ConnectInfo(peer))| peer),
+        &state.settings.server.trusted_proxy_cidrs,
+    )
+    .and_then(|ip| ip.parse().ok());
+    upgrade(ws, state, client)
 }
 
-fn upgrade(ws: WebSocketUpgrade, state: AppState) -> axum::response::Response {
+fn upgrade(
+    ws: WebSocketUpgrade,
+    state: AppState,
+    client: Option<std::net::IpAddr>,
+) -> axum::response::Response {
+    let Ok(ip_slot) = state.sockets_per_ip.try_acquire(client) else {
+        return (
+            axum::http::StatusCode::TOO_MANY_REQUESTS,
+            [(axum::http::header::RETRY_AFTER, "5")],
+        )
+            .into_response();
+    };
     let permit = match state.sockets.clone().try_acquire_owned() {
         Ok(permit) if !state.restart.is_cancelled() => permit,
         _ => {
@@ -53,6 +75,7 @@ fn upgrade(ws: WebSocketUpgrade, state: AppState) -> axum::response::Response {
         .max_message_size(MAX_ASSIGNMENT_BYTES)
         .max_frame_size(MAX_ASSIGNMENT_BYTES)
         .on_upgrade(move |socket| async move {
+            let _ip_slot = ip_slot;
             let socket = io::WebSocket::new(socket, state.clone(), permit);
             handle_socket(socket, state).await;
         })

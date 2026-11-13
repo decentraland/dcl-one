@@ -97,6 +97,38 @@ async fn whitelist_never_bypasses_listener_wallet_bans() {
     assert!(!srv.is_authenticated(1));
 }
 
+#[tokio::test]
+async fn scene_listeners_are_limited_to_the_configured_wallets() {
+    let (base, wallet, now) = signed_handshake_request().await;
+    let bytes = one_realm_msg(&base, "realm", vec![rect(0, 0, 0, 0)], 0);
+    for (allowed, admitted) in [
+        (HashSet::new(), false),
+        (
+            HashSet::from(["0x1111111111111111111111111111111111111111".to_string()]),
+            false,
+        ),
+        (HashSet::from([wallet.to_ascii_lowercase()]), true),
+    ] {
+        let mut srv = PulseServer::new();
+        srv.scene_listener_wallets = Some(allowed);
+        srv.peers
+            .insert(1, PeerState::new(PeerConnectionState::PendingAuth, 0));
+        let action = srv.dispatch(1, channel::RELIABLE, &bytes, now, 0);
+        if admitted {
+            assert!(matches!(action, Action::AuthenticatedListener { .. }));
+        } else {
+            assert!(matches!(
+                action,
+                Action::Reject {
+                    reason: DisconnectReason::AuthFailed,
+                    ..
+                }
+            ));
+            assert!(!srv.is_authenticated(1));
+        }
+    }
+}
+
 fn rect(min_x: i32, min_z: i32, max_x: i32, max_z: i32) -> ParcelRect {
     ParcelRect {
         min_x,

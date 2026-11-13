@@ -1697,6 +1697,7 @@ dependencies = [
  "getrandom 0.4.3",
  "hex",
  "hmac 0.13.0",
+ "ipnet",
  "metrics",
  "metrics-exporter-prometheus",
  "parking_lot",

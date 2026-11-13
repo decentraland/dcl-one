@@ -86,6 +86,10 @@ pub const ENV_DOCS: &[(&str, &str)] = &[
         "scene-listener AoI budget in parcels: sum of rect areas over every announced realm plus 4 per realm (default 4096)",
     ),
     (
+        "PULSE_SCENE_LISTENER_WALLETS",
+        "comma-separated wallets allowed to open a scene listener; unset falls back to AUTHORITATIVE_SERVER_ADDRESS, and with neither every listener handshake is refused",
+    ),
+    (
         "PULSE_IP_LIMITER_ENABLED",
         "enforce concurrent source-IP connection caps; still counts when disabled (default false)",
     ),
@@ -317,6 +321,13 @@ pub async fn run_from_env() -> anyhow::Result<()> {
         env_or("PULSE_DISCRETE_BURST", DEFAULT_DISCRETE_BURST)?,
     );
     server.aoi = SpatialAreaOfInterest::new(aoi);
+    let listeners = scene_listener_wallets_from(&|key| std::env::var(key).ok())?;
+    if listeners.is_empty() {
+        tracing::warn!(
+            "PULSE_SCENE_LISTENER_WALLETS and AUTHORITATIVE_SERVER_ADDRESS are unset; scene listeners are refused"
+        );
+    }
+    server.scene_listener_wallets = Some(listeners);
     let fallback = limiter_options_from_lookup(&|key| std::env::var(key).ok())?;
     server.apply_ip_limiter_options(fallback.clone());
     if let Some(url) = env_value("PULSE_FLAGS_URL", std::env::var("PULSE_FLAGS_URL"))? {
@@ -361,6 +372,33 @@ fn limiter_options_from_lookup(
         scene_listener_max_concurrency: cap("PULSE_IP_LIMITER_SCENE_LISTENER_MAX_CONCURRENCY", 2)?,
         whitelist: ip_whitelist_from(env("PULSE_IP_LIMITER_WHITELIST"))?,
     })
+}
+
+/// The scene-listener wallets: `PULSE_SCENE_LISTENER_WALLETS`, else the
+/// authoritative server's address; empty refuses every listener.
+fn scene_listener_wallets_from(
+    env: &dyn Fn(&str) -> Option<String>,
+) -> anyhow::Result<std::collections::HashSet<String>> {
+    let (key, raw) = match env("PULSE_SCENE_LISTENER_WALLETS").filter(|v| !v.trim().is_empty()) {
+        Some(raw) => ("PULSE_SCENE_LISTENER_WALLETS", raw),
+        None => match env("AUTHORITATIVE_SERVER_ADDRESS").filter(|v| !v.trim().is_empty()) {
+            Some(raw) => ("AUTHORITATIVE_SERVER_ADDRESS", raw),
+            None => return Ok(Default::default()),
+        },
+    };
+    raw.split(',')
+        .map(str::trim)
+        .filter(|wallet| !wallet.is_empty())
+        .map(|wallet| {
+            let lower = wallet.to_ascii_lowercase();
+            let valid = lower.len() == 42
+                && lower.starts_with("0x")
+                && lower[2..].bytes().all(|b| b.is_ascii_hexdigit());
+            valid
+                .then_some(lower)
+                .ok_or_else(|| anyhow::anyhow!("{key} must list 0x wallet addresses"))
+        })
+        .collect()
 }
 
 fn ip_whitelist_from(raw: Option<String>) -> anyhow::Result<IpWhitelist> {
@@ -968,6 +1006,47 @@ mod tests {
         assert!(
             wt.contains(&BOOL_TRUE.join("/")) && wt.contains(&BOOL_FALSE.join("/")),
             "the accepted boolean spellings are documented: `{wt}`"
+        );
+    }
+
+    #[test]
+    fn scene_listener_wallets_fall_back_to_the_authoritative_server_and_fail_closed() {
+        let wallet = "0xAbCdEf0123456789abcdef0123456789ABCDEF01";
+        let lookup = |pairs: &'static [(&'static str, &'static str)]| {
+            move |key: &str| {
+                pairs
+                    .iter()
+                    .find(|(k, _)| *k == key)
+                    .map(|(_, v)| v.to_string())
+            }
+        };
+        assert!(
+            scene_listener_wallets_from(&lookup(&[]))
+                .unwrap()
+                .is_empty()
+        );
+        let fallback = scene_listener_wallets_from(&lookup(&[(
+            "AUTHORITATIVE_SERVER_ADDRESS",
+            "0xAbCdEf0123456789abcdef0123456789ABCDEF01",
+        )]))
+        .unwrap();
+        assert!(fallback.contains(&wallet.to_ascii_lowercase()));
+        let explicit = scene_listener_wallets_from(&lookup(&[
+            (
+                "PULSE_SCENE_LISTENER_WALLETS",
+                "0x1111111111111111111111111111111111111111",
+            ),
+            (
+                "AUTHORITATIVE_SERVER_ADDRESS",
+                "0xAbCdEf0123456789abcdef0123456789ABCDEF01",
+            ),
+        ]))
+        .unwrap();
+        assert_eq!(explicit.len(), 1);
+        assert!(explicit.contains("0x1111111111111111111111111111111111111111"));
+        assert!(
+            scene_listener_wallets_from(&lookup(&[("PULSE_SCENE_LISTENER_WALLETS", "nope")]))
+                .is_err()
         );
     }
 

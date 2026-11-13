@@ -130,6 +130,7 @@ pub async fn build_state(
             settings.server.max_sockets as usize,
         )),
         restart: tokio_util::sync::CancellationToken::new(),
+        sockets_per_ip: state::IpSlots::new(settings.server.max_sockets_per_ip),
         settings,
         peers,
         registry,

@@ -2045,6 +2045,8 @@ async fn comms_states(
     let archipelago_settings = archipelago::Settings::resolve(
         archipelago::config::RawSettings {
             max_sockets: config.worlds.ws_max_sockets,
+            max_sockets_per_ip: config.worlds.ws_max_sockets_per_ip,
+            trusted_proxy_cidrs: config.node.http_trusted_proxy_cidrs.clone(),
             handshake_timeout_ms: config.worlds.handshake_timeout,
             deny_list_url: config.worlds.deny_list(),
             island_changed_dedup_ms: config.worlds.island_changed_dedup_ms,
