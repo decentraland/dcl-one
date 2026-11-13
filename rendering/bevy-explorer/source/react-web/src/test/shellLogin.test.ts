@@ -25,7 +25,6 @@ const ACCOUNT = '0x7e5f4552091a69125d5dfcb7b8c2659029395bdf'
 
 vi.mock('@explorer-core/features/auth/guest', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@explorer-core/features/auth/guest')>()),
-  webGuestBackend: {},
   createGuestIdentity: vi.fn(async () => identity(GUEST, 30))
 }))
 
@@ -45,6 +44,10 @@ describe('shell login requests', () => {
     expect(login.identity.ephemeralIdentity.privateKey).toBeUndefined()
     const stored = JSON.parse(localStorage.getItem('dcl-guest-identity') ?? 'null') as AuthIdentity
     expect(stored.ephemeralIdentity.privateKey).toBe(KEY)
+
+    // off Decentraland's domains thirdweb serves no guest wallet: the guest is a key made here
+    const { createGuestIdentity, localGuestBackend } = await import('@explorer-core/features/auth/guest')
+    expect(createGuestIdentity).toHaveBeenLastCalledWith(localGuestBackend)
 
     // it is now the current login, and the shell signs with it
     expect(await request('identity', undefined)).toEqual(login)

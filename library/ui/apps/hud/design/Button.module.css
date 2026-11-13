@@ -108,6 +108,19 @@
   opacity: 0.5;
 }
 
+/* the sign-in screens' CTA (PLAY AS GUEST, LOGIN OR SIGNUP): 56px, semibold caps */
+.start {
+  height: 56px;
+  padding: 0 24px;
+  border-radius: var(--r-sm);
+  font-size: var(--type-18);
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0;
+}
+.start:disabled {
+  opacity: 0.5;
+}
+
 /* variants */
 .primary {
   background: var(--brand);
@@ -181,6 +194,14 @@
   background: var(--fill-5);
 }
 
+/* darkOutline: the see-through black fill with a white outline (the sign-in screens' LOGIN OR SIGNUP) */
+.darkOutline {
+  background: var(--black-40);
+  box-shadow: inset 0 0 0 2px var(--text);
+}
+.darkOutline:hover:not(:disabled) {
+  background: var(--black-50);
+}
 /* outline: thin white outline on dark (e.g. SHOP) */
 .outline {
   height: 40px;

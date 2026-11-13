@@ -2,7 +2,8 @@
 // the real weighted progress from the engine loader (deploy/web/ui.js; the bundle's own bar is
 // hidden via hideLoader=1), held short of done once the engine can take commands until the first
 // avatar has loaded (the engine is launched the moment it can be, and the stage shows a stand-in
-// until then), then full for a moment before it goes.
+// until then), then full for a moment before it goes. The first screen with no session shows no
+// stage, so there it is done once the engine can take commands.
 
 import { useEffect, useState } from 'react'
 import type { LoginFlow } from '../session/useEngineSession'
@@ -21,7 +22,7 @@ const AVATAR_HOLD_PCT = 95
 const DONE_FLASH_MS = 600
 
 export function BootProgress({ flow }: { flow: LoginFlow }): React.JSX.Element | null {
-  const done = flow.engineReady && flow.avatarLoaded
+  const done = flow.engineReady && (flow.avatarLoaded || flow.status === 'sign-in-or-guest')
   const [hidden, setHidden] = useState(false)
   useEffect(() => {
     if (!done || hidden) return

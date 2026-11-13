@@ -2,6 +2,7 @@
 // the Explorer 2.0 Figma. Open with ?showcase=1. Add every new primitive here.
 
 import { Button } from './Button'
+import { LogoPattern } from './LogoPattern'
 import { Skeleton } from './Skeleton'
 import { IconButton } from './IconButton'
 import { VoiceBars } from './VoiceBars'
@@ -221,6 +222,19 @@ export function Showcase(): React.JSX.Element {
           <Button size="row" variant="secondary">Row</Button>
           <Button size="md">Medium</Button>
           <Button size="lg">Large</Button>
+        </div>
+      </Section>
+
+      <Section title="Button (start: the sign-in screens' CTA)">
+        <div style={{ ...row, background: 'var(--loading-vignette)', padding: 16 }}>
+          <Button size="start" style={{ width: 300 }}>Play as guest</Button>
+          <Button size="start" variant="darkOutline" style={{ width: 300 }}>Login or signup</Button>
+        </div>
+      </Section>
+
+      <Section title="Logo pattern (the loading and sign-in backdrop)">
+        <div style={{ position: 'relative', height: 160, background: 'var(--loading-vignette)', overflow: 'hidden' }}>
+          <LogoPattern />
         </div>
       </Section>
 

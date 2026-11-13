@@ -1,7 +1,7 @@
-// React port of scene/src/ui-classes/loading-and-login/LoadingAndLogin.tsx.
-// A stored identity shows the "welcome back" screen and "Jump in" hands it straight to the engine;
-// native shows the sign-in code here. With no session the guest start page shows instead
-// (./GuestStartPage), whose "Continue with an account" bounces to the same-domain auth site.
+// React port of scene/src/ui-classes/loading-and-login/LoadingAndLogin.tsx, for the startup screens
+// not yet built in features/startup: a stored sign-in that failed shows the
+// "welcome back" screen, whose "Jump in" hands it straight to the engine, and the desktop browser
+// sign-in shows its Cancel here.
 
 import { useEffect, useState } from 'react'
 import { Button } from '../../design'
@@ -63,25 +63,11 @@ export function LoadingAndLogin({ flow }: { flow: LoginFlow }): React.JSX.Elemen
   }, [])
   const reuse = flow.status === 'reuse-login-or-new'
   const profile = flow.profile
-
-  // The logo splash covers everything until there is somewhere to go: a stored session heads
-  // straight to the lobby, so it never flashes the sign-in screen (unless signing in failed).
-  const splash = flow.status === 'loading' || (reuse && flow.error == null)
   return (
     <div className={styles.root}>
-      {splash ? (
-        <>
-          <div className={styles.loading}>
-            <div className={styles.spinnerLogo} />
-          </div>
-        </>
-      ) : (
-        <>
-          <div className={styles.watermark} />
-          <Panel flow={flow} name={profile.name} />
-          {reuse && profile.body != null && <LoginAvatar body={profile.body} />}
-        </>
-      )}
+      <div className={styles.watermark} />
+      <Panel flow={flow} name={profile.name} />
+      {reuse && profile.body != null && <LoginAvatar body={profile.body} />}
     </div>
   )
 }

@@ -854,7 +854,8 @@ export type Destination =
   | { kind: 'world'; realm: string; position?: string }
   | null
 
-/** What the guest start page picked: the new guest's name and curated default look (`default<look>`). */
+/** A new guest's name and curated default look (`default<look>`), chosen before sign-in (a `/hud_login`'s
+ *  first login today). */
 export type GuestPick = NewAccountPick
 
 export interface LoginFlow {
@@ -880,8 +881,8 @@ export interface LoginFlow {
   authCode: string | null
   /** Abort the in-flight native fresh sign-in. */
   cancelLogin: () => void
-  /** `pick`: the guest start page's name and default look, accepted with the terms once signed in.
-   *  Before the engine is ready the click is kept (`acceptQueued`) and runs once it is. */
+  /** With no `pick` the welcome page (name and terms) follows; a `pick` is accepted with the terms
+   *  once signed in. Before the engine is ready the click is kept (`acceptQueued`) and runs once it is. */
   exploreAsGuest: (pick?: GuestPick) => void
   acceptQueued: boolean
   /** Reuse the stored SSO identity (hand it to the engine). */
@@ -4109,7 +4110,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   // login left to run.
   const startWithAccount = useCallback(() => {
     if (busy) return
-    clickButton('SIGN_IN', 'AVATAR_NAMING')
+    clickButton('SIGN_IN', 'ACCOUNT_HOME')
     guestPick.current = null
     const driver = driverRef.current
     if (driver?.loginNew == null) {
@@ -4304,7 +4305,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       phase !== 'login' || boot.current.hideHud
         ? null
         : status === 'sign-in-or-guest'
-          ? 'AVATAR_NAMING'
+          ? 'ACCOUNT_HOME'
           : status === 'reuse-login-or-new' && error != null
             ? 'COMEBACK'
             : null

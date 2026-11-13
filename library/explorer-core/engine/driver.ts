@@ -12,7 +12,7 @@ import type { PageToScene, SceneToPage } from './protocol'
 // because the two implementations drive it differently (console vs rpc).
 
 /** What a first-time login's new profile starts as: a name and one of the curated default looks
- *  by number (`default<look>`), picked before the account existed (the guest start page). */
+ *  by number (`default<look>`), picked before the account existed. */
 export interface NewAccountPick {
   name: string
   look: number

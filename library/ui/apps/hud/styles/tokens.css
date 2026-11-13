@@ -24,6 +24,7 @@
   --lavender: #c640cd; /* DCL/Lavender — secondary badge */
   --red: #ff0000; /* DCL/Red — blocked */
   --white-10: rgba(255, 255, 255, 0.1); /* DCL/White10% — dividers */
+  --white-50: rgba(255, 255, 255, 0.5); /* the sign-in screens' footer icons and version line */
   --shop-card-hover: rgba(255, 255, 255, 0.2); /* DCL/White20% — the Shop cart's hovered card */
   --pale-black: #43404a; /* DCL/Pale Black — the Shop toast's rim */
   --silver: #a09ba8; /* DCL/Silver — the NAME field's placeholder and suffix, an empty nametag */
@@ -263,6 +264,7 @@
   --type-30: 30px;
   --type-32: 32px;
   --type-36: 36px;
+  --type-46: 46px; /* the sign-in screens' title */
   --type-60: 60px;
   --type-shop-nametag: 32.44px; /* the Shop's NAMEs nametag over the avatar: the 18px nametag at 1.802× */
   --type-name-card-label: 24.36px; /* the NAME card art's "Name" */

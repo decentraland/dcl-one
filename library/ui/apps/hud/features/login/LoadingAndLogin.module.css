@@ -34,20 +34,6 @@
     url('../../assets/category-icons/hands_wear.png') 55% 92% / 60px no-repeat;
 }
 
-/* ---- loading state ---- */
-.loading {
-  margin: auto;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.spinnerLogo {
-  width: 10vh;
-  height: 10vh;
-  background: var(--hud-logo) center / contain no-repeat;
-  animation: pulse 1.6s var(--ease-out) infinite;
-}
-
 /* ---- left panel ---- */
 .panel {
   position: relative;
@@ -281,16 +267,5 @@
 @keyframes fade-out {
   to {
     opacity: 0;
-  }
-}
-@keyframes pulse {
-  0%,
-  100% {
-    transform: scale(1);
-    opacity: 0.85;
-  }
-  50% {
-    transform: scale(1.08);
-    opacity: 1;
   }
 }

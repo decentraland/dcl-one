@@ -42,48 +42,27 @@
     <style>
       /* Instant branded first paint. The JS bundle + React mount take a moment (longer over a slow
          tunnel/network) and #root is empty until then — without this the page flashes white. This
-         splash paints from app.html with zero JS; React's login screen (same purple backdrop)
-         replaces #root on mount, so the hand-off is seamless. The colors below mirror tokens.css
-         `--menu-bg` (the radial gradient) and its `#54098a` end stop — kept literal because this must
-         paint before any CSS/JS loads, so it can't reference the token. */
+         is the splash: the animated logo, 124px on the 1080 reference canvas, on the
+         purple vignette. React's splash (library/ui/apps/hud/features/startup/StartupSplash) paints
+         the same from the same file and replaces #root on mount, so the hand-off is seamless. The
+         colors mirror tokens.css `--loading-vignette`, kept literal because this must paint before
+         any CSS/JS loads; the size mirrors `--ui-scale` (lib/hudScale.ts). */
       html,
       body {
         margin: 0;
-        background: #54098a;
+        background: #4c0080;
       }
       #boot-splash {
         position: fixed;
         inset: 0;
         display: flex;
-        flex-direction: column;
         align-items: center;
         justify-content: center;
-        gap: 20px;
-        background: radial-gradient(circle at 66% 38%, #b528d8 0%, #8016b8 44%, #54098a 100%);
-        font-family: system-ui, -apple-system, sans-serif;
-        color: #fff;
+        background: radial-gradient(ellipse 100% 100% at 50% 50%, #bf00ff 16.7%, #4c0080 66.7%);
       }
       #boot-splash img {
-        width: 88px;
-        height: 88px;
-        animation: boot-pulse 1.6s ease-in-out infinite;
-      }
-      #boot-splash h1 {
-        margin: 0;
-        font-size: 1.5rem;
-        font-weight: 600;
-        letter-spacing: 0.01em;
-      }
-      @keyframes boot-pulse {
-        0%,
-        100% {
-          transform: scale(1);
-          opacity: 0.85;
-        }
-        50% {
-          transform: scale(1.08);
-          opacity: 1;
-        }
+        width: clamp(74.4px, min(6.458vw, 11.481vh), 161.2px);
+        height: clamp(74.4px, min(6.458vw, 11.481vh), 161.2px);
       }
     </style>
   </head>
@@ -93,8 +72,7 @@
          pre-React branded splash; createRoot() clears it on mount. -->
     <div id="root">
       <div id="boot-splash">
-        <img src="/assets/logo.png" alt="" />
-        <h1>Decentraland</h1>
+        <img src="/assets/splash-logo.webp" alt="" />
       </div>
     </div>
     <script type="module" src="/src/main.tsx"></script>

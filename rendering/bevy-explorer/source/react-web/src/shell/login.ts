@@ -1,6 +1,6 @@
 // The signed-in identity, kept by the shell for the app (src/lib/shell.ts shellRequest): the app
 // gets the public identity and asks for signatures, and never sees the key.
-import { createGuestIdentity, webGuestBackend } from '@explorer-core/features/auth/guest'
+import { createGuestIdentity, webGuestBackendFor } from '@explorer-core/features/auth/guest'
 import {
   clearGuestLogin,
   clearStoredLogins,
@@ -49,7 +49,8 @@ export async function request(method: unknown, params: unknown): Promise<unknown
     // "Explore as guest": a guest account that persists across visits (features/auth/guest.ts),
     // created and kept here like a sign-in. Any earlier guest is replaced.
     case 'createGuest': {
-      const identity = await createGuestIdentity(webGuestBackend)
+      // thirdweb serves its guest wallet only to Decentraland's domains; elsewhere it's a key made here
+      const identity = await createGuestIdentity(webGuestBackendFor(location.hostname))
       storeGuestLogin(identity)
       held = { address: rootAddress(identity).toLowerCase(), identity, guest: true }
       pinned = true
