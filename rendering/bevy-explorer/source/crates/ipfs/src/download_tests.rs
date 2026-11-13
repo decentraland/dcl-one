@@ -539,7 +539,7 @@ async fn a_content_hash_that_answers_a_client_error_is_remembered_for_the_sessio
                 .failed_remotes
                 .lock()
                 .unwrap()
-                .repeat(&server.url(path), later);
+                .repeat(&server.url(path), later, true);
             assert_eq!(
                 repeat,
                 Some(Repeat::Session(
@@ -588,12 +588,12 @@ async fn transient_and_url_keyed_failures_keep_the_retry_window() {
         let mut failed = io.failed_remotes.lock().unwrap();
         for url in &urls {
             assert_eq!(
-                failed.repeat(url, Instant::now()),
+                failed.repeat(url, Instant::now(), false),
                 Some(Repeat::Recent),
                 "{url}"
             );
             assert_eq!(
-                failed.repeat(url, Instant::now() + Duration::from_secs(11)),
+                failed.repeat(url, Instant::now() + Duration::from_secs(11), false),
                 None,
                 "{url}"
             );
@@ -686,7 +686,7 @@ async fn a_preview_client_does_not_keep_a_content_failure_for_the_session() {
         let mut failed = io.failed_remotes.lock().unwrap();
         assert_eq!(failed.session_len(), 0);
         assert_eq!(
-            failed.repeat(&server.url("missing"), Instant::now()),
+            failed.repeat(&server.url("missing"), Instant::now(), false),
             Some(Repeat::Recent)
         );
     })
@@ -695,15 +695,18 @@ async fn a_preview_client_does_not_keep_a_content_failure_for_the_session() {
 }
 
 fn seed_session_404(io: &Arc<IpfsIo>, server: &Server) {
+    seed_session_404_at(io, server, Instant::now());
+}
+
+fn seed_session_404_at(io: &Arc<IpfsIo>, server: &Server, at: Instant) {
     let url = format!(
         "http://{}/contents/{MISSING}",
         server.0.local_addr().unwrap()
     );
-    io.failed_remotes.lock().unwrap().record(
-        url,
-        Some(reqwest::StatusCode::NOT_FOUND),
-        Instant::now(),
-    );
+    io.failed_remotes
+        .lock()
+        .unwrap()
+        .record(url, Some(reqwest::StatusCode::NOT_FOUND), at);
 }
 
 #[tokio::test]
@@ -713,11 +716,10 @@ async fn a_session_failure_is_answered_by_read_without_a_request() {
         let server = Server::start().await;
         let path = loopback_realm(&io, &server).await;
         seed_session_404(&io, &server);
+        // a loopback read has no content key, so the entry answers it only within the retry window
         let error = io.read(&path).await.map(|_| ()).unwrap_err();
         assert!(
-            error
-                .to_string()
-                .contains("404 Not Found earlier this session"),
+            error.to_string().contains("repeat request for failed"),
             "{error}"
         );
         assert!(timeout(Duration::from_millis(200), server.0.accept())
@@ -727,6 +729,55 @@ async fn a_session_failure_is_answered_by_read_without_a_request() {
     })
     .await
     .expect("a session failure was not answered from memory");
+}
+
+#[tokio::test]
+async fn a_session_failure_answers_only_content_reads() {
+    timeout(LIMIT, async {
+        let io = ipfs();
+        let server = Server::start().await;
+        let path = loopback_realm(&io, &server).await;
+        let long_ago = Instant::now().checked_sub(Duration::from_secs(11)).unwrap();
+        seed_session_404_at(&io, &server, long_ago);
+        // a loopback read has no content key, so the entry is not its answer
+        assert!(read_missing(&io, &server, &path).await.is_err());
+        assert_eq!(io.request_metrics.attempts.load(Ordering::Relaxed), 1);
+        let url = format!(
+            "http://{}/contents/{MISSING}",
+            server.0.local_addr().unwrap()
+        );
+        assert_eq!(
+            io.failed_remotes
+                .lock()
+                .unwrap()
+                .repeat(&url, Instant::now(), true),
+            Some(Repeat::Session(reqwest::StatusCode::NOT_FOUND))
+        );
+    })
+    .await
+    .expect("a session failure answered a read that is not a content read");
+}
+
+#[tokio::test]
+async fn a_successful_download_clears_a_failure_of_its_url() {
+    timeout(LIMIT, async {
+        let io = ipfs();
+        let server = Server::start().await;
+        let url = server.url("found");
+        io.failed_remotes.lock().unwrap().record(
+            url.clone(),
+            Some(reqwest::StatusCode::NOT_FOUND),
+            Instant::now(),
+        );
+        let download = asset(&io, &server, "found", None);
+        server.reply("found", OK).await;
+        assert!(download.await.unwrap().is_ok());
+        let mut failed = io.failed_remotes.lock().unwrap();
+        assert_eq!(failed.repeat(&url, Instant::now(), true), None);
+        assert_eq!(failed.session_len(), 0);
+    })
+    .await
+    .expect("a success did not clear the failure");
 }
 
 #[tokio::test]
@@ -765,10 +816,11 @@ async fn a_loopback_404_is_answered_from_memory_only_within_the_retry_window() {
             server.0.local_addr().unwrap()
         );
         assert_eq!(
-            io.failed_remotes
-                .lock()
-                .unwrap()
-                .repeat(&url, Instant::now() + Duration::from_secs(11)),
+            io.failed_remotes.lock().unwrap().repeat(
+                &url,
+                Instant::now() + Duration::from_secs(11),
+                false
+            ),
             None
         );
     })

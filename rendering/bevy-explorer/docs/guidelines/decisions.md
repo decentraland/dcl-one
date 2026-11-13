@@ -427,12 +427,13 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   ownership is its membership of the avatar's animation graph. A pruning PR that special-cases
   emotes (#1323) is parked for that reason.
 - **A missing content file stays missing until restart.** When a server answers 400, 404, 405,
-  410, 414 or 451 for the url of a content hash, the client answers later requests for that url
-  from memory for the rest of the session, because the bytes a hash names never change. Any
-  other failure, and content requested by url rather than by hash, is answered from memory for
-  10 s and then asked for again; a loopback content server's failure is answered from memory for
-  10 s; preview mode asks again on every read. A later failure of another kind does not shorten
-  a session entry. At most 4096 urls are held.
+  410, 414 or 451 to a read of a content hash, later reads of that url by content hash are
+  answered from memory for the rest of the session. Any other read of the same url (by url, or
+  from a loopback content server, which is never keyed by hash) is answered from memory for 10 s
+  after the failure and then asked for again; other failures are answered from memory for 10 s;
+  preview mode asks again on every read. A later failure of another kind does not shorten a
+  session entry, and a successful download of the url clears its entry. At most 4096 urls are
+  held.
 - **Camera layers are identified by entity**, not by an explicit layer number; the cleanup in
   #1320 waits on the protocol change.
 - **`-logFile` with one dash is accepted** (rewritten to `--log-file` before clap, `main.rs`):

@@ -496,6 +496,10 @@ impl IpfsIo {
         }
 
         debug!("[{token:?}]: completed remote url: `{remote}`");
+        self.failed_remotes
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .forget(&remote);
         ipfs_io_read_state.send_success(data.len());
         Ok(data)
     }

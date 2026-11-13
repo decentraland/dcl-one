@@ -32,6 +32,8 @@ REQUIRED = {
         "a_preview_client_asks_again_for_a_missing_file_at_once",
         "a_poisoned_failure_memory_keeps_answering",
         "content_reads_are_keyed_by_hash_and_url_reads_by_url",
+        "a_session_failure_answers_only_content_reads",
+        "a_successful_download_clears_a_failure_of_its_url",
     },
     "platform": {
         "grant_is_held_through_body_read_and_released_on_cancellation",

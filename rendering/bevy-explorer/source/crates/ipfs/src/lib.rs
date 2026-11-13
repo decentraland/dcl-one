@@ -2138,7 +2138,11 @@ impl IpfsIo {
                     failed.forget(&remote);
                     None
                 } else {
-                    failed.repeat(&remote, Instant::now())
+                    failed.repeat(
+                        &remote,
+                        Instant::now(),
+                        matches!(cache_key, Some(CacheKey::Content(_))),
+                    )
                 }
             };
             if let Some(repeat) = repeat {

@@ -76,11 +76,16 @@ impl FailedRemotes {
         self.entries.insert(remote, Failed { at: now, session });
     }
 
-    /// Whether `remote` is answered from memory at `now`. An expired entry is dropped.
-    pub(crate) fn repeat(&mut self, remote: &str, now: Instant) -> Option<Repeat> {
+    /// Whether `remote` is answered from memory at `now`. A session entry answers only a
+    /// `content` read (one keyed by hash); any other read of the url treats it as a short-lived
+    /// one and leaves it in place. An expired short-lived entry is dropped.
+    pub(crate) fn repeat(&mut self, remote: &str, now: Instant, content: bool) -> Option<Repeat> {
         let failed = self.entries.get(remote)?;
         if let Some(status) = failed.session {
-            return Some(Repeat::Session(status));
+            if content {
+                return Some(Repeat::Session(status));
+            }
+            return (!expired(failed.at, now)).then_some(Repeat::Recent);
         }
         if !expired(failed.at, now) {
             return Some(Repeat::Recent);
@@ -135,7 +140,7 @@ mod tests {
         failed.record(URL.into(), Some(StatusCode::NOT_FOUND), t0);
         failed.record(URL.into(), None, t0 + Duration::from_secs(1));
         assert_eq!(
-            failed.repeat(URL, t0 + Duration::from_secs(3600)),
+            failed.repeat(URL, t0 + Duration::from_secs(3600), true),
             Some(Repeat::Session(StatusCode::NOT_FOUND))
         );
         assert_eq!(failed.session_len(), 1);
@@ -148,11 +153,31 @@ mod tests {
         failed.record(URL.into(), Some(StatusCode::NOT_FOUND), t0);
         let later = t0 + Duration::from_secs(3600);
         assert_eq!(
-            failed.repeat(URL, later),
+            failed.repeat(URL, later, true),
             Some(Repeat::Session(StatusCode::NOT_FOUND))
         );
         assert_eq!(
-            failed.repeat(URL, later),
+            failed.repeat(URL, later, true),
+            Some(Repeat::Session(StatusCode::NOT_FOUND))
+        );
+        assert_eq!(failed.session_len(), 1);
+    }
+
+    #[test]
+    fn a_session_failure_answers_other_reads_only_within_the_retry_window() {
+        let t0 = Instant::now();
+        let mut failed = FailedRemotes::default();
+        failed.record(URL.into(), Some(StatusCode::NOT_FOUND), t0);
+        assert_eq!(
+            failed.repeat(URL, t0 + Duration::from_secs(5), false),
+            Some(Repeat::Recent)
+        );
+        assert_eq!(
+            failed.repeat(URL, t0 + Duration::from_secs(11), false),
+            None
+        );
+        assert_eq!(
+            failed.repeat(URL, t0 + Duration::from_secs(11), true),
             Some(Repeat::Session(StatusCode::NOT_FOUND))
         );
         assert_eq!(failed.session_len(), 1);
@@ -165,11 +190,11 @@ mod tests {
         let mut failed = FailedRemotes::default();
         failed.record(url.into(), None, t0);
         assert_eq!(
-            failed.repeat(url, t0 + Duration::from_secs(10)),
+            failed.repeat(url, t0 + Duration::from_secs(10), true),
             Some(Repeat::Recent)
         );
-        assert_eq!(failed.repeat(url, t0 + Duration::from_secs(11)), None);
-        assert_eq!(failed.repeat(url, t0 + Duration::from_secs(1)), None);
+        assert_eq!(failed.repeat(url, t0 + Duration::from_secs(11), true), None);
+        assert_eq!(failed.repeat(url, t0 + Duration::from_secs(1), true), None);
         assert_eq!(failed.session_len(), 0);
     }
 
@@ -179,7 +204,7 @@ mod tests {
         let mut failed = FailedRemotes::default();
         failed.record(URL.into(), Some(StatusCode::NOT_FOUND), t0);
         failed.forget(URL);
-        assert_eq!(failed.repeat(URL, t0), None);
+        assert_eq!(failed.repeat(URL, t0, true), None);
     }
 
     #[test]
@@ -195,20 +220,20 @@ mod tests {
 
         failed.record("d".into(), nf, secs(11));
         assert_eq!(failed.entries.len(), 2);
-        assert_eq!(failed.repeat("c", secs(11)), session);
-        assert_eq!(failed.repeat("d", secs(11)), session);
+        assert_eq!(failed.repeat("c", secs(11), true), session);
+        assert_eq!(failed.repeat("d", secs(11), true), session);
 
         failed.record("e".into(), nf, secs(12));
         failed.record("f".into(), nf, secs(13));
         assert_eq!(failed.entries.len(), 3);
-        assert_eq!(failed.repeat("c", secs(13)), None);
+        assert_eq!(failed.repeat("c", secs(13), true), None);
         for url in ["d", "e", "f"] {
-            assert_eq!(failed.repeat(url, secs(13)), session, "{url}");
+            assert_eq!(failed.repeat(url, secs(13), true), session, "{url}");
         }
 
         failed.record("f".into(), nf, secs(14));
         assert_eq!(failed.entries.len(), 3);
-        assert_eq!(failed.repeat("d", secs(14)), session);
+        assert_eq!(failed.repeat("d", secs(14), true), session);
     }
 
     #[test]
@@ -224,8 +249,8 @@ mod tests {
 
         failed.record("d".into(), nf, secs(3));
         assert_eq!(failed.entries.len(), 3);
-        assert_eq!(failed.repeat("a", secs(3)), session);
-        assert_eq!(failed.repeat("b", secs(3)), session);
-        assert_eq!(failed.repeat("c", secs(3)), None);
+        assert_eq!(failed.repeat("a", secs(3), true), session);
+        assert_eq!(failed.repeat("b", secs(3), true), session);
+        assert_eq!(failed.repeat("c", secs(3), true), None);
     }
 }
