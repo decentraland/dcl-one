@@ -2,13 +2,18 @@ mod atmosphere_params;
 mod coast;
 mod day_night;
 mod debug_panel;
+mod landscape_textures;
 mod nishita_cloud;
+#[cfg(test)]
+mod pipeline_test;
 mod props;
 pub mod shell_texturing;
 mod sky_envmap;
 mod solids;
 mod stars;
 pub mod terrain;
+#[cfg(test)]
+mod test_wait;
 mod trees;
 
 use bevy::{
@@ -41,6 +46,7 @@ use scene_runner::update_world::lights::{moon_direction, SUN_COLOR_NOON};
 use crate::{
     coast::CoastPlugin,
     day_night::DayNightPlugin,
+    landscape_textures::LandscapeTexturesPlugin,
     props::PropsPlugin,
     shell_texturing::ShellTexturingPlugin,
     sky_envmap::{SkyEnvmapPlugin, SkyEnvmapSettings},
@@ -71,6 +77,7 @@ impl Plugin for VisualsPlugin {
             })
             .add_plugins(WireframePlugin::default())
             .add_plugins(DayNightPlugin)
+            .add_plugins(LandscapeTexturesPlugin)
             .add_plugins(ShellTexturingPlugin)
             .add_plugins(TerrainPlugin)
             .add_plugins(CoastPlugin)

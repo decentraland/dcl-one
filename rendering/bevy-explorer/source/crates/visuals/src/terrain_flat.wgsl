@@ -1,4 +1,5 @@
-// Flat-colour ground (parcel grass off): standard lighting, ending at the coast like the grass.
+// The ground without grass shells (parcel grass off): the splat-textured ground colour under
+// standard lighting, ending at the coast like the grass.
 
 #ifdef PREPASS_PIPELINE
     #import bevy_pbr::prepass_io::{VertexOutput, FragmentOutput};
@@ -8,6 +9,7 @@
     #import bevy_pbr::pbr_functions::{apply_pbr_lighting, main_pass_post_lighting_processing};
     #import bevy_pbr::{mesh_view_bindings::{lights, view}, shadows};
     #import "embedded://shaders/shadow_softening.wgsl"::soften_directional_shadow
+    #import "embedded://visuals/landscape_ground.wgsl"::ground_albedo_normal
 #endif
 
 #import "embedded://visuals/terrain_params.wgsl"::terrain
@@ -44,6 +46,10 @@ override fn ambient::ambient_light(world_position: vec4<f32>, world_normal: vec3
 
 @fragment
 fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
+#ifndef PREPASS_PIPELINE
+    // sampled before the discard, in uniform control flow
+    let ground = ground_albedo_normal(in.world_position.xz);
+#endif
     if beyond_coast(in.world_position.xz, terrain.coast) {
         discard;
     }
@@ -58,7 +64,8 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     out.frag_depth = in.unclipped_depth;
 #endif
 #else
-    let pbr_input = pbr_input_from_standard_material(in, is_front);
+    var pbr_input = pbr_input_from_standard_material(in, is_front);
+    pbr_input.material.base_color = vec4(ground.albedo, 1.0);
     out.color = main_pass_post_lighting_processing(pbr_input, apply_pbr_lighting(pbr_input));
 #endif
 

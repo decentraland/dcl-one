@@ -230,3 +230,72 @@ fn scene_casts_hit_the_heightfield() {
         assert_eq!(all.len(), 1, "avatar all, skip_inside {skip_inside}");
     }
 }
+
+/// The textured ground compiles in every pipeline it is drawn with: the flat ground (grass off)
+/// and a ground shell (grass on), each with the prepasses and shadows. Needs a GPU, so `#[ignore]`d
+/// and skipped by CI:
+///
+/// ```text
+/// cargo test -p visuals ground_shader_compiles -- --ignored --nocapture
+/// ```
+#[test]
+#[ignore = "needs a GPU; run with --ignored"]
+fn ground_shader_compiles() {
+    use crate::{
+        landscape_textures::LandscapeTextures,
+        pipeline_test,
+        shell_texturing::{self, ShellTexture},
+    };
+    use bevy::render::mesh::MeshTag;
+    use common::structs::ParcelGrassSetting;
+
+    let mut app = pipeline_test::app();
+    embed_shaders(&mut app);
+    shell_texturing::embed_shaders(&mut app);
+    app.add_plugins((
+        MaterialPlugin::<TerrainFlatMaterial>::default(),
+        MaterialPlugin::<ShellTexture>::default(),
+    ));
+    app.finish();
+    app.cleanup();
+
+    let world = app.world_mut();
+    let textures = world.resource::<LandscapeTextures>().clone();
+    let steps = TerrainSurface::default().image();
+    world
+        .resource_mut::<Assets<Image>>()
+        .insert(TERRAIN_TEXTURE.id(), steps);
+    let mesh = world.resource_mut::<Assets<Mesh>>().add(parcel_mesh(4));
+    let flat = world
+        .resource_mut::<Assets<TerrainFlatMaterial>>()
+        .add(TerrainFlatMaterial {
+            base: StandardMaterial::default(),
+            extension: TerrainExtension::new(&textures),
+        });
+    let shell = world
+        .resource_mut::<Assets<ShellTexture>>()
+        .add(ShellTexture::new(
+            &ParcelGrassSetting::Low,
+            3,
+            TerrainParams::default(),
+            &textures,
+        ));
+    world.spawn((
+        Mesh3d(mesh.clone()),
+        MeshMaterial3d(flat),
+        Transform::default(),
+    ));
+    world.spawn((
+        Mesh3d(mesh),
+        MeshMaterial3d(shell),
+        MeshTag(1),
+        Transform::from_xyz(0.0, 0.1, 0.0),
+    ));
+
+    pipeline_test::assert_pipelines_compile(
+        &mut app,
+        Vec3::new(0.0, 3.0, 6.0),
+        Vec3::ZERO,
+        &["terrain_flat.wgsl", "shell_texturing.wgsl"],
+    );
+}

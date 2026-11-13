@@ -433,6 +433,26 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **No satellite floor.** unity-explorer lays the minimap's satellite images flat at 0.205 m under the
   terrain in Genesis City; here the terrain covers that plane out to the landscape distance, so the
   floor would never be seen and is not shipped.
+- **The ground, sand and cliff textures** are unity-explorer's own files, and differ in how they
+  reach the GPU and in the grass.
+  - They ship as JPEG (colour) and PNG (splat, cliff normal) at 1024 by 1024, the ground texture
+    scaled down from Unity's 2048, and the engine builds their mip chains on the CPU as each
+    loads (box filter, colour averaged in linear light, normals renormalised). KTX2 with prebuilt
+    mips is the intended format; its encoder was not available when they were added. Until then
+    they sit uncompressed on the GPU (RGBA8 with mips, about 28 MB for the five), where Unity's
+    import compresses them.
+  - Until a texture has loaded, and for good if it fails (an LFS pointer embedded in place of the
+    image, say), its one-texel stand-in is drawn: the ground in its former flat green, the rock in
+    its former grey. Unity has no such state; its textures ship in the build.
+  - Until the scattered grass replaces them, every grass shell takes the ground's colour under it
+    rather than the grass colours, so the ground looks the same with grass on or off. Unity has
+    no shells.
+- **Bevy's procedural cliffs stay and take Unity's cliff rock texture.** Unity places cliff
+  prefabs along the terrain bounds; the procedural cliff keeps its shape and has no uvs, so the
+  rock texture (Unity's cliff material: its colour and normal map, its moss colour on upward
+  faces and its smoothness) is projected along the three world axes, at the texel density of
+  Unity's cliff mesh (17.08 m per repeat). The rock's per-facet grey tint is gone; the sand
+  below keeps bevy's colour and shore effects rather than Unity's beach material.
 
 ## Deliberate choices that look like mistakes
 
@@ -453,6 +473,10 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **Native HUD preferences are persisted by the engine** (`hud-prefs.json`), because CEF's
   `localStorage` does not survive.
 - **Web is Chrome only.**
+- **The ground has no normal maps.** Unity's ground material binds ground and sand normal maps,
+  but its shader variant is built without its normal-map keyword, so they never reach the
+  lighting. Bringing them would make the ground bumpier than Unity's; they stay out until Unity
+  applies them.
 - **The end-to-end tests use no Playwright.** They drive the client through its console on both
   shells, so one spec runs on the web and the standalone, and what they need from a browser (real
   input, pages outside the client such as sign-in, screenshots) the in-repo web driver does

@@ -13,6 +13,7 @@ use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddCo
 use serde_json::json;
 
 use crate::{
+    landscape_textures::{self, LandscapeTextures},
     shell_texturing::{Ground, ParcelGrass},
     trees::Tree,
     CloudCover, ShadowBiasOverride, SUN_SHADOW_BIAS,
@@ -65,6 +66,7 @@ pub(super) fn register(app: &mut App) {
             ("Scene load distance (m)", "loadDistance"),
             ("Loaded trees", "treeCount"),
             ("Grass parcels", "grassParcels"),
+            ("Ground and cliff textures", "groundTextures"),
         ],
         actions: &[],
         inputs: &[
@@ -203,6 +205,7 @@ fn landscape_command(
     preview: Option<Res<common::structs::PreviewMode>>,
     mut layers: ResMut<LandscapeLayers>,
     load: Res<SceneLoadDistance>,
+    textures: Res<LandscapeTextures>,
     trees: Query<(), With<Tree>>,
     grass: Query<(), With<ParcelGrass>>,
 ) {
@@ -218,8 +221,9 @@ fn landscape_command(
             _ => layers.grass = value,
         }
     }
+    let ground_textures = landscape_textures::load_state(&textures);
     cmd.reply_ok(json!({"ground":layers.ground, "trees":layers.trees, "grass":layers.grass,
-        "treeCount":trees.iter().len(), "grassParcels":grass.iter().len(), "loadDistance":load.load}).to_string());
+        "treeCount":trees.iter().len(), "grassParcels":grass.iter().len(), "loadDistance":load.load, "groundTextures":ground_textures}).to_string());
 }
 
 type LandscapeObjects = Or<(With<Ground>, With<Tree>, With<ParcelGrass>)>;

@@ -24,6 +24,7 @@ use scene_runner::{
     vec3_to_parcel,
 };
 
+use crate::landscape_textures::{ground_shader_defs, rebind_on_replace, LandscapeTextures};
 use crate::terrain::{
     ground_extent, ground_mesh, ground_origin, parcel_mesh, terrain_vertex_shader,
     TerrainExtension, TerrainFlatMaterial, TerrainParams, TerrainSet, TerrainSurface,
@@ -132,14 +133,51 @@ pub struct ShellTexture {
     #[uniform(0)]
     /// xz the snap grid is anchored to
     snap_anchor: Vec2,
-    #[uniform(0)]
-    root_color: LinearRgba,
-    #[uniform(0)]
-    tip_color: LinearRgba,
     #[texture(100, sample_type = "float", filterable = false, visibility(vertex))]
     terrain_steps: Handle<Image>,
     #[uniform(101)]
     terrain: TerrainParams,
+    #[texture(102)]
+    #[sampler(103)]
+    ground_splat: Handle<Image>,
+    #[texture(104)]
+    #[sampler(105)]
+    ground_colour: Handle<Image>,
+    #[texture(106)]
+    #[sampler(107)]
+    sand_colour: Handle<Image>,
+}
+
+impl ShellTexture {
+    /// Shells coloured from the ground texture under them.
+    pub(crate) fn new(
+        config: &ParcelGrassConfig,
+        layers: u32,
+        terrain: TerrainParams,
+        textures: &LandscapeTextures,
+    ) -> Self {
+        Self {
+            subdivisions: config.subdivisions,
+            layers,
+            snap_anchor: Vec2::ZERO,
+            terrain_steps: TERRAIN_TEXTURE,
+            terrain,
+            ground_splat: textures.splat.clone(),
+            ground_colour: textures.ground.clone(),
+            sand_colour: textures.sand.clone(),
+        }
+    }
+}
+
+pub(crate) fn embed_shaders(app: &mut App) {
+    embedded_asset!(app, "shell_texturing.wgsl");
+}
+
+/// The ground and grass materials bind the landscape textures: prepare them again when one is
+/// replaced.
+pub(crate) fn rebind_materials(app: &mut App) {
+    rebind_on_replace::<ShellTexture>(app);
+    rebind_on_replace::<TerrainFlatMaterial>(app);
 }
 
 impl Material for ShellTexture {
@@ -180,6 +218,9 @@ impl Material for ShellTexture {
         _key: MaterialPipelineKey<Self>,
     ) -> Result<(), SpecializedMeshPipelineError> {
         descriptor.primitive.cull_mode = None;
+        if let Some(fragment) = descriptor.fragment.as_mut() {
+            fragment.shader_defs.extend(ground_shader_defs());
+        }
         Ok(())
     }
 }
@@ -189,7 +230,8 @@ pub(crate) struct ShellTexturingPlugin;
 
 impl Plugin for ShellTexturingPlugin {
     fn build(&self, app: &mut App) {
-        embedded_asset!(app, "shell_texturing.wgsl");
+        embed_shaders(app);
+        rebind_materials(app);
 
         app.init_state::<ParcelGrassState>();
 
@@ -295,7 +337,11 @@ fn parcel_grass_aabb() -> Aabb {
     )
 }
 
-fn spawn_ground(mut commands: Commands, mut materials: ResMut<Assets<TerrainFlatMaterial>>) {
+fn spawn_ground(
+    mut commands: Commands,
+    mut materials: ResMut<Assets<TerrainFlatMaterial>>,
+    textures: Res<LandscapeTextures>,
+) {
     commands.spawn((
         Name::new("Ground"),
         // follows the player's parcel, see `follow_player`
@@ -308,14 +354,13 @@ fn spawn_ground(mut commands: Commands, mut materials: ResMut<Assets<TerrainFlat
         GROUND_MATERIAL_FLAT_COLOR.id(),
         TerrainFlatMaterial {
             base: StandardMaterial {
-                base_color: Color::srgb(0.3, 0.45, 0.2),
                 perceptual_roughness: 1.0,
                 metallic: 0.0,
                 depth_bias: -100.0,
                 fog_enabled: false,
                 ..Default::default()
             },
-            extension: TerrainExtension::default(),
+            extension: TerrainExtension::new(&textures),
         },
     );
 }
@@ -411,6 +456,7 @@ fn update_parcel_grass_material(
     mut materials: ResMut<Assets<ShellTexture>>,
     parcel_grass_config: Res<ParcelGrassConfig>,
     surface: Res<TerrainSurface>,
+    textures: Res<LandscapeTextures>,
 ) {
     debug!(
         target: "visuals::parcel_grass::update_material",
@@ -418,27 +464,21 @@ fn update_parcel_grass_material(
     );
     materials.insert(
         PARCEL_GRASS_MATERIAL.id(),
-        ShellTexture {
-            subdivisions: parcel_grass_config.subdivisions,
-            layers: parcel_grass_config.layers,
-            snap_anchor: Vec2::ZERO,
-            root_color: parcel_grass_config.root_color.into(),
-            tip_color: parcel_grass_config.tip_color.into(),
-            terrain_steps: TERRAIN_TEXTURE,
-            terrain: surface.params(),
-        },
+        ShellTexture::new(
+            &parcel_grass_config,
+            parcel_grass_config.layers,
+            surface.params(),
+            &textures,
+        ),
     );
     materials.insert(
         GROUND_MATERIAL.id(),
-        ShellTexture {
-            subdivisions: parcel_grass_config.subdivisions,
-            layers: GROUND_LAYERS,
-            snap_anchor: Vec2::ZERO,
-            root_color: parcel_grass_config.root_color.into(),
-            tip_color: parcel_grass_config.tip_color.into(),
-            terrain_steps: TERRAIN_TEXTURE,
-            terrain: surface.params(),
-        },
+        ShellTexture::new(
+            &parcel_grass_config,
+            GROUND_LAYERS,
+            surface.params(),
+            &textures,
+        ),
     );
 }
 
@@ -741,7 +781,8 @@ mod test {
         };
 
         use crate::{
-            coast::{CliffExtension, CliffMaterial, WaterExtension, WaterMaterial},
+            coast::{cliff_material, CliffMaterial, WaterExtension, WaterMaterial},
+            landscape_textures::{LandscapeTextures, LandscapeTexturesPlugin},
             terrain::NO_COAST,
             trees::{SoftShadowMaterial, SoftShadows},
         };
@@ -756,6 +797,10 @@ mod test {
             ("terrain_vertex.wgsl", include_str!("terrain_vertex.wgsl")),
             ("terrain_params.wgsl", include_str!("terrain_params.wgsl")),
             ("terrain_flat.wgsl", include_str!("terrain_flat.wgsl")),
+            (
+                "landscape_ground.wgsl",
+                include_str!("landscape_ground.wgsl"),
+            ),
             ("coast_profile.wgsl", include_str!("coast_profile.wgsl")),
             ("coast_surf.wgsl", include_str!("coast_surf.wgsl")),
             ("coast_cliff.wgsl", include_str!("coast_cliff.wgsl")),
@@ -765,6 +810,8 @@ mod test {
             registry.insert_asset(path.clone(), &path, source.as_bytes());
         }
         app.add_plugins((
+            // the ground, grass and cliff textures, each a one-texel stand-in until it loads
+            LandscapeTexturesPlugin,
             MaterialPlugin::<ShellTexture>::default(),
             MaterialPlugin::<SoftShadowMaterial>::default(),
             MaterialPlugin::<TerrainFlatMaterial>::default(),
@@ -777,6 +824,7 @@ mod test {
 
         let target = render_target(&mut app);
         let world = app.world_mut();
+        let textures = world.resource::<LandscapeTextures>().clone();
         let mut images = world.resource_mut::<Assets<Image>>();
         // flat terrain, as `TerrainSurface` uploads it before any bounds are known
         images.insert(
@@ -796,15 +844,15 @@ mod test {
         let plane_mesh = meshes.add(Plane3d::default().mesh().size(4.0, 4.0));
         let grass = world
             .resource_mut::<Assets<ShellTexture>>()
-            .add(ShellTexture {
-                subdivisions: 4,
-                layers: 4,
-                snap_anchor: Vec2::ZERO,
-                root_color: LinearRgba::GREEN,
-                tip_color: LinearRgba::GREEN,
-                terrain_steps: TERRAIN_TEXTURE,
-                terrain: TerrainParams::default(),
-            });
+            .add(ShellTexture::new(
+                &ParcelGrassConfig {
+                    subdivisions: 4,
+                    ..default()
+                },
+                4,
+                TerrainParams::default(),
+                &textures,
+            ));
         let rock = world
             .resource_mut::<Assets<SoftShadowMaterial>>()
             .add(SoftShadowMaterial {
@@ -815,18 +863,11 @@ mod test {
             .resource_mut::<Assets<TerrainFlatMaterial>>()
             .add(TerrainFlatMaterial {
                 base: StandardMaterial::default(),
-                extension: TerrainExtension::default(),
+                extension: TerrainExtension::new(&textures),
             });
         let cliff = world
             .resource_mut::<Assets<CliffMaterial>>()
-            .add(CliffMaterial {
-                base: StandardMaterial {
-                    cull_mode: None,
-                    double_sided: true,
-                    ..default()
-                },
-                extension: CliffExtension { bounds: NO_COAST },
-            });
+            .add(cliff_material(&textures));
         let water = world
             .resource_mut::<Assets<WaterMaterial>>()
             .add(WaterMaterial {

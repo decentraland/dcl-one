@@ -32,7 +32,10 @@ use scene_runner::{
     vec3_to_parcel,
 };
 
-use crate::terrain::{TerrainSet, TerrainSurface, NO_COAST};
+use crate::{
+    landscape_textures::{rebind_on_replace, LandscapeTextures},
+    terrain::{TerrainSet, TerrainSurface, NO_COAST},
+};
 
 pub const SEA_LEVEL: f32 = -19.0;
 /// Cliffs are built in chunks of this length along each side.
@@ -65,9 +68,8 @@ pub(crate) struct CoastPlugin;
 
 impl Plugin for CoastPlugin {
     fn build(&self, app: &mut App) {
-        embedded_asset!(app, "coast_surf.wgsl");
-        embedded_asset!(app, "coast_cliff.wgsl");
-        embedded_asset!(app, "coast_water.wgsl");
+        embed_shaders(app);
+        rebind_materials(app);
 
         app.init_resource::<CoastState>()
             .add_plugins(MaterialPlugin::<CliffMaterial>::default())
@@ -82,16 +84,53 @@ impl Plugin for CoastPlugin {
     }
 }
 
+pub(crate) fn embed_shaders(app: &mut App) {
+    embedded_asset!(app, "coast_surf.wgsl");
+    embedded_asset!(app, "coast_cliff.wgsl");
+    embedded_asset!(app, "coast_water.wgsl");
+}
+
+/// The cliff material binds the landscape textures: prepare it again when one is replaced.
+pub(crate) fn rebind_materials(app: &mut App) {
+    rebind_on_replace::<CliffMaterial>(app);
+}
+
 fn shader(path: &std::path::Path) -> ShaderRef {
     ShaderRef::Path(format!("embedded://{}", path.display()).into())
 }
 
 pub(crate) type CliffMaterial = ExtendedMaterial<CliffExtension>;
 
+/// The rock takes its colour and normal from the reference cliff texture; the vertex colour's
+/// alpha marks the rock (1) from the sand and the hidden lid (0).
 #[derive(Asset, TypePath, AsBindGroup, Clone)]
 pub(crate) struct CliffExtension {
     #[uniform(100)]
-    pub(crate) bounds: Vec4,
+    bounds: Vec4,
+    #[texture(101)]
+    #[sampler(102)]
+    rock_colour: Handle<Image>,
+    #[texture(103)]
+    #[sampler(104)]
+    rock_normal: Handle<Image>,
+}
+
+pub(crate) fn cliff_material(textures: &LandscapeTextures) -> CliffMaterial {
+    ExtendedMaterial {
+        base: StandardMaterial {
+            perceptual_roughness: 0.95,
+            // the rock faces the sea, so it must cast shadows through its back faces when the
+            // sun is over the land
+            cull_mode: None,
+            double_sided: true,
+            ..default()
+        },
+        extension: CliffExtension {
+            bounds: NO_COAST,
+            rock_colour: textures.cliff.clone(),
+            rock_normal: textures.cliff_normal.clone(),
+        },
+    }
 }
 
 impl MaterialExtension for CliffExtension {
@@ -156,18 +195,9 @@ fn setup(
     mut waters: ResMut<Assets<WaterMaterial>>,
     mut images: ResMut<Assets<Image>>,
     mut standard: ResMut<Assets<StandardMaterial>>,
+    textures: Res<LandscapeTextures>,
 ) {
-    let cliff = cliffs.add(ExtendedMaterial {
-        base: StandardMaterial {
-            perceptual_roughness: 0.95,
-            // the rock faces the sea, so it must cast shadows through its back faces when the
-            // sun is over the land
-            cull_mode: None,
-            double_sided: true,
-            ..default()
-        },
-        extension: CliffExtension { bounds: NO_COAST },
-    });
+    let cliff = cliffs.add(cliff_material(&textures));
     let water = waters.add(ExtendedMaterial {
         base: StandardMaterial {
             base_color: Color::srgb(0.065, 0.30, 0.36),
@@ -494,7 +524,8 @@ fn split_rock(column: &[Vec3; RINGS]) -> Vec<Vec3> {
     points
 }
 
-/// Flat-shaded cliff and sand for one chunk, with vertex colours.
+/// Flat-shaded cliff and sand for one chunk. The vertex colour is the sand's colour; its alpha is
+/// the rock's weight, so the rock takes the shader's texture.
 fn cliff_mesh(bounds: Vec4, side: u32, chunk: i32) -> Mesh {
     let columns = columns(bounds, side, chunk);
     let mut positions = Vec::new();
@@ -510,7 +541,7 @@ fn cliff_mesh(bounds: Vec4, side: u32, chunk: i32) -> Mesh {
         })
         .collect();
     let columns: Vec<_> = columns.iter().map(split_rock).collect();
-    for (step, pair) in columns.windows(2).enumerate() {
+    for pair in columns.windows(2) {
         let [previous, next] = [&pair[0], &pair[1]];
         for ring in 0..previous.len() - 1 {
             let [a, b, c, d] = [
@@ -520,16 +551,12 @@ fn cliff_mesh(bounds: Vec4, side: u32, chunk: i32) -> Mesh {
                 next[ring + 1],
             ];
             let color = if ring >= ROCK_RINGS * ROCK_SPLIT {
-                Vec3::new(0.81, 0.65, 0.48)
+                Color::srgba(0.81, 0.65, 0.48, 0.0)
+                    .to_linear()
+                    .to_f32_array()
             } else {
-                let seed = (chunk as u32).wrapping_mul(773)
-                    ^ step as u32
-                    ^ ((ring + 1) as u32).wrapping_mul(337);
-                Vec3::new(0.43, 0.41, 0.40) * (0.86 + random(seed) * 0.18)
+                [1.0; 4]
             };
-            let color = Color::srgb(color.x, color.y, color.z)
-                .to_linear()
-                .to_f32_array();
             for points in [[a, c, b], [b, c, d]] {
                 let normal = (points[1] - points[0]).cross(points[2] - points[0]);
                 if normal.length_squared() < 1e-6 {
@@ -544,7 +571,7 @@ fn cliff_mesh(bounds: Vec4, side: u32, chunk: i32) -> Mesh {
             }
         }
     }
-    let black = [0.0, 0.0, 0.0, 1.0];
+    let black = [0.0; 4];
     for pair in lid.windows(2) {
         let [[a, c], [b, d]] = [pair[0], pair[1]];
         for points in [[a, c, b], [b, c, d]] {
