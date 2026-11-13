@@ -13,11 +13,10 @@ const sessionSection: DebugSection = {
 const REQUEST = 'dcl-debug-panel'
 type Request = { target: string; report: (message: string) => void }
 
-/** The open panel: `target` is the section it opened on, `opened` remounts it on each open. */
+/** The open panel: `target` is the section it opened on, `opened` increases on each open. */
 export type DebugPanelState = { target: string; opened: number } | null
 
-// Module-level store, like the popup stack: the sidebar toggles the panel and the host mounted
-// beside the world HUD renders it, so opening a menu page (which unmounts the sidebar) keeps it.
+// Module-level store, like the popup stack: the open state outlives every component that reads it.
 let panel: DebugPanelState = null
 let opened = 0
 const listeners = new Set<() => void>()
@@ -80,7 +79,7 @@ export function useDebugPanel(session: EngineSession) {
     window.addEventListener(REQUEST, onRequest)
     return () => { window.removeEventListener(REQUEST, onRequest); closeDebugPanel() }
   }, [run])
-  // The panel does not hold input like a popup, so Cancel reaches it as a layer of its own.
+  // A cancel layer that closes the panel, registered while it is open.
   const open = state != null
   useEffect(() => open ? registerCancelLayer(closeDebugPanel) : undefined, [open])
   return { state, run }

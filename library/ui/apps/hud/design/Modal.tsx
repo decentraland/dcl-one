@@ -13,7 +13,7 @@ interface ModalProps {
   width?: number
   ariaLabel?: string
   role?: string
-  /** `false` for a card that sits beside the world and leaves the rest of the HUD usable. */
+  /** `false` sets `aria-modal="false"`. */
   modal?: boolean
   className?: string
 }

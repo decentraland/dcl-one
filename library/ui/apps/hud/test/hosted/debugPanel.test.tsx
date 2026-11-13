@@ -198,7 +198,7 @@ it('stays open while the player uses the world and the HUD, and closes on Cancel
   fireEvent.click(screen.getByRole('button', { name: 'Sidebar settings' }))
   expect(screen.getByRole('button', { name: 'Debug panel' })).toBeInTheDocument()
   expect(screen.getByRole('dialog', { name: 'Debug panel' })).toBe(dialog)
-  // the settings panel opened last, so Cancel closes it first
+  // the first Cancel closes the settings panel
   act(() => { expect(dispatchCancelLayer()).toBe(true) })
   expect(screen.queryByRole('button', { name: 'Debug panel' })).toBeNull()
   expect(screen.getByRole('dialog', { name: 'Debug panel' })).toBe(dialog)

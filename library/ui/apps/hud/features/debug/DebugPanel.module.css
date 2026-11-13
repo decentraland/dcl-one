@@ -1,6 +1,6 @@
 .panel {
   position: fixed;
-  /* Over the world HUD and menu pages, under popups. */
+  /* One layer above --z-modal. */
   z-index: calc(var(--z-modal) + 1);
   top: 12px;
   right: 12px;

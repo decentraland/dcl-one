@@ -304,8 +304,7 @@ function DebugPanel({ run, initial }: { run: RunCommand; initial: string }) {
   )
 }
 
-/** The open panel, beside the world rather than on the popup stack: it holds no input, so the
- *  player keeps moving, clicking the world and using the HUD while its readings update. */
+/** Renders the open panel outside the popup stack: no backdrop, no focus trap. */
 export function DebugPanelHost({ session }: { session: EngineSession }) {
   const { state, run } = useDebugPanel(session)
   return state && <DebugPanel key={state.opened} run={run} initial={state.target} />

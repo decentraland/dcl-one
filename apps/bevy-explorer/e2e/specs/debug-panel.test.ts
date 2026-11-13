@@ -79,7 +79,7 @@ scenario('the debug panel shows live plugin data and can play an avatar emote', 
     await explorer.hud.click(button('Use configured FPS'))
     await explorer.hud.wait(button('Limit to 30 FPS'))
     assert.equal((await explorer.json<{ overrideFps: number | null }>('/performance_state')).overrideFps, null)
-    // the panel holds no input: the player walks, clicks the world and uses the HUD beside it
+    // walk, click the world and use Sidebar settings with the panel open
     const start = await explorer.position()
     await explorer.key('KeyW', 'down')
     try {

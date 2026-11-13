@@ -452,7 +452,7 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
             <PhotoModeOverlay photoMode={session.photoMode} onOpenGallery={session.gallery.toggle} />
           )}
           {chrome && <Sidebar session={session} onViewProfile={viewMyProfile} />}
-          {/* Outside `chrome`: the panel stays open over menu pages, photo mode and the editor. */}
+          {/* Not gated by `chrome`: mounted while a menu page, photo mode or the editor is open. */}
           <DebugPanelHost session={session} />
           {chrome && <VoiceChatPanel />}
           {chrome && <SceneVoiceChatBanner />}
