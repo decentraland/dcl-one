@@ -1,5 +1,10 @@
 //! Registry DTOs over the same local entity lookup and profile processing as
 //! Catalyst Lambdas. There is no Registry upstream or separate profile cache.
+//!
+//! Both answers keep the Registry's key order: `{timestamp, avatars}` with a
+//! numeric `timestamp` for `/profiles` (`captures/abr/AB-2-one-known.json`),
+//! `{pointer, hasClaimedName, name, nameColor, thumbnailUrl}` for
+//! `/profiles/metadata` (`captures/abr/AB-1-one-known.json`).
 
 use axum::body::Bytes;
 use axum::extract::rejection::BytesRejection;
@@ -8,11 +13,20 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use axum::{Json, Router};
+use serde_json::value::RawValue;
 use serde_json::{Value, json};
 
 use super::{
-    MarketplaceState, PROFILE_IDS_MAX, SharedState, active_entities, process_profiles_positional,
+    MarketplaceState, PROFILE_IDS_MAX, ProfileMetadata, SharedState, active_entities,
+    process_profiles_positional,
 };
+
+/// One `/profiles` element in the Registry's key order.
+#[derive(serde::Serialize)]
+struct FullProfile<'a> {
+    timestamp: Value,
+    avatars: &'a Value,
+}
 
 const INVALID_IDS: &str = "The ids property must be an array of non-empty strings";
 /// Largest request body: 1000 ids of a few dozen bytes each fit well within it.
@@ -181,14 +195,15 @@ fn sort_by_request(entities: &mut [Value], pointers: &[String]) {
     });
 }
 
-/// The processed profiles in `entities` order. A malformed entity (no id,
-/// pointer, avatar or timestamp) is left out with a warning; only a failed
-/// ownership pass fails the batch.
+/// The processed profiles in `entities` order, each serialized in the
+/// Registry's key order. A malformed entity (no id, pointer, avatar or
+/// timestamp) is left out with a warning; only a failed ownership pass fails
+/// the batch.
 async fn project_profiles(
     state: &MarketplaceState,
     entities: &[Value],
     compact: bool,
-) -> Result<Vec<Value>, ()> {
+) -> Result<Vec<Box<RawValue>>, ()> {
     let processed = process_profiles_positional(state, entities)
         .await
         .map_err(|error| tracing::warn!(%error, "Registry ownership reader failed"))?;
@@ -215,7 +230,7 @@ fn project(
     entity: &Value,
     mut profile: Value,
     compact: bool,
-) -> Option<Value> {
+) -> Option<Box<RawValue>> {
     let id = entity.get("id").and_then(Value::as_str)?;
     let images = state
         .settings
@@ -238,7 +253,7 @@ fn project(
             avatar.insert("snapshots".into(), snapshots.clone());
         }
     }
-    if compact {
+    let projected = if compact {
         let pointer = entity
             .get("pointers")
             .and_then(Value::as_array)
@@ -249,27 +264,28 @@ fn project(
             .and_then(Value::as_array)
             .and_then(|avatars| avatars.first())
             .and_then(Value::as_object)?;
-        let mut result = json!({
-            "pointer": pointer,
-            "thumbnailUrl": snapshots["face256"],
-        });
-        for field in ["hasClaimedName", "name", "nameColor"] {
-            if let Some(value) = avatar.get(field) {
-                result[field] = value.clone();
-            }
-        }
-        Some(result)
+        let field = |key: &str| avatar.get(key).cloned();
+        serde_json::value::to_raw_value(&ProfileMetadata {
+            pointer: pointer.to_string(),
+            has_claimed_name: field("hasClaimedName"),
+            name: field("name"),
+            name_color: field("nameColor"),
+            thumbnail_url: snapshots["face256"].as_str()?.to_string(),
+        })
     } else {
-        // Registry's PostgreSQL bigint is serialized as a string in
-        // the pinned integration expectations and September captures,
-        // despite the OpenAPI timestamp schema declaring a number.
+        // A number, as the Registry answers from its cache and its Catalyst
+        // fallback (`captures/abr/AB-2-one-known.json`).
         let timestamp = match entity.get("timestamp") {
-            Some(Value::String(value)) => value.clone(),
-            Some(Value::Number(value)) => value.to_string(),
+            Some(Value::Number(value)) => Value::Number(value.clone()),
+            Some(Value::String(value)) => Value::from(value.parse::<u64>().ok()?),
             _ => return None,
         };
-        Some(json!({"timestamp": timestamp, "avatars": profile["avatars"]}))
-    }
+        serde_json::value::to_raw_value(&FullProfile {
+            timestamp,
+            avatars: &profile["avatars"],
+        })
+    };
+    projected.ok()
 }
 
 #[cfg(test)]
@@ -280,6 +296,12 @@ mod tests {
     use tower::ServiceExt;
 
     use crate::market::tests::support::{state_with_empty_readers, state_without_db};
+
+    fn values(raw: Vec<Box<RawValue>>) -> Vec<Value> {
+        raw.iter()
+            .map(|raw| serde_json::from_str(raw.get()).unwrap())
+            .collect()
+    }
 
     async fn call(path: &str, body: &str) -> (StatusCode, Value) {
         let response = router(state_without_db())
@@ -379,11 +401,13 @@ mod tests {
         let state = state_with_empty_readers(None).await;
         let mut broken = entity();
         broken.as_object_mut().unwrap().remove("timestamp");
-        let full = project_profiles(&state, &[broken, entity()], false)
-            .await
-            .unwrap_or_else(|_| panic!("profile processing failed"));
+        let full = values(
+            project_profiles(&state, &[broken, entity()], false)
+                .await
+                .unwrap_or_else(|_| panic!("profile processing failed")),
+        );
         assert_eq!(full.len(), 1);
-        assert_eq!(full[0]["timestamp"], "1700000000000");
+        assert_eq!(full[0]["timestamp"], 1700000000000_u64);
     }
 
     /// The Registry's CORS (`captures/abr/AB-12-preflight.json`): the
@@ -518,14 +542,22 @@ mod tests {
             "face128": "bafkold", "face": "bafkold2",
         });
         let entities = [entity];
-        let full = project_profiles(&state, &entities, false)
+        let full_raw = project_profiles(&state, &entities, false)
             .await
             .unwrap_or_else(|_| panic!("profile processing failed"));
-        let compact = project_profiles(&state, &entities, true)
+        let compact_raw = project_profiles(&state, &entities, true)
             .await
             .unwrap_or_else(|_| panic!("profile processing failed"));
+        // The Registry's key order (AB-2 and AB-1 captures).
+        assert!(
+            full_raw[0]
+                .get()
+                .starts_with(r#"{"timestamp":1700000000000,"avatars":["#)
+        );
+        assert!(compact_raw[0].get().starts_with(r#"{"pointer":"0xabc","hasClaimedName":false,"name":"Alice","nameColor":null,"thumbnailUrl":"#));
+        let (full, compact) = (values(full_raw), values(compact_raw));
         assert_eq!(full[0].as_object().unwrap().len(), 2);
-        assert_eq!(full[0]["timestamp"], "1700000000000");
+        assert_eq!(full[0]["timestamp"], 1700000000000_u64);
         let avatar = &full[0]["avatars"][0];
         assert_eq!(avatar["hasClaimedName"], false);
         assert_eq!(
@@ -561,6 +593,7 @@ mod tests {
             false,
         )
         .unwrap();
+        let projected: Value = serde_json::from_str(projected.get()).unwrap();
         assert_eq!(projected["avatars"], avatars);
     }
 
@@ -572,9 +605,11 @@ mod tests {
             .as_object_mut()
             .unwrap()
             .remove("nameColor");
-        let compact = project_profiles(&state, &[entity], true)
-            .await
-            .unwrap_or_else(|_| panic!("profile processing failed"));
+        let compact = values(
+            project_profiles(&state, &[entity], true)
+                .await
+                .unwrap_or_else(|_| panic!("profile processing failed")),
+        );
         assert!(compact[0].get("nameColor").is_none());
     }
 
@@ -665,7 +700,7 @@ mod tests {
             assert_eq!(status, StatusCode::OK, "{body}");
             assert_eq!(body.as_array().unwrap().len(), 1);
             if path == "/profiles" {
-                assert_eq!(body[0]["timestamp"], "1700000000000");
+                assert_eq!(body[0]["timestamp"], 1700000000000_u64);
                 assert_eq!(body[0]["avatars"][0]["name"], name);
                 assert_eq!(body[0]["avatars"][0]["userId"], pointer);
             } else {
