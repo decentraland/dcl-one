@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use alloy_core::primitives::Address;
 use dcl_component::proto_components::pulse;
 
@@ -102,7 +104,6 @@ fn sequence_progress_resets_backoff_and_recovery_stops_all_retries() {
     let recovered_at = progress_at + Duration::from_millis(1100);
     decoder.handle_at(player_state_full(7, 1450, 4.0), recovered_at);
     assert!(decoder.pending_resync.is_empty());
-    assert!(decoder.subjects[&SUBJECT].resync_retry.is_none());
     assert!(decoder
         .retry_resyncs(recovered_at + Duration::from_secs(60))
         .is_empty());
@@ -1105,7 +1106,7 @@ fn reset_clears_the_pending_resyncs() {
 }
 
 #[test]
-fn a_resync_that_was_not_sent_retries_without_new_packets() {
+fn newer_gaps_preserve_the_pending_request_and_its_initial_retry_deadline() {
     let now = Instant::now();
     let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
     decoder.handle_at(server_msg(joined(5, (1.0, 2.0, 3.0), 0)), now);
@@ -1113,15 +1114,73 @@ fn a_resync_that_was_not_sent_retries_without_new_packets() {
     let events = decoder.handle_at(delta(SUBJECT, 7, 8, 1500, 5.0), now);
     assert!(is_one_resync(&events, SUBJECT, 5), "{events:?}");
 
-    // Drop the initial event, as a full outbound queue would, and keep the request gated.
+    // A later gap extends the recovery goal without another immediate request.
     assert!(decoder
-        .handle_at(delta(SUBJECT, 8, 9, 1600, 5.0), now)
+        .handle_at(
+            delta(SUBJECT, 8, 9, 1600, 5.0),
+            now + Duration::from_millis(900),
+        )
         .is_empty());
     assert!(decoder
         .retry_resyncs(now + Duration::from_millis(999))
         .is_empty());
     let events = decoder.retry_resyncs(now + Duration::from_secs(1));
     assert!(is_one_resync(&events, SUBJECT, 5), "{events:?}");
+}
+
+#[test]
+fn an_older_baseline_reply_extends_a_pending_goal_without_duplicating_or_delaying_the_request() {
+    let now = Instant::now();
+    let mut decoder = decoder_with_retry_gap(now);
+    let events = decoder.handle_at(
+        delta(SUBJECT, 4, 9, 1800, 6.0),
+        now + Duration::from_millis(900),
+    );
+    assert!(events.is_empty(), "{events:?}");
+    assert!(decoder
+        .retry_resyncs(now + Duration::from_millis(999))
+        .is_empty());
+    assert!(is_one_resync(
+        &decoder.retry_resyncs(now + Duration::from_secs(1)),
+        SUBJECT,
+        5
+    ));
+
+    // The held 7 → 8 delta still replays; the incompatible 4 → 9 fields do not.
+    let events = decoder.handle_at(
+        player_state_full(7, 1400, 3.0),
+        now + Duration::from_millis(1100),
+    );
+    assert!(
+        events.iter().any(|event| matches!(event,
+            PulseEvent::Resync(request) if request.known_seq == 8
+        )),
+        "{events:?}"
+    );
+    approx(only_movement(events).position_x, 165.0);
+    let events = decoder.handle_at(
+        delta(SUBJECT, 8, 9, 1900, 7.0),
+        now + Duration::from_millis(1200),
+    );
+    approx(only_movement(events).position_x, 167.0);
+    assert!(decoder
+        .retry_resyncs(now + Duration::from_secs(60))
+        .is_empty());
+}
+
+#[test]
+fn acknowledging_a_request_after_its_subject_left_does_not_restore_retry_state() {
+    let now = Instant::now();
+    let mut decoder = decoder_with_retry_gap(now);
+    decoder.handle_at(left(SUBJECT), now);
+
+    decoder.resync_sent(SUBJECT);
+
+    assert!(decoder.pending_resync.is_empty());
+    assert!(!decoder.subjects.contains_key(&SUBJECT));
+    assert!(decoder
+        .retry_resyncs(now + Duration::from_secs(60))
+        .is_empty());
 }
 
 #[test]
@@ -1527,7 +1586,7 @@ fn buffered_delta_renews_resync_when_a_delta_does_not_close_the_gap() {
 }
 
 #[test]
-fn buffered_delta_survives_a_stale_full_state_and_an_unsent_resync() {
+fn buffered_delta_survives_a_stale_full_state_and_a_retry() {
     let now = Instant::now();
     let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
     decoder.handle_at(server_msg(joined(5, (1.0, 2.0, 3.0), 0)), now);
@@ -1812,7 +1871,7 @@ fn buffered_delta_keeps_one_request_during_repeated_stale_and_equal_snapshots() 
         ] {
             let events = decoder.handle(message);
             assert!(events.is_empty(), "{events:?}");
-            assert!(decoder.pending_resync.contains(&SUBJECT));
+            assert!(decoder.pending_resync.contains_key(&SUBJECT));
         }
     }
     approx(
@@ -1836,7 +1895,7 @@ fn buffered_delta_keeps_its_request_while_equal_sequence_emotes_are_reported() {
         ),
         "{events:?}"
     );
-    assert!(decoder.pending_resync.contains(&SUBJECT));
+    assert!(decoder.pending_resync.contains_key(&SUBJECT));
 
     for _ in 0..3 {
         let events = decoder.handle(emote_started(5, 1100, "wave", 1.0));
@@ -1847,7 +1906,7 @@ fn buffered_delta_keeps_its_request_while_equal_sequence_emotes_are_reported() {
             ),
             "{events:?}"
         );
-        assert!(decoder.pending_resync.contains(&SUBJECT));
+        assert!(decoder.pending_resync.contains_key(&SUBJECT));
     }
 
     let events = decoder.handle(emote_stopped(5, 1200, 1.0));
@@ -1858,7 +1917,7 @@ fn buffered_delta_keeps_its_request_while_equal_sequence_emotes_are_reported() {
         ),
         "{events:?}"
     );
-    assert!(decoder.pending_resync.contains(&SUBJECT));
+    assert!(decoder.pending_resync.contains_key(&SUBJECT));
     approx(
         only_movement(decoder.handle(player_state_full(7, 1600, 3.0))).position_x,
         165.0,

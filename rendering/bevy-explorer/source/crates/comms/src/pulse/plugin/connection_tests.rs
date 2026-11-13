@@ -1113,9 +1113,7 @@ fn partial_queue_admission_rotates_retries_while_an_admitted_subject_never_answe
     session.link = Some(link);
     session.state = Connection::Established;
     let start = Instant::now();
-    // Exercise wrap-around as well as real bounded-channel admission, without relying on
-    // HashSet iteration order. Each subject gets its own wallet and outstanding gap.
-    session.decoder.next_resync_order = u64::MAX - 2;
+    // Each subject gets its own wallet and outstanding gap.
     for id in 42..45 {
         let wallet = format!("0x{id:040x}");
         session.decoder.handle_at(
@@ -1184,7 +1182,7 @@ fn partial_queue_admission_rotates_retries_while_an_admitted_subject_never_answe
     }
     assert_eq!(&admitted[..3], &[42, 43, 44]);
     assert_eq!(session.decoder.pending_resync.len(), 1);
-    assert!(session.decoder.pending_resync.contains(&42));
+    assert!(session.decoder.pending_resync.contains_key(&42));
     assert_eq!(session.resyncs[0], (0, 7));
 }
 
@@ -1194,7 +1192,7 @@ fn a_full_send_queue_recovers_through_the_pump_without_inbound_or_game_time_prog
     let (link, driver) = transport::pulse_channels(1);
     harness.session_mut().link = Some(link);
     harness.driver = driver;
-    let start = Instant::now() - Duration::from_secs(2);
+    let start = Instant::now();
     {
         let mut session = harness.session_mut();
         let request = begin_resync_gap(&mut session, start);
@@ -1218,6 +1216,14 @@ fn a_full_send_queue_recovers_through_the_pump_without_inbound_or_game_time_prog
     }
     harness.driver.outbound.try_recv().unwrap();
 
+    // Make the request due without relying on an Instant before the clock's origin.
+    harness
+        .session_mut()
+        .decoder
+        .pending_resync
+        .get_mut(&42)
+        .unwrap()
+        .retry_at = start;
     // The real pump has no inbound packet and its game clock remains at zero.
     harness.pump_at(0.0);
     let frame = harness.driver.outbound.try_recv().unwrap();
