@@ -26,6 +26,8 @@ export function EventInfo({
   const current = useRef(event)
   current.current = event
   const reminds = useRef(0)
+  // what the services last held, which a toggle that fails goes back to
+  const held = useRef({ attending: event.attending, total_attendees: event.total_attendees })
   const live = event.live === true
   const attending = event.attending === true
 
@@ -33,11 +35,15 @@ export function EventInfo({
     const run = ++reminds.current
     const before = current.current
     const next = before.attending !== true
-    const count = (before.total_attendees ?? 0) + (next ? 1 : -1)
-    onEventChange({ ...before, attending: next, total_attendees: Math.max(0, count) })
-    setEventAttending(before.id, next).catch(() => {
-      if (run === reminds.current) onEventChange({ ...current.current, attending: before.attending, total_attendees: before.total_attendees })
-    })
+    const count = Math.max(0, (before.total_attendees ?? 0) + (next ? 1 : -1))
+    onEventChange({ ...before, attending: next, total_attendees: count })
+    setEventAttending(before.id, next)
+      .then(() => {
+        held.current = { attending: next, total_attendees: count }
+      })
+      .catch(() => {
+        if (run === reminds.current) onEventChange({ ...current.current, ...held.current })
+      })
   }
 
   return (

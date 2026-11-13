@@ -3847,6 +3847,10 @@
           "kind": "regular"
         },
         {
+          "name": "mapEventInfo.test.tsx",
+          "kind": "regular"
+        },
+        {
           "name": "menu.clicks.test.tsx",
           "kind": "regular"
         },
@@ -5147,7 +5151,7 @@
     },
     {
       "path": "library/explorer-core/features/map/navmap.ts",
-      "sha256": "77f34d03e072692d8800374ab442f78cf739adb84627d490a2a2a061563ba3d7"
+      "sha256": "2c5991162ae4f778dd713c9c5915504642cd45b68da8394345d33d18125ecfae"
     },
     {
       "path": "library/explorer-core/features/map/parcelsCenter.ts",
@@ -5403,7 +5407,7 @@
     },
     {
       "path": "library/explorer-core/test/navmap.test.ts",
-      "sha256": "14fb815c7f5f8283f67aae785caab1eb6d573e9c5fd02b0751d20c2c33ee14f7"
+      "sha256": "c3959c9bcd21b2ffb3bafe4e508dad7d7c802dcb027081c8acf7578364c6fec2"
     },
     {
       "path": "library/explorer-core/test/outfitRandomizer.test.ts",
@@ -7327,7 +7331,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/map/OceanLayer.tsx",
-      "sha256": "80aa6394863454844aa9473e88e1b81427f4052948c5089c5a9934028dd95f9c"
+      "sha256": "8f2a8eaee11e33e31243d3cd15adbbbc6afc4c744b596d277867f981bd31279a"
     },
     {
       "path": "library/ui/apps/hud/features/map/PinsLayer.tsx",
@@ -7351,7 +7355,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/map/panel/EventInfo.tsx",
-      "sha256": "064d3407645091325961d702e3abb722070009c724b14dbb8a33ef27043b50d7"
+      "sha256": "1509ea0db3c2602978876968d42b53b1983cc292704a2858560c10f2560abc0a"
     },
     {
       "path": "library/ui/apps/hud/features/map/panel/MapPanel.module.css",
@@ -7359,7 +7363,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/map/panel/PlaceInfo.tsx",
-      "sha256": "48b768d31b1f88e1745d1ff36ff079855e16710b608de7e67fbf7d7d0e3accb9"
+      "sha256": "22f5d2ac498aadc164afd6f24102f95d6446408c1597bc1555e7403eb082cb64"
     },
     {
       "path": "library/ui/apps/hud/features/map/panel/RightPanel.tsx",
@@ -8124,6 +8128,10 @@
     {
       "path": "library/ui/apps/hud/test/loadingScreen.test.tsx",
       "sha256": "8cb6c176babd039480e2526c7b5265425a40af05b9759799b383569365e27f3e"
+    },
+    {
+      "path": "library/ui/apps/hud/test/mapEventInfo.test.tsx",
+      "sha256": "f50932eee47ab2b5372605561e031faeeb74e9efa5dc825ab244baa07543857e"
     },
     {
       "path": "library/ui/apps/hud/test/menu.clicks.test.tsx",
@@ -30845,6 +30853,21 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/apps/hud/test/mapEventInfo.test.tsx",
+      "to": "library/ui/apps/hud/features/map/panel/EventInfo.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/mapEventInfo.test.tsx",
+      "to": "library/ui/apps/hud/features/map/panel/EventInfo.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/mapEventInfo.test.tsx",
+      "to": "library/ui/apps/hud/features/map/panel/EventInfo.tsx",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/apps/hud/test/menu.clicks.test.tsx",
       "to": "library/ui/apps/hud/features/menu/MainMenuShell.tsx",
       "kind": "native:runtime"
@@ -34362,6 +34385,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/test/loadingScreen.test.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/test/mapEventInfo.test.tsx",
       "kind": "type"
     },
     {

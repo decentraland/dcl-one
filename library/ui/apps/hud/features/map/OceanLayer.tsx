@@ -24,7 +24,13 @@ function compile(gl: WebGLRenderingContext, type: number, source: string): WebGL
   return shader
 }
 
-function texture(gl: WebGLRenderingContext, unit: number, src: string, mipmaps: boolean): { tex: WebGLTexture | null; image: HTMLImageElement } {
+function texture(
+  gl: WebGLRenderingContext,
+  unit: number,
+  src: string,
+  mipmaps: boolean,
+  onReady: () => void
+): { tex: WebGLTexture | null; image: HTMLImageElement } {
   const tex = gl.createTexture()
   gl.activeTexture(gl.TEXTURE0 + unit)
   gl.bindTexture(gl.TEXTURE_2D, tex)
@@ -43,6 +49,7 @@ function texture(gl: WebGLRenderingContext, unit: number, src: string, mipmaps: 
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, mipmaps ? gl.LINEAR_MIPMAP_LINEAR : gl.LINEAR)
     if (mipmaps) gl.generateMipmap(gl.TEXTURE_2D)
+    onReady()
   }
   image.src = src
   return { tex, image }
@@ -107,8 +114,18 @@ export function OceanLayer({ view }: { view: { current: MapView } }): React.JSX.
     gl.enableVertexAttribArray(position)
     gl.vertexAttribPointer(position, 2, gl.FLOAT, false, 0, 0)
 
+    // still water for those who ask for less motion: drawn again only when the camera moves or an image arrives
+    const still = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true
+    let drawn = ''
+    const redraw = (): void => {
+      drawn = ''
+    }
     // the height and the noise are read at full detail; the ground is mip-mapped
-    textures.push(texture(gl, 0, OCEAN_ART.height, false), texture(gl, 1, OCEAN_ART.ground, true), texture(gl, 2, OCEAN_ART.noise, false))
+    textures.push(
+      texture(gl, 0, OCEAN_ART.height, false, redraw),
+      texture(gl, 1, OCEAN_ART.ground, true, redraw),
+      texture(gl, 2, OCEAN_ART.noise, false, redraw)
+    )
     gl.uniform1i(gl.getUniformLocation(program, 'uHeight'), 0)
     gl.uniform1i(gl.getUniformLocation(program, 'uGround'), 1)
     gl.uniform1i(gl.getUniformLocation(program, 'uNoise'), 2)
@@ -117,9 +134,6 @@ export function OceanLayer({ view }: { view: { current: MapView } }): React.JSX.
     const uResolution = gl.getUniformLocation(program, 'uResolution')
     const uTime = gl.getUniformLocation(program, 'uTime')
 
-    // still water for those who ask for less motion: drawn again only when the camera moves
-    const still = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true
-    let drawn = ''
     const draw = (now: number): void => {
       frame = requestAnimationFrame(draw)
       const v = view.current

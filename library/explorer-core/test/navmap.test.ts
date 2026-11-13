@@ -454,9 +454,13 @@ describe('map history', () => {
     expect(nav.getSnapshot().place?.place).toBe(CLUB)
   })
 
-  it('leaves a place whose events arrive after an event was opened out of the history', async () => {
+  it('goes back to a place whose events arrive after an event was opened', async () => {
     let answerEvents!: (events: MapEvent[]) => void
-    const { nav } = setup({ fetchEventsAt: vi.fn(() => new Promise<MapEvent[]>((resolve) => (answerEvents = resolve))) })
+    const fetchEventsAt = vi
+      .fn()
+      .mockImplementationOnce(() => new Promise<MapEvent[]>((resolve) => (answerEvents = resolve)))
+      .mockImplementation(async () => [])
+    const { nav } = setup({ fetchEventsAt })
     const opened = nav.selectPlace(CLUB)
     await settle()
     await nav.selectEvent(event('e', 0, 0), PLAZA)
@@ -464,7 +468,46 @@ describe('map history', () => {
     expect(await opened).toBe(false)
     expect(nav.getSnapshot().section).toBe('event')
     await nav.back()
-    expect(nav.getSnapshot().input).toMatchObject({ text: '', interactable: true, back: false })
+    const s = nav.getSnapshot()
+    expect(s.section).toBe('place')
+    expect(s.place?.place).toBe(CLUB)
+    expect(s.input).toMatchObject({ text: 'Sugar Club', back: false })
+  })
+
+  it('goes back to the list from a place whose events are still being read', async () => {
+    let reads = 0
+    const { nav } = setup({ fetchEventsAt: vi.fn(() => (reads++ === 1 ? new Promise<MapEvent[]>(() => undefined) : Promise.resolve([]))) })
+    nav.typeText('club')
+    nav.submitSearch()
+    await settle()
+    nav.clickResult(CLUB)
+    await settle()
+    expect(nav.getSnapshot().input.back).toBe(true)
+    await nav.back()
+    await settle()
+    const s = nav.getSnapshot()
+    expect(s.section).toBe('search')
+    expect(s.results.shown).toBe(true)
+    expect(s.results.places).toHaveLength(3)
+  })
+
+  it('leaves a search that is still on its way behind when the bar is cleared', async () => {
+    let answer!: (result: { places: MapPlace[]; total: number }) => void
+    const { nav } = setup({ searchPlaces: vi.fn(() => new Promise<{ places: MapPlace[]; total: number }>((resolve) => (answer = resolve))) })
+    nav.typeText('club')
+    nav.submitSearch()
+    await settle()
+    nav.clearInput()
+    answer({ places: [CLUB], total: 1 })
+    await settle()
+    const s = nav.getSnapshot()
+    expect(s.input.text).toBe('')
+    expect(s.expanded).toBe(false)
+    expect(s.searchMarkers).toEqual([])
+    expect(s.results).toMatchObject({ loading: false, places: [] })
+    // nothing entered the history
+    await nav.back()
+    expect(nav.getSnapshot().input.text).toBe('')
   })
 
   it('leaves an event whose place arrives after a place was opened out of the panel', async () => {

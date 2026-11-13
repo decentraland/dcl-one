@@ -216,6 +216,7 @@ export class Navmap {
   }
 
   clearInput(): void {
+    this.supersedeSearch()
     this.category = null
     this.searchText = ''
     this.togglePanel(false)
@@ -352,9 +353,9 @@ export class Navmap {
       if (first != null) this.effects.moveCamera(first, CAMERA_MOVE_SECONDS)
     }
     const entry: Entry = { type: 'place', place, events: null }
-    const shown = await this.showPlace(entry, { fromSearch, origin, landOnOrigin })
-    if (shown) this.push(entry)
-    return shown
+    // the place is on screen before its events are read, so back must find it from then
+    this.push(entry)
+    return this.showPlace(entry, { fromSearch, origin, landOnOrigin })
   }
 
   /** A parcel picked on the map: its place, or an empty one. */

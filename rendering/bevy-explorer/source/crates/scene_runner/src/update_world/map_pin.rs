@@ -14,6 +14,7 @@ use dcl_component::{
 use dcl_types::interface::ComponentPosition;
 use ipfs::IpfsAssetServer;
 use system_bridge::{MapPinInfo, SystemApi};
+use url::Url;
 
 use crate::{RendererSceneContext, SceneEntity};
 
@@ -50,12 +51,7 @@ impl From<PbMapPin> for MapPin {
     fn from(value: PbMapPin) -> Self {
         let position = value.position.unwrap_or_default();
         let icon = match value.texture.and_then(|texture| texture.tex) {
-            // a plain http url would be mixed content in the page that draws it
-            Some(Tex::Texture(texture))
-                if !texture.src.is_empty() && !texture.src.starts_with("http://") =>
-            {
-                Some(texture.src)
-            }
+            Some(Tex::Texture(texture)) if !texture.src.is_empty() => icon_source(texture.src),
             _ => None,
         };
         Self {
@@ -68,6 +64,15 @@ impl From<PbMapPin> for MapPin {
             description: clip(value.description, MAX_DESCRIPTION_CHARS),
             icon,
         }
+    }
+}
+
+/// A url is kept only over https (plain http would be mixed content in the page that draws it),
+/// as the parser writes it, so the page can quote it. Anything else is a file of the scene.
+fn icon_source(src: String) -> Option<String> {
+    match Url::parse(&src) {
+        Ok(url) => (url.scheme() == "https").then(|| url.to_string()),
+        Err(_) => Some(src),
     }
 }
 
@@ -132,8 +137,9 @@ fn stream_map_pins(
             .iter()
             .filter_map(|(pin, entity)| {
                 let scene = scenes.get(entity.root).ok()?;
+                // a url was kept only over https; the rest are the scene's files
                 let icon = pin.icon.as_ref().and_then(|src| {
-                    if src.starts_with("https://") {
+                    if Url::parse(src).is_ok() {
                         Some(src.clone())
                     } else {
                         ipfas.ipfs().content_url(src, &scene.hash)
@@ -230,6 +236,18 @@ mod tests {
             Some("https://example.com/a.png")
         );
         assert_eq!(icon("http://example.com/a.png"), None);
+        assert_eq!(icon("HTTP://example.com/a.png"), None);
+        assert_eq!(icon("data:image/png;base64,AAAA"), None);
+        assert_eq!(icon("javascript:alert(1)"), None);
+        assert_eq!(
+            icon("HTTPS://example.com/a.png").as_deref(),
+            Some("https://example.com/a.png")
+        );
+        // a quote cannot close the url() the page writes the icon into
+        assert_eq!(
+            icon(r#"https://example.com/a.png"),url("https://example.com/b.png"#).as_deref(),
+            Some("https://example.com/a.png%22),url(%22https://example.com/b.png")
+        );
     }
 
     #[test]
