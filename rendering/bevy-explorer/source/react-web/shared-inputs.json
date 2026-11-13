@@ -4346,7 +4346,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/session.test.tsx",
-      "sha256": "c2e05163e50d77e02fd09019484fb2f81428db3b9cc58caf48698573f94b891e"
+      "sha256": "94013ce7b410d820a6c6f1adb1a8262a02780765d9e139f5b25af192fc31ee01"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/setup.ts",
@@ -4520,7 +4520,7 @@
     },
     {
       "path": "library/explorer-core/engine/mockBridge.ts",
-      "sha256": "831deadff798cd57c5e8be75c4ce0dd10578734ae9a841216c3a9ce361075dc5"
+      "sha256": "e3cf15c23b0ca63242f78f865f943155303491617da3a3682504c339fae73d58"
     },
     {
       "path": "library/explorer-core/engine/nameColor.ts",
@@ -4544,7 +4544,7 @@
     },
     {
       "path": "library/explorer-core/engine/protocol.ts",
-      "sha256": "a52105d440df43679f3951e26c09e74dd454de70faac3c72b09ed29187075f5c"
+      "sha256": "a076a7a9ba4d2ac7f86771bc80418a3ba7f23a0a50d2c1c46d5f46ffee0742ac"
     },
     {
       "path": "library/explorer-core/features/auth/authReturn.ts",
@@ -4768,7 +4768,7 @@
     },
     {
       "path": "library/explorer-core/lib/hudAutomation.ts",
-      "sha256": "8e7ad6fe5f9311b518845b0276afef5c550dd96dcb92f20a8b7c048cd140af39"
+      "sha256": "2e273b61372b2d59466164f988e7b9872eed3212bf4c71243e09d4ec347e9b0e"
     },
     {
       "path": "library/explorer-core/lib/hudScale.ts",
@@ -4900,7 +4900,7 @@
     },
     {
       "path": "library/explorer-core/test/hudAutomation.test.ts",
-      "sha256": "e7f92ea1cbf7a36ba68c99539dc50e73d09a3bcb2a47c9a5518baf1b554c4cb4"
+      "sha256": "b93bbc6f16817f308e3f5430c62c1fc9ad1cac5e2a43bb20a9bf6dbbc0843770"
     },
     {
       "path": "library/explorer-core/test/hudScale.test.ts",
@@ -6808,7 +6808,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "b593fa0663fca3c9bdaf9289daec0e6220c7035721caae2b051cf672d90e9b5d"
+      "sha256": "9f6d511ad6e04ead06c4e2d2f02faec5889cc2f4466ce49453618d553a34eb48"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -6984,7 +6984,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/harness.tsx",
-      "sha256": "7ea755a494386cc16c95b2ec066dd0cd982edffe416b602a9864ab6f8137dcb3"
+      "sha256": "a621a8218e54b43d865a405a41a17bdb6fd500242c5ede4d1a66cef3a0a8ca59"
     },
     {
       "path": "library/ui/apps/hud/test/host.ts",
@@ -7144,7 +7144,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/hudLogin.test.tsx",
-      "sha256": "a6e12f8f2c67c1b51ce822c61d1e5efeee684642f5edd24be61d2b2af3edafac"
+      "sha256": "270f3ef66e7d5d21726f9799a6f46eaebdbcd5da1ed63db526e72148d4966635"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/inWorldConversion.test.tsx",

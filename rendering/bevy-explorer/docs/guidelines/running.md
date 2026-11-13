@@ -305,6 +305,12 @@ The HUD and input:
   `picking` or `world`) once the sign-in has landed and the page is done, or fails with its error.
   The command is `library/explorer-core/lib/hudAutomation.ts` (`LOGIN_COMMANDS`, `provideHudLogin`); the
   session provides the sign-in in `library/ui/apps/hud/features/session/useEngineSession.ts`.
+- `/hud_logout` (web, under a test runner as `/hud_login` is): sign out through the HUD's own
+  flow, the engine included, back to the HUD's start page, where `/hud_login` takes a sign-in
+  again; a `/hud_login` still waiting for its answer fails with `signed out`. The engine's
+  `/logout` never reaches the HUD, which stays signed in and refuses a new `/hud_login`. A sign-in
+  the engine still holds keeps the next one waiting (`a sign-in is still finishing`) until the
+  engine answers it; one it never answers needs a page reload.
 - `/press_key <code> [--state down|up]`, with the key named as `KeyboardEvent.code` names it, and
   `/click_at <x> <y> [--button left|right|middle]`.
 - `/hover_entity <entity> [--bounds] [--frames N] [--timeout-frames N]`, `/hover_entity --clear`

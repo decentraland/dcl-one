@@ -1,4 +1,4 @@
-export { type Console, ConsoleError, FakeConsole, normalizeLine, commandOf, redact, redactLine, secretOf } from './console.ts'
+export { type Console, ConsoleError, FakeConsole, normalizeLine, commandOf, redact, redactLine, secretsOf } from './console.ts'
 export { Explorer, Hud, parseLiveScenes, parsePortables, parseSmartWearables } from './explorer.ts'
 export type { WorldState, Control, NotFound, HudRead, HudInput, HudEntry, HudState, UserData, AvatarReport, ChatHistory, ChatMessage, CommunityState, VoiceState, ScreenPosition, Position, CommandRecord, HudLoginReply, LiveScene, SmartWearables, SmartWearableEntry, SmartWearableState, SmartWearableAction, Portable, PortableKind, PortableState, PointerReport, RaycastStats } from './explorer.ts'
 export { type Selector, type SelectorObject, selectorArg } from './selectors.ts'

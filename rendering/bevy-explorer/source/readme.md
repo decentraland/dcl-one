@@ -286,7 +286,8 @@ Replies are JSON where the command says so; a failed command rejects (web) or an
   <identity> [--name <name> --look <n>] [--guest] [--default-on-error] [--realm <realm>]
   [--position <x,y>]`, with an AuthIdentity encoded as `/login_identity` takes it, lands in the
   lobby or on the way to the destination; `/login_identity` alone signs the engine in under a HUD
-  that keeps its start page.
+  that keeps its start page. `/hud_logout` signs the HUD out, the engine with it, so `/hud_login`
+  can sign in again; the engine's `/logout` leaves the HUD signed in.
 - Input: `/press_key <code> [--state down|up]` (`KeyboardEvent.code` names) and
   `/click_at <x> <y> [--button left|right|middle]`. Natively these and the HUD commands go through
   CEF and the window's own input, always real. On the web the page needs a DevTools client to make

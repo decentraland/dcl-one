@@ -80,7 +80,7 @@ export class FakeDriver implements LoginDriver {
   send(msg: PageToScene): void {
     this.sent.push(msg)
     const welcome = this.welcome
-    if (msg.kind === 'getWelcome' && welcome != null) queueMicrotask(() => this.emit({ kind: 'welcome', ...welcome }))
+    if (msg.kind === 'getWelcome' && welcome != null) queueMicrotask(() => this.emit({ kind: 'welcome', ...welcome, ask: msg.ask }))
   }
   on(fn: (msg: SceneToPage) => void): () => void {
     this.listeners.add(fn)

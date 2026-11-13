@@ -1,7 +1,7 @@
 // The typed API specs use. Every method is one console command (or a command and the wait that
 // makes its effect observable), with the reply parsed as rendering/bevy-explorer/docs/guidelines/
 // running.md ("Test commands") describes it. Specs never see which transport carries the line.
-import { type Console, ConsoleError, redact, redactLine, secretOf } from './console.ts'
+import { type Console, ConsoleError, redact, redactLine, replaceSecrets, secretsOf } from './console.ts'
 import { type AuthIdentity, encodeIdentity } from './identity.ts'
 import { type Selector, describeSelector, selectorArg, toSelectorObject } from './selectors.ts'
 import { sleep, until } from './wait.ts'
@@ -455,7 +455,7 @@ export class Explorer {
   /** The own profile's version as last read, and when it was last seen to change. */
   #ownVersion: number | undefined
   #ownVersionChangedAt = 0
-  /** The credentials the lines run so far carried (`secretOf`), for text that may quote them. */
+  /** The credentials the lines run so far carried (`secretsOf`), for text that may quote them. */
   readonly #secrets = new Set<string>()
 
   constructor(console: Console, options: ExplorerOptions = {}) {
@@ -475,8 +475,7 @@ export class Explorer {
   async run(line: string): Promise<string> {
     const startedAt = Date.now()
     const record: CommandRecord = { line: redactLine(line.trim()), startedAt, ms: 0 }
-    const secret = secretOf(line)
-    if (secret !== undefined) this.#secrets.add(secret)
+    for (const secret of secretsOf(line)) this.#secrets.add(secret)
     try {
       const reply = await this.console.run(line)
       record.ms = Date.now() - startedAt
@@ -497,9 +496,7 @@ export class Explorer {
   /** `text` with every credential a line of this client carried replaced: the page's console,
    *  which the HUD may have written an error into. */
   redactSecrets(text: string): string {
-    let out = text
-    for (const secret of this.#secrets) out = out.split(secret).join('<redacted>')
-    return out
+    return replaceSecrets(this.#secrets, text)
   }
 
   /** Run a line whose reply is JSON. A reply that does not parse is an error naming the command,
@@ -641,6 +638,8 @@ export class Explorer {
     await until(() => this.worldState(), (state) => state.signedIn, { timeoutMs: 30_000, intervalMs: 250, what: 'the guest to be signed in' })
   }
 
+  /** The engine's sign-out (`/logout`). On the web the HUD never hears of it and stays signed in,
+   *  refusing a new `/hud_login`; `/hud_logout` signs both out. */
   async logout(): Promise<void> {
     await this.run('/logout')
   }

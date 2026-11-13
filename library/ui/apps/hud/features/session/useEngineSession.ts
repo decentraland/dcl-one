@@ -21,7 +21,7 @@ import type { FatalError } from '@explorer-core/features/error/fatalError'
 import { createLoadingProgress } from '@explorer-core/features/session/loadingProgress'
 import { useConnectivity } from './useConnectivity'
 import { DEFAULT_REALM } from '@hud-host'
-import { provideHudLogin, type HudLoginReply, type HudLoginRequest } from '@explorer-core/lib/hudAutomation'
+import { provideHudLogin, provideHudLogout, type HudLoginReply, type HudLoginRequest } from '@explorer-core/lib/hudAutomation'
 import { checkRealm, realmCheckMessage } from '@explorer-core/lib/realmCheck'
 import { entryRealm } from '@hud-host'
 import { color3ToHex, hexToColor3 } from '@explorer-core/lib/color'
@@ -1151,12 +1151,31 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   // The login captured on Jump in, run once the engine is launched (for the lobby, or straight at a
   // ?position/?realm destination).
   const pendingLogin = useRef<((driver: LoginDriver) => Promise<unknown>) | null>(null)
+  // Counts sign-outs, so a sign-in the engine answers after one (runPendingLogin) is known stale.
+  const signOuts = useRef(0)
+  // A welcome page ask, tagged with the sign-out count it goes out under, which its answer echoes:
+  // an answer to one from before a sign-out is the signed-out account's.
+  const askWelcome = useCallback((driver: LoginDriver): void => {
+    driver.send({ kind: 'getWelcome', ask: signOuts.current })
+  }, [])
   // The sign-in `/hud_login` runs (lib/hudAutomation.ts, a test runner's), answered once it has
-  // landed (`landed`: the engine took it) and the welcome page is done, or failed; `restore` puts
-  // the page's stored sign-in back as it was when the sign-in never took. The destination it then
-  // goes to from the lobby, as a link's would.
-  const hudLoginPending = useRef<{ resolve: (reply: HudLoginReply) => void; reject: (error: Error) => void; login: StoredLogin; landed: boolean; welcomeAwaited: boolean; restore: () => void } | null>(null)
+  // landed (`landed`: the engine took it) and the welcome page is done, or failed. The destination
+  // it then goes to from the lobby, as a link's would.
+  const hudLoginPending = useRef<{ resolve: (reply: HudLoginReply) => void; reject: (error: Error) => void; login: StoredLogin; landed: boolean; welcomeAwaited: boolean } | null>(null)
   const hudDestination = useRef<Destination>(null)
+  // While the page's stored sign-in is a /hud_login's: the one it replaced, put back
+  // (`restoreHudSignIn`) if the engine refuses the sign-in or never runs it, until the engine has
+  // taken it (`landed`). It outlives the command's reply, which an error the engine may survive
+  // gives at once, and the startup read of the stored sign-in, should it come late, lands in it
+  // rather than over the runner's.
+  const hudStored = useRef<{ replaced: StoredLogin | null; landed: boolean } | null>(null)
+  const restoreHudSignIn = useCallback((): void => {
+    const owned = hudStored.current
+    if (owned == null || owned.landed) return
+    hudStored.current = null
+    setStored(owned.replaced)
+    storedRef.current = owned.replaced
+  }, [])
   // ticks as the pending sign-in moves on (landed, the welcome page in), so the effect that
   // answers it runs again where no state of its own changes (a link's page sets none)
   const [hudLoginTick, setHudLoginTick] = useState(0)
@@ -2190,6 +2209,10 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           setPendingLook((pending) => (pending === msg.look ? null : pending))
           break
         case 'welcome': {
+          // an answer to an ask from before a sign-out is the signed-out account's: no page of a
+          // sign-in since, even one already submitted, and none of its pick. One from a bridge
+          // that echoes no tag counts while a sign-in is submitted.
+          if (msg.ask !== undefined ? msg.ask !== signOuts.current : !submittedRef.current) break
           // ACCEPT AND PLAY's pick accepted the terms already, and a /hud_login's sign-in stands
           // for them too (lib/hudAutomation.ts): the page is answered, with the pick's name. A
           // first login deploys its profile under the pick's name, so without one a /hud_login
@@ -2198,7 +2221,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           if (hudLogin != null) {
             hudLogin.welcomeAwaited = false
             setHudLoginTick((n) => n + 1)
-            if (msg.newProfile && guestPick.current == null) settleHudLogin(new Error('the account has no profile yet: a first login needs --name and --look (/logout, then sign in again with them)'))
+            if (msg.newProfile && guestPick.current == null) settleHudLogin(new Error('the account has no profile yet: a first login needs --name and --look (/hud_logout, then sign in again with them)'))
           }
           const chosen: { name?: string } | null = guestPick.current ?? (hudLoginPending.current != null ? {} : null)
           guestPick.current = null
@@ -2355,18 +2378,29 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       // localStorage entry would strand the user on a button that throws. The driver folds both
       // signals together (engine saved login + SSO) into getPreviousLogin().
       const login = getLogin().catch(() => null)
-      void login.then(setStored)
+      const signOut = signOuts.current
+      void login.then((read) => {
+        // a sign-out since cleared what the read would bring back
+        if (signOuts.current !== signOut) return
+        // a /hud_login that came first holds the stored sign-in: the read is what goes back if
+        // the engine refuses that sign-in, never a replacement for it
+        const owned = hudStored.current
+        if (owned == null) setStored(read)
+        else owned.replaced = read
+      })
       // an auto-login boot (?guest=1) goes straight in: nothing to pick, the splash stays up
       const screen = (stored: boolean): void => {
         if (boot.current.autoLogin == null) setStatus(stored ? 'reuse-login-or-new' : 'sign-in-or-guest')
       }
+      // nor does the engine's answer bring a signed-out account back to the start page
       driver
         .getPreviousLogin()
         .then((r) => {
+          if (signOuts.current !== signOut) return
           setPrevUserId(r.userId)
           screen(Boolean(r.userId))
         })
-        .catch(() => login.then((l) => screen(l != null)))
+        .catch(() => login.then((l) => signOuts.current === signOut && screen(l != null)))
     }
 
     return () => {
@@ -3044,26 +3078,42 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     pendingLogin.current = null
     const type = pendingLoginType.current
     pendingLoginType.current = null
+    const signOut = signOuts.current
+    // A sign-out came while the engine held the sign-in: the HUD is back on its start page, so the
+    // answer only ends the wait (`busy`), and a sign-in that landed is signed out again.
+    const stale = (): boolean => {
+      if (signOuts.current === signOut) return false
+      setBusy(false)
+      return true
+    }
     Promise.resolve(login?.(driver))
       .then(() => {
+        if (stale()) {
+          if (login != null) driver.logout().catch((e: Error) => console.error('[session] logout failed', e))
+          return
+        }
         if (type != null) {
           lastLoginType.current = type === 'stored' ? storedLoginType(storedRef.current) : type
           screenViewed('AUTH_SUCCESS', { login_type: lastLoginType.current })
         }
         welcomeLink.current = urlDestination.current
         urlDestination.current = null
-        // only a sign-in that ran lands it: a run with nothing pending answers no /hud_login
+        // only a sign-in that ran lands it: a run with nothing pending answers no /hud_login, and
+        // one whose command was already answered keeps the stored sign-in it set
+        if (login != null && hudStored.current != null) hudStored.current.landed = true
         if (login != null && hudLoginPending.current != null) {
           hudLoginPending.current.landed = true
           hudLoginPending.current.welcomeAwaited = welcomeShown()
           setHudLoginTick((n) => n + 1)
         }
         setBusy(false)
-        if (welcomeShown()) driver.send({ kind: 'getWelcome' })
+        if (welcomeShown()) askWelcome(driver)
       })
       .catch((e: unknown) => {
         console.error('[login] post-launch login failed:', e)
-        hudLoginPending.current?.restore()
+        // an unattended run's host still hears of the failure, which ends the run
+        if (boot.current.autoLogin !== 'unattended' && stale()) return
+        restoreHudSignIn()
         // The engine driver rejects with a RAW STRING (wasm-bindgen JsValue), not an Error —
         // e.message would be undefined and the login screen would show no error at all.
         const msg = e instanceof Error ? e.message : String(e)
@@ -3225,12 +3275,15 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     // Boot the engine straight at the chosen destination, then run the deferred login. `engine_run`
     // is heavy and runs on the shared main thread, so defer it a paint (rAF, setTimeout fallback) so
     // the loading overlay is on screen before the freeze — same trick as the login loader. Run once.
+    const signOut = signOuts.current
     let ran = false
     const run = (): void => {
       // Bail if the session unmounted during the deferred kick — cleanup nulls driverRef, so this
       // guards against launching on a disposed driver (the rAF/timeout aren't otherwise cancellable).
       if (ran || driverRef.current == null) return
       ran = true
+      // signed out before the deferred run: neither the launch nor the sign-in runs
+      if (signOuts.current !== signOut) return setBusy(false)
       if (driver.launch == null) {
         travelInPlace(driver, dest)
         runPendingLogin(driver)
@@ -3252,14 +3305,14 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       if (launched) runPendingLogin(driver)
       else {
         // a /hud_login's sign-in never ran: answered with that, its stored sign-in put back
-        hudLoginPending.current?.restore()
+        restoreHudSignIn()
         settleHudLogin(new Error('the engine failed to launch'))
       }
     }
     requestAnimationFrame(() => requestAnimationFrame(run))
     setTimeout(run, 60)
     return true
-  }, [launchEngine, runPendingLogin, travelFromLobby, travelInPlace, settleHudLogin])
+  }, [launchEngine, runPendingLogin, travelFromLobby, travelInPlace, settleHudLogin, restoreHudSignIn])
   // Boot-mode flags (?hud=0 / ?guest=1 / ?systemScene= — see lib/bootMode.ts), captured once
   // per session mount so tests can vary location.search between mounts.
   const boot = useRef(bootMode())
@@ -3302,7 +3355,9 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       return null
     })()
   )
-  const validatingRealm = useRef(false)
+  // The sign-out count the realm check in flight started under (null = none): a sign-in after a
+  // sign-out starts its own check rather than wait for one whose answer is dropped.
+  const validatingRealm = useRef<number | null>(null)
   useEffect(() => {
     if (!submitted || destinationPicked || urlDestination.current == null) return
     const dest = urlDestination.current
@@ -3321,28 +3376,41 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       return
     }
     if (dest != null && dest.kind === 'world') {
-      if (validatingRealm.current) return
-      validatingRealm.current = true
+      if (validatingRealm.current === signOuts.current) return
+      const signOut = signOuts.current
+      validatingRealm.current = signOut
       // Launching against an unreachable realm strands the engine in a cryptic login failure, so
       // block up front: 404 → not found, no/failed answer (incl. timeout) → unreachable.
       checkRealm(dest.realm)
         .then((result) => {
+          // signed out meanwhile: the next sign-in checks the realm again
+          if (signOuts.current !== signOut) return
           if (result === 'ok') pickDestination(dest)
           else {
             urlDestination.current = null
             setFatalError({ message: realmCheckMessage(dest.realm, result), source: 'realm' })
-            // a /hud_login's sign-in never ran: answered with that, its stored sign-in put back
-            hudLoginPending.current?.restore()
+            // a /hud_login's sign-in never ran: answered with that, its stored sign-in put back,
+            // and it never runs later from the picker the dismissed dialog leads to (a person's
+            // own link sign-in does), so the HUD goes back to its start page
+            const runners = hudStored.current != null && !hudStored.current.landed
+            restoreHudSignIn()
             settleHudLogin(new Error(realmCheckMessage(dest.realm, result)))
+            if (runners) {
+              guestPick.current = null
+              pendingLogin.current = null
+              pendingLoginType.current = null
+              setSubmitted(false)
+              submittedRef.current = false
+            }
           }
         })
         .finally(() => {
-          validatingRealm.current = false
+          if (validatingRealm.current === signOut) validatingRealm.current = null
         })
       return
     }
     pickDestination(dest)
-  }, [submitted, destinationPicked, pickDestination, settleHudLogin])
+  }, [submitted, destinationPicked, pickDestination, settleHudLogin, restoreHudSignIn])
   // Optimistically reflect a new equipped set so the button flips to "Unequip" immediately AND the
   // equipped set stays authoritative for the next equip — the engine deploy + wearables re-emit lags,
   // and a failed deploy never re-emits at all. `urns` is the full next set (see BackpackPage), so
@@ -3661,9 +3729,12 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   }, [])
 
   const logout = useCallback(() => {
+    signOuts.current += 1
     driverRef.current?.logout().catch((e: Error) => console.error('[session] logout failed', e))
     clearLogins() // drop the same-domain SSO identity for this origin
     setStored(null)
+    // the refs at once too: a /hud_login in the same task sees the sign-out
+    storedRef.current = null
     pendingLoginType.current = null
     lastLoginType.current = null
     welcomeRef.current = null
@@ -3674,6 +3745,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     closeAllPanels()
     setPlayerReady(false)
     setSubmitted(false) // back to the login screen
+    submittedRef.current = false
     setDestinationPicked(false) // re-show the picker on the next jump-in
     setLobby(false)
     setLobbyOpen(false)
@@ -3686,6 +3758,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     heldDest.current = undefined
     visitedTitle.current = ''
     pendingLogin.current = null
+    // nothing to put back: a /hud_login's sign-in the engine still holds goes with the rest
+    hudStored.current = null
     settleHudLogin(new Error('signed out'))
     // The next account starts clean: it fetches its own data and hasn't spawned yet.
     fetchedRef.current.clear()
@@ -3783,16 +3857,19 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       if (!launchedRef.current) setLobbyStageReady(false)
       setBusy(true)
       busyRef.current = true
+      const signOut = signOuts.current
       let ran = false
       const run = (): void => {
         if (ran || driverRef.current == null) return
         ran = true
+        // signed out before the deferred run: the sign-in never runs
+        if (signOuts.current !== signOut) return setBusy(false)
         if (driver.launch != null && !launchedRef.current) {
           const home = driver.homeScene?.()
           if (!launchEngine(driver, home?.realm ?? DEFAULT_REALM, home?.parcel ?? '0,0', { holdWorld: true })) {
             setWelcomePending(false) // no sign-in to answer it
             // a /hud_login's sign-in never ran: answered with that, its stored sign-in put back
-            hudLoginPending.current?.restore()
+            restoreHudSignIn()
             settleHudLogin(new Error('the engine failed to launch'))
             return
           }
@@ -3804,7 +3881,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       setTimeout(run, 60)
       return true
     },
-    [busy, engineReady, launchEngine, runPendingLogin, settleHudLogin]
+    [busy, engineReady, launchEngine, runPendingLogin, settleHudLogin, restoreHudSignIn]
   )
 
   // A test runner's sign-in (/hud_login, lib/hudAutomation.ts): the identity becomes this page's
@@ -3812,21 +3889,21 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   // one, so the HUD leaves its start page for the lobby. The sign-in stands for the terms the
   // welcome page asks for, and the pick names and dresses a first login's profile; the destination
   // is picked from the lobby once it takes picks (the effect after the phase). Answered once the
-  // sign-in has landed and the page is done, or failed, when the stored sign-in goes back to what
-  // it was.
+  // sign-in has landed and the page is done, or failed; the stored sign-in goes back to what it
+  // was if the engine refuses the sign-in or never runs it.
   const hudLogin = useCallback(
     (request: HudLoginRequest): Promise<HudLoginReply> =>
       new Promise((resolve, reject) => {
         // the refs, as the command may come between a render and the effect that hands it over
-        if (hudLoginPending.current != null) return reject(new Error('a /hud_login is already under way'))
+        if (hudLoginPending.current != null) return reject(new Error('a /hud_login is already under way: /hud_logout ends it'))
         if (fatalErrorRef.current != null) return reject(new Error(fatalErrorRef.current.message))
-        if (submittedRef.current) return reject(new Error('already signed in: /logout first'))
+        if (submittedRef.current) return reject(new Error('already signed in: /hud_logout first'))
         // a sign-out under a sign-in the engine has not answered yet: busy until it does
         if (busyRef.current) return reject(new Error('a sign-in is still finishing'))
         if (!engineReady) return reject(new Error('the engine is not ready to take a sign-in yet'))
         const { identity, guest, defaultOnError, pick, destination } = request
-        const previous = storedRef.current
         const login: StoredLogin = { address: rootAddress(identity).toLowerCase(), identity, guest }
+        hudStored.current = { replaced: storedRef.current, landed: false }
         setStored(login)
         storedRef.current = login
         guestPick.current = pick ?? null
@@ -3834,32 +3911,30 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
         // the runner's sign-in stands in for a stored account's own: no Jump In with that one
         // once its profile check ends, should this sign-in fail
         autoEntered.current = true
-        hudLoginPending.current = {
-          resolve,
-          reject,
-          login,
-          landed: false,
-          welcomeAwaited: false,
-          restore: () => {
-            setStored(previous)
-            storedRef.current = previous
-          }
-        }
+        hudLoginPending.current = { resolve, reject, login, landed: false, welcomeAwaited: false }
         if (!submitLogin((d) => d.loginWithIdentity(identity, defaultOnError, guest, pick), 'stored')) {
           guestPick.current = null
-          hudLoginPending.current.restore()
+          restoreHudSignIn()
           settleHudLogin(new Error('the sign-in could not start: another is under way'))
         }
       }),
-    [engineReady, submitLogin, settleHudLogin]
+    [engineReady, submitLogin, settleHudLogin, restoreHudSignIn]
   )
   // handed over once, through a ref to the latest callback (and so the latest `submitLogin`): a
   // command between a render and an effect that would hand a new one over sees the current state
   const hudLoginRef = useRef(hudLogin)
   hudLoginRef.current = hudLogin
+  // and the sign-out a runner's `/hud_logout` takes, the HUD's own, which the engine's `/logout`
+  // never reaches
+  const logoutRef = useRef(logout)
+  logoutRef.current = logout
   useEffect(() => {
     provideHudLogin((request) => hudLoginRef.current(request))
-    return () => provideHudLogin(null)
+    provideHudLogout(() => logoutRef.current())
+    return () => {
+      provideHudLogin(null)
+      provideHudLogout(null)
+    }
   }, [])
   // a sign-in the HUD went away under is answered with that, not left to the runner's timeout
   useEffect(() => () => settleHudLogin(new Error('the HUD unmounted')), [settleHudLogin])
@@ -3992,8 +4067,10 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
         setBusy(false)
         pendingLogin.current = null
         setSubmitted(true)
+        // at once: the welcome page's answer may come before the next render
+        submittedRef.current = true
         welcomeLink.current = urlDestination.current
-        if (welcomeShown()) driverRef.current?.send({ kind: 'getWelcome' })
+        if (welcomeShown() && driverRef.current != null) askWelcome(driverRef.current)
         // the engine booted holding the world, as for Jump in: the pick is the lobby's
         if (urlDestination.current == null) {
           setLobby(true)
@@ -4134,16 +4211,17 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     settleHudLogin({ address: pending.login.address, guest: pending.login.guest === true, phase: picked ? 'entering' : phase })
   }, [phase, busy, welcomeSaving, hudLoginTick, pickDestination, settleHudLogin])
 
-  // An engine that fails (a boot panic, the watchdog's crash) answers no sign-in: a pending
-  // /hud_login is answered with the failure, and its stored sign-in put back when the sign-in
-  // never took. The launch and realm-check failures have answered theirs by the time this runs.
+  // A pending /hud_login is answered at once with the error (the launch and realm-check failures
+  // have answered theirs by the time this runs). Only a failed launch leaves no engine to answer
+  // the sign-in, so only then does its stored sign-in go back here: a boot panic the poll reports
+  // after launch() returned (a launch that throws has put it back already). The bridge's dialog
+  // leaves the world running, and the watchdog's stall may pass, so the engine can still land or
+  // refuse the sign-in, and its answer decides (runPendingLogin).
   useEffect(() => {
     if (fatalError == null) return
-    const pending = hudLoginPending.current
-    if (pending == null) return
-    if (!pending.landed) pending.restore()
+    if (fatalError.source === 'launch') restoreHudSignIn()
     settleHudLogin(new Error(fatalError.message))
-  }, [fatalError, settleHudLogin])
+  }, [fatalError, settleHudLogin, restoreHudSignIn])
 
   // The screens a phase shows (the loading screen's own are the engine's: LOADING_START / END /
   // TIMEOUT come from `crates/analytics/src/loading.rs`).

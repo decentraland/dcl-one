@@ -844,10 +844,14 @@ export interface HomeSceneMessage extends HomeScene {
 /** What the welcome page must show for the signed-in account (answered with `welcome`). */
 export interface GetWelcomeRequest {
   kind: 'getWelcome'
+  /** The page's tag for this ask, which its answer echoes. */
+  ask?: number
 }
 
 export interface WelcomeMessage extends WelcomeState {
   kind: 'welcome'
+  /** The tag of the ask this answers, as the page sent it. */
+  ask?: number
 }
 
 /** Put the curated default look `default<look>` on the lobby stage's avatar, as the page fetched it
