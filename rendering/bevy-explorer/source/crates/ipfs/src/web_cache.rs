@@ -169,7 +169,8 @@ pub struct WebCacheState {
     pub written_bytes: u64,
     pub quota_retries: u64,
     pub trims: u64,
-    /// Requests no service worker answered: none controls the page (after a hard reload, say).
+    /// Requests no service worker answered: none controls the page (after a hard reload, say), or
+    /// the reply timed out (5 s after a quota error, 30 s otherwise).
     pub unanswered: u64,
     /// Summed over every trim reported this session.
     pub evicted_entries_total: u64,
@@ -226,7 +227,7 @@ pub fn state_json(state: &WebCacheState) -> serde_json::Value {
 #[wasm_bindgen::prelude::wasm_bindgen(js_namespace = self)]
 extern "C" {
     /// deploy/web/engine/content_cache.js: asks the service worker to trim the cache to
-    /// `cap_bytes`, freeing at least a quarter of it when `quota_error`. Resolves with the worker's
+    /// `cap_bytes`, freeing the oldest content worth a quarter of it when `quota_error`. Resolves with the worker's
     /// report, or null when no worker answered.
     #[wasm_bindgen::prelude::wasm_bindgen(js_name = "__contentCacheTrim")]
     fn page_content_cache_trim(cap_bytes: f64, quota_error: bool) -> js_sys::Promise;

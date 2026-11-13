@@ -131,8 +131,9 @@ const CONTENT_CACHE_TRIM = 'content-cache-trim';
 const CONTENT_CACHE_QUOTA_SHARE = 0.5;
 // A trim goes down to this share of the cap, so the next one waits for real growth.
 const CONTENT_CACHE_LOW_WATER = 0.9;
-// After a quota error, keep at most this share of the cache, even under the cap.
-const CONTENT_CACHE_QUOTA_ERROR_KEEP = 0.75;
+// After a quota error the origin is full: free the oldest content worth this share of the cap (all
+// of it if less), even under the cap, sizing no more than that, so the engine's 5 s wait suffices.
+const CONTENT_CACHE_QUOTA_ERROR_FREE = 0.25;
 // Entries sized (one `match` each) per step while choosing what to evict.
 const CONTENT_CACHE_SIZE_BATCH = 64;
 // Requests waiting their turn. One trim at a time: a second request sees what the first left. A
@@ -173,13 +174,9 @@ self.addEventListener('message', (event) => {
 
 // How much to free. `cachesUsage` is the bytes held: the usage bound, then the content's measured
 // total. `quota` bounds the cap.
-function contentCacheTarget({ capBytes, quota, cachesUsage, quotaError }) {
+function contentCacheTarget({ capBytes, quota, cachesUsage }) {
     const cap = Math.max(0, Math.min(capBytes, Math.floor(quota * CONTENT_CACHE_QUOTA_SHARE)));
-    let bytesToFree = cachesUsage > cap ? cachesUsage - Math.floor(cap * CONTENT_CACHE_LOW_WATER) : 0;
-    if (quotaError) {
-        const keep = Math.floor(Math.min(cap, cachesUsage) * CONTENT_CACHE_QUOTA_ERROR_KEEP);
-        bytesToFree = Math.max(bytesToFree, cachesUsage - keep);
-    }
+    const bytesToFree = cachesUsage > cap ? cachesUsage - Math.floor(cap * CONTENT_CACHE_LOW_WATER) : 0;
     return { cap, bytesToFree };
 }
 
@@ -212,21 +209,22 @@ async function trimContentCache(capBytes, quotaError) {
     const cachesUsage = usageDetails ? (usageDetails.caches ?? 0) : usage;
     // only for the report: a browser without it, or one that refuses, must not stop the trim
     const persisted = (await navigator.storage.persisted?.().catch(() => false)) ?? false;
-    const { cap, bytesToFree } = contentCacheTarget({ capBytes, quota, cachesUsage, quotaError });
+    const { cap, bytesToFree } = contentCacheTarget({ capBytes, quota, cachesUsage });
+    const quotaErrorFree = quotaError ? Math.floor(cap * CONTENT_CACHE_QUOTA_ERROR_FREE) : 0;
     const report = {
         capBytes: cap, usage, quota, cachesUsage, evictedEntries: 0, evictedBytes: 0, persisted,
         contentBytes: null, preempted: false,
     };
     // the bound: content can only be over the cap when the usage holding it is
-    if (bytesToFree <= 0) return report;
+    if (bytesToFree <= 0 && quotaErrorFree <= 0) return report;
 
     const cache = await caches.open(CACHE_NAME);
     // insertion order: oldest written first (a put over a key moves it to the end)
     const requests = await cache.keys();
-    // size it all: other storage in the bound must not decide how much content goes
+    // a regular trim sizes it all: other storage in the bound must not decide how much content goes
     const sized = [];
     let contentBytes = 0;
-    for (let i = 0; i < requests.length; i += CONTENT_CACHE_SIZE_BATCH) {
+    for (let i = 0; i < requests.length && !(quotaError && contentBytes >= quotaErrorFree); i += CONTENT_CACHE_SIZE_BATCH) {
         if (!quotaError && contentCacheForcedWaiting()) {
             report.preempted = true;
             return report;
@@ -238,13 +236,17 @@ async function trimContentCache(capBytes, quotaError) {
         for (const entry of batch) contentBytes += entry.size;
         sized.push(...batch);
     }
-    report.contentBytes = contentBytes;
-    const toFree = contentCacheTarget({ capBytes, quota, cachesUsage: contentBytes, quotaError }).bytesToFree;
+    if (!quotaError) report.contentBytes = contentBytes;
+    const toFree = quotaError
+        ? quotaErrorFree
+        : contentCacheTarget({ capBytes, quota, cachesUsage: contentBytes }).bytesToFree;
     const { picked } = pickEvictions(sized, toFree);
     if (picked.length === 0) return report;
     // An entry written again while this trim sized moved to the newest end, behind a key that
-    // followed it in the first listing: keep it, and skip keys gone meanwhile. This covers the
-    // sizing only, not a write between this listing and the deletes.
+    // followed it in the first listing: keep it, and skip keys gone meanwhile. The newest entry has
+    // nothing behind it to show a move: it counts as rewritten when its size changed (a processed
+    // texture written back after it was sized). This covers the sizing only, not a write between
+    // this listing and the deletes.
     const first = new Map(requests.map((key, i) => [key.url, i]));
     const listed = new Set();
     const rewritten = new Set();
@@ -257,6 +259,11 @@ async function trimContentCache(capBytes, quotaError) {
         else latest = i;
     }
     const sizes = new Map(sized.map(({ key, size }) => [key.url, size]));
+    const newest = requests[requests.length - 1];
+    if (picked.includes(newest) && listed.has(newest.url)) {
+        const response = await cache.match(newest);
+        if (response && (await contentCacheEntrySize(response)) !== sizes.get(newest.url)) rewritten.add(newest.url);
+    }
     const evicted = picked.filter((key) => listed.has(key.url) && !rewritten.has(key.url));
     await Promise.all(evicted.map((key) => cache.delete(key)));
     report.evictedEntries = evicted.length;

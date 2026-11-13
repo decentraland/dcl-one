@@ -56,7 +56,7 @@ impl Plugin for WebCachePlugin {
                 ("Writes retried after a quota error", "quotaRetries"),
                 ("Trims reported", "trims"),
                 (
-                    "Trim requests no service worker answered",
+                    "Trim requests unanswered (no service worker, or timed out)",
                     "unansweredTrims",
                 ),
                 ("Entries evicted this session", "evictedEntriesTotal"),
@@ -125,5 +125,11 @@ fn web_cache_cap(
         return;
     }
     cap_override.0 = web_cache::override_bytes(cmd.mib);
-    input.reply_ok(format!("Web content cache cap override: {} MiB", cmd.mib));
+    match cap_override.0 {
+        Some(bytes) => input.reply_ok(format!(
+            "Web content cache cap override: {} MiB",
+            bytes as f64 / (1u64 << 20) as f64
+        )),
+        None => input.reply_ok("Web content cache cap override removed"),
+    }
 }

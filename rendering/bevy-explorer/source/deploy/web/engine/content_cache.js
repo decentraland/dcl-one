@@ -34,7 +34,7 @@ export function askServiceWorker(message, container = navigator.serviceWorker, t
   });
 }
 
-/** `__contentCacheTrim`: trim to `capBytes`, freeing at least a quarter after a quota error. */
+/** `__contentCacheTrim`: trim to `capBytes`; after a quota error, free a quarter of it. */
 export function contentCacheTrim(capBytes, quotaError, container, timeoutMs) {
   return askServiceWorker(
     { type: CONTENT_CACHE_TRIM, capBytes, quotaError: quotaError === true },
@@ -66,7 +66,8 @@ export function installContentCachePageFunctions(target = window, container = na
     if (unanswered === null) return;
     const capBytes = unanswered;
     unanswered = null;
-    contentCacheTrim(capBytes, false, container);
+    // only runs the trim: its report does not reach the engine, whose next request reads the result
+    contentCacheTrim(capBytes, false, container).catch(() => {});
   });
   target.__contentCacheTrim = (capBytes, quotaError) => {
     if (!container?.controller) {
