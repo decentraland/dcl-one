@@ -406,6 +406,55 @@ impl TransactionComponent {
         contract_address: &str,
         now: NaiveDateTime,
     ) -> Result<(), ApiError> {
+        self.reserve(
+            max_transactions_per_day,
+            None,
+            sender,
+            session_id,
+            chain_id,
+            contract_address,
+            now,
+        )
+        .await
+    }
+
+    /// [`Self::reserve_quota`] for a call that is no sale or credits spend: it
+    /// also counts toward the relayer's daily budget across every address
+    /// (`free_budget`, 0 is no limit), checked and taken under one global lock.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn reserve_free_call(
+        &self,
+        max_transactions_per_day: i64,
+        free_budget: i64,
+        sender: &MetaTxSender,
+        session_id: &str,
+        chain_id: u64,
+        contract_address: &str,
+        now: NaiveDateTime,
+    ) -> Result<(), ApiError> {
+        self.reserve(
+            max_transactions_per_day,
+            Some(free_budget),
+            sender,
+            session_id,
+            chain_id,
+            contract_address,
+            now,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn reserve(
+        &self,
+        max_transactions_per_day: i64,
+        free_budget: Option<i64>,
+        sender: &MetaTxSender,
+        session_id: &str,
+        chain_id: u64,
+        contract_address: &str,
+        now: NaiveDateTime,
+    ) -> Result<(), ApiError> {
         let user_address = sender.as_str();
         if !is_hex_address(user_address) || !is_session_id(session_id) {
             return Err(ApiError::Internal(
@@ -415,6 +464,29 @@ impl TransactionComponent {
         let contract = contract_address.to_lowercase();
         let window_start = now - chrono::Duration::seconds(QUOTA_WINDOW_SECS);
         let mut tx = self.pool.begin().await?;
+        if let Some(budget) = free_budget {
+            // Global lock first, then the user's: one order, no deadlock.
+            sqlx::query("SELECT pg_advisory_xact_lock(hashtext('relay-free-budget'))")
+                .execute(&mut *tx)
+                .await?;
+            if budget > 0 {
+                let used: i64 = sqlx::query_scalar(
+                    "SELECT count(*) FROM (SELECT 1 FROM economy.transactions \
+                     WHERE free_call AND created_at >= $1 LIMIT $2) used",
+                )
+                .bind(window_start)
+                .bind(budget)
+                .fetch_one(&mut *tx)
+                .await?;
+                if used >= budget {
+                    tracing::warn!(budget, "relay budget for free calls is spent for the day");
+                    return Err(ApiError::RelayBudgetSpent(
+                        "The relayer's daily budget for non-sale transactions is spent; try again later"
+                            .into(),
+                    ));
+                }
+            }
+        }
         sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1))")
             .bind(user_address)
             .execute(&mut *tx)
@@ -424,8 +496,8 @@ impl TransactionComponent {
                SELECT COUNT(*) AS n FROM economy.transactions \
                WHERE user_address = $1 AND created_at >= $5\
              ), ins AS (\
-               INSERT INTO economy.transactions (user_address, session_id, chain_id, contract_address, created_at) \
-               SELECT $1, $2, $3, $4, $6 FROM used \
+               INSERT INTO economy.transactions (user_address, session_id, chain_id, contract_address, created_at, free_call) \
+               SELECT $1, $2, $3, $4, $6, $8 FROM used \
                WHERE used.n < $7 \
                RETURNING id\
              ) \
@@ -438,6 +510,7 @@ impl TransactionComponent {
         .bind(window_start)
         .bind(now)
         .bind(max_transactions_per_day)
+        .bind(free_budget.is_some())
         .fetch_one(&mut *tx)
         .await?;
         tx.commit().await?;
@@ -447,36 +520,6 @@ impl TransactionComponent {
             return Err(ApiError::QuotaReached(format!(
                 "Max amount of transactions reached for address. Quota: {count}"
             )));
-        }
-        Ok(())
-    }
-
-    /// The relayer's budget across every address: refused once the day
-    /// before `now` holds `max_total` reservations (0 is no limit).
-    pub async fn check_global_budget(
-        &self,
-        max_total: i64,
-        now: NaiveDateTime,
-    ) -> Result<(), ApiError> {
-        if max_total <= 0 {
-            return Ok(());
-        }
-        let window_start = now - chrono::Duration::seconds(QUOTA_WINDOW_SECS);
-        let used: i64 = sqlx::query_scalar(
-            "SELECT count(*) FROM (SELECT 1 FROM economy.transactions WHERE created_at >= $1 LIMIT $2) used",
-        )
-        .bind(window_start)
-        .bind(max_total)
-        .fetch_one(&self.pool)
-        .await?;
-        if used >= max_total {
-            tracing::warn!(
-                max_total,
-                "relay budget for the day is spent; refusing meta-transactions"
-            );
-            return Err(ApiError::QuotaReached(
-                "The relayer's daily transaction budget is spent; try again later".into(),
-            ));
         }
         Ok(())
     }
@@ -814,6 +857,25 @@ fn check_sale_price(settings: &Settings, tx: &TransactionData) -> Result<(), Api
         )));
     }
     Ok(())
+}
+
+/// A sale that passes the floor, or a call to a credits manager: never held
+/// back by the relayer's budget for free calls.
+pub fn is_paid_call(settings: &Settings, tx: &TransactionData) -> bool {
+    let Ok(contract) = tx.params[0].trim().parse::<Address>() else {
+        return false;
+    };
+    let credits_manager = super::meta_tx::audited_domains_for(settings.collections_chain_id)
+        .iter()
+        .any(|(a, d)| *a == contract && d.label.starts_with("CreditsManager"));
+    if credits_manager {
+        return true;
+    }
+    let Some(kind) = abi::sale_target(settings.collections_chain_id, contract) else {
+        return false;
+    };
+    let full_data = hex_to_bytes(&tx.params[1]).unwrap_or_default();
+    abi::get_sale_price(&full_data, settings.collections_chain_id, kind).is_some()
 }
 
 pub fn is_hex_address(s: &str) -> bool {

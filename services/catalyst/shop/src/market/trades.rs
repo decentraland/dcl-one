@@ -1085,9 +1085,10 @@ pub async fn list_trades(
     let limit = first.unwrap_or(100).clamp(0, 1000);
     let offset = skip.unwrap_or(0).max(0);
     let counted = counted_sql("", "$3");
+    let served = super::catalog::served_trade_sql("t");
     let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
         "SELECT {TRADE_COLUMNS}, COUNT(*) OVER()::int8 AS total \
-         FROM shop.trades WHERE {counted} ORDER BY created_at DESC LIMIT $1 OFFSET $2"
+         FROM shop.trades t WHERE {counted} AND {served} ORDER BY created_at DESC LIMIT $1 OFFSET $2"
     )))
     .bind(limit)
     .bind(offset)
@@ -1099,8 +1100,9 @@ pub async fn list_trades(
         // An empty page past the end (or a zero-row page) says nothing about the total.
         None if offset > 0 || limit == 0 => {
             let counted = counted_sql("", "$1");
+            let served = super::catalog::served_trade_sql("t");
             sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
-                "SELECT COUNT(*) FROM shop.trades WHERE {counted}"
+                "SELECT COUNT(*) FROM shop.trades t WHERE {counted} AND {served}"
             )))
             .bind(since)
             .fetch_one(pool)
@@ -1156,8 +1158,8 @@ pub async fn trades_of_address(
 ) -> Result<Vec<Trade>, sqlx::Error> {
     let address = address.to_lowercase();
     let heads = sqlx::query(sqlx::AssertSqlSafe(format!(
-        "SELECT {TRADE_COLUMNS} FROM shop.trades \
-         WHERE id IN ( \
+        "SELECT {TRADE_COLUMNS} FROM shop.trades t \
+         WHERE {served} AND id IN ( \
             (SELECT id FROM shop.trades WHERE signer = $1 AND {signer_counted} ORDER BY created_at DESC LIMIT $2) \
             UNION \
             (SELECT ta.trade_id FROM shop.trade_assets ta JOIN shop.trades t ON t.id = ta.trade_id \
@@ -1165,6 +1167,7 @@ pub async fn trades_of_address(
          ORDER BY created_at DESC LIMIT $2",
         signer_counted = counted_sql("", "$3"),
         beneficiary_counted = counted_sql("t.", "$3"),
+        served = super::catalog::served_trade_sql("t"),
     )))
     .bind(&address)
     .bind(limit)
@@ -1233,8 +1236,9 @@ pub async fn get_trade_by_id(
     since: Option<NaiveDateTime>,
 ) -> Result<Option<Trade>, sqlx::Error> {
     let counted = counted_sql("", "$2");
+    let served = super::catalog::served_trade_sql("t");
     let Some(head) = sqlx::query(sqlx::AssertSqlSafe(format!(
-        "SELECT {TRADE_COLUMNS} FROM shop.trades WHERE id = $1::uuid AND {counted}"
+        "SELECT {TRADE_COLUMNS} FROM shop.trades t WHERE id = $1::uuid AND {counted} AND {served}"
     )))
     .bind(id)
     .bind(since)

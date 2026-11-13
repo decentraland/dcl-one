@@ -811,3 +811,62 @@ async fn a_refused_coingecko_falls_back_to_the_exchanges_in_order() {
     );
     cleanup().await;
 }
+
+const MARKER_STEADY: f64 = 0.27272727;
+const MARKER_JUMP: f64 = 0.54545454;
+
+/// A jump against a fresh snapshot is published only when another source agrees.
+#[tokio::test]
+async fn an_outlier_needs_a_second_source() {
+    let Some(pool) = crate::db::scratch::pool(4).await else {
+        return;
+    };
+    let _serial = SNAPSHOTS.lock().await;
+    let cleanup = || async {
+        sqlx::query(
+            "DELETE FROM economy.price_snapshots WHERE mana_usd IN ($1::numeric, $2::numeric)",
+        )
+        .bind(MARKER_STEADY.to_string())
+        .bind(MARKER_JUMP.to_string())
+        .execute(&pool)
+        .await
+        .unwrap();
+    };
+    cleanup().await;
+    let now = chrono::Utc::now().timestamp();
+    let answer = Arc::new(Mutex::new(quote(MARKER_STEADY, now - 60)));
+    let coingecko = stub_coingecko(answer.clone()).await;
+    let ticker = |usd: f64| {
+        stub_upstreams(vec![(
+            "/api/v3/ticker/price",
+            json!([{ "symbol": "MANAUSDT", "price": usd.to_string() }]),
+        )])
+    };
+    let http = crate::http::Outbound::for_tests();
+    let live = Prices::new(pool.clone(), true);
+    let sources = |fallback: String| poller::Sources {
+        coingecko: coingecko.clone(),
+        fallbacks: vec![(poller::Exchange::Binance, fallback)],
+    };
+    let agreeing = ticker(MARKER_JUMP * 1.01).await;
+    poller::run_pass(&http, &sources(agreeing.clone()), &live)
+        .await
+        .unwrap();
+    *answer.lock().unwrap() = quote(MARKER_JUMP, now - 30);
+    let disagreeing = ticker(MARKER_STEADY).await;
+    let err = poller::run_pass(&http, &sources(disagreeing), &live)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("no other source agrees"), "{err}");
+    assert_eq!(live.live().unwrap().mana_usd, Some(MARKER_STEADY));
+    poller::run_pass(&http, &sources(agreeing), &live)
+        .await
+        .unwrap();
+    assert_eq!(
+        live.live().unwrap().mana_usd,
+        Some(MARKER_JUMP),
+        "a corroborated move is published"
+    );
+    cleanup().await;
+}

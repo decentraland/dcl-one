@@ -16,7 +16,7 @@
 //! 404 unknown); a bid's accept only by a wallet owning a token of the bid's
 //! item (the nft index; its envelope until published); an order only by an
 //! owner of a token of the item who holds no active lease on it (403); a
-//! trade record by anyone, for a known order (404). The writes sit behind
+//! trade record only by the order's signer, for a known order (404, 403). The writes sit behind
 //! `DATA_WRITES_ENABLED` (the router's gate). A bid, a bid's accept and an
 //! order are the Marketplace's, refused before the preflight while its rollout
 //! is off (`features`); their cancels stay open, and so does a trade record
@@ -49,7 +49,6 @@ use super::{MarketplaceState, SharedState};
 use crate::comms::limits::{RateLimitDecision, RateLimiter};
 use crate::fed::{FedError, Signed, TypedMessage};
 use crate::jobs::{Jobs, PeriodicCfg};
-use crate::shared::cache::TtlMap;
 use crate::shared::signed_fetch::{self, PayloadPolicy};
 
 pub const NONCES: &str = "shop.fed_seen_nonces";
@@ -435,7 +434,6 @@ async fn append<T: TypedMessage>(
     .bind(&payload)
     .execute(pool)
     .await?;
-    SNAPSHOT.clear();
     Ok(signature_hash)
 }
 
@@ -902,18 +900,37 @@ pub async fn snapshot_view(pool: &PgPool) -> Result<MarketSnapshot, sqlx::Error>
 
 /// `GET /federation/market/snapshot`.
 pub async fn snapshot(State(state): State<SharedState>) -> Response {
-    match SNAPSHOT
-        .get_or_fetch((), || snapshot_view(&state.pool))
-        .await
-    {
+    match cached_snapshot(&state.pool).await {
         Ok(s) => Json(s).into_response(),
         Err(e) => db_err(e),
     }
 }
 
-/// The snapshot walks the whole log; one computation serves every request for 30 s.
-static SNAPSHOT: LazyLock<TtlMap<(), MarketSnapshot>> =
-    LazyLock::new(|| TtlMap::bounded(Duration::from_secs(30), 1));
+/// The last snapshot, the log's newest `seq` read before it was taken, and when.
+#[allow(clippy::type_complexity)]
+static SNAPSHOT: std::sync::Mutex<Option<(i64, std::time::Instant, MarketSnapshot)>> =
+    std::sync::Mutex::new(None);
+
+const SNAPSHOT_MAX_AGE: Duration = Duration::from_secs(30);
+
+/// The snapshot walks the whole log, so it is recomputed when the log grew
+/// (any writer, any replica) or after 30 s (a row whose `seq` committed late);
+/// otherwise one `max(seq)` read serves it.
+pub async fn cached_snapshot(pool: &PgPool) -> Result<MarketSnapshot, sqlx::Error> {
+    let newest: i64 = sqlx::query_scalar::<_, Option<i64>>("SELECT max(seq) FROM shop.fed_actions")
+        .fetch_one(pool)
+        .await?
+        .unwrap_or(0);
+    if let Some((seq, at, snap)) = SNAPSHOT.lock().unwrap().as_ref()
+        && *seq == newest
+        && at.elapsed() < SNAPSHOT_MAX_AGE
+    {
+        return Ok(snap.clone());
+    }
+    let snap = snapshot_view(pool).await?;
+    *SNAPSHOT.lock().unwrap() = Some((newest, std::time::Instant::now(), snap.clone()));
+    Ok(snap)
+}
 
 #[derive(Debug, Deserialize)]
 pub struct ChangesQuery {

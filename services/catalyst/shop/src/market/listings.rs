@@ -1131,9 +1131,15 @@ fn creation_error_to_api(e: TradeCreationError) -> ApiError {
     }
 }
 
-/// Trades one signer may post per minute.
-static TRADE_LIMITER: std::sync::LazyLock<RateLimiter> =
-    std::sync::LazyLock::new(|| RateLimiter::new(30, std::time::Duration::from_secs(60)));
+/// Trades one signer may post per minute; the map holds enough signers that a
+/// burst of fresh wallets does not force the sweep that resets every bucket.
+static TRADE_LIMITER: std::sync::LazyLock<RateLimiter> = std::sync::LazyLock::new(|| {
+    RateLimiter::new(30, std::time::Duration::from_secs(60)).with_max_buckets(200_000)
+});
+
+/// Trades the process accepts per minute across signers (fresh wallets cost nothing).
+static ALL_TRADES_LIMITER: std::sync::LazyLock<RateLimiter> =
+    std::sync::LazyLock::new(|| RateLimiter::new(600, std::time::Duration::from_secs(60)));
 
 async fn post_trade_inner(
     state: &MarketplaceState,
@@ -1142,7 +1148,9 @@ async fn post_trade_inner(
 ) -> Result<Response, ApiError> {
     require_auth_metadata(headers, MARKETPLACE_AUTH_SIGNERS, Some(CREATE_TRADE_INTENT))?;
     let recovered = require_signer(headers, "post", "/v1/trades").await?;
-    if TRADE_LIMITER.check(&recovered.to_ascii_lowercase()) == RateLimitDecision::Deny {
+    if TRADE_LIMITER.check(&recovered.to_ascii_lowercase()) == RateLimitDecision::Deny
+        || ALL_TRADES_LIMITER.check("all") == RateLimitDecision::Deny
+    {
         return Err(ApiError::http(429, "rate limit exceeded".to_string()));
     }
     let trade: TradeCreation = serde_json::from_str(body)
@@ -1152,7 +1160,7 @@ async fn post_trade_inner(
     if trade.trade_type != TRADE_TYPE_PUBLIC_ITEM_ORDER {
         state.require_marketplace()?;
     }
-    let id = create_trade(
+    let id = match create_trade(
         &state.pool,
         Some(state),
         &trade,
@@ -1160,7 +1168,20 @@ async fn post_trade_inner(
         Utc::now().timestamp_millis(),
     )
     .await
-    .map_err(creation_error_to_api)?;
+    {
+        Ok(id) => id,
+        // The mirror catches up within a pass: tell the client when to retry.
+        Err(TradeCreationError::ItemUnknown) => {
+            let mut response =
+                creation_error_to_api(TradeCreationError::ItemUnknown).into_response();
+            response.headers_mut().insert(
+                axum::http::header::RETRY_AFTER,
+                axum::http::HeaderValue::from_static("60"),
+            );
+            return Ok(response);
+        }
+        Err(e) => return Err(creation_error_to_api(e)),
+    };
     state.catalog_cache.invalidate();
     Ok((
         StatusCode::CREATED,

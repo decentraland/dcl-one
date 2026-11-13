@@ -137,10 +137,31 @@ fn ensure_fresh_quote(row: &SnapshotRow, now: DateTime<Utc>) -> anyhow::Result<(
     Ok(())
 }
 
+/// A quote from the future is not fresh beyond a minute of clock skew.
 fn quote_is_fresh(quoted_at: DateTime<Utc>, now: DateTime<Utc>) -> bool {
-    (now - quoted_at)
-        .to_std()
-        .map_or(true, |age| age <= crate::store::SNAPSHOT_MAX_AGE)
+    match (now - quoted_at).to_std() {
+        Ok(age) => age <= crate::store::SNAPSHOT_MAX_AGE,
+        Err(_) => (quoted_at - now) <= chrono::Duration::seconds(60),
+    }
+}
+
+/// How close another source must be for an outlier to stand.
+pub const CORROBORATION_FRACTION: f64 = 0.05;
+
+/// Whether another configured source than `source` quotes `next` within
+/// [`CORROBORATION_FRACTION`]; the first source that answers decides.
+async fn corroborated(http: &Outbound, sources: &Sources, source: &str, next: f64) -> bool {
+    for (exchange, base) in &sources.fallbacks {
+        if exchange.name() == source {
+            continue;
+        }
+        if let Ok(row) = fetch_exchange(http, *exchange, base).await
+            && let Some(other) = row.mana_usd.filter(|v| *v > 0.0)
+        {
+            return ((next - other) / other).abs() <= CORROBORATION_FRACTION;
+        }
+    }
+    false
 }
 
 /// The largest move against the previous fresh snapshot a pass publishes;
@@ -400,12 +421,16 @@ pub async fn run_pass(http: &Outbound, sources: &Sources, prices: &Prices) -> an
             found
         }
     };
-    let previous = prices.latest().await.ok().flatten();
+    let previous = prices
+        .latest()
+        .await
+        .context("previous snapshot read for the outlier check")?;
     if let Some(next) = row.mana_usd
         && is_outlier(previous.as_deref(), next, Utc::now())
+        && !corroborated(http, sources, source, next).await
     {
         anyhow::bail!(
-            "{source} MANA/USD {next} moved more than {}% from the previous snapshot; not published",
+            "{source} MANA/USD {next} moved more than {}% from the previous snapshot and no other source agrees; not published",
             MAX_MOVE_FRACTION * 100.0
         );
     }
@@ -472,6 +497,14 @@ mod tests {
         assert!(snapshot(0.4, now, now).is_fresh_at(now));
         assert!(quote_is_fresh(now - chrono::Duration::minutes(5), now));
         assert!(!quote_is_fresh(now - chrono::Duration::hours(1), now));
+        assert!(
+            quote_is_fresh(now + chrono::Duration::seconds(30), now),
+            "clock skew"
+        );
+        assert!(
+            !quote_is_fresh(now + chrono::Duration::minutes(5), now),
+            "a quote from the future is not fresh"
+        );
     }
 
     #[test]

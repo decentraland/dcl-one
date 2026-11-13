@@ -25,7 +25,6 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::Duration;
 
 use axum::Json;
@@ -508,22 +507,22 @@ impl Builder {
     }
 }
 
-static SERVED_ETHEREUM: AtomicI64 = AtomicI64::new(1);
-static SERVED_MATIC: AtomicI64 = AtomicI64::new(137);
+/// The chains this node's trade readers serve, installed once by the binary.
+static SERVED: std::sync::OnceLock<(i64, i64)> = std::sync::OnceLock::new();
 
-/// The chains this node's trade readers serve (`MARKETPLACE_INDEX_CHAIN_ID_*`),
-/// set when the marketplace state is built.
-pub fn set_served_chains(ethereum: i64, matic: i64) {
-    SERVED_ETHEREUM.store(ethereum, Ordering::Relaxed);
-    SERVED_MATIC.store(matic, Ordering::Relaxed);
+/// Installs the served chains (`MARKETPLACE_INDEX_CHAIN_ID_*`) for the
+/// process; the first call wins. Without it the readers serve mainnet (1, 137).
+pub fn install_served_chains(indexes: &super::chain_walk::IndexSettings) {
+    use super::chain_walk::ChainNet;
+    let _ = SERVED.set((
+        indexes.chain_id(ChainNet::Ethereum),
+        indexes.chain_id(ChainNet::Matic),
+    ));
 }
 
 /// `(ethereum, matic)`.
 pub fn served_chains() -> (i64, i64) {
-    (
-        SERVED_ETHEREUM.load(Ordering::Relaxed),
-        SERVED_MATIC.load(Ordering::Relaxed),
-    )
+    SERVED.get().copied().unwrap_or((1, 137))
 }
 
 /// `alias`'s trade is on the chain this node serves for its network.
@@ -531,6 +530,20 @@ pub fn served_chain_sql(alias: &str) -> String {
     let (eth, matic) = served_chains();
     format!(
         "{alias}.chain_id = CASE lower({alias}.network) WHEN 'ethereum' THEN {eth} ELSE {matic} END"
+    )
+}
+
+/// `alias`'s trade is one this node serves: on its chain for the network, and
+/// an item order only when the item's creator signed it.
+pub fn served_trade_sql(alias: &str) -> String {
+    format!(
+        "{served} AND ({alias}.type <> 'public_item_order' OR EXISTS ( \
+           SELECT 1 FROM shop.trade_assets sa \
+           JOIN shop.trade_assets_item si ON si.asset_id = sa.id \
+           JOIN shop.items ci ON ci.network = lower({alias}.network) \
+             AND ci.contract_address = lower(sa.contract_address) AND ci.item_id = si.item_id::numeric \
+           WHERE sa.trade_id = {alias}.id AND sa.direction = 'sent' AND lower(ci.creator) = lower({alias}.signer)))",
+        served = served_chain_sql(alias),
     )
 }
 

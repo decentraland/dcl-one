@@ -101,7 +101,7 @@ pub struct Settings {
     pub min_sale_value_in_wei: String,
     /// `MAX_TRANSACTIONS_PER_DAY` (10): the per-address relay quota.
     pub max_transactions_per_day: i64,
-    /// `MAX_RELAYED_TRANSACTIONS_PER_DAY` (20,000): the relay quota across every address; 0 is no limit.
+    /// `MAX_RELAYED_TRANSACTIONS_PER_DAY` (20,000): free (non-sale, non-credits) calls relayed per day across every address; 0 is no limit.
     pub max_relayed_transactions_per_day: i64,
     /// `CONTRACT_ADDRESSES_URL`: the dApps' contract-addresses JSON; unset, only the mirror admits.
     pub contract_addresses_url: Option<String>,

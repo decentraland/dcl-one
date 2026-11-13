@@ -474,7 +474,8 @@ fn unique_address() -> String {
 }
 
 #[tokio::test]
-async fn the_global_relay_budget_caps_reservations_across_addresses() {
+async fn the_free_call_budget_never_holds_back_a_sale() {
+    use axum::response::IntoResponse;
     let Some(pool) = scratch_pool().await else {
         return;
     };
@@ -484,30 +485,64 @@ async fn the_global_relay_budget_caps_reservations_across_addresses() {
         .unwrap()
         .and_hms_opt(0, 0, 0)
         .unwrap();
-    let addrs = [unique_address(), unique_address()];
-    for a in &addrs {
-        tc.reserve_quota(
-            10,
-            &sender(a),
-            &Uuid::new_v4().to_string(),
-            137,
-            COLLECTION,
-            at,
-        )
-        .await
-        .expect("reserve");
-    }
-    assert!(tc.check_global_budget(3, at).await.is_ok());
-    assert!(matches!(
-        tc.check_global_budget(2, at).await,
-        Err(ApiError::QuotaReached(_))
-    ));
-    assert!(tc.check_global_budget(0, at).await.is_ok(), "0 is no limit");
+    let addrs = [unique_address(), unique_address(), unique_address()];
+    let free = |a: &str, budget: i64| {
+        let (tc, a) = (&tc, a.to_string());
+        async move {
+            tc.reserve_free_call(
+                10,
+                budget,
+                &sender(&a),
+                &Uuid::new_v4().to_string(),
+                137,
+                COLLECTION,
+                at,
+            )
+            .await
+        }
+    };
+    free(&addrs[0], 2).await.expect("first free call");
+    free(&addrs[1], 2).await.expect("second free call");
+    let err = free(&addrs[2], 2).await.unwrap_err();
+    assert!(matches!(err, ApiError::RelayBudgetSpent(_)), "got {err:?}");
+    assert_eq!(
+        err.into_response().status(),
+        axum::http::StatusCode::TOO_MANY_REQUESTS
+    );
+    tc.reserve_quota(
+        10,
+        &sender(&addrs[2]),
+        &Uuid::new_v4().to_string(),
+        137,
+        COLLECTION,
+        at,
+    )
+    .await
+    .expect("a sale still relays when the free-call budget is spent");
+    free(&addrs[2], 0).await.expect("0 is no limit");
     sqlx::query("DELETE FROM economy.transactions WHERE user_address = ANY($1)")
         .bind(addrs.iter().map(|a| a.to_lowercase()).collect::<Vec<_>>())
         .execute(&pool)
         .await
         .unwrap();
+}
+
+#[test]
+fn sales_and_credits_spends_are_paid_calls() {
+    let settings = Settings::for_tests();
+    let call = |to: &str, data: String| super::transaction::TransactionData {
+        from: VICTIM.to_string(),
+        params: vec![to.to_string(), data],
+    };
+    let credits_manager = "0x8b3a40ca1b6f5cafc99d112a4d02e897d1fd8cc5";
+    assert!(super::transaction::is_paid_call(
+        &settings,
+        &call(credits_manager, "0x00".into())
+    ));
+    assert!(
+        !super::transaction::is_paid_call(&settings, &call(COLLECTION, "0xa22cb465".into())),
+        "an approval on a collection is a free call"
+    );
 }
 
 #[tokio::test]
