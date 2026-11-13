@@ -522,6 +522,14 @@ pub struct ShopConfig {
     #[arg(long, env = "CREDITS_USAGE_START_BLOCK")]
     pub credits_usage_start_block: Option<u64>,
 
+    /// MANA top-ups mined before this block are refused; unset, any block.
+    #[arg(long, env = "CREDITS_TOPUP_START_BLOCK")]
+    pub credits_topup_start_block: Option<u64>,
+
+    /// Blocks a MANA top-up transfer needs on top of it before it is credited.
+    #[arg(long, env = "CREDITS_TOPUP_MIN_CONFIRMATIONS", default_value_t = 64)]
+    pub credits_topup_min_confirmations: u64,
+
     #[arg(long, env = "CREDITS_USAGE_INDEX_INTERVAL_SECS", default_value_t = 30)]
     pub credits_usage_index_interval_secs: u64,
 

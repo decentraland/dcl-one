@@ -31,6 +31,8 @@ pub struct ResolvedScene {
     pub deployment: ActiveDeployment,
     pub code_hash: String,
     pub crdt_hash: Option<String>,
+    /// scene.json `authoritativeMultiplayer: true`: the scene asks for a server.
+    pub authoritative: bool,
 }
 
 #[derive(Deserialize)]
@@ -43,6 +45,8 @@ struct SceneEntity {
 #[derive(Deserialize)]
 struct SceneMetadata {
     main: String,
+    #[serde(default, rename = "authoritativeMultiplayer")]
+    authoritative_multiplayer: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize)]
@@ -100,7 +104,7 @@ pub async fn resolve(state: &SceneHostState, key: &SceneKey) -> Result<Option<Re
     let Some(deployment) = active_deployment(state, key).await? else {
         return Ok(None);
     };
-    let (main, files): (String, Vec<(String, String)>) = match key {
+    let (main, files, authoritative): (String, Vec<(String, String)>, bool) = match key {
         SceneKey::Local => unreachable!("the local scene has no deployment"),
         SceneKey::World(world) => {
             let entity: serde_json::Value = sqlx::query_scalar(
@@ -120,11 +124,14 @@ pub async fn resolve(state: &SceneHostState, key: &SceneKey) -> Result<Option<Re
                     .into_iter()
                     .map(|c| (c.file, c.hash))
                     .collect(),
+                entity.metadata.authoritative_multiplayer == Some(serde_json::Value::Bool(true)),
             )
         }
         SceneKey::Genesis(_) | SceneKey::GenesisParcel(_) => {
             let rows = sqlx::query(
-                "SELECT d.entity_metadata ->> 'main' AS main, cf.key, cf.content_hash \
+                "SELECT d.entity_metadata ->> 'main' AS main, \
+                 (d.entity_metadata -> 'authoritativeMultiplayer')::jsonb = 'true'::jsonb AS authoritative, \
+                 cf.key, cf.content_hash \
                  FROM content.deployments d \
                  LEFT JOIN content.content_files cf ON cf.deployment = d.id \
                  WHERE d.entity_id = $1",
@@ -134,6 +141,10 @@ pub async fn resolve(state: &SceneHostState, key: &SceneKey) -> Result<Option<Re
             .await
             .context("reading the scene deployment")?;
             let main: Option<String> = rows.first().and_then(|r| r.get("main"));
+            let authoritative = rows
+                .first()
+                .and_then(|r| r.get::<Option<bool>, _>("authoritative"))
+                .unwrap_or(false);
             let files = rows
                 .iter()
                 .filter_map(|r| {
@@ -146,6 +157,7 @@ pub async fn resolve(state: &SceneHostState, key: &SceneKey) -> Result<Option<Re
             (
                 main.ok_or_else(|| anyhow!("scene {} declares no main file", deployment.scene_id))?,
                 files,
+                authoritative,
             )
         }
     };
@@ -154,6 +166,7 @@ pub async fn resolve(state: &SceneHostState, key: &SceneKey) -> Result<Option<Re
         deployment,
         code_hash,
         crdt_hash,
+        authoritative,
     }))
 }
 
@@ -192,12 +205,39 @@ pub async fn from_local(path: &str) -> Result<String> {
 /// leaves nothing hosted under the key (the old host dropped the previous
 /// scene first too).
 pub async fn load_or_reload(state: &SceneHostState, key: &SceneKey) -> Result<()> {
+    load_scene(state, key, false).await
+}
+
+/// [`load_or_reload`]; with `require_opt_in` a scene that does not set
+/// `authoritativeMultiplayer` is refused. Whatever was hosted under the key
+/// is stopped first either way, so callers that require opt-in only load
+/// keys that are not hosted.
+pub(super) async fn load_scene(
+    state: &SceneHostState,
+    key: &SceneKey,
+    require_opt_in: bool,
+) -> Result<()> {
     let name = key.room_key();
-    if let Some(prev) = state.scenes.remove(&name) {
+    if let Some((prev, _)) = state.remove_hosted(&name) {
         tracing::info!(scene = %name, "stopping existing scene");
-        prev.kick_all();
         drop(prev);
     }
+    let resolved = match key {
+        SceneKey::Local => None,
+        _ => {
+            let resolved = resolve(state, key).await?.ok_or_else(|| match key {
+                SceneKey::World(w) => anyhow!(
+                    "world {} has no scene published on this node (mirrored scenes are not hosted)",
+                    w.display()
+                ),
+                other => anyhow!("no local active Genesis scene for {other}"),
+            })?;
+            if require_opt_in && !resolved.authoritative {
+                bail!("{key} does not enable authoritativeMultiplayer");
+            }
+            Some(resolved)
+        }
+    };
 
     let (hash, source, static_crdt, identity, scope) = match key {
         SceneKey::Local => {
@@ -216,13 +256,7 @@ pub async fn load_or_reload(state: &SceneHostState, key: &SceneKey) -> Result<()
             )
         }
         _ => {
-            let resolved = resolve(state, key).await?.ok_or_else(|| match key {
-                SceneKey::World(w) => anyhow!(
-                    "world {} has no scene published on this node (mirrored scenes are not hosted)",
-                    w.display()
-                ),
-                other => anyhow!("no local active Genesis scene for {other}"),
-            })?;
+            let resolved = resolved.expect("resolved above for every non-local key");
             let code = read_blob(state, &resolved.code_hash, "scene code").await?;
             let static_crdt = match &resolved.crdt_hash {
                 Some(h) => read_blob(state, h, "main.crdt").await?,

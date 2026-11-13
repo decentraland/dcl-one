@@ -48,7 +48,21 @@ pub(crate) enum TransferDecoder {
     Gzip(Box<flate2::write::MultiGzDecoder<Vec<u8>>>),
 }
 
+/// Compressed bytes inflated per step; deflate expands at most ~1032x, so one step yields
+/// at most ~258 KiB.
+const GZIP_INPUT_STEP_BYTES: usize = 256;
+/// Decoded bytes [`stream_body`] holds before handing them to its sink.
+const SINK_FLUSH_BYTES: usize = 1 << 20;
+
 impl TransferDecoder {
+    /// The wire bytes [`stream_body`] decodes at a time.
+    fn input_step(&self) -> usize {
+        match self {
+            Self::Identity => usize::MAX,
+            Self::Gzip(_) => GZIP_INPUT_STEP_BYTES,
+        }
+    }
+
     pub(crate) fn for_encoding(encoding: Option<&str>) -> Result<Self, String> {
         match encoding.unwrap_or("").trim().to_ascii_lowercase().as_str() {
             "" | "identity" => Ok(Self::Identity),
@@ -59,15 +73,27 @@ impl TransferDecoder {
         }
     }
 
-    /// Appends what `chunk` decodes to (so far) onto `out`.
-    pub(crate) fn push(&mut self, chunk: &[u8], out: &mut Vec<u8>) -> Result<(), String> {
+    /// Appends what `chunk` decodes to (so far) onto `out`, failing once `out` passes
+    /// `limit` bytes: gzip input is fed in small steps, so a compression bomb overshoots the
+    /// limit by at most one step's output, never by a whole wire chunk's.
+    pub(crate) fn push(
+        &mut self,
+        chunk: &[u8],
+        out: &mut Vec<u8>,
+        limit: usize,
+    ) -> Result<(), String> {
         match self {
             Self::Identity => out.extend_from_slice(chunk),
             Self::Gzip(decoder) => {
-                decoder
-                    .write_all(chunk)
-                    .map_err(|e| format!("gzip transfer decoding failed: {e}"))?;
-                out.append(decoder.get_mut());
+                for step in chunk.chunks(GZIP_INPUT_STEP_BYTES) {
+                    decoder
+                        .write_all(step)
+                        .map_err(|e| format!("gzip transfer decoding failed: {e}"))?;
+                    out.append(decoder.get_mut());
+                    if out.len() > limit {
+                        return Err(format!("decoded body exceeds the {limit} bytes left"));
+                    }
+                }
             }
         }
         Ok(())
@@ -113,9 +139,9 @@ pub(crate) struct BodyStats {
 }
 
 /// Streams `resp`'s body through its transfer decoding into `sink`, holding one wire chunk and
-/// its decoded run in memory at a time, with `cap` enforced on both the wire and the decoded
-/// bytes as they pass. Whether the wire bytes fell short of the Content-Length is the caller's
-/// to judge from the stats.
+/// about [`SINK_FLUSH_BYTES`] of decoded bytes in memory at a time, with `cap` enforced on both
+/// the wire and the decoded bytes as they pass. Whether the wire bytes fell short of the
+/// Content-Length is the caller's to judge from the stats.
 pub(crate) async fn stream_body<S: DecodedSink>(
     resp: reqwest::Response,
     cap: usize,
@@ -143,17 +169,28 @@ pub(crate) async fn stream_body<S: DecodedSink>(
         if stats.wire_len > cap as u64 {
             return Err(format!("response body exceeds the {cap} byte cap"));
         }
-        run.clear();
-        decoder.push(&chunk, &mut run)?;
-        stats.decoded_len += run.len() as u64;
-        if stats.decoded_len > cap as u64 {
-            return Err(format!("decoded body exceeds {cap} byte cap"));
+        for piece in chunk.chunks(decoder.input_step()) {
+            // `run` holds decoded bytes not yet counted in `decoded_len`.
+            let left = (cap as u64).saturating_sub(stats.decoded_len) as usize;
+            decoder.push(piece, &mut run, left).map_err(|e| {
+                if run.len() > left {
+                    format!("decoded body exceeds {cap} byte cap")
+                } else {
+                    e
+                }
+            })?;
+            if run.len() >= SINK_FLUSH_BYTES {
+                stats.decoded_len += run.len() as u64;
+                sink.accept(&run).await?;
+                run.clear();
+            }
         }
         if !run.is_empty() {
+            stats.decoded_len += run.len() as u64;
             sink.accept(&run).await?;
+            run.clear();
         }
     }
-    run.clear();
     decoder.finish(&mut run)?;
     stats.decoded_len += run.len() as u64;
     if stats.decoded_len > cap as u64 {
@@ -1177,10 +1214,27 @@ mod tests {
         let mut decoder = TransferDecoder::for_encoding(encoding)?;
         let mut out = Vec::new();
         for chunk in wire.chunks(piece.max(1)) {
-            decoder.push(chunk, &mut out)?;
+            decoder.push(chunk, &mut out, usize::MAX)?;
         }
         decoder.finish(&mut out)?;
         Ok(out)
+    }
+
+    #[test]
+    fn a_gzip_bomb_stops_near_the_limit_within_one_wire_chunk() {
+        let wire = gzip(&vec![0u8; 64 << 20]);
+        assert!(wire.len() < 128 << 10, "{}", wire.len());
+        let mut decoder = TransferDecoder::for_encoding(Some("gzip")).unwrap();
+        let mut out = Vec::new();
+        let err = decoder.push(&wire, &mut out, 1 << 20).unwrap_err();
+        assert!(err.contains("exceeds"), "{err}");
+        assert!(out.len() < 2 << 20, "inflated {} bytes", out.len());
+
+        let mut decoder = TransferDecoder::for_encoding(Some("gzip")).unwrap();
+        let mut out = Vec::new();
+        decoder.push(&wire, &mut out, 64 << 20).unwrap();
+        decoder.finish(&mut out).unwrap();
+        assert_eq!(out.len(), 64 << 20);
     }
 
     #[test]
@@ -1232,6 +1286,37 @@ mod tests {
             .await
             .expect_err("a compression bomb must not outgrow the caller's cap");
         assert!(err.contains("exceeds 100 byte cap"), "{err}");
+        server.abort();
+    }
+
+    /// Records the largest run handed over, keeping no bytes.
+    struct LargestRun(usize, u64);
+
+    impl DecodedSink for LargestRun {
+        async fn accept(&mut self, decoded: &[u8]) -> Result<(), String> {
+            self.0 = self.0.max(decoded.len());
+            self.1 += decoded.len() as u64;
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn a_highly_compressed_body_reaches_the_sink_in_bounded_runs() {
+        let wire = gzip(&vec![0u8; 32 << 20]);
+        let (base, server) = spawn_content_server(wire, Some("gzip")).await;
+        let resp = reqwest::Client::new()
+            .get(format!("{base}/contents/zeros"))
+            .send()
+            .await
+            .unwrap();
+        let mut sink = LargestRun(0, 0);
+        let stats = stream_body(resp, 64 << 20, &mut sink).await.unwrap();
+        assert_eq!((stats.decoded_len, sink.1), (32 << 20, 32 << 20));
+        assert!(
+            sink.0 < SINK_FLUSH_BYTES + (300 << 10),
+            "largest run {}",
+            sink.0
+        );
         server.abort();
     }
 

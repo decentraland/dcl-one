@@ -17,8 +17,8 @@ use serde_json::value::RawValue;
 use serde_json::{Value, json};
 
 use super::{
-    MarketplaceState, PROFILE_IDS_MAX, ProfileMetadata, SharedState, active_entities,
-    process_profiles_positional,
+    MarketplaceState, PROFILE_IDS_MAX, SharedState, active_entities, process_profiles_positional,
+    profile_metadata,
 };
 
 /// One `/profiles` element in the Registry's key order.
@@ -239,8 +239,9 @@ fn project(
     // The Registry's sanitizer replaces every avatar's `snapshots` with
     // exactly `face256` and `body` on this node's profile-images routes,
     // dropping any other deployed key (Lambdas keeps those).
+    let face = format!("{images}/entities/{id}/face.png");
     let snapshots = json!({
-        "face256": format!("{images}/entities/{id}/face.png"),
+        "face256": face,
         "body": format!("{images}/entities/{id}/body.png"),
     });
     for avatar in profile
@@ -259,19 +260,7 @@ fn project(
             .and_then(Value::as_array)
             .and_then(|pointers| pointers.first())
             .and_then(Value::as_str)?;
-        let avatar = profile
-            .get("avatars")
-            .and_then(Value::as_array)
-            .and_then(|avatars| avatars.first())
-            .and_then(Value::as_object)?;
-        let field = |key: &str| avatar.get(key).cloned();
-        serde_json::value::to_raw_value(&ProfileMetadata {
-            pointer: pointer.to_string(),
-            has_claimed_name: field("hasClaimedName"),
-            name: field("name"),
-            name_color: field("nameColor"),
-            thumbnail_url: snapshots["face256"].as_str()?.to_string(),
-        })
+        serde_json::value::to_raw_value(&profile_metadata(pointer, &profile, Some(&face))?)
     } else {
         // A number, as the Registry answers from its cache and its Catalyst
         // fallback (`captures/abr/AB-2-one-known.json`).

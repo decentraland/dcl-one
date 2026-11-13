@@ -167,9 +167,24 @@ impl BlockchainChecker for Synced<'_> {
         names: &[String],
         timestamp: Timestamp,
     ) -> Result<PermissionResult, ValidatorError> {
-        self.sources
-            .check_names_ownership(eth_address, names, timestamp)
-            .await
+        let owned = self
+            .sources
+            .access()
+            .names_capped(
+                eth_address,
+                names,
+                timestamp,
+                super::onchain::SYNCED_ITEM_CAPS,
+            )
+            .await?;
+        Ok(PermissionResult::from_failing(
+            names
+                .iter()
+                .zip(owned)
+                .filter(|(_, o)| !o)
+                .map(|(n, _)| n.clone())
+                .collect(),
+        ))
     }
 
     async fn check_items_ownership(
