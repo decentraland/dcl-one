@@ -12,6 +12,11 @@ path = "src/lib.rs"
 name = "catalyst"
 path = "src/main.rs"
 
+[[test]]
+name = "stats_metrics_engine"
+path = "tests/stats_metrics_engine.rs"
+required-features = ["test-support"]
+
 # The application crate plus the leaf crates it re-exports (src/lib.rs): http, auth,
 # fed, db (with schema_migrate) and jobs depend on nothing else in the application, so
 # an edit elsewhere never recompiles them (AGENTS.md, METRICS.md "Dev loop").
@@ -142,6 +147,7 @@ tokio-tungstenite = "0.30.0"
 alloy = { version = "2", default-features = false, features = ["std", "signer-local"] }
 
 [dependencies]
+v8.workspace = true
 dcl-http = { workspace = true, features = ["db"] }
 dcl-auth.workspace = true
 catalyst-fed = { path = "fed" }
@@ -197,6 +203,7 @@ metrics.workspace = true
 ts-rs = { workspace = true, optional = true }
 
 [features]
+test-support = ["catalyst-comms/test-support"]
 # The library/catalyst-api TypeScript exports (scripts/gen-ts.sh).
 ts = ["dep:ts-rs", "catalyst-shared/ts", "catalyst-config/ts", "catalyst-storage/ts", "catalyst-price/ts", "catalyst-chain-index/ts", "catalyst-land-authz/ts", "catalyst-content/ts", "catalyst-explore/ts", "catalyst-comms/ts", "catalyst-worlds/ts", "catalyst-social/ts", "catalyst-builder/ts", "catalyst-camera-reel/ts", "catalyst-shop/ts"]
 

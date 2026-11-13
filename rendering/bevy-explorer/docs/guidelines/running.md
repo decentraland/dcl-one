@@ -155,7 +155,8 @@ guest: the HUD's guest sign-in goes through thirdweb, which refuses origins it d
 arrival, so release it (`/press_key Escape`) and check `keyboardClaimed` in `/world_state` before
 holding a movement key; a scene's own dialog can hold movement too. `/performance_state` gives the
 slowest frame and the frames over 50 ms of each 1,000 frames, and `/instantiation_state` what the
-spawner and glTF processing take.
+spawner and glTF processing take, what primitives and materials charged the last frame and how
+many of them wait.
 
 ## Headless
 

@@ -12,6 +12,9 @@ struct TimedBus {
 }
 #[async_trait::async_trait]
 impl NatsBus for TimedBus {
+    async fn statistics_control(&self, payload: Vec<u8>) -> Result<Vec<u8>, RequestError> {
+        self.inner.statistics_control(payload).await
+    }
     fn is_enabled(&self) -> bool {
         self.inner.is_enabled()
     }

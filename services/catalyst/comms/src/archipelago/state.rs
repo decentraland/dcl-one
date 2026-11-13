@@ -1,10 +1,9 @@
 use crate::archipelago::auth::ChallengeStore;
 use crate::archipelago::ban::BanChecker;
 use crate::archipelago::config::Settings;
-use crate::archipelago::content::ContentResolver;
 use crate::archipelago::control_v4::AssignmentAuthority;
+use crate::archipelago::enforcement::Enforcement;
 use crate::archipelago::feed::{FeedCache, Outbox};
-use crate::archipelago::peers::PeerDirectory;
 use crate::archipelago::registry::PeersRegistry;
 use crate::deny_list::DenyList;
 use std::sync::Arc;
@@ -12,8 +11,15 @@ use std::sync::Arc;
 pub struct AppStateInner {
     pub settings: Settings,
     pub sockets: Arc<tokio::sync::Semaphore>,
+    pub handlers: Arc<tokio::sync::Semaphore>,
     pub restart: tokio_util::sync::CancellationToken,
-    pub peers: Arc<PeerDirectory>,
+    pub enforcement: Arc<Enforcement>,
+    pub statistics: Arc<crate::stats::Reader>,
+    pub(crate) _statistics_subscription: crate::gatekeeper::bus::NatsSubscription,
+    pub connector_metrics: Arc<crate::stats::runtime::Metrics>,
+    pub observations: super::observations::Observations,
+    pub started_at: std::time::Instant,
+    pub started: std::sync::atomic::AtomicBool,
     pub registry: Arc<PeersRegistry>,
     pub feed: Arc<FeedCache>,
     pub outbox: Outbox,
@@ -22,7 +28,6 @@ pub struct AppStateInner {
     pub gatekeeper: crate::gatekeeper::SharedState,
     pub challenges: Arc<ChallengeStore>,
 
-    pub content: Arc<ContentResolver>,
     pub control_v4: Arc<AssignmentAuthority>,
     pub replica_id: String,
 
