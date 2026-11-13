@@ -73,4 +73,5 @@ web-sys = { workspace = true, features = ["HtmlVideoElement"] }
 js-sys = { workspace = true }
 futures-channel = { workspace = true }
 once_cell = { workspace = true }
+dashmap = { workspace = true }
 gloo-timers = { version = "0.4", features = ["futures"] }
