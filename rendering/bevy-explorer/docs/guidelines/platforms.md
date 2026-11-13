@@ -55,7 +55,11 @@ sees a `cfg`. Backend functionality that only one caller needs lives next to tha
   `__contentCacheTrim` page function (`deploy/web/engine/content_cache.js`): at start, after each
   sixteenth of the cap written (at most 64 MiB), and before retrying a write that failed for quota
   (then it frees at least a quarter, at most once a minute). It never opens another cache. The
-  page asks once for persistent storage. The **Web Content Cache** debug section shows the readings;
+  cap applies to the content cache's own bytes: Cache Storage usage (`usageDetails.caches`, or the
+  origin's whole usage where the browser does not report it) only bounds them, so at or under the
+  cap nothing is enumerated, and over it every entry is sized and that total alone decides what
+  goes. A page no service worker controls (after a hard reload) is not trimmed: it logs that once
+  and asks again when a worker takes control. The page asks once for persistent storage. The **Web Content Cache** debug section shows the readings;
   in preview mode it can override the cap for the session. The scene server's frame runs a second
   engine that asks for its own configured cap, so an override above that lasts only until its
   next trim.
