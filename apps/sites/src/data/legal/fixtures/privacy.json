@@ -1,0 +1,651 @@
+{
+  "source": "decentraland/sites@cfdfa1a51216f9dc90c5b148686a95e7ee9c2862",
+  "path": "/privacy",
+  "oracleA": {
+    "renderedFrom": "git archive cfdfa1a5, vite build and preview",
+    "capturedAt": "2026-11-04T02:33:12.566Z"
+  },
+  "oracleB": {
+    "url": "https://decentraland.org/privacy",
+    "bundle": "@dcl/sites/0.76.0",
+    "capturedAt": "2026-11-04T02:32:14.129Z"
+  },
+  "canonical": [
+    {
+      "tag": "a",
+      "href": "/brand",
+      "children": [
+        {
+          "text": "Logo and Name"
+        }
+      ]
+    },
+    {
+      "tag": "a",
+      "href": "/content",
+      "children": [
+        {
+          "text": "Content Policy"
+        }
+      ]
+    },
+    {
+      "tag": "a",
+      "href": "/ethics",
+      "children": [
+        {
+          "text": "Code of Ethics"
+        }
+      ]
+    },
+    {
+      "tag": "a",
+      "href": "/rewards-terms",
+      "children": [
+        {
+          "text": "Rewards Program"
+        }
+      ]
+    },
+    {
+      "tag": "a",
+      "href": "/credits-terms",
+      "children": [
+        {
+          "text": "Credits"
+        }
+      ]
+    },
+    {
+      "tag": "a",
+      "href": "/security",
+      "children": [
+        {
+          "text": "Security"
+        }
+      ]
+    },
+    {
+      "tag": "a",
+      "href": "/privacy",
+      "children": [
+        {
+          "text": "Privacy Policy"
+        }
+      ]
+    },
+    {
+      "tag": "a",
+      "href": "/referral-terms",
+      "children": [
+        {
+          "text": "Referral"
+        }
+      ]
+    },
+    {
+      "tag": "a",
+      "href": "/terms",
+      "children": [
+        {
+          "text": "Terms of Use"
+        }
+      ]
+    },
+    {
+      "tag": "h1",
+      "children": [
+        {
+          "text": "Privacy Policy"
+        }
+      ]
+    },
+    {
+      "tag": "ul",
+      "children": [
+        {
+          "tag": "li",
+          "children": [
+            {
+              "tag": "a",
+              "href": "#introduction",
+              "children": [
+                {
+                  "text": "1. Introduction"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "tag": "a",
+              "href": "#information-collected",
+              "children": [
+                {
+                  "text": "2. Information Collected"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "tag": "a",
+              "href": "#way-information-used",
+              "children": [
+                {
+                  "text": "3. How Your Personal Information Is Used"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "tag": "a",
+              "href": "#what-is-done",
+              "children": [
+                {
+                  "text": "4. What Is Done with Your Information"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "tag": "a",
+              "href": "#your-choice",
+              "children": [
+                {
+                  "text": "5. Your Choices"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "tag": "a",
+              "href": "#cookies",
+              "children": [
+                {
+                  "text": "6. Cookies and Tracking Technologies"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "tag": "a",
+              "href": "#information-not-collected",
+              "children": [
+                {
+                  "text": "7. Information Not Collected"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "tag": "a",
+              "href": "#information-security",
+              "children": [
+                {
+                  "text": "8. Information Security"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "tag": "a",
+              "href": "#privacy-rights",
+              "children": [
+                {
+                  "text": "9. Privacy Rights"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "tag": "a",
+              "href": "#changes-and-updates",
+              "children": [
+                {
+                  "text": "10. Changes and Updates"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "anchor": "introduction"
+    },
+    {
+      "tag": "h2",
+      "children": [
+        {
+          "text": "1. Introduction"
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "This Privacy Policy should be read in conjunction with the Terms of Use."
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "1.2. The aim of this Privacy Policy is to help you understand how your personal information is used and your choices regarding said use."
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "1.3. By accessing and using the Services, you agree and consent that Decentraland can collect, use, disclose, and process your information as described in this Privacy Policy."
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "1.4 Your use of the Services and any personal information you provide through them remains subject to the terms of this Privacy Policy and the Terms of Use, as each may be updated from time to time."
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "1.5. This Privacy Policy only applies to the Services, and not to any other websites, products or services you may be able to access or link to via the Services. We encourage you to read the privacy policies of any other websites you visit before providing your information to them."
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "1.6. The Services may evolve over time, and this Privacy Policy will change to reflect that evolution. If changes are made, you will be notified by revising the date at the top of this Privacy Policy. In some cases, if significant changes are made, an statement may be placed in the homepage. We encourage you to review this Privacy Policy periodically to stay informed."
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "1.7 Any questions, comments or complaints should be emailed to "
+        },
+        {
+          "tag": "a",
+          "href": "mailto:privacy@decentraland.org",
+          "children": [
+            {
+              "text": "privacy@decentraland.org"
+            }
+          ]
+        },
+        {
+          "text": "."
+        }
+      ]
+    },
+    {
+      "anchor": "information-collected"
+    },
+    {
+      "tag": "h2",
+      "children": [
+        {
+          "text": "2. Information Collected"
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "The personal information collected from you generally may include:"
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "2.1 Network information regarding transactions, including the type of device you use, access times, hardware model, operating system and version, and other unique device identifiers."
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "2.2 Information about plugins you might be using, including but not limited to those related to the management of cryptocurrency assets and any information provided by them."
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "2.3 Your email and Ether address."
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "2.4 The Services require the highest level of browser permissions that could potentially lead to procurement of more personal information. Information on these permissions is used for a limited purpose, and why this is necessary, can be found in paragraph 3 below."
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "2.5 Your interactions with the Services are documented via third party analytics providers such as Segment.io (Twilio) and/or Firebase, and that information is processed by Google and any related company or service."
+        }
+      ]
+    },
+    {
+      "anchor": "way-information-used"
+    },
+    {
+      "tag": "h2",
+      "children": [
+        {
+          "text": "3. How Your Personal Information Is Used"
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "3.1 As with nearly all interactions that take place on the World Wide Web, the servers may receive information by virtue of your interaction with them, including but not limited to IP addresses."
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "3.2 The Services require full browser permissions that could potentially be used to access additional personal information. Such browser permissions are used for an extremely limited technical purpose for allowing the Services to properly interact with your browser. No additional information is obtained beyond what is necessary to provide the Services. No information received is shared with any third party except as required for provision of the Services."
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "3.3 Third party providers such as Segment.io (Twilio) and Firebase are used for purposes of monitoring web traffic, usage, engagement and technical performance. Any identifying information collected via such third-party providers is collected, processed and controlled by them."
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "3.4 Public blockchains provide transparency into transactions and the Foundation is not responsible for preventing or managing information broadcasted on a blockchain."
+        }
+      ]
+    },
+    {
+      "anchor": "what-is-done"
+    },
+    {
+      "tag": "h2",
+      "children": [
+        {
+          "text": "4. What Is Done with Your Information"
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "4.1 Your information may be used in the following ways: To analyze trends for how the Services are being used; To improve the Services; To help personalize your experience of the Services; and if you provide your contact information, you may receive technical notices, updates, confirmations, security alerts, to provide information about events and governance initiatives, to provide support to you, to tell you about other products and services that might interest you, or to respond to your comments or questions."
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "4.2 Your information may be shared with third parties who need to access it in order to do work related to the Services, including helping make the Services available, or providing analytics services. These third parties only access and use your information as necessary to perform their functions."
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "4.3 Aggregations and anonymizations that contain your information may be created in a way that does not directly identify you. Those aggregations and anonymizations may be used or shared for a variety of purposes related to the Services."
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "4.4 Your personal information may be disclosed to agents, businesses, or service providers who process it for providing the Services to you. The Agreements with these service providers limit the kinds of information they can use and ensure they use reasonable efforts to keep your personal information secure."
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "4.5 The Foundation also reserves the right to disclose personal information that it believes, in good faith, is appropriate or necessary to enforce the Terms of Use, take precautions against liability or harm, to investigate and respond to third-party claims or allegations, to respond to court orders or official requests, to protect the security or integrity of the Services, and to protect the rights, property, or safety of the Decentraland, the Decentraland community of users and LAND owners, or others."
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "4.6 In the event that the Foundation is involved in a merger, acquisition, sale, bankruptcy, insolvency, reorganization, receivership, assignment for the benefit of creditors, or the application of laws or equitable principles affecting creditors' rights generally, or other change of control, there may be a disclosure of your information to another entity related to such event."
+        }
+      ]
+    },
+    {
+      "anchor": "your-choice"
+    },
+    {
+      "tag": "h2",
+      "children": [
+        {
+          "text": "5. Your Choices"
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "5.1 Your personal information will be processed in accordance with this Privacy Policy, unless you exercise any of your privacy rights stated in clause 9 of this privacy policy."
+        }
+      ]
+    },
+    {
+      "anchor": "cookies"
+    },
+    {
+      "tag": "h2",
+      "children": [
+        {
+          "text": "6. Cookies and Tracking Technologies"
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "The Services do not use first-party cookies at this time. However, third-party service providers may place cookies or tracking pixels on your browser in connection with your use of these Services. Most web browsers allow you to manage or reject cookies via browser settings. Disabling cookies may affect certain features of the Services."
+        }
+      ]
+    },
+    {
+      "anchor": "information-not-collected"
+    },
+    {
+      "tag": "h2",
+      "children": [
+        {
+          "text": "7. Information Not Collected"
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "Any other personally identifiable information about you shall not be collected, unless you give it to the Foundation directly: by log in, filling out a form, giving written feedback, communicating via third party social media sites, or otherwise communicating via the Site, the Tools, or any other means."
+        }
+      ]
+    },
+    {
+      "anchor": "information-security"
+    },
+    {
+      "tag": "h2",
+      "children": [
+        {
+          "text": "8. Information Security"
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "Whilst neither the Foundation nor any other organization can guarantee the security of information processed online, the Foundation has appropriate security measures in place to protect your personal information including storage on computer systems with limited access, encryption, or both."
+        }
+      ]
+    },
+    {
+      "anchor": "privacy-rights"
+    },
+    {
+      "tag": "h2",
+      "children": [
+        {
+          "text": "9. Privacy Rights"
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "9.1 Subject to applicable law, you may have some or all of the following rights in respect of your personal information: (i) to obtain a copy of your personal information together with information about how and on what basis that personal information is processed; (ii) to rectify inaccurate personal information (including the right to have incomplete personal information completed); (iii) to erase your personal information (in limited circumstances, where it is no longer necessary in relation to the purposes for which it was collected or processed); (iv) to restrict processing of your personal information where: a. the accuracy of the personal information is contested; b. the processing is unlawful but you object to the erasure of the personal information; or c. we no longer require the personal information but it is still required for the establishment, exercise or defense of a legal claim; (v) to challenge processing which we have justified on the basis of a legitimate interest (as opposed to your consent, or to perform a contract with you); (vi) to prevent us from sending you direct marketing; (vii) to withdraw your consent to our processing of your personal information (where that processing is based on your consent); (viii) to object to decisions which are based solely on automated processing or profiling; (ix) in addition to the above, you have the right to file a complaint with the supervisory authority."
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "9.2 If you reside in California, you may request certain general information regarding our disclosure of personal information to third parties for their direct marketing purposes."
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "9.3 To exercise any of these rights, please contact us at: "
+        },
+        {
+          "tag": "a",
+          "href": "mailto:privacy@decentraland.org",
+          "children": [
+            {
+              "text": "privacy@decentraland.org"
+            }
+          ]
+        },
+        {
+          "text": "."
+        }
+      ]
+    },
+    {
+      "anchor": "changes-and-updates"
+    },
+    {
+      "tag": "h2",
+      "children": [
+        {
+          "text": "10. Changes and Updates"
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "10.1 This Privacy Policy may be revised periodically, reflected by the \"Last update posted\" date above. In the case of significant changes, a notice will be placed on the homepage. Your continued use of the Services constitutes your agreement to this Privacy Policy and any future revisions."
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "10.2 Contact Information: "
+        },
+        {
+          "tag": "a",
+          "href": "mailto:privacy@decentraland.org",
+          "children": [
+            {
+              "text": "privacy@decentraland.org"
+            }
+          ]
+        },
+        {
+          "text": "."
+        }
+      ]
+    }
+  ]
+}

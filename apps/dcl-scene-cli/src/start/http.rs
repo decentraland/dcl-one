@@ -86,7 +86,18 @@ async fn handle_ws(socket: axum::extract::ws::WebSocket, mut rx: broadcast::Rece
                 Err(_) => break,
             },
             incoming = stream.next() => match incoming {
-                Some(Ok(Message::Close(_))) => break,
+                Some(Ok(Message::Close(_))) => {
+                    // The Close reply is queued, not sent: closing the sink
+                    // flushes it and draining the stream finishes the
+                    // handshake. Dropping the socket here instead would reset
+                    // the TCP connection under the client.
+                    let _ = sink.close().await;
+                    let _ = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                        while let Some(Ok(_)) = stream.next().await {}
+                    })
+                    .await;
+                    break;
+                }
                 Some(Ok(_)) => continue,
                 _ => break,
             },
@@ -371,6 +382,31 @@ pub(super) async fn preview_wearables(
         "ok": true,
         "data": collect_preview_wearables(&st.projects(), &base, |p| scene_entity_cached(&st, p)),
     }))
+}
+
+/// `/preview-wearables/{id}`: the wearable whose project has that scene id
+/// (what upstream keys the route on), else the one whose `wearable.json`
+/// carries it. `data` is empty when neither matches, like upstream.
+pub(super) async fn preview_wearable(
+    State(st): State<Arc<AppState>>,
+    AxPath(id): AxPath<String>,
+    headers: HeaderMap,
+) -> Json<Value> {
+    let base = format!("{}/content/contents", preview_origin(&headers));
+    let entity_of = |p: &Project| scene_entity_cached(&st, p);
+    let by_scene: Vec<Project> = st
+        .projects()
+        .into_iter()
+        .filter(|p| scene_id_for(p, &st.machine) == id)
+        .collect();
+    let mut data = collect_preview_wearables(&by_scene, &base, entity_of);
+    if data.is_empty() {
+        data = collect_preview_wearables(&st.projects(), &base, entity_of)
+            .into_iter()
+            .filter(|w| w.get("id").and_then(Value::as_str) == Some(id.as_str()))
+            .collect();
+    }
+    Json(json!({ "ok": true, "data": data }))
 }
 
 /// One entry per project with a readable `wearable.json`; a plain scene
@@ -842,6 +878,20 @@ mod tests {
             };
             assert_eq!(frame, ClientMessage::Text("reload-proof".into()));
             socket.close(None).await.unwrap();
+            let closing = loop {
+                match socket.next().await {
+                    Some(Ok(ClientMessage::Ping(_))) => continue,
+                    other => break other,
+                }
+            };
+            assert!(
+                matches!(closing, Some(Ok(ClientMessage::Close(_)))),
+                "the server answers the client's Close with its own, got {closing:?}"
+            );
+            assert!(
+                socket.next().await.is_none(),
+                "the stream ends after the close handshake"
+            );
             crate::test_wait::until(Duration::from_secs(10), async || {
                 (state.reload_tx.receiver_count() == 0).then_some(())
             })
@@ -1467,6 +1517,38 @@ mod tests {
             "the url has to name the file inside the wearable's own root, or \
              /content/contents cannot find it"
         );
+    }
+
+    #[tokio::test]
+    async fn one_wearable_answers_to_its_id_and_to_its_scene_id() {
+        let tmp = Tmp::new("swid");
+        std::fs::write(tmp.0.join("scene.json"), "{}").unwrap();
+        std::fs::write(
+            tmp.0.join("wearable.json"),
+            r#"{"id":"urn:x","data":{"category":"eyewear"}}"#,
+        )
+        .unwrap();
+        std::fs::write(tmp.0.join("model.glb"), b"glb").unwrap();
+        let project = project_at(tmp.0.clone());
+        let st = contents_state(vec![project.clone()]);
+        let ask = |id: &str| {
+            let st = st.clone();
+            let id = id.to_string();
+            async move {
+                preview_wearable(State(st), AxPath(id), HeaderMap::new())
+                    .await
+                    .0
+            }
+        };
+        for id in ["urn:x", &scene_id_for(&project, "m")] {
+            let out = ask(id).await;
+            assert_eq!(out["ok"], true);
+            assert_eq!(out["data"].as_array().unwrap().len(), 1, "{id}");
+            assert_eq!(out["data"][0]["id"], "urn:x", "{id}");
+        }
+        let out = ask("urn:somebody-else").await;
+        assert_eq!(out["ok"], true);
+        assert!(out["data"].as_array().unwrap().is_empty());
     }
 
     #[test]
