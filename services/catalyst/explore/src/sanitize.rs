@@ -809,6 +809,8 @@ mod markup_tests {
         let out = strip_all_markup("<<<<<<<<b>b>b>b>b>b>b>b>");
         assert!(!out.contains('<') && !out.contains('>'), "{out}");
         assert_eq!(strip_all_markup_opt(None), None);
+        assert_eq!(strip_all_markup_opt(Some("<size=300><b>".into())), None);
+        assert_eq!(strip_all_markup_opt(Some(String::new())), None);
     }
 
     #[test]
@@ -1198,8 +1200,10 @@ fn name_tag_end(bytes: &[u8], lt: usize) -> Option<usize> {
     (bytes[j + rel] == b'>').then_some(j + rel + 1)
 }
 
+/// [`strip_all_markup`] for an optional field: text that was only tags
+/// becomes `None`, so the field reads as unset.
 pub fn strip_all_markup_opt(text: Option<String>) -> Option<String> {
-    text.map(|t| strip_all_markup(&t))
+    text.map(|t| strip_all_markup(&t)).filter(|t| !t.is_empty())
 }
 
 pub const MAX_EVENT_URL_LEN: usize = 2048;
