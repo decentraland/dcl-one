@@ -798,7 +798,7 @@ mod tests {
     async fn complete_latest_pair_precedes_lookup_and_complete_history_pair() {
         use crate::eip1654::verify_eip1654_at_verification_time;
         let message = b"dcl-controlled-fallback";
-        let contract = "0x0000000000000000000000000000000000000001";
+        let contract = "0x0000000000000000000000000000000000000101";
         for (fixture, (latest, historical, accepted, expected_calls)) in [
             (vec![magic()], vec![], true, 1),
             (vec![rpc_error(), magic()], vec![], true, 2),
@@ -900,7 +900,7 @@ mod tests {
             answers.truncate(3 + failure_at);
             let (rpc, calls, task) = scripted_rpc(answers).await;
             assert!(
-                verify_eip1654_at_verification_time(&rpc, "0xabc", b"message", &[1], 115000)
+                verify_eip1654_at_verification_time(&rpc, WALLET, b"message", &[1], 115000)
                     .await
                     .is_err()
             );
@@ -909,7 +909,7 @@ mod tests {
         }
         let (rpc, calls, task) = scripted_rpc(vec![refusal(), refusal(), magic()]).await;
         assert!(
-            !verify_eip1654(&rpc, "0xabc", b"message", &[1])
+            !verify_eip1654(&rpc, WALLET, b"message", &[1])
                 .await
                 .unwrap()
         );
@@ -917,12 +917,15 @@ mod tests {
         task.abort();
     }
 
+    /// Fixture contract signers start past the precompile range, which is never asked.
+    const CONTRACT_BASE: usize = 0x100;
+
     fn historical_chain(links: usize, payload: &str) -> crate::AuthChain {
         let mut chain = vec![
-            serde_json::json!({"type":"SIGNER","payload":"0x0000000000000000000000000000000000000001","signature":""}),
+            serde_json::json!({"type":"SIGNER","payload":format!("0x{:040x}", CONTRACT_BASE + 1),"signature":""}),
         ];
         for n in 1..links {
-            chain.push(serde_json::json!({"type":"ECDSA_EIP_1654_EPHEMERAL","payload":format!("Decentraland Login\nEphemeral address: 0x{:040x}\nExpiration: 2099-12-31T00:00:00.000Z",n+1),"signature":"0x1234"}));
+            chain.push(serde_json::json!({"type":"ECDSA_EIP_1654_EPHEMERAL","payload":format!("Decentraland Login\nEphemeral address: 0x{:040x}\nExpiration: 2099-12-31T00:00:00.000Z",CONTRACT_BASE+n+1),"signature":"0x1234"}));
         }
         chain.push(serde_json::json!({"type":"ECDSA_EIP_1654_SIGNED_ENTITY","payload":payload,"signature":"0x1234"}));
         serde_json::from_value(serde_json::json!(chain)).unwrap()
@@ -964,7 +967,7 @@ mod tests {
                 assert_eq!(link_calls[0]["params"][1], "latest");
                 assert_eq!(
                     link_calls[0]["params"][0]["to"],
-                    format!("0x{:040x}", index + 1)
+                    format!("0x{:040x}", CONTRACT_BASE + index + 1)
                 );
                 assert_eq!(
                     link_calls[2]["params"],
