@@ -90,7 +90,7 @@ type NavBarCommonProps = {
   /** Defaults to `/`. */
   logoHref?: string
   balances?: NavBarBalances
-  /** Standard foundation surface or black-to-transparent overlay. The app owns layout positioning. */
+  /** Responsive tinted backdrop or minimal desktop overlay. The host positions and stacks the header above page content. */
   surface?: 'solid' | 'overlay'
   /** App-owned balance action beside numeric balances, rendered in the header or open drawer, never both. */
   balanceAction?: ReactNode

@@ -1,0 +1,13 @@
+packages/creator-hub/scripts/*.js linguist-detectable=false
+*.config.js linguist-detectable=false
+* text=auto eol=lf
+
+# The asset packs' media lives in Git LFS. Only the jobs that build, validate or upload the packs
+# fetch it (.github/actions/creator-hub-lfs at the repository root); the rest of the tree,
+# the app's own images and videos included, stays plain git.
+packages/asset-packs/packs/**/*.[gG][lL][bB] filter=lfs diff=lfs merge=lfs -text
+packages/asset-packs/packs/**/*.[pP][nN][gG] filter=lfs diff=lfs merge=lfs -text
+packages/asset-packs/packs/**/*.[jJ][pP][gG] filter=lfs diff=lfs merge=lfs -text
+packages/asset-packs/packs/**/*.[jJ][pP][eE][gG] filter=lfs diff=lfs merge=lfs -text
+packages/asset-packs/packs/**/*.[wW][eE][bB][pP] filter=lfs diff=lfs merge=lfs -text
+packages/asset-packs/packs/**/*.[mM][pP]3 filter=lfs diff=lfs merge=lfs -text

@@ -1,6 +1,6 @@
 //! The connector's side of the island feed. Over `serve`'s one NATS link, the gatekeeper's
 //! (`gatekeeper::bus`, core NATS, no JetStream or durable consumer acknowledgement), inbound
-//! carries the topology and service-discovery snapshots the stats surface serves
+//! carries the independent social topology and validates discovery messages
 //! ([`dispatch`]) and outbound its realm owners' control positions ([`Outbox`]).
 //!
 //! The island subscriber lives in the same process, so the rest is calls: it hands each minted
@@ -23,7 +23,7 @@ use crate::archipelago::state::{AppState, AppStateInner};
 use crate::gatekeeper::admission::cluster::sockets::{IslandDelivery, IslandSockets};
 use crate::gatekeeper::bus::{NatsBus, NatsHandler, NatsSubscription, PublishOutcome};
 use crate::jobs::Jobs;
-use crate::protocol::archipelago::archipelago::{IslandChangedMessage, ServiceDiscoveryMessage};
+use crate::protocol::archipelago::archipelago::IslandChangedMessage;
 use crate::protocol::bus::BusError;
 use crate::protocol::bus::control_position::{
     ControlPosition, SUBJECT as CONTROL_POSITION_SUBJECT,
@@ -31,7 +31,7 @@ use crate::protocol::bus::control_position::{
 use crate::protocol::bus::topology::{
     DISCOVERY_SUBJECT, ISLANDS_SUBJECT, decode_discovery, decode_islands,
 };
-use parking_lot::{Mutex, RwLock};
+use parking_lot::Mutex;
 use prost::Message as _;
 use serde::Serialize;
 use std::sync::Arc;
@@ -100,14 +100,11 @@ pub enum Routed {
     Ignored,
 }
 
-/// The latest topology and service-discovery snapshots the feed carried, and the counters that
-/// tell a silent feed apart from one whose assignments reach no socket.
+/// Social topology and delivery counters; statistical population lives in Pulse.
 #[derive(Default)]
 pub struct FeedCache {
     /// Shared complete-wallet view; fed by this existing subscription on every replica.
     pub topology: Arc<crate::topology::Topology>,
-    islands: RwLock<Vec<IslandReport>>,
-    discovery: RwLock<Option<ServiceDiscoveryMessage>>,
     delivered: AtomicU64,
     no_session_socket: AtomicU64,
     deduplicated: AtomicU64,
@@ -115,6 +112,7 @@ pub struct FeedCache {
     coalesced: AtomicU64,
     assignment_oversized: AtomicU64,
     socket_write_timeout: AtomicU64,
+    dropped_close: AtomicU64,
     socket_assignments_written: AtomicU64,
     #[cfg(any(test, feature = "test-support"))]
     restoration_complete: AtomicBool,
@@ -131,49 +129,6 @@ impl FeedCache {
     #[cfg(any(test, feature = "test-support"))]
     pub fn link_observed(&self) -> bool {
         self.link_observed.load(Ordering::Acquire)
-    }
-
-    pub fn islands(&self) -> Vec<IslandReport> {
-        self.islands.read().clone()
-    }
-
-    pub fn island(&self, id: &str) -> Option<IslandReport> {
-        self.islands
-            .read()
-            .iter()
-            .find(|island| island.id == id)
-            .cloned()
-    }
-
-    pub fn islands_count(&self) -> usize {
-        self.islands.read().len()
-    }
-
-    pub fn on_islands(&self, islands: Vec<IslandReport>) {
-        *self.islands.write() = islands;
-    }
-
-    pub fn on_discovery(&self, message: ServiceDiscoveryMessage) {
-        *self.discovery.write() = Some(message);
-    }
-
-    pub fn is_core_healthy(&self, now_ms: i64) -> bool {
-        self.discovery
-            .read()
-            .as_ref()
-            .and_then(|m| m.status.as_ref())
-            .is_some_and(|status| {
-                (now_ms - status.current_time as i64).abs() < DISCOVERY_FRESHNESS_MS
-            })
-    }
-
-    pub fn core_user_count(&self) -> u32 {
-        self.discovery
-            .read()
-            .as_ref()
-            .and_then(|m| m.status.as_ref())
-            .map(|status| status.user_count)
-            .unwrap_or(0)
     }
 
     pub fn delivered_count(&self) -> u64 {
@@ -207,6 +162,13 @@ impl FeedCache {
         self.assignment_oversized.load(Ordering::Relaxed)
     }
 
+    pub fn dropped_close_count(&self) -> u64 {
+        self.dropped_close.load(Ordering::Relaxed)
+    }
+    pub(crate) fn on_dropped_close(&self) {
+        self.dropped_close.fetch_add(1, Ordering::Relaxed);
+    }
+
     pub fn socket_write_timeout_count(&self) -> u64 {
         self.socket_write_timeout.load(Ordering::Relaxed)
     }
@@ -235,17 +197,11 @@ pub fn dispatch(state: &AppState, subject: &str, data: &[u8]) -> Routed {
             .receive(data)
             .and_then(|_| decode_islands_report(data))
         {
-            Ok(islands) => {
-                state.feed.on_islands(islands);
-                Routed::Topology
-            }
+            Ok(_) => Routed::Topology,
             Err(e) => undecodable(state, subject, &e),
         },
         DISCOVERY_SUBJECT => match decode_discovery(data) {
-            Ok(message) => {
-                state.feed.on_discovery(message);
-                Routed::Discovery
-            }
+            Ok(_) => Routed::Discovery,
             Err(e) => undecodable(state, subject, &e),
         },
         _ => Routed::Ignored,
@@ -346,7 +302,11 @@ fn deliver(
         }
         AssignmentSend::Closed => return Routed::NoSocket,
     };
-    state.peers.set_island(address, &assignment.island_id);
+    if !state.registry.with_session_link(address, link, || {
+        state.enforcement.set_island(address, &assignment.island_id)
+    }) {
+        return Routed::NoSocket;
+    }
     state.feed.delivered.fetch_add(1, Ordering::Relaxed);
     outcome
 }
@@ -553,7 +513,7 @@ mod tests {
     use crate::gatekeeper::bus::{InProcessBus, RequestError};
     use crate::protocol::archipelago::Position;
     use crate::protocol::archipelago::archipelago::{
-        IslandData, IslandStatusMessage, ServiceStatus,
+        IslandData, IslandStatusMessage, ServiceDiscoveryMessage, ServiceStatus,
     };
     use crate::protocol::bus::cluster::ClusterLookup;
     use crate::protocol::pulse::decentraland::pulse::PeerClusterSnapshot;
@@ -610,27 +570,6 @@ mod tests {
         assert_eq!(report[0].radius, 8.0);
     }
 
-    #[test]
-    fn the_core_is_healthy_only_while_its_heartbeat_is_fresh() {
-        let cache = FeedCache::default();
-        assert!(!cache.is_core_healthy(1_000_000));
-        assert_eq!(cache.core_user_count(), 0);
-
-        let message = ServiceDiscoveryMessage::decode(status_message(1_000_000, 42).as_slice())
-            .expect("decodes");
-        cache.on_discovery(message);
-        assert!(cache.is_core_healthy(1_000_000));
-        assert!(cache.is_core_healthy(1_000_000 + DISCOVERY_FRESHNESS_MS - 1));
-        assert!(!cache.is_core_healthy(1_000_000 + DISCOVERY_FRESHNESS_MS));
-        assert!(
-            !cache.is_core_healthy(1_000_000 - DISCOVERY_FRESHNESS_MS),
-            "a heartbeat from the future is not fresh either"
-        );
-        assert_eq!(cache.core_user_count(), 42);
-    }
-
-    /// The gatekeeper's link as an in-process bus that also records every subscription asked of
-    /// it, with its queue group.
     #[derive(Default)]
     struct Recorded {
         bus: InProcessBus,
@@ -639,6 +578,9 @@ mod tests {
 
     #[async_trait::async_trait]
     impl NatsBus for Recorded {
+        async fn statistics_control(&self, payload: Vec<u8>) -> Result<Vec<u8>, RequestError> {
+            self.bus.statistics_control(payload).await
+        }
         fn is_enabled(&self) -> bool {
             self.bus.is_enabled()
         }
@@ -674,15 +616,23 @@ mod tests {
         }
     }
 
-    /// On the gatekeeper's link the connector takes the two topology snapshots, every replica a
-    /// copy (no queue group), and nothing else: no island assignment and no connect cross it.
+    /// On the gatekeeper's link readers and lazy registration observe statistics separately;
+    /// topology remains unqueued and carries no session announcements.
     #[tokio::test]
-    async fn the_connector_subscribes_to_the_topology_snapshots_alone() {
+    async fn the_connector_uses_one_bus_for_statistics_and_social_topology() {
         let bus = Arc::new(Recorded::default());
         let _state = state_over(Settings::for_tests(), bus.clone()).await;
         assert_eq!(
             *bus.subscribed.lock(),
             vec![
+                (
+                    crate::protocol::bus::statistics::SNAPSHOTS_SUBJECT.to_owned(),
+                    None
+                ),
+                (
+                    crate::protocol::bus::statistics::SNAPSHOTS_SUBJECT.to_owned(),
+                    None
+                ),
                 (ISLANDS_SUBJECT.to_owned(), None),
                 (DISCOVERY_SUBJECT.to_owned(), None)
             ]
@@ -696,7 +646,13 @@ mod tests {
         };
         let bus = Arc::new(Recorded::default());
         let state = state_over(Settings::for_tests(), bus.clone()).await;
-        let _mounts = crate::archipelago::mounts(state.clone(), false);
+        let _mounts = crate::archipelago::mounts(
+            state.clone(),
+            false,
+            Default::default(),
+            crate::stats::http::test_support::matcher(),
+            Arc::new(crate::content::Denylist::default()),
+        );
         let bytes = IslandStatusMessage {
             data: vec![IslandData {
                 peers: vec![WALLET.into()],
@@ -858,15 +814,21 @@ mod tests {
     }
 
     async fn get_json(state: &AppState, path: &str) -> serde_json::Value {
-        let response = crate::archipelago::mounts(state.clone(), true)
-            .stats
-            .oneshot(
-                axum::http::Request::get(path)
-                    .body(axum::body::Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+        let response = crate::archipelago::mounts(
+            state.clone(),
+            true,
+            Default::default(),
+            crate::stats::http::test_support::matcher(),
+            Arc::new(crate::content::Denylist::default()),
+        )
+        .root
+        .oneshot(
+            axum::http::Request::get(path)
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
         let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
             .await
             .unwrap();
@@ -880,10 +842,20 @@ mod tests {
         bus.inject(ISLANDS_SUBJECT, &islands_message());
         bus.inject(DISCOVERY_SUBJECT, &status_message(now as u64, 7));
 
+        let snapshot = crate::protocol::bus::statistics::Snapshot {
+            islands: islands_message(),
+            discovery: status_message(now as u64, 7),
+            ..Default::default()
+        };
+        for frame in
+            crate::protocol::bus::statistics::frames(&snapshot, uuid::Uuid::new_v4(), 1, 65536)
+                .unwrap()
+        {
+            bus.inject(crate::protocol::bus::statistics::SNAPSHOTS_SUBJECT, &frame);
+        }
         let islands = get_json(&state, "/islands").await;
         assert_eq!(islands["islands"].as_array().unwrap().len(), 1);
         assert_eq!(islands["islands"][0]["id"], "island-C1");
-        assert!(state.feed.is_core_healthy(now));
         let core = get_json(&state, "/core-status").await;
         assert_eq!(core["healthy"], true);
         assert_eq!(core["userCount"], 7);
@@ -895,6 +867,9 @@ mod tests {
 
     #[async_trait::async_trait]
     impl NatsBus for Unconfirmed {
+        async fn statistics_control(&self, _: Vec<u8>) -> Result<Vec<u8>, RequestError> {
+            Err(RequestError::NoConnection)
+        }
         fn is_enabled(&self) -> bool {
             true
         }
@@ -1107,6 +1082,9 @@ mod tests {
                     .cloned()
                     .unwrap_or_else(|| "c1".to_owned());
                 Ok(PeerClusterSnapshot {
+                    selected_origin: 1,
+                    selected_identity: Some(1),
+                    assignment_state: 1,
                     wallet: lookup.wallet,
                     session: lookup.session,
                     cluster_id,
@@ -1263,7 +1241,10 @@ mod tests {
             "livekit:wss://sfu.invalid?access_token=token-for-island-c2"
         );
         assert_eq!(moved.from_island_id.as_deref(), Some("island-c1"));
-        assert_eq!(state.peers.island_of(MOVED).as_deref(), Some("island-c2"));
+        assert_eq!(
+            state.enforcement.island_of(MOVED).as_deref(),
+            Some("island-c2")
+        );
         assert!(bus.published().is_empty(), "an announce crosses no broker");
         jobs.shutdown(Duration::from_secs(5)).await;
     }
@@ -1342,7 +1323,7 @@ mod tests {
         assert!(newer_events.try_recv().is_err());
         assert_eq!(state.feed.delivered_count(), 1);
         assert_eq!(
-            state.peers.island_of(WALLET).as_deref(),
+            state.enforcement.island_of(WALLET).as_deref(),
             Some("island-session")
         );
 

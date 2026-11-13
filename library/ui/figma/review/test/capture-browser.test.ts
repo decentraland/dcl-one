@@ -4,6 +4,7 @@ import { chmod, mkdtemp, readFile, rm, writeFile, stat } from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
 import { EventEmitter } from 'node:events'
+import { execFileSync } from 'node:child_process'
 import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { browserArgs } from '../scripts/browser-args.mjs'
@@ -82,6 +83,18 @@ describe('when startup diagnostics explain a failed browser launch', () => {
     assert.equal(diagnostic.phase, 'port-file')
     assert.match(diagnostic.stderr, /launch failed/)
     assert.ok(!JSON.stringify(diagnostic).includes(path.dirname(file)))
+  })
+
+  it('should let the caller exit when a failed browser leaves an inherited stderr writer', async () => {
+    const { file } = await script(
+      'require("node:child_process").spawn(process.execPath,["-e","setTimeout(()=>{},8000)"],{stdio:["ignore","ignore",2]}).unref();process.exit(7)'
+    )
+    const source = new URL('../scripts/capture-browser.mjs', import.meta.url).href
+    const runner = `import {openSession} from ${JSON.stringify(source)};try{await openSession(${JSON.stringify(file)});process.exitCode=1}catch(error){if(!error.message.includes('exited during startup'))throw error}`
+    execFileSync(process.execPath, ['--input-type=module', '-e', runner], {
+      timeout: 3000,
+      stdio: 'pipe'
+    })
   })
 
   it('should report a child signal before cleanup changes its process state', async (t) => {

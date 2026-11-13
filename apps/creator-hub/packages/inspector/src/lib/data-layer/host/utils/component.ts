@@ -1,0 +1,247 @@
+import type {
+  ComponentDefinition,
+  CompositeDefinition,
+  DeepReadonlyObject,
+  Entity,
+} from '@dcl/ecs';
+import { ReadWriteByteBuffer } from '@dcl/ecs/dist/serialization/ByteBuffer';
+import { dataCompare } from '@dcl/ecs/dist/systems/crdt/utils';
+import type { Scene } from '@dcl/schemas';
+
+import type {
+  EditorComponentsTypes,
+  SceneAgeRating,
+  SceneComponent,
+  SceneSpawnPoint,
+} from '../../../sdk/components';
+import { SceneCategory } from '../../../sdk/components';
+import { getConfig } from '../../../logic/config';
+import { isAddress } from '../../../logic/ethereum';
+import type { TransitionMode } from '../../../sdk/components/SceneMetadata';
+
+export function isEqual(
+  component: ComponentDefinition<unknown>,
+  prevValue: unknown,
+  newValue: unknown,
+) {
+  if (prevValue === newValue || (!prevValue && !newValue)) return true;
+  if ((!prevValue && newValue) || (prevValue && !newValue)) return false;
+  const prevBuffer = new ReadWriteByteBuffer();
+  const newBuffer = new ReadWriteByteBuffer();
+  component.schema.serialize(prevValue as DeepReadonlyObject<unknown>, prevBuffer);
+  component.schema.serialize(newValue as DeepReadonlyObject<unknown>, newBuffer);
+  return dataCompare(prevBuffer.toBinary(), newBuffer.toBinary()) === 0;
+}
+
+export function findPrevValue(
+  composite: CompositeDefinition,
+  componentName: string,
+  entity: Entity,
+) {
+  const component = composite.components.find(c => c.name === componentName);
+  const value = component?.data.get(entity);
+  if (value?.data?.$case !== 'json') {
+    return null;
+  }
+  return value.data.json;
+}
+
+const parseCoords = (coords: string) => {
+  const [x, y] = coords.split(',');
+  return { x: parseInt(x), y: parseInt(y) };
+};
+
+// A scene without parcels is invalid and breaks deployment: fall back to the base parcel,
+// and only to 0,0 when there is no other known set of coordinates
+const DEFAULT_PARCEL = '0,0';
+const PARCEL_REGEX = /^\s*-?\d+\s*,\s*-?\d+\s*$/;
+
+function isValidParcel(value: unknown): value is string {
+  return typeof value === 'string' && PARCEL_REGEX.test(value);
+}
+
+export function getValidParcels(
+  rawParcels: unknown,
+  rawBase?: unknown,
+): {
+  parcels: string[];
+  base: string;
+} {
+  const validParcels = Array.isArray(rawParcels) ? rawParcels.filter(isValidParcel) : [];
+  const base = isValidParcel(rawBase) ? rawBase : (validParcels[0] ?? DEFAULT_PARCEL);
+  const parcels = validParcels.length > 0 ? validParcels : [base];
+  return { parcels, base };
+}
+
+type SceneWithRating = Scene & {
+  creator?: string;
+  rating: SceneAgeRating;
+  skyboxConfig?: { fixedTime?: number; transitionMode?: TransitionMode };
+  landscapeTerrain?: boolean;
+  authoritativeMultiplayer?: boolean;
+  logsPermissions?: string[];
+};
+
+const HEX_PREFIX = /^0x/i;
+
+function toAllowlist(addresses: readonly string[] | undefined): string[] {
+  const normalized = (addresses ?? [])
+    .filter(address => isAddress(address))
+    .map(address => `0x${address.replace(HEX_PREFIX, '')}`);
+  return Array.from(new Set(normalized));
+}
+
+export type SceneJsonSpawnPoint = NonNullable<Scene['spawnPoints']>[number];
+
+export function fromSceneSpawnPoint(
+  spawnPoint: DeepReadonlyObject<SceneSpawnPoint>,
+): SceneJsonSpawnPoint {
+  const { x, y, z } = spawnPoint.position;
+  const hasRange = x.$case === 'range' || y.$case === 'range' || z.$case === 'range';
+  return {
+    name: spawnPoint.name,
+    default: spawnPoint.default,
+    position: hasRange
+      ? {
+          x: x.$case === 'range' ? [...x.value] : [x.value, x.value],
+          y: y.$case === 'range' ? [...y.value] : [y.value, y.value],
+          z: z.$case === 'range' ? [...z.value] : [z.value, z.value],
+        }
+      : {
+          x: x.value as number,
+          y: y.value as number,
+          z: z.value as number,
+        },
+    cameraTarget: spawnPoint.cameraTarget ? { ...spawnPoint.cameraTarget } : undefined,
+  };
+}
+
+export function toSceneSpawnPoint(spawnPoint: SceneJsonSpawnPoint, index: number): SceneSpawnPoint {
+  return {
+    name: spawnPoint.name || `Spawn Point ${index + 1}`,
+    default: spawnPoint.default,
+    position: {
+      x: Array.isArray(spawnPoint.position.x)
+        ? { $case: 'range', value: spawnPoint.position.x }
+        : { $case: 'single', value: spawnPoint.position.x },
+      y: Array.isArray(spawnPoint.position.y)
+        ? { $case: 'range', value: spawnPoint.position.y }
+        : { $case: 'single', value: spawnPoint.position.y },
+      z: Array.isArray(spawnPoint.position.z)
+        ? { $case: 'range', value: spawnPoint.position.z }
+        : { $case: 'single', value: spawnPoint.position.z },
+    },
+    cameraTarget: spawnPoint.cameraTarget,
+  };
+}
+
+export function isSceneSpawnAxis(value: unknown): value is number | [number, number] {
+  if (Array.isArray(value)) return value.length === 2 && value.every(Number.isFinite);
+  return Number.isFinite(value);
+}
+
+export function fromSceneComponent(
+  value: DeepReadonlyObject<EditorComponentsTypes['Scene']>,
+): Partial<Scene> {
+  const tags: string[] = [];
+  for (const category of value.categories || []) {
+    tags.push(category);
+  }
+  for (const tag of value.tags || []) {
+    const sanitizedTag = tag.trim();
+    if (sanitizedTag && !tags.includes(sanitizedTag)) tags.push(sanitizedTag);
+  }
+  const config = getConfig();
+  const { parcels, base } = getValidParcels(
+    value.layout.parcels.map($ => `${$.x},${$.y}`),
+    value.layout.base ? `${value.layout.base.x},${value.layout.base.y}` : undefined,
+  );
+  const allowlist = toAllowlist(value.logsPermissions);
+  const scene: Partial<SceneWithRating> = {
+    display: {
+      title: value.name || '',
+      description: value.description || '',
+      navmapThumbnail: value.thumbnail || '',
+    },
+    scene: {
+      parcels,
+      base,
+    },
+    creator: value.creator || '',
+    contact: {
+      name: value.author || '',
+      email: value.email || '',
+    },
+    tags,
+    spawnPoints: value.spawnPoints ? value.spawnPoints.map(fromSceneSpawnPoint) : [],
+    featureToggles: {
+      voiceChat: value.silenceVoiceChat ? 'disabled' : 'enabled',
+      portableExperiences: value.disablePortableExperiences ? 'disabled' : 'enabled',
+      nearbyVoiceChat: value.disableNearbyVoiceChat ? 'disabled' : 'enabled',
+    },
+    rating: value.ageRating,
+    skyboxConfig: {
+      fixedTime: value.skyboxConfig?.fixedTime,
+      transitionMode: value.skyboxConfig?.transitionMode,
+    },
+    landscapeTerrain: !value.hideLandscapeTerrain,
+    authoritativeMultiplayer: !!value.multiplayerServer,
+    logsPermissions: allowlist.length ? allowlist : undefined,
+  };
+
+  if (config.segmentAppId && config.projectId) {
+    // add analytics source
+    scene.source = {
+      origin: config.segmentAppId,
+      projectId: config.projectId,
+    };
+  }
+
+  return scene;
+}
+
+export function toSceneComponent(value: Scene): EditorComponentsTypes['Scene'] {
+  const { parcels, base } = getValidParcels(value.scene?.parcels, value.scene?.base);
+  const rawLogsPermissions = (value as SceneWithRating).logsPermissions;
+  const categories: SceneCategory[] = [];
+  const tags: string[] = [];
+
+  for (const tag of value.tags || []) {
+    if (Object.values(SceneCategory).includes(tag as SceneCategory)) {
+      categories.push(tag as SceneCategory);
+    } else {
+      tags.push(tag);
+    }
+  }
+
+  const scene: SceneComponent = {
+    name: value.display?.title || '',
+    description: value.display?.description || '',
+    thumbnail: value.display?.navmapThumbnail || '',
+    creator: (value as SceneWithRating).creator || '',
+    layout: {
+      parcels: parcels.map(parseCoords),
+      base: parseCoords(base),
+    },
+    author: value.contact?.name || '',
+    email: value.contact?.email || '',
+    categories,
+    tags,
+    silenceVoiceChat: value.featureToggles?.voiceChat === 'disabled',
+    disablePortableExperiences: value.featureToggles?.portableExperiences === 'disabled',
+    disableNearbyVoiceChat: value.featureToggles?.nearbyVoiceChat === 'disabled',
+    hideLandscapeTerrain: (value as SceneWithRating).landscapeTerrain === false,
+    multiplayerServer: (value as SceneWithRating).authoritativeMultiplayer === true,
+    logsPermissions: toAllowlist(
+      Array.isArray(rawLogsPermissions) ? rawLogsPermissions : undefined,
+    ),
+    ageRating: (value as SceneWithRating).rating,
+    skyboxConfig: {
+      fixedTime: (value as SceneWithRating).skyboxConfig?.fixedTime,
+      transitionMode: (value as SceneWithRating).skyboxConfig?.transitionMode,
+    },
+    spawnPoints: value.spawnPoints?.map(toSceneSpawnPoint),
+  };
+
+  return scene;
+}

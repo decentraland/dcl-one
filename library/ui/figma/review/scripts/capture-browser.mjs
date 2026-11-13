@@ -390,6 +390,7 @@ async function openSession(executable, { signal } = {}) {
     })
     browser.stderr?.off('data', output.write)
     browser.stderr?.resume()
+    browser.stderr?.unref()
     return session
   } catch (error) {
     const diagnostic = {
@@ -402,6 +403,7 @@ async function openSession(executable, { signal } = {}) {
     const startup = output.finish()
     browser.stderr?.off('data', output.write)
     browser.stderr?.resume()
+    browser.stderr?.unref()
     await cleanupCapture(error, close)
     if (!signal?.aborted) {
       try {
