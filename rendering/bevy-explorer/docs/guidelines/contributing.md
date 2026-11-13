@@ -180,6 +180,8 @@ deno_core accepts.
      changed async-ness. Re-check the replacement against the new upstream op.
    - `every_*_op_survives_junk_arguments`: a new or changed op panics on scene input. Override it
      (`hardened_ops.rs`) or disable it (`DISABLED_OPS`).
+   - `every_upstream_op_is_reviewed`: an upstream op is on none of the override, disabled and
+     `REVIEWED_UPSTREAM_OPS` lists. Read its source against scene input before choosing one.
    - `embedded_upstream_scripts_match_the_locked_crates` and `every_runtime_script_is_compiled_in`:
      a vendored script is stale or missing.
    - `runtime_surface_tests.rs`: Intl, console, clocks, per-scene Blob and BroadcastChannel,

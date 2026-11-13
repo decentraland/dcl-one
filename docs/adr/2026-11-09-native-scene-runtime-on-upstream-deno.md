@@ -36,21 +36,27 @@ rest.
 - **Per scene, nothing shared:** a BroadcastChannel and a Blob store (capped at 64 MiB of distinct
   parts) per runtime; Web Locks and the broadcast ops disabled; the web classes whose constructors cannot be
   wrapped are not installed. No persistent storage of any kind.
-- **Hardening:** an op never panics or exits on scene input (`security.md`). Upstream ops that do
-  are overridden with ops of the same shape, structured arguments go through `Plain<T>`, and op
-  results are ordinary objects (`JsPlain<T>`), replacing the fork's `toString` patch. The V8
+- **Hardening:** an op never panics or exits on scene input (`security.md`). Every upstream op a
+  scene can call is overridden with an op of the same shape, disabled, or on a reviewed list
+  (`hardened_ops.rs`); structured clone uses our serializer, which has no host objects. Structured
+  arguments go through `Plain<T>`, and op results are ordinary objects (`JsPlain<T>`), replacing
+  the fork's `toString` patch. The V8
   callbacks scene code reaches without an op are ours (`isolate_hooks.rs`): stack formatting
   reads data properties only and runs no scene code, WebAssembly streaming compilation is
   removed, and WebAssembly results are settled without assuming the isolate is still running.
 - **Memory per scene:** a 512 MiB V8 heap and 512 MiB of ArrayBuffers (a counting allocator);
   past either the allocation fails or the scene ends. Native memory that ops hold has its own
-  caps: Blob parts 64 MiB, a scene-fed stream read whole 64 MiB, 256 open streams and sinks.
-  Not bounded per scene: resizable ArrayBuffers and WebAssembly memories, which V8 reserves
-  outside the allocator, and fetch request and response bodies on the client.
-- **Clocks:** `performance.now()`, the time origin, the timer clock, `Date`, `Temporal.Now` and
-  `Intl.DateTimeFormat`'s current time are coarsened to 2 ms; scenes share a process. This
-  limits resolution only: there is no jitter, so a scene that counts work between clock ticks
-  still measures finer intervals.
+  caps: Blob parts 64 MiB (a clone or slice shares its parent's bytes), a scene-fed stream read
+  whole 64 MiB, 256 open streams and sinks, 4096 resources, 32 MiB per text decode. Not bounded
+  per scene: resizable ArrayBuffers and WebAssembly memories, which V8 reserves outside the
+  allocator; buffers ops return (a Blob read, a stream read whole), which wrap a Rust allocation;
+  the timer and unref sets a client scene can grow through the raw ops; and fetch request and
+  response bodies on the client.
+- **Clocks:** `performance.now()`, the time origin, the timer clock, `Date`, `Temporal.Now`,
+  `Intl.DateTimeFormat`'s current time and `File.lastModified` are coarsened to 2 ms; scenes
+  share a process. This holds on the authoritative server only: a desktop client scene keeps
+  `Deno` and its primordials, which read the native clock. It limits resolution only: there is
+  no jitter, so a scene that counts work between clock ticks still measures finer intervals.
 - **V8 platform:** initialized once on the sidecar's main thread, before any scene thread
   exists, so every isolate thread descends from it, as Linux memory protection keys require.
   Only `dcl_deno`'s own tests use the unprotected platform, under `cfg(test)`, never through a
@@ -78,7 +84,7 @@ rest.
 - `cargo test --profile ci-test --locked -p dcl_deno -p dcl_js -p dcl_deno_ipc -p scene_runner -p common`.
 - `invalid_op_input_tests.rs`: every registered op survives malformed arguments in every position;
   `every_override_replaces_an_op_of_the_same_shape` fails when an upgrade renames or reshapes an
-  overridden op.
+  overridden op, and `every_upstream_op_is_reviewed` when it adds an op on none of the lists.
 - `runtime_surface_tests.rs`: Intl, console, op results as ordinary objects, 2 ms clocks, Blob
   and BroadcastChannel isolation and the Blob cap, the fetch redirect contract.
 - `isolate_hooks_tests.rs`: the V8 callbacks and memory caps, each case that could end the
