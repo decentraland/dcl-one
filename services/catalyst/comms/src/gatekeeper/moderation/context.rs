@@ -336,6 +336,7 @@ mod tests {
             (None, "Place at 1,1"),
             (Some(""), "Place at 1,1"),
             (Some("<link=\"smb://h/s\">Rules</link>"), "Rules"),
+            (Some("<size=1></size>"), "Place at 1,1"),
         ] {
             let world = WorldName::parse("title.dcl.eth").unwrap();
             let realm = RealmId::World(world.clone());

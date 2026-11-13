@@ -681,7 +681,7 @@ mod tests {
         let (clause, binds) = build_where(&f, true);
         assert_eq!(binds.len(), 6, "search takes $1, the gate $2..$6: {clause}");
         assert!(clause.contains("LIKE ANY ($2::text[])"), "{clause}");
-        assert!(clause.contains("'g') !~ $3"), "{clause}");
+        assert!(clause.contains("plain) END) !~ $3"), "{clause}");
         assert!(clause.contains("<> ALL ($5::text[])"), "{clause}");
         assert!(clause.contains("<> $6)"), "{clause}");
         assert!(
