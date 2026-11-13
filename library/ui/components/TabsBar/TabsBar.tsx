@@ -1,4 +1,4 @@
-import type { AnchorHTMLAttributes, ComponentType, ReactNode } from 'react'
+import { useLayoutEffect, useRef, type AnchorHTMLAttributes, type ComponentType, type ReactNode } from 'react'
 import { Tabs } from '../Tabs/Tabs'
 import styles from './TabsBar.module.css'
 
@@ -9,6 +9,7 @@ export type TabsBarItem = Readonly<{
   /** Hide inactive routes on narrow layouts; the controlled current route remains visible. */
   hiddenOnMobile?: boolean
 }>
+/** Render one native anchor and forward children, className, data-label, aria-current and events. */
 export type TabsBarLinkProps = AnchorHTMLAttributes<HTMLAnchorElement> & {
   href: string
   /** Intent-prefetch hint for the app adapter; consume it before forwarding native anchor props. */
@@ -62,6 +63,39 @@ export function TabsBar({
       throw new Error('TabsBar routes require a non-empty label and href')
     ids.add(item.id)
   }
+  const listRef = useRef<HTMLUListElement>(null)
+  const routeLayout = JSON.stringify(
+    items.map((item) => [item.id, item.label, item.href, !!item.hiddenOnMobile])
+  )
+  useLayoutEffect(() => {
+    const list = listRef.current
+    if (!list) return
+    const revealCurrent = () => {
+      if (!list.isConnected) return
+      const current = list.querySelector<HTMLElement>('[aria-current="page"]')
+      if (!current) return
+      const frame = list.getBoundingClientRect()
+      const route = current.getBoundingClientRect()
+      if (frame.width <= 0) return
+      const offset =
+        route.width > frame.width
+          ? getComputedStyle(list).direction === 'rtl'
+            ? route.right - frame.right
+            : route.left - frame.left
+          : route.left < frame.left
+            ? route.left - frame.left
+            : route.right > frame.right
+              ? route.right - frame.right
+              : 0
+      if (Math.abs(offset) > 1) list.scrollLeft += offset
+    }
+    revealCurrent()
+    if (typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(revealCurrent)
+    observer.observe(list)
+    for (const item of list.children) observer.observe(item)
+    return () => observer.disconnect()
+  }, [activeId, routeLayout, page, LinkComponent])
   return (
     <nav
       aria-label={label.trim() || 'Sections'}
@@ -69,7 +103,7 @@ export function TabsBar({
       className={[styles.root, className].filter(Boolean).join(' ')}
     >
       <div className={styles.navigation} data-region="navigation">
-        <ul className={styles.list}>
+        <ul ref={listRef} className={styles.list}>
           {items.map((item) => {
             const select: AnchorHTMLAttributes<HTMLAnchorElement>['onClick'] = (event) => {
               if (

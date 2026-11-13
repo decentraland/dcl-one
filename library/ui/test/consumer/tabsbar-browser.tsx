@@ -24,9 +24,14 @@ function App() {
   const [activeId, setActiveId] = useState(
     new URLSearchParams(location.search).get('active') ?? '0'
   )
-  const common = { items, activeId, onSelect: setActiveId, label: 'Fixture sections' }
+  const common = { items: [...items], activeId, onSelect: setActiveId, label: 'Fixture sections' }
   return (
-    <main className={styles.canvas}>
+    <main
+      className={styles.canvas}
+      data-external-selection={
+        new URLSearchParams(location.search).has('external-selection') || undefined
+      }
+    >
       <p>
         Static local composition fixture. Controls are supplied by this fixture, not migrated
         Searchbar or Shop actions.
@@ -70,7 +75,17 @@ function App() {
           }
         />
       )}
-      <button id="outside">After composition</button>
+      <button
+        id="outside"
+        className={
+          new URLSearchParams(location.search).has('external-selection')
+            ? styles.outside
+            : undefined
+        }
+        onClick={() => setActiveId(items.at(-1)!.id)}
+      >
+        Select last section from outside
+      </button>
     </main>
   )
 }

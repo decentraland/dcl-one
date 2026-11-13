@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest'
 import { productionBrowser } from './production-browser.helpers'
 const browser = productionBrowser('test/consumer/tabsbar-browser.tsx')
-async function navigate(page: string, width: number, activeId?: string) {
+async function navigate(page: string, width: number, activeId?: string, external = false) {
   await browser.session.send('Emulation.setDeviceMetricsOverride', {
     width,
     height: 900,
@@ -10,7 +10,11 @@ async function navigate(page: string, width: number, activeId?: string) {
     mobile: false
   })
   await browser.session.navigate(
-    browser.origin + '?page=' + page + (activeId ? '&active=' + activeId : '')
+    browser.origin +
+      '?page=' +
+      page +
+      (activeId ? '&active=' + activeId : '') +
+      (external ? '&external-selection' : '')
   )
   await browser.evaluate(
     '(async()=>{for(let n=0;n<100&&!document.querySelector("nav");n++)await new Promise(r=>setTimeout(r,20));await document.fonts.ready})()'
@@ -208,5 +212,95 @@ describe('when the current route is normally hidden on mobile', () => {
     await tab()
     await tab()
     expect(await focusName()).toBe('#1')
+  })
+})
+
+async function currentRouteVisible() {
+  return browser.evaluate<boolean>(
+    `(()=>{const a=document.querySelector('nav [aria-current="page"]'),r=a.getBoundingClientRect(),p=a.closest('ul').getBoundingClientRect();return r.width>0&&r.left>=p.left-1&&r.right<=p.right+1})()`
+  )
+}
+async function paint() {
+  await browser.evaluate(
+    'new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))'
+  )
+}
+describe('when the controlled current route lies beyond the visible scroll tray', () => {
+  for (const [page, width, id] of [
+    ['shop', 768, '4'],
+    ['learn', 390, '3']
+  ] as const)
+    it('should reveal the initial current route without moving focus for ' + page, async () => {
+      await navigate(page, width, id)
+      await paint()
+      expect(await currentRouteVisible()).toBe(true)
+      expect(await browser.evaluate('document.activeElement===document.body')).toBe(true)
+    })
+  it('should reveal a current route after resize without replacing caller controls', async () => {
+    await navigate('shop', 1920, '4')
+    await browser.evaluate('void(window.fixtureInput=document.querySelector("input"))')
+    await browser.session.send('Emulation.setDeviceMetricsOverride', {
+      width: 768,
+      height: 900,
+      deviceScaleFactor: 1,
+      mobile: false
+    })
+    await paint()
+    expect(await currentRouteVisible()).toBe(true)
+    expect(await browser.evaluate('window.fixtureInput===document.querySelector("input")')).toBe(
+      true
+    )
+  })
+  it('should reveal an externally selected route without moving page scroll or stealing focus', async () => {
+    await navigate('shop', 768, '0', true)
+    await browser.evaluate('scrollTo(0,400)')
+    await paint()
+    const before = await browser.evaluate<number>('scrollY')
+    await clickControl('#outside')
+    await paint()
+    expect(
+      await browser.evaluate('document.querySelector("[aria-current]").getAttribute("href")')
+    ).toBe('#4')
+    expect(await currentRouteVisible()).toBe(true)
+    expect(await browser.evaluate('scrollY')).toBe(before)
+    expect(await browser.evaluate('document.activeElement.id')).toBe('outside')
+  })
+})
+
+async function clickControl(selector: string) {
+  const point = await browser.evaluate<{ x: number; y: number }>(
+    `(()=>{const r=document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2}})()`
+  )
+  for (const type of ['mousePressed', 'mouseReleased'])
+    await browser.session.send('Input.dispatchMouseEvent', {
+      type,
+      ...point,
+      button: 'left',
+      clickCount: 1
+    })
+}
+describe('when a user scrolls away from the selected section', () => {
+  it('should preserve manual scroll through an unrelated caller rerender', async () => {
+    await navigate('shop', 768, '4')
+    await paint()
+    const point = await browser.evaluate<{ x: number; y: number }>(
+      `(()=>{const r=document.querySelector('nav ul').getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2}})()`
+    )
+    await browser.session.send('Input.dispatchMouseEvent', {
+      type: 'mouseWheel',
+      ...point,
+      deltaX: -10000,
+      deltaY: 0
+    })
+    await paint()
+    expect(await currentRouteVisible()).toBe(false)
+    const before = await browser.evaluate<number>('document.querySelector("nav ul").scrollLeft')
+    await clickControl('[aria-label="Fixture cart, 0"]')
+    await paint()
+    expect(await browser.evaluate('document.querySelector("nav ul").scrollLeft')).toBe(before)
+    expect(await currentRouteVisible()).toBe(false)
+    expect(await browser.evaluate('document.activeElement.getAttribute("aria-label")')).toBe(
+      'Fixture cart, 1'
+    )
   })
 })

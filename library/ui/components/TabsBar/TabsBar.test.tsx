@@ -196,3 +196,21 @@ describe('when a server-rendered parent hydrates with caller-owned controls', ()
     }
   })
 })
+
+
+describe('when the route tray leaves the page', () => {
+  it('should disconnect layout observation on unmount', () => {
+    const disconnect = vi.fn()
+    vi.stubGlobal('ResizeObserver', class {
+      observe() {}
+      disconnect = disconnect
+    })
+    try {
+      const { unmount } = render(<TabsBar items={items} activeId="news" />)
+      unmount()
+      expect(disconnect).toHaveBeenCalledOnce()
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+})

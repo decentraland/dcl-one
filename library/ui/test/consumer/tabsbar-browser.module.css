@@ -61,3 +61,14 @@
     }
   }
 }
+
+@layer dcl.components {
+  .canvas[data-external-selection] {
+    min-height: 2000px;
+  }
+  .outside {
+    position: fixed;
+    bottom: 16px;
+    right: 16px;
+  }
+}
