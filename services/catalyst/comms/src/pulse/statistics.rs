@@ -94,6 +94,8 @@ impl Statistics {
                     return rejected;
                 }
                 self.pending = None;
+                // Defensive: `Begin` answers `Active` to the producer that is already
+                // active, so a pending grant never shares the active producer today.
                 self.retiring = self
                     .active
                     .take()
@@ -499,6 +501,40 @@ mod tests {
             ["new-socket"],
             "a drained connector leaves no ghost"
         );
+    }
+    #[test]
+    fn a_draining_disconnect_drops_a_reconnected_wallet_until_its_next_heartbeat() {
+        let mut stats = registered();
+        assert!(stats.observe(beat(1, "w"), 1));
+        let incoming = register(&mut stats, uuid::Uuid::from_u128(7));
+        let through_new = |sequence| {
+            let mut beat = beat(sequence, "w");
+            beat.producer = incoming.producer;
+            beat.generation = incoming.generation;
+            beat
+        };
+        assert!(stats.observe(through_new(1), 2));
+        // The old socket closes after the wallet reconnected: as upstream, any
+        // connector's disconnect removes the peer.
+        let gone = Event::Disconnect {
+            address: "w".into(),
+        };
+        assert!(stats.observe(observation(2, gone), 3));
+        assert!(stats.snapshot().peers.is_empty());
+        assert!(stats.observe(through_new(2), 4));
+        assert_eq!(stats.snapshot().peers[0].address, "w");
+    }
+    #[test]
+    fn only_the_most_recent_outgoing_connector_drains() {
+        let mut stats = registered();
+        assert!(stats.observe(beat(1, "a"), 1));
+        register(&mut stats, uuid::Uuid::from_u128(7));
+        register(&mut stats, uuid::Uuid::from_u128(8));
+        let gone = Event::Disconnect {
+            address: "a".into(),
+        };
+        assert!(!stats.observe(observation(2, gone), 2));
+        assert_eq!(stats.snapshot().peers[0].address, "a");
     }
     fn register(stats: &mut Statistics, producer: uuid::Uuid) -> ProducerGrant {
         let ProducerReply::Grant(grant) = stats.control(ProducerRequest::Begin {

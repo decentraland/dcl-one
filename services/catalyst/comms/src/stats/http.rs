@@ -45,7 +45,8 @@ pub mod test_support {
 pub struct Settings {
     pub metrics_path: String,
     pub metrics_bearer_token: Option<String>,
-    /// Base of `/hot-scenes` thumbnails. Serve sets it to this node's content URL.
+    /// Base of `/hot-scenes` thumbnails. `serve` sets it from `CONTENT_URL` or this
+    /// node's own `/content` (`stats_content_url`); the default serves tests.
     pub content_url: String,
 }
 impl Default for Settings {
@@ -68,10 +69,7 @@ impl Settings {
             metrics_bearer_token: std::env::var("WKC_METRICS_BEARER_TOKEN")
                 .ok()
                 .filter(|s| !s.is_empty()),
-            content_url: std::env::var("CONTENT_URL")
-                .ok()
-                .filter(|s| !s.is_empty())
-                .unwrap_or(defaults.content_url),
+            content_url: defaults.content_url,
         }
     }
 }

@@ -1208,8 +1208,11 @@ async fn a_world_is_published_hosted_joined_voiced_revoked_persisted_and_pulsed(
     .fetch_one(&pool)
     .await
     .unwrap();
-    sqlx::query("INSERT INTO content.content_files (deployment, content_hash, key) VALUES ($1, 'bafkreiacceptancethumb', 'thumb.png')")
+    // The world's own thumbnail file: the node's blob store holds it, so the
+    // content route serves it.
+    sqlx::query("INSERT INTO content.content_files (deployment, content_hash, key) VALUES ($1, $2, 'thumb.png')")
         .bind(deployment)
+        .bind(&thumb_hash)
         .execute(&pool)
         .await
         .unwrap();
@@ -1232,8 +1235,8 @@ async fn a_world_is_published_hosted_joined_voiced_revoked_persisted_and_pulsed(
         },
     )
     .await;
-    // The thumbnail names this node's content, the server the scene was read from
-    // (upstream's literal `${url}/contents/` concatenation).
+    // The thumbnail names this node's content, the server the scene was read from,
+    // at a path this node serves.
     let (_, hot) = http.get("/archipelago-ea-stats/hot-scenes").await;
     let scene = hot
         .as_array()
@@ -1243,13 +1246,17 @@ async fn a_world_is_published_hosted_joined_voiced_revoked_persisted_and_pulsed(
                 .find(|s| s["id"] == "bafkreiacceptancegenesis")
         })
         .unwrap_or_else(|| panic!("{hot}"));
+    let thumbnail = format!(
+        "http://127.0.0.1:{}/content/contents/{thumb_hash}",
+        rig.port
+    );
+    assert_eq!(scene["thumbnail"], json!(thumbnail), "{hot}");
+    let served = http.http.get(&thumbnail).send().await.unwrap();
+    assert_eq!(served.status().as_u16(), 200, "GET {thumbnail}");
     assert_eq!(
-        scene["thumbnail"],
-        json!(format!(
-            "http://127.0.0.1:{}/content//contents/bafkreiacceptancethumb",
-            rig.port
-        )),
-        "{hot}"
+        served.bytes().await.unwrap().as_ref(),
+        PNG_1X1,
+        "GET {thumbnail}"
     );
     let (status, peers) = http
         .get(&format!(

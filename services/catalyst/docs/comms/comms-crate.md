@@ -118,8 +118,9 @@ successful view, and an outage retains the last complete snapshot without public
 Social keeps its existing topology subscription and LiveKit keeps occupancy authority.
 Hot-scene HTTP and archive enrichment use serve's existing content pool and shared
 content denylist, preserving selected local document order before projection,
-stable count sorting and top-100 selection. `CONTENT_URL` supplies thumbnail
-construction; local SQL determines the corpus and dependency failures. The
+stable count sorting and top-100 selection. Thumbnails name `CONTENT_URL`, or
+this node's own `/content` when it is unset; local SQL determines the corpus and
+dependency failures. The
 [local content source ADR](../../../../docs/adr/2026-11-12-stats-local-content-source.md)
 records the accepted source semantics and preserved rendering and snapshot obligations.
 The discovery subscription and original frame validation remain for transport compatibility;

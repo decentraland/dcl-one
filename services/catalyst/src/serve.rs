@@ -237,9 +237,10 @@ pub async fn serve(
         storage.clone(),
         sync_status.clone(),
     ));
-    // Hot-scene thumbnails name the server the scenes are read from: this node's
-    // content (`CONTENT_URL` when set), as upstream Stats uses one URL for both.
-    prepared.settings.content_url = content.settings.content_public_url.clone();
+    prepared.settings.content_url = stats_content_url(
+        config.node.content_url.as_deref(),
+        &content.settings.content_public_url,
+    );
 
     // ONE outbound client: peer sync and the RPC validator use it as is
     // (`raw`), every mirror and upstream reader through the guard.
@@ -2244,6 +2245,42 @@ fn registry_profiles(market: shop::market::SharedState) -> axum::Router {
         "/asset-bundle-registry",
         shop::market::profiles::registry::router(market),
     )
+}
+
+/// The base of `/hot-scenes` thumbnails, the server the scenes are read from, as
+/// upstream Stats uses one URL for both. An operator's `CONTENT_URL` is kept as
+/// written, since upstream concatenates `${url}/contents/` literally. This node's
+/// own `/content/` loses its trailing slash, so `{base}/contents/{hash}` is a
+/// route the node serves (the nested `/content` route does not match `//`).
+fn stats_content_url(configured: Option<&str>, content_public_url: &str) -> String {
+    match configured.map(str::trim).filter(|url| !url.is_empty()) {
+        Some(url) => url.to_string(),
+        None => content_public_url.trim_end_matches('/').to_string(),
+    }
+}
+
+#[cfg(test)]
+mod stats_content_url_tests {
+    use super::stats_content_url;
+
+    #[test]
+    fn the_node_default_names_a_served_route_and_an_operator_value_is_kept() {
+        assert_eq!(
+            stats_content_url(None, "https://node.example/content/"),
+            "https://node.example/content"
+        );
+        assert_eq!(
+            stats_content_url(Some("  "), "https://node.example/content/"),
+            "https://node.example/content"
+        );
+        assert_eq!(
+            stats_content_url(
+                Some("https://cdn.example/content/"),
+                "https://cdn.example/content/"
+            ),
+            "https://cdn.example/content/"
+        );
+    }
 }
 
 #[cfg(test)]
