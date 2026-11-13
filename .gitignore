@@ -62,5 +62,6 @@ result-*
 /services/catalyst/docs/crates/agents/tools/
 /services/catalyst/docs/crates/*.html
 
-# Temporary working notes and documents made during development are never committed.
+# Temporary notes and documents written by people during development; never committed.
+# AI session output belongs in .agent-work/ instead.
 /temp/
