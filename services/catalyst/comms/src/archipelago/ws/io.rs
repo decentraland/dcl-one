@@ -75,6 +75,35 @@ mod tests {
     use std::pin::Pin;
     use std::task::{Context, Poll};
 
+    #[test]
+    fn capacity_is_retained_until_both_shared_transport_directions_drop() {
+        struct Physical {
+            capacity: Arc<tokio::sync::Semaphore>,
+            ended: Arc<std::sync::atomic::AtomicBool>,
+        }
+        impl Drop for Physical {
+            fn drop(&mut self) {
+                assert_eq!(self.capacity.available_permits(), 0);
+                self.ended.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+        }
+        let capacity = Arc::new(tokio::sync::Semaphore::new(1));
+        let ended = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let permit = Arc::new(capacity.clone().try_acquire_owned().unwrap());
+        let (mut writer, mut reader) = SharedTransport::pair(Physical {
+            capacity: capacity.clone(),
+            ended: ended.clone(),
+        });
+        writer.1 = Some(permit.clone());
+        reader.1 = Some(permit);
+        drop(writer);
+        assert_eq!(capacity.available_permits(), 0);
+        assert!(!ended.load(std::sync::atomic::Ordering::SeqCst));
+        drop(reader);
+        assert!(ended.load(std::sync::atomic::Ordering::SeqCst));
+        assert_eq!(capacity.available_permits(), 1);
+    }
+
     #[derive(Default)]
     struct HeldSink {
         ready: bool,
@@ -219,12 +248,12 @@ const POSITION_INTERVAL: Duration = Duration::from_millis(500);
 
 /// Poll the transport directly on both halves. There is no intermediate sink
 /// slot: start_send is the synchronous handoff to the WebSocket transport.
-struct SharedTransport<S>(Arc<Mutex<S>>);
+struct SharedTransport<S>(Arc<Mutex<S>>, Option<Arc<OwnedSemaphorePermit>>);
 
 impl<S> SharedTransport<S> {
     fn pair(transport: S) -> (Self, Self) {
         let shared = Arc::new(Mutex::new(transport));
-        (Self(shared.clone()), Self(shared))
+        (Self(shared.clone(), None), Self(shared, None))
     }
 }
 
@@ -315,12 +344,18 @@ enum Terminal {
 }
 #[derive(Default)]
 struct Queue {
+    raw: Option<super::raw_transport::Signal>,
     pending: Mutex<Pending>,
     changed: Notify,
     closed: CancellationToken,
     peer_close: CancellationToken,
 }
 impl Queue {
+    fn retire(&self) {
+        if let Some(raw) = &self.raw {
+            raw.retire();
+        }
+    }
     fn clean_peer_close(&self) -> bool {
         self.peer_close.is_cancelled() && self.pending.lock().write_phase == WritePhase::Clean
     }
@@ -332,12 +367,16 @@ impl Queue {
         pending.done = true;
         if pending.write_phase == WritePhase::Active {
             pending.write_phase = WritePhase::Retired;
+            self.retire();
         }
         self.peer_close.cancel();
         self.changed.notify_waiters();
     }
 
     fn terminal(&self, reason: Terminal) {
+        if matches!(reason, Terminal::Abort) {
+            self.retire();
+        }
         let mut pending = self.pending.lock();
         if self.peer_close.is_cancelled() {
             return;
@@ -371,7 +410,7 @@ pub(super) struct WebSocket {
 }
 
 /// Four-second transport sweeps: probe after 19 ticks, retire after four more.
-/// Activity here means complete messages, including Ping/Pong, exposed by Axum.
+/// Production activity comes from positive raw reads before frame parsing.
 struct Idle {
     epoch: Instant,
     deadline: Instant,
@@ -414,10 +453,27 @@ struct PositionSample {
 }
 
 impl WebSocket {
-    pub(super) fn new(socket: Transport, state: AppState, permit: OwnedSemaphorePermit) -> Self {
-        let (sink, incoming) = SharedTransport::pair(socket);
-        let queue = Arc::new(Queue::default());
-        tokio::spawn(writer(sink, queue.clone(), state.clone(), permit));
+    pub(super) fn new(
+        socket: Transport,
+        state: AppState,
+        permit: OwnedSemaphorePermit,
+        raw: Option<super::raw_transport::Signal>,
+    ) -> Self {
+        let (mut sink, mut incoming) = SharedTransport::pair(socket);
+        // The admission snapshot includes any initial HTTP read-ahead once.
+        // A new socket's clock starts no earlier than admission itself.
+        if let Some(raw) = &raw {
+            raw.take_activity();
+        }
+        let queue = Arc::new(Queue {
+            raw,
+            ..Queue::default()
+        });
+        let permit = Arc::new(permit);
+        // The parser is dropped before either half releases its capacity share.
+        sink.1 = Some(permit.clone());
+        incoming.1 = Some(permit.clone());
+        tokio::spawn(writer(sink, queue.clone(), state.clone(), permit.clone()));
         Self {
             incoming,
             queue,
@@ -530,11 +586,35 @@ impl WebSocket {
             if self.queue.peer_close.is_cancelled() {
                 return None;
             }
+            let raw = self.queue.raw.clone();
+            let activity = async {
+                match &raw {
+                    Some(raw) => {
+                        let notified = raw.notified();
+                        tokio::pin!(notified);
+                        notified.as_mut().enable();
+                        if let Some(at) = raw.take_activity() {
+                            return Some(at);
+                        }
+                        notified.await;
+                        raw.take_activity()
+                    }
+                    None => std::future::pending().await,
+                }
+            };
             tokio::select! {
                 biased;
                 _ = self.state.restart.cancelled() => return None,
                 _ = self.queue.closed.cancelled() => return None,
+                activity = activity => {
+                    if let Some(at) = activity { self.idle.activity(at); }
+                }
                 _ = tokio::time::sleep_until(self.idle.deadline) => {
+                    if let Some(raw) = &raw {
+                        if let Some(at) = raw.take_activity() { self.idle.activity(at); }
+                        if Instant::now() < self.idle.deadline { continue; }
+                        if self.idle.probing && !raw.retire_if_quiet() { continue; }
+                    }
                     if self.idle.expired(Instant::now()) {
                         self.queue.terminal(Terminal::Abort);
                         return None;
@@ -551,7 +631,7 @@ impl WebSocket {
                         self.queue.peer_closed();
                         return message;
                     }
-                    if matches!(message, Some(Ok(_))) { self.idle.activity(Instant::now()); }
+                    if self.queue.raw.is_none() && matches!(message, Some(Ok(_))) { self.idle.activity(Instant::now()); }
                     // Application data uses the same decoder and rate accounting for both opcodes.
                     let message = message.map(|result| result.map(|message| match message {
                         Message::Text(text) => Message::Binary(text.as_bytes().to_vec().into()),
@@ -707,8 +787,9 @@ async fn writer<S: Sink<Message> + Unpin>(
     mut sink: S,
     queue: Arc<Queue>,
     state: AppState,
-    _permit: OwnedSemaphorePermit,
+    permit: impl Into<Arc<OwnedSemaphorePermit>>,
 ) {
+    let _permit = permit.into();
     loop {
         let changed = queue.changed.notified();
         tokio::pin!(changed);
@@ -724,8 +805,8 @@ async fn writer<S: Sink<Message> + Unpin>(
             }
         };
         if let Some(clean) = peer_close {
-            // Every completed send has flushed both SplitSink's slot and the
-            // transport buffers. Only the parser's automatic reply remains.
+            // Every completed send has flushed the transport buffers. Only
+            // the parser's automatic reply remains.
             if clean {
                 if tokio::time::timeout(WRITE_DEADLINE, sink.flush())
                     .await
@@ -853,6 +934,7 @@ async fn writer<S: Sink<Message> + Unpin>(
             tokio::select! { _ = changed => {}, _ = state.restart.cancelled() => {} }
         }
     }
+    queue.retire();
     queue.closed.cancel();
 }
 
@@ -1008,6 +1090,7 @@ async fn write_frame<S: Sink<Message> + Unpin>(
         FrameWrite::Written
     } else if pending.write_phase != WritePhase::Clean || matches!(result, FrameWrite::Retired) {
         pending.write_phase = WritePhase::Retired;
+        queue.retire();
         FrameWrite::Retired
     } else {
         FrameWrite::Dropped
@@ -1040,6 +1123,7 @@ async fn coordinated_write<S: Sink<Message> + Unpin>(
         true
     } else {
         pending.write_phase = WritePhase::Retired;
+        queue.retire();
         false
     }
 }
