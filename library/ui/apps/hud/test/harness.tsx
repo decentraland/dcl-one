@@ -238,7 +238,7 @@ export function fakeSession(): EngineSession {
     portables: { list: [], stop: vi.fn(), restart: vi.fn() },
     create: { open: false, toggle: vi.fn(), show: vi.fn() },
     editor: { mode: 'off', setMode: vi.fn() },
-    mic: { enabled: false, available: true, sceneBlocked: false, toggle: vi.fn() },
+    mic: { enabled: false, available: true, sceneBlocked: false, refusals: 0, toggle: vi.fn() },
     nearbyMutes: { muted: new Set(), set: vi.fn() },
     voiceChat: {
       // the engine's first snapshot: idle (null would mean a build without voice chat)

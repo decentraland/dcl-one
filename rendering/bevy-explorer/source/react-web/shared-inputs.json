@@ -3272,6 +3272,10 @@
       "path": "library/ui/apps/hud/features/voice",
       "entries": [
         {
+          "name": "NearbyVoiceRefusals.tsx",
+          "kind": "regular"
+        },
+        {
           "name": "NearbyVoiceWidget.module.css",
           "kind": "regular"
         },
@@ -3723,6 +3727,10 @@
           "kind": "regular"
         },
         {
+          "name": "nearbyVoiceRefusals.test.tsx",
+          "kind": "regular"
+        },
+        {
           "name": "notifications.clicks.test.tsx",
           "kind": "regular"
         },
@@ -4066,7 +4074,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/bevy-api.ts",
-      "sha256": "4699ff446bc5f5b8ab05f83aa342a970018d44d594f0a2f815343d31d009163d"
+      "sha256": "7a59e6d5999356f477003509a4fd027fb9fa87f519b1f152d818cb5831b5db8e"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/avatarDraft.ts",
@@ -4582,7 +4590,7 @@
     },
     {
       "path": "library/explorer-core/engine/protocol.ts",
-      "sha256": "4f6de6bcf918c8bdd94dc7150505bce8c5babed5fbe65a352216aa15e2ffe484"
+      "sha256": "77fad7c42d49a1d7c14569271d73d29a7e0eeb26c8e64defb7fb749039c95fd8"
     },
     {
       "path": "library/explorer-core/features/auth/authReturn.ts",
@@ -4974,7 +4982,7 @@
     },
     {
       "path": "library/ui/apps/hud/App.tsx",
-      "sha256": "d549fc65df868f8430ee2ec825d26ff8d9d13b9e6365e3177b588f266c1ed6ff"
+      "sha256": "a45945630ae570412d364b075c2089dec64d3a82e5f218bd2e0cdc784c94e940"
     },
     {
       "path": "library/ui/apps/hud/assets/backpack/add-gradient.webp",
@@ -6862,7 +6870,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "0fd7b41e517609f8f6d8e6ae4fc448fe13fec61cb8d45fd08032eb5b5ab0b419"
+      "sha256": "61fc15490291e92c052d2b145fce1f0d8c8f42dbc8112078cd379660bcf0be58"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -6894,7 +6902,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/sidebar/Sidebar.tsx",
-      "sha256": "356eee631dfeb793724abbc6d4657e54c925614bf31274f8d1561402f6dac190"
+      "sha256": "aa77d6d2d672671f19a906b94c56b8a5a0e25083b29e2833dd60d2d1036fb417"
     },
     {
       "path": "library/ui/apps/hud/features/sidebar/useAutoHide.ts",
@@ -6913,12 +6921,16 @@
       "sha256": "881497ff9094fd054754d8c5dfb7ec8a1832e21370961d21ae4d0e35538e9e79"
     },
     {
+      "path": "library/ui/apps/hud/features/voice/NearbyVoiceRefusals.tsx",
+      "sha256": "3642b07edfbef70adcc93878af592bc1553b5d5f159e0c6ef47332da526e8e10"
+    },
+    {
       "path": "library/ui/apps/hud/features/voice/NearbyVoiceWidget.module.css",
       "sha256": "ada39bd57e140dd30cf782479afffd38fcfc62885a0053c987ab6091a37429c2"
     },
     {
       "path": "library/ui/apps/hud/features/voice/NearbyVoiceWidget.tsx",
-      "sha256": "829a68c20355a09e89798aa0681476351df0d4b658415028dff5f9fa5d9abc6f"
+      "sha256": "968fb538e0ac00b5dcae40d1aab07d12b3be0c46b1928055adee24809e0288cc"
     },
     {
       "path": "library/ui/apps/hud/features/voice/useNearbyVoice.ts",
@@ -7038,7 +7050,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/harness.tsx",
-      "sha256": "fb342543943f8aac0d9de20beba7faf607f9c03db2468052d8ca6249fde7935b"
+      "sha256": "25eea869c799c5d539bf4c81d9b671479f41971ede73edbc6c99a44df2690e3b"
     },
     {
       "path": "library/ui/apps/hud/test/host.ts",
@@ -7246,7 +7258,11 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/nearbyVoice.test.tsx",
-      "sha256": "9b817cf9975b9524e68b14cc4c8ae8792ac23ada2984d9fe24dd86fb587b4233"
+      "sha256": "dcd507d52467c1cb56f994deba4188531da9d3f0ee8a3b8fec9801525c87a270"
+    },
+    {
+      "path": "library/ui/apps/hud/test/hosted/nearbyVoiceRefusals.test.tsx",
+      "sha256": "fffb5c0098cfcb890a425730531f1247f37088aa452ce5eaaf0e4b6046d7d974"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/notifications.clicks.test.tsx",
@@ -9847,6 +9863,21 @@
     },
     {
       "from": "library/ui/apps/hud/App.tsx",
+      "to": "library/ui/apps/hud/features/voice/NearbyVoiceRefusals.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/App.tsx",
+      "to": "library/ui/apps/hud/features/voice/NearbyVoiceRefusals.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/App.tsx",
+      "to": "library/ui/apps/hud/features/voice/NearbyVoiceRefusals.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/App.tsx",
       "to": "library/ui/apps/hud/features/voiceChat/SceneVoiceChatBanner.tsx",
       "kind": "native:runtime"
     },
@@ -22596,6 +22627,36 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/apps/hud/features/voice/NearbyVoiceRefusals.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voice/NearbyVoiceRefusals.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voice/NearbyVoiceRefusals.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voice/NearbyVoiceRefusals.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voice/NearbyVoiceRefusals.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voice/NearbyVoiceRefusals.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/apps/hud/features/voice/NearbyVoiceWidget.tsx",
       "to": "library/explorer-core/lib/cancelLayers.ts",
       "kind": "native:runtime"
@@ -22683,6 +22744,21 @@
     {
       "from": "library/ui/apps/hud/features/voice/NearbyVoiceWidget.tsx",
       "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voice/NearbyVoiceWidget.tsx",
+      "to": "library/ui/apps/hud/features/voice/NearbyVoiceRefusals.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voice/NearbyVoiceWidget.tsx",
+      "to": "library/ui/apps/hud/features/voice/NearbyVoiceRefusals.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voice/NearbyVoiceWidget.tsx",
+      "to": "library/ui/apps/hud/features/voice/NearbyVoiceRefusals.tsx",
       "kind": "test:runtime"
     },
     {
@@ -26077,6 +26153,21 @@
     },
     {
       "from": "library/ui/apps/hud/test/hosted/nearbyVoice.test.tsx",
+      "to": "library/ui/apps/hud/features/voice/NearbyVoiceRefusals.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/nearbyVoice.test.tsx",
+      "to": "library/ui/apps/hud/features/voice/NearbyVoiceRefusals.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/nearbyVoice.test.tsx",
+      "to": "library/ui/apps/hud/features/voice/NearbyVoiceRefusals.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/nearbyVoice.test.tsx",
       "to": "library/ui/apps/hud/test/harness.tsx",
       "kind": "native:runtime"
     },
@@ -26089,6 +26180,21 @@
       "from": "library/ui/apps/hud/test/hosted/nearbyVoice.test.tsx",
       "to": "library/ui/apps/hud/test/harness.tsx",
       "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/nearbyVoiceRefusals.test.tsx",
+      "to": "library/ui/apps/hud/features/voice/NearbyVoiceRefusals.tsx",
+      "kind": "native:dynamic"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/nearbyVoiceRefusals.test.tsx",
+      "to": "library/ui/apps/hud/features/voice/NearbyVoiceRefusals.tsx",
+      "kind": "production:dynamic"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/nearbyVoiceRefusals.test.tsx",
+      "to": "library/ui/apps/hud/features/voice/NearbyVoiceRefusals.tsx",
+      "kind": "test:dynamic"
     },
     {
       "from": "library/ui/apps/hud/test/hosted/notifications.clicks.test.tsx",
@@ -30257,6 +30363,11 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/features/voice/NearbyVoiceRefusals.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/features/voice/NearbyVoiceWidget.tsx",
       "kind": "type"
     },
@@ -30648,6 +30759,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/test/hosted/nearbyVoice.test.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/test/hosted/nearbyVoiceRefusals.test.tsx",
       "kind": "type"
     },
     {

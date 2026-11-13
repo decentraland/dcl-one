@@ -1789,6 +1789,9 @@ pub struct MicState {
     /// The scene the player stands in turns nearby voice off.
     #[serde(default)]
     pub scene_blocked: bool,
+    /// Counts the mic opens the scene refused.
+    #[serde(default)]
+    pub refusals: u32,
 }
 
 impl MicState {
@@ -1798,6 +1801,18 @@ impl MicState {
         if blocked {
             self.enabled = false;
         }
+    }
+
+    pub fn refuse(&mut self) {
+        self.refusals = self.refusals.wrapping_add(1);
+    }
+
+    /// Closing the mic is never refused.
+    pub fn request_enabled(&mut self, enabled: bool) {
+        if enabled && self.available && self.scene_blocked {
+            self.refuse();
+        }
+        self.enabled = self.available && !self.scene_blocked && enabled;
     }
 }
 
@@ -2081,11 +2096,37 @@ mod tests {
             available: true,
             enabled: true,
             scene_blocked: false,
+            refusals: 0,
         };
         mic.set_scene_blocked(true);
         assert!(mic.scene_blocked && !mic.enabled);
         mic.set_scene_blocked(false);
         assert!(!mic.scene_blocked && !mic.enabled);
+    }
+
+    #[test]
+    fn a_scene_that_turns_nearby_voice_off_counts_each_refused_open() {
+        let mut mic = MicState {
+            available: true,
+            enabled: false,
+            scene_blocked: true,
+            refusals: 0,
+        };
+        mic.request_enabled(true);
+        assert!(!mic.enabled);
+        assert_eq!(mic.refusals, 1);
+        mic.request_enabled(false);
+        assert_eq!(mic.refusals, 1, "closing the mic is never refused");
+
+        mic.available = false;
+        mic.request_enabled(true);
+        assert_eq!(mic.refusals, 1, "no mic to refuse");
+
+        mic.available = true;
+        mic.scene_blocked = false;
+        mic.request_enabled(true);
+        assert!(mic.enabled);
+        assert_eq!(mic.refusals, 1);
     }
 
     #[test]
@@ -2111,6 +2152,10 @@ mod tests {
             r#","featureToggles":{"nearbyVoiceChat":"disabled"}"#
         ));
         assert!(!enabled(r#","featureToggles":{"nearbyVoiceChat":"off"}"#));
+        // values of another shape are ignored rather than failing the scene.json
+        assert!(enabled(r#","featureToggles":{"nearbyVoiceChat":false}"#));
+        assert!(enabled(r#","featureToggles":{"nearbyVoiceChat":1}"#));
+        assert!(enabled(r#","featureToggles":["disabled"]"#));
     }
 
     #[test]

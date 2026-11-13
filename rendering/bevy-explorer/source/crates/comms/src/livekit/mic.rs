@@ -73,6 +73,7 @@ impl Plugin for MicPlugin {
         app.init_state::<MicrophoneState>();
         app.init_state::<MicrophoneTransmissionState>();
         app.init_resource::<MicrophoneDrain>();
+        app.init_resource::<LastTransmission>();
 
         #[cfg(target_arch = "wasm32")]
         app.add_systems(Startup, setup_microphone_permission);
@@ -302,24 +303,46 @@ fn add_ping_systems(world: &mut World) {
         schedules.add_systems(OnEnter(MicrophoneTransmissionState::Enabled), ping_enabled);
         schedules.add_systems(
             OnEnter(MicrophoneTransmissionState::Disabled),
-            // a mic closed by the scene makes no sound
-            ping_disabled.run_if(|mic_state: Res<MicState>| !mic_state.scene_blocked),
+            ping_disabled.run_if(|mic_state: Res<MicState>, last: Res<LastTransmission>| {
+                mic_off_pings(mic_state.scene_blocked, last.call)
+            }),
         );
     });
 }
 
+/// Whether the call's mic was among those transmitting when the last one stopped.
+#[derive(Resource, Default)]
+struct LastTransmission {
+    call: bool,
+}
+
+/// While the scene blocks nearby voice, only the call's mic can be the one that stopped by choice.
+fn mic_off_pings(scene_blocked: bool, call_was_transmitting: bool) -> bool {
+    !scene_blocked || call_was_transmitting
+}
+
 fn transmission_state(
-    tracks: Query<&MicrophonePublication>,
+    tracks: Query<(&MicrophonePublication, &HostedBy)>,
+    voice_rooms: Query<(), With<VoiceRoom>>,
     microphone_transmission_state: Res<State<MicrophoneTransmissionState>>,
     mut next_state: ResMut<NextState<MicrophoneTransmissionState>>,
+    mut last: ResMut<LastTransmission>,
 ) {
-    let transmitting = tracks.iter().any(|publication| {
+    let mut transmitting = false;
+    let mut call = false;
+    for (publication, room) in &tracks {
         let state = publication
             .state
             .lock()
             .unwrap_or_else(|err| err.into_inner());
-        state.transmitting
-    });
+        if state.transmitting {
+            transmitting = true;
+            call |= voice_rooms.contains(room.get());
+        }
+    }
+    if transmitting && last.call != call {
+        last.call = call;
+    }
     if !transmitting && microphone_transmission_state.get() == &MicrophoneTransmissionState::Enabled
     {
         next_state.set(MicrophoneTransmissionState::Disabled);
@@ -920,6 +943,7 @@ mod routing_tests {
             available: true,
             enabled: true,
             scene_blocked: false,
+            refusals: 0,
         };
         let mut call_mic = CallMic::default();
         let nearby_room = (true, false, false, true);
@@ -957,6 +981,7 @@ mod routing_tests {
             available: true,
             enabled: true,
             scene_blocked: false,
+            refusals: 0,
         };
         let mut call_mic = CallMic {
             enabled: false,
@@ -986,6 +1011,7 @@ mod routing_tests {
             available: true,
             enabled: false,
             scene_blocked: false,
+            refusals: 0,
         };
         let call_mic = CallMic {
             enabled: true,
@@ -1205,6 +1231,7 @@ mod routing_tests {
             available: true,
             enabled: true,
             scene_blocked: true,
+            refusals: 0,
         };
         let call_mic = CallMic::default();
         let nearby_room = (true, false, false, true);
@@ -1220,6 +1247,7 @@ mod routing_tests {
             available: true,
             enabled: false,
             scene_blocked: true,
+            refusals: 0,
         };
         let call_mic = CallMic {
             enabled: true,
@@ -1231,5 +1259,19 @@ mod routing_tests {
             &mic,
             &call_mic,
         ));
+    }
+
+    #[test]
+    fn muting_the_call_in_a_scene_that_disables_nearby_voice_still_pings() {
+        assert!(mic_off_pings(false, false), "nearby mic closed by the user");
+        assert!(mic_off_pings(false, true), "call mic muted");
+        assert!(
+            !mic_off_pings(true, false),
+            "nearby mic closed by the scene"
+        );
+        assert!(
+            mic_off_pings(true, true),
+            "call mic muted in a blocked scene"
+        );
     }
 }

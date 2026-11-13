@@ -831,6 +831,8 @@ export interface MicMessage {
   available: boolean
   /** The scene the player stands in turns nearby voice off. */
   sceneBlocked?: boolean
+  /** Counts the mic opens the scene refused. */
+  refusals?: number
 }
 
 export interface SetMicRequest {

@@ -6,7 +6,7 @@
 
 import { useCallback, useContext, useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { Button, ControlButton, IconButton, Panel, showToast, Toggle } from '../../design'
+import { Button, ControlButton, IconButton, Panel, Toggle } from '../../design'
 import { useDebugPanel } from '../debug/useDebugPanel'
 import type { IconName } from '../../design'
 import type { NavAction } from '@explorer-core/engine/protocol'
@@ -126,8 +126,6 @@ const BOTTOM: Item[] = [
   { kind: 'friends', icon: 'friends', label: 'Friends', hotkey: 'Friends' },
   { kind: 'chat', icon: 'chat', label: 'Chat', hotkey: 'ChatPanel' }
 ]
-
-const NEARBY_VOICE_BLOCKED = 'Nearby voice chat unavailable in this scene.'
 
 type VoiceProps = NearbyVoice & { onOpen: (button: HTMLElement) => void }
 type PopoverProps = { open: boolean; onOpen: (button: HTMLElement) => void }
@@ -376,16 +374,7 @@ export function Sidebar({
   const [portablesAnchor, setPortablesAnchor] = useState<HTMLElement | null>(null)
   const autoHide = useAutoHide(configOpen || voiceAnchor != null || permissionsAnchor != null || portablesAnchor != null)
   const nearby = useNearbyVoice(session)
-  const voice: VoiceProps = {
-    ...nearby,
-    onOpen: (button) => {
-      if (nearby.blocked) showToast(NEARBY_VOICE_BLOCKED)
-      else setVoiceAnchor((a) => (a == null ? button : null))
-    }
-  }
-  useEffect(() => {
-    if (nearby.blocked) setVoiceAnchor(null)
-  }, [nearby.blocked])
+  const voice: VoiceProps = { ...nearby, onOpen: (button) => setVoiceAnchor((a) => (a == null ? button : null)) }
   const closeVoice = useCallback(() => setVoiceAnchor(null), [])
   const popovers: Popovers = {
     permissions: {
@@ -471,6 +460,7 @@ export function Sidebar({
           speaking={nearby.speaking}
           talking={nearby.talking}
           micAvailable={nearby.micAvailable}
+          blocked={nearby.blocked}
           onSpeakToggle={nearby.toggleSpeak}
           talkKey={keyHintFor(snap, 'Microphone')}
           onClose={closeVoice}

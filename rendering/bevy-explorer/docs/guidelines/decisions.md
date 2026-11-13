@@ -125,12 +125,14 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   when absent, not a string, empty or `enabled` (any case); any other string turns nearby voice off for a player
   standing in that parcel scene. An empty parcel and a portable experience never do.
   - Don't leave the mic open: entering closes it, the `Microphone` key and the HUD cannot open it,
-    and leaving does not reopen it.
+    and leaving does not reopen it. Each refused open counts in `MicState.refusals`, and the HUD
+    toasts "Nearby voice chat unavailable in this scene." when the count goes up.
   - Don't play nearby players or show their speaking badge there. Their tracks stay subscribed, so
     hearing returns on the way out.
-  - Don't touch calls and community streams: their mic, audio and badges are unaffected.
-  - Don't open the nearby voice popover there: the sidebar button says nearby voice is
-    unavailable in this scene, and the minimap header lists "Nearby voice disabled".
+  - Don't touch calls and community streams: their mic, audio, badges and mic on/off sounds are
+    unaffected.
+  - Don't offer Speak there: the nearby voice popover still opens, with Speak disabled and the same
+    hint, so hearing and volume stay adjustable; the minimap header lists "Nearby voice disabled".
   - A player the gatekeeper refuses from a scene room is not handled here; that is next work.
 - **Saved mutes for nearby voice** follow unity-explorer's: the profile menu's Hush and Hear, the
   list kept by the social service (`/v1/mutes`), a mute that holds for the session when saving it

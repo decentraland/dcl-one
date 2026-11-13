@@ -93,7 +93,7 @@ export type VoiceChatApi = {
 
 export type ChatStreamMessage = ChatMessage
 export type SceneLoadingState = SceneLoadingUi
-export type MicState = { enabled: boolean; available: boolean; scene_blocked: boolean }
+export type MicState = { enabled: boolean; available: boolean; scene_blocked: boolean; refusals: number }
 
 // World-entity hover events. targetType: 0=WORLD, 1=UI, 2=AVATAR. eventType: PointerEventType.
 // eventInfo.maxPlayerDistance absent/null → the entry is range-gated by camera distance only (the

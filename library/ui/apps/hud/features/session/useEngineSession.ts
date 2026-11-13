@@ -1021,7 +1021,7 @@ export interface EngineSession {
   /** The portable experiences running beside the scene (smart wearables, scene-spawned portables). */
   portables: PortablesState
   editor: EditorHostState
-  mic: { enabled: boolean; available: boolean; sceneBlocked: boolean; toggle: () => void }
+  mic: { enabled: boolean; available: boolean; sceneBlocked: boolean; refusals: number; toggle: () => void }
   /** Saved mutes for nearby voice: lowercased addresses the user hushed, kept per account by the engine. */
   nearbyMutes: { muted: ReadonlySet<string>; set: (address: string, muted: boolean) => void }
   /** Private calls and community streams. */
@@ -1354,7 +1354,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const [skyboxProgressing, setSkyboxProgressingState] = useState(true)
   const [emotes, setEmotes] = useState<Emote[]>([])
   const [emotesOpen, setEmotesOpen] = useState(false)
-  const [mic, setMic] = useState({ enabled: false, available: false, sceneBlocked: false })
+  const [mic, setMic] = useState({ enabled: false, available: false, sceneBlocked: false, refusals: 0 })
   const [voiceChatState, setVoiceChatState] = useState<VoiceChatState | null>(null)
   const [activeVoiceChats, setActiveVoiceChats] = useState<ActiveCommunityVoiceChat[]>([])
   const [activeVoiceChatsLoaded, setActiveVoiceChatsLoaded] = useState(false)
@@ -1939,7 +1939,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           setEmotes(msg.emotes)
           break
         case 'mic':
-          setMic({ enabled: msg.enabled, available: msg.available, sceneBlocked: msg.sceneBlocked === true })
+          setMic((m) => ({ enabled: msg.enabled, available: msg.available, sceneBlocked: msg.sceneBlocked === true, refusals: msg.refusals ?? m.refusals }))
           break
         case 'nearbyMutes':
           applyNearbyMuted(new Set(msg.addresses.map((a) => a.toLowerCase())))
@@ -4683,7 +4683,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     worldPassword: { pending: worldPassword, resolve: resolveWorldPassword },
     portables: { list: portables, stop: stopPortable, restart: restartSmartWearable },
     editor: { mode: editorMode, setMode: setEditorMode },
-    mic: { enabled: mic.enabled, available: mic.available, sceneBlocked: mic.sceneBlocked, toggle: toggleMic },
+    mic: { enabled: mic.enabled, available: mic.available, sceneBlocked: mic.sceneBlocked, refusals: mic.refusals, toggle: toggleMic },
     nearbyMutes: { muted: nearbyMuted, set: setNearbyMute },
     voiceChat: { state: voiceChatState, active: activeVoiceChats, activeLoaded: activeVoiceChatsLoaded, scene: sceneVoiceChat, guest: profile?.isGuest === true, act: voiceChatAct },
     nav,

@@ -3,6 +3,7 @@ import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { ToastHost } from '../../design'
 import { Sidebar } from '../../features/sidebar/Sidebar'
+import { NEARBY_VOICE_BLOCKED } from '../../features/voice/NearbyVoiceRefusals'
 import { fakeSession } from '../harness'
 
 function renderSidebar(over: { enabled?: boolean; available?: boolean; sceneBlocked?: boolean } = {}) {
@@ -60,21 +61,26 @@ describe('nearby voice', () => {
     expect(screen.getByText('No microphone available')).toBeInTheDocument()
   })
 
-  it('in a scene that turns nearby voice off, the button says so instead of opening the popover', async () => {
-    renderSidebar({ sceneBlocked: true })
+  it('in a scene that turns nearby voice off, the popover opens with Speak disabled and hearing adjustable', async () => {
+    const s = renderSidebar({ sceneBlocked: true })
     const button = screen.getByRole('button', { name: 'Nearby Voice' })
     expect(button).toHaveAttribute('data-voice', 'blocked')
     expect(button.querySelector('[data-indicator]')).toBeNull()
     await userEvent.click(button)
-    expect(screen.queryByRole('dialog', { name: 'Nearby voice' })).toBeNull()
-    expect(screen.getByRole('status')).toHaveTextContent('Nearby voice chat unavailable in this scene.')
+    expect(screen.getByRole('dialog', { name: 'Nearby voice' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Speak' })).toBeDisabled()
+    expect(screen.getByText(NEARBY_VOICE_BLOCKED)).toBeInTheDocument()
+    expect(screen.getByRole('switch', { name: 'Hear others' })).toBeEnabled()
+    fireEvent.change(screen.getByRole('slider', { name: 'Voice volume' }), { target: { value: '40' } })
+    expect(vi.mocked(s.settings.set)).toHaveBeenLastCalledWith('Voice Volume', 40)
   })
 
-  it('walking into a scene that turns nearby voice off closes the open popover', async () => {
+  it('walking into a scene that turns nearby voice off keeps the open popover and disables Speak', async () => {
     const s = renderSidebar()
     await userEvent.click(screen.getByRole('button', { name: 'Nearby Voice' }))
-    expect(screen.getByRole('dialog', { name: 'Nearby voice' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Speak' })).toBeEnabled()
     s.rerender({ sceneBlocked: true })
-    expect(screen.queryByRole('dialog', { name: 'Nearby voice' })).toBeNull()
+    expect(screen.getByRole('dialog', { name: 'Nearby voice' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Speak' })).toBeDisabled()
   })
 })
