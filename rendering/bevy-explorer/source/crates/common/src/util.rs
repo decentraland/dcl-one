@@ -479,13 +479,23 @@ pub fn camera_to_render_layers<'a>(
     })
 }
 
+/// The User-Agent every client of this engine sends, scene fetch and WebSocket included.
+pub const USER_AGENT: &str = "DCLExplorer/0.1";
+
+/// `host` without the brackets of an IPv6 literal.
+pub fn strip_ipv6_brackets(host: &str) -> &str {
+    host.strip_prefix('[')
+        .and_then(|h| h.strip_suffix(']'))
+        .unwrap_or(host)
+}
+
 // convenient non-pooled client use for infrequent requests
 #[cfg(not(target_arch = "wasm32"))]
 pub fn reqwest_client() -> reqwest::Client {
     platform::http_client_builder()
         .timeout(std::time::Duration::from_secs(5))
         .use_native_tls()
-        .user_agent("DCLExplorer/0.1")
+        .user_agent(USER_AGENT)
         .build()
         .unwrap()
 }
@@ -493,7 +503,7 @@ pub fn reqwest_client() -> reqwest::Client {
 #[cfg(target_arch = "wasm32")]
 pub fn reqwest_client() -> reqwest::Client {
     platform::http_client_builder()
-        .user_agent("DCLExplorer/0.1")
+        .user_agent(USER_AGENT)
         .build()
         .unwrap()
 }
@@ -781,10 +791,26 @@ pub fn is_private_lan(ip: &std::net::IpAddr) -> bool {
     }
 }
 
+/// The error [`validate_public_addrs`] returns, so callers can tell a policy refusal from a
+/// network failure.
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Debug)]
+pub struct NonPublicAddress;
+
+#[cfg(not(target_arch = "wasm32"))]
+impl std::fmt::Display for NonPublicAddress {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("request to a non-public address is not allowed")
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl std::error::Error for NonPublicAddress {}
+
 /// Reject the set unless EVERY address is public (or, under `allow_private`, on the local
-/// network). Whole-set rejection is deliberate — see [`resolve_public_addrs`]. This is the
-/// pure validation step, shared by the fetch resolver (which resolves first) and the
-/// WebSocket `check_resolved` hook (which is handed addresses already resolved by deno).
+/// network) with [`NonPublicAddress`]. Whole-set rejection is deliberate — see
+/// [`resolve_public_addrs`]. This is the pure validation step, shared by the fetch resolver
+/// and the scene WebSocket, which re-validates its resolver's answer before dialling it.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn validate_public_addrs(
     addrs: &[std::net::SocketAddr],
@@ -795,7 +821,7 @@ pub fn validate_public_addrs(
             continue;
         }
         if is_forbidden_ip(&addr.ip()) {
-            anyhow::bail!("request to a non-public address is not allowed");
+            return Err(NonPublicAddress.into());
         }
     }
     Ok(())
@@ -808,9 +834,9 @@ pub fn validate_public_addrs(
 /// and silently dropping the private ones would let the request proceed looking legitimate.
 ///
 /// This is the shared primitive behind [`assert_public_url`] (pre-flight, by URL) and the
-/// connect-time resolver used by every scene http client, so both reach the same verdict
-/// from the same code. `allow_private` (preview only) permits [`is_private_lan`] addresses
-/// but never link-local, so metadata stays blocked in every mode.
+/// connect-time resolver used by every scene http client and the scene WebSocket, so all
+/// reach the same verdict from the same code. `allow_private` (preview, or a non-server super-user scene) permits
+/// [`is_private_lan`] addresses but never link-local, so metadata stays blocked in every mode.
 #[cfg(not(target_arch = "wasm32"))]
 pub async fn resolve_public_addrs(
     host: &str,
@@ -926,7 +952,7 @@ mod tests {
         );
     }
 
-    /// The egress policy hinges on this split: `allow_private` (preview) opens loopback and
+    /// The egress policy hinges on this split: `allow_private` opens loopback and
     /// the local network, but link-local — including cloud metadata `169.254.169.254` — is
     /// NOT `is_private_lan`, so it stays `is_forbidden_ip` and is refused in every mode.
     #[cfg(not(target_arch = "wasm32"))]
@@ -959,10 +985,10 @@ mod tests {
         assert!(!is_forbidden_ip(&pubip));
     }
 
-    /// End-to-end on the shared primitive both the fetch resolver and the WebSocket
-    /// `resolve_checked` hook depend on: literal private/loopback is refused normally and
-    /// allowed only under `allow_private` (preview), while cloud metadata stays refused even
-    /// under preview. Uses literal IPs so no network lookup happens.
+    /// End-to-end on the shared primitive both the fetch resolver and the scene WebSocket
+    /// depend on: literal private/loopback is refused normally and allowed only under
+    /// `allow_private`, while cloud metadata stays refused even then. Uses literal IPs so no
+    /// network lookup happens.
     #[cfg(not(target_arch = "wasm32"))]
     #[tokio::test]
     async fn resolve_public_addrs_enforces_egress_policy() {

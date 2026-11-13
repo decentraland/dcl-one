@@ -33,10 +33,7 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 #[cfg(not(feature = "inspect"))]
 pub struct InspectorServer;
 
-use self::{
-    fetch::{FP, NP, TP},
-    websocket::WebSocketPerms,
-};
+use self::fetch::{FP, NP, TP};
 
 pub mod fetch;
 mod hardened_ops;
@@ -52,7 +49,6 @@ pub fn create_runtime(
     inspect: bool,
     super_user: bool,
     storage_root: &str,
-    preview: bool,
     kill_flag: KillFlag,
 ) -> (JsRuntime, Option<InspectorServer>) {
     // add fetch stack
@@ -65,11 +61,6 @@ pub fn create_runtime(
     let url = deno_url::deno_url::init_ops_and_esm();
     let console = deno_console::deno_console::init_ops_and_esm();
     let fetch = deno_fetch::deno_fetch::init_ops_and_esm::<FP>(deno_fetch::Options::default());
-    let websocket = deno_websocket::deno_websocket::init_ops_and_esm::<WebSocketPerms>(
-        "bevy-explorer".to_owned(),
-        None,
-        None,
-    );
 
     let storage_digest = multihash_codetable::Code::Sha2_256.digest(storage_root.as_bytes());
     let storage_hash = BASE64_URL_SAFE_NO_PAD.encode(storage_digest.digest());
@@ -82,7 +73,7 @@ pub fn create_runtime(
 
     let mut ops = vec![op_require(), op_log(), op_error()];
 
-    let op_sets: [Vec<deno_core::OpDecl>; 14] = [
+    let op_sets: [Vec<deno_core::OpDecl>; 15] = [
         op_wrappers::engine::ops(),
         op_wrappers::restricted_actions::ops(),
         op_wrappers::runtime::ops(),
@@ -97,6 +88,7 @@ pub fn create_runtime(
         op_wrappers::ethereum_controller::ops(),
         op_wrappers::adaption_layer_helper::ops(),
         op_wrappers::system_api::ops(super_user),
+        websocket::ops(),
     ];
 
     // add plugin registrations
@@ -109,9 +101,8 @@ pub fn create_runtime(
         ops.extend(set);
     }
 
-    let override_sets: [Vec<deno_core::OpDecl>; 5] = [
+    let override_sets: [Vec<deno_core::OpDecl>; 4] = [
         fetch::override_ops(),
-        websocket::override_ops(),
         local_storage::override_ops(),
         hardened_ops::override_ops(),
         stream_resource::override_ops(),
@@ -139,6 +130,7 @@ pub fn create_runtime(
         BevyExplorer
         dir "src/js/modules",
         "init.js",
+        "websocket.js",
     ));
 
     let ext = Extension {
@@ -189,9 +181,7 @@ pub fn create_runtime(
     // create runtime
     #[allow(unused_mut)]
     let mut runtime = JsRuntime::new(RuntimeOptions {
-        extensions: vec![
-            webidl, url, console, web, net, fetch, websocket, webstorage, ext,
-        ],
+        extensions: vec![webidl, url, console, web, net, fetch, webstorage, ext],
         inspector: inspect,
         create_params: Some(
             deno_core::v8::CreateParams::default().heap_limits(0, MAX_SCENE_HEAP_BYTES),
@@ -227,7 +217,6 @@ pub fn create_runtime(
         let mut state = state.borrow_mut();
         state.put(TP);
         state.put(NP);
-        state.put(WebSocketPerms { preview });
     }
 
     // On approaching the cap, terminate this isolate's execution so its JS unwinds and the
@@ -308,13 +297,11 @@ pub(crate) fn scene_thread(
     scene_origin: bevy::prelude::Vec3,
 ) {
     let scene_id = scene_context.scene_id;
-    let preview = scene_context.preview;
     let kill_flag = KillFlag::default();
     let (mut runtime, inspector) = create_runtime(
         inspect,
         super_user.is_some(),
         &storage_root,
-        preview,
         kill_flag.clone(),
     );
 
@@ -726,6 +713,9 @@ mod tests {
     mod invalid_op_input {
         include!("invalid_op_input_tests.rs");
     }
+    mod websocket {
+        include!("websocket_tests.rs");
+    }
     use std::sync::Arc;
 
     use common::structs::SceneJsFile;
@@ -749,8 +739,7 @@ mod tests {
     /// is evaluated (`op_require("~scene.js")` -> `evalContext`). A `throw` in the scene
     /// surfaces as `Err`.
     fn run_scene(is_server: bool, scene_js: &str) -> Result<(), String> {
-        let (mut runtime, _) =
-            create_runtime(false, false, "test-scene-realm", false, Default::default());
+        let (mut runtime, _) = create_runtime(false, false, "test-scene-realm", Default::default());
         {
             let state = runtime.op_state();
             let mut state = state.borrow_mut();
@@ -766,7 +755,7 @@ mod tests {
     #[test]
     fn signed_fetch_scene_module_queues_only_rust_computed_body_hashes() {
         let (mut runtime, _) =
-            create_runtime(false, false, "test-signed-fetch", false, Default::default());
+            create_runtime(false, false, "test-signed-fetch", Default::default());
         let op_state = runtime.op_state();
         op_state.borrow_mut().put(context(false));
         op_state.borrow_mut().put(dcl_types::RpcCalls::default());
@@ -920,13 +909,8 @@ mod tests {
     /// authoritative server the option must be refused outright.
     #[test]
     fn server_refuses_a_scene_supplied_proxy() {
-        let (mut runtime, _) = create_runtime(
-            false,
-            false,
-            "test-custom-client",
-            false,
-            Default::default(),
-        );
+        let (mut runtime, _) =
+            create_runtime(false, false, "test-custom-client", Default::default());
         runtime.op_state().borrow_mut().put(context(true));
         let err = runtime
             .execute_script(
@@ -944,13 +928,8 @@ mod tests {
     /// own outbound TLS.
     #[test]
     fn server_refuses_scene_supplied_ca_certs() {
-        let (mut runtime, _) = create_runtime(
-            false,
-            false,
-            "test-custom-client-ca",
-            false,
-            Default::default(),
-        );
+        let (mut runtime, _) =
+            create_runtime(false, false, "test-custom-client-ca", Default::default());
         runtime.op_state().borrow_mut().put(context(true));
         let err = runtime
             .execute_script(
@@ -972,7 +951,6 @@ mod tests {
             false,
             false,
             "test-custom-client-clientmode",
-            false,
             Default::default(),
         );
         runtime.op_state().borrow_mut().put(context(false));
@@ -1023,13 +1001,8 @@ mod tests {
             });
         }
 
-        let (mut runtime, _) = create_runtime(
-            false,
-            false,
-            "test-fetch-redirect",
-            true,
-            Default::default(),
-        );
+        let (mut runtime, _) =
+            create_runtime(false, false, "test-fetch-redirect", Default::default());
         {
             let state = runtime.op_state();
             let mut state = state.borrow_mut();

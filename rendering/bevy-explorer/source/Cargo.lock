@@ -4336,13 +4336,13 @@ dependencies = [
  "deno_url",
  "deno_web",
  "deno_webidl",
- "deno_websocket",
  "deno_webstorage",
- "fastwebsockets 0.4.4",
+ "fastwebsockets",
  "http 1.5.0",
  "hyper 0.14.32",
  "libc",
  "multihash-codetable",
+ "native-tls",
  "once_cell",
  "platform",
  "reqwest",
@@ -4350,6 +4350,8 @@ dependencies = [
  "serde_json",
  "system_bridge",
  "tokio",
+ "tokio-native-tls",
+ "tokio-tungstenite",
  "uuid",
 ]
 
@@ -4783,28 +4785,6 @@ version = "0.168.0"
 source = "git+https://github.com/robtfm/deno?branch=1_46_hotfix#3ee34819c57653610521dc6501ddf8e2cf0c5aaa"
 dependencies = [
  "deno_core",
-]
-
-[[package]]
-name = "deno_websocket"
-version = "0.173.0"
-source = "git+https://github.com/robtfm/deno?branch=1_46_hotfix#3ee34819c57653610521dc6501ddf8e2cf0c5aaa"
-dependencies = [
- "bytes",
- "deno_core",
- "deno_net",
- "deno_permissions",
- "deno_tls",
- "fastwebsockets 0.8.1",
- "h2",
- "http 1.5.0",
- "http-body-util",
- "hyper 1.8.1",
- "hyper-util",
- "once_cell",
- "rustls-tokio-stream",
- "serde",
- "tokio",
 ]
 
 [[package]]
@@ -5495,25 +5475,6 @@ checksum = "9e6185b6dc9dddc4db0dedd2e213047e93bcbf7a0fb092abc4c4e4f3195efdb4"
 dependencies = [
  "base64 0.21.7",
  "hyper 0.14.32",
- "pin-project",
- "rand 0.8.8",
- "sha1",
- "simdutf8",
- "thiserror 1.0.69",
- "tokio",
- "utf-8",
-]
-
-[[package]]
-name = "fastwebsockets"
-version = "0.8.1"
-source = "git+https://github.com/robtfm/fastwebsockets?branch=0_8_hotfix#1db2dbc2d1db519e6ba76741fd76f13519ab76f7"
-dependencies = [
- "base64 0.21.7",
- "bytes",
- "http-body-util",
- "hyper 1.8.1",
- "hyper-util",
  "pin-project",
  "rand 0.8.8",
  "sha1",

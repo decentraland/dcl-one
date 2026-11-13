@@ -182,10 +182,8 @@ globalThis.setTimeout = timers.setTimeout;
 globalThis.setInterval = timers.setInterval;
 globalThis.clearTimeout = timers.clearTimeout;
 
-import * as websocket from "ext:deno_websocket/01_websocket.js";
+import * as websocket from "ext:BevyExplorer/websocket.js";
 globalThis.WebSocket = websocket.WebSocket;
-
-import * as _10 from "ext:deno_websocket/02_websocketstream.js";
 
 import * as textEncoding from "ext:deno_web/08_text_encoding.js";
 globalThis.TextEncoder = textEncoding.TextEncoder;

@@ -51,8 +51,12 @@ integrated web client, Sites supplies its origin's service URLs at boot.
 On desktop, native HTTP Fetch from the bundled bridge or an operator-selected
 `--system-scene` can reach loopback and LAN services outside preview, including through
 an explicit HTTP service override. The HTTP client blocks link-local and metadata addresses.
-Ordinary and authoritative hosted scenes use their own address policies. For native scene
-WebSockets, access to private resolved addresses is preview-only.
+Ordinary and authoritative hosted scenes use their own address policies. Native scene
+WebSockets follow the same rule as native Fetch: preview (on desktop or on an authoritative
+server launched in preview), the bundled bridge and an operator-selected `--system-scene` on
+desktop may use `ws://` and reach loopback and LAN addresses; every other scene, including
+every non-preview scene on the authoritative server, needs `wss://` to a public address. Link-local and metadata addresses stay blocked in every mode. TLS
+certificates are checked against the operating system's trust store.
 
 Use HTTPS for remote deployments. Plain HTTP sends signed headers and any request
 credentials in cleartext.
