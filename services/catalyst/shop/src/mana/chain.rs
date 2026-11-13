@@ -290,6 +290,15 @@ impl Reader {
         )?)
     }
 
+    /// Whether `address` holds contract code now (a contract wallet, not an EOA).
+    pub async fn has_code(&self, address: Address) -> Result<bool, ReadError> {
+        let code = self
+            .rpc
+            .call_hex("eth_getCode", json!([format!("{address:#x}"), "latest"]))
+            .await?;
+        Ok(!code.trim_start_matches("0x").is_empty())
+    }
+
     pub async fn chain_id(&self) -> Result<u64, ReadError> {
         Ok(parse_quantity_u64(
             &self.rpc.call_hex("eth_chainId", json!([])).await?,

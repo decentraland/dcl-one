@@ -563,10 +563,11 @@ pub async fn post_execution(
         Err(r) => return r,
     };
     // A transaction the node already knows must be the reporter's; an unknown
-    // one is checked by the tracker once mined.
+    // one, or a contract wallet's, is checked by the tracker once mined.
     if let Ok(Some(reader)) = state.reader(req.chain_id).await
         && let Ok(Some((from, input))) = reader.transaction_sender(&tx_hash).await
         && !super::tracker::sent_by(actor, from, &input)
+        && matches!(reader.has_code(actor).await, Ok(false))
     {
         return error(
             StatusCode::FORBIDDEN,

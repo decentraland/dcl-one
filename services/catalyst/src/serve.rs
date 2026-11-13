@@ -1614,6 +1614,9 @@ fn credits_settings(config: &Config) -> anyhow::Result<shop::credits::Settings> 
         usage_chain_id: config.economy.collections_chain_id as i64,
         usage_start_block: config.shop.credits_usage_start_block,
         topup_start_block: config.shop.credits_topup_start_block,
+        topups_enabled: Config::non_empty(&config.economy.catalyrst_economy_admin_token).is_some()
+            && config.economy.meta_tx_broadcast_enabled
+            && Config::non_empty(&config.economy.relayer_private_key).is_some(),
         topup_min_confirmations: config.shop.credits_topup_min_confirmations,
         usage_interval_secs: config.shop.credits_usage_index_interval_secs,
         usage_requests_per_pass: config.shop.credits_usage_index_requests_per_pass,

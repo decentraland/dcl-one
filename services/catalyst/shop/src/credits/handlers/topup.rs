@@ -390,6 +390,32 @@ mod tests {
     }
 
     #[test]
+    fn mainnet_top_ups_need_a_start_block_and_testnets_do_not() {
+        use crate::credits::{RawSettings, Settings};
+        let raw = |chain: i64, start: Option<u64>| RawSettings {
+            topups_enabled: true,
+            usage_chain_id: chain,
+            topup_start_block: start,
+            ..RawSettings::default()
+        };
+        let err = Settings::parse(raw(137, None)).err().expect("refused");
+        assert!(
+            err.to_string().contains("CREDITS_TOPUP_START_BLOCK"),
+            "{err}"
+        );
+        assert!(Settings::parse(raw(137, Some(70_000_000))).is_ok());
+        assert!(Settings::parse(raw(80_002, None)).is_ok());
+        assert!(
+            Settings::parse(RawSettings {
+                topups_enabled: false,
+                ..raw(137, None)
+            })
+            .is_ok(),
+            "a node without the top-up rail starts as before"
+        );
+    }
+
+    #[test]
     fn shallow_transfers_stay_pending_until_deep_enough() {
         let shallow = TransferBlock {
             confirmations: 63,
