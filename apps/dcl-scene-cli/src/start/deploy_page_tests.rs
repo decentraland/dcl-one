@@ -163,6 +163,8 @@ fn linker_deploy(target: &str, world: Option<&str>) -> crate::linker::LinkerDepl
         base_parcel: "0,0".into(),
         multi_scene: true,
         gate: crate::deploy::PermissionGate::off(),
+        deploy_token: "0123456789abcdef".into(),
+        skip_validations: false,
     }
 }
 
@@ -449,7 +451,9 @@ async fn the_page_is_one_card_with_the_target_in_its_headline() {
         "the payload is a folded list of paths and sizes: {html}"
     );
     assert!(
-        html.contains(r#"<button class="jn__cta" type="submit">Publish</button>"#),
+        html.contains(
+            r#"<button class="btn btn--primary btn--lg jn__cta" type="submit">Publish</button>"#
+        ),
         "the primary button is the card footer's: {html}"
     );
     assert!(
@@ -989,8 +993,8 @@ async fn the_card_names_the_destination_once_and_the_bare_command() {
     );
     assert!(
         done.contains(
-            r#"<a class="jn__cta" href="https://decentraland.org/play/?realm=my.dcl.eth">Jump in</a>"#
-        ) && done.contains(r#"<button class="knob__go" type="submit">Publish again</button>"#),
+            r#"<a class="btn btn--primary btn--lg jn__cta" href="https://decentraland.org/play/?realm=my.dcl.eth">Jump in</a>"#
+        ) && done.contains(r#"<button class="btn btn--secondary btn--md knob__go" type="submit">Publish again</button>"#),
         "{done}"
     );
     assert_eq!(
@@ -1000,7 +1004,7 @@ async fn the_card_names_the_destination_once_and_the_bare_command() {
     );
     let no_realm = card_at(&dest, &p, &status, Phase::Done(None));
     assert!(
-        no_realm.contains(r#"<button class="jn__cta" type="submit">Publish again</button>"#)
+        no_realm.contains(r#"<button class="btn btn--primary btn--lg jn__cta" type="submit">Publish again</button>"#)
             && !no_realm.contains("Jump in"),
         "without a realm url the run button keeps the call to action: {no_realm}"
     );
@@ -1250,7 +1254,10 @@ async fn an_oversize_file_gets_a_warning_before_the_wallet() {
     let p = deploy::preview(&project).unwrap();
     assert_eq!(p.oversize, ["assets/huge.glb"]);
     let html = served(&state(project)).await;
-    assert!(html.contains(r#"class="panel panel--warn""#), "{html}");
+    assert!(
+        html.contains(r#"class="panel panel--warn ui-card""#),
+        "{html}"
+    );
     assert!(html.contains("Over the per-file limit"), "{html}");
     assert!(html.contains("assets/huge.glb"), "{html}");
     assert!(html.contains("50.0 MB"), "{html}");
@@ -1312,7 +1319,10 @@ async fn a_world_section_that_names_no_world_gets_a_warning_before_the_wallet() 
     let p = deploy::preview(&project).unwrap();
     assert!(p.nameless_world);
     let html = served(&state(project)).await;
-    assert!(html.contains(r#"class="panel panel--warn""#), "{html}");
+    assert!(
+        html.contains(r#"class="panel panel--warn ui-card""#),
+        "{html}"
+    );
     assert!(html.contains("names no world"), "{html}");
     assert!(html.contains("Genesis City LAND"), "{html}");
 }
@@ -2173,7 +2183,7 @@ fn a_failure_detail_is_the_why_without_the_advice() {
     assert!(rows[0].detail.is_none());
     let pane = history_rows_pane(&rows);
     assert!(
-        pane.contains("World w.dcl.eth") && pane.contains("tgt__history-status--ok\">published"),
+        pane.contains("World w.dcl.eth") && pane.contains("u-pill u-pill--online\">published"),
         "{pane}"
     );
 }
@@ -2778,7 +2788,10 @@ async fn moving_to_land_selects_land_but_a_world_coordinate_edit_keeps_its_world
 #[test]
 fn cli_publish_releases_the_signer_and_allows_another_web_publish() {
     for outcome in [
-        Ok("Published".to_string()),
+        Ok(crate::linker::Published {
+            entity_id: "bafy".into(),
+            message: "Published".into(),
+        }),
         Err(anyhow::anyhow!("Upload failed")),
     ] {
         let st = AppState::new(vec![], 8000, tokio::sync::broadcast::channel(32).0);
@@ -2795,7 +2808,10 @@ fn cli_publish_releases_the_signer_and_allows_another_web_publish() {
 #[tokio::test]
 async fn standalone_browser_server_stays_available_after_publish() {
     for outcome in [
-        Ok("Published test scene".to_string()),
+        Ok(crate::linker::Published {
+            entity_id: "bafy".into(),
+            message: "Published test scene".into(),
+        }),
         Err(anyhow::anyhow!("Upload rejected")),
     ] {
         let (_tree, project) = scene(
@@ -2816,6 +2832,7 @@ async fn standalone_browser_server_stays_available_after_publish() {
                 (port, listener),
                 false,
                 Duration::from_secs(5),
+                false,
                 signer,
                 rx,
             )
@@ -2941,5 +2958,44 @@ async fn scene_removal_is_gated_and_bound_to_the_selected_world() {
             .await
             .status(),
         StatusCode::CONFLICT
+    );
+}
+
+/// After a DNS rebind `Origin` and `Host` agree on the attacker's domain and
+/// the peer is still loopback: the signing gate wants a loopback `Origin`
+/// host too, unless remote peers are admitted on purpose.
+#[test]
+fn signing_refuses_an_origin_that_is_not_a_loopback_host() {
+    let (_tree, project) = gather("rebound-origin");
+    let mut st = crate::start::testkit::state(vec![project]);
+    let blocked = |st: &AppState, host: &str, origin: &str| {
+        let mut headers = HeaderMap::new();
+        headers.insert(header::HOST, host.parse().unwrap());
+        headers.insert(header::ORIGIN, origin.parse().unwrap());
+        signing_blocked(st, LOCAL, &headers).is_some()
+    };
+    assert!(blocked(
+        &st,
+        "evil.example:8000",
+        "http://evil.example:8000"
+    ));
+    assert!(blocked(&st, "10.1.2.3:8000", "http://10.1.2.3:8000"));
+    assert!(!blocked(&st, "localhost:8000", "http://localhost:8000"));
+    assert!(!blocked(&st, "127.0.0.1:8000", "http://127.0.0.1:8000"));
+    assert!(!blocked(&st, "[::1]:8000", "http://[::1]:8000"));
+    let mut none = HeaderMap::new();
+    none.insert(header::HOST, "evil.example:8000".parse().unwrap());
+    assert!(
+        signing_blocked(&st, LOCAL, &none).is_none(),
+        "no Origin is a non-browser request"
+    );
+    st.allow_remote_deploy = true;
+    assert!(
+        !blocked(&st, "10.1.2.3:8000", "http://10.1.2.3:8000"),
+        "an admitted remote signs from its own address"
+    );
+    assert!(
+        blocked(&st, "10.1.2.3:8000", "http://evil.example:8000"),
+        "and still only from the page it was served"
     );
 }
