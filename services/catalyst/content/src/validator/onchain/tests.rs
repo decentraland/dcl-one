@@ -206,6 +206,13 @@ async fn names_are_deduplicated_and_capped() {
         .unwrap_err();
     assert!(matches!(err, ValidatorError::BlockchainQuery(_)), "{err}");
     assert!(chain.calls().is_empty(), "nothing asked past a cap");
+
+    let long = "x".repeat(MAX_NAME_BYTES + 1);
+    assert_eq!(
+        a.names(OWNER, &[long.clone(), long], TS).await.unwrap(),
+        vec![false, false]
+    );
+    assert!(chain.calls().is_empty(), "an overlong name is not asked");
 }
 
 #[tokio::test]

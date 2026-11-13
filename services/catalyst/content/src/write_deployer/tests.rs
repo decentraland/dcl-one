@@ -318,18 +318,20 @@ const DEPLOYER_KEY: &str = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae78
 
 /// A signed scene entity with no content files: its bytes, id and auth chain.
 async fn signed_scene(pointers: &[String], timestamp: i64) -> (Bytes, String, Value) {
+    signed_entity_of(serde_json::json!({
+        "version": "v3",
+        "type": "scene",
+        "pointers": pointers,
+        "timestamp": timestamp,
+        "content": [],
+        "metadata": {}
+    }))
+    .await
+}
+
+async fn signed_entity_of(entity: Value) -> (Bytes, String, Value) {
     use alloy::signers::{Signer, local::PrivateKeySigner};
-    let bytes = Bytes::from(
-        serde_json::to_vec(&serde_json::json!({
-            "version": "v3",
-            "type": "scene",
-            "pointers": pointers,
-            "timestamp": timestamp,
-            "content": [],
-            "metadata": {}
-        }))
-        .unwrap(),
-    );
+    let bytes = Bytes::from(serde_json::to_vec(&entity).unwrap());
     let id = hash_bytes_v1(&bytes);
     let key: PrivateKeySigner = DEPLOYER_KEY.parse().unwrap();
     let signature = key.sign_message(id.as_bytes()).await.unwrap().to_string();
@@ -502,11 +504,38 @@ async fn of_two_concurrent_deploys_to_one_pointer_the_second_is_refused_as_in_fl
     let _ = std::fs::remove_dir_all(&tmp);
 }
 
+/// Polls until a deploy's write queues on the shared store lock of `pool`'s database.
+async fn queued_on_the_store_lock<F: std::future::Future + Unpin>(pool: &PgPool, deploy: &mut F)
+where
+    F::Output: std::fmt::Debug,
+{
+    for _ in 0..60 {
+        if let Ok(done) = tokio::time::timeout(Duration::from_millis(50), &mut *deploy).await {
+            panic!("the write did not wait for the batch: {done:?}");
+        }
+        let waiting: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM pg_locks \
+             WHERE locktype = 'advisory' AND mode = 'ShareLock' AND NOT granted \
+               AND database = (SELECT oid FROM pg_database WHERE datname = current_database()) \
+               AND (classid::bigint << 32 | objid::bigint) = $1",
+        )
+        .bind(crate::storage::gc::STORE_LOCK_KEY)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        if waiting >= 1 {
+            return;
+        }
+    }
+    panic!("the write never queued on the store lock");
+}
+
 /// A content deploy writes under the shared store lock: while an unlink batch holds the
-/// exclusive side the write waits, and it commits once the batch ends.
+/// exclusive side the write waits, and it commits once the batch ends. Its own database,
+/// so no other test's deploy waits behind this batch.
 #[tokio::test]
 async fn a_content_deploy_waits_for_an_unlink_batch() {
-    let Some(pool) = test_pool(4).await else {
+    let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
         return;
     };
     let (storage, tmp) = temp_storage("store-lock").await;
@@ -519,36 +548,126 @@ async fn a_content_deploy_waits_for_an_unlink_batch() {
         .unwrap();
     let deploy = deployer.deploy_entity(vec![bytes], &id, chain, "LOCAL");
     tokio::pin!(deploy);
-    let waiting = || async {
-        sqlx::query_scalar::<_, i64>(
-            "SELECT count(*) FROM pg_locks \
-             WHERE locktype = 'advisory' AND mode = 'ShareLock' AND NOT granted \
-               AND (classid::bigint << 32 | objid::bigint) = $1",
-        )
-        .bind(crate::storage::gc::STORE_LOCK_KEY)
-        .fetch_one(&pool)
-        .await
-        .unwrap()
-    };
-    let mut polls = 0;
-    loop {
-        assert!(
-            tokio::time::timeout(Duration::from_millis(50), &mut deploy)
-                .await
-                .is_err(),
-            "the write waits for the batch"
-        );
-        if waiting().await == 1 {
-            break;
-        }
-        polls += 1;
-        assert!(polls < 60, "the write never queued on the store lock");
-    }
+    queued_on_the_store_lock(&pool, &mut deploy).await;
     batch.rollback().await.unwrap();
     tokio::time::timeout(Duration::from_secs(10), deploy)
         .await
         .expect("the write proceeds once the batch ends")
         .expect("the deploy commits");
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+/// A batch that outlasts the write's lock wait answers a retryable 503.
+#[tokio::test]
+async fn a_content_deploy_behind_a_long_unlink_batch_is_undecided() {
+    let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+        return;
+    };
+    let (storage, tmp) = temp_storage("store-lock-wait").await;
+    let deployer = WriteDeployer::new(pool.clone(), storage, Arc::new(NoEip1654));
+    let pointers = Scope::new().pointers(&["9,10"]);
+    let (bytes, id, chain) = signed_scene(&pointers, chrono::Utc::now().timestamp_millis()).await;
+
+    let batch = crate::storage::gc::lock_store_exclusive(&pool)
+        .await
+        .unwrap();
+    let err = tokio::time::timeout(
+        Duration::from_secs(20),
+        deployer.deploy_entity(vec![bytes], &id, chain, "LOCAL"),
+    )
+    .await
+    .expect("the wait is bounded")
+    .unwrap_err();
+    assert!(matches!(&err, DeployFailure::Unavailable(_)), "{err:?}");
+    batch.rollback().await.unwrap();
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+/// A stored file the entity reuses, removed by a batch the write waited for, answers a
+/// retryable 503 instead of committing a reference to a missing file.
+#[tokio::test]
+async fn a_reused_file_collected_during_the_deploy_is_undecided() {
+    let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+        return;
+    };
+    let (storage, tmp) = temp_storage("store-lock-gone").await;
+    let reused = Bytes::from_static(b"reused bytes");
+    let reused_hash = hash_bytes_v1(&reused);
+    storage.store(&reused_hash, reused).await.unwrap();
+    let deployer = WriteDeployer::new(pool.clone(), storage.clone(), Arc::new(NoEip1654));
+    let pointers = Scope::new().pointers(&["9,11"]);
+    let (bytes, id, chain) = signed_entity_of(serde_json::json!({
+        "version": "v3",
+        "type": "scene",
+        "pointers": pointers,
+        "timestamp": chrono::Utc::now().timestamp_millis(),
+        "content": [{"file": "reused.bin", "hash": reused_hash}],
+        "metadata": {}
+    }))
+    .await;
+
+    let batch = crate::storage::gc::lock_store_exclusive(&pool)
+        .await
+        .unwrap();
+    let deploy = deployer.deploy_entity(vec![bytes], &id, chain, "LOCAL");
+    tokio::pin!(deploy);
+    queued_on_the_store_lock(&pool, &mut deploy).await;
+    storage.delete_strict(&reused_hash).await.unwrap();
+    batch.commit().await.unwrap();
+    let err = tokio::time::timeout(Duration::from_secs(10), deploy)
+        .await
+        .expect("the write proceeds once the batch ends")
+        .unwrap_err();
+    assert!(
+        matches!(&err, DeployFailure::Unavailable(e) if e[0].contains(&reused_hash)),
+        "{err:?}"
+    );
+    assert_eq!(deployer.deployed_timestamp(&id).await.unwrap(), None);
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+/// Pointer lists past the per-type bound are refused before any database work.
+#[tokio::test]
+async fn oversized_pointer_lists_are_refused_early() {
+    let (deployer, tmp) = deployer_over_temp_storage("pointer-bound").await;
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    let parcels: Vec<String> = (0..=MAX_SCENE_POINTERS)
+        .map(|i| format!("{},{}", i % 1000, i / 1000))
+        .collect();
+    let (bytes, id, chain) = signed_scene(&parcels, now_ms).await;
+    let err = deployer
+        .deploy_entity(vec![bytes], &id, chain, "LOCAL")
+        .await
+        .unwrap_err();
+    assert_eq!(
+        err.errors(),
+        [format!(
+            "A scene may name at most {MAX_SCENE_POINTERS} pointers."
+        )]
+    );
+
+    let pointers: Vec<String> = (0..=MAX_OTHER_POINTERS)
+        .map(|i| format!("0x{i:040x}"))
+        .collect();
+    let (bytes, id, chain) = signed_entity_of(serde_json::json!({
+        "version": "v3",
+        "type": "profile",
+        "pointers": pointers,
+        "timestamp": now_ms,
+        "content": [],
+        "metadata": {}
+    }))
+    .await;
+    let err = deployer
+        .deploy_entity(vec![bytes], &id, chain, "LOCAL")
+        .await
+        .unwrap_err();
+    assert_eq!(
+        err.errors(),
+        [format!(
+            "A profile may name at most {MAX_OTHER_POINTERS} pointers."
+        )]
+    );
     let _ = std::fs::remove_dir_all(&tmp);
 }
 

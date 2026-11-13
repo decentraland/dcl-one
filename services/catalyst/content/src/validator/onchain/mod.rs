@@ -12,7 +12,7 @@
 //! RPC, a node that cannot answer for that block, a check past its deadline)
 //! is an `Err`, never a grant; a call the chain reverts is a "no".
 
-mod items;
+pub(crate) mod items;
 
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
@@ -74,6 +74,9 @@ pub(crate) const MAX_NFT_CONTRACTS_ASKED: usize = MAX_ITEMS_ASKED;
 /// Distinct claimed names asked about per check; more refuses the check. A
 /// profile names one per avatar.
 pub(crate) const MAX_NAMES_ASKED: usize = MAX_ITEMS_ASKED;
+/// Longer names are answered as not held without being asked: no registrable
+/// NAME comes near it, and it bounds the calldata one name sends.
+pub(crate) const MAX_NAME_BYTES: usize = 64;
 
 /// How many items or names one ownership check asks about, and what more is.
 #[derive(Debug, Clone, Copy)]
@@ -750,11 +753,16 @@ impl OnChainAccess {
                 ValidatorError::TooManyItems(message)
             });
         }
-        let owned = self
-            .distinct_names(address, &distinct, timestamp_ms)
-            .await?;
-        let by_name: HashMap<&String, bool> = distinct.into_iter().zip(owned).collect();
-        Ok(names.iter().map(|n| by_name[n]).collect())
+        let askable: Vec<&String> = distinct
+            .into_iter()
+            .filter(|n| n.len() <= MAX_NAME_BYTES)
+            .collect();
+        let owned = self.distinct_names(address, &askable, timestamp_ms).await?;
+        let by_name: HashMap<&String, bool> = askable.into_iter().zip(owned).collect();
+        Ok(names
+            .iter()
+            .map(|n| by_name.get(n).copied().unwrap_or(false))
+            .collect())
     }
 
     async fn distinct_names(
@@ -763,6 +771,9 @@ impl OnChainAccess {
         names: &[&String],
         timestamp_ms: i64,
     ) -> Result<Vec<bool>, ValidatorError> {
+        if names.is_empty() {
+            return Ok(Vec::new());
+        }
         self.within_deadline("names", async {
             let l1 = self.l1()?;
             let Ok(sender) = address.parse::<Address>() else {

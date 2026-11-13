@@ -363,12 +363,50 @@ fn entity_file_of(files: &[Bytes], entity_id: &str) -> Option<Value> {
 }
 
 /// Whether an undecided deploy's quota charge is given back: only when its
-/// access check fits one Checker batch. A larger request can drive its own
-/// check past its deadline.
+/// access check fits one Checker batch and asks only Decentraland's own
+/// contracts (LAND, estates, the NAME registrar). A larger request, or a
+/// contract the entity names (a collection, a worn item's NFT), can drive the
+/// check past its deadline or into a non-revert failure.
 fn is_refundable(files: &[Bytes], entity_id: &str) -> bool {
     entity_file_of(files, entity_id).is_some_and(|entity| {
-        access_calls_of(&entity) <= crate::validator::onchain::CALLS_PER_BATCH
+        !asks_named_contracts(&entity)
+            && access_calls_of(&entity) <= crate::validator::onchain::CALLS_PER_BATCH
     })
+}
+
+/// Whether the access check calls contracts the entity names: a wearable's or
+/// emote's collection, or an on-chain item a profile or outfit wears.
+fn asks_named_contracts(entity: &Value) -> bool {
+    if matches!(
+        entity.get("type").and_then(Value::as_str),
+        Some("wearable" | "emote")
+    ) {
+        return true;
+    }
+    let on_chain = |urn: &Value| {
+        let urn = urn.as_str().or_else(|| urn.get("urn")?.as_str());
+        urn.is_some_and(|u| {
+            crate::validator::onchain::items::item_ref(u)
+                .on_l1()
+                .is_some()
+        })
+    };
+    let worn = |list: Option<&Value>| {
+        list.and_then(Value::as_array)
+            .is_some_and(|items| items.iter().any(on_chain))
+    };
+    let Some(metadata) = entity.get("metadata") else {
+        return false;
+    };
+    let avatars = metadata.get("avatars").and_then(Value::as_array);
+    let outfits = metadata.get("outfits").and_then(Value::as_array);
+    avatars.into_iter().flatten().any(|a| {
+        let a = a.get("avatar");
+        worn(a.and_then(|a| a.get("wearables"))) || worn(a.and_then(|a| a.get("emotes")))
+    }) || outfits
+        .into_iter()
+        .flatten()
+        .any(|o| worn(o.get("outfit").and_then(|o| o.get("wearables"))))
 }
 
 /// An upper bound on the on-chain sub-calls the access check asks for `entity`:
@@ -1011,6 +1049,27 @@ mod tests {
         let wearable =
             serde_json::json!({"type": "wearable", "pointers": ["urn"], "content": [{}, {}]});
         assert_eq!(access_calls_of(&wearable), 3);
+    }
+
+    #[test]
+    fn checks_on_contracts_the_entity_names_are_never_refunded() {
+        let wearing = |urn: &str| {
+            serde_json::json!({
+                "type": "profile",
+                "pointers": ["0xabc"],
+                "metadata": {"avatars": [{"avatar": {"wearables": [urn], "emotes": []}}]}
+            })
+        };
+        assert!(!asks_named_contracts(&wearing(
+            "urn:decentraland:off-chain:base-avatars:eyebrows_00"
+        )));
+        assert!(asks_named_contracts(&wearing(
+            "urn:decentraland:matic:collections-v2:0x0002000000000000000000000000000000000001:0:1"
+        )));
+        let emote = serde_json::json!({"type": "emote", "pointers": ["urn"]});
+        assert!(asks_named_contracts(&emote));
+        let scene = serde_json::json!({"type": "scene", "pointers": ["0,0"]});
+        assert!(!asks_named_contracts(&scene));
     }
 
     #[test]
