@@ -44,7 +44,9 @@ sees a `cfg`. Backend functionality that only one caller needs lives next to tha
   `apps/bevy-explorer`, which builds the wasm package, sandbox worker and HUD into `dist/web`
   without serving them (see [Running](running.md#web)). `just wasm` also runs from Git Bash on
   Windows: a wasm build there gets `file!()` paths with backslashes, which the fork's
-  `embedded_asset!` normalizes.
+  `embedded_asset!` normalizes. Use Git Bash for every `just` recipe there: from PowerShell
+  `just` finds no `sh`, and the `bash` on its `PATH` is usually WSL's. Windows has no `make`:
+  `make web` is `python build-web.py` (`--no-opt` for `web-dev`), from any shell.
 - **Exit work runs before `Last`.** On `AppExit`, `close_rooms_on_app_exit` blocks in `Last`
   (`comms`), so on web a system in `Last` may never run again. Anything that must reach the page
   at exit, such as the benchmark stream's final bytes, runs in `Update`.
@@ -82,7 +84,13 @@ sees a `cfg`. Backend functionality that only one caller needs lives next to tha
   `CARGO_TARGET_DIR` on one drive. `cef-dll-sys` needs Ninja on `PATH`; Visual Studio ships one
   under `Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja`. A cold build at a high job count can
   run LLVM out of memory: limit it with `CARGO_BUILD_JOBS`, and keep tens of gigabytes free for a
-  debug target dir (measurements (evidence supplied for the task)).
+  debug target dir (measurements (evidence supplied for the task)). Keep `CARGO_TARGET_DIR` short
+  and free of spaces: under a worktree's `.../source/target`, LiveKit's prebuilt libwebrtc headers
+  pass the 260-character path limit and `webrtc-sys` stops with C1083 on an `absl/...` header, and
+  GN-style build scripts break on a space. protoc is the `protoc-<version>-win64.zip` release that
+  `apps/bevy-explorer/install-protoc.py` pins (that script only runs on CI): put its `bin` on
+  `PATH` or set `PROTOC`. `CEF_PATH` takes a Windows path; in Git Bash,
+  `export CEF_PATH="$(cygpath -w ~/.local/share/cef)"` after `just setup-cef`.
 - **A PR runs the Windows and macOS tests only for platform inputs.** A Rust change under
   `rendering/bevy-explorer/source` runs clippy, the native test suite on Linux, the headless smoke
   test and the web build (`tooling/bevy-ci.py` at the dcl-one root selects them). The suite adds
