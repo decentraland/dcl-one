@@ -26,7 +26,7 @@ import { checkRealm, realmCheckMessage } from '@explorer-core/lib/realmCheck'
 import { entryRealm } from '@hud-host'
 import { color3ToHex, hexToColor3 } from '@explorer-core/lib/color'
 import { closeTopPopup, hasOpenPopup, showToast, subscribePopups, topPopupOrder } from '../../design'
-import { requestDebugPanel } from '../debug/useDebugPanel'
+import { closeDebugPanel, isDebugPanelOpen, requestDebugPanel } from '../debug/useDebugPanel'
 import { emitFriendEvent } from '@explorer-core/features/friends/friendEvents'
 import { toastFriendOnline, toastFriendResult } from '../friends/friendToasts'
 import { clearNotificationToasts, queueNotificationToasts } from '../notifications/NotificationToast'
@@ -4458,6 +4458,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       if (hasOpenPopup()) closeTopPopup()
       // the lobby sits under the panels it opens: close those first, then the lobby
       else if (anyPanelOpenExceptLobby) panelSetters.forEach((set) => set(false))
+      // the debug panel closes after every popup, leaf layer and panel
+      else if (isDebugPanelOpen()) closeDebugPanel()
       else setLobbyOpen(false)
       return
     }

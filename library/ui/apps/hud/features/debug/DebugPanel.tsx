@@ -275,9 +275,8 @@ function SectionRow({ section, run, open, toggle }: {
   )
 }
 
-function DebugPanel({ run, initial }: { run: RunCommand; initial: string }) {
+function DebugPanel({ run, initial, className }: { run: RunCommand; initial: string; className: string }) {
   const { value: sections, error } = useCommandResult<DebugSection[]>(run, '/debug_panel', false)
-  const { value: developmentBuild } = useCommandResult<boolean>(run, '/debug_panel --dev-build', false)
   const [filter, setFilter] = useState(initial)
   const [expanded, setExpanded] = useState<string[]>(initial ? [initial.toLowerCase()] : [])
   const isOpen = (s: DebugSection) => expanded.includes(s.title.toLowerCase())
@@ -291,7 +290,7 @@ function DebugPanel({ run, initial }: { run: RunCommand; initial: string }) {
       ? [i.label, i.kind.options.enable[0], i.kind.options.disable[0]] : [i.label])].some((label) => label.toLowerCase().includes(term)))
   return (
     <ModalShell title="Debug panel" ariaLabel="Debug panel" modal={false} onClose={closeDebugPanel}
-      className={developmentBuild === true ? `${styles.panel} ${styles.besideLauncher}` : styles.panel}>
+      className={className}>
       <TextInput type="search" aria-label="Find debug controls" placeholder="Find a section or control"
         value={filter} onChange={setFilter} />
       {error ? <p role="status">Could not load debug sections. {error}</p> :
@@ -304,8 +303,12 @@ function DebugPanel({ run, initial }: { run: RunCommand; initial: string }) {
   )
 }
 
-/** Renders the open panel outside the popup stack: no backdrop, no focus trap. */
-export function DebugPanelHost({ session }: { session: EngineSession }) {
-  const { state, run } = useDebugPanel(session)
-  return state && <DebugPanel key={state.opened} run={run} initial={state.target} />
+/** Renders the open panel outside the popup stack: no backdrop, no focus trap. `belowMenuBar`
+ *  starts it under a menu page's top bar. */
+export function DebugPanelHost({ session, belowMenuBar = false }: { session: EngineSession; belowMenuBar?: boolean }) {
+  const { state, run, developmentBuild } = useDebugPanel(session)
+  let className = styles.panel
+  if (developmentBuild) className += ` ${styles.besideLauncher}`
+  if (belowMenuBar) className += ` ${styles.belowMenuBar}`
+  return state && <DebugPanel key={state.opened} run={run} initial={state.target} className={className} />
 }

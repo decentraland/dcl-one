@@ -1,7 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { expect, it, vi } from 'vitest'
 import { hasOpenPopup } from '../../design/popups'
-import { dispatchCancelLayer } from '@explorer-core/lib/cancelLayers'
 import { DebugPanelHost } from '../../features/debug/DebugPanel'
 import { Sidebar } from '../../features/sidebar/Sidebar'
 import { requestDebugPanel } from '../../features/debug/useDebugPanel'
@@ -53,7 +52,7 @@ it('discovers plugin sections, samples expanded sections and dispatches their ac
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Debug panel' })) })
     expect(screen.getByRole('dialog', { name: 'Debug panel' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Transport' })).toHaveAttribute('aria-expanded', 'false')
-    expect(command.mock.calls).toEqual([['/debug_panel --dev-build'], ['/debug_panel'], ['/debug_panel --dev-build']])
+    expect(command.mock.calls).toEqual([['/debug_panel --dev-build'], ['/debug_panel --dev-build'], ['/debug_panel']])
     const clock = screen.getByRole('button', { name: 'Clock' })
     const sectionHeaders = () => screen.getAllByRole('button', { name: /^(Transport|Clock|Session)$/ })
     const originalOrder = sectionHeaders()
@@ -186,7 +185,7 @@ it('explains absent readings once per cause and replaces the explanation when da
   fireEvent.click(screen.getByRole('button', { name: 'Close' }))
 })
 
-it('stays open while the player uses the world and the HUD, and closes on Cancel', async () => {
+it('opens as a non-modal card off the popup stack and leaves the sidebar usable', async () => {
   const session = fakeSession()
   session.runDebugCommand = vi.fn(async () => '[]')
   render(<><Sidebar session={session} /><DebugPanelHost session={session} /></>)
@@ -194,16 +193,22 @@ it('stays open while the player uses the world and the HUD, and closes on Cancel
   const dialog = screen.getByRole('dialog', { name: 'Debug panel' })
   expect(dialog).toHaveAttribute('aria-modal', 'false')
   expect(hasOpenPopup()).toBe(false)
-  fireEvent.click(document.body)
   fireEvent.click(screen.getByRole('button', { name: 'Sidebar settings' }))
   expect(screen.getByRole('button', { name: 'Debug panel' })).toBeInTheDocument()
   expect(screen.getByRole('dialog', { name: 'Debug panel' })).toBe(dialog)
-  // the first Cancel closes the settings panel
-  act(() => { expect(dispatchCancelLayer()).toBe(true) })
-  expect(screen.queryByRole('button', { name: 'Debug panel' })).toBeNull()
-  expect(screen.getByRole('dialog', { name: 'Debug panel' })).toBe(dialog)
-  act(() => { expect(dispatchCancelLayer()).toBe(true) })
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }))
   expect(screen.queryByRole('dialog', { name: 'Debug panel' })).toBeNull()
+})
+
+it('asks the engine for the development build once, not on every open', async () => {
+  const session = fakeSession()
+  session.runDebugCommand = vi.fn(async (line: string) => line === '/debug_panel --dev-build' ? 'true' : '[]')
+  render(<DebugPanelHost session={session} />)
+  await act(async () => requestDebugPanel('', vi.fn()))
+  await act(async () => requestDebugPanel('', vi.fn()))
+  await act(async () => requestDebugPanel('', vi.fn()))
+  expect(screen.getByRole('dialog', { name: 'Debug panel' })).toBeInTheDocument()
+  expect(vi.mocked(session.runDebugCommand).mock.calls.filter(([line]) => line === '/debug_panel --dev-build')).toHaveLength(1)
 })
 
 it('keeps the panel open when the world sidebar unmounts and closes it with its host', async () => {

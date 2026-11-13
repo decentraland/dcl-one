@@ -4,10 +4,11 @@
 import { describe, it, expect, afterEach, vi } from 'vitest'
 import { act, render, screen, waitFor } from '@testing-library/react'
 import { renderSession, enterAsGuest, type Harness } from '../harness'
-import { openPopup, resetPopups, PopupHost } from '../../design'
+import { hasOpenPopup, openPopup, resetPopups, PopupHost } from '../../design'
 import { setBindingsSnapshot } from '../../lib/bindingLabels'
 import { registerCancelLayer } from '@explorer-core/lib/cancelLayers'
 import { lockInput } from '@explorer-core/lib/inputLock'
+import { closeDebugPanel, isDebugPanelOpen, toggleDebugPanel } from '../../features/debug/useDebugPanel'
 
 async function world(): Promise<Harness> {
   const h = renderSession({ userId: null })
@@ -23,6 +24,7 @@ const action = (name: string, pressed = true): { kind: 'systemAction'; action: s
 
 afterEach(() => {
   resetPopups()
+  act(() => closeDebugPanel())
   act(() => setBindingsSnapshot([])) // module store leaks across tests
   document.body.innerHTML = ''
 })
@@ -232,6 +234,36 @@ describe('system-action menu shortcuts', () => {
     await waitFor(() =>
       expect(h.driver.last('uiFocus')).toEqual({ kind: 'uiFocus', ui: false, text: true, scroll: false, covered: false, menu: null })
     )
+  })
+
+  it('an open debug panel declares no ui focus and lets hotkeys through', async () => {
+    const h = await world()
+    act(() => toggleDebugPanel())
+    h.driver.clearSent()
+    h.driver.emit(action('Places'))
+    expect(h.session().places.open).toBe(true)
+    h.driver.emit(action('Places'))
+    await waitFor(() =>
+      expect(h.driver.last('uiFocus')).toEqual({ kind: 'uiFocus', ui: false, text: false, scroll: false, covered: false, menu: null })
+    )
+    expect(isDebugPanelOpen()).toBe(true)
+  })
+
+  it("a 'Cancel' action closes a popup, then a panel opened over the debug panel, then the debug panel", async () => {
+    const h = await world()
+    act(() => toggleDebugPanel())
+    h.driver.emit(action('Places'))
+    act(() => {
+      openPopup(() => <div>a popup</div>)
+    })
+    act(() => h.driver.emit(action('Cancel')))
+    expect(hasOpenPopup()).toBe(false)
+    expect(h.session().places.open).toBe(true)
+    act(() => h.driver.emit(action('Cancel')))
+    expect(h.session().places.open).toBe(false)
+    expect(isDebugPanelOpen()).toBe(true)
+    act(() => h.driver.emit(action('Cancel')))
+    expect(isDebugPanelOpen()).toBe(false)
   })
 
   it('Scroll edges scroll the hovered scrollable panel while held (gamepad/key scrolling)', async () => {

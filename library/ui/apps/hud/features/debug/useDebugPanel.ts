@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useRef, useSyncExternalStore } from 'react'
 import { bugReportUrl } from '@explorer-core/lib/bugReport'
-import { registerCancelLayer } from '@explorer-core/lib/cancelLayers'
 import { isNativeHud } from '@hud-host'
 import type { EngineSession } from '../session/useEngineSession'
-import { type DebugSection } from './DebugPanel'
+import { useCommandResult, type DebugSection } from './DebugPanel'
 
 const sessionSection: DebugSection = {
   title: 'Session', query: 'hud/session', fields: [['Phase', 'phase'], ['Engine ready', 'ready']],
@@ -36,6 +35,11 @@ export function toggleDebugPanel(target = '') {
 
 export function closeDebugPanel() {
   setPanel(null)
+}
+
+/** Read at call time, outside React. */
+export function isDebugPanelOpen(): boolean {
+  return panel != null
 }
 
 export function useDebugPanelState(): DebugPanelState {
@@ -79,8 +83,6 @@ export function useDebugPanel(session: EngineSession) {
     window.addEventListener(REQUEST, onRequest)
     return () => { window.removeEventListener(REQUEST, onRequest); closeDebugPanel() }
   }, [run])
-  // A cancel layer that closes the panel, registered while it is open.
-  const open = state != null
-  useEffect(() => open ? registerCancelLayer(closeDebugPanel) : undefined, [open])
-  return { state, run }
+  const { value: developmentBuild } = useCommandResult<boolean>(run, '/debug_panel --dev-build', false)
+  return { state, run, developmentBuild: developmentBuild === true }
 }
