@@ -31,14 +31,19 @@ impl Metrics {
         )
     }
     fn configured(collect_default: bool, reset_at_night: bool) -> Arc<Self> {
+        Self::configured_with_sampler(collect_default, reset_at_night, process::collect)
+    }
+    fn configured_with_sampler(
+        collect_default: bool,
+        reset_at_night: bool,
+        sample: impl FnOnce() -> process::Sample,
+    ) -> Arc<Self> {
         Arc::new(Self {
             registry: Mutex::new(Registry {
                 recorder: recorder(),
                 next_reset_ms: next_reset(chrono::Local::now()),
                 feed: [0; 3],
-                cpu_origin: collect_default
-                    .then(process::collect)
-                    .and_then(|sample| sample.cpu),
+                cpu_origin: collect_default.then(sample).and_then(|sample| sample.cpu),
             }),
             collect_default,
             reset_at_night,
@@ -78,10 +83,18 @@ impl Metrics {
     }
     fn scrape<Tz: chrono::TimeZone>(
         &self,
-        mut clock: impl FnMut() -> chrono::DateTime<Tz>,
+        clock: impl FnMut() -> chrono::DateTime<Tz>,
         feed: Option<[u64; 3]>,
     ) -> String {
-        let process = self.collect_default.then(process::collect);
+        self.scrape_with_sampler(clock, feed, process::collect)
+    }
+    fn scrape_with_sampler<Tz: chrono::TimeZone>(
+        &self,
+        mut clock: impl FnMut() -> chrono::DateTime<Tz>,
+        feed: Option<[u64; 3]>,
+        sample: impl FnOnce() -> process::Sample,
+    ) -> String {
+        let process = self.collect_default.then(sample);
         let mut registry = self.registry.lock();
         metrics::with_local_recorder(&registry.recorder, || {
             if let Some(feed) = feed {
