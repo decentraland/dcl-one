@@ -231,10 +231,17 @@ pub async fn update_world_settings(
 
     let timeout_ms = limits.deployment_processing_timeout_ms;
     tokio::time::timeout(Duration::from_millis(timeout_ms), async {
-        let authorized = match state.policy.is_owner(&world, &signer).await {
-            PermissionDecision::Allowed => true,
+        // `holder`: who the edit is recorded for, the signer when it holds the name, else (a
+        // collaborator with world-wide deployment) the holder this node knows, if any.
+        let (authorized, holder) = match state.policy.is_owner(&world, &signer).await {
+            PermissionDecision::Allowed => (true, Some(signer.clone())),
             PermissionDecision::Refused(crate::shared::identity::AuthorityNotEstablished::RefusedLacksAuthority { .. }) => {
-                state.policy.has_world_wide_permission(&world, Permission::Deployment, &signer).await.map_err(ApiError::from)?
+                let allowed = state.policy.has_world_wide_permission(&world, Permission::Deployment, &signer).await.map_err(ApiError::from)?;
+                let holder = match allowed {
+                    true => state.policy.current_owner(&world).await.ok().flatten(),
+                    false => None,
+                };
+                (allowed, holder)
             }
             PermissionDecision::Refused(undetermined) => return Err(ApiError::from(undetermined).into()),
         };
@@ -251,7 +258,7 @@ pub async fn update_world_settings(
             input.thumbnail_hash = Some(hash);
         }
         // The two spawn refusals are the store's only 400s: upstream's `ValidationError`s.
-        let (settings, _old_spawn) = store::update_world_settings(&state.pool, &world, &signer, &input)
+        let (settings, _old_spawn) = store::update_world_settings(&state.pool, &world, &signer, holder.as_ref(), &input)
             .await
             .map_err(|e| match e.is_bad_request() {
                 true => SettingsError::invalid(e.public_message()),

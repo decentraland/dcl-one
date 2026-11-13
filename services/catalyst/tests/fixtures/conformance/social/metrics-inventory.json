@@ -43,6 +43,13 @@
       "source_buckets": null,
       "candidate": [
         {
+          "path": "services/catalyst/comms/src/stats/runtime.rs",
+          "line": 68,
+          "kind": "histogram",
+          "scope": "production_file_inline_test_possible",
+          "labels": []
+        },
+        {
           "path": "services/catalyst/social/src/rpc/metrics.rs",
           "line": 312,
           "kind": "histogram",
@@ -54,7 +61,7 @@
           ]
         }
       ],
-      "status": "literal_shape_present_runtime_unverified"
+      "status": "literal_type_or_labels_differ"
     },
     {
       "name": "http_requests_total",
@@ -67,6 +74,13 @@
       "source_buckets": null,
       "candidate": [
         {
+          "path": "services/catalyst/comms/src/stats/runtime.rs",
+          "line": 67,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": []
+        },
+        {
           "path": "services/catalyst/social/src/rpc/metrics.rs",
           "line": 311,
           "kind": "counter",
@@ -78,7 +92,7 @@
           ]
         }
       ],
-      "status": "literal_shape_present_runtime_unverified"
+      "status": "literal_type_or_labels_differ"
     },
     {
       "name": "http_request_size_bytes",
@@ -91,6 +105,13 @@
       "source_buckets": null,
       "candidate": [
         {
+          "path": "services/catalyst/comms/src/stats/runtime.rs",
+          "line": 71,
+          "kind": "histogram",
+          "scope": "production_file_inline_test_possible",
+          "labels": []
+        },
+        {
           "path": "services/catalyst/social/src/rpc/http.rs",
           "line": 209,
           "kind": "histogram",
@@ -102,7 +123,7 @@
           ]
         }
       ],
-      "status": "literal_shape_present_runtime_unverified"
+      "status": "literal_type_or_labels_differ"
     },
     {
       "name": "wkc_logger_logs_total",

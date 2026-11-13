@@ -1,0 +1,49 @@
+.InstallClientModal > .MuiPaper-root:first-child {
+  background-color: var(--secondary);
+}
+
+.InstallClientBox {
+  display: flex;
+  padding: 20px;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+.LogoContainer {
+  margin-bottom: 10px;
+}
+
+.Logo {
+  width: 64px;
+  height: 64px;
+}
+
+.InstallClientModal .Title {
+  font-weight: 500;
+  margin-bottom: 32px;
+  font-size: 24px;
+  line-height: 32px;
+}
+
+.InstallClientModal .Actions {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+/* Override button styles */
+.InstallClientModal .Actions button {
+  height: 40px;
+  font-size: 16px;
+  font-weight: 500;
+}
+
+.InstallClientModal .Actions button:last-child {
+  margin-left: 0 !important;
+  background-color: var(--dark-gray);
+  color: white;
+  border: none;
+}

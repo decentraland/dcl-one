@@ -1,0 +1,284 @@
+/**
+ * Navigation, permission and response-header restrictions for the app's web contents.
+ *
+ * ## Cross-origin isolation
+ *
+ * `self.crossOriginIsolated` — which the Bevy engine's `SharedArrayBuffer` requires — is only
+ * true when the top-level document AND every ancestor frame are isolated via COOP: same-origin
+ * plus COEP. The engine runs three frames deep: creator-hub renderer, inspector iframe,
+ * bevy-engine iframe. The inspector and engine come from our http-server, which already stamps
+ * these headers, but the top document loads from `file://` in production (mainWindow's
+ * `loadFile`), which carries no HTTP headers, leaving the whole chain un-isolated and the
+ * engine's asset-loader worker throwing `SharedArrayBuffer transfer requires
+ * self.crossOriginIsolated`.
+ *
+ * The isolation headers (COOP + COEP + CORP) are therefore injected onto the app's own documents
+ * (`file://` renderer plus localhost inspector) only; external documents such as docs and
+ * studios are left alone, since a blanket COEP would block their cross-origin subresources. The
+ * frames listed under "Frames the app embeds" below get COEP alone, and nothing else. COEP is
+ * `credentialless` rather than `require-corp` so the inspector iframe's cross-origin
+ * subresources load without needing CORP on every one, matching the inspector http-server and
+ * the engine's own service worker.
+ *
+ * ## Frames the app embeds
+ *
+ * A document with COEP set may only embed a cross-origin *frame* whose own response also
+ * carries COEP; `credentialless` relaxes that for subresources, not for frames, and CORP does
+ * not cover frames either. So once the inspector document became isolated, every cross-origin
+ * frame it embeds had to carry COEP or stop loading with `ERR_BLOCKED_BY_RESPONSE`. Two did:
+ * the wearable-preview behind GLB and emote previews, whose `onLoad` the import dialog waits on
+ * (so the spinner never resolved), and the video players a scene's markdown may embed, which
+ * simply rendered nothing. Neither sends an enforced COEP of its own — YouTube sends only
+ * `Cross-Origin-Embedder-Policy-Report-Only`, which does not count — so it is stamped here.
+ * Every wearable-preview environment is listed because decentraland-ui picks the origin from
+ * its own env config; the video origins mirror the inspector's markdown iframe allowlist, and
+ * a test asserts this list keeps covering it.
+ *
+ * ## One listener, one handler
+ *
+ * Electron keeps only ONE `onHeadersReceived` listener per session — a second registration
+ * replaces the first — so the asset-packs CDN CORS rewrite and the isolation headers must
+ * share a handler registered over the union of their filters, each rule applying to the URLs
+ * it matches. CORS only fills in a header the response omitted; isolation is forced and replaces
+ * whatever the response sent.
+ *
+ * ## Header names are case-insensitive, and a spread is not
+ *
+ * Electron rebuilds the whole response header block from the object the handler returns,
+ * writing one line per key with no case-insensitive de-duplication, and it keys the incoming
+ * object by the *wire* casing — lowercase over HTTP/2, which every CDN in front of these
+ * origins speaks. Spreading a capitalized override on top of `details.responseHeaders`
+ * therefore appends a SECOND header rather than replacing the response's own. Chromium joins
+ * the two (`credentialless, credentialless`), fails to parse the result as a structured item
+ * and falls back to `unsafe-none` — an injection that reads correctly while having no effect
+ * at all, silently. A duplicated `Access-Control-Allow-Origin` is rejected outright. Hence
+ * `setHeader` below, which drops every casing of a name before setting it.
+ */
+import { URL } from 'node:url';
+import { session, type Session } from 'electron';
+import { app, shell } from 'electron';
+
+const IS_DEV = import.meta.env.DEV;
+
+/**
+ * Union for all existing permissions in electron
+ */
+type Permission = Parameters<
+  Exclude<Parameters<Session['setPermissionRequestHandler']>[0], null>
+>[1];
+
+/**
+ * A list of origins that you allow open INSIDE the application and permissions for them.
+ *
+ * In development mode you need allow open `VITE_DEV_SERVER_URL`.
+ */
+const ALLOWED_ORIGINS_AND_PERMISSIONS = new Map<string, Set<Permission>>(
+  IS_DEV && import.meta.env.VITE_DEV_SERVER_URL
+    ? [[new URL(import.meta.env.VITE_DEV_SERVER_URL).origin, new Set()]]
+    : [],
+);
+
+/**
+ * A list of origins that you allow open IN BROWSER.
+ * Navigation to the origins below is only possible if the link opens in a new window.
+ *
+ * @example
+ * <a
+ *   target="_blank"
+ *   href="https://github.com/"
+ * >
+ */
+
+type AllowedOrigins<IsDev extends boolean> = IsDev extends true
+  ? `http://${string}` | `https://${string}`
+  : `https://${string}`;
+const ALLOWED_EXTERNAL_ORIGINS = new Set<AllowedOrigins<typeof IS_DEV>>([
+  'https://decentraland.org',
+  'https://decentraland.today',
+  'https://decentraland.zone',
+  'https://studios.decentraland.org',
+  'https://docs.decentraland.org',
+  'https://youtube.com',
+  'https://www.youtube.com',
+  'https://github.com',
+  ...(import.meta.env.VITE_ALLOWED_EXTERNAL_ORIGINS ?? '').split(',').filter(Boolean),
+] as AllowedOrigins<typeof IS_DEV>[]);
+
+app.on('ready', () => {
+  const isolationFilter = { urls: ['file://*/*', 'http://localhost/*', 'http://localhost:*/*'] };
+
+  const embedFilter = {
+    urls: [
+      'https://wearable-preview.decentraland.org/*',
+      'https://wearable-preview.decentraland.today/*',
+      'https://wearable-preview.decentraland.zone/*',
+      'https://www.youtube.com/*',
+      'https://youtube.com/*',
+      'https://player.vimeo.com/*',
+    ],
+  };
+
+  // The asset-packs content CDN (Smart Item catalog + model files). Its CloudFront layer only
+  // returns Access-Control-Allow-Origin when it forwards/varies on Origin, but it intermittently
+  // serves cached responses WITHOUT that header — so a cross-origin fetch from the inspector
+  // iframe (a localhost origin) is CORS-blocked and place_smart_item / drag-drop fail with a
+  // bare "Failed to fetch". Inject ACAO ourselves so it's immune to the
+  // CDN's cache state. Public, read-only content, so `*` is safe.
+  const contentFilter = {
+    urls: [
+      'https://builder-items.decentraland.org/*',
+      'https://builder-items.decentraland.zone/*',
+      'https://builder-items.decentraland.today/*',
+    ],
+  };
+
+  const combinedFilter = {
+    urls: [...isolationFilter.urls, ...embedFilter.urls, ...contentFilter.urls],
+  };
+  const matches = (url: string, patterns: string[]) =>
+    patterns.some(pattern => {
+      // Electron url patterns are `<scheme>://<host><path>` with `*` wildcards;
+      // translate to a RegExp (escape regex metachars, `*` → `.*`).
+      const re = new RegExp(
+        '^' + pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*') + '$',
+      );
+      return re.test(url);
+    });
+
+  type ResponseHeaders = Record<string, string[]>;
+
+  const hasHeader = (headers: ResponseHeaders, name: string) =>
+    Object.keys(headers).some(key => key.toLowerCase() === name.toLowerCase());
+
+  const setHeader = (headers: ResponseHeaders, name: string, value: string): ResponseHeaders => ({
+    ...Object.fromEntries(
+      Object.entries(headers).filter(([key]) => key.toLowerCase() !== name.toLowerCase()),
+    ),
+    [name]: [value],
+  });
+
+  session.defaultSession.webRequest.onHeadersReceived(combinedFilter, (details, callback) => {
+    let responseHeaders: ResponseHeaders = details.responseHeaders ?? {};
+
+    if (
+      matches(details.url, contentFilter.urls) &&
+      !hasHeader(responseHeaders, 'Access-Control-Allow-Origin')
+    ) {
+      responseHeaders = setHeader(responseHeaders, 'Access-Control-Allow-Origin', '*');
+    }
+
+    if (matches(details.url, isolationFilter.urls)) {
+      responseHeaders = setHeader(responseHeaders, 'Cross-Origin-Opener-Policy', 'same-origin');
+      responseHeaders = setHeader(
+        responseHeaders,
+        'Cross-Origin-Embedder-Policy',
+        'credentialless',
+      );
+      responseHeaders = setHeader(responseHeaders, 'Cross-Origin-Resource-Policy', 'cross-origin');
+    }
+
+    if (matches(details.url, embedFilter.urls)) {
+      responseHeaders = setHeader(
+        responseHeaders,
+        'Cross-Origin-Embedder-Policy',
+        'credentialless',
+      );
+    }
+
+    callback({ responseHeaders });
+  });
+});
+
+app.on('web-contents-created', (_, contents) => {
+  /**
+   * Block navigation to origins not on the allowlist.
+   *
+   * Navigation exploits are quite common. If an attacker can convince the app to navigate away from its current page,
+   * they can possibly force the app to open arbitrary web resources/websites on the web.
+   *
+   * @see https://www.electronjs.org/docs/latest/tutorial/security#13-disable-or-limit-navigation
+   */
+  contents.on('will-navigate', (event, url) => {
+    const { origin } = new URL(url);
+    if (ALLOWED_ORIGINS_AND_PERMISSIONS.has(origin)) {
+      return;
+    }
+
+    // Prevent navigation
+    event.preventDefault();
+
+    if (IS_DEV) {
+      console.warn(`Blocked navigating to disallowed origin: ${origin}`);
+    }
+  });
+
+  /**
+   * Block requests for disallowed permissions.
+   * By default, Electron will automatically approve all permission requests.
+   *
+   * @see https://www.electronjs.org/docs/latest/tutorial/security#5-handle-session-permission-requests-from-remote-content
+   */
+  contents.session.setPermissionRequestHandler((webContents, permission, callback) => {
+    const { origin } = new URL(webContents.getURL());
+
+    const permissionGranted = !!ALLOWED_ORIGINS_AND_PERMISSIONS.get(origin)?.has(permission);
+    callback(permissionGranted);
+
+    if (!permissionGranted && IS_DEV) {
+      console.warn(`${origin} requested permission for '${permission}', but was rejected.`);
+    }
+  });
+
+  /**
+   * Hyperlinks leading to allowed sites are opened in the default browser.
+   *
+   * The creation of new `webContents` is a common attack vector. Attackers attempt to convince the app to create new windows,
+   * frames, or other renderer processes with more privileges than they had before; or with pages opened that they couldn't open before.
+   * You should deny any unexpected window creation.
+   *
+   * @see https://www.electronjs.org/docs/latest/tutorial/security#14-disable-or-limit-creation-of-new-windows
+   * @see https://www.electronjs.org/docs/latest/tutorial/security#15-do-not-use-openexternal-with-untrusted-content
+   */
+  contents.setWindowOpenHandler(({ url }) => {
+    const { origin } = new URL(url);
+    if (ALLOWED_EXTERNAL_ORIGINS.has(origin as AllowedOrigins<typeof IS_DEV>)) {
+      // Open url in default browser.
+      shell.openExternal(url).catch(console.error);
+    } else if (IS_DEV) {
+      console.warn(`Blocked the opening of a disallowed origin: ${origin}`);
+    }
+
+    // Prevent creating a new window.
+    return { action: 'deny' };
+  });
+
+  /**
+   * Verify webview options before creation.
+   *
+   * Strip away preload scripts, disable Node.js integration, and ensure origins are on the allowlist.
+   *
+   * @see https://www.electronjs.org/docs/latest/tutorial/security#12-verify-webview-options-before-creation
+   */
+  contents.on('will-attach-webview', (event, webPreferences, params) => {
+    const { origin } = new URL(params.src);
+    if (!ALLOWED_ORIGINS_AND_PERMISSIONS.has(origin)) {
+      if (IS_DEV) {
+        console.warn(`A webview tried to attach ${params.src}, but was blocked.`);
+      }
+
+      event.preventDefault();
+      return;
+    }
+
+    // Strip away preload scripts if unused or verify their location is legitimate.
+    delete webPreferences.preload;
+    // @ts-expect-error `preloadURL` exists. - @see https://www.electronjs.org/docs/latest/api/web-contents#event-will-attach-webview
+    delete webPreferences.preloadURL;
+
+    // Disable Node.js integration
+    webPreferences.nodeIntegration = false;
+
+    // Enable contextIsolation
+    webPreferences.contextIsolation = true;
+  });
+});

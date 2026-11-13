@@ -7,11 +7,44 @@ const REALM_LANE: &str = "realm";
 const OWNER_LAPSE_SECONDS: i32 = 90;
 const MAX_ASSIGNMENT_BYTES: usize = 64 * 1024 - 2048;
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SelectedRoomOrigin {
+    #[default]
+    Unknown,
+    Native,
+    LegacyOwnerV1,
+    LegacyIntentV2,
+}
+
+impl SelectedRoomOrigin {
+    fn wire(self) -> i32 {
+        match self {
+            Self::Unknown => 0,
+            Self::Native => 1,
+            Self::LegacyOwnerV1 => 2,
+            Self::LegacyIntentV2 => 3,
+        }
+    }
+    fn from_wire(value: i32) -> Self {
+        match value {
+            1 => Self::Native,
+            2 => Self::LegacyOwnerV1,
+            3 => Self::LegacyIntentV2,
+            _ => Self::Unknown,
+        }
+    }
+}
+
 /// Internal credential authority retained through SQL visibility and socket queue waits.
 /// This is never projected into a public client packet.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct PulseAdmissionStamp {
+    #[serde(default)]
+    pub selected_origin: SelectedRoomOrigin,
+    #[serde(default)]
+    pub selected_identity: u64,
     pub wallet: String,
     pub session: String,
     pub cluster_id: String,
@@ -31,10 +64,14 @@ impl PulseAdmissionStamp {
         snapshot: &crate::protocol::pulse::decentraland::pulse::PeerClusterSnapshot,
         credential_not_before: u64,
     ) -> Option<Self> {
-        if !snapshot.pending_takeovers.is_empty() {
+        if !crate::protocol::bus::cluster::active_selection(snapshot)
+            || !snapshot.pending_takeovers.is_empty()
+        {
             return None;
         }
         Some(Self {
+            selected_origin: SelectedRoomOrigin::from_wire(snapshot.selected_origin),
+            selected_identity: snapshot.selected_identity?,
             wallet: snapshot.wallet.clone(),
             session: snapshot.session.clone(),
             cluster_id: snapshot.cluster_id.clone(),
@@ -48,7 +85,11 @@ impl PulseAdmissionStamp {
         })
     }
     pub fn valid(&self) -> bool {
-        super::subscriber::is_session_key(&self.wallet)
+        self.selected_identity > 0
+            && self.selected_origin != SelectedRoomOrigin::Unknown
+            && (self.selected_origin != SelectedRoomOrigin::LegacyIntentV2
+                || self.selected_identity <= i64::MAX as u64)
+            && super::subscriber::is_session_key(&self.wallet)
             && super::subscriber::is_session_key(&self.session)
             && !self.cluster_id.is_empty()
             && self.cluster_id.len() <= crate::protocol::bus::cluster::MAX_REPLY_BYTES
@@ -81,6 +122,9 @@ impl PulseAdmissionStamp {
     }
     pub fn snapshot(&self) -> crate::protocol::pulse::decentraland::pulse::PeerClusterSnapshot {
         crate::protocol::pulse::decentraland::pulse::PeerClusterSnapshot {
+            selected_origin: self.selected_origin.wire(),
+            selected_identity: Some(self.selected_identity),
+            assignment_state: if self.valid() { 1 } else { 0 },
             wallet: self.wallet.clone(),
             session: self.session.clone(),
             cluster_id: self.cluster_id.clone(),
@@ -568,6 +612,97 @@ fn encode_assignment(assignment: AssignmentDocument) -> Result<serde_json::Value
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn selected_wire_vectors_preserve_exact_u64_json_and_refuse_unknown_authority() {
+        use crate::protocol::pulse::decentraland::pulse::PeerClusterSnapshot;
+        use prost::Message;
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(concat!(
+            env!("DCL_ONE_ROOT"),
+            "/services/catalyst/tests/fixtures/pulse_selected_recovery.json"
+        )))
+        .unwrap();
+        for vector in fixture["reply_vectors"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .chain(fixture["identity_boundary_vectors"].as_array().unwrap())
+        {
+            let bytes = hex::decode(vector["wire_hex"].as_str().unwrap()).unwrap();
+            let snapshot = PeerClusterSnapshot::decode(bytes.as_slice()).unwrap();
+            assert_eq!(snapshot.encode_to_vec(), bytes, "{}", vector["id"]);
+            assert_eq!(
+                crate::protocol::bus::cluster::selected_evidence(&snapshot),
+                vector["expected_selection_evidence_valid"]
+                    .as_bool()
+                    .unwrap(),
+                "{}",
+                vector["id"]
+            );
+            let stamp = PulseAdmissionStamp::from_snapshot(&snapshot, 0);
+            if let Some(want) = vector["expected_eligible_to_construct_stamp"].as_bool() {
+                assert_eq!(stamp.is_some(), want, "{}", vector["id"]);
+            }
+            if let Some(stamp) = stamp {
+                assert!(stamp.valid());
+                let json = serde_json::to_string(&stamp).unwrap();
+                let restored: PulseAdmissionStamp = serde_json::from_str(&json).unwrap();
+                assert_eq!(restored, stamp);
+                assert_eq!(
+                    restored.snapshot().selected_identity,
+                    snapshot.selected_identity
+                );
+                assert!(restored.matches_snapshot(&snapshot));
+                let mut changed = snapshot.clone();
+                changed.selected_origin = if snapshot.selected_origin == 1 { 2 } else { 1 };
+                assert!(!stamp.matches_snapshot(&changed));
+                let mut changed = snapshot.clone();
+                changed.selected_identity =
+                    Some(snapshot.selected_identity.unwrap().saturating_sub(1));
+                assert!(!stamp.matches_snapshot(&changed));
+                let mut changed = snapshot.clone();
+                changed.assignment_state = 2;
+                assert!(!stamp.matches_snapshot(&changed));
+                let mut advanced = snapshot.clone();
+                advanced.pass += 1;
+                assert!(stamp.matches_snapshot(&advanced));
+                let mut old: serde_json::Value = serde_json::from_str(&json).unwrap();
+                old.as_object_mut().unwrap().remove("selectedOrigin");
+                old.as_object_mut().unwrap().remove("selectedIdentity");
+                let old: PulseAdmissionStamp = serde_json::from_value(old).unwrap();
+                assert!(!old.valid());
+            }
+        }
+    }
+
+    #[test]
+    fn old_unknown_and_cleanup_only_snapshots_cannot_create_admission_stamps() {
+        use prost::Message;
+        let old = crate::protocol::pulse::decentraland::pulse::PeerClusterSnapshot {
+            wallet: format!("0x{}", "01".repeat(20)),
+            session: format!("0x{}", "02".repeat(20)),
+            cluster_id: "c".into(),
+            realm: "r".into(),
+            source_incarnation: "source".into(),
+            pass: 1,
+            assignment_version: 1,
+            token_not_before: Some(0),
+            ..Default::default()
+        };
+        assert!(
+            PulseAdmissionStamp::from_snapshot(&old, 0).is_none(),
+            "old reply has no selection authority"
+        );
+        let mut bytes = old.encode_to_vec();
+        bytes.extend([0x50, 1, 0x58, 1, 0x60, 2]);
+        let cleanup = crate::protocol::pulse::decentraland::pulse::PeerClusterSnapshot::decode(
+            bytes.as_slice(),
+        )
+        .unwrap();
+        assert!(
+            PulseAdmissionStamp::from_snapshot(&cleanup, 0).is_none(),
+            "cleanup-only cannot mint even with no pending entries"
+        );
+    }
 
     #[test]
     fn pulse_stamp_is_strict_internal_data_and_preserves_actual_credential_boundary() {
