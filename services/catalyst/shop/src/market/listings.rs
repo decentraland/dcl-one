@@ -1153,8 +1153,9 @@ async fn post_trade_inner(
     if let Some(ip) = crate::shared::client_ip::distinct_client_ip(
         headers,
         peer,
-        &state.settings.market.tips.trusted_proxy_cidrs,
-    ) && TRADE_IP_LIMITER.check(&ip) == RateLimitDecision::Deny
+        &state.settings.market.trusted_proxy_cidrs,
+    ) && TRADE_IP_LIMITER.check(&crate::shared::client_ip::source_key(&ip))
+        == RateLimitDecision::Deny
     {
         return Err(ApiError::http(429, "rate limit exceeded".to_string()));
     }
@@ -1478,6 +1479,12 @@ mod tests {
         }
         assert_eq!(status("203.0.113.71").await, 429);
         assert_ne!(status("203.0.113.72").await, 429, "another client posts");
+        // An IPv6 client is one /64: rotating addresses inside it shares the budget.
+        for i in 0..120 {
+            assert_ne!(status(&format!("[2001:db8:7:1::{i:x}]")).await, 429);
+        }
+        assert_eq!(status("[2001:db8:7:1::ffff]").await, 429);
+        assert_ne!(status("[2001:db8:7:2::1]").await, 429, "another /64 posts");
     }
 
     #[tokio::test]

@@ -469,22 +469,20 @@ impl TransactionComponent {
             sqlx::query("SELECT pg_advisory_xact_lock(hashtext('relay-free-budget'))")
                 .execute(&mut *tx)
                 .await?;
-            {
-                let used: i64 = sqlx::query_scalar(
-                    "SELECT count(*) FROM (SELECT 1 FROM economy.transactions \
-                     WHERE free_call AND created_at >= $1 LIMIT $2) used",
-                )
-                .bind(window_start)
-                .bind(budget)
-                .fetch_one(&mut *tx)
-                .await?;
-                if used >= budget {
-                    tracing::warn!(budget, "relay budget for free calls is spent for the day");
-                    return Err(ApiError::RelayBudgetSpent(
-                        "The relayer's daily budget for non-sale transactions is spent; try again later"
-                            .into(),
-                    ));
-                }
+            let used: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM (SELECT 1 FROM economy.transactions \
+                 WHERE free_call AND created_at >= $1 LIMIT $2) used",
+            )
+            .bind(window_start)
+            .bind(budget)
+            .fetch_one(&mut *tx)
+            .await?;
+            if used >= budget {
+                tracing::warn!(budget, "relay budget for free calls is spent for the day");
+                return Err(ApiError::RelayBudgetSpent(
+                    "The relayer's daily budget for non-sale transactions is spent; try again later"
+                        .into(),
+                ));
             }
         }
         sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1))")
@@ -872,8 +870,9 @@ pub fn is_paid_call(settings: &Settings, tx: &TransactionData) -> bool {
         .any(|(a, d)| *a == contract && d.label.starts_with("CreditsManager"));
     if credits_manager {
         // Only a credits spend; the manager's other functions are free calls.
-        return abi::decode_meta_tx(&full_data).is_some_and(|inner| {
-            inner.get(..4) == Some(&crate::policy_entry::USE_CREDITS_SELECTOR[..])
+        // Both executeMetaTransaction forms (split and combined signature).
+        return abi::decode_meta_tx_full(&full_data).is_some_and(|m| {
+            m.function_signature.get(..4) == Some(&crate::policy_entry::USE_CREDITS_SELECTOR[..])
         });
     }
     let Some(kind) = abi::sale_target(settings.collections_chain_id, contract) else {

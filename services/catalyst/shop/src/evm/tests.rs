@@ -554,8 +554,24 @@ fn sales_and_credits_spends_are_paid_calls() {
     use_credits.extend([0u8; 32]);
     assert!(super::transaction::is_paid_call(
         &settings,
-        &call(credits_manager, meta(use_credits))
+        &call(credits_manager, meta(use_credits.clone()))
     ));
+    // The checkout client relays credits spends in the combined-signature form.
+    let combined = format!(
+        "0x{}",
+        hex::encode(
+            super::abi::combined_sig::executeMetaTransactionCall {
+                userAddress: VICTIM.parse().unwrap(),
+                functionData: use_credits.into(),
+                signature: vec![0u8; 65].into(),
+            }
+            .abi_encode()
+        )
+    );
+    assert!(
+        super::transaction::is_paid_call(&settings, &call(credits_manager, combined)),
+        "a combined-signature useCredits is a credits spend"
+    );
     assert!(
         !super::transaction::is_paid_call(
             &settings,

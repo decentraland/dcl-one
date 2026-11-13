@@ -271,9 +271,14 @@ impl Market for LocalMarket {
         }
         // A named trade resolves whatever its copy's age: the chain checks
         // the purchase against the signature, its expiry and cancellations.
-        let Some(trade) = crate::market::trades::get_trade_by_id(&self.pool, trade_id, None, true)
-            .await
-            .map_err(|e| ApiError::Internal(format!("trades read failed: {e}")))?
+        let Some(trade) = crate::market::trades::get_trade_by_id(
+            &self.pool,
+            trade_id,
+            None,
+            crate::market::trades::TradeScope::Served,
+        )
+        .await
+        .map_err(|e| ApiError::Internal(format!("trades read failed: {e}")))?
         else {
             return Ok(TradeLookup::NotFound);
         };

@@ -244,6 +244,9 @@ pub struct MarketSettings {
     pub indexes: chain_walk::IndexSettings,
     /// The tip forward's thresholds and pending cap.
     pub tips: tips::TipSettings,
+    /// `HTTP_TRUSTED_PROXY_CIDRS`: peers whose `X-Real-IP` names the client
+    /// (the tip forward's and the trade post's per-address limits).
+    pub trusted_proxy_cidrs: Vec<ipnet::IpNet>,
 }
 
 /// No derived `Debug`: `admin_token` is a bearer. Prints whether one is set,
@@ -283,6 +286,7 @@ impl Default for MarketSettings {
             marketplace_base_url: "https://decentraland.org/marketplace".to_string(),
             indexes: chain_walk::IndexSettings::default(),
             tips: tips::TipSettings::default(),
+            trusted_proxy_cidrs: Vec::new(),
         }
     }
 }
@@ -327,6 +331,7 @@ impl MarketSettings {
             marketplace_base_url: marketplace_base_url.trim_end_matches('/').to_string(),
             indexes: chain_walk::IndexSettings::default(),
             tips: tips::TipSettings::default(),
+            trusted_proxy_cidrs: Vec::new(),
         })
     }
 
@@ -339,6 +344,11 @@ impl MarketSettings {
     /// The tip forward's knobs (`main.rs` fills them from `Config`).
     pub fn with_tips(mut self, tips: tips::TipSettings) -> Self {
         self.tips = tips;
+        self
+    }
+
+    pub fn with_trusted_proxies(mut self, cidrs: Vec<ipnet::IpNet>) -> Self {
+        self.trusted_proxy_cidrs = cidrs;
         self
     }
 }

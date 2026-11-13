@@ -1230,19 +1230,28 @@ pub async fn trades_of_address(
         .collect())
 }
 
+/// Which stored trades a lookup by id may answer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TradeScope {
+    /// Only the trades this node serves ([`super::catalog::served_trade_sql`]):
+    /// what it lists or prices.
+    Served,
+    /// Any stored trade: cancelling or answering one must keep working.
+    Any,
+}
+
 /// The trade `id` with its assets, when it counts at `since` ([`counted_sql`])
-/// and, with `served_only`, is one this node serves ([`super::catalog::served_trade_sql`]).
+/// and is in `scope`.
 pub async fn get_trade_by_id(
     pool: &PgPool,
     id: &str,
     since: Option<NaiveDateTime>,
-    served_only: bool,
+    scope: TradeScope,
 ) -> Result<Option<Trade>, sqlx::Error> {
     let counted = counted_sql("", "$2");
-    let served = if served_only {
-        super::catalog::served_trade_sql("t")
-    } else {
-        "TRUE".to_string()
+    let served = match scope {
+        TradeScope::Served => super::catalog::served_trade_sql("t"),
+        TradeScope::Any => "TRUE".to_string(),
     };
     let Some(head) = sqlx::query(sqlx::AssertSqlSafe(format!(
         "SELECT {TRADE_COLUMNS} FROM shop.trades t WHERE id = $1::uuid AND {counted} AND {served}"
@@ -1354,7 +1363,7 @@ pub async fn get_trade(State(state): State<SharedState>, Path(id): Path<String>)
         return envelope;
     }
     let since = mirrored_since(&state.settings, Utc::now().naive_utc());
-    match get_trade_by_id(&state.pool, &id, since, true).await {
+    match get_trade_by_id(&state.pool, &id, since, TradeScope::Served).await {
         Ok(Some(trade)) => Json(json!({ "ok": true, "data": trade })).into_response(),
         Ok(None) => (
             axum::http::StatusCode::NOT_FOUND,

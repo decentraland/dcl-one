@@ -83,8 +83,6 @@ pub struct TipSettings {
     pub max_age_secs: i64,
     /// `MARKETPLACE_TIP_MAX_PENDING`: pending claims across every sender.
     pub max_pending: i64,
-    /// `HTTP_TRUSTED_PROXY_CIDRS`: peers whose `X-Real-IP` names the client.
-    pub trusted_proxy_cidrs: Vec<ipnet::IpNet>,
 }
 
 impl Default for TipSettings {
@@ -111,13 +109,7 @@ impl TipSettings {
             min_amount_wei,
             max_age_secs: i64::try_from(max_age_secs).unwrap_or(i64::MAX),
             max_pending: i64::try_from(max_pending).unwrap_or(i64::MAX),
-            trusted_proxy_cidrs: Vec::new(),
         })
-    }
-
-    pub fn with_trusted_proxies(mut self, cidrs: Vec<ipnet::IpNet>) -> Self {
-        self.trusted_proxy_cidrs = cidrs;
-        self
     }
 }
 
@@ -282,7 +274,7 @@ async fn forward(
     let ip = crate::shared::client_ip::distinct_client_ip(
         &headers,
         peer,
-        &state.settings.market.tips.trusted_proxy_cidrs,
+        &state.settings.market.trusted_proxy_cidrs,
     );
     if let Some(ip) = ip
         && !SOURCE_LIMITER.allow(&source_keys(&ip))
@@ -856,8 +848,7 @@ mod tests {
 
     fn forward_app(trusted: &[&str]) -> Router {
         let mut settings = crate::market::Settings::for_tests();
-        settings.market.tips = TipSettings::default()
-            .with_trusted_proxies(trusted.iter().map(|c| c.parse().unwrap()).collect());
+        settings.market.trusted_proxy_cidrs = trusted.iter().map(|c| c.parse().unwrap()).collect();
         Router::new().nest(
             "/events-notifier",
             router(crate::market::tests::support::state_without_db_settings(
