@@ -12,7 +12,19 @@ const ENV_DOCS: &[(&str, &str)] = &[
     ),
     (
         "TUNNEL_TOKENS",
-        "comma-separated bearer tokens required to open a trunk (default empty = no auth)",
+        "comma-separated bearer tokens required to open a trunk (required unless TUNNEL_ALLOW_ANONYMOUS)",
+    ),
+    (
+        "TUNNEL_ALLOW_ANONYMOUS",
+        "true to accept trunks without a token, for a local relay only (default false)",
+    ),
+    (
+        "TUNNEL_MAX_AGENTS",
+        "tunnel ids held at once, connected or in grace (default 256)",
+    ),
+    (
+        "TUNNEL_MAX_CHANNELS",
+        "concurrent proxied requests and websockets per agent (default 256)",
     ),
     (
         "TUNNEL_ALLOW_IDS",

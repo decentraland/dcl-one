@@ -98,6 +98,34 @@ async fn connect_agent(addr: SocketAddr, hello: Control) -> (Socket, String, Str
     }
 }
 
+/// A relay that accepts trunks without a token, as a local test relay does.
+fn anonymous() -> Config {
+    Config {
+        allow_anonymous: true,
+        ..Config::default()
+    }
+}
+
+async fn expect_close(addr: SocketAddr, hello: Control) -> u16 {
+    let mut socket = tokio_tungstenite::connect_async(format!("ws://{addr}/t/_connect"))
+        .await
+        .unwrap()
+        .0;
+    socket
+        .send(Message::Text(hello.encode().into()))
+        .await
+        .unwrap();
+    let msg = tokio::time::timeout(HANG_GUARD, socket.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    match msg {
+        Message::Close(Some(frame)) => u16::from(frame.code),
+        other => panic!("expected a close frame, got {other:?}"),
+    }
+}
+
 fn plain_hello() -> Control {
     Control::Hello {
         token: None,
@@ -108,7 +136,7 @@ fn plain_hello() -> Control {
 
 #[tokio::test]
 async fn http_request_multiplexes_through_the_trunk() {
-    let addr = spawn_service(Config::default()).await;
+    let addr = spawn_service(anonymous()).await;
     let (mut trunk, id, public_url, _) = connect_agent(addr, plain_hello()).await;
     assert_eq!(public_url, format!("http://127.0.0.1:5167/t/{id}"));
 
@@ -175,7 +203,7 @@ async fn http_request_multiplexes_through_the_trunk() {
 
 #[tokio::test]
 async fn ws_channel_negotiates_subprotocol_and_preserves_frame_types() {
-    let addr = spawn_service(Config::default()).await;
+    let addr = spawn_service(anonymous()).await;
     let (mut trunk, id, _, _) = connect_agent(addr, plain_hello()).await;
 
     let mut request = format!("ws://{addr}/t/{id}/mini-comms/room-1")
@@ -279,7 +307,7 @@ async fn ws_channel_negotiates_subprotocol_and_preserves_frame_types() {
 
 #[tokio::test]
 async fn unknown_id_is_404_and_disconnected_agent_is_502() {
-    let addr = spawn_service(Config::default()).await;
+    let addr = spawn_service(anonymous()).await;
     let client = reqwest::Client::new();
     let resp = client
         .get(format!("http://{addr}/t/zzzzzzzzzz/about"))
@@ -300,7 +328,7 @@ async fn unknown_id_is_404_and_disconnected_agent_is_502() {
 
 #[tokio::test]
 async fn open_err_maps_to_502_with_the_agent_error() {
-    let addr = spawn_service(Config::default()).await;
+    let addr = spawn_service(anonymous()).await;
     let (mut trunk, id, _, _) = connect_agent(addr, plain_hello()).await;
     let client = reqwest::Client::new();
     let request = tokio::spawn({
@@ -380,7 +408,7 @@ async fn token_mismatch_is_rejected_with_4401() {
 async fn resume_with_key_keeps_the_public_id() {
     let cfg = Config {
         public_base_url: Some("https://tunnel.example".into()),
-        ..Config::default()
+        ..anonymous()
     };
     let addr = spawn_service(cfg).await;
     let (trunk, id, public_url, resume_key) = connect_agent(addr, plain_hello()).await;
@@ -421,7 +449,7 @@ async fn resume_with_key_keeps_the_public_id() {
 async fn allow_ids_pins_the_public_url_pool() {
     let cfg = Config {
         allow_ids: vec!["stable-one".into()],
-        ..Config::default()
+        ..anonymous()
     };
     let addr = spawn_service(cfg).await;
     let (_trunk, id, _, _) = connect_agent(addr, plain_hello()).await;
@@ -444,4 +472,107 @@ async fn allow_ids_pins_the_public_url_pool() {
         Message::Close(Some(frame)) => assert_eq!(u16::from(frame.code), 4409),
         other => panic!("expected close 4409, got {other:?}"),
     }
+}
+
+#[tokio::test]
+async fn a_relay_without_tokens_refuses_trunks_unless_opted_in() {
+    let addr = spawn_service(Config::default()).await;
+    assert_eq!(expect_close(addr, plain_hello()).await, 4401);
+    let addr = spawn_service(anonymous()).await;
+    let (_trunk, id, _, _) = connect_agent(addr, plain_hello()).await;
+    assert_eq!(id.len(), 10);
+}
+
+#[tokio::test]
+async fn the_agent_count_is_capped() {
+    let addr = spawn_service(Config {
+        max_agents: 1,
+        ..anonymous()
+    })
+    .await;
+    let (_trunk, _, _, _) = connect_agent(addr, plain_hello()).await;
+    assert_eq!(expect_close(addr, plain_hello()).await, 4409);
+}
+
+#[tokio::test]
+async fn shared_origin_credentials_and_worker_scope_stay_inside_one_tunnel() {
+    let addr = spawn_service(Config {
+        max_channels_per_agent: 1,
+        ..anonymous()
+    })
+    .await;
+    let (mut trunk, id, _, _) = connect_agent(addr, plain_hello()).await;
+    let client = reqwest::Client::new();
+
+    let worker = client
+        .get(format!("http://{addr}/t/{id}"))
+        .header("service-worker", "script")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(worker.status(), 403);
+
+    let request = tokio::spawn({
+        let client = client.clone();
+        let url = format!("http://{addr}/t/{id}/sw.js");
+        async move {
+            client
+                .get(url)
+                .header("cookie", "session=example")
+                .header("authorization", "Basic ZXhhbXBsZQ==")
+                .header("x-probe", "1")
+                .send()
+                .await
+                .unwrap()
+        }
+    });
+    let (ch, headers) = match recv_control(&mut trunk).await {
+        Control::Open { ch, headers, .. } => (ch, headers),
+        other => panic!("expected http open, got {other:?}"),
+    };
+    assert!(headers.iter().any(|(k, _)| k == "x-probe"));
+    assert!(
+        !headers
+            .iter()
+            .any(|(k, _)| k == "cookie" || k == "authorization"),
+        "{headers:?}"
+    );
+    assert_eq!(recv_control(&mut trunk).await, Control::End { ch });
+
+    let busy = client
+        .get(format!("http://{addr}/t/{id}/other"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(busy.status(), 503, "one open channel is the agent's limit");
+
+    trunk
+        .send(Message::Text(
+            Control::OpenOk {
+                ch,
+                status: 200,
+                headers: Some(vec![
+                    ("content-type".into(), "text/javascript".into()),
+                    ("set-cookie".into(), "session=planted; Path=/".into()),
+                    ("service-worker-allowed".into(), "/".into()),
+                ]),
+                subprotocol: None,
+            }
+            .encode()
+            .into(),
+        ))
+        .await
+        .unwrap();
+    trunk
+        .send(Message::Text(Control::End { ch }.encode().into()))
+        .await
+        .unwrap();
+    let response = request.await.unwrap();
+    assert_eq!(response.status(), 200);
+    assert_eq!(
+        response.headers().get("content-type").unwrap(),
+        "text/javascript"
+    );
+    assert!(response.headers().get("set-cookie").is_none());
+    assert!(response.headers().get("service-worker-allowed").is_none());
 }

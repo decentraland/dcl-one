@@ -33,6 +33,8 @@ const HELLO_TIMEOUT: Duration = Duration::from_secs(10);
 const EVENT_SEND_TIMEOUT: Duration = Duration::from_secs(5);
 const CHANNEL_EVENT_BUFFER: usize = 256;
 const TRUNK_BUFFER: usize = 1024;
+const SERVICE_WORKER: &str = "service-worker";
+const SERVICE_WORKER_ALLOWED: &str = "service-worker-allowed";
 
 pub struct AppState {
     cfg: Config,
@@ -89,7 +91,7 @@ enum ChanEvent {
 pub fn router(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/t/_connect", get(trunk))
-        .route("/t/{id}", any(public_root))
+        .route("/t/{id}", any(public_bare))
         .route("/t/{id}/", any(public_root))
         .route("/t/{id}/{*path}", any(public_sub))
         .with_state(state)
@@ -136,11 +138,14 @@ async fn handle_trunk(mut socket: WebSocket, st: Arc<AppState>) {
             return;
         }
     };
-    if !st.cfg.tokens.is_empty()
-        && !token
+    let authorized = if st.cfg.tokens.is_empty() {
+        st.cfg.allow_anonymous
+    } else {
+        token
             .as_deref()
             .is_some_and(|t| st.cfg.tokens.iter().any(|x| x == t))
-    {
+    };
+    if !authorized {
         close_with(&mut socket, 4401, "invalid token").await;
         return;
     }
@@ -252,6 +257,9 @@ fn register(
         entry.epoch = epoch;
         entry.conn = Some(conn);
         return Ok((res.id, entry.resume_key.clone(), epoch));
+    }
+    if agents.len() >= st.cfg.max_agents {
+        return Err("tunnel capacity reached");
     }
     let id = if st.cfg.allow_ids.is_empty() {
         loop {
@@ -408,6 +416,23 @@ async fn public_root(
     handle_public(st, id, "/".to_string(), req).await
 }
 
+/// `/t/{id}` without the slash: a worker script here would default to scope
+/// `/t/`, every tunnel's, so worker script fetches are refused.
+async fn public_bare(
+    State(st): State<Arc<AppState>>,
+    AxPath(id): AxPath<String>,
+    req: Request,
+) -> Response {
+    if req.headers().contains_key(SERVICE_WORKER) {
+        return (
+            StatusCode::FORBIDDEN,
+            "service workers must be served under /t/<id>/",
+        )
+            .into_response();
+    }
+    handle_public(st, id, "/".to_string(), req).await
+}
+
 async fn public_sub(
     State(st): State<Arc<AppState>>,
     AxPath((id, path)): AxPath<(String, String)>,
@@ -448,10 +473,33 @@ async fn handle_public(st: Arc<AppState>, id: String, path: String, req: Request
     }
 }
 
+/// Browser credentials for the relay's host never reach an agent: cookies and
+/// ambient `Authorization` schemes; a page's explicit bearer still passes.
+fn is_ambient_credential(name: &header::HeaderName, value: &header::HeaderValue) -> bool {
+    if name == header::COOKIE {
+        return true;
+    }
+    name == header::AUTHORIZATION
+        && !value.to_str().ok().is_some_and(|v| {
+            v.trim_start()
+                .split_once(' ')
+                .is_some_and(|(scheme, _)| scheme.eq_ignore_ascii_case("bearer"))
+        })
+}
+
+/// Response headers that would act beyond one tunnel on the shared origin.
+fn is_cross_tunnel_response_header(name: &str) -> bool {
+    name.eq_ignore_ascii_case("set-cookie")
+        || name.eq_ignore_ascii_case("set-cookie2")
+        || name.eq_ignore_ascii_case(SERVICE_WORKER_ALLOWED)
+        || name.eq_ignore_ascii_case("clear-site-data")
+}
+
 fn collect_headers(headers: &HeaderMap) -> Vec<(String, String)> {
     headers
         .iter()
         .filter(|(name, _)| !protocol::is_hop_by_hop(name.as_str()))
+        .filter(|(name, value)| !is_ambient_credential(name, value))
         .filter_map(|(name, value)| {
             value
                 .to_str()
@@ -461,14 +509,17 @@ fn collect_headers(headers: &HeaderMap) -> Vec<(String, String)> {
         .collect()
 }
 
-fn open_channel(
-    conn: &AgentConn,
-    is_ws: bool,
-) -> (u32, oneshot::Receiver<Control>, mpsc::Receiver<ChanEvent>) {
+type OpenedChannel = (u32, oneshot::Receiver<Control>, mpsc::Receiver<ChanEvent>);
+
+fn open_channel(st: &AppState, conn: &AgentConn, is_ws: bool) -> Option<OpenedChannel> {
+    let mut channels = lock(&conn.channels);
+    if channels.len() >= st.cfg.max_channels_per_agent {
+        return None;
+    }
     let ch = conn.next_ch.fetch_add(1, Ordering::Relaxed) + 1;
     let (reply_tx, reply_rx) = oneshot::channel();
     let (events_tx, events_rx) = mpsc::channel(CHANNEL_EVENT_BUFFER);
-    lock(&conn.channels).insert(
+    channels.insert(
         ch,
         Channel {
             is_ws,
@@ -476,7 +527,15 @@ fn open_channel(
             events: events_tx,
         },
     );
-    (ch, reply_rx, events_rx)
+    Some((ch, reply_rx, events_rx))
+}
+
+fn too_many_channels() -> Response {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        "tunnel agent is at its concurrent request limit",
+    )
+        .into_response()
 }
 
 async fn await_open_reply(
@@ -519,7 +578,9 @@ async fn handle_public_http(
             return (StatusCode::PAYLOAD_TOO_LARGE, "request body too large").into_response();
         }
     };
-    let (ch, reply_rx, events_rx) = open_channel(&conn, false);
+    let Some((ch, reply_rx, events_rx)) = open_channel(&st, &conn, false) else {
+        return too_many_channels();
+    };
     let open = Control::Open {
         ch,
         kind: ChannelKind::Http,
@@ -563,7 +624,10 @@ async fn handle_public_http(
             let mut builder = Response::builder()
                 .status(StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY));
             for (name, value) in headers.unwrap_or_default() {
-                if protocol::is_hop_by_hop(&name) || name.eq_ignore_ascii_case("content-length") {
+                if protocol::is_hop_by_hop(&name)
+                    || name.eq_ignore_ascii_case("content-length")
+                    || is_cross_tunnel_response_header(&name)
+                {
                     continue;
                 }
                 builder = builder.header(name, value);
@@ -627,7 +691,9 @@ async fn handle_public_ws(
         .filter(|s| !s.is_empty())
         .map(str::to_string)
         .collect();
-    let (ch, reply_rx, events_rx) = open_channel(&conn, true);
+    let Some((ch, reply_rx, events_rx)) = open_channel(&st, &conn, true) else {
+        return too_many_channels();
+    };
     let open = Control::Open {
         ch,
         kind: ChannelKind::Ws,
@@ -781,6 +847,31 @@ mod tests {
         let key = random_key();
         assert_eq!(key.len(), 32);
         assert!(key.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn collect_headers_drops_ambient_credentials_and_keeps_a_bearer() {
+        let mut headers = HeaderMap::new();
+        headers.insert(header::ACCEPT, "*/*".parse().unwrap());
+        headers.insert(header::COOKIE, "session=example".parse().unwrap());
+        headers.insert(header::AUTHORIZATION, "Basic ZXhhbXBsZQ==".parse().unwrap());
+        assert_eq!(
+            collect_headers(&headers),
+            vec![("accept".to_string(), "*/*".to_string())]
+        );
+        headers.insert(header::AUTHORIZATION, "Bearer example".parse().unwrap());
+        assert!(
+            collect_headers(&headers)
+                .contains(&("authorization".to_string(), "Bearer example".to_string()))
+        );
+    }
+
+    #[test]
+    fn cross_tunnel_response_headers_are_recognised() {
+        for name in ["Set-Cookie", "service-worker-allowed", "Clear-Site-Data"] {
+            assert!(is_cross_tunnel_response_header(name), "{name}");
+        }
+        assert!(!is_cross_tunnel_response_header("content-type"));
     }
 
     #[test]

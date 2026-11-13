@@ -7,7 +7,13 @@ pub struct Config {
     pub http_port: u16,
     pub public_base_url: Option<String>,
     pub tokens: Vec<String>,
+    /// Accept trunks without a token; only for a local or test relay.
+    pub allow_anonymous: bool,
     pub allow_ids: Vec<String>,
+    /// Tunnel ids held at once, connected or in their reconnect grace.
+    pub max_agents: usize,
+    /// Open channels per connected agent.
+    pub max_channels_per_agent: usize,
     pub grace_secs: u64,
     pub ping_secs: u64,
     pub open_timeout_secs: u64,
@@ -21,7 +27,10 @@ impl Default for Config {
             http_port: 5167,
             public_base_url: None,
             tokens: Vec::new(),
+            allow_anonymous: false,
             allow_ids: Vec::new(),
+            max_agents: 256,
+            max_channels_per_agent: 256,
             grace_secs: 120,
             ping_secs: 20,
             open_timeout_secs: 15,
@@ -35,12 +44,20 @@ impl Config {
         let defaults = Config::default();
         let opt = |k: &str| env::var(k).ok().filter(|s| !s.is_empty());
         let http_port = get_port("HTTP_SERVER_PORT", defaults.http_port)?;
-        Ok(Config {
+        let cfg = Config {
             http_host: opt("HTTP_SERVER_HOST").unwrap_or(defaults.http_host),
             http_port,
             public_base_url: opt("PUBLIC_BASE_URL").map(|s| s.trim_end_matches('/').to_string()),
             tokens: parse_list(opt("TUNNEL_TOKENS")),
+            allow_anonymous: opt("TUNNEL_ALLOW_ANONYMOUS")
+                .is_some_and(|v| matches!(v.trim(), "1" | "true")),
             allow_ids: parse_list(opt("TUNNEL_ALLOW_IDS")),
+            max_agents: parse_or(opt("TUNNEL_MAX_AGENTS"), defaults.max_agents).max(1),
+            max_channels_per_agent: parse_or(
+                opt("TUNNEL_MAX_CHANNELS"),
+                defaults.max_channels_per_agent,
+            )
+            .max(1),
             grace_secs: parse_or(opt("TUNNEL_GRACE_SECS"), defaults.grace_secs),
             ping_secs: parse_or(opt("TUNNEL_PING_SECS"), defaults.ping_secs).max(1),
             open_timeout_secs: parse_or(
@@ -49,7 +66,19 @@ impl Config {
             )
             .max(1),
             body_max_bytes: parse_or(opt("TUNNEL_BODY_MAX_BYTES"), defaults.body_max_bytes),
-        })
+        };
+        cfg.validate()?;
+        Ok(cfg)
+    }
+
+    /// Refuses an open relay: trunks need a token unless anonymous use is opted into.
+    pub fn validate(&self) -> Result<()> {
+        if self.tokens.is_empty() && !self.allow_anonymous {
+            anyhow::bail!(
+                "TUNNEL_TOKENS is empty; set it, or TUNNEL_ALLOW_ANONYMOUS=true for a local relay"
+            );
+        }
+        Ok(())
     }
 
     pub fn public_base(&self) -> String {
@@ -94,6 +123,21 @@ mod tests {
             ..Config::default()
         };
         assert_eq!(cfg.public_base(), "https://tunnel.example");
+    }
+
+    #[test]
+    fn an_open_relay_needs_an_explicit_opt_in() {
+        assert!(Config::default().validate().is_err());
+        let anonymous = Config {
+            allow_anonymous: true,
+            ..Config::default()
+        };
+        assert!(anonymous.validate().is_ok());
+        let tokened = Config {
+            tokens: vec!["t".into()],
+            ..Config::default()
+        };
+        assert!(tokened.validate().is_ok());
     }
 
     #[test]
