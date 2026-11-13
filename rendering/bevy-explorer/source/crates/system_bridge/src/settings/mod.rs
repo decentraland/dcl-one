@@ -37,7 +37,6 @@ use common::{
 };
 use constrain_ui::ConstrainUiSetting;
 use frame_rate::FpsTargetSetting;
-use landscape_distance::LandscapeDistanceSetting;
 use language_setting::LanguageSetting;
 use load_distance::{LoadDistanceSetting, UnloadDistanceSetting};
 use max_avatars::MaxAvatarsSetting;
@@ -67,7 +66,6 @@ pub mod dof_setting;
 pub mod fog_settings;
 pub mod frame_rate;
 pub mod imposter_settings;
-pub mod landscape_distance;
 pub mod language_setting;
 pub mod load_distance;
 pub mod max_avatars;
@@ -164,7 +162,6 @@ impl Plugin for SettingBridgePlugin {
             add_enum_setting::<ImposterSetting>(app, &mut settings, &mut schedule, &config);
         }
         add_enum_setting::<ParcelGrassSetting>(app, &mut settings, &mut schedule, &config);
-        add_int_setting::<LandscapeDistanceSetting>(app, &mut settings, &mut schedule, &config);
         add_enum_setting::<FogSetting>(app, &mut settings, &mut schedule, &config);
         add_enum_setting::<BloomSetting>(app, &mut settings, &mut schedule, &config);
         add_enum_setting::<DofSetting>(app, &mut settings, &mut schedule, &config);
