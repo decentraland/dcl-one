@@ -1,3 +1,5 @@
+@layer dcl.reset, dcl.foundations, dcl.components;
+
 @layer dcl.components {
   .root {
     --button-height: 56px;

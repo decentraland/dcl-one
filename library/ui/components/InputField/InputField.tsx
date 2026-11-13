@@ -65,7 +65,7 @@ export function InputField({
   }
   const revealed = canReveal && visibility.eligible && visibility.revealed
   const inputRef = useRef<HTMLInputElement>(null)
-  useImperativeHandle(forwardedRef, () => inputRef.current!)
+  useImperativeHandle(forwardedRef, () => inputRef.current!, [])
   const { surface, ...nativeInput } = input
   useEffect(() => {
     const form = inputRef.current?.form
@@ -149,7 +149,6 @@ export function InputField({
               type="button"
               className={styles.reveal}
               aria-label={revealed ? hideLabel : revealLabel}
-              aria-pressed={revealed}
               disabled={nativeInput.disabled}
               onClick={() =>
                 setVisibility((current) => ({ ...current, revealed: !current.revealed }))
