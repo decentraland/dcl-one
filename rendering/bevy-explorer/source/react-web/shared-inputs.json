@@ -4382,7 +4382,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/serviceWorkerContentCache.test.ts",
-      "sha256": "39baa0e1bce82b9bcbed89c0446d8170e5e4170409594a713cb0b979ff03100e"
+      "sha256": "9e26640473c26b9975ce0cfe750249b456cfce582012d4f49972b6241d54efe9"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/session.test.tsx",

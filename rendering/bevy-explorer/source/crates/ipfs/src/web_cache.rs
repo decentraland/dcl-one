@@ -65,6 +65,11 @@ pub fn effective_cap(configured: u64, override_bytes: Option<u64>) -> u64 {
     override_bytes.unwrap_or(configured.min(WEB_CACHE_CAP_BYTES))
 }
 
+/// Whether `cap` differs from the one last applied, which it then becomes.
+pub fn cap_changed(applied: &mut Option<u64>, cap: u64) -> bool {
+    applied.replace(cap) != Some(cap)
+}
+
 /// Bytes written between two trim requests.
 fn trim_interval(cap: u64) -> u64 {
     (cap / 16).clamp(MIB, TRIM_INTERVAL_MAX)
@@ -452,12 +457,20 @@ mod io {
             .await
             .map_err(|e| bevy::log::warn!("content cache trim failed: {e:?}"))
             .ok()?;
-        let json = js_sys::JSON::stringify(&reply)
-            .ok()
-            .and_then(|text| text.as_string())
-            .and_then(|text| serde_json::from_str(&text).ok())
-            .unwrap_or(serde_json::Value::Null);
-        let report = match parse_trim_reply(&json) {
+        // only no reply is `Missing`: one that does not read as JSON is a failure to log
+        let parsed = if reply.is_null() || reply.is_undefined() {
+            TrimReply::Missing
+        } else {
+            js_sys::JSON::stringify(&reply)
+                .ok()
+                .and_then(|text| text.as_string())
+                .and_then(|text| serde_json::from_str(&text).ok())
+                .map_or_else(
+                    || TrimReply::Failed(format!("an unreadable reply: {reply:?}")),
+                    |json| parse_trim_reply(&json),
+                )
+        };
+        let report = match parsed {
             TrimReply::Done(report) => report,
             TrimReply::Preempted { cap_bytes } => {
                 WORKER_CAP_BYTES.store(cap_bytes as u64, Ordering::Relaxed);
@@ -648,6 +661,16 @@ mod tests {
     fn a_session_override_replaces_the_configured_cap() {
         assert_eq!(effective_cap(10 << 30, Some(50 << 20)), 50 << 20);
         assert_eq!(effective_cap(10 << 30, Some(4 << 30)), 4 << 30);
+    }
+
+    #[test]
+    fn only_a_new_cap_counts_as_a_change() {
+        let mut applied = None;
+        // the first run, at start
+        assert!(cap_changed(&mut applied, 1 << 30));
+        assert!(!cap_changed(&mut applied, 1 << 30));
+        assert!(cap_changed(&mut applied, 50 << 20));
+        assert!(cap_changed(&mut applied, 1 << 30));
     }
 
     #[test]

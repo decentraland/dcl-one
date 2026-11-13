@@ -164,9 +164,55 @@ describe('content cache trim message', () => {
     for (let n = 0; n < 10; n++) sw.seed(n)
     const { port } = await sw.trim({ capBytes: 500 })
     expect(sw.remaining()).toEqual(['bafkrei6', 'bafkrei7', 'bafkrei8', 'bafkrei9'])
-    expect(port.postMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ evictedEntries: 6, evictedBytes: 600, capBytes: 500, targetUnreachable: false, preempted: false })
-    )
+    // the exact report: crates/ipfs/src/web_cache.rs `parse_trim_reply` reads these keys
+    expect(port.postMessage).toHaveBeenCalledWith({
+      capBytes: 500,
+      usage: 1000,
+      quota: 1e9,
+      cachesUsage: 1000,
+      evictedEntries: 6,
+      evictedBytes: 600,
+      persisted: false,
+      targetUnreachable: false,
+      preempted: false,
+      indexedEntries: 0
+    })
+  })
+
+  it('keeps an entry written again while the trim was sizing', async () => {
+    const sw = serviceWorker()
+    for (let n = 0; n < 10; n++) sw.seed(n)
+    const match = sw.content.match
+    let rewritten = false
+    sw.content.match = async (key: string | Request) => {
+      // the engine writes entry 0 again after the trim listed the keys
+      if (!rewritten) {
+        rewritten = true
+        await sw.content.put(entryUrl(0), entry(100))
+      }
+      return match(key)
+    }
+    const { port } = await sw.trim({ capBytes: 500 })
+    expect(sw.remaining()).toContain('bafkrei0')
+    expect(port.postMessage).toHaveBeenCalledWith(expect.objectContaining({ evictedEntries: 5, evictedBytes: 500 }))
+  })
+
+  it('keeps an entry written again while the trim was sizing when the pick takes the whole cache', async () => {
+    const sw = serviceWorker()
+    sw.seed(0, 100)
+    sw.seed(1, 900)
+    const match = sw.content.match
+    let rewritten = false
+    sw.content.match = async (key: string | Request) => {
+      if (!rewritten) {
+        rewritten = true
+        await sw.content.put(entryUrl(0), entry(100))
+      }
+      return match(key)
+    }
+    const { port } = await sw.trim({ capBytes: 500 })
+    expect(sw.remaining()).toEqual(['bafkrei0'])
+    expect(port.postMessage).toHaveBeenCalledWith(expect.objectContaining({ evictedEntries: 1, evictedBytes: 900 }))
   })
 
   it('moves an entry written again to the newest end', async () => {
