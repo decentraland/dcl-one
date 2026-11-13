@@ -977,14 +977,16 @@ async fn legacy_orders_count_per_transaction_and_resolve_relays() {
     nft_event(&pool, 101, 0, "order_successful", &c, 1, b, Some(&tx1)).await;
     nft_event(&pool, 101, 1, "order_successful", &other, 1, b, Some(&tx1)).await;
     nft_event(&pool, 102, 3, "order_successful", &c, 1, b, None).await;
-    // a relay buys, then hands the token to the user in the same block
+    // a relay buys (the seller's transfer to it precedes the order), then
+    // hands the token to the user in the same block
     let relay = "0xed038688ecf1193f8d9717eb3930f0bf0d745cb4";
     let user = fresh_address();
     let tx2 = format!("0x{}", "b".repeat(64));
+    nft_event(&pool, 103, 0, "transfer", &other, 1, relay, None).await;
     nft_event(
         &pool,
         103,
-        0,
+        1,
         "order_successful",
         &other,
         1,
@@ -992,10 +994,14 @@ async fn legacy_orders_count_per_transaction_and_resolve_relays() {
         Some(&tx2),
     )
     .await;
-    nft_event(&pool, 103, 1, "transfer", &other, 1, relay, None).await;
     nft_event(&pool, 103, 2, "transfer", &other, 1, user.as_str(), None).await;
-    chain_ready(&pool, "nft", 103).await;
-    assert_eq!(sales::batch(&p, Log::Order).await.unwrap().0, 4);
+    // a relay buys and forwards the token only in a later block: nobody counts
+    let tx3 = format!("0x{}", "c".repeat(64));
+    nft_event(&pool, 104, 0, "transfer", &c, 1, relay, None).await;
+    nft_event(&pool, 104, 1, "order_successful", &c, 1, relay, Some(&tx3)).await;
+    nft_event(&pool, 105, 0, "transfer", &c, 1, user.as_str(), None).await;
+    chain_ready(&pool, "nft", 105).await;
+    assert_eq!(sales::batch(&p, Log::Order).await.unwrap().0, 5);
     let emotes = progress(&pool, b, "emotionista").await.unwrap();
     assert_eq!(emotes.0, 2, "one transaction and one chain position");
     assert_eq!(
@@ -1007,8 +1013,8 @@ async fn legacy_orders_count_per_transaction_and_resolve_relays() {
     );
     let resolved = progress(&pool, user.as_str(), "emotionista").await.unwrap();
     assert_eq!(
-        resolved.1["transactions_emotes_purchase"][0]["transactionHash"],
-        json!(tx2)
+        resolved.1["transactions_emotes_purchase"],
+        json!([{"transactionHash": tx2, "saleAt": 1_700_000_000_000_i64}])
     );
     assert_eq!(progress(&pool, relay, "emotionista").await, None);
 }

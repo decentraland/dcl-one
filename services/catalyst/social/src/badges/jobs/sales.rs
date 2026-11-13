@@ -9,9 +9,10 @@
 //!   subgraph did not index: each good's beneficiary buys, else a listing's
 //!   caller or a bid's signer);
 //! - `shop.nft_event` `order_successful` (the legacy marketplace: its buyer,
-//!   or the token's last recipient in the block when the buyer is a relay the
-//!   subgraph resolved the same way; a row indexed without its transaction
-//!   hash is counted by its chain position).
+//!   or, when the buyer is a relay, the token's last recipient after the
+//!   order in its block, as the subgraph resolved it, and nobody when the
+//!   relay still holds it; a row indexed without its transaction hash is
+//!   counted by its chain position).
 //!
 //! An item's category is its mirrored `shop.items.item_type`. Each log table
 //! is read only up to the block its index has published (`shop.chain_cursor`
@@ -28,7 +29,7 @@
 //! without effect. A mirror that stops completing passes holds the sales,
 //! so the job runs only with `MARKETPLACE_MIRRORS_ENABLED`.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use serde_json::Value;
 use sqlx::PgConnection;
@@ -101,11 +102,13 @@ impl Log {
             }
             Log::Order => format!(
                 "SELECT e.block_number, e.log_index, e.block_time, \
-                        CASE WHEN e.to_address IN ({RELAY_BUYERS}) THEN coalesce(( \
-                            SELECT t.to_address FROM shop.nft_event t \
+                        CASE WHEN e.to_address IN ({RELAY_BUYERS}) THEN ( \
+                            SELECT CASE WHEN t.to_address IN ({RELAY_BUYERS}) THEN NULL ELSE t.to_address END \
+                            FROM shop.nft_event t \
                             WHERE t.network = e.network AND t.contract_address = e.contract_address \
-                              AND t.token_id = e.token_id AND t.block_number = e.block_number AND t.kind = 'transfer' \
-                            ORDER BY t.log_index DESC LIMIT 1), e.to_address) \
+                              AND t.token_id = e.token_id AND t.block_number = e.block_number \
+                              AND t.log_index > e.log_index AND t.kind = 'transfer' \
+                            ORDER BY t.log_index DESC LIMIT 1) \
                         ELSE e.to_address END AS buyer, \
                         coalesce(e.tx_hash, 'nft_event:matic:' || e.block_number || ':' || e.log_index) AS tx_hash, \
                         NULL::jsonb AS assets, NULL::text AS caller, \
@@ -304,19 +307,17 @@ pub(crate) async fn batch(pass: &Pass, log: Log) -> Result<(u64, bool), sqlx::Er
         // (buyer, item types) of the row's goods
         let (buys, unmirrored): (Vec<(String, Vec<String>)>, bool) = if log == Log::Trade {
             let goods = trade(row);
-            let mut buys: Vec<(String, Vec<String>)> = Vec::new();
+            let total = goods.len();
+            let mut buys: BTreeMap<String, Vec<String>> = BTreeMap::new();
             let mut found = 0;
-            for (buyer, (_, c, v)) in &goods {
-                let Some(t) = traded.get(&(c.clone(), v.clone())) else {
+            for (buyer, (_, c, v)) in goods {
+                let Some(t) = traded.get(&(c, v)) else {
                     continue;
                 };
                 found += 1;
-                match buys.iter_mut().find(|(b, _)| b == buyer) {
-                    Some((_, types)) => types.push(t.clone()),
-                    None => buys.push((buyer.clone(), vec![t.clone()])),
-                }
+                buys.entry(buyer).or_default().push(t.clone());
             }
-            (buys, found < goods.len())
+            (buys.into_iter().collect(), found < total)
         } else {
             let missing = row.buyer.is_some() && row.item_types.is_empty();
             let buys = row.buyer.clone().map(|b| (b, row.item_types.clone()));
@@ -343,15 +344,6 @@ pub(crate) async fn batch(pass: &Pass, log: Log) -> Result<(u64, bool), sqlx::Er
         }
         passed += 1;
         if pass.too_old(at, now) {
-            continue;
-        }
-        if buys.iter().all(|(_, types)| types.is_empty()) {
-            tracing::debug!(
-                source = log.source(),
-                block = row.block_number,
-                log = row.log_index,
-                "sale without a buyer or a mirrored item: passed"
-            );
             continue;
         }
         for (buyer, types) in buys {
