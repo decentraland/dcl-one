@@ -699,45 +699,24 @@ mod tests {
     #[test]
     #[ignore = "needs a GPU; run with --ignored"]
     fn ghost_and_reveal_shaders_compile() {
+        use assets::test_support::{compile_pipelines, headless_app, render_target};
         use bevy::{
             asset::RenderAssetUsages,
             core_pipeline::prepass::{DepthPrepass, NormalPrepass},
             image::Image,
-            log::LogPlugin,
             render::{
                 camera::RenderTarget,
-                pipelined_rendering::PipelinedRenderingPlugin,
-                render_resource::{
-                    CachedPipelineState, Extent3d, PipelineCache, TextureDimension, TextureFormat,
-                    TextureUsages,
-                },
+                render_resource::{Extent3d, TextureDimension, TextureFormat},
                 storage::ShaderStorageBuffer,
-                RenderApp,
             },
-            window::ExitCondition,
-            winit::WinitPlugin,
         };
         use scene_material::{
             SceneBound, SceneBounds, EMPTY_SCENE_CELLS, SCENE_MATERIAL_CONE_ONLY_DITHER_MESH_TAG,
             SCENE_MATERIAL_TOON_MESH_TAG,
         };
 
-        let mut app = App::new();
-        app.add_plugins(
-            DefaultPlugins
-                .build()
-                .disable::<LogPlugin>()
-                .disable::<WinitPlugin>()
-                // keeps the render app in this app, so the pipeline cache is readable
-                .disable::<PipelinedRenderingPlugin>()
-                .set(WindowPlugin {
-                    primary_window: None,
-                    exit_condition: ExitCondition::DontExit,
-                    close_when_requested: false,
-                }),
-        );
+        let mut app = headless_app();
         app.add_plugins((
-            assets::EmbedAssetsPlugin,
             MaterialPlugin::<SceneMaterial>::default(),
             crate::mask_material::MaskMaterialPlugin,
             GhostAvatarPlugin,
@@ -748,27 +727,14 @@ mod tests {
         app.cleanup();
         load_ghost_body_in(&mut app);
 
+        let target = render_target(&mut app);
         let world = app.world_mut();
         // the unbounded scene's cell table, as SceneBoundPlugin inserts it
         world.resource_mut::<Assets<ShaderStorageBuffer>>().insert(
             EMPTY_SCENE_CELLS.id(),
             ShaderStorageBuffer::new(&[0; 8], RenderAssetUsages::RENDER_WORLD),
         );
-        let mut images = world.resource_mut::<Assets<Image>>();
-        let mut target = Image::new_fill(
-            Extent3d {
-                width: 64,
-                height: 64,
-                depth_or_array_layers: 1,
-            },
-            TextureDimension::D2,
-            &[0, 0, 0, 0],
-            TextureFormat::Bgra8UnormSrgb,
-            RenderAssetUsages::all(),
-        );
-        target.texture_descriptor.usage |= TextureUsages::RENDER_ATTACHMENT;
-        let target = images.add(target);
-        let texture = images.add(Image::new_fill(
+        let texture = world.resource_mut::<Assets<Image>>().add(Image::new_fill(
             Extent3d::default(),
             TextureDimension::D2,
             &[255, 255, 255, 255],
@@ -854,39 +820,7 @@ mod tests {
             app.update();
         }
         // a few frames queue every pipeline; then they compile in the background
-        for _ in 0..10 {
-            app.update();
-        }
-        let started = Instant::now();
-        let mut ok;
-        let mut errors = Vec::new();
-        loop {
-            app.update();
-            let cache = app.sub_app(RenderApp).world().resource::<PipelineCache>();
-            ok = 0;
-            errors.clear();
-            let mut pending = 0;
-            for pipeline in cache.pipelines() {
-                match &pipeline.state {
-                    CachedPipelineState::Ok(_) => ok += 1,
-                    CachedPipelineState::Err(error) => errors.push(error.to_string()),
-                    _ => pending += 1,
-                }
-            }
-            if pending == 0 {
-                break;
-            }
-            assert!(
-                started.elapsed() < Duration::from_secs(60),
-                "{pending} pipelines still compiling"
-            );
-        }
-        println!("{ok} pipelines compiled");
-        assert!(
-            errors.is_empty(),
-            "pipeline errors:\n{}",
-            errors.join("\n\n")
-        );
+        let ok = compile_pipelines(&mut app);
         // the skinned ghost, the scene material's main, prepass and shadow passes, the mask
         // material
         assert!(ok >= 5, "only {ok} pipelines compiled");

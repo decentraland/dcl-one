@@ -334,6 +334,9 @@ pub async fn run_from_env() -> anyhow::Result<()> {
         env_value("PULSE_V4_AUDIENCE", std::env::var("PULSE_V4_AUDIENCE"))?,
     )?;
     server.clusters = clusters_from_env(control_audience.as_deref())?;
+    if let Some(clusters) = &server.clusters {
+        clusters.bind_identity(&mut server.identity);
+    }
     server.run_with_webtransport(bind, 50, wt).await
 }
 
