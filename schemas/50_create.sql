@@ -294,15 +294,16 @@ CREATE TABLE builder.newsletter_subscriptions (
 -- ══ camera_reel ═════════════════════════════════════════════════════════════
 
 -- A player's photo: the full image and its 640x360 thumbnail are blobs in
--- the ONE store named by `image_hash`/`thumbnail_hash` (the wire's `url` /
--- `thumbnailUrl` render as `<API_URL>/api/images/<hash>`); `metadata` is the
+-- the ONE store named by `image_hash`/`thumbnail_hash`. The wire URLs use
+-- UUID-prefixed basenames when retained, and hashes for older rows. `metadata` is the
 -- client document (`Metadata`: userName, userAddress, dateTime, realm,
 -- scene, visiblePeople, placeId) returned as a unit; `place_id` is its
 -- placeId projected for the place galleries and names an explore.place row
 -- by key (no FK: mirrored catalogue, different lifecycle). `user_address` is
 -- the verified signer (the write path refuses a metadata.userAddress that is
 -- not the signer; the CHECK holds the pair together). `review_status` is the
--- moderator's: `rejected` hides the row and its blobs from every read.
+-- moderator's: `rejected` hides the row from public galleries and metadata
+-- reads, and withholds unreferenced blobs on the protected byte routes.
 CREATE TABLE camera_reel.images (
     id uuid NOT NULL,
     user_address text NOT NULL,
@@ -529,8 +530,9 @@ CREATE TABLE builder.asset_contents (
 
 -- ==== section: camera_reel ====
 -- World-name galleries (`name.dcl.eth`) resolve to place ids through
--- explore.place_indexed (lower(world_name) = lower($1)), the old HTTP hop to
--- the places API made a local read; no cache table.
+-- explore.place_indexed (lower(world_name) = lower($1), without the world's
+-- catalogue row `id = lower(world_name)`), the old HTTP hop to the places
+-- API made a local read; no cache table.
 --
 -- A blob this node withholds everywhere because the camera reel's moderation
 -- said so: the image and thumbnail hashes of a rejected row (`reason` =
@@ -582,4 +584,31 @@ $$;
 CREATE INDEX images_wearable_items_idx ON camera_reel.images
     USING gin (camera_reel.image_wearable_items(metadata))
     WHERE is_public AND review_status <> 'rejected';
+
+-- The photo events camera-reel-service published to SNS, recorded for
+-- in-process consumers instead (append-only outbox; camera_reel::events).
+-- Workload: one insert per finalised upload (`photo-taken`, in the
+-- transaction that sets images.ranking_published) and one per visibility
+-- change (`photo-privacy-changed`, in the statement that changes it), so
+-- writes follow the upload rate. Reads: each consumer pages `id > $cursor
+-- ORDER BY id LIMIT n` (the primary key) and keeps its cursor in its own
+-- schema; the outbox holds no consumer state and rows are never updated.
+-- Retention: the fleet-wide `camera-photo-events-retention` job deletes rows
+-- older than 30 days in bounded batches by `created_at` (the second index),
+-- so the table holds about 30 days of events. `payload` is the upstream
+-- event body `{type, subType, key, timestamp, metadata}`; `photo_id` names
+-- an images row as a fact (no FK: the photo may be deleted later).
+CREATE TABLE camera_reel.photo_events (
+    id bigint GENERATED ALWAYS AS IDENTITY,
+    kind text NOT NULL,
+    photo_id uuid NOT NULL,
+    user_address text NOT NULL,
+    payload jsonb NOT NULL,
+    created_at timestamp with time zone NOT NULL DEFAULT now(),
+    CONSTRAINT photo_events_pkey PRIMARY KEY (id),
+    CONSTRAINT photo_events_kind_check CHECK (kind IN ('photo-taken', 'photo-privacy-changed')),
+    CONSTRAINT photo_events_user_address_lowercase_check CHECK (user_address = lower(user_address)),
+    CONSTRAINT photo_events_payload_object_check CHECK (jsonb_typeof(payload) = 'object')
+);
+CREATE INDEX photo_events_created_at_idx ON camera_reel.photo_events (created_at);
 -- ==== end section: camera_reel ====

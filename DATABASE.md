@@ -1319,6 +1319,31 @@ IP and links. Addresses are lower-cased and checked by the table; the handler
 normalises the body's. The bootstrap defines the table; an existing database
 gains it from the object pass, so no step exists.
 
+## Camera reel photo events workload
+
+`camera_reel.photo_events` (`schemas/50_create.sql`) is the append-only outbox
+of the photo events camera-reel-service published to SNS: `photo-taken`, one
+row per finalised upload, written in the transaction that sets
+`camera_reel.images.ranking_published` (public and private photos alike), and
+`photo-privacy-changed`, one row per visibility change, written in the
+statement that changes it. `payload` is the upstream body `{type: "camera",
+subType, key, timestamp, metadata}`. Writes follow the upload rate.
+
+Readers are in-process consumers (`camera_reel::events::read_after`): each
+pages `id > $cursor ORDER BY id LIMIT n` on the primary key and keeps its
+cursor in its own schema, committed with its own effects; the outbox holds no
+consumer state. No consumer reads it yet; the credits program reads it for
+its photo goals once it has one. The community photo counts are applied
+directly in the upload's finalising transaction and do not read the outbox.
+
+Invariants: rows are never updated; the leased
+`camera-photo-events-retention` job deletes rows older than 30 days, 1000 per
+statement by `created_at` (its index), at most 100 statements an hourly pass,
+so the table holds about 30 days of events and a consumer further behind
+misses events. `user_address` is the photo's owner, lowercase. The bootstrap
+defines the table; an existing database gains it from the object pass, so no
+step exists.
+
 ## Badges catalog and progress workload
 
 The catalog (`social.badge_definitions`, `badge_tiers`, `presence_badges`;

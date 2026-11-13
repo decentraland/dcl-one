@@ -18,8 +18,9 @@ processed results into Registry response shapes, in request order.
 Non-profile entities and profiles without a usable avatar are omitted; an entity
 missing its id, pointer or timestamp is logged and omitted. A failed entity lookup
 or ownership pass returns 500 with the Registry's `{"error":"Internal Server Error"}`
-envelope, never unvalidated metadata or an empty array. Full profiles use an entity
-timestamp string. Snapshots and compact thumbnails point to the configured local
+envelope, never unvalidated metadata or an empty array. Full profiles carry the entity
+timestamp as a JSON number and both answers keep the Registry's key order, as the
+2026-11-05 captures `AB-1-one-known.json` and `AB-2-one-known.json` show. Snapshots and compact thumbnails point to the configured local
 profile-images service; each full-profile avatar carries exactly the `face256` and
 `body` snapshots, as the Registry's sanitizer writes them. The Registry projection
 does not use Lambdas' profile response cache, so a subsequent read sees changes in
@@ -54,6 +55,13 @@ fragment, and startup refuses any other value, naming the variable.
   signed reads need the local runtime.
 - Empty, the island posture, answers `/entities/active` and `/entities/versions`
   with `200 []` and the other reads with 503.
+
+Whatever the source, `/entities/active` and `/entities/versions` first apply the
+Registry's request rule: a body without a non-empty `pointers` (`ids` is not read)
+answers `400 {"ok":false,"message":"No pointers provided"}` and a body that is not
+JSON `500 {"error":"Internal Server Error"}`, with no cap on the pointers. A
+successful `/entities/active` answer then drops every entity whose id is on the
+node's content denylist projection, the one the content reads apply.
 
 Every case forwards the method, raw query, body, content type, `accept` and
 conditional headers, and never `authorization`. Registry writes (`/denylist/{id}`

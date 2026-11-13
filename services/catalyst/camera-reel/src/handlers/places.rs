@@ -25,10 +25,12 @@ pub fn validate_places_ids(places_ids: &[String]) -> Result<(), ApiError> {
     Ok(())
 }
 
+/// A failed lookup is upstream's 502 (its places API was a hop away); the
+/// database error stays in the log.
 async fn world_place_ids(state: &SharedState, name: &str) -> Result<Vec<String>, ApiError> {
     state.db.world_place_ids(name).await.map_err(|e| {
         tracing::error!("failed to resolve world name '{name}': {e}");
-        ApiError::BadGateway(format!("failed to resolve world name: {e}"))
+        ApiError::BadGateway("failed to resolve world name".to_string())
     })
 }
 
@@ -96,7 +98,7 @@ pub async fn get_place_images(
         .into_response())
 }
 
-/// A read behind a `POST` (the id list is the body); `writes::guard` keeps
+/// A read behind a `POST` (the id list is the body); the write-route gate keeps
 /// it open while creator writes are disabled.
 pub async fn get_multiple_places_images(
     State(state): State<SharedState>,

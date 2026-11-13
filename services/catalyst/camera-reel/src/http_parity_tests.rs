@@ -827,3 +827,123 @@ async fn lossy_path_decoding_keeps_authorization_bound_to_the_raw_request() {
         std::fs::remove_dir_all(dir).unwrap();
     }
 }
+
+#[cfg(test)]
+mod main_extractor_contracts {
+    use crate::http::{JsonBody as Json, Query};
+    use axum::extract::Request;
+    use axum::http::{StatusCode, header};
+    const MAX_JSON_BODY_BYTES: usize = 2 * 1024 * 1024;
+    use axum::Router;
+    use axum::body::{Body, to_bytes};
+    use axum::routing::{get, post};
+    use serde::Deserialize;
+    use tower::ServiceExt;
+
+    #[derive(Deserialize)]
+    struct Page {
+        #[serde(default)]
+        #[allow(dead_code)]
+        limit: u64,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Ids {
+        places_ids: Vec<String>,
+    }
+
+    async fn call(app: Router, req: Request) -> (StatusCode, String, String) {
+        let res = app.oneshot(req).await.unwrap();
+        let status = res.status();
+        let ct = res
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .map(|v| v.to_str().unwrap().to_string())
+            .unwrap_or_default();
+        let body = to_bytes(res.into_body(), 1 << 16).await.unwrap();
+        (status, ct, String::from_utf8(body.to_vec()).unwrap())
+    }
+
+    #[tokio::test]
+    async fn a_bad_query_answers_the_upstream_plain_text() {
+        let app = Router::new().route("/x", get(|_: Query<Page>| async { "ok" }));
+        let req = Request::builder()
+            .uri("/x?limit=abc")
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(
+            call(app.clone(), req).await,
+            (
+                StatusCode::BAD_REQUEST,
+                "text/plain; charset=utf-8".to_string(),
+                "Query deserialize error: invalid digit found in string".to_string()
+            )
+        );
+        let req = Request::builder()
+            .uri("/x?limit=3&other=1")
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(call(app, req).await.0, StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn json_rejections_are_actix_s_400_and_413() {
+        let app = Router::new().route(
+            "/b",
+            post(|Json(b): Json<Ids>| async move { b.places_ids.len().to_string() }),
+        );
+        let send = |body: Vec<u8>, ct: Option<&str>| {
+            let mut req = Request::builder().method("POST").uri("/b");
+            if let Some(ct) = ct {
+                req = req.header(header::CONTENT_TYPE, ct);
+            }
+            req.body(Body::from(body)).unwrap()
+        };
+        for (body, ct, status, text) in [
+            (
+                "{}",
+                Some("application/json"),
+                StatusCode::BAD_REQUEST,
+                "Json deserialize error: missing field `placesIds` at line 1 column 2",
+            ),
+            (
+                r#"{"placesIds":"x"}"#,
+                Some("application/json"),
+                StatusCode::BAD_REQUEST,
+                "Json deserialize error: invalid type: string \"x\", expected a sequence at line 1 column 16",
+            ),
+            (
+                r#"{"placesIds":["a"]}"#,
+                None,
+                StatusCode::BAD_REQUEST,
+                "Content type error",
+            ),
+            (
+                r#"{"placesIds":["a"]}"#,
+                Some("text/plain"),
+                StatusCode::BAD_REQUEST,
+                "Content type error",
+            ),
+            (
+                r#"{"placesIds":["a"]}"#,
+                Some("application/json; charset=utf-8"),
+                StatusCode::OK,
+                "1",
+            ),
+            (
+                r#"{"placesIds":["a","b"]}"#,
+                Some("application/vnd.x+json"),
+                StatusCode::OK,
+                "2",
+            ),
+        ] {
+            let (got, _, got_text) = call(app.clone(), send(body.as_bytes().to_vec(), ct)).await;
+            assert_eq!((got, got_text.as_str()), (status, text), "{body} {ct:?}");
+        }
+        let big = vec![b' '; MAX_JSON_BODY_BYTES + 1];
+        let (status, ct, _) = call(app, send(big, Some("application/json"))).await;
+        assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+        assert_eq!(ct, "text/plain; charset=utf-8");
+    }
+}

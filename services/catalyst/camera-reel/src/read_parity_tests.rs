@@ -162,11 +162,11 @@ async fn world_resolution_failure_is_bad_gateway_for_single_and_batch_reads() {
     let (status, body) = get(&state, "/api/places/unavailable.eth/images").await;
     assert_eq!(status, StatusCode::BAD_GATEWAY);
     let error: Value = serde_json::from_slice(&body).unwrap();
-    assert!(
-        error["message"]
-            .as_str()
-            .unwrap()
-            .starts_with("failed to resolve world name: ")
+    // Upstream includes its places-client error. Local SQL failures keep the
+    // same status and envelope while withholding database implementation details.
+    assert_eq!(
+        error,
+        serde_json::json!({ "message": "failed to resolve world name" })
     );
     let response = router(state.clone())
         .oneshot(
@@ -180,6 +180,12 @@ async fn world_resolution_failure_is_bad_gateway_for_single_and_batch_reads() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+    let body = to_bytes(response.into_body(), 8192).await.unwrap();
+    let error: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(
+        error,
+        serde_json::json!({ "message": "failed to resolve world name" })
+    );
     tokio::fs::remove_dir_all(directory).await.unwrap();
 }
 

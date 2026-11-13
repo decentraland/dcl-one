@@ -247,12 +247,7 @@ async fn finalize_upload(
     metadata: Metadata,
     is_public: bool,
 ) -> Result<Response, ApiError> {
-    if metadata
-        .visible_people
-        .iter()
-        .filter_map(|person| person.screen_rect)
-        .any(|rect| !rect.is_valid())
-    {
+    if !metadata.screen_rects_are_valid() {
         return Err(ApiError::BadRequest("invalid metadata".to_string()));
     }
     if metadata.user_address != address {

@@ -861,6 +861,7 @@ pub async fn serve(
         .await
         .context("loading camera_reel.withheld_blobs")?;
     camera_reel.spawn_ranking_job(&jobs);
+    camera_reel::events::spawn_retention_job(&camera_reel, &jobs);
     tracing::info!(
         builder = %builder.sources_label(),
         camera_reel_api_url = %camera_reel.settings.api_url,
