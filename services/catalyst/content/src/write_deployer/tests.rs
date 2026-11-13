@@ -571,6 +571,7 @@ async fn a_content_deploy_behind_a_long_unlink_batch_is_undecided() {
     let batch = crate::storage::gc::lock_store_exclusive(&pool)
         .await
         .unwrap();
+    let started = std::time::Instant::now();
     let err = tokio::time::timeout(
         Duration::from_secs(20),
         deployer.deploy_entity(vec![bytes], &id, chain, "LOCAL"),
@@ -579,6 +580,12 @@ async fn a_content_deploy_behind_a_long_unlink_batch_is_undecided() {
     .expect("the wait is bounded")
     .unwrap_err();
     assert!(matches!(&err, DeployFailure::Unavailable(_)), "{err:?}");
+    assert!(
+        started.elapsed() >= Duration::from_millis(4500),
+        "answered after {:?}, before the lock wait ran out",
+        started.elapsed()
+    );
+    assert_eq!(deployer.deployed_timestamp(&id).await.unwrap(), None);
     batch.rollback().await.unwrap();
     let _ = std::fs::remove_dir_all(&tmp);
 }

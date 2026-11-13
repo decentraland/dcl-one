@@ -213,6 +213,10 @@ async fn names_are_deduplicated_and_capped() {
         vec![false, false]
     );
     assert!(chain.calls().is_empty(), "an overlong name is not asked");
+
+    let mixed = vec!["alice".to_string(), "y".repeat(MAX_NAME_BYTES + 1)];
+    assert_eq!(a.names(OWNER, &mixed, TS).await.unwrap(), vec![true, false]);
+    assert_eq!(chain.calls().len(), 1, "only the short name is asked");
 }
 
 #[tokio::test]

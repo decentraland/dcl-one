@@ -369,9 +369,21 @@ fn entity_file_of(files: &[Bytes], entity_id: &str) -> Option<Value> {
 /// check past its deadline or into a non-revert failure.
 fn is_refundable(files: &[Bytes], entity_id: &str) -> bool {
     entity_file_of(files, entity_id).is_some_and(|entity| {
-        !asks_named_contracts(&entity)
+        !has_nul(&entity)
+            && !asks_named_contracts(&entity)
             && access_calls_of(&entity) <= crate::validator::onchain::CALLS_PER_BATCH
     })
+}
+
+/// Whether a string or key holds a NUL, which the metadata column refuses at the
+/// write: that 503 is the request's own.
+fn has_nul(value: &Value) -> bool {
+    match value {
+        Value::String(s) => s.contains('\0'),
+        Value::Array(items) => items.iter().any(has_nul),
+        Value::Object(map) => map.iter().any(|(k, v)| k.contains('\0') || has_nul(v)),
+        _ => false,
+    }
 }
 
 /// Whether the access check calls contracts the entity names: a wearable's or
@@ -1049,6 +1061,18 @@ mod tests {
         let wearable =
             serde_json::json!({"type": "wearable", "pointers": ["urn"], "content": [{}, {}]});
         assert_eq!(access_calls_of(&wearable), 3);
+    }
+
+    #[test]
+    fn metadata_the_write_refuses_is_never_refunded() {
+        let with = |description: &str| {
+            serde_json::json!({"type": "scene", "pointers": ["0,0"],
+                "metadata": {"avatars": [{"description": description}]}})
+        };
+        assert!(has_nul(&with("escaped \0 is invalid")));
+        assert!(!has_nul(&with(r"literal \u0000 is valid")));
+        let key = serde_json::json!({"metadata": {"a\u{0}b": 1}});
+        assert!(has_nul(&key));
     }
 
     #[test]
