@@ -114,7 +114,6 @@ impl Plugin for VisualsPlugin {
     }
 
     fn finish(&self, app: &mut App) {
-        debug_panel::register_gpu(app);
         let snapshots_only = app
             .world()
             .resource::<scene_runner::initialize_scene::TestingData>()

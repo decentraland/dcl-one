@@ -666,7 +666,7 @@ impl Plugin for IpfsIoPlugin {
 
         app.add_console_command::<ChangeRealmCommand, _>(change_realm_command);
         app.add_plugins(debug_panel::WebRequestsDebugPanelPlugin);
-        bevy_variants::build(app);
+        app.add_plugins(bevy_variants::BevyVariantsPlugin);
 
         app.register_diagnostic(Diagnostic::new(IPFS_IN_FLIGHT_DIAGNOSTIC_PATH));
         app.register_diagnostic(Diagnostic::new(IPFS_SUCCESS_DIAGNOSTIC_PATH));
@@ -686,7 +686,6 @@ impl Plugin for IpfsIoPlugin {
             .init_asset::<SceneJsFile>()
             .init_asset_loader::<EntityDefinitionLoader>()
             .init_asset_loader::<SceneJsLoader>();
-        bevy_variants::finish(app);
 
         if let Some(realm) = &self.starting_realm {
             let ipfs = app.world().resource::<IpfsResource>().clone();

@@ -183,6 +183,44 @@ impl Plugin for VisualsDebugPanelPlugin {
             app.add_systems(Update, apply_landscape_visibility);
         }
     }
+
+    fn finish(&self, app: &mut App) {
+        let render = app.sub_app(RenderApp).world();
+        let gpu_instances = matches!(
+            render.get_resource::<RenderMeshInstances>(),
+            Some(RenderMeshInstances::GpuBuilding(_))
+        );
+        let culling = gpu_instances
+            && render
+                .get_resource::<GpuPreprocessingSupport>()
+                .is_some_and(|s| s.is_culling_supported());
+        app.insert_resource(RenderCapabilities {
+            gpu_instances,
+            culling,
+        });
+        let inputs = [
+            toggle(
+                "Indirect drawing",
+                "indirect",
+                "/render_view indirect {value}",
+            ),
+            toggle(
+                "GPU occlusion culling",
+                "occlusion",
+                "/render_view occlusion {value}",
+            ),
+        ];
+        app.add_preview_debug_inputs(DebugSection {
+            title: "GPU rendering",
+            query: "/render_view",
+            fields: &[
+                ("GPU-built mesh instances", "gpuInstances"),
+                ("GPU culling supported", "supported"),
+            ],
+            actions: &[],
+            inputs: if culling { &inputs } else { &[] },
+        });
+    }
 }
 
 #[derive(Resource)]
@@ -328,44 +366,6 @@ fn sun_shadow_map(
 struct RenderCapabilities {
     gpu_instances: bool,
     culling: bool,
-}
-
-pub(super) fn register_gpu(app: &mut App) {
-    let render = app.sub_app(RenderApp).world();
-    let gpu_instances = matches!(
-        render.get_resource::<RenderMeshInstances>(),
-        Some(RenderMeshInstances::GpuBuilding(_))
-    );
-    let culling = gpu_instances
-        && render
-            .get_resource::<GpuPreprocessingSupport>()
-            .is_some_and(|s| s.is_culling_supported());
-    app.insert_resource(RenderCapabilities {
-        gpu_instances,
-        culling,
-    });
-    let inputs = [
-        toggle(
-            "Indirect drawing",
-            "indirect",
-            "/render_view indirect {value}",
-        ),
-        toggle(
-            "GPU occlusion culling",
-            "occlusion",
-            "/render_view occlusion {value}",
-        ),
-    ];
-    app.add_preview_debug_inputs(DebugSection {
-        title: "GPU rendering",
-        query: "/render_view",
-        fields: &[
-            ("GPU-built mesh instances", "gpuInstances"),
-            ("GPU culling supported", "supported"),
-        ],
-        actions: &[],
-        inputs: if culling { &inputs } else { &[] },
-    });
 }
 
 /// Inspect main camera GPU drawing or set its indirect draw and occlusion mode.
