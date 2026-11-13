@@ -559,10 +559,18 @@ impl BevyVariants {
         self.session.lock().unwrap().served.contains_key(path)
     }
 
-    /// Marks the variant served for `path` bad, if there was one, and returns the url of its
-    /// cached copy: the asset should be reloaded (from its original), and the copy dropped.
-    fn decode_failed(&self, path: &Path, error: &str) -> Option<String> {
+    /// Marks the variant served for `path` bad, if there was one of `formats`, and returns the
+    /// url of its cached copy: the asset should be reloaded (from its original), and the copy
+    /// dropped.
+    fn decode_failed(&self, path: &Path, error: &str, formats: &[&str]) -> Option<String> {
         let mut session = self.session.lock().unwrap();
+        if !session
+            .served
+            .get(path)
+            .is_some_and(|served| formats.contains(&served.format.as_str()))
+        {
+            return None;
+        }
         let served = session.served.remove(path)?;
         session.bad.insert(served.variant.clone());
         session.fallback(
@@ -921,18 +929,35 @@ fn detect_gpu_formats(
     let _ = ipfs.bevy_variants.bc.set(bc);
 }
 
-/// Reloads from its original each texture or GLB whose variant failed to load. A GLB that
-/// never loaded reloads whole; a scene's container retries it (`retry_repaired_gltfs`).
-fn fall_back_from_failed_variants<A: Asset>(
+/// An asset type a variant can fail to load as, and the variant formats whose failure reloads
+/// it from the original.
+trait VariantAsset: Asset {
+    const FORMATS: &'static [&'static str];
+}
+
+impl VariantAsset for Image {
+    const FORMATS: &'static [&'static str] = &["ktx2-bc"];
+}
+
+/// Only `glb`: a `glb-br` variant is the original byte for byte, so a glTF loader failure on
+/// it is the original's own (a Draco GLB, repaired by image processing) and needs no reload.
+impl VariantAsset for Gltf {
+    const FORMATS: &'static [&'static str] = &["glb"];
+}
+
+/// Reloads from its original each texture or `glb` model whose variant failed to load. A GLB
+/// that never loaded reloads whole; a scene's container retries it (`retry_repaired_gltfs`).
+fn fall_back_from_failed_variants<A: VariantAsset>(
     mut failed: EventReader<AssetLoadFailedEvent<A>>,
     ipfs: Res<IpfsResource>,
     server: Res<AssetServer>,
 ) {
     for event in failed.read() {
-        if let Some(url) = ipfs
-            .bevy_variants
-            .decode_failed(event.path.path(), &event.error.to_string())
-        {
+        if let Some(url) = ipfs.bevy_variants.decode_failed(
+            event.path.path(),
+            &event.error.to_string(),
+            A::FORMATS,
+        ) {
             server.reload(event.path.without_label().into_owned());
             let io = ipfs.clone();
             IoTaskPool::get()

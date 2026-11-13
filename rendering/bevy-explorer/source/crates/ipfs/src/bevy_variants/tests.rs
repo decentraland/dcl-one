@@ -679,17 +679,41 @@ fn a_variant_that_fails_to_decode_is_marked_bad_once() {
     // reloaded from the original, and the url of the copy to drop handed back
     assert_eq!(
         variants
-            .decode_failed(&path, "unsupported texture format")
+            .decode_failed(&path, "unsupported texture format", &["ktx2-bc"])
             .as_deref(),
         Some("https://abgen.example/bevy/t3/variant")
     );
     assert!(!variants.is_served(&path));
     assert!(variants.is_bad(&served_path(VARIANT_CID)));
     // an asset that was never a variant is not reloaded
-    assert!(variants.decode_failed(&path, "again").is_none());
     assert!(variants
-        .decode_failed(&content_path("other.png"), "x")
+        .decode_failed(&path, "again", &["ktx2-bc"])
         .is_none());
+    assert!(variants
+        .decode_failed(&content_path("other.png"), "x", &["ktx2-bc"])
+        .is_none());
+}
+
+#[test]
+fn a_glb_br_model_that_fails_to_load_is_not_reloaded() {
+    let variants = BevyVariants::default();
+    let path = content_path("models/a.glb");
+    variants.served(
+        &path,
+        ServedVariant {
+            scene: SCENE.to_owned(),
+            file: "models/a.glb".to_owned(),
+            variant: served_path_of("glb-br", VARIANT_CID),
+            format: "glb-br".to_owned(),
+            url: "https://abgen.example/bevy/m2/variant.br".to_owned(),
+        },
+        false,
+    );
+    // the glTF fallback takes only `glb`: a `glb-br` copy is the original, its failure the
+    // original's own
+    assert!(variants.decode_failed(&path, "draco", &["glb"]).is_none());
+    assert!(variants.is_served(&path));
+    assert!(!variants.is_bad(&served_path_of("glb-br", VARIANT_CID)));
 }
 
 #[test]

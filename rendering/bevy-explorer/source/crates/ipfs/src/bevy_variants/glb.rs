@@ -218,7 +218,7 @@ fn buffer_view_range(
     let glb_buffer = json
         .get("buffers")
         .and_then(|buffers| buffers.get(0))
-        .is_some_and(|buffer| buffer.get("uri").is_none());
+        .is_some_and(|buffer| buffer.as_object().is_some_and(|b| !b.contains_key("uri")));
     let Some(bin) = bin.filter(|_| buffer == Some(0) && glb_buffer) else {
         return Err(format!("image {image}: not in the GLB's binary chunk"));
     };
@@ -244,9 +244,11 @@ pub(crate) mod tests {
     use crate::bevy_variants::ktx2::tests::{bc7_two_levels, ktx2};
     use serde_json::json;
 
-    /// A GLB with `json` (whose `buffers[0]` is filled in) and `bin`.
+    /// A GLB with `json` (whose `buffers` are filled in unless it names some) and `bin`.
     pub(crate) fn glb(mut json: Value, bin: &[u8]) -> Vec<u8> {
-        json["buffers"] = json!([{ "byteLength": bin.len() }]);
+        if json.get("buffers").is_none() {
+            json["buffers"] = json!([{ "byteLength": bin.len() }]);
+        }
         let mut json = serde_json::to_vec(&json).unwrap();
         pad(&mut json, b' ');
         let mut bin = bin.to_vec();
@@ -447,6 +449,17 @@ pub(crate) mod tests {
         assert!(bc_glb_dds(&data_uri)
             .unwrap_err()
             .contains("no buffer view"));
+    }
+
+    #[test]
+    fn a_glb_whose_first_buffer_is_not_an_object_fails() {
+        let (bc7, _, _) = bc7_two_levels();
+        let (mut json, bin) = parse(&with_one_ktx2(&bc7));
+        json["buffers"] = json!([5]);
+        let source = glb(json, &bin);
+        assert!(bc_glb_dds(&source)
+            .unwrap_err()
+            .contains("not in the GLB's binary chunk"));
     }
 
     #[test]
