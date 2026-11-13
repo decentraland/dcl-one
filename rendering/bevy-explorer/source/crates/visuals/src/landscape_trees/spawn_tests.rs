@@ -9,16 +9,18 @@ use bevy::{
     scene::ScenePlugin,
 };
 use common::{
+    sets::RealmLifecycle,
     structs::{LandscapeDistance, PrimaryUser},
     terrain::{Occupancy, TerrainTargets},
 };
 use scene_runner::initialize_scene::{PointerResult, ScenePointers};
 
 use super::{
+    add_spawn_systems,
     layout::TreeLayout,
     material::{Surface, SURFACES},
     prototypes::PROTOTYPES,
-    tree_radius_parcels, update_trees, LandscapeTreeAssets, Tree, ASSET_DIR,
+    tree_radius_parcels, LandscapeTreeAssets, Tree, ASSET_DIR,
 };
 use crate::{
     solids::{prototype_solids, Solid},
@@ -71,8 +73,8 @@ fn app(extent: i32, realm: (IVec2, IVec2), player: Vec3) -> App {
     })
     .insert_resource(TerrainSurface::settled(&targets))
     .insert_resource(pointers)
-    .insert_resource(LandscapeDistance::default())
-    .add_systems(PostUpdate, update_trees);
+    .insert_resource(LandscapeDistance::default());
+    add_spawn_systems(&mut app);
     app.world_mut().spawn((
         PrimaryUser::default(),
         GlobalTransform::from_translation(player),
@@ -437,6 +439,8 @@ fn trees_spawn_in_the_frame_the_pointer_resolves() {
         (IVec2::splat(-150), IVec2::splat(150)),
         parcel_centre(PARCEL),
     );
+    app.init_resource::<Resolve>()
+        .add_systems(PostUpdate, resolve_in_realm.in_set(RealmLifecycle));
     resolve(
         &mut app,
         block(PARCEL, 1).filter(|parcel| *parcel != PARCEL),
@@ -445,8 +449,10 @@ fn trees_spawn_in_the_frame_the_pointer_resolves() {
     app.update();
     assert!(spawned(&mut app).iter().all(|tree| tree.parcel != PARCEL));
 
-    resolve(&mut app, [PARCEL], PointerResult::Nothing);
+    // the realm writes the pointer in its PostUpdate set, as the client does
+    app.insert_resource(Resolve(Some(PARCEL)));
     app.update();
+    assert!(app.world().resource::<Resolve>().0.is_none(), "resolved");
     assert_eq!(
         spawned(&mut app)
             .iter()
@@ -454,6 +460,210 @@ fn trees_spawn_in_the_frame_the_pointer_resolves() {
             .count(),
         3
     );
+}
+
+/// A parcel the realm resolves empty in its next PostUpdate.
+#[derive(Resource, Default)]
+struct Resolve(Option<IVec2>);
+
+fn resolve_in_realm(mut resolve: ResMut<Resolve>, mut pointers: ResMut<ScenePointers>) {
+    if let Some(parcel) = resolve.0.take() {
+        pointers.insert(parcel, PointerResult::Nothing);
+    }
+}
+
+/// A realm switch while the new realm's layout is still loading clears the old layout's trees
+/// at once; the new ones come when the layout arrives.
+#[test]
+fn realm_switch_clears_trees_while_the_layout_loads() {
+    let mut app = open_land(6, Vec3::ZERO);
+    let worlds_id = app.world().resource::<LandscapeTreeAssets>().worlds.id();
+    let worlds = app
+        .world_mut()
+        .resource_mut::<Assets<TreeLayout>>()
+        .remove(worlds_id)
+        .unwrap();
+    app.update();
+    assert!(!spawned(&mut app).is_empty());
+
+    app.world_mut()
+        .resource_mut::<ScenePointers>()
+        .reset_terrain(true);
+    app.update();
+    assert!(spawned(&mut app).is_empty(), "the city's trees are gone");
+
+    app.world_mut()
+        .resource_mut::<Assets<TreeLayout>>()
+        .insert(worlds_id, worlds);
+    app.update();
+    let trees = spawned(&mut app);
+    assert!(!trees.is_empty());
+    let worlds = layout(WORLDS);
+    for tree in &trees {
+        let expected =
+            worlds.instances(tree.parcel)[tree.index as usize].transform(tree.parcel, |_, _| 0.0);
+        assert!(tree
+            .transform
+            .translation
+            .xz()
+            .abs_diff_eq(expected.translation.xz(), 1e-4));
+    }
+}
+
+/// The trees' systems fit the explorer's PostUpdate ordering: the transform and collider sets,
+/// which run before the realm's scene lifecycle, and the realm lifecycle itself, which the trees
+/// follow. A cycle among them would panic the client at start-up.
+#[test]
+fn landscape_trees_schedule_is_acyclic() {
+    use bevy::ecs::schedule::ScheduleLabel;
+    use scene_runner::{
+        initialize_scene::process_scene_lifecycle,
+        update_world::transform_and_parent::configure_post_update_sets,
+    };
+
+    let mut app = App::new();
+    app.add_plugins((MinimalPlugins, AssetPlugin::default()))
+        .init_asset::<Shader>()
+        .init_asset::<Mesh>()
+        .init_asset::<Image>();
+    // the explorer's own order of the transform, collider and camera sets, before the realm's
+    // scene lifecycle
+    configure_post_update_sets(&mut app);
+    app.add_systems(PostUpdate, process_scene_lifecycle.in_set(RealmLifecycle));
+    crate::terrain::TerrainPlugin.build(&mut app);
+    super::LandscapeTreesPlugin.build(&mut app);
+    crate::solids::SolidsPlugin.build(&mut app);
+    let label = PostUpdate.intern();
+    app.world_mut()
+        .schedule_scope(label, |world, schedule| schedule.initialize(world))
+        .unwrap_or_else(|error| panic!("PostUpdate does not build: {error}"));
+}
+
+/// A spawned instance's meshes draw with the surfaces' materials, the swaying ones inside bounds
+/// padded for the wind: a tree's leaves and trunk, a stone's rock.
+#[test]
+fn spawned_meshes_wear_the_surface_materials() {
+    use bevy::render::{mesh::MeshAabb, primitives::Aabb};
+
+    use super::{
+        dress_trees,
+        material::{TreeMaterial, ALL_SURFACES},
+        setup, wind_padding, TreeMaterials, TreeWind,
+    };
+
+    let mut app = App::new();
+    app.add_plugins((
+        MinimalPlugins,
+        AssetPlugin::default(),
+        ImagePlugin::default(),
+        assets::EmbedAssetsPlugin,
+        ScenePlugin,
+        GltfPlugin::default(),
+    ))
+    .add_plugins(TransformPlugin)
+    .register_type::<Visibility>()
+    .register_type::<InheritedVisibility>()
+    .register_type::<ViewVisibility>()
+    .register_type::<bevy::render::view::VisibilityClass>()
+    .register_type::<bevy::render::primitives::Aabb>()
+    .register_type::<Mesh3d>()
+    .register_type::<MeshMaterial3d<StandardMaterial>>()
+    .init_asset::<Mesh>()
+    .init_asset::<StandardMaterial>()
+    .init_asset::<SkinnedMeshInverseBindposes>()
+    .init_asset::<AnimationClip>()
+    .init_asset::<TreeLayout>()
+    .init_asset::<TreeMaterial>()
+    .init_resource::<TreeWind>()
+    .add_systems(Startup, setup)
+    .add_systems(PostUpdate, dress_trees);
+    app.finish();
+    app.cleanup();
+    app.update();
+    let scenes = app.world().resource::<LandscapeTreeAssets>().scenes.clone();
+    // Tree01 and Stone01
+    let roots = [5, 2].map(|prototype| {
+        app.world_mut()
+            .spawn(SceneRoot(scenes[prototype].clone()))
+            .id()
+    });
+
+    let meshes = |app: &mut App| {
+        let mut query = app.world_mut().query::<(
+            Entity,
+            &Mesh3d,
+            Option<&MeshMaterial3d<TreeMaterial>>,
+            Has<MeshMaterial3d<StandardMaterial>>,
+            Option<&Aabb>,
+        )>();
+        query
+            .iter(app.world())
+            .map(|(entity, mesh, material, standard, aabb)| {
+                (
+                    entity,
+                    mesh.0.clone(),
+                    material.map(|material| material.0.clone()),
+                    standard,
+                    aabb.copied(),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    // a tree has its leaves and trunk, a stone its rock; the files load on the shared IO pool
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while meshes(&mut app).len() < 3 {
+        assert!(Instant::now() < deadline, "the scenes never spawned");
+        app.update();
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    app.update();
+
+    let surfaces = app.world().resource::<TreeMaterials>().surfaces.clone();
+    let mut tree = Vec::new();
+    let mut stone = Vec::new();
+    for (entity, mesh, material, standard, aabb) in meshes(&mut app) {
+        assert!(!standard, "the model's own material is gone");
+        let material = material.expect("a surface material");
+        let surface = ALL_SURFACES[surfaces
+            .iter()
+            .position(|handle| *handle == material)
+            .expect("one of the surfaces")];
+        let mut root = entity;
+        while let Some(parent) = app.world().get::<ChildOf>(root) {
+            root = parent.parent();
+        }
+        if root == roots[0] {
+            tree.push(surface);
+        } else {
+            assert_eq!(root, roots[1]);
+            stone.push(surface);
+        }
+
+        // the swaying surfaces' bounds reach past the mesh by the wind's padding
+        let tight = app
+            .world()
+            .resource::<Assets<Mesh>>()
+            .get(&mesh)
+            .unwrap()
+            .compute_aabb()
+            .unwrap();
+        let padding = wind_padding(surface.spec().wind.as_ref());
+        if surface.spec().wind.is_some() {
+            assert!(padding > 0.0, "{surface:?}: {padding}");
+            let aabb = aabb.expect("padded bounds");
+            assert_eq!(aabb.center, tight.center);
+            assert!(
+                (Vec3::from(aabb.half_extents) - Vec3::from(tight.half_extents))
+                    .abs_diff_eq(Vec3::splat(padding), 1e-4),
+                "{surface:?}"
+            );
+        } else {
+            assert_eq!(padding, 0.0);
+        }
+    }
+    tree.sort_by_key(|surface| *surface as usize);
+    assert_eq!(tree, [Surface::LeafYellow, Surface::Trunk]);
+    assert_eq!(stone, [Surface::Rock01]);
 }
 
 #[test]

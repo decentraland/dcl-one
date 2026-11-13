@@ -10,12 +10,12 @@ use bevy::{
     gltf::GltfAssetLabel,
     platform::collections::HashMap,
     prelude::*,
-    render::render_resource::ShaderRef,
+    render::{mesh::MeshAabb, render_resource::ShaderRef, view::VisibilitySystems},
 };
 use bevy_console::ConsoleCommand;
 use common::{
     partition::PARCEL_SIZE,
-    sets::PostUpdateSets,
+    sets::RealmLifecycle,
     structs::{LandscapeDistance, PrimaryUser},
 };
 use console::DoAddConsoleCommand;
@@ -30,7 +30,7 @@ use crate::{
     terrain::{TerrainSet, TerrainSurface},
 };
 use layout::{hidden_by_occupancy, TreeLayout, TreeLayoutLoader};
-use material::{add_mips, surface_material, TreeMaterial, TreeSway, ALL_SURFACES};
+use material::{add_mips, surface_material, Surface, TreeMaterial, TreeSway, ALL_SURFACES};
 use prototypes::PROTOTYPES;
 
 pub(crate) mod layout;
@@ -53,14 +53,41 @@ impl Plugin for LandscapeTreesPlugin {
             .add_systems(Update, (add_texture_mips, apply_tree_wind))
             .add_systems(
                 PostUpdate,
-                (
-                    update_trees
-                        .after(TerrainSet)
-                        .before(PostUpdateSets::ColliderUpdate),
-                    dress_trees,
-                ),
+                dress_trees.before(VisibilitySystems::CalculateBounds),
             );
+        add_spawn_systems(app);
     }
+}
+
+/// Spawning and dropping the trees, after the realm has resolved this frame's pointers, so a
+/// parcel resolved empty has its trees in that frame. Ordering the terrain itself after the realm
+/// would close a cycle through the collider update, so a tree spawned here gets its colliders in
+/// the next frame's collider update.
+pub(crate) fn add_spawn_systems(app: &mut App) {
+    app.add_systems(
+        PostUpdate,
+        update_trees.after(TerrainSet).after(RealmLifecycle),
+    );
+}
+
+/// The farthest the wind moves a vertex, in metres: the sway at full force (a crest of the wave
+/// plus the noise's largest turbulence) along the wind with its fifth upwards, and the flutter
+/// along a direction of up to unit size on each axis.
+fn wind_reach(wind: &material::Wind) -> f32 {
+    // three octaves of noise in 0..1 at amplitudes 0.5, 0.25 and 0.125
+    const MAX_FBM: f32 = 0.875;
+    let force = (1.0 + MAX_FBM * wind.turbulence) * wind.strength;
+    force * (1.0f32 + 0.2 * 0.2).sqrt() + 3.0f32.sqrt() * wind.flutter_strength
+}
+
+/// The bounds padding, in mesh units, that keeps a swaying mesh inside its bounds at the smallest
+/// scale any prototype is drawn at; 0 for a still surface.
+pub(crate) fn wind_padding(wind: Option<&material::Wind>) -> f32 {
+    let smallest = PROTOTYPES
+        .iter()
+        .map(|prototype| prototype.scale_xz.0.min(prototype.scale_y.0))
+        .fold(f32::INFINITY, f32::min);
+    wind.map_or(0.0, |wind| wind_reach(wind) / smallest)
 }
 
 fn embed_shaders(app: &mut App) {
@@ -108,7 +135,7 @@ pub(crate) struct LandscapeTreeAssets {
 struct TreeMaterials {
     /// By `Surface`.
     surfaces: Vec<Handle<TreeMaterial>>,
-    by_model_material: HashMap<AssetId<StandardMaterial>, Handle<TreeMaterial>>,
+    by_model_material: HashMap<AssetId<StandardMaterial>, (Surface, Handle<TreeMaterial>)>,
     /// Held so the models' materials keep the ids `by_model_material` knows them by.
     _model_materials: Vec<Handle<StandardMaterial>>,
     textures: Vec<Handle<Image>>,
@@ -147,7 +174,10 @@ fn setup(
                 }
                 .from_asset(path.clone()),
             );
-            by_model_material.insert(model_material.id(), surfaces[*surface as usize].clone());
+            by_model_material.insert(
+                model_material.id(),
+                (*surface, surfaces[*surface as usize].clone()),
+            );
             model_materials.push(model_material);
         }
         asset_server.load(GltfAssetLabel::Scene(0).from_asset(path))
@@ -191,22 +221,36 @@ fn add_texture_mips(
     }
 }
 
-/// The models carry placeholder materials; swap in the surfaces' as their meshes spawn.
+/// A model mesh as the scene spawns it.
+type ModelMesh = (
+    Entity,
+    &'static MeshMaterial3d<StandardMaterial>,
+    &'static Mesh3d,
+);
+
+/// The models carry placeholder materials; swap in the surfaces' as their meshes spawn, and pad a
+/// swaying mesh's bounds by the wind's reach so it is not culled while it leans out of them.
 fn dress_trees(
     mut commands: Commands,
     materials: Option<Res<TreeMaterials>>,
-    added: Query<
-        (Entity, &MeshMaterial3d<StandardMaterial>),
-        Added<MeshMaterial3d<StandardMaterial>>,
-    >,
+    meshes: Res<Assets<Mesh>>,
+    added: Query<ModelMesh, Added<MeshMaterial3d<StandardMaterial>>>,
 ) {
     let Some(materials) = materials else { return };
-    for (entity, material) in &added {
-        if let Some(surface) = materials.by_model_material.get(&material.id()) {
-            commands
-                .entity(entity)
-                .remove::<MeshMaterial3d<StandardMaterial>>()
-                .insert(MeshMaterial3d(surface.clone()));
+    for (entity, material, mesh) in &added {
+        let Some((surface, tree_material)) = materials.by_model_material.get(&material.id()) else {
+            continue;
+        };
+        let mut entity = commands.entity(entity);
+        entity
+            .remove::<MeshMaterial3d<StandardMaterial>>()
+            .insert(MeshMaterial3d(tree_material.clone()));
+        let padding = wind_padding(surface.spec().wind.as_ref());
+        if padding > 0.0 {
+            if let Some(mut aabb) = meshes.get(mesh).and_then(|mesh| mesh.compute_aabb()) {
+                aabb.half_extents += Vec3A::splat(padding);
+                entity.insert(aabb);
+            }
         }
     }
 }
@@ -350,20 +394,28 @@ fn update_trees(
     } else {
         &assets.genesis
     });
+    // a realm of the other kind: the old layout's trees go at once, whether or not the new
+    // layout has loaded
+    let switched = state.world != Some(world);
+    if switched {
+        for (entity, _, _) in &trees {
+            commands.entity(entity).despawn();
+        }
+        state.world = Some(world);
+    }
     if let (true, Some(layout)) = (state.pending, layout) {
-        let switched = state.world != Some(world);
-        *state = TreeState {
-            centre: Some(centre),
-            world: Some(world),
-            pending: false,
-        };
+        state.centre = Some(centre);
+        state.pending = false;
         // unknown parcels stay clear until the realm confirms they are empty
         let mut desired = desired_trees(layout, position, distance.0, |parcel| {
             surface.contains(parcel) && matches!(pointers.get(parcel), Some(PointerResult::Nothing))
         });
-        for (entity, tree, _) in &trees {
-            if switched || desired.remove(&(tree.parcel, tree.index)).is_none() {
-                commands.entity(entity).despawn();
+        // after a switch the old trees are already going
+        if !switched {
+            for (entity, tree, _) in &trees {
+                if desired.remove(&(tree.parcel, tree.index)).is_none() {
+                    commands.entity(entity).despawn();
+                }
             }
         }
         for ((parcel, index), (prototype, mut transform)) in desired {
