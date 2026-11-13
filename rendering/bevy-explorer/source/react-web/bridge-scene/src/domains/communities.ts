@@ -10,6 +10,7 @@
 import { getPlayer } from '@dcl/sdk/players'
 import { BevyApi } from '../bevy-api'
 import { dataUrlBytes, getJson, HttpError, serviceBase, signed, signedForm } from '../http'
+import { destinationsByIds, type DestinationRaw } from '../destinations'
 import { fetchIdentities } from './profile'
 import type { ProfileIdentity } from './profile'
 import { relay } from '../system-helpers'
@@ -430,7 +431,6 @@ async function invitesCount(): Promise<number> {
 // the user owns or operates (one destinations read by owner), and, when editing, the community's
 // linked places (their ids from the social service, their details from the places service by id).
 // Each is labelled "title (world name)" or "title (x,y)" and carries its owner's name.
-type DestinationRaw = { id: string; title?: string; world_name?: string | null; base_position?: string; owner?: string | null }
 
 const GET_PLACES_ERROR = 'There was an error getting places. Please try again.'
 const GET_OWNERS_NAMES_ERROR = 'There was an error getting owners names. Please try again.'
@@ -482,14 +482,6 @@ async function linkedPlaceIds(communityId: string): Promise<string[]> {
     if (rows.length < PAGE || (res?.total != null && ids.length >= res.total)) return ids
   }
   throw new Error(`more than ${PAGE * LINKED_PAGES} linked places`)
-}
-
-/** The places' details by id, a page at a time. A place the service does not return (a disabled
- *  one, say) is left out. */
-async function destinationsByIds(destinations: string, ids: string[]): Promise<DestinationRaw[]> {
-  const rows: DestinationRaw[] = []
-  for (let i = 0; i < ids.length; i += PAGE) rows.push(...((await signed<DestinationRaw[]>(destinations, 'POST', ids.slice(i, i + PAGE))) ?? []))
-  return rows
 }
 
 async function placeOptionsFor(communityId: string | undefined): Promise<CommunityPlaceOptionsMessage> {

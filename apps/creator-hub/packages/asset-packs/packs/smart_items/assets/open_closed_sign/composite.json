@@ -1,0 +1,160 @@
+{
+  "version": 1,
+  "components": [
+    {
+      "name": "core::Transform",
+      "data": {
+        "513": {
+          "json": {
+            "position": {
+              "x": 0,
+              "y": 0,
+              "z": 0
+            },
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            },
+            "rotation": {
+              "x": 0,
+              "y": 0,
+              "z": 0,
+              "w": 1
+            },
+            "parent": 0
+          }
+        },
+        "514": {
+          "json": {
+            "position": {
+              "x": 0,
+              "y": 0,
+              "z": 0
+            },
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            },
+            "rotation": {
+              "x": 0,
+              "y": 0,
+              "z": 0,
+              "w": 1
+            },
+            "parent": 0
+          }
+        }
+      }
+    },
+    {
+      "name": "core::GltfContainer",
+      "data": {
+        "513": {
+          "json": {
+            "src": "{assetPath}/Closed_Sign.glb",
+            "visibleMeshesCollisionMask": 1,
+            "invisibleMeshesCollisionMask": 2
+          }
+        },
+        "514": {
+          "json": {
+            "src": "{assetPath}/Open_Sign.glb",
+            "visibleMeshesCollisionMask": 1,
+            "invisibleMeshesCollisionMask": 2
+          }
+        }
+      }
+    },
+    {
+      "name": "asset-packs::Script",
+      "data": {
+        "0": {
+          "json": {
+            "value": [
+              {
+                "path": "{assetPath}/Sign.ts",
+                "priority": 0,
+                "layout": "{\"params\":{\"sound\":{\"type\":\"string\",\"optional\":true,\"value\":\"NeonTube.mp3\",\"tooltip\":\"Name of an audio file inside this smart item's folder, played whenever the sign flips. Leave empty for no sound.\"},\"onOpen\":{\"type\":\"action\",\"optional\":true,\"value\":{\"entity\":0,\"action\":\"\"},\"tooltip\":\"Action triggered every time the sign flips to Open.\"},\"onClose\":{\"type\":\"action\",\"optional\":true,\"value\":{\"entity\":0,\"action\":\"\"},\"tooltip\":\"Action triggered every time the sign flips to Closed.\"}},\"actions\":[{\"methodName\":\"open\",\"description\":\"Flips the sign to Open\",\"params\":{}},{\"methodName\":\"close\",\"description\":\"Flips the sign to Closed\",\"params\":{}},{\"methodName\":\"toggle\",\"description\":\"Flips the sign to Closed if it shows Open, or to Open if it shows Closed\",\"params\":{}}],\"events\":[\"open\",\"close\"]}"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "core-schema::Name",
+      "data": {
+        "0": {
+          "json": {
+            "value": "Open-Closed"
+          }
+        },
+        "513": {
+          "json": {
+            "value": "Closed"
+          }
+        },
+        "514": {
+          "json": {
+            "value": "Open"
+          }
+        }
+      }
+    },
+    {
+      "name": "core::VisibilityComponent",
+      "data": {
+        "513": {
+          "json": {
+            "visible": false
+          }
+        },
+        "514": {
+          "json": {
+            "visible": true
+          }
+        }
+      }
+    },
+    {
+      "name": "asset-packs::Actions",
+      "data": {
+        "0": {
+          "json": {
+            "id": "{self}",
+            "value": [
+              {
+                "type": "call_script_method",
+                "name": "Open",
+                "jsonPayload": "{\"scriptPath\":\"{assetPath}/Sign.ts\",\"methodName\":\"open\",\"params\":{}}"
+              },
+              {
+                "type": "call_script_method",
+                "name": "Close",
+                "jsonPayload": "{\"scriptPath\":\"{assetPath}/Sign.ts\",\"methodName\":\"close\",\"params\":{}}"
+              },
+              {
+                "type": "call_script_method",
+                "name": "Open or Close",
+                "jsonPayload": "{\"scriptPath\":\"{assetPath}/Sign.ts\",\"methodName\":\"toggle\",\"params\":{}}",
+                "default": true
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "core-schema::Sync-Components",
+      "data": {
+        "0": {
+          "json": {
+            "componentIds": ["asset-packs::States"]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,61 @@
+{
+  "version": 1,
+  "components": [
+    {
+      "name": "asset-packs::Placeholder",
+      "data": {
+        "0": {
+          "json": {
+            "src": "{assetPath}/click_area.glb"
+          }
+        }
+      }
+    },
+    {
+      "name": "core::MeshCollider",
+      "jsonSchema": {
+        "type": "object",
+        "properties": {},
+        "serializationType": "protocol-buffer",
+        "protocolBuffer": "PBMeshCollider"
+      },
+      "data": {
+        "0": {
+          "json": {
+            "collisionMask": 1,
+            "mesh": {
+              "$case": "box",
+              "box": {}
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "core-schema::Sync-Components",
+      "data": {
+        "0": {
+          "json": {
+            "value": ["core::PointerEvents"]
+          }
+        }
+      }
+    },
+    {
+      "name": "asset-packs::Script",
+      "data": {
+        "0": {
+          "json": {
+            "value": [
+              {
+                "path": "{assetPath}/ClickArea.tsx",
+                "priority": 0,
+                "layout": "{\"params\":{\"hoverText\":{\"type\":\"string\",\"optional\":true,\"value\":\"Click\"},\"inputButton\":{\"type\":\"number\",\"optional\":true,\"value\":0}},\"events\":[\"click\"]}"
+              }
+            ]
+          }
+        }
+      }
+    }
+  ]
+}
