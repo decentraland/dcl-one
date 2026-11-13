@@ -745,6 +745,7 @@ impl DecentralandApp {
         app.configure_sets(Startup, SetupSets::Init.before(SetupSets::Main));
         app.add_systems(Startup, setup.in_set(SetupSets::Init));
         app.add_systems(Startup, save_fresh_user_id);
+        app.add_systems(Startup, scene_runner::util::remove_scene_storage);
 
         // Commands
         app.add_console_command::<ChangeLocationCommand, _>(change_location);
