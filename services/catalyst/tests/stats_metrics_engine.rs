@@ -10,6 +10,7 @@ fn configured_stats_engine_and_http_contract() {
                 "--exact",
                 "configured_stats_engine_and_http_contract",
                 "--nocapture",
+                "--test-threads=1",
             ])
             .env("DCL_STATS_ENGINE_CHILD", "1")
             .stdout(std::process::Stdio::piped())
@@ -36,7 +37,7 @@ fn configured_stats_engine_and_http_contract() {
                     1,
                     "child must emit exactly one receipt: {output}"
                 );
-                writeln!(std::io::stdout().lock(), "{}", receipts[0]).unwrap();
+                writeln!(std::io::stdout().lock(), "\n{}", receipts[0]).unwrap();
                 return;
             }
             if Instant::now() >= deadline {
@@ -75,10 +76,11 @@ fn configured_stats_engine_and_http_contract() {
         .join()
         .expect("child wrapper must return plain errors")
         .unwrap();
+    // A fresh line separates the receipt from libtest's unterminated pretty prefix.
     // Direct stdout survives libtest success capture and is retained by the runner.
     writeln!(
         std::io::stdout().lock(),
-        "STATS_ENGINE_RECEIPT {}",
+        "\nSTATS_ENGINE_RECEIPT {}",
         serde_json::json!({"initialization_ns":initialization_ns,"result":result})
     )
     .unwrap();

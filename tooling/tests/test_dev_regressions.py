@@ -426,7 +426,8 @@ class InventoryTests(unittest.TestCase):
             for executable in executables:
                 executable.write_text(
                     '#!/bin/sh\nprintf "%s\\n" "' + executable.name + '" >> "' + count.as_posix() + '"\n'
-                    + "printf '%s\\n' 'STATS_ENGINE_RECEIPT {\"completed\":32}' "
+                    + "printf '%s' 'test configured_stats_engine_and_http_contract ... '\n"
+                    + "printf '\\n%s\\n' 'STATS_ENGINE_RECEIPT {\"completed\":32}' "
                     + "'private success detail' 'test result: ok. 1 passed; 0 failed'\n"
                 )
                 executable.chmod(0o755)
@@ -444,7 +445,10 @@ class InventoryTests(unittest.TestCase):
             self.assertEqual((directory / "stats-engine-receipt.log").read_text().splitlines(), receipts)
             self.assertEqual(result.stdout.count("1 passed; 0 failed"), 2)
             for executable in executables:
-                self.assertIn("private success detail", (directory / (executable.name + ".log")).read_text())
+                log = (directory / (executable.name + ".log")).read_text()
+                self.assertEqual(log.splitlines()[0], "test configured_stats_engine_and_http_contract ... ")
+                self.assertTrue(log.splitlines()[1].startswith("STATS_ENGINE_RECEIPT "))
+                self.assertIn("private success detail", log)
 
     def test_actual_test_script_rejects_filters_skipped_binaries_and_early_exit(self):
         script = (ROOT / "tooling/catalyst-test.sh").read_text()
