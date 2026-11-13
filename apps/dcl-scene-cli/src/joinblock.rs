@@ -239,6 +239,29 @@ fn query_value_encode(value: &str) -> String {
     out
 }
 
+/// Why a browser will refuse this player on this realm, when it will: a page
+/// served over https may fetch plain http from this machine's loopback and
+/// from nowhere else, so an https player pointed at `http://<lan address>`
+/// loads and then shows nothing. The answer names the ways out.
+pub fn web_blocked(web_explorer: &str, realm: &str) -> Option<String> {
+    let player = parse_web_explorer(web_explorer).ok()?;
+    let realm = url::Url::parse(realm).ok()?;
+    let loopback = match realm.host()? {
+        url::Host::Domain(d) => d == "localhost" || d.ends_with(".localhost"),
+        url::Host::Ipv4(ip) => ip.is_loopback(),
+        url::Host::Ipv6(ip) => ip.is_loopback(),
+    };
+    (player.scheme() == "https" && realm.scheme() == "http" && !loopback).then(|| {
+        format!(
+            "The browser blocks this pairing: {} is served over https and cannot load a preview from plain http at {}. \
+             Open the preview as http://127.0.0.1 on the machine that runs it, or serve it over https: \
+             start with --tunnel, or put a proxy in front and pass --public-url https://<your domain>.",
+            player.host_str().unwrap_or("the player"),
+            realm.host_str().unwrap_or("this address"),
+        )
+    })
+}
+
 pub fn web_join_url(web_explorer: &str, realm: &str, position: (i64, i64)) -> String {
     let Ok(mut player) = parse_web_explorer(web_explorer) else {
         return String::new();
@@ -585,9 +608,18 @@ impl JoinBlock {
     }
 
     pub fn internet_section(&self, public_url: &str) -> String {
+        self.public_section(
+            "Join from the INTERNET \u{2014} tunnel connected",
+            public_url,
+        )
+    }
+
+    /// The join links of an address other than this machine's own: a tunnel's
+    /// public URL, or the `--public-url` a proxy serves the preview at.
+    pub fn public_section(&self, heading: &str, public_url: &str) -> String {
         let realm = public_url.trim_end_matches('/');
         let mut out = String::new();
-        out.push_str("\nJoin from the INTERNET \u{2014} tunnel connected\n");
+        out.push_str(&format!("\n{heading}\n"));
         row(&mut out, "realm:", realm);
         row(&mut out, "web:", self.web_url(realm));
         row(&mut out, "desktop:", self.desktop_link(realm, ""));
@@ -1068,6 +1100,30 @@ mod tests {
 
     /// A realm reflected from a proxy header must not be able to open a second
     /// query param in the web-explorer href.
+    #[test]
+    fn an_https_player_is_blocked_only_on_plain_http_off_loopback() {
+        let player = "https://decentraland.org/bevy-web";
+        for fine in [
+            "http://127.0.0.1:8000",
+            "http://localhost:8000",
+            "http://[::1]:8000",
+            "https://preview.example.com",
+            "https://tunnel.example/t/abc",
+        ] {
+            assert_eq!(web_blocked(player, fine), None, "{fine}");
+        }
+        let blocked = web_blocked(player, "http://192.0.2.20:8000").unwrap();
+        assert!(blocked.contains("decentraland.org"), "{blocked}");
+        assert!(blocked.contains("192.0.2.20"), "{blocked}");
+        assert!(blocked.contains("--tunnel"), "{blocked}");
+        assert!(blocked.contains("--public-url"), "{blocked}");
+        assert_eq!(
+            web_blocked("http://192.0.2.20:5173/play", "http://192.0.2.20:8000"),
+            None,
+            "a player served over http loads an http preview"
+        );
+    }
+
     #[test]
     fn web_join_url_encodes_the_realm() {
         let url = web_join_url(
