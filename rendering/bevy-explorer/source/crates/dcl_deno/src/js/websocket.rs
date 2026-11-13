@@ -1,4 +1,5 @@
 use crate::js::errors::{bail, OpError};
+use crate::js::fetch::USER_AGENT;
 use std::{
     borrow::Cow,
     cell::{Cell, RefCell},
@@ -68,7 +69,6 @@ const CLOSE_TIMEOUT: Duration = Duration::from_secs(5);
 const CLOSE_DRAIN_TIMEOUT: Duration = Duration::from_secs(60);
 const MAX_URL_BYTES: usize = 8 * 1024;
 const MAX_PROTOCOLS_BYTES: usize = 4 * 1024;
-const USER_AGENT: &str = "DCLExplorer/0.1";
 
 const KIND_TEXT: u16 = 0;
 const KIND_BINARY: u16 = 1;

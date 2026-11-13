@@ -57,6 +57,7 @@ function createEntry(name, value, filename) {
     ObjectPrototypeIsPrototypeOf(BlobPrototype, value) &&
     !ObjectPrototypeIsPrototypeOf(FilePrototype, value)
   ) {
+    // CLOCK_GRANULARITY in hardened_ops.rs
     const now = DateNow();
     value = new File([value], "blob", {
       type: value.type,

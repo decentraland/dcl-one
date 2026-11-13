@@ -28,7 +28,6 @@ pub(super) fn deno_fetch() -> Vec<ExtensionFileSource> {
         "ext:deno_fetch/23_request.js" = "vendor/deno_fetch/23_request.js",
         "ext:deno_fetch/23_response.js" = "vendor/deno_fetch/23_response.js",
         "ext:deno_fetch/26_fetch.js" = "vendor/deno_fetch/26_fetch.js",
-        "ext:deno_fetch/27_eventsource.js" = "vendor/deno_fetch/27_eventsource.js",
     )
 }
 

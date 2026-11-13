@@ -178,7 +178,7 @@ pub fn op_fetch(
         }
     }
 
-    request = request.header("User-Agent", "DCLExplorer/0.1");
+    request = request.header("User-Agent", USER_AGENT);
 
     debug!("request {url}");
     let cancel = CancelHandle::new_rc();
@@ -496,6 +496,9 @@ impl reqwest::dns::Resolve for PublicOnlyResolver {
     }
 }
 
+/// What scene fetches and websockets send as their User-Agent.
+pub(crate) const USER_AGENT: &str = "DCLExplorer/0.1";
+
 /// Shared base for every scene http client: connect timeout, native TLS, UA, and the
 /// resolver that refuses any non-public address at connect time, so the address that was
 /// checked is the address that is dialled. `allow_private` (preview or a native system
@@ -504,7 +507,7 @@ fn scene_client_builder(allow_private: bool) -> reqwest::ClientBuilder {
     platform::http_client_builder()
         .connect_timeout(Duration::from_secs(5))
         .use_native_tls()
-        .user_agent("DCLExplorer/0.1")
+        .user_agent(USER_AGENT)
         .dns_resolver(std::sync::Arc::new(PublicOnlyResolver { allow_private }))
 }
 

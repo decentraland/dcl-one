@@ -857,8 +857,10 @@ fn op_encoding_decode_single<'s>(
     Ok(decode(scope, &mut decoder, data, fatal, true)?)
 }
 
-// Scenes share a process, so every clock they can read is coarsened against timing side
-// channels: these ops, and `Date`, `Temporal.Now` and `Intl.DateTimeFormat` in init.js.
+// Scenes share a process, so the clocks they read are coarsened against timing side channels:
+// these ops, `Date`, `Temporal.Now`, `Intl.DateTimeFormat` and `File` in init.js, and
+// 21_formdata.js, which repeat the 2 ms. Only the authoritative server holds this: a client
+// scene keeps `Deno` and its primordials, which read the native clock.
 const CLOCK_GRANULARITY: std::time::Duration = std::time::Duration::from_millis(2);
 const CLOCK_GRANULARITY_MS: f64 = 2.0;
 

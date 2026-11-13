@@ -254,6 +254,7 @@ const NativeDate = Date;
 const nativeNow = Date.now;
 const ReflectConstruct = Reflect.construct;
 const coarseNow = () => {
+    // CLOCK_GRANULARITY in hardened_ops.rs
     const now = nativeNow();
     return now - (now % 2);
 };
@@ -307,6 +308,7 @@ Object.defineProperties(dateTimeFormat, {
     const descriptor = Object.getOwnPropertyDescriptor(filePrototype, "lastModified");
     const nativeLastModified = descriptor.get;
     descriptor.get = function lastModified() {
+        // CLOCK_GRANULARITY in hardened_ops.rs
         const time = ReflectApply(nativeLastModified, this, []);
         return time - (((time % 2) + 2) % 2);
     };

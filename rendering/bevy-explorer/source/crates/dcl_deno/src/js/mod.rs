@@ -12,11 +12,11 @@ use dcl_types::{
     RendererResponse, RpcCalls, SceneResourceCounters, SceneResponse, SceneResponseSender,
 };
 use deno_core::{
-    anyhow::anyhow, ascii_str, error::AnyError, op2, v8, Extension, JsRuntime, OpDecl, OpState,
+    ascii_str, error::AnyError, op2, v8, Extension, JsRuntime, OpDecl, OpState,
     PollEventLoopOptions, RuntimeOptions,
 };
 use system_bridge::SystemApi;
-use tokio::{sync::mpsc::UnboundedReceiver, time::timeout};
+use tokio::sync::mpsc::UnboundedReceiver;
 
 use common::structs::SceneJsFile;
 
@@ -294,8 +294,6 @@ fn web_extensions(blob_store: Arc<blob_store::CappedBlobStore>) -> [Extension; 3
 /// Overrides that did not replace an op exactly, logged at runtime creation.
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) struct OpOverrideProblems(pub Vec<String>);
-
-pub struct StorageRoot(pub String);
 
 // main scene processing thread - constructs an isolate and runs the scene
 #[allow(clippy::too_many_arguments)]
@@ -622,20 +620,10 @@ async fn run_script(
 
     let f = runtime.resolve(promise);
 
-    let result = if true {
-        runtime
-            .with_event_loop_promise(f, PollEventLoopOptions::default())
-            .await
-            .map(|_| ())
-    } else {
-        timeout(
-            Duration::from_secs(30),
-            runtime.with_event_loop_promise(f, PollEventLoopOptions::default()),
-        )
+    let result = runtime
+        .with_event_loop_promise(f, PollEventLoopOptions::default())
         .await
-        .map_err(|_| anyhow!("script timed out"))?
-        .map(|_| ())
-    };
+        .map(|_| ());
 
     Ok(result?)
 }
