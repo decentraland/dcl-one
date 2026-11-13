@@ -300,9 +300,14 @@ jobs:
         timeout-minutes: 20
         run: nix develop --command pnpm --dir apps/ui3 test
       - name: Run Sites unit tests
+        id: sites-tests
         if: steps.web-coverage.outputs.run-web-unit-tests != 'false'
         timeout-minutes: 20
         run: nix develop --command pnpm --dir apps/sites test
+      - name: Diagnose isolated header geometry startup
+        if: ${{ failure() && steps.sites-tests.outcome == 'failure' && steps.sites-tests.outputs.capture-missing-port == 'true' }}
+        timeout-minutes: 2
+        run: nix develop --command pnpm --dir apps/sites test src/features/components/chrome/header-geometry.test.ts
       - name: Run editor scene unit tests
         if: steps.web-coverage.outputs.run-web-unit-tests != 'false'
         timeout-minutes: 20

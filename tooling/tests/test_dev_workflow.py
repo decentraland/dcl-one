@@ -49,6 +49,36 @@ class DevelopmentWorkflowTest(unittest.TestCase):
         self.assertIn('bash tooling/dev-smoke.sh', smoke)
         self.assertIn('bash tooling/dev-test.sh e2e', smoke)
 
+    def test_header_geometry_control_requires_the_original_missing_port_evidence(self):
+        web = jobs()['web']
+        original = re.search(r'(?ms)^      - name: Run Sites unit tests\n(.*?)(?=^      - |\Z)', web).group(1)
+        self.assertIn('id: sites-tests', original)
+        self.assertIn('run: nix develop --command pnpm --dir apps/sites test\n', original)
+        self.assertNotIn('continue-on-error', original)
+        control = re.findall(r'(?ms)^      - name: Diagnose isolated header geometry startup\n(.*?)(?=^      - |\Z)', web)
+        self.assertEqual(len(control), 1)
+        control = control[0]
+        self.assertIn('timeout-minutes: 2', control)
+        self.assertNotIn('continue-on-error', control)
+        self.assertNotIn('|', control)
+        self.assertIn('run: nix develop --command pnpm --dir apps/sites test src/features/components/chrome/header-geometry.test.ts\n', control)
+        self.assertLess(web.index('name: Run Sites unit tests'), web.index('name: Diagnose isolated header geometry startup'))
+        expression = re.search(r'^        if: \$\{\{ (.*?) \}\}$', control, re.M).group(1)
+        expression = expression.replace('&&', 'and')
+        expression = expression.replace('steps.sites-tests.outcome', 'outcome')
+        expression = expression.replace('steps.sites-tests.outputs.capture-missing-port', 'evidence')
+        for failed, outcome, evidence, expected in (
+            (True, 'failure', 'true', True),
+            (True, 'failure', '', False),
+            (True, 'success', 'true', False),
+            (False, 'cancelled', 'true', False),
+            (False, 'success', '', False),
+        ):
+            with self.subTest(failed=failed, outcome=outcome, evidence=evidence):
+                self.assertEqual(bool(eval(expression, {'__builtins__': {}}, {
+                    'failure': lambda: failed, 'outcome': outcome, 'evidence': evidence,
+                })), expected)
+
     def test_every_nix_job_restores_the_store_snapshot_before_its_first_shell(self):
         policy = WORKFLOW.parents[2] / 'tooling/repo-actions-policy.sh'
         self.assertIn("patterns_allowed[]=nix-community/cache-nix-action@*", policy.read_text())

@@ -1,4 +1,6 @@
 import { readFileSync } from "node:fs";
+import { appendFile } from "node:fs/promises";
+import { availableParallelism, freemem, loadavg } from "node:os";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
@@ -20,17 +22,66 @@ let startup: ReturnType<typeof openSession> | undefined;
 const startupController = new AbortController();
 // Teardown also owns a startup that outlives this fixture's integration budget.
 beforeAll(async () => {
-  startup = (async () =>
-    openSession(
-      await findBrowser([
-        process.env.BROWSER_PATH,
-        process.env.CHROME_PATH,
+  startup = (async () => {
+    const candidates = [
+      [process.env.BROWSER_PATH, "BROWSER_PATH"],
+      [process.env.CHROME_PATH, "CHROME_PATH"],
+      [
         "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-        "/usr/bin/google-chrome",
-        "/usr/bin/chromium",
-      ]),
-      { signal: startupController.signal },
-    ))();
+        "macos-chrome",
+      ],
+      ["/usr/bin/google-chrome", "linux-chrome"],
+      ["/usr/bin/chromium", "linux-chromium"],
+    ] as const;
+    const executable = await findBrowser(candidates.map(([file]) => file));
+    const source = candidates.find(([file]) => file === executable)![1];
+    try {
+      const address = process.env.DBUS_SESSION_BUS_ADDRESS;
+      const type = address?.split(":", 1)[0];
+      console.info(
+        "Header geometry launch context:",
+        JSON.stringify({
+          source,
+          cpus: availableParallelism(),
+          load: loadavg().map((value) => Number(value.toFixed(2))),
+          freeMemoryMiB: Math.floor(freemem() / 1024 / 1024),
+          dbus: !address
+            ? "unset"
+            : ["unix", "tcp", "autolaunch"].includes(type!)
+              ? type
+              : "other",
+        }),
+      );
+    } catch {
+      // Diagnostics must not prevent the browser launch.
+    }
+    try {
+      return await openSession(executable, {
+        signal: startupController.signal,
+      });
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        "code" in error &&
+        error.code === "CAPTURE_BROWSER_PORT_MISSING"
+      ) {
+        try {
+          if (process.env.GITHUB_OUTPUT) {
+            await appendFile(
+              process.env.GITHUB_OUTPUT,
+              "capture-missing-port=true\n",
+            );
+          }
+          console.error(
+            "Header geometry missing-port receipt: capture-missing-port=true",
+          );
+        } catch {
+          // A diagnostic receipt cannot replace the startup failure.
+        }
+      }
+      throw error;
+    }
+  })();
   session = await startup;
 }, 40_000);
 afterAll(async () => {
