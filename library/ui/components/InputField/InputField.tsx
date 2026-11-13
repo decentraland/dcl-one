@@ -57,7 +57,13 @@ export function InputField({
 }: InputFieldProps & { surface: 'explorer' | 'web' }) {
   const generatedId = useId()
   const inputId = id ?? generatedId
-  const [revealed, setRevealed] = useState(false)
+  const canReveal = type === 'password' && allowPasswordReveal && !input.disabled
+  const [visibility, setVisibility] = useState({ eligible: canReveal, revealed: false })
+  // Revoke visibility in this render instead of waiting for a post-paint effect.
+  if (visibility.eligible !== canReveal) {
+    setVisibility({ eligible: canReveal, revealed: false })
+  }
+  const revealed = canReveal && visibility.eligible && visibility.revealed
   const inputRef = useRef<HTMLInputElement>(null)
   useImperativeHandle(forwardedRef, () => inputRef.current!)
   const { surface, ...nativeInput } = input
@@ -70,7 +76,7 @@ export function InputField({
     completedDispatch.port1.onmessage = () => {
       if (!active) return
       const accepted = pendingResets.splice(0).some((event) => !event.defaultPrevented)
-      if (accepted) setRevealed(false)
+      if (accepted) setVisibility((current) => ({ ...current, revealed: false }))
     }
     const reset = (event: Event) => {
       // A task observes cancellation after native and React reset owners have run.
@@ -90,8 +96,8 @@ export function InputField({
   const sanitized = nativeInput as InputHTMLAttributes<HTMLInputElement>
   delete sanitized.children
   delete sanitized.dangerouslySetInnerHTML
-  const descriptionId = description ? `${inputId}-description` : undefined
-  const errorId = error ? `${inputId}-error` : undefined
+  const descriptionId = description?.trim() ? `${inputId}-description` : undefined
+  const errorId = error?.trim() ? `${inputId}-error` : undefined
   const counterId = counter?.trim() ? `${inputId}-counter` : undefined
   const suffixId = suffix?.trim() ? `${inputId}-suffix` : undefined
   const hintId = hint?.trim() ? `${inputId}-hint` : undefined
@@ -107,13 +113,13 @@ export function InputField({
       >
         {label}
       </label>
-      {description ? (
+      {descriptionId ? (
         <div id={descriptionId} className={styles.description}>
           {description}
         </div>
       ) : null}
       <div className={styles.fieldRow}>
-        <div className={styles.field} data-invalid={!!error || undefined}>
+        <div className={styles.field} data-invalid={!!errorId || undefined}>
           {hasRenderableContent(leadingIcon) ? (
             <span className={styles.icon} aria-hidden="true">
               {leadingIcon}
@@ -123,8 +129,8 @@ export function InputField({
             {...sanitized}
             ref={inputRef}
             id={inputId}
-            type={type === 'password' && revealed ? 'text' : type}
-            aria-invalid={error ? true : nativeInput['aria-invalid']}
+            type={revealed ? 'text' : type}
+            aria-invalid={errorId ? true : nativeInput['aria-invalid']}
             aria-describedby={ids}
             className={styles.input}
           />
@@ -145,7 +151,9 @@ export function InputField({
               aria-label={revealed ? hideLabel : revealLabel}
               aria-pressed={revealed}
               disabled={nativeInput.disabled}
-              onClick={() => setRevealed((value) => !value)}
+              onClick={() =>
+                setVisibility((current) => ({ ...current, revealed: !current.revealed }))
+              }
             >
               <PasswordVisibilityIcon revealed={revealed} />
             </button>
@@ -153,13 +161,13 @@ export function InputField({
         </div>
         {hasRenderableContent(action) ? <div className={styles.action}>{action}</div> : null}
       </div>
-      {error || counterId || hintId ? (
+      {errorId || counterId || hintId ? (
         <div className={styles.status}>
           {counterId ? <span id={counterId}>{counter}</span> : null}
-          {error ? (
+          {errorId ? (
             <div className={styles.errorRow}>
               <InputErrorIcon surface={surface} />
-              <div id={errorId} className={styles.error} role="status">
+              <div id={errorId} className={styles.error}>
                 {error}
               </div>
             </div>

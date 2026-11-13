@@ -739,6 +739,10 @@
           "kind": "regular"
         },
         {
+          "name": "link.helpers.ts",
+          "kind": "regular"
+        },
+        {
           "name": "package.json",
           "kind": "regular"
         },

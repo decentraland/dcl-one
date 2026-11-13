@@ -30,3 +30,18 @@ it('should preserve its owned content when untyped callers provide HTML override
   expect(screen.getByRole('link')).toHaveTextContent('Overview')
   expect(screen.queryByText('Injected content')).toBeNull()
 })
+
+for (const [target, rel, expected] of [
+  ['_blank', undefined, 'noopener noreferrer'],
+  ['named-window', 'nofollow', 'nofollow noopener noreferrer'],
+  ['_BLANK', 'noopener noopener', 'noopener noreferrer'],
+  ['_self', 'nofollow', 'nofollow'],
+  [undefined, undefined, undefined]
+] as const)
+  it(`should preserve safe native link relations for ${target ?? 'the current window'}`, () => {
+    render(<Tabs href="/profile" label="Overview" target={target} rel={rel} />)
+    const link = screen.getByRole('link')
+    if (expected === undefined) expect(link).not.toHaveAttribute('rel')
+    else expect(link).toHaveAttribute('rel', expected)
+    expect(link).toHaveAttribute('href', '/profile')
+  })

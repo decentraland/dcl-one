@@ -55,3 +55,22 @@ describe('when native password form reset reaches its final owner', () => {
     expect(browser.session.runtimeErrors).toHaveLength(0)
   })
 })
+
+for (const control of ['#allow', '#field-type', '#disabled'])
+  it(`should remask after a reveal eligibility transition through ${control}`, async () => {
+    await browser.session.navigate(browser.origin)
+    await evaluate(
+      '(async()=>{for(let n=0;n<100&&!document.querySelector("input");n++)await new Promise(r=>setTimeout(r,20))})()'
+    )
+    await click('button[aria-label="Show password"]')
+    expect(await evaluate('document.querySelector("input").type')).toBe('text')
+    await click(control)
+    if (control !== '#field-type')
+      expect(await evaluate('document.querySelector("input").type')).toBe('password')
+    await click(control)
+    expect(await evaluate('document.querySelector("input").type')).toBe('password')
+    expect(await evaluate('document.querySelector("input").value')).toBe('secret')
+    expect(
+      await evaluate('document.querySelector("button[aria-pressed]").getAttribute("aria-pressed")')
+    ).toBe('false')
+  })

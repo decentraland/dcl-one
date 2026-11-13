@@ -19,6 +19,45 @@ async function ready(width: number, label = 'Overview') {
     '(async()=>{for(let n=0;n<100&&!document.querySelector("#tabs a");n++)await new Promise(r=>setTimeout(r,20));await document.fonts.ready})()'
   )
 }
+async function hoverFirst() {
+  const point = await evaluate<{ x: number; y: number; outsideY: number }>(
+    `(() => { const r=document.querySelector('#tabs a').getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2,outsideY:innerHeight-1} })()`
+  )
+  await browser.session.send('Input.dispatchMouseEvent', {
+    type: 'mouseMoved',
+    x: 0,
+    y: point.outsideY,
+    pointerType: 'mouse'
+  })
+  await browser.session.send('Input.dispatchMouseEvent', {
+    type: 'mouseMoved',
+    x: point.x,
+    y: point.y,
+    pointerType: 'mouse'
+  })
+  await evaluate('new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))')
+  const observed = await evaluate<{
+    hover: boolean
+    fine: boolean
+    matched: boolean
+    hit: boolean
+    font: string
+    weight: string
+  }>(`(() => {
+    const e=document.querySelector('#tabs a'),r=e.getBoundingClientRect(),s=getComputedStyle(e);
+    return {hover:matchMedia('(hover:hover)').matches,fine:matchMedia('(pointer:fine)').matches,
+      matched:e.matches(':hover'),hit:document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)?.closest('a')===e,
+      font:s.fontSize,weight:s.fontWeight,width:innerWidth,touch:navigator.maxTouchPoints,focused:document.hasFocus(),userAgent:navigator.userAgent};
+  })()`)
+  expect(observed, JSON.stringify(observed)).toMatchObject({
+    hover: true,
+    fine: true,
+    matched: true,
+    hit: true,
+    font: '15px',
+    weight: '700'
+  })
+}
 describe('when public native route tabs render their captured content', () => {
   for (const width of [390, 1440])
     it(`should preserve native target and typography at${width}`, async () => {
@@ -49,12 +88,7 @@ describe('when public native route tabs render their captured content', () => {
     const before = await evaluate<{ x: number; width: number }[]>(
       `(()=>[...document.querySelectorAll('#tabs a')].map(e=>{const r=e.getBoundingClientRect();return{x:r.x,width:r.width}}))()`
     )
-    await browser.session.send('Input.dispatchMouseEvent', {
-      type: 'mouseMoved',
-      x: before[0]!.x + before[0]!.width / 2,
-      y: 40
-    })
-    await evaluate('new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))')
+    await hoverFirst()
     const after = await evaluate<{ x: number; width: number }[]>(
       `(()=>[...document.querySelectorAll('#tabs a')].map(e=>{const r=e.getBoundingClientRect();return{x:r.x,width:r.width}}))()`
     )
@@ -73,12 +107,7 @@ describe('when valid route captions use narrow and wide glyphs', () => {
       const before = await evaluate<{ x: number; width: number }[]>(
         `(()=>[...document.querySelectorAll('#tabs a')].map(e=>{const r=e.getBoundingClientRect();return{x:r.x,width:r.width}}))()`
       )
-      await browser.session.send('Input.dispatchMouseEvent', {
-        type: 'mouseMoved',
-        x: before[0]!.x + before[0]!.width / 2,
-        y: 40
-      })
-      await evaluate('new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))')
+      await hoverFirst()
       expect(
         await evaluate(
           `(()=>{const e=document.querySelector('#tabs a span');return e.scrollWidth>e.clientWidth})()`

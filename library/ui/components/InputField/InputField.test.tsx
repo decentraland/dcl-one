@@ -26,7 +26,8 @@ for (const Field of [InputExplorerNames, SharedWebField]) {
       const input = screen.getByRole('textbox', { name: 'Email' })
       expect(input).toHaveAttribute('aria-invalid', 'true')
       expect(input).toHaveAccessibleDescription('External Use an address Invalid address')
-      expect(screen.getByRole('status')).toHaveTextContent('Invalid address')
+      expect(screen.getByText('Invalid address')).toBeInTheDocument()
+      expect(screen.queryByRole('status')).toBeNull()
     })
     it('should preserve controlled values, native name and change events', async () => {
       const change = vi.fn()
@@ -72,7 +73,7 @@ for (const Field of [InputExplorerNames, SharedWebField]) {
         <Field label="Name" readOnly defaultValue="Ada" error="Invalid" />
       )
       rerender(<Field label="Name" readOnly defaultValue="Ada" aria-invalid="grammar" />)
-      expect(screen.queryByRole('status')).not.toBeInTheDocument()
+      expect(screen.queryByText('Invalid')).not.toBeInTheDocument()
       expect(screen.getByRole('textbox')).toHaveAttribute('readonly')
       expect(screen.getByRole('textbox')).toHaveAttribute('aria-invalid', 'grammar')
     })

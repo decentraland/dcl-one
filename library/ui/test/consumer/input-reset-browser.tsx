@@ -6,6 +6,9 @@ function App() {
     cancel = q.get('cancel'),
     external = q.has('external')
   const [mounted, setMounted] = useState(true)
+  const [revealAllowed, setRevealAllowed] = useState(true)
+  const [fieldType, setFieldType] = useState<'password' | 'text'>('password')
+  const [disabled, setDisabled] = useState(false)
   useEffect(() => {
     const late = (e: Event) => {
       if (cancel === 'document') e.preventDefault()
@@ -18,8 +21,9 @@ function App() {
   const input = mounted ? (
     <Field
       label="Password"
-      type="password"
-      allowPasswordReveal
+      type={fieldType}
+      allowPasswordReveal={revealAllowed}
+      disabled={disabled}
       defaultValue="secret"
       form={external ? 'owner' : undefined}
     />
@@ -39,6 +43,19 @@ function App() {
         </button>
       </form>
       {external ? input : null}
+      <button id="allow" type="button" onClick={() => setRevealAllowed((value) => !value)}>
+        Toggle reveal permission
+      </button>
+      <button
+        id="field-type"
+        type="button"
+        onClick={() => setFieldType((value) => (value === 'password' ? 'text' : 'password'))}
+      >
+        Toggle native type
+      </button>
+      <button id="disabled" type="button" onClick={() => setDisabled((value) => !value)}>
+        Toggle disabled
+      </button>
     </>
   )
 }
