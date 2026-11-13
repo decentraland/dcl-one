@@ -155,14 +155,21 @@ fn above_ninety_percent(
 /// `freemem`). A figure that cannot be read counts as not overloaded; off
 /// Linux there is no memory figure.
 fn resources_overloaded() -> bool {
+    #[cfg(unix)]
     let mut load = [0f64; 3];
     // SAFETY: getloadavg writes at most `nelem` doubles into `load`.
+    #[cfg(unix)]
     let load_one_minute = match unsafe { libc::getloadavg(load.as_mut_ptr(), 1) } {
         1.. => load[0],
         _ => 0.0,
     };
+    #[cfg(not(unix))]
+    let load_one_minute = 0.0;
     // SAFETY: sysconf reads a system constant.
+    #[cfg(unix)]
     let cpus = unsafe { libc::sysconf(libc::_SC_NPROCESSORS_ONLN) }.max(1) as u64;
+    #[cfg(not(unix))]
+    let cpus = std::thread::available_parallelism().map_or(1, |count| count.get()) as u64;
     let (mem_total, mem_available) = std::fs::read_to_string("/proc/meminfo")
         .map(|meminfo| {
             (
@@ -329,11 +336,12 @@ pub async fn get_explore_realms(State(state): State<SharedState>) -> Json<Vec<Re
     let (users_count, max_users, mut user_parcels) = match state.about_comms() {
         Some(about) => {
             let mut parcels = Vec::new();
-            for ((x, y), peers) in about.parcel_counts() {
+            let (users_count, counts) = about.realm_view();
+            for ((x, y), peers) in counts {
                 parcels.extend(std::iter::repeat_n([x, y], peers as usize));
             }
             (
-                about.probe().user_count,
+                users_count,
                 about.settings.max_users.unwrap_or(DEFAULT_MAX_USERS),
                 parcels,
             )

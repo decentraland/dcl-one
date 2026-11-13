@@ -6,7 +6,7 @@
 
 use std::cmp::Ordering;
 
-use super::jsjson::{self, JsValue};
+use super::jsjson::{self, LegacyValue};
 use super::types::{ContentMapping, Deployment};
 
 /// JS `<` / `>` on strings: UTF-16 code unit order.
@@ -16,7 +16,7 @@ fn js_cmp(a: &str, b: &str) -> Ordering {
 
 /// The bytes ADR-32 hashes, from the content mappings and the entity file.
 fn hashed_payload(content: &[ContentMapping], entity_file: &[u8]) -> Option<Vec<u8>> {
-    let entity: JsValue = serde_json::from_slice(entity_file).ok()?;
+    let entity: LegacyValue = serde_json::from_slice(entity_file).ok()?;
     entity.as_object()?;
     let mut sorted: Vec<&ContentMapping> = content.iter().collect();
     sorted.sort_by(|a, b| js_cmp(&a.hash, &b.hash).then_with(|| js_cmp(&a.file, &b.file)));
@@ -54,6 +54,18 @@ pub(super) fn deployment_hashes(deployment: &Deployment<'_>) -> Option<[String; 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn item_hash_explicitly_retains_legacy_number_marker_interpretation() {
+        assert_eq!(
+            payload(&[], r#"{"metadata":{"n":9007199254740993}}"#),
+            r#"{"content":[],"metadata":{"n":9007199254740992}}"#
+        );
+        assert_eq!(
+            payload(&[], r#"{"metadata":{"$serde_json::private::Number":"12"}}"#),
+            r#"{"content":[],"metadata":12}"#
+        );
+    }
 
     fn mapping(file: &str, hash: &str) -> ContentMapping {
         ContentMapping {

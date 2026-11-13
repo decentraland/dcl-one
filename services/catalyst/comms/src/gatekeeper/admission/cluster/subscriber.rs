@@ -833,6 +833,9 @@ impl ClusterSubscriber {
             .request(&lookup.subject(), lookup.encode())
             .await
             .ok()?;
+        if payload.len() > crate::protocol::bus::cluster::MAX_REPLY_BYTES {
+            return None;
+        }
         let snapshot = PeerClusterSnapshot::decode(payload.as_slice()).ok()?;
         valid_reply(&lookup, &snapshot).then_some(snapshot)
     }
@@ -960,6 +963,9 @@ impl ClusterSubscriber {
 
     async fn ready_floor(&self, expected: &PeerClusterSnapshot) -> Option<PeerClusterSnapshot> {
         let current = self.same_authority(expected).await?;
+        if !crate::protocol::bus::cluster::active_selection(&current) {
+            return None;
+        }
         if !self.safety_ready(&current.wallet).await {
             return None;
         }
@@ -1478,7 +1484,12 @@ impl ClusterSubscriber {
 }
 
 fn snapshot_extends(expected: &PeerClusterSnapshot, current: &PeerClusterSnapshot) -> bool {
-    current.wallet == expected.wallet
+    crate::protocol::bus::cluster::selected_evidence(expected)
+        && crate::protocol::bus::cluster::selected_evidence(current)
+        && current.selected_origin == expected.selected_origin
+        && current.selected_identity == expected.selected_identity
+        && current.assignment_state == expected.assignment_state
+        && current.wallet == expected.wallet
         && current.session == expected.session
         && current.assignment_version == expected.assignment_version
         && current.source_incarnation == expected.source_incarnation
