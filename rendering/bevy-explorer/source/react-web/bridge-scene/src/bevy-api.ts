@@ -12,6 +12,7 @@ import type {
   ChatMessage,
   ChatReactionData,
   CommunityMemberConnectivityData,
+  ConnectivitySnapshot,
   CommunityVoiceUpdate,
   DmHistoryEntryData,
   DmUserStateData,
@@ -182,6 +183,8 @@ export type BevyApiInterface = {
   getAnalyticsEventStream: () => Promise<AsyncIterable<AnalyticsEvent>>
   getHoverStream: () => Promise<AsyncIterable<SystemHoverEvent>>
   getProximityStream: () => Promise<AsyncIterable<SystemProximityEvent>>
+  getConnectivityStream: () => Promise<AsyncIterable<ConnectivitySnapshot>>
+  retryConnectivity: () => void
   /** Photo mode (the camera reel's in-world camera): its state whenever it changes. Optional:
    *  absent on runtimes whose SystemApi predates it. */
   getPhotoModeStream?: () => Promise<AsyncIterable<PhotoModeState>>

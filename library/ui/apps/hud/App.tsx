@@ -57,6 +57,7 @@ import { ErrorBoundary } from './features/error/ErrorBoundary'
 import { SurfaceBoundary } from './features/error/SurfaceBoundary'
 import { CrashModal } from './features/error/CrashModal'
 import { openRealmError } from './features/error/RealmErrorModal'
+import { ConnectivityFeedback } from './features/error/ConnectivityFeedback'
 import { DIALOG_TITLE, isDialogSource } from '@explorer-core/features/error/fatalError'
 import { openEntryParamsDialog } from './features/gate/EntryParamsDialog'
 import { EDITOR_BUILD, editorOffered, FEATURES_PARAM } from '@explorer-core/features/editorHost/config'
@@ -572,6 +573,7 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
           — the world <ProfileCard> — can read useSession(). */}
       <PopupHost />
       <ToastHost />
+      <ConnectivityFeedback state={session.connectivity.state} retry={session.connectivity.retry} exit={session.logout} />
       <NotificationToastHost notifications={session.notifications} friends={session.friends} voiceChat={session.voiceChat} chat={session.chat} />
       <VoiceChatToasts />
       {/* Crash surface (boot panic / runtime crash / react render crash) — last, so it renders above

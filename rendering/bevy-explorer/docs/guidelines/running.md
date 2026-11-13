@@ -220,6 +220,18 @@ State, in every build:
   emote markers and direct messages are left out; `/dm_history` has those.
 - `/voice_state`: the mic (`available`, `enabled`) and, in LiveKit builds, each voice room's state
   and the addresses speaking.
+- `/connectivity_state`: `connectionLost`, `probing`, `everConnected`, `suppressed` and `rooms`
+  (`scope`, `state`, `retryAt`). Scope names identify realm, scene or private chat rooms without
+  adapter URLs or credentials. `/connectivity_retry` requests immediate recovery and a new
+  reachability check; terminal admission failures and intentional pauses stay stopped.
+  The Connectivity debug section exposes both. The HUD's Connection Lost alert has Retry and
+  Exit Application buttons; recovery dismisses it, while Exit signs out through the existing session flow.
+  Room states share the same calculation as voice and room diagnostics: first admission is
+  `connecting`, a refused dial is `failed`, and pauses and terminal refusals retain their
+  specific labels. Room diagnostic `attempts` counts failures since the last stable reset.
+  The HUD receives initial and changed snapshots over the SystemApi bridge stream and sends
+  Retry through that bridge; the console commands remain available for diagnostics.
+  The [modal reference](connection-lost-modal.md) records Unity assets, dimensions and platform differences.
 - `/bevy_variants`: the abgen Bevy variants client as JSON: `base` (the variants origin, `null`
   when off), `state` (on, off and why, or waiting for the GPU's texture formats), `formats` (the
   variant formats this build takes and those it does not), `manifestCounts` (manifests loaded,

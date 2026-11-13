@@ -3568,6 +3568,7 @@ dependencies = [
  "js-sys",
  "kira",
  "livekit",
+ "livekit-signaling",
  "livestream_manager",
  "media",
  "modular-bitfield",

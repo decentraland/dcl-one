@@ -510,6 +510,28 @@ module.exports.setWorldPassword = function(body) {
     Deno.core.ops.op_set_world_password(body.password ?? null);
 }
 
+module.exports.getConnectivityStream = async function() {
+  const rid = await Deno.core.ops.op_get_connectivity_stream();
+  async function* streamGenerator() {
+    try {
+      while (true) {
+        const next = await Deno.core.ops.op_read_connectivity_stream(rid);
+        if (next === null) break;
+        yield next;
+      }
+    } finally {
+      Deno.core.ops.op_close_connectivity_stream(rid);
+    }
+  }
+  const stream = streamGenerator();
+  stream.close = () => Deno.core.ops.op_close_connectivity_stream(rid);
+  return stream;
+}
+
+module.exports.retryConnectivity = function() {
+  Deno.core.ops.op_retry_connectivity();
+}
+
 // get proximity events as a stream
 // type ProximityEvent = {
 //   entered: bool,

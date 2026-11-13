@@ -49,10 +49,11 @@ use crate::{
             ActiveSpeaker, HostedBy, LivekitParticipant, ParticipantIndex,
             ParticipantMetadataChanged,
         },
-        room::{ConnectFailed, Connected, Connecting, Disconnected, Reconnecting},
+        room::{Connected, Connecting, Disconnected, Reconnecting},
         standalone_room_components,
         track::{Audio, Microphone, PublishedBy, SubscribeToTrack},
     },
+    room_connection::RoomRecovery,
     DisableRealmComms, DisableSceneRoomGatekeeper, NetworkMessage,
 };
 
@@ -550,9 +551,9 @@ type VoiceRoomQuery<'w, 's> = Query<
             Has<Connected>,
             Has<Connecting>,
             Has<Reconnecting>,
-            Has<ConnectFailed>,
             Has<Disconnected>,
         ),
+        &'static mut RoomRecovery,
         Option<&'static VoiceRoomDisconnected>,
     ),
 >;
@@ -677,7 +678,8 @@ fn drive_voice_chat(
     for (
         entity,
         mut room,
-        (connected, connecting, reconnecting, failed, disconnected),
+        (connected, connecting, reconnecting, disconnected),
+        mut recovery,
         disconnected_reason,
     ) in rooms.iter_mut()
     {
@@ -695,14 +697,19 @@ fn drive_voice_chat(
         if !disconnected && room.unexplained_drop_at.is_some() {
             room.unexplained_drop_at = None;
         }
-        // a refused dial keeps its `Connecting` marker beside `ConnectFailed`
         let dropped = match disconnected_reason {
             Some(d) => Some((d.terminal, d.ending, d.reason.clone())),
-            None if failed && room.redial_at.is_none() => Some((
-                false,
-                CallEnding::Refused,
-                "the connection was refused".to_owned(),
-            )),
+            None if recovery.failure.is_some()
+                && !connecting
+                && !disconnected
+                && room.redial_at.is_none() =>
+            {
+                Some((
+                    false,
+                    CallEnding::Refused,
+                    "the connection was refused".to_owned(),
+                ))
+            }
             // the reason may trail the drop, or never come (one the web mirror cannot parse)
             None if disconnected && room.redial_at.is_none() => {
                 let since = *room.unexplained_drop_at.get_or_insert(now);
@@ -718,9 +725,7 @@ fn drive_voice_chat(
         };
         if let Some((terminal, ending, reason)) = dropped {
             room.unexplained_drop_at = None;
-            commands
-                .entity(entity)
-                .remove::<(VoiceRoomDisconnected, ConnectFailed)>();
+            commands.entity(entity).remove::<VoiceRoomDisconnected>();
             if terminal || room.reconnects >= MAX_RECONNECTION_ATTEMPTS {
                 warn!(
                     target: "comms::voice_chat",
@@ -747,7 +752,8 @@ fn drive_voice_chat(
             }
         } else if room.redial_at.is_some_and(|due| now >= due) {
             room.redial_at = None;
-            // only an added marker dials: a refused room still carries the last one
+            recovery.failure = None;
+            // Only an added marker starts a new dial.
             if connecting {
                 commands.entity(entity).remove::<Connecting>();
             }
@@ -1130,7 +1136,14 @@ mod tests {
     struct Dials(u32);
 
     fn refuse(app: &mut App, room: Entity) {
-        app.world_mut().entity_mut(room).insert(ConnectFailed);
+        app.world_mut().entity_mut(room).remove::<Connecting>();
+        let now = app.world().resource::<Time>().elapsed_secs_f64();
+        app.world_mut().get_mut::<RoomRecovery>(room).unwrap().fail(
+            now,
+            crate::room_connection::AdmissionError::new(
+                crate::room_connection::FailureKind::Transient,
+            ),
+        );
         app.update();
     }
 
@@ -1148,7 +1161,7 @@ mod tests {
         for attempt in 1..=MAX_RECONNECTION_ATTEMPTS {
             refuse(&mut app, room);
             let entity = app.world().entity(room);
-            assert!(!entity.contains::<ConnectFailed>());
+            assert!(entity.get::<RoomRecovery>().unwrap().failure.is_some());
             assert_eq!(entity.get::<VoiceRoom>().unwrap().reconnects, attempt);
             assert_eq!(
                 app.world().resource::<VoiceChat>().connection,
@@ -1158,6 +1171,9 @@ mod tests {
             assert_eq!(app.world().resource::<Dials>().0, attempt);
             wait(&mut app, RECONNECTION_DELAY_SECS);
             assert_eq!(app.world().resource::<Dials>().0, attempt + 1);
+            let recovery = app.world().get::<RoomRecovery>(room).unwrap();
+            assert!(recovery.failure.is_none());
+            assert_eq!(recovery.retry.attempts, attempt);
             assert!(app.world().resource::<VoiceChat>().state.is_in_call());
         }
         refuse(&mut app, room);

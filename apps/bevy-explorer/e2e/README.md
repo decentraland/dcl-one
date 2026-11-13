@@ -323,6 +323,22 @@ Kept from explorer-automation's guides:
 
 ## Keeping the suite true
 
+Connectivity diagnostics use `explorer.connectivity()` (`/connectivity_state`) and
+`explorer.retryConnectivity()` (`/connectivity_retry`). The snapshot contains `connectionLost`,
+`probing`, `everConnected`, `suppressed`, and `rooms` (`scope`, `state`, `retryAt`), without
+credentials or raw server responses. The HUD exposes one `alertdialog` named `Connection Lost`,
+with `Retry` and `Exit Application` buttons, and a `status` named `Multiplayer status` for scoped room
+degradation. Retry is disabled and `aria-busy` while its command is pending. The dialog
+follows engine state through retry, reopening or remaining available when a probe fails.
+Recovery retracts it automatically; Exit follows session sign-out.
+
+Connectivity and voice diagnostics share room states: `connecting` for first admission,
+`connected`, `reconnecting`, `disconnected`, `failed`, `paused`, and the terminal reasons
+`denied`, `invalid`, `identity_conflict`, `credentials_required`. A first connection has no
+retry deadline. `/room_diagnostics` reports failed attempts since the last stable reset.
+The HUD receives initial and changed connectivity snapshots through its bridge stream;
+the console commands remain available to the driver and debug panel.
+
 The suite and the console surface read the code they test (the repository's `AGENTS.md`). A
 change on the left updates what is on the right in the same change, then runs the check.
 

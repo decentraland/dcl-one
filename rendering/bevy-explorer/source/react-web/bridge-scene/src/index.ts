@@ -12,6 +12,7 @@ import { registerAvatarPreview } from './domains/avatarPreview'
 import { registerMinimap } from './domains/minimap'
 import { renderSceneUi } from './ui'
 import { registerSession } from './domains/session'
+import { registerConnectivity } from './domains/connectivity'
 import { registerAnalytics } from './domains/analytics'
 import { registerProfile } from './domains/profile'
 import { registerFriends } from './domains/friends'
@@ -50,6 +51,7 @@ export function main(): void {
 
   startBridge((ctx) => {
     registerSession(ctx)
+    registerConnectivity(ctx)
     registerAnalytics(ctx)
     registerProfile(ctx)
     registerFriends(ctx)

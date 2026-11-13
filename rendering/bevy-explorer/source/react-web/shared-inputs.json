@@ -2688,6 +2688,14 @@
       "path": "library/ui/apps/hud/features/error",
       "entries": [
         {
+          "name": "ConnectivityFeedback.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "ConnectivityFeedback.tsx",
+          "kind": "regular"
+        },
+        {
           "name": "CrashModal.module.css",
           "kind": "regular"
         },
@@ -2709,6 +2717,18 @@
         },
         {
           "name": "SurfaceBoundary.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "connection-lost.png",
+          "kind": "regular"
+        },
+        {
+          "name": "modal-light.png",
+          "kind": "regular"
+        },
+        {
+          "name": "radial-glow.png",
           "kind": "regular"
         }
       ]
@@ -3155,6 +3175,10 @@
           "kind": "regular"
         },
         {
+          "name": "useConnectivity.ts",
+          "kind": "regular"
+        },
+        {
           "name": "useEngineSession.ts",
           "kind": "regular"
         }
@@ -3580,6 +3604,10 @@
         },
         {
           "name": "communityChat.test.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "connectivity.test.tsx",
           "kind": "regular"
         },
         {
@@ -4018,7 +4046,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/bevy-api.ts",
-      "sha256": "439b51d41c7808c2a5494fe37633fb3264901a6f177544a2d0a3962989932be7"
+      "sha256": "d1ea9ea384c89683bac80e80a4e28a9f9b981c6540fd77dbcaf1816d3ce107b0"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/avatarDraft.ts",
@@ -4031,6 +4059,10 @@
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/communities.ts",
       "sha256": "69407d1fe4c85b8358bcb6505fb7c685e9da4784f2b4420813b2ba8a13175125"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/connectivity.ts",
+      "sha256": "d832aca2994c91a66eb4295c047b435163948cc987a42c169cc0122dbd56588c"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/editor.ts",
@@ -4209,6 +4241,10 @@
       "sha256": "29db5e29cf57111a645a1f417b305887d764942f15092200beee74a760df6f38"
     },
     {
+      "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeConnectivity.test.tsx",
+      "sha256": "feac2ace9ea505be34ef1f168a89ae499a8d2fc42b47e2c8d77684b27cec4c78"
+    },
+    {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeEditor.test.ts",
       "sha256": "e890e5b55625e2e1d521abc45fe7bf28852bcdef7b371320a4da75187282f541"
     },
@@ -4247,6 +4283,10 @@
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeVoiceChat.test.ts",
       "sha256": "012d587a425705d13ed1ef9876c6c6a0d32f5b5918033f3d849f26ffe9712ca7"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/src/test/connectivityApi.test.ts",
+      "sha256": "e6072c8cb90b4e661c6a4c8aa6f64d3a70284b5db99b7451fff5a9a7f10543ab"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/editorHost.test.tsx",
@@ -4350,7 +4390,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/tsconfig.json",
-      "sha256": "929a58b7ee9df1afd0ab9620423f9b2ed7edc7c09ebee9004e722a4a600c43be"
+      "sha256": "ae94606c96055169209ecd14ae9362a4444252c11e3f12f16337cf5b8910a006"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -4391,6 +4431,7 @@
     "rendering/bevy-explorer/source/react-web/src/test/bootWatchdog.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeAvatarDraft.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeCommunities.test.ts",
+    "rendering/bevy-explorer/source/react-web/src/test/bridgeConnectivity.test.tsx",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeEditor.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeFriends.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeHashing.test.ts",
@@ -4401,6 +4442,7 @@
     "rendering/bevy-explorer/source/react-web/src/test/bridgeRelay.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeSession.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeVoiceChat.test.ts",
+    "rendering/bevy-explorer/source/react-web/src/test/connectivityApi.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/editorHost.test.tsx",
     "rendering/bevy-explorer/source/react-web/src/test/editorHostSigning.test.tsx",
     "rendering/bevy-explorer/source/react-web/src/test/editorScene.test.ts",
@@ -4478,7 +4520,7 @@
     },
     {
       "path": "library/explorer-core/engine/mockBridge.ts",
-      "sha256": "7b20086f2906a0d7999a58fef4826c663d0d93723ef29550a44f4058fd6df05e"
+      "sha256": "831deadff798cd57c5e8be75c4ce0dd10578734ae9a841216c3a9ce361075dc5"
     },
     {
       "path": "library/explorer-core/engine/nameColor.ts",
@@ -4502,7 +4544,7 @@
     },
     {
       "path": "library/explorer-core/engine/protocol.ts",
-      "sha256": "0cbb5c9ee1a19b116747235c9b5f367c9ad3a0823941871cb399be5f56dff57b"
+      "sha256": "a52105d440df43679f3951e26c09e74dd454de70faac3c72b09ed29187075f5c"
     },
     {
       "path": "library/explorer-core/features/auth/authReturn.ts",
@@ -4894,7 +4936,7 @@
     },
     {
       "path": "library/ui/apps/hud/App.tsx",
-      "sha256": "ce42ab391c5abe005a2122a6a781d1f587fb4bf1b3fb9bc588cb6eb2e37f4eb1"
+      "sha256": "d549fc65df868f8430ee2ec825d26ff8d9d13b9e6365e3177b588f266c1ed6ff"
     },
     {
       "path": "library/ui/apps/hud/assets/backpack/add-gradient.webp",
@@ -6130,7 +6172,7 @@
     },
     {
       "path": "library/ui/apps/hud/design/popups.tsx",
-      "sha256": "7e4f03f7bac396269ce21c10575dc5ff6b30e7a1b5cdeebe73c45704629b0aa7"
+      "sha256": "af96f90863d0ca315cfc27ef1f10df701c192ec6d695edfa6678dc1fcd208044"
     },
     {
       "path": "library/ui/apps/hud/design/rarityArt.ts",
@@ -6369,6 +6411,14 @@
       "sha256": "e376921c94dc6339e0e953ef97b4b27fe6614309dcf15b0474ba5b3f814adb91"
     },
     {
+      "path": "library/ui/apps/hud/features/error/ConnectivityFeedback.module.css",
+      "sha256": "27c3b6e4ea99506a1e3d24f0ee50713662680aa43fc46465b38bdde89459011a"
+    },
+    {
+      "path": "library/ui/apps/hud/features/error/ConnectivityFeedback.tsx",
+      "sha256": "76d0f5abe8462f4d0c917d48b0c7a754dc059d9109f2fb356ad7cedc840a24d2"
+    },
+    {
       "path": "library/ui/apps/hud/features/error/CrashModal.module.css",
       "sha256": "45821990acd7ed757805a85429d779719781e02a609ecdd519f5cb9156f229d9"
     },
@@ -6391,6 +6441,18 @@
     {
       "path": "library/ui/apps/hud/features/error/SurfaceBoundary.tsx",
       "sha256": "fd0940948c5070cb6c989f00605f54296d516bd6b108dffc923f6b4249921c76"
+    },
+    {
+      "path": "library/ui/apps/hud/features/error/connection-lost.png",
+      "sha256": "c9d8204ae8cc41d39a060b61b28442dbe7d2ca617fdda2782a5ff4f4944b7d2a"
+    },
+    {
+      "path": "library/ui/apps/hud/features/error/modal-light.png",
+      "sha256": "5833efc69f395cd94af5ffdf5edd29388e4d43d16d5d3a959567b0f629bbdd67"
+    },
+    {
+      "path": "library/ui/apps/hud/features/error/radial-glow.png",
+      "sha256": "e130cfd61d8c3ce39f492a972ed2029b8a45a6584d80291586b311f4634bac28"
     },
     {
       "path": "library/ui/apps/hud/features/events/EventsPage.tsx",
@@ -6741,8 +6803,12 @@
       "sha256": "2e46aad2236705a915aa360acebf92682a1ea296c8f6a402e390cceace64889f"
     },
     {
+      "path": "library/ui/apps/hud/features/session/useConnectivity.ts",
+      "sha256": "53ed9ffcea61e8e941a06080ccbc7f7622d94595b08784a4903ceea5672a3315"
+    },
+    {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "81583e07342d6b668b87bb704e03d73ceabb6ea720eaf8c7029708ab05450694"
+      "sha256": "b593fa0663fca3c9bdaf9289daec0e6220c7035721caae2b051cf672d90e9b5d"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -6866,7 +6932,7 @@
     },
     {
       "path": "library/ui/apps/hud/styles/tokens.css",
-      "sha256": "9841f47f557007cecc54f7208e86f45ff61263bba8936e0d5ad9e1b0263ebc0a"
+      "sha256": "df6d61e7921f02d27b0ef235042b570125727718d7216400d7b43fe1a768fe19"
     },
     {
       "path": "library/ui/apps/hud/test/avatar.test.tsx",
@@ -6918,7 +6984,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/harness.tsx",
-      "sha256": "ff4996c819dafddae79176084fc9076b08c502aa48f3293b951969c3595b6cbe"
+      "sha256": "7ea755a494386cc16c95b2ec066dd0cd982edffe416b602a9864ab6f8137dcb3"
     },
     {
       "path": "library/ui/apps/hud/test/host.ts",
@@ -7027,6 +7093,10 @@
     {
       "path": "library/ui/apps/hud/test/hosted/communityChat.test.tsx",
       "sha256": "42fdfca5431bd2ada37c5983204bcd6f45ab1e830bdd8ab68b8bc3c3e0fcd582"
+    },
+    {
+      "path": "library/ui/apps/hud/test/hosted/connectivity.test.tsx",
+      "sha256": "729cf497d3956fff69a79ea601d016834bd9fcb7bdf9087fa6754265fcc1bc5e"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/debugPanel.test.tsx",
@@ -7206,7 +7276,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/skybox.test.tsx",
-      "sha256": "ff2da65002ae2e2627fbcd47f788fd6011a35bbcebbc5c28d649da692d746f45"
+      "sha256": "d2dbc94beed60877fc67d4362fb3789e4669c8ddca77326d5e38668eaed111c5"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/systemActionShortcuts.test.tsx",
@@ -9224,6 +9294,21 @@
     },
     {
       "from": "library/ui/apps/hud/App.tsx",
+      "to": "library/ui/apps/hud/features/error/ConnectivityFeedback.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/App.tsx",
+      "to": "library/ui/apps/hud/features/error/ConnectivityFeedback.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/App.tsx",
+      "to": "library/ui/apps/hud/features/error/ConnectivityFeedback.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/App.tsx",
       "to": "library/ui/apps/hud/features/error/CrashModal.tsx",
       "kind": "native:runtime"
     },
@@ -16288,6 +16373,66 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/apps/hud/features/error/ConnectivityFeedback.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/error/ConnectivityFeedback.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/error/ConnectivityFeedback.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/error/ConnectivityFeedback.tsx",
+      "to": "library/ui/apps/hud/features/error/ConnectivityFeedback.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/error/ConnectivityFeedback.tsx",
+      "to": "library/ui/apps/hud/features/error/ConnectivityFeedback.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/error/ConnectivityFeedback.tsx",
+      "to": "library/ui/apps/hud/features/error/ConnectivityFeedback.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/error/ConnectivityFeedback.tsx",
+      "to": "library/ui/apps/hud/features/error/connection-lost.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/error/ConnectivityFeedback.tsx",
+      "to": "library/ui/apps/hud/features/error/connection-lost.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/error/ConnectivityFeedback.tsx",
+      "to": "library/ui/apps/hud/features/error/connection-lost.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/error/ConnectivityFeedback.tsx",
+      "to": "library/ui/apps/hud/features/error/modal-light.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/error/ConnectivityFeedback.tsx",
+      "to": "library/ui/apps/hud/features/error/modal-light.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/error/ConnectivityFeedback.tsx",
+      "to": "library/ui/apps/hud/features/error/modal-light.png",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/apps/hud/features/error/CrashModal.tsx",
       "to": "library/explorer-core/lib/inputLock.ts",
       "kind": "native:runtime"
@@ -21434,6 +21579,21 @@
     },
     {
       "from": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "to": "library/ui/apps/hud/features/session/useConnectivity.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "to": "library/ui/apps/hud/features/session/useConnectivity.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "to": "library/ui/apps/hud/features/session/useConnectivity.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/session/useEngineSession.ts",
       "to": "library/ui/apps/hud/features/voiceChat/streamHere.ts",
       "kind": "native:runtime"
     },
@@ -24774,6 +24934,66 @@
     },
     {
       "from": "library/ui/apps/hud/test/hosted/communityChat.test.tsx",
+      "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/connectivity.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/connectivity.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/connectivity.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/connectivity.test.tsx",
+      "to": "library/ui/apps/hud/features/error/ConnectivityFeedback.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/connectivity.test.tsx",
+      "to": "library/ui/apps/hud/features/error/ConnectivityFeedback.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/connectivity.test.tsx",
+      "to": "library/ui/apps/hud/features/error/ConnectivityFeedback.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/connectivity.test.tsx",
+      "to": "library/ui/apps/hud/features/session/useConnectivity.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/connectivity.test.tsx",
+      "to": "library/ui/apps/hud/features/session/useConnectivity.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/connectivity.test.tsx",
+      "to": "library/ui/apps/hud/features/session/useConnectivity.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/connectivity.test.tsx",
+      "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/connectivity.test.tsx",
+      "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/connectivity.test.tsx",
       "to": "library/ui/apps/hud/test/harness.tsx",
       "kind": "test:runtime"
     },
@@ -28198,6 +28418,26 @@
       "kind": "test:runtime"
     },
     {
+      "from": "rendering/bevy-explorer/source/react-web/src/test/bridgeConnectivity.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/src/test/bridgeConnectivity.test.tsx",
+      "to": "library/ui/apps/hud/features/error/ConnectivityFeedback.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/src/test/bridgeConnectivity.test.tsx",
+      "to": "library/ui/apps/hud/features/session/useConnectivity.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/src/test/bridgeConnectivity.test.tsx",
+      "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "test:runtime"
+    },
+    {
       "from": "rendering/bevy-explorer/source/react-web/src/test/bridgeSession.test.ts",
       "to": "library/explorer-core/test/console.ts",
       "kind": "test:runtime"
@@ -29479,6 +29719,11 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/features/error/ConnectivityFeedback.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/features/error/CrashModal.tsx",
       "kind": "type"
     },
@@ -29765,6 +30010,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/features/session/profileStore.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/features/session/useConnectivity.ts",
       "kind": "type"
     },
     {
@@ -30075,6 +30325,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/test/hosted/communityChat.test.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/test/hosted/connectivity.test.tsx",
       "kind": "type"
     },
     {
@@ -33750,6 +34005,51 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/hud/assets/voice/stream-small.png",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/features/error/connection-lost.png",
+      "kind": "native:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/features/error/connection-lost.png",
+      "kind": "production:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/features/error/connection-lost.png",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/features/error/modal-light.png",
+      "kind": "native:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/features/error/modal-light.png",
+      "kind": "production:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/features/error/modal-light.png",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/features/error/radial-glow.png",
+      "kind": "native:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/features/error/radial-glow.png",
+      "kind": "production:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/features/error/radial-glow.png",
       "kind": "test:asset"
     }
   ]

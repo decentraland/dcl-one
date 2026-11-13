@@ -10,11 +10,12 @@ use std::{cell::RefCell, rc::Rc};
 use system_bridge::{
     settings::SettingInfo, AnalyticsEvent, AvatarModifierState, BlockUpdateData, BlockedUserData,
     BlockingStatusData, ChatMessage, ChatReactionData, CommunityMemberConnectivityData,
-    CommunityVoiceUpdate, DmHistoryEntryData, DmUserStateData, FriendConnectivityEvent, FriendData,
-    FriendRequestData, FriendStatusData, FriendshipEventUpdate, HomeScene, HoverEvent,
-    LiveSceneInfo, PermanentPermissionItem, PermissionRequestEvent, PhotoModeState, PortableInfo,
-    ProfileChangedEvent, ProximityEvent, SatelliteView, SceneLoadingUi, SetAvatarData,
-    VoiceChatAction, VoiceChatState, VoiceMessage, WelcomeState, WorldAccessEvent,
+    CommunityVoiceUpdate, ConnectivitySnapshot, DmHistoryEntryData, DmUserStateData,
+    FriendConnectivityEvent, FriendData, FriendRequestData, FriendStatusData,
+    FriendshipEventUpdate, HomeScene, HoverEvent, LiveSceneInfo, PermanentPermissionItem,
+    PermissionRequestEvent, PhotoModeState, PortableInfo, ProfileChangedEvent, ProximityEvent,
+    SatelliteView, SceneLoadingUi, SetAvatarData, VoiceChatAction, VoiceChatState, VoiceMessage,
+    WelcomeState, WorldAccessEvent,
 };
 
 // list of op declarations
@@ -78,6 +79,10 @@ pub fn ops(super_user: bool) -> Vec<OpDecl> {
             op_read_hover_stream(),
             op_get_proximity_stream(),
             op_read_proximity_stream(),
+            op_get_connectivity_stream(),
+            op_read_connectivity_stream(),
+            op_close_connectivity_stream(),
+            op_retry_connectivity(),
             op_get_photo_mode_stream(),
             op_read_photo_mode_stream(),
             op_get_world_access_stream(),
@@ -541,6 +546,30 @@ pub async fn op_read_hover_stream(
 #[op2(async)]
 pub async fn op_get_proximity_stream(state: Rc<RefCell<OpState>>) -> u32 {
     dcl_js::system_api::op_get_proximity_stream(state).await
+}
+
+#[op2(async)]
+pub async fn op_get_connectivity_stream(state: Rc<RefCell<OpState>>) -> u32 {
+    dcl_js::system_api::op_get_connectivity_stream(state).await
+}
+
+#[op2(async)]
+#[serde]
+pub async fn op_read_connectivity_stream(
+    state: Rc<RefCell<OpState>>,
+    rid: u32,
+) -> Result<Option<ConnectivitySnapshot>, deno_core::anyhow::Error> {
+    dcl_js::system_api::op_read_connectivity_stream(state, rid).await
+}
+
+#[op2(fast)]
+pub fn op_close_connectivity_stream(state: Rc<RefCell<OpState>>, #[smi] rid: u32) {
+    dcl_js::system_api::op_close_connectivity_stream(state, rid)
+}
+
+#[op2(fast)]
+pub fn op_retry_connectivity(state: Rc<RefCell<OpState>>) {
+    dcl_js::system_api::op_retry_connectivity(state)
 }
 
 #[op2(async)]

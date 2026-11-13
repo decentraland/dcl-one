@@ -210,14 +210,25 @@ export interface CommunityState {
   lastError?: string | null
 }
 
+export type RoomState = 'connecting' | 'connected' | 'reconnecting' | 'disconnected' | 'failed'
+  | 'paused' | 'denied' | 'invalid' | 'identity_conflict' | 'credentials_required'
+
 export interface VoiceState {
   mic: { available: boolean; enabled: boolean }
   livekit: boolean
   connected: boolean | null
-  rooms: { scene: boolean; state: string }[] | null
+  rooms: { scene: boolean; state: RoomState }[] | null
   speakers: string[] | null
   /** Null without `livekit`. */
   call: VoiceCallState | null
+}
+
+export interface ConnectivityState {
+  connectionLost: boolean
+  probing: boolean
+  everConnected: boolean
+  suppressed: boolean
+  rooms: { scope: string; state: RoomState; retryAt: number | null }[]
 }
 
 /** `/ban_block_state [address]`: the one answer to "is this user banned or blocked?", with every
@@ -728,6 +739,14 @@ export class Explorer {
 
   voiceState(): Promise<VoiceState> {
     return this.json<VoiceState>('/voice_state')
+  }
+
+  connectivity(): Promise<ConnectivityState> {
+    return this.json<ConnectivityState>('/connectivity_state')
+  }
+
+  retryConnectivity(): Promise<string> {
+    return this.run('/connectivity_retry')
   }
 
   /** The ban and block status; with an address, also that address's standing. */
