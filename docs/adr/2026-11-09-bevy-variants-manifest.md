@@ -49,9 +49,10 @@ from the configured service, rejecting only what fails to decode.
 ```json
 {
   "v": 3,
-  "lanes": { "texture": "t2", "mesh": "m1" },
+  "lanes": { "texture": "t4", "mesh": "m2", "glb": "g4" },
   "files": {
-    "<original cid>": ["bevy/t2/<original cid>_srgb", "bevy/m1/<original cid>"]
+    "<image cid>": ["bevy/t4/<image cid>_srgb"],
+    "<model cid>": ["bevy/g4/<model cid>", "bevy/m2/<model cid>"]
   }
 }
 ```
@@ -64,8 +65,8 @@ from the configured service, rejecting only what fails to decode.
 - A path is relative to the base: `bevy`, a prefix of ASCII letters and digits
   other than `manifest`, and a name of ASCII letters, digits and `_`. The
   prefix's first letter is the variant's class: `t` a BC KTX2 texture, `m` a
-  `glb-br` model, `g` a GLB. A reader drops a path of any other shape or
-  class.
+  `glb-br` model, `g` a GLB; the rest names the generation and build options
+  (`g4`, `t4z9`). A reader drops a path of any other shape or class.
 - `lanes` records which generation each variant class was built from; it is for
   abgen, and a reader only shows it.
 - A reader takes only `v: 3`. Earlier versions listed a CID, format and size for
@@ -85,11 +86,19 @@ Classes:
   or fewer a side get no variant. A creator UASTC KTX2 is transcoded block for
   block to BC7, one level, no resize or re-encode, so the variant is
   pixel-identical to the Explorer's own transcode; no variant when a level
-  cannot be block-transcoded or the variant is larger than the original.
+  cannot be block-transcoded. A variant larger than its original is kept: the
+  Explorer holds a PNG or JPEG as RGBA, so the BC copy still saves memory.
 - `g`, a GLB: a GLB with Draco decoded, `KHR_texture_basisu`
-  resolved and embedded images replaced by BC KTX2. External image URIs stay as
-  they are; they resolve to their own original CID, which has its own texture
-  variant.
+  resolved to a core `source`, external buffers inlined, and each embedded image
+  replaced by a KTX2 of the `t` class's format (`mimeType: "image/ktx2"`, in a
+  buffer view of the GLB's binary chunk). Every KTX2 in it is BC: a GLB whose
+  embedded KTX2 does not transcode gets no variant. An embedded PNG or JPEG
+  that gets no encode (too small, undecodable) keeps its own bytes and MIME
+  type. External image URIs stay as they are; they resolve to their own
+  original CID, which has its own texture variant. Geometry, nodes and
+  materials stay as in the original. A Brotli copy sits beside it at
+  `{path}.br` only when it is smaller, and the server sends it, with
+  `Content-Encoding: br`, to a client that asks for `{path}` and accepts `br`.
 - `m`, a `glb-br` model: the original `.glb`, byte for byte, with a Brotli copy
   beside it at `{path}.br`, stored with `Content-Encoding: br`. A CDN does not
   pick the copy by `Accept-Encoding`, so a reader asks for `{path}.br` by name.
@@ -119,7 +128,7 @@ Excluded from variants: source maps, audio, video and scene code.
 - A content file reads as a variant only when its original CID has a variant of
   a class the Explorer supports for that file type and GPU: original CID, first
   supported variant, fetch from `{base}/{path}`, decode. Any failure (fetch, a
-  KTX2 that does not unwrap, a texture that does not load) falls back to the
+  KTX2 that does not unwrap, a texture or GLB that does not load) falls back to the
   original, per file; a variant that failed is not tried again in the session,
   its cached copy is dropped and the asset is reloaded from the original. Repeated transport failures turn the
   service off for the session.
@@ -135,9 +144,21 @@ Excluded from variants: source maps, audio, video and scene code.
   build only, `glb-br`: the browser decodes the Brotli copy, the bytes must hash
   to the original's own CID (they are the original byte for byte, so a copy that
   passes needs no reload if the glTF loader then fails), and the GLB goes to the
-  glTF loader of the original path. Native loads original models until its
-  http client can decode Brotli. `glb` is not taken because the glTF loader
-  rejects a file that requires `KHR_texture_basisu`.
+  glTF loader of the original path. Native loads original models for `glb-br`
+  until its http client can decode Brotli.
+- The table also holds `glb`, on a GPU with BC textures, for `.glb` files. It
+  is fetched at its own path on every platform, since its Brotli copy may not
+  exist; a browser that accepts `br` gets the copy and decodes it. The cache
+  keeps it as served. The
+  glTF loader decodes embedded images itself and reads DDS but not KTX2, so on
+  every read the reader rewrites the GLB before the loader sees it: each
+  embedded KTX2 is unwrapped to its DDS, appended to the binary chunk, its
+  buffer view pointed there and its `mimeType` set to `image/vnd-ms.dds`; every
+  other byte keeps its offset. The loader picks sRGB or linear for each image
+  from how the materials use it. A KTX2 that does not unwrap fails the variant
+  before the loader sees it, and a GLB that then fails to load is reloaded from
+  the original. The asset keeps the original path, so every user of the model
+  shares one loaded copy. Image processing skips a GLB read from a variant.
 
 ## Consequences
 
