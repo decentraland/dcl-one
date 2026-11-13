@@ -13,10 +13,10 @@ pub(crate) const RETRY_AFTER: Duration = Duration::from_secs(10);
 const LIMIT: usize = 4096;
 
 /// A client error about the url itself, which asking again does not change. 408, 425 and 429
-/// ask the client to come back later; 401, 403 and 407 come from a CDN, firewall or proxy for an
-/// unsigned request, and those can lift.
+/// ask the client to come back later and 421 for another connection; 401, 403 and 407 come from a
+/// CDN, firewall or proxy for an unsigned request, and those can lift.
 pub(crate) fn is_definitive(status: StatusCode) -> bool {
-    status.is_client_error() && !matches!(status.as_u16(), 401 | 403 | 407 | 408 | 425 | 429)
+    status.is_client_error() && !matches!(status.as_u16(), 401 | 403 | 407 | 408 | 421 | 425 | 429)
 }
 
 /// Why a request is answered from memory.
@@ -118,7 +118,7 @@ mod tests {
         for n in [400, 404, 405, 410, 414, 451] {
             assert!(is_definitive(code(n)), "{n}");
         }
-        for n in [401, 403, 407, 408, 425, 429, 500, 502, 503, 504] {
+        for n in [401, 403, 407, 408, 421, 425, 429, 500, 502, 503, 504] {
             assert!(!is_definitive(code(n)), "{n}");
         }
     }
