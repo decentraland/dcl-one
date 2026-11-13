@@ -177,6 +177,26 @@ fn add_ops_wrap_instead_of_overflowing() {
         eval_string(&mut runtime, "`${globalThis.__sync} ${globalThis.__async}`"),
         "-2147483648 -2147483648"
     );
+    // release builds wrap either way, so also pin that the overrides are installed
+    let names: Vec<_> = crate::js::hardened_ops::override_ops()
+        .iter()
+        .map(|op| op.name)
+        .collect();
+    assert!(names.contains(&"op_add") && names.contains(&"op_add_async"));
+}
+
+/// A view left out of bounds by shrinking its resizable buffer is refused, not rebuilt.
+#[test]
+fn an_out_of_bounds_view_is_refused() {
+    assert_refused(
+        r#"
+        const buffer = new ArrayBuffer(16, { maxByteLength: 16 });
+        const view = new Uint8Array(buffer, 8, 4);
+        buffer.resize(4);
+        Deno.core.ops.op_log_test_plan(view);
+        "#,
+        "cannot be passed",
+    );
 }
 
 /// Each voice chat action decodes through `Plain` in its tagged-enum shape.

@@ -40,10 +40,14 @@ const MAX_BUFFERED_BYTES: usize = 64 * 1024;
 const MAX_OPEN_STREAMS: usize = 256;
 // a stream's producer is scene code, so reading one to its end stops here
 const MAX_READ_ALL_BYTES: usize = 64 * 1024 * 1024;
-// Bytes one stream may carry. This bounds a fetch upload, which is read whole; `op_read_all`
-// stops earlier, at MAX_READ_ALL_BYTES.
+// Bytes a runtime's open streams may carry between them. This bounds a fetch upload, which is
+// read whole; `op_read_all` stops one stream earlier, at MAX_READ_ALL_BYTES.
 const SERVER_MAX_STREAM_BYTES: u64 = super::fetch::SERVER_MAX_BODY_BYTES;
 const CLIENT_MAX_STREAM_BYTES: u64 = 512 * 1024 * 1024;
+
+/// Bytes read from a runtime's open streams.
+#[derive(Clone, Default)]
+struct StreamBytes(Rc<Cell<u64>>);
 
 #[derive(Default)]
 struct Channel {
@@ -182,6 +186,7 @@ struct ReadableStreamResource {
     completion: Rc<RefCell<Completion>>,
     length: Option<u64>,
     read_bytes: Cell<u64>,
+    runtime_bytes: StreamBytes,
     max_bytes: u64,
     _open: OpenStream,
     // reserved up front so a sink can always be taken: deno_web never closes a stream
@@ -192,6 +197,10 @@ struct ReadableStreamResource {
 impl ReadableStreamResource {
     fn add(state: &mut OpState, length: Option<u64>) -> Result<ResourceId, AnyError> {
         let mut slots = OpenStream::take(state, 2)?;
+        if !state.has::<StreamBytes>() {
+            state.put(StreamBytes::default());
+        }
+        let runtime_bytes = state.borrow::<StreamBytes>().clone();
         let is_server = state
             .try_borrow::<dcl_types::interface::crdt_context::CrdtContext>()
             .is_some_and(|context| context.is_server);
@@ -202,6 +211,7 @@ impl ReadableStreamResource {
             completion: Default::default(),
             length,
             read_bytes: Cell::new(0),
+            runtime_bytes,
             max_bytes: if is_server {
                 SERVER_MAX_STREAM_BYTES
             } else {
@@ -220,15 +230,17 @@ impl ReadableStreamResource {
             .await
             .map_err(JsErrorBox::from_err)?;
         let chunk = self.channel.borrow_mut().read(limit)?;
-        let read = self.read_bytes.get() + chunk.len() as u64;
-        if read > self.max_bytes {
+        let len = chunk.len() as u64;
+        let total = &self.runtime_bytes.0;
+        if total.get() + len > self.max_bytes {
             self.close_channel();
             return Err(JsErrorBox::type_error(format!(
-                "stream exceeds {} bytes",
+                "stream data exceeds the {}-byte budget",
                 self.max_bytes
             )));
         }
-        self.read_bytes.set(read);
+        total.set(total.get() + len);
+        self.read_bytes.set(self.read_bytes.get() + len);
         Ok(chunk)
     }
 
@@ -260,14 +272,16 @@ impl Resource for ReadableStreamResource {
         self.close_channel();
     }
 
-    // only a small upper bound: `op_read_all` preallocates from it
+    // `op_read_all` preallocates from an upper bound, so give only a small one
     fn size_hint(&self) -> (u64, Option<u64>) {
-        (0, self.length.map(|l| l.min(MAX_BUFFERED_BYTES as u64)))
+        (0, self.length.filter(|&l| l <= MAX_BUFFERED_BYTES as u64))
     }
 }
 
 impl Drop for ReadableStreamResource {
     fn drop(&mut self) {
+        let total = &self.runtime_bytes.0;
+        total.set(total.get() - self.read_bytes.get());
         self.close_channel();
     }
 }
@@ -437,5 +451,33 @@ async fn op_read_all(
             return Err(type_error(format!("stream is larger than {cap} bytes")).into());
         }
         out.extend_from_slice(&chunk);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn hint(length: u64) -> (u64, Option<u64>) {
+        let mut state = OpState::new(None);
+        let rid = ReadableStreamResource::add(&mut state, Some(length)).unwrap();
+        let resource = state
+            .resource_table
+            .get::<ReadableStreamResource>(rid)
+            .unwrap();
+        resource.size_hint()
+    }
+
+    /// A declared length past one buffer gives no upper bound, so readers neither
+    /// preallocate it nor overflow rounding it up.
+    #[test]
+    fn size_hints_never_exceed_one_buffer() {
+        assert_eq!(hint(100), (0, Some(100)));
+        assert_eq!(
+            hint(MAX_BUFFERED_BYTES as u64),
+            (0, Some(MAX_BUFFERED_BYTES as u64))
+        );
+        assert_eq!(hint(MAX_BUFFERED_BYTES as u64 + 1), (0, None));
+        assert_eq!(hint(10_000_000_000_000_000_000), (0, None));
     }
 }
