@@ -43,10 +43,10 @@ runs:
       id: update_release
       shell: bash
       run: |
-        echo "🔍 Checking if release '${{ inputs.tag_name }}' exists..."
+        echo "🔍 Checking if release '$IN_TAG_NAME' exists..."
 
         # Check if release exists
-        RELEASE_INFO=$(gh release view "${{ inputs.tag_name }}" --json id,url,isDraft,isPrerelease 2>/dev/null || echo "null")
+        RELEASE_INFO=$(gh release view "$IN_TAG_NAME" --json id,url,isDraft,isPrerelease 2>/dev/null || echo "null")
 
         if [[ "$RELEASE_INFO" != "null" ]]; then
           # Release exists - update it
@@ -59,7 +59,7 @@ runs:
           printf '%s' "$RELEASE_NOTES" > temp_release_notes.md
 
           # Update the release description
-          gh release edit "${{ inputs.tag_name }}" --notes-file temp_release_notes.md
+          gh release edit "$IN_TAG_NAME" --notes-file temp_release_notes.md
 
           echo "🎉 Successfully updated release description!"
           echo "🔗 Release URL: $RELEASE_URL"
@@ -71,7 +71,7 @@ runs:
           echo "release_url=$RELEASE_URL" >> $GITHUB_OUTPUT
           echo "release_id=$RELEASE_ID" >> $GITHUB_OUTPUT
 
-        elif [[ "${{ inputs.create_if_not_exists }}" == "true" ]]; then
+        elif [[ "$IN_CREATE_IF_NOT_EXISTS" == "true" ]]; then
           # Release doesn't exist - create it
           echo "🆕 Release not found. Creating new release..."
 
@@ -79,10 +79,10 @@ runs:
           printf '%s' "$RELEASE_NOTES" > temp_release_notes.md
 
           # Determine release title
-          if [[ -n "${{ inputs.release_title }}" ]]; then
-            TITLE="${{ inputs.release_title }}"
+          if [[ -n "$IN_RELEASE_TITLE" ]]; then
+            TITLE="$IN_RELEASE_TITLE"
           else
-            TITLE="${{ inputs.tag_name }}"
+            TITLE="$IN_TAG_NAME"
           fi
           echo "📝 Using release title: $TITLE"
 
@@ -91,25 +91,25 @@ runs:
           DRAFT_FLAG=""
 
           # Add optional flags
-          if [[ "${{ inputs.prerelease }}" == "true" ]]; then
+          if [[ "$IN_PRERELEASE" == "true" ]]; then
             PRERELEASE_FLAG="--prerelease"
             echo "🚧 Marking as prerelease"
           fi
 
-          if [[ "${{ inputs.draft }}" == "true" ]]; then
+          if [[ "$IN_DRAFT" == "true" ]]; then
             DRAFT_FLAG="--draft"
             echo "📝 Marking as draft"
           fi
 
           # Execute create command
-          echo "🚀 Creating release with command: gh release create \"${{ inputs.tag_name }}\" --title \"$TITLE\" --notes-file temp_release_notes.md $PRERELEASE_FLAG $DRAFT_FLAG"
+          echo "🚀 Creating release with command: gh release create \"$IN_TAG_NAME\" --title \"$TITLE\" --notes-file temp_release_notes.md $PRERELEASE_FLAG $DRAFT_FLAG"
           # --target: without it the new tag lands on main's tip when this job runs, which in a busy
           # monorepo can be a later commit. Package changes merged in between would then count as
           # released, and semantic-version would never publish them.
-          gh release create "${{ inputs.tag_name }}" --target "$GITHUB_SHA" --title "$TITLE" --notes-file temp_release_notes.md $PRERELEASE_FLAG $DRAFT_FLAG
+          gh release create "$IN_TAG_NAME" --target "$GITHUB_SHA" --title "$TITLE" --notes-file temp_release_notes.md $PRERELEASE_FLAG $DRAFT_FLAG
 
           # Get the created release info
-          RELEASE_INFO=$(gh release view "${{ inputs.tag_name }}" --json id,url)
+          RELEASE_INFO=$(gh release view "$IN_TAG_NAME" --json id,url)
           RELEASE_ID=$(echo "$RELEASE_INFO" | jq -r '.id')
           RELEASE_URL=$(echo "$RELEASE_INFO" | jq -r '.url')
 
@@ -125,11 +125,16 @@ runs:
 
         else
           # Release doesn't exist and create_if_not_exists is false
-          echo "❌ ERROR: Release '${{ inputs.tag_name }}' not found!"
+          echo "❌ ERROR: Release '$IN_TAG_NAME' not found!"
           echo "To create the release automatically, set 'create_if_not_exists: true'"
           exit 1
         fi
       env:
+        IN_CREATE_IF_NOT_EXISTS: ${{ inputs.create_if_not_exists }}
+        IN_DRAFT: ${{ inputs.draft }}
+        IN_PRERELEASE: ${{ inputs.prerelease }}
+        IN_RELEASE_TITLE: ${{ inputs.release_title }}
+        IN_TAG_NAME: ${{ inputs.tag_name }}
         GH_TOKEN: ${{ inputs.github_token }}
         GITHUB_TOKEN: ${{ inputs.github_token }}
         RELEASE_NOTES: ${{ inputs.release_notes }}

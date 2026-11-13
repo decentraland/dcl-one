@@ -38,8 +38,8 @@ runs:
       shell: bash
       run: |
         # Parse input parameters
-        IFS=',' read -ra PATHS <<< "${{ inputs.paths }}"
-        IFS=',' read -ra SECTION_NAMES <<< "${{ inputs.section_names }}"
+        IFS=',' read -ra PATHS <<< "$IN_PATHS"
+        IFS=',' read -ra SECTION_NAMES <<< "$IN_SECTION_NAMES"
 
         # Validate that paths and section names have the same count
         if [[ ${#PATHS[@]} -ne ${#SECTION_NAMES[@]} ]]; then
@@ -47,15 +47,15 @@ runs:
           exit 1
         fi
 
-        echo "🔍 Generating release notes for ${{ inputs.release_title }} v${{ inputs.current_version }}"
-        echo "📋 Tracking changes in paths: ${{ inputs.paths }}"
+        echo "🔍 Generating release notes for $IN_RELEASE_TITLE v$IN_CURRENT_VERSION"
+        echo "📋 Tracking changes in paths: $IN_PATHS"
 
         # Build the tag reference for git log
-        if [[ -n "${{ inputs.tag_prefix }}" ]]; then
-          TAG_REF="${{ inputs.tag_prefix }}${{ inputs.previous_version }}"
+        if [[ -n "$IN_TAG_PREFIX" ]]; then
+          TAG_REF="$IN_TAG_PREFIX$IN_PREVIOUS_VERSION"
           echo "🏷️  Comparing against: $TAG_REF"
         else
-          TAG_REF="${{ inputs.previous_version }}"
+          TAG_REF="$IN_PREVIOUS_VERSION"
           echo "🏷️  Comparing against: $TAG_REF"
         fi
 
@@ -88,7 +88,7 @@ runs:
             echo "🔄 Processing commit: $commit_hash"
 
             # Try to get PR number from commit
-            PR_INFO=$(gh api repos/${{ github.repository }}/commits/$commit_hash/pulls --jq '.[0] | select(. != null) | {number: .number, html_url: .html_url}' 2>/dev/null || echo "null")
+            PR_INFO=$(gh api repos/$GITHUB_REPOSITORY/commits/$commit_hash/pulls --jq '.[0] | select(. != null) | {number: .number, html_url: .html_url}' 2>/dev/null || echo "null")
 
             # Get GitHub username from email
             GITHUB_USER=$(gh api search/users?q="$author_email+in:email" --jq '.items[0].login // empty' 2>/dev/null || echo "")
@@ -151,4 +151,10 @@ runs:
           echo "EOF"
         } >> $GITHUB_OUTPUT
       env:
+        IN_CURRENT_VERSION: ${{ inputs.current_version }}
+        IN_PATHS: ${{ inputs.paths }}
+        IN_PREVIOUS_VERSION: ${{ inputs.previous_version }}
+        IN_RELEASE_TITLE: ${{ inputs.release_title }}
+        IN_SECTION_NAMES: ${{ inputs.section_names }}
+        IN_TAG_PREFIX: ${{ inputs.tag_prefix }}
         GH_TOKEN: ${{ inputs.github_token }}

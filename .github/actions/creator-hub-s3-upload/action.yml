@@ -49,34 +49,38 @@ outputs:
 runs:
   using: 'composite'
   steps:
+    # Every input reaches the shell through env and is only read quoted, so a branch name or other
+    # input can't inject commands. The upload command is a bash array, with no eval.
     - name: Extract filename
       shell: bash
+      env:
+        FILE_PATH: ${{ inputs.file-path }}
       run: |
-        FILENAME=$(basename "${{ inputs.file-path }}")
-        echo "filename=$FILENAME" >> $GITHUB_OUTPUT
+        FILENAME=$(basename "$FILE_PATH")
+        echo "filename=$FILENAME" >> "$GITHUB_OUTPUT"
         echo "Extracted filename: $FILENAME"
       id: extract-filename
 
     - name: Sanitize prefix
       shell: bash
+      env:
+        PREFIX: ${{ inputs.prefix }}
+        REF_NAME: ${{ github.ref_name }}
       run: |
-        PREFIX="${{ inputs.prefix }}"
-        if [ -z "$PREFIX" ]; then
-          # Use branch name as default if no prefix provided
-          PREFIX="${{ github.ref_name }}"
-        fi
+        # Use the branch name as default if no prefix is provided
+        [ -n "$PREFIX" ] || PREFIX="$REF_NAME"
 
         # Replace invalid S3 characters with hyphens and convert to lowercase
-        SANITIZED_PREFIX=$(echo "$PREFIX" | \
+        SANITIZED_PREFIX=$(printf '%s\n' "$PREFIX" | \
           sed 's/[^a-zA-Z0-9._/@-]/-/g' | \
           sed 's/--*/-/g' | \
           sed 's/^-\|-$//g' | \
           tr '[:upper:]' '[:lower:]')
 
         # Remove leading/trailing slashes and ensure no double slashes
-        SANITIZED_PREFIX=$(echo "$SANITIZED_PREFIX" | sed 's|^/\|/$||g' | sed 's|//\+|/|g')
+        SANITIZED_PREFIX=$(printf '%s\n' "$SANITIZED_PREFIX" | sed 's|^/\|/$||g' | sed 's|//\+|/|g')
 
-        echo "sanitized-prefix=$SANITIZED_PREFIX" >> $GITHUB_OUTPUT
+        echo "sanitized-prefix=$SANITIZED_PREFIX" >> "$GITHUB_OUTPUT"
         echo "Original prefix: $PREFIX"
         echo "Sanitized prefix: $SANITIZED_PREFIX"
       id: sanitize
@@ -89,47 +93,33 @@ runs:
 
     - name: Upload to S3
       shell: bash
+      env:
+        FILE_PATH: ${{ inputs.file-path }}
+        FILENAME: ${{ steps.extract-filename.outputs.filename }}
+        SANITIZED_PREFIX: ${{ steps.sanitize.outputs.sanitized-prefix }}
+        BUCKET: ${{ inputs.bucket }}
+        REGION: ${{ inputs.region }}
+        CONTENT_TYPE: ${{ inputs.content-type }}
+        ACL: ${{ inputs.acl }}
+        CACHE_CONTROL: ${{ inputs.cache-control }}
       run: |
-        FILE_PATH="${{ inputs.file-path }}"
-        FILENAME="${{ steps.extract-filename.outputs.filename }}"
-        SANITIZED_PREFIX="${{ steps.sanitize.outputs.sanitized-prefix }}"
-        BUCKET="${{ inputs.bucket }}"
-        REGION="${{ inputs.region }}"
-
-        # Construct S3 key
         if [ -z "$SANITIZED_PREFIX" ]; then
           S3_KEY="$FILENAME"
         else
           S3_KEY="$SANITIZED_PREFIX/$FILENAME"
         fi
 
-        # Prepare upload command
-        UPLOAD_CMD="aws s3 cp \"$FILE_PATH\" \"s3://$BUCKET/$S3_KEY\" --region \"$REGION\""
+        upload=(aws s3 cp "$FILE_PATH" "s3://$BUCKET/$S3_KEY" --region "$REGION")
+        [ -z "$CONTENT_TYPE" ] || upload+=(--content-type "$CONTENT_TYPE")
+        [ -z "$ACL" ] || upload+=(--acl "$ACL")
+        [ -z "$CACHE_CONTROL" ] || upload+=(--cache-control "$CACHE_CONTROL")
 
-        # Add content-type if specified
-        if [ -n "${{ inputs.content-type }}" ]; then
-          UPLOAD_CMD="$UPLOAD_CMD --content-type \"${{ inputs.content-type }}\""
-        fi
-
-        # Add ACL if specified
-        if [ -n "${{ inputs.acl }}" ]; then
-          UPLOAD_CMD="$UPLOAD_CMD --acl \"${{ inputs.acl }}\""
-        fi
-
-        # Add cache-control if specified
-        if [ -n "${{ inputs.cache-control }}" ]; then
-          UPLOAD_CMD="$UPLOAD_CMD --cache-control \"${{ inputs.cache-control }}\""
-        fi
-
-        # Execute upload
         echo "Uploading $FILE_PATH to s3://$BUCKET/$S3_KEY"
-        eval $UPLOAD_CMD
+        "${upload[@]}"
 
-        # Generate outputs
         S3_URL="https://$BUCKET.s3.$REGION.amazonaws.com/$S3_KEY"
-
-        echo "s3-key=$S3_KEY" >> $GITHUB_OUTPUT
-        echo "s3-url=$S3_URL" >> $GITHUB_OUTPUT
+        echo "s3-key=$S3_KEY" >> "$GITHUB_OUTPUT"
+        echo "s3-url=$S3_URL" >> "$GITHUB_OUTPUT"
 
         echo "✅ File uploaded successfully!"
         echo "S3 Key: $S3_KEY"
