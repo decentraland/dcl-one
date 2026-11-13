@@ -487,6 +487,23 @@ async fn item_lookup(
     }
 }
 
+/// Credits never pay a wallet for its own item: the buyer may not be the
+/// item's creator or the trade's signer, who receive the proceeds.
+fn refuse_own_sale(
+    session: Session,
+    index: usize,
+    seller: EvmAddress,
+) -> Result<(), AuthorizeError> {
+    if let Session::Web3 { wallet } | Session::Web2 { account: wallet } = session
+        && wallet == seller
+    {
+        return Err(AuthorizeError::Api(ApiError::forbidden(format!(
+            "items[{index}]: credits cannot buy an item from the buyer's own wallet"
+        ))));
+    }
+    Ok(())
+}
+
 /// One line's authoritative facts from the mirrors and the decoded order,
 /// through the rule; `chain_id` is the credits chain this node serves.
 pub(super) async fn derive_line(
@@ -541,6 +558,7 @@ pub(super) async fn derive_line(
                 got: trade.venue.chain_id,
             }));
         }
+        refuse_own_sale(session, index, trade.signer)?;
         // The coupon the line's purchase offer was priced with, chosen again
         // here by the same server rule: the authorized price is the offer's,
         // and a coupon that ended or was outbid since is a changed price.
@@ -555,6 +573,7 @@ pub(super) async fn derive_line(
             if sent.asset_type == TradeAssetType::CollectionItem {
                 match item_lookup(state, chain_id, sent.contract, sent.value).await? {
                     Lookup::Found((record, _)) => {
+                        refuse_own_sale(session, index, record.creator)?;
                         contract = Lookup::Found(ContractRole::Collection);
                         item = Lookup::Found(record);
                     }
@@ -600,6 +619,7 @@ pub(super) async fn derive_line(
         };
         match item_lookup(state, chain_id, collection, item_id).await? {
             Lookup::Found((record, info)) => {
+                refuse_own_sale(session, index, record.creator)?;
                 if !info.store_mintable {
                     return Err(AuthorizeError::Line {
                         index,
@@ -1150,6 +1170,18 @@ fn getrandom_32() -> Option<[u8; 32]> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_buyer_cannot_pay_itself_with_credits() {
+        let me = EvmAddress::parse("0x2222222222222222222222222222222222222222").unwrap();
+        let seller = EvmAddress::parse("0x3333333333333333333333333333333333333333").unwrap();
+        let err = refuse_own_sale(Session::Web3 { wallet: me }, 2, me).unwrap_err();
+        assert!(
+            matches!(&err, AuthorizeError::Api(ApiError::Forbidden(m)) if m.starts_with("items[2]")),
+            "got {err:?}"
+        );
+        assert!(refuse_own_sale(Session::Web3 { wallet: me }, 0, seller).is_ok());
+    }
 
     #[test]
     fn line_validation_is_upstreams_message_for_message() {

@@ -128,6 +128,7 @@ pub const DEFAULT_CHECKOUT_WORKER_INTERVAL_SECS: u64 = 30;
 pub const DEFAULT_CHECKOUT_MAX_ATTEMPTS: i32 = 5;
 pub const DEFAULT_ESCROW_LOCK_DAYS: i32 = 15;
 pub const DEFAULT_REQUIRE_PURCHASE_INTENT: bool = true;
+pub const DEFAULT_TOPUP_MIN_CONFIRMATIONS: u64 = 64;
 
 /// The raw values `main.rs` reads from `Config` (the old env names; the
 /// secrets through `<NAME>_FILE`). No `Debug`: five fields are credentials.
@@ -191,6 +192,10 @@ pub struct RawSettings {
     pub usage_chain_id: i64,
     /// `CREDITS_USAGE_START_BLOCK`: unset, the chain's known start (`usage::Settings::default_start_block`).
     pub usage_start_block: Option<u64>,
+    /// `CREDITS_TOPUP_START_BLOCK`: a MANA top-up mined before it is refused.
+    pub topup_start_block: Option<u64>,
+    /// `CREDITS_TOPUP_MIN_CONFIRMATIONS` (64).
+    pub topup_min_confirmations: u64,
     /// `CREDITS_USAGE_INDEX_INTERVAL_SECS` (30).
     pub usage_interval_secs: u64,
     /// `CREDITS_USAGE_INDEX_REQUESTS_PER_PASS` (50).
@@ -247,6 +252,8 @@ impl Default for RawSettings {
             usage_rpc_url: None,
             usage_chain_id: usage::CHAIN_POLYGON,
             usage_start_block: None,
+            topup_start_block: None,
+            topup_min_confirmations: DEFAULT_TOPUP_MIN_CONFIRMATIONS,
             usage_interval_secs: 30,
             usage_requests_per_pass: 50,
             usage_replay_from_block: None,
@@ -291,6 +298,8 @@ pub struct Settings {
     pub checkout_builder_urls: Option<(String, String)>,
     /// The CreditUsed index (`usage.rs`); its contract is `credits_manager_contract`.
     pub usage: usage::Settings,
+    /// Which MANA top-up transfers are credited (`handlers::topup`).
+    pub topup: handlers::topup::TopupPolicy,
     pub credit_ttl_seconds: u64,
     pub credit_cap_headroom_pct: u32,
     pub credit_buffer_bps: u32,
@@ -540,6 +549,10 @@ impl Settings {
             checkout_builder_urls: non_empty(raw.checkout_success_url_builder)
                 .zip(non_empty(raw.checkout_cancel_url_builder)),
             usage,
+            topup: handlers::topup::TopupPolicy {
+                start_block: raw.topup_start_block,
+                min_confirmations: raw.topup_min_confirmations,
+            },
             credit_ttl_seconds: raw.credit_ttl_seconds,
             credit_cap_headroom_pct: raw.credit_cap_headroom_pct,
             credit_buffer_bps: raw.credit_buffer_bps,

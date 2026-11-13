@@ -1016,6 +1016,10 @@ async fn dispute_revokes_granted_credits_instead_of_paying_the_buyer_twice() {
         }
         other => panic!("expected a reversal, got {other:?}"),
     }
+    assert!(
+        !wallet_blocked(&pool, &addr).await,
+        "a fully covered reversal leaves the wallet usable"
+    );
 
     assert_eq!(
         available(&pool, &addr).await.parse::<f64>().unwrap(),
@@ -1048,6 +1052,16 @@ async fn dispute_revokes_granted_credits_instead_of_paying_the_buyer_twice() {
     assert_reconciles(&pool, &addr, "after dispute").await;
 
     cleanup(&pool, &addr).await;
+}
+
+async fn wallet_blocked(pool: &PgPool, addr: &str) -> bool {
+    sqlx::query_scalar(
+        "SELECT COALESCE((SELECT is_blocked_for_claiming FROM credits.wallets WHERE address = $1), false)",
+    )
+    .bind(addr)
+    .fetch_one(pool)
+    .await
+    .unwrap()
 }
 
 #[tokio::test]
@@ -1097,6 +1111,27 @@ async fn charge_refund_revokes_and_reports_the_unrecoverable_shortfall() {
     }
     assert_eq!(available(&pool, &addr).await.parse::<f64>().unwrap(), 0.0);
     assert_reconciles(&pool, &addr, "after partial-clawback reversal").await;
+    assert!(
+        wallet_blocked(&pool, &addr).await,
+        "an uncovered reversal blocks the wallet"
+    );
+    credits
+        .admin_grant_credits(GrantRequest {
+            address: &addr,
+            amount: "5",
+            kind: "grant",
+            reason: None,
+            actor: Some("test"),
+            idempotency_key: None,
+            detail: &json!({}),
+        })
+        .await
+        .unwrap();
+    let err = credits
+        .spend(&addr, "1", "checkout:after-shortfall", None)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, ApiError::Forbidden(_)), "got {err:?}");
 
     cleanup(&pool, &addr).await;
 }
@@ -1880,15 +1915,41 @@ async fn mana_topup_route_verifies_through_the_broker_and_grants_once() {
     let wallet = scratch_wallet();
     let tx_hash = format!("0x{}", uuid::Uuid::new_v4().simple().to_string().repeat(2));
     let pending = format!("0x{}", uuid::Uuid::new_v4().simple().to_string().repeat(2));
+    let shallow = format!("0x{}", uuid::Uuid::new_v4().simple().to_string().repeat(2));
+    let cheaper_then = format!("0x{}", uuid::Uuid::new_v4().simple().to_string().repeat(2));
+    let unpriced = format!("0x{}", uuid::Uuid::new_v4().simple().to_string().repeat(2));
+    // Rates recorded at fixed past instants no other test writes near; each
+    // test transfer is mined 10 s after one of them.
+    let snapshot_at = |ts: i64| chrono::DateTime::from_timestamp(ts, 0).unwrap().naive_utc();
+    let (at_quarter, at_fifth, at_nothing) = (978_307_200_i64, 978_393_600_i64, 1_009_843_200_i64);
+    for (ts, rate) in [(at_quarter, "0.25"), (at_fifth, "0.20")] {
+        sqlx::query("INSERT INTO economy.price_snapshots (source, mana_usd, taken_at) VALUES ('coingecko', $1::numeric, $2)")
+            .bind(rate)
+            .bind(snapshot_at(ts))
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+    let block = |ts: i64, confirmations: u64| super::escrow::TransferBlock {
+        number: 1_000,
+        timestamp: ts + 10,
+        confirmations,
+    };
+    let payment = |block: super::escrow::TransferBlock| ManaPaymentVerification::Confirmed {
+        from: wallet.address.clone(),
+        to: "0x1111111111111111111111111111111111111111".into(),
+        value_wei: "100000000000000000000".into(),
+        block,
+    };
     let mut broker = MockBroker::configured();
-    broker.verifications.insert(
-        tx_hash.clone(),
-        ManaPaymentVerification::Confirmed {
-            from: wallet.address.clone(),
-            to: "0x1111111111111111111111111111111111111111".into(),
-            value_wei: "100000000000000000000".into(),
-        },
-    );
+    for (hash, b) in [
+        (&tx_hash, block(at_quarter, 64)),
+        (&shallow, block(at_quarter, 3)),
+        (&cheaper_then, block(at_fifth, 64)),
+        (&unpriced, block(at_nothing, 64)),
+    ] {
+        broker.verifications.insert(hash.clone(), payment(b));
+    }
     broker
         .verifications
         .insert(pending.clone(), ManaPaymentVerification::Pending);
@@ -1911,6 +1972,52 @@ async fn mana_topup_route_verifies_through_the_broker_and_grants_once() {
     .await;
     assert_eq!(status, StatusCode::ACCEPTED, "{body}");
     assert_eq!(body["status"], "pending");
+
+    let (status, body) = call(
+        &app,
+        &wallet,
+        "post",
+        "/credits/topup/mana",
+        &[],
+        Some(json!({ "txHash": shallow })),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::ACCEPTED,
+        "too few confirmations: {body}"
+    );
+
+    let (status, body) = call(
+        &app,
+        &wallet,
+        "post",
+        "/credits/topup/mana",
+        &[],
+        Some(json!({ "txHash": unpriced })),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "an old transfer with no recorded rate: {body}"
+    );
+
+    let (status, body) = call(
+        &app,
+        &wallet,
+        "post",
+        "/credits/topup/mana",
+        &[],
+        Some(json!({ "txHash": cheaper_then })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        body["creditsGranted"], "200",
+        "priced at the rate when it was mined, below today's"
+    );
+    cleanup(&pool, &wallet.address).await;
 
     let (status, body) = call(
         &app,
@@ -1972,6 +2079,11 @@ async fn mana_topup_route_verifies_through_the_broker_and_grants_once() {
     assert_eq!(body["manaUsd"], "0.25");
 
     cleanup(&pool, &wallet.address).await;
+    sqlx::query("DELETE FROM economy.price_snapshots WHERE taken_at = ANY($1)")
+        .bind(vec![snapshot_at(at_quarter), snapshot_at(at_fifth)])
+        .execute(&pool)
+        .await
+        .unwrap();
 }
 
 trait Pipe: Sized {
@@ -5163,6 +5275,67 @@ fn market_for_checkout() -> FakeMarket {
 }
 
 #[tokio::test]
+async fn checkout_refuses_an_item_created_by_the_buyer() {
+    let _serial = OUTBOX_SERIAL.lock().await;
+    let Some(pool) = pool().await else { return };
+    let creator = scratch_wallet();
+    let buyer = scratch_wallet();
+    let mut market = market_for_checkout();
+    market
+        .items
+        .get_mut(&(COLLECTION.to_string(), "1".to_string()))
+        .unwrap()
+        .creator = creator.address.to_uppercase().replace("0X", "0x");
+    let state = state_with(
+        pool.clone(),
+        StateCfg {
+            fulfillment_mode: "auto",
+            ..StateCfg::default()
+        },
+        market,
+        MockBroker::configured(),
+    );
+    let urn = format!("urn:decentraland:matic:collections-v2:{COLLECTION}:1");
+    let app = app(state.clone());
+    for w in [&creator, &buyer] {
+        seed_paid_credits(&pool, &w.address, "100").await;
+        state
+            .credits
+            .add_item(cart_line(&w.address, "1", &urn, 1), "3")
+            .await
+            .unwrap();
+    }
+
+    let (status, v) = call(
+        &app,
+        &creator,
+        "post",
+        "/credits/checkout",
+        &[("idempotency-key", &unique("own-item"))],
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{v}");
+    assert_eq!(available(&pool, &creator.address).await, "100");
+
+    let (status, v) = call(
+        &app,
+        &buyer,
+        "post",
+        "/credits/checkout",
+        &[("idempotency-key", &unique("their-item"))],
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    assert_ne!(available(&pool, &buyer.address).await, "100");
+
+    for w in [&creator, &buyer] {
+        cleanup(&pool, &w.address).await;
+    }
+}
+
+#[tokio::test]
 async fn replay_after_commit_returns_original_checkout_without_a_new_debit() {
     let _serial = OUTBOX_SERIAL.lock().await;
     let Some(pool) = pool().await else { return };
@@ -5238,21 +5411,51 @@ async fn replay_after_commit_returns_original_checkout_without_a_new_debit() {
     assert_eq!(spends, 1, "replay must not debit again");
     assert_eq!(available(&pool, &addr).await, "7");
 
-    let intruder = scratch_wallet();
+    // Keys are per wallet: another wallet's same key neither replays this
+    // checkout nor is blocked by it.
+    let other = scratch_wallet();
+    seed_paid_credits(&pool, &other.address, "100").await;
+    state
+        .credits
+        .add_item(cart_line(&other.address, "1", &urn, 1), "3")
+        .await
+        .unwrap();
     let (status, v) = call(
         &app,
-        &intruder,
+        &other,
         "post",
         "/credits/checkout",
         &[("idempotency-key", &idem)],
         Some(json!({})),
     )
     .await;
-    assert_eq!(
-        status,
-        StatusCode::CONFLICT,
-        "someone else's key must not replay: {v}"
-    );
+    assert_eq!(status, StatusCode::OK, "{v}");
+    assert_eq!(v["replayed"], false, "someone else's key must not replay");
+    assert_ne!(v["id"].as_i64(), Some(first.id));
+    cleanup(&pool, &other.address).await;
+
+    // A checkout stored under an unscoped key still replays for its own wallet.
+    let legacy = unique("legacy-key");
+    let legacy_id: i64 = sqlx::query_scalar(
+        "INSERT INTO credits.checkouts (idempotency_key, address, status) VALUES ($1, $2, 'fulfilled') RETURNING id",
+    )
+    .bind(&legacy)
+    .bind(&addr)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let (status, v) = call(
+        &app,
+        &wallet,
+        "post",
+        "/credits/checkout",
+        &[("idempotency-key", &legacy)],
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    assert_eq!(v["id"].as_i64(), Some(legacy_id));
+    assert_eq!(v["replayed"], true);
 
     let (status, v) = call(
         &app,
@@ -5380,7 +5583,11 @@ async fn signed_checkout_binds_price_and_owner_debits_once_and_fulfils_through_t
         Some(signed),
     )
     .await;
-    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(
+        status,
+        StatusCode::FORBIDDEN,
+        "the buyer's key never replays for another wallet, and its intent names the buyer"
+    );
 
     let path = format!("/credits/checkout/{}", first["id"]);
     let (status, order) = call(&app, &buyer, "get", &path, &[], None).await;
@@ -5812,7 +6019,7 @@ async fn cart_reads_and_writes_keep_their_totals_and_the_checkout_records_its_le
     assert_eq!(err.status().as_u16(), 402);
     let status: String =
         sqlx::query_scalar("SELECT status FROM credits.checkouts WHERE idempotency_key = $1")
-            .bind(&idem)
+            .bind(super::checkout::scoped_checkout_key(&broke, &idem))
             .fetch_one(&pool)
             .await
             .unwrap();

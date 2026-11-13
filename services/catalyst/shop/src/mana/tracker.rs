@@ -73,6 +73,17 @@ fn word_u256(word: &[u8]) -> Option<U256> {
     (word.len() == 32).then(|| U256::from_be_slice(word))
 }
 
+/// The settlement key marking a row whose transaction another wallet sent;
+/// the sender's own report may claim the row again.
+pub const SENDER_MISMATCH: &str = "senderMismatch";
+
+/// Whether `actor` sent the transaction: directly, or as the signer of the
+/// meta-transaction it carries.
+pub fn sent_by(actor: Address, from: Address, input: &[u8]) -> bool {
+    from == actor
+        || crate::evm::abi::decode_meta_tx_full(input).is_some_and(|m| m.user_address == actor)
+}
+
 /// What a receipt's logs prove about a settlement.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Proof {
@@ -593,7 +604,45 @@ pub async fn step(
         .await?;
         return Ok("reverted");
     }
-    let payer: Address = row.actor.parse().unwrap_or(receipt.from);
+    let actor: Address = row.actor.parse().unwrap_or(receipt.from);
+    if receipt.from != actor {
+        let input = match reader.transaction_input(&row.tx_hash).await {
+            Ok(Some(input)) => input,
+            Ok(None) | Err(_) => {
+                advance(
+                    &state.pool,
+                    row.id,
+                    &row.status,
+                    &stay(Some("the transaction could not be read".into()), "mined"),
+                    now,
+                )
+                .await?;
+                return Ok("rpc-error");
+            }
+        };
+        if !sent_by(actor, receipt.from, &input) {
+            advance(
+                &state.pool,
+                row.id,
+                &row.status,
+                &Advance {
+                    status: "mismatch",
+                    block_number: Some(receipt.block_number as i64),
+                    confirmed_by: Some("receipt"),
+                    settlement: Some(json!({
+                        (SENDER_MISMATCH): true,
+                        "mismatches": ["the transaction was not sent by the reporting wallet"],
+                    })),
+                    error: None,
+                    next_check_at: now,
+                },
+                now,
+            )
+            .await?;
+            return Ok("mismatch");
+        }
+    }
+    let payer = actor;
     let proof = proof_of(row, &receipt, payer);
     let block = receipt.block_number as i64;
     let (confirmed, by) = match index_confirms(&state.pool, &chain, row, block).await? {
@@ -773,6 +822,26 @@ pub type Shared = SharedState;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_the_sender_or_its_meta_transaction_signer_reported_the_hash() {
+        use alloy_sol_types::SolCall;
+        let (actor, relayer) = (Address::repeat_byte(0xa1), Address::repeat_byte(0xee));
+        assert!(sent_by(actor, actor, &[]));
+        assert!(!sent_by(actor, relayer, &[]));
+        let meta = |user: Address| {
+            crate::evm::abi::executeMetaTransactionCall {
+                userAddress: user,
+                functionSignature: vec![0u8; 4].into(),
+                sigR: Default::default(),
+                sigS: Default::default(),
+                sigV: 27,
+            }
+            .abi_encode()
+        };
+        assert!(sent_by(actor, relayer, &meta(actor)));
+        assert!(!sent_by(actor, relayer, &meta(relayer)));
+    }
 
     fn row(kind: &str, price: Option<&str>) -> ExecutionRow {
         let now = Utc::now().naive_utc();

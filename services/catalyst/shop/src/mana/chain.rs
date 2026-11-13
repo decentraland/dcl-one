@@ -351,6 +351,18 @@ impl Reader {
     /// The calldata `tx_hash` was sent with, `None` when the node does not
     /// know the transaction.
     pub async fn transaction_input(&self, tx_hash: &str) -> Result<Option<Vec<u8>>, ReadError> {
+        Ok(self
+            .transaction_sender(tx_hash)
+            .await?
+            .map(|(_, input)| input))
+    }
+
+    /// The sender and calldata of `tx_hash`, `None` when the node does not
+    /// know the transaction (pending ones included).
+    pub async fn transaction_sender(
+        &self,
+        tx_hash: &str,
+    ) -> Result<Option<(Address, Vec<u8>)>, ReadError> {
         let value = self
             .rpc
             .call("eth_getTransactionByHash", json!([tx_hash]))
@@ -358,12 +370,17 @@ impl Reader {
         if value.is_null() {
             return Ok(None);
         }
+        let from = value
+            .get("from")
+            .and_then(Value::as_str)
+            .and_then(|f| f.parse::<Address>().ok())
+            .ok_or_else(|| ReadError::Decode("transaction sender".into()))?;
         let input = value
             .get("input")
             .and_then(Value::as_str)
             .ok_or_else(|| ReadError::Decode("transaction input".into()))?;
         hex::decode(input.trim_start_matches("0x"))
-            .map(Some)
+            .map(|input| Some((from, input)))
             .map_err(|e| ReadError::Decode(format!("transaction input: {e}")))
     }
 

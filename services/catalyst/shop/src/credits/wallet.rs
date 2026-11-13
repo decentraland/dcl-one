@@ -485,11 +485,18 @@ impl Credits {
                 },
             )
             .await?;
+            sqlx::query(
+                "INSERT INTO credits.wallets (address, is_blocked_for_claiming) VALUES ($1, true) \
+                 ON CONFLICT (address) DO UPDATE SET is_blocked_for_claiming = true",
+            )
+            .bind(address)
+            .execute(&mut **tx)
+            .await?;
             tracing::error!(
                 address = %address,
                 tx_ref = %tx_ref,
                 charged_back = %amount,
-                "credits revoke found NO wallet row: the entire charge-back is an unrecovered loss"
+                "credits revoke found NO wallet row: the entire charge-back is an unrecovered loss; wallet blocked"
             );
             return Ok(RevokeOutcome {
                 available: "0".to_string(),
@@ -501,10 +508,16 @@ impl Credits {
         let available_before: String = before.get("available");
         let earned_before: String = before.get("earned");
 
+        // A reversal the balance cannot cover, net of live pledges, blocks the
+        // wallet from spending until an operator reviews it.
         let row = sqlx::query(
             "UPDATE credits.wallets \
              SET available = GREATEST(available - $2::numeric, 0), \
                  earned_available = LEAST(earned_available, GREATEST(available - $2::numeric, 0)), \
+                 is_blocked_for_claiming = is_blocked_for_claiming OR $2::numeric > available - COALESCE(( \
+                     SELECT SUM(usd_cents) FROM credits.authorizations \
+                     WHERE address = $1 AND status IN ('authorized', 'retired') \
+                 ), 0)::numeric / $5::numeric, \
                  updated_at = timezone('UTC', now()) \
              WHERE address = $1 \
              RETURNING available::text AS available, \
@@ -512,14 +525,20 @@ impl Credits {
                        ($4::numeric - earned_available)::text AS earned_removed, \
                        (($3::numeric - available) - ($4::numeric - earned_available))::text AS paid_removed, \
                        GREATEST($2::numeric - ($3::numeric - available), 0)::text AS shortfall, \
-                       ($2::numeric > $3::numeric - available) AS has_shortfall",
+                       ($2::numeric > $3::numeric - available) AS has_shortfall, \
+                       is_blocked_for_claiming AS blocked",
         )
         .bind(address)
         .bind(amount)
         .bind(&available_before)
         .bind(&earned_before)
+        .bind(UsdCents::CENTS_PER_CREDIT)
         .fetch_one(&mut **tx)
         .await?;
+        let blocked: bool = row.get("blocked");
+        if blocked {
+            tracing::error!(address = %address, tx_ref = %tx_ref, "fiat reversal exceeds the unpledged balance: wallet blocked from spending credits");
+        }
         let available: String = row.get("available");
         let removed: String = row.get("removed");
         let earned_removed: String = row.get("earned_removed");
@@ -531,6 +550,7 @@ impl Credits {
         if let serde_json::Value::Object(map) = &mut detail {
             map.insert("txRef".into(), json!(tx_ref));
             map.insert("chargedBack".into(), json!(amount));
+            map.insert("blocked".into(), json!(blocked));
             map.insert("removed".into(), json!(removed));
             map.insert("shortfall".into(), json!(shortfall));
             map.insert("reason".into(), json!(reason));

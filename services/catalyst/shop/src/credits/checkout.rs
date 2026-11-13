@@ -87,6 +87,11 @@ pub struct CheckoutIdemRow {
     pub status: String,
 }
 
+/// A checkout's `Idempotency-Key` is the wallet's own namespace.
+pub(crate) fn scoped_checkout_key(address: &str, idempotency_key: &str) -> String {
+    format!("{}:{idempotency_key}", address.to_ascii_lowercase())
+}
+
 impl Credits {
     pub async fn get_or_create_cart(&self, address: &str) -> Result<i64, ApiError> {
         let row = sqlx::query(
@@ -310,14 +315,21 @@ impl Credits {
         Ok((outcome, closed))
     }
 
+    /// `address`'s checkout under its `Idempotency-Key`: the wallet-scoped key,
+    /// or an unscoped key stored before keys were scoped, if it is the same wallet's.
     pub async fn find_checkout_by_idempotency_key(
         &self,
+        address: &str,
         idempotency_key: &str,
     ) -> Result<Option<CheckoutIdemRow>, ApiError> {
         let row = sqlx::query(
-            "SELECT id, address, status FROM credits.checkouts WHERE idempotency_key = $1",
+            "SELECT id, address, status FROM credits.checkouts \
+             WHERE idempotency_key IN ($1, $2) AND lower(address) = lower($3) \
+             ORDER BY id LIMIT 1",
         )
+        .bind(scoped_checkout_key(address, idempotency_key))
         .bind(idempotency_key)
+        .bind(address)
         .fetch_optional(&self.pool)
         .await?;
         Ok(row.map(|r| CheckoutIdemRow {
@@ -341,6 +353,8 @@ impl Credits {
         if repriced.is_empty() {
             return Err(ApiError::bad_request("cart is empty"));
         }
+        let scoped = scoped_checkout_key(address, idempotency_key);
+        let idempotency_key = scoped.as_str();
 
         let mut tx = self.pool.begin().await?;
 

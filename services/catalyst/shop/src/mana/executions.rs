@@ -152,6 +152,8 @@ fn lower(a: Address) -> String {
 }
 
 /// Inserts the row, or returns the one the hash already has. `(claimed, row)`.
+/// A row the tracker found was sent by another wallet than its reporter is
+/// claimed again by a different reporter, and re-checked.
 pub async fn record(
     pool: &PgPool,
     chain_id: u64,
@@ -165,7 +167,19 @@ pub async fn record(
         "INSERT INTO shop.executions (chain_id, tx_hash, kind, actor, venue, contract_address, token_id, reference, expected_price, mana_token, expected_seller, expected_owner, \
                                       status, next_check_at, created_at, updated_at) \
          VALUES ($1, $2, $3, $4, $5, $6, $7::numeric, $8, $9::numeric, $10, $11, $12, 'submitted', $13, $13, $13) \
-         ON CONFLICT (chain_id, tx_hash) DO NOTHING RETURNING {COLUMNS}"
+         ON CONFLICT (chain_id, tx_hash) DO UPDATE SET \
+             kind = EXCLUDED.kind, actor = EXCLUDED.actor, venue = EXCLUDED.venue, \
+             contract_address = EXCLUDED.contract_address, token_id = EXCLUDED.token_id, \
+             reference = EXCLUDED.reference, expected_price = EXCLUDED.expected_price, \
+             mana_token = EXCLUDED.mana_token, expected_seller = EXCLUDED.expected_seller, \
+             expected_owner = EXCLUDED.expected_owner, status = 'submitted', block_number = NULL, \
+             confirmed_by = NULL, settlement = NULL, attempts = 0, last_error = NULL, \
+             next_check_at = EXCLUDED.next_check_at, updated_at = EXCLUDED.updated_at \
+         WHERE shop.executions.actor <> EXCLUDED.actor \
+           AND shop.executions.status = 'mismatch' \
+           AND (shop.executions.settlement ->> '{sender_mismatch}')::boolean IS TRUE \
+         RETURNING {COLUMNS}",
+        sender_mismatch = super::tracker::SENDER_MISMATCH,
     )))
     .bind(chain_id as i64)
     .bind(tx_hash)
@@ -548,6 +562,18 @@ pub async fn post_execution(
         Ok(e) => e,
         Err(r) => return r,
     };
+    // A transaction the node already knows must be the reporter's; an unknown
+    // one is checked by the tracker once mined.
+    if let Ok(Some(reader)) = state.reader(req.chain_id).await
+        && let Ok(Some((from, input))) = reader.transaction_sender(&tx_hash).await
+        && !super::tracker::sent_by(actor, from, &input)
+    {
+        return error(
+            StatusCode::FORBIDDEN,
+            "Forbidden",
+            "the transaction was not sent by the signing wallet",
+        );
+    }
     match record(
         &state.pool,
         req.chain_id.0,
@@ -636,6 +662,65 @@ pub async fn list_executions(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn a_row_another_wallet_sent_is_claimed_by_the_next_reporter() {
+        let Some(pool) = crate::db::scratch::pool(2).await else {
+            return;
+        };
+        let hash = format!("0x{}", uuid::Uuid::new_v4().simple().to_string().repeat(2));
+        let (first, second, third) = (
+            Address::repeat_byte(0xa1),
+            Address::repeat_byte(0xa2),
+            Address::repeat_byte(0xa3),
+        );
+        let e = Expectation {
+            venue: Address::repeat_byte(0x01),
+            ..Default::default()
+        };
+        let now = Utc::now().naive_utc();
+        let (claimed, row) = record(&pool, 137, &hash, "approve_mana", first, &e, now)
+            .await
+            .unwrap();
+        assert!(claimed);
+        let (claimed, kept) = record(&pool, 137, &hash, "approve_mana", second, &e, now)
+            .await
+            .unwrap();
+        assert!(!claimed, "an unchecked row keeps its reporter");
+        assert_eq!(kept.actor, row.actor);
+
+        sqlx::query(
+            "UPDATE shop.executions SET status = 'mismatch', settlement = $2 WHERE id = $1",
+        )
+        .bind(row.id)
+        .bind(json!({ (crate::mana::tracker::SENDER_MISMATCH): true }))
+        .execute(&pool)
+        .await
+        .unwrap();
+        let (claimed, reclaimed) = record(&pool, 137, &hash, "approve_mana", second, &e, now)
+            .await
+            .unwrap();
+        assert!(
+            claimed,
+            "the sender's report replaces a foreign reporter's row"
+        );
+        assert_eq!(reclaimed.id, row.id);
+        assert_eq!(reclaimed.actor, format!("{second:#x}"));
+        assert_eq!(reclaimed.status, "submitted");
+        let (claimed, _) = record(&pool, 137, &hash, "approve_mana", third, &e, now)
+            .await
+            .unwrap();
+        assert!(
+            !claimed,
+            "a re-claimed row is checked before anyone else claims it"
+        );
+
+        sqlx::query("DELETE FROM shop.executions WHERE id = $1")
+            .bind(row.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
 
     #[test]
     fn the_kinds_and_statuses_are_the_schemas() {

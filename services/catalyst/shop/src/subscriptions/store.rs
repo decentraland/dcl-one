@@ -117,6 +117,32 @@ impl Subscriptions {
         Ok(())
     }
 
+    /// Pending rows held by `address`, and pending rows for `email` across
+    /// wallets, other than `address`'s own row for the item.
+    pub async fn pending_counts(
+        &self,
+        address: &str,
+        email: &str,
+        contract: &str,
+        item_id: &str,
+    ) -> sqlx::Result<(i64, i64)> {
+        sqlx::query_as(
+            "SELECT \
+               (SELECT count(*) FROM shop.item_notify_requests \
+                 WHERE address = $1 AND status = 'pending' \
+                   AND NOT (contract_address = $3 AND item_id = $4)), \
+               (SELECT count(*) FROM shop.item_notify_requests \
+                 WHERE lower(email) = lower($2) AND status = 'pending' \
+                   AND NOT (address = $1 AND contract_address = $3 AND item_id = $4))",
+        )
+        .bind(address)
+        .bind(email)
+        .bind(contract)
+        .bind(item_id)
+        .fetch_one(&self.pool)
+        .await
+    }
+
     pub async fn get(
         &self,
         address: &str,

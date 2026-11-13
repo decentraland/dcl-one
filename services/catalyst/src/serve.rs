@@ -1613,6 +1613,8 @@ fn credits_settings(config: &Config) -> anyhow::Result<shop::credits::Settings> 
         usage_rpc_url: non_empty(&config.economy.rpc_endpoint_polygon),
         usage_chain_id: config.economy.collections_chain_id as i64,
         usage_start_block: config.shop.credits_usage_start_block,
+        topup_start_block: config.shop.credits_topup_start_block,
+        topup_min_confirmations: config.shop.credits_topup_min_confirmations,
         usage_interval_secs: config.shop.credits_usage_index_interval_secs,
         usage_requests_per_pass: config.shop.credits_usage_index_requests_per_pass,
         usage_replay_from_block: config.shop.credits_usage_replay_from_block,

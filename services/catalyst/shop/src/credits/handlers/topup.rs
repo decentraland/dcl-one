@@ -15,7 +15,7 @@ use super::signer_from;
 use crate::credits::SharedState;
 use crate::credits::admin_store::GrantRequest;
 use crate::credits::errors::ApiError;
-use crate::credits::escrow::ManaPaymentVerification;
+use crate::credits::escrow::{ManaPaymentVerification, TransferBlock};
 use crate::credits::pricing::CREDIT_USD;
 
 const QUOTE_MAX_CREDITS: i64 = 100_000;
@@ -61,13 +61,33 @@ fn topup_idempotency_key(tx_hash_lowercase: &str) -> String {
     format!("mana-topup:{tx_hash_lowercase}")
 }
 
+/// Which confirmed MANA transfers a top-up credits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TopupPolicy {
+    /// `CREDITS_TOPUP_START_BLOCK`: transfers mined earlier are refused.
+    pub start_block: Option<u64>,
+    /// `CREDITS_TOPUP_MIN_CONFIRMATIONS`: until then the claim answers pending.
+    pub min_confirmations: u64,
+}
+
+/// A transfer with no recorded MANA/USD rate at its block is credited only this soon after it.
+const UNPRICED_MAX_AGE_SECS: i64 = crate::price::store::SNAPSHOT_MAX_AGE.as_secs() as i64;
+
 #[derive(Debug, PartialEq, Eq)]
 enum TopupDecision {
     Pending,
-    Granted { value_wei: String },
+    Granted {
+        value_wei: String,
+        block: TransferBlock,
+    },
 }
 
-fn decide(verification: ManaPaymentVerification, signer: &str) -> Result<TopupDecision, ApiError> {
+fn decide(
+    verification: ManaPaymentVerification,
+    signer: &str,
+    policy: &TopupPolicy,
+    operator: &[&str],
+) -> Result<TopupDecision, ApiError> {
     match verification {
         ManaPaymentVerification::Pending => Ok(TopupDecision::Pending),
         ManaPaymentVerification::Reverted => Err(ApiError::unprocessable(
@@ -77,14 +97,94 @@ fn decide(verification: ManaPaymentVerification, signer: &str) -> Result<TopupDe
             "the transaction is confirmed but contains no MANA transfer to the top-up address",
         )),
         ManaPaymentVerification::Confirmed {
-            from, value_wei, ..
+            from,
+            to,
+            value_wei,
+            block,
         } => {
             if from.to_lowercase() != signer.to_lowercase() {
                 return Err(ApiError::forbidden(
                     "the MANA payment was sent by a different wallet; only the payer can claim this top-up",
                 ));
             }
-            Ok(TopupDecision::Granted { value_wei })
+            if from.eq_ignore_ascii_case(&to)
+                || operator.iter().any(|a| a.eq_ignore_ascii_case(&from))
+            {
+                return Err(ApiError::forbidden(
+                    "transfers from the Shop's own wallets are not top-ups",
+                ));
+            }
+            if policy.start_block.is_some_and(|start| block.number < start) {
+                return Err(ApiError::unprocessable(
+                    "the MANA payment predates MANA top-ups on this node",
+                ));
+            }
+            if block.confirmations < policy.min_confirmations {
+                return Ok(TopupDecision::Pending);
+            }
+            Ok(TopupDecision::Granted { value_wei, block })
+        }
+    }
+}
+
+/// The recorded MANA/USD rate when `block_timestamp` was mined: the newest
+/// snapshot at or before it, no older than the snapshot freshness budget.
+async fn rate_at(pool: &sqlx::PgPool, block_timestamp: i64) -> Result<Option<String>, ApiError> {
+    let Some(at) = chrono::DateTime::from_timestamp(block_timestamp, 0) else {
+        return Ok(None);
+    };
+    let row = sqlx::query(
+        "SELECT mana_usd::text AS rate FROM economy.price_snapshots \
+         WHERE taken_at <= $1 AND taken_at > $1 - make_interval(secs => $2) \
+         ORDER BY taken_at DESC LIMIT 1",
+    )
+    .bind(at.naive_utc())
+    .bind(UNPRICED_MAX_AGE_SECS as f64)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.map(|r| r.get::<String, _>("rate")))
+}
+
+/// The rate a transfer is credited at: the lower of the rate at its block and
+/// now; with no rate recorded at its block, only a recent transfer is priced.
+fn pricing_rate(
+    now_rate: &str,
+    rate_at_block: Option<String>,
+    block_timestamp: i64,
+    now_s: i64,
+) -> Result<PricingRate, ApiError> {
+    match rate_at_block {
+        Some(then) => Ok(PricingRate::Lower {
+            now: now_rate.to_string(),
+            then,
+        }),
+        None if now_s.saturating_sub(block_timestamp) <= UNPRICED_MAX_AGE_SECS => {
+            Ok(PricingRate::Now(now_rate.to_string()))
+        }
+        None => Err(ApiError::unprocessable(
+            "the MANA payment is too old to price: no MANA/USD rate is recorded for its block",
+        )),
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum PricingRate {
+    Now(String),
+    Lower { now: String, then: String },
+}
+
+impl PricingRate {
+    async fn resolve(self, pool: &sqlx::PgPool) -> Result<String, ApiError> {
+        match self {
+            Self::Now(rate) => Ok(rate),
+            Self::Lower { now, then } => Ok(sqlx::query(
+                "SELECT least($1::numeric, $2::numeric)::text AS rate",
+            )
+            .bind(now)
+            .bind(then)
+            .fetch_one(pool)
+            .await?
+            .get::<String, _>("rate")),
         }
     }
 }
@@ -162,14 +262,29 @@ pub async fn mana_topup(
         state.pricing.fetch_mana_usd()
     );
 
-    let value_wei = match decide(verification?, signer.as_str())? {
+    let escrow = state.broker.escrow_address();
+    let operator: Vec<&str> = escrow.iter().map(String::as_str).collect();
+    let (value_wei, block) = match decide(
+        verification?,
+        signer.as_str(),
+        &state.settings.topup,
+        &operator,
+    )? {
         TopupDecision::Pending => {
             return Ok((StatusCode::ACCEPTED, Json(json!({ "status": "pending" }))).into_response());
         }
-        TopupDecision::Granted { value_wei } => value_wei,
+        TopupDecision::Granted { value_wei, block } => (value_wei, block),
     };
 
-    let mana_usd = mana_usd?;
+    let rate_at_block = rate_at(&state.credits.pool, block.timestamp).await?;
+    let mana_usd = pricing_rate(
+        &mana_usd?,
+        rate_at_block,
+        block.timestamp,
+        chrono::Utc::now().timestamp(),
+    )?
+    .resolve(&state.credits.pool)
+    .await?;
     let credits = credits_for_wei(&state.credits.pool, &value_wei, &mana_usd).await?;
     if !crate::credits::pricing::charge_is_positive(&credits) {
         return Err(ApiError::unprocessable(format!(
@@ -177,7 +292,7 @@ pub async fn mana_topup(
         )));
     }
 
-    let detail = json!({ "source": "mana-topup", "txHash": tx_hash, "valueWei": value_wei, "manaUsd": mana_usd });
+    let detail = json!({ "source": "mana-topup", "txHash": tx_hash, "valueWei": value_wei, "manaUsd": mana_usd, "blockNumber": block.number });
     let outcome = state
         .credits
         .admin_grant_credits(GrantRequest {
@@ -245,12 +360,91 @@ mod tests {
     const SIGNER: &str = "0x2222222222222222222222222222222222222222";
     const OTHER: &str = "0x3333333333333333333333333333333333333333";
 
-    fn confirmed(from: &str, wei: &str) -> ManaPaymentVerification {
+    const PAY_TO: &str = "0x1111111111111111111111111111111111111111";
+    const ESCROW: &str = "0x4444444444444444444444444444444444444444";
+    const POLICY: TopupPolicy = TopupPolicy {
+        start_block: Some(1_000),
+        min_confirmations: 64,
+    };
+    const BLOCK: TransferBlock = TransferBlock {
+        number: 2_000,
+        timestamp: 1_700_000_000,
+        confirmations: 64,
+    };
+
+    fn confirmed_at(from: &str, wei: &str, block: TransferBlock) -> ManaPaymentVerification {
         ManaPaymentVerification::Confirmed {
             from: from.into(),
-            to: "0x1111111111111111111111111111111111111111".into(),
+            to: PAY_TO.into(),
             value_wei: wei.into(),
+            block,
         }
+    }
+
+    fn confirmed(from: &str, wei: &str) -> ManaPaymentVerification {
+        confirmed_at(from, wei, BLOCK)
+    }
+
+    fn decide(v: ManaPaymentVerification, signer: &str) -> Result<TopupDecision, ApiError> {
+        super::decide(v, signer, &POLICY, &[ESCROW])
+    }
+
+    #[test]
+    fn shallow_transfers_stay_pending_until_deep_enough() {
+        let shallow = TransferBlock {
+            confirmations: 63,
+            ..BLOCK
+        };
+        assert_eq!(
+            decide(confirmed_at(SIGNER, "42", shallow), SIGNER).unwrap(),
+            TopupDecision::Pending
+        );
+        assert!(matches!(
+            decide(confirmed_at(SIGNER, "42", BLOCK), SIGNER).unwrap(),
+            TopupDecision::Granted { .. }
+        ));
+    }
+
+    #[test]
+    fn transfers_before_the_start_block_are_refused() {
+        let early = TransferBlock {
+            number: 999,
+            ..BLOCK
+        };
+        let err = decide(confirmed_at(SIGNER, "42", early), SIGNER).unwrap_err();
+        assert!(matches!(err, ApiError::Unprocessable(_)), "got {err:?}");
+        let at_start = TransferBlock {
+            number: 1_000,
+            ..BLOCK
+        };
+        assert!(decide(confirmed_at(SIGNER, "42", at_start), SIGNER).is_ok());
+    }
+
+    #[test]
+    fn operator_wallets_cannot_claim_their_funding() {
+        for operator in [PAY_TO, ESCROW] {
+            let err = decide(confirmed(operator, "42"), operator).unwrap_err();
+            assert!(matches!(err, ApiError::Forbidden(_)), "{operator}: {err:?}");
+        }
+    }
+
+    #[test]
+    fn an_unrecorded_rate_prices_only_recent_transfers() {
+        let ts = BLOCK.timestamp;
+        assert_eq!(
+            pricing_rate("0.3", None, ts, ts + UNPRICED_MAX_AGE_SECS).unwrap(),
+            PricingRate::Now("0.3".into())
+        );
+        let err = pricing_rate("0.3", None, ts, ts + UNPRICED_MAX_AGE_SECS + 1).unwrap_err();
+        assert!(matches!(err, ApiError::Unprocessable(_)), "got {err:?}");
+        assert_eq!(
+            pricing_rate("0.3", Some("0.2".into()), ts, ts + 86_400).unwrap(),
+            PricingRate::Lower {
+                now: "0.3".into(),
+                then: "0.2".into()
+            },
+            "a recorded rate prices any age at the lower of then and now"
+        );
     }
 
     #[test]
@@ -314,7 +508,8 @@ mod tests {
         assert_eq!(
             got,
             TopupDecision::Granted {
-                value_wei: "42".into()
+                value_wei: "42".into(),
+                block: BLOCK,
             }
         );
     }

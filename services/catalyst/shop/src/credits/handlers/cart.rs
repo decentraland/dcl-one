@@ -330,7 +330,7 @@ pub async fn checkout(
     if let Some(out) = replay_for_signer(
         state
             .credits
-            .find_checkout_by_idempotency_key(&idem)
+            .find_checkout_by_idempotency_key(signer.as_str(), &idem)
             .await?,
         signer.as_str(),
     )? {
@@ -429,6 +429,17 @@ pub async fn checkout(
     let mut repriced: Vec<RepricedLine> = Vec::with_capacity(lines.len());
     for (line, priced) in lines.into_iter().zip(priced_lines) {
         let priced = priced?;
+        if priced
+            .basis
+            .info
+            .creator
+            .eq_ignore_ascii_case(signer.as_str())
+        {
+            return Err(ApiError::forbidden(format!(
+                "credits cannot buy {}:{} from its creator's own wallet",
+                line.collection, line.item_id
+            )));
+        }
         ensure_qty_fillable(&priced.basis.kind, line.qty)?;
         rule_line(&state, session, &priced.basis)
             .await?

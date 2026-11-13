@@ -16576,6 +16576,9 @@ CREATE TABLE shop.item_notify_requests (
 -- availability watcher's distinct pending items.
 CREATE INDEX item_notify_requests_pending_idx ON shop.item_notify_requests (contract_address, item_id, id) WHERE status = 'pending';
 
+-- The per-email cap on new requests: WHERE lower(email) = $1 AND status = 'pending'.
+CREATE INDEX item_notify_requests_pending_email_idx ON shop.item_notify_requests (lower(email)) WHERE status = 'pending';
+
 -- The delivery outbox of the waitlist (the SQS hop of shop-server as a
 -- local transactional row): an item's on-sale transition inserts one row
 -- per pending subscriber in the transaction that records the transition;
