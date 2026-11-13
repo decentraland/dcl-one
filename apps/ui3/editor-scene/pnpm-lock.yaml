@@ -5,10 +5,10 @@ settings:
   excludeLinksFromLockfile: false
 
 overrides:
+  '@dcl/hashing': workspace:*
   protobufjs: 7.6.6
   '@dcl/quests-client>@dcl/sdk': 7.30.1
   fast-uri@>=3.0.0 <3.1.9: ^3.1.9
-  '@dcl/sdk-commands>@dcl/hashing': 3.0.4
 
 importers:
 
@@ -17,6 +17,9 @@ importers:
       '@dcl/ecs':
         specifier: 7.30.1
         version: 7.30.1
+      '@dcl/hashing':
+        specifier: workspace:*
+        version: link:../../../library/hashing
       '@dcl/js-runtime':
         specifier: 7.30.1
         version: 7.30.1
@@ -25,10 +28,20 @@ importers:
         version: 7.30.1
       '@dcl/sdk':
         specifier: 7.30.1
-        version: 7.30.1
+        version: 7.30.1(@well-known-components/interfaces@1.5.2)
       '@dcl/sdk-commands':
         specifier: 7.30.1
         version: 7.30.1(@well-known-components/interfaces@1.5.2)
+
+  ../../../library/hashing:
+    dependencies:
+      '@noble/hashes':
+        specifier: 2.4.0
+        version: 2.4.0
+    devDependencies:
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
 
 packages:
 
@@ -80,9 +93,6 @@ packages:
   '@dcl/gltf-validator-ts@1.0.14':
     resolution: {integrity: sha512-2sfCvyLKEJlmUrgkWQh57NnjvYeynJWyGCr/WMcUFFur1xlbJEC3kgqbkkNEmVKuOhM/DeYoL5fQDV/BGcxHQg==}
     engines: {node: '>=18.0.0'}
-
-  '@dcl/hashing@3.0.4':
-    resolution: {integrity: sha512-Cg+MoIOn+BYmQV2q8zSFnNYY+GldlnUazwBnfgrq3i66ZxOaZ65h01btd8OUtSAlfWG4VTNIOHDjtKqmuwJNBg==}
 
   '@dcl/inspector@7.36.3':
     resolution: {integrity: sha512-EwvXoZlXvDKZsK2qrRYG+Yia7qKHWgQUqbWY7e6zSVMffRDhhjVyS2FEipgrLqL0YMrTkJcfAsHaNnZgZsnP4A==}
@@ -285,6 +295,10 @@ packages:
   '@noble/hashes@1.4.0':
     resolution: {integrity: sha512-V1JJ1WTRUqHHrOSh597hURcMqVKVGL/ea3kv0gSnEdsEZ0/+VyPghM1lMNGc00z7CIQorSvbKpuJkxvuHbvdbg==}
     engines: {node: '>= 16'}
+
+  '@noble/hashes@2.4.0':
+    resolution: {integrity: sha512-X5XaVWZIBCT7HHZGm5I7ZQXDwLG+bGXuSrMQAW+7Zvl87h1kmc1ZB1VSRJcpUfoUrGQp4Fkoxm5kZ+Ms+aW+eA==}
+    engines: {node: '>= 20.19.0'}
 
   '@opentelemetry/api@1.9.1':
     resolution: {integrity: sha512-gLyJlPHPZYdAk1JENA9LeHejZe1Ti77/pTeFm/nMXmQH/HFZlcS/O2XJB+L8fkbrNSqhdtlvjBVjxwUYanNH5Q==}
@@ -1175,8 +1189,6 @@ snapshots:
 
   '@dcl/gltf-validator-ts@1.0.14': {}
 
-  '@dcl/hashing@3.0.4': {}
-
   '@dcl/inspector@7.36.3(@dcl/ecs@7.30.1)':
     dependencies:
       '@babel/parser': 7.28.5
@@ -1213,12 +1225,18 @@ snapshots:
       '@dcl/ts-proto': 1.154.0
       protobufjs: 7.6.6
 
-  '@dcl/quests-client@1.0.3':
+  '@dcl/quests-client@1.0.3(@well-known-components/interfaces@1.5.2)':
     dependencies:
       '@dcl/protocol': 1.0.0-34643020503.commit-6402953
       '@dcl/rpc': 1.1.2
-      '@dcl/sdk': 7.30.1
+      '@dcl/sdk': 7.30.1(@well-known-components/interfaces@1.5.2)
       mitt: 3.0.1
+    transitivePeerDependencies:
+      - '@well-known-components/interfaces'
+      - bufferutil
+      - encoding
+      - supports-color
+      - utf-8-validate
 
   '@dcl/quests-manager@0.1.4': {}
 
@@ -1264,12 +1282,12 @@ snapshots:
       '@dcl/crypto': 3.8.0
       '@dcl/ecs': 7.30.1
       '@dcl/gltf-validator-ts': 1.0.14
-      '@dcl/hashing': 3.0.4
+      '@dcl/hashing': link:../../../library/hashing
       '@dcl/inspector': 7.36.3(@dcl/ecs@7.30.1)
       '@dcl/linker-dapp': 0.15.2
       '@dcl/mini-comms': 1.0.1-20230216163137.commit-a4c75be
       '@dcl/protocol': 1.0.0-34643020503.commit-6402953
-      '@dcl/quests-client': 1.0.3
+      '@dcl/quests-client': 1.0.3(@well-known-components/interfaces@1.5.2)
       '@dcl/quests-manager': 0.1.4
       '@dcl/rpc': 1.1.2
       '@dcl/schemas': 8.2.3-20230801124703.commit-ade94fc
@@ -1297,13 +1315,19 @@ snapshots:
       - supports-color
       - utf-8-validate
 
-  '@dcl/sdk@7.30.1':
+  '@dcl/sdk@7.30.1(@well-known-components/interfaces@1.5.2)':
     dependencies:
       '@dcl/ecs': 7.30.1
       '@dcl/ecs-math': 2.1.0
       '@dcl/js-runtime': 7.30.1
       '@dcl/react-ecs': 7.30.1
       '@dcl/sdk-commands': 7.30.1(@well-known-components/interfaces@1.5.2)
+    transitivePeerDependencies:
+      - '@well-known-components/interfaces'
+      - bufferutil
+      - encoding
+      - supports-color
+      - utf-8-validate
 
   '@dcl/ts-proto@1.154.0':
     dependencies:
@@ -1395,6 +1419,8 @@ snapshots:
 
   '@noble/hashes@1.4.0': {}
 
+  '@noble/hashes@2.4.0': {}
+
   '@opentelemetry/api@1.9.1': {}
 
   '@protobufjs/aspromise@1.1.2': {}
@@ -1461,7 +1487,7 @@ snapshots:
 
   '@types/node-fetch@2.6.13':
     dependencies:
-      '@types/node': 20.19.43
+      '@types/node': 26.6.5
       form-data: 4.0.6
 
   '@types/node@20.19.43':
@@ -1703,7 +1729,7 @@ snapshots:
       '@dcl/catalyst-contracts': 4.4.2
       '@dcl/crypto': 3.8.0
       '@dcl/fetch-component': 1.1.2
-      '@dcl/hashing': 3.0.4
+      '@dcl/hashing': link:../../../library/hashing
       '@dcl/schemas': 23.1.0
       cookie: 0.5.0
 

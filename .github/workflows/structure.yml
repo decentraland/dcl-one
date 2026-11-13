@@ -49,6 +49,12 @@ jobs:
       - name: Test shared asynchronous utilities
         if: success() || failure()
         run: node --test library/async/*.test.mts
+      - name: Test the hashing package
+        if: success() || failure()
+        working-directory: library/hashing
+        run: |
+          corepack pnpm@11.27.0 install --frozen-lockfile --ignore-scripts
+          node --test test/*.test.ts
       - name: Test the shop parity harness
         if: success() || failure()
         working-directory: tooling/shop-parity

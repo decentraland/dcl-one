@@ -73,7 +73,8 @@ jobs:
       - name: Bundle react HUD (page + bridge scene -> assets/)
         run: |-
           cd react-web && npm ci
-          cd bridge-scene && npm ci && cd ..
+          cd bridge-scene && corepack pnpm@11.27.0 install --frozen-lockfile --ignore-scripts
+          corepack pnpm@11.27.0 --filter @dcl/hashing build && cd ..
           npm run bundle:native
         shell: bash
       - name: Install ninja (macos)

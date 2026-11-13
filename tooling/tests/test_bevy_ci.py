@@ -375,6 +375,18 @@ class SelectionTest(unittest.TestCase):
                 self.assertEqual({lane for lane in (*ci.LANES, 'native-matrix', 'scenes')
                                   if selected[lane]}, {'web'})
 
+    def test_local_hashing_and_its_check_validate_web_only(self):
+        # play-artifact.py fingerprints these paths with the web app: a change needs a web build
+        # with the new fingerprint, or fetch-play.py finds no producer for it. Markdown is in
+        # neither the fingerprint nor the selection.
+        for name, lanes in (('library/hashing/src/cid.ts', {'web'}), ('library/hashing/package.json', {'web'}),
+                            ('tooling/check-local-hashing.mjs', {'web'}), ('library/hashing/README.md', set())):
+            with self.subTest(path=name):
+                before = self.git('rev-parse', 'HEAD')
+                self.write(name, 'changed')
+                selected = ci.select(before, self.commit())
+                self.assertEqual({lane for lane in (*ci.LANES, 'native-matrix', 'scenes') if selected[lane]}, lanes)
+
     def test_library_ui_outside_the_hud_entries_selects_nothing(self):
         for name in ('library/ui/figma/src/cli.ts', 'library/ui/index.ts', 'library/ui/index.tsx',
                      'library/ui/components/NavBar/NavBar.tsx',
