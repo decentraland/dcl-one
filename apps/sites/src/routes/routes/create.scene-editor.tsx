@@ -54,7 +54,7 @@ function documentUrl(request: Request): URL {
   return url;
 }
 
-export async function loader({ request }: Route.LoaderArgs) {
+export async function loader({ request, context }: Route.LoaderArgs) {
   const url = documentUrl(request);
   // A deliberate New action creates a fresh browser draft even when its
   // title/template match an earlier scene. Keep that identity in the URL so
@@ -80,7 +80,7 @@ export async function loader({ request }: Route.LoaderArgs) {
   const from = url.searchParams.get("from")?.trim() || null;
 
   const [{ sid, assignment, wrap }, { seed, rawComposite }] = await Promise.all([
-    pageLoader(request,  FALLBACK),
+    pageLoader(request, context,  FALLBACK),
     (async () => {
       let seed: SceneEditorSeed;
       let rawComposite: string | undefined;

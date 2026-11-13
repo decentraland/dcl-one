@@ -1,8 +1,8 @@
 use anyhow::Result;
 use clap::{Args, Parser, Subcommand};
 use dcl_scene_cli::{
-    build, context_files, deploy, init, joinblock, pack, scene, start, ux, watch, workspace, world,
-    world_access,
+    build, build_script, context_files, deploy, export_static, init, joinblock, pack, scene, start,
+    ux, watch, workspace, world, world_access,
 };
 use std::path::PathBuf;
 
@@ -12,6 +12,25 @@ const MIN_MCP_PORT: u16 = 1024;
 
 const NO_INSTALL_NOTE: &str =
     "--skip-install has no effect (dcl-scene-cli never installs packages)";
+
+const CI_HELP: &str = "Non-interactive (also when CI is set in the environment): no colours, spinners, prompts, QR codes or browser windows";
+
+/// The flag, or `CI` in the environment: either turns the whole run
+/// non-interactive, so every later print and prompt sees one answer.
+/// `--position X,Y`.
+fn parse_position(raw: &str) -> Result<(i64, i64), String> {
+    let bad = || format!("expected X,Y (two integers), got {raw:?}");
+    let (x, y) = raw.split_once(',').ok_or_else(bad)?;
+    let num = |s: &str| s.trim().parse::<i64>().map_err(|_| bad());
+    Ok((num(x)?, num(y)?))
+}
+
+fn ci_mode(flag: bool) -> bool {
+    if flag {
+        ux::set_ci(true);
+    }
+    ux::ci()
+}
 
 fn resolved_mcp_port(mcp_port: Option<u16>) -> u16 {
     mcp_port.unwrap_or(joinblock::DEFAULT_EXPLORER_MCP_PORT)
@@ -30,17 +49,32 @@ struct Cli {
         help = "Show detailed logs and full error chains (RUST_LOG also enables this)"
     )]
     verbose: bool,
+    #[arg(
+        long,
+        global = true,
+        help = "Print the command's result as JSON on stdout and nothing else there (export-static: scenesUrn, destination, entities; deploy: entityId, message); the other commands have no result document"
+    )]
+    json: bool,
     #[command(subcommand)]
     command: Command,
 }
 
 #[derive(Subcommand)]
+// Parsed once, then destructured: the size of `Start` costs nothing.
+#[allow(clippy::large_enum_variant)]
 enum Command {
-    #[command(about = "Scaffold a new scene or smart wearable project")]
+    #[command(
+        about = "Scaffold a new scene, smart wearable, portable experience or library project"
+    )]
     Init {
         #[arg(long, default_value = ".", help = "Folder to scaffold into")]
         dir: PathBuf,
-        #[arg(long, value_enum, help = "What to scaffold (default: scene)")]
+        #[arg(
+            long,
+            value_enum,
+            conflicts_with_all = ["template", "github_repo"],
+            help = "What to scaffold (default: scene)"
+        )]
         project: Option<init::ProjectKind>,
         #[arg(short = 'y', long, help = "Scaffold even if the folder is not empty")]
         yes: bool,
@@ -49,6 +83,21 @@ enum Command {
             help = "Only install the vendored node_modules into an existing project; scaffold nothing"
         )]
         node_modules_only: bool,
+        #[arg(
+            long,
+            value_name = "ZIP",
+            conflicts_with = "github_repo",
+            help = "Scaffold from a zip instead, by http(s) URL or local path: one top-level folder whose contents become the project"
+        )]
+        template: Option<String>,
+        #[arg(
+            long,
+            value_name = "URL",
+            help = "Scaffold from a GitHub repository: https://github.com/<owner>/<repo>, or /tree/<branch>/<path> for one folder of it"
+        )]
+        github_repo: Option<String>,
+        #[arg(long, help = "Do not install the vendored node_modules")]
+        skip_install: bool,
     },
     #[command(
         about = "Install the bundled migrate-smart-items-to-code skill into .claude/skills/ and download the official SDK7 AI context files into dclcontext/"
@@ -64,7 +113,7 @@ enum Command {
     },
     #[command(
         about = "Run package.json scripts.build, or type-check and bundle with the SDK",
-        long_about = "Run package.json scripts.build from the project directory via the system shell, with node_modules/.bin on PATH and inherited output. The script owns type checking, bundling and assets, must exit zero and produce a nonempty scene.json main bundle. No npm lifecycle hooks or SDK fallback. DCL_SCENE_CLI_PRODUCTION=1 for production (0 otherwise); DCL_SCENE_CLI_MAIN names the output. Build, start/watch, deploy and pack share this contract. Use --built-in for an explicit SDK build, including inside a build script. The legacy script dcl-scene-cli build is a built-in alias. See README: Custom build scripts."
+        long_about = "Run package.json scripts.build from the project directory via the system shell, with node_modules/.bin on PATH and inherited output (under --json the script's stdout goes to stderr, so stdout stays the result document). The script owns type checking, bundling and assets, must exit zero and produce a nonempty scene.json main bundle. No npm lifecycle hooks or SDK fallback. DCL_SCENE_CLI_PRODUCTION=1 for production (0 otherwise); DCL_SCENE_CLI_MAIN names the output. Build, start/watch, deploy and pack share this contract. Use --built-in for an explicit SDK build, including inside a build script. The legacy script dcl-scene-cli build is a built-in alias. See README: Custom build scripts."
     )]
     Build {
         #[arg(
@@ -104,6 +153,19 @@ enum Command {
             help = "Bundle without type checking (the bundle is written either way)"
         )]
         skip_type_check: bool,
+        #[arg(
+            long,
+            value_name = "GLOB",
+            conflicts_with_all = ["watch", "custom_entry_point"],
+            help = "Bundle each matching .ts/.tsx under the project to a sibling .js instead of the scene (library files; the SDK stays a require, as in the scene chunk)"
+        )]
+        single: Option<String>,
+        #[arg(
+            long = "emitDeclaration",
+            visible_alias = "emit-declaration",
+            help = "Have the type check also write .d.ts files (tsc --emitDeclarationOnly, into tsconfig's declarationDir or outDir)"
+        )]
+        emit_declaration: bool,
     },
     #[command(about = "Build the scene and serve a live preview with hot reload")]
     Start {
@@ -140,7 +202,7 @@ enum Command {
             help = "Accepted for compatibility; this CLI opens a browser only for --talk, and this keeps it from doing so"
         )]
         no_browser: bool,
-        #[arg(long, help = "Non-interactive: no prompts, no TTY-only output")]
+        #[arg(long, help = CI_HELP)]
         ci: bool,
         #[arg(
             long,
@@ -205,6 +267,61 @@ enum Command {
             help = "Show a QR code and LAN URL for opening the preview on a phone"
         )]
         mobile: bool,
+        #[arg(
+            long,
+            help = "Launch the desktop Explorer on the printed deep link (install: https://dcl.gg/explorer); --no-client or --ci keep it from launching"
+        )]
+        explorer_alpha: bool,
+        #[arg(
+            long = "web",
+            visible_alias = "bevy-web",
+            help = "Open the hosted web explorer on this preview in a browser; --no-browser, --no-client or --ci keep it closed"
+        )]
+        web: bool,
+        #[arg(
+            long,
+            value_name = "org|zone",
+            default_value = "org",
+            value_parser = ["org", "zone"],
+            help = "Decentraland environment: the deep link's dclenv and the hosted web explorer's domain"
+        )]
+        dclenv: String,
+        #[arg(
+            long,
+            value_name = "URL",
+            help = "Realm the printed desktop deep links name instead of this preview"
+        )]
+        realm: Option<String>,
+        #[arg(
+            long,
+            value_name = "X,Y",
+            value_parser = parse_position,
+            help = "Parcel the join links land on instead of scene.json's base"
+        )]
+        position: Option<(i64, i64)>,
+        #[arg(long, help = "Add hub=true to the desktop deep link")]
+        hub: bool,
+        #[arg(
+            short = 'n',
+            long = "open-deeplink-in-new-instance",
+            help = "Add open-deeplink-in-new-instance=true to the desktop deep link"
+        )]
+        new_instance: bool,
+        #[arg(
+            long,
+            help = "Add landscape-terrain-enabled=true to the desktop deep link"
+        )]
+        landscape_terrain_enabled: bool,
+        #[arg(long, hide = true)]
+        skip_auth_screen: bool,
+        #[arg(long = "local-scene", hide = true)]
+        local_scene: bool,
+        #[arg(long, hide = true)]
+        debug: bool,
+        #[arg(short = 'd', long = "no-debug", hide = true)]
+        no_debug: bool,
+        #[arg(long, hide = true)]
+        web3: bool,
         #[arg(
             long,
             help = "Do not run the abgen asset-bundle sidecar, and stop forwarding local-ab=true with it. The sidecar is on by default and needs no install \u{2014} every dcl-scene-cli binary embeds abgen (ABGEN_BIN runs a different one). Upstream sdk-commands has no sidecar, so this is how to get its unoptimized preview"
@@ -343,6 +460,32 @@ enum Command {
         skip_build: bool,
         #[arg(
             long,
+            help = "Skip the local checks before signing (scene.json media permissions, the 50 MB per-file limit); implied by --target-server, whose limits this CLI does not know"
+        )]
+        skip_validations: bool,
+        #[arg(
+            long,
+            help = "Accepted for upstream parity: this CLI runs no SDK version check before publishing"
+        )]
+        skip_version_checks: bool,
+        #[arg(
+            long,
+            help = "Accepted for upstream parity: the signing page is served on loopback, which browsers already treat as a secure context"
+        )]
+        https: bool,
+        #[arg(
+            long,
+            help = "Upload every file, even those the server already stores (DCL_SCENE_CLI_UPLOAD_ALL=1 does the same)"
+        )]
+        force_upload: bool,
+        #[arg(
+            long,
+            conflicts_with = "replace_world_scenes",
+            help = "Deploy alongside the world's other scenes: the default (see --replace-world-scenes)"
+        )]
+        multi_scene: bool,
+        #[arg(
+            long,
             help = "Pack and hash the entity, print what would be published, and touch no network"
         )]
         dry_run: bool,
@@ -373,7 +516,7 @@ enum Command {
         no_browser: bool,
         #[arg(
             long,
-            help = "Non-interactive: never open a browser, and refuse a public deploy unless --yes is given"
+            help = "Non-interactive (also when CI is set): no colours or prompts, never opens a browser, refuses a public deploy unless --yes is given"
         )]
         ci: bool,
         #[arg(
@@ -384,6 +527,17 @@ enum Command {
         port: Option<u16>,
         #[command(flatten)]
         textures: TextureFlags,
+        #[arg(
+            long,
+            help = "Machine-driven run: no browser, no narration; stdout carries one JSON line when the signing server is up (its URL, the /api/deploy resource, the deploy token, the entity id to sign) and one with the final deployment state"
+        )]
+        programmatic: bool,
+        #[arg(
+            long,
+            value_name = "TOKEN",
+            help = "Token the X-Deploy-Token header must carry to cancel through DELETE /api/deploy (at least 16 characters); random per run by default"
+        )]
+        deploy_token: Option<String>,
     },
     #[command(
         about = "Remove a LAND scene published to a dcl-one-style content server (signed request)"
@@ -404,7 +558,10 @@ enum Command {
             help = "Alias of --target-server for a content-server URL"
         )]
         target_content: Option<String>,
-        #[arg(long)]
+        #[arg(
+            long,
+            help = "Sign with this private-key file instead of a wallet (env: DCL_PRIVATE_KEY; this flag wins)"
+        )]
         sign_key: Option<PathBuf>,
     },
     #[command(
@@ -415,6 +572,55 @@ enum Command {
         #[arg(long, default_value = ".", help = "Smart-wearable folder to pack")]
         dir: PathBuf,
         #[arg(long, help = "Zip the existing bin/ as-is instead of rebuilding")]
+        skip_build: bool,
+    },
+    #[command(
+        about = "Export the scene as a content server stores it: hash-named files, the entity file and, with --realmName, a realm about"
+    )]
+    ExportStatic {
+        #[arg(
+            long,
+            default_value = ".",
+            help = "Project or workspace folder to export"
+        )]
+        dir: PathBuf,
+        #[arg(
+            long,
+            default_value = ".",
+            value_name = "DIR",
+            help = "Folder the hash-named files and the entity file are written to; not the project folder or one above it"
+        )]
+        destination: PathBuf,
+        #[arg(
+            long,
+            value_name = "MS|RFC3339",
+            value_parser = export_static::parse_timestamp,
+            help = "Entity timestamp instead of now: unix milliseconds or an RFC 3339 date"
+        )]
+        timestamp: Option<i64>,
+        #[arg(
+            long = "realmName",
+            visible_alias = "realm-name",
+            value_name = "NAME",
+            requires = "base_url",
+            help = "Also write <destination>/<NAME>/about, exposing the export as a realm (needs --baseUrl)"
+        )]
+        realm_name: Option<String>,
+        #[arg(
+            long = "commsAdapter",
+            visible_alias = "comms-adapter",
+            value_name = "URL",
+            help = "The realm's fixed comms adapter (ADR-180); default offline:offline"
+        )]
+        comms_adapter: Option<String>,
+        #[arg(
+            long = "baseUrl",
+            visible_alias = "base-url",
+            value_name = "URL",
+            help = "Public URL --destination is served from, appended to every scene URN"
+        )]
+        base_url: Option<String>,
+        #[arg(long, help = "Export the existing bin/ as-is instead of rebuilding")]
         skip_build: bool,
     },
     #[command(about = "Manage a world's settings and permissions on a worlds content server")]
@@ -624,13 +830,16 @@ struct SignedWriteArgs {
         help = "Worlds server to publish this signed request to; DCL_SCENE_CLI_TARGET_SERVER from the environment otherwise"
     )]
     target_content: Option<String>,
-    #[arg(long)]
+    #[arg(
+        long,
+        help = "Sign with this private-key file instead of a wallet (env: DCL_PRIVATE_KEY; this flag wins)"
+    )]
     sign_key: Option<PathBuf>,
-    #[arg(short = 'b', long)]
+    #[arg(short = 'b', long, help = "Do not open a browser for wallet signing")]
     no_browser: bool,
-    #[arg(long)]
+    #[arg(long, help = CI_HELP)]
     ci: bool,
-    #[arg(short, long)]
+    #[arg(short, long, help = "Port for the local signing page")]
     port: Option<u16>,
 }
 
@@ -644,7 +853,7 @@ impl SignedWriteArgs {
             world::BrowserOptions {
                 port: self.port,
                 no_browser: self.no_browser,
-                ci: self.ci,
+                ci: ci_mode(self.ci),
             },
         )
         .await
@@ -697,6 +906,8 @@ async fn main() {
     let cli = Cli::parse();
     let verbose = cli.verbose || std::env::var_os("RUST_LOG").is_some();
     ux::set_verbose(verbose);
+    ux::set_json(cli.json);
+    ux::set_ci(ux::ci_env());
     init_tracing(verbose);
     dcl_scene_cli::shutdown::install();
     if let Err(e) = run(cli.command).await {
@@ -706,6 +917,14 @@ async fn main() {
     std::process::exit(0);
 }
 
+/// `--json`: the result, as upstream writes it.
+fn print_json(value: serde_json::Value) {
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&value).unwrap_or_default()
+    );
+}
+
 async fn run(command: Command) -> Result<()> {
     match command {
         Command::Init {
@@ -713,12 +932,36 @@ async fn run(command: Command) -> Result<()> {
             project,
             yes,
             node_modules_only,
-        } => init::init(&init::InitOptions {
-            dir,
-            project,
-            yes,
-            node_modules_only,
-        }),
+            template,
+            github_repo,
+            skip_install,
+        } => {
+            let source = match (template, github_repo) {
+                (Some(zip), _) => Some(init::RemoteSource::Zip(zip)),
+                (None, Some(url)) => Some(init::RemoteSource::GitHub(url)),
+                (None, None) => None,
+            };
+            match source {
+                Some(source) => {
+                    init::init_remote(&init::RemoteInitOptions {
+                        dir,
+                        yes,
+                        skip_install,
+                        source,
+                    })
+                    .await
+                }
+                None => init::init_with(
+                    &init::InitOptions {
+                        dir,
+                        project,
+                        yes,
+                        node_modules_only,
+                    },
+                    skip_install,
+                ),
+            }
+        }
         Command::CrdtGen { dir, out } => {
             let generated = dcl_scene_cli::crdt_gen::generate(&dir)?
                 .ok_or_else(|| anyhow::anyhow!("no .composite files under {}", dir.display()))?;
@@ -750,6 +993,8 @@ async fn run(command: Command) -> Result<()> {
             custom_entry_point,
             skip_install,
             skip_type_check,
+            single,
+            emit_declaration,
         } => {
             if skip_install {
                 ux::note(NO_INSTALL_NOTE);
@@ -764,14 +1009,27 @@ async fn run(command: Command) -> Result<()> {
                 out_root: None,
                 quiet: false,
             };
+            if emit_declaration && let Some(why) = build::no_declarations(skip_type_check, watch) {
+                ux::note_absent(why);
+            }
+            if let Some(pattern) = single {
+                return build::build_single(&opts, &pattern, emit_declaration)
+                    .await
+                    .map(|_| ());
+            }
+            let mode = match emit_declaration {
+                true => build::BuildMode::EmitDeclaration,
+                false => build::BuildMode::Plain,
+            };
             if workspace::member_folders(&opts.dir)?.is_some() {
                 let ws = workspace::Workspace::load(&opts.dir)?;
                 if watch {
                     return watch_workspace(&ws, &opts).await;
                 }
-                return build::build_workspace(&ws, &opts).await;
+                return build::build_workspace(&ws, &opts, mode).await;
             }
             if watch {
+                let opts = build_script::preview_options(&opts);
                 let project = scene::Project::load(&opts.dir)?;
                 let fs = watch::FsWatcher::new(&project.root)?;
                 let mut steps = ux::Steps::new(4);
@@ -782,7 +1040,7 @@ async fn run(command: Command) -> Result<()> {
                     _ = dcl_scene_cli::shutdown::shutdown_signal() => Ok(()),
                 }
             } else {
-                build::build(&opts).await.map(|_| ())
+                build::build_as(&opts, mode).await.map(|_| ())
             }
         }
         Command::Start {
@@ -807,6 +1065,19 @@ async fn run(command: Command) -> Result<()> {
             multi_instance,
             no_client,
             mobile,
+            explorer_alpha,
+            web,
+            dclenv,
+            realm,
+            position,
+            hub,
+            new_instance,
+            landscape_terrain_enabled,
+            skip_auth_screen,
+            local_scene,
+            debug,
+            no_debug,
+            web3,
             no_asset_bundles,
             asset_bundles: _,
             no_mcp,
@@ -830,6 +1101,7 @@ async fn run(command: Command) -> Result<()> {
                 return Ok(());
             }
             ux::set_custom_build_note(!no_build_note);
+            let ci = ci_mode(ci);
             let tunnel_token = if tunnel.is_some() {
                 dcl_scene_cli::tunnel::resolve_token(tunnel_token, tunnel_token_file.as_deref())?
             } else {
@@ -843,24 +1115,51 @@ async fn run(command: Command) -> Result<()> {
                 room: livekit_room.clone(),
                 offline_comms,
             })?;
+            let launch_desktop = explorer_alpha && !ci && !no_client;
+            let launch_web = web && !no_browser && !ci && !no_client;
             for (given, note) in [
                 (skip_install, NO_INSTALL_NOTE),
                 (
-                    no_browser && !talk,
-                    "--no-browser has no effect without --talk (dcl-scene-cli opens a browser only for --talk)",
+                    no_browser && !talk && !web && !ci,
+                    "--no-browser has no effect without --talk or --web (dcl-scene-cli opens a browser only for those)",
                 ),
-                (ci, "--ci has no effect yet"),
                 (
                     multi_instance,
                     "--multi-instance has no effect (the join block always prints a 2nd-instance deep link)",
                 ),
                 (
-                    no_client,
-                    "--no-client has no effect (dcl-scene-cli never launches a client)",
+                    no_client && !explorer_alpha && !web,
+                    "--no-client has no effect without --explorer-alpha or --web (dcl-scene-cli launches a client only when asked)",
+                ),
+                (
+                    explorer_alpha && !launch_desktop,
+                    "--explorer-alpha: not launching the desktop Explorer (--ci or --no-client); the deep link still prints",
+                ),
+                (
+                    web && !launch_web && !talk,
+                    "--web: not opening a browser (--no-browser, --ci or --no-client); the web link still prints",
+                ),
+                (
+                    skip_auth_screen || local_scene,
+                    "--skip-auth-screen and --local-scene are already the default: both ride on every desktop deep link",
+                ),
+                (
+                    debug || no_debug || web3,
+                    "--debug, --no-debug and --web3 are accepted for upstream parity and do nothing",
                 ),
             ] {
                 if given {
                     ux::note(note);
+                }
+            }
+            let mut explorer_params = explorer_params;
+            for (on, key) in [
+                (hub, "hub"),
+                (new_instance, "open-deeplink-in-new-instance"),
+                (landscape_terrain_enabled, "landscape-terrain-enabled"),
+            ] {
+                if on {
+                    explorer_params.push(format!("--{key}=true"));
                 }
             }
             start::start(start::StartOptions {
@@ -892,9 +1191,14 @@ async fn run(command: Command) -> Result<()> {
                 no_host,
                 talk: talk.then_some(start::Talk {
                     player,
-                    open_browser: !no_browser,
+                    open_browser: !no_browser && !ci,
                 }),
                 textures: textures.overrides(),
+                dclenv,
+                realm,
+                position,
+                launch_desktop,
+                launch_web,
             })
             .await
         }
@@ -908,6 +1212,11 @@ async fn run(command: Command) -> Result<()> {
             target_content,
             sign_key,
             skip_build,
+            skip_validations,
+            skip_version_checks,
+            https,
+            force_upload,
+            multi_scene: _,
             dry_run,
             timestamp,
             entity_out,
@@ -917,29 +1226,61 @@ async fn run(command: Command) -> Result<()> {
             no_browser,
             ci,
             port,
+            programmatic,
+            deploy_token,
             textures,
-        } => deploy::deploy(&deploy::DeployOptions {
-            dir,
-            target,
-            target_content,
-            sign_key,
-            skip_build,
-            dry_run,
-            timestamp,
-            entity_out,
-            multi_scene: !replace_world_scenes,
-            check_permissions,
-            yes,
-            no_browser,
-            ci,
-            port,
-            quiet: false,
-            host_signer: None,
-            identity: None,
-            textures: textures.overrides(),
-        })
-        .await
-        .map(|_| ()),
+        } => {
+            if programmatic {
+                ux::set_quiet(true);
+            }
+            for (given, note) in [
+                (
+                    https,
+                    "--https is accepted for upstream parity: the signing page is served on loopback, a secure context already",
+                ),
+                (
+                    skip_version_checks,
+                    "--skip-version-checks is accepted for upstream parity: this CLI runs no SDK version check",
+                ),
+            ] {
+                if given {
+                    ux::note(note);
+                }
+            }
+            deploy::deploy(&deploy::DeployOptions {
+                dir,
+                target,
+                target_content,
+                sign_key,
+                skip_build,
+                skip_validations,
+                force_upload,
+                dry_run,
+                timestamp,
+                entity_out,
+                multi_scene: !replace_world_scenes,
+                check_permissions,
+                yes,
+                no_browser,
+                ci: ci_mode(ci),
+                port,
+                quiet: ux::quiet(),
+                host_signer: None,
+                identity: None,
+                programmatic,
+                deploy_token,
+                textures: textures.overrides(),
+            })
+            .await
+            .map(|published| {
+                if ux::json() && !programmatic {
+                    print_json(serde_json::json!({
+                        "entityId": published.entity_id,
+                        "message": published.message,
+                    }));
+                }
+            })
+        }
         Command::Unpublish {
             parcel,
             target,
@@ -957,6 +1298,33 @@ async fn run(command: Command) -> Result<()> {
         Command::Pack { dir, skip_build } => {
             pack::pack(&pack::PackOptions { dir, skip_build }).await
         }
+        Command::ExportStatic {
+            dir,
+            destination,
+            timestamp,
+            realm_name,
+            comms_adapter,
+            base_url,
+            skip_build,
+        } => export_static::export_static(&export_static::ExportStaticOptions {
+            dir,
+            destination,
+            timestamp,
+            realm_name,
+            comms_adapter,
+            base_url,
+            skip_build,
+        })
+        .await
+        .map(|exported| {
+            if ux::json() {
+                print_json(serde_json::json!({
+                    "scenesUrn": exported.scenes_urn,
+                    "destination": exported.destination,
+                    "entities": exported.entities,
+                }));
+            }
+        }),
         Command::World { command } => run_world(command).await,
         Command::Storage { command } => dcl_scene_cli::storage_cli::run(command).await,
         Command::Sync { opts } => dcl_scene_cli::project_sync::run(opts).await,
@@ -1137,7 +1505,7 @@ async fn run_world_access(command: WorldAccessCommand) -> Result<()> {
                 world::BrowserOptions {
                     port: signed.port,
                     no_browser: signed.no_browser,
-                    ci: signed.ci,
+                    ci: ci_mode(signed.ci),
                 },
             )
             .await
@@ -1151,7 +1519,7 @@ async fn watch_workspace(ws: &workspace::Workspace, opts: &build::BuildOptions) 
         if let Some(header) = ws.member_header(i) {
             ux::note(header);
         }
-        let member = build::member_options(opts, project);
+        let member = build_script::preview_options(&build::member_options(opts, project));
         let chunk = 3;
         let tc = if member.skip_type_check { 0 } else { 1 };
         let mut steps = ux::Steps::new(chunk + tc);
@@ -1229,6 +1597,166 @@ mod tests {
     fn talk_flags(args: &[&str]) -> (bool, Option<String>) {
         match parse(args) {
             Command::Start { talk, player, .. } => (talk, player),
+            _ => panic!("not a start command"),
+        }
+    }
+
+    /// Every flag `@dcl/sdk-commands` documents parses here under the same
+    /// spelling, so a script written for one CLI runs on the other.
+    #[test]
+    fn upstream_flags_parse() {
+        let accepted: &[&[&str]] = &[
+            &[
+                "init",
+                "--yes",
+                "--dir",
+                "d",
+                "--skip-install",
+                "--project",
+                "scene-template",
+            ],
+            &["init", "-y", "--project", "px-template"],
+            &["init", "--project", "library"],
+            &["init", "--project", "smart-wearable"],
+            &[
+                "init",
+                "--template",
+                "https://example.org/t.zip",
+                "--skip-install",
+            ],
+            &[
+                "init",
+                "--github-repo",
+                "https://github.com/decentraland/sdk7-scene-template",
+            ],
+            &[
+                "build",
+                "--watch",
+                "--production",
+                "--ignoreComposite",
+                "--customEntryPoint",
+                "--skip-install",
+                "--dir",
+                "d",
+            ],
+            &["build", "-w", "-p"],
+            &["build", "--single", "src/**/*.ts", "--emitDeclaration"],
+            &[
+                "start",
+                "--dir",
+                "d",
+                "--port",
+                "0",
+                "--no-debug",
+                "--no-browser",
+                "--no-watch",
+                "--ci",
+                "--skip-install",
+                "--web3",
+                "--skip-build",
+                "--data-layer",
+                "--explorer-alpha",
+                "--hub",
+                "--mobile",
+                "--debug",
+                "--dclenv",
+                "zone",
+                "--realm",
+                "http://127.0.0.1:1",
+                "--local-scene",
+                "--position",
+                "1,-2",
+                "--skip-auth-screen",
+                "--landscape-terrain-enabled",
+                "-n",
+                "--bevy-web",
+                "--multi-instance",
+                "--asset-bundles",
+                "--no-client",
+                "--no-server",
+                "--mcp",
+                "--mcp-port",
+                "9000",
+            ],
+            &["start", "-p", "0", "-d", "-b", "-w", "-m", "--web"],
+            &[
+                "deploy",
+                "--dir",
+                "d",
+                "--target",
+                "peer.decentraland.org",
+                "--skip-validations",
+                "--skip-version-checks",
+                "--skip-build",
+                "--https",
+                "--force-upload",
+                "--yes",
+                "--no-browser",
+                "--port",
+                "1",
+                "--multi-scene",
+                "--programmatic",
+                "--deploy-token",
+                "0123456789abcdef",
+                "--json",
+            ],
+            &["deploy", "-t", "x", "-b", "-p", "1"],
+            &["deploy", "--target-content", "https://x/content"],
+            &[
+                "export-static",
+                "--dir",
+                "d",
+                "--destination",
+                "o",
+                "--timestamp",
+                "2023-11-14T22:13:20Z",
+                "--realmName",
+                "r",
+                "--commsAdapter",
+                "offline:offline",
+                "--baseUrl",
+                "https://x/",
+            ],
+            &[
+                "export-static",
+                "--realm-name",
+                "r",
+                "--base-url",
+                "https://x",
+                "--skip-build",
+            ],
+        ];
+        for case in accepted {
+            let mut argv = vec!["dcl-scene-cli"];
+            argv.extend_from_slice(case);
+            Cli::try_parse_from(&argv).unwrap_or_else(|e| panic!("{case:?}: {e}"));
+        }
+        let rejected: &[&[&str]] = &[
+            &["init", "--project", "scene", "--template", "t.zip"],
+            &[
+                "init",
+                "--template",
+                "t.zip",
+                "--github-repo",
+                "https://github.com/a/b",
+            ],
+            &["build", "--single", "src/a.ts", "--watch"],
+            &["deploy", "--multi-scene", "--replace-world-scenes"],
+            &["start", "--position", "nope"],
+            &["start", "--dclenv", "staging"],
+            &["export-static", "--realmName", "r"],
+            &["export-static", "--timestamp", "soon"],
+        ];
+        for case in rejected {
+            let mut argv = vec!["dcl-scene-cli"];
+            argv.extend_from_slice(case);
+            assert!(
+                Cli::try_parse_from(&argv).is_err(),
+                "{case:?} should be rejected"
+            );
+        }
+        match parse(&["--position", " 3 , -4 "]) {
+            Command::Start { position, .. } => assert_eq!(position, Some((3, -4))),
             _ => panic!("not a start command"),
         }
     }

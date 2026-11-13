@@ -1,0 +1,579 @@
+{
+  "source": "decentraland/sites@cfdfa1a51216f9dc90c5b148686a95e7ee9c2862",
+  "path": "/referral-terms",
+  "oracleA": {
+    "renderedFrom": "git archive cfdfa1a5, vite build and preview",
+    "capturedAt": "2026-11-04T02:33:12.566Z"
+  },
+  "oracleB": {
+    "url": "https://decentraland.org/referral-terms",
+    "bundle": "@dcl/sites/0.76.0",
+    "capturedAt": "2026-11-04T02:32:14.129Z"
+  },
+  "canonical": [
+    {
+      "tag": "a",
+      "href": "/brand",
+      "children": [
+        {
+          "text": "Logo and Name"
+        }
+      ]
+    },
+    {
+      "tag": "a",
+      "href": "/content",
+      "children": [
+        {
+          "text": "Content Policy"
+        }
+      ]
+    },
+    {
+      "tag": "a",
+      "href": "/ethics",
+      "children": [
+        {
+          "text": "Code of Ethics"
+        }
+      ]
+    },
+    {
+      "tag": "a",
+      "href": "/rewards-terms",
+      "children": [
+        {
+          "text": "Rewards Program"
+        }
+      ]
+    },
+    {
+      "tag": "a",
+      "href": "/credits-terms",
+      "children": [
+        {
+          "text": "Credits"
+        }
+      ]
+    },
+    {
+      "tag": "a",
+      "href": "/security",
+      "children": [
+        {
+          "text": "Security"
+        }
+      ]
+    },
+    {
+      "tag": "a",
+      "href": "/privacy",
+      "children": [
+        {
+          "text": "Privacy Policy"
+        }
+      ]
+    },
+    {
+      "tag": "a",
+      "href": "/referral-terms",
+      "children": [
+        {
+          "text": "Referral"
+        }
+      ]
+    },
+    {
+      "tag": "a",
+      "href": "/terms",
+      "children": [
+        {
+          "text": "Terms of Use"
+        }
+      ]
+    },
+    {
+      "tag": "h1",
+      "children": [
+        {
+          "text": "Referral"
+        }
+      ]
+    },
+    {
+      "tag": "ul",
+      "children": [
+        {
+          "tag": "li",
+          "children": [
+            {
+              "tag": "a",
+              "href": "#general-provisions",
+              "children": [
+                {
+                  "text": "1. General Provisions"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "tag": "a",
+              "href": "#how-it-works",
+              "children": [
+                {
+                  "text": "2. How It Works"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "tag": "a",
+              "href": "#rewards-structure",
+              "children": [
+                {
+                  "text": "3. Rewards Structure"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "tag": "a",
+              "href": "#reward-distribution",
+              "children": [
+                {
+                  "text": "4. Reward Distribution and Delivery"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "tag": "a",
+              "href": "#program-abuse",
+              "children": [
+                {
+                  "text": "5. Program Abuse and Disqualification"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "tag": "a",
+              "href": "#email-notifications",
+              "children": [
+                {
+                  "text": "6. Email Notifications"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "tag": "a",
+              "href": "#changes-and-termination",
+              "children": [
+                {
+                  "text": "7. Changes and Termination"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "tag": "a",
+              "href": "#miscellaneous",
+              "children": [
+                {
+                  "text": "8. Miscellaneous"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "Referral Program – Terms and Conditions"
+        }
+      ]
+    },
+    {
+      "anchor": "general-provisions"
+    },
+    {
+      "tag": "h2",
+      "children": [
+        {
+          "text": "1. General Provisions"
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "1.1. This Referral Program (\"Program\") is open to all registered users of Decentraland platform who are in good standing and comply with our general Terms of Service."
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "1.2. Participation in the Program constitutes acceptance of these Terms and Conditions, as well as the Decentraland Terms of Use, Privacy Policy, and Content Policy."
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "1.3. The Decentraland Foundation reserves the right to modify, suspend, or terminate the Program at its discretion."
+        }
+      ]
+    },
+    {
+      "anchor": "how-it-works"
+    },
+    {
+      "tag": "h2",
+      "children": [
+        {
+          "text": "2. How It Works"
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "2.1. To refer a new user, share your unique referral link. A referred user (\"Referee\") will be considered valid if the following conditions are met:"
+        }
+      ]
+    },
+    {
+      "tag": "ul",
+      "children": [
+        {
+          "tag": "li",
+          "children": [
+            {
+              "text": "The Referee successfully creates an account on our platform using a referral link."
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "text": "The Referee downloads and installs Decentraland's desktop client."
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "text": "The Referee jumps into Genesis City via the desktop client three (3) different days."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "2.2. Only referrals meeting those criteria will count towards your reward tally."
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "2.3. Every successful referral should count and be displayed in a counter under the \"Referral Rewards\" section."
+        }
+      ]
+    },
+    {
+      "anchor": "rewards-structure"
+    },
+    {
+      "tag": "h2",
+      "children": [
+        {
+          "text": "3. Rewards Structure"
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "Rewards are granted based on the number of valid referrals you accumulate in the \"Referral Rewards\" section. Each reward tier is cumulative and unlocks sequentially:"
+        }
+      ]
+    },
+    {
+      "tag": "ul",
+      "children": [
+        {
+          "tag": "li",
+          "children": [
+            {
+              "text": "5 Friends Joined: EPIC Bottoms Wearable + Starter Community Recruiter Badge"
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "text": "10 Friends Joined: EPIC Jacket Wearable + Bronze Community Recruiter Badge"
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "text": "20 Friends Joined: LEGENDARY Handwear Wearable"
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "text": "25 Friends Joined: LEGENDARY Emote + Silver Community Recruiter Badge"
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "text": "30 Friends Joined: EXOTIC Shoes Wearable"
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "text": "50 Friends Joined: EXOTIC Hair Wearable + Gold Community Recruiter Badge"
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "text": "60 Friends Joined: MYTHIC \"Companion-style\" Wearable"
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "text": "75 Friends Joined: MYTHIC Looping Emote+ Platinum Community Recruiter Badge"
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "text": "100 Friends Joined: IRL Swag Pack + Digital Twin Wearable + Diamond Community Recruiter Badge"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "anchor": "reward-distribution"
+    },
+    {
+      "tag": "h2",
+      "children": [
+        {
+          "text": "4. Reward Distribution and Delivery"
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "4.1. Digital rewards (Wearables, Emotes, badges, and Credits) will be automatically credited to your account within 3 business days of reaching a reward tier."
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "4.2. IRL rewards require contact through the designated email or the email address you share for such purpose."
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "4.3. We commit to delivering the Rewards in accordance with the rarity levels of the Wearables as stated in the Program. However, we do not guarantee the delivery of a specific Wearable within a given rarity category, as each Wearable is subject to availability and are traded on the Marketplace."
+        }
+      ]
+    },
+    {
+      "anchor": "program-abuse"
+    },
+    {
+      "tag": "h2",
+      "children": [
+        {
+          "text": "5. Program Abuse and Disqualification"
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "We reserve the right to disqualify participants who attempt to game, abuse, or manipulate the referral system, including but not limited to creating fake accounts, using bots, or violating the platform's Terms of Service."
+        }
+      ]
+    },
+    {
+      "anchor": "email-notifications"
+    },
+    {
+      "tag": "h2",
+      "children": [
+        {
+          "text": "6. Email Notifications"
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "6.1. By participating in the Program, you consent to receive email notifications related to \"Referral Program.\""
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "6.2. The Decentraland Foundation may add additional email notification categories in the future."
+        }
+      ]
+    },
+    {
+      "anchor": "changes-and-termination"
+    },
+    {
+      "tag": "h2",
+      "children": [
+        {
+          "text": "7. Changes and Termination"
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "We reserve the right to modify or terminate this Program at any time without prior notice. Any changes will be effective immediately upon posting an updated version of these Terms and Conditions."
+        }
+      ]
+    },
+    {
+      "anchor": "miscellaneous"
+    },
+    {
+      "tag": "h2",
+      "children": [
+        {
+          "text": "8. Miscellaneous"
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "7.1. The Decentraland Foundation is not responsible for any technical malfunctions, errors, or issues that may affect participation in the Program."
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "7.2. Any disputes regarding the Program shall be resolved at the sole discretion of the Decentraland Foundation."
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "7.3. For any questions regarding the Referral Program, please contact our support team via the platform or at "
+        },
+        {
+          "tag": "a",
+          "href": "mailto:support@decentraland.org",
+          "children": [
+            {
+              "text": "support@decentraland.org"
+            }
+          ]
+        },
+        {
+          "text": "."
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "Updated August 18, 2025"
+        }
+      ]
+    }
+  ]
+}

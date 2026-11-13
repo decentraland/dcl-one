@@ -140,28 +140,30 @@ CREATE TABLE worlds.world_scenes (
 CREATE INDEX world_scenes_world_name_created_idx
     ON worlds.world_scenes (world_name, created_at DESC);
 
--- A scene's storage collaborators: the lowercased string entries of its
--- `metadata.logsPermissions` array, from the raw JSON text (an entry spelled
--- with escapes never matches; no stored json/jsonb value makes it fail, so it can index json
--- columns that may hold `\u0000`). The storage routes' grant
--- (`storage::has_logs_access`) and `GET /collaborator` compare against it.
-CREATE FUNCTION worlds.logs_permissions(text) RETURNS text[]
+-- A scene's storage collaborators: the string entries of its
+-- `metadata.logsPermissions` array as `JSON.parse` reads them (escapes
+-- decoded), lowercased. An entry carrying an escape PostgreSQL cannot decode
+-- (`\u0000`, a surrogate) is left out, as it names no address; so no stored
+-- json/jsonb value makes it fail, and it can index json columns that may hold
+-- `\u0000`. The storage routes' grant (`storage::has_logs_access`) and
+-- `GET /collaborator` compare against it.
+CREATE FUNCTION worlds.logs_permissions_decoded(text) RETURNS text[]
     LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
     SELECT ARRAY(
-        SELECT lower(btrim(e::text, '"'))
+        SELECT lower(e #>> '{}')
         FROM json_array_elements(CASE WHEN json_typeof($1::json) = 'array' THEN $1::json ELSE '[]'::json END) e
-        WHERE json_typeof(e) = 'string')
+        WHERE json_typeof(e) = 'string' AND e::text !~ '\\u(0000|[dD][89a-fA-F])')
 $$;
 
 -- `GET /collaborator`: the local world scenes listing the signer.
-CREATE INDEX world_scenes_logs_permissions_idx ON worlds.world_scenes
-    USING gin (worlds.logs_permissions((entity #> '{metadata,logsPermissions}')::text))
+CREATE INDEX world_scenes_logs_permissions_decoded_idx ON worlds.world_scenes
+    USING gin (worlds.logs_permissions_decoded((entity #> '{metadata,logsPermissions}')::text))
     WHERE mirror_source IS NULL;
 
 -- `GET /collaborator`: the live Genesis scenes listing the signer (partial on
 -- the predicate the query repeats; overwritten rows leave the index).
-CREATE INDEX deployments_scene_logs_permissions_idx ON content.deployments
-    USING gin (worlds.logs_permissions((entity_metadata -> 'logsPermissions')::text))
+CREATE INDEX deployments_scene_logs_permissions_decoded_idx ON content.deployments
+    USING gin (worlds.logs_permissions_decoded((entity_metadata -> 'logsPermissions')::text))
     WHERE entity_type = 'scene' AND deleter_deployment IS NULL;
 
 -- ── the permission core ────────────────────────────────────────────────────

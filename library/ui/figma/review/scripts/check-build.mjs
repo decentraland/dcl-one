@@ -15,7 +15,7 @@ import path from 'node:path'
 import process from 'node:process'
 import { setTimeout as delay } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
-import { findBrowser, openSession } from './capture-browser.mjs'
+import { NavigationInterrupted, findBrowser, openSession } from './capture-browser.mjs'
 
 const TYPES = {
   '.html': 'text/html',
@@ -100,21 +100,32 @@ async function serve(dist, prefix, createServer) {
   }
 }
 
-// Polls a page expression until it returns a truthy value.
+// Polls a page expression until it returns a truthy value in a document that has finished loading. A value is kept
+// only when the top frame was idle and started no navigation while it was read, since it may describe the outgoing
+// document. A poll that a navigation interrupted is read again in the document that replaced it; any other error
+// fails, and a page that never settles times out.
 async function waitFor(session, expression, what) {
   const started = Date.now()
   for (;;) {
-    const value = await session.evaluate(
-      `(() => { try { return ${expression} } catch { return null } })()`
-    )
-    if (value) return value
+    if (!session.loading) {
+      const before = session.navigations
+      let value = null
+      try {
+        value = await session.evaluate(
+          `(() => { try { return ${expression} } catch { return null } })()`
+        )
+      } catch (error) {
+        if (!(error instanceof NavigationInterrupted)) throw error
+      }
+      if (value && !session.loading && session.navigations === before) return value
+    }
     if (Date.now() - started > TIMEOUT) throw new Error(`Timed out waiting for ${what}`)
     await delay(100)
   }
 }
 
 async function navigate(session, url, check) {
-  await session.send('Page.navigate', { url })
+  await session.navigate(url, TIMEOUT)
   const loaded = await waitFor(
     session,
     `document.readyState === 'complete' && location.href`,
@@ -221,7 +232,7 @@ async function checkBuild({
       `new URL(location.href).searchParams.has('variant') && document.readyState === 'complete' && document.querySelector('select[name=${JSON.stringify(`variant-${variantSwitch.property}`)}]')?.value === ${JSON.stringify(variantSwitch.value)} && new URL(location.href).searchParams.get('variant')`,
       'variant navigation'
     )
-    checkPage(await session.evaluate('location.href'))
+    checkPage(await waitFor(session, 'location.href', 'the current document'))
 
     const audit = new URL(first.href)
     audit.searchParams.set('audit', '1')
@@ -238,7 +249,7 @@ async function checkBuild({
       throw new Error(
         `${failed.length} requests failed, first ${failed[0].status} ${failed[0].path}`
       )
-    checkPage(await session.evaluate('location.href'))
+    checkPage(await waitFor(session, 'location.href', 'the current document'))
     if (session.runtimeErrors.length) throw new Error(`page error: ${session.runtimeErrors[0]}`)
     if (session.consoleErrors.length) throw new Error(`console error: ${session.consoleErrors[0]}`)
     summary = {

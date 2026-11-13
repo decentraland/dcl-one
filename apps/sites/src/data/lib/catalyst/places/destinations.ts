@@ -11,15 +11,24 @@ export type DestinationParams = {
   only_favorites?: boolean; only_highlighted?: boolean; world_names?: string;
   order_by?: "most_active";
 };
-export type DestinationPage = { data: Place[]; total: number; copy: CopyStamp | null; received?: number };
+/** A destinations row: the place, plus what only this feed carries (the running event, the deployer, the member's save). */
+export type Destination = Place & {
+  live: boolean;
+  live_event_name: string | null;
+  creator_address: string | null;
+  user_favorite: boolean;
+};
+export type DestinationPage = { data: Destination[]; total: number; copy: CopyStamp | null; received?: number };
 
-function toPlace(row: z.infer<typeof DestinationSchema>): Place {
+function toPlace(row: z.infer<typeof DestinationSchema>): Destination {
   return {
     id: row.id, title: row.title, description: row.description, image: row.image, owner: row.owner,
     positions: row.positions, base_position: row.base_position, updated_at: row.updated_at, created_at: row.created_at,
     contact_name: row.contact_name, categories: row.categories, highlighted: row.highlighted, highlighted_image: row.highlighted_image,
     user_count: row.user_count, user_visits: row.user_visits, favorites: row.favorites, likes: row.likes, like_rate: row.like_rate,
     world: row.world, world_name: row.world_name,
+    live: row.live === true, live_event_name: row.live_event_name?.trim() || null,
+    creator_address: row.creator_address, user_favorite: row.user_favorite,
   };
 }
 
@@ -31,7 +40,7 @@ export async function fetchDestinations(params: DestinationParams = {}, options:
     ? await signedGetJSON(path, { identity: options.identity, base: options.base, signal: options.signal, query })
     : await getJSON(path, { ...options, query });
   const envelope = ApiDataTotalSchema(z.unknown()).parse(raw);
-  const data: Place[] = [];
+  const data: Destination[] = [];
   for (const row of envelope.data) {
     const parsed = DestinationSchema.safeParse(row);
     if (parsed.success) data.push(toPlace(parsed.data));

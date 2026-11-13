@@ -5,12 +5,17 @@
 ## Agent work and commits
 
 - Keep accepted architecture in `docs/adr/` and reusable instructions in this tree.
+- Keep agent instructions and skills usable across LLM providers and models; omit provider-specific metadata files.
 - Keep plans, briefs, handoffs, task reports and review evidence in ignored `.agent-work/`; follow `services/catalyst/docs/comms/README.md` for specialist reporting. `services/catalyst/docs/comms/plans/` and `.superpowers/` stay local too.
 - Before committing, capture accepted public architectural choices in ADRs and check the staged paths for working documents and sensitive data.
 - Never commit working documents unless the user asks.
 - Tracked documentation must stand alone without local plans or private ledger exports.
 - For tracked documentation, ADRs, agent instructions, comments and PR prose, apply the [public-prose rule](rendering/bevy-explorer/docs/guidelines/contributing.md#public-prose), including its pre-publication search.
 - Make focused edits; preserve other agents' work.
+
+For formal verification of LiveKit or networking decisions, or maintenance of
+their proof evidence, use
+[verify-dcl-networking](.claude/skills/verify-dcl-networking/SKILL.md).
 
 ## Agentic roles documentation
 
@@ -103,11 +108,15 @@ Code that serves none of these deliverables is removed, not kept for reference:
 ## UI standards
 
 Before changing web UI in `apps/` (including the Play HUD in
-`apps/ui3/src/play/`, which keeps its current design primitives until Sites
-migrates), `library/ui/` or
+`apps/ui3/src/play/`), `library/ui/` (including the Explorer HUD UI in
+`library/ui/apps/hud/`, shared by both HUD hosts) or
 `rendering/bevy-explorer/source/react-web/`, read and follow
 [`docs/ui-standards.md`](docs/ui-standards.md). It defines component styling,
 shared foundations and components, accessibility, migration and verification.
+To implement a Figma design, follow the `implement-figma-design` skill in
+`.claude/skills/`; it resolves each component to the library instead of
+recreating it. To port a capture into `library/ui`, follow
+`maintain-figma-library`.
 
 State, data fetching and structure follow [`docs/web-app-standards.md`](docs/web-app-standards.md), and tests follow [`docs/frontend-testing.md`](docs/frontend-testing.md).
 
@@ -115,7 +124,7 @@ State, data fetching and structure follow [`docs/web-app-standards.md`](docs/web
 
 The end-to-end suite in `apps/bevy-explorer/e2e` and the Explorer's console surface it drives
 (`rendering/bevy-explorer/source`: `src/automation.rs`, `src/world_state.rs`,
-`react-web/src/lib/hudAutomation.ts`, `local-harness/web-driver`, documented in the readme's
+`library/explorer-core/lib/hudAutomation.ts`, `local-harness/web-driver`, documented in the readme's
 "Agents and tests") read the code they test, so a change to that code updates them in the same
 change. That is any of: a HUD control's role, accessible name, placeholder, `aria-*` state or
 visibility; a page's heading or tablist; a key binding; a console command's name, arguments or

@@ -12,12 +12,14 @@ import { registerAvatarPreview } from './domains/avatarPreview'
 import { registerMinimap } from './domains/minimap'
 import { renderSceneUi } from './ui'
 import { registerSession } from './domains/session'
+import { registerConnectivity } from './domains/connectivity'
 import { registerAnalytics } from './domains/analytics'
 import { registerTextureOptimization } from './domains/textureOptimization'
 import { registerProfile } from './domains/profile'
 import { registerFriends } from './domains/friends'
 import { registerChat } from './domains/chat'
 import { registerDm } from './domains/dm'
+import { registerNearbyMutes } from './domains/nearbyMutes'
 import { registerUiSound } from './domains/uiSound'
 import { registerEmotes } from './domains/emotes'
 import { registerWearables, sendEquipped } from './domains/wearables'
@@ -32,6 +34,7 @@ import { registerCommunities } from './domains/communities'
 import { registerGallery } from './domains/gallery'
 import { registerWorld } from './domains/world'
 import { registerVoice } from './domains/voice'
+import { registerVoiceChat } from './domains/voiceChat'
 import { registerPointer } from './domains/pointer'
 import { registerPhotoMode } from './domains/photoMode'
 import { registerProximity } from './domains/proximity'
@@ -39,6 +42,7 @@ import { registerSystemAction } from './domains/systemAction'
 import { registerBindings } from './domains/bindings'
 import { registerAvatarPointer } from './domains/avatarPointer'
 import { registerPermissions } from './domains/permissions'
+import { registerPortables } from './domains/portables'
 import { registerWorldAccess } from './domains/worldAccess'
 import { registerEditor } from './domains/editor'
 import { initNametags } from './domains/nametags'
@@ -49,6 +53,7 @@ export function main(): void {
 
   startBridge((ctx) => {
     registerSession(ctx)
+    registerConnectivity(ctx)
     registerAnalytics(ctx)
     registerTextureOptimization(ctx)
     registerProfile(ctx)
@@ -57,6 +62,8 @@ export function main(): void {
     registerDm(ctx)
     registerUiSound(ctx)
     registerVoice(ctx)
+    registerNearbyMutes(ctx)
+    registerVoiceChat(ctx)
     registerEmotes(ctx)
     registerWearables(ctx)
     registerCatalog(ctx)
@@ -78,6 +85,7 @@ export function main(): void {
     registerBindings(ctx)
     registerAvatarPointer(ctx)
     registerPermissions(ctx)
+    registerPortables(ctx)
     registerWorldAccess(ctx)
     registerEditor(ctx)
     registerAvatarPreview(ctx)

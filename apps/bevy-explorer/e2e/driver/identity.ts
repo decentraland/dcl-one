@@ -1,5 +1,5 @@
 // An AuthIdentity for `/login_identity`, built as the HUD builds one for a guest
-// (react-web/src/features/auth/guest.ts, shell/sign.ts): a fresh ephemeral key, delegated by the
+// (library/explorer-core/features/auth/guest.ts, library/explorer-core/shell/sign.ts): a fresh ephemeral key, delegated by the
 // account's key with an EIP-191 personal signature over the catalyst's delegation message.
 import { secp256k1 } from '@noble/curves/secp256k1.js'
 import { keccak_256 } from '@noble/hashes/sha3.js'

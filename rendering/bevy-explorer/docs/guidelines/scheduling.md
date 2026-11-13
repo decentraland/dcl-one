@@ -8,6 +8,11 @@ from a separate schedule that `Update` runs inside its frame budget.
 You should not need to add a schedule, a set or an ordering point. Every system belongs in one
 of the slots below. If a change seems to need a new one, raise it before writing it.
 
+A per-frame time budget is a share of the target frame (`SceneUpdates::frame_target`, the
+frame of 60 fps when the frame rate is uncapped): a tenth for capped raycasts, a quarter for
+instantiation. A fixed duration is a different share at 30, 60 and 144 fps. Budget from the
+target, not the measured frame, so a slow frame does not raise the next frame's budget.
+
 All set types live in `crates/common/src/sets.rs`; the chains are configured in
 `crates/scene_runner/src/lib.rs` (`SceneSets`, `SceneLoopSets`) and
 `crates/scene_runner/src/update_world/transform_and_parent.rs` (`PostUpdateSets`).
@@ -38,6 +43,13 @@ flowchart LR
 | `RunLoop` | The scene loop (below), the partitions it ranks by, and the download priorities published from them | `update_scene_partitions`, `publish_download_priorities`, `update_scene_priority`, `run_scene_loop` |
 | `PostLoop` | Reacting to scene state the loop wrote: by far the largest set | materials, mesh renderer, gltf container, lights, animation, fonts, scene UI, tween, audio, NFT, texture camera, avatar attach and animate, world UI |
 | `RestrictedActions` | Anything that may move the player, change realm, or alter engine-level state on a scene's behalf | teleport and move player, settings, profile updates, emote reports, imposter render |
+
+`run_raycasts` runs each request in three phases. Prepare is serial: it sets `last_run`, resolves
+the ray's origin and direction and flushes the collider BVHs of the scenes the ray crosses. Cast
+only reads colliders. Write is serial: the result into the CRDT, debug gizmos. The uncapped tier
+([scene raycasts](interaction.md#scene-raycasts)) prepares all its requests, casts them together on
+the `ComputeTaskPool` once at least `MIN_PARALLEL_RAYCASTS` are due, then writes in request order.
+The capped tier runs the phases one request at a time, so its budget can stop between casts.
 
 ## The scene loop
 
@@ -118,6 +130,16 @@ well, or its writes land a frame late. `crates/avatar/src/point_at_marker.rs` is
 - **`First`**: pumps for the comms and social tokio runtimes, sysinfo counters.
 - **`PreUpdate`**: `UiActionSet` (system-UI actions; interact sounds before it, text links
   after), the web livekit page-event dispatch, media source serving, the headless supervisor.
+- **`SpawnScene`** (bevy's, between `Update` and `PostUpdate`), in order:
+  - `slice_scene_spawning` sets this frame's instantiation slice: a quarter of the target frame
+    (`SceneUpdates::frame_target`, 60 fps when uncapped) from when it runs, the spawner's deadline
+    a quarter of the slice before its end and processing's (`ProcessingDeadline`) at its end;
+    none behind the loading backdrop or on headless;
+  - bevy's `scene_spawner_system` writes scene instances up to its deadline;
+  - `update_ready_gltfs` processes complete glTF instances a node at a time until its deadline,
+    instances already in progress first, and reveals each when its last node is done;
+  - `spawn_timing`'s `start_spawner` before the spawner, `finish_spawner` between the spawner and
+    processing, and `finish_processing` after processing: they measure both into diagnostics.
 - **`Last`**: CEF command drain, livekit room close on app exit, the web engine heartbeat.
 - **`OnEnter`/`OnExit`**: a few states (transmitter, receiver, microphone, parcel grass).
 
@@ -128,9 +150,10 @@ Other named sets: `RealmLifecycle` for systems that react to a realm change, `Te
 ## Render world
 
 The render app is bevy's. We add a few `RenderSet::Prepare*` systems for custom materials and
-uniforms, and one extra render-graph node: the stars pass, between `DepthOfField` and
-`Tonemapping` in `Core3d` (`crates/visuals/src/stars.rs`). Render-world ordering follows bevy's
-conventions, not ours.
+uniforms, and two render-graph nodes in `Core3d`, in this order between `DepthOfField` and
+`Tonemapping`: the hover glow (`crates/scene_material/src/highlight`, whose mask phase also adds
+queue and sort systems in `RenderSet::QueueMeshes` and `RenderSet::PhaseSort`) and the stars pass
+(`crates/visuals/src/stars.rs`). Render-world ordering follows bevy's conventions, not ours.
 
 ## Headless
 

@@ -3,6 +3,7 @@ import { siteUrl } from "../bases";
 import { getJSON } from "../client";
 import type { GetOptions } from "../client";
 import { z } from "zod";
+import { absentWhenNull } from "../absent";
 import { NameColorSchema } from "../generated-schemas/communities";
 import { ETH_ADDRESS_RE } from "../format/address";
 
@@ -24,10 +25,9 @@ const LinkSchema = z.object({
 const AvatarInfoSchema = z
   .object({
     wearables: z.array(z.string()).optional(),
-    snapshots: z
-      .object({ face256: z.string().optional(), body: z.string().optional() })
-      .passthrough()
-      .optional(),
+    snapshots: absentWhenNull(
+      z.object({ face256: z.string().optional(), body: z.string().optional() }).passthrough(),
+    ),
   })
   .passthrough();
 
@@ -35,19 +35,19 @@ const AvatarSchema = z
   .object({
     name: z.string(),
     hasClaimedName: z.boolean(),
-    nameColor: z.union([Color3Schema, z.string()]).optional(),
+    nameColor: absentWhenNull(z.union([Color3Schema, z.string()])),
     description: z.string(),
-    links: z.array(LinkSchema).optional(),
-    country: z.string().optional(),
-    gender: z.string().optional(),
-    pronouns: z.string().optional(),
-    relationshipStatus: z.string().optional(),
-    sexualOrientation: z.string().optional(),
-    language: z.string().optional(),
-    profession: z.string().optional(),
-    birthdate: z.number().optional(),
-    realName: z.string().optional(),
-    hobbies: z.string().optional(),
+    links: absentWhenNull(z.array(LinkSchema)),
+    country: absentWhenNull(z.string()),
+    gender: absentWhenNull(z.string()),
+    pronouns: absentWhenNull(z.string()),
+    relationshipStatus: absentWhenNull(z.string()),
+    sexualOrientation: absentWhenNull(z.string()),
+    language: absentWhenNull(z.string()),
+    profession: absentWhenNull(z.string()),
+    birthdate: absentWhenNull(z.number()),
+    realName: absentWhenNull(z.string()),
+    hobbies: absentWhenNull(z.string()),
     ethAddress: z.string().optional(),
     userId: z.string().optional(),
     avatar: AvatarInfoSchema.optional(),
@@ -87,6 +87,8 @@ export type ProfileVM = {
   hasClaimedName: boolean;
   nameColor: string;
   avatarUrl?: string;
+  /** The full-body snapshot, an http(s) URL or empty. */
+  bodyUrl: string;
   mutualCount: number;
   bio: string;
   accountUrl: string;
@@ -108,8 +110,10 @@ const INFO_FIELDS: { src: keyof Avatar; key: string; label: string; icon: string
   { src: "country", key: "country", label: "Country", icon: "globe" },
   { src: "language", key: "language", label: "Language", icon: "translate" },
   { src: "pronouns", key: "pronouns", label: "Pronouns", icon: "pronouns" },
+  { src: "relationshipStatus", key: "relationship_status", label: "Relationship status", icon: "heart" },
   { src: "gender", key: "gender", label: "Gender", icon: "gender" },
   { src: "profession", key: "profession", label: "Profession", icon: "games" },
+  { src: "realName", key: "real_name", label: "Real name", icon: "at" },
   { src: "hobbies", key: "favorite_hobby", label: "Favorite hobby", icon: "heart" },
 ];
 
@@ -120,6 +124,7 @@ export function emptyProfile(address: string): ProfileVM {
     name: addr,
     hasClaimedName: false,
     nameColor: DEFAULT_NAME_COLOR,
+    bodyUrl: "",
     mutualCount: 0,
     bio: "",
     accountUrl: addr ? siteUrl("/shop") : "",
@@ -157,6 +162,7 @@ export function mapProfile(avatar: Avatar, address: string): ProfileVM {
     hasClaimedName: Boolean(avatar.hasClaimedName),
     nameColor,
     avatarUrl: profileFaceUrl(avatar.avatar?.snapshots?.face256),
+    bodyUrl: /^https?:\/\//i.test(avatar.avatar?.snapshots?.body ?? "") ? (avatar.avatar?.snapshots?.body as string) : "",
     mutualCount: 0,
     bio: avatar.description ?? "",
     accountUrl: siteUrl("/shop"),

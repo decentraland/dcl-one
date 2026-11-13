@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-10-30
+- Updated: 2026-11-12
 
 ## Context
 
@@ -15,6 +16,8 @@ Place shared UI foundations, components and their Figma tooling in `library/ui`.
 Place UI used by a single app in `library/ui/apps/<app>/`; the app keeps its
 pages, routes and data wiring. The shared component styling standard is CSS
 Modules. The Figma tooling is separate from browser imports.
+
+Public components are written by hand from the component template described in [`docs/ui-standards.md`](../ui-standards.md): the React component with its native semantics, its CSS Module on foundation tokens, behavior and accessibility tests, and a `Component.figma.ts` mapping that only the Figma tooling reads. Generated Figma views back the Review previews and are not a production rendering model. Hand-written public components are absent from `promotion.include` in `library/ui/figma/figma.config.json`.
 
 ### Layout
 
@@ -32,7 +35,7 @@ deliverable needs something from it, it moves to the shared `components/` or
 
 ### Foundation installation
 
-The shared `figma install` command owns installation of public UI targets. Its foundations target regenerates colors, icons, typography, layout and spacing from the verified capture pinned in `library/ui/upstream.lock.json`. Live reads cannot write public output. Installation stages the complete target, refuses dirty or concurrently changed output and restores the previous directory when publication fails. Maintained CSS entrypoints, declarations and licensed Inter font assets are preserved. The public lock table records file digests and origins, and font validation compares materialized bytes with Git LFS object identities and their pinned digests. A port verification record binds the source lock and tooling tree to a clean installation that reproduces every tracked foundation file. Browser entrypoints remain independent of installation code.
+The shared `figma install` command owns installation of public UI targets. Its foundations target regenerates colors, icons, typography, layout and spacing from the verified capture pinned in `library/ui/upstream.lock.json`. Live reads cannot write public output. Installation stages the complete target, refuses dirty or concurrently changed output and restores the previous directory when publication fails. Maintained CSS entrypoints, declarations and licensed Inter font assets are preserved. The public lock table records file digests and origins, and font validation compares materialized bytes with Git LFS object identities and their pinned digests. A port verification record binds the port inputs ([ADR](2026-11-10-port-verification-binds-port-inputs.md)) to a clean installation that reproduces every tracked foundation file. Browser entrypoints remain independent of installation code.
 
 ## Consequences
 
@@ -40,7 +43,7 @@ The Explorer HUD consumes shared tokens and icons through the public foundations
 
 ### Component installation and integrity
 
-The components target uses the same verified-cache source and atomic install transaction as foundations. A pure producer receives source data, configuration, a names-only visibility registry and the locked runtime; it cannot acquire data or publish files. The transaction owns and rechecks the complete input read-set. Public names receive mappings; internal names receive neither mappings nor package exports. Installation records source, configuration, dependency and complete generator-module identities alongside emitted output digests in `components/generation.json`. The common output inspector verifies the index and materialized bytes for both targets; the component policy derives origin classes from the emitted plan and fixed runtime inputs. Components never admit LFS pointers. The checked record establishes offline provenance consistency, not an authenticated claim of live Figma parity. NavBar is exposed as a public bridge for the Sites home, legal and blog pages with captured signed-in mock balances, notification counts and a placeholder avatar, empty mobile variants 7 and 8, pending semantic data and avatar contracts, and a 60px desktop and 48px mobile logo pending alignment to the 40px design.
+The components target uses the same verified-cache source and atomic install transaction as foundations. A pure producer receives source data, configuration, a names-only visibility registry and the locked runtime; it cannot acquire data or publish files. The transaction owns and rechecks the complete input read-set. Public names receive mappings; internal names receive neither mappings nor package exports. Installation records source, configuration, dependency and generator-module identities alongside emitted output digests in `components/generation.json`; the module list is the install process's read-set ([ADR](2026-11-11-generation-binds-installer-import-closure.md)). The lock's public component table pins that record's digest, and the record's module list is validated against each module's digest in the source lock; output origins name source and transform and never repeat the list. The common output inspector verifies the index and materialized bytes for both targets; the component policy derives origin classes from the emitted plan and fixed runtime inputs. Components never admit LFS pointers. A hand-written component is a top-level directory of `components/` that the public component table does not name: it is plain tracked source, the transaction carries it into the published tree byte for byte and refuses a plan that writes into it, the lock never pins it, and the inspector refuses it when it is untracked or not TypeScript or CSS, or holds an LFS pointer, a Figma URL or key-shaped value, or a known generator marker. `lock-digests --write` regenerates both public tables from the staged manifests. The checked record establishes offline provenance consistency, not an authenticated claim of live Figma parity. No generated public component remains: NavBar, the last one, is hand-written in `components/NavBar/`, and the components target now installs an empty registry.
 
 ### HUD shared-source contract
 
