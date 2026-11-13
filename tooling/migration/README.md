@@ -17,7 +17,7 @@ transactions-server (its relay history has no chain or contract, which
 `economy.transactions` requires), chain-derived tables the node's indexers
 rebuild, and rows the upstream mirrors fill. Each `MAPPING.md` names the
 tables it leaves to the node. `blobs` copies the blobs of the sources it knows
-(`worlds-content-server`), and `blobs badges` the badge art into the node's
+(`worlds-content-server` and `camera-reel-service`), and `blobs badges` the badge art into the node's
 `BADGES_ASSETS_DIR`; the others need an external copy that fills the same
 records.
 
@@ -63,7 +63,8 @@ in-app purchases cannot be clawed back by a later Apple refund
 - **External state needs a separate handover.** These SQL imports do not copy
   referral Redis login-day state, live voice/streaming sessions or provider
   ownership. Export/reconcile that state or drain it before activation. Builder
-  and camera media also need their documented external-file transfer; database
+  media need its documented external transfer; Camera uses the offline filename
+  copy described in `sources/camera-reel-service/MAPPING.md`. Database
   rows alone are not a complete service migration.
 - **Same secrets.** Values the upstream encrypted (world env variables) are
   copied as ciphertext; the node must run with the upstream key.
@@ -115,7 +116,7 @@ automatically includes its guard first; guards check outstanding operations,
 but do not stop upstream writers. Explicit `run shop-server` includes its
 financial steps as well as its other data, so it is a cutover command too.
 
-`blobs <source>` reads from the source database which objects its rows name,
+`blobs worlds-content-server` reads from the source database which objects its rows name,
 copies each from upstream storage (`--from-dir`, or `--from-s3 BUCKET`) into
 the node's store under `--to` (`<root>/contents/<sha1 shard>/<cid>`, staging
 file then rename), after re-hashing the bytes against their key; it skips
@@ -126,6 +127,15 @@ lacks; `run` of that source does the same check at its end (`--storage-root`
 or `STORAGE_ROOT_FOLDER`). `worlds-limits` seeds `worlds.world_limit_overrides` from a copy of
 the old worlds service's whitelist document. Both are described in
 `sources/worlds-content-server/MAPPING.md`.
+
+Camera uses `blobs camera-reel-service --from-dir --object-metadata` against an
+offline source snapshot and original-object MIME JSONL inventory. It requires
+`CAMERA_REEL_IMPORT_API_URL` and the target's filename/MIME schema capabilities. It copies exact original/thumbnail bytes, refuses changed
+source-key mappings and conflicting UUIDs, and protects each bounded row batch
+with the shared GC publication lock plus local hash verification. Camera dry
+runs roll back each batch; missing thumbnails and unsupported URLs fail without
+substitutes. See `sources/camera-reel-service/MAPPING.md` for prerequisites and
+remaining origin, orphan-object and financial handover gaps.
 
 Options of `run`:
 

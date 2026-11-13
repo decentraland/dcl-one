@@ -19,9 +19,10 @@ class ContentMigrationCases:
                     if s.name == step_name)
         defs = ', '.join(f'"{n}" {t}' for n, t in step.columns)
         values = ', '.join(f'({row})' for row in rows)
+        variables = "\\set camera_api_url 'https://camera.example.test'\n" if source == 'camera-reel-service' else ''
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
-            self.sql(db, f'BEGIN;\nCREATE TEMP TABLE stage ({defs}) ON COMMIT DROP;\n'
+            self.sql(db, variables + f'BEGIN;\nCREATE TEMP TABLE stage ({defs}) ON COMMIT DROP;\n'
                          f'INSERT INTO stage VALUES {values};\n{step.load.read_text()}\nCOMMIT;\n')
         return err.getvalue()
 
@@ -70,13 +71,17 @@ class ContentMigrationCases:
         self.assertEqual(self.builder_names(db), 'Upstream later\tUpstream later\tUpstream later')
 
     def camera_rows(self, is_public):
-        return [f"'{PHOTO}', '{OWNER.upper().replace('0X', '0x')}', 'img-key', NULL, {is_public}, "
+        return [f"'{PHOTO}', '{OWNER}', 'https://camera.example.test/api/images/{PHOTO}-photo.png', "
+                f"'https://camera.example.test/api/images/{PHOTO}-thumbnail-photo.png', {is_public}, "
                 f"'{{\"userAddress\": \"{OWNER}\"}}', '2026-01-01Z'"]
 
     def camera_db(self, name):
         db = self.content_db(name)
-        self.sql(db, "INSERT INTO dcl_migration.blob_inventory VALUES "
-                     "('camera-reel-service', 'img-key', 'bafkreiimage', 10);\n")
+        self.sql(db, "ALTER TABLE camera_reel.images ADD COLUMN original_filename text;"
+                     "ALTER TABLE camera_reel.images ADD COLUMN image_content_type text;"
+                     "INSERT INTO dcl_migration.blob_inventory (source, object_key, hash, size, content_type) VALUES "
+                     f"('camera-reel-service', '{PHOTO}-photo.png', 'bafkreiimage', 10, 'image/png'),"
+                     f"('camera-reel-service', '{PHOTO}-thumbnail-photo.png', 'bafkreithumb', 5, 'image/png');\n")
         return db
 
     def is_public(self, db):
@@ -87,7 +92,7 @@ class ContentMigrationCases:
         self.content_load(db, 'camera-reel-service', 'image', self.camera_rows('false'))
         self.assertEqual(self.sql(db, f"SELECT user_address, image_hash, thumbnail_hash, is_public, review_status "
                                       f"FROM camera_reel.images WHERE id = '{PHOTO}';\n").strip(),
-                         f'{OWNER}\tbafkreiimage\tbafkreiimage\tf\tok')
+                         f'{OWNER}\tbafkreiimage\tbafkreithumb\tf\tok')
         self.content_load(db, 'camera-reel-service', 'image', self.camera_rows('true'))
         self.assertEqual(self.is_public(db), 't')
 

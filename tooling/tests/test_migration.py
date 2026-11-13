@@ -29,12 +29,8 @@ from tooling.tests.migration_worlds_cases import WorldsMigrationCases
 from tooling.tests.migration_financial_cases import FinancialMigrationCases
 from tooling.tests.migration_content_cases import ContentMigrationCases
 
-from tooling.tests.migration_harness import blobs, migrate
+from tooling.tests.migration_harness import blobs, migrate, pattern, private_postgres_cluster, validate_test_server
 CHUNK = blobs.CHUNK_SIZE
-
-
-def pattern(n):
-    return (bytes(range(251)) * (n // 251 + 1))[:n]
 
 
 def put_upstream(root, key, data):
@@ -97,7 +93,9 @@ class HarnessImports(unittest.TestCase):
                   "sys.path[:0] = ['tooling/tests', '.']\n"
                   "first = importlib.import_module(sys.argv[1])\n"
                   "second = importlib.import_module(sys.argv[2])\n"
-                  "assert first.migrate.MigrationError is second.migrate.MigrationError\n")
+                  "assert first.migrate.MigrationError is second.migrate.MigrationError\n"
+                  "camera = importlib.import_module('tooling.tests.test_camera_migration')\n"
+                  "assert camera.migrate is first.migrate\n")
         names = ('test_migration', 'tooling.tests.migration_harness')
         for order in (names, names[::-1]):
             with self.subTest(first=order[0]):
@@ -921,45 +919,23 @@ class AgainstPostgres(CommsMigrationCases, SocialMigrationCases, WorldsMigration
         if not shutil.which('psql'):
             raise RuntimeError('psql is not on PATH')
         cls.tmp = Path(tempfile.mkdtemp())
-        cls.data = None
+        cls.addClassCleanup(shutil.rmtree, cls.tmp)
         # Per-run database names, so concurrent runs on one server never touch each other's.
         cls.suffix = f'_t{os.getpid()}_{os.urandom(3).hex()}'
         server = os.environ.get(SERVER_ENV)
         if server:
-            host = urllib.parse.urlsplit(server).hostname or ''
-            if host not in ('', 'localhost', '127.0.0.1', '::1') and os.environ.get(DISPOSABLE_ENV) != '1':
-                shutil.rmtree(cls.tmp)
-                raise RuntimeError(f'{SERVER_ENV} names a non-local server; set {DISPOSABLE_ENV}=1 if it is'
-                                   ' disposable (tests create and drop databases on it)')
+            validate_test_server(server)
             cls.base = server.rstrip('/').rsplit('/', 1)[0] if server.count('/') > 2 else server.rstrip('/')
-            return
-        data = cls.tmp / 'pg'
-        initdb = subprocess.run(['initdb', '-D', str(data), '-U', 'postgres', '--auth=trust', '-E', 'UTF8',
-                                 '--locale=C'], capture_output=True, text=True)
-        if initdb.returncode != 0:
-            shutil.rmtree(cls.tmp)
-            # CI's dev shell has a working server; locally a client-only initdb (libpq) cannot start one
-            if os.environ.get('CI'):
-                raise RuntimeError(f'initdb failed: {initdb.stderr.strip()}')
-            raise unittest.SkipTest(f'initdb cannot create a cluster here: {initdb.stderr.strip()[:200]}')
-        cls.port = free_port()
-        with (data / 'postgresql.conf').open('a') as conf:
-            conf.write(f"port={cls.port}\nlisten_addresses='127.0.0.1'\nunix_socket_directories=''\nfsync=off\n")
-        subprocess.run(['pg_ctl', '-D', str(data), '-l', str(cls.tmp / 'log'), '-w', 'start'], check=True,
-                       capture_output=True)
-        cls.data = data
-        cls.base = f'postgres://postgres@127.0.0.1:{cls.port}'
+            cls.addClassCleanup(cls.drop_fixture_databases)
+        else:
+            cls.base = cls.enterClassContext(private_postgres_cluster())
 
     @classmethod
-    def tearDownClass(cls):
-        if cls.data:
-            subprocess.run(['pg_ctl', '-D', str(cls.data), '-m', 'immediate', 'stop'], capture_output=True)
-        else:
-            names = migrate.psql(f'{cls.base}/postgres', "SELECT datname FROM pg_database WHERE datname LIKE"
-                                 f" {migrate.literal('%' + cls.suffix)};\n").split()
-            for name in names:
-                migrate.psql(f'{cls.base}/postgres', f'DROP DATABASE IF EXISTS {name} WITH (FORCE);\n')
-        shutil.rmtree(cls.tmp)
+    def drop_fixture_databases(cls):
+        names = migrate.psql(f'{cls.base}/postgres', "SELECT datname FROM pg_database WHERE datname LIKE"
+                             f" {migrate.literal('%' + cls.suffix)};\n").split()
+        for name in names:
+            migrate.psql(f'{cls.base}/postgres', f'DROP DATABASE IF EXISTS {name} WITH (FORCE);\n')
 
     @classmethod
     def db_name(cls, db):
@@ -1166,6 +1142,10 @@ class AgainstPostgres(CommsMigrationCases, SocialMigrationCases, WorldsMigration
             self.schema_unavailable(f'schemas/ does not apply on this cluster: {str(e)[:200]}')
         env = {s.database_env: '' for s in sources.values()}
         env['TARGET_DATABASE_URL'] = self.url(db)
+        env['CAMERA_REEL_IMPORT_API_URL'] = 'https://camera.example.test'
+        # This mapping depends on the additive runtime filename and MIME capabilities.
+        self.sql(db, 'ALTER TABLE camera_reel.images ADD COLUMN IF NOT EXISTS original_filename text; '
+                     'ALTER TABLE camera_reel.images ADD COLUMN IF NOT EXISTS image_content_type text;')
         with unittest.mock.patch.dict(os.environ, env):
             code, out = self.migrate('check', sources_dir=migrate.SOURCES)
         self.assertEqual(code, 0, out)
