@@ -41,6 +41,8 @@ TSC = node_modules/.bin/tsc
 ESLINT = node_modules/.bin/eslint
 SYNC_PACK = node_modules/.bin/syncpack
 JEST = node_modules/.bin/jest
+# library/hashing is a pnpm package; a machine with pnpm on its PATH can pass PNPM=pnpm
+PNPM ?= corepack pnpm@11.27.0
 
 # this DEVELOPER_MODE is important to not send developer's events to the same segment
 # stream as the production ones. Look for it's usage on the analytics component
@@ -49,6 +51,7 @@ export DEVELOPER_MODE=true
 install:
 	$(MAKE) -C ../protocol install
 	npm --prefix ../protocol run build
+	cd ../hashing && $(PNPM) install --frozen-lockfile --ignore-scripts && $(PNPM) run build
 	npm i --silent
 ifndef SDK_PROTOC
 	test -x "$(PROTOC_DOWNLOADED)" || $(MAKE) install-protobuf

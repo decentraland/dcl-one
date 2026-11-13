@@ -35,7 +35,8 @@ flow('build-all', () => {
     for (const dependency of processWithOptimisticDependencies(graph)) {
       const projectDirectory = resolveProjectPath(dependency)
       installCrossDependencies(projectDirectory)
-      pinProtocol(projectDirectory)
+      pinLinked(projectDirectory, '@dcl/protocol', 'PROTOCOL_VERSION')
+      pinLinked(projectDirectory, '@dcl/hashing', 'HASHING_VERSION')
       itExecutes('npm pack', projectDirectory)
     }
   })
@@ -131,26 +132,27 @@ function installCrossDependencies(...paths: string[]) {
   }
 }
 
-// @dcl/protocol is the file: link to library/protocol while developing. A packed manifest names
-// the version published from there, which only the caller knows (PROTOCOL_VERSION: the publish
-// job's value, or a self-describing one for tarballs that are not published); there is no
-// fallback, since the folder's own version is not necessarily on npm.
-function pinProtocol(path: string) {
+// @dcl/protocol and @dcl/hashing are file: links to library/protocol and library/hashing while
+// developing. A packed manifest names the version published from there, which only the caller
+// knows (PROTOCOL_VERSION and HASHING_VERSION: the publish job's values, or self-describing ones
+// for tarballs that are not published); there is no fallback, since the folder's own version is
+// not necessarily on npm.
+function pinLinked(path: string, name: string, variable: string) {
   const packageJson = resolve(path, 'package.json')
   const { dependencies } = JSON.parse(readFileSync(packageJson, 'utf-8'))
-  if (!dependencies || !('@dcl/protocol' in dependencies)) return
-  it(`pin @dcl/protocol in ${path}`, () => {
-    const version = process.env.PROTOCOL_VERSION
+  if (!dependencies || !(name in dependencies)) return
+  it(`pin ${name} in ${path}`, () => {
+    const version = process.env[variable]
     if (!version) {
       throw new Error(
-        `PROTOCOL_VERSION is unset: set it to the @dcl/protocol version this build is published with ` +
+        `${variable} is unset: set it to the ${name} version this build is published with ` +
           `(or e.g. 0.0.0-unpublished.local for tarballs that are not published), so ${path} never packs ` +
           `the file: link or a version that is not on npm`
       )
     }
     patchJson('package.json', path, ($) => ({
       ...$,
-      dependencies: { ...$.dependencies, '@dcl/protocol': version }
+      dependencies: { ...$.dependencies, [name]: version }
     }))
   })
 }

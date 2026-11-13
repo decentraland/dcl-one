@@ -143,6 +143,7 @@
       "owners": [],
       "paths": [
         "/library/js-sdk-toolchain/",
+        "/library/hashing/",
         "/.github/workflows/sdk.yml"
       ]
     },
