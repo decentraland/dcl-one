@@ -23,8 +23,9 @@ it in place from now on. This repository is the source of truth; the fork branch
 - **What is imported:** the whole tree except `assets/` (358 files, 55 MB of example assets, which
   Bevy's own crates.io package leaves out too), the symlink `examples/wasm/assets` into it, and
   the fork's `.gitattributes`, whose `* text=auto` would override the root's `-text` rule for the
-  subtree. Every other file is the fork's blob, byte for byte. Bevy's own workspace stays
-  loadable, so its crates' tests can run in it.
+  subtree. At the import, every other file is the fork's blob, byte for byte; `bevy-fork.md`
+  records each later change. Bevy's own workspace stays loadable, so its crates' tests can run
+  in it.
 - **Where:** beside `source/`, outside the Explorer's Cargo workspace. It is no workspace member,
   needs no `exclude`, and the Explorer's Clippy, Rustfmt and Taplo gates do not reach it.
   `rust-cache` keeps its artifacts, since they lie outside the workspace root.
@@ -36,8 +37,8 @@ it in place from now on. This repository is the source of truth; the fork branch
   vendored root `Cargo.toml` allows `dead_code` (code our feature set leaves unused) and
   `mismatched_lifetime_syntaxes` (a lint newer than Bevy 0.16), with a comment saying why. They
   made up 810 of the 835 warnings Bevy's 47 crates printed in a native workspace check; the
-  complete check afterwards prints 30, from six other lints. This is the only change to the fork's
-  files.
+  complete check afterwards prints 30, from six other lints. This is the only change the import
+  makes to the fork's files.
 - **Tooling:** the paths that keyed on `source/` also cover the tree: `.gitattributes`,
   `tooling/bevy-ci.py` (a Bevy change selects every lane, the Windows and macOS matrix included),
   `tooling/play-artifact.py` and `infra/packages/play.nix` (Bevy is a web engine input), and

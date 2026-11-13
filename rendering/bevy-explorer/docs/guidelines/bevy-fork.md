@@ -227,6 +227,8 @@ across workers:
 - The import left out `assets/` (example assets), the symlink `examples/wasm/assets` into it, and
   the fork's `.gitattributes`. The root `.gitattributes` sets `-text` for the tree, so its bytes
   stay exact on every platform.
+- `.github/start-mobile-example` is removed. No workflow or tool in this repository runs it, and
+  its npm lockfile pinned packages with known vulnerabilities.
 - `source/Cargo.toml` points both patch tables at the tree. `[patch.crates-io]` lists each bevy
   subcrate an ecosystem crate names by crates.io version (18 today);
   `[patch."https://github.com/robtfm/bevy"]` catches `bevy_dui`, `bevy_ecss` and `boimp`, which

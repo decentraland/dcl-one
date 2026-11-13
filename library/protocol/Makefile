@@ -34,7 +34,9 @@ all: buf-lint buf-build test
 install:
 	npm i
 	rm -rf proto/google || true
-	cp -r node_modules/protobufjs/google proto/google
+	# The well-known types come from the pinned protoc (config.protocVersion). The first protoc run installs it.
+	node_modules/.bin/protoc --version
+	cp -r node_modules/@protobuf-ts/protoc/installed/protoc-$$(node -p "require('./package.json').config.protocVersion")-*/include/google proto/google
 
 list-components-ids:
 	@bash scripts/list-components-ids.sh
