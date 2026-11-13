@@ -1588,6 +1588,7 @@ dependencies = [
  "url",
  "urlencoding",
  "uuid",
+ "v8",
  "web-transport-quinn",
 ]
 
@@ -1645,6 +1646,7 @@ dependencies = [
  "image",
  "serde",
  "serde_json",
+ "serde_urlencoded",
  "sqlx",
  "thiserror",
  "tokio",
@@ -1770,6 +1772,7 @@ dependencies = [
  "dcl-http",
  "flate2",
  "futures",
+ "hashlink",
  "hex",
  "image",
  "ipnet",
@@ -2174,6 +2177,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "sha2 0.11.1",
  "sqlx",
  "thiserror",
  "tokio",

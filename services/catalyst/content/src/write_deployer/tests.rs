@@ -523,6 +523,11 @@ fn newer_and_overwrote_are_consistent_at_the_boundary() {
 
 #[test]
 fn is_content_unchanged_metadata_compare() {
+    let precise: Value = serde_json::from_str(r#"{"v":{"z":9007199254740993,"a":1}}"#).unwrap();
+    let reordered: Value = serde_json::from_str(r#"{"a":1,"z":9007199254740993}"#).unwrap();
+    let rounded: Value = serde_json::from_str(r#"{"a":1,"z":9007199254740992}"#).unwrap();
+    assert!(metadata_unchanged(Some(&precise), Some(&reordered)));
+    assert!(!metadata_unchanged(Some(&precise), Some(&rounded)));
     let wrapped = serde_json::json!({ "v": { "name": "alice", "n": 1 } });
     let same = serde_json::json!({ "name": "alice", "n": 1 });
     let diff = serde_json::json!({ "name": "bob", "n": 1 });
@@ -825,7 +830,7 @@ async fn deploy_function_matches_the_statement() {
                 .bind("v3")
                 .bind("scene")
                 .bind(&id)
-                .bind(serde_json::json!({"v": {"n": id}}))
+                .bind(serde_json::json!({"v": {"n": id}}).to_string())
                 .bind(ts)
                 .bind(&pointers)
                 .bind(serde_json::json!([]))

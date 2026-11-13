@@ -10,14 +10,17 @@
 //! envelope and a `Retry-After`; the reads keep answering. The one `POST`
 //! that is a read, the batch place gallery `/api/places/images`, stays open.
 //! The middleware is `builder::writes` ([`Gate`]): one switch, one
-//! implementation, this router's open path and envelope.
+//! implementation, this router's open path and envelope. It is layered on
+//! each write route's own methods ([`route`]), so a path or method the
+//! router does not serve answers its 404 rather than the 503.
 
-use axum::Router;
 use axum::http::{Method, StatusCode, header};
+use axum::middleware;
 use axum::response::{IntoResponse, Response};
+use axum::routing::MethodRouter;
 
 use super::http::ResponseError;
-use crate::shared::writes::{Gate, Refusal, guard_with};
+use crate::shared::writes::{Gate, Refusal};
 
 /// The paths (as this router sees them, after any nest prefix is stripped)
 /// whose non-GET methods stay open while writes are disabled.
@@ -63,29 +66,36 @@ pub fn refused_response(refusal: &Refusal) -> Response {
         .into_response()
 }
 
-/// Wraps the router in the gate. Applied before `main.rs` nests it, so the
-/// path the gate sees is the route-local one.
-pub fn guard(router: Router, writes_enabled: bool) -> Router {
-    guard_with(router, gate(writes_enabled))
+/// Puts the gate in front of the methods `route` serves (and only those:
+/// its 405 fallback stays outside the gate).
+pub fn route<S>(route: MethodRouter<S>, writes_enabled: bool) -> MethodRouter<S>
+where
+    S: Clone + Send + Sync + 'static,
+{
+    route.route_layer(middleware::from_fn_with_state(
+        gate(writes_enabled),
+        crate::shared::writes::gate,
+    ))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::Router;
     use axum::body::Body;
     use axum::extract::Request;
-    use axum::routing::{get, post};
+    use axum::routing::{delete, get, post};
     use tower::ServiceExt;
 
     fn app(enabled: bool) -> Router {
         let inner = Router::new()
-            .route("/api/images", post(|| async { "uploaded" }))
+            .route("/api/images", route(post(|| async { "uploaded" }), enabled))
             .route(
                 "/api/images/{id}",
-                get(|| async { "bytes" }).delete(|| async { "deleted" }),
+                get(|| async { "bytes" }).merge(route(delete(|| async { "deleted" }), enabled)),
             )
             .route("/api/places/images", post(|| async { "gallery" }));
-        Router::new().nest("/camera-reel-service", guard(inner, enabled))
+        Router::new().nest("/camera-reel-service", inner)
     }
 
     async fn call(app: &Router, method: &str, path: &str) -> (StatusCode, String) {
