@@ -380,6 +380,17 @@ pub async fn serve(
             "EVENTS_MIRROR_ADOPT adopts the mirrored events once the mirror is off: unset EVENTS_MIRROR_UPSTREAM first"
         );
     }
+    if config
+        .node
+        .public_url
+        .as_deref()
+        .is_none_or(|u| u.trim().is_empty())
+    {
+        tracing::warn!(
+            own_url = %config.node.own_url(),
+            "PUBLIC_URL is unset: place report upload URLs and asset links use the bind address"
+        );
+    }
     let explore_settings = explore::Settings {
         content_public_url: content.settings.content_public_url.clone(),
         asset_rewrite_domain: explore::Settings::asset_rewrite_domain_for(
@@ -441,6 +452,8 @@ pub async fn serve(
             .trim_end_matches('/')
             .to_string(),
         events_asset_base_url: explore::Settings::events_asset_base_for(&config.node.own_url()),
+        public_url: config.node.own_url().trim_end_matches('/').to_string(),
+        trusted_proxy_cidrs: config.node.http_trusted_proxy_cidrs.clone(),
         realm_name: config
             .node
             .realm_name

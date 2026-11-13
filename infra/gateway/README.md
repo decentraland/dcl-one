@@ -22,6 +22,11 @@ Verify the deployed trust chain and client bucket separation before cutover:
 without it every client behind the gateway shares one `/contents` budget
 (1000 requests a minute by default) and gets 429s past it.
 
+Place reports count against the reporter's wallet and, when its address names
+one client (a trusted proxy's `X-Real-IP` or a public peer), its network. Behind
+an unlisted private gateway only the wallet limit applies, and fresh wallets cost
+nothing, so set `HTTP_TRUSTED_PROXY_CIDRS` to keep the per-network report limit.
+
 Set `PUBLIC_URL` to the externally reachable node base URL, including any deployment prefix. Without it, the node uses its bind address (for example `http://0.0.0.0:<port>`), which is only a local fallback and cannot provide public image or notification links. See [event client and deployment guidance](../../services/catalyst/docs/events.md).
 
 ```sh
