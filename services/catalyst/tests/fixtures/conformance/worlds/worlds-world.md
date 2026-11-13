@@ -723,13 +723,23 @@ tree, and orders by name (upstream: group order). `owner` is `null` for worlds w
     - Upstream `/about` lists the newest scene only (WW-01); `GET /world/:n/scenes` lists every deployed
       scene, paged oldest first (`scenes-handler.ts` `getScenesHandler`, `worlds-manager.ts` `getWorldScenes`).
     - dcl-one: the mirror reads a world's scene ids from the source's paged `/world/{name}/scenes`
-      (`listed_scenes`, `worlds/src/mirror.rs:2108`) and keeps `/about` for the world's spawn and the
+      (`listed_scenes`, `worlds/src/mirror.rs:2243`) and keeps `/about` for the world's spawn and the
       content `baseUrl`. The listing decides what is retired, so any doubt stops that world's sync until the
       next pass and retires nothing: a refusal (404 and 405 included), a page without `scenes`, a repeated id,
       a count other than `total`, or a held scene missing from the pages that `?entity_id=` still lists (the
       listing moved while it was read). A world over 2,000 scenes is refused on every pass. The read-through
-      fill takes the same path and stores the world only when every listed scene verifies. Pinned by
-      `tests/worlds_mirror.rs:1195` `a_world_of_many_scenes_is_mirrored_whole_from_the_paged_listing`; the fakes
+      fill takes the same path and verifies each scene by the `deploymentAuthChain` of its listing row. The
+      newest scene must verify, or nothing is stored. An older scene whose chain this node will not accept
+      (a signer its NAME authority refuses and no trusted upstream grant covers, as a former owner's or a
+      collaborator's, or an over-size, malformed or empty chain) is left out with a warning and nothing of it
+      is fetched. A signature that does not match its entity, or an authority that cannot answer, still fails
+      the whole fill. Pinned by `tests/worlds_mirror.rs:1208`
+      `a_world_of_many_scenes_is_mirrored_whole_from_the_paged_listing`, `tests/worlds_read_through.rs:1047`
+      `a_world_of_many_scenes_is_filled_whole_on_a_miss_from_its_listing_chains`, `:1100`
+      `an_older_scene_signed_by_one_who_may_not_publish_is_left_out_of_the_fill`, `:1145`
+      `older_scenes_with_an_over_size_malformed_or_empty_chain_are_left_out_of_the_fill`, `:1187`
+      `an_older_scene_whose_grant_cannot_be_read_fails_the_whole_fill` and `:1215`
+      `an_older_scene_whose_chain_does_not_sign_it_fails_the_whole_fill`; the fakes
       in `tests/worlds_mirror.rs` and `tests/worlds_read_through.rs` answer `/about` with the newest URN only.
     - Severity: none (closed).
 
