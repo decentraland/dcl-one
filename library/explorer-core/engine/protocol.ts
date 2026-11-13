@@ -253,6 +253,7 @@ export type PageToScene =
   | PreloadLookRequest
   | AcceptWelcomeRequest
   | OpenLegalRequest
+  | OpenExternalUrlRequest
   | TeleportRequest
   | ChangeRealmRequest
   | MinimapConfigRequest
@@ -269,6 +270,7 @@ export type PageToScene =
   | TakePhotoRequest
   | GetGalleryPhotoRequest
   | DeleteGalleryPhotoRequest
+  | SetGalleryPhotoPublicRequest
 
 // ---- scene -> page ---------------------------------------------------------
 
@@ -693,8 +695,6 @@ export interface Profile {
   info?: ProfileInfo
   /** Mutual-friends count shown under the name. */
   mutuals?: number
-  /** Camera-reel photo URLs (Photos tab). */
-  photos?: string[]
   /** Currently-equipped wearables (category slots), resolved from the deployed avatar. */
   equippedWearables?: Wearable[]
   /** Currently-equipped emotes (wheel slots), resolved from the deployed avatar. */
@@ -710,8 +710,8 @@ export interface GetProfileRequest {
   kind: 'getProfile'
 }
 
-/** Fetch a user's profile by address from the engine's cache. With `extras`, the passport's badges,
- *  photos and equipped items come too (each a service call of its own, so only the passport asks). */
+/** Fetch a user's profile by address from the engine's cache. With `extras`, the passport's badges
+ *  and equipped items come too (each a service call of its own, so only the passport asks). */
 export interface GetUserProfileRequest {
   kind: 'getUserProfile'
   address: string
@@ -904,6 +904,20 @@ export interface AcceptWelcomeRequest {
 export interface OpenLegalRequest {
   kind: 'openLegal'
   doc: 'terms' | 'privacy'
+}
+
+/** Open an `https:` url in the user's browser (the scene's openExternalUrl, which works from the
+ *  native HUD too). Answered by an ExternalUrlOpenedMessage. */
+export interface OpenExternalUrlRequest {
+  kind: 'openExternalUrl'
+  requestId: number
+  url: string
+}
+
+export interface ExternalUrlOpenedMessage {
+  kind: 'externalUrlOpened'
+  requestId: number
+  ok: boolean
 }
 
 export interface WelcomeAcceptedMessage {
@@ -1724,14 +1738,24 @@ export interface GalleryPhotoMeta {
   people?: GalleryPerson[]
 }
 
+/** One page of the local player's camera reel (signed, so private photos are included), newest
+ *  first as the service orders them. `requestId` is echoed in the GalleryMessage that answers it. */
 export interface GetGalleryRequest {
   kind: 'getGallery'
+  requestId: number
+  offset: number
+  limit: number
 }
 
-/** The local player's camera-reel photos + storage usage (current/max). */
+/** A page of the local player's camera-reel photos + storage usage: `current` is the total number of
+ *  photos the player has, `max` the storage limit. `received` counts the images the service sent,
+ *  url-less ones included, which `photos` drops. */
 export interface GalleryMessage {
   kind: 'gallery'
+  requestId: number
+  ok: boolean
   photos: GalleryPhoto[]
+  received: number
   current: number
   max: number
 }
@@ -1748,10 +1772,29 @@ export interface GalleryPhotoMessage {
   meta: GalleryPhotoMeta | null
 }
 
-/** Delete one of the local player's photos (signed DELETE; re-emits the gallery). */
+/** Delete one of the local player's photos (signed DELETE). Answered by a GalleryWriteMessage. */
 export interface DeleteGalleryPhotoRequest {
   kind: 'deleteGalleryPhoto'
+  requestId: number
   id: string
+}
+
+/** Make one of the local player's photos public or private (signed PATCH). Answered by a
+ *  GalleryWriteMessage. */
+export interface SetGalleryPhotoPublicRequest {
+  kind: 'setGalleryPhotoPublic'
+  requestId: number
+  id: string
+  isPublic: boolean
+}
+
+/** The outcome of a gallery write. A delete also reports the storage usage that follows it. */
+export interface GalleryWriteMessage {
+  kind: 'galleryWrite'
+  requestId: number
+  ok: boolean
+  current?: number
+  max?: number
 }
 
 /** An owned wearable (backpack catalog item). */
@@ -2260,6 +2303,7 @@ export type SceneToPage =
   | HomeSceneMessage
   | WelcomeMessage
   | WelcomeAcceptedMessage
+  | ExternalUrlOpenedMessage
   | PlayerPoseMessage
   | RealmInfoMessage
   | SceneInfoMessage
@@ -2267,6 +2311,7 @@ export type SceneToPage =
   | LookShownMessage
   | GalleryMessage
   | GalleryPhotoMessage
+  | GalleryWriteMessage
   | PermissionRequestMessage
   | PermissionWithdrawnMessage
   | PermissionUsedMessage
