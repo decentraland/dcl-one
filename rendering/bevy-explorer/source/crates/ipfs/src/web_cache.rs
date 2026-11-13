@@ -5,6 +5,11 @@
 //! under the shared key answers for every content server, so it is only written once the bytes
 //! are checked against the hash (`content_hash`), and under that hash; a url's response goes
 //! under the url.
+//!
+//! The cache is capped (`effective_cap`). The service worker trims it, oldest-written entries
+//! first, when the engine asks through the `__contentCacheTrim` page function
+//! (deploy/web/engine/content_cache.js): after every `trim_interval` bytes written, when the cap
+//! changes, and before retrying a write that failed for quota.
 
 // stand-in origin for shared entries: `.invalid` is reserved, so no server's own entries land here
 const SHARED_ORIGIN: &str = "https://shared.invalid";
@@ -37,13 +42,114 @@ fn names(url: &str, hash: &str) -> bool {
     keys(url).is_some_and(|[shared, _]| shared == format!("{SHARED_ORIGIN}/{hash}"))
 }
 
+/// The most the content cache keeps on web, whatever `AppConfig::cache_bytes` says.
+pub const WEB_CACHE_CAP_BYTES: u64 = 1 << 30;
+const MIB: u64 = 1 << 20;
+// The worker leaves headroom below the cap, so a request every 1/16 of it is enough.
+const TRIM_INTERVAL_MAX: u64 = 64 * MIB;
+// A full origin is often full for reasons the cap does not see (OPFS, IndexedDB): forced trims
+// are spaced so they cannot empty the cache a quarter at a time.
+const FORCED_TRIM_SPACING_MS: u64 = 60_000;
+
+/// The cap the worker trims to: a tester's session override, else the configured size, at most
+/// [`WEB_CACHE_CAP_BYTES`].
+pub fn effective_cap(configured: u64, override_bytes: Option<u64>) -> u64 {
+    override_bytes.unwrap_or(configured.min(WEB_CACHE_CAP_BYTES))
+}
+
+/// Bytes written between two trim requests.
+fn trim_interval(cap: u64) -> u64 {
+    (cap / 16).clamp(MIB, TRIM_INTERVAL_MAX)
+}
+
+/// Whether writing `len` bytes after `before` bytes crosses a multiple of `interval`.
+fn crosses_interval(before: u64, len: u64, interval: u64) -> bool {
+    interval > 0 && before / interval != before.saturating_add(len) / interval
+}
+
+/// Whether a forced trim may run at `now_ms`, the last one having run at `last_ms` (0 = never).
+fn forced_trim_allowed(last_ms: u64, now_ms: u64) -> bool {
+    last_ms == 0 || now_ms.saturating_sub(last_ms) >= FORCED_TRIM_SPACING_MS
+}
+
+/// What the service worker reported for its last trim (deploy/web/service_worker.js
+/// `trimContentCache`), in bytes.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct TrimReport {
+    pub cap_bytes: f64,
+    pub usage: f64,
+    pub quota: f64,
+    pub caches_usage: f64,
+    pub evicted_entries: f64,
+    pub evicted_bytes: f64,
+    pub persisted: bool,
+}
+
+/// The engine side's readings, for the debug panel.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct WebCacheState {
+    pub cap_bytes: u64,
+    pub override_bytes: Option<u64>,
+    pub written_bytes: u64,
+    pub quota_retries: u64,
+    pub trims: u64,
+    pub last: Option<TrimReport>,
+}
+
+fn mib(bytes: f64) -> f64 {
+    (bytes / MIB as f64 * 10.0).round() / 10.0
+}
+
+/// The `/web_content_cache` reply.
+pub fn state_json(state: &WebCacheState) -> serde_json::Value {
+    let last = state.last;
+    let reason = "The service worker has not answered a trim yet: it does not control this page, or none ran.";
+    serde_json::json!({
+        "capMiB": mib(state.cap_bytes as f64),
+        "overrideMiB": state.override_bytes.map(|b| mib(b as f64)),
+        "writtenMiB": mib(state.written_bytes as f64),
+        "quotaRetries": state.quota_retries,
+        "trims": state.trims,
+        "workerCapMiB": last.map(|r| mib(r.cap_bytes)),
+        "usageMiB": last.map(|r| mib(r.usage)),
+        "quotaMiB": last.map(|r| mib(r.quota)),
+        "cachesMiB": last.map(|r| mib(r.caches_usage)),
+        "evictedEntries": last.map(|r| r.evicted_entries),
+        "evictedMiB": last.map(|r| mib(r.evicted_bytes)),
+        "persisted": last.map(|r| r.persisted),
+        "unavailable": {
+            "overrideMiB": "No override: the configured cap applies.",
+            "workerCapMiB": reason, "usageMiB": reason, "quotaMiB": reason, "cachesMiB": reason,
+            "evictedEntries": reason, "evictedMiB": reason, "persisted": reason,
+        },
+    })
+}
+
+#[cfg(target_arch = "wasm32")]
+#[bevy::web_worker::page_functions]
+#[wasm_bindgen::prelude::wasm_bindgen(js_namespace = self)]
+extern "C" {
+    /// deploy/web/engine/content_cache.js: asks the service worker to trim the cache to
+    /// `cap_bytes`, freeing at least a quarter of it when `quota_error`. Resolves with the worker's
+    /// report, or null when no worker answered.
+    #[wasm_bindgen::prelude::wasm_bindgen(js_name = "__contentCacheTrim")]
+    fn page_content_cache_trim(cap_bytes: f64, quota_error: bool) -> js_sys::Promise;
+}
+
 #[cfg(target_arch = "wasm32")]
 pub use io::*;
 
 #[cfg(target_arch = "wasm32")]
 mod io {
-    use super::{keys, names};
+    use super::{
+        crosses_interval, forced_trim_allowed, keys, names, page_content_cache_trim, trim_interval,
+        TrimReport, WebCacheState, WEB_CACHE_CAP_BYTES,
+    };
     use js_sys::Uint8Array;
+    use std::sync::{
+        atomic::{AtomicU64, Ordering},
+        Mutex, PoisonError,
+    };
     use wasm_bindgen::prelude::*;
     use wasm_bindgen_futures::JsFuture;
     use web_sys::{Cache, CacheStorage, Headers, Response, ResponseInit};
@@ -98,8 +204,12 @@ mod io {
         Ok(data)
     }
 
-    /// Replaces the body of the entry under `key`.
-    pub async fn put(cache: &Cache, key: &str, old: &Response, data: &[u8]) -> Result<(), JsValue> {
+    async fn put_once(
+        cache: &Cache,
+        key: &str,
+        old: &Response,
+        data: &[u8],
+    ) -> Result<(), JsValue> {
         let headers = old.headers();
         headers.set("Content-Length", &data.len().to_string())?;
 
@@ -114,8 +224,7 @@ mod io {
         Ok(())
     }
 
-    /// Stores `data` under `key` as a fresh response.
-    async fn store(cache: &Cache, key: &str, data: &[u8]) -> Result<(), JsValue> {
+    async fn store_once(cache: &Cache, key: &str, data: &[u8]) -> Result<(), JsValue> {
         let headers = Headers::new()?;
         headers.set("Content-Type", "application/octet-stream")?;
         headers.set("Content-Length", &data.len().to_string())?;
@@ -163,6 +272,123 @@ mod io {
         JsFuture::from(cache.delete_with_str(&own)).await?;
         Ok(())
     }
+
+    // Written from the asset loader and processor workers, which have no `World`; one wasm memory
+    // is shared by every worker of an engine instance.
+    static CAP_BYTES: AtomicU64 = AtomicU64::new(WEB_CACHE_CAP_BYTES);
+    static WRITTEN_BYTES: AtomicU64 = AtomicU64::new(0);
+    static LAST_FORCED_MS: AtomicU64 = AtomicU64::new(0);
+    static QUOTA_RETRIES: AtomicU64 = AtomicU64::new(0);
+    static TRIMS: AtomicU64 = AtomicU64::new(0);
+    static LAST_REPORT: Mutex<Option<TrimReport>> = Mutex::new(None);
+
+    /// Replaces the body of the entry under `key`.
+    pub async fn put(cache: &Cache, key: &str, old: &Response, data: &[u8]) -> Result<(), JsValue> {
+        write_with_quota_retry(key, data.len(), || put_once(cache, key, old, data)).await
+    }
+
+    /// Stores `data` under `key` as a fresh response.
+    async fn store(cache: &Cache, key: &str, data: &[u8]) -> Result<(), JsValue> {
+        write_with_quota_retry(key, data.len(), || store_once(cache, key, data)).await
+    }
+
+    /// The cap the worker trims to.
+    pub fn set_cap(cap_bytes: u64) {
+        CAP_BYTES.store(cap_bytes, Ordering::Relaxed);
+    }
+
+    /// Asks the service worker for a trim to the current cap and keeps its report.
+    pub async fn request_trim(quota_error: bool) -> Option<TrimReport> {
+        let cap = CAP_BYTES.load(Ordering::Relaxed) as f64;
+        let reply = JsFuture::from(page_content_cache_trim(cap, quota_error))
+            .await
+            .map_err(|e| bevy::log::warn!("content cache trim failed: {e:?}"))
+            .ok()?;
+        let report = report_from_js(&reply)?;
+        TRIMS.fetch_add(1, Ordering::Relaxed);
+        *LAST_REPORT.lock().unwrap_or_else(PoisonError::into_inner) = Some(report);
+        Some(report)
+    }
+
+    /// The engine side's readings, for the debug panel.
+    pub fn state(override_bytes: Option<u64>) -> WebCacheState {
+        WebCacheState {
+            cap_bytes: CAP_BYTES.load(Ordering::Relaxed),
+            override_bytes,
+            written_bytes: WRITTEN_BYTES.load(Ordering::Relaxed),
+            quota_retries: QUOTA_RETRIES.load(Ordering::Relaxed),
+            trims: TRIMS.load(Ordering::Relaxed),
+            last: *LAST_REPORT.lock().unwrap_or_else(PoisonError::into_inner),
+        }
+    }
+
+    // A failed `put` may have consumed its response's body: `write` builds a fresh one each call.
+    async fn write_with_quota_retry<F, Fut>(key: &str, len: usize, write: F) -> Result<(), JsValue>
+    where
+        F: Fn() -> Fut,
+        Fut: std::future::Future<Output = Result<(), JsValue>>,
+    {
+        let result = match write().await {
+            Err(e) if is_quota_error(&e) && claim_forced_trim() => {
+                QUOTA_RETRIES.fetch_add(1, Ordering::Relaxed);
+                bevy::log::debug!("content cache full writing `{key}`: trimming and retrying");
+                request_trim(true).await;
+                write().await
+            }
+            other => other,
+        };
+        if result.is_ok() {
+            note_written(len as u64);
+        }
+        result
+    }
+
+    fn is_quota_error(error: &JsValue) -> bool {
+        js_sys::Reflect::get(error, &"name".into())
+            .ok()
+            .and_then(|name| name.as_string())
+            .is_some_and(|name| name == "QuotaExceededError")
+    }
+
+    fn claim_forced_trim() -> bool {
+        let now = js_sys::Date::now() as u64;
+        let last = LAST_FORCED_MS.load(Ordering::Relaxed);
+        forced_trim_allowed(last, now)
+            && LAST_FORCED_MS
+                .compare_exchange(last, now, Ordering::Relaxed, Ordering::Relaxed)
+                .is_ok()
+    }
+
+    fn note_written(len: u64) {
+        let interval = trim_interval(CAP_BYTES.load(Ordering::Relaxed));
+        let before = WRITTEN_BYTES.fetch_add(len, Ordering::Relaxed);
+        if crosses_interval(before, len, interval) {
+            wasm_bindgen_futures::spawn_local(async {
+                request_trim(false).await;
+            });
+        }
+    }
+
+    fn report_from_js(value: &JsValue) -> Option<TrimReport> {
+        if value.is_null() || value.is_undefined() {
+            return None;
+        }
+        let get = |name: &str| js_sys::Reflect::get(value, &name.into()).ok();
+        if let Some(error) = get("error").and_then(|e| e.as_string()) {
+            bevy::log::warn!("content cache trim failed in the service worker: {error}");
+            return None;
+        }
+        let number = |name: &str| get(name).and_then(|v| v.as_f64());
+        Some(TrimReport {
+            cap_bytes: number("capBytes")?,
+            usage: number("usage")?,
+            quota: number("quota")?,
+            caches_usage: number("cachesUsage")?,
+            evicted_entries: number("evictedEntries")?,
+            evicted_bytes: number("evictedBytes")?,
+            persisted: get("persisted").and_then(|v| v.as_bool()).unwrap_or(false),
+        })
+    }
 }
 
 #[cfg(test)]
@@ -202,5 +428,73 @@ mod tests {
             "https://peer.example/contents/bafkreihash/",
             "bafkreihash"
         ));
+    }
+
+    #[test]
+    fn web_cap_is_at_most_a_gibibyte_whatever_the_config() {
+        assert_eq!(
+            effective_cap(common::structs::AppConfig::default().cache_bytes, None),
+            WEB_CACHE_CAP_BYTES
+        );
+        assert_eq!(effective_cap(200 << 20, None), 200 << 20);
+    }
+
+    #[test]
+    fn a_session_override_replaces_the_configured_cap() {
+        assert_eq!(effective_cap(10 << 30, Some(50 << 20)), 50 << 20);
+        assert_eq!(effective_cap(10 << 30, Some(4 << 30)), 4 << 30);
+    }
+
+    #[test]
+    fn trims_are_requested_every_sixteenth_of_the_cap() {
+        assert_eq!(trim_interval(1 << 30), 64 << 20);
+        assert!(crosses_interval(63 << 20, 1 << 20, 64 << 20));
+        assert!(!crosses_interval(0, (64 << 20) - 1, 64 << 20));
+        assert!(!crosses_interval(10, 0, 64 << 20));
+    }
+
+    #[test]
+    fn small_caps_trim_at_least_every_mebibyte_and_large_ones_every_64() {
+        assert_eq!(trim_interval(4 << 20), 1 << 20);
+        assert_eq!(trim_interval(16 << 30), 64 << 20);
+        assert_eq!(trim_interval(50 << 20), (50 << 20) / 16);
+    }
+
+    #[test]
+    fn forced_trims_are_a_minute_apart() {
+        assert!(forced_trim_allowed(0, 5));
+        assert!(!forced_trim_allowed(1_000, 60_999));
+        assert!(forced_trim_allowed(1_000, 61_000));
+        // the clock went back
+        assert!(!forced_trim_allowed(70_000, 1_000));
+    }
+
+    #[test]
+    fn state_without_a_report_names_why_the_worker_readings_are_missing() {
+        let state = WebCacheState {
+            cap_bytes: 1 << 30,
+            ..Default::default()
+        };
+        let json: serde_json::Value =
+            serde_json::from_str(&state_json(&state).to_string()).unwrap();
+        assert_eq!(json["capMiB"], 1024.0);
+        assert!(json["usageMiB"].is_null());
+        assert!(json["unavailable"]["usageMiB"].is_string());
+    }
+
+    #[test]
+    fn state_reports_the_last_trim_in_mebibytes() {
+        let state = WebCacheState {
+            last: Some(TrimReport {
+                evicted_bytes: 3.0 * 1048576.0 + 52429.0,
+                persisted: true,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let json: serde_json::Value =
+            serde_json::from_str(&state_json(&state).to_string()).unwrap();
+        assert_eq!(json["evictedMiB"], 3.1);
+        assert_eq!(json["persisted"], true);
     }
 }
