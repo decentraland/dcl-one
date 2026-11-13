@@ -19,9 +19,7 @@ import { BASE_DOMAIN } from '@hud-host'
 import { launchAnalytics } from './analytics'
 import { getPref, PREF, setPref } from './prefs'
 
-export const FLAGS_APP = 'explorer'
-/** The prefix of this client's flags in the file; keys without it are left out. */
-export const FLAG_PREFIX = `${FLAGS_APP}-bevy-`
+const FLAG_PREFIX = 'explorer-bevy-'
 
 /** Every flag the HUD reads, by its name without the `explorer-bevy-` prefix. */
 export const FLAG = {} as const satisfies Record<string, string>
@@ -57,7 +55,7 @@ function notify(): void {
 }
 
 export function featureFlagsUrl(baseDomain: string = BASE_DOMAIN): string {
-  return `https://feature-flags.${baseDomain}/${FLAGS_APP}.json`
+  return `https://feature-flags.${baseDomain}/explorer.json`
 }
 
 /** The anonymous id rollouts are bucketed by: the campaign id, else the one this client keeps. */
