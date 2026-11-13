@@ -403,7 +403,8 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   client), so the worker passes the request to the network untouched; a lookup there could only
   repeat that miss. The worker still answers requests that carry the header from that cache, and
   only the engine writes it. A hit missed in between (the same hash finishing under another url,
-  another tab) costs one more download of the same bytes.
+  another tab), or one that appears before a retry (the engine reads the cache only before the
+  first attempt), costs one more download of the same bytes.
 - **Web-only engine switches are page params**, not `LaunchOptions` fields.
 - **`CommsApi.consumeMessages` resolves to a bare array** of `{ sender, data }`, not the
   protocol's `{ messages }`, because unity-explorer, the client scenes are tested on, returns

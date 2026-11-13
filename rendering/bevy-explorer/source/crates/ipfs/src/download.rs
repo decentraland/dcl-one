@@ -336,8 +336,9 @@ impl IpfsIo {
         let _deferred_in_flight = DeferredDropper::new(&IPFS_IN_FLIGHT);
         let mut no_cache = false;
         let client = &self.client;
-        // no `X-IPFS` header on web: a caller with a cache key has read `web_cache` already, and
-        // the header would have the service worker repeat that lookup
+        // no `X-IPFS` header on web: a caller with a cache key has read `web_cache` before the first
+        // attempt, and the header would have the service worker repeat that lookup. A retry does
+        // not read it again
         let request = client.get(&remote);
 
         let request = ipfs_io_read_state.send_failure(request.build().map_err(|e| {
