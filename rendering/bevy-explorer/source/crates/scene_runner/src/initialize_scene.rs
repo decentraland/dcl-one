@@ -53,6 +53,7 @@ use crate::{
         RendererSceneContext, SceneState, FROZEN_BLOCK, SCENE_FIRST_UPDATE_TICK,
         SCENE_JS_SPAWN_TICK,
     },
+    scene_lod::{LodState, SceneDefinition, SceneDefinitions, SceneLod},
     update_world::{visibility::VisibilityComponent, ComponentTracker},
     vec3_to_parcel, ContainerEntity, DeletedSceneEntities, MobileUiEmulation, OutOfWorld,
     SceneEntity, SceneThreadHandle,
@@ -96,6 +97,7 @@ impl Plugin for SceneLifecyclePlugin {
         app.init_resource::<CurrentSceneLoading>();
         app.init_resource::<LiveScenes>();
         app.init_resource::<ScenePointers>();
+        app.init_resource::<SceneDefinitions>();
         app.init_resource::<PortableScenes>();
         app.init_asset::<SerializedCrdtStore>();
         app.init_asset_loader::<CrdtLoader>();
@@ -1194,6 +1196,7 @@ fn load_active_entities(
     mut stored_parcels: Local<(IVec2, Vec<(f32, IVec2)>)>,
     mut teleport_target: ResMut<RealmInitialLocation>,
     mut pending_teleport: Local<bool>,
+    mut definitions: ResMut<SceneDefinitions>,
 ) {
     let teleport_components = |parcel: IVec2| -> (Transform, OutOfWorld) {
         (
@@ -1208,6 +1211,7 @@ fn load_active_entities(
 
     if current_realm.is_changed() {
         *fetch_count = 100;
+        definitions.0.clear();
         // drop current request
         *pointer_request = None;
         // clear stored parcels
@@ -1495,6 +1499,7 @@ fn load_active_entities(
                 continue;
             };
 
+            let metadata_json = active_entity_metadata.to_string();
             let meta = match serde_json::from_value::<SceneMeta>(active_entity_metadata) {
                 Ok(metadata) => metadata,
                 Err(err) => {
@@ -1527,6 +1532,23 @@ fn load_active_entities(
                     Some(IVec2::new(x, y))
                 })
                 .collect::<Vec<_>>();
+
+            // keep what a stand-in needs before the scene itself is fetched
+            let base = meta.scene.base.split_once(',').and_then(|(x, y)| {
+                Some(IVec2::new(x.parse::<i32>().ok()?, y.parse::<i32>().ok()?))
+            });
+            if let Some(base) = base {
+                definitions.0.insert(
+                    active_entity.id.clone(),
+                    SceneDefinition {
+                        content: active_entity.content,
+                        metadata: Some(metadata_json),
+                        urn: urn.clone(),
+                        base,
+                        parcels: parcels.clone(),
+                    },
+                );
+            }
 
             // jump to target if we just resolved it
             if teleport_on_resolve
@@ -2042,6 +2064,9 @@ fn animate_ready_scene(
 #[derive(Component)]
 pub struct LoadingMaterialHandle(pub Handle<LoadingMaterial>);
 
+/// Keeps each loading wall at the player's height and lights it near the player. A scene whose
+/// near LOD is shown raises no walls: the stand-in already stands on its parcels.
+#[allow(clippy::type_complexity)]
 fn update_loading_quads(
     mut q: Query<
         (
@@ -2049,10 +2074,14 @@ fn update_loading_quads(
             &mut Transform,
             &MeshMaterial3d<LoadingMaterial>,
             &LoadingQuad,
+            &ChildOf,
+            &mut Visibility,
         ),
         Without<PrimaryUser>,
     >,
     player: Query<&Transform, With<PrimaryUser>>,
+    scenes: Query<&RendererSceneContext>,
+    lods: Query<&SceneLod>,
     mut mats: ResMut<Assets<LoadingMaterial>>,
     mut local_prev_active: Local<HashSet<AssetId<LoadingMaterial>>>,
 ) {
@@ -2061,8 +2090,25 @@ fn update_loading_quads(
     };
 
     let prev_active = std::mem::take(&mut *local_prev_active);
+    let stood_in = lods
+        .iter()
+        .filter(|lod| matches!(lod.state, LodState::Shown(_)))
+        .map(|lod| lod.hash.as_str())
+        .collect::<HashSet<_>>();
 
-    for (gt, mut trans, h_mat, loading) in q.iter_mut() {
+    for (gt, mut trans, h_mat, loading, child_of, mut visibility) in q.iter_mut() {
+        let hidden = scenes
+            .get(child_of.parent())
+            .is_ok_and(|ctx| stood_in.contains(&*ctx.hash));
+        visibility.set_if_neq(if hidden {
+            Visibility::Hidden
+        } else {
+            Visibility::Inherited
+        });
+        if hidden {
+            continue;
+        }
+
         let nearest_point = player_translation.xz().clamp(
             gt.translation().xz()
                 - if loading.0 {

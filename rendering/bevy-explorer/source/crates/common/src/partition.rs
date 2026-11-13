@@ -45,6 +45,9 @@ pub enum Tier {
     Avatar,
     /// the other scenes in range, nearest first
     Scene,
+    /// a scene's stand-in: the scene's files while no live scene holds its hash, after every
+    /// live scene's
+    Lod,
     /// no scene's and no avatar's: NFT images, URL-form fonts, imposter archives
     Other,
     /// a scene that has left while its downloads wait
@@ -98,6 +101,14 @@ impl LoadPriority {
     /// The bottom of the avatar tier: an avatar that has no partition yet.
     pub const AVATAR_PENDING: Self = Self {
         tier: Tier::Avatar,
+        parcel_distance: u16::MAX,
+        is_behind: true,
+        sqr_distance: FloatOrd(f32::MAX),
+    };
+
+    /// The bottom of the LOD tier: a stand-in that has no partition yet.
+    pub const LOD_PENDING: Self = Self {
+        tier: Tier::Lod,
         parcel_distance: u16::MAX,
         is_behind: true,
         sqr_distance: FloatOrd(f32::MAX),

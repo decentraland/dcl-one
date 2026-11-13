@@ -119,10 +119,22 @@ pub enum IpfsType {
 }
 
 impl IpfsType {
+    /// The file part takes the content map's key form (relative and lowercase, as
+    /// `ContentMap::key` stores it), so every load of one deployed file gets one asset path
+    /// whatever case the caller spelled it in: a scene's `GltfContainer` may name
+    /// `models/Tree.glb` while the near LOD finds `models/tree.glb` in the content map, and two
+    /// paths would download and parse the file twice. The lookup is case-insensitive either way.
+    /// A url keeps its case: a content-map miss fetches it as written.
     pub fn new_content_file(content_hash: String, file_path: String) -> Self {
+        let file_path = content_file_path(&file_path);
+        let file_path = if is_url(&file_path) {
+            file_path.into_owned()
+        } else {
+            file_path.to_lowercase()
+        };
         Self::ContentFile {
             content_hash,
-            file_path: content_file_path(&file_path).into_owned(),
+            file_path,
         }
     }
 
@@ -1057,6 +1069,22 @@ mod tests {
         assert_eq!(hash("scenehash", "dance"), None);
         assert!(hash("scenehash", "https://example.com/foo.glb").is_some());
         assert_eq!(hash("otherhash", "models/emotes/foo.glb"), None);
+    }
+
+    #[test]
+    fn content_files_share_one_path_across_case() {
+        let path = |file: &str| {
+            PathBuf::from(&IpfsPath::new(IpfsType::new_content_file(
+                "bafyscene".to_owned(),
+                file.to_owned(),
+            )))
+        };
+        assert_eq!(path("models/Tree.glb"), path("models/tree.glb"));
+        let url = "https://example.com/Tree.glb";
+        assert!(matches!(
+            IpfsType::new_content_file("bafyscene".to_owned(), url.to_owned()),
+            IpfsType::ContentFile { file_path, .. } if file_path == url
+        ));
     }
 
     #[test]
