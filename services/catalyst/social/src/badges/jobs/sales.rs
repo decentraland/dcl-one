@@ -5,10 +5,14 @@
 //!
 //! - `shop.sale_event` `mint` (a CollectionStore issue, the beneficiary
 //!   buys) and `bid_accepted` (ERC721BidV2, the bidder buys);
-//! - `shop.trade_event` `traded` (the off-chain marketplace: a listing's
-//!   caller or a bid's signer buys);
-//! - `shop.nft_event` `order_successful` (the legacy marketplace; the log has
-//!   no transaction hash, so its chain position stands in for it).
+//! - `shop.trade_event` `traded` (the off-chain marketplace, which the
+//!   subgraph did not index: each good's beneficiary buys, else a listing's
+//!   caller or a bid's signer);
+//! - `shop.nft_event` `order_successful` (the legacy marketplace: its buyer,
+//!   or, when the buyer is a relay, the token's last recipient after the
+//!   order in its block, as the subgraph resolved it, and nobody when the
+//!   relay still holds it; a row indexed without its transaction hash is
+//!   counted by its chain position).
 //!
 //! An item's category is its mirrored `shop.items.item_type`. Each log table
 //! is read only up to the block its index has published (`shop.chain_cursor`
@@ -25,7 +29,7 @@
 //! without effect. A mirror that stops completing passes holds the sales,
 //! so the job runs only with `MARKETPLACE_MIRRORS_ENABLED`.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use serde_json::Value;
 use sqlx::PgConnection;
@@ -38,6 +42,11 @@ use crate::identity::Address;
 const ITEM_SHIFT: &str = "105312291668557186697918027683670432318895095400549111254310977536";
 const ASSET_TYPE_ERC721: i64 = 3;
 const ASSET_TYPE_COLLECTION_ITEM: i64 = 4;
+const ZERO_ADDRESS: &str = "0x0000000000000000000000000000000000000000";
+/// The fiat and cross-chain relays whose legacy orders the subgraph credited
+/// to the token's owner after the sale.
+const RELAY_BUYERS: &str =
+    "'0xed038688ecf1193f8d9717eb3930f0bf0d745cb4', '0xea749fd6ba492dbc14c24fe8a3d08769229b896c'";
 /// How long after a sale the items mirror must complete a pass before a
 /// sale whose item it lacks is passed (a pass takes well under it: 50 pages
 /// of 1,000 items every 300 s by default).
@@ -92,8 +101,16 @@ impl Log {
                     .to_string()
             }
             Log::Order => format!(
-                "SELECT e.block_number, e.log_index, e.block_time, e.to_address AS buyer, \
-                        'nft_event:matic:' || e.block_number || ':' || e.log_index AS tx_hash, \
+                "SELECT e.block_number, e.log_index, e.block_time, \
+                        CASE WHEN e.to_address IN ({RELAY_BUYERS}) THEN ( \
+                            SELECT CASE WHEN t.to_address IN ({RELAY_BUYERS}) THEN NULL ELSE t.to_address END \
+                            FROM shop.nft_event t \
+                            WHERE t.network = e.network AND t.contract_address = e.contract_address \
+                              AND t.token_id = e.token_id AND t.block_number = e.block_number \
+                              AND t.log_index > e.log_index AND t.kind = 'transfer' \
+                            ORDER BY t.log_index DESC LIMIT 1) \
+                        ELSE e.to_address END AS buyer, \
+                        coalesce(e.tx_hash, 'nft_event:matic:' || e.block_number || ':' || e.log_index) AS tx_hash, \
                         NULL::jsonb AS assets, NULL::text AS caller, \
                         CASE WHEN i.item_type IS NULL THEN '{{}}'::text[] ELSE ARRAY[i.item_type] END AS item_types \
                  FROM shop.nft_event e \
@@ -131,8 +148,9 @@ fn badge_of(item_type: &str) -> &'static str {
 /// (asset type, contract, value) of a Traded good.
 type Good = (i64, String, String);
 
-/// The goods (an ERC721 token or a collection item) of one side of a Traded log.
-fn side(assets: &Value, key: &str) -> Vec<Good> {
+/// The goods (an ERC721 token or a collection item) of one side of a Traded
+/// log, each with its non-zero beneficiary.
+fn side(assets: &Value, key: &str) -> Vec<(Good, Option<String>)> {
     assets[key]
         .as_array()
         .into_iter()
@@ -143,26 +161,45 @@ fn side(assets: &Value, key: &str) -> Vec<Good> {
                 Value::String(s) => s.parse().ok()?,
                 _ => return None,
             };
+            let beneficiary = a["beneficiary"]
+                .as_str()
+                .map(str::to_ascii_lowercase)
+                .filter(|b| b != ZERO_ADDRESS);
             Some((
-                kind,
-                a["contractAddress"].as_str()?.to_ascii_lowercase(),
-                a["value"].as_str()?.to_string(),
+                (
+                    kind,
+                    a["contractAddress"].as_str()?.to_ascii_lowercase(),
+                    a["value"].as_str()?.to_string(),
+                ),
+                beneficiary,
             ))
         })
-        .filter(|(kind, _, _)| *kind == ASSET_TYPE_ERC721 || *kind == ASSET_TYPE_COLLECTION_ITEM)
+        .filter(|((kind, _, _), _)| {
+            *kind == ASSET_TYPE_ERC721 || *kind == ASSET_TYPE_COLLECTION_ITEM
+        })
         .collect()
 }
 
-/// A Traded log's buyer and goods: the signer sent the goods (a listing,
-/// the caller buys) or received them (a bid, the signer buys).
-fn trade(row: &Row) -> Option<(String, Vec<Good>)> {
-    let assets = row.assets.as_ref()?;
+/// A Traded log's goods, each with its buyer: the signer sent the goods (a
+/// listing) or received them (a bid), and each went to its beneficiary, else
+/// to the caller or the signer (`Marketplace._transferAssets`).
+fn trade(row: &Row) -> Vec<(String, Good)> {
+    let Some(assets) = row.assets.as_ref() else {
+        return Vec::new();
+    };
     let sent = side(assets, "sent");
-    if !sent.is_empty() {
-        return Some((row.caller.clone()?, sent));
-    }
-    let received = side(assets, "received");
-    (!received.is_empty()).then(|| (row.buyer.clone().unwrap_or_default(), received))
+    let (goods, to) = if sent.is_empty() {
+        (side(assets, "received"), row.buyer.as_deref())
+    } else {
+        (sent, row.caller.as_deref())
+    };
+    goods
+        .into_iter()
+        .filter_map(|(good, beneficiary)| {
+            let buyer = beneficiary.or_else(|| to.map(str::to_ascii_lowercase))?;
+            Some((buyer, good))
+        })
+        .collect()
 }
 
 /// The mirrored item types of Traded goods, by (contract, value).
@@ -257,7 +294,7 @@ pub(crate) async fn batch(pass: &Pass, log: Log) -> Result<(u64, bool), sqlx::Er
     let mut sales: Vec<(String, String, i64, Vec<&'static str>)> = Vec::new();
     let now = crate::shared::now_utc();
     let goods: Vec<Good> = if log == Log::Trade {
-        rows.iter().filter_map(trade).flat_map(|(_, g)| g).collect()
+        rows.iter().flat_map(trade).map(|(_, g)| g).collect()
     } else {
         Vec::new()
     };
@@ -267,22 +304,24 @@ pub(crate) async fn batch(pass: &Pass, log: Log) -> Result<(u64, bool), sqlx::Er
         let at = chrono::DateTime::from_timestamp(row.block_time, 0)
             .map(|t| t.naive_utc())
             .unwrap_or(now);
-        let (buyer, types, unmirrored): (Option<String>, Vec<String>, bool) = if log == Log::Trade {
-            match trade(row) {
-                Some((buyer, goods)) => {
-                    let wanted = goods.len();
-                    let types: Vec<String> = goods
-                        .into_iter()
-                        .filter_map(|(_, c, v)| traded.get(&(c, v)).cloned())
-                        .collect();
-                    let missing = types.len() < wanted;
-                    (Some(buyer), types, missing)
-                }
-                None => (None, Vec::new(), false),
+        // (buyer, item types) of the row's goods
+        let (buys, unmirrored): (Vec<(String, Vec<String>)>, bool) = if log == Log::Trade {
+            let goods = trade(row);
+            let total = goods.len();
+            let mut buys: BTreeMap<String, Vec<String>> = BTreeMap::new();
+            let mut found = 0;
+            for (buyer, (_, c, v)) in goods {
+                let Some(t) = traded.get(&(c, v)) else {
+                    continue;
+                };
+                found += 1;
+                buys.entry(buyer).or_default().push(t.clone());
             }
+            (buys.into_iter().collect(), found < total)
         } else {
             let missing = row.buyer.is_some() && row.item_types.is_empty();
-            (row.buyer.clone(), row.item_types.clone(), missing)
+            let buys = row.buyer.clone().map(|b| (b, row.item_types.clone()));
+            (buys.into_iter().collect(), missing)
         };
         if unmirrored && !pass.too_old(at, now) {
             let waited = items_pass
@@ -307,24 +346,20 @@ pub(crate) async fn batch(pass: &Pass, log: Log) -> Result<(u64, bool), sqlx::Er
         if pass.too_old(at, now) {
             continue;
         }
-        let mut badges: Vec<&'static str> = types.iter().map(|t| badge_of(t)).collect();
-        badges.sort();
-        badges.dedup();
-        let Some(buyer) = buyer.filter(|_| !badges.is_empty()) else {
-            tracing::debug!(
-                source = log.source(),
-                block = row.block_number,
-                log = row.log_index,
-                "sale without a buyer or a mirrored item: passed"
-            );
-            continue;
-        };
-        sales.push((
-            buyer.to_ascii_lowercase(),
-            row.tx_hash.to_ascii_lowercase(),
-            row.block_time.saturating_mul(1000),
-            badges,
-        ));
+        for (buyer, types) in buys {
+            let mut badges: Vec<&'static str> = types.iter().map(|t| badge_of(t)).collect();
+            badges.sort();
+            badges.dedup();
+            if badges.is_empty() {
+                continue;
+            }
+            sales.push((
+                buyer.to_ascii_lowercase(),
+                row.tx_hash.to_ascii_lowercase(),
+                row.block_time.saturating_mul(1000),
+                badges,
+            ));
+        }
     }
     let Some(last) = rows[..passed].last().map(|r| (r.block_number, r.log_index)) else {
         tx.rollback().await?;
@@ -383,13 +418,14 @@ mod tests {
     fn a_listing_is_bought_by_its_caller_a_bid_by_its_signer() {
         let listing = row(
             "0xseller",
-            "0xbuyer",
-            json!({"sent": [{"assetType": 4, "contractAddress": "0xC", "value": "2"}],
+            "0xBuyer",
+            json!({"sent": [{"assetType": 4, "contractAddress": "0xC", "value": "2",
+                             "beneficiary": ZERO_ADDRESS}],
                    "received": [{"assetType": 1, "contractAddress": "0xm", "value": "10"}]}),
         );
         assert_eq!(
             trade(&listing),
-            Some(("0xbuyer".into(), vec![(4, "0xc".into(), "2".into())]))
+            vec![("0xbuyer".into(), (4, "0xc".into(), "2".into()))]
         );
         let bid = row(
             "0xbidder",
@@ -399,14 +435,48 @@ mod tests {
         );
         assert_eq!(
             trade(&bid),
-            Some(("0xbidder".into(), vec![(3, "0xc".into(), "77".into())]))
+            vec![("0xbidder".into(), (3, "0xc".into(), "77".into()))]
         );
         let currency_only = row(
             "0xa",
             "0xb",
             json!({"sent": [{"assetType": 1, "contractAddress": "0xm", "value": "1"}]}),
         );
-        assert_eq!(trade(&currency_only), None);
+        assert_eq!(trade(&currency_only), vec![]);
+    }
+
+    #[test]
+    fn each_good_is_bought_by_its_beneficiary() {
+        // a credits purchase: the CreditsManager calls, the goods go to each beneficiary
+        let listing = row(
+            "0xseller",
+            "0xcredits",
+            json!({"sent": [
+                       {"assetType": "4", "contractAddress": "0xc", "value": "2", "beneficiary": "0xAlice"},
+                       {"assetType": "3", "contractAddress": "0xc", "value": "9", "beneficiary": "0xbob"},
+                       {"assetType": "4", "contractAddress": "0xc", "value": "5", "beneficiary": ZERO_ADDRESS}],
+                   "received": [{"assetType": 1, "contractAddress": "0xm", "value": "10",
+                                 "beneficiary": "0xseller"}]}),
+        );
+        assert_eq!(
+            trade(&listing),
+            vec![
+                ("0xalice".into(), (4, "0xc".into(), "2".into())),
+                ("0xbob".into(), (3, "0xc".into(), "9".into())),
+                ("0xcredits".into(), (4, "0xc".into(), "5".into())),
+            ]
+        );
+        let bid = row(
+            "0xbidder",
+            "0xowner",
+            json!({"sent": [{"assetType": 1, "contractAddress": "0xm", "value": "10"}],
+                   "received": [{"assetType": "3", "contractAddress": "0xc", "value": "77",
+                                 "beneficiary": "0xfriend"}]}),
+        );
+        assert_eq!(
+            trade(&bid),
+            vec![("0xfriend".into(), (3, "0xc".into(), "77".into()))]
+        );
     }
 
     #[test]

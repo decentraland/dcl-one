@@ -17,6 +17,7 @@ catalyst-chain-index = { path = "../chain-index" }
 catalyst-content = { path = "../content" }
 catalyst-explore = { path = "../explore" }
 catalyst-comms = { path = "../comms" }
+catalyst-config = { path = "../config" }
 tokio.workspace = true
 axum.workspace = true
 tower-http.workspace = true
@@ -58,8 +59,8 @@ catalyst-testing = { path = "../testing", optional = true }
 tower = { version = "0.5", features = ["util"], optional = true }
 
 [features]
-ts = ["dep:ts-rs", "catalyst-shared/ts", "catalyst-storage/ts", "catalyst-chain-index/ts", "catalyst-content/ts", "catalyst-explore/ts", "catalyst-comms/ts"]
-test-support = ["dep:catalyst-testing", "dep:tower", "catalyst-fed/test-support", "catalyst-shared/test-support", "catalyst-storage/test-support", "catalyst-chain-index/test-support", "catalyst-content/test-support", "catalyst-explore/test-support", "catalyst-comms/test-support"]
+ts = ["dep:ts-rs", "catalyst-shared/ts", "catalyst-storage/ts", "catalyst-chain-index/ts", "catalyst-content/ts", "catalyst-explore/ts", "catalyst-comms/ts", "catalyst-config/ts"]
+test-support = ["dep:catalyst-testing", "dep:tower", "catalyst-fed/test-support", "catalyst-shared/test-support", "catalyst-storage/test-support", "catalyst-chain-index/test-support", "catalyst-content/test-support", "catalyst-explore/test-support", "catalyst-comms/test-support", "catalyst-config/test-support"]
 
 [build-dependencies]
 prost-build.workspace = true
