@@ -150,14 +150,14 @@ async function openSession(executable, { signal } = {}) {
             : validPortObserved
               ? 'valid'
               : 'invalid'
-        break
+        if (validPortObserved) break
       } catch (error) {
         lastFsError = error?.code ?? 'UNKNOWN'
         portState = error?.code === 'ENOENT' ? 'missing' : 'unreadable'
-        await delay(100)
       }
+      await delay(100)
     }
-    if (!port) throw new Error('Capture browser did not start')
+    if (!validPortObserved) throw new Error('Capture browser did not start')
     phase = 'endpoint'
     const tab = await fetch(`http://127.0.0.1:${port}/json/new?about:blank`, {
       method: 'PUT',
