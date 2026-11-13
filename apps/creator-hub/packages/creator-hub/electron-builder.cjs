@@ -166,7 +166,9 @@ if (process.env.CODE_SIGN_SCRIPT_PATH) {
         environment_name: process.env.INPUT_ENVIRONMENT_NAME,
         jvm_max_memory: process.env.INPUT_JVM_MAX_MEMORY,
       };
-      console.log('env:', JSON.stringify(env, null, 2));
+      // Never log `env` itself: it holds the eSigner password and TOTP secret, and GitHub masks
+      // only exact secret strings, not escaped copies of them.
+      console.log(`Signing ${env.file_path} with eSigner (${env.environment_name})`);
       // Use stdio 'inherit' so the esigner script output goes directly to the console.
       // execSync throws automatically on non-zero exit codes, which is sufficient to detect failures.
       execSync(`node "${scriptPath}"`, {
