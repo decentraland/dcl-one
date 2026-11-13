@@ -35,7 +35,18 @@ pub enum ManaPaymentVerification {
         from: String,
         to: String,
         value_wei: String,
+        block: TransferBlock,
     },
+}
+
+/// Where a confirmed payment was mined, as of the verification.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TransferBlock {
+    pub number: u64,
+    /// Unix seconds.
+    pub timestamp: i64,
+    /// Blocks mined on top of it.
+    pub confirmations: u64,
 }
 
 pub fn parse_verification(v: &Value) -> Result<ManaPaymentVerification, ApiError> {
@@ -54,10 +65,22 @@ pub fn parse_verification(v: &Value) -> Result<ManaPaymentVerification, ApiError
                         ))
                     })
             };
+            let number = |name: &str| {
+                v.get(name).and_then(Value::as_i64).ok_or_else(|| {
+                    ApiError::Internal(format!(
+                        "economy verify 'confirmed' response missing {name}"
+                    ))
+                })
+            };
             Ok(ManaPaymentVerification::Confirmed {
                 from: field("from")?,
                 to: field("to")?,
                 value_wei: field("valueWei")?,
+                block: TransferBlock {
+                    number: number("blockNumber")?.max(0) as u64,
+                    timestamp: number("blockTimestamp")?,
+                    confirmations: number("confirmations")?.max(0) as u64,
+                },
             })
         }
         other => Err(ApiError::Internal(format!(
@@ -508,13 +531,31 @@ mod tests {
                 "from": "0xAAAA567890123456789012345678901234567890",
                 "to": "0xbbbb567890123456789012345678901234567890",
                 "valueWei": "2500000000000000000",
+                "blockNumber": 100,
+                "blockTimestamp": 1_700_000_000,
+                "confirmations": 12,
             }))
             .unwrap(),
             ManaPaymentVerification::Confirmed {
                 from: "0xaaaa567890123456789012345678901234567890".into(),
                 to: "0xbbbb567890123456789012345678901234567890".into(),
                 value_wei: "2500000000000000000".into(),
+                block: TransferBlock {
+                    number: 100,
+                    timestamp: 1_700_000_000,
+                    confirmations: 12,
+                },
             }
+        );
+        assert!(
+            parse_verification(&json!({
+                "status": "confirmed",
+                "from": "0xaaaa567890123456789012345678901234567890",
+                "to": "0xbbbb567890123456789012345678901234567890",
+                "valueWei": "1",
+            }))
+            .is_err(),
+            "a confirmation without its block is refused"
         );
     }
 
