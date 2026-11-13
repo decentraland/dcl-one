@@ -238,7 +238,7 @@ Replies are JSON where the command says so; a failed command rejects (web) or an
 - State: `/world_state` (`inWorld`, `arrivals`, which grows on every return to the world, so a wait
   after a teleport reads it first; `keyboardClaimed`, true while a text field holds the keys),
   `/avatar_state [all|<address>]`, `/chat_history [count]`
-  (Nearby only), `/dm_history <address|community:<id>> [count]` (a DM partner's or a community's
+  (Nearby only, as received: blocks and scene bans are not applied), `/dm_history <address|community:<id>> [count]` (a DM partner's or a community's
   stored lines), `/community_state` (community chat's router, channels and counters),
   `/voice_state` (the nearby voice rooms and, as `call`, the private call or community stream the
   player is in: `status`, `kind`, `peer`, `communityId`, `connection`, `participants`,
@@ -247,7 +247,8 @@ Replies are JSON where the command says so; a failed command rejects (web) or an
   match voice diagnostics, with `connecting` for first admission and `failed` for refused dials),
   `/connectivity_retry` (immediate recovery without overriding denied access),
   `/ban_block_state [address]` (platform ban, current scene admission, social blocks and
-  scene moderation lists; `/ban_block_refresh` re-checks the platform ban), `/entity_screen_position <entity>
+  scene moderation lists; Nearby chat and reactions from an address the scene room bans are
+  dropped; `/ban_block_refresh` re-checks the platform ban), `/entity_screen_position <entity>
   [--bounds]`, `/photo_mode [on|off]` (the camera reel's in-world camera: its state, or open or
   close it) and `/take_photo` (a photo, captured and uploaded; the reply is the state, a refusal
   names why), plus the older `/player_position`, `/get_user_data`, `/connected_players`, `/time`
@@ -265,6 +266,9 @@ Replies are JSON where the command says so; a failed command rejects (web) or an
   nearby one is the `Microphone` key) and `/voice promote|demote|kick|deny <address>`. Each only
   queues the request; read `/voice_state` `call` for the outcome. The debug panel's "Voice call"
   section shows the call and binds these actions.
+- Saved mutes for nearby voice: `/nearby_mute on|off <address>` mutes or unmutes a wallet, as the
+  profile menu's Hush and Hear do, and `/nearby_mutes` reports the account's list. The debug
+  panel's "Nearby voice mutes" section shows it and binds both.
 - In development builds the lower-right bug button toggles the debug panel. In all builds,
   open **Sidebar settings (•••) → Debug panel** or type `/debug` in chat. Search by
   section or control, or enter `/debug Performance` directly. Expanded sections refresh

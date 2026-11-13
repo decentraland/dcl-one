@@ -18,6 +18,7 @@ import { registerProfile } from './domains/profile'
 import { registerFriends } from './domains/friends'
 import { registerChat } from './domains/chat'
 import { registerDm } from './domains/dm'
+import { registerNearbyMutes } from './domains/nearbyMutes'
 import { registerUiSound } from './domains/uiSound'
 import { registerEmotes } from './domains/emotes'
 import { registerWearables, sendEquipped } from './domains/wearables'
@@ -59,6 +60,7 @@ export function main(): void {
     registerDm(ctx)
     registerUiSound(ctx)
     registerVoice(ctx)
+    registerNearbyMutes(ctx)
     registerVoiceChat(ctx)
     registerEmotes(ctx)
     registerWearables(ctx)
