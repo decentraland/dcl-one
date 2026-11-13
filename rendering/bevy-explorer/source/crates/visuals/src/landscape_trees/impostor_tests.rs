@@ -29,7 +29,7 @@ use super::{
         impostor_step_scale, impostor_transform, lod_for, screen_height, switch_distance,
         ImpostorDraw, ImpostorsEnabled, Lod, IMPOSTOR_SCALES,
     },
-    material::TreeMaterial,
+    material::{StoneMaterial, TreeMaterial},
     prototypes::PROTOTYPES,
     spawn_tests::{open_land, GENESIS},
     LandscapeTreeAssets, Tree, ASSET_DIR, IMPOSTOR_DIR,
@@ -430,6 +430,7 @@ fn impostor_materials_follow_the_scale() {
     .init_asset::<AnimationClip>()
     .init_asset::<TreeLayout>()
     .init_asset::<TreeMaterial>()
+    .init_asset::<StoneMaterial>()
     .init_asset::<Imposter>()
     .init_asset::<TreeImpostor>()
     .register_asset_loader(ImposterLoader)
