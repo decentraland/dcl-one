@@ -1067,7 +1067,7 @@ async fn serve_signing_on(
             )
             .into())
         }
-        outcome = crate::linker::await_outcome(rx, timeout, &url) => {
+        outcome = crate::linker::await_outcome(&signer, rx, timeout, &url) => {
             deploy_page::finish_cli_signing(&state, &outcome);
             // A program drives the run: it ends with the deployment, after
             // a beat for a follower of /api/deploy to read the final state.

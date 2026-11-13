@@ -524,6 +524,21 @@ fn library_scaffold_bundles_single_files_with_declarations() {
     );
     let dts = f.read("dist/index.d.ts");
     assert!(dts.contains("export declare function initLibrary"), "{dts}");
+    std::fs::remove_dir_all(f.path().join("dist")).unwrap();
+    let out = run_with_path(&[
+        "build",
+        "--built-in",
+        "--dir",
+        &dir,
+        "--single",
+        "src/**/*.ts",
+        "--emitDeclaration",
+    ]);
+    assert!(out.status.success(), "stderr: {}", stderr_of(&out));
+    assert!(
+        f.path().join("dist/index.d.ts").is_file(),
+        "unchanged sources and no dist: the declarations are written again"
+    );
     assert!(
         !f.path().join("bin/index.js").exists(),
         "--single does not build the scene"

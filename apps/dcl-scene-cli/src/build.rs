@@ -632,6 +632,8 @@ pub async fn type_check(project: &Project, reloaded: Reloaded) -> Result<Checked
 /// `emit_declaration` swaps `--noEmit` for `--emitDeclarationOnly`, so the
 /// pass also writes the `.d.ts` files tsconfig's declarationDir (or outDir)
 /// names; the unchanged-stamp is not consulted then, the files are the point.
+/// Nor is tsc's own build info: with it, tsc writes nothing for sources it
+/// already emitted, also when the output is gone.
 pub async fn type_check_mode(
     project: &Project,
     reloaded: Reloaded,
@@ -649,6 +651,9 @@ pub async fn type_check_mode(
     let buildinfo = project.root.join(crate::check_stamp::TSBUILDINFO);
     if let Some(dir) = buildinfo.parent() {
         let _ = std::fs::create_dir_all(dir);
+    }
+    if emit_declaration {
+        let _ = std::fs::remove_file(&buildinfo);
     }
     let tsc = |extra: &[&str]| {
         let mut cmd = tokio::process::Command::new(&node);

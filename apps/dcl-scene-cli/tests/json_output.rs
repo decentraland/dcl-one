@@ -161,3 +161,28 @@ fn a_custom_build_script_cannot_write_into_the_json_document() {
     assert!(stderr.contains("build chatter"), "{stderr}");
     assert!(stderr.contains("more chatter"), "{stderr}");
 }
+
+/// `deploy --programmatic` gives stdout to the lines a program parses: the
+/// output of a custom `scripts.build` goes to stderr there too.
+#[cfg(unix)]
+#[test]
+fn a_custom_build_script_cannot_write_into_the_programmatic_lines() {
+    let f = Fixture::new("custom-build-programmatic");
+    std::fs::write(
+        f.0.join("package.json"),
+        r#"{"name":"custom","private":true,"scripts":{"build":"echo build chatter"}}"#,
+    )
+    .unwrap();
+    let dir = f.0.display().to_string();
+    let out = run(&["deploy", "--dir", &dir, "--dry-run", "--programmatic"]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert!(!lines.is_empty(), "no state line");
+    for line in lines {
+        let parsed: Value = serde_json::from_str(line)
+            .unwrap_or_else(|e| panic!("stdout line is not JSON ({e}): {line}"));
+        assert_eq!(parsed["event"], "state", "{line}");
+    }
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("build chatter"), "{stderr}");
+}

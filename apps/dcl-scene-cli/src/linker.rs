@@ -422,6 +422,18 @@ impl LinkerState {
 
     /// The run's one ending: recorded for the API, handed to the CLI.
     pub(crate) fn conclude(&self, outcome: Result<Published>) {
+        self.end(outcome, false);
+    }
+
+    /// The signature deadline: ends a run that no signature started, and
+    /// says whether it did. A started run goes on to its own end; the check
+    /// and the ending share one lock with [`claim`], so a signature that
+    /// lands as the deadline fires is either refused or runs to the end.
+    pub(crate) fn expire(&self, e: anyhow::Error) -> bool {
+        self.end(Err(e), true)
+    }
+
+    fn end(&self, outcome: Result<Published>, unsigned_only: bool) -> bool {
         let ended = match &outcome {
             Ok(p) => Final::Deployed(p.clone()),
             Err(e) => match e.downcast_ref::<Cancelled>() {
@@ -434,13 +446,14 @@ impl LinkerState {
         };
         {
             let mut r = self.resource();
-            if r.outcome.is_some() {
-                return;
+            if r.outcome.is_some() || (unsigned_only && r.started) {
+                return false;
             }
             r.outcome = Some(ended);
         }
         self.progress.touch();
         finish(&self.done, outcome);
+        true
     }
 
     pub(crate) fn signer_address(&self) -> Option<String> {
@@ -956,30 +969,36 @@ pub fn linker_bind_host() -> String {
         .unwrap_or_else(|| "127.0.0.1".to_string())
 }
 
+/// The run's outcome. `timeout` is the wait for a signature only: once a
+/// signature starts the run, the wait lasts until the run ends.
 pub(crate) async fn await_outcome(
-    rx: tokio::sync::oneshot::Receiver<Result<Published>>,
+    st: &LinkerState,
+    mut rx: tokio::sync::oneshot::Receiver<Result<Published>>,
     timeout: Duration,
     url: &str,
 ) -> Result<Published> {
-    tokio::select! {
-        res = rx => match res {
-            Ok(outcome) => outcome,
-            Err(_) => Err(UserError::new(
-                "the signing flow ended without a result",
-                TrySteps::one("re-run dcl-scene-cli deploy"),
-            )
-            .into()),
-        },
-        _ = tokio::time::sleep(timeout) => Err(timeout_error(timeout, url)),
-    }
+    let res = tokio::select! {
+        res = &mut rx => res,
+        _ = tokio::time::sleep(timeout) => {
+            st.expire(timeout_error(timeout, url));
+            rx.await
+        }
+    };
+    res.unwrap_or_else(|_| {
+        Err(UserError::new(
+            "the signing flow ended without a result",
+            TrySteps::one("re-run dcl-scene-cli deploy"),
+        )
+        .into())
+    })
 }
 
 pub async fn run(dep: LinkerDeploy, opts: LinkerOptions) -> Result<Published> {
     let dir = dep.dir.clone();
     let (state, rx) = new_state(dep);
     if let Some(host) = opts.host {
-        (host.register)(state);
-        return await_outcome(rx, opts.timeout, &host.url).await;
+        (host.register)(state.clone());
+        return await_outcome(&state, rx, opts.timeout, &host.url).await;
     }
     crate::start::serve_signing(
         &dir,
@@ -1014,6 +1033,47 @@ mod tests {
     use crate::deploy::TempTree;
     use crate::scene::Project;
     use std::path::Path;
+
+    const WAIT: Duration = Duration::from_secs(600);
+
+    #[tokio::test(start_paused = true)]
+    async fn the_deadline_ends_a_run_that_no_signature_started() {
+        let (_tree, dep) = fixture("deadline-unsigned", None);
+        let (st, rx) = new_state(dep);
+        let error = await_outcome(&st, rx, WAIT, "http://localhost/deploy")
+            .await
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("no signature arrived"),
+            "{error}"
+        );
+        let state = st.deployment_state();
+        assert_eq!(state.phase, "failed", "a follower reads the end");
+        assert_eq!(state.error.unwrap().code, DEPLOY_FAILED);
+        assert!(!st.can_start(), "a late signature starts nothing");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_deadline_leaves_a_started_run_to_its_end() {
+        let (_tree, dep) = fixture("deadline-signed", None);
+        let (st, rx) = new_state(dep);
+        st.resource().started = true;
+        let waiting = {
+            let st = st.clone();
+            tokio::spawn(
+                async move { await_outcome(&st, rx, WAIT, "http://localhost/deploy").await },
+            )
+        };
+        tokio::time::sleep(WAIT * 2).await;
+        assert!(!waiting.is_finished(), "the upload outlasts the deadline");
+        assert_eq!(st.deployment_state().phase, "uploading");
+        st.conclude(Ok(Published {
+            entity_id: "id".into(),
+            message: "published".into(),
+        }));
+        assert_eq!(waiting.await.unwrap().unwrap().message, "published");
+        assert_eq!(st.deployment_state().phase, "deployed");
+    }
 
     fn fixture(tag: &str, world: Option<&str>) -> (TempTree, LinkerDeploy) {
         let t = TempTree::new(tag);

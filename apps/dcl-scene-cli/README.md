@@ -207,8 +207,8 @@ The resource is upstream's `/api/deploy` contract:
   `phase` one of `awaiting-signature`, `undeploying`, `uploading`, `deployed`, `failed`,
   `cancelled`; `upload` is `{stage, sentBytes, totalBytes, completedBatches, totalBatches}` while
   bytes move (`stage` `checking`, `uploading` or `processing`), `result` is `{entityId, message}`
-  once deployed, `error` is `{code, message}` with `DEPLOY_FAILED`,
-  `DEPLOY_CANCELLED_AFTER_UNDEPLOY` or `DEPLOY_CANCEL_OUTCOME_UNCERTAIN`. With
+  once deployed, `error` is `{code, message}` with `DEPLOY_FAILED` or
+  `DEPLOY_CANCELLED_AFTER_UNDEPLOY` (a plain cancel has no `error`). With
   `Accept: text/event-stream` every change is a `state` event (a `: ping` comment every 15 s) and
   the stream ends after the final state, so close the EventSource then.
 - `POST /api/deploy` takes the linker's `{address, authChain, chainId?, deleteSignature?}` (the

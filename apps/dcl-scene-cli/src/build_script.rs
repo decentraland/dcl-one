@@ -188,9 +188,9 @@ pub async fn run(project: Project, opts: &BuildOptions, script: &str) -> Result<
         .env("DCL_SCENE_CLI_MAIN", &main)
         .env(QUIET, if opts.quiet { "1" } else { "0" })
         .stdin(Stdio::inherit())
-        // --json keeps stdout for the result document: the script's own
-        // output joins the narration on stderr.
-        .stdout(match ux::json() {
+        // --json and deploy --programmatic keep stdout for the lines a
+        // program parses: the script's own output joins stderr.
+        .stdout(match ux::quiet() {
             true => Stdio::from(std::io::stderr()),
             false => Stdio::inherit(),
         })
