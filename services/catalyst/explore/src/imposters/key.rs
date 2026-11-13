@@ -34,6 +34,17 @@ impl TileKey {
     }
 }
 
+/// Bakes stay near the city (~±150 parcels); a tile further out renders empty.
+pub const MAX_BAKE_COORD: i32 = 256;
+
+pub fn within_bake_bounds(tile: &TileKey) -> bool {
+    let extent = 1i32 << tile.level;
+    tile.x + extent > -MAX_BAKE_COORD
+        && tile.x < MAX_BAKE_COORD
+        && tile.y + extent > -MAX_BAKE_COORD
+        && tile.y < MAX_BAKE_COORD
+}
+
 impl ImposterKey {
     pub fn new(level: u8, x: i32, y: i32, crc: u32) -> Option<Self> {
         if crc == 0 {
@@ -83,6 +94,16 @@ pub fn parse_spec_request(level_seg: &str, file: &str) -> Option<ImposterKey> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bakes_stay_near_the_city() {
+        for (level, x, y) in [(0, 0, 0), (0, -150, 150), (5, -256, 224)] {
+            assert!(within_bake_bounds(&TileKey::new(level, x, y).unwrap()));
+        }
+        for (level, x, y) in [(0, 256, 0), (0, 0, -257), (5, 1 << 20, 0)] {
+            assert!(!within_bake_bounds(&TileKey::new(level, x, y).unwrap()));
+        }
+    }
 
     #[test]
     fn parses_negative_coordinates() {

@@ -3,7 +3,8 @@
 //! response cache with the conditional headers.
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
+use std::time::Duration;
 
 use axum::Json;
 use axum::body::Body;
@@ -16,6 +17,16 @@ use super::super::Shared;
 use super::Grid;
 use super::http_cache;
 use super::render::{Coord, MapView, render_estate_minimap, render_minimap, render_png};
+
+/// Renders run on the blocking pool, at most this many at once.
+const MAX_CONCURRENT_RENDERS: usize = 2;
+const RENDER_QUEUE_WAIT: Duration = Duration::from_secs(10);
+/// A centre is clamped to this many parcels from the origin (the map is ~±150).
+const MAX_CENTER_COORD: i32 = 300;
+const MAX_SELECTED: usize = 512;
+
+static RENDERS: LazyLock<tokio::sync::Semaphore> =
+    LazyLock::new(|| tokio::sync::Semaphore::new(MAX_CONCURRENT_RENDERS));
 
 /// Owned parcels first, then every parcel carrying the estate id.
 pub fn select_estate_coords(grid: &Grid, estate_id: &str) -> Vec<Coord> {
@@ -59,13 +70,30 @@ fn extract_params(q: &HashMap<String, String>) -> Params {
         center: q
             .get("center")
             .and_then(|s| parse_coord(s))
+            .map(clamp_center)
             .unwrap_or(Coord { x: 0, y: 0 }),
         show_on_sale: q.get("on-sale").is_some_and(|s| s == "true"),
         show_on_rent: q.get("listed-for-rent").is_some_and(|s| s == "true"),
         selected: q
             .get("selected")
-            .map(|s| s.split(';').filter_map(parse_coord).collect())
+            .map(|s| {
+                let mut sel: Vec<Coord> = s
+                    .split(';')
+                    .filter_map(parse_coord)
+                    .take(MAX_SELECTED)
+                    .collect();
+                sel.sort_unstable_by_key(|c| (c.x, c.y));
+                sel.dedup();
+                sel
+            })
             .unwrap_or_default(),
+    }
+}
+
+fn clamp_center(c: Coord) -> Coord {
+    Coord {
+        x: c.x.clamp(-MAX_CENTER_COORD, MAX_CENTER_COORD),
+        y: c.y.clamp(-MAX_CENTER_COORD, MAX_CENTER_COORD),
     }
 }
 
@@ -119,7 +147,31 @@ fn render_error(e: String) -> Box<Response> {
     )
 }
 
-fn cached_png_render<F>(
+/// Runs `render` on the blocking pool behind the render limit; a request that
+/// waits too long for a slot answers 503.
+async fn render_blocking<F>(grid: Arc<Grid>, render: F) -> Result<Vec<u8>, Box<Response>>
+where
+    F: FnOnce(&Grid) -> Result<Vec<u8>, Box<Response>> + Send + 'static,
+{
+    let busy = || {
+        Box::new(
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                [(header::RETRY_AFTER, "5")],
+                "map renderer busy",
+            )
+                .into_response(),
+        )
+    };
+    let Ok(Ok(_permit)) = tokio::time::timeout(RENDER_QUEUE_WAIT, RENDERS.acquire()).await else {
+        return Err(busy());
+    };
+    tokio::task::spawn_blocking(move || render(&grid))
+        .await
+        .unwrap_or_else(|e| Err(render_error(e.to_string())))
+}
+
+async fn cached_png_render<F>(
     state: &Shared,
     headers: &HeaderMap,
     key: String,
@@ -128,7 +180,7 @@ fn cached_png_render<F>(
     render: F,
 ) -> Response
 where
-    F: FnOnce(&Grid) -> Result<Vec<u8>, Box<Response>>,
+    F: FnOnce(&Grid) -> Result<Vec<u8>, Box<Response>> + Send + 'static,
 {
     let last = state.map.last_updated_at();
     let etag = http_cache::etag_for(last, &key);
@@ -143,7 +195,7 @@ where
                 http_cache::apply(&mut resp, last, max_age, swr);
                 return resp;
             };
-            match render(&grid) {
+            match render_blocking(grid, render).await {
                 Ok(b) => {
                     let b = Arc::new(b);
                     state.map.store_png(key, b.clone());
@@ -174,8 +226,9 @@ pub async fn map_png(
         key,
         http_cache::DEFAULT_MAX_AGE,
         http_cache::DEFAULT_SWR,
-        |grid| render_png(grid, &p.view(p.center, &p.selected)).map_err(render_error),
+        move |grid| render_png(grid, &p.view(p.center, &p.selected)).map_err(render_error),
     )
+    .await
 }
 
 pub async fn parcel_map_png(
@@ -185,10 +238,10 @@ pub async fn parcel_map_png(
     Query(q): Query<HashMap<String, String>>,
 ) -> Response {
     let p = extract_params(&q);
-    let center = Coord {
+    let center = clamp_center(Coord {
         x: x.parse().unwrap_or(0),
         y: y.parse().unwrap_or(0),
-    };
+    });
     let selected = vec![center];
     let key = format!(
         "parcel:{},{}:{}:{}",
@@ -203,8 +256,9 @@ pub async fn parcel_map_png(
         key,
         http_cache::DEFAULT_MAX_AGE,
         http_cache::DEFAULT_SWR,
-        |grid| render_png(grid, &p.view(center, &selected)).map_err(render_error),
+        move |grid| render_png(grid, &p.view(center, &selected)).map_err(render_error),
     )
+    .await
 }
 
 pub async fn estate_map_png(
@@ -225,7 +279,7 @@ pub async fn estate_map_png(
         key,
         http_cache::DEFAULT_MAX_AGE,
         http_cache::DEFAULT_SWR,
-        |grid| {
+        move |grid| {
             let selected = select_estate_coords(grid, &estate_id);
             if selected.is_empty() {
                 return Err(Box::new(StatusCode::NOT_FOUND.into_response()));
@@ -241,6 +295,7 @@ pub async fn estate_map_png(
             render_png(grid, &p.view(center, &selected)).map_err(render_error)
         },
     )
+    .await
 }
 
 pub async fn minimap_png(State(state): State<Shared>, headers: HeaderMap) -> Response {
@@ -252,6 +307,7 @@ pub async fn minimap_png(State(state): State<Shared>, headers: HeaderMap) -> Res
         http_cache::MINIMAP_SWR,
         |grid| render_minimap(grid).map_err(render_error),
     )
+    .await
 }
 
 pub async fn estate_minimap_png(State(state): State<Shared>, headers: HeaderMap) -> Response {
@@ -263,6 +319,7 @@ pub async fn estate_minimap_png(State(state): State<Shared>, headers: HeaderMap)
         http_cache::MINIMAP_SWR,
         |grid| render_estate_minimap(grid).map_err(render_error),
     )
+    .await
 }
 
 #[cfg(test)]
@@ -351,5 +408,54 @@ mod tests {
             })
             .collect();
         assert_eq!(p.key_suffix(), extract_params(&q2).key_suffix());
+    }
+
+    #[test]
+    fn centre_and_selection_are_bounded() {
+        let many: Vec<String> = (0..2000).map(|i| format!("{i},0")).collect();
+        let q: HashMap<String, String> = [
+            ("center".to_string(), "99999,-99999".to_string()),
+            (
+                "selected".to_string(),
+                format!("1,1;1,1;{}", many.join(";")),
+            ),
+        ]
+        .into();
+        let p = extract_params(&q);
+        assert_eq!(
+            p.center,
+            Coord {
+                x: MAX_CENTER_COORD,
+                y: -MAX_CENTER_COORD
+            }
+        );
+        assert!(p.selected.len() <= MAX_SELECTED, "{}", p.selected.len());
+        assert_eq!(
+            p.selected
+                .iter()
+                .filter(|c| **c == Coord { x: 1, y: 1 })
+                .count(),
+            1,
+            "duplicates collapse"
+        );
+        let q: HashMap<String, String> = [("center".to_string(), "-20,35".to_string())].into();
+        assert_eq!(extract_params(&q).center, Coord { x: -20, y: 35 });
+    }
+
+    #[tokio::test]
+    async fn renders_run_off_the_async_workers() {
+        let grid = Arc::new(Grid::from_tiles(
+            HashMap::new(),
+            0,
+            None,
+            chrono::Utc::now().naive_utc(),
+        ));
+        let worker = std::thread::current().id();
+        let out = render_blocking(grid, move |_| {
+            assert_ne!(std::thread::current().id(), worker);
+            Ok(vec![1])
+        })
+        .await;
+        assert_eq!(out.ok(), Some(vec![1]));
     }
 }

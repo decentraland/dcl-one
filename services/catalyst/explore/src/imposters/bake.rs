@@ -41,6 +41,10 @@ use crate::imposters::zips;
 
 /// How often the baker looks for markers other processes left.
 const POLL: Duration = Duration::from_secs(5);
+/// A tile baked successfully is not baked again for this long, whatever crc
+/// a later miss asked for.
+const BAKE_COOLDOWN: Duration = Duration::from_secs(3600);
+const MAX_RECENT_BAKES: usize = 10_000;
 
 #[derive(Clone, Debug)]
 pub struct BakeConfig {
@@ -68,6 +72,7 @@ pub struct BakeQueue {
     wanted: PathBuf,
     inflight: PathBuf,
     notify: Notify,
+    recent: parking_lot::Mutex<std::collections::HashMap<TileKey, std::time::Instant>>,
 }
 
 fn marker_name(tile: &TileKey) -> String {
@@ -127,7 +132,23 @@ impl BakeQueue {
             wanted,
             inflight,
             notify: Notify::new(),
+            recent: parking_lot::Mutex::new(std::collections::HashMap::new()),
         })
+    }
+
+    fn recently_baked(&self, tile: &TileKey) -> bool {
+        self.recent
+            .lock()
+            .get(tile)
+            .is_some_and(|at| at.elapsed() < BAKE_COOLDOWN)
+    }
+
+    fn record_baked(&self, tile: TileKey) {
+        let mut recent = self.recent.lock();
+        if recent.len() >= MAX_RECENT_BAKES {
+            recent.retain(|_, at| at.elapsed() < BAKE_COOLDOWN);
+        }
+        recent.insert(tile, std::time::Instant::now());
     }
 
     /// The worker, a fleet-wide job: it bakes in the process holding the
@@ -144,6 +165,9 @@ impl BakeQueue {
     }
 
     pub fn enqueue(&self, tile: TileKey) -> bool {
+        if self.recently_baked(&tile) {
+            return false;
+        }
         let name = marker_name(&tile);
         if self.inflight.join(&name).exists() {
             return false;
@@ -191,6 +215,8 @@ impl BakeQueue {
             }
             if self.quarantine.is_quarantined(&tile) {
                 tracing::info!(tile = %tile.label(), "bake suppressed, tile quarantined");
+            } else if self.recently_baked(&tile) {
+                tracing::info!(tile = %tile.label(), "bake suppressed, tile baked recently");
             } else if let Err(reason) = realm_ready(&self.http, &self.cfg.server).await {
                 tracing::info!(tile = %tile.label(), %reason, "bake deferred, realm not ready");
             } else {
@@ -205,6 +231,7 @@ impl BakeQueue {
                     Ok(count) => {
                         tracing::info!(tile = %tile.label(), count, "bake harvested");
                         self.quarantine.record_success(&tile);
+                        self.record_baked(tile);
                     }
                     Err(e) => {
                         tracing::warn!(tile = %tile.label(), error = %format!("{e:#}"), "bake failed");
@@ -631,6 +658,21 @@ mod tests {
         let (pending, inflight) = queue.snapshot();
         assert_eq!(pending, vec![a]);
         assert_eq!(inflight, None);
+    }
+
+    #[tokio::test]
+    async fn a_recently_baked_tile_is_not_queued_again() {
+        let dir = tempdir("bake-cooldown");
+        let store = store(&dir);
+        let quarantine = Arc::new(Quarantine::load(dir.0.join("quarantine.json"), 3, 86400));
+        let mut cfg = test_cfg("/bin/true");
+        cfg.queue_depth = 4;
+        let queue = BakeQueue::new(cfg, store, quarantine);
+        let baked = TileKey::new(0, 0, 0).unwrap();
+        let other = TileKey::new(0, 1, 0).unwrap();
+        queue.record_baked(baked);
+        assert!(!queue.enqueue(baked));
+        assert!(queue.enqueue(other));
     }
 
     #[tokio::test]

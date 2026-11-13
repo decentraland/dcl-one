@@ -19,7 +19,42 @@ use sqlx::Row;
 
 use super::admin::RequireAdmin;
 use crate::SharedState;
+use crate::rate::WindowLimiter;
 use crate::shared::errors::{ApiData, ApiDataTotal, ApiError};
+
+/// `POST /api/report` takes a small JSON request or a signed envelope.
+pub const REPORT_BODY_LIMIT: usize = 16 << 10;
+/// The uploaded report document.
+pub const UPLOAD_BODY_LIMIT: usize = 64 << 10;
+const REPORTS_PER_WALLET_PER_HOUR: u32 = 20;
+const REPORTS_PER_NETWORK_PER_HOUR: u32 = 60;
+
+static WALLET_REPORTS: std::sync::LazyLock<WindowLimiter> = std::sync::LazyLock::new(|| {
+    WindowLimiter::new(
+        REPORTS_PER_WALLET_PER_HOUR,
+        std::time::Duration::from_secs(3600),
+        100_000,
+    )
+});
+static NETWORK_REPORTS: std::sync::LazyLock<WindowLimiter> = std::sync::LazyLock::new(|| {
+    WindowLimiter::new(
+        REPORTS_PER_NETWORK_PER_HOUR,
+        std::time::Duration::from_secs(3600),
+        100_000,
+    )
+});
+
+/// Counts one report for the reporter and its network; 429 past either limit.
+fn admit_report(reporter: &str, headers: &HeaderMap) -> Result<(), ApiError> {
+    let ip = crate::shared::client_ip::client_ip(headers);
+    let admitted = WALLET_REPORTS.try_acquire(&[reporter])
+        && (ip.is_empty() || NETWORK_REPORTS.try_acquire(&[ip.as_str()]));
+    if admitted {
+        Ok(())
+    } else {
+        Err(ApiError::http(429, "too many reports, retry later"))
+    }
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ReportRow {
@@ -78,31 +113,14 @@ fn report_filename(address: &str, now_seconds: i64) -> String {
     )
 }
 
-fn request_base_url(headers: &HeaderMap) -> String {
-    let host = headers
-        .get("x-forwarded-host")
-        .or_else(|| headers.get("host"))
-        .and_then(|v| v.to_str().ok())
-        .filter(|host| {
-            !host
-                .chars()
-                .any(|c| c.is_whitespace() || "/\\?#@".contains(c))
-        })
-        .unwrap_or("127.0.0.1")
-        .to_string();
-    let scheme = headers
-        .get("x-forwarded-proto")
-        .and_then(|v| v.to_str().ok())
-        .filter(|scheme| matches!(*scheme, "http" | "https"))
-        .map(str::to_string)
-        .unwrap_or_else(|| {
-            if host.starts_with("127.0.0.1") || host.starts_with("localhost") {
-                "http".into()
-            } else {
-                "https".into()
-            }
-        });
-    format!("{scheme}://{host}")
+/// The upload URL on this node's configured origin; only the route's public
+/// path comes from the request.
+fn upload_url(public_url: &str, headers: &HeaderMap, route: &str, filename: &str) -> String {
+    format!(
+        "{}{}/upload/{filename}",
+        public_url.trim_end_matches('/'),
+        public_path(headers, route)
+    )
 }
 
 /// The public path of this route: a prefix-stripping proxy's
@@ -141,14 +159,16 @@ pub async fn post_report(
         .and_then(Value::as_str)
         .or_else(|| payload.get("place_id").and_then(Value::as_str))
         .map(str::to_string);
+    if let Some(id) = entity_id.as_deref()
+        && state.places.find_by_id_for(id, None).await?.is_none()
+    {
+        return Err(ApiError::not_found(format!("Not found place \"{id}\"")));
+    }
+    admit_report(&reporter, &headers)?;
     let now = Utc::now();
     let filename = report_filename(&reporter, now.timestamp());
     let token = format!("{:032x}", rand::random::<u128>());
-    let signed_url = format!(
-        "{}{}/upload/{filename}",
-        request_base_url(&headers),
-        public_path(&headers, uri.path())
-    );
+    let signed_url = upload_url(&state.settings.public_url, &headers, uri.path(), &filename);
     sqlx::query("INSERT INTO explore.place_reports (entity_id, reporter, signed_url, filename, payload, created_at, upload_token_hash) VALUES ($1, $2, $3, $4, $5, $6, $7)")
         .bind(entity_id.as_deref())
         .bind(&reporter)
@@ -405,6 +425,20 @@ mod tests {
     /// characters lowercased, the request second in lowercase hex, `.json`
     /// (fixture report.post.signed_user); the random suffix is this node's.
     #[test]
+    fn a_reporter_is_limited_per_hour_and_others_are_not() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-real-ip", "198.51.100.200".parse().unwrap());
+        let wallet = "0xrate-limit-test-wallet";
+        for _ in 0..REPORTS_PER_WALLET_PER_HOUR {
+            assert!(admit_report(wallet, &headers).is_ok());
+        }
+        assert_eq!(admit_report(wallet, &headers).unwrap_err().status(), 429);
+        let mut other = HeaderMap::new();
+        other.insert("x-real-ip", "198.51.100.201".parse().unwrap());
+        assert!(admit_report("0xrate-limit-test-other", &other).is_ok());
+    }
+
+    #[test]
     fn filename_keeps_upstream_prefix() {
         let f = report_filename("0x1234567890ABCDEF1234567890abcdef12345678", 0x6500_0000);
         assert!(f.starts_with("1234567865000000"), "{f}");
@@ -442,7 +476,6 @@ mod tests {
         assert_eq!(public_path(&headers, "/api/report"), "/places/api/report");
         headers.insert("x-original-path", "/elsewhere".parse().unwrap());
         assert_eq!(public_path(&headers, "/api/report"), "/api/report");
-        assert_eq!(request_base_url(&headers), "https://node.example");
     }
     async fn request(
         app: &axum::Router,
@@ -716,17 +749,15 @@ mod tests {
         }
     }
     #[test]
-    fn forwarded_host_cannot_insert_query_or_credentials_into_upload_urls() {
+    fn upload_urls_use_the_configured_origin_whatever_the_request_headers() {
         let mut headers = HeaderMap::new();
-        for host in [
-            "node.example?token=injected",
-            "node.example/path",
-            "user@node.example",
-            "node.example#fragment",
-        ] {
-            headers.insert("x-forwarded-host", host.parse().unwrap());
-            assert_eq!(request_base_url(&headers), "http://127.0.0.1");
-        }
+        headers.insert("x-forwarded-host", "attacker.example".parse().unwrap());
+        headers.insert("host", "attacker.example".parse().unwrap());
+        headers.insert("x-original-path", "/places/api/report".parse().unwrap());
+        assert_eq!(
+            upload_url("https://node.example/", &headers, "/api/report", "f.json"),
+            "https://node.example/places/api/report/upload/f.json"
+        );
     }
 
     #[tokio::test]

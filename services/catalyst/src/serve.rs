@@ -431,6 +431,7 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
             .trim_end_matches('/')
             .to_string(),
         events_asset_base_url: explore::Settings::events_asset_base_for(&config.node.own_url()),
+        public_url: config.node.own_url().trim_end_matches('/').to_string(),
         realm_name: config
             .node
             .realm_name
