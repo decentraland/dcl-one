@@ -169,6 +169,45 @@ async fn land_parcels_are_asked_in_bounded_multicalls() {
     );
 }
 
+/// Repeated names are asked once; more distinct names than the cap refuse the
+/// check without asking, and a synced check past its own cap is undecided.
+#[tokio::test]
+async fn names_are_deduplicated_and_capped() {
+    let chain = fake_chain::serve(move |q, _| match q {
+        Query::Name { .. } => Reply::Yes(true),
+        other => panic!("{other:?}"),
+    })
+    .await;
+    let a = access(Some(&chain.url), None);
+    a.l1().unwrap().chain.blocks_for(TS).await.unwrap();
+    chain.clear();
+    let repeated = vec!["alice".to_string(); 500];
+    assert_eq!(
+        a.names(OWNER, &repeated, TS).await.unwrap(),
+        vec![true; 500]
+    );
+    assert_eq!(chain.calls().len(), 1, "one distinct name, one multicall");
+
+    chain.clear();
+    let many: Vec<String> = (0..=MAX_NAMES_ASKED).map(|i| format!("n{i}")).collect();
+    let err = a.names(OWNER, &many, TS).await.unwrap_err();
+    assert!(matches!(err, ValidatorError::TooManyItems(_)), "{err}");
+    let err = a
+        .names_capped(
+            OWNER,
+            &many,
+            TS,
+            ItemCaps {
+                names: 10,
+                ..SYNCED_ITEM_CAPS
+            },
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(err, ValidatorError::BlockchainQuery(_)), "{err}");
+    assert!(chain.calls().is_empty(), "nothing asked past a cap");
+}
+
 #[tokio::test]
 async fn names_are_asked_of_the_registrar() {
     let chain = fake_chain::serve(|q, _| match q {

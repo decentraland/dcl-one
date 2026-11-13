@@ -362,14 +362,50 @@ fn entity_file_of(files: &[Bytes], entity_id: &str) -> Option<Value> {
         .and_then(|f| serde_json::from_slice::<Value>(f).ok())
 }
 
-/// The most pointers an undecided deploy may name and still be refunded: one
-/// access-check batch. A larger request can drive its own check past its deadline.
-const REFUNDABLE_MAX_POINTERS: usize = 100;
-
+/// Whether an undecided deploy's quota charge is given back: only when its
+/// access check fits one Checker batch. A larger request can drive its own
+/// check past its deadline.
 fn is_refundable(files: &[Bytes], entity_id: &str) -> bool {
-    entity_file_of(files, entity_id)
-        .and_then(|v| v.get("pointers")?.as_array().map(Vec::len))
-        .is_some_and(|n| n <= REFUNDABLE_MAX_POINTERS)
+    entity_file_of(files, entity_id).is_some_and(|entity| {
+        access_calls_of(&entity) <= crate::validator::onchain::CALLS_PER_BATCH
+    })
+}
+
+/// An upper bound on the on-chain sub-calls the access check asks for `entity`:
+/// its pointers (LAND parcels), a wearable's or emote's content hashes, and the
+/// names and items its profiles and outfits claim.
+fn access_calls_of(entity: &Value) -> usize {
+    let len = |v: Option<&Value>| v.and_then(Value::as_array).map_or(0, Vec::len);
+    let mut calls = len(entity.get("pointers"));
+    if matches!(
+        entity.get("type").and_then(Value::as_str),
+        Some("wearable" | "emote")
+    ) {
+        calls += len(entity.get("content"));
+    }
+    let Some(metadata) = entity.get("metadata") else {
+        return calls;
+    };
+    for avatar in metadata
+        .get("avatars")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        calls += usize::from(avatar.get("hasClaimedName") == Some(&Value::Bool(true)));
+        let worn = avatar.get("avatar");
+        calls += len(worn.and_then(|a| a.get("wearables")));
+        calls += len(worn.and_then(|a| a.get("emotes")));
+    }
+    for outfit in metadata
+        .get("outfits")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        calls += len(outfit.get("outfit").and_then(|o| o.get("wearables")));
+    }
+    calls + len(metadata.get("namesForExtraSlots"))
 }
 
 pub fn deployment_failure_response(failure: DeployFailure) -> Response {
@@ -951,6 +987,30 @@ mod tests {
             let peer = peer.parse().unwrap();
             assert!(!looks_like_an_untrusted_proxy(&forwarded, peer), "{peer}");
         }
+    }
+
+    #[test]
+    fn access_calls_count_parcels_names_and_items() {
+        let scene = serde_json::json!({"type": "scene", "pointers": ["0,0", "0,1"]});
+        assert_eq!(access_calls_of(&scene), 2);
+        let profile = serde_json::json!({
+            "type": "profile",
+            "pointers": ["0xabc"],
+            "metadata": {"avatars": [
+                {"hasClaimedName": true, "avatar": {"wearables": ["a", "b"], "emotes": [{"urn": "c"}]}},
+                {"hasClaimedName": false, "avatar": {"wearables": []}}
+            ]}
+        });
+        assert_eq!(access_calls_of(&profile), 5);
+        let outfits = serde_json::json!({
+            "type": "outfits",
+            "pointers": ["0xabc:outfits"],
+            "metadata": {"outfits": [{"outfit": {"wearables": ["a", "b"]}}], "namesForExtraSlots": ["n"]}
+        });
+        assert_eq!(access_calls_of(&outfits), 4);
+        let wearable =
+            serde_json::json!({"type": "wearable", "pointers": ["urn"], "content": [{}, {}]});
+        assert_eq!(access_calls_of(&wearable), 3);
     }
 
     #[test]

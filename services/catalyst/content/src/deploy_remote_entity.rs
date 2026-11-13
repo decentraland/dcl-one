@@ -43,16 +43,26 @@ const BUDGET_GROWTH_WAIT: std::time::Duration = std::time::Duration::from_secs(6
 /// ([`stream_body`]), so a body spooled to disk never has its wire bytes and its decoded bytes
 /// in memory at once, and the caller caps the decoded size so a compression bomb cannot
 /// outgrow its body cap.
-/// Compressed bytes inflated per step; deflate expands at most ~1032x, so one step yields
-/// at most ~264 KiB.
-const GZIP_INPUT_STEP_BYTES: usize = 256;
-
 pub(crate) enum TransferDecoder {
     Identity,
     Gzip(Box<flate2::write::MultiGzDecoder<Vec<u8>>>),
 }
 
+/// Compressed bytes inflated per step; deflate expands at most ~1032x, so one step yields
+/// at most ~258 KiB.
+const GZIP_INPUT_STEP_BYTES: usize = 256;
+/// Decoded bytes [`stream_body`] holds before handing them to its sink.
+const SINK_FLUSH_BYTES: usize = 1 << 20;
+
 impl TransferDecoder {
+    /// The wire bytes [`stream_body`] decodes at a time.
+    fn input_step(&self) -> usize {
+        match self {
+            Self::Identity => usize::MAX,
+            Self::Gzip(_) => GZIP_INPUT_STEP_BYTES,
+        }
+    }
+
     pub(crate) fn for_encoding(encoding: Option<&str>) -> Result<Self, String> {
         match encoding.unwrap_or("").trim().to_ascii_lowercase().as_str() {
             "" | "identity" => Ok(Self::Identity),
@@ -129,9 +139,9 @@ pub(crate) struct BodyStats {
 }
 
 /// Streams `resp`'s body through its transfer decoding into `sink`, holding one wire chunk and
-/// its decoded run in memory at a time, with `cap` enforced on both the wire and the decoded
-/// bytes as they pass. Whether the wire bytes fell short of the Content-Length is the caller's
-/// to judge from the stats.
+/// about [`SINK_FLUSH_BYTES`] of decoded bytes in memory at a time, with `cap` enforced on both
+/// the wire and the decoded bytes as they pass. Whether the wire bytes fell short of the
+/// Content-Length is the caller's to judge from the stats.
 pub(crate) async fn stream_body<S: DecodedSink>(
     resp: reqwest::Response,
     cap: usize,
@@ -159,24 +169,28 @@ pub(crate) async fn stream_body<S: DecodedSink>(
         if stats.wire_len > cap as u64 {
             return Err(format!("response body exceeds the {cap} byte cap"));
         }
-        run.clear();
-        let left = (cap as u64).saturating_sub(stats.decoded_len) as usize;
-        decoder.push(&chunk, &mut run, left).map_err(|e| {
-            if run.len() > left {
-                format!("decoded body exceeds {cap} byte cap")
-            } else {
-                e
+        for piece in chunk.chunks(decoder.input_step()) {
+            // `run` holds decoded bytes not yet counted in `decoded_len`.
+            let left = (cap as u64).saturating_sub(stats.decoded_len) as usize;
+            decoder.push(piece, &mut run, left).map_err(|e| {
+                if run.len() > left {
+                    format!("decoded body exceeds {cap} byte cap")
+                } else {
+                    e
+                }
+            })?;
+            if run.len() >= SINK_FLUSH_BYTES {
+                stats.decoded_len += run.len() as u64;
+                sink.accept(&run).await?;
+                run.clear();
             }
-        })?;
-        stats.decoded_len += run.len() as u64;
-        if stats.decoded_len > cap as u64 {
-            return Err(format!("decoded body exceeds {cap} byte cap"));
         }
         if !run.is_empty() {
+            stats.decoded_len += run.len() as u64;
             sink.accept(&run).await?;
+            run.clear();
         }
     }
-    run.clear();
     decoder.finish(&mut run)?;
     stats.decoded_len += run.len() as u64;
     if stats.decoded_len > cap as u64 {
@@ -1272,6 +1286,37 @@ mod tests {
             .await
             .expect_err("a compression bomb must not outgrow the caller's cap");
         assert!(err.contains("exceeds 100 byte cap"), "{err}");
+        server.abort();
+    }
+
+    /// Records the largest run handed over, keeping no bytes.
+    struct LargestRun(usize, u64);
+
+    impl DecodedSink for LargestRun {
+        async fn accept(&mut self, decoded: &[u8]) -> Result<(), String> {
+            self.0 = self.0.max(decoded.len());
+            self.1 += decoded.len() as u64;
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn a_highly_compressed_body_reaches_the_sink_in_bounded_runs() {
+        let wire = gzip(&vec![0u8; 32 << 20]);
+        let (base, server) = spawn_content_server(wire, Some("gzip")).await;
+        let resp = reqwest::Client::new()
+            .get(format!("{base}/contents/zeros"))
+            .send()
+            .await
+            .unwrap();
+        let mut sink = LargestRun(0, 0);
+        let stats = stream_body(resp, 64 << 20, &mut sink).await.unwrap();
+        assert_eq!((stats.decoded_len, sink.1), (32 << 20, 32 << 20));
+        assert!(
+            sink.0 < SINK_FLUSH_BYTES + (300 << 10),
+            "largest run {}",
+            sink.0
+        );
         server.abort();
     }
 

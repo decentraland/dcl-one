@@ -107,7 +107,11 @@ admitted under advisory locks (deployer, world, node budget); the per-world
 count and byte sums read `pending_scenes (world_name, created_at)`. The blob
 collector keeps every file a pending row names, and a leased job reclaims
 expired uploads under the exclusive store lock, unlinking only files a
-batch of that upload wrote (`pending_scene_files.written`).
+batch of that upload wrote (`pending_scene_files.written`). Content and world
+scene deploys take that lock's shared side in their write transaction and
+re-check every file they name, so an unlink batch never removes a file a
+committed deployment references; a content deploy waits at most 5 s for it
+and answers 503 past that.
 
 Genesis storage management requires LAND rights at the requested parcel, using
 the published LAND manager index or its configured document source. Without a

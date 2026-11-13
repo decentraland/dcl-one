@@ -425,32 +425,39 @@ async fn two_concurrent_deploys_of_one_entity_both_answer_its_stored_timestamp()
 /// The first deploy holds its pointer from validation to its write (here a database that
 /// accepts the write's connection and never answers), so a concurrent deploy to that pointer
 /// is refused with upstream's in-flight text, unqueued; a cancelled deploy lets its pointers
-/// go. Every other connection fails at once, so the newer-entity lookups go on without it.
+/// go. A connection opened before the claim fails at once, so the newer-entity lookup goes on
+/// without it.
 #[tokio::test]
 async fn of_two_concurrent_deploys_to_one_pointer_the_second_is_refused_as_in_flight() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let (connected_tx, connected_rx) = tokio::sync::oneshot::channel();
-    let silent = tokio::spawn(async move {
-        let mut connected_tx = Some(connected_tx);
-        let mut held = Vec::new();
-        let mut accepted = 0;
-        while let Ok((socket, _)) = listener.accept().await {
-            accepted += 1;
-            if accepted == 2 {
-                held.push(socket);
-                if let Some(tx) = connected_tx.take() {
-                    tx.send(()).unwrap();
+    let claimed: Arc<std::sync::OnceLock<Arc<WriteDeployer>>> = Arc::default();
+    let silent = {
+        let claimed = Arc::clone(&claimed);
+        tokio::spawn(async move {
+            let mut connected_tx = Some(connected_tx);
+            let mut held = Vec::new();
+            while let Ok((socket, _)) = listener.accept().await {
+                if claimed
+                    .get()
+                    .is_some_and(|d| d.holds_pointer("scene", "5,5"))
+                {
+                    held.push(socket);
+                    if let Some(tx) = connected_tx.take() {
+                        tx.send(()).unwrap();
+                    }
                 }
             }
-        }
-    });
+        })
+    };
     let pool = sqlx::postgres::PgPoolOptions::new()
         .acquire_timeout(Duration::from_secs(60))
         .connect_lazy(&format!("postgres://nobody@{addr}/nowhere"))
         .unwrap();
     let (storage, tmp) = temp_storage("concurrent").await;
     let deployer = Arc::new(WriteDeployer::new(pool, storage, Arc::new(NoEip1654)));
+    assert!(claimed.set(Arc::clone(&deployer)).is_ok());
     let pointers = vec!["5,5".to_string()];
     let now_ms = chrono::Utc::now().timestamp_millis();
     let (first_bytes, first_id, first_chain) = signed_scene(&pointers, now_ms).await;
@@ -512,12 +519,31 @@ async fn a_content_deploy_waits_for_an_unlink_batch() {
         .unwrap();
     let deploy = deployer.deploy_entity(vec![bytes], &id, chain, "LOCAL");
     tokio::pin!(deploy);
-    assert!(
-        tokio::time::timeout(Duration::from_millis(500), &mut deploy)
-            .await
-            .is_err(),
-        "the write waits for the batch"
-    );
+    let waiting = || async {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM pg_locks \
+             WHERE locktype = 'advisory' AND mode = 'ShareLock' AND NOT granted \
+               AND (classid::bigint << 32 | objid::bigint) = $1",
+        )
+        .bind(crate::storage::gc::STORE_LOCK_KEY)
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+    };
+    let mut polls = 0;
+    loop {
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), &mut deploy)
+                .await
+                .is_err(),
+            "the write waits for the batch"
+        );
+        if waiting().await == 1 {
+            break;
+        }
+        polls += 1;
+        assert!(polls < 60, "the write never queued on the store lock");
+    }
     batch.rollback().await.unwrap();
     tokio::time::timeout(Duration::from_secs(10), deploy)
         .await
