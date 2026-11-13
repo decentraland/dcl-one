@@ -73,7 +73,6 @@ impl Params {
     fn key_suffix(&self) -> String {
         let mut sel: Vec<(i32, i32)> = self.selected.iter().map(|c| (c.x, c.y)).collect();
         sel.sort_unstable();
-        sel.dedup();
         let sel: Vec<String> = sel.iter().map(|(x, y)| format!("{x},{y}")).collect();
         format!(
             "w{}h{}s{}c{},{}os{}or{}sel{}",

@@ -370,12 +370,15 @@ async fn serve_tiles(
     q: &HashMap<String, String>,
     legacy: bool,
 ) -> Response {
-    let last = state.map.last_updated_at();
+    // One grid for the key, the stamp and the body, so a concurrent swap
+    // cannot key one grid's body under the other's tag.
+    let grid = state.map.snapshot();
+    let last = grid.as_ref().map_or(0, |g| g.last_updated_at);
     let key = canonical_key(
         if legacy { "v1" } else { "v2" },
         q,
-        state.map.bounds(),
-        state.map.content_tag(),
+        grid.as_ref().and_then(|g| g.bounds),
+        grid.as_ref().map_or(0, |g| g.content_tag),
     );
     if let Some(r) = http_cache::not_modified_etag(
         headers,
@@ -386,9 +389,15 @@ async fn serve_tiles(
     ) {
         return r;
     }
-    let Some(grid) = state.map.snapshot() else {
+    let Some(grid) = grid else {
         return not_ready(last);
     };
+    if let Some(body) = state.map.cached_tiles(&key) {
+        return cached_json(body, last, &key);
+    }
+    // Concurrent misses on one key build it once.
+    let flight = state.map.tiles_flight(&key);
+    let _building = flight.lock().await;
     if let Some(body) = state.map.cached_tiles(&key) {
         return cached_json(body, last, &key);
     }

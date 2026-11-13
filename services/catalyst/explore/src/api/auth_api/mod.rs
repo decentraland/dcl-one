@@ -4,8 +4,9 @@
 //! pick up once. Everything is process state with a short TTL (5 min
 //! requests, 1 h identities), as the old service kept it.
 
+use axum::Extension;
 use axum::body::Body;
-use axum::extract::{DefaultBodyLimit, Path, Request, State};
+use axum::extract::{ConnectInfo, DefaultBodyLimit, Path, Request, State};
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
@@ -19,7 +20,7 @@ use uuid::Uuid;
 
 use crate::api::Shared as AppState;
 use crate::auth::AuthChain;
-use crate::shared::client_ip::{client_ip, normalize_ip};
+use crate::shared::client_ip::{client_ip, normalize_ip, peer_client_ip, source_key};
 
 mod identities;
 mod validation;
@@ -32,8 +33,7 @@ const REQUEST_TTL_SECONDS: i64 = 300;
 /// An expired request still answers 410 for this long before the sweep drops it.
 const REQUEST_EXPIRED_GRACE_SECONDS: i64 = 300;
 const MAX_PENDING_REQUESTS: usize = 10_000;
-const MAX_REQUESTS_PER_SENDER: usize = 20;
-const MAX_REQUESTS_PER_IP: usize = 100;
+const MAX_REQUESTS_PER_SOURCE: usize = 100;
 const DEFAULT_BODY_SIZE_BYTES: usize = 16 * 1024;
 const IDENTITY_SWEEP_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
 const CLIENT_HEADER: &str = "x-dcl-client";
@@ -136,7 +136,8 @@ pub struct ChallengeRecord {
     pub expiration: DateTime<Utc>,
     pub requires_validation: bool,
     pub status: ChallengeStatus,
-    pub ip_address: String,
+    /// The creating network's [`request_source`] key, for the pending cap.
+    pub source: String,
 }
 
 #[derive(Debug, Clone)]
@@ -399,18 +400,42 @@ pub fn sweep_expired_requests(state: &AppState, now: DateTime<Utc>) {
         .retain(|_, record| record.expiration >= horizon);
 }
 
-/// Refuses a new request once the relay, its sender or its network holds too
-/// many unexpired ones.
+/// The network a request comes from, for the pending caps: the TCP peer or
+/// a trusted proxy's `X-Real-IP`, IPv6 by its /64. Requests whose source is
+/// unknown share one key. The request chain is not bound to the request, so
+/// the caps never key on the signer.
+pub(super) fn request_source(
+    headers: &HeaderMap,
+    peer: Option<std::net::SocketAddr>,
+    trusted_proxies: &[ipnet::IpNet],
+) -> String {
+    peer_client_ip(headers, peer, trusted_proxies)
+        .map(|ip| source_key(&ip))
+        .unwrap_or_default()
+}
+
+/// Refuses a new request once the relay or its network holds too many
+/// unexpired pending ones.
 fn request_capacity_refusal(
     state: &AppState,
-    sender: &str,
-    ip: &str,
+    source: &str,
     now: DateTime<Utc>,
 ) -> Option<Response> {
     if state.auth_api.requests.len() >= MAX_PENDING_REQUESTS {
         sweep_expired_requests(state, now);
     }
-    if state.auth_api.requests.len() >= MAX_PENDING_REQUESTS {
+    let (mut live, mut from_source) = (0usize, 0usize);
+    for entry in state.auth_api.requests.iter() {
+        let record = entry.value();
+        if record.expiration < now {
+            continue;
+        }
+        live += 1;
+        if record.source == source && matches!(record.status, ChallengeStatus::Pending) {
+            from_source += 1;
+        }
+    }
+    if live >= MAX_PENDING_REQUESTS {
         return Some(
             (
                 StatusCode::SERVICE_UNAVAILABLE,
@@ -421,24 +446,11 @@ fn request_capacity_refusal(
                 .into_response(),
         );
     }
-    let (mut by_sender, mut by_ip) = (0usize, 0usize);
-    for entry in state.auth_api.requests.iter() {
-        let record = entry.value();
-        if record.expiration < now {
-            continue;
-        }
-        if record.sender.as_deref() == Some(sender) {
-            by_sender += 1;
-        }
-        if !ip.is_empty() && record.ip_address == ip {
-            by_ip += 1;
-        }
-    }
-    (by_sender >= MAX_REQUESTS_PER_SENDER || by_ip >= MAX_REQUESTS_PER_IP).then(|| {
+    (from_source >= MAX_REQUESTS_PER_SOURCE).then(|| {
         (
             StatusCode::TOO_MANY_REQUESTS,
             Json(ErrorBody {
-                error: "Too many pending requests, retry shortly".into(),
+                error: "Too many pending requests from this network, try again later".into(),
             }),
         )
             .into_response()
@@ -447,6 +459,7 @@ fn request_capacity_refusal(
 
 async fn create_request(
     State(state): State<AppState>,
+    peer: Option<Extension<ConnectInfo<std::net::SocketAddr>>>,
     headers: HeaderMap,
     Json(body): Json<CreateRequestBody>,
 ) -> Response {
@@ -459,8 +472,12 @@ async fn create_request(
         Err(msg) => return bad_request(&msg),
     };
     let now = Utc::now();
-    let ip_address = client_ip(&headers);
-    if let Some(refusal) = request_capacity_refusal(&state, &sender, &ip_address, now) {
+    let source = request_source(
+        &headers,
+        peer.map(|Extension(ConnectInfo(p))| p),
+        &state.settings.trusted_proxy_cidrs,
+    );
+    if let Some(refusal) = request_capacity_refusal(&state, &source, now) {
         return refusal;
     }
 
@@ -480,7 +497,7 @@ async fn create_request(
         expiration,
         requires_validation: false,
         status: ChallengeStatus::Pending,
-        ip_address,
+        source,
     };
 
     state.auth_api.requests.insert(request_id.clone(), record);
@@ -1188,73 +1205,153 @@ mod tests {
         );
     }
 
+    fn from_peer(mut req: Request, peer: &str) -> Request {
+        req.extensions_mut()
+            .insert(ConnectInfo(peer.parse::<std::net::SocketAddr>().unwrap()));
+        req
+    }
+
+    fn record(id: &str, source: &str, expiration: DateTime<Utc>) -> ChallengeRecord {
+        ChallengeRecord {
+            request_id: id.into(),
+            method: "personal_sign".into(),
+            params: Vec::new(),
+            sender: Some("0x1234567890123456789012345678901234567890".into()),
+            code: 1,
+            challenge: String::new(),
+            created_at: Utc::now(),
+            expiration,
+            requires_validation: false,
+            status: ChallengeStatus::Pending,
+            source: source.into(),
+        }
+    }
+
     #[tokio::test]
-    async fn a_sender_is_capped_on_unexpired_requests_and_the_sweep_frees_them() {
+    async fn a_network_is_capped_on_pending_requests_and_a_replayed_chain_locks_no_one_out() {
         let state = crate::api::tests_support::state_without_db().await;
         let app = Router::new().nest("/auth-api", routes().with_state(state.clone()));
         let ephemeral = alloy_signer_local::PrivateKeySigner::random();
         let body = serde_json::to_vec(&json!({ "method": "personal_sign", "params": ["hi"], "authChain": delegated(&format!("{:#x}", ephemeral.address())) })).unwrap();
-        for _ in 0..MAX_REQUESTS_PER_SENDER {
-            let (status, created) = call(&app, json_post("/auth-api/requests", body.clone())).await;
+        let post = |peer: &str| from_peer(json_post("/auth-api/requests", body.clone()), peer);
+        for _ in 0..MAX_REQUESTS_PER_SOURCE {
+            let (status, created) = call(&app, post("203.0.113.5:4000")).await;
             assert_eq!(status, StatusCode::CREATED, "{created}");
         }
-        let (status, _) = call(&app, json_post("/auth-api/requests", body.clone())).await;
+        let (status, _) = call(&app, post("203.0.113.5:4001")).await;
         assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
-
-        let past = Utc::now() - Duration::seconds(REQUEST_TTL_SECONDS);
-        for mut entry in state.auth_api.requests.iter_mut() {
-            entry.expiration = past;
-        }
-        let (status, _) = call(&app, json_post("/auth-api/requests", body)).await;
-        assert_eq!(status, StatusCode::CREATED, "expired requests do not count");
-
-        sweep_expired_requests(
-            &state,
-            Utc::now() + Duration::seconds(REQUEST_EXPIRED_GRACE_SECONDS),
-        );
+        let (status, _) = call(&app, post("198.51.100.7:4000")).await;
         assert_eq!(
-            state.auth_api.requests.len(),
-            1,
-            "only the unexpired request survives the sweep"
+            status,
+            StatusCode::CREATED,
+            "the same chain from another network is not refused"
+        );
+        let (status, _) = call(&app, json_post("/auth-api/requests", body.clone())).await;
+        assert_eq!(
+            status,
+            StatusCode::CREATED,
+            "an unknown source is its own bucket"
+        );
+
+        for mut entry in state.auth_api.requests.iter_mut() {
+            entry.status = ChallengeStatus::Fulfilled;
+        }
+        let (status, _) = call(&app, post("203.0.113.5:4002")).await;
+        assert_eq!(
+            status,
+            StatusCode::CREATED,
+            "answered requests do not count"
         );
     }
 
+    #[test]
+    fn request_sources_group_ipv6_by_64_and_trust_only_listed_proxies() {
+        let none = HeaderMap::new();
+        let peer = |s: &str| Some(s.parse::<std::net::SocketAddr>().unwrap());
+        assert_eq!(
+            request_source(&none, peer("[2001:db8:1:2::9]:1"), &[]),
+            request_source(&none, peer("[2001:db8:1:2:abcd::1]:1"), &[])
+        );
+        assert_ne!(
+            request_source(&none, peer("[2001:db8:1:2::9]:1"), &[]),
+            request_source(&none, peer("[2001:db8:1:3::9]:1"), &[])
+        );
+        let spoofed = headers(&[("x-real-ip", "198.51.100.7")]);
+        assert_eq!(
+            request_source(&spoofed, peer("203.0.113.5:1"), &[]),
+            "203.0.113.5",
+            "an untrusted peer's header is ignored"
+        );
+        let proxies = ["203.0.113.0/24".parse().unwrap()];
+        assert_eq!(
+            request_source(&spoofed, peer("203.0.113.5:1"), &proxies),
+            "198.51.100.7"
+        );
+        assert_eq!(request_source(&spoofed, None, &proxies), "");
+    }
+
     #[tokio::test]
-    async fn a_network_is_capped_on_unexpired_requests() {
+    async fn the_global_cap_counts_only_unexpired_requests() {
         let state = crate::api::tests_support::state_without_db().await;
         let now = Utc::now();
-        for i in 0..MAX_REQUESTS_PER_IP {
-            state.auth_api.requests.insert(
-                format!("r{i}"),
-                ChallengeRecord {
-                    request_id: format!("r{i}"),
-                    method: "personal_sign".into(),
-                    params: Vec::new(),
-                    sender: Some(format!("0x{i:040x}")),
-                    code: 1,
-                    challenge: String::new(),
-                    created_at: now,
-                    expiration: now + Duration::seconds(REQUEST_TTL_SECONDS),
-                    requires_validation: false,
-                    status: ChallengeStatus::Pending,
-                    ip_address: "203.0.113.9".into(),
-                },
-            );
+        let in_grace = now - Duration::seconds(1);
+        for i in 0..MAX_PENDING_REQUESTS {
+            let id = format!("r{i}");
+            state
+                .auth_api
+                .requests
+                .insert(id.clone(), record(&id, &format!("s{i}"), in_grace));
         }
-        let refused = request_capacity_refusal(&state, "0xnew", "203.0.113.9", now);
-        assert_eq!(
-            refused.map(|r| r.status()),
-            Some(StatusCode::TOO_MANY_REQUESTS)
+        assert!(
+            request_capacity_refusal(&state, "new", now).is_none(),
+            "expired requests in their grace window hold no slot"
         );
-        assert!(request_capacity_refusal(&state, "0xnew", "198.51.100.7", now).is_none());
+        let live = now + Duration::seconds(REQUEST_TTL_SECONDS);
+        for mut entry in state.auth_api.requests.iter_mut() {
+            entry.expiration = live;
+        }
+        assert_eq!(
+            request_capacity_refusal(&state, "new", now).map(|r| r.status()),
+            Some(StatusCode::SERVICE_UNAVAILABLE)
+        );
     }
 
     #[tokio::test]
-    async fn a_signer_is_capped_on_pending_identities() {
+    async fn the_sweep_keeps_requests_through_their_grace_window() {
+        let state = crate::api::tests_support::state_without_db().await;
+        let now = Utc::now();
+        state.auth_api.requests.insert(
+            "old".into(),
+            record(
+                "old",
+                "",
+                now - Duration::seconds(REQUEST_EXPIRED_GRACE_SECONDS + 1),
+            ),
+        );
+        state.auth_api.requests.insert(
+            "grace".into(),
+            record("grace", "", now - Duration::seconds(1)),
+        );
+        state.auth_api.requests.insert(
+            "live".into(),
+            record("live", "", now + Duration::seconds(60)),
+        );
+        sweep_expired_requests(&state, now);
+        let mut left: Vec<String> = state
+            .auth_api
+            .requests
+            .iter()
+            .map(|e| e.key().clone())
+            .collect();
+        left.sort();
+        assert_eq!(left, ["grace", "live"]);
+    }
+
+    #[tokio::test]
+    async fn a_network_is_capped_on_pending_identities_but_a_signer_is_not() {
         let state = crate::api::tests_support::state_without_db().await;
         let app = Router::new().nest("/auth-api", routes().with_state(state.clone()));
-        let mut statuses = Vec::new();
-        for _ in 0..=identities::MAX_IDENTITIES_PER_SIGNER {
+        let post = || async {
             let ephemeral = alloy_signer_local::PrivateKeySigner::random();
             let eph_address = format!("{:#x}", ephemeral.address());
             let identity = json!({
@@ -1272,14 +1369,35 @@ mod tests {
             .await;
             let mut req = json_post("/auth-api/identities", body);
             req.headers_mut().extend(headers);
-            statuses.push(call(&app, req).await.0);
+            req
+        };
+        for _ in 0..8 {
+            let (status, body) = call(&app, from_peer(post().await, "198.51.100.7:1")).await;
+            assert_eq!(
+                status,
+                StatusCode::CREATED,
+                "one signer is not capped: {body}"
+            );
         }
-        let (last, accepted) = statuses.split_last().unwrap();
-        assert!(
-            accepted.iter().all(|s| *s == StatusCode::CREATED),
-            "{statuses:?}"
-        );
-        assert_eq!(*last, StatusCode::TOO_MANY_REQUESTS);
+        let now = Utc::now();
+        for i in 0..identities::MAX_IDENTITIES_PER_SOURCE {
+            state.auth_api.identities.insert(
+                format!("i{i}"),
+                IdentityRecord {
+                    identity_id: format!("i{i}"),
+                    identity: Value::Null,
+                    ip_address: String::new(),
+                    source: "203.0.113.5".into(),
+                    is_mobile: false,
+                    created_at: now,
+                    expiration: now + Duration::seconds(3600),
+                },
+            );
+        }
+        let (status, _) = call(&app, from_peer(post().await, "203.0.113.5:1")).await;
+        assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+        let (status, _) = call(&app, from_peer(post().await, "198.51.100.7:2")).await;
+        assert_eq!(status, StatusCode::CREATED);
     }
 
     #[tokio::test]

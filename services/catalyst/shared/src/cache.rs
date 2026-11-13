@@ -51,6 +51,8 @@ where
     map: DashMap<K, Slot<V>>,
     ttl: Duration,
     max_entries: Option<usize>,
+    #[cfg(test)]
+    eviction_passes: std::sync::atomic::AtomicUsize,
 }
 
 struct LeaderGuard<'a, K, V>
@@ -90,6 +92,8 @@ where
             map: DashMap::new(),
             ttl,
             max_entries: None,
+            #[cfg(test)]
+            eviction_passes: Default::default(),
         }
     }
 
@@ -126,7 +130,9 @@ where
     }
 
     pub fn insert(&self, key: K, value: V) {
-        self.make_room(&key);
+        if !self.map.contains_key(&key) {
+            self.make_room(1);
+        }
         let mut slot = self.map.entry(key).or_insert_with(Slot::empty);
         slot.cached = Some(Entry {
             at: Instant::now(),
@@ -134,30 +140,41 @@ where
         });
     }
 
-    /// Keeps a bounded map under `max_entries` before `key` is added: expired
-    /// entries go first, then the oldest cached one. In-flight fetches stay.
-    fn make_room(&self, key: &K) {
+    /// Makes room for `incoming` new keys in a bounded map: once full, expired
+    /// entries go, then the oldest down to ~90% of `max_entries` in one pass,
+    /// so a full map pays one scan per tenth of its size. In-flight fetches
+    /// stay, and concurrent inserts are not serialized: the bound is soft by
+    /// at most the in-flight and racing keys.
+    fn make_room(&self, incoming: usize) {
         let Some(max) = self.max_entries else { return };
-        if self.map.len() < max || self.map.contains_key(key) {
+        if self.map.len() + incoming <= max {
             return;
         }
+        #[cfg(test)]
+        self.eviction_passes
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let ttl = self.ttl;
         self.map.retain(|_, slot| {
             slot.notify.is_some() || slot.cached.as_ref().is_some_and(|e| e.at.elapsed() < ttl)
         });
-        while self.map.len() >= max {
-            let oldest = self
-                .map
-                .iter()
-                .filter(|slot| slot.notify.is_none())
-                .min_by_key(|slot| slot.cached.as_ref().map(|e| e.at))
-                .map(|slot| slot.key().clone());
-            match oldest {
-                Some(oldest) => {
-                    self.map.remove(&oldest);
-                }
-                None => break,
-            }
+        let low_water = max.saturating_sub(max / 10 + 1);
+        let len = self.map.len() + incoming;
+        if len <= max {
+            return;
+        }
+        let excess = len.saturating_sub(low_water.max(incoming)).max(1);
+        let mut ages: Vec<(Option<Instant>, K)> = self
+            .map
+            .iter()
+            .filter(|slot| slot.notify.is_none())
+            .map(|slot| (slot.cached.as_ref().map(|e| e.at), slot.key().clone()))
+            .collect();
+        if ages.len() > excess {
+            ages.select_nth_unstable_by_key(excess - 1, |(at, _)| *at);
+            ages.truncate(excess);
+        }
+        for (_, key) in ages {
+            self.map.remove(&key);
         }
     }
 
@@ -219,18 +236,8 @@ where
                         finished: false,
                     };
 
-                    if let Some(max) = self.max_entries
-                        && self.map.len() > max
-                    {
-                        self.map.clear();
-                        self.map.insert(
-                            key.clone(),
-                            Slot {
-                                cached: None,
-                                notify: Some(notify.clone()),
-                            },
-                        );
-                    }
+                    // This leader's own slot is in flight, so it survives.
+                    self.make_room(0);
 
                     let fetch = fetch.take().expect("a leader fetches once");
                     let result = fetch().await;
@@ -395,7 +402,7 @@ mod tests {
         map.insert(1, 10);
         assert_eq!(map.len(), 3, "replacing a key needs no room");
         map.insert(3, 3);
-        assert_eq!(map.len(), 3);
+        assert!(map.len() <= 3, "{}", map.len());
         assert_eq!(map.get_fresh(&0), None, "the oldest entry is evicted");
         assert_eq!(map.get_fresh(&1), Some(10));
         assert_eq!(map.get_fresh(&3), Some(3));
@@ -421,5 +428,53 @@ mod tests {
             map.insert(k, k);
         }
         assert_eq!(map.len(), 100);
+    }
+
+    #[tokio::test]
+    async fn a_full_map_evicts_in_batches_not_per_insert() {
+        let map: TtlMap<u32, u32> = TtlMap::bounded(Duration::from_secs(60), 100);
+        for k in 0..1_000 {
+            map.insert(k, k);
+        }
+        assert!(map.len() <= 100, "{}", map.len());
+        let passes = map.eviction_passes.load(Ordering::Relaxed);
+        assert!(
+            passes <= 1_000 / 10 + 1,
+            "one scan per tenth of the map, not per insert: {passes}"
+        );
+        assert_eq!(map.get_fresh(&999), Some(999), "the newest entry stays");
+    }
+
+    #[tokio::test]
+    async fn an_in_flight_fetch_survives_eviction_and_lands() {
+        let map: TtlMap<u32, u32> = TtlMap::bounded(Duration::from_secs(60), 10);
+        let release = Notify::new();
+        let fetch = || async {
+            release.notified().await;
+            Ok::<_, ()>(42)
+        };
+        let mut pending = std::pin::pin!(map.get_or_fetch(1_000, fetch));
+        assert!(futures::poll!(&mut pending).is_pending());
+        for k in 0..100 {
+            map.insert(k, k);
+        }
+        assert!(map.len() <= 11, "{}", map.len());
+        release.notify_one();
+        assert_eq!(pending.await, Ok(42));
+        assert_eq!(map.get_fresh(&1_000), Some(42));
+    }
+
+    #[tokio::test]
+    async fn a_leader_on_a_full_map_evicts_instead_of_clearing() {
+        let map: TtlMap<u32, u32> = TtlMap::bounded(Duration::from_secs(60), 10);
+        for k in 0..10 {
+            map.insert(k, k);
+        }
+        assert_eq!(
+            map.get_or_fetch(99, || async { Ok::<_, ()>(99) }).await,
+            Ok(99)
+        );
+        assert!(map.len() <= 10, "{}", map.len());
+        assert_eq!(map.get_fresh(&9), Some(9), "recent entries are kept");
     }
 }

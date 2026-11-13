@@ -205,6 +205,7 @@ pub struct MapState {
     grid: RwLock<Option<Arc<Grid>>>,
     png_cache: ResponseCache,
     tiles_cache: ResponseCache,
+    tiles_flights: parking_lot::Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
 }
 
 impl Default for MapState {
@@ -223,6 +224,7 @@ impl MapState {
                 TILES_CACHE_ENTRIES,
                 TILES_CACHE_BYTES,
             ),
+            tiles_flights: Default::default(),
         }
     }
 
@@ -238,8 +240,11 @@ impl MapState {
         self.grid.read().as_ref().map_or(0, |g| g.last_updated_at)
     }
 
-    pub fn bounds(&self) -> Option<(i32, i32, i32, i32)> {
-        self.grid.read().as_ref().and_then(|g| g.bounds)
+    /// The lock a tiles miss holds while building `key`'s body.
+    pub fn tiles_flight(&self, key: &str) -> Arc<tokio::sync::Mutex<()>> {
+        let mut flights = self.tiles_flights.lock();
+        flights.retain(|_, lock| Arc::strong_count(lock) > 1);
+        flights.entry(key.to_string()).or_default().clone()
     }
 
     pub fn content_tag(&self) -> u64 {
@@ -473,6 +478,20 @@ mod tests {
             "replacing a key needs no room"
         );
         assert_eq!(cache.get_fresh("k9").as_deref(), Some(&vec![2]));
+    }
+
+    #[test]
+    fn concurrent_tile_misses_share_one_build_lock() {
+        let map = MapState::new();
+        let a = map.tiles_flight("k");
+        assert!(Arc::ptr_eq(&a, &map.tiles_flight("k")));
+        assert!(!Arc::ptr_eq(&a, &map.tiles_flight("other")));
+        drop(a);
+        map.tiles_flight("third");
+        assert!(
+            map.tiles_flights.lock().len() <= 1,
+            "idle locks are dropped"
+        );
     }
 
     #[test]
