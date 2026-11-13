@@ -398,6 +398,13 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **`UnapprovedPathMode::Allow`** in the asset server: bevy's check only admits paths under
   the executable's assets directory and the IPFS cache lives elsewhere. Containment is done
   in `ipfs_path.rs` instead. See the security page.
+- **A cached file is checked only after its asset fails to load.** A load its loader rejects has
+  the cache entry it read checked once per session: an entry under a content hash is dropped only
+  when its bytes do not hash to it (a processed or damaged copy), an entry under a url always,
+  and the asset is then reloaded. So a url whose bytes never decode is downloaded again in every
+  session, and a file the asset processor turned into bytes that fail to load is processed again
+  in a later session. Checking every cached read would hash every file on every load, and
+  processed copies never match their hash.
 - **Web-only engine switches are page params**, not `LaunchOptions` fields.
 - **`CommsApi.consumeMessages` resolves to a bare array** of `{ sender, data }`, not the
   protocol's `{ messages }`, because unity-explorer, the client scenes are tested on, returns

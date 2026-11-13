@@ -254,7 +254,7 @@ fn check_assets(
     // actual bytes.
     for ev in failed_gltfs.read() {
         let error = ev.error.to_string();
-        if !["KHR_draco_mesh_compression", "KHR_texture_basisu"]
+        if !ipfs::cache_heal::REPAIRABLE_GLTF_EXTENSIONS
             .iter()
             .any(|extension| error.contains(extension))
         {
@@ -303,6 +303,14 @@ fn check_assets(
                         drop_ktx2_result(ty, &base_path);
                         return None;
                     };
+
+                    // a cached copy of this file failed to load and was dropped: processing it
+                    // again could write the same bytes back
+                    if ipfs.cache_entry_dropped(&hash) {
+                        skip_shouldnt_cache += 1;
+                        drop_ktx2_result(ty, &base_path);
+                        return None;
+                    }
 
                     // loopback content is never cached (see `IpfsIo::read`), so there is
                     // nothing to process
