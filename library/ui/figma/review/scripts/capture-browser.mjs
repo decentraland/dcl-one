@@ -40,22 +40,27 @@ async function findBrowser(candidates) {
   throw new Error('A Chromium browser is required. Set BROWSER_PATH to Chrome or Chromium.')
 }
 
-function redactStartup(text) {
-  text = text
-    .split(String.fromCharCode(27))
-    .map((part) => part.replace(/^\[[0-?]*[ -/]*[@-~]/, ''))
-    .join('')
-  for (const value of [process.env.FIGMA_FILE_KEY, os.homedir()]) {
-    if (value)
-      text = text.replace(
-        new RegExp(value.replace(/[.*+?^$()|[\]\\{}]/g, '\\$&'), 'gi'),
-        '[redacted]'
-      )
+function startupRedactor() {
+  let patterns
+  try {
+    patterns = [process.env.FIGMA_FILE_KEY, os.homedir()]
+      .filter((value) => value && value !== path.parse(value).root)
+      .map((value) => new RegExp(value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'))
+  } catch {
+    // If the private-path boundary is unavailable, suppress stderr instead of guessing it.
+    return () => '[startup text unavailable]'
   }
-  return text.replace(/\b(?:https?|wss?|file):\/\/[^\s"'<>]+/gi, '[redacted-url]')
+  return (text) => {
+    text = text
+      .split(String.fromCharCode(27))
+      .map((part) => part.replace(/^\[[0-?]*[ -/]*[@-~]/, ''))
+      .join('')
+    for (const pattern of patterns) text = text.replace(pattern, '[redacted]')
+    return text.replace(/\b(?:https?|wss?|file):\/\/[^\s"'<>]+/gi, '[redacted-url]')
+  }
 }
 
-function startupOutput() {
+function startupOutput(redactStartup) {
   const decoder = new StringDecoder('utf8')
   let retained = ''
   let pending = ''
@@ -93,7 +98,8 @@ function startupOutput() {
 
 async function openSession(executable, { signal } = {}) {
   const profile = await mkdtemp(path.join(os.tmpdir(), 'dcl-visual-'))
-  const output = startupOutput()
+  const redactStartup = startupRedactor()
+  const output = startupOutput(redactStartup)
   const browser = spawn(executable, browserArgs(profile), { stdio: ['ignore', 'ignore', 'pipe'] })
   browser.stderr?.on('data', output.write)
   let phase = 'port-file'
@@ -393,14 +399,15 @@ async function openSession(executable, { signal } = {}) {
       signal: browser.signalCode,
       port: { state: portState, lastFsError, validObserved: validPortObserved }
     }
-    await cleanupCapture(error, close)
+    const startup = output.finish()
     browser.stderr?.off('data', output.write)
     browser.stderr?.resume()
+    await cleanupCapture(error, close)
     if (!signal?.aborted) {
       try {
         console.error(
           'Capture browser startup diagnostics:',
-          JSON.stringify({ ...diagnostic, ...output.finish() })
+          JSON.stringify({ ...diagnostic, ...startup })
         )
       } catch {
         // Diagnostics must not replace the primary startup failure.

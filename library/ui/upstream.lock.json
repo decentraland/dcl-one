@@ -914,7 +914,7 @@
           ]
         },
         "library/ui/figma/review/scripts/capture-browser.mjs": {
-          "sha256": "968ad82dbe5854ff6cfdf1c6468acc6666ca1136fd9fc4b9cbcd390a5dfb019a",
+          "sha256": "0196bf4b9cd6d5ad1332a617b168490edc34681fa27301d4400c62bb740478e2",
           "fds": null,
           "deviation": [
             "bot-review-279-b",
@@ -2238,7 +2238,7 @@
           }
         },
         "library/ui/figma/review/test/capture-browser.test.ts": {
-          "sha256": "ebd5603442ecfdcded82060b285a03a97b82f9bef0509e50dab06244b9eb7649",
+          "sha256": "7a67400c3e42e4de82932b179cb03a52eb0c2ac435824f156c9c88f13733c224",
           "fds": null,
           "deviation": [
             "dcl-one-only",

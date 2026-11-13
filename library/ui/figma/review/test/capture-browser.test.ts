@@ -189,6 +189,42 @@ describe('when startup diagnostics explain a failed browser launch', () => {
     assert.match(diagnostic.stderr, /redacted/)
   })
 
+  it('should preserve startup failure and cleanup when home lookup fails', async (t) => {
+    const log = t.mock.method(console, 'error', () => {})
+    const { folder, file } = await script('process.exit(0)')
+    const marker = path.join(folder, 'profile')
+    await writeFile(
+      file,
+      `#!/bin/sh\nexec '${process.execPath}' -e 'const fs=require("node:fs");fs.writeFileSync(${JSON.stringify(marker)},process.argv.find(x=>x.startsWith("--user-data-dir=")).slice(16));fs.writeSync(2,"private startup details\\n");process.exit(8)' -- "$@"\n`
+    )
+    t.mock.method(os, 'homedir', () => {
+      throw new Error('home unavailable')
+    })
+    await assert.rejects(openSession(file), /exited during startup/)
+    await assert.rejects(stat(await readFile(marker, 'utf8')), { code: 'ENOENT' })
+    assert.ok(!report(log.mock.calls).stderr.includes('private startup details'))
+  })
+
+  it('should preserve diagnostic slashes when the home directory is the filesystem root', async (t) => {
+    const log = t.mock.method(console, 'error', () => {})
+    t.mock.method(os, 'homedir', () => '/')
+    const { file } = await script(
+      'require("node:fs").writeSync(2,"port /tmp/devtools\\n");process.exit(8)'
+    )
+    await assert.rejects(openSession(file), /exited during startup/)
+    assert.match(report(log.mock.calls).stderr, /port \/tmp\/devtools/)
+  })
+
+  it('should snapshot startup output before teardown noise is emitted', async (t) => {
+    const log = t.mock.method(console, 'error', () => {})
+    const { file } = await script(
+      'const fs=require("node:fs");const dir=process.argv.find(x=>x.startsWith("--user-data-dir=")).slice(16);fs.writeSync(2,"startup failure\\n");fs.writeFileSync(dir+"/DevToolsActivePort","not-a-port");process.on("SIGTERM",()=>{fs.writeSync(2,"shutdown noise\\n".repeat(500));process.exit(0)});setInterval(()=>{},1000)'
+    )
+    await assert.rejects(openSession(file), /URL|fetch/i)
+    assert.match(report(log.mock.calls).stderr, /startup failure/)
+    assert.ok(!report(log.mock.calls).stderr.includes('shutdown noise'))
+  })
+
   it('should retain the primary failure if diagnostic logging is unavailable', async (t) => {
     t.mock.method(console, 'error', () => {
       throw new Error('logger unavailable')
