@@ -227,6 +227,7 @@ module.exports.consoleCommand = async function(cmd, args) {
 //     title: string,
 //     parcels: [Vector2],
 //     isPortable: bool,
+//     isSmartWearable: bool,
 //     isBroken: bool,
 //     isBlocked: bool,
 //     isSuper: bool,
@@ -370,6 +371,24 @@ module.exports.getPermissionRequestStream = async function() {
   async function* streamGenerator() {
     while (true) {
       const next = await Deno.core.ops.op_read_permission_request_stream(rid);
+      if (next === null) break;
+      yield next;
+    }
+  }
+
+  return streamGenerator();
+}
+
+// stream of the portables the player can see and stop, as a whole list on subscribe and on every
+// change: [{ hash?, pid, name, kind: 'scene' | 'smartWearable',
+//   state: 'loading' | 'running' | 'failed' | 'blocked' | 'stopped', reason?,
+//   source?: 'equipped' | 'console' | 'preview' }]
+module.exports.getPortablesStream = async function() {
+  const rid = await Deno.core.ops.op_get_portables_stream();
+
+  async function* streamGenerator() {
+    while (true) {
+      const next = await Deno.core.ops.op_read_portables_stream(rid);
       if (next === null) break;
       yield next;
     }

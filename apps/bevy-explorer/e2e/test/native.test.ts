@@ -166,6 +166,33 @@ describe('spawnNative', () => {
     await assert.rejects(spawnNative({ bin: process.execPath, args: ['-e', 'process.exit(3)', '--'], port: 1, startTimeoutMs: 5000 }), /exited with code 3 before its console came up/)
   })
 
+  test('clients spawned without a port each get their own', async () => {
+    // A console that answers: `dcl/console_result` for an unknown id is the refusal `answers` takes as up.
+    const script = `
+      const http = require('node:http')
+      const port = Number(process.argv[process.argv.indexOf('--automation-port') + 1])
+      http.createServer((request, response) => {
+        request.resume()
+        request.on('end', () => {
+          response.writeHead(200, { 'content-type': 'application/json' })
+          response.end(JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32602, message: 'unknown or already collected call id' } }))
+        })
+      }).listen(port, '127.0.0.1')
+      setInterval(() => {}, 1000)
+    `
+    const first = await spawnNative({ bin: process.execPath, args: ['-e', script, '--'], startTimeoutMs: 5000 })
+    try {
+      const second = await spawnNative({ bin: process.execPath, args: ['-e', script, '--'], startTimeoutMs: 5000 })
+      try {
+        assert.notEqual(first.url, second.url, 'two clients of one run share a port')
+      } finally {
+        await second.close()
+      }
+    } finally {
+      await first.close()
+    }
+  })
+
   test('a client whose console never answers is killed when the start times out', async () => {
     // A client that holds the port but was started with another token: it refuses ours forever.
     const probe = createServer()

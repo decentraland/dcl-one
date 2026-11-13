@@ -790,3 +790,16 @@ pub async fn op_read_block_update_stream(
 ) -> Result<JsValue, WasmError> {
     serde_result!(dcl_js::system_api::op_read_block_update_stream(state.rc(), rid).await)
 }
+
+#[wasm_bindgen]
+pub async fn op_get_portables_stream(state: &WorkerContext) -> u32 {
+    dcl_js::system_api::op_get_portables_stream(state.rc()).await
+}
+
+#[wasm_bindgen]
+pub async fn op_read_portables_stream(
+    state: &WorkerContext,
+    rid: u32,
+) -> Result<JsValue, WasmError> {
+    serde_result!(dcl_js::system_api::op_read_portables_stream(state.rc(), rid).await)
+}
