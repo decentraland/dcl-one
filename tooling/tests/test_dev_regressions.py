@@ -415,6 +415,37 @@ class InventoryTests(unittest.TestCase):
                 guard.validate_runtime_script(bad)
 
 
+    def test_engine_receipt_is_emitted_once_without_unrelated_success_output(self):
+        import json
+        script = (ROOT / "tooling/catalyst-test.sh").read_text()
+        body = script.split("run() {\n", 1)[1].split("\n}\n", 1)[0]
+        with tempfile.TemporaryDirectory(prefix="matcher-receipt-") as temporary:
+            directory = Path(temporary)
+            count = directory / "executions"
+            executables = [directory / name for name in ["stats_metrics_engine-fixture", "ordinary-fixture"]]
+            for executable in executables:
+                executable.write_text(
+                    '#!/bin/sh\nprintf "%s\\n" "' + executable.name + '" >> "' + count.as_posix() + '"\n'
+                    + "printf '%s\\n' 'STATS_ENGINE_RECEIPT {\"completed\":32}' "
+                    + "'private success detail' 'test result: ok. 1 passed; 0 failed'\n"
+                )
+                executable.chmod(0o755)
+            result = subprocess.run(
+                [shutil.which("bash"), "-c", 'logs="$1"; receipts="$1"; shift; run() {\n' + body
+                 + '\n}; printf "%s\\n" "$@" | run 1', "_", directory.as_posix(),
+                 *(executable.as_posix() for executable in executables)],
+                capture_output=True, text=True, check=True,
+            )
+            self.assertEqual(count.read_text().splitlines(), [path.name for path in executables])
+            receipts = [line for line in result.stdout.splitlines() if line.startswith("STATS_ENGINE_RECEIPT ")]
+            self.assertEqual(len(receipts), 1)
+            self.assertEqual(json.loads(receipts[0].removeprefix("STATS_ENGINE_RECEIPT ")), {"completed": 32})
+            self.assertNotIn("private success detail", result.stdout)
+            self.assertEqual((directory / "stats-engine-receipt.log").read_text().splitlines(), receipts)
+            self.assertEqual(result.stdout.count("1 passed; 0 failed"), 2)
+            for executable in executables:
+                self.assertIn("private success detail", (directory / (executable.name + ".log")).read_text())
+
     def test_actual_test_script_rejects_filters_skipped_binaries_and_early_exit(self):
         script = (ROOT / "tooling/catalyst-test.sh").read_text()
         guard.validate_test_script(script)
