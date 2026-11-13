@@ -76,8 +76,11 @@ impl Plugin for LandscapeTreesPlugin {
                 PostUpdate,
                 dress_trees.before(VisibilitySystems::CalculateBounds),
             );
+        // After the material's own plugin: plugins finish in the order they were added, and the
+        // bake pipeline is built from the material's pipeline.
         #[cfg(not(target_arch = "wasm32"))]
         if !preview {
+            app.add_plugins(boimp::bake::ImposterBakeMaterialPlugin::<TreeMaterial>::default());
             bake::add_bake_command(app);
         }
         add_spawn_systems(app);
@@ -86,18 +89,13 @@ impl Plugin for LandscapeTreesPlugin {
 
 /// boimp's plugins. Drawing needs its render plugin (its shaders and loader); outside preview
 /// mode the scene impostors bake, and their plugin's bake plugin brings the render plugin with
-/// it, so it is added here in its place, whichever of the two plugins is built first. The tree
-/// material bakes on native builds outside preview mode, where the bake command runs.
+/// it, so it is added here in its place, whichever of the two plugins is built first.
 fn add_impostor_plugins(app: &mut App, scenes_bake: bool) {
     let bake = app.is_plugin_added::<ImposterBakePlugin>();
     if scenes_bake && !bake {
         app.add_plugins(ImposterBakePlugin);
     } else if !bake && !app.is_plugin_added::<ImposterRenderPlugin>() {
         app.add_plugins(ImposterRenderPlugin);
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    if scenes_bake {
-        app.add_plugins(boimp::bake::ImposterBakeMaterialPlugin::<TreeMaterial>::default());
     }
 }
 
