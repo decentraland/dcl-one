@@ -12,6 +12,8 @@
 6. **Shop, treasury, credits and marketplace datasets are excluded for security reasons.** Dependencies on them do not authorize expanding this migration.
 7. **No public activation yet.** The isolated follower exposes private migration endpoints only. Public API compatibility, signed paths, complete data scope, readiness enforcement and session/effect ownership remain unresolved.
 
+**Identity coverage limit:** the baseline preserves Places UUIDs, but new/replacement place identities are not synchronized. Independent deployment processing can generate different IDs; expanding beyond fixed scopes requires [ordered source identity propagation](places-hybrid-commands.md#place-uuids-baseline-coverage-and-ongoing-creation-gap).
+
 ## Kept, removed and still needed
 
 | Status | Scope and reason |
