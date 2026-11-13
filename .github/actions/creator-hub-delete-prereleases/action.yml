@@ -1,10 +1,21 @@
 name: Delete Pre-releases by Pattern
-description: 'Delete all pre-releases and their associated tags matching a regex pattern'
+description: >-
+  Delete the pre-releases (and their tags) matching a regex pattern. Never deletes the one named in
+  `keep`, nor one rolled back by creator-hub-promote.yml (titled "X.Y.Z (rolled back)"). With
+  `unfinished_only`, deletes only those with no `creator-hub@X.Y.Z` tag in this repository.
 
 inputs:
   pattern:
     description: 'Regex pattern to match release names/tags (e.g., "^[0-9]+\.[0-9]+\.[0-9]+$" for semver without prefix)'
     required: true
+  keep:
+    description: 'Tag of a pre-release that is never deleted'
+    required: false
+    default: ''
+  unfinished_only:
+    description: 'Only delete pre-releases whose run never tagged creator-hub@X.Y.Z here'
+    required: false
+    default: 'false'
   dry_run:
     description: 'Dry run - only show what would be deleted'
     required: false
@@ -26,6 +37,10 @@ runs:
       env:
         GITHUB_TOKEN: ${{ inputs.github_token }}
         PATTERN: ${{ inputs.pattern }}
+        KEEP: ${{ inputs.keep }}
+        UNFINISHED_ONLY: ${{ inputs.unfinished_only }}
+        # Reads this repository's creator-hub@X.Y.Z tags; github_token reaches only REPO.
+        TAGS_TOKEN: ${{ github.token }}
         DRY_RUN: ${{ inputs.dry_run }}
         REPO: ${{ inputs.repository }}
       with:
@@ -41,13 +56,27 @@ runs:
           echo "Dry run mode: $DRY_RUN"
           echo ""
 
-          releases=$(gh api "repos/$REPO/releases" --paginate)
+          echo "Keeping: ${KEEP:-none}, rolled-back releases; unfinished only: $UNFINISHED_ONLY"
 
-          matching_releases=$(echo "$releases" | jq -r --arg pattern "$PATTERN" '
-            .[] |
-            select(.prerelease == true) |
-            select(((.name // "") | test($pattern)) or ((.tag_name // "") | test($pattern))) |
-            "ID: \(.id) | Name: \(.name) | Tag: \(.tag_name) | Created: \(.created_at)"
+          # A finished release run tags creator-hub@X.Y.Z here (creator-hub-desktop.yml).
+          finished='[]'
+          if [ "$UNFINISHED_ONLY" = "true" ]; then
+            finished=$(GH_TOKEN="$TAGS_TOKEN" gh api "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/creator-hub@" --paginate \
+              | jq -s '[.[][] | .ref | ltrimstr("refs/tags/creator-hub@")]')
+          fi
+
+          releases=$(gh api "repos/$REPO/releases" --paginate \
+            | jq -s --arg pattern "$PATTERN" --arg keep "$KEEP" --argjson finished "$finished" '[
+                .[][] |
+                select(.prerelease == true) |
+                select(.tag_name != $keep) |
+                select((.name // "") | endswith("(rolled back)") | not) |
+                select(.tag_name as $t | $finished | index($t) | not) |
+                select(((.name // "") | test($pattern)) or ((.tag_name // "") | test($pattern)))
+              ]')
+
+          matching_releases=$(echo "$releases" | jq -r '
+            .[] | "ID: \(.id) | Name: \(.name) | Tag: \(.tag_name) | Created: \(.created_at)"
           ')
 
           if [ -z "$matching_releases" ]; then
@@ -72,12 +101,7 @@ runs:
             echo "🗑️  Deleting $match_count pre-releases and their tags..."
             echo ""
 
-            release_ids=$(echo "$releases" | jq -r --arg pattern "$PATTERN" '
-              .[] |
-              select(.prerelease == true) |
-              select(((.name // "") | test($pattern)) or ((.tag_name // "") | test($pattern))) |
-              .id
-            ')
+            release_ids=$(echo "$releases" | jq -r '.[].id')
 
             deleted_count=0
             failed_count=0

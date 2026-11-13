@@ -7,6 +7,16 @@ on:
         default: false
         required: false
         type: boolean
+      unfinished-only:
+        description: 'Delete only pre-releases with no creator-hub@X.Y.Z tag in this repository'
+        default: false
+        required: false
+        type: boolean
+      keep:
+        description: 'Version of a pre-release that is never deleted (the one this run published)'
+        default: ''
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -46,5 +56,7 @@ jobs:
         with:
           pattern: '^[0-9]+\.[0-9]+\.[0-9]+$'
           dry_run: 'false'
+          keep: ${{ inputs.keep }}
+          unfinished_only: ${{ inputs.unfinished-only }}
           repository: decentraland/creator-hub
           github_token: ${{ steps.release-token.outputs.token }}

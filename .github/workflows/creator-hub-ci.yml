@@ -80,6 +80,9 @@ jobs:
     with:
       # dry-run == false only if we are on main branch and the event is a push or workflow_dispatch
       dry-run: ${{ !((github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref_name == 'main') }}
+      # Before the build only unfinished pre-releases go (no `creator-hub@X.Y.Z` tag here), so this
+      # run can rebuild that version. A finished one, possibly awaiting promote approval, stays.
+      unfinished-only: true
   asset-packs:
     needs: [ drop_pre_release ]
     uses: ./.github/workflows/creator-hub-asset-packs.yml
@@ -102,6 +105,16 @@ jobs:
       inspector_s3_bucket_key: ${{ needs.inspector.outputs.s3_bucket_key }}
       inspector_version: ${{ needs.inspector.outputs.version }}
       inspector_changed: ${{ needs.inspector.outputs.changed == 'true' }}
+  # Older finished pre-releases go only once the new one is fully published, which is kept. A run
+  # that fails part-way leaves the previous pre-release in place, still promotable.
+  prune_pre_releases:
+    name: prune pre-releases
+    needs: [ creator-hub ]
+    uses: ./.github/workflows/creator-hub-drop.yml
+    secrets: inherit
+    with:
+      dry-run: ${{ !((github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref_name == 'main') }}
+      keep: ${{ needs.creator-hub.outputs.version }}
   # The one required check. It stands for lint, typecheck, unit tests, both e2e suites and the
   # macOS and Windows builds (the checks decentraland/creator-hub required), plus the package jobs
   # those builds wait on: it fails if any of them failed or was cancelled, and passes when they
@@ -109,7 +122,7 @@ jobs:
   result:
     name: Creator Hub CI
     if: always()
-    needs: [ changes, build, lint, typechecking, tests, e2e, drop_pre_release, asset-packs, inspector, creator-hub ]
+    needs: [ changes, build, lint, typechecking, tests, e2e, drop_pre_release, asset-packs, inspector, creator-hub, prune_pre_releases ]
     runs-on: ubuntu-latest
     permissions: {}
     steps:

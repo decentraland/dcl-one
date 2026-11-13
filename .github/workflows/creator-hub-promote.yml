@@ -76,12 +76,14 @@ jobs:
                 echo "::error::$VERSION has no $feed"; exit 1
               fi
             done
-            gh release edit "$VERSION" --repo "$REPO" --prerelease=false --latest
+            gh release edit "$VERSION" --repo "$REPO" --prerelease=false --latest --title "$VERSION"
           else
             if [ "$latest" != "$VERSION" ]; then
               echo "::error::$VERSION is not the Latest release (Latest is ${latest:-none})"; exit 1
             fi
-            gh release edit "$VERSION" --repo "$REPO" --prerelease
+            # The title marks it, so creator-hub-drop.yml leaves it alone instead of deleting it
+            # with the ordinary pre-releases.
+            gh release edit "$VERSION" --repo "$REPO" --prerelease --title "$VERSION (rolled back)"
           fi
 
           now=$(gh api "repos/$REPO/releases/latest" --jq .tag_name 2>/dev/null || echo none)
