@@ -158,11 +158,12 @@ const MAX_COMMITS_PAGE: i64 = 500;
 static BLOB_BUDGET: LazyLock<RateLimiter> =
     LazyLock::new(|| RateLimiter::new(16 * 1024, Duration::from_secs(3600)));
 
-/// Spends the signer's blob budget for `bytes` before anything is stored.
-fn spend_blob_budget(signer: &str, bytes: usize) -> Result<(), ApiError> {
+/// Spends the signer's blob budget for `bytes` before anything is stored;
+/// answers the KiB spent, refunded when the write does not land.
+fn spend_blob_budget(signer: &str, bytes: usize) -> Result<u32, ApiError> {
     let kib = u32::try_from(bytes.div_ceil(1024)).unwrap_or(u32::MAX);
     match BLOB_BUDGET.check_cost(signer, kib) {
-        RateLimitDecision::Allow => Ok(()),
+        RateLimitDecision::Allow => Ok(kib),
         RateLimitDecision::Deny => Err(ApiError::labeled(
             429,
             "rate limit exceeded",
@@ -477,6 +478,7 @@ pub async fn create_group(
     if exists {
         return Err(ApiError::http(409, "group already exists"));
     }
+    let mut spent = 0;
     let initial = match &b.initial_commit {
         Some(c) => {
             let commit_bytes = opaque(decode_b64(c, "initial_commit")?, "initial_commit")?;
@@ -487,7 +489,7 @@ pub async fn create_group(
                 .as_deref()
                 .map(|w| decode_b64(w, "welcome").and_then(|w| opaque(w, "welcome")))
                 .transpose()?;
-            spend_blob_budget(
+            spent = spend_blob_budget(
                 &creator,
                 commit_bytes.len() + welcome_bytes.as_ref().map_or(0, Vec::len),
             )?;
@@ -539,6 +541,7 @@ pub async fn create_group(
     .fetch_one(&state.pool)
     .await?;
     if !created {
+        BLOB_BUDGET.refund(&creator, spent);
         return Err(ApiError::http(409, "group already exists"));
     }
     Ok(Json(json!({
@@ -623,7 +626,7 @@ pub async fn submit_commit(
         .as_deref()
         .map(|w| decode_b64(w, "welcome").and_then(|w| opaque(w, "welcome")))
         .transpose()?;
-    spend_blob_budget(
+    let spent = spend_blob_budget(
         &signer,
         commit_bytes.len() + welcome_bytes.as_ref().map_or(0, Vec::len),
     )?;
@@ -678,6 +681,7 @@ pub async fn submit_commit(
     .fetch_one(&state.pool)
     .await?;
     if b.epoch != locked + 1 {
+        BLOB_BUDGET.refund(&signer, spent);
         return Err(ApiError::http(409, "epoch advanced concurrently; retry"));
     }
     Ok(Json(
@@ -802,9 +806,9 @@ pub async fn send_message(
     let signature_hash = mls::content_hash(
         format!("{group_id}:{}:{signer}:{ciphertext_hash}", routing.epoch).as_bytes(),
     );
-    spend_blob_budget(&signer, ciphertext.len())?;
+    let spent = spend_blob_budget(&signer, ciphertext.len())?;
     let ciphertext_cid = store_blob(&state, ciphertext).await?;
-    sqlx::query(
+    let inserted = sqlx::query(
         "INSERT INTO social.mls_message_refs \
             (signature_hash, group_id, author, epoch, ciphertext_hash, ciphertext_cid, signed_at, received_at) \
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8) ON CONFLICT (signature_hash) DO NOTHING",
@@ -818,7 +822,11 @@ pub async fn send_message(
     .bind(now)
     .bind(now_utc())
     .execute(&state.pool)
-    .await?;
+    .await?
+    .rows_affected();
+    if inserted == 0 {
+        BLOB_BUDGET.refund(&signer, spent);
+    }
     Ok(Json(json!({
         "group_id": group_id,
         "epoch": routing.epoch,
@@ -1116,6 +1124,8 @@ mod tests {
         for _ in 0..64 {
             spend_blob_budget(&heavy, MAX_OPAQUE_BYTES).unwrap();
         }
+        BLOB_BUDGET.refund(&heavy, 256);
+        spend_blob_budget(&heavy, MAX_OPAQUE_BYTES).unwrap();
         assert_eq!(
             spend_blob_budget(&heavy, MAX_OPAQUE_BYTES)
                 .unwrap_err()

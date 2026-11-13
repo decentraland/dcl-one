@@ -263,6 +263,10 @@ pub const NOT_STORE_KEYS: &[(&str, &str)] = &[
         "a post body's sha256; its blob is the row's cid",
     ),
     (
+        "social.community_content_uploads.content_hash",
+        "a post body's sha256; its blob is social.community_contents.cid",
+    ),
+    (
         "social.mls_key_packages.ref_hash",
         "a key package digest; the bytes are in the row",
     ),

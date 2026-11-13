@@ -71,8 +71,9 @@ const DOMAIN: &str = "DecentralandCommunities";
 const BODY_LIMIT: usize = 512 * 1024;
 /// A post body: at most `POST_CONTENT_MAX` characters of up to 4 bytes each.
 pub const MAX_CONTENT_BYTES: usize = super::posts::POST_CONTENT_MAX * 4;
-/// Registered bodies no post names yet, across all uploaders.
-const MAX_UNBOUND_CONTENT_BYTES: i64 = 32 * 1024 * 1024;
+/// Uploaded bodies no post names yet, per uploader and across all of them.
+const MAX_UPLOADER_UNPOSTED_BYTES: i64 = 256 * 1024;
+const MAX_UNPOSTED_CONTENT_BYTES: i64 = 32 * 1024 * 1024;
 const DEFAULT_CHANGES: i64 = 500;
 const MAX_CHANGES: i64 = 5000;
 const SNAPSHOT_COMMUNITIES: i64 = 1000;
@@ -617,8 +618,11 @@ async fn record(
 ) -> sqlx::Result<bool> {
     let res = sqlx::query(
         "INSERT INTO social.community_signed_actions \
-           (signature_hash, community_id, community_uuid, kind, signer, target, role, action, content_hash, signed_at, payload) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) ON CONFLICT (signature_hash) DO NOTHING",
+           (signature_hash, community_id, community_uuid, kind, signer, target, role, action, content_hash, signed_at, payload, public_at_entry) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, \
+           COALESCE((SELECT NOT c.private FROM social.communities c WHERE c.id = $3), \
+                    NOT COALESCE(($11::jsonb ->> 'private')::boolean, false))) \
+         ON CONFLICT (signature_hash) DO NOTHING",
     )
     .bind(signature_hash)
     .bind(community_hex)
@@ -1396,7 +1400,8 @@ async fn post(ctx: &Ctx<'_>, id: &str) -> Response {
     {
         return *r;
     }
-    let body = registered_body(ctx.state, &m.content_hash.to_ascii_lowercase()).await;
+    let hash = m.content_hash.to_ascii_lowercase();
+    let body = uploaded_body(ctx.state, &hash, &signer).await;
     let text = match body.as_deref().map(std::str::from_utf8) {
         None => {
             tracing::debug!(community_id = %m.community_id, content_hash = %m.content_hash, %signer, "CommunityPost accepted before its content body is here");
@@ -1418,6 +1423,11 @@ async fn post(ctx: &Ctx<'_>, id: &str) -> Response {
                 .bind(community)
                 .bind(&signer)
                 .bind(&text)
+                .execute(&mut *tx)
+                .await?;
+            sqlx::query("UPDATE social.community_content_uploads SET posted_at = timezone('UTC', now()) WHERE content_hash = $1 AND uploader = $2 AND posted_at IS NULL")
+                .bind(&hash)
+                .bind(&signer)
                 .execute(&mut *tx)
                 .await?;
         }
@@ -1654,13 +1664,14 @@ fn hash_all(hashes: &[String]) -> String {
     hex::encode(h.finalize())
 }
 
-/// The feeds and bodies peers pull leave private communities out.
-const PUBLIC_ONLY: &str = "NOT EXISTS (SELECT 1 FROM social.communities pc WHERE pc.id = a.community_uuid AND pc.private)";
+/// The feeds and bodies peers pull publish only entries written while their
+/// community was public; a later change of privacy changes neither way.
+const PUBLIC_ONLY: &str = "a.public_at_entry";
 
 pub async fn snapshot_view(pool: &PgPool) -> sqlx::Result<Value> {
     let latest = |kinds: &'static [&'static str]| async move {
         sqlx::query_scalar::<_, Option<i64>>(
-            "SELECT max(seq) FROM social.community_signed_actions WHERE kind = ANY($1)",
+            "SELECT max(seq) FROM social.community_signed_actions a WHERE kind = ANY($1) AND a.public_at_entry",
         )
         .bind(kinds)
         .fetch_one(pool)
@@ -1673,8 +1684,10 @@ pub async fn snapshot_view(pool: &PgPool) -> sqlx::Result<Value> {
         latest(&["place"]).await?,
     );
     let communities: Vec<(String, String, Option<String>, i64)> = sqlx::query_as(
-        "SELECT a.community_id, a.signer, COALESCE(c.name, a.payload->>'name'), a.signed_at FROM social.community_signed_actions a \
-         LEFT JOIN social.communities c ON c.id = a.community_uuid WHERE a.kind = 'create' AND NOT COALESCE(c.private, false) ORDER BY a.seq LIMIT $1",
+        "SELECT a.community_id, a.signer, \
+           CASE WHEN COALESCE(c.private, false) THEN a.payload->>'name' ELSE COALESCE(c.name, a.payload->>'name') END, a.signed_at \
+         FROM social.community_signed_actions a \
+         LEFT JOIN social.communities c ON c.id = a.community_uuid WHERE a.kind = 'create' AND a.public_at_entry ORDER BY a.seq LIMIT $1",
     )
     .bind(SNAPSHOT_COMMUNITIES)
     .fetch_all(pool)
@@ -1783,19 +1796,13 @@ fn content_hash(body: &[u8]) -> String {
     hex::encode(Sha256::digest(body))
 }
 
-/// The blob a registered body is stored as (the ONE store keys by CID).
-async fn registered_cid(pool: &PgPool, hash: &str) -> sqlx::Result<Option<String>> {
-    sqlx::query_scalar("SELECT cid FROM social.community_contents WHERE content_hash = $1")
-        .bind(hash)
-        .fetch_optional(pool)
-        .await
-}
-
-/// The blob of a body a post in a public community names.
+/// The blob of a body a public-at-entry post names and its signer uploaded.
 async fn published_cid(pool: &PgPool, hash: &str) -> sqlx::Result<Option<String>> {
     sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT cc.cid FROM social.community_contents cc WHERE cc.content_hash = $1 \
            AND EXISTS (SELECT 1 FROM social.community_signed_actions a \
+                       JOIN social.community_content_uploads u \
+                         ON u.content_hash = a.content_hash AND u.uploader = a.signer \
                        WHERE a.content_hash = cc.content_hash AND a.kind = 'post' AND {PUBLIC_ONLY})"
     )))
     .bind(hash)
@@ -1803,11 +1810,22 @@ async fn published_cid(pool: &PgPool, hash: &str) -> sqlx::Result<Option<String>
     .await
 }
 
-async fn registered_body(state: &CommunitiesState, hash: &str) -> Option<Bytes> {
+/// A body `uploader` uploaded, the only one their post may take.
+async fn uploaded_body(state: &CommunitiesState, hash: &str, uploader: &Address) -> Option<Bytes> {
     if !is_valid_hash(hash) {
         return None;
     }
-    let cid = registered_cid(&state.pool, hash).await.ok().flatten()?;
+    let cid: String = sqlx::query_scalar(
+        "SELECT cc.cid FROM social.community_contents cc \
+         JOIN social.community_content_uploads u ON u.content_hash = cc.content_hash \
+         WHERE cc.content_hash = $1 AND u.uploader = $2",
+    )
+    .bind(hash)
+    .bind(uploader)
+    .fetch_optional(&state.pool)
+    .await
+    .ok()
+    .flatten()?;
     state.storage.retrieve(&cid).await.ok().flatten()
 }
 
@@ -1840,22 +1858,28 @@ pub async fn put_content(
             format!("body exceeds {MAX_CONTENT_BYTES} bytes"),
         );
     }
-    let (hash, size) = (content_hash(&body), body.len());
-    match registered_cid(&state.pool, &hash).await {
-        Ok(Some(_)) => {
-            return Json(json!({ "ok": true, "content_hash": hash, "size": size })).into_response();
+    match std::str::from_utf8(&body) {
+        Ok(raw) => {
+            if let Err(refused) = super::posts::validate_text(raw) {
+                return refused;
+            }
         }
-        Ok(None) => {}
+        Err(_) => return bad("content body is not valid UTF-8"),
+    }
+    match is_poster(&state.pool, &signer).await {
+        Ok(true) => {}
+        Ok(false) => {
+            return err_json(
+                StatusCode::FORBIDDEN,
+                "only a community owner or moderator may upload post content",
+            );
+        }
         Err(e) => return db_err(e),
     }
     if CONTENT_LIMITER.check(signer.as_str()) == RateLimitDecision::Deny {
         return err_json(StatusCode::TOO_MANY_REQUESTS, "rate limit exceeded");
     }
-    match may_upload(&state.pool, &signer).await {
-        Ok(None) => {}
-        Ok(Some(refused)) => return refused,
-        Err(e) => return db_err(e),
-    }
+    let (hash, size) = (content_hash(&body), body.len());
     let for_cid = body.clone();
     let cid = match tokio::task::spawn_blocking(move || crate::auth::hash::hash_bytes_v1(&for_cid))
         .await
@@ -1863,6 +1887,7 @@ pub async fn put_content(
         Ok(cid) => cid,
         Err(_) => return err_json(StatusCode::INTERNAL_SERVER_ERROR, "io error"),
     };
+    // A body registered earlier may have lost its blob; storing again repairs it.
     let stored = async {
         if !state.storage.exist(&cid).await? {
             state.storage.store(&cid, body).await?;
@@ -1874,48 +1899,77 @@ pub async fn put_content(
         tracing::error!(error = %e, "community content store io error");
         return err_json(StatusCode::INTERNAL_SERVER_ERROR, "io error");
     }
-    let registered = sqlx::query("INSERT INTO social.community_contents (content_hash, cid, size) VALUES ($1, $2, $3) ON CONFLICT (content_hash) DO NOTHING")
-        .bind(&hash)
-        .bind(&cid)
-        .bind(size as i32)
-        .execute(&state.pool)
-        .await;
-    if let Err(e) = registered {
-        return db_err(e);
+    match register_upload(&state.pool, &hash, &cid, size as i32, &signer).await {
+        Ok(None) => Json(json!({ "ok": true, "content_hash": hash, "size": size })).into_response(),
+        Ok(Some(refused)) => refused,
+        Err(e) => db_err(e),
     }
-    Json(json!({ "ok": true, "content_hash": hash, "size": size })).into_response()
 }
 
-/// Only a wallet that may post somewhere uploads, within the global budget
-/// of bodies no post names yet.
-async fn may_upload(pool: &PgPool, signer: &Address) -> sqlx::Result<Option<Response>> {
-    let poster: bool = sqlx::query_scalar(
+/// Registers the body and binds it to its uploader under one lock, within
+/// the per-uploader and global budgets of unposted bodies. A repeated upload
+/// refreshes both rows, so the collector keeps a body a retried post needs.
+async fn register_upload(
+    pool: &PgPool,
+    hash: &str,
+    cid: &str,
+    size: i32,
+    uploader: &Address,
+) -> sqlx::Result<Option<Response>> {
+    let mut tx = pool.begin().await?;
+    sqlx::query(
+        "SELECT pg_advisory_xact_lock(hashtextextended('social.community_content_uploads', 0))",
+    )
+    .execute(&mut *tx)
+    .await?;
+    let (mine, all): (i64, i64) = sqlx::query_as(
+        "SELECT COALESCE(sum(size) FILTER (WHERE uploader = $1), 0)::bigint, COALESCE(sum(size), 0)::bigint \
+         FROM social.community_content_uploads \
+         WHERE posted_at IS NULL AND NOT (content_hash = $2 AND uploader = $1)",
+    )
+    .bind(uploader)
+    .bind(hash)
+    .fetch_one(&mut *tx)
+    .await?;
+    let size_i64 = i64::from(size);
+    if mine + size_i64 > MAX_UPLOADER_UNPOSTED_BYTES || all + size_i64 > MAX_UNPOSTED_CONTENT_BYTES
+    {
+        return Ok(Some(err_json(
+            StatusCode::TOO_MANY_REQUESTS,
+            "content upload budget exhausted; retry later",
+        )));
+    }
+    sqlx::query(
+        "INSERT INTO social.community_contents (content_hash, cid, size) VALUES ($1, $2, $3) \
+                 ON CONFLICT (content_hash) DO UPDATE SET stored_at = timezone('UTC', now())",
+    )
+    .bind(hash)
+    .bind(cid)
+    .bind(size)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query("INSERT INTO social.community_content_uploads (content_hash, uploader, size) VALUES ($1, $2, $3) \
+                 ON CONFLICT (content_hash, uploader) DO UPDATE SET uploaded_at = timezone('UTC', now())")
+        .bind(hash)
+        .bind(uploader)
+        .bind(size)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(None)
+}
+
+/// Only a wallet that may post somewhere uploads.
+async fn is_poster(pool: &PgPool, signer: &Address) -> sqlx::Result<bool> {
+    sqlx::query_scalar(
         "SELECT EXISTS (SELECT 1 FROM social.community_members m \
            JOIN social.communities c ON c.id = m.community_id \
-           WHERE m.member_address = $1 AND m.role IN ('owner', 'moderator', 'mod') \
+           WHERE m.member_address = $1 AND m.role IN ('owner', 'moderator') \
              AND c.active AND NOT c.suspended)",
     )
     .bind(signer)
     .fetch_one(pool)
-    .await?;
-    if !poster {
-        return Ok(Some(err_json(
-            StatusCode::FORBIDDEN,
-            "only a community owner or moderator may upload post content",
-        )));
-    }
-    let unbound: i64 = sqlx::query_scalar(
-        "SELECT COALESCE(sum(cc.size), 0)::bigint FROM social.community_contents cc \
-         WHERE NOT EXISTS (SELECT 1 FROM social.community_signed_actions a WHERE a.content_hash = cc.content_hash)",
-    )
-    .fetch_one(pool)
-    .await?;
-    Ok((unbound >= MAX_UNBOUND_CONTENT_BYTES).then(|| {
-        err_json(
-            StatusCode::TOO_MANY_REQUESTS,
-            "content upload budget exhausted; retry later",
-        )
-    }))
+    .await
 }
 
 /// `GET /federation/communities/content/{hash}`: the body of a public post.
@@ -1976,6 +2030,12 @@ async fn collect(state: &CommunitiesState) -> anyhow::Result<Value> {
         .fetch_one(&state.pool)
         .await?;
     let referenced: i64 = sqlx::query_scalar("SELECT count(DISTINCT content_hash) FROM social.community_signed_actions WHERE content_hash IS NOT NULL").fetch_one(&state.pool).await?;
+    sqlx::query(
+        "DELETE FROM social.community_content_uploads WHERE posted_at IS NULL AND uploaded_at < $1",
+    )
+    .bind(floor)
+    .execute(&state.pool)
+    .await?;
     let mut removed = 0i64;
     loop {
         let dropped: Vec<String> = sqlx::query_scalar(
@@ -1983,6 +2043,7 @@ async fn collect(state: &CommunitiesState) -> anyhow::Result<Value> {
                SELECT cc.content_hash FROM social.community_contents cc \
                WHERE cc.stored_at < $1 \
                  AND NOT EXISTS (SELECT 1 FROM social.community_signed_actions a WHERE a.content_hash = cc.content_hash) \
+                 AND NOT EXISTS (SELECT 1 FROM social.community_content_uploads u WHERE u.content_hash = cc.content_hash) \
                ORDER BY cc.content_hash LIMIT $2) \
              RETURNING cid",
         )
@@ -3509,24 +3570,11 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::NOT_FOUND, "no post names it yet");
 
-        // A body over the post limit is refused as a post.
-        let (status, long) = upload(&app, &owner, &"a".repeat(1001)).await;
-        assert_eq!(status, StatusCode::OK, "{long}");
-        let (status, _) = send(
-            &app,
-            &owner,
-            "POST",
-            &format!("{base}/posts"),
-            &env(
-                &owner,
-                CommunityPost {
-                    community_id: hex_id.clone(),
-                    content_hash: long["content_hash"].as_str().unwrap().to_string(),
-                },
-            ),
-        )
-        .await;
+        // A body over the post limit is refused at upload.
+        let (status, _) = upload(&app, &owner, &"a".repeat(1001)).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "1001 characters");
+        let (status, _) = upload(&app, &owner, "   ").await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "blank");
 
         let post_env = env(
             &owner,
@@ -4015,6 +4063,231 @@ mod tests {
             .0,
             StatusCode::BAD_REQUEST
         );
+
+        // A re-upload repairs a lost blob and refreshes the body's age.
+        let cid: String =
+            sqlx::query_scalar("SELECT cid FROM social.community_contents WHERE content_hash = $1")
+                .bind(&content)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        sqlx::query("UPDATE social.community_contents SET stored_at = stored_at - interval '2 hours' WHERE content_hash = $1")
+            .bind(&content)
+            .execute(&pool)
+            .await
+            .unwrap();
+        state.storage.delete_strict(&cid).await.unwrap();
+        let (status, _) = upload(&app, &owner, "hello peers").await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(state.storage.exist(&cid).await.unwrap());
+        let fresh: bool = sqlx::query_scalar("SELECT stored_at > timezone('UTC', now()) - interval '1 minute' FROM social.community_contents WHERE content_hash = $1")
+            .bind(&content)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert!(fresh);
+
+        // A body is taken only by its uploader's post: another public
+        // community naming a private body gets the hash, not the text.
+        let mallory = PrivateKeySigner::random();
+        claimed_name(&pool, &state, &mallory).await;
+        let (status, theirs) = send(
+            &app,
+            &mallory,
+            "POST",
+            "/v1/communities",
+            &env(
+                &mallory,
+                CommunityCreate {
+                    name: format!("fed open {}", &Uuid::new_v4().simple().to_string()[..8]),
+                    description: "d".into(),
+                    private: false,
+                    unlisted: false,
+                    flags: vec![],
+                },
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{theirs}");
+        let theirs_hex = theirs["community_id"].as_str().unwrap().to_string();
+        let copy = env(
+            &mallory,
+            CommunityPost {
+                community_id: theirs_hex.clone(),
+                content_hash: secret.clone(),
+            },
+        );
+        let (status, body) = send(
+            &app,
+            &mallory,
+            "POST",
+            &format!("/v1/communities/{}/posts", theirs["id"].as_str().unwrap()),
+            &copy,
+        )
+        .await;
+        assert_eq!(
+            (status, body["content_body_local"].clone()),
+            (StatusCode::OK, json!(false)),
+            "{body}"
+        );
+        let text: String =
+            sqlx::query_scalar("SELECT content FROM social.community_posts WHERE id = $1")
+                .bind(post_uuid(&copy.signature_hash()))
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(text, secret);
+        let get = |hash: String| {
+            let app = app.clone();
+            async move {
+                call(
+                    &app,
+                    "GET",
+                    &format!("/federation/communities/content/{hash}"),
+                    HeaderMap::new(),
+                    Body::empty(),
+                )
+                .await
+                .0
+            }
+        };
+        assert_eq!(get(secret.clone()).await, StatusCode::NOT_FOUND);
+
+        // Privacy is the entry's: turning public publishes only what follows.
+        let private_seq: i64 = sqlx::query_scalar(
+            "SELECT seq FROM social.community_signed_actions WHERE kind = 'post' AND content_hash = $1 AND NOT public_at_entry",
+        )
+        .bind(&secret)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let (_, snap) = call(
+            &app,
+            "GET",
+            "/federation/communities/snapshot",
+            HeaderMap::new(),
+            Body::empty(),
+        )
+        .await;
+        assert_ne!(snap["latest_posts_seq"].as_i64(), Some(private_seq));
+        sqlx::query("UPDATE social.communities SET private = false WHERE id = $1")
+            .bind(Uuid::parse_str(&private_id).unwrap())
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            get(secret.clone()).await,
+            StatusCode::NOT_FOUND,
+            "an earlier private body"
+        );
+        let (status, opened) = upload(&app, &owner, "after opening").await;
+        assert_eq!(status, StatusCode::OK, "{opened}");
+        let opened = opened["content_hash"].as_str().unwrap().to_string();
+        let (status, body) = send(
+            &app,
+            &owner,
+            "POST",
+            &format!("/v1/communities/{private_id}/posts"),
+            &env(
+                &owner,
+                CommunityPost {
+                    community_id: private_hex.clone(),
+                    content_hash: opened.clone(),
+                },
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(get(opened.clone()).await, StatusCode::OK);
+        let (_, feed) = call(
+            &app,
+            "GET",
+            &format!("/federation/communities/changes?since={since}"),
+            HeaderMap::new(),
+            Body::empty(),
+        )
+        .await;
+        let published: Vec<&Value> = feed["posts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|p| p["community_id"] == json!(private_hex))
+            .collect();
+        assert_eq!(
+            published
+                .iter()
+                .map(|p| p["content_hash"].clone())
+                .collect::<Vec<_>>(),
+            [json!(opened)]
+        );
+
+        // The collector drops unposted bodies past the age floor.
+        let (status, stale) = upload(&app, &owner, "never posted").await;
+        assert_eq!(status, StatusCode::OK, "{stale}");
+        let stale = stale["content_hash"].as_str().unwrap().to_string();
+        for table in [
+            "community_content_uploads SET uploaded_at = uploaded_at",
+            "community_contents SET stored_at = stored_at",
+        ] {
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "UPDATE social.{table} - interval '2 hours' WHERE content_hash = $1"
+            )))
+            .bind(&stale)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        collect(&state).await.unwrap();
+        let left: i64 = sqlx::query_scalar(
+            "SELECT (SELECT count(*) FROM social.community_contents WHERE content_hash = $1) \
+                  + (SELECT count(*) FROM social.community_content_uploads WHERE content_hash = $1)",
+        )
+        .bind(&stale)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(left, 0);
+
+        // Upload budgets: per uploader, then the per-signer rate.
+        let poster = PrivateKeySigner::random();
+        let uploads_community = Uuid::new_v4();
+        sqlx::query("INSERT INTO social.communities (id, name, description, owner_address, private, unlisted) VALUES ($1, 'Uploads', 'd', $2, FALSE, FALSE)")
+            .bind(uploads_community)
+            .bind(address(&poster))
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO social.community_members (community_id, member_address, role) VALUES ($1, $2, 'owner')")
+            .bind(uploads_community)
+            .bind(address(&poster))
+            .execute(&pool)
+            .await
+            .unwrap();
+        let filler = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
+        sqlx::query("INSERT INTO social.community_content_uploads (content_hash, uploader, size) VALUES ($1, $2, $3)")
+            .bind(&filler)
+            .bind(address(&poster))
+            .bind(MAX_UPLOADER_UNPOSTED_BYTES as i32)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let (status, _) = upload(&app, &poster, "over budget").await;
+        assert_eq!(
+            status,
+            StatusCode::TOO_MANY_REQUESTS,
+            "the uploader's budget"
+        );
+        sqlx::query("DELETE FROM social.community_content_uploads WHERE content_hash = $1")
+            .bind(&filler)
+            .execute(&pool)
+            .await
+            .unwrap();
+        for _ in 1..30 {
+            let (status, _) = upload(&app, &poster, "again").await;
+            assert_eq!(status, StatusCode::OK);
+        }
+        let (status, _) = upload(&app, &poster, "again").await;
+        assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "the signer's rate");
 
         let (status, _) = send(
             &app,

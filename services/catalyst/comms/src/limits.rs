@@ -87,9 +87,12 @@ impl RateLimiter {
     }
 
     /// Spends `cost` tokens at once (e.g. bytes in KiB); a cost above the
-    /// capacity is always refused.
+    /// capacity is always refused and a zero cost spends nothing.
     pub fn check_cost(&self, key: &str, cost: u32) -> RateLimitDecision {
-        let cost = f64::from(cost.max(1));
+        if cost == 0 {
+            return RateLimitDecision::Allow;
+        }
+        let cost = f64::from(cost);
         self.maybe_sweep();
         let now = Instant::now();
         let entry = self
@@ -110,6 +113,14 @@ impl RateLimiter {
             RateLimitDecision::Allow
         } else {
             RateLimitDecision::Deny
+        }
+    }
+
+    /// Returns `cost` tokens spent on work that did not happen.
+    pub fn refund(&self, key: &str, cost: u32) {
+        if let Some(entry) = self.buckets.get(&key.to_ascii_lowercase()) {
+            let mut b = entry.lock();
+            b.tokens = (b.tokens + f64::from(cost)).min(self.capacity);
         }
     }
 
@@ -149,6 +160,10 @@ mod tests {
         assert_eq!(limiter.check_cost("a", 6), RateLimitDecision::Deny);
         assert_eq!(limiter.check_cost("a", 4), RateLimitDecision::Allow);
         assert_eq!(limiter.check_cost("b", 11), RateLimitDecision::Deny);
+        assert_eq!(limiter.check_cost("a", 0), RateLimitDecision::Allow);
+        limiter.refund("a", 6);
+        assert_eq!(limiter.check_cost("a", 6), RateLimitDecision::Allow);
+        assert_eq!(limiter.check_cost("a", 1), RateLimitDecision::Deny);
     }
 
     #[test]
