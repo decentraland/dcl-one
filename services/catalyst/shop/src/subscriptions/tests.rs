@@ -266,51 +266,88 @@ async fn outbox_rows(pool: &PgPool, contract: &str) -> Vec<(String, i32)> {
 async fn one_email_holds_a_bounded_number_of_pending_requests() {
     let Some(r) = rig(true).await else { return };
     let c = contract();
-    let email = format!("cap-{}@example.com", uuid::Uuid::new_v4().simple());
-    async fn post(
-        r: &Rig,
-        wallet: &crate::outfits::testkit::Wallet,
-        c: &str,
-        item: String,
-        email: &str,
-    ) -> StatusCode {
-        let h = signed_headers(wallet, "post", "/shop-api/v1/notify-requests").await;
-        send(
-            &r.app,
-            "POST",
-            "/shop-api/v1/notify-requests",
-            h,
-            Some(json!({ "contractAddress": c, "itemId": item, "chainId": 137, "email": email })),
-        )
-        .await
-        .0
-    }
+    let mailbox = format!("cap-{}", uuid::Uuid::new_v4().simple());
+    let email = format!("{mailbox}@example.com");
     let first = scratch_wallet();
     assert_eq!(
-        post(&r, &first, &c, "0".into(), &email).await,
+        post_notify(&r, &first, &c, "0".into(), &email).await,
         StatusCode::CREATED
     );
-    for i in 1..super::MAX_PENDING_PER_EMAIL {
+    // Concurrent requests from fresh wallets, each with its own +tag alias.
+    let wallets: Vec<_> = (0..super::MAX_PENDING_PER_EMAIL + 4)
+        .map(|_| scratch_wallet())
+        .collect();
+    let statuses = futures::future::join_all(wallets.iter().enumerate().map(|(i, w)| {
+        let (r, c, email) = (&r, &c, format!("{mailbox}+{i}@Example.com"));
+        async move { post_notify(r, w, c, (i + 1).to_string(), &email).await }
+    }))
+    .await;
+    let created = statuses
+        .iter()
+        .filter(|s| **s == StatusCode::CREATED)
+        .count() as i64;
+    assert_eq!(
+        created,
+        super::MAX_PENDING_PER_EMAIL - 1,
+        "aliases and races share one mailbox cap: {statuses:?}"
+    );
+    assert!(
+        statuses
+            .iter()
+            .all(|s| *s == StatusCode::CREATED || *s == StatusCode::TOO_MANY_REQUESTS)
+    );
+    assert_eq!(
+        post_notify(&r, &first, &c, "0".into(), &email).await,
+        StatusCode::CREATED,
+        "re-subscribing an existing row is not a new request"
+    );
+    sqlx::query("DELETE FROM shop.item_notify_requests WHERE email ILIKE $1")
+        .bind(format!("{mailbox}%"))
+        .execute(&r.pool)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn one_wallet_holds_a_bounded_number_of_pending_requests() {
+    let Some(r) = rig(true).await else { return };
+    let c = contract();
+    let wallet = scratch_wallet();
+    for i in 0..super::MAX_PENDING_PER_WALLET {
+        let email = format!("w{i}-{}@example.com", uuid::Uuid::new_v4().simple());
         assert_eq!(
-            post(&r, &scratch_wallet(), &c, i.to_string(), &email).await,
+            post_notify(&r, &wallet, &c, i.to_string(), &email).await,
             StatusCode::CREATED
         );
     }
     assert_eq!(
-        post(&r, &scratch_wallet(), &c, "x".into(), &email).await,
-        StatusCode::TOO_MANY_REQUESTS,
-        "past the cap a new wallet cannot add the address"
+        post_notify(&r, &wallet, &c, "x".into(), "another@example.com").await,
+        StatusCode::TOO_MANY_REQUESTS
     );
-    assert_eq!(
-        post(&r, &first, &c, "0".into(), &email).await,
-        StatusCode::CREATED,
-        "re-subscribing an existing row is not a new request"
-    );
-    sqlx::query("DELETE FROM shop.item_notify_requests WHERE email = $1")
-        .bind(&email)
+    sqlx::query("DELETE FROM shop.item_notify_requests WHERE address = $1")
+        .bind(wallet.address.to_ascii_lowercase())
         .execute(&r.pool)
         .await
         .unwrap();
+}
+
+async fn post_notify(
+    r: &Rig,
+    wallet: &crate::outfits::testkit::Wallet,
+    c: &str,
+    item: String,
+    email: &str,
+) -> StatusCode {
+    let h = signed_headers(wallet, "post", "/shop-api/v1/notify-requests").await;
+    send(
+        &r.app,
+        "POST",
+        "/shop-api/v1/notify-requests",
+        h,
+        Some(json!({ "contractAddress": c, "itemId": item, "chainId": 137, "email": email })),
+    )
+    .await
+    .0
 }
 
 #[tokio::test]

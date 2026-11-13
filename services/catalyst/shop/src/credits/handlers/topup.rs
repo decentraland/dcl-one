@@ -2,6 +2,12 @@
 //! economy module (the old `/v1/payments/verify` hop), granted once per
 //! transaction hash at the memoised oracle rate, floored to whole Credits;
 //! `GET /topup/mana/quote` suggests the wei for N Credits with a 2% buffer.
+//!
+//! A transfer mined while no MANA/USD rate was recorded (a price poller down
+//! longer than the freshness window) answers 422 for good. An operator credits
+//! it with `POST /admin/credits/grant` and `idempotencyKey` `mana-topup:<txHash>`
+//! (lowercase), so a later claim of that hash replays the grant instead of
+//! granting again.
 
 use axum::Json;
 use axum::extract::{OriginalUri, Query, State};

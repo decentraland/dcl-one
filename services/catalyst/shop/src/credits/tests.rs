@@ -94,6 +94,7 @@ impl FakeMarket {
             token_id: Some(ITEM_TOKEN_ID.to_string()),
             trade_id: None,
             price_wei: price_wei.to_string(),
+            seller: "0x5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e".to_string(),
         });
         self
     }
@@ -1020,6 +1021,12 @@ async fn dispute_revokes_granted_credits_instead_of_paying_the_buyer_twice() {
         !wallet_blocked(&pool, &addr).await,
         "a fully covered reversal leaves the wallet usable"
     );
+    let detail: Value = sqlx::query_scalar("SELECT detail FROM ops.admin_audit WHERE domain = 'credits' AND action = 'revoke' AND target = $1")
+        .bind(&addr)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(detail["blocked"], json!(false));
 
     assert_eq!(
         available(&pool, &addr).await.parse::<f64>().unwrap(),
@@ -1231,6 +1238,10 @@ async fn revoke_without_a_wallet_row_is_still_audited_as_a_total_loss() {
 
     assert!(ledger_kinds(&pool, &addr).await.is_empty());
     assert_reconciles(&pool, &addr, "after a no-wallet chargeback").await;
+    assert!(
+        wallet_blocked(&pool, &addr).await,
+        "a chargeback with no wallet row blocks the address"
+    );
 
     cleanup(&pool, &addr).await;
 }
@@ -5333,6 +5344,59 @@ async fn checkout_refuses_an_item_created_by_the_buyer() {
     for w in [&creator, &buyer] {
         cleanup(&pool, &w.address).await;
     }
+}
+
+/// A cart line never fills from the buyer's own listing: the selection falls
+/// back to the next one, and refuses when only the buyer's own is open.
+#[tokio::test]
+async fn checkout_skips_the_buyers_own_listing() {
+    let Some(pool) = pool().await else { return };
+    let seller = scratch_wallet();
+    let basis = |market: FakeMarket, buyer: String| {
+        let state = state_with(
+            pool.clone(),
+            StateCfg::default(),
+            market,
+            MockBroker::configured(),
+        );
+        async move {
+            state
+                .pricing
+                .fetch_charge_bases_batch(
+                    &[(COLLECTION.to_string(), "4".to_string())],
+                    "secondary",
+                    1,
+                    Some(&buyer),
+                )
+                .await
+                .unwrap()
+                .pop()
+                .unwrap()
+        }
+    };
+    let own_first = || {
+        let mut m = market_for_checkout()
+            .with_listing(COLLECTION, "1000000000000000000")
+            .with_listing(COLLECTION, "2000000000000000000");
+        m.orders[0].seller = seller.address.to_uppercase().replace("0X", "0x");
+        m
+    };
+    let picked = basis(own_first(), seller.address.clone()).await.unwrap();
+    assert_eq!(
+        picked.basis_wei, "2000000000000000000",
+        "the buyer's own cheaper listing is skipped for the next one"
+    );
+    let picked = basis(own_first(), scratch_wallet().address).await.unwrap();
+    assert_eq!(picked.basis_wei, "1000000000000000000");
+    let mut only_own = market_for_checkout().with_listing(COLLECTION, "1000000000000000000");
+    only_own.orders[0].seller = seller.address.clone();
+    assert!(
+        matches!(
+            basis(only_own, seller.address.clone()).await,
+            Err(ApiError::Conflict(_))
+        ),
+        "no listing but the buyer's own: refused"
+    );
 }
 
 #[tokio::test]

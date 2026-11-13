@@ -511,13 +511,15 @@ impl Credits {
         // A reversal the balance cannot cover, net of live pledges, blocks the
         // wallet from spending until an operator reviews it.
         let row = sqlx::query(
-            "UPDATE credits.wallets \
+            "WITH held AS ( \
+               SELECT COALESCE(SUM(usd_cents), 0)::numeric / $5::numeric AS credits \
+               FROM credits.authorizations \
+               WHERE address = $1 AND status IN ('authorized', 'retired') \
+             ) \
+             UPDATE credits.wallets \
              SET available = GREATEST(available - $2::numeric, 0), \
                  earned_available = LEAST(earned_available, GREATEST(available - $2::numeric, 0)), \
-                 is_blocked_for_claiming = is_blocked_for_claiming OR $2::numeric > available - COALESCE(( \
-                     SELECT SUM(usd_cents) FROM credits.authorizations \
-                     WHERE address = $1 AND status IN ('authorized', 'retired') \
-                 ), 0)::numeric / $5::numeric, \
+                 is_blocked_for_claiming = is_blocked_for_claiming OR $2::numeric > available - (SELECT credits FROM held), \
                  updated_at = timezone('UTC', now()) \
              WHERE address = $1 \
              RETURNING available::text AS available, \
@@ -526,7 +528,7 @@ impl Credits {
                        (($3::numeric - available) - ($4::numeric - earned_available))::text AS paid_removed, \
                        GREATEST($2::numeric - ($3::numeric - available), 0)::text AS shortfall, \
                        ($2::numeric > $3::numeric - available) AS has_shortfall, \
-                       is_blocked_for_claiming AS blocked",
+                       ($2::numeric > $3::numeric - (SELECT credits FROM held)) AS uncovered",
         )
         .bind(address)
         .bind(amount)
@@ -535,7 +537,8 @@ impl Credits {
         .bind(UsdCents::CENTS_PER_CREDIT)
         .fetch_one(&mut **tx)
         .await?;
-        let blocked: bool = row.get("blocked");
+        // This reversal's own condition, not a block an operator set earlier.
+        let blocked: bool = row.get("uncovered");
         if blocked {
             tracing::error!(address = %address, tx_ref = %tx_ref, "fiat reversal exceeds the unpledged balance: wallet blocked from spending credits");
         }

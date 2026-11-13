@@ -206,6 +206,7 @@ pub async fn add_item(
             &[(collection.clone(), item_id.clone())],
             mode,
             ORDER_SCAN_MAX_PAGES,
+            Some(signer.as_str()),
         )
         .await?
         .pop()
@@ -279,21 +280,13 @@ pub struct CheckoutStartOut {
     replayed: bool,
 }
 
-pub(crate) fn replay_for_signer(
-    prior: Option<CheckoutIdemRow>,
-    signer: &str,
-) -> Result<Option<CheckoutStartOut>, ApiError> {
-    match prior {
-        Some(row) if row.address.eq_ignore_ascii_case(signer) => Ok(Some(CheckoutStartOut {
-            id: row.id,
-            status: row.status,
-            replayed: true,
-        })),
-        Some(_) => Err(ApiError::conflict(
-            "Idempotency-Key already used by a different wallet",
-        )),
-        None => Ok(None),
-    }
+/// The signer's own earlier checkout under the key (the lookup is scoped to it).
+pub(crate) fn replay_of(prior: Option<CheckoutIdemRow>) -> Option<CheckoutStartOut> {
+    prior.map(|row| CheckoutStartOut {
+        id: row.id,
+        status: row.status,
+        replayed: true,
+    })
 }
 
 type CheckoutScopeAndIntent = (
@@ -327,13 +320,12 @@ pub async fn checkout(
     let signer = signer_from(&state, &headers, "post", "/checkout", &original).await?;
     let idem = idempotency_key(&headers)?;
 
-    if let Some(out) = replay_for_signer(
+    if let Some(out) = replay_of(
         state
             .credits
             .find_checkout_by_idempotency_key(signer.as_str(), &idem)
             .await?,
-        signer.as_str(),
-    )? {
+    ) {
         return Ok(Json(out));
     }
 
@@ -422,6 +414,7 @@ pub async fn checkout(
             &pairs,
             &state.settings.checkout_fulfillment_mode,
             ORDER_SCAN_MAX_PAGES,
+            Some(signer.as_str()),
         )
         .await?;
 
@@ -429,11 +422,13 @@ pub async fn checkout(
     let mut repriced: Vec<RepricedLine> = Vec::with_capacity(lines.len());
     for (line, priced) in lines.into_iter().zip(priced_lines) {
         let priced = priced?;
-        if priced
-            .basis
-            .info
-            .creator
-            .eq_ignore_ascii_case(signer.as_str())
+        // A mint pays the creator; a listing pays its seller, never the buyer (selection skips those).
+        if matches!(priced.basis.kind, BasisKind::Primary)
+            && priced
+                .basis
+                .info
+                .creator
+                .eq_ignore_ascii_case(signer.as_str())
         {
             return Err(ApiError::forbidden(format!(
                 "credits cannot buy {}:{} from its creator's own wallet",
@@ -645,31 +640,17 @@ mod tests {
 
     #[test]
     fn replay_decisions() {
-        let out = replay_for_signer(
-            Some(CheckoutIdemRow {
-                id: 41,
-                address: "0xAbC0000000000000000000000000000000000001".into(),
-                status: "fulfilling".into(),
-            }),
-            "0xabc0000000000000000000000000000000000001",
-        )
-        .unwrap()
+        let out = replay_of(Some(CheckoutIdemRow {
+            id: 41,
+            address: "0xAbC0000000000000000000000000000000000001".into(),
+            status: "fulfilling".into(),
+        }))
         .expect("must replay");
         assert_eq!(
             serde_json::to_value(&out).unwrap(),
             json!({ "id": 41, "status": "fulfilling", "replayed": true })
         );
-        let err = replay_for_signer(
-            Some(CheckoutIdemRow {
-                id: 41,
-                address: "0xabc0000000000000000000000000000000000001".into(),
-                status: "fulfilled".into(),
-            }),
-            "0xdef0000000000000000000000000000000000002",
-        )
-        .unwrap_err();
-        assert!(matches!(err, ApiError::Conflict(_)), "got {err:?}");
-        assert!(replay_for_signer(None, "0xabc").unwrap().is_none());
+        assert!(replay_of(None).is_none());
     }
 
     #[test]

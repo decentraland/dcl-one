@@ -316,26 +316,24 @@ async fn create(
         .map_err(|e| ApiError::bad_request(format!("invalid request body: {e}")))?;
     validate_create(&req).map_err(ApiError::bad_request)?;
     let contract = req.contract_address.to_ascii_lowercase();
-    let (by_wallet, by_email) = state
+    let stored = state
         .store
-        .pending_counts(&address, &req.email, &contract, &req.item_id)
-        .await?;
-    if by_wallet >= MAX_PENDING_PER_WALLET || by_email >= MAX_PENDING_PER_EMAIL {
-        return Err(ApiError::Status(
-            StatusCode::TOO_MANY_REQUESTS,
-            "too many pending notify requests for this wallet or email".into(),
-        ));
-    }
-    state
-        .store
-        .upsert(
+        .upsert_capped(
             &address,
             &req.email,
             &contract,
             &req.item_id,
             req.chain_id as i32,
+            MAX_PENDING_PER_WALLET,
+            MAX_PENDING_PER_EMAIL,
         )
         .await?;
+    if !stored {
+        return Err(ApiError::Status(
+            StatusCode::TOO_MANY_REQUESTS,
+            "too many pending notify requests for this wallet or email".into(),
+        ));
+    }
     tracing::info!(address = %address, contract = %contract, item_id = %req.item_id, "notify request upserted");
     Ok((StatusCode::CREATED, Json(json!({ "ok": true }))).into_response())
 }

@@ -487,6 +487,18 @@ async fn item_lookup(
     }
 }
 
+/// The wallets a trade pays: its `received[].beneficiary` (an unparsable one is skipped;
+/// the chain pays the signer for a zero beneficiary, which the signer check covers).
+fn trade_payees(json: &Value) -> Vec<EvmAddress> {
+    json.get("received")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|a| a.get("beneficiary").and_then(Value::as_str))
+        .filter_map(|b| EvmAddress::parse(&b.to_ascii_lowercase()).ok())
+        .collect()
+}
+
 /// Credits never pay a wallet for its own item: the buyer may not be the
 /// item's creator or the trade's signer, who receive the proceeds.
 fn refuse_own_sale(
@@ -530,10 +542,15 @@ pub(super) async fn derive_line(
     } else if let Some(trade_id) = &v.trade_id {
         let (trade, trade_type) = match state.pricing.fetch_trade(trade_id).await? {
             TradeLookup::Open(json) => (
-                decode_trade(&json).map_err(|m| AuthorizeError::Line {
-                    index,
-                    message: format!("trade {trade_id} cannot be decoded: {m}"),
-                })?,
+                {
+                    for payee in trade_payees(&json) {
+                        refuse_own_sale(session, index, payee)?;
+                    }
+                    decode_trade(&json).map_err(|m| AuthorizeError::Line {
+                        index,
+                        message: format!("trade {trade_id} cannot be decoded: {m}"),
+                    })?
+                },
                 json.get("type")
                     .and_then(Value::as_str)
                     .unwrap_or_default()
@@ -1181,6 +1198,15 @@ mod tests {
             "got {err:?}"
         );
         assert!(refuse_own_sale(Session::Web3 { wallet: me }, 0, seller).is_ok());
+        let trade = json!({ "received": [
+            { "beneficiary": "0x3333333333333333333333333333333333333333" },
+            { "beneficiary": "0x2222222222222222222222222222222222222222" },
+        ] });
+        assert_eq!(
+            trade_payees(&trade),
+            vec![seller, me],
+            "the payee may be the buyer"
+        );
     }
 
     #[test]
