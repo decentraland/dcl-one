@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use alloy_core::primitives::Address;
 use dcl_component::proto_components::pulse;
 
@@ -870,6 +872,104 @@ fn a_resync_that_was_not_sent_is_asked_for_again() {
     assert!(is_one_resync(&events, SUBJECT, 5), "{events:?}");
 }
 
+/// The `(subject_id, known_seq)` of each request in `requests`.
+fn requested(requests: &[pulse::ResyncRequest]) -> Vec<(u32, u32)> {
+    requests
+        .iter()
+        .map(|request| (request.subject_id, request.known_seq))
+        .collect()
+}
+
+/// Both servers drop a request for a subject outside the observer's interest in the tick it
+/// arrives. The waiting request would hold back every later one, so it is asked again once it has
+/// gone unanswered for `RESYNC_RETRY_SECS`, and again after each further interval.
+#[test]
+fn an_unanswered_resync_is_asked_for_again() {
+    let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
+    decoder.handle(server_msg(joined(5, (1.0, 2.0, 3.0), 0)));
+
+    let events = decoder.handle(delta(SUBJECT, 7, 8, 1500, 5.0));
+    assert!(is_one_resync(&events, SUBJECT, 5), "{events:?}");
+    // the frame that sent it stamps it
+    assert!(decoder.retry_resyncs(10.0).is_empty());
+
+    // later gaps still wait on it, and so does the timer, until the interval has passed
+    let events = decoder.handle(delta(SUBJECT, 8, 9, 1600, 5.0));
+    assert!(events.is_empty(), "{events:?}");
+    assert!(decoder
+        .retry_resyncs(10.0 + RESYNC_RETRY_SECS * 0.5)
+        .is_empty());
+
+    assert_eq!(
+        requested(&decoder.retry_resyncs(10.0 + RESYNC_RETRY_SECS)),
+        [(SUBJECT, 5)]
+    );
+    assert!(decoder
+        .retry_resyncs(10.0 + RESYNC_RETRY_SECS * 1.5)
+        .is_empty());
+    assert_eq!(
+        requested(&decoder.retry_resyncs(10.0 + RESYNC_RETRY_SECS * 2.0)),
+        [(SUBJECT, 5)]
+    );
+}
+
+/// The retry asks from the baseline held when it is sent, not the one the first request had: a
+/// stale state in between moves nothing, and progress releases the request.
+#[test]
+fn a_resync_retry_asks_from_the_current_baseline() {
+    let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
+    decoder.handle(server_msg(joined(5, (1.0, 2.0, 3.0), 0)));
+    decoder.handle(delta(SUBJECT, 5, 6, 1500, 5.0));
+
+    let events = decoder.handle(delta(SUBJECT, 8, 9, 1600, 5.0));
+    assert!(is_one_resync(&events, SUBJECT, 6), "{events:?}");
+    assert!(decoder.retry_resyncs(0.0).is_empty());
+
+    // an old state does not answer it, and the retry still comes
+    let events = decoder.handle(player_state_full(5, 1400, 1.0));
+    assert!(events.is_empty(), "{events:?}");
+    assert_eq!(
+        requested(&decoder.retry_resyncs(RESYNC_RETRY_SECS)),
+        [(SUBJECT, 6)]
+    );
+
+    // part of the gap closes: the rest is asked for at once from the new baseline, and its retry
+    // is timed from then
+    let events = decoder.handle(bare_delta(6, 7, 1700));
+    assert!(
+        matches!(events.as_slice(), [PulseEvent::Movement { .. }, PulseEvent::Resync(request)] if request.known_seq == 7),
+        "{events:?}"
+    );
+    assert!(decoder.retry_resyncs(RESYNC_RETRY_SECS * 1.5).is_empty());
+    assert_eq!(
+        requested(&decoder.retry_resyncs(RESYNC_RETRY_SECS * 2.5)),
+        [(SUBJECT, 7)]
+    );
+
+    // the answer arrives: nothing is left to retry
+    let events = decoder.handle(player_state_full(9, 1800, 5.0));
+    assert!(
+        matches!(events.as_slice(), [PulseEvent::Movement { .. }]),
+        "{events:?}"
+    );
+    assert!(decoder.pending_resync.is_empty());
+    assert!(decoder.retry_resyncs(RESYNC_RETRY_SECS * 10.0).is_empty());
+}
+
+/// A request the plugin could not send waits on nothing, so the timer has nothing to retry.
+#[test]
+fn a_resync_that_was_not_sent_is_not_retried() {
+    let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
+    decoder.handle(server_msg(joined(5, (1.0, 2.0, 3.0), 0)));
+
+    let events = decoder.handle(delta(SUBJECT, 7, 8, 1500, 5.0));
+    assert!(is_one_resync(&events, SUBJECT, 5), "{events:?}");
+    decoder.resync_not_sent(SUBJECT);
+
+    assert!(decoder.retry_resyncs(0.0).is_empty());
+    assert!(decoder.retry_resyncs(RESYNC_RETRY_SECS * 10.0).is_empty());
+}
+
 #[test]
 fn an_emote_event_older_than_the_last_is_ignored() {
     let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
@@ -1551,7 +1651,7 @@ fn buffered_delta_keeps_one_request_during_repeated_stale_and_equal_snapshots() 
         ] {
             let events = decoder.handle(message);
             assert!(events.is_empty(), "{events:?}");
-            assert!(decoder.pending_resync.contains(&SUBJECT));
+            assert!(decoder.pending_resync.contains_key(&SUBJECT));
         }
     }
     approx(
@@ -1575,7 +1675,7 @@ fn buffered_delta_keeps_its_request_while_equal_sequence_emotes_are_reported() {
         ),
         "{events:?}"
     );
-    assert!(decoder.pending_resync.contains(&SUBJECT));
+    assert!(decoder.pending_resync.contains_key(&SUBJECT));
 
     for _ in 0..3 {
         let events = decoder.handle(emote_started(5, 1100, "wave", 1.0));
@@ -1586,7 +1686,7 @@ fn buffered_delta_keeps_its_request_while_equal_sequence_emotes_are_reported() {
             ),
             "{events:?}"
         );
-        assert!(decoder.pending_resync.contains(&SUBJECT));
+        assert!(decoder.pending_resync.contains_key(&SUBJECT));
     }
 
     let events = decoder.handle(emote_stopped(5, 1200, 1.0));
@@ -1597,7 +1697,7 @@ fn buffered_delta_keeps_its_request_while_equal_sequence_emotes_are_reported() {
         ),
         "{events:?}"
     );
-    assert!(decoder.pending_resync.contains(&SUBJECT));
+    assert!(decoder.pending_resync.contains_key(&SUBJECT));
     approx(
         only_movement(decoder.handle(player_state_full(7, 1600, 3.0))).position_x,
         165.0,

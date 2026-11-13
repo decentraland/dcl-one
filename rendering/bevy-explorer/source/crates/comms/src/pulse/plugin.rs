@@ -1259,30 +1259,7 @@ fn drain_inbound(
                     )
                 }
                 // A sequence gap was detected — ask the server to replay full state, reliably.
-                PulseEvent::Resync(request) => {
-                    let subject_id = request.subject_id;
-                    let message = pulse::ClientMessage {
-                        message: Some(pulse::client_message::Message::Resync(request)),
-                    };
-                    let sent = session.link.as_mut().is_some_and(|link| {
-                        link.send(PulseFrame {
-                            bytes: message.encode_to_vec(),
-                            reliability: PulseReliability::Reliable,
-                            kind: FrameKind::Control,
-                        })
-                    });
-                    if sent {
-                        let second = now as u64;
-                        let bucket = &mut session.resyncs[(second % 60) as usize];
-                        if bucket.0 != second {
-                            *bucket = (second, 0);
-                        }
-                        bucket.1 += 1;
-                    } else {
-                        // Unsent, it would hold back every later request for the subject.
-                        session.decoder.resync_not_sent(subject_id);
-                    }
-                }
+                PulseEvent::Resync(request) => send_resync(session, request, now),
                 // Emote start/stop are delivered natively (`PlayerMessage::EmoteStart` / `EmoteStop`)
                 // rather than as an rfc4 `PlayerEmote`: byte-transport emotes are dropped as
                 // duplicates, so the Pulse copy has to be distinguishable from them by variant,
@@ -1353,6 +1330,37 @@ fn drain_inbound(
                 PulseEvent::Left { address } => session.forget(sinks, address),
             }
         }
+    }
+
+    // A request the server dropped unanswered (see `PulseDecoder::retry_resyncs`) is sent again.
+    for request in session.decoder.retry_resyncs(now) {
+        send_resync(session, request, now);
+    }
+}
+
+/// Send a `Resync` reliably and count it for the debug panel. Unsent, it would hold back every
+/// later request for the subject, so the decoder is told to forget it.
+fn send_resync(session: &mut PulseSession, request: pulse::ResyncRequest, now: f64) {
+    let subject_id = request.subject_id;
+    let message = pulse::ClientMessage {
+        message: Some(pulse::client_message::Message::Resync(request)),
+    };
+    let sent = session.link.as_mut().is_some_and(|link| {
+        link.send(PulseFrame {
+            bytes: message.encode_to_vec(),
+            reliability: PulseReliability::Reliable,
+            kind: FrameKind::Control,
+        })
+    });
+    if sent {
+        let second = now as u64;
+        let bucket = &mut session.resyncs[(second % 60) as usize];
+        if bucket.0 != second {
+            *bucket = (second, 0);
+        }
+        bucket.1 += 1;
+    } else {
+        session.decoder.resync_not_sent(subject_id);
     }
 }
 
