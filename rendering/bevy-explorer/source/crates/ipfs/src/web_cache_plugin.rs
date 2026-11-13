@@ -61,6 +61,10 @@ impl Plugin for WebCachePlugin {
                 ("Written to the cache this session (MiB)", "writtenMiB"),
                 ("Writes retried after a quota error", "quotaRetries"),
                 ("Trims reported", "trims"),
+                (
+                    "Trim requests no service worker answered",
+                    "unansweredTrims",
+                ),
                 ("Entries evicted this session", "evictedEntriesTotal"),
                 ("Evicted this session (MiB)", "evictedTotalMiB"),
                 ("Uses waiting to be recorded", "pendingUses"),
@@ -70,10 +74,7 @@ impl Plugin for WebCachePlugin {
                 ("Last trim: Cache Storage usage (MiB)", "cachesMiB"),
                 ("Last trim: entries evicted", "evictedEntries"),
                 ("Last trim: evicted (MiB)", "evictedMiB"),
-                (
-                    "Last trim: other storage keeps the cache over its cap",
-                    "targetUnreachable",
-                ),
+                ("Last trim: content cache size (MiB)", "contentMiB"),
                 (
                     "Last trim: entries ordered by recorded use",
                     "indexedEntries",
@@ -140,6 +141,6 @@ fn web_cache_cap(
         input.reply_failed("The cap must be 0 to 65536 MiB");
         return;
     }
-    cap_override.0 = (cmd.mib > 0.0).then(|| (cmd.mib * (1u64 << 20) as f64) as u64);
+    cap_override.0 = web_cache::override_bytes(cmd.mib);
     input.reply_ok(format!("Web content cache cap override: {} MiB", cmd.mib));
 }

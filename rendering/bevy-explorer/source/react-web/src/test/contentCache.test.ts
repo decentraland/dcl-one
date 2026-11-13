@@ -105,6 +105,37 @@ describe('content cache page functions', () => {
     expect(typeof target.__contentCacheTouch).toBe('function')
   })
 
+  it('warns once without a controlling worker and asks again when one takes control', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const listeners: Record<string, () => void> = {}
+    const posted: unknown[] = []
+    const container: { controller: unknown; addEventListener: (type: string, fn: () => void) => void } = {
+      controller: null,
+      addEventListener: (type, fn) => (listeners[type] = fn)
+    }
+    try {
+      const target: Record<string, (capBytes: number, quotaError: boolean) => Promise<unknown>> = {}
+      installContentCachePageFunctions(target as never, container as never)
+      expect(await target.__contentCacheTrim(4096, false)).toBeNull()
+      expect(await target.__contentCacheTrim(8192, false)).toBeNull()
+      expect(warn).toHaveBeenCalledTimes(1)
+
+      container.controller = {
+        postMessage(msg: unknown, [port]: MessagePort[]) {
+          posted.push(msg)
+          port.postMessage({ ok: true })
+        }
+      }
+      listeners.controllerchange()
+      await vi.waitFor(() => expect(posted).toEqual([{ type: 'content-cache-trim', capBytes: 8192, quotaError: false }]))
+      // only once per unanswered request
+      listeners.controllerchange()
+      expect(posted).toHaveLength(1)
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
   it('forwards the cap and the quota-error flag from the installed page function', async () => {
     const posted: unknown[] = []
     vi.stubGlobal('navigator', {

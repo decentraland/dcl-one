@@ -125,6 +125,9 @@ async function servePreviewRealm(request, clientId) {
 // (engine/content_cache.js) after it has written enough, when its cap changes, and after a write
 // failed for quota. The trim runs here, off the engine's threads, evicts the least recently used
 // entries first (oldest written first for those with no recorded use), and only ever opens CACHE_NAME.
+// The cap applies to the content cache's own bytes. Cache Storage usage (`usageDetails.caches`, or
+// the origin's whole usage without it) is only an upper bound on them: at or under the cap nothing
+// is enumerated; over it, every entry is sized and only that measured total decides the eviction.
 const CONTENT_CACHE_TRIM = 'content-cache-trim';
 const CONTENT_CACHE_TOUCH = 'content-cache-touch';
 // When each entry was last read or written, as the engine reported it: eviction goes least
@@ -200,7 +203,8 @@ self.addEventListener('message', (event) => {
     ).then(() => Promise.all(background)));
 });
 
-// How much to free. `cachesUsage` is the origin's Cache Storage usage; `quota` bounds the cap.
+// How much to free. `cachesUsage` is the bytes held: the usage bound, then the content's measured
+// total. `quota` bounds the cap.
 function contentCacheTarget({ capBytes, quota, cachesUsage, quotaError }) {
     const cap = Math.max(0, Math.min(capBytes, Math.floor(quota * CONTENT_CACHE_QUOTA_SHARE)));
     let bytesToFree = cachesUsage > cap ? cachesUsage - Math.floor(cap * CONTENT_CACHE_LOW_WATER) : 0;
@@ -361,10 +365,10 @@ async function trimContentCache(capBytes, quotaError, usedNow = [], keepAlive = 
     const { cap, bytesToFree } = contentCacheTarget({ capBytes, quota, cachesUsage, quotaError });
     const report = {
         capBytes: cap, usage, quota, cachesUsage, evictedEntries: 0, evictedBytes: 0, persisted,
-        targetUnreachable: false, preempted: false,
+        contentBytes: null, preempted: false,
     };
-    let toFree = bytesToFree;
-    if (toFree <= 0) return report;
+    // the bound: content can only be over the cap when the usage holding it is
+    if (bytesToFree <= 0) return report;
 
     const cache = await caches.open(CACHE_NAME);
     // insertion order: oldest written first (a put over a key moves it to the end)
@@ -375,11 +379,10 @@ async function trimContentCache(capBytes, quotaError, usedNow = [], keepAlive = 
     for (const key of usedNow) ranked.set(key, now);
     const ordered = contentCacheEvictionOrder(requests, ranked);
     report.indexedEntries = requests.filter((r) => ranked.has(r.url)).length;
-    // Size before deleting: `cachesUsage` also counts other caches (and, without usageDetails, all
-    // storage), which no eviction here reaches.
+    // size it all: other storage in the bound must not decide how much content goes
     const sized = [];
     let contentBytes = 0;
-    for (let i = 0; i < ordered.length && contentBytes < toFree; i += CONTENT_CACHE_SIZE_BATCH) {
+    for (let i = 0; i < ordered.length; i += CONTENT_CACHE_SIZE_BATCH) {
         if (!quotaError && contentCacheForcedWaiting()) {
             report.preempted = true;
             return report;
@@ -391,11 +394,8 @@ async function trimContentCache(capBytes, quotaError, usedNow = [], keepAlive = 
         for (const entry of batch) contentBytes += entry.size;
         sized.push(...batch);
     }
-    if (contentBytes < toFree) {
-        // the whole content cache would not reach the target: hold it to the cap by itself
-        report.targetUnreachable = true;
-        toFree = contentCacheTarget({ capBytes, quota, cachesUsage: contentBytes, quotaError }).bytesToFree;
-    }
+    report.contentBytes = contentBytes;
+    const toFree = contentCacheTarget({ capBytes, quota, cachesUsage: contentBytes, quotaError }).bytesToFree;
     const { picked } = pickEvictions(sized, toFree);
     if (picked.length === 0) return report;
     // An entry written again while this trim sized moved to the newest end, behind a key that

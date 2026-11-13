@@ -55,7 +55,7 @@ export function contentCacheTouch(keys, container, timeoutMs) {
 
 /**
  * Asks once for persistent storage, so the browser does not clear this origin under storage
- * pressure. The browser decides without prompting.
+ * pressure. Chromium decides without prompting; other browsers may ask the player.
  * @param {StorageManager} storage
  * @returns {Promise<boolean>}
  */
@@ -64,9 +64,29 @@ export async function requestPersistentStorage(storage = navigator.storage) {
   return storage.persist();
 }
 
-/** Defines the page functions on `target` (a window). */
-export function installContentCachePageFunctions(target = window) {
-  target.__contentCacheTrim = (capBytes, quotaError, usedNow) =>
-    contentCacheTrim(capBytes, quotaError, undefined, undefined, usedNow);
-  target.__contentCacheTouch = (keys) => contentCacheTouch(keys);
+/**
+ * Defines the page functions on `target` (a window). Without a controlling worker (after a hard
+ * reload, say) nothing trims the cache: that is logged once, and the last cap asked for is sent
+ * again when a worker takes control.
+ */
+export function installContentCachePageFunctions(target = window, container = navigator.serviceWorker) {
+  let warned = false;
+  let unanswered = null;
+  container?.addEventListener?.('controllerchange', () => {
+    if (unanswered === null) return;
+    const capBytes = unanswered;
+    unanswered = null;
+    contentCacheTrim(capBytes, false, container);
+  });
+  target.__contentCacheTrim = (capBytes, quotaError, usedNow) => {
+    if (!container?.controller) {
+      unanswered = capBytes;
+      if (!warned) {
+        warned = true;
+        console.warn('[content cache] no service worker controls this page: the content cache is not trimmed until one does');
+      }
+    }
+    return contentCacheTrim(capBytes, quotaError, container, undefined, usedNow);
+  };
+  target.__contentCacheTouch = (keys) => contentCacheTouch(keys, container);
 }
