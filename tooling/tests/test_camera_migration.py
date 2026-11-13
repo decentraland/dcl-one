@@ -14,7 +14,7 @@ from unittest.mock import patch
 import urllib.parse
 import uuid
 
-from tooling.tests.test_migration import migrate, blobs, pattern
+from tooling.tests.test_migration import migrate, blobs, pattern, private_postgres_cluster, SERVER_ENV
 
 PHOTO = '12345678-1234-5678-9012-123456789012'
 OWNER = '0x' + 'a' * 40
@@ -268,11 +268,20 @@ class CameraFiles(unittest.TestCase):
 
 
 class CameraDatabase(CameraFiles):
+    @classmethod
+    def setUpClass(cls):
+        cls.admin_url = os.environ.get('CATALYST_TEST_DATABASE_URL') or os.environ.get(SERVER_ENV)
+        if cls.admin_url:
+            parsed = urllib.parse.urlsplit(cls.admin_url)
+            cls.admin_url = urllib.parse.urlunsplit(parsed._replace(path=parsed.path or '/postgres'))
+        else:
+            # Discovery in CI has no database URL. This cluster belongs only
+            # to Camera, independent of the migration harness's fixed DB names.
+            cls.admin_url = cls.enterClassContext(private_postgres_cluster()) + '/postgres'
+
     def setUp(self):
         super().setUp()
-        admin = os.environ.get('CATALYST_TEST_DATABASE_URL')
-        if not admin:
-            self.skipTest('CATALYST_TEST_DATABASE_URL required for disposable Camera database')
+        admin = self.admin_url
         self.admin = admin
         self.name = 'camera_import_test_' + uuid.uuid4().hex
         migrate.psql(admin, f'CREATE DATABASE {self.name};')

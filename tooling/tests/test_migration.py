@@ -21,8 +21,10 @@ import urllib.error
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
-if __name__ == "__main__":
-    sys.modules["tooling.tests.test_migration"] = sys.modules[__name__]
+# Discovery imports this file as test_migration; Camera and the mixins use its
+# package name. Both must share the same dynamically loaded exception classes.
+for module_name in ("test_migration", "tooling.tests.test_migration"):
+    sys.modules[module_name] = sys.modules[__name__]
 
 from tooling.tests.migration_comms_cases import CommsMigrationCases
 from tooling.tests.migration_social_cases import SocialMigrationCases
@@ -92,6 +94,21 @@ def write_source(root, files=FILES, name='toy'):
     for file, text in files.items():
         (directory / file).write_text(text)
     return directory
+
+
+class ModuleIdentity(unittest.TestCase):
+    def test_discovery_and_package_imports_share_the_migration_harness(self):
+        for first, second in (('test_migration', 'tooling.tests.test_migration'),
+                              ('tooling.tests.test_migration', 'test_migration')):
+            with self.subTest(first=first):
+                subprocess.run([sys.executable, '-c',
+                    "import importlib,sys; sys.path.insert(0,sys.argv[1]); "
+                    "a=importlib.import_module(sys.argv[2]); b=importlib.import_module(sys.argv[3]); "
+                    "c=importlib.import_module('tooling.tests.test_camera_migration'); "
+                    "assert a is b; assert a.migrate is c.migrate; "
+                    "assert isinstance(a.migrate.MigrationError('fixture'), b.migrate.MigrationError)",
+                    str(ROOT / 'tooling/tests'), first, second], cwd=ROOT, check=True,
+                    capture_output=True, text=True)
 
 
 class Manifests(unittest.TestCase):
@@ -807,6 +824,31 @@ def free_port():
 SERVER_ENV = 'MIGRATION_TEST_SERVER_URL'
 
 
+@contextlib.contextmanager
+def private_postgres_cluster():
+    """A caller-owned cluster; fixed fixture database names never reach another suite's server."""
+    if not all(shutil.which(binary) for binary in ('psql', 'initdb', 'pg_ctl')):
+        raise unittest.SkipTest('PostgreSQL binaries are not on PATH')
+    with tempfile.TemporaryDirectory(prefix='migration-pg-') as tmp:
+        root = Path(tmp)
+        data = root / 'pg'
+        initdb = subprocess.run(['initdb', '-D', str(data), '-U', 'postgres', '--auth=trust', '-E', 'UTF8',
+                                 '--locale=C'], capture_output=True, text=True)
+        if initdb.returncode != 0:
+            if os.environ.get('CI'):
+                raise RuntimeError(f'initdb failed: {initdb.stderr.strip()}')
+            raise unittest.SkipTest(f'initdb cannot create a cluster here: {initdb.stderr.strip()[:200]}')
+        port = free_port()
+        with (data / 'postgresql.conf').open('a') as conf:
+            conf.write(f"port={port}\nlisten_addresses='127.0.0.1'\nunix_socket_directories=''\nfsync=off\n")
+        try:
+            subprocess.run(['pg_ctl', '-D', str(data), '-l', str(root / 'log'), '-w', 'start'],
+                           check=True, capture_output=True)
+            yield f'postgres://postgres@127.0.0.1:{port}'
+        finally:
+            subprocess.run(['pg_ctl', '-D', str(data), '-m', 'immediate', 'stop'], capture_output=True)
+
+
 @unittest.skipUnless(shutil.which('psql') and (os.environ.get(SERVER_ENV) or
                                                (shutil.which('initdb') and shutil.which('pg_ctl'))),
                      'PostgreSQL binaries are not on PATH')
@@ -816,33 +858,12 @@ class AgainstPostgres(CommsMigrationCases, SocialMigrationCases, WorldsMigration
     @classmethod
     def setUpClass(cls):
         cls.tmp = Path(tempfile.mkdtemp())
-        cls.data = None
+        cls.addClassCleanup(shutil.rmtree, cls.tmp)
         server = os.environ.get(SERVER_ENV)
         if server:
             cls.base = server.rstrip('/').rsplit('/', 1)[0] if server.count('/') > 2 else server.rstrip('/')
-            return
-        data = cls.tmp / 'pg'
-        initdb = subprocess.run(['initdb', '-D', str(data), '-U', 'postgres', '--auth=trust', '-E', 'UTF8',
-                                 '--locale=C'], capture_output=True, text=True)
-        if initdb.returncode != 0:
-            shutil.rmtree(cls.tmp)
-            # CI's dev shell has a working server; locally a client-only initdb (libpq) cannot start one
-            if os.environ.get('CI'):
-                raise RuntimeError(f'initdb failed: {initdb.stderr.strip()}')
-            raise unittest.SkipTest(f'initdb cannot create a cluster here: {initdb.stderr.strip()[:200]}')
-        cls.port = free_port()
-        with (data / 'postgresql.conf').open('a') as conf:
-            conf.write(f"port={cls.port}\nlisten_addresses='127.0.0.1'\nunix_socket_directories=''\nfsync=off\n")
-        subprocess.run(['pg_ctl', '-D', str(data), '-l', str(cls.tmp / 'log'), '-w', 'start'], check=True,
-                       capture_output=True)
-        cls.data = data
-        cls.base = f'postgres://postgres@127.0.0.1:{cls.port}'
-
-    @classmethod
-    def tearDownClass(cls):
-        if cls.data:
-            subprocess.run(['pg_ctl', '-D', str(cls.data), '-m', 'immediate', 'stop'], capture_output=True)
-        shutil.rmtree(cls.tmp)
+        else:
+            cls.base = cls.enterClassContext(private_postgres_cluster())
 
     def url(self, db):
         return f'{self.base}/{db}'
