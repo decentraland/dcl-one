@@ -47,7 +47,9 @@ What else changes:
 - **npm releases.** `@dcl/asset-packs` and `@dcl/inspector` publish from here with npm trusted
   publishing (workflow `creator-hub-ci.yml`, environment `creator-hub-release`) and keep their
   tags, `@dcl/asset-packs@X.Y.Z` and `@dcl/inspector@X.Y.Z`. The tag history was not imported:
-  the last released version of each is tagged on the import commit before the first release.
+  the last released version of each (and `creator-hub@X.Y.Z` for the installers) is tagged on
+  `main` before the import merges, since the merge itself starts the first release. A release on
+  `main` fails when it finds no such tag, instead of publishing `0.1.0` as npm `latest`.
 - **Installers.** They keep publishing to `decentraland/creator-hub` releases, which becomes a
   release-only repository: every installed app's updater reads them (`electron-builder.cjs`
   `publish`, `shared/urls.ts`), and GitHub has one "Latest" release per repository, which the
@@ -58,10 +60,13 @@ What else changes:
 - **Promotion.** Every merge publishes a pre-release, which no installed app sees. A person makes
   it Latest with `creator-hub-promote.yml` (`promote`), and `rollback` turns the current Latest
   back into a pre-release. Both run in the `creator-hub-promote` environment, which requires a
-  reviewer. A newer merge never cancels a release in progress on `main`.
+  reviewer. Promotion needs the `creator-hub@X.Y.Z` tag here, which the desktop workflow creates
+  only after both installers built and passed the signature check: the installers upload before
+  those checks end, so a pre-release alone may be half-built. A newer merge never cancels a
+  release in progress on `main`.
 - **Windows update signatures.** Installed Windows apps check each update's signature against
   `publisherName` (`verifyUpdateCodeSignature: true`). The release job fails if the signed
-  installer's certificate carries a different name, before anyone can promote it.
+  installer's certificate carries a different name, so it never gets the tag promotion needs.
 - **Secrets.** No AWS keys are stored: every upload assumes an IAM role through GitHub OIDC
   (`aws-actions/configure-aws-credentials` with `role-to-assume`, `id-token: write`). The role
   ARNs are repository variables: `CREATOR_HUB_SDK_BUCKET_ROLE_ARN` (PR packages, installers and
@@ -78,7 +83,8 @@ What else changes:
   the inspector keeps one plain stylesheet per component, both against
   [the UI standards](../ui-standards.md). `tooling/ui-standards-imported.txt` lists the 238 files
   that broke the standard when they were imported. `tooling/ui_standards.py` passes them only as
-  files the change adds, so every later change to them is checked as usual, and the list never
+  files the change adds, so every later change to them is checked as usual. The check reads the
+  list from the base revision and fails a change that adds to it or deletes it, so the list never
   grows.
 - **Ownership.** `apps/creator-hub` and the creator-hub workflows and actions belong to the
   `creator-ui` area.

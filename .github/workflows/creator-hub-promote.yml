@@ -20,7 +20,9 @@ on:
         type: choice
         options: [promote, rollback]
 
-permissions: {}
+# Reads this repository's tags only; the release repository is reached with the App token.
+permissions:
+  contents: read
 
 concurrency:
   group: creator-hub-promote
@@ -44,6 +46,7 @@ jobs:
       - name: ${{ inputs.action }}
         env:
           GH_TOKEN: ${{ steps.release-token.outputs.token }}
+          DCL_ONE_TOKEN: ${{ github.token }}
           REPO: decentraland/creator-hub
           VERSION: ${{ inputs.version }}
           ACTION: ${{ inputs.action }}
@@ -60,6 +63,12 @@ jobs:
           if [ "$ACTION" = promote ]; then
             if [ "$(jq -r .prerelease <<<"$release")" != true ]; then
               echo "::error::$VERSION is not a pre-release"; exit 1
+            fi
+            # creator-hub-desktop.yml tags creator-hub@X.Y.Z here only after both installers built,
+            # signed and passed the Windows signature check. Installers upload before those checks
+            # finish, so a pre-release without the tag may be half-built or wrongly signed.
+            if ! GH_TOKEN="$DCL_ONE_TOKEN" gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/creator-hub@$VERSION" >/dev/null 2>&1; then
+              echo "::error::$GITHUB_REPOSITORY has no tag creator-hub@$VERSION: its release run didn't finish cleanly"; exit 1
             fi
             # The update feeds the installed apps read; without them the release is invisible.
             for feed in latest.yml latest-mac.yml; do

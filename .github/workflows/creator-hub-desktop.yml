@@ -70,6 +70,9 @@ jobs:
 
       - name: install inspector
         working-directory: apps/creator-hub/packages/creator-hub
+        env:
+          INSPECTOR_S3_KEY: ${{ inputs.inspector_s3_bucket_key }}
+          S3_BASE_URL: ${{ secrets.SDK_TEAM_S3_BASE_URL }}
         run: |
           # If the inspector version hasn't changed or we are on main branch, we need to install the latest version
           # Otherwise, we need to install the version from the S3 bucket
@@ -85,9 +88,13 @@ jobs:
             done
             npm view @dcl/inspector versions --json | tail -5 || true
             exit 1
+          elif [[ -n "$INSPECTOR_S3_KEY" ]]; then
+            echo "Installing inspector version from S3 bucket: $INSPECTOR_S3_KEY"
+            npm install "$S3_BASE_URL/$INSPECTOR_S3_KEY"
           else
-            echo "Installing inspector version from S3 bucket: ${{ inputs.inspector_s3_bucket_key }}"
-            npm install ${{ secrets.SDK_TEAM_S3_BASE_URL }}/${{ inputs.inspector_s3_bucket_key }}
+            # No S3 package (fork or Dependabot PR): build against the last published inspector.
+            echo "::warning::No inspector package for this PR; building against @dcl/inspector@latest"
+            npm install @dcl/inspector@latest
           fi
 
       - name: build
@@ -143,6 +150,18 @@ jobs:
           search_commit_body: true
           user_format_type: "json"
           change_path: "apps/creator-hub"
+
+      # With no `creator-hub@X.Y.Z` tag, semantic-version counts from 0.0.0, and a release on main
+      # would publish 0.1.0 installers. Tag the last released version first (cut-over runbook).
+      - name: Require a baseline version tag on main
+        if: github.ref == 'refs/heads/main'
+        env:
+          PREVIOUS_VERSION: ${{ steps.version.outputs.previous_version }}
+        run: |
+          if [ "$PREVIOUS_VERSION" = 0.0.0 ]; then
+            echo "::error::No creator-hub@X.Y.Z tag found; tag the last released version before releasing from main"
+            exit 1
+          fi
 
       # Installers are published to decentraland/creator-hub, a release-only repository: every
       # installed app's updater reads its GitHub releases (electron-builder.cjs `publish`).

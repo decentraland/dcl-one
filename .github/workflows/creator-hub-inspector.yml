@@ -60,6 +60,18 @@ jobs:
           user_format_type: "json"
           change_path: "apps/creator-hub/packages/inspector"
 
+      # With no `@dcl/inspector@X.Y.Z` tag, semantic-version counts from 0.0.0, and a release on main
+      # would publish 0.1.0 as the npm `latest`. Tag the last released version first (cut-over runbook).
+      - name: Require a baseline version tag on main
+        if: github.ref == 'refs/heads/main'
+        env:
+          PREVIOUS_VERSION: ${{ steps.semantic-version.outputs.previous_version }}
+        run: |
+          if [ "$PREVIOUS_VERSION" = 0.0.0 ]; then
+            echo "::error::No @dcl/inspector@X.Y.Z tag found; tag the last released version before releasing from main"
+            exit 1
+          fi
+
       # Force a patch bump when only @dcl/asset-packs changed: inspector source
       # references @dcl/asset-packs via `file:../asset-packs`, so dependency-only
       # bumps don't touch apps/creator-hub/packages/inspector and semantic-version returns an
@@ -99,6 +111,10 @@ jobs:
     outputs:
       s3_bucket_key: ${{ steps.s3-upload.outputs.s3-key }}
       preview_path: ${{ steps.preview.outputs.path }}
+    env:
+      # Fork and Dependabot PRs get no secrets and no OIDC token, so they build and pack without
+      # uploading, as creator-hub-desktop.yml does.
+      CAN_UPLOAD: ${{ secrets.SDK_TEAM_S3_BUCKET != '' && vars.CREATOR_HUB_SDK_BUCKET_ROLE_ARN != '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -118,6 +134,9 @@ jobs:
 
       - name: install asset-packs
         working-directory: apps/creator-hub/packages/inspector
+        env:
+          ASSET_PACKS_S3_KEY: ${{ inputs.asset_packs_s3_bucket_key }}
+          S3_BASE_URL: ${{ secrets.SDK_TEAM_S3_BASE_URL }}
         run: |
           # If the asset-packs version hasn't changed or we are on main branch, we need to install the latest version
           # Otherwise, we need to install the version from the S3 bucket
@@ -133,9 +152,13 @@ jobs:
             done
             npm view @dcl/asset-packs versions --json | tail -5 || true
             exit 1
+          elif [[ -n "$ASSET_PACKS_S3_KEY" ]]; then
+            echo "Installing asset-packs version from S3 bucket: $ASSET_PACKS_S3_KEY"
+            npm install "$S3_BASE_URL/$ASSET_PACKS_S3_KEY"
           else
-            echo "Installing asset-packs version from S3 bucket: ${{ inputs.asset_packs_s3_bucket_key }}"
-            npm install ${{ secrets.SDK_TEAM_S3_BASE_URL }}/${{ inputs.asset_packs_s3_bucket_key }}
+            # No S3 package (fork or Dependabot PR): build against the last published asset-packs.
+            echo "::warning::No asset-packs package for this PR; building against @dcl/asset-packs@latest"
+            npm install @dcl/asset-packs@latest
           fi
 
       - name: protoc
@@ -163,6 +186,7 @@ jobs:
           echo "pack-filename=$PACK_FILENAME" >> $GITHUB_OUTPUT
 
       - name: upload package to S3
+        if: env.CAN_UPLOAD == 'true'
         uses: ./.github/actions/creator-hub-s3-upload
         id: s3-upload
         with:
@@ -186,12 +210,14 @@ jobs:
       # served from the SDK bucket next to the branch's package tarballs. Source maps and the
       # Bevy engine/agent bundles stay out: the preview doesn't load them.
       - name: AWS role for the SDK bucket
+        if: env.CAN_UPLOAD == 'true'
         uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
         with:
           role-to-assume: ${{ vars.CREATOR_HUB_SDK_BUCKET_ROLE_ARN }}
           aws-region: ${{ secrets.SDK_TEAM_AWS_REGION }}
 
       - name: upload preview to S3
+        if: env.CAN_UPLOAD == 'true'
         id: preview
         env:
           BUCKET: ${{ secrets.SDK_TEAM_S3_BUCKET }}
@@ -216,7 +242,7 @@ jobs:
 
   notify:
     needs: [version, publish]
-    if: ${{ github.event.pull_request.number && needs.version.outputs.changed == 'true' }}
+    if: ${{ github.event.pull_request.number && needs.version.outputs.changed == 'true' && needs.publish.outputs.s3_bucket_key != '' }}
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write

@@ -47,6 +47,18 @@ jobs:
           user_format_type: "json"
           change_path: "apps/creator-hub/packages/asset-packs"
 
+      # With no `@dcl/asset-packs@X.Y.Z` tag, semantic-version counts from 0.0.0, and a release on main
+      # would publish 0.1.0 as the npm `latest`. Tag the last released version first (cut-over runbook).
+      - name: Require a baseline version tag on main
+        if: github.ref == 'refs/heads/main'
+        env:
+          PREVIOUS_VERSION: ${{ steps.version.outputs.previous_version }}
+        run: |
+          if [ "$PREVIOUS_VERSION" = 0.0.0 ]; then
+            echo "::error::No @dcl/asset-packs@X.Y.Z tag found; tag the last released version before releasing from main"
+            exit 1
+          fi
+
   validate:
     runs-on: ubuntu-latest
     needs: [version]
@@ -79,6 +91,10 @@ jobs:
       id-token: write
     outputs:
       s3_bucket_key: ${{ steps.s3-upload.outputs.s3-key }}
+    env:
+      # Fork and Dependabot PRs get no secrets and no OIDC token, so they build and pack without
+      # uploading, as creator-hub-desktop.yml does.
+      CAN_UPLOAD: ${{ secrets.SDK_TEAM_S3_BUCKET != '' && vars.CREATOR_HUB_SDK_BUCKET_ROLE_ARN != '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -122,6 +138,7 @@ jobs:
           echo "pack-filename=$PACK_FILENAME" >> $GITHUB_OUTPUT
 
       - name: upload package to S3
+        if: env.CAN_UPLOAD == 'true'
         uses: ./.github/actions/creator-hub-s3-upload
         id: s3-upload
         with:
@@ -181,7 +198,7 @@ jobs:
 
   notify:
     needs: [version, publish]
-    if: ${{ github.event.pull_request.number && needs.version.outputs.changed == 'true' }}
+    if: ${{ github.event.pull_request.number && needs.version.outputs.changed == 'true' && needs.publish.outputs.s3_bucket_key != '' }}
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write
