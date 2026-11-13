@@ -97,6 +97,9 @@ MANDATORY_ARCHIPELAGO = {
         "archipelago::observations::tests::refused_observations_count_every_loss_without_logging_on_the_socket_path",
         "pulse::statistics::tests::draining_changes_releases_bytes_while_the_backlog_stays_nonempty",
         "stats::tests::indexed_changes_preserve_order_and_rebuild_after_removal_and_recovery",
+        "stats::tests::render_tests::f32_position_extremes_and_receipt_rounding_keep_exact_public_bytes",
+        "stats::tests::render_tests::discovery_uses_absolute_strict_age_and_advertised_count",
+        "stats::tests::content_tests::selected_metadata_keeps_index_key_order_and_distinguishes_omitted_fields",
         "stats::tests::http_tests::method_admission_bounds_labels_without_relabeling_accepted_extensions",
         "stats::tests::content_tests::thumbnail_only_sql_matches_full_projection_for_metadata_and_selection_variants",
         "gatekeeper::bus::broker::tests::terminal_submission_waits_for_capacity_without_admission_readiness",
@@ -144,6 +147,8 @@ MANDATORY_ARCHIPELAGO = {
     ],
     ("catalyst", "lib"): [
         "presence::tests::module_sources::validated_historical_sync_order_reaches_hot_scenes_http",
+        "presence::tests::module_sources::numeric_statistics_reach_about_and_realm_routes_without_signed_narrowing",
+        "presence::tests::module_sources::archive_retains_one_statistics_snapshot_while_content_awaits",
         "presence::tests::module_sources::archive_reads_selected_sql_metadata_and_omits_non_string_fields",
         "metrics_matcher::tests::canceled_queued_and_running_matchers_keep_single_submission",
         "metrics_matcher::tests::panicked_work_returns_error_and_releases_admission",
