@@ -45,6 +45,13 @@ export const SERVICES: ServiceDef[] = [
     "path": ""
   },
   {
+    "name": "abgenCdn",
+    "value": "http",
+    "scheme": "https",
+    "sub": "abgen-cdn",
+    "path": ""
+  },
+  {
     "name": "storage",
     "value": "http",
     "scheme": "https",

@@ -12,6 +12,7 @@ import { registerAvatarPreview } from './domains/avatarPreview'
 import { registerMinimap } from './domains/minimap'
 import { renderSceneUi } from './ui'
 import { registerSession } from './domains/session'
+import { registerConnectivity } from './domains/connectivity'
 import { registerAnalytics } from './domains/analytics'
 import { registerProfile } from './domains/profile'
 import { registerFriends } from './domains/friends'
@@ -41,6 +42,7 @@ import { registerSystemAction } from './domains/systemAction'
 import { registerBindings } from './domains/bindings'
 import { registerAvatarPointer } from './domains/avatarPointer'
 import { registerPermissions } from './domains/permissions'
+import { registerPortables } from './domains/portables'
 import { registerWorldAccess } from './domains/worldAccess'
 import { registerEditor } from './domains/editor'
 import { initNametags } from './domains/nametags'
@@ -51,6 +53,7 @@ export function main(): void {
 
   startBridge((ctx) => {
     registerSession(ctx)
+    registerConnectivity(ctx)
     registerAnalytics(ctx)
     registerProfile(ctx)
     registerFriends(ctx)
@@ -82,6 +85,7 @@ export function main(): void {
     registerBindings(ctx)
     registerAvatarPointer(ctx)
     registerPermissions(ctx)
+    registerPortables(ctx)
     registerWorldAccess(ctx)
     registerEditor(ctx)
     registerAvatarPreview(ctx)

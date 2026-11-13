@@ -145,6 +145,7 @@ def render(table, cfg, mime):
         raise ValueError("Both API and Sites upstreams are required")
     prefixes = site_prefixes(table["sites"])
     for prefix in prefixes:
+        # Only the exact /content page is Sites', on the apex host (the content_root map).
         if prefix in ("/ws", "/hot-scenes", "/content") or any(
                 prefix == path or prefix.startswith(path + "/") for path in table["internal"]):
             raise ValueError(f"Sites claims a reserved API path: {prefix}")
@@ -267,8 +268,11 @@ def render(table, cfg, mime):
             locations += pair(prefix, "sites")
     for path in ("/", "/favicon.ico", "/dcl-sdk-types.json", "/docs/index.md", "/_root.data",
                  "/terms", "/privacy", "/content-policy", "/ethics", "/rewards", "/rewards-terms",
-                 "/referral", "/referral-terms", "/security", "/brand"):
+                 "/referral", "/referral-terms", "/credits-terms", "/security", "/brand"):
         locations += location("= " + path, proxy("sites"))
+    # The Content Policy page on the apex host; on every other host (peer., worlds., content.)
+    # /content stays the content server's.
+    locations += location("= /content", proxy("$content_root"))
     for path in ("/assets/", "/fonts/", "/errors/", "/template-bundles/"):
         locations += location("^~ " + path, proxy("sites"))
     locations += location("/content/", proxy("apis", "limit_req zone=content burst=1000 nodelay;"))
@@ -347,6 +351,10 @@ http {{
         default "";
         {apex_hosts}
         "~^(?<gateway_sub>[a-z0-9-]+)\\.{domain}$" $gateway_sub;
+    }}
+    map $gateway_subdomain $content_root {{
+        default apis;
+        "" sites;
     }}
     map $gateway_subdomain $gateway_prefix {{
         default /$gateway_subdomain;

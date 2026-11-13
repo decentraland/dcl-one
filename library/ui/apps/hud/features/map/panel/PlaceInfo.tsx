@@ -22,6 +22,8 @@ import { parcelKey, parseParcel, type Vec2 } from '@explorer-core/features/map/m
 import type { PlaceView } from '@explorer-core/features/map/navmap'
 import { eventSchedule, eventShareLinks, placeShareLinks } from '@explorer-core/features/map/shareLinks'
 import { MaskIcon } from '../../../design/MaskIcon'
+import tipIcon from '../../../assets/donate/tip.png'
+import { useDonate } from '../../donate/useDonate'
 import { CAT_ICONS, PANEL_ART } from '../mapArt'
 import { ShareMenu } from './ShareMenu'
 import { TextWithLinks } from './TextWithLinks'
@@ -214,6 +216,9 @@ export function PlaceInfo({ view, referrer, isHome, onPlaceChange, onHome, onSta
   // the latest place, for a write that lands after another has changed it
   const current = useRef(place)
   current.current = place
+  const base = parseParcel(place.base_position)
+  // Shown where the host can sign a tip and the place has a creator to tip.
+  const donate = useDonate(isWorldPlace(place) || isEmptyPlace(place) || base == null ? null : { parcel: base })
 
   const world = isWorldPlace(place)
   const empty = isEmptyPlace(place)
@@ -313,6 +318,11 @@ export function PlaceInfo({ view, referrer, isHome, onPlaceChange, onHome, onSta
             onClick={favourite}
           />
           <ActionButton label="Set as Home" on={isHome} icon={PANEL_ART.homeOutline} iconOn={PANEL_ART.homeSolid} size={26} onClick={() => onHome(!isHome)} />
+          {donate.visible && (
+            <button type="button" className={styles.action} aria-label="Donate" onClick={(e) => donate.open(e.detail === 0 ? 'keyboard' : 'pointer')}>
+              <MaskIcon src={tipIcon} size={26} />
+            </button>
+          )}
           <span className={styles.shareAnchor}>
             <button type="button" className={styles.action} aria-label="Share" aria-haspopup="menu" aria-expanded={sharing} onClick={() => setSharing(true)}>
               <MaskIcon src={PANEL_ART.share} size={24} />

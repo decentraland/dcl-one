@@ -1,8 +1,6 @@
 /* Design tokens — the single source of truth for the React HUD.
-   Values adapted from the Decentraland UI port (eordano/dcl-react-ui
-   primitives.css) and the SDK7 scene's constants. New components use the
-   canonical tokens below; the legacy --color-* aliases keep the first slices
-   (login/chat/loading) working. */
+   New components use the canonical tokens below; the legacy --color-* aliases
+   keep login, chat and loading components working. */
 :root {
   /* ---- palette ---- */
   --brand: #ff2d55; /* primary / ruby */
@@ -16,8 +14,8 @@
   --gold: #ffc95b;
   --purple: #982de2;
 
-  /* Unity menu backdrop — vivid magenta→purple radial, brightest upper-right (shared with
-     the login screen). Full-screen menu pages paint this so the HUD matches Unity. */
+  /* Full-screen menus and the login screen share this radial backdrop,
+     with the brightest area in the upper-right. */
   --menu-bg: radial-gradient(circle at 66% 38%, #b528d8 0%, #8016b8 44%, #54098a 100%);
 
   /* DCL named palette (Explorer 2.0 design system) */
@@ -83,7 +81,15 @@
   /* ---- modal (the shared violet design-system dialog: permissions, communities, etc.) ---- */
   --modal-bg: linear-gradient(160deg, #3a1660 0%, #25103f 55%, #1a0c2e 100%);
   --modal-scrim: rgba(18, 7, 33, 0.6);
-  /* The NAME upsell panel at the foot of the name editor (unity's Edit Username dialog). */
+  /* Connection Lost modal colors, shared by both HUD builds. */
+  --connection-modal-bg: #4c147c;
+  --connection-modal-scrim: rgba(0, 0, 0, 0.8);
+  --connection-modal-glow: #ff4bed;
+  --connection-modal-glow-top: 0.101960786;
+  --connection-modal-glow-bottom: 0.14901961;
+  --connection-modal-floor-opacity: 0.29803923;
+  --connection-modal-radius: 48px;
+  /* The NAME upsell panel at the foot of the name editor. */
   --promo-bg: linear-gradient(105deg, #7b2ea8 0%, #a92e93 100%);
 
   /* ---- radii ---- */
@@ -106,9 +112,8 @@
   --z-modal: 1000;
   --z-loading: 9998;
   --z-login: 9999;
-  /* The imperative popup layer (PopupHost). Above login/loading/picker — a popup must be able to
-     open over any phase (e.g. the world-not-found dialog over the destination picker), mirroring
-     bevy-ui-scene's PopupStack at MAX_ZINDEX-1. Below --z-fatal: a crash outranks everything. */
+  /* The imperative popup layer (PopupHost) opens above every phase surface,
+     including login, loading and the destination picker. A crash stays above it. */
   --z-popup: 10000;
   --z-fatal: 10010; /* engine crash / boot-panic popup — above login + loading + popups */
 
@@ -124,14 +129,13 @@
   --fs-display: clamp(2rem, 4.5vh, 3.25rem);
 
   /* ---- HUD scale ---- */
-  /* The engine canvas + Unity's HUD scale with render resolution; our DOM overlay
-     is fixed CSS px, so it reads larger. This knob scales the floating HUD panels
-     to match. Tune to taste (1 = native px). */
+  /* Floating HUD panels scale their CSS pixels with the viewport.
+     A value of 1 uses native pixels. */
   --ui-scale: 0.85;
 
   /* ---- motion ---- */
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
-  /* Unity DOTween Ease.OutBack — the spring overshoot the backpack UI uses on hover/select. */
+  /* Spring overshoot for backpack hover and selection. */
   --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
   --dur-fast: 140ms;
   --dur-mid: 300ms;
@@ -359,7 +363,7 @@
   --map-dur-notice: 300ms;
   --ease-outback: cubic-bezier(0.34, 1.56, 0.64, 1);
 
-  /* ---- modal (ported from dcl-react-ui) ---- */
+  /* ---- modal ---- */
   --modal-pad: 30px;
   --modal-gap: 20px;
   --modal-btn-h: 46px;
@@ -380,7 +384,7 @@
   --font-button: var(--fs-md);
 }
 
-/* ---- item rarity (Unity NftRarityColors.asset) ----
+/* ---- item rarity ----
    Set `data-rarity` on a tile and read --rm (main) / --rl (light sheen) anywhere inside it,
    pseudo-elements included. Unknown or missing values fall through to base.
    --rarity / --rarity-light are the design system's (DCL-ONE UI Style Guide, Rarities/<rarity> and its

@@ -9,12 +9,18 @@
     justify-content: space-between;
     gap: var(--dcl-space-16);
     min-height: var(--dcl-space-64);
+    block-size: 64px;
     padding: var(--dcl-space-12) var(--dcl-layout-margin-x);
     background: var(--dcl-bg-navbar-mobile);
     box-shadow:
       0 4px 8px -1px var(--dcl-transparencies-black-20),
       0 8px 24px 0 var(--dcl-transparencies-black-10);
     color: var(--dcl-text-primary);
+  }
+
+  /* Keep the foreground band readable over bright artwork; positioning belongs to the app. */
+  .root[data-surface='overlay'] {
+    background: linear-gradient(180deg, var(--dcl-neutrals-black) 70%, transparent 100%);
   }
 
   .root *,
@@ -158,8 +164,22 @@
     cursor: pointer;
   }
 
-  .barBalances {
+  .barBalances,
+  .barAccountControl {
     display: none;
+    align-items: center;
+    gap: var(--dcl-space-16);
+  }
+
+  .compositionControl {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+  }
+
+  .secondaryNavigation {
+    padding-top: var(--dcl-space-16);
+    border-top: 1px solid var(--dcl-border-subtle);
   }
 
   .balances {
@@ -230,6 +250,8 @@
 
   .account {
     position: relative;
+    display: flex;
+    align-items: center;
   }
 
   .avatar {
@@ -405,18 +427,20 @@
 
   @media (min-width: 768px) {
     .barBalances {
-      display: block;
+      display: flex;
     }
   }
 
   @media (min-width: 1024px) {
     .root {
       min-height: 80px;
+      block-size: 80px;
       padding-block: var(--dcl-space-16);
       background: var(--dcl-bg-navbar);
     }
 
-    .sections {
+    .sections,
+    .barAccountControl {
       display: flex;
     }
 

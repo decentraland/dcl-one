@@ -1,31 +1,15 @@
 //! Player control of the currently assigned, credentialed LiveKit room.
 
-use bevy::{
-    ecs::{component::HookContext, system::SystemParam, world::DeferredWorld},
-    prelude::*,
-};
+use bevy::{ecs::system::SystemParam, prelude::*};
 use common::structs::NoRenderApp;
 
-use super::{ConnectFailed, Connecting, LivekitRoom};
+use super::{Connecting, LivekitRoom};
 use crate::{
     livekit::{ConnectionAvailability, LivekitNetworkMessage, LivekitRuntimeRes, LivekitTransport},
     private_chat::PrivateChatRoom,
+    room_connection::RoomSuspended,
     SceneRoom, Transport,
 };
-
-/// A fresh assignment has its own entity and starts with its connection enabled.
-#[derive(Component)]
-#[component(on_remove = Self::on_remove)]
-pub(super) struct RoomPaused;
-
-impl RoomPaused {
-    fn on_remove(mut world: DeferredWorld, context: HookContext) {
-        // Drop anything enqueued since the last Update before publishing can resume.
-        if let Some(mut messages) = world.get_mut::<LivekitNetworkMessage>(context.entity) {
-            messages.discard_queued();
-        }
-    }
-}
 
 impl LivekitNetworkMessage {
     fn discard_queued(&mut self) {
@@ -85,9 +69,11 @@ pub(super) struct RoomConnections<'w, 's> {
             Has<SceneRoom>,
             Has<PrivateChatRoom>,
             Has<Transport>,
-            Has<RoomPaused>,
-            Has<ConnectFailed>,
+            Has<RoomSuspended>,
             Option<&'static LivekitRoom>,
+            &'static crate::room_connection::RoomRecovery,
+            Has<crate::room_connection::CredentialRequest>,
+            Option<&'static crate::archipelago::IslandOwner>,
         ),
         With<LivekitTransport>,
     >,
@@ -109,24 +95,36 @@ impl RoomConnections<'_, '_> {
             .filter(|(_, scene, private, transport, ..)| {
                 RoomKind::for_room(*scene, *private, *transport) == Some(kind)
             });
-        let (entity, _, _, _, paused, failed, room) = matching.next().ok_or("No current room")?;
+        let (entity, _, _, _, paused, room, recovery, refreshable, island) =
+            matching.next().ok_or("No current room")?;
         if matching.next().is_some() {
             return Err("More than one room matches");
         }
-        let mut entity = self.commands.entity(entity);
+        let failed = recovery.failure.is_some();
         if enabled && (paused || failed) {
-            entity.remove::<RoomPaused>();
-            // Re-add Connecting to trigger a new dial after a refusal.
-            if failed {
-                entity.remove::<Connecting>();
+            if recovery
+                .failure
+                .is_some_and(|kind| kind != crate::room_connection::FailureKind::Transient)
+            {
+                return Err("Room requires an access change or replacement credentials");
             }
+            self.commands.entity(entity).remove::<RoomSuspended>();
             // While an SDK close is in flight, its Disconnected event will restart the room
             // after retiring participants from the previous connection.
             if failed || room.is_none_or(|room| room.closed) {
-                entity.insert(Connecting);
+                self.commands.entity(entity).remove::<Connecting>();
+                super::plugin::restart_room(
+                    &mut self.commands,
+                    entity,
+                    refreshable,
+                    island.map(|owner| owner.0),
+                );
             }
         } else if !enabled && !paused {
-            entity.insert(RoomPaused).remove::<Connecting>();
+            self.commands
+                .entity(entity)
+                .insert(RoomSuspended)
+                .remove::<Connecting>();
         }
         Ok(())
     }
@@ -142,8 +140,8 @@ pub(super) fn register(app: &mut App) {
 // The pause and the completed dial can arrive in either order, including on re-dial
 // when the same transport entity already has a (closed) SDK room.
 fn close_paused_room(
-    trigger: Trigger<OnInsert, (RoomPaused, LivekitRoom)>,
-    rooms: Query<&LivekitRoom, With<RoomPaused>>,
+    trigger: Trigger<OnInsert, (RoomSuspended, LivekitRoom)>,
+    rooms: Query<&LivekitRoom, With<RoomSuspended>>,
     runtime: LivekitRuntimeRes,
 ) {
     if let Ok(room) = rooms.get(trigger.target()) {
@@ -158,7 +156,7 @@ fn close_paused_room(
     }
 }
 
-fn discard_paused_messages(mut rooms: Query<&mut LivekitNetworkMessage, With<RoomPaused>>) {
+fn discard_paused_messages(mut rooms: Query<&mut LivekitNetworkMessage, With<RoomSuspended>>) {
     for mut messages in &mut rooms {
         messages.discard_queued();
     }

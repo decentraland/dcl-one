@@ -448,6 +448,36 @@ pub async fn op_get_proximity_stream(state: &WorkerContext) -> u32 {
 }
 
 #[wasm_bindgen]
+pub async fn op_get_connectivity_stream(state: &WorkerContext) -> u32 {
+    dcl_js::system_api::op_get_connectivity_stream(state.rc()).await
+}
+
+#[wasm_bindgen]
+pub async fn op_read_connectivity_stream(
+    state: &WorkerContext,
+    rid: u32,
+) -> Result<JsValue, WasmError> {
+    dcl_js::system_api::op_read_connectivity_stream(state.rc(), rid)
+        .await
+        .map(|value| {
+            value
+                .serialize(&serde_wasm_bindgen::Serializer::json_compatible())
+                .unwrap()
+        })
+        .map_err(WasmError::from)
+}
+
+#[wasm_bindgen]
+pub fn op_close_connectivity_stream(state: &WorkerContext, rid: u32) {
+    dcl_js::system_api::op_close_connectivity_stream(state.rc(), rid)
+}
+
+#[wasm_bindgen]
+pub fn op_retry_connectivity(state: &WorkerContext) {
+    dcl_js::system_api::op_retry_connectivity(state.rc())
+}
+
+#[wasm_bindgen]
 pub async fn op_read_proximity_stream(
     state: &WorkerContext,
     rid: u32,
@@ -812,4 +842,17 @@ pub async fn op_read_block_update_stream(
     rid: u32,
 ) -> Result<JsValue, WasmError> {
     serde_result!(dcl_js::system_api::op_read_block_update_stream(state.rc(), rid).await)
+}
+
+#[wasm_bindgen]
+pub async fn op_get_portables_stream(state: &WorkerContext) -> u32 {
+    dcl_js::system_api::op_get_portables_stream(state.rc()).await
+}
+
+#[wasm_bindgen]
+pub async fn op_read_portables_stream(
+    state: &WorkerContext,
+    rid: u32,
+) -> Result<JsValue, WasmError> {
+    serde_result!(dcl_js::system_api::op_read_portables_stream(state.rc(), rid).await)
 }
