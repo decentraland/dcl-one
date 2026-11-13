@@ -48,8 +48,9 @@ rest.
   removed, and WebAssembly results are settled without assuming the isolate is still running.
 - **Memory per scene:** a 512 MiB V8 heap and 512 MiB of ArrayBuffers (a counting allocator);
   past either the allocation fails or the scene ends. Native memory that ops hold has its own
-  caps: Blob parts 64 MiB (a clone or slice shares its parent's bytes), a scene-fed stream read
-  whole 64 MiB, one stream's bytes 10 MiB on the server and 512 MiB on the client, 256 open
+  caps: Blob parts 64 MiB (a clone or slice shares its parent's bytes); the bytes a scene's open
+  streams carry between them, 10 MiB on the server and 512 MiB on the client, with a stream
+  read whole also stopping at 64 MiB (so on the server the 10 MiB budget comes first); 256 open
   streams and sinks; cancel handles stop at 4096 open resources; 32 MiB per non-UTF-8 decode.
   Not bounded per scene: resizable ArrayBuffers and WebAssembly memories, which V8 reserves outside the
   allocator; buffers ops return (a Blob read, a stream read whole), which wrap a Rust allocation;
