@@ -47,7 +47,7 @@ docker run --rm --network dcl-one --read-only --cap-drop ALL --security-opt no-n
 | `GATEWAY_STORAGE_ROOT` | empty | Content mount; API sets `STORAGE_X_ACCEL_BASE=/__protected_storage` |
 
 - Publish only port 8080; keep APIs and Sites private; terminate TLS before it.
-- Operator paths (`/admin`, `/server`, `/metabase`, telemetry admin, and an `admin` segment directly under an API mount or its `/v1` or `/api`, such as `/rpc/admin` or `/shop-api/v1/admin`) are gated on the normalized path; an allowed network does not authenticate.
+- Operator paths (`/admin`, `/server`, `/metabase`, telemetry admin, and an `admin` segment directly under an API mount or its `/v1` or `/api`, such as `/rpc/admin` or `/shop-api/v1/admin`, and the worlds `/worlds-content-server/gc` and `/reprocess-ab`) are gated on the normalized path; an allowed network does not authenticate.
 - Never trust arbitrary client networks as proxies; a trusted proxy must set `X-Forwarded-For` and `X-Forwarded-Proto`.
 - The gateway overwrites client IP, forwarding, `X-Catalyst-Admin-Gate` and `x-original-path` headers and removes `True-Client-IP`.
 - `/internal/pulse` and `/metrics` are not public; internal callers use the APIs' private address.
