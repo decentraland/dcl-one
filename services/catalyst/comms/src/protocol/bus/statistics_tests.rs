@@ -1,40 +1,37 @@
 use super::*;
 #[test]
-fn producer_churn_cannot_grow_slots_or_evict_replay_fences() {
+fn producer_churn_keeps_recent_fences_and_never_refuses_a_new_incarnation() {
     let mut assembler = Assembler::default();
     let mut now = std::time::Instant::now();
-    for producer in 0..=MAX_PRODUCERS {
-        let frame = frames(
-            &Snapshot::default(),
-            uuid::Uuid::from_u128(producer as u128),
-            1,
-            1024,
-        )
-        .unwrap();
+    let id = |n: usize| uuid::Uuid::from_u128(n as u128);
+    for producer in 0..=MAX_PRODUCERS + 1 {
+        let frame = frames(&Snapshot::default(), id(producer), 1, 1024).unwrap();
         assert!(assembler.receive_update(&frame[0], now).is_some());
         now += PRODUCER_QUIET;
     }
     assert_eq!(assembler.retired.len(), MAX_PRODUCERS);
-    let extra = frames(
-        &Snapshot::default(),
-        uuid::Uuid::from_u128(100_000),
-        1,
-        1024,
-    )
-    .unwrap();
-    assert!(assembler.receive_update(&extra[0], now).is_none());
-    let stale = frames(&Snapshot::default(), uuid::Uuid::nil(), 999, 1024).unwrap();
-    assert!(assembler.receive_update(&stale[0], now).is_none());
-    let current = frames(
-        &snapshot(1),
-        uuid::Uuid::from_u128(MAX_PRODUCERS as u128),
-        2,
-        1024,
-    )
-    .unwrap();
+    assert_eq!(assembler.retired_order.len(), MAX_PRODUCERS);
+    assert!(
+        !assembler.retired.contains(&id(0)),
+        "the oldest fence is forgotten at capacity"
+    );
+    // Past the fence capacity, a new Pulse incarnation still replaces a quiet one.
+    let extra = id(100_000);
+    let frame = frames(&Snapshot::default(), extra, 1, 1024).unwrap();
+    assert!(assembler.receive_update(&frame[0], now).is_some());
+    assert_eq!(assembler.retired.len(), MAX_PRODUCERS);
+    assert!(assembler.retired.contains(&id(MAX_PRODUCERS + 1)));
+    assert!(!assembler.retired.contains(&id(1)));
+    // Recently retired incarnations stay fenced, even after the active one goes quiet.
+    now += PRODUCER_QUIET;
+    for retired in [MAX_PRODUCERS + 1, MAX_PRODUCERS, 2] {
+        let stale = frames(&Snapshot::default(), id(retired), 999, 1024).unwrap();
+        assert!(assembler.receive_update(&stale[0], now).is_none());
+    }
+    let current = frames(&snapshot(1), extra, 2, 1024).unwrap();
     assert!(assembler.receive_update(&current[0], now).is_some());
     for producer in 100_001..100_101 {
-        let partial = frames(&snapshot(10), uuid::Uuid::from_u128(producer), 1, 100).unwrap();
+        let partial = frames(&snapshot(10), id(producer), 1, 100).unwrap();
         assert!(assembler.receive_update(&partial[0], now).is_none());
         assert!(assembler.pending.iter().flatten().count() <= 2);
     }
