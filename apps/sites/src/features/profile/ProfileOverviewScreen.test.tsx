@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { createMemoryRouter, RouterProvider } from "react-router";
@@ -12,6 +13,11 @@ vi.hoisted(() => {
     $RefreshReg$: () => {},
   });
 });
+const net = vi.hoisted(() => ({ fetchUserBadges: vi.fn() }));
+vi.mock("@/data/lib/catalyst/social/badges", async (original) => ({
+  ...(await original<typeof import("@/data/lib/catalyst/social/badges")>()),
+  fetchUserBadges: net.fetchUserBadges,
+}));
 
 import { emptyProfile, type ProfileVM } from "@/data/lib/catalyst/social/profile";
 
@@ -27,16 +33,29 @@ function profile(over: Partial<ProfileVM> = {}): ProfileVM {
   return { ...emptyProfile(A), name: "Alice", nameColor: "#ff8362", ...over };
 }
 
-function show(vm: ProfileVM, own = false, onTab = vi.fn()) {
+function show(vm: ProfileVM, own = false, onTab = vi.fn(), hasProfile = false) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const router = createMemoryRouter(
-    [{ path: "*", element: <ProfileOverviewScreen profile={vm} own={own} tabs={tabs} onTab={onTab} /> }],
+    [
+      {
+        path: "*",
+        element: <ProfileOverviewScreen profile={vm} hasProfile={hasProfile} own={own} tabs={tabs} onTab={onTab} />,
+      },
+    ],
     { initialEntries: [`/profile/${A}`] },
   );
-  render(<RouterProvider router={router} />);
+  render(
+    <QueryClientProvider client={client}>
+      <RouterProvider router={router} />
+    </QueryClientProvider>,
+  );
   return router;
 }
 
-afterEach(() => cleanup());
+afterEach(() => {
+  cleanup();
+  vi.resetAllMocks();
+});
 
 describe("profile overview screen, header", () => {
   it("shows a claimed name with the verified mark and no number suffix", () => {
@@ -147,6 +166,47 @@ describe("profile overview screen, About", () => {
     show(profile({ bodyUrl: "https://example.com/body.png" }));
 
     expect(screen.getByAltText("Alice's avatar").getAttribute("src")).toBe("https://example.com/body.png");
+  });
+});
+
+describe("profile overview screen, badges", () => {
+  it("does not read badges for a wallet with no profile, and says it has none", () => {
+    show(profile(), false, vi.fn(), false);
+
+    expect(net.fetchUserBadges).not.toHaveBeenCalled();
+    expect(screen.getByText("No badges yet. Jump in world and start collecting badges!")).toBeTruthy();
+  });
+
+  it("shows each badge with its name, tier, blurb and unlock date", async () => {
+    net.fetchUserBadges.mockResolvedValue([
+      {
+        id: "explorer",
+        name: "Explorer",
+        imageUrl: "https://example.com/explorer.png",
+        tierName: "Gold",
+        description: "Visit 100 scenes",
+        unlockedAt: Date.UTC(2026, 2, 3),
+      },
+    ]);
+
+    show(profile(), false, vi.fn(), true);
+
+    expect(await screen.findByAltText("Explorer")).toBeTruthy();
+    const tip = screen.getByRole("tooltip", { hidden: true });
+    expect(tip.textContent).toContain("Gold");
+    expect(tip.textContent).toContain("Visit 100 scenes");
+    expect(tip.textContent).toContain("Unlocked on Mar 3, 2026");
+    expect(net.fetchUserBadges).toHaveBeenCalledWith(A, { signal: expect.any(AbortSignal) });
+  });
+
+  it("falls back to the empty text when the badges cannot be read", async () => {
+    net.fetchUserBadges.mockRejectedValue(new Error("offline"));
+
+    show(profile(), false, vi.fn(), true);
+
+    await waitFor(() =>
+      expect(screen.getByText("No badges yet. Jump in world and start collecting badges!")).toBeTruthy(),
+    );
   });
 });
 

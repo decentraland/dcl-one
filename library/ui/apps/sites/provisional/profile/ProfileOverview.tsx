@@ -12,6 +12,8 @@ type ProfileOverviewProps = {
   emptyBio: string
   info: readonly ProfileInfoItem[]
   links: readonly ProfileLinkItem[]
+  /** Shown first in the card, as the source orders it: the badges row. */
+  badges?: ReactNode
   /** Further cards below About (badges, equipped items). */
   children?: ReactNode
 }
@@ -34,7 +36,7 @@ function linkProvider(url: string): string {
 }
 
 /** About, the profile's details and its links, in the source's translucent card. */
-function ProfileOverview({ bio, emptyBio, info, links, children }: ProfileOverviewProps) {
+function ProfileOverview({ bio, emptyBio, info, links, badges, children }: ProfileOverviewProps) {
   const safeLinks = links.flatMap((link) => {
     const url = safeUrl(link.url)
     return url
@@ -46,6 +48,7 @@ function ProfileOverview({ bio, emptyBio, info, links, children }: ProfileOvervi
   return (
     <div className={styles.root}>
       <section className={styles.surface}>
+        {badges ? <div className={styles.section}>{badges}</div> : null}
         <div className={styles.section}>
           <h2 className={styles.title}>About</h2>
           {text ? <p className={styles.bio}>{text}</p> : <p className={styles.empty}>{emptyBio}</p>}

@@ -73,6 +73,7 @@ export function ProfilePage({ address: rawAddress, tabSegment, ownOnServer, sid 
     return (
       <ProfileOverviewScreen
         profile={profile}
+        hasProfile={Boolean(query.data)}
         own={own}
         tabs={tabs.map((entry) => ({ ...entry, href: profileHref(address, entry.id) }))}
         onTab={onTab}

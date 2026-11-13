@@ -20,6 +20,7 @@ vi.mock("@/data/lib/catalyst/social/profile", async (original) => ({
   fetchProfile: net.fetchProfile,
 }));
 vi.mock("@/data/lib/catalyst/social/profile-communities", () => ({ fetchMyCommunities: net.fetchMyCommunities }));
+vi.mock("@/data/lib/catalyst/social/badges", () => ({ fetchUserBadges: () => Promise.resolve([]) }));
 vi.mock("@/core/lib/telemetry/track", () => ({ track: net.track }));
 vi.mock("@/data/lib/auth/index", () => ({ useAuth: () => auth.state }));
 
