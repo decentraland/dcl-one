@@ -18,6 +18,10 @@ pub(super) fn register(app: &mut App, preview: bool) {
                 ("Cached reads", "cached"),
                 ("Non-IPFS reads", "local"),
                 ("Failed reads", "failed"),
+                (
+                    "Content files answered as missing for the session",
+                    "missingForSession",
+                ),
                 #[cfg(not(target_arch = "wasm32"))]
                 ("IPFS connection failures (native)", "connectFailed"),
                 ("Available request slots", "available"),
@@ -173,6 +177,15 @@ mod request_tests {
             #[cfg(feature = "ipfs_debug")]
             tokio::sync::mpsc::unbounded_channel().0,
         ));
+        {
+            let mut failed = ipfs.failed_remotes.lock().unwrap();
+            failed.record(
+                "https://a.example/contents/x".into(),
+                Some(reqwest::StatusCode::NOT_FOUND),
+                web_time::Instant::now(),
+            );
+            failed.record("https://a.example/y".into(), None, web_time::Instant::now());
+        }
         ipfs.record_scene_batch(0);
         ipfs.record_scene_batch(2);
         ipfs.record_attachment_batch(4);
@@ -206,6 +219,7 @@ mod request_tests {
         app.update();
         let state: serde_json::Value =
             serde_json::from_str(&rx.try_recv().unwrap().unwrap()).unwrap();
+        assert_eq!(state["missingForSession"], 1);
         assert_eq!(state["bytes"], 1_058_816);
         assert_eq!(state["firstByteMs"], 100.0);
         assert_eq!(state["smallMs"], 750.0);
@@ -235,6 +249,7 @@ fn web_state(mut input: ConsoleCommand<WebState>, ipfs: Res<IpfsResource>, confi
                 "cached": IPFS_CACHED.load(Ordering::Relaxed),
                 "local": IPFS_NON_IPFS.load(Ordering::Relaxed),
                 "failed": IPFS_FAILED.load(Ordering::Relaxed),
+                "missingForSession": ipfs.failed_remotes.lock().unwrap().session_len(),
                 "connectFailed": connect_failed,
                 "available": ipfs.request_slots.available_permits(),
                 "slots": config.max_concurrent_remotes,

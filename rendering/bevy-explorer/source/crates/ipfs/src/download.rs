@@ -387,6 +387,16 @@ impl IpfsIo {
                         .unwrap()
                         .connect_failed += 1;
                 }
+                // the bytes behind a content hash never change, so a server that says the url is wrong
+                // says so for the rest of the session
+                let session = match (&e, &cache_key) {
+                    (platform::FetchError::Status(status, _), Some(CacheKey::Content(_)))
+                        if failed_remotes::is_definitive(*status) =>
+                    {
+                        Some(*status)
+                    }
+                    _ => None,
+                };
                 let detail = match e {
                     platform::FetchError::Headers => "timed out awaiting headers".to_owned(),
                     platform::FetchError::Stalled => {
@@ -398,11 +408,10 @@ impl IpfsIo {
                     }
                     platform::FetchError::Body(e) => format!("body stream error: {e}"),
                 };
-                self.context
-                    .write()
-                    .await
-                    .failed_remotes
-                    .insert(remote.clone(), Instant::now());
+                self.failed_remotes
+                    .lock()
+                    .unwrap()
+                    .record(remote.clone(), session, Instant::now());
                 return ipfs_io_read_state.send_failure(Err(AssetReaderError::Io(Arc::new(
                     std::io::Error::other(format!(
                         "[{token:?}] failed to retrieve `{remote}`: {detail}"

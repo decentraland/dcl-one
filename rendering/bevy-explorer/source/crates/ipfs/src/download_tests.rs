@@ -1,4 +1,8 @@
 use super::*;
+use crate::{
+    failed_remotes::Repeat, ipfs_path::IpfsType, ContentMap, EndpointConfig, IpfsEntity,
+    RealmConfig, ServerAbout,
+};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     net::{TcpListener, TcpStream},
@@ -490,4 +494,214 @@ async fn shared_downloads_keep_arrival_order_when_workers_poll_in_reverse() {
     })
     .await
     .expect("shared downloads did not finish in FIFO order");
+}
+
+fn status_only(status: &str) -> Vec<u8> {
+    format!("HTTP/1.1 {status}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").into_bytes()
+}
+
+/// A content download keyed by `key`, run to its failure.
+async fn fail_shared(
+    io: &Arc<IpfsIo>,
+    server: &Server,
+    path: &str,
+    key: CacheKey,
+    status: &str,
+) -> AssetReaderError {
+    let (reader, task) = io.share_download(key, 1, path.into(), server.url(path), None);
+    IoTaskPool::get().spawn_compat(task.unwrap()).detach();
+    server.reply(path, &status_only(status)).await;
+    let mut result = reader.result();
+    let result = result
+        .wait_for(Option::is_some)
+        .await
+        .unwrap()
+        .clone()
+        .unwrap();
+    result.err().expect("the download failed")
+}
+
+#[tokio::test]
+async fn a_content_hash_that_answers_a_client_error_is_remembered_for_the_session() {
+    timeout(LIMIT, async {
+        let io = ipfs();
+        let server = Server::start().await;
+        let later = Instant::now() + Duration::from_secs(3600);
+        for (path, status, code) in [
+            ("missing", "404 Not Found", 404),
+            ("gone", "410 Gone", 410),
+            ("bad", "400 Bad Request", 400),
+        ] {
+            let key = CacheKey::Content(format!("bafk{path}"));
+            let error = fail_shared(&io, &server, path, key, status).await;
+            assert!(error.to_string().contains(&code.to_string()), "{error}");
+            let repeat = io
+                .failed_remotes
+                .lock()
+                .unwrap()
+                .repeat(&server.url(path), later);
+            assert_eq!(
+                repeat,
+                Some(Repeat::Session(
+                    reqwest::StatusCode::from_u16(code).unwrap()
+                )),
+                "{path}"
+            );
+        }
+        assert_eq!(io.request_metrics.attempts.load(Ordering::Relaxed), 3);
+    })
+    .await
+    .expect("definitive failures were not remembered");
+}
+
+#[tokio::test]
+async fn transient_and_url_keyed_failures_keep_the_retry_window() {
+    timeout(LIMIT, async {
+        let io = ipfs();
+        let server = Server::start().await;
+        let mut urls = Vec::new();
+        for (path, status) in [
+            ("timeout", "408 Request Timeout"),
+            ("busy", "429 Too Many Requests"),
+            ("forbidden", "403 Forbidden"),
+        ] {
+            let key = CacheKey::Content(format!("bafk{path}"));
+            fail_shared(&io, &server, path, key, status).await;
+            urls.push(server.url(path));
+        }
+        fail_shared(
+            &io,
+            &server,
+            "missing-url",
+            CacheKey::Url("missing-url".into()),
+            "404 Not Found",
+        )
+        .await;
+        urls.push(server.url("missing-url"));
+        let uncached = asset(&io, &server, "uncached", None);
+        server
+            .reply("uncached", &status_only("404 Not Found"))
+            .await;
+        assert!(uncached.await.unwrap().is_err());
+        urls.push(server.url("uncached"));
+
+        let mut failed = io.failed_remotes.lock().unwrap();
+        for url in &urls {
+            assert_eq!(
+                failed.repeat(url, Instant::now()),
+                Some(Repeat::Recent),
+                "{url}"
+            );
+            assert_eq!(
+                failed.repeat(url, Instant::now() + Duration::from_secs(11)),
+                None,
+                "{url}"
+            );
+        }
+        assert_eq!(failed.session_len(), 0);
+        drop(failed);
+        assert_eq!(io.request_metrics.attempts.load(Ordering::Relaxed), 5);
+    })
+    .await
+    .expect("transient failures were not kept for the retry window");
+}
+
+const SCENE: &str = "bafkreiscene";
+const MISSING: &str = "bafkreimissing";
+
+/// A realm on `server` with one scene whose `missing.png` is [`MISSING`]; returns its path.
+async fn loopback_realm(io: &Arc<IpfsIo>, server: &Server) -> PathBuf {
+    let about = ServerAbout {
+        content: Some(EndpointConfig {
+            healthy: true,
+            public_url: format!("http://{}", server.0.local_addr().unwrap()),
+        }),
+        ..Default::default()
+    };
+    {
+        let mut context = io.context.write().await;
+        context.about = Some(about.clone());
+        context.entities.insert(
+            SCENE.to_owned(),
+            IpfsEntity {
+                collection: ContentMap::new_single("missing.png".to_owned(), MISSING.to_owned()),
+                metadata: None,
+            },
+        );
+    }
+    io.realm_config_sender.send_replace(Some(RealmConfig {
+        about_url: String::new(),
+        address: String::new(),
+        about,
+        connected: true,
+        secret: None,
+        spawn_parcel: None,
+    }));
+    PathBuf::from(&IpfsPath::new(IpfsType::new_content_file(
+        SCENE.to_owned(),
+        "missing.png".to_owned(),
+    )))
+}
+
+/// One read of the missing file, answered by `server` with a 404.
+async fn read_missing(
+    io: &Arc<IpfsIo>,
+    server: &Server,
+    path: &Path,
+) -> Result<(), AssetReaderError> {
+    let request = format!("contents/{MISSING}");
+    let not_found = status_only("404 Not Found");
+    let (read, ()) = tokio::join!(
+        async { io.read(path).await.map(|_| ()) },
+        server.reply(&request, &not_found)
+    );
+    read
+}
+
+#[tokio::test]
+async fn a_preview_client_asks_again_for_a_missing_file_at_once() {
+    timeout(LIMIT, async {
+        let mut io = ipfs();
+        Arc::get_mut(&mut io).unwrap().is_preview = true;
+        let server = Server::start().await;
+        let path = loopback_realm(&io, &server).await;
+        for _ in 0..2 {
+            assert!(read_missing(&io, &server, &path).await.is_err());
+        }
+        assert_eq!(io.request_metrics.attempts.load(Ordering::Relaxed), 2);
+    })
+    .await
+    .expect("preview did not ask again");
+}
+
+#[tokio::test]
+async fn a_loopback_404_is_answered_from_memory_only_within_the_retry_window() {
+    timeout(LIMIT, async {
+        let io = ipfs();
+        let server = Server::start().await;
+        let path = loopback_realm(&io, &server).await;
+        assert!(read_missing(&io, &server, &path).await.is_err());
+        let second = io.read(&path).await.map(|_| ()).unwrap_err();
+        assert!(
+            second.to_string().contains("repeat request for failed"),
+            "{second}"
+        );
+        assert!(timeout(Duration::from_millis(200), server.0.accept())
+            .await
+            .is_err());
+        assert_eq!(io.request_metrics.attempts.load(Ordering::Relaxed), 1);
+        let url = format!(
+            "http://{}/contents/{MISSING}",
+            server.0.local_addr().unwrap()
+        );
+        assert_eq!(
+            io.failed_remotes
+                .lock()
+                .unwrap()
+                .repeat(&url, Instant::now() + Duration::from_secs(11)),
+            None
+        );
+    })
+    .await
+    .expect("loopback failure was not answered from memory");
 }
