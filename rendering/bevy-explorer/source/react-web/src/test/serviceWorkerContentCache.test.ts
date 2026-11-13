@@ -167,7 +167,7 @@ describe('content cache trim message', () => {
       evictedEntries: 6,
       evictedBytes: 600,
       persisted: false,
-      targetUnreachable: false,
+      contentBytes: 1000,
       preempted: false
     })
   })
@@ -214,6 +214,14 @@ describe('content cache trim message', () => {
     await sw.content.put(entryUrl(0), entry(100))
     await sw.trim({ capBytes: 250 })
     expect(sw.remaining()).toEqual(['bafkrei2', 'bafkrei0'])
+  })
+
+  it('does not open any cache while usage with other storage is at or under the cap', async () => {
+    const sw = serviceWorker({ others: true, otherSize: 100 })
+    for (let n = 0; n < 5; n++) sw.seed(n)
+    const { port } = await sw.trim({ capBytes: 1000 })
+    expect(sw.caches.open).not.toHaveBeenCalled()
+    expect(port.postMessage).toHaveBeenCalledWith(expect.objectContaining({ cachesUsage: 800, contentBytes: null }))
   })
 
   it('does not open the cache when under the cap', async () => {
@@ -304,8 +312,28 @@ describe('content cache trim message', () => {
     const { port } = await sw.trim({ capBytes: 2000 })
     expect(sw.remaining()).toHaveLength(10)
     expect(port.postMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ cachesUsage: 4000, evictedEntries: 0, evictedBytes: 0, targetUnreachable: true })
+      expect.objectContaining({ cachesUsage: 4000, evictedEntries: 0, evictedBytes: 0, contentBytes: 1000 })
     )
+  })
+
+  it('does not evict content under the cap when other storage takes part of it', async () => {
+    // cap 2000, other storage 1500, content 1000: usage is over the cap, the content is not
+    const sw = serviceWorker({ others: true, otherSize: 500 })
+    for (let n = 0; n < 10; n++) sw.seed(n)
+    const { port } = await sw.trim({ capBytes: 2000 })
+    expect(sw.remaining()).toHaveLength(10)
+    expect(port.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ cachesUsage: 2500, evictedEntries: 0, contentBytes: 1000 })
+    )
+  })
+
+  it('trims content over the cap to 90% of it, whatever other storage holds', async () => {
+    for (const otherSize of [500, 1000]) {
+      const sw = serviceWorker({ others: true, otherSize })
+      for (let n = 0; n < 10; n++) sw.seed(n)
+      await sw.trim({ capBytes: 500 })
+      expect(sw.remaining()).toEqual(['bafkrei6', 'bafkrei7', 'bafkrei8', 'bafkrei9'])
+    }
   })
 
   it('frees a quarter of the content after a quota error when other storage fills the cap', async () => {
@@ -314,7 +342,7 @@ describe('content cache trim message', () => {
     const { port } = await sw.trim({ capBytes: 2000, quotaError: true })
     expect(sw.remaining()).toHaveLength(7)
     expect(port.postMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ evictedEntries: 3, evictedBytes: 300, targetUnreachable: true })
+      expect.objectContaining({ evictedEntries: 3, evictedBytes: 300, contentBytes: 1000 })
     )
   })
 

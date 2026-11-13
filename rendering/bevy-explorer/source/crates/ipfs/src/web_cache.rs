@@ -62,6 +62,12 @@ pub fn cap_changed(applied: &mut Option<u64>, cap: u64) -> bool {
     applied.replace(cap) != Some(cap)
 }
 
+/// A session override given in MiB: none for 0, else at least 1 MiB, so a tiny value cannot
+/// empty the cache.
+pub fn override_bytes(mib: f64) -> Option<u64> {
+    (mib > 0.0).then(|| ((mib * MIB as f64) as u64).max(MIB))
+}
+
 /// Bytes written between two trim requests.
 fn trim_interval(cap: u64) -> u64 {
     (cap / 16).clamp(MIB, TRIM_INTERVAL_MAX)
@@ -94,8 +100,9 @@ pub struct TrimReport {
     pub evicted_entries: f64,
     pub evicted_bytes: f64,
     pub persisted: bool,
-    /// Evicting all content would not reach the cap: other storage counts toward the usage.
-    pub target_unreachable: bool,
+    /// The content cache's measured bytes; `None` when the usage bound was under the cap and
+    /// nothing was sized.
+    pub content_bytes: Option<f64>,
 }
 
 /// The service worker's answer to a trim request.
@@ -145,7 +152,7 @@ pub fn parse_trim_reply(value: &serde_json::Value) -> TrimReply {
             evicted_entries: number("evictedEntries")?,
             evicted_bytes: number("evictedBytes")?,
             persisted: flag("persisted"),
-            target_unreachable: flag("targetUnreachable"),
+            content_bytes: number("contentBytes"),
         })
     })();
     report.map_or_else(
@@ -162,6 +169,8 @@ pub struct WebCacheState {
     pub written_bytes: u64,
     pub quota_retries: u64,
     pub trims: u64,
+    /// Requests no service worker answered: none controls the page (after a hard reload, say).
+    pub unanswered: u64,
     /// Summed over every trim reported this session.
     pub evicted_entries_total: u64,
     pub evicted_bytes_total: u64,
@@ -188,6 +197,7 @@ pub fn state_json(state: &WebCacheState) -> serde_json::Value {
         "writtenMiB": mib(state.written_bytes as f64),
         "quotaRetries": state.quota_retries,
         "trims": state.trims,
+        "unansweredTrims": state.unanswered,
         "evictedEntriesTotal": state.evicted_entries_total,
         "evictedTotalMiB": mib(state.evicted_bytes_total as f64),
         "workerCapMiB": last.map(|r| mib(r.cap_bytes)),
@@ -197,12 +207,16 @@ pub fn state_json(state: &WebCacheState) -> serde_json::Value {
         "evictedEntries": last.map(|r| r.evicted_entries),
         "evictedMiB": last.map(|r| mib(r.evicted_bytes)),
         "persisted": last.map(|r| r.persisted),
-        "targetUnreachable": last.map(|r| r.target_unreachable),
+        "contentMiB": last.and_then(|r| r.content_bytes.map(mib)),
         "unavailable": {
             "overrideMiB": "No override: the configured cap applies.",
             "workerCapMiB": reason, "usageMiB": reason, "quotaMiB": quota_reason, "cachesMiB": reason,
             "evictedEntries": reason, "evictedMiB": reason, "persisted": reason,
-            "targetUnreachable": reason,
+            "contentMiB": if last.is_some() {
+                "Cache Storage usage was at or under the cap: the content cache was not sized."
+            } else {
+                reason
+            },
         },
     })
 }
@@ -365,6 +379,7 @@ mod io {
     static LAST_FORCED_MS: AtomicU64 = AtomicU64::new(0);
     static QUOTA_RETRIES: AtomicU64 = AtomicU64::new(0);
     static TRIMS: AtomicU64 = AtomicU64::new(0);
+    static UNANSWERED: AtomicU64 = AtomicU64::new(0);
     static EVICTED_ENTRIES: AtomicU64 = AtomicU64::new(0);
     static EVICTED_BYTES: AtomicU64 = AtomicU64::new(0);
     static LAST_REPORT: Mutex<Option<TrimReport>> = Mutex::new(None);
@@ -414,7 +429,10 @@ mod io {
                 bevy::log::warn!("content cache trim failed in the service worker: {error}");
                 return None;
             }
-            TrimReply::Missing => return None,
+            TrimReply::Missing => {
+                UNANSWERED.fetch_add(1, Ordering::Relaxed);
+                return None;
+            }
         };
         TRIMS.fetch_add(1, Ordering::Relaxed);
         WORKER_CAP_BYTES.store(report.cap_bytes as u64, Ordering::Relaxed);
@@ -432,6 +450,7 @@ mod io {
             written_bytes: WRITTEN_BYTES.load(Ordering::Relaxed),
             quota_retries: QUOTA_RETRIES.load(Ordering::Relaxed),
             trims: TRIMS.load(Ordering::Relaxed),
+            unanswered: UNANSWERED.load(Ordering::Relaxed),
             evicted_entries_total: EVICTED_ENTRIES.load(Ordering::Relaxed),
             evicted_bytes_total: EVICTED_BYTES.load(Ordering::Relaxed),
             last: *LAST_REPORT.lock().unwrap_or_else(PoisonError::into_inner),
@@ -544,6 +563,36 @@ mod tests {
     }
 
     #[test]
+    fn an_override_is_none_for_zero_and_at_least_a_mebibyte() {
+        assert_eq!(override_bytes(0.0), None);
+        assert_eq!(override_bytes(0.0000001), Some(1 << 20));
+        assert_eq!(override_bytes(0.5), Some(1 << 20));
+        assert_eq!(override_bytes(50.0), Some(50 << 20));
+    }
+
+    #[test]
+    fn a_reply_under_the_cap_has_no_content_total() {
+        let reply = serde_json::json!({
+            "capBytes": 1000.0, "usage": 900.0, "quota": 1e9, "cachesUsage": 800.0,
+            "evictedEntries": 0.0, "evictedBytes": 0.0, "contentBytes": null, "preempted": false,
+        });
+        let TrimReply::Done(report) = parse_trim_reply(&reply) else {
+            panic!("not a report");
+        };
+        assert_eq!(report.content_bytes, None);
+        let state = WebCacheState {
+            unanswered: 2,
+            last: Some(report),
+            ..Default::default()
+        };
+        let json: serde_json::Value =
+            serde_json::from_str(&state_json(&state).to_string()).unwrap();
+        assert!(json["contentMiB"].is_null());
+        assert!(json["unavailable"]["contentMiB"].is_string());
+        assert_eq!(json["unansweredTrims"], 2);
+    }
+
+    #[test]
     fn only_a_new_cap_counts_as_a_change() {
         let mut applied = None;
         // the first run, at start
@@ -603,7 +652,7 @@ mod tests {
             last: Some(TrimReport {
                 evicted_bytes: 3.0 * 1048576.0 + 52429.0,
                 persisted: true,
-                target_unreachable: true,
+                content_bytes: Some(2.0 * 1048576.0),
                 ..Default::default()
             }),
             ..Default::default()
@@ -612,7 +661,7 @@ mod tests {
             serde_json::from_str(&state_json(&state).to_string()).unwrap();
         assert_eq!(json["evictedMiB"], 3.1);
         assert_eq!(json["persisted"], true);
-        assert_eq!(json["targetUnreachable"], true);
+        assert_eq!(json["contentMiB"], 2.0);
     }
 
     #[test]
@@ -620,7 +669,7 @@ mod tests {
         let reply = serde_json::json!({
             "capBytes": 1000.0, "usage": 900.0, "quota": null, "cachesUsage": 800.0,
             "evictedEntries": 3.0, "evictedBytes": 300.0, "persisted": true,
-            "targetUnreachable": false, "preempted": false,
+            "contentBytes": 750.0, "preempted": false,
         });
         assert_eq!(
             parse_trim_reply(&reply),
@@ -632,7 +681,7 @@ mod tests {
                 evicted_entries: 3.0,
                 evicted_bytes: 300.0,
                 persisted: true,
-                target_unreachable: false,
+                content_bytes: Some(750.0),
             })
         );
     }
