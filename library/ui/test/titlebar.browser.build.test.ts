@@ -163,7 +163,9 @@ describe('when the app controls section state and panel lifetime', () => {
       'window.fixtureSearch=document.querySelector("[data-control=search] input");window.fixtureSearch.focus()'
     )
     await browser.session.send('Input.insertText', { text: 'Draft' })
-    await browser.evaluate('document.querySelector("[aria-pressed=false]").focus()')
+    await browser.evaluate(
+      'document.querySelector("[data-region=primary] button:not([aria-current])").focus()'
+    )
     await browser.session.send('Input.dispatchKeyEvent', {
       type: 'keyDown',
       text: '\r',
@@ -179,7 +181,7 @@ describe('when the app controls section state and panel lifetime', () => {
       windowsVirtualKeyCode: 13
     })
     expect(
-      await browser.evaluate('document.querySelector("[aria-pressed=true]").textContent.trim()')
+      await browser.evaluate('document.querySelector("[aria-current=true]").textContent.trim()')
     ).toBe('Wearables')
     await browser.session.send('Emulation.setDeviceMetricsOverride', {
       width: 390,
@@ -232,7 +234,7 @@ describe('when the selected section receives keyboard focus', () => {
       ring: string
       text: string
     }>(
-      `(()=>{const e=document.activeElement,s=getComputedStyle(e);return{selected:e.getAttribute('aria-pressed')==='true',style:s.outlineStyle,ring:s.outlineColor,text:s.color}})()`
+      `(()=>{const e=document.activeElement,s=getComputedStyle(e);return{selected:e.getAttribute('aria-current')==='true',style:s.outlineStyle,ring:s.outlineColor,text:s.color}})()`
     )
     expect(focus.selected).toBe(true)
     expect(focus.style).toBe('solid')
@@ -273,4 +275,52 @@ describe('when pointer focus enters the supplied filter panel padding', () => {
       'Filter & Sort'
     )
   })
+})
+
+describe('when forced colors replace selected text and backgrounds', () => {
+  for (const width of [390, 1920])
+    it(
+      'should preserve distinct selected and focus cues without geometry changes at ' + width,
+      async () => {
+        await navigate('settings', width, true)
+        const before = await browser.evaluate<{
+          x: number
+          y: number
+          width: number
+          height: number
+        }>(
+          `(()=>{const r=document.querySelector('[data-active]').getBoundingClientRect();return{x:r.x,y:r.y,width:r.width,height:r.height}})()`
+        )
+        await browser.session.send('Emulation.setEmulatedMedia', {
+          features: [{ name: 'forced-colors', value: 'active' }]
+        })
+        try {
+          await tab()
+          const after = await browser.evaluate<{
+            rect: { x: number; y: number; width: number; height: number }
+            forced: boolean
+            focused: boolean
+            border: string
+            borderWidth: string
+            pointer: string
+            ring: string
+            ringWidth: string
+            offset: string
+          }>(
+            `(()=>{const e=document.querySelector('[data-active]'),r=e.getBoundingClientRect(),s=getComputedStyle(e),p=getComputedStyle(e,'::after');return{rect:{x:r.x,y:r.y,width:r.width,height:r.height},forced:matchMedia('(forced-colors:active)').matches,focused:document.activeElement===e,border:p.borderTopStyle,borderWidth:p.borderTopWidth,pointer:p.pointerEvents,ring:s.outlineStyle,ringWidth:s.outlineWidth,offset:s.outlineOffset}})()`
+          )
+          expect(after.forced).toBe(true)
+          expect(after.focused).toBe(true)
+          expect(after.rect).toEqual(before)
+          expect(after.border).toBe('solid')
+          expect(after.borderWidth).toBe('2px')
+          expect(after.pointer).toBe('none')
+          expect(after.ring).toBe('solid')
+          expect(after.ringWidth).toBe('2px')
+          expect(after.offset).toBe('2px')
+        } finally {
+          await browser.session.send('Emulation.setEmulatedMedia', { features: [] })
+        }
+      }
+    )
 })

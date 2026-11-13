@@ -19,7 +19,7 @@ describe('when the public toolbar renders on the server', () => {
     (props) => {
       const html = renderToString(<TitleBar {...props} />)
       expect(html).toContain('data-variant="' + props.variant + '"')
-      expect(html).toContain('aria-pressed="true"')
+      expect(html).toContain('aria-current="true"')
       expect(html).not.toMatch(/FigmaView|figma-module-runtime|registerComponent/)
     }
   )

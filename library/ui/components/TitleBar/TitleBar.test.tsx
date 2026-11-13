@@ -47,8 +47,8 @@ describe('when a captured application toolbar is composed', () => {
       () => {
         render(<TitleBar {...fixture} sections={sections} activeId="one" onSelect={() => {}} />)
         expect(screen.getByRole('heading', { name: fixture.title })).toBeInTheDocument()
-        expect(screen.getByRole('button', { name: 'One' })).toHaveAttribute('aria-pressed', 'true')
-        expect(screen.getByRole('button', { name: 'Two' })).toHaveAttribute('aria-pressed', 'false')
+        expect(screen.getByRole('button', { name: 'One' })).toHaveAttribute('aria-current', 'true')
+        expect(screen.getByRole('button', { name: 'Two' })).not.toHaveAttribute('aria-current')
         expect(document.querySelector('[data-variant]')).toHaveAttribute(
           'data-variant',
           fixture.variant
@@ -65,9 +65,13 @@ describe('when a captured application toolbar is composed', () => {
     )
     await userEvent.setup().click(screen.getByRole('button', { name: 'Two' }))
     expect(select).toHaveBeenCalledExactlyOnceWith('two')
-    expect(screen.getByRole('button', { name: 'One' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('button', { name: 'One' })).toHaveAttribute('aria-current', 'true')
     rerender(<TitleBar variant="settings" sections={sections} activeId="two" onSelect={select} />)
-    expect(screen.getByRole('button', { name: 'Two' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('button', { name: 'Two' })).toHaveAttribute('aria-current', 'true')
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Two' }))
+    expect(select).toHaveBeenCalledTimes(2)
+    expect(select).toHaveBeenLastCalledWith('two')
+    expect(screen.getByRole('button', { name: 'Two' })).toHaveAttribute('aria-current', 'true')
   })
   it('should keep route links native and omit modified selection callbacks', () => {
     const select = vi.fn()
@@ -253,4 +257,80 @@ describe('when untyped section configuration is malformed', () => {
       )
     }
   )
+})
+
+describe('when adopting a title bar as a page or nested heading', () => {
+  it.each([1, 3, 6] as const)(
+    'should expose its requested level %s without changing its visual class',
+    (headingLevel) => {
+      render(
+        <TitleBar
+          variant="settings"
+          headingLevel={headingLevel}
+          sections={sections}
+          activeId="graphics"
+          onSelect={() => {}}
+        />
+      )
+      expect(
+        screen.getByRole('heading', { name: 'Settings', level: headingLevel }).className
+      ).toContain('title')
+    }
+  )
+  it('should expose current view buttons without toggle semantics', () => {
+    render(
+      <TitleBar
+        variant="settings"
+        sections={sections}
+        activeId={sections[0]!.id}
+        onSelect={() => {}}
+      />
+    )
+    const current = screen.getByRole('button', { name: sections[0]!.label })
+    expect(current).toHaveAttribute('aria-current', 'true')
+    expect(current).not.toHaveAttribute('aria-pressed')
+  })
+  it('should forward app routing hints and select once before an adapter handles routing', () => {
+    const select = vi.fn(),
+      prefetch = vi.fn()
+    render(
+      <TitleBar
+        variant="settings"
+        sections={[{ id: 'route', label: 'Route', href: '#route', icon: null }]}
+        activeId="route"
+        onSelect={select}
+        LinkComponent={({ prefetch: hint, ...props }) => {
+          prefetch(hint)
+          return (
+            <a
+              {...props}
+              onClick={(event) => {
+                props.onClick?.(event)
+                event.preventDefault()
+              }}
+            />
+          )
+        }}
+      />
+    )
+    expect(fireEvent.click(screen.getByRole('link', { name: 'Route' }))).toBe(false)
+    expect(select).toHaveBeenCalledExactlyOnceWith('route')
+    expect(prefetch).toHaveBeenCalledWith('intent')
+  })
+})
+
+describe('when a heading level configuration is invalid', () => {
+  it.each([0, 7, 1.5, 'h1'])('should reject unsupported level %s', (headingLevel) => {
+    expect(() =>
+      render(
+        <TitleBar
+          variant="settings"
+          headingLevel={headingLevel as never}
+          sections={sections}
+          activeId="one"
+          onSelect={() => {}}
+        />
+      )
+    ).toThrow('TitleBar heading level must be an integer from 1 to 6')
+  })
 })

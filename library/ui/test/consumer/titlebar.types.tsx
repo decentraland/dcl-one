@@ -32,3 +32,12 @@ const invented: TitleBarProps = {
 const unnamed: TitleBarSection = { id: 'empty', icon: null }
 export const fixtures = { settings, backpack, missing, invented, unnamed }
 export const rendered = <TitleBar {...settings} />
+
+export const pageTitle = (
+  <TitleBar variant="settings" sections={[]} activeId="none" onSelect={() => {}} headingLevel={1} />
+)
+export const invalidHeadingProps: TitleBarProps = {
+  ...settings,
+  // @ts-expect-error Native heading levels are restricted to the six semantic HTML heading elements.
+  headingLevel: 7
+}

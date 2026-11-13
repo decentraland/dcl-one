@@ -9,8 +9,11 @@ export type TitleBarSection = Readonly<{
   icon: ReactNode
   href?: string
 }>
+/** Render one anchor and forward native attributes, children and events. Call the supplied onClick before
+ * router cancellation; an earlier cancellation deliberately suppresses onSelect. Consume prefetch in the adapter. */
 export type TitleBarLinkProps = AnchorHTMLAttributes<HTMLAnchorElement> & {
   href: string
+  prefetch?: 'intent'
   'data-active'?: boolean
 }
 type SharedProps = Omit<
@@ -18,10 +21,15 @@ type SharedProps = Omit<
   'children' | 'dangerouslySetInnerHTML' | 'role' | 'aria-label' | 'title' | 'onSelect'
 > & {
   title?: string
+  /** Semantic heading level; the visual title style is unchanged. */
+  headingLevel?: 1 | 2 | 3 | 4 | 5 | 6
   label?: string
   sectionsLabel?: string
+  /** Invalid entries throw; validate remote configuration at the app boundary. */
   sections: readonly TitleBarSection[]
+  /** The current view or destination, not an independent on/off toggle. */
   activeId: string
+  /** Required controlled view-selection callback, including native route selection before app routing. */
   onSelect: (id: string) => void
   LinkComponent?: ComponentType<TitleBarLinkProps>
 }
@@ -55,11 +63,16 @@ const controlOrder = {
   events: ['date', 'create'],
   places: ['filters', 'search'],
   shop: ['filters', 'sort', 'search', 'cart']
-} as const
+} as const satisfies {
+  [V in TitleBarProps['variant']]: readonly (keyof NonNullable<
+    Extract<TitleBarProps, { variant: V }>['controls']
+  >)[]
+}
 
 export function TitleBar({
   variant,
   title,
+  headingLevel = 2,
   label,
   sectionsLabel,
   sections,
@@ -70,6 +83,8 @@ export function TitleBar({
   controls,
   ...rest
 }: TitleBarProps) {
+  if (![1, 2, 3, 4, 5, 6].includes(headingLevel))
+    throw new Error('TitleBar heading level must be an integer from 1 to 6')
   if (!Object.hasOwn(titles, variant)) throw new Error('Unsupported TitleBar variant')
   if (typeof onSelect !== 'function')
     throw new Error('TitleBar requires a controlled section callback')
@@ -89,6 +104,7 @@ export function TitleBar({
   for (const field of controlOrder[variant])
     if (!Object.hasOwn(fields, field)) throw new Error('Missing TitleBar control: ' + field)
   const heading = title?.trim() ? title : titles[variant]
+  const Heading = `h${headingLevel}` as 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6'
   return (
     <div
       {...rest}
@@ -99,7 +115,7 @@ export function TitleBar({
       className={[styles.root, className].filter(Boolean).join(' ')}
     >
       <div className={styles.primary} data-region="primary">
-        <h2 className={styles.title}>{heading}</h2>
+        <Heading className={styles.title}>{heading}</Heading>
         <div
           className={styles.sections}
           role="group"
@@ -126,7 +142,7 @@ export function TitleBar({
                 }
               }
               return LinkComponent ? (
-                <LinkComponent key={section.id} {...props}>
+                <LinkComponent key={section.id} {...props} prefetch="intent">
                   {content}
                 </LinkComponent>
               ) : (
@@ -140,7 +156,7 @@ export function TitleBar({
                 key={section.id}
                 type="button"
                 className={styles.section}
-                aria-pressed={active}
+                aria-current={active ? 'true' : undefined}
                 data-active={active || undefined}
                 onClick={(event) => {
                   if (!event.defaultPrevented) onSelect(section.id)
