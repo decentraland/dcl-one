@@ -257,9 +257,10 @@ pub async fn load_or_reload(state: &SceneHostState, key: &SceneKey) -> Result<()
         || source.trim().is_empty()
     {
         tracing::info!(scene = %name, %hash, "loading with RelayRuntime (JS disabled or empty source)");
-        Arc::new(RelayRuntime::new(
+        Arc::new(RelayRuntime::with_limits(
             hash.clone(),
             ServerTransportConfig::default(),
+            &state.settings.limits,
         ))
     } else {
         let realm = match key {

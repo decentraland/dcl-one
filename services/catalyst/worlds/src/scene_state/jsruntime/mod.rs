@@ -1,3 +1,4 @@
+mod array_buffers;
 mod fetch;
 mod fetch_ops;
 mod handle;

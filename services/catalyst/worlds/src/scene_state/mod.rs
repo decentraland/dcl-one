@@ -442,6 +442,7 @@ impl Settings {
                 fetch_max_body_bytes: raw.signed_fetch_max_body_bytes,
                 fetch_max_in_flight: raw.signed_fetch_max_in_flight,
                 fetch_timeout_ms: raw.signed_fetch_timeout_ms,
+                ..RuntimeLimits::default()
             },
             ws_max_frame_bytes: raw.ws_max_frame_bytes,
             storage,

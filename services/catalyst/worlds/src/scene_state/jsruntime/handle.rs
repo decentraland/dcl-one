@@ -6,7 +6,9 @@ use parking_lot::Mutex;
 use tokio::sync::mpsc;
 
 use crate::scene_state::crdt::{CrdtEngine, decode_batch};
-use crate::scene_state::runtime::{ClientSlots, RuntimeLimits, ServerTransportConfig};
+use crate::scene_state::runtime::{
+    ClientSlots, InboundBudget, RuntimeLimits, ServerTransportConfig,
+};
 
 use super::fetch;
 use super::scene_thread::{SceneScript, run_scene_thread};
@@ -56,6 +58,9 @@ pub struct SharedState {
     /// Bounded, recycled client indices. Shared with the scene thread, which
     /// releases a slot only once it has reclaimed that client's entity range.
     pub slots: Arc<ClientSlots>,
+
+    /// Client bytes queued toward the scene thread and not yet read.
+    pub inbound: Arc<InboundBudget>,
 }
 
 pub(super) struct Watchdog {
@@ -167,7 +172,11 @@ pub fn spawn(
     static_crdt: Vec<u8>,
     storage: Option<fetch::StorageCtx>,
 ) -> JsRuntimeHandle {
-    let engine = Arc::new(Mutex::new(CrdtEngine::with_cap(limits.crdt_max_components)));
+    let engine = Arc::new(Mutex::new(CrdtEngine::with_limits(
+        limits.crdt_max_components,
+        limits.crdt_max_value_bytes,
+        limits.crdt_max_bytes,
+    )));
     let snapshot = Arc::new(Mutex::new(Vec::new()));
 
     if !static_crdt.is_empty() {
@@ -188,6 +197,7 @@ pub fn spawn(
         outbound: dashmap::DashMap::new(),
         running: AtomicBool::new(true),
         slots: Arc::clone(&slots),
+        inbound: Arc::new(InboundBudget::new(&limits)),
     });
 
     let watchdog = Arc::new(Watchdog {
@@ -1177,5 +1187,129 @@ mod tests {
             "the cross-client reparent must never reach the scene"
         );
         assert_eq!(live_puts(&handle), vec![ok]);
+    }
+
+    #[test]
+    fn a_spinning_set_immediate_is_terminated() {
+        let js = r#"
+            setImmediate(function () { for (;;) {} });
+            module.exports.onUpdate = function (dt) {};
+        "#
+        .to_string();
+        let limits = RuntimeLimits {
+            js_tick_budget_ms: 100,
+            ..RuntimeLimits::default()
+        };
+        let handle = spawn(
+            "immediate-spin".into(),
+            js,
+            "dcl-test".into(),
+            limits,
+            Vec::new(),
+            None,
+        );
+        assert!(
+            wait_for(|| !handle.shared.running.load(Ordering::SeqCst)),
+            "the watchdog must stop a setImmediate callback that never returns"
+        );
+    }
+
+    /// Runs `body` in `onStart` and reports whether it set `ok`, by writing
+    /// entity 600 only when it did.
+    fn scene_reports(name: &str, body: &str, limits: RuntimeLimits) -> bool {
+        let batch = encode_batch(&[put(600, 1, 1, &[1])]);
+        let js = format!(
+            r#"
+            var EngineApi = require('~system/EngineApi');
+            module.exports.onStart = function () {{
+              var ok = false;
+              {body}
+              if (ok) {{ EngineApi.crdtSendToRenderer({{ data: new Uint8Array({batch:?}) }}); }}
+            }};
+            "#
+        );
+        let handle = spawn(name.into(), js, "dcl-test".into(), limits, Vec::new(), None);
+        wait_for(|| handle.shared.engine.lock().component_count() == 1)
+    }
+
+    #[test]
+    fn array_buffers_are_held_to_the_isolate_budget() {
+        let limits = RuntimeLimits {
+            js_array_buffer_limit_mb: 8,
+            ..RuntimeLimits::default()
+        };
+        assert!(
+            scene_reports(
+                "ab-within",
+                "var keep = new Uint8Array(4 << 20); keep.fill(1); ok = keep[0] === 1;",
+                limits,
+            ),
+            "an allocation inside the budget succeeds"
+        );
+        let js = r#"
+            var keep = [];
+            module.exports.onUpdate = function () { keep.push(new Uint8Array(4 << 20)); };
+        "#;
+        let handle = spawn(
+            "ab-over".into(),
+            js.to_string(),
+            "dcl-test".into(),
+            limits,
+            Vec::new(),
+            None,
+        );
+        assert!(
+            wait_for(|| !handle.shared.running.load(Ordering::SeqCst)),
+            "a scene that keeps allocating past the budget is stopped"
+        );
+    }
+
+    #[test]
+    fn host_buffers_over_the_crdt_budget_throw() {
+        let limits = RuntimeLimits {
+            crdt_max_bytes: 64,
+            ..RuntimeLimits::default()
+        };
+        assert!(
+            scene_reports(
+                "crdt-within",
+                "updateCRDTState(new Uint8Array(64)); ok = true;",
+                limits,
+            ),
+            "a buffer at the cap is accepted"
+        );
+        assert!(
+            scene_reports(
+                "crdt-over",
+                "try { updateCRDTState(new Uint8Array(65)); } catch (e) { ok = e instanceof RangeError; } \
+                 try { EngineApi.crdtSendToRenderer({ data: new Uint8Array(65) }); ok = false; } \
+                 catch (e) { ok = ok && e instanceof RangeError; }",
+                limits,
+            ),
+            "a buffer over the cap throws"
+        );
+    }
+
+    #[test]
+    fn array_buffer_budget_returns_freed_host_buffers() {
+        let budget = super::super::array_buffers::ArrayBufferBudget::new(1024);
+        ensure_v8_initialized();
+        let mut isolate = v8::Isolate::new(
+            v8::CreateParams::default()
+                .array_buffer_allocator(super::super::array_buffers::allocator(&budget)),
+        );
+        {
+            v8::scope!(let scope, &mut isolate);
+            let context = v8::Context::new(scope, Default::default());
+            let scope = &mut v8::ContextScope::new(scope, context);
+            assert!(super::super::array_buffers::uint8array(scope, &budget, &[1; 600]).is_some());
+            assert_eq!(budget.used(), 600);
+            assert!(
+                super::super::array_buffers::uint8array(scope, &budget, &[1; 600]).is_none(),
+                "a host buffer past the budget is refused"
+            );
+        }
+        drop(isolate);
+        assert_eq!(budget.used(), 0, "dropping the isolate frees its buffers");
     }
 }

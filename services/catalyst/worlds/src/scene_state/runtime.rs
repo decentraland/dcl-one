@@ -290,6 +290,20 @@ pub struct RuntimeLimits {
     pub client_inbound_max: usize,
     pub client_outbound_max: usize,
     pub crdt_max_components: usize,
+    /// Largest single component payload the engine keeps.
+    pub crdt_max_value_bytes: usize,
+    /// Payload bytes one scene's engine retains; also the largest buffer a
+    /// scene may hand `crdtSendToRenderer` or `updateCRDTState`.
+    pub crdt_max_bytes: usize,
+    /// Client frames queued toward the scene and not yet read, per client
+    /// and per scene.
+    pub client_inbound_max_bytes: usize,
+    pub scene_inbound_max_bytes: usize,
+    /// Bytes the scene may queue to one client between flushes; also the
+    /// largest single `sendCrdtMessage` buffer.
+    pub client_outbound_max_bytes: usize,
+    /// ArrayBuffer memory one isolate may hold outside its JS heap.
+    pub js_array_buffer_limit_mb: usize,
     pub fetch_max_response_bytes: usize,
     pub fetch_max_body_bytes: usize,
     pub fetch_max_in_flight: usize,
@@ -306,11 +320,80 @@ impl Default for RuntimeLimits {
             client_inbound_max: 1024,
             client_outbound_max: 1024,
             crdt_max_components: 100_000,
+            crdt_max_value_bytes: 256 * 1024,
+            crdt_max_bytes: 32 * 1024 * 1024,
+            client_inbound_max_bytes: 8 * 1024 * 1024,
+            scene_inbound_max_bytes: 32 * 1024 * 1024,
+            client_outbound_max_bytes: 8 * 1024 * 1024,
+            js_array_buffer_limit_mb: 128,
             fetch_max_response_bytes: 2 * 1024 * 1024,
             fetch_max_body_bytes: 1024 * 1024,
             fetch_max_in_flight: 8,
             fetch_timeout_ms: 10_000,
         }
+    }
+}
+
+/// A client queued more bytes toward the scene than its budget allows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InboundOverBudget;
+
+/// Bytes and frames queued toward one scene thread, per client and in total.
+#[derive(Debug)]
+pub struct InboundBudget {
+    client_max_bytes: usize,
+    client_max_frames: usize,
+    scene_max_bytes: usize,
+    state: Mutex<InboundUsage>,
+}
+
+#[derive(Debug, Default)]
+struct InboundUsage {
+    per_client: std::collections::HashMap<u32, (usize, usize)>,
+    total: usize,
+}
+
+impl InboundBudget {
+    pub fn new(limits: &RuntimeLimits) -> Self {
+        Self {
+            client_max_bytes: limits.client_inbound_max_bytes,
+            client_max_frames: limits.client_inbound_max.max(1),
+            scene_max_bytes: limits.scene_inbound_max_bytes,
+            state: Mutex::new(InboundUsage::default()),
+        }
+    }
+
+    /// Charges one frame of `bytes` to `index`; `false` (nothing charged)
+    /// when that would exceed the client's or the scene's budget.
+    pub fn reserve(&self, index: u32, bytes: usize) -> bool {
+        let mut s = self.state.lock();
+        let (used, frames) = s.per_client.get(&index).copied().unwrap_or_default();
+        if used.saturating_add(bytes) > self.client_max_bytes
+            || frames >= self.client_max_frames
+            || s.total.saturating_add(bytes) > self.scene_max_bytes
+        {
+            return false;
+        }
+        s.per_client.insert(index, (used + bytes, frames + 1));
+        s.total += bytes;
+        true
+    }
+
+    /// Returns `bytes` and `frames` previously reserved for `index`.
+    pub fn release(&self, index: u32, bytes: usize, frames: usize) {
+        let mut s = self.state.lock();
+        s.total = s.total.saturating_sub(bytes);
+        if let Some((used, queued)) = s.per_client.get_mut(&index) {
+            *used = used.saturating_sub(bytes);
+            *queued = queued.saturating_sub(frames);
+            if *used == 0 && *queued == 0 {
+                s.per_client.remove(&index);
+            }
+        }
+    }
+
+    pub fn total(&self) -> usize {
+        self.state.lock().total
     }
 }
 
@@ -332,7 +415,13 @@ pub trait SceneRuntime: Send + Sync {
         outbound: tokio::sync::mpsc::Sender<Vec<u8>>,
     ) -> InitState;
 
-    fn on_client_crdt(&self, client_index: u32, body: &[u8]) -> Vec<Vec<u8>>;
+    /// `Err` when the client has queued more than its byte budget: the
+    /// caller closes it.
+    fn on_client_crdt(
+        &self,
+        client_index: u32,
+        body: &[u8],
+    ) -> Result<Vec<Vec<u8>>, InboundOverBudget>;
 
     /// Tear down `client_index`. Returns already-encoded CRDT bodies that the
     /// caller **must broadcast to the remaining clients** -- the reclaim of a
@@ -357,10 +446,22 @@ pub struct RelayRuntime {
 
 impl RelayRuntime {
     pub fn new(scene_hash: impl Into<String>, config: ServerTransportConfig) -> Self {
+        Self::with_limits(scene_hash, config, &RuntimeLimits::default())
+    }
+
+    pub fn with_limits(
+        scene_hash: impl Into<String>,
+        config: ServerTransportConfig,
+        limits: &RuntimeLimits,
+    ) -> Self {
         Self {
             scene_hash: scene_hash.into(),
             config,
-            engine: Mutex::new(crate::scene_state::crdt::CrdtEngine::new()),
+            engine: Mutex::new(crate::scene_state::crdt::CrdtEngine::with_limits(
+                limits.crdt_max_components,
+                limits.crdt_max_value_bytes,
+                limits.crdt_max_bytes,
+            )),
             slots: ClientSlots::default(),
             assigned: Mutex::new(BTreeMap::new()),
         }
@@ -411,14 +512,18 @@ impl SceneRuntime for RelayRuntime {
         }
     }
 
-    fn on_client_crdt(&self, client_index: u32, body: &[u8]) -> Vec<Vec<u8>> {
+    fn on_client_crdt(
+        &self,
+        client_index: u32,
+        body: &[u8],
+    ) -> Result<Vec<Vec<u8>>, InboundOverBudget> {
         let Some((start, size)) = self.assigned.lock().get(&client_index).copied() else {
             tracing::warn!(
                 scene = %self.scene_hash,
                 index = client_index,
                 "crdt from a client with no assigned range; dropped"
             );
-            return vec![];
+            return Ok(vec![]);
         };
         let foreign = self.foreign_ranges(client_index);
         let guard = AuthorityGuard {
@@ -430,13 +535,13 @@ impl SceneRuntime for RelayRuntime {
             body, start, size,
         ));
         if msgs.is_empty() {
-            return vec![];
+            return Ok(vec![]);
         }
         let accepted = self.engine.lock().apply_batch(&msgs);
         if accepted.is_empty() {
-            vec![]
+            Ok(vec![])
         } else {
-            vec![crate::scene_state::crdt::encode_batch(&accepted)]
+            Ok(vec![crate::scene_state::crdt::encode_batch(&accepted)])
         }
     }
 
@@ -526,12 +631,23 @@ impl SceneRuntime for JsRuntime {
         }
     }
 
-    fn on_client_crdt(&self, client_index: u32, body: &[u8]) -> Vec<Vec<u8>> {
-        let _ = self.handle.tx.send(Command::ClientCrdt {
+    fn on_client_crdt(
+        &self,
+        client_index: u32,
+        body: &[u8],
+    ) -> Result<Vec<Vec<u8>>, InboundOverBudget> {
+        let budget = &self.handle.shared.inbound;
+        if !budget.reserve(client_index, body.len()) {
+            return Err(InboundOverBudget);
+        }
+        let sent = self.handle.tx.send(Command::ClientCrdt {
             index: client_index,
             body: body.to_vec(),
         });
-        vec![]
+        if sent.is_err() {
+            budget.release(client_index, body.len(), 1);
+        }
+        Ok(vec![])
     }
 
     fn on_client_close(&self, client_index: u32) -> Vec<Vec<u8>> {
@@ -689,7 +805,7 @@ mod tests {
             data: vec![1, 2, 3],
         };
         let body = encode_batch(std::slice::from_ref(&put));
-        let out = rt.on_client_crdt(idx, &body);
+        let out = rt.on_client_crdt(idx, &body).unwrap();
 
         assert_eq!(out.len(), 1);
         assert_eq!(decode_batch(&out[0]), vec![put.clone()]);
@@ -700,7 +816,7 @@ mod tests {
             timestamp: 4,
             data: vec![9],
         }]);
-        assert!(rt.on_client_crdt(idx, &stale).is_empty());
+        assert!(rt.on_client_crdt(idx, &stale).unwrap().is_empty());
 
         let second = open(&rt);
         let (tx, _rx) = tokio::sync::mpsc::channel(16);
@@ -735,7 +851,7 @@ mod tests {
                 entity: 4_000_000_000,
             },
         ]);
-        assert!(rt.on_client_crdt(idx, &out_of_range).is_empty());
+        assert!(rt.on_client_crdt(idx, &out_of_range).unwrap().is_empty());
         assert!(live(&rt).is_empty());
 
         let in_range = encode_batch(&[CrdtMessage::Put {
@@ -744,7 +860,7 @@ mod tests {
             timestamp: 1,
             data: vec![3],
         }]);
-        assert_eq!(rt.on_client_crdt(idx, &in_range).len(), 1);
+        assert_eq!(rt.on_client_crdt(idx, &in_range).unwrap().len(), 1);
     }
 
     /// D4. The departing client's reclaim has to reach the room, not be
@@ -769,7 +885,7 @@ mod tests {
                 data: vec![2],
             },
         ]);
-        assert_eq!(rt.on_client_crdt(a, &body).len(), 1);
+        assert_eq!(rt.on_client_crdt(a, &body).unwrap().len(), 1);
 
         let out = rt.on_client_close(a);
         assert_eq!(
@@ -806,7 +922,7 @@ mod tests {
             data: transform_with_parent(1600),
         }]);
         assert!(
-            rt.on_client_crdt(a, &graft).is_empty(),
+            rt.on_client_crdt(a, &graft).unwrap().is_empty(),
             "cross-client reparent must be rejected"
         );
         assert!(live(&rt).is_empty());
@@ -819,7 +935,7 @@ mod tests {
                 data: transform_with_parent(parent),
             }]);
             assert_eq!(
-                rt.on_client_crdt(a, &ok).len(),
+                rt.on_client_crdt(a, &ok).unwrap().len(),
                 1,
                 "parenting to {parent} is legitimate and must be admitted"
             );
@@ -848,7 +964,7 @@ mod tests {
                 data: vec![generation as u8],
             }]);
             assert_eq!(
-                rt.on_client_crdt(a, &body).len(),
+                rt.on_client_crdt(a, &body).unwrap().len(),
                 1,
                 "entity number 1100 at generation {generation} (packed {packed}) is \
                  inside client a's range [1024, 1536) and must be admitted"
@@ -864,7 +980,7 @@ mod tests {
                 data: vec![1],
             }]);
             assert!(
-                rt.on_client_crdt(a, &body).is_empty(),
+                rt.on_client_crdt(a, &body).unwrap().is_empty(),
                 "entity number 1600 is not client a's, whatever the generation"
             );
         }
@@ -931,5 +1047,84 @@ mod tests {
         );
         assert_eq!(transform_parent(2, &transform_with_parent(2048)), None);
         assert_eq!(transform_parent(TRANSFORM_COMPONENT_ID, &[0u8; 40]), None);
+    }
+
+    fn js_runtime(js: &str, limits: RuntimeLimits) -> JsRuntime {
+        JsRuntime::new(
+            "budget",
+            js.to_string(),
+            "dcl-test".into(),
+            limits,
+            Vec::new(),
+            None,
+        )
+    }
+
+    fn js_open(rt: &JsRuntime) -> u32 {
+        let index = rt.allocate_client_index();
+        let (tx, _rx) = tokio::sync::mpsc::channel(16);
+        let _ = rt.on_client_open(index, tx);
+        index
+    }
+
+    const NEVER_READS: &str = r#"
+        registerScene(
+          { reservedLocalEntities: 512, networkEntitiesLimit: { serverLimit: 512, clientLimit: 512 } },
+          function (ev) {}
+        );
+        module.exports.onUpdate = function (dt) {};
+    "#;
+
+    #[test]
+    fn a_client_past_its_inbound_byte_budget_is_refused() {
+        let limits = RuntimeLimits {
+            client_inbound_max_bytes: 100,
+            ..RuntimeLimits::default()
+        };
+        let rt = js_runtime(NEVER_READS, limits);
+        let index = js_open(&rt);
+        let frame = encode_batch(&[CrdtMessage::Put {
+            entity: 1100,
+            component_id: 1,
+            timestamp: 1,
+            data: vec![0; 40],
+        }]);
+        assert!(rt.on_client_crdt(index, &frame).is_ok());
+        assert_eq!(
+            rt.on_client_crdt(index, &[0; 80]),
+            Err(InboundOverBudget),
+            "unread bytes past the client's budget close it"
+        );
+    }
+
+    #[test]
+    fn the_scene_budget_bounds_all_clients_together() {
+        let limits = RuntimeLimits {
+            client_inbound_max_bytes: 100,
+            scene_inbound_max_bytes: 150,
+            ..RuntimeLimits::default()
+        };
+        let rt = js_runtime(NEVER_READS, limits);
+        let (a, b) = (js_open(&rt), js_open(&rt));
+        assert!(rt.on_client_crdt(a, &[0; 90]).is_ok());
+        assert!(rt.on_client_crdt(b, &[0; 50]).is_ok());
+        assert_eq!(rt.on_client_crdt(b, &[0; 20]), Err(InboundOverBudget));
+    }
+
+    #[test]
+    fn frames_a_scene_cannot_read_do_not_count() {
+        let limits = RuntimeLimits {
+            client_inbound_max_bytes: 100,
+            ..RuntimeLimits::default()
+        };
+        let rt = js_runtime("module.exports.onUpdate = function (dt) {};", limits);
+        let index = js_open(&rt);
+        for _ in 0..10 {
+            assert!(rt.on_client_crdt(index, &[0; 60]).is_ok());
+            assert!(
+                crate::shared::test_wait::until_blocking(|| rt.handle.shared.inbound.total() == 0),
+                "a scene without an observer drops what it can never read"
+            );
+        }
     }
 }

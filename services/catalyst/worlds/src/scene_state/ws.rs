@@ -281,7 +281,10 @@ async fn handle_socket(
                     Message::Binary(bytes) => {
                         if let Some((MessageType::Crdt, body)) = decode_message(&bytes) {
                             if body.is_empty() { continue; }
-                            let outbound = scene.runtime.on_client_crdt(index, body);
+                            let Ok(outbound) = scene.runtime.on_client_crdt(index, body) else {
+                                tracing::info!(scene = %scene.name, index, "client over its inbound byte budget; closing");
+                                break;
+                            };
                             for out in outbound {
                                 let frame = encode_message(MessageType::Crdt, &out);
                                 scene.broadcast(&frame, index);
