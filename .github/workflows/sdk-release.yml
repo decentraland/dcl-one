@@ -60,8 +60,7 @@ jobs:
   publish:
     name: Publish to npm
     needs: build
-    # next waits for the SDK_PUBLISH_NEXT repository variable; a release always publishes
-    if: github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' || vars.SDK_PUBLISH_NEXT == 'true')
+    if: github.ref == 'refs/heads/main'
     concurrency:
       group: sdk-publish-${{ github.event_name }}
       cancel-in-progress: false

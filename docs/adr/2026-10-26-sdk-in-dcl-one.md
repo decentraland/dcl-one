@@ -50,9 +50,7 @@ build test prepare`). Its `.github`, agent files and editor configuration were l
   `js-runtime`, `react-ecs`, `sdk-commands` and `sdk` (`playground-assets` is built and tested, not
   published) as `@dcl/*` under the `next` dist-tag, as `<latest patch+1>-<run>.commit-<sha>`
   (oddish derives the version from the registry's `latest`; the manifests keep `7.0.0` as upstream
-  does, and `npm publish` ships the tarballs through trusted publishing). `next` stays off until
-  the `SDK_PUBLISH_NEXT` repository variable is `true`, which waits for the `@dcl` trusted
-  publishers and for upstream to stop publishing it.
+  does, and `npm publish` ships the tarballs through trusted publishing).
   Versioned releases are cut by hand ([releases ADR](2026-11-09-releases-per-scope.md)). The
   manifests name this repository, which trusted publishing requires.
 - A pull request from this repository publishes the tarballs its run built as
@@ -80,8 +78,7 @@ build test prepare`). Its `.github`, agent files and editor configuration were l
 
 1. PR previews publish from here. Releases and `next` are wired in `sdk-release.yml` and still
    need: the `npm-release` environment, a trusted publisher on each `@dcl` package naming that
-   workflow and environment, `SDK_PUBLISH_NEXT` turned on, and `decentraland/js-sdk-toolchain`
-   to stop publishing. Then the rest of the PR tooling (the e2e realm, the playground). The first
+   workflow and environment, and `decentraland/js-sdk-toolchain` to stop publishing. Then the rest of the PR tooling (the e2e realm, the playground). The first
    release notes carry the narrowed types above.
 2. The `auth-server` branch as a dcl-one branch published through a manual `publish-tag` run.
 3. Fold the rest of the SDK's `experimental-bevy` layer (react-ecs scroll and render-to-texture,

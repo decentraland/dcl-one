@@ -90,8 +90,7 @@ trusted publishers require that environment, so a branch or a pull request canno
 whatever its workflow says.
 
 A push to `main` that touches the SDK or the protocol publishes under `next` as
-`<latest patch+1>-<run>.commit-<sha>` once the `SDK_PUBLISH_NEXT` repository variable is `true`;
-until then it builds and tests only.
+`<latest patch+1>-<run>.commit-<sha>`.
 
 A versioned release is a manual run from `main`:
 
