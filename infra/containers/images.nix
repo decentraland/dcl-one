@@ -7,6 +7,18 @@ let
     printf 'root:x:0:\nfoundation:x:1000:\n' > "$out/etc/group"
     printf 'hosts: files dns\npasswd: files\ngroup: files\n' > "$out/etc/nsswitch.conf"
   '';
+  # Sites for a deployment whose Shop settles credits through dcl-one's own CreditsManager on
+  # Polygon (services/catalyst/shop/src/policy_entry.rs DCL_ONE_POLYGON_MANAGER); the plain
+  # `sites` keeps the registry's manager. Defined here, not in infra/packages, so the plain
+  # build and the Bevy artifact's inputs stay as they are.
+  sitesPolygonCredits = sites.override {
+    shopSettlement = { chainId = 137; creditsManager = "0xe21289022b9324f9b9145a91ee59297ceb040c06"; };
+  };
+  labels = {
+    "org.opencontainers.image.source" = "https://github.com/decentraland/dcl-one";
+    "org.opencontainers.image.revision" = revision;
+    "org.opencontainers.image.licenses" = "AGPL-3.0";
+  };
   image = name: package: config: pkgs.dockerTools.buildLayeredImage {
     inherit name;
     tag = "nix";
@@ -21,12 +33,17 @@ let
       User = "1000:1000";
       WorkingDir = "/data";
       Env = [ "HOME=/data" "SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.crt" ];
-      Labels = {
-        "org.opencontainers.image.source" = "https://github.com/decentraland/dcl-one";
-        "org.opencontainers.image.revision" = revision;
-        "org.opencontainers.image.licenses" = "AGPL-3.0";
-      };
+      Labels = labels;
     } // config;
+  };
+  sitesConfig = package: {
+    Entrypoint = [ "${lib.getExe package}" ];
+    Env = [
+      "HOME=/data" "SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.crt"
+      "PATH=${lib.makeBinPath [ pkgs.nodejs-slim_26 ]}:/bin"
+      "HOST=0.0.0.0" "PORT=5212" "NODE_ENV=production" "SITES_STATE_DIR=/data"
+    ];
+    ExposedPorts."5212/tcp" = { };
   };
 in {
   image-gateway = image "foundation-gateway" gateway {
@@ -49,13 +66,14 @@ in {
     ];
     ExposedPorts."5210/tcp" = { };
   };
-  image-sites = image "foundation-sites" sites {
-    Entrypoint = [ "${lib.getExe sites}" ];
-    Env = [
-      "HOME=/data" "SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.crt"
-      "PATH=${lib.makeBinPath [ pkgs.nodejs-slim_26 ]}:/bin"
-      "HOST=0.0.0.0" "PORT=5212" "NODE_ENV=production" "SITES_STATE_DIR=/data"
-    ];
-    ExposedPorts."5212/tcp" = { };
-  };
+  image-sites = image "foundation-sites" sites (sitesConfig sites);
+  # The same Sites image built for dcl-one's Polygon CreditsManager (`sitesPolygonCredits` above),
+  # labelled with the settlement it carries.
+  image-sites-polygon-credits = image "foundation-sites-polygon-credits" sitesPolygonCredits
+    (sitesConfig sitesPolygonCredits // {
+      Labels = labels // {
+        "org.decentraland.shop.settlement-chain-id" = toString sitesPolygonCredits.shopSettlement.chainId;
+        "org.decentraland.shop.credits-manager" = sitesPolygonCredits.shopSettlement.creditsManager;
+      };
+    });
 }

@@ -61,3 +61,7 @@ result-*
 /services/catalyst/docs/crates/agents/*-evidence.md
 /services/catalyst/docs/crates/agents/tools/
 /services/catalyst/docs/crates/*.html
+
+# Temporary notes and documents written by people during development; never committed.
+# AI session output belongs in .agent-work/ instead.
+/temp/

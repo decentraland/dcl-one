@@ -1473,6 +1473,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "ban_block"
+version = "0.1.0"
+dependencies = [
+ "alloy-core",
+ "bevy",
+ "bevy_console",
+ "clap",
+ "common",
+ "comms",
+ "console 0.1.0",
+ "platform",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "social",
+ "wallet",
+ "web-time",
+]
+
+[[package]]
 name = "base-x"
 version = "0.2.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3522,6 +3542,7 @@ dependencies = [
  "js-sys",
  "kira",
  "livekit",
+ "livekit-signaling",
  "livestream_manager",
  "media",
  "modular-bitfield",
@@ -3536,6 +3557,7 @@ dependencies = [
  "rusty_enet",
  "serde",
  "serde_json",
+ "social",
  "system_bridge",
  "tokio",
  "ui_core",
@@ -4452,6 +4474,7 @@ dependencies = [
  "async-std",
  "av",
  "avatar",
+ "ban_block",
  "bevy",
  "bevy_console",
  "bevy_dui",
@@ -6963,6 +6986,7 @@ name = "imposters"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "assets",
  "async-fs",
  "bevy",
  "bevy_console",
@@ -6973,6 +6997,7 @@ dependencies = [
  "crc",
  "futures-lite",
  "ipfs",
+ "naga_oil",
  "platform",
  "reqwest",
  "scene_material",
@@ -7128,6 +7153,7 @@ dependencies = [
  "multihash-codetable",
  "platform",
  "reqwest",
+ "ruzstd 0.9.1",
  "serde",
  "serde_json",
  "tokio",
@@ -10497,6 +10523,7 @@ dependencies = [
  "bevy_console",
  "bevy_dui",
  "clap",
+ "collectibles",
  "common",
  "comms",
  "console 0.1.0",
@@ -10926,9 +10953,12 @@ dependencies = [
 name = "scene_material"
 version = "0.1.0"
 dependencies = [
+ "assets",
  "bevy",
  "boimp",
  "common",
+ "naga_oil",
+ "nonmax",
 ]
 
 [[package]]
@@ -12125,6 +12155,7 @@ dependencies = [
  "anyhow",
  "async-std",
  "avatar",
+ "ban_block",
  "base64 0.22.1",
  "bevy",
  "bevy_console",
@@ -13310,6 +13341,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 name = "visuals"
 version = "0.1.0"
 dependencies = [
+ "assets",
  "bevy",
  "bevy_atmosphere",
  "bevy_console",
@@ -13320,7 +13352,9 @@ dependencies = [
  "dcl_component",
  "dcl_types",
  "ipfs",
+ "naga_oil",
  "noise",
+ "scene_material",
  "scene_runner",
  "serde_json",
  "web-time",

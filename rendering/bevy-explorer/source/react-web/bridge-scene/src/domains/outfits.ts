@@ -15,10 +15,10 @@ import { fetchOwnedNames } from './profile'
 import { sendEquipped } from './wearables'
 import { currentLook, editLook } from './avatarDraft'
 import { captureAvatarThumbnail, waitFrames } from './avatarPreview'
-import type { AvatarLook } from '../../../src/engine/avatarEquip'
-import type { OutfitsData } from '../../../src/engine/generated'
+import type { AvatarLook } from '@explorer-core/engine/avatarEquip'
+import type { OutfitsData } from '@explorer-core/engine/generated'
 import type { Ctx } from '../bridge'
-import type { Outfit, OutfitsMetadata, RGBColor } from '../../../src/engine/protocol'
+import type { Outfit, OutfitsMetadata, RGBColor } from '@explorer-core/engine/protocol'
 
 const EMPTY: OutfitsMetadata = { outfits: [], namesForExtraSlots: [] }
 const GREY: RGBColor = { r: 0.5, g: 0.5, b: 0.5 }

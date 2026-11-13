@@ -9,7 +9,8 @@ vi.mock("../catalyst/create/index.server", () => ({ loadCreatorScenes: vi.fn() }
 vi.mock("../catalyst/places/index", () => ({ fetchMostActivePlaces: vi.fn() }));
 vi.mock("../catalyst/places/events", () => ({ fetchEvents: vi.fn() }));
 vi.mock("../catalyst/social/profile", () => ({ fetchProfile: vi.fn() }));
-vi.mock("@/core/lib/content/blog", () => ({ blogPostCards: () => [] }));
+const blogList = vi.hoisted(() => vi.fn());
+vi.mock("../blog/cms", () => ({ blogCms: () => ({ list: blogList }) }));
 
 const address = "0x1111111111111111111111111111111111111111";
 const request = () => new Request("https://sites.test/create", { headers: { cookie: `dcl_wallet=${address}` } });
@@ -22,6 +23,7 @@ beforeEach(() => {
   vi.mocked(fetchMostActivePlaces).mockResolvedValue([]);
   vi.mocked(fetchEvents).mockResolvedValue({ data: [], total: 0 });
   vi.mocked(fetchProfile).mockResolvedValue({ name: "Alice", ethAddress: address, hasClaimedName: false, description: "" });
+  blogList.mockResolvedValue({ posts: [], total: 0 });
 });
 afterEach(() => { resetCreateScreenCache(); vi.useRealTimers(); });
 
@@ -74,6 +76,21 @@ describe("creator home screen", () => {
     expect(completed).toBe(true);
     expect((await pending).data.happenings).toMatchObject([{ id: "trending" }]);
     await vi.advanceTimersByTimeAsync(10_000);
+  });
+
+  it("adds the CMS's latest three posts to the happenings, and none when the blog is unavailable", async () => {
+    const post = (slug: string) => ({ id: slug, slug, title: slug.toUpperCase(), hue: 1, publishedAt: "2026-07-02", category: { slug: "platform", title: "Platform" } });
+    blogList.mockResolvedValue({ posts: ["a", "b", "c", "d"].map(post), total: 4 });
+    const { data } = await loadCreateScreen(request());
+    expect(data.happenings).toEqual([
+      expect.objectContaining({ id: "a", kind: "post", title: "A", href: "/blog/platform/a", meta: expect.stringContaining("Platform") }),
+      expect.objectContaining({ id: "b" }),
+      expect.objectContaining({ id: "c" }),
+    ]);
+
+    resetCreateScreenCache();
+    blogList.mockRejectedValue(new Error("unavailable"));
+    expect((await loadCreateScreen(request())).data.happenings).toEqual([]);
   });
 
   it("keeps scenes when the profile fails and exposes that section's failure", async () => {

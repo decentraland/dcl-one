@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import type { Ctx } from '../../bridge-scene/src/bridge'
-import type { AvatarLook } from '../engine/avatarEquip'
-import type { OutfitsData, OutfitThumbnailData } from '../engine/generated'
-import type { OutfitsMetadata, PageToScene, SceneToPage } from '../engine/protocol'
+import type { AvatarLook } from '@explorer-core/engine/avatarEquip'
+import type { OutfitsData, OutfitThumbnailData } from '@explorer-core/engine/generated'
+import type { OutfitsMetadata, PageToScene, SceneToPage } from '@explorer-core/engine/protocol'
 
 const FEMALE = 'urn:decentraland:off-chain:base-avatars:BaseFemale'
 const PICTURE = 'data:image/png;base64,AAAA'

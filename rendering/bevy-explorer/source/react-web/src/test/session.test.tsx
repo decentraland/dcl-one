@@ -1,14 +1,14 @@
-import { expectConsoleOutput } from './console'
+import { expectConsoleOutput } from '@explorer-core/test/console'
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { act, waitFor } from '@testing-library/react'
-import { renderSession, enterAsGuest, FakeDriver } from './harness'
-import { openProfileCard } from '../features/profileCard/ProfileCard'
-import { resetPopups } from '../design'
+import { renderSession, enterAsGuest, FakeDriver } from '@hud/test/harness'
+import { openProfileCard } from '@hud/features/profileCard/ProfileCard'
+import { resetPopups } from '@hud/design'
 import { DEFAULT_REALM } from '../lib/baseDomain'
 import { leave, visit } from './entryUrl'
 
 // The avatarClick handler opens the world profile card as a popup; stub it so we can assert the call.
-vi.mock('../features/profileCard/ProfileCard', () => ({ openProfileCard: vi.fn() }))
+vi.mock('@hud/features/profileCard/ProfileCard', () => ({ openProfileCard: vi.fn() }))
 afterEach(resetPopups)
 
 // Records launch() so tests can assert the realm/position the engine was booted with.
@@ -529,6 +529,26 @@ describe('autopilot boot (?autopilot)', () => {
     expect(h.session().login.status).toBe('loading')
     expect(h.session().login.error).toBeNull()
     expect(h.session().phase).not.toBe('lobby')
+  })
+
+  it('a sign-in refused after a sign-out is still reported, so the run ends', async () => {
+    expectConsoleOutput('error', [['[login] post-launch login failed:', 'profile fetch failed: 503']])
+    window.history.replaceState(null, '', '/?autopilot&realm=supportteam.dcl.eth')
+    let refuse!: () => void
+    class HeldRefusalDriver extends FakeDriver {
+      async loginLocalGuest(): Promise<void> {
+        this.calls.push('loginLocalGuest')
+        await new Promise<void>((go) => (refuse = go))
+        throw 'profile fetch failed: 503'
+      }
+    }
+    const driver = new HeldRefusalDriver()
+    const h = renderSession({ userId: null }, driver)
+    await waitFor(() => expect(driver.calls).toContain('loginLocalGuest'))
+    // signed out (the debug panel's hud/signout) while the engine holds the sign-in
+    act(() => h.session().logout())
+    refuse()
+    await waitFor(() => expect(driver.autopilotFailures).toEqual(['sign-in failed: profile fetch failed: 503']))
   })
 
   it('logs a failure report the engine did not take, which would leave the run to time out', async () => {

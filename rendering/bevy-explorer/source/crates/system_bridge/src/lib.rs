@@ -85,15 +85,12 @@ pub enum SystemApi {
     /// JSON read from localStorage) — no auth-server round-trip. The identity is the same
     /// regardless of how the user signed in (wallet, social, OTP, magic).
     /// bools: as for LoginPrevious; the identity is a guest account (see
-    /// `Wallet::is_guest_account`). The pick names and dresses the profile a first login builds;
-    /// the string is the lambdas endpoint to fetch the account's profile from (the catalyst the
-    /// sign-in deployed it to), else the realm's.
+    /// `Wallet::is_guest_account`). The pick names and dresses the profile a first login builds.
     LoginWithIdentity(
         String,
         bool,
         bool,
         Option<NewAccountPick>,
-        Option<String>,
         RpcResultSender<Result<(), String>>,
     ),
     LoginGuest,
@@ -156,6 +153,9 @@ pub enum SystemApi {
     GetSystemActionStream(RpcStreamSender<SystemActionEvent>),
     GetChatStream(RpcStreamSender<ChatMessage>),
     GetVoiceStream(RpcStreamSender<VoiceMessage>),
+    SetNearbyMuted(String, bool, RpcResultSender<Result<(), String>>),
+    /// The wallets whose nearby voice is muted: the list now, then again on every change.
+    GetNearbyMuteStream(RpcStreamSender<Vec<String>>),
     GetHoverStream(RpcStreamSender<HoverEvent>),
     GetProximityStream(RpcStreamSender<ProximityEvent>),
     GetPhotoModeStream(RpcStreamSender<PhotoModeState>),
@@ -185,6 +185,8 @@ pub enum SystemApi {
         PermissionLevel,
         RpcResultSender<Vec<PermanentPermissionItem>>,
     ),
+    /// The portables the player can see and stop, sent on subscribe and on every change.
+    GetPortablesStream(RpcStreamSender<Vec<PortableInfo>>),
     /// Prompts for the password of a world being entered (see `ipfs::world_access`).
     GetWorldAccessStream(RpcStreamSender<WorldAccessEvent>),
     /// Answers the password prompt: the password, or `None` when the player gives up.
@@ -192,6 +194,10 @@ pub enum SystemApi {
     SetInteractableArea(Vec4),
     GetMicState(RpcResultSender<MicState>),
     SetMicEnabled(bool),
+    /// Trusted HUD recovery request; terminal access decisions remain unchanged.
+    RetryConnectivity,
+    /// The current safe snapshot, followed by changes until the consumer closes.
+    GetConnectivityStream(RpcStreamSender<ConnectivitySnapshot>),
     GetAvatarModifiers(RpcResultSender<Vec<AvatarModifierState>>),
     // Social / Friends
     GetFriends(RpcResultSender<Vec<FriendData>>),
@@ -226,6 +232,13 @@ pub enum SystemApi {
     /// The community channels the local user listens to (member of, chat not closed), as
     /// community ids; replaces the previous set.
     SetCommunityChannels(Vec<String>),
+    // Voice chat (private calls and community streams)
+    /// Emits the voice chat state now and whenever it changes, until dropped.
+    GetVoiceChatStateStream(RpcStreamSender<VoiceChatState>),
+    /// Emits every community voice chat started / ended broadcast, until dropped.
+    GetCommunityVoiceUpdateStream(RpcStreamSender<CommunityVoiceUpdate>),
+    /// A voice chat command from the HUD; its outcome shows on the state stream.
+    VoiceChatAction(VoiceChatAction),
 }
 
 #[derive(Resource)]

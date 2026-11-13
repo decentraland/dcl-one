@@ -164,7 +164,14 @@ impl SceneResponseSender {
 pub enum CommsMessageType {
     String = 1,
     Binary = 2,
+    /// A `CommsApi` topic message: `[u16 LE topic length][topic UTF-8][data UTF-8]`.
+    CommsData = 3,
 }
+
+/// Longest `CommsApi` topic, in UTF-8 bytes.
+pub const MAX_TOPIC_BYTES: usize = 512;
+/// Longest `CommsApi` topic message, including the type byte and the topic length prefix.
+pub const MAX_TOPIC_MESSAGE_BYTES: usize = 13 * 1024;
 
 #[cfg(test)]
 mod rpc_calls_tests {

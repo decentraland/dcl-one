@@ -1,4 +1,5 @@
-import { ensureSid } from "@/core/lib/telemetry/session";
+import type { RouterContextProvider } from "react-router";
+import { requestSession } from "@/core/lib/telemetry/session";
 import { track, withoutSensitiveParams } from "@/core/lib/telemetry/track";
 
 import type { Route } from "./+types/internal.client-error";
@@ -52,7 +53,7 @@ export function loader() {
   return Response.json({ ok: false, error: "method not allowed" }, { status: 405, headers: { allow: "POST" } });
 }
 
-export async function action({ request }: Route.ActionArgs) {
+export async function action({ request, context }: Route.ActionArgs) {
   if (request.method !== "POST") {
     return Response.json({ ok: false, error: "method not allowed" }, { status: 405 });
   }
@@ -80,11 +81,11 @@ export async function action({ request }: Route.ActionArgs) {
     return new Response(null, { status: 204 });
   }
 
-  recordClientError(report, request);
+  recordClientError(report, request, context);
   return Response.json({ ok: true }, { status: 202 });
 }
 
-function recordClientError(report: ClientErrorReport, request: Request): void {
+function recordClientError(report: ClientErrorReport, request: Request, context: Readonly<RouterContextProvider>): void {
   try {
     // eslint-disable-next-line no-console
     console.error(
@@ -105,7 +106,7 @@ function recordClientError(report: ClientErrorReport, request: Request): void {
   }
 
   try {
-    const { sid } = ensureSid(request);
+    const { sid } = requestSession(request, context);
     track(
       "client_error",
       {

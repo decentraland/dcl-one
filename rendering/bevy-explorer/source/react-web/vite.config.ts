@@ -5,7 +5,7 @@ import { extname, join, normalize } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { defineConfig, searchForWorkspaceRoot, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
-import { SHARED_ALIASES, SHARED_DEDUPE, SHARED_TREES } from './vite.shared'
+import { INTER_FILES, SHARED_ALIASES, SHARED_DEDUPE, SHARED_TREES } from './vite.shared'
 
 // Dev-only: run the bridge scene's live preview (`sdk-commands start` on :8100 — the engine's
 // default systemScene in dev, with scene hot-reload) alongside vite, so `npm run dev` is the ONE
@@ -114,7 +114,7 @@ export function serveStatic(prefix: string, dirFromConfig: string): Plugin {
 
 // Dev-only: the scene editor package (a dcl-editor checkout's packages/web/dist, named by
 // WEB_EDITOR_DIR) served same-origin under /editor/, where `?editor` loads it from on localhost
-// (src/features/editorHost). Without the variable nothing is mounted.
+// (library/ui/apps/hud/features/editorHost). Without the variable nothing is mounted.
 function editorPackage(): Plugin[] {
   const checkout = process.env.WEB_EDITOR_DIR
   if (!checkout) return []
@@ -208,7 +208,11 @@ export default defineConfig(({ command, mode }) => ({
             // The shell (index.html): its own code, and what it shares with the HUD. Ahead of the
             // HUD's groups, which would otherwise take these along with the modules that import them.
             { name: 'crypto', test: /node_modules\/@noble\//, priority: 1 },
-            { name: 'shell', test: /\/src\/(lib\/(shell|prefs)|features\/auth\/(sso|guest|thirdweb))\.ts/, priority: 1 },
+            { name: 'shell', test: /\/(src|apps\/hud|explorer-core)\/(lib\/(shell|prefs)|features\/auth\/(sso|guest|thirdweb))\.ts/, priority: 1 },
+            // The host module the shared HUD reads (`@hud-host`, src/host.ts) and what it reads, and the
+            // signer the shell and the editor share: the shell page needs them, so they go with it rather
+            // than with the first HUD chunk that imports them.
+            { name: 'shell', test: /\/src\/(host|lib\/(baseDomain|bootMode|entryParams|loopbackHost|publicUrl))\.ts|\/(apps\/hud|explorer-core)\/(engine\/generated\/(serviceTable|webParamTable)|shell\/sign)\.ts/, priority: 1 },
             {
               name(id) {
                 if (id.includes('node_modules')) return 'vendor'
@@ -218,8 +222,9 @@ export default defineConfig(({ command, mode }) => ({
                 if (id.includes('emojis_complete.json') || id.includes('/chat/emojiData')) return 'emoji'
                 // Showcase is dev-only (?showcase=1) and lazy-loaded — leave it out of the design
                 // chunk so its lazy boundary survives and it never ships in the prod HUD path.
-                if (id.includes('/src/design/') && !id.includes('Showcase')) return 'design'
-                if (/\/src\/features\/(map|backpack|communities|gallery|places)\//.test(id)) return 'menus'
+                // The shared HUD (library/ui/apps/hud, library/explorer-core) is split the same way as this app's own sources.
+                if (/\/(src|apps\/hud|explorer-core)\/design\//.test(id) && !id.includes('Showcase')) return 'design'
+                if (/\/(src|apps\/hud|explorer-core)\/features\/(map|backpack|communities|gallery|places)\//.test(id)) return 'menus'
                 return null
               }
             }
@@ -234,7 +239,7 @@ export default defineConfig(({ command, mode }) => ({
     // domain keeps Vite's DNS-rebinding protection on for everything else.
     allowedHosts: ['.trycloudflare.com'],
     // The shared sources live outside this app (vite.shared.ts).
-    fs: { allow: [searchForWorkspaceRoot(process.cwd()), ...SHARED_TREES] },
+    fs: { allow: [searchForWorkspaceRoot(process.cwd()), ...SHARED_TREES, INTER_FILES] },
     // Proxy the auth dapp so it is served same-origin on localhost — sign in locally against
     // zone and the signed AuthIdentity lands in this origin's localStorage (the marketplace
     // does the same). Because it's same-origin, the auth site also accepts our localhost
