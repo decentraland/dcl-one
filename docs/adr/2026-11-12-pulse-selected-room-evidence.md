@@ -40,8 +40,8 @@ lookup verification. An unchanged selection can survive pass advancement.
 ## Legacy readers
 
 The additive internal `archipelago.control.position.v2` subject carries a bounded
-closed legacy intent frame. The ordinary connector continues publishing owner-v1
-frames. Both readers use the existing NATS link and one bounded wallet-slot
+closed legacy intent frame. The ordinary connector publishes intent-v2 frames after verified-session
+registration; it never claims a realm row merely to register signaling. Both readers use the existing NATS link and one bounded wallet-slot
 envelope, with independent ordering and retention for each version. Explicit
 withdrawal terminates an epoch; ordinary live expiry permits a still-open producer
 to resume the same session and epoch with a greater sequence. Duplicate samples
@@ -57,17 +57,41 @@ continues to withhold mixed-version authority until its retention ends; omitting
 it from the conflict check would bypass the required common-domain proof. The
 current live horizon is 10 seconds, followed by 300 seconds of tombstone
 retention after expiry processing. This reader supports no seamless v1-to-v2
-producer cutover during that interval. The ordinary producer remains v1, and
-native reservation is unaffected by conflicting legacy heads.
+producer cutover during that interval. The ordinary producer emits v2, and native reservation is unaffected by
+conflicting legacy heads. Residual v1 input must expire or be reconciled before
+legacy v2 service is enabled.
 
 ## Consequences and remaining work
 
-These readers do not fence an unrestricted older SQL writer or establish a
-producer cutover. Selected legacy production, native SQL ownership lifecycle,
-uncertain mutation settlement and the final physical output admission boundary
-require their own implementation and evidence. Deployment needs reader readiness,
-old writer and backend quiescence, actual allocator-domain proof and exact residual
-state reconciliation. Reader support alone is not a rollout approval.
+The connector commits each verified signaling session before room work. Same-session
+replacement follows successful authentication completion; distinct sessions remain
+connected. A fresh valid heartbeat makes a transport eligible for the wallet's
+completion-ranked v2 candidate. Candidate promotion allocates a fresh epoch; candidate
+evidence cannot authorize credentials.
+
+Gatekeeper's selected realm coordinator owns acquisition, renewal and conditional
+settlement on the shared SQL pool. It preserves wallet-before-realm locking and
+compares the complete known predecessor. Native selection works without a native
+signaling socket. Fresh unknown foreign owners remain conflicts; a fresh external
+same-session assignment can be borrowed read-only after its current stamp validates.
+Only a known exact owned predecessor or lapsed row can be replaced. Transport
+closure detaches its local delivery binding; it cannot release another owner.
+Absent positive selection, renewal stops and the existing 90-second lease lapses.
+
+Dispatched claim, renewal and assignment publication retain immutable before/after
+facts across timeout and cancellation. Reconciliation reads under the same wallet
+lock, conditionally recognizes the attempted result or unchanged predecessor and
+never restores a predecessor. Uncertainty retains its existing subscriber work
+credit; settlement can reuse that credit at capacity. Owned facts use the existing
+peer-state bound, while one retained sample per live transport, the 1,024 outbox
+and 64-frame writer bounds remain. The feed job owns at most 32 candidate allocation
+futures, one per wallet, with no per-heartbeat spawned task.
+
+These paths cannot fence an unrestricted older SQL writer. Deployment still needs
+reader readiness, old writer and backend quiescence, actual allocator-domain proof
+and exact residual state reconciliation. Physical output admission and runtime
+release evidence remain separate requirements. Source implementation alone is not
+a rollout approval.
 
 The stored assignment document is also a deployment boundary. Binaries that
 predate selected origin and identity reject those fields in their closed JSON

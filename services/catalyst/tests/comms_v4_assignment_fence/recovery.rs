@@ -124,6 +124,7 @@ struct RecoveryHarness {
     gateway: Arc<RecordingGateway>,
     source: Arc<Mutex<PeerClusterSnapshot>>,
     sockets: Arc<RecordingSockets>,
+    fence: Arc<super::PgAssignmentFence>,
 }
 
 impl RecoveryHarness {
@@ -156,6 +157,7 @@ impl RecoveryHarness {
             pool: Some(fixture.pool.clone()),
             ..Default::default()
         });
+        let fence = Arc::new(fixture.fence().await);
         let subscriber = ClusterSubscriber::new_with_assignment_fence(
             bus.clone(),
             gateway.clone(),
@@ -165,7 +167,7 @@ impl RecoveryHarness {
                 drain_timeout_ms: 0,
                 ..ClusterConfig::default()
             },
-            Some(Arc::new(fixture.fence().await)),
+            Some(fence.clone()),
         );
         let sockets = Arc::new(RecordingSockets::default());
         subscriber.attach_sockets(sockets.clone());
@@ -176,7 +178,19 @@ impl RecoveryHarness {
             gateway,
             source,
             sockets,
+            fence,
         }
+    }
+
+    async fn claim(
+        &self,
+    ) -> Box<dyn catalyst::comms::gatekeeper::admission::cluster::fence::RealmAssignmentLease> {
+        use catalyst::comms::gatekeeper::admission::cluster::fence::AssignmentFence;
+        let selected = self.source.lock().unwrap().clone();
+        self.fence
+            .lock_selected(&selected)
+            .await
+            .expect("real selected coordinator writer")
     }
 
     fn connect(&self, session: &str) {
@@ -198,43 +212,25 @@ impl RecoveryHarness {
     }
 }
 
-async fn replace_control_owner(fixture: &Fixture, session: &str, owner_epoch: i64) -> (i64, i64) {
-    sqlx::query_as::<_, (i64, i64)>(
-        "UPDATE social.archipelago_v4_assignments
-         SET owner_session = $3,
-             owner_epoch = $4,
-             assignment_revision = assignment_revision + 1,
-             fencing_token = fencing_token + 1,
-             assignment_json = NULL,
-             acknowledged_revision = 0,
-             updated_at = clock_timestamp()
-         WHERE deployment_audience = $1
-           AND owner_address = $2
-           AND lane_key = 'realm'
-         RETURNING assignment_revision, fencing_token",
-    )
-    .bind(AUDIENCE)
-    .bind(WALLET)
-    .bind(session)
-    .bind(owner_epoch)
-    .fetch_one(&fixture.pool)
-    .await
-    .expect("replace the authenticated control owner")
-}
-
 #[tokio::test]
 async fn a_stationary_reconnect_refills_the_claim_once_despite_an_old_participant() {
     let Some(fixture) = Fixture::new().await else {
         return;
     };
-    seed_realm(&fixture.pool, WALLET, SESSION, 7, 3, 9, None).await;
     let harness = RecoveryHarness::new(&fixture, SESSION).await;
+    let claimed = harness.claim().await.token_fence();
 
     harness.connect(SESSION);
     harness.settle().await;
 
     let (revision, fence, document) = row_state(&fixture.pool).await;
-    assert_eq!((revision, fence), (4, 9));
+    assert_eq!(
+        (revision, fence),
+        (
+            claimed.assignment_revision as i64,
+            claimed.fencing_token as i64
+        )
+    );
     let document = document.expect("reconnect fills the claimed authority row");
     assert_eq!(document["islandId"], "island-current");
     assert_eq!(
@@ -252,12 +248,19 @@ async fn a_stationary_reconnect_refills_the_claim_once_despite_an_old_participan
             token.assignment_revision,
             token.fencing_token
         ),
-        (7, 4, 9)
+        (
+            claimed.owner_epoch,
+            claimed.assignment_revision,
+            claimed.fencing_token
+        )
     );
 
     harness.connect(SESSION);
     harness.settle().await;
-    assert_eq!(row_state(&fixture.pool).await, (4, 9, Some(document)));
+    assert_eq!(
+        row_state(&fixture.pool).await,
+        (revision, fence, Some(document))
+    );
     assert_eq!(harness.gateway.fences.lock().unwrap().len(), 1);
     harness.subscriber.stop().await;
     drop(harness);
@@ -284,81 +287,47 @@ async fn a_stale_connect_cannot_refill_a_newer_owners_claim() {
 
 #[tokio::test]
 async fn same_room_control_handoffs_refill_same_and_different_session_claims() {
-    let Some(fixture) = Fixture::new().await else {
-        return;
-    };
-    seed_realm(
-        &fixture.pool,
-        WALLET,
-        SESSION,
-        1,
-        1,
-        1,
-        Some(serde_json::json!({
-            "islandId": "island-current",
-            "connectionString": "livekit:wss://example.invalid/v4-old",
-            "tokenExpiresAtUnix": 1
-        })),
-    )
-    .await;
+    let fixture = Fixture::new()
+        .await
+        .expect("required disposable PostgreSQL");
     let harness = RecoveryHarness::new(&fixture, SESSION).await;
-
-    assert_eq!(replace_control_owner(&fixture, SESSION, 2).await, (2, 2));
-    harness.connect(SESSION);
-    harness.settle().await;
-    let (revision, fence, same_session_assignment) = row_state(&fixture.pool).await;
-    assert_eq!((revision, fence), (3, 2));
-    assert_eq!(
-        same_session_assignment.as_ref().unwrap()["islandId"],
-        "island-current"
-    );
-    let same_session_token = harness.gateway.fences.lock().unwrap()[0].clone();
-    assert_eq!(same_session_token.owner_session, SESSION);
-    assert_eq!(
-        (
-            same_session_token.owner_epoch,
-            same_session_token.assignment_revision,
-            same_session_token.fencing_token
-        ),
-        (2, 3, 2)
-    );
-
-    assert_eq!(
-        replace_control_owner(&fixture, STALE_SESSION, 3).await,
-        (4, 3)
-    );
-    {
-        let mut source = harness.source.lock().unwrap();
-        source.session = STALE_SESSION.into();
-        source.pass += 1;
+    let mut previous = harness.claim().await.token_fence();
+    for (identity, session) in [(2, SESSION), (3, STALE_SESSION)] {
+        {
+            let mut source = harness.source.lock().unwrap();
+            source.session = session.into();
+            source.selected_identity = Some(identity);
+            source.assignment_version += 1;
+        }
+        let claimed = harness.claim().await.token_fence();
+        assert!(claimed.owner_epoch > previous.owner_epoch);
+        assert!(claimed.fencing_token > previous.fencing_token);
+        harness.connect(session);
+        harness.settle().await;
+        let (revision, fence, document) = row_state(&fixture.pool).await;
+        assert_eq!(
+            (revision, fence),
+            (
+                claimed.assignment_revision as i64,
+                claimed.fencing_token as i64
+            )
+        );
+        assert_eq!(document.as_ref().unwrap()["islandId"], "island-current");
+        let minted = harness
+            .gateway
+            .fences
+            .lock()
+            .unwrap()
+            .last()
+            .unwrap()
+            .clone();
+        assert_eq!(minted, claimed);
+        assert_eq!(minted.owner_session, session);
+        harness.connect(SESSION);
+        harness.settle().await;
+        assert_eq!(row_state(&fixture.pool).await, (revision, fence, document));
+        previous = claimed;
     }
-    *harness.gateway.occupant.lock().unwrap() = Some(IslandOccupant::Session(SESSION.into()));
-    harness.connect(STALE_SESSION);
-    harness.settle().await;
-    let (revision, fence, new_session_assignment) = row_state(&fixture.pool).await;
-    assert_eq!((revision, fence), (5, 3));
-    assert_eq!(
-        new_session_assignment.as_ref().unwrap()["islandId"],
-        "island-current"
-    );
-    let tokens = harness.gateway.fences.lock().unwrap().clone();
-    assert_eq!(tokens.len(), 2);
-    assert_eq!(tokens[1].owner_session, STALE_SESSION);
-    assert_eq!(
-        (
-            tokens[1].owner_epoch,
-            tokens[1].assignment_revision,
-            tokens[1].fencing_token
-        ),
-        (3, 5, 3)
-    );
-
-    harness.connect(SESSION);
-    harness.settle().await;
-    assert_eq!(
-        row_state(&fixture.pool).await,
-        (5, 3, new_session_assignment)
-    );
     assert_eq!(harness.gateway.fences.lock().unwrap().len(), 2);
     harness.subscriber.stop().await;
     drop(harness);
@@ -370,8 +339,8 @@ async fn a_move_during_token_mint_rolls_back_then_recovers_the_current_room() {
     let Some(fixture) = Fixture::new().await else {
         return;
     };
-    seed_realm(&fixture.pool, WALLET, SESSION, 7, 3, 9, None).await;
     let harness = RecoveryHarness::new(&fixture, SESSION).await;
+    let claimed = harness.claim().await.token_fence();
     let release = Arc::new(Notify::new());
     *harness.gateway.mint_pause.lock().unwrap() = Some(release.clone());
 
@@ -392,7 +361,7 @@ async fn a_move_during_token_mint_rolls_back_then_recovers_the_current_room() {
     let newer_owner = catalyst::comms::archipelago::control_v4::V4Owner {
         address: WALLET.into(),
         session: SESSION.into(),
-        epoch: 8,
+        epoch: authority.next_connection_epoch().await.unwrap(),
     };
     tokio::time::timeout(
         std::time::Duration::from_secs(2),
@@ -404,7 +373,10 @@ async fn a_move_during_token_mint_rolls_back_then_recovers_the_current_room() {
     .await
     .expect("a competing owner change must commit while the external mint is still paused")
     .unwrap();
-    assert_eq!(row_state(&fixture.pool).await, (4, 10, None));
+    let displaced = row_state(&fixture.pool).await;
+    assert_eq!(displaced.0, claimed.assignment_revision as i64);
+    assert!(displaced.1 > claimed.fencing_token as i64);
+    assert!(displaced.2.is_none());
     assert!(harness.sockets.0.lock().unwrap().is_empty());
     {
         let mut source = harness.source.lock().unwrap();
@@ -416,7 +388,7 @@ async fn a_move_during_token_mint_rolls_back_then_recovers_the_current_room() {
     harness.settle().await;
     assert_eq!(
         row_state(&fixture.pool).await,
-        (4, 10, None),
+        displaced,
         "the stale private credential must not publish after the newer owner commits"
     );
     assert!(
@@ -425,10 +397,21 @@ async fn a_move_during_token_mint_rolls_back_then_recovers_the_current_room() {
     );
 
     *harness.gateway.mint_pause.lock().unwrap() = None;
+    // The unrelated API writer is not retroactively owned. Its finite lease must lapse
+    // before the selected coordinator can acquire the row again.
+    sqlx::query("UPDATE social.archipelago_v4_assignments SET updated_at=clock_timestamp()-interval '91 seconds' WHERE deployment_audience=$1 AND owner_address=$2 AND lane_key='realm'")
+        .bind(AUDIENCE).bind(WALLET).execute(&fixture.pool).await.unwrap();
+    let recovered = harness.claim().await.token_fence();
     harness.connect(SESSION);
     harness.settle().await;
     let (revision, fence, document) = row_state(&fixture.pool).await;
-    assert_eq!((revision, fence), (5, 10));
+    assert_eq!(
+        (revision, fence),
+        (
+            recovered.assignment_revision as i64,
+            recovered.fencing_token as i64
+        )
+    );
     assert_eq!(document.unwrap()["islandId"], "island-moved");
     assert_eq!(harness.gateway.fences.lock().unwrap().len(), 2);
     harness.subscriber.stop().await;
@@ -468,26 +451,22 @@ async fn same_room_recovery_renews_expired_credentials_without_periodic_churn() 
         if let Some(expiry) = expiry {
             document["tokenExpiresAtUnix"] = expiry.into();
         }
-        seed_realm(
-            &fixture.pool,
-            WALLET,
-            SESSION,
-            7,
-            3,
-            9,
-            Some(document.clone()),
-        )
-        .await;
         let harness = RecoveryHarness::new(&fixture, SESSION).await;
+        let lease = harness.claim().await;
+        let initial = lease.token_fence();
+        lease
+            .commit(serde_json::from_value(document.clone()).unwrap())
+            .await
+            .unwrap();
         *harness.gateway.occupant.lock().unwrap() = Some(occupant.clone());
 
         harness.connect(SESSION);
         harness.settle().await;
         let (revision, fence, stored) = row_state(&fixture.pool).await;
-        assert_eq!(fence, 9);
+        assert_eq!(fence, initial.fencing_token as i64);
         assert_eq!(
             revision,
-            if should_renew { 4 } else { 3 },
+            initial.assignment_revision as i64 + i64::from(should_renew),
             "{expiry:?} {occupant:?}"
         );
         assert_eq!(
@@ -500,7 +479,10 @@ async fn same_room_recovery_renews_expired_credentials_without_periodic_churn() 
             assert_eq!(stored["fromIslandId"], "island-current");
             harness.connect(SESSION);
             harness.settle().await;
-            assert_eq!(row_state(&fixture.pool).await, (4, 9, Some(stored)));
+            assert_eq!(
+                row_state(&fixture.pool).await,
+                (revision, fence, Some(stored))
+            );
             assert_eq!(
                 harness.gateway.fences.lock().unwrap().len(),
                 1,

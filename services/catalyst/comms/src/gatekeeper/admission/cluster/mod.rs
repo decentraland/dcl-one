@@ -9,11 +9,10 @@
 //! connector announces each session the same way, by call
 //! ([`CommsState::announce_session`](crate::gatekeeper::CommsState::announce_session)),
 //! and the subscriber asks Pulse for its current cluster
-//! (`peer.*.cluster_lookup`). A wallet a configured legacy socket
-//! owns goes through the realm-lane fence instead (`fence`, over the
-//! `social.archipelago_v4_*` rows `comms::archipelago::control_v4` claims):
-//! the token carries the fence and the assignment is committed to the row
-//! the legacy socket reads. `/island-refresh` (`gatekeeper::admission::island_refresh`)
+//! (`peer.*.cluster_lookup`). With a configured audience, Gatekeeper acquires a
+//! positively selected realm binding (`fence`, over `social.archipelago_v4_*`):
+//! the token carries the exact fence and the assignment is committed to the row
+//! an independently registered signaling socket can read. `/island-refresh` (`gatekeeper::admission::island_refresh`)
 //! re-mints the fenced credential of the current row.
 //!
 //! `serve` starts it in the primary only, the one process that holds the
@@ -134,7 +133,7 @@ pub fn fence_for(
     config.validate()?;
     match config.control_v4_audience.clone() {
         Some(audience) => Ok(Some(Arc::new(
-            fence::PgAssignmentFence::new(pool, audience)
+            fence::PgAssignmentFence::with_limit(pool, audience, config.peer_state_max)
                 .map_err(|e| anyhow::anyhow!("ARCHIPELAGO_CONTROL_V4_AUDIENCE: {e}"))?,
         ))),
         None => Ok(None),

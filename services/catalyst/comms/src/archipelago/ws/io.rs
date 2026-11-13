@@ -401,11 +401,11 @@ pub(super) struct WebSocket {
     pulse_admission: Option<crate::gatekeeper::admission::cluster::fence::PulseAdmissionStamp>,
     island_token_fence: Option<TokenFence>,
     terminal_next: bool,
+    selected_permit: Option<crate::archipelago::registry::ControlPositionPermit>,
     rate: HeartbeatRate,
     sample: Option<PositionSample>,
     sample_generation: u64,
     next_position: Instant,
-    fence: Option<V4Owner>,
     idle: Idle,
 }
 
@@ -484,11 +484,11 @@ impl WebSocket {
             pulse_admission: None,
             island_token_fence: None,
             terminal_next: false,
+            selected_permit: None,
             rate: HeartbeatRate::default(),
             sample: None,
             sample_generation: 0,
             next_position: Instant::now(),
-            fence: None,
         }
     }
     pub(super) fn delivery(&mut self, assigned: Option<bool>, metric: bool, coalesce: bool) {
@@ -498,8 +498,11 @@ impl WebSocket {
     pub(super) fn kick(&mut self) {
         self.terminal_next = true;
     }
-    pub(super) fn bind_fence(&mut self, owner: Option<&V4Owner>) {
-        self.fence = owner.cloned();
+    pub(super) fn bind_selected_permit(
+        &mut self,
+        permit: crate::archipelago::registry::ControlPositionPermit,
+    ) {
+        self.selected_permit = Some(permit);
     }
     pub(super) fn bind_pulse(
         &mut self,
@@ -711,17 +714,10 @@ pub(super) async fn send(
         ));
         return !socket.queue.peer_close.is_cancelled();
     }
-    let needs_fence =
-        delivery.is_some_and(|(assigned, _)| assigned.is_some()) && socket.fence.is_some();
+    let needs_fence = delivery.is_some_and(|(assigned, _)| assigned.is_some())
+        && socket.selected_permit.is_some();
     let permit = if needs_fence {
-        socket.fence.as_ref().and_then(|owner| {
-            socket.state.registry.control_position_permit(
-                &owner.address,
-                &owner.session,
-                owner.epoch,
-                false,
-            )
-        })
+        socket.selected_permit.clone()
     } else {
         None
     };
@@ -1963,7 +1959,37 @@ mod bounds_tests {
             durable_writer_case(change, true, true).await;
         }
     }
+    #[tokio::test]
+    async fn durable_selected_transport_delivery_retains_exact_binding_and_socket_generation() {
+        if !durable_writer_pg_available() {
+            return;
+        }
+        for held_readiness in [false, true] {
+            for change in [
+                "unchanged",
+                "binding-detached",
+                "binding-revision",
+                "same-session",
+                "revision",
+                "epoch",
+                "token",
+                "generation",
+                "floor",
+                "hazard",
+            ] {
+                durable_writer_case_with_binding(change, true, held_readiness, true).await;
+            }
+        }
+    }
     async fn durable_writer_case(change: &str, fenced: bool, held_readiness: bool) {
+        durable_writer_case_with_binding(change, fenced, held_readiness, false).await;
+    }
+    async fn durable_writer_case_with_binding(
+        change: &str,
+        fenced: bool,
+        held_readiness: bool,
+        selected_transport: bool,
+    ) {
         use crate::gatekeeper::admission::cluster::{
             ClusterConfig, fence::PulseAdmissionStamp, safety::SafetyStore,
         };
@@ -2036,7 +2062,7 @@ mod bounds_tests {
         )
         .await
         .unwrap();
-        let (owner, _events) = if fenced {
+        let (owner, _events) = if fenced && !selected_transport {
             state.registry.on_v4_peer_connected_with_realm_epoch(
                 &wallet,
                 session,
@@ -2051,12 +2077,21 @@ mod bounds_tests {
         let queue = Arc::new(Queue::default());
         let mut credential = frame(Some(owner.clone()), true);
         credential.message = Message::Binary(vec![9].into());
-        credential.pulse_admission = Some(stamp);
+        credential.pulse_admission = Some(stamp.clone());
         if fenced {
             credential.fence_bound = change != "missing-fence-bound";
-            credential.permit = state
-                .registry
-                .control_position_permit(&wallet, session, 7, false);
+            credential.permit = if selected_transport {
+                state.registry.bind_selected_realm(
+                    &wallet,
+                    &owner,
+                    token_fence.clone().unwrap(),
+                    stamp.clone(),
+                )
+            } else {
+                state
+                    .registry
+                    .control_position_permit(&wallet, session, 7, false)
+            };
             if change != "missing-fence" {
                 credential.island_token_fence = token_fence.clone();
             }
@@ -2092,6 +2127,20 @@ mod bounds_tests {
             assert!(wire.lock().messages.is_empty());
         }
         match change {
+            "binding-detached" => state.registry.detach_selected_realm(&owner),
+            "binding-revision" => {
+                let mut next = token_fence.clone().unwrap();
+                next.assignment_revision += 1;
+                assert!(
+                    state
+                        .registry
+                        .bind_selected_realm(&wallet, &owner, next, stamp.clone())
+                        .is_some()
+                );
+            }
+            "same-session" => {
+                state.registry.on_peer_connected(&wallet, session);
+            }
             "generation" => {
                 sqlx::query("UPDATE social.island_admission_fences SET generation=generation+1 WHERE wallet=$1").bind(&wallet).execute(&pool).await.unwrap();
             }
