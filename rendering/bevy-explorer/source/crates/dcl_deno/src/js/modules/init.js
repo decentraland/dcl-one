@@ -194,6 +194,10 @@ globalThis.DOMException = DOMException;
 globalThis.AbortController = AbortController;
 globalThis.AbortSignal = AbortSignal;
 
+// A key the scripts read and nobody set would walk to Object.prototype, where a scene getter
+// would get `internals` as `this`.
+Object.setPrototypeOf(internals, null);
+
 // The fetch scripts read their tracing hooks from these; scenes are never traced.
 internals.__telemetry ??= {
     TRACING_ENABLED: false,

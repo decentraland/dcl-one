@@ -307,6 +307,28 @@ fn date_keeps_its_contract() {
     );
 }
 
+/// Fetch reads hooks nobody set from `internals`; none of those reads reaches a scene getter.
+#[test]
+fn internals_reads_do_not_reach_object_prototype() {
+    let ports = super::redirect_servers();
+    let outcome = fetch_outcome(
+        false,
+        None,
+        format!(
+            r#"let leaked = false;
+            Object.defineProperty(Object.prototype, "__inspectorNetwork", {{
+                get() {{ leaked = true; return undefined; }},
+                configurable: true,
+            }});
+            fetch("http://127.0.0.1:{}/target")
+            .then((r) => r.text(), (e) => `error ${{e}}`)
+            .then((body) => globalThis.__outcome = `${{body}} ${{leaked}}`);"#,
+            ports[1]
+        ),
+    );
+    assert_eq!(outcome, "arrived false");
+}
+
 #[test]
 fn timers_never_fire_early() {
     let mut runtime = client_runtime();
