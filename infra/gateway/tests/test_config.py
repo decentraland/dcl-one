@@ -265,15 +265,23 @@ class ConfigurationTest(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertFalse(any("12m" in body for regex, body in regexes if regex.search(path)))
 
-    def test_worlds_content_reads_use_the_content_rate_zone(self):
-        _, regexes = self.worlds_locations()
-        for path in ["/worlds-content-server/contents/bafy", "/worlds-content-server/ipfs/bafy"]:
+    def test_worlds_paths_but_the_deploy_are_not_rate_limited(self):
+        # Upstream worlds-content-server limits no route by rate (WR-37).
+        text, regexes = self.worlds_locations()
+        self.assertIn('map $host $uncounted_key { default ""; }', text)
+        self.assertIn("limit_req_zone $uncounted_key zone=uncounted:1m rate=1r/s;", text)
+        prefix = re.search(r"\nlocation /worlds-content-server/ \{\n(.*?)\n\}", text, re.S)[1]
+        exact = re.search(r"\nlocation = /worlds-content-server \{\n(.*?)\n\}", text, re.S)[1]
+        for body in (prefix, exact):
+            self.assertIn("limit_req zone=uncounted;", body)
+        for path in ["/worlds-content-server/contents/bafy", "/worlds-content-server/ipfs/bafy",
+                     "/worlds-content-server/world/w.dcl.eth/settings", "/world/w.dcl.eth/settings"]:
             with self.subTest(path=path):
                 body = next(body for regex, body in regexes if regex.search(path))
-                self.assertIn("limit_req zone=content burst=1000 nodelay;", body)
-        for path in ["/worlds-content-server/status", "/worlds-content-server/contentsx/a"]:
-            with self.subTest(path=path):
-                self.assertFalse(any("zone=content" in body for regex, body in regexes if regex.search(path)))
+                self.assertIn("limit_req zone=uncounted;", body)
+                self.assertNotIn("zone=content", body)
+        deploy = next(body for regex, body in regexes if regex.search("/worlds-content-server/entities"))
+        self.assertIn("limit_req zone=deploy burst=4 nodelay;", deploy)
 
     def test_the_deploy_zone_sits_above_the_content_servers_burst_limit(self):
         cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1"})

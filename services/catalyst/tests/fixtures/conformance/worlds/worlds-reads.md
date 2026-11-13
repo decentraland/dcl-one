@@ -139,8 +139,7 @@ Files read:
 | 10 | POST | `/gc` | `/worlds-content-server/gc` and `/worlds-content-server/admin/gc` → `worlds/src/core/admin.rs:90`; no root route | DIVERGENT |
 
 Counts: 10 endpoints. MATCH 0, GAP 0, DIVERGENT 10, MISSING 0. Every remaining difference on the
-DIVERGENT rows is listed in `docs/worlds-compatibility.md` except WR-04's unported formats, the
-recovery after a failed deny-list read (WR-35) and the gateway's read rate limits (WR-37). The
+DIVERGENT rows is listed in `docs/worlds-compatibility.md` except WR-04's unported formats. The
 cross-cutting rules (404/405, error envelope, CORS, mounts) are in "Common notes" and the backlog.
 
 ---
@@ -682,7 +681,7 @@ documented in `docs/worlds-compatibility.md` "Mounts" (WR-23).
     - Severity: none (closed).
 
 35. **WR-35 · every name deny-list consumer · `BLOCKED_WORLD_NAMES`.** Status: MATCH on every answer
-    while the list reads; a failed list read differs (open, waiting for a decision).
+    while the list reads; a failed list read differs (intended, best effort).
     - Upstream: `BLOCKED_WORLD_NAMES` (`.env.default:97`, empty) is split on commas, trimmed and
       lowercased (`name-deny-list-checker.ts:8-13`); `checkNameDenyList` refuses a whole lowercased
       name in it before reading the remote list and keeps refusing it while that list is offline
@@ -709,7 +708,8 @@ documented in `docs/worlds-compatibility.md` "Mounts" (WR-23).
       the world reads' list to that policy and `CoreState` takes the policy's
       (`src/serve.rs:925`, `worlds/src/core/mod.rs:322`), so every consumer reads one instance. Pinned by `names.rs`
       `configured_blocks_refuse_exact_names_and_lead_the_banned_names`,
-      `configured_blocks_hold_while_the_list_cannot_be_read`, `configured_blocks_add_to_the_list`,
+      `configured_blocks_hold_while_the_list_cannot_be_read`, `a_failed_read_keeps_the_last_list_read`,
+      `configured_blocks_add_to_the_list`,
       `worlds/src/core/tests.rs` `active_entities_skip_a_blocked_world_name` and
       `configured_world_names_are_invalid_on_the_permission_routes`, `worlds/src/policy.rs`
       `world_admission_refuses_a_deny_listed_name` and `tests/gatekeeper_policy.rs`
@@ -717,13 +717,12 @@ documented in `docs/worlds-compatibility.md` "Mounts" (WR-23).
     - Difference on a failed list read: upstream's `fetchMethod` catches the fetch error and returns
       `[]`, which the LRU cache keeps for its hour (`name-deny-list-checker.ts:21-43`), so after the
       list service recovers DAO-listed names stay allowed until that hour ends. dcl-one reads the list
-      one caller at a time and answers the configured blocks alone for five seconds after a failed read
-      (`NameDenyList::snapshot`, `FAILED_READ_TTL`), then reads `explore_api.lists` again, so a
-      recovered list applies within seconds; an expired snapshot is never served. Both answer the configured blocks alone while the read fails. The edge is not
-      listed in `docs/worlds-compatibility.md`.
-    - Proposed fix: decide whether this stricter recovery is intended; if so, list it under "Deny list
-      in world listings"; if not, cache the blocks-only snapshot for the hour in `NameDenyList::read`.
-    - Severity: P3 (only the hour after a failed list read).
+      one caller at a time; for five seconds after a failed read it answers the last list that read,
+      with the configured blocks, or the configured blocks alone when no read has succeeded since start
+      (`NameDenyList::read`, `FAILED_READ_TTL`), then reads `explore_api.lists` again, so a recovered
+      list applies within seconds. Listed in `docs/worlds-compatibility.md` ("Name deny list after a
+      failed read").
+    - Severity: none (closed).
 
 36. **WR-36 · `/index` · a repeated query key.** Status: MATCH, no work.
     - Upstream: `searchParams.get` reads the first value of `limit` and of `offset`, so
@@ -735,17 +734,15 @@ documented in `docs/worlds-compatibility.md` "Mounts" (WR-23).
       `?limit=1&offset=1`.
     - Severity: none (closed).
 
-37. **WR-37 · reads behind the gateway · rate limits.** Status: open, waiting for a decision.
+37. **WR-37 · reads behind the gateway · rate limits.** Status: MATCH.
     - Upstream: no rate limiter on any route (`src/controllers/routes.ts`, server options
       `src/components.ts:96-107`).
-    - dcl-one: the gateway limits `/worlds-content-server/(contents|ipfs)/` with zone `content`
-      (100 r/s per key, burst 1000; `infra/gateway/gateway.py:256-257,430`) and every other worlds
-      path with the server-wide zone `read` (30 r/s per address, burst 60; `gateway.py:428,469`).
-      A client over the limit gets nginx's 429. `docs/worlds-compatibility.md` lists only the deploy
-      and upload limits.
-    - Proposed fix: decide whether these limits are intended; if so, list them under "Reads, mounts
-      and admin" and pin the zones and bursts in `infra/gateway/tests/test_config.py`.
-    - Severity: P3.
+    - dcl-one: every `/worlds-content-server` location but the deploy, and the settings route on both
+      mounts, names the gateway's `uncounted` zone, whose key is always empty, so nginx counts no
+      request and the server-wide `read` zone does not apply (`infra/gateway/gateway.py`, `UNCOUNTED`).
+      Only `POST /entities` keeps its deploy limits (`worlds-deploy.md`). Pinned by
+      `infra/gateway/tests/test_config.py` `test_worlds_paths_but_the_deploy_are_not_rate_limited`.
+    - Severity: none (closed).
 
 ## Endpoints dcl-one serves in this area that upstream does not
 

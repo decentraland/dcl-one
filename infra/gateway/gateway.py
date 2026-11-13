@@ -136,6 +136,9 @@ def settings(env, resolv_conf="/etc/resolv.conf"):
     }
 
 
+# A location that names this zone has no rate limit (see the uncounted zone below).
+UNCOUNTED = "limit_req zone=uncounted;"
+
 # First path segments of social's badges router (services/catalyst/social/src/badges/mod.rs).
 BADGES_MOUNTS = ("assets", "badges", "categories", "status", "users")
 
@@ -252,10 +255,12 @@ def render(table, cfg, mime):
         retry_after = f"add_header Retry-After {retry} always;\n" if retry else ""
         text = json.dumps(body, separators=(",", ":"))
         locations += location(name, json_error + retry_after + f"return {status} '{text}';")
+    # Upstream worlds-content-server limits no route by rate, so every worlds path
+    # but the deploy names the uncounted zone, which replaces the server-wide read zone.
     locations += location('~ "^(/worlds-content-server)?/world/[^/]+/settings/*$"', proxy("apis",
-        f"client_max_body_size {WORLDS_SETTINGS_CAP};"))
-    locations += location("~ ^/worlds-content-server/(contents|ipfs)/", proxy("apis",
-        "limit_req zone=content burst=1000 nodelay;"))
+        f"client_max_body_size {WORLDS_SETTINGS_CAP}; {UNCOUNTED}"))
+    locations += location("~ ^/worlds-content-server/(contents|ipfs)/", proxy("apis", UNCOUNTED))
+    locations += pair("/worlds-content-server", "apis", extra=UNCOUNTED)
     locations += location("~ ^/comms-gatekeeper/reports/players/[^/]+/evidence/", proxy("apis",
         "client_max_body_size 11m;"))
     locations += location("~ ^(/builder-api)?/v1/(projects/[^/]+/(blobs/[^/]+|manifest|files)|items/[^/]+/files)/*$",
@@ -433,6 +438,10 @@ http {{
     map $storage_trusted $storage_trusted_key {{ 1 $binary_remote_addr; default ""; }}
     limit_req_zone $storage_write_key zone=storage_write:10m rate=30r/s;
     limit_req_zone $storage_trusted_key zone=storage_trusted:10m rate=1000r/s;
+    # Requests with an empty key are not counted: a location that names this zone
+    # is unlimited and no longer inherits the server's read zone.
+    map $host $uncounted_key {{ default ""; }}
+    limit_req_zone $uncounted_key zone=uncounted:1m rate=1r/s;
     limit_req_zone $binary_remote_addr zone=read:10m rate=30r/s;
     limit_req_zone $binary_remote_addr zone=webhook:10m rate={WEBHOOK_RATE}r/s;
     limit_req_zone $content_limit_key zone=content:10m rate=100r/s;
