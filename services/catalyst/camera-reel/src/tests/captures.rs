@@ -5,8 +5,8 @@
 //! read are seeded from the captured bodies: the photos with their metadata,
 //! place ids, public flag and `created_at` from their `dateTime`, plus
 //! filler rows that bring the place gallery to its captured `maxImages`
-//! (523) and the item gallery to its (12). No blob is stored: no captured
-//! answer carries image bytes.
+//! (523) and the item gallery to its (12). One photo's blobs are stored:
+//! the one the image captures ask for by its legacy key.
 
 use axum::Router;
 use serde_json::{Value, json};
@@ -51,20 +51,23 @@ const CAPTURES: &[(&str, &[&str])] = &[
         ],
     ),
     ("health-live", &[]),
-    // Addressed by blob hash: the legacy `{uuid}-{ts}.jpg` key resolves to
-    // no row, so no 307 to the legacy bucket.
+    // The legacy key `{id}-{ts}.jpg` names the row's image blob, served
+    // here (no `CAMERA_REEL_BUCKET_URL`) instead of a 307 to the legacy
+    // bucket key; the seeded blob is the photo id as text.
     (
         "image-file-redirect",
         &[
-            "status: fixture=307 candidate=404",
-            "header content-length: fixture=\"0\" candidate=\"29\"",
+            "status: fixture=307 candidate=200",
+            "header content-length: fixture=\"0\" candidate=\"36\"",
             "header location: fixture=\"https://camera-reel-s3-bucket.decentraland.org/e9659dd5-0f87-4169-a9a6-1ec0d5faf051-1790074770.jpg\" candidate=<missing>",
-            r#"body bytes differ: fixture="" candidate="{\"message\":\"image not found\"}""#,
+            r#"body bytes differ: fixture="" candidate="e9659dd5-0f87-4169-a9a6-1ec0d5faf051""#,
         ],
     ),
     ("image-metadata-404", &[]),
     ("image-metadata", &[]),
-    // Addressed by blob hash: a photo id is not a hash, so no 307.
+    // A bare photo id is neither a hash nor a legacy key: upstream's 307
+    // names a bucket key no upload writes (its keys are `{id}-{file}`), so
+    // the old answer ended in the bucket's refusal; this is a 404 at once.
     (
         "image-redirect",
         &[
@@ -160,13 +163,27 @@ fn filler_metadata(date_time: &str, place_id: &str, wearables: &[String]) -> Val
     })
 }
 
+/// A seeded photo's image bytes: its id as text, so the one stored blob
+/// (the legacy-key photo, [`LEGACY_PHOTO`]) reads in a replay note.
+fn image_bytes(id: Uuid) -> String {
+    id.to_string()
+}
+
+fn thumbnail_bytes(id: Uuid) -> String {
+    format!("{id}-thumbnail")
+}
+
 fn image_hash(id: Uuid) -> String {
-    hash_bytes_v1(id.as_bytes())
+    hash_bytes_v1(image_bytes(id).as_bytes())
 }
 
 fn thumbnail_hash(id: Uuid) -> String {
-    hash_bytes_v1(format!("{id}-thumbnail").as_bytes())
+    hash_bytes_v1(thumbnail_bytes(id).as_bytes())
 }
+
+/// The photo the `image-redirect` and `image-file-redirect` captures ask
+/// for; its blobs are stored, so its legacy key serves bytes.
+const LEGACY_PHOTO: &str = "e9659dd5-0f87-4169-a9a6-1ec0d5faf051";
 
 async fn insert(pool: &sqlx::PgPool, id: Uuid, owner: &str, metadata: &Value, date_time: i64) {
     sqlx::query(
@@ -279,6 +296,15 @@ async fn the_camera_reel_host_answers_as_its_captures() {
         )
         .await;
     }
+    let legacy: Uuid = LEGACY_PHOTO.parse().unwrap();
+    assert!(
+        ids.contains(&legacy),
+        "the redirect captures' photo is seeded"
+    );
+    for bytes in [image_bytes(legacy), thumbnail_bytes(legacy)] {
+        let hash = hash_bytes_v1(bytes.as_bytes());
+        s.state.storage.store(&hash, bytes.into()).await.unwrap();
+    }
     let oldest = photos.iter().map(|p| p.date_time).min().unwrap();
     // The place gallery's other public photos, older than every captured one.
     let place_total = body("place-images")["maxImages"].as_u64().unwrap() as usize;
@@ -325,6 +351,28 @@ async fn the_camera_reel_host_answers_as_its_captures() {
         "wearable-images",
     ] {
         assert_photo_ids_and_urls(&app, name).await;
+    }
+    // Both legacy URLs the captured document hands out serve their blobs.
+    let captured = body("image-metadata");
+    for (field, bytes) in [
+        ("url", image_bytes(legacy)),
+        ("thumbnailUrl", thumbnail_bytes(legacy)),
+    ] {
+        let key = captured[field]
+            .as_str()
+            .unwrap()
+            .rsplit('/')
+            .next()
+            .unwrap();
+        let (status, _, got) = send(
+            app.clone(),
+            "GET",
+            &format!("{PREFIX}/api/images/{key}"),
+            Vec::new(),
+            None,
+        )
+        .await;
+        assert_eq!((status.as_u16(), got), (200, bytes.into_bytes()), "{field}");
     }
     clear(&pool, &ids).await;
     s.done().await;

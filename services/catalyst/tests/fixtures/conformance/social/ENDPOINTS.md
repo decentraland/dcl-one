@@ -409,11 +409,11 @@ and port 5461 with the environment (bounded outfits/emote sync from
 Logs: `replay-<service>.log` in the run's scratchpad; the node and its
 database were stopped and dropped after the run.
 
-## In-process replay of camera-reel (2026-11-13 20:46 UTC)
+## In-process replay of camera-reel (2026-11-13)
 
 `camera-reel/src/tests/captures.rs`, test
-`the_camera_reel_host_answers_as_its_captures`, at revision `189e64ad9`
-with `CATALYST_TEST_DATABASE_URL` set. It mounts the router under
+`the_camera_reel_host_answers_as_its_captures`, on `eea971036` with legacy
+key resolution added, with `CATALYST_TEST_DATABASE_URL` set. It mounts the router under
 `/camera-reel-service` as `serve` does and replays all 21 captures through
 `social::test_fixtures::replay` (status, recorded headers, body by the shared
 diff). It seeds the captured photos from the captured bodies: documents,
@@ -421,6 +421,9 @@ place ids, public flag and `created_at` from `dateTime`. Filler rows bring
 the corpus place to its 523 public photos and the item gallery to its 12.
 The shared diff skips `id` and `url` leaves. The test therefore checks the
 ids, their order and the hash URLs of the five photo answers separately.
+The blobs of the photo the image captures ask for are stored (its id as
+text, 36 bytes, and a thumbnail), and the test fetches both legacy URLs of
+its captured document.
 
 13 of 21 are identical. The other 8 differ only by the deliberate
 differences in `camera-reel/src/lib.rs` or upstream additions after the
@@ -428,7 +431,8 @@ capture, each listed in the test:
 
 | fixture | difference | reason |
 | --- | --- | --- |
-| `image-redirect`, `image-file-redirect` | 404 `{"message":"image not found"}` (29 B) instead of 307 to the legacy bucket key | images are addressed by blob hash; a photo id or the legacy `{id}-{ts}.jpg` key names no hash |
+| `image-file-redirect` | 200 with the image bytes instead of 307 to the legacy bucket key `{id}-{ts}.jpg` (no `location`) | the legacy key names the row's image hash, served from the blob store; with `CAMERA_REEL_BUCKET_URL` set it is a 307 to `<bucket>/<hash>` instead |
+| `image-redirect` | 404 `{"message":"image not found"}` (29 B) instead of 307 to the bucket key `{id}` | a bare photo id is neither a hash nor a legacy key; upstream's redirect names a key no upload writes (keys are `{id}-{file}`) |
 | `image-metadata`, `place-images`, `place-images-page2`, `places-images-batch`, `wearable-images` | `url` and `thumbnailUrl` are `<api_url>/api/images/<hash>` instead of `.../api/images/<id>-[thumbnail-]<ts>.jpg` | the same hash addressing; ids, order, counts and every other field are identical |
 | `docs-openapi` | `components.schemas.ScreenRect` and `User.properties.screenRect` extra | added by camera-reel-service `3e8bd0b` (#61) after the capture |
 | `docs-openapi` | `components.schemas.GalleryImageWithPlace` extra | the captured document references this component but never defines it |

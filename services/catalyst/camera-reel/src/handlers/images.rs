@@ -13,7 +13,7 @@ use bytes::Bytes;
 use image::guess_format;
 use uuid::Uuid;
 
-use crate::db::{BlobVerdict, DeletedImage, NewImage};
+use crate::db::{BlobVerdict, DeletedImage, LegacyKey, NewImage};
 use crate::dto::{
     Image, Metadata, UpdateReview, UpdateVisibility, UploadResponse, UserDataResponse,
 };
@@ -605,14 +605,30 @@ pub async fn update_image_visibility(
     Ok(StatusCode::OK.into_response())
 }
 
-/// `GET /api/images/{hash}`: the blob, while a non-rejected row names it
+/// `GET /api/images/{key}`: the blob, while a non-rejected row names it
 /// and the store does not withhold it (the operator's `content.denylist`
 /// or a reel verdict; the store's own reads refuse a listed hash too, this
-/// check keeps the bucket redirect from pointing at one).
+/// check keeps the bucket redirect from pointing at one). `key` is a blob
+/// hash, or a legacy bucket key camera-reel-service handed out
+/// ([`LegacyKey`]: `{id}-{file}`, `{id}-thumbnail-{file}`), which names the
+/// row's image or thumbnail hash and is then served by the same rules; a
+/// legacy key of no row is the same 404.
 pub async fn get_image(
     State(state): State<SharedState>,
-    Path(image_id): Path<String>,
+    Path(key): Path<String>,
 ) -> Result<Response, ApiError> {
+    let image_id = match LegacyKey::parse(&key) {
+        None => key,
+        Some(legacy) => state
+            .db
+            .legacy_key_hash(&legacy)
+            .await
+            .map_err(|e| {
+                tracing::error!("failed to resolve a legacy image key: {e}");
+                ApiError::NotFound("image not found".to_string())
+            })?
+            .ok_or_else(|| ApiError::NotFound("image not found".to_string()))?,
+    };
     if state.storage.withholds(&image_id) {
         return Err(ApiError::NotFound("image not found".to_string()));
     }

@@ -75,10 +75,16 @@
 //! route).
 //!
 //! Deliberate differences from camera-reel-service @ 3e8bd0b:
-//! - images are addressed by blob hash, so the legacy `{uuid}-{file}` URLs
-//!   (`/api/images/{uuid}-{ts}.jpg`) do not resolve; `GET /api/images/{hash}`
-//!   answers 200 with the bytes unless `CAMERA_REEL_BUCKET_URL` is set (then
-//!   307 there), and 404 for a hash no non-rejected row names;
+//! - images are addressed by blob hash: the wire `url`/`thumbnailUrl` are
+//!   `<api_url>/api/images/<hash>`. `GET /api/images/{key}` takes a hash or
+//!   a legacy bucket key the old service handed out (`{uuid}-{file}`,
+//!   `{uuid}-thumbnail-{file}`, [`db::LegacyKey`]), which names the row's
+//!   image or thumbnail hash by its id; the file part is not stored or
+//!   compared. Either answers 200 with the bytes unless
+//!   `CAMERA_REEL_BUCKET_URL` is set (then 307 to `<bucket>/<hash>`, not to
+//!   the legacy key), and 404 for a hash no non-rejected row names or a
+//!   legacy key of no row. A bare photo id is neither and answers 404
+//!   (upstream: 307 to a bucket key no upload writes);
 //! - a refused signature is 401 JSON `{"message":"Unauthorized"}` (upstream:
 //!   text/plain `Unathorized`);
 //! - the shared signed-fetch verifier's policy is not upstream's
