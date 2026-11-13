@@ -36,6 +36,7 @@ import type {
   SceneLoadingUi,
   SetAvatarData,
   SetSinglePermission,
+  TextureOptimizationStatus,
   Vector3,
   WelcomeState,
   WorldAccessEvent
@@ -181,6 +182,9 @@ export type BevyApiInterface = {
   getSystemActionStream: () => Promise<AsyncIterable<SystemActionEvent>>
   getSceneLoadingUIStream: () => Promise<AsyncIterable<SceneLoadingState>>
   getAnalyticsEventStream: () => Promise<AsyncIterable<AnalyticsEvent>>
+  /** The preview server's texture import status (preview mode only). Optional: absent on runtimes
+   *  whose SystemApi predates it. */
+  getTextureOptimizationStream?: () => Promise<AsyncIterable<TextureOptimizationStatus>>
   getHoverStream: () => Promise<AsyncIterable<SystemHoverEvent>>
   getProximityStream: () => Promise<AsyncIterable<SystemProximityEvent>>
   getConnectivityStream: () => Promise<AsyncIterable<ConnectivitySnapshot>>

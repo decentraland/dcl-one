@@ -1593,7 +1593,7 @@ fn start_texture_import(
         if status.state != crate::textures::import::ImportState::Running {
             lock_cache(&st).remove(&root);
         }
-        for frame in live_reload::texture_optimization_frames(&scene, status) {
+        for frame in live_reload::texture_optimization_frames(&scene, status, false) {
             let _ = st.reload_tx.send(frame);
         }
     });
@@ -1603,7 +1603,7 @@ fn start_texture_import(
 }
 
 /// What a client connecting now is told first: each project's last texture
-/// import status, when an import has sent one.
+/// import status, when an import has sent one, marked as a replay.
 pub(crate) fn texture_status_frames(state: &AppState) -> Vec<ReloadFrame> {
     state
         .projects()
@@ -1611,7 +1611,9 @@ pub(crate) fn texture_status_frames(state: &AppState) -> Vec<ReloadFrame> {
         .filter_map(|project| {
             let status = crate::textures::import::last_status(&project.root)?;
             let scene = scene_id_for(project, &state.machine);
-            Some(live_reload::texture_optimization_frames(&scene, &status))
+            Some(live_reload::texture_optimization_frames(
+                &scene, &status, true,
+            ))
         })
         .flatten()
         .collect()

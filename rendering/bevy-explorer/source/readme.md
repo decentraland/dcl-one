@@ -242,6 +242,7 @@ Replies are JSON where the command says so; a failed command rejects (web) or an
   `/avatar_state [all|<address>]`, `/chat_history [count]`
   (Nearby only, as received: blocks and scene bans are not applied), `/dm_history <address|community:<id>> [count]` (a DM partner's or a community's
   stored lines), `/community_state` (community chat's router, channels and counters),
+  `/preview_textures` (the preview server's last texture optimization status, in preview mode),
   `/voice_state` (the nearby voice rooms and, as `call`, the private call or community stream the
   player is in: `status`, `kind`, `peer`, `communityId`, `connection`, `participants`,
   `micEnabled`, `localSpeaker`, `localRole`, `error`, `errorIsNotice`),

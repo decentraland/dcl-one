@@ -26,6 +26,7 @@ import {
   type ProfileEdit,
   type SceneToPage,
   type Setting,
+  type TextureOptimizationMessage,
   type VoiceChatActionWire,
   type VoiceChatParticipant,
   type VoiceChatRole,
@@ -834,6 +835,24 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     // wrong answer (anything but "open-sesame") re-asks with the reason, as the engine does.
     if (new URLSearchParams(location.search).get('worldpw') === '1') {
       setTimeout(() => reply({ kind: 'worldPasswordRequest', world: 'secret-garden.dcl.eth' }), 3000)
+    }
+    // ?textures=1 → a scene preview's texture import: progress, then the Reload offer (the toast).
+    if (new URLSearchParams(location.search).get('textures') === '1') {
+      const total = 6
+      const at = (done: number, state: 'running' | 'ready'): TextureOptimizationMessage => ({
+        kind: 'textureOptimization',
+        sceneId: 'bafkreigenesisplazahash',
+        state,
+        done,
+        total,
+        failed: 0,
+        bytesBefore: 9_437_184,
+        bytesAfter: 2_202_009,
+        enabled: true,
+        replay: false
+      })
+      for (let done = 0; done <= total; done++) setTimeout(() => reply(at(done, 'running')), 3000 + done * 500)
+      setTimeout(() => reply(at(total, 'ready')), 3000 + (total + 1) * 500)
     }
     // ?mockportables=1 → the portables list, so the rail button and its popover are exercisable.
     if (new URLSearchParams(location.search).get('mockportables') === '1') sendPortables()

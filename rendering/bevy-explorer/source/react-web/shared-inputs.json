@@ -2371,6 +2371,10 @@
           "kind": "directory"
         },
         {
+          "name": "preview",
+          "kind": "directory"
+        },
+        {
           "name": "profile",
           "kind": "directory"
         },
@@ -3093,6 +3097,15 @@
       ]
     },
     {
+      "path": "library/ui/apps/hud/features/preview",
+      "entries": [
+        {
+          "name": "textureOptimizationToast.ts",
+          "kind": "regular"
+        }
+      ]
+    },
+    {
       "path": "library/ui/apps/hud/features/profile",
       "entries": [
         {
@@ -3503,6 +3516,10 @@
         },
         {
           "name": "surfaceBoundary.test.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "textureOptimization.test.tsx",
           "kind": "regular"
         }
       ]
@@ -4058,7 +4075,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/bevy-api.ts",
-      "sha256": "4725764b6afa53a81c6f5f9161a0cb5a5f3f5f0cc6a0be68bbcf46fc3ae39805"
+      "sha256": "2c0ee6650a06752f827640e6b7de21aa938a6178650b02e89b93c0a25ca3db67"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/avatarDraft.ts",
@@ -4111,6 +4128,10 @@
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/session.ts",
       "sha256": "a335e94255e00de0a0401a9a6f13553538ac309ac1ad75eae3b20da99f747098"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/textureOptimization.ts",
+      "sha256": "db397fc04bacb8259322faebed4fb992af1c65611916c5ddfa088e6757d5ebba"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/urns.ts",
@@ -4305,6 +4326,10 @@
       "sha256": "4b376514a743d34c422d953ccd5bf44d0da275d754640c3df2544d920a2ac358"
     },
     {
+      "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeTextureOptimization.test.ts",
+      "sha256": "9215e44d8c803335b125591254a6584453268644d0d65b4b59fb375322ef83aa"
+    },
+    {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeVoice.test.ts",
       "sha256": "3d2bde9a27de63fb7775fda5b6026a72d2096371ae0fc07dbd03cb428dd725c1"
     },
@@ -4418,7 +4443,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/tsconfig.json",
-      "sha256": "0a2ffaebad7d9dbbab5313bf3b2fbc23ceccb59140e8ee358fb5886712a6a8a3"
+      "sha256": "82b4efaf7aaf1e623ac77e0a27dee2e13f97b13ec4074ad011fad3ef37e0f7fe"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -4470,6 +4495,7 @@
     "rendering/bevy-explorer/source/react-web/src/test/bridgeRandomizerTokens.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeRelay.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeSession.test.ts",
+    "rendering/bevy-explorer/source/react-web/src/test/bridgeTextureOptimization.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeVoice.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeVoiceChat.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/connectivityApi.test.ts",
@@ -4550,7 +4576,7 @@
     },
     {
       "path": "library/explorer-core/engine/mockBridge.ts",
-      "sha256": "8192971c764bea8335855349a82a11600b100da99816db8ef3a17a49970a2352"
+      "sha256": "8a2eafefc5ea3f0877ae591e98af3f931cc6bafa4bd63255cc0667179e05560d"
     },
     {
       "path": "library/explorer-core/engine/nameColor.ts",
@@ -4574,7 +4600,7 @@
     },
     {
       "path": "library/explorer-core/engine/protocol.ts",
-      "sha256": "de312f26c21eebbecf16fb4afcfcaa94446d433a5d749f4b73ceca0da0aca05a"
+      "sha256": "b70fb24e7461993acb7a788e06c32a4d6f95231777f0eb5df8fb665cd1aca59c"
     },
     {
       "path": "library/explorer-core/features/auth/authReturn.ts",
@@ -6098,7 +6124,7 @@
     },
     {
       "path": "library/ui/apps/hud/design/Showcase.tsx",
-      "sha256": "921b4c2db10ec9676f6b99478c272fa6c563d7be761dc5df8bdbcad198b59f84"
+      "sha256": "c5a83bfa3b7d5ea99d31657e74ae54110c488f3fd097fe34b8424a906bb814fd"
     },
     {
       "path": "library/ui/apps/hud/design/Slider.module.css",
@@ -6158,11 +6184,11 @@
     },
     {
       "path": "library/ui/apps/hud/design/Toast.module.css",
-      "sha256": "0f48af1036680ccbe0dbcbbb2e6c725efd28cfb7042540337e10fb496137dee9"
+      "sha256": "2d31c21fd8a8b605ff3e6418af0b7ac51d627f1f11fbc449bf2569c9803e544f"
     },
     {
       "path": "library/ui/apps/hud/design/Toast.tsx",
-      "sha256": "0b4e7ab5ca591c7ba6ca1675df26d9e869b4b3e66822e8d056adfc12097a2896"
+      "sha256": "f597a9c93dd2f1ef237c3ebc040d16dd31ec2f5a67c5483bbee1a574c541a84e"
     },
     {
       "path": "library/ui/apps/hud/design/Toggle.module.css",
@@ -6202,7 +6228,7 @@
     },
     {
       "path": "library/ui/apps/hud/design/index.ts",
-      "sha256": "cc4fa10ecbe788f651a05b015b27f3253c0f383bbb3b2b30327d84ffdffc30a9"
+      "sha256": "01c08bfbfd639bb1ca5fa3e800f4fe84e903233781acb9ffd0ae4d91b420ff62"
     },
     {
       "path": "library/ui/apps/hud/design/popups.module.css",
@@ -6769,6 +6795,10 @@
       "sha256": "067987a9ee150d284965467cdb30c6666ce5c38d7250d1cf13e3e0f91679cca0"
     },
     {
+      "path": "library/ui/apps/hud/features/preview/textureOptimizationToast.ts",
+      "sha256": "0f97a4b3230677b78ec192d36d46064cc6cb61d9b5453d041de45ed83fb326b0"
+    },
+    {
       "path": "library/ui/apps/hud/features/profile/NameEditModal.module.css",
       "sha256": "0079d50e9d97b22383ec58b8682880ee218e8a633510cd80f2d5e77361aab9b6"
     },
@@ -6846,7 +6876,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "97687965f09d92e3e83480dbe11ac1e2d43e62a3ff6490fc9fc6926b854bd1a7"
+      "sha256": "7180b66b9adfb0608a3bad458255496c261c5dc57a2ebff6941426016417a72b"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -7423,6 +7453,10 @@
     {
       "path": "library/ui/apps/hud/test/surfaceBoundary.test.tsx",
       "sha256": "73563cfc7b7e1c0dcc210360e9377b9f699caa4aef902198e46d1e9e88245871"
+    },
+    {
+      "path": "library/ui/apps/hud/test/textureOptimization.test.tsx",
+      "sha256": "fbb3bd76e7b98edd7c01943878a6bd6a6a29a1e29ed00d37cbe2abe66a43b85f"
     },
     {
       "path": "library/ui/foundations/colors/colors.css",
@@ -11316,6 +11350,21 @@
     },
     {
       "from": "library/ui/apps/hud/design/Showcase.tsx",
+      "to": "library/ui/apps/hud/design/Toast.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Showcase.tsx",
+      "to": "library/ui/apps/hud/design/Toast.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Showcase.tsx",
+      "to": "library/ui/apps/hud/design/Toast.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Showcase.tsx",
       "to": "library/ui/apps/hud/design/Toggle.tsx",
       "kind": "native:runtime"
     },
@@ -11612,6 +11661,51 @@
     {
       "from": "library/ui/apps/hud/design/TextInput.tsx",
       "to": "library/ui/apps/hud/design/icons.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Toast.tsx",
+      "to": "library/ui/apps/hud/design/Button.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Toast.tsx",
+      "to": "library/ui/apps/hud/design/Button.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Toast.tsx",
+      "to": "library/ui/apps/hud/design/Button.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Toast.tsx",
+      "to": "library/ui/apps/hud/design/ControlButton.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Toast.tsx",
+      "to": "library/ui/apps/hud/design/ControlButton.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Toast.tsx",
+      "to": "library/ui/apps/hud/design/ControlButton.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Toast.tsx",
+      "to": "library/ui/apps/hud/design/Glyphs.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Toast.tsx",
+      "to": "library/ui/apps/hud/design/Glyphs.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Toast.tsx",
+      "to": "library/ui/apps/hud/design/Glyphs.tsx",
       "kind": "test:runtime"
     },
     {
@@ -19970,6 +20064,21 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/apps/hud/features/preview/textureOptimizationToast.ts",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/preview/textureOptimizationToast.ts",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/preview/textureOptimizationToast.ts",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/apps/hud/features/profile/NameEditModal.tsx",
       "to": "library/explorer-core/engine/profileEdit.ts",
       "kind": "native:runtime"
@@ -21602,6 +21711,21 @@
     {
       "from": "library/ui/apps/hud/features/session/useEngineSession.ts",
       "to": "library/ui/apps/hud/features/portables/portableToasts.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "to": "library/ui/apps/hud/features/preview/textureOptimizationToast.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "to": "library/ui/apps/hud/features/preview/textureOptimizationToast.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "to": "library/ui/apps/hud/features/preview/textureOptimizationToast.ts",
       "kind": "test:runtime"
     },
     {
@@ -27800,6 +27924,51 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/apps/hud/test/textureOptimization.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/textureOptimization.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/textureOptimization.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/textureOptimization.test.tsx",
+      "to": "library/ui/apps/hud/features/preview/textureOptimizationToast.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/textureOptimization.test.tsx",
+      "to": "library/ui/apps/hud/features/preview/textureOptimizationToast.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/textureOptimization.test.tsx",
+      "to": "library/ui/apps/hud/features/preview/textureOptimizationToast.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/textureOptimization.test.tsx",
+      "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/textureOptimization.test.tsx",
+      "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/textureOptimization.test.tsx",
+      "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/foundations/foundations.css",
       "to": "library/ui/foundations/colors/colors.css",
       "kind": "native:css"
@@ -30071,6 +30240,11 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/features/preview/textureOptimizationToast.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/features/profile/NameEditModal.tsx",
       "kind": "type"
     },
@@ -30807,6 +30981,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/test/surfaceBoundary.test.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/test/textureOptimization.test.tsx",
       "kind": "type"
     },
     {
