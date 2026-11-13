@@ -90,10 +90,17 @@ pub(crate) fn install_ktx2_transcoder() {
 ///   glTF). A KTX2 that can't be transcoded (not UASTC, malformed) fails to load.
 /// - Without one (`Image::from_buffer` callers, bevy's own KTX2 LUTs, which are not UASTC): a
 ///   KTX2 that can't be transcoded is left to bevy's own decode.
+///
+/// A BC texture variant (`ipfs::bevy_variants`, BC1/BC5/BC7 in KTX2) is unwrapped to its dds
+/// first, never transcoded, stashed or noted: its cache entry is the variant's, not this path's.
+/// A BC KTX2 that doesn't unwrap goes on to the transcoder.
 pub(crate) fn transcode_ktx2_image(
     bytes: &[u8],
     path: Option<&AssetPath<'_>>,
 ) -> Option<Ktx2Transcoded> {
+    if let Some(Ok(dds)) = ipfs::bevy_variants::ktx2::bc_ktx2_dds(bytes) {
+        return Some(Ok((dds, ImageFormat::Dds)));
+    }
     match crate::processor::transcode_ktx2(bytes) {
         Ok(dds) => {
             match path {
