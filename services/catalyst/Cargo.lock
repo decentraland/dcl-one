@@ -1643,7 +1643,9 @@ dependencies = [
  "chrono",
  "dcl-auth",
  "dcl-http",
+ "futures",
  "image",
+ "reqwest",
  "serde",
  "serde_json",
  "serde_urlencoded",
@@ -1653,6 +1655,7 @@ dependencies = [
  "tower",
  "tracing",
  "ts-rs",
+ "url",
  "uuid",
 ]
 

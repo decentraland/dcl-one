@@ -58,6 +58,11 @@ enum Command {
         #[command(subcommand)]
         command: CommunitiesCommand,
     },
+    /// Camera reel operator commands.
+    CameraReel {
+        #[command(subcommand)]
+        command: CameraReelCommand,
+    },
     /// Explore (places, events) operator commands.
     Explore {
         #[command(subcommand)]
@@ -113,6 +118,53 @@ enum ExploreCommand {
         /// The export; `-` reads standard input.
         #[arg(long)]
         file: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum CameraReelCommand {
+    /// Copy camera-reel-service's photos into `camera_reel.images`
+    /// (`camera_reel::import`; runbook: docs/camera-reel.md): pages the old
+    /// service's `images` table by `(created_at, id)`, fetches each photo and
+    /// thumbnail from its bucket (`<bucket-url>/<key>`, the key ending the
+    /// row's `url`/`thumbnail_url`), generates the 640x360 thumbnail when the
+    /// row has none or the bucket lacks it, stores both blobs by hash and
+    /// inserts the row under the same id, owner, document, visibility and
+    /// `created_at`, unmoderated, with no ranking count and no photo event,
+    /// and without `MAX_IMAGES_PER_USER`. Re-running is safe and resumes: a
+    /// photo already imported is not fetched again, only its visibility and
+    /// document follow the source while it is unmoderated. A row the local
+    /// table refuses or whose objects are missing is skipped and reported;
+    /// the run goes on. Prints the outcome as JSON. Not behind
+    /// CREATE_WRITES_ENABLED: an import is operator data.
+    Import {
+        #[arg(long, env = "DATABASE_URL", hide_env_values = true)]
+        database_url: String,
+        /// camera-reel-service's database (read only).
+        #[arg(long, env = "CAMERA_REEL_SOURCE_DATABASE_URL", hide_env_values = true)]
+        source_database_url: String,
+        /// camera-reel-service's public bucket (its `BUCKET_URL`).
+        #[arg(long, env = "CAMERA_REEL_SOURCE_BUCKET_URL", hide_env_values = true)]
+        bucket_url: String,
+        #[arg(
+            long,
+            env = "STORAGE_ROOT_FOLDER",
+            default_value = "/var/lib/catalyst/content"
+        )]
+        storage_root_folder: String,
+        /// Source rows per page.
+        #[arg(long, default_value_t = 500, value_parser = clap::value_parser!(i64).range(1..=10_000))]
+        batch: i64,
+        /// Photos fetched at once.
+        #[arg(long, default_value_t = 8, value_parser = clap::value_parser!(u16).range(1..=256))]
+        concurrency: u16,
+        /// Fetch and check every photo; write no blob and no row.
+        #[arg(long)]
+        dry_run: bool,
+        /// After the pass, delete the imported photos the source no longer
+        /// has (photos uploaded here are never touched).
+        #[arg(long)]
+        prune: bool,
     },
 }
 
@@ -623,6 +675,64 @@ async fn run(
             if !out.complete {
                 anyhow::bail!("communities mirror pass incomplete (the next run resumes it)");
             }
+            Ok(())
+        }
+        Command::CameraReel {
+            command:
+                CameraReelCommand::Import {
+                    database_url,
+                    source_database_url,
+                    bucket_url,
+                    storage_root_folder,
+                    batch,
+                    concurrency,
+                    dry_run,
+                    prune,
+                },
+        } => {
+            use catalyst::camera_reel::import;
+            tracing_subscriber::fmt().with_target(false).init();
+            // Neither URL is echoed: either may carry credentials.
+            let bucket_url = url::Url::parse(&bucket_url)
+                .ok()
+                .filter(|u| matches!(u.scheme(), "http" | "https") && !u.cannot_be_a_base())
+                .context("CAMERA_REEL_SOURCE_BUCKET_URL is not an http(s) URL")?;
+            let concurrency = usize::from(concurrency);
+            let target = db::connect_pool(
+                &database_url,
+                &db::PoolSettings {
+                    max_connections: concurrency.min(16) as u32 + 2,
+                    ..Default::default()
+                },
+            )
+            .await
+            .context("connecting to DATABASE_URL")?;
+            db::bootstrap(&target).await?;
+            let source = db::connect_pool(
+                &source_database_url,
+                &db::PoolSettings {
+                    max_connections: 1,
+                    ..Default::default()
+                },
+            )
+            .await
+            .context("connecting to CAMERA_REEL_SOURCE_DATABASE_URL")?;
+            let storage = storage::Storage::from_config(Path::new(&storage_root_folder))
+                .await
+                .with_context(|| format!("opening STORAGE_ROOT_FOLDER {storage_root_folder}"))?;
+            let client = http::Outbound::new(
+                http::HttpClientCfg::default().with_total_timeout(import::FETCH_TIMEOUT),
+            )
+            .context("building the HTTP client")?;
+            let options = import::ImportOptions {
+                bucket_url,
+                batch,
+                concurrency,
+                dry_run,
+                prune,
+            };
+            let report = import::run(&source, &target, &storage, &client, &options).await?;
+            println!("{}", serde_json::to_string(&report)?);
             Ok(())
         }
         Command::Posture {

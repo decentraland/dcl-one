@@ -80,6 +80,42 @@ pub fn image_url(api_url: &str, hash: &str) -> String {
     format!("{}/api/images/{hash}", api_url.trim_end_matches('/'))
 }
 
+/// A bucket key camera-reel-service wrote and handed out in its `url` /
+/// `thumbnailUrl`: `{id}-{file}` for the image and `{id}-thumbnail-{file}`
+/// for its thumbnail (upstream `src/api/upload.rs`), `id` the row's uuid in
+/// its hyphenated 36-character form. A blob hash never parses as one (no
+/// hyphen at byte 36). A file name that itself starts with `thumbnail-`
+/// makes the image key read as the thumbnail's: the file name is not
+/// stored, so the two cannot be told apart.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LegacyKey {
+    pub id: Uuid,
+    pub thumbnail: bool,
+}
+
+impl LegacyKey {
+    pub fn parse(key: &str) -> Option<Self> {
+        let (id, rest) = (key.get(..36)?, key.get(36..)?);
+        let file = rest.strip_prefix('-').filter(|f| !f.is_empty())?;
+        // `Uuid::parse_str` also takes the 32-digit simple form, which is
+        // not 36 characters, and the braced or URN forms, which are not
+        // hyphenated at these positions; insist on the hyphenated one.
+        if id
+            .as_bytes()
+            .iter()
+            .enumerate()
+            .any(|(i, b)| matches!(i, 8 | 13 | 18 | 23) != (*b == b'-'))
+        {
+            return None;
+        }
+        let id = Uuid::parse_str(id).ok()?;
+        let thumbnail = file
+            .strip_prefix("thumbnail-")
+            .is_some_and(|f| !f.is_empty());
+        Some(Self { id, thumbnail })
+    }
+}
+
 /// What one delete reports back: ownership outcome, the hashes the row
 /// named (the servable memo drops them; the blobs stay in the shared store),
 /// the ones now withheld node-wide and the owner's remaining image count.
@@ -620,6 +656,21 @@ impl Database {
         Ok(servable)
     }
 
+    /// The blob a legacy key (`{uuid}-{file}` or `{uuid}-thumbnail-{file}`,
+    /// [`LegacyKey`]) names: the row's `image_hash` or `thumbnail_hash` by
+    /// its id, `None` when no row has the id. The file part is not stored and
+    /// not compared; the caller applies the hash route's rules to the hash.
+    pub async fn legacy_key_hash(&self, key: &LegacyKey) -> Result<Option<String>, sqlx::Error> {
+        sqlx::query_scalar::<_, String>(
+            "SELECT CASE WHEN $2 THEN thumbnail_hash ELSE image_hash END \
+             FROM camera_reel.images WHERE id = $1",
+        )
+        .bind(key.id)
+        .bind(key.thumbnail)
+        .fetch_optional(&self.pool)
+        .await
+    }
+
     fn forget_servable(&self, hash: &str) {
         self.servable.lock().unwrap().remove(hash);
     }
@@ -756,6 +807,37 @@ mod tests {
         assert_eq!(Cursor::decode("garbage"), None);
         assert_eq!(Cursor::decode("12.not-a-uuid"), None);
         assert_eq!(Cursor::decode(&format!("x.{}", Uuid::new_v4())), None);
+    }
+
+    #[test]
+    fn legacy_keys_parse_as_upstream_wrote_them() {
+        let id: Uuid = "e9659dd5-0f87-4169-a9a6-1ec0d5faf051".parse().unwrap();
+        let image = LegacyKey::parse(&format!("{id}-1790074770.jpg")).unwrap();
+        assert_eq!((image.id, image.thumbnail), (id, false));
+        let thumb = LegacyKey::parse(&format!("{id}-thumbnail-1790074770.jpg")).unwrap();
+        assert_eq!((thumb.id, thumb.thumbnail), (id, true));
+        assert_eq!(
+            LegacyKey::parse(&format!("{id}-thumbnail-")).map(|k| k.thumbnail),
+            Some(false),
+            "an empty file after `thumbnail-` is the image key's file `thumbnail-`"
+        );
+        assert_eq!(
+            LegacyKey::parse(&format!("{}-image.png", id.to_string().to_uppercase())).map(|k| k.id),
+            Some(id)
+        );
+        for not_legacy in [
+            id.to_string(),
+            format!("{id}-"),
+            format!("{id}x1790074770.jpg"),
+            format!("{}-image.png", id.simple()),
+            format!("{{{id}}}-image.png"),
+            "bafkreickiq5m2aj4i4hi4emzcyaqvh2w2wdig325ienuqnkycz5xr5l66a".to_string(),
+            "zzzzzzzz-0f87-4169-a9a6-1ec0d5faf051-1.jpg".to_string(),
+            "é".repeat(20),
+            String::new(),
+        ] {
+            assert_eq!(LegacyKey::parse(&not_legacy), None, "{not_legacy}");
+        }
     }
 
     #[test]

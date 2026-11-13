@@ -607,4 +607,23 @@ CREATE TABLE camera_reel.photo_events (
     CONSTRAINT photo_events_payload_object_check CHECK (jsonb_typeof(payload) = 'object')
 );
 CREATE INDEX photo_events_created_at_idx ON camera_reel.photo_events (created_at);
+
+-- The photos `catalyst camera-reel import` copied from camera-reel-service's
+-- database: one row per imported `images` row, by the same id, written in
+-- the transaction that inserts it. A fact about the copy, not about the
+-- photo, so it is its own relation rather than a column every gallery read
+-- carries. Readers: the import's re-runs (which source rows it refreshes:
+-- only imported ones, never a photo uploaded here) and its `--prune` (which
+-- local rows a source delete may remove: only imported ones), both by
+-- primary key. Rows: at most one per photo, written once at import and
+-- never updated; the cascade removes it with its photo (an owner's or
+-- moderator's delete, or a prune). Once the old service is retired nothing
+-- reads it.
+CREATE TABLE camera_reel.imported_images (
+    id uuid NOT NULL,
+    imported_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    CONSTRAINT imported_images_pkey PRIMARY KEY (id),
+    CONSTRAINT imported_images_id_fkey FOREIGN KEY (id)
+        REFERENCES camera_reel.images (id) ON DELETE CASCADE
+);
 -- ==== end section: camera_reel ====
