@@ -20,6 +20,8 @@ function versionOutput(executable) {
       stdio: ['ignore', 'pipe', 'ignore'],
       windowsHide: true
     })
+    const stdout = child.stdout
+    let deadline
     let settled = false
     let size = 0
     const chunks = []
@@ -27,9 +29,9 @@ function versionOutput(executable) {
       if (settled) return
       settled = true
       clearTimeout(deadline)
-      child.stdout.removeListener('data', onData)
-      child.stdout.destroy()
-      if (!ok) child.kill('SIGKILL')
+      stdout?.removeListener('data', onData)
+      stdout?.destroy()
+      if (!ok && Number.isInteger(child.pid) && child.pid > 0) child.kill('SIGKILL')
       child.unref()
       if (ok) resolve({ stdout: Buffer.concat(chunks).toString('utf8') })
       else reject(new Error('Browser version metadata unavailable'))
@@ -40,11 +42,15 @@ function versionOutput(executable) {
       else chunks.push(chunk)
     }
     // Own the deadline and pipe lifetime: a child may ignore SIGTERM or leave a writer behind.
-    const deadline = setTimeout(() => finish(false), 3000)
-    child.stdout.on('data', onData)
-    child.stdout.once('error', () => finish(false))
     child.once('error', () => finish(false))
     child.once('close', (code) => finish(code === 0))
+    if (!stdout) {
+      finish(false)
+      return
+    }
+    deadline = setTimeout(() => finish(false), 3000)
+    stdout.on('data', onData)
+    stdout.once('error', () => finish(false))
   })
 }
 

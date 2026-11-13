@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { mkdtempSync, writeFileSync, readFileSync, rmSync, chmodSync } from 'node:fs'
 import os from 'node:os'
 import { performance } from 'node:perf_hooks'
@@ -372,5 +372,39 @@ describe('when the actual version child cannot finish cooperatively', () => {
     delete overrides.version
     const result = await collectBrowserEnvironment(overrides)
     assert.deepEqual(result.browser, { selected: true, family: null, version: null })
+  })
+})
+
+describe('when the operating system cannot allocate subprocess handles', () => {
+  it('should retain unknown version metadata without uncaught private errors under actual FD exhaustion', () => {
+    const scratch = mkdtempSync(path.join(os.tmpdir(), 'ui-version-fd-'))
+    const executable = path.join(scratch, secret)
+    const script = path.join(scratch, 'probe.mjs')
+    writeFileSync(
+      executable,
+      `#!${process.execPath}\nprocess.stdout.write('Google Chrome 157.0.8103.50')`
+    )
+    chmodSync(executable, 0o700)
+    writeFileSync(
+      script,
+      `import {openSync,closeSync} from 'node:fs';import {collectBrowserEnvironment} from ${JSON.stringify(new URL('../ui-browser-environment.mjs', import.meta.url).href)};const descriptors=[];let exhausted=false;try{while(true)descriptors.push(openSync('/dev/null','r'))}catch(error){if(error.code!=='EMFILE'&&error.code!=='ENFILE')throw error;exhausted=true}let report;try{report=await collectBrowserEnvironment({findBrowser:async()=>${JSON.stringify(executable)},env:{},home:()=>null,stat:async()=>{throw Object.assign(new Error(),{code:'ENOENT'})},readFile:async()=>{throw new Error()}})}finally{for(const fd of descriptors)closeSync(fd)}console.log(JSON.stringify({exhausted,browser:report.browser}));`
+    )
+    try {
+      const result = spawnSync(
+        '/bin/sh',
+        ['-c', 'ulimit -n 40; exec "$1" "$2"', 'version-fd-probe', process.execPath, script],
+        { timeout: 4500, killSignal: 'SIGKILL', detached: true, encoding: 'utf8', maxBuffer: 8192 }
+      )
+      assert.equal(result.stderr.includes(secret), false)
+      assert.equal(result.stderr.length, 0)
+      assert.equal(result.status, 0)
+      assert.equal(result.error, undefined)
+      assert.deepEqual(JSON.parse(result.stdout), {
+        exhausted: true,
+        browser: { selected: true, family: null, version: null }
+      })
+    } finally {
+      rmSync(scratch, { recursive: true, force: true })
+    }
   })
 })
