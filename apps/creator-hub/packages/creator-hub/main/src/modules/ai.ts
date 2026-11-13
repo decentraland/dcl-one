@@ -46,6 +46,7 @@ import {
 } from './scene-mcp';
 import { ensureGitignored, upsertMcpServer } from './project-config-files';
 import { ensureSkillsLinked } from './skills';
+import { redactSecrets } from './redact';
 
 // GUI-launched Electron gets a sparse PATH (no shell profile), so the CLIs — and their
 // own node/child lookups — won't be found by name alone. Search these in addition to
@@ -1024,13 +1025,6 @@ export function signInRequiredMessage(
   }
   const steps = relogin.map(step => `\`${step}\``).join(', then ');
   return `${label} isn't signed in, or its sign-in expired. In a terminal, run ${steps}, then send your message again. Or ${apiKeyAlternative(provider)}.`;
-}
-
-/** `text` with anything that looks like an API key or bearer token masked, for the log. */
-export function redactSecrets(text: string): string {
-  return text
-    .replace(/\b(sk-|AIza)[\w-]{8,}/g, '$1<redacted>')
-    .replace(/(Bearer\s+)[\w.~+/=-]+/gi, '$1<redacted>');
 }
 
 /** `bin`, or null when it is a managed install of a CLI the app no longer signs in to. */
