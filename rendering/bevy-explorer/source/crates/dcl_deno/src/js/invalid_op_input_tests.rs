@@ -33,6 +33,18 @@ fn no_raw_socket_lock_or_cppgc_class_ops_are_reachable() {
 }
 
 #[test]
+fn core_ops_that_abort_on_scene_input_are_disabled() {
+    assert_refused(
+        r#"Deno.core.ops.op_compile_function("", "file:///x", undefined, [1])"#,
+        "op is disabled",
+    );
+    assert_refused(
+        "Deno.core.ops.op_set_handled_promise_rejection_handler(() => {})",
+        "op is disabled",
+    );
+}
+
+#[test]
 fn op_panic_is_refused() {
     assert_refused(r#"Deno.core.ops.op_panic("x")"#, "not available");
 }
@@ -714,6 +726,9 @@ fn sweep_ops(super_user: bool, is_server: bool) {
             ["x", 0, throwingArray(), throwingArray()],
             [new Uint8Array(8), trap(), trap()],
             [0, new Uint8Array(8), trap(), trap()],
+            // past argument decoding: a valid specifier with non-string items
+            ["", "file:///x", undefined, [1, trap()]],
+            ["", "file:///x", [1, trap()], [1]],
             // a branded object reaches structured clone's host-object path
             [{{ [Symbol.for("Deno.core.hostObject")]() {{ return {{ type: "x" }}; }} }}],
         ];

@@ -73,6 +73,10 @@ pub const DISABLED_OPS: &[&str] = &[
     "op_compression_new",
     "op_compression_write",
     "op_compression_finish",
+    // unwraps reads of its parameter and option arrays
+    "op_compile_function",
+    // the scene's handler runs while deno_core holds borrows the handler can take again
+    "op_set_handled_promise_rejection_handler",
 ];
 
 #[op2(fast)]
