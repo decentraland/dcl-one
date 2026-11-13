@@ -431,6 +431,10 @@ pub struct WorldsConfig {
     #[arg(long, env = "WS_MAX_SOCKETS", default_value_t = 3000, value_parser = clap::value_parser!(u32).range(1..))]
     pub ws_max_sockets: u32,
 
+    /// Connector sockets one client address may hold, pending handshakes included; 0 is unlimited.
+    #[arg(long, env = "WS_MAX_SOCKETS_PER_IP", default_value_t = 64)]
+    pub ws_max_sockets_per_ip: u32,
+
     /// Handshake deadline, ms; 0 keeps the default.
     #[arg(long, env = "HANDSHAKE_TIMEOUT", default_value_t = 60_000)]
     pub handshake_timeout: u64,

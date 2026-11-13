@@ -973,19 +973,35 @@ pub async fn serve(
         );
     }
     // The gatekeeper's room events feed the worlds access log and, when
-    // enabled, the presence badges (stored here, applied by a leased job).
+    // enabled, the presence badges (stored before the webhook is
+    // acknowledged, applied by a leased job).
     let presence_badges =
         config.social.badges_presence_enabled && config.writes.social_writes_enabled;
-    let mut room_event_sinks: Vec<Arc<dyn comms::gatekeeper::events::RoomEventSink>> =
+    let room_event_sinks: Vec<Arc<dyn comms::gatekeeper::events::RoomEventSink>> =
         vec![stage5.core.clone()];
-    let presence_badge_settings = badges::presence::Settings::default();
-    if presence_badges {
-        let sink = Arc::new(badges::presence::EventSink::new(
+    let presence_badge_settings = {
+        let social = &config.social;
+        let ms = badges::presence::secs_to_ms;
+        badges::presence::Settings {
+            check_after_ms: ms(social.badges_presence_open_visit_check_after_seconds),
+            max_age_ms: ms(social.badges_presence_open_visit_max_age_seconds),
+            applied_events_ttl_ms: ms(social.badges_presence_applied_events_ttl_seconds),
+            absent_expire_ms: ms(social.badges_presence_absent_expire_after_seconds),
+            lookahead_ms: ms(social.badges_presence_early_join_lookahead_seconds),
+            sweep_batch: i64::from(social.badges_presence_sweep_batch_size),
+            prune_batch: i64::from(social.badges_presence_prune_batch_size),
+            sweep_interval: Duration::from_secs(social.badges_presence_sweep_interval_seconds),
+            grant_notifications: social.badges_presence_grant_notifications,
+            sweeper_enabled: social.badges_presence_sweeper_enabled,
+            ..badges::presence::Settings::default()
+        }
+    };
+    let presence_badge_store = presence_badges.then(|| {
+        Arc::new(badges::presence::EventSink::new(
+            pool.clone(),
             presence_badge_settings.clone(),
-        ));
-        sink.spawn_writer(pool.clone(), &jobs);
-        room_event_sinks.push(sink);
-    }
+        )) as Arc<dyn comms::gatekeeper::events::RoomEventStore>
+    });
     let comms_stage = comms_states(
         &config,
         &pool,
@@ -998,6 +1014,7 @@ pub async fn serve(
         Arc::new(comms::gatekeeper::events::RoomEventFanout::new(
             room_event_sinks,
         )),
+        presence_badge_store,
         live_presence.clone(),
         eip1654.clone(),
         primary,
@@ -1161,6 +1178,15 @@ pub async fn serve(
     ));
     presence.spawn_jobs(&jobs);
     social.notifications.spawn_jobs(&jobs);
+    let catalog = social.badges.clone();
+    jobs.spawn("badges-catalog-check", move |ctx| async move {
+        tokio::select! {
+            _ = ctx.cancel.cancelled() => Ok(()),
+            checked = catalog.badges.warn_ahead_of_code() => {
+                checked.map(drop).context("badge catalog check failed")
+            }
+        }
+    });
     comms_stage.gatekeeper.spawn_jobs(&jobs);
     social.media.spawn_jobs(&jobs);
     social.rpc.spawn_jobs(&jobs);
@@ -2076,6 +2102,7 @@ async fn comms_states(
     policy: &Arc<worlds::policy::Policy>,
     ban_status: Arc<dyn comms::gatekeeper::moderation::BanStatus>,
     room_events: Arc<dyn comms::gatekeeper::events::RoomEventSink>,
+    room_event_store: Option<Arc<dyn comms::gatekeeper::events::RoomEventStore>>,
     presence: Arc<comms::presence::Presence>,
     eip1654: Option<Arc<dyn crate::auth::eip1654::Eip1654Validator>>,
     primary: bool,
@@ -2088,6 +2115,8 @@ async fn comms_states(
     let archipelago_settings = archipelago::Settings::resolve(
         archipelago::config::RawSettings {
             max_sockets: config.worlds.ws_max_sockets,
+            max_sockets_per_ip: config.worlds.ws_max_sockets_per_ip,
+            trusted_proxy_cidrs: config.node.http_trusted_proxy_cidrs.clone(),
             handshake_timeout_ms: config.worlds.handshake_timeout,
             deny_list_url: config.worlds.deny_list(),
             island_changed_dedup_ms: config.worlds.island_changed_dedup_ms,
@@ -2126,6 +2155,10 @@ async fn comms_states(
     .with_shared_secret_max_attempts(config.worlds.shared_secret_max_attempts_per_minute)
     .with_room_authority_key(non_empty(&config.room_authority.pulse_room_authority_key).as_deref())?
     .with_room_event_sink(room_events);
+    let gatekeeper = match room_event_store {
+        Some(store) => gatekeeper.with_room_event_store(store),
+        None => gatekeeper,
+    };
     let gatekeeper = Arc::new(gatekeeper);
     gatekeeper.spawn_presence_recovery(jobs);
 
