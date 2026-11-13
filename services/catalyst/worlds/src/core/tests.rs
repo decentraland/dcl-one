@@ -6155,7 +6155,18 @@ async fn served(app: &Router, method: &str, path: &str) -> (StatusCode, Option<S
 async fn worlds_contents_sniff_and_answer_legacy_sha256_keys() {
     let Some(f) = fixture().await else { return };
     let app = served_app(&f).await;
-    let png = bytes::Bytes::from([&PNG_MAGIC[..], Uuid::new_v4().as_bytes()].concat());
+    // `file-type` reads a PNG's chunks up to its IDAT: an IHDR, then an IDAT of 16 unique bytes.
+    let png = bytes::Bytes::from(
+        [
+            &PNG_MAGIC[..],
+            b"\0\0\0\x0dIHDR",
+            &[0; 17],
+            b"\0\0\0\x10IDAT",
+            Uuid::new_v4().as_bytes(),
+            &[0; 4],
+        ]
+        .concat(),
+    );
     let png_cid = hash_bytes_v1(&png);
     f.storage.store(&png_cid, png.clone()).await.unwrap();
     // sha256("abc"), stored under the raw-leaf CIDv1 a deploy or import gives it.

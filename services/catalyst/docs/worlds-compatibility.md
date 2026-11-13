@@ -54,12 +54,17 @@ difference not listed here is a gap, not a decision.
   does (upstream: 400). A key on the content denylist answers 404, and with
   `READ_THROUGH_ENABLED` a missing key is fetched from the sync sources
   before the 404.
-- **Content types.** The worlds `/contents` and `/ipfs` routes sniff the
-  file's first 64 bytes with `file-type@16`'s signatures for images (PNG,
-  JPEG, GIF, WebP, BMP, AVIF, HEIC), glTF binary, fonts, the ISO-BMFF brands,
-  MP3, WAV, FLAC, Ogg, WebM, ZIP and WebAssembly; a format that needs more of
-  the file is `application/octet-stream`. A file that opens with `{` or `[`
-  is `application/json` (upstream: `application/octet-stream`).
+- **Content types.** The worlds `/contents` and `/ipfs` routes answer
+  `file-type@16`'s Content-Type for scene formats: images, glTF binary,
+  audio, video, fonts, PDF, WebAssembly, gzip and ZIP. Other formats, and a
+  ZIP's office or EPUB subtypes, are `application/octet-stream` (or the type
+  of a ported signature their bytes also match) or `application/zip`. XML is
+  `application/octet-stream` (upstream: `application/xml`): these routes
+  share the node's origin, where a browser would run an XHTML or SVG
+  document's scripts. A file that opens with `{` or `[` is
+  `application/json` (upstream: `application/octet-stream`). A file of more
+  than 16 chained ID3 tags, 256 PNG chunks before the image data, or 64 EBML
+  header elements is `application/octet-stream`.
 - **Conditional reads.** A request whose `If-None-Match` names the ETag gets
   304 on `/contents`, `/ipfs` and `/index`; upstream always answers 200.
 - **Error envelope on 403 and 500.** Worlds routes answer
@@ -385,6 +390,16 @@ difference not listed here is a gap, not a decision.
   (upstream: LiveKit's room listing, cached 60 seconds), answers
   `adapterType: "offline"` without `statusUrl` when no LiveKit host is set,
   and adds `personalWorlds` and `mirror`.
+- **Name deny list after a failed read.** For five seconds after a failed
+  read of the `banned-names` list, the last list that read applies with
+  `BLOCKED_WORLD_NAMES` (the configured names alone if none has read since
+  start); then the list is read again. Upstream keeps an empty list for an
+  hour after a failed fetch.
+- **Gateway rate limits.** Reads (GET, HEAD, OPTIONS) have no rate limit,
+  as upstream. Writes, and the `admin`, `gc` and `reprocess-ab` routes, are
+  limited to 30 requests a second per address (burst 60), answered with
+  nginx's 429; settings uploads also take at most 10 connections per address.
+  Upstream limits none of them.
 
 ## Notifications
 
@@ -430,6 +445,14 @@ difference not listed here is a gap, not a decision.
   not only recorded.
 - **Shared-secret hashes** use bcrypt cost 12 (upstream: 10); existing
   hashes verify unchanged.
+- **Mirrored worlds** take the source's access type and allow-list wallets
+  and apply this node's permission model to them. Deployment and streaming
+  grants are not copied, so their lists and `summary` are empty; a
+  shared-secret world refuses every secret, because the source does not
+  publish its hash; allow-list communities are matched against this node's
+  members. Once the owner changes the access here, the mirror keeps that
+  setting while they hold the name. A world's own grants, secrets and
+  members come with a data migration, not through the mirror.
 
 ## World metadata and settings
 

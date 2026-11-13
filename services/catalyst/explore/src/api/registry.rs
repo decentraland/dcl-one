@@ -9,6 +9,13 @@
 //! - empty answers the boot reads (`/entities/active`, `/entities/versions`)
 //!   with `200 []` and the other reads with 503.
 //!
+//! The boot reads check the Registry's request rule first, with every source:
+//! a body without a non-empty `pointers` answers the Registry's
+//! `400 {"ok":false,"message":"No pointers provided"}` (`ids` is not read),
+//! and a body that is not JSON its `500`. An `/entities/active` answer drops
+//! every entity whose id is on this node's content denylist, as the content
+//! reads do ([`crate::content::queries::retain_non_denylisted`]).
+//!
 //! Registry writes (moderation, queue controls, registration, cache flush)
 //! are not exposed here: the abgen admin bearer stays on this host and those
 //! operations go through the ops console. No `Authorization` header is forwarded.
@@ -48,8 +55,8 @@ static PERMITS: LazyLock<Semaphore> = LazyLock::new(|| Semaphore::new(IN_FLIGHT)
 
 pub fn routes(state: Shared) -> Router {
     Router::new()
-        .route("/entities/active", post(boot_read))
-        .route("/entities/versions", post(boot_read))
+        .route("/entities/active", post(active))
+        .route("/entities/versions", post(versions))
         .route("/entities/status", get(read))
         .route("/entities/status/{id}", get(read))
         .route("/worlds/{world_name}/manifest", get(read))
@@ -126,9 +133,34 @@ impl Backend {
     }
 }
 
-/// `/entities/active` and `/entities/versions`: unity-explorer calls them at
-/// boot, so a node without a Registry knows no converted entity (`200 []`).
-async fn boot_read(
+/// `POST /entities/active`: the backend's entities without those on this
+/// node's content denylist.
+async fn active(
+    State(state): State<Shared>,
+    OriginalUri(original_uri): OriginalUri,
+    method: Method,
+    uri: Uri,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    if let Err(response) = pointers_rule(&body) {
+        return response;
+    }
+    if state.settings.sources.registry.is_empty() {
+        return Json(json!([])).into_response();
+    }
+    match forward(&state, &original_uri, method, &uri, &headers, body).await {
+        Ok((status, out_headers, bytes)) if status == StatusCode::OK => {
+            let bytes = without_denylisted(bytes, &state.content.denylist);
+            (status, out_headers, bytes).into_response()
+        }
+        Ok(answer) => answer.into_response(),
+        Err(response) => response,
+    }
+}
+
+/// `POST /entities/versions`: the backend's answer as received.
+async fn versions(
     state: State<Shared>,
     original_uri: OriginalUri,
     method: Method,
@@ -136,10 +168,79 @@ async fn boot_read(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
+    if let Err(response) = pointers_rule(&body) {
+        return response;
+    }
     if state.settings.sources.registry.is_empty() {
         return Json(json!([])).into_response();
     }
     read(state, original_uri, method, uri, headers, body).await
+}
+
+/// The Registry's request rule for the boot reads (`get-active-entities.ts`
+/// and `get-entity-versions.ts`): the body is read as JSON whatever its
+/// `Content-Type` (unparseable: the http-commons `500`), and `pointers` must
+/// be present, truthy and, when an array, non-empty. `ids` is not read, and
+/// the number of pointers is not capped.
+fn pointers_rule(body: &[u8]) -> Result<(), Response> {
+    let Ok(body) = serde_json::from_slice::<Value>(body) else {
+        return Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error":"Internal Server Error"})),
+        )
+            .into_response());
+    };
+    let present = match body.get("pointers") {
+        None | Some(Value::Null) | Some(Value::Bool(false)) => false,
+        Some(Value::String(s)) => !s.is_empty(),
+        Some(Value::Number(n)) => n.as_f64().is_some_and(|n| n != 0.0),
+        Some(Value::Array(a)) => !a.is_empty(),
+        Some(_) => true,
+    };
+    if present {
+        Ok(())
+    } else {
+        // Written out: `json!` would sort the keys, the Registry sends `ok` first.
+        Err((
+            StatusCode::BAD_REQUEST,
+            [(axum::http::header::CONTENT_TYPE, "application/json")],
+            r#"{"ok":false,"message":"No pointers provided"}"#,
+        )
+            .into_response())
+    }
+}
+
+/// The entities of a backend answer without those whose id is on this node's
+/// content denylist (the projection and rule of the content reads, failing
+/// closed on an entity without an id). An answer that drops nothing, or that
+/// is not a JSON array, keeps its bytes.
+fn without_denylisted(body: Vec<u8>, denylist: &crate::content::Denylist) -> Vec<u8> {
+    use crate::content::queries::{EntityDoc, retain_non_denylisted};
+    #[derive(serde::Deserialize)]
+    struct Id<'a> {
+        #[serde(borrow, default)]
+        id: Option<std::borrow::Cow<'a, str>>,
+    }
+    let Ok(items) = serde_json::from_slice::<Vec<&serde_json::value::RawValue>>(&body) else {
+        return body;
+    };
+    let mut docs: Vec<EntityDoc> = items
+        .iter()
+        .map(|raw| EntityDoc {
+            id: serde_json::from_str::<Id>(raw.get())
+                .ok()
+                .and_then(|entity| entity.id)
+                .map(|id| id.into_owned())
+                .unwrap_or_default(),
+            json: Bytes::copy_from_slice(raw.get().as_bytes()),
+        })
+        .collect();
+    let before = docs.len();
+    retain_non_denylisted(&mut docs, denylist);
+    if docs.len() == before {
+        return body;
+    }
+    EntityDoc::json_array(&docs).to_vec()
 }
 
 async fn read(
@@ -150,37 +251,53 @@ async fn read(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
+    match forward(&state, &original_uri, method, &uri, &headers, body).await {
+        Ok(answer) => answer.into_response(),
+        Err(response) => response,
+    }
+}
+
+/// One backend call: its status, the kept headers and the buffered body, or
+/// the gateway's own answer when the call cannot be made or fails.
+async fn forward(
+    state: &Shared,
+    original_uri: &Uri,
+    method: Method,
+    uri: &Uri,
+    headers: &HeaderMap,
+    body: Bytes,
+) -> Result<(StatusCode, HeaderMap, Vec<u8>), Response> {
     let source = &state.settings.sources.registry;
     if source.is_empty() {
-        return message(
+        return Err(message(
             StatusCode::SERVICE_UNAVAILABLE,
             "Registry service is not configured",
-        );
+        ));
     }
     let (native, mut url) = match backend(&state.settings, source) {
         Ok(backend) => backend,
         Err(error) => {
             tracing::warn!(error = %format!("{error:#}"), "Registry source refused");
-            return message(
+            return Err(message(
                 StatusCode::SERVICE_UNAVAILABLE,
                 "Registry service is not configured",
-            );
+            ));
         }
     };
     let path = format!("{}{}", url.path().trim_end_matches('/'), uri.path());
     url.set_path(&path);
     if url.path() != path {
         // Encoded dot segments the URL parser would normalize out of the route.
-        return message(StatusCode::BAD_REQUEST, "Invalid Registry path");
+        return Err(message(StatusCode::BAD_REQUEST, "Invalid Registry path"));
     }
     url.set_query(uri.query());
     let Some(_permit) = slot(&PERMITS, SLOT_WAIT).await else {
-        return (
+        return Err((
             StatusCode::SERVICE_UNAVAILABLE,
             [("retry-after", "1")],
             Json(json!({"ok":false,"message":"Registry service is busy"})),
         )
-            .into_response();
+            .into_response());
     };
     let result = async {
         let mut http = state.http.clone();
@@ -192,7 +309,7 @@ async fn read(
             .max_redirects(0)
             .timeout(TIMEOUT)
             .body(body);
-        for (name, value) in &headers {
+        for (name, value) in headers {
             let name = name.as_str();
             if matches!(
                 name,
@@ -231,10 +348,10 @@ async fn read(
             );
             bytes.extend_from_slice(&chunk);
         }
-        Ok::<_, anyhow::Error>((status, out_headers, bytes).into_response())
+        Ok::<_, anyhow::Error>((status, out_headers, bytes))
     }
     .await;
-    result.unwrap_or_else(|error| {
+    result.map_err(|error| {
         tracing::warn!(error = %format!("{error:#}"), "Registry request failed");
         message(StatusCode::BAD_GATEWAY, "Registry service unavailable")
     })
