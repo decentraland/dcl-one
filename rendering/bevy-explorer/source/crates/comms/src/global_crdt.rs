@@ -37,6 +37,8 @@ use dcl_types::{
 
 use crate::{
     chat_reaction::{canonical_message_id, received_emoji, ChatReactionEvent},
+    scene_rooms::SceneRooms,
+    scene_topics::SceneTopicRouter,
     Transport,
 };
 
@@ -835,9 +837,11 @@ pub fn process_transport_updates(
     mut subscribers: EventReader<RpcCallEvent>,
     mut duplicate_chat_filter: Local<HashMap<Entity, f64>>,
     mut remote_anim: Local<RemoteAnimState>,
-    (discard_player_updates, transports): (
+    (discard_player_updates, transports, scene_rooms, mut scene_topics): (
         Res<DiscardPlayerUpdates>,
         Query<Option<&crate::room_connection::ConnectionHealth>, With<Transport>>,
+        SceneRooms,
+        SceneTopicRouter,
     ),
 ) {
     // gather any event receivers
@@ -1039,8 +1043,11 @@ pub fn process_transport_updates(
                             process_messagebus(
                                 scene,
                                 address,
+                                update.transport_id,
                                 &mut string_senders,
                                 &mut binary_senders,
+                                &scene_rooms,
+                                &mut scene_topics,
                             );
                         }
                         PlayerMessage::PlayerData(Message::Voice(_)) => (),
@@ -1193,8 +1200,11 @@ pub fn process_transport_updates(
                             process_messagebus(
                                 scene,
                                 update.address,
+                                update.transport_id,
                                 &mut string_senders,
                                 &mut binary_senders,
+                                &scene_rooms,
+                                &mut scene_topics,
                             );
                         }
                         // a server resolving a guest profile asks the guest directly — the
@@ -1338,8 +1348,11 @@ fn resolve_remote_anim(
 fn process_messagebus(
     mut scene: rfc4::Scene,
     address: String,
+    transport: Entity,
     string_senders: &mut HashMap<String, RpcStreamSender<String>>,
     binary_senders: &mut HashMap<String, RpcStreamSender<(String, Vec<u8>)>>,
+    scene_rooms: &SceneRooms,
+    scene_topics: &mut SceneTopicRouter,
 ) {
     if scene.data.is_empty() {
         warn!("empty scene message");
@@ -1355,6 +1368,10 @@ fn process_messagebus(
             scene.data.remove(0);
             CommsMessageType::Binary
         }
+        c if c == CommsMessageType::CommsData as u8 => {
+            scene.data.remove(0);
+            CommsMessageType::CommsData
+        }
         _ => CommsMessageType::String,
     };
 
@@ -1362,6 +1379,17 @@ fn process_messagebus(
         "messagebus received from {} to scene {}: [{:?}] `{:?}`",
         address, scene.scene_id, comms_type, scene.data
     );
+
+    if !scene_rooms.carries(transport, &scene.scene_id) {
+        debug!(
+            "dropping message for scene {} from {address}: not its scene room",
+            scene.scene_id
+        );
+        if matches!(comms_type, CommsMessageType::CommsData) {
+            scene_topics.drop_without_room();
+        }
+        return;
+    }
 
     match comms_type {
         CommsMessageType::String => {
@@ -1379,6 +1407,9 @@ fn process_messagebus(
             if let Some(sender) = binary_senders.get(&scene.scene_id) {
                 let _ = sender.send((address, scene.data));
             }
+        }
+        CommsMessageType::CommsData => {
+            scene_topics.deliver(&scene.scene_id, address, scene.data);
         }
     }
 }
@@ -1648,6 +1679,8 @@ mod tests {
         app.add_event::<EmoteLifecycleEvent>();
         app.add_event::<ChatEvent>();
         app.add_event::<ChatReactionEvent>();
+        crate::scene_rooms::test_support::init_scene_rooms(&mut app);
+        app.add_plugins(crate::scene_topics::SceneTopicsRoutingPlugin);
         app.add_systems(
             Update,
             (
@@ -1688,6 +1721,167 @@ mod tests {
                 .into(),
             )
             .unwrap();
+    }
+
+    fn queue_scene_message(
+        app: &mut App,
+        context: Entity,
+        transport: Entity,
+        address: Address,
+        data: Vec<u8>,
+    ) {
+        app.world()
+            .get::<GlobalCrdtState>(context)
+            .unwrap()
+            .get_sender()
+            .try_send(
+                PlayerUpdate {
+                    transport_id: transport,
+                    message: PlayerMessage::PlayerData(Message::Scene(rfc4::Scene {
+                        scene_id: "bafyscene".to_owned(),
+                        data,
+                    })),
+                    address,
+                }
+                .into(),
+            )
+            .unwrap();
+    }
+
+    /// Subscribes a scene with `hash` to the message bus and to topic messages.
+    fn subscribe_scene(
+        app: &mut App,
+        hash: &str,
+    ) -> (
+        common::rpc::RpcStreamReceiver<String>,
+        common::rpc::RpcStreamReceiver<(String, Vec<u8>)>,
+    ) {
+        let (bus, bus_rx) = RpcStreamSender::<String>::channel();
+        let (topics, topics_rx) = RpcStreamSender::<(String, Vec<u8>)>::channel();
+        let scene = app.world_mut().spawn_empty().id();
+        let origin = || RpcOrigin::Scene {
+            entity: scene,
+            hash: hash.into(),
+        };
+        app.world_mut().send_event(RpcCallEvent {
+            origin: origin(),
+            call: RpcCall::SubscribeMessageBus { sender: bus },
+        });
+        app.world_mut().send_event(RpcCallEvent {
+            origin: origin(),
+            call: RpcCall::SubscribeSceneTopics { sender: topics },
+        });
+        app.update();
+        (bus_rx, topics_rx)
+    }
+
+    const TOPIC_MESSAGE: [u8; 5] = [3, 1, 0, b't', b'x'];
+    const BUS_MESSAGE: [u8; 3] = [1, b'h', b'i'];
+
+    #[test]
+    fn scene_messages_reach_the_scene_on_its_own_room_only() {
+        use crate::scene_rooms::test_support::spawn_server_room;
+        let (mut app, context) = presence_app();
+        let peer = Address::repeat_byte(0xab);
+        let (own, _) = spawn_server_room(&mut app, "bafyscene", context);
+        let (other, _) = spawn_server_room(&mut app, "bafyother", context);
+        for room in [own, other] {
+            queue_joined(&mut app, context, room, peer);
+        }
+        app.update();
+        let (mut bus_rx, mut topics_rx) = subscribe_scene(&mut app, "bafyscene");
+
+        // another scene's room carries nothing for this scene
+        queue_scene_message(&mut app, context, other, peer, TOPIC_MESSAGE.to_vec());
+        queue_scene_message(&mut app, context, other, peer, BUS_MESSAGE.to_vec());
+        app.update();
+        assert!(topics_rx.try_recv().is_err());
+        assert!(bus_rx.try_recv().is_err());
+
+        queue_scene_message(&mut app, context, own, peer, TOPIC_MESSAGE.to_vec());
+        queue_scene_message(&mut app, context, own, peer, BUS_MESSAGE.to_vec());
+        app.update();
+        assert_eq!(
+            topics_rx.try_recv().unwrap(),
+            (format!("{peer:#x}"), vec![1, 0, b't', b'x'])
+        );
+        assert!(topics_rx.try_recv().is_err());
+        // the topic message is not taken for a message bus string
+        assert!(bus_rx.try_recv().unwrap().contains("hi"));
+        assert!(bus_rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn a_transport_that_is_not_the_scene_room_delivers_no_scene_messages() {
+        use crate::scene_rooms::test_support::spawn_client_room;
+        let (mut app, context) = presence_app();
+        let peer = Address::repeat_byte(0xab);
+        let island = spawn_transport(&mut app, context);
+        let (room, _) = spawn_client_room(&mut app, "bafyscene", context);
+        queue_joined(&mut app, context, island, peer);
+        queue_joined(&mut app, context, room, peer);
+        app.update();
+        let (mut bus_rx, mut topics_rx) = subscribe_scene(&mut app, "bafyscene");
+
+        queue_scene_message(&mut app, context, island, peer, TOPIC_MESSAGE.to_vec());
+        queue_scene_message(&mut app, context, island, peer, BUS_MESSAGE.to_vec());
+        app.update();
+        assert!(topics_rx.try_recv().is_err());
+        assert!(bus_rx.try_recv().is_err());
+
+        queue_scene_message(&mut app, context, room, peer, TOPIC_MESSAGE.to_vec());
+        queue_scene_message(&mut app, context, room, peer, BUS_MESSAGE.to_vec());
+        app.update();
+        assert!(topics_rx.try_recv().is_ok());
+        assert!(bus_rx.try_recv().is_ok());
+    }
+
+    #[test]
+    fn a_shared_room_delivers_to_a_scene_other_than_the_one_it_was_dialed_for() {
+        use crate::scene_rooms::test_support::{local_preview, spawn_client_room};
+        let (mut app, context) = presence_app();
+        let peer = Address::repeat_byte(0xab);
+        let (room, _) = spawn_client_room(&mut app, "bafyroom", context);
+        queue_joined(&mut app, context, room, peer);
+        app.update();
+        let (mut bus_rx, mut topics_rx) = subscribe_scene(&mut app, "bafyscene");
+
+        queue_scene_message(&mut app, context, room, peer, TOPIC_MESSAGE.to_vec());
+        queue_scene_message(&mut app, context, room, peer, BUS_MESSAGE.to_vec());
+        app.update();
+        assert!(
+            topics_rx.try_recv().is_err() && bus_rx.try_recv().is_err(),
+            "isolated rooms carry only their own scene"
+        );
+
+        local_preview(&mut app);
+        queue_scene_message(&mut app, context, room, peer, TOPIC_MESSAGE.to_vec());
+        queue_scene_message(&mut app, context, room, peer, BUS_MESSAGE.to_vec());
+        app.update();
+        assert!(topics_rx.try_recv().is_ok());
+        assert!(bus_rx.try_recv().is_ok());
+    }
+
+    #[test]
+    fn topic_messages_over_the_size_limit_are_dropped() {
+        use crate::scene_rooms::test_support::spawn_client_room;
+        let (mut app, context) = presence_app();
+        let peer = Address::repeat_byte(0xab);
+        let (room, _) = spawn_client_room(&mut app, "bafyscene", context);
+        queue_joined(&mut app, context, room, peer);
+        app.update();
+        let (_bus_rx, mut topics_rx) = subscribe_scene(&mut app, "bafyscene");
+
+        let mut at_limit = vec![3, 1, 0, b't'];
+        at_limit.resize(dcl_types::MAX_TOPIC_MESSAGE_BYTES, b'd');
+        let mut over_limit = at_limit.clone();
+        over_limit.push(b'd');
+        queue_scene_message(&mut app, context, room, peer, over_limit);
+        queue_scene_message(&mut app, context, room, peer, at_limit);
+        app.update();
+        let (_, payload) = topics_rx.try_recv().unwrap();
+        assert_eq!(payload.len(), dcl_types::MAX_TOPIC_MESSAGE_BYTES - 1);
+        assert!(topics_rx.try_recv().is_err());
     }
 
     /// Each foreign player's presence set.

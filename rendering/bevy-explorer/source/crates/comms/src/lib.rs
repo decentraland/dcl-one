@@ -18,6 +18,8 @@ pub mod profile;
 pub mod pulse;
 pub mod recovery;
 pub mod room_connection;
+pub mod scene_rooms;
+pub mod scene_topics;
 pub mod signed_login;
 #[cfg(test)]
 mod test;
@@ -112,6 +114,7 @@ impl Plugin for CommsPlugin {
             UserProfilePlugin,
             PreviewPlugin,
             automation::CommsAutomationPlugin,
+            scene_topics::SceneTopicsPlugin,
         ));
 
         #[cfg(feature = "livekit")]
