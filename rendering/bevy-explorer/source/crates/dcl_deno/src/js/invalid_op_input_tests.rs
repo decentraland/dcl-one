@@ -32,6 +32,20 @@ fn op_panic_is_refused() {
 }
 
 #[test]
+fn add_ops_wrap_instead_of_overflowing() {
+    run_scene(
+        false,
+        r#"
+        if (Deno.core.ops.op_add(2147483647, 1) !== -2147483648) { throw new Error("op_add"); }
+        Deno.core.ops.op_add_async(2147483647, 1).then((v) => {
+            if (v !== -2147483648) { throw new Error("op_add_async"); }
+        });
+        "#,
+    )
+    .unwrap();
+}
+
+#[test]
 fn call_site_needs_room_for_line_and_column() {
     assert_refused(
         "Deno.core.ops.op_current_user_call_site(new Uint8Array(0))",
