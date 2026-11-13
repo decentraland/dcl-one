@@ -243,8 +243,9 @@ const performance = loadExtScript("ext:deno_web/15_performance.js");
 performance.setTimeOrigin();
 globalThis.performance = performance.performance;
 
-// `Date`, `Temporal.Now` and `Intl.DateTimeFormat` read the wall clock in V8, not through an
-// op; floor what they read to the ops' granularity (CLOCK_GRANULARITY in hardened_ops.rs).
+// `Date`, `Temporal.Now`, `Intl.DateTimeFormat` and `File` read the wall clock in V8, not
+// through an op; floor what they read to the ops' granularity (CLOCK_GRANULARITY in
+// hardened_ops.rs).
 const NativeDate = Date;
 const nativeNow = Date.now;
 const ReflectConstruct = Reflect.construct;
@@ -294,6 +295,19 @@ Object.defineProperties(dateTimeFormat, {
         configurable: true,
     },
 });
+
+// File defaults lastModified from the primordial Date, taken before CoarseDate, and every
+// File reads it through this getter. Explicit values are floored too.
+{
+    const filePrototype = loadExtScript("ext:deno_web/09_file.js").File.prototype;
+    const descriptor = Object.getOwnPropertyDescriptor(filePrototype, "lastModified");
+    const nativeLastModified = descriptor.get;
+    descriptor.get = function lastModified() {
+        const time = ReflectApply(nativeLastModified, this, []);
+        return time - (((time % 2) + 2) % 2);
+    };
+    Object.defineProperty(filePrototype, "lastModified", descriptor);
+}
 
 if (typeof Temporal === "object") {
     const { Instant, Now } = Temporal;

@@ -211,12 +211,14 @@ fn every_clock_has_two_millisecond_granularity() {
         r#"
         const millisOf = (parts) => Number(parts.find((p) => p.type === "fractionalSecond").value);
         const intl = new Intl.DateTimeFormat("en-US", { second: "numeric", fractionalSecondDigits: 3 });
+        const { File } = Deno.core.loadExtScript("ext:deno_web/09_file.js");
         const clocks = {
             dateNow: () => Date.now(),
             newDate: () => new Date().getTime(),
             performanceNow: () => performance.now(),
             timeOrigin: () => performance.timeOrigin,
             timerNow: () => Deno.core.ops.op_timer_now(),
+            fileLastModified: () => new File([], "x").lastModified,
             intlFormat: () => Number(intl.format().split(".")[1]),
             intlFormatToParts: () => millisOf(intl.formatToParts()),
             temporalInstant: () => Number(Temporal.Now.instant().epochNanoseconds % 1000000000n),
@@ -243,7 +245,7 @@ fn every_clock_has_two_millisecond_granularity() {
     )
     .unwrap();
     let outcome: std::collections::BTreeMap<String, bool> = serde_json::from_str(&outcome).unwrap();
-    assert!(outcome.len() == 10 && outcome.values().all(|coarse| *coarse), "{outcome:?}");
+    assert!(outcome.len() == 11 && outcome.values().all(|coarse| *coarse), "{outcome:?}");
     // the clocks still advance
     let advanced = eval(
         &mut runtime,
