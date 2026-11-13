@@ -81,7 +81,7 @@ fn consecutive_ticks_stay_distinct_at_realistic_magnitudes() {
     const TICKS: [u32; 3] = [2350530722, 2350530821, 2350530940];
 
     let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
-    decoder.handle(server_msg(joined(5, (1.0, 2.0, 3.0), 0)));
+    decoder.handle(joined_with_tick(WALLET, 5, TICKS[0] - 100, 1.0));
 
     let stamps: Vec<f64> = TICKS
         .iter()
@@ -230,6 +230,7 @@ fn sequence_gap_requests_resync_without_applying() {
         subject_id: SUBJECT,
         baseline_seq: 6,
         new_seq: 7,
+        server_tick: 1100,
         position_x: Some(200),
         ..Default::default()
     };
@@ -1603,4 +1604,121 @@ fn buffered_delta_keeps_its_request_while_equal_sequence_emotes_are_reported() {
         165.0,
     );
     assert!(decoder.pending_resync.is_empty());
+}
+
+fn joined_with_tick(wallet: &str, sequence: u32, tick: u32, x: f32) -> pulse::ServerMessage {
+    let pulse::server_message::Message::PlayerJoined(mut message) =
+        joined_in_realm(SUBJECT, wallet, "home", (x, 2.0, 3.0))
+    else {
+        unreachable!()
+    };
+    let full = message.state.as_mut().unwrap();
+    full.sequence = sequence;
+    full.server_tick = tick;
+    server_msg(pulse::server_message::Message::PlayerJoined(message))
+}
+
+#[test]
+fn a_reused_subject_id_drops_deltas_from_before_its_join() {
+    const OTHER: &str = "0x0000000000000000000000000000000000000002";
+    let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
+    decoder.handle(joined_with_tick(WALLET, 2, 1000, 1.0));
+    decoder.handle(left(SUBJECT));
+    decoder.handle(joined_with_tick(OTHER, 0, 10000, 10.0));
+
+    let events = decoder.handle(delta(SUBJECT, 2, 3, 1000, 2.0));
+    assert!(events.is_empty(), "{events:?}");
+    assert!(decoder.pending_resync.is_empty());
+    let events = decoder.handle(delta(SUBJECT, 0, 2, 10100, 11.0));
+    assert!(
+        matches!(events.as_slice(), [PulseEvent::Movement { address, timestamp, .. }]
+        if *address == other() && *timestamp == 10.1),
+        "{events:?}"
+    );
+    approx(only_movement(events).position_x, 171.0);
+    approx(
+        only_movement(decoder.handle(delta(SUBJECT, 2, 3, 10200, 12.0))).position_x,
+        172.0,
+    );
+}
+
+#[test]
+fn a_subject_accepts_deltas_at_the_exact_join_tick() {
+    let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
+    decoder.handle(joined_with_tick(WALLET, 0, 10000, 10.0));
+    assert!(is_one_resync(
+        &decoder.handle(delta(SUBJECT, 2, 3, 10000, 12.0)),
+        SUBJECT,
+        0
+    ));
+    let events = decoder.handle(delta(SUBJECT, 0, 2, 10000, 11.0));
+    assert!(
+        matches!(events.as_slice(), [PulseEvent::Movement { timestamp, .. }]
+        if *timestamp == 10.0),
+        "{events:?}"
+    );
+    approx(only_movement(events).position_x, 172.0);
+}
+
+#[test]
+fn a_subject_lifetime_floor_unwraps_the_server_tick_rollover() {
+    let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
+    decoder.handle(joined_with_tick(WALLET, 0, u32::MAX - 50, 10.0));
+    assert!(decoder
+        .handle(delta(SUBJECT, 2, 3, u32::MAX - 100, 2.0))
+        .is_empty());
+    let events = decoder.handle(delta(SUBJECT, 0, 2, 25, 11.0));
+    assert!(
+        matches!(events.as_slice(), [PulseEvent::Movement { timestamp, .. }]
+        if (*timestamp - ((1u64 << 32) + 25) as f64 / 1000.0).abs() < 1e-6),
+        "{events:?}"
+    );
+    approx(only_movement(events).position_x, 171.0);
+    approx(
+        only_movement(decoder.handle(delta(SUBJECT, 2, 3, 30, 12.0))).position_x,
+        172.0,
+    );
+}
+
+#[test]
+fn a_subject_can_resume_after_a_full_tick_rollover_while_other_peers_advance_the_clock() {
+    const OTHER: &str = "0x0000000000000000000000000000000000000002";
+    let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
+    decoder.handle(joined_with_tick(WALLET, 0, 1000, 10.0));
+    let pulse::server_message::Message::PlayerJoined(mut peer) =
+        joined_in_realm(SUBJECT + 1, OTHER, "home", (4.0, 2.0, 3.0))
+    else {
+        unreachable!()
+    };
+    peer.state.as_mut().unwrap().sequence = 0;
+    decoder.handle(server_msg(pulse::server_message::Message::PlayerJoined(
+        peer,
+    )));
+    for (sequence, tick) in [0x4000_0000, 0x8000_0000, 0xc000_0000, 0x100]
+        .into_iter()
+        .enumerate()
+    {
+        let sequence = sequence as u32;
+        let events = decoder.handle(delta(SUBJECT + 1, sequence, sequence + 1, tick, 4.0));
+        assert!(
+            matches!(events.as_slice(), [PulseEvent::Movement { .. }]),
+            "{events:?}"
+        );
+    }
+    let events = decoder.handle(delta(SUBJECT, 0, 1, 0x101, 11.0));
+    approx(only_movement(events).position_x, 171.0);
+}
+
+#[test]
+fn an_emote_start_before_the_join_does_not_lower_the_delta_lifetime_floor() {
+    let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
+    decoder.handle(joined_with_tick(WALLET, 0, 10000, 10.0));
+    let events = decoder.handle(emote_started(0, 1000, "wave", 10.0));
+    assert!(emits_emote_start(&events), "{events:?}");
+    approx(only_movement(events).position_x, 170.0);
+    assert!(decoder.handle(delta(SUBJECT, 2, 3, 2000, 2.0)).is_empty());
+    approx(
+        only_movement(decoder.handle(delta(SUBJECT, 0, 2, 10100, 11.0))).position_x,
+        171.0,
+    );
 }
