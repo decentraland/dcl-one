@@ -4114,11 +4114,11 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/outfits.ts",
-      "sha256": "fb408e8f09c7e54527eb8fea669a4ff070a3ba7ee013b9aa72ba756d8c886951"
+      "sha256": "ead5a597885af1f73aa092c295ab0d0e4b8f352a3e86110130e0cc0527984338"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/profile.ts",
-      "sha256": "383effec91f99a75d4a3d222be087a3cf920438d5931d182d98181cd98f8a15f"
+      "sha256": "10f3b67a23c95e7bc5458c2a562451bd2519540ac55f805becff7429b850f5e9"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/randomizer.ts",
@@ -4306,7 +4306,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeOutfits.test.ts",
-      "sha256": "2d00ca56920b25b4c2478960628b05d4e1f12132f1f76741cdf3d71895433d74"
+      "sha256": "361f0575e0491b7649763cac0ba6a995f49312ff8d30ca7925fc60adfbdad333"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeRandomizer.test.ts",
@@ -4595,7 +4595,7 @@
     },
     {
       "path": "library/explorer-core/engine/protocol.ts",
-      "sha256": "a8287f1050522067d955149794eb35118e6b21856b2986b6f0f89c0da4dc7d1d"
+      "sha256": "849340f7d29ac2ed7343166e50dafa807edb8fe6b037b35c56557b4d62c9d975"
     },
     {
       "path": "library/explorer-core/features/auth/authReturn.ts",
@@ -6867,7 +6867,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "9287f9b73d1e83a8b68c68484e080757ce8b140b3bc35e2dfaa45574b6840814"
+      "sha256": "205e4c4628a0ffc74df91aa99527cc0c3aa12b5aff7ec4b5a7d73f90442f6ff8"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -7091,7 +7091,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/backpackOutfitSlots.test.tsx",
-      "sha256": "556f5d20191157efb57af7c707b81390ff09a8f4de5c93b6a597066ec998abf1"
+      "sha256": "10ac40e2d371ec4b2439882aabcd6109164827c7a9addb2c7145f9fb29b44ff7"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/backpackRandomize.test.tsx",

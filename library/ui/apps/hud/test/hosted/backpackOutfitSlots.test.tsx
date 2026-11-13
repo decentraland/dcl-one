@@ -37,5 +37,25 @@ describe('the number of outfit slots', () => {
     it('should offer the extra slots', () => {
       expect(h.session().backpack.outfitSlots).toBe(10)
     })
+
+    describe('and the names lookup says the player owns none', () => {
+      beforeEach(() => {
+        act(() => h.driver.emit({ kind: 'ownedNames', names: [] }))
+      })
+
+      it('should offer the free slots', () => {
+        expect(h.session().backpack.outfitSlots).toBe(5)
+      })
+    })
+
+    describe('and the names lookup fails', () => {
+      beforeEach(() => {
+        act(() => h.driver.emit({ kind: 'ownedNames', names: [], failed: true }))
+      })
+
+      it('should still offer the extra slots', () => {
+        expect(h.session().backpack.outfitSlots).toBe(10)
+      })
+    })
   })
 })
