@@ -35,12 +35,12 @@ export function sdkWorkspaceHandoff(url: URL): string | null {
   return `/create/scene-editor?${target.toString()}`;
 }
 
-export async function loader({ request }: Route.LoaderArgs) {
+export async function loader({ request, context }: Route.LoaderArgs) {
   const url = new URL(request.url);
   const handoff = sdkWorkspaceHandoff(url);
   if (handoff) throw redirect(handoff, { headers: { "Cache-Control": "private, no-store" } });
 
-  const { sid, wrap } = await pageLoader(request, FALLBACK);
+  const { sid, wrap } = await pageLoader(request, context, FALLBACK);
   const screen = await loadCreateScreen(request);
   const response = wrap({ sid, ...screen.data });
   const headers = new Headers(response.init?.headers);

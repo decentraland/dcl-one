@@ -1,22 +1,55 @@
-import { Buffer } from 'node:buffer'
-import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { lstatSync, readFileSync, readdirSync } from 'node:fs'
+import { lstatSync, readFileSync } from 'node:fs'
 import path from 'node:path'
+import { inspectPublicOutput } from './public-output.mjs'
 
 const ROOT = 'library/ui/foundations'
-const POINTER = Buffer.from('version https://git-lfs.github.com/spec/v1\n')
-const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex')
 const FONT = { package: '@fontsource-variable/inter', version: '5.3.0', license: 'OFL-1.1' }
 
-function filesUnder(directory, prefix = '') {
-  return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
-    const relative = prefix + entry.name
-    if (entry.isSymbolicLink()) throw new Error('Public foundations contain a symlink')
-    if (entry.isDirectory()) return filesUnder(path.join(directory, entry.name), relative + '/')
-    if (!entry.isFile()) throw new Error('Public foundations contain a special file')
-    return [relative]
+const CAPTURE = 'https://github.com/decentraland/figma-design-system'
+const REPOSITORY = 'https://github.com/decentraland/dcl-one'
+
+/**
+ * The public foundation table the staged manifests imply, for lock-digests --write. `files` lists the staged paths
+ * under library/ui/foundations (relative to it) and `readStaged` returns a non-LFS path's staged bytes. Generated
+ * files take the digest source.json emitted and the pinned capture revision, the Inter fonts and license take the
+ * digests font-source.json pins and the npm origin, and every other staged file is dcl-one source pinned at its
+ * staged bytes, except a file `previous` pinned as generated or npm, which keeps that pin. publicFoundationProblems still checks the materialized bytes against this table.
+ */
+export function publicFoundationTable(lock, files, readStaged, previous) {
+  const json = (file) => JSON.parse(readStaged(ROOT + '/' + file).toString('utf8'))
+  const generated = json('source.json').output
+  const fontSource = json('typography/font-source.json')
+  if (!Array.isArray(generated) || !fontSource || typeof fontSource.files !== 'object')
+    throw new Error('foundation manifests are malformed')
+  const revision = lock.sources?.find((entry) => entry.repository === CAPTURE)?.snapshot?.revision
+  const npm = (origin) => ({ kind: 'npm', ...FONT, path: origin })
+  const table = new Map()
+  for (const { path: file, sha256 } of generated)
+    table.set(file, { sha256, origin: { kind: 'generated', revision } })
+  for (const [name, sha256] of Object.entries(fontSource.files))
+    table.set('typography/fonts/' + name, { sha256, origin: npm('files/' + name) })
+  table.set('typography/' + fontSource.licenseFile, {
+    sha256: fontSource.licenseSha256,
+    origin: npm('LICENSE')
   })
+  for (const file of files) {
+    if (table.has(file)) continue
+    // A file the manifests no longer list keeps a generated or npm pin, so the check reports it instead of the
+    // table quietly calling it dcl-one source.
+    const kind = previous?.[file]?.origin?.kind
+    if (kind === 'generated' || kind === 'npm') {
+      table.set(file, previous[file])
+      continue
+    }
+    table.set(file, {
+      sha256: createHash('sha256')
+        .update(readStaged(ROOT + '/' + file))
+        .digest('hex'),
+      origin: { kind: 'source', repository: REPOSITORY }
+    })
+  }
+  return Object.fromEntries([...table].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
 }
 
 /** Checks materialized public bytes, their index identities and declared origins without installing dependencies. */
@@ -30,25 +63,40 @@ export function publicFoundationProblems(root, lock) {
     return ['public foundations directory is missing or unsafe']
   if (!table || typeof table !== 'object' || Array.isArray(table) || !Object.keys(table).length)
     return ['public foundations have no pinned file table']
-  const actual = filesUnder(directory).sort()
-  const expected = Object.keys(table).sort()
-  const indexed = new Set(
-    execFileSync('git', ['-C', root, 'ls-files', '--', ROOT], { encoding: 'utf8' })
-      .trim()
-      .split('\n')
-      .filter(Boolean)
+  const lfsFiles = new Set(
+    Object.keys(table).filter((file) => /^typography\/fonts\/[^/]+\.woff2$/.test(file))
   )
-  for (const file of actual)
-    if (!Object.hasOwn(table, file)) problems.push('extra public file: ' + file)
+  const inspected = inspectPublicOutput(root, { scope: ROOT, table, lfsFiles })
+  problems.push(...inspected.problems)
+  const actual = inspected.actual
+  const expected = Object.keys(table).sort()
+  if (
+    !inspected.outputs.has('typography/font-source.json') ||
+    !inspected.outputs.has('source.json')
+  )
+    return [...problems, 'foundation manifests are missing or unsafe']
   const capture = lock.sources?.find(
     (entry) => entry.repository === 'https://github.com/decentraland/figma-design-system'
   )?.snapshot
-  const fontSource = JSON.parse(
-    readFileSync(path.join(directory, 'typography/font-source.json'), 'utf8')
-  )
+  let fontSource
+  let generated
+  try {
+    fontSource = JSON.parse(
+      readFileSync(path.join(directory, 'typography/font-source.json'), 'utf8')
+    )
+    generated = JSON.parse(readFileSync(path.join(directory, 'source.json'), 'utf8')).output
+    if (
+      !fontSource ||
+      typeof fontSource !== 'object' ||
+      !Array.isArray(generated) ||
+      generated.some((entry) => !entry || typeof entry.path !== 'string')
+    )
+      return [...problems, 'foundation manifests are malformed']
+  } catch {
+    return [...problems, 'foundation manifests are malformed']
+  }
   if (!Object.entries(FONT).every(([key, value]) => fontSource[key] === value))
     problems.push('wrong font package origin')
-  const generated = JSON.parse(readFileSync(path.join(directory, 'source.json'), 'utf8')).output
   const generatedPaths = new Set(generated.map((entry) => entry.path))
   for (const output of generated)
     if (table[output.path]?.sha256 !== output.sha256)
@@ -75,30 +123,9 @@ export function publicFoundationProblems(root, lock) {
       problems.push('missing public file: ' + file)
       continue
     }
-    if (!indexed.has(ROOT + '/' + file)) {
-      problems.push('untracked public file: ' + file)
-      continue
-    }
-    const bytes = readFileSync(path.join(directory, file))
-    if (bytes.subarray(0, POINTER.length).equals(POINTER)) {
-      problems.push('unmaterialized public file: ' + file)
-      continue
-    }
-    if (!/^[0-9a-f]{64}$/.test(entry?.sha256 ?? '') || sha256(bytes) !== entry.sha256)
-      problems.push('changed public file: ' + file)
-    const blob = execFileSync('git', ['-C', root, 'show', ':' + ROOT + '/' + file])
-    const pointer = blob.subarray(0, POINTER.length).equals(POINTER)
-    if (file.endsWith('.woff2')) {
-      const match =
-        /^version https:\/\/git-lfs.github.com\/spec\/v1\noid sha256:([0-9a-f]{64})\nsize ([0-9]+)\n$/.exec(
-          blob.toString('utf8')
-        )
-      if (!match || match[1] !== entry.sha256 || Number(match[2]) !== bytes.length)
-        problems.push('font LFS identity mismatch: ' + file)
-      if (fontSource.files?.[path.basename(file)] !== entry.sha256)
-        problems.push('font source digest mismatch: ' + file)
-    } else if (pointer || !blob.equals(bytes)) problems.push('public index bytes differ: ' + file)
-    const origin = entry.origin
+    if (file.endsWith('.woff2') && fontSource.files?.[path.basename(file)] !== entry?.sha256)
+      problems.push('font source digest mismatch: ' + file)
+    const origin = entry?.origin
     if (generatedPaths.has(file) !== (origin?.kind === 'generated'))
       problems.push('generated origin classification differs: ' + file)
     if (origin?.kind === 'generated') {

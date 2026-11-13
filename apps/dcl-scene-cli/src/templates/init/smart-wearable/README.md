@@ -4,11 +4,12 @@
 
 ## Before you publish
 
-This scaffold ships no binary assets - add them at the project root:
+The scaffold ships placeholder assets at the project root; replace them with
+your own:
 
 - `model.glb` - the wearable model `wearable.json` references
-  (`data.representations[0].mainFile` / `contents`); update both fields if your
-  file has a different name.
+  (`data.representations[0].mainFile` / `contents`); a plain pair of glasses
+  until you export yours. Update both fields if your file has a different name.
 - `thumbnail.png` - 256x256 PNG with a transparent background, shown in the
   marketplace and the backpack.
 

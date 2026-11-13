@@ -1,6 +1,6 @@
 // The HUD's full-screen pages (Backpack, Places, Events, Map, Gallery, Settings, Communities):
 // how each opens (key, rail button, top-bar tab) and the control that proves it is open. Names are
-// the HUD's accessible names (react-web/src/features); the key hints in the top-bar tabs are the
+// the HUD's accessible names (library/ui/apps/hud/features); the key hints in the top-bar tabs are the
 // engine's default bindings, so a tab is `Places [ Z ]` as the page joins its text nodes.
 import type { Explorer, Selector } from '../driver/index.ts'
 

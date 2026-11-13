@@ -140,6 +140,11 @@ impl AssetLoader for ImageLoader {
                 ImageType::Extension(ext)
             }
             ImageFormatSetting::Format(format) => ImageType::Format(format),
+            // the `image` crate doesn't know KTX2; take it by its magic, at any path
+            #[cfg(feature = "ktx2")]
+            ImageFormatSetting::Guess if crate::ktx2::has_ktx2_magic(&bytes) => {
+                ImageType::Format(ImageFormat::Ktx2)
+            }
             ImageFormatSetting::Guess => {
                 let format = image::guess_format(&bytes).map_err(|err| FileTextureError {
                     error: err.into(),
@@ -154,7 +159,8 @@ impl AssetLoader for ImageLoader {
             }
         };
 
-        let image = Image::from_buffer(
+        // with the asset path, for the host's KTX2 transcoder (see `Ktx2Transcoder`)
+        let image = Image::from_buffer_at(
             #[cfg(all(debug_assertions, feature = "dds"))]
             load_context.path().display().to_string(),
             &bytes,
@@ -163,6 +169,7 @@ impl AssetLoader for ImageLoader {
             settings.is_srgb,
             settings.sampler.clone(),
             settings.asset_usage,
+            Some(load_context.asset_path()),
         )
         .map_err(|err| FileTextureError {
             error: err,

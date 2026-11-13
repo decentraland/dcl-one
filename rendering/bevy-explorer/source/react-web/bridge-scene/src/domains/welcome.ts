@@ -12,7 +12,7 @@ import { BevyApi } from '../bevy-api'
 import type { Ctx } from '../bridge'
 import { deployLookAs, editLook, hasDraft, setStandInLook } from './avatarDraft'
 import { expectLook, syncShape, waitFrames } from './avatarPreview'
-import type { AvatarLook } from '../../../src/engine/avatarEquip'
+import type { AvatarLook } from '@explorer-core/engine/avatarEquip'
 import { sendEquipped } from './wearables'
 
 const LEGAL = {
@@ -23,9 +23,10 @@ const LEGAL = {
 const PLAYER_LOOK_FRAMES = 600
 
 export function registerWelcome(ctx: Ctx): void {
-  ctx.on('getWelcome', async () => {
+  ctx.on('getWelcome', async (msg) => {
     const state = (await BevyApi.getWelcome?.().catch(() => undefined)) ?? { terms: false, newProfile: false }
-    ctx.send({ kind: 'welcome', ...state })
+    // with the ask's tag, so the page knows which ask this answers
+    ctx.send({ kind: 'welcome', ...state, ask: msg.ask })
   })
 
   // A curated default look, as the page fetched it, on the stage: signed in, on the draft (the

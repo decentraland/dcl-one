@@ -99,6 +99,7 @@ impl Plugin for UserProfilePlugin {
                     ("Mean batch size", "meanBatch"),
                     ("Batches in flight", "inFlight"),
                     ("Compact POSTs", "compact"),
+                    ("Compact source", "compactSource"),
                     ("Compact route missing", "compactUnsupported"),
                     ("Unresolved cached profiles", "unresolved"),
                     ("Own profile version", "ownVersion"),
@@ -331,8 +332,8 @@ pub struct ProfileCache {
     requests: ProfileRequestCounts,
     batches: Vec<ProfileBatch>,
     compact_batches: Vec<CompactBatch>,
-    /// the catalyst answered a compact POST as an unknown route: compact readers are served
-    /// from full profiles for the rest of the session
+    /// the compact source answered a compact POST as an unknown route: compact readers are
+    /// served from full profiles for the rest of the session
     compact_unsupported: bool,
 }
 
@@ -368,7 +369,8 @@ fn profile_requests(
             "unavailable": {"meanBatch": "No profile requests yet", "ownVersion": "Not signed in", "peerVersion": "Not signed in",
                 "lastOutfitsDeploy": "No outfits deployed yet"},
             "outfitsInFlight": outfits.deploys_in_flight(), "lastOutfitsDeploy": last_outfits_deploy,
-            "compact": counts.compact, "compactUnsupported": cache.compact_unsupported,
+            "compact": counts.compact, "compactSource": compact_source(&lambdas_url()),
+            "compactUnsupported": cache.compact_unsupported,
             "inFlight": cache.batches.len() + cache.compact_batches.len(),
             "unresolved": cache.entries.values().filter(|entry| entry.data.is_none() && entry.compact.is_none()).count(),
             "ownVersion": current.profile.as_ref().map(|profile| profile.version),
@@ -424,6 +426,19 @@ impl ProfileCache {
             entry.data = Some((Box::new(profile), ProfileSource::Catalyst));
             entry.compact = None;
         }
+    }
+
+    /// Record a profile `sender` sent of itself, under the sender's address; false, with
+    /// nothing recorded, for one naming another address. `apply`'s authority ranking keeps
+    /// a room-broadcast response from displacing an equal-version catalyst answer; a
+    /// guest's own answer counts as final via `satisfied`.
+    fn update_from_peer(&mut self, sender: Address, profile: UserProfile) -> bool {
+        if !is_senders_own(sender, &profile.content) {
+            return false;
+        }
+        self.touch(sender, ProfileTier::Full)
+            .apply(profile, ProfileSource::Peer);
+        true
     }
 
     /// the catalyst has no compact route: from now on every fetch is full, and the
@@ -558,16 +573,23 @@ impl ProfileManager<'_, '_> {
         self.cache.server_snapshots(profile)
     }
 
-    /// Record a profile received directly from the owning peer. `apply`'s authority
-    /// ranking keeps a room-broadcast response from displacing an equal-version
-    /// catalyst answer; a guest's own answer counts as final via `satisfied`.
-    pub fn update_from_peer(&mut self, profile: UserProfile) {
-        if let Some(address) = profile.content.eth_address.as_h160() {
-            self.cache
-                .touch(address, ProfileTier::Full)
-                .apply(profile, ProfileSource::Peer);
-        }
+    /// Record a profile `sender` sent of itself; see `ProfileCache::update_from_peer`.
+    pub fn update_from_peer(&mut self, sender: Address, profile: UserProfile) -> bool {
+        self.cache.update_from_peer(sender, profile)
     }
+}
+
+/// Whether a profile received from a peer is that peer's own: every address it carries is
+/// the sender's. A peer speaks only for itself; a profile naming anyone else would be
+/// shown as theirs. An address counts in any letter case, `0X` included, and an empty
+/// user id as none, so a sender's spelling alone never drops its profile.
+fn is_senders_own(sender: Address, content: &SerializedProfile) -> bool {
+    let is_sender = |address: &str| address.to_ascii_lowercase().as_h160() == Some(sender);
+    is_sender(&content.eth_address)
+        && content
+            .user_id
+            .as_deref()
+            .is_none_or(|id| id.is_empty() || is_sender(id))
 }
 
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
@@ -1016,6 +1038,7 @@ fn drive_profile_fetches(mut manager: ProfileManager, wallet: Res<Wallet>) {
         return;
     }
     let lambdas = lambdas_url();
+    let compact_base = compact_source(&lambdas);
     let ProfileCache {
         batches,
         compact_batches,
@@ -1041,7 +1064,7 @@ fn drive_profile_fetches(mut manager: ProfileManager, wallet: Res<Wallet>) {
         compact_batches.push(CompactBatch {
             addresses: chunk.to_vec(),
             task: IoTaskPool::get().spawn_compat(fetch_compact_profiles(
-                lambdas.clone(),
+                compact_base.clone(),
                 chunk.to_vec(),
                 ipfs.ipfs().clone(),
             )),
@@ -1318,12 +1341,8 @@ pub fn process_profile_events(
                         };
                     let version = serialized_profile.version as u32;
 
-                    // check/update profile version
                     if version < player.profile_version {
                         continue;
-                    }
-                    if version > player.profile_version {
-                        player.profile_version = version;
                     }
 
                     let profile = UserProfile {
@@ -1331,6 +1350,20 @@ pub fn process_profile_events(
                         content: serialized_profile,
                         base_url: r.base_url.clone(),
                     };
+
+                    // dropped whole when it names another address: nothing of it reaches
+                    // the sender's entity, version or identity either
+                    if !cache.update_from_peer(player.address, profile.clone()) {
+                        warn!(
+                            "dropping a profile from {:#x} that names another address",
+                            player.address
+                        );
+                        continue;
+                    }
+
+                    if version > player.profile_version {
+                        player.profile_version = version;
+                    }
 
                     // diff before any push: only write the identity crdt when the guest
                     // flag actually changes (or on first sight of this player's profile)
@@ -1352,8 +1385,6 @@ pub fn process_profile_events(
                             );
                         }
                     }
-
-                    cache.update_from_peer(profile.clone());
 
                     if let Some(mut existing_profile) = maybe_profile {
                         if existing_profile.as_ref() != &profile {
@@ -1544,9 +1575,27 @@ async fn send_deployment(
     }
 }
 
-/// The lambdas of the base domain's catalyst, where every profile is read.
+/// The lambdas of the base domain's catalyst: where full profiles are read, and compact ones
+/// off Decentraland's own deployments ([`compact_source`]).
 fn lambdas_url() -> String {
     common::base_domain::url(common::base_domain::Service::Catalyst, "/lambdas")
+}
+
+/// Where compact profiles are read (`POST {source}/profiles/metadata`): the catalyst's lambdas,
+/// except when that catalyst is one of Decentraland's own deployments
+/// ([`common::base_domain::decentraland_domain`]), whose catalysts have no compact route. There
+/// the same deployment's asset-bundle registry serves the tier, as for unity-explorer with
+/// `USE_CENTRALIZED_PROFILES`. The decision follows the resolved catalyst, not the base domain:
+/// a dcl-one page or a `--gateway` launch keeps the default base domain with its own catalyst.
+///
+/// Temporary: the registry branch is to be removed once Decentraland's catalysts answer
+/// `POST /lambdas/profiles/metadata` (docs/adr/2026-11-04-explorer-profiles-from-the-catalyst.md,
+/// "Follow-ups"); compact reads then go to the catalyst everywhere.
+fn compact_source(lambdas: &str) -> String {
+    match common::base_domain::decentraland_domain(lambdas) {
+        Some(domain) => format!("https://asset-bundle-registry.{domain}"),
+        None => lambdas.trim_end_matches('/').to_owned(),
+    }
 }
 
 /// The content endpoint of the catalyst serving `lambdas`, which carries the profile's files.
@@ -1637,16 +1686,15 @@ fn profiles_from_lambdas(
         .collect()
 }
 
-/// One catalyst POST of the compact tier for a chunk of ids: the asked addresses, in
-/// order, each with what the catalyst holds for it. A catalyst without the route
-/// (Decentraland's answer 404; one whose `/profiles/{id}` takes the path, 405) is
-/// `Unsupported`.
+/// One POST of the compact tier to the [`compact_source`] for a chunk of ids: the asked
+/// addresses, in order, each with what the source holds for it. A source without the route
+/// (a catalyst answers 404, or 405 when its `/profiles/{id}` takes the path) is `Unsupported`.
 async fn fetch_compact_profiles(
-    lambdas: String,
+    source: String,
     addresses: Vec<Address>,
     ipfs: Arc<IpfsIo>,
 ) -> CompactAnswer {
-    let url = format!("{}/profiles/metadata", lambdas.trim_end_matches('/'));
+    let url = format!("{}/profiles/metadata", source.trim_end_matches('/'));
     let ids = addresses
         .iter()
         .map(|address| format!("{address:#x}"))
@@ -1773,17 +1821,14 @@ pub async fn get_default_look(
     fetch_catalyst_profile_by_id(lambdas_url(), format!("default{index}"), ipfs).await
 }
 
-/// Resolve one profile from the catalyst without the engine cache (used at login, before
-/// any player entities exist): `lambdas` is the sign-in's catalyst, else the centralized
-/// one. Ok(None) means the catalyst authoritatively has no profile, so callers can tell
-/// "no profile" from "couldn't fetch".
+/// Resolve one profile from the centralized catalyst without the engine cache (used at login,
+/// before any player entities exist). Ok(None) means the catalyst authoritatively has no
+/// profile, so callers can tell "no profile" from "couldn't fetch".
 pub async fn get_remote_profile(
     address: Address,
     ipfs: Arc<IpfsIo>,
-    lambdas: Option<String>,
 ) -> Result<Option<UserProfile>, anyhow::Error> {
-    let lambdas = lambdas.unwrap_or_else(lambdas_url);
-    fetch_profiles(lambdas, vec![address], ipfs)
+    fetch_profiles(lambdas_url(), vec![address], ipfs)
         .await
         .pop()
         .map_or(Ok(None), |(_, result)| result)
@@ -2178,6 +2223,61 @@ mod tests {
         assert!(!peer.satisfied());
     }
 
+    fn profile_of(address: Address, version: u32, name: &str) -> UserProfile {
+        let mut profile = profile(version, name);
+        profile.content.eth_address = format!("{address:#x}");
+        profile
+    }
+
+    #[test]
+    fn a_peer_profile_naming_another_address_is_not_recorded() {
+        let (sender, other) = (Address::repeat_byte(0xa1), Address::repeat_byte(0xb2));
+        let mut cache = ProfileCache::default();
+
+        // at a version no catalyst answer would displace
+        assert!(!cache.update_from_peer(sender, profile_of(other, u32::MAX, "forged")));
+
+        let mut other_user_id = profile_of(sender, 1, "forged");
+        other_user_id.content.user_id = Some(format!("{other:#x}"));
+        assert!(!cache.update_from_peer(sender, other_user_id));
+
+        let mut no_address = profile(1, "forged");
+        no_address.content.eth_address = String::new();
+        assert!(!cache.update_from_peer(sender, no_address));
+
+        assert!(cache.entries.is_empty());
+    }
+
+    #[test]
+    fn a_peer_profile_is_recorded_under_its_sender() {
+        let sender = Address::repeat_byte(0xa1);
+        let mut cache = ProfileCache::default();
+
+        // however the sender spells its address, and with or without a user id
+        let upper = format!("{sender:#x}").to_uppercase();
+        assert!(upper.starts_with("0XA1"));
+        let spellings = [
+            (format!("{sender:#x}"), None),
+            (upper.clone(), Some(upper)),
+            (format!("{sender:x}"), Some(String::new())),
+        ];
+        for (version, (eth_address, user_id)) in (1..).zip(spellings) {
+            let mut own = profile(version, "peer");
+            own.content.eth_address = eth_address;
+            own.content.user_id = user_id;
+            assert!(cache.update_from_peer(sender, own));
+            assert_eq!(cache.entries[&sender].profile().unwrap().version, version);
+        }
+        assert_eq!(held_name(&cache.entries[&sender]), "peer");
+        assert_eq!(cache.entries.len(), 1);
+
+        // the catalyst's answer at that version replaces it, and is not replaced back
+        let entry = cache.entries.get_mut(&sender).unwrap();
+        assert!(entry.apply(profile_of(sender, 3, "catalyst"), ProfileSource::Catalyst));
+        assert!(cache.update_from_peer(sender, profile_of(sender, 3, "peer")));
+        assert_eq!(held_name(&cache.entries[&sender]), "catalyst");
+    }
+
     #[test]
     fn profiles_from_lambdas_matches_by_address() {
         let address = |n: u8| Address::repeat_byte(n);
@@ -2220,6 +2320,48 @@ mod tests {
             Some("https://peer.example/content/contents/")
         );
         assert_eq!(content_base("https://peer.example/other"), None);
+    }
+
+    /// Full profiles come from the catalyst everywhere; compact ones from the same catalyst
+    /// except on Decentraland's own deployments, whose catalysts lack the route: there from the
+    /// same deployment's asset-bundle registry (temporary, see `compact_source`).
+    #[test]
+    fn compact_reads_use_the_registry_only_for_decentraland_catalysts() {
+        // the engine's own resolution: nothing overridden, so Decentraland's catalyst
+        assert_eq!(lambdas_url(), "https://peer.decentraland.org/lambdas");
+        assert_eq!(
+            compact_source(&lambdas_url()),
+            "https://asset-bundle-registry.decentraland.org"
+        );
+        for (lambdas, compact) in [
+            (
+                "https://peer.decentraland.zone/lambdas",
+                "https://asset-bundle-registry.decentraland.zone",
+            ),
+            (
+                "https://peer-ec1.decentraland.org/lambdas",
+                "https://asset-bundle-registry.decentraland.org",
+            ),
+            // a dcl-one node, a gateway or a local catalyst serves its own compact tier
+            (
+                "https://play.example.test/lambdas",
+                "https://play.example.test/lambdas",
+            ),
+            (
+                "https://gateway.example.test/mount/peer/lambdas/",
+                "https://gateway.example.test/mount/peer/lambdas",
+            ),
+            (
+                "http://127.0.0.1:5222/lambdas",
+                "http://127.0.0.1:5222/lambdas",
+            ),
+            (
+                "https://peer.decentraland.org.example.test/lambdas",
+                "https://peer.decentraland.org.example.test/lambdas",
+            ),
+        ] {
+            assert_eq!(compact_source(lambdas), compact, "{lambdas}");
+        }
     }
 
     fn compact(name: &str) -> CompactProfile {

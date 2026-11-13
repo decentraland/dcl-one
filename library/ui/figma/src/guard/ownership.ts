@@ -1,4 +1,9 @@
-import { componentOwner, componentOwnerById, type ComponentOwner } from './component-identity.js'
+import {
+  componentOwner,
+  componentOwnerById,
+  componentIdOfFile,
+  type ComponentOwner
+} from './component-identity.js'
 import { assetUsers } from './asset-users.js'
 import { CACHED_LEDGERS, LEDGER, RETIREMENTS } from './consumers.js'
 import { exportStatements } from './exports.js'
@@ -266,19 +271,6 @@ async function buildOwnership(root: string): Promise<Ownership> {
       for (const symbol of statement.symbols)
         ownership.artifactIdentity.set(`${LIBRARY_INDEX}#${symbol.key}`, JSON.stringify(owner))
   }
-  const promoted = (await readJson(path.join(root, LIBRARY_PROMOTION))) as
-    { files?: Record<string, string> } | undefined
-  const runtimePrefix = 'figma/review/src/components/'
-  for (const file of Object.keys(promoted?.files ?? {})) {
-    if (!file.startsWith(runtimePrefix)) continue
-    const relative = file.slice(runtimePrefix.length)
-    if (!relative || relative.includes('/') || relative.includes('\\')) continue
-    ownership.artifactIdentity.set(
-      // The promoted runtime lives in components/runtime here (our promote.ts), not beside the components.
-      `components/runtime/${relative}`,
-      JSON.stringify({ aggregate: 'runtime' })
-    )
-  }
   for (const [directory, source] of [
     [`${GENERATED}/components/assets`, 'figma/review/src'],
     [`${LIBRARY_GENERATED}assets`, 'components']
@@ -383,19 +375,6 @@ function ownerOf(ownership: Ownership, file: string): Owner | null {
   if (id) return componentOwnerById(ownership, id)
 
   return null
-}
-
-function componentIdOfFile(ownership: Ownership, file: string): string | undefined {
-  const prefix = file.startsWith(LIBRARY_GENERATED) ? LIBRARY_GENERATED : `${GENERATED}/components/`
-  if (!file.startsWith(prefix)) return undefined
-  const relative = file.slice(prefix.length)
-  const suffixes = ['.tsx', '.module.css', '.module.css.d.ts', '.figma.ts']
-  for (const suffix of suffixes) {
-    if (!relative.endsWith(suffix)) continue
-    const id = ownership.fileComponentId.get(relative.slice(0, -suffix.length))
-    if (id) return id
-  }
-  return undefined
 }
 
 // Public labels are metadata for selectors; only the recorded module/component ID establishes ownership.

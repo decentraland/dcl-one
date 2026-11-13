@@ -28,11 +28,12 @@ import { Color4, Vector3 } from '@dcl/sdk/math'
 import { getPlayer, onEnterScene, onLeaveScene } from '@dcl/sdk/players'
 import { ReactEcsRenderer } from '@dcl/sdk/react-ecs'
 import type { Entity } from '@dcl/ecs'
-import { isSpeaking } from './voice'
+import { isSpeaking, isSpeakingInCall } from './voice'
+import { isHushed } from './nearbyMutes'
 import { fetchProfile } from './profile'
 import { BevyApi } from '../bevy-api'
 import { relay } from '../system-helpers'
-import { userNameColor } from '../../../src/engine/nameColor'
+import { userNameColor } from '@explorer-core/engine/nameColor'
 
 // unity-explorer colours (CommonStyles.uss): solid pill + border, white-40% wallet id.
 const PILL_BG = Color4.create(22 / 255, 21 / 255, 24 / 255, 1) // --dcl-color-shadow #161518
@@ -81,6 +82,17 @@ function VoiceBadge(): ReactEcs.JSX.Element {
       {bar(!alt)}
       {bar(alt)}
     </UiEntity>
+  )
+}
+// Takes the speaking badge's place for a player whose nearby voice the user muted.
+const HUSHED_RED = Color4.fromHexString('#FF2D55FF')
+
+function HushedBadge(): ReactEcs.JSX.Element {
+  return (
+    <UiEntity
+      uiTransform={{ width: BADGE, height: BADGE, margin: { left: GAP } }}
+      uiBackground={{ textureMode: 'stretch', texture: { src: 'images/icon-hushed.png' }, color: HUSHED_RED }}
+    />
   )
 }
 const BORDER = 2
@@ -273,7 +285,7 @@ function tagElement(userId: string): () => ReactEcs.JSX.Element | null {
                 uiBackground={{ textureMode: 'stretch', texture: { src: 'images/icon-verified.png' } }}
               />
             )}
-            {isSpeaking(userId) && <VoiceBadge />}
+            {isSpeaking(userId) && (isHushed(userId) && !isSpeakingInCall(userId) ? <HushedBadge /> : <VoiceBadge />)}
           </UiEntity>
           {bubble != null && (
             <UiEntity uiTransform={{ flexDirection: 'row', alignItems: 'center', margin: { top: MSG_GAP } }}>

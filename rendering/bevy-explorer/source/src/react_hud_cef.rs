@@ -45,6 +45,7 @@ use cef_offscreen::prelude::{
 use common::rpc::{RpcResultReceiver, RpcResultSender, RpcStreamSender};
 use common::structs::{OutOfWorld, PrimaryUser};
 use input_manager::{InputPriorities, MouseInteractionComponent};
+use scene_runner::update_scene::synthetic_pointer::SyntheticPointer;
 use std::collections::BTreeMap;
 use std::time::Instant;
 use system_bridge::{SystemApi, SystemBridge};
@@ -418,7 +419,9 @@ struct MultiClick {
 // full document like on web — outside-clicks defocus text fields, :hover tracks the real cursor);
 // what the ENGINE receives is gated per-pixel — an opaque HUD pixel under the cursor blocks world
 // input (via Interaction on the fullscreen node). While pointer-locked (camera mouse-look) there
-// is no cursor and the engine keeps everything.
+// is no cursor and the engine keeps everything. While a synthetic aim drives the pointer
+// (`/hover_entity`, `/click_entity`), its presses are meant for the aimed entity, not for the page
+// under the OS cursor, so button presses and releases are not forwarded (motion still is).
 #[allow(clippy::too_many_arguments)]
 fn route_mouse(
     state: Option<ResMut<ReactHudCef>>,
@@ -431,6 +434,7 @@ fn route_mouse(
     time: Res<Time>,
     mut clicks: Local<MultiClick>,
     mut commands: Commands,
+    synthetic: Option<Res<SyntheticPointer>>,
 ) {
     let Some(mut state) = state else { return };
     let Ok(window) = windows.single() else {
@@ -473,7 +477,13 @@ fn route_mouse(
 
     let Some(cursor) = cursor else { return };
     browsers.send_mouse_move(&state.hud, buttons.get_pressed(), cursor, false);
-    for button in [MouseButton::Left, MouseButton::Right, MouseButton::Middle] {
+    let aimed = synthetic.is_some_and(|synthetic| synthetic.0.is_some());
+    let routed: &[MouseButton] = if aimed {
+        &[]
+    } else {
+        &[MouseButton::Left, MouseButton::Right, MouseButton::Middle]
+    };
+    for &button in routed {
         if buttons.just_pressed(button) {
             let now = time.elapsed_secs_f64();
             // same button, quick succession, near-stationary -> next multi-click step

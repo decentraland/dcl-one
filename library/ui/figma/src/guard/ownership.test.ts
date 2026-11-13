@@ -239,18 +239,6 @@ describe('when display metadata disagrees with stable ownership', () => {
       'componentPageById "b1" claimed as'
     )
   })
-  it('should recognize shared library runtime only when prior promotion recorded the artifact', async () => {
-    await put(root, 'components/promotion.json', {
-      schema: 1,
-      components: ['Button', 'PlaceCard'],
-      files: { 'figma/review/src/components/figma-module-runtime.tsx': 'reviewed' }
-    })
-    const ownership = await buildOwnership(root)
-    expect(ownerOf(ownership, 'components/runtime/figma-module-runtime.tsx')).toEqual({
-      aggregate: 'runtime'
-    })
-    expect(ownerOf(ownership, 'components/runtime/Foreign.tsx')).toBeNull()
-  })
   it('should reject an invalid embedded snapshot ID instead of assigning a filename owner', async () => {
     await put(root, `${SNAP}/components/Buttons.json`, {
       page: { id: 123, name: 'Buttons' },

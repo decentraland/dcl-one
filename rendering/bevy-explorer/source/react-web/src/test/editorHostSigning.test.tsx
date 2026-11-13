@@ -7,12 +7,12 @@ import userEvent from '@testing-library/user-event'
 // the bridge scene's tree has it: this file is out of `tsc` (tsconfig.json), which runs before that install
 import { Authenticator, type AuthChain } from '../../bridge-scene/node_modules/@dcl/crypto'
 import { createUnsafeIdentity } from '../../bridge-scene/node_modules/@dcl/crypto/dist/crypto'
-import { PopupHost } from '../design'
-import { useEditorHost } from '../features/editorHost/EditorHost'
-import type { DclEditorHostV1 } from '../features/editorHost/host/host'
-import { localSigner, signDeployment, signFetch } from '../features/editorHost/host/sign'
-import type { Signer } from '../features/editorHost/host/signer'
-import { fakeSession } from './harness'
+import { PopupHost } from '@hud/design'
+import { useEditorHost } from '@hud/features/editorHost/EditorHost'
+import type { DclEditorHostV1 } from '@explorer-core/features/editorHost/host/host'
+import { localSigner, signDeployment, signFetch } from '@explorer-core/features/editorHost/host/sign'
+import type { Signer } from '@explorer-core/features/editorHost/host/signer'
+import { fakeSession } from '@hud/test/harness'
 
 type HostWindow = Window & {
   __dclEditorHost?: DclEditorHostV1

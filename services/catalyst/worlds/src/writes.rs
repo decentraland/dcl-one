@@ -9,10 +9,11 @@
 //! `PATCH`, `DELETE`) to a worlds router answers 503 with the social error
 //! envelope and a `Retry-After`; the reads keep answering.
 //!
-//! Two non-GET requests are reads and stay open: `POST /entities/active`
-//! (the newest scene per named world) and `POST
+//! Three non-GET requests are reads and stay open: `POST /entities/active`
+//! (the newest scene per named world), `POST
 //! /world/{name}/permissions/{perm}/parcels` (the addresses holding a grant
-//! over the parcels); so does `POST /admin/federation/worlds/refresh`, a poll of the
+//! over the parcels) and the world-storage `POST /exports` (a download of
+//! the scene's values); so does `POST /admin/federation/worlds/refresh`, a poll of the
 //! admitted peers that writes mirror rows, never user authority. The scene
 //! host (`/scene-state`: a WebSocket, an operator kick and a reload) and
 //! archipelago (`/ws`, the challenge and heartbeat: admission and presence)
@@ -37,7 +38,7 @@ pub fn is_gated(method: &Method, path: &str) -> bool {
     if *method == Method::POST
         && matches!(
             path,
-            "/entities/active" | "/admin/federation/worlds/refresh"
+            "/entities/active" | "/admin/federation/worlds/refresh" | "/exports"
         )
     {
         return false;
@@ -116,6 +117,7 @@ mod tests {
                 "/admin/federation/worlds/refresh",
                 post(|| async { "polled" }),
             )
+            .route("/exports", post(|| async { "exported" }))
             .route(
                 "/admin/federation/worlds/{p}/{w}/hidden",
                 put(|| async { "hidden" }),
@@ -173,6 +175,7 @@ mod tests {
             "/world/foo.dcl.eth/permissions/deployment/parcels"
         ));
         assert!(!is_gated(&Method::POST, "/admin/federation/worlds/refresh"));
+        assert!(!is_gated(&Method::POST, "/exports"));
     }
 
     #[tokio::test]
@@ -221,6 +224,10 @@ mod tests {
         assert_eq!(
             call(&app, "POST", "/admin/federation/worlds/refresh").await,
             (StatusCode::OK, "polled".to_string())
+        );
+        assert_eq!(
+            call(&app, "POST", "/exports").await,
+            (StatusCode::OK, "exported".to_string())
         );
     }
 
