@@ -105,6 +105,32 @@ across workers:
 
 - `GltfLoader::uri_resolver` (`GltfPlugin::with_uri_resolver`): the host resolves every URI a
   glTF references. This is how content paths are contained; see the security page.
+- `KHR_texture_basisu`, `EXT_texture_webp` and `MSFT_texture_dds` are supported: `gltf`'s
+  `allow_empty_texture` feature lets a file that requires them (and textures with no `source`)
+  through. A texture with no `source` samples its extension image, KTX2 first when it has
+  several; one with a PNG/JPEG fallback keeps the fallback. A KTX2, by path or embedded,
+  decodes through `bevy_image`'s KTX2 route below; WebP and DDS through bevy's own decoders.
+- KTX2 transcoder hook (`bevy_image::set_ktx2_transcoder`, `Ktx2Transcoder`): one process-wide
+  host function, set once, that every KTX2 decode asks first. It gets the bytes and the asset
+  path: the one `ImageLoader` loaded it from, or the labelled path the glTF loader decodes an
+  embedded image at through `Image::from_buffer_at` (made public; `model.glb#Texture0`).
+  `Image::from_buffer` passes `None` (bevy's LUTs). It returns `None` (bevy's own KTX2
+  decode), bytes plus the format to decode them as instead (with the caller's `is_srgb`,
+  sampler and asset usage), or an error. A global because `Image::from_buffer` has no plugin
+  or loader to carry it. `image_processing` sets it to transcode UASTC to BC7, fails a KTX2
+  it can't transcode whenever a path is given (glTF content never reaches bevy's own KTX2
+  decode, which trusts the header), and uses the path to cache the result. Alongside it: KTX2 bytes are taken by their magic at any path,
+  whatever type was declared (also under the `Guess` format setting, which the `image` crate
+  can't guess for KTX2), so a KTX2 without a file extension or under another one loads too.
+  DDS bytes decode as DDS whatever was declared, so a transcode the host cached over the KTX2
+  bytes reads back from the same path.
+- Every compressed decode (basis, dds, ktx2) gets the caller's asset usage, which upstream
+  leaves at the default: a cached dds loads with `RENDER_WORLD` as its first load did.
+- The patched crates' tests (`bevy_image`, `bevy_gltf`) run in the explorer's CI ("Test the
+  patched vendored Bevy crates"): they are path dependencies, so `cargo test --all` never
+  compiles them. From `source`, seed the fork's workspace with this lock file and run them there:
+  `cp Cargo.lock ../bevy/Cargo.lock`, then `cargo test --manifest-path ../bevy/Cargo.toml -p
+  bevy_image -p bevy_gltf --lib --features bevy_gltf/dds,bevy_image/ktx2,bevy_image/zstd`.
 - Accessors with no `bufferView` are accepted (zero-filled per spec; Blender morph targets).
 - Texture decode is skipped when `load_materials` is empty, with a 1x1 placeholder under the
   normal label: headless servers keep geometry without pixels.

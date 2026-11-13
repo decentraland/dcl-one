@@ -31,7 +31,9 @@ impl Plugin for ImageProcessingPlugin {
     fn build(&self, app: &mut App) {
         app.add_event::<AssetForProcessing>();
         app.add_systems(Update, (check_assets, pipe_events));
-        app.preregister_asset_loader::<crate::ktx2_loader::Ktx2Loader>(&["ktx2"]);
+        // every KTX2 bevy decodes (one loaded by path through its `ImageLoader`, or an image
+        // embedded in a glTF) goes through `ktx2::transcode_ktx2_image`
+        crate::ktx2::install_ktx2_transcoder();
 
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -52,11 +54,6 @@ impl Plugin for ImageProcessingPlugin {
         app.init_resource::<ImgReprocessStats>();
         app.init_resource::<DebugProcessingEnabled>();
         app.add_preview_console_command::<DebugProcessingCommand, _>(toggle_debug_processing);
-    }
-
-    fn finish(&self, app: &mut App) {
-        // after the renderer, which reports the compressed formats the gpu takes
-        app.init_asset_loader::<crate::ktx2_loader::Ktx2Loader>();
     }
 }
 
@@ -108,12 +105,12 @@ struct ImgReprocessStats {
     swapped: usize,
 }
 
-/// Frees a `.ktx2` transcode the loader stashed when its cache write is not going to happen
+/// Frees a ktx2 transcode the loader stashed when its cache write is not going to happen
 /// (uncacheable or unhashable paths), so the stash holds queued work only. Anything missed here
-/// is evicted by `ktx2_loader::evict_stale_results`.
+/// is evicted by `ktx2::evict_stale_results`.
 fn drop_ktx2_result(ty: ProcessingAssetType, path: &AssetPath) {
     if matches!(ty, ProcessingAssetType::Ktx2Cache) {
-        if let Ok(mut results) = crate::ktx2_loader::KTX2_RESULTS.lock() {
+        if let Ok(mut results) = crate::ktx2::KTX2_RESULTS.lock() {
             results.remove(&path.to_string());
         }
     }
@@ -132,7 +129,7 @@ fn check_assets(
     mut task: Local<Option<Task<(usize, usize, Vec<AssetForProcessing>)>>>,
 ) {
     // before any early return, so stale transcodes go even when nothing can be cached
-    crate::ktx2_loader::evict_stale_results();
+    crate::ktx2::evict_stale_results();
 
     #[cfg(not(target_arch = "wasm32"))]
     let Some(cache_root) = ipfas.ipfs_cache_path() else {
@@ -165,23 +162,15 @@ fn check_assets(
                 stats.skip_variant += 1;
                 continue;
             }
-            // a `.ktx2` loads compressed already; when the loader transcoded it, the dds is
-            // waiting in `KTX2_RESULTS` to be written over the cached ktx2 bytes. a cached
-            // or bc7 ktx2 has nothing waiting and is left as it is
-            let ktx2 = asset_path.label().is_none()
-                && asset_path
-                    .path()
-                    .extension()
-                    .is_some_and(|ext| ext.eq_ignore_ascii_case("ktx2"));
-            if ktx2 {
-                let waiting = crate::ktx2_loader::KTX2_RESULTS
-                    .lock()
-                    .is_ok_and(|results| results.contains_key(&asset_path.to_string()));
-                if !waiting {
-                    stats.already_compressed += 1;
-                    continue;
-                }
-            } else if image.is_compressed() {
+            // a ktx2 loads compressed already; when bevy's image loader transcoded it
+            // (`ktx2::transcode_ktx2_image`), the dds is waiting in `KTX2_RESULTS` to be
+            // written over the cached ktx2 bytes, whatever the path's extension. an embedded
+            // ktx2 that was transcoded queues its gltf, whose pass writes it back as dds. a
+            // cached or bc ktx2 has nothing waiting and is skipped as compressed, like any
+            // cached image
+            let ktx2 = crate::ktx2::has_waiting_transcode(asset_path)
+                || crate::ktx2::take_embedded_transcode(asset_path);
+            if !ktx2 && image.is_compressed() {
                 // skip already processed
                 stats.already_compressed += 1;
                 continue;
@@ -246,12 +235,11 @@ fn check_assets(
         }
     }
 
-    // a gltf that fails to load because it is draco-compressed or has basisu
-    // textures (the loader rejects the extension by name, and spec-compliant
-    // files without a fallback must list it in extensionsRequired) is run
-    // through the processor once, which decompresses or transcodes and persists
-    // it. the processor independently verifies the extension against the
-    // actual bytes.
+    // a gltf that fails to load because it is draco-compressed (the loader
+    // rejects the extension by name) is run through the processor once, which
+    // decompresses and persists it. the processor independently verifies the
+    // extension against the actual bytes. a required KHR_texture_basisu no
+    // longer fails: the loader reads it natively
     for ev in failed_gltfs.read() {
         let error = ev.error.to_string();
         if !ipfs::cache_heal::names_repairable_extension(&error) {

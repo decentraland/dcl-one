@@ -34,8 +34,7 @@ use crate::{content_hash, ipfs_path::IpfsPath, IpfsIo, IpfsResource};
 
 /// glTF extensions the asset processor (`image_processing`) repairs a failed load for: such a
 /// failure is the processor's to handle, not a sign of bad bytes.
-pub const REPAIRABLE_GLTF_EXTENSIONS: [&str; 2] =
-    ["KHR_draco_mesh_compression", "KHR_texture_basisu"];
+pub const REPAIRABLE_GLTF_EXTENSIONS: [&str; 1] = ["KHR_draco_mesh_compression"];
 
 /// Whether a load error's text names an extension the asset processor repairs.
 pub fn names_repairable_extension(text: &str) -> bool {

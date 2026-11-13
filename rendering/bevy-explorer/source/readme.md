@@ -59,6 +59,8 @@ cargo install wasm-pack
 just wasm     # builds the wasm into deploy/web/engine/pkg, then serves react-web and opens a browser
 ```
 
+With Nix, `nix develop .#wasm` from the repository root replaces the two installs: the shell carries the pinned nightly with the wasm target, `just`, `wasm-pack`, `wasm-bindgen` at the `Cargo.lock` version, `wasm-opt`, node and protoc.
+
 `just wasm` is the whole loop: `just ts-bindings` (the HUD imports the generated types), `wasm-pack build` on the pinned nightly for the engine and for the scene runtime (`crates/dcl_scene_wasm`, into `pkg-scene`), re-bundle the sandbox worker (it inlines the wasm glue, so it must be rebuilt with the wasm), `npm install` in `react-web` and `react-web/bridge-scene`, then `npm run dev`.
 
 Useful URLs once the dev server is up:
