@@ -111,16 +111,19 @@ it("selects overlay geometry only for the explicit native header policy", () => 
 
 
 it("keeps a legacy overlay flag in flow unless the native header surface is explicitly selected", () => {
-  const shell = (children: ReactNode) => renderToString(<QueryClientProvider client={new QueryClient()}><MemoryRouter><ChromeNavBridge>{children}</ChromeNavBridge></MemoryRouter></QueryClientProvider>);
+  const shell = (children: ReactNode, at = "/") => renderToString(<QueryClientProvider client={new QueryClient()}><MemoryRouter initialEntries={[at]}><ChromeNavBridge>{children}</ChromeNavBridge></MemoryRouter></QueryClientProvider>);
   for (const active of ["legal", "whatson", "play"] as const) {
-    const ordinary = shell(<SitesChrome active={active} overlayNav>Page</SitesChrome>);
+    const ordinary = shell(<SitesChrome active={active} overlayNav>Page</SitesChrome>, "/about");
     expect(ordinary).toContain('data-header-layout="native"');
     expect(ordinary).not.toContain('data-header-overlay');
     expect(ordinary).toContain('data-surface="solid"');
+    expect(ordinary).not.toContain('data-landing');
   }
   const home = shell(<SitesChrome active="play" overlayNav headerSurface="overlay">Hero</SitesChrome>);
   expect(home).toContain('data-header-overlay="true"');
-  expect(home).toContain('data-surface="overlay"');
+  // The bar's landing look comes from the path, as decentraland.org's Layout derives it: bare while signed out.
+  expect(home).toContain('data-landing="true"');
+  expect(home).toContain('data-bare="true"');
   const fallback = renderToString(<SitesChrome active="play" overlayNav headerSurface="overlay">Hero</SitesChrome>);
   expect(fallback).not.toContain('data-header-overlay');
 });

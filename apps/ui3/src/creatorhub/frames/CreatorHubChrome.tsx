@@ -43,7 +43,7 @@ const CREATORHUB_NAV: NavItem[] = [
     id: "home",
     group: "Create",
     label: "Home",
-    href: "/create",
+    href: "/create/home",
     icon: (
       <svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true">
         <path d="M3 9.2 10 3.5l7 5.7V17a1 1 0 0 1-1 1h-3v-5H7v5H4a1 1 0 0 1-1-1V9.2Z" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinejoin="round" />

@@ -8,6 +8,8 @@ import { normalizeAddress } from "@/data/lib/catalyst/social/profile";
 import {
   canReadProfile,
   creationsQuery,
+  badgesQuery,
+  emptyTabsQuery,
   ownedNamesQuery,
   ownedWearablesQuery,
   photosQuery,
@@ -39,8 +41,13 @@ function keepQuery(path: string, url: URL): string {
 
 /** Public reads the active tab shows; a failure leaves them to the browser. */
 /** `assets` reaches here only for the member's own profile: `readProfileTab` refuses it otherwise. */
-function prefetchTab(client: QueryClient, address: string, tab: ProfileTab) {
+function prefetchTab(client: QueryClient, address: string, tab: ProfileTab, own: boolean) {
   switch (tab) {
+    case "overview":
+      return Promise.all([
+        client.prefetchQuery(badgesQuery(address)),
+        own ? undefined : client.prefetchQuery(emptyTabsQuery(address)),
+      ]);
     case "creations":
       return client.prefetchQuery(creationsQuery(address));
     case "places":
@@ -94,7 +101,7 @@ export async function profileLoader(
   const cancel = () => void client.cancelQueries();
   request.signal.addEventListener("abort", cancel, { once: true });
   try {
-    await Promise.all([client.fetchQuery(profileQuery(address)), prefetchTab(client, address, tab)]);
+    await Promise.all([client.fetchQuery(profileQuery(address)), prefetchTab(client, address, tab, own)]);
   } catch (error) {
     // A profile read's failure is 503; anything else is a bug and stays a 500.
     if (!isRouteFatal(error)) throw error;

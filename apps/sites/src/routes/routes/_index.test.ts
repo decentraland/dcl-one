@@ -1,11 +1,14 @@
 import { RouterContextProvider } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("@/data/lib/catalyst/landings/download-counts.server", () => ({
-  loadDownloadsLabel: vi.fn(),
+vi.mock("@/data/lib/download/counts.server", () => ({
+  loadDownloadCounts: vi.fn(),
 }));
 vi.mock("@/data/lib/catalyst/landings/home.server", () => ({
-  loadHomeEvents: vi.fn(),
+  loadHomeLive: vi.fn(),
+}));
+vi.mock("@/features/home/cards.server", () => ({
+  whatsOnCards: () => [],
 }));
 vi.mock("@/features/home/content", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/features/home/content")>()),
@@ -13,8 +16,8 @@ vi.mock("@/features/home/content", async (importOriginal) => ({
 }));
 
 import { requestSessionContext } from "@/core/lib/telemetry/session";
-import { loadDownloadsLabel } from "@/data/lib/catalyst/landings/download-counts.server";
-import { loadHomeEvents } from "@/data/lib/catalyst/landings/home.server";
+import { loadHomeLive } from "@/data/lib/catalyst/landings/home.server";
+import { loadDownloadCounts } from "@/data/lib/download/counts.server";
 import { loader } from "./_index";
 
 type Wrapped = { data: { sid: string }; init?: { headers?: HeadersInit } };
@@ -24,8 +27,12 @@ const setCookies = (result: Wrapped) => new Headers(result.init?.headers).getSet
 
 describe("/ loader session", () => {
   beforeEach(() => {
-    vi.mocked(loadDownloadsLabel).mockResolvedValue("+438K");
-    vi.mocked(loadHomeEvents).mockResolvedValue({ content: {} } as never);
+    vi.mocked(loadDownloadCounts).mockResolvedValue("+438K");
+    vi.mocked(loadHomeLive).mockResolvedValue({
+      content: {},
+      cards: [],
+      profiles: {},
+    } as never);
   });
 
   it("uses the session the root middleware set and leaves the cookie to it", async () => {

@@ -1,56 +1,47 @@
-/* TODO(figma-ds): replace with the Figma-generated tab bar's styles. The source's 50px gap between
- * tabs has no spacing token; the nearest one (48px) is used. */
-.root {
-  overflow-x: auto;
-  width: 100%;
-  border-bottom: 1px solid var(--dcl-transparencies-white-20);
-  scrollbar-width: none;
-}
-
-.list {
+/* TODO(figma-ds): replace with the tab bar's styles (MUI Tabs: a 50px gap, a 4px indicator), until the Figma-generated tab bar's. */
+/* The profile site's ProfileTabs (ProfileTabs.styled.ts): router links 46px tall, 16px/600 on a 20px line. */
+.tabs {
   display: flex;
-  gap: var(--dcl-space-24);
-  margin: 0;
-  padding: 0 var(--dcl-space-16);
-  list-style: none;
-}
-
-.item {
-  flex-shrink: 0;
+  gap: 50px;
+  overflow: hidden;
+  width: 100%;
+  min-height: 47px;
+  border-bottom: 1px solid rgb(255 255 255 / 30%);
 }
 
 .tab {
+  position: relative;
   display: inline-flex;
-  box-sizing: border-box;
   align-items: center;
+  justify-content: center;
+  min-width: 0;
   min-height: 46px;
-  border-bottom: 4px solid transparent;
+  padding: 0;
   color: var(--dcl-text-secondary);
-  font-family: 'Inter', sans-serif;
   font-size: var(--dcl-font-size-label-md-caps);
   font-weight: 600;
+  line-height: 20px;
+  letter-spacing: normal;
   text-decoration: none;
   text-transform: uppercase;
-  white-space: nowrap;
 }
 
-.tab:hover {
+.tab[aria-current='page'] {
   color: var(--dcl-text-primary);
+}
+
+/* The indicator is as wide as the tab's offsetWidth: the text width rounded to a pixel. */
+.tab[aria-current='page']::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: round(nearest, 100%, 1px);
+  height: 4px;
+  background: var(--dcl-primary-primary);
 }
 
 .tab:focus-visible {
   outline: 2px solid var(--dcl-text-primary);
-  outline-offset: 2px;
-}
-
-.active {
-  border-bottom-color: var(--dcl-primary-primary);
-  color: var(--dcl-text-primary);
-}
-
-@media (min-width: 1024px) {
-  .list {
-    gap: var(--dcl-space-48);
-    padding: 0;
-  }
+  outline-offset: -2px;
 }

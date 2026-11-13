@@ -14,18 +14,29 @@
 
 .badgeGroup {
   display: flex;
-  gap: var(--dcl-space-4);
+  gap: var(--dcl-space-8);
 }
 
+/* Source's LIVE and people badges are decentraland-ui2's LiveBadge and UserCountBadge: fixed pixels, caption 12px bold on one line. */
 .badge {
   composes: text6c6162656c2f746167 from '../../../../foundations/typography/text-styles.module.css';
   display: inline-flex;
   align-items: center;
   gap: var(--dcl-space-4);
-  height: min(5.974cqw, 26px);
-  padding: 0 min(1.838cqw, 8px);
-  border-radius: min(1.838cqw, 8px);
+  box-sizing: border-box;
+  height: 26px;
+  padding: 0 var(--dcl-space-12);
+  border-radius: var(--dcl-radius-sm);
   color: var(--dcl-neutrals-white);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0.15008px;
+}
+
+.badge svg {
+  width: 14px;
+  height: 14px;
 }
 
 .live {
@@ -36,7 +47,9 @@
 
 .users {
   composes: badge;
+  gap: 6px;
   background: var(--dcl-neutrals-shadow);
+  color: #f0f0f0;
 }
 
 .dot {
@@ -46,9 +59,22 @@
   background: var(--dcl-system-green);
 }
 
+/* Source's FeaturedBadge (DiscoverShell): card-relative, capped at its design pixels. */
 .featured {
   composes: badge;
-  background: var(--dcl-gradient-light-rainbow);
+  gap: min(0.919cqw, 4px);
+  height: min(5.974cqw, 26px);
+  padding: min(1.149cqw, 5px) min(1.379cqw, 6px);
+  border-radius: min(1.838cqw, 8px);
+  background: linear-gradient(149.456deg, #ffbc5b 0%, #ff2d55 50.521%, #c640cd 100%);
+  color: var(--dcl-neutrals-snow);
+  font-size: min(3.217cqw, 14px);
+  font-weight: 600;
+}
+
+.featured svg {
+  width: auto;
+  height: var(--featured-glyph, min(3.217cqw, 14px));
 }
 
 .visuallyHidden {
@@ -63,9 +89,8 @@
 .cover {
   position: absolute;
   inset: 0;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
+  background-position: center;
+  background-size: cover;
 }
 
 .titleLink {
@@ -84,24 +109,27 @@
   inset: 0;
 }
 
+/* The by-line's measurements are the grid card's (source PlaceCard); the live card sets its own through the custom properties. */
 .creatorRow {
   display: flex;
   flex: 1;
   align-items: center;
-  gap: min(2.298cqw, 10px);
+  gap: var(--creator-gap, 2.298cqw);
   min-width: 0;
 }
 
+/* `--avatar-bg` is the creator's ADR-292 colour, behind a transparent face. */
 .avatar {
   composes: text626f64792f736d2d7374726f6e67 from '../../../../foundations/typography/text-styles.module.css';
   display: grid;
   flex: none;
   place-items: center;
-  width: min(7.352cqw, 32px);
-  height: min(7.352cqw, 32px);
-  border: min(0.525cqw, 2px) solid var(--dcl-transparencies-white-40);
+  box-sizing: border-box;
+  width: var(--avatar-size, 7.352cqw);
+  height: var(--avatar-size, 7.352cqw);
+  border: var(--avatar-border, 0.525cqw) solid color-mix(in srgb, var(--dcl-neutrals-white) 50%, transparent);
   border-radius: var(--dcl-radius-full);
-  background: var(--dcl-brand-lavender);
+  background: var(--avatar-bg, var(--dcl-brand-lavender));
   color: var(--dcl-neutrals-white);
   font-size: min(3.217cqw, 14px);
   object-fit: cover;
@@ -111,7 +139,9 @@
   composes: text626f64792f736d2d7374726f6e67 from '../../../../foundations/typography/text-styles.module.css';
   min-width: 0;
   overflow: hidden;
-  font-size: min(3.217cqw, 14px);
+  font-size: var(--by-size, 3.217cqw);
+  line-height: 1.57;
+  letter-spacing: var(--by-tracking, 0.00938em);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -122,6 +152,13 @@
   z-index: 1;
   color: var(--dcl-brand-ruby);
   text-decoration: none;
+}
+
+/* The reference's creator link is a button: an inline-block with the browser's normal tracking, so the
+   by-line's ellipsis replaces an overlong name as a whole instead of cutting it mid-word. */
+a.creator {
+  display: inline-block;
+  letter-spacing: normal;
 }
 
 a.creator:hover {
@@ -140,13 +177,24 @@ a.creator:focus-visible {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: var(--dcl-space-8);
+  gap: var(--jump-gap, 1.952cqw);
   width: 100%;
-  border-radius: var(--dcl-radius-md);
+  box-sizing: border-box;
+  border-radius: var(--jump-radius, 2.757cqw);
   background: var(--dcl-action-primary);
-  color: var(--dcl-text-on-action);
+  color: var(--dcl-neutrals-snow);
+
+  /* The reference's button keeps the browser's button font. */
+  font-family: Arial, sans-serif;
+  line-height: normal;
+  letter-spacing: normal;
   text-decoration: none;
   transition: background-color 0.15s ease;
+}
+
+.jumpIn svg {
+  width: auto;
+  height: var(--jump-glyph, 5.715cqw);
 }
 
 .jumpIn:hover {

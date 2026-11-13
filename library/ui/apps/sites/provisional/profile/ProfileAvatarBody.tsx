@@ -1,18 +1,18 @@
-// TODO(figma-ds): replace with the Figma-generated avatar render; the source shows a 3D preview here.
+// TODO(figma-ds): replace with the avatar column, until the Figma-generated avatar render from library/ui/components.
 import { useEffect, useState } from 'react'
 import styles from './ProfileAvatarBody.module.css'
 
 type ProfileAvatarBodyProps = { imageUrl?: string; name: string }
 
-/** The avatar's full-body snapshot, as the source shows when its 3D preview cannot load. */
+/** The avatar's full-body snapshot, in the box where the profile site mounts its 3D preview. */
 function ProfileAvatarBody({ imageUrl, name }: ProfileAvatarBodyProps) {
   const [failed, setFailed] = useState(false)
   useEffect(() => setFailed(false), [imageUrl])
   return (
-    <div className={styles.root}>
+    <div className={styles.render}>
       {imageUrl && !failed ? (
         <img
-          className={styles.image}
+          className={styles.renderImage}
           src={imageUrl}
           alt={`${name}'s avatar`}
           onError={() => setFailed(true)}

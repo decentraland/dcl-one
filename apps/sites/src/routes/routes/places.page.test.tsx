@@ -311,7 +311,7 @@ describe("when a member section is open", () => {
     const { user } = renderPage("/places?tab=favourites");
     await user.click(await screen.findByRole("link", { name: "Busy favourite" }));
     expect(screen.getByRole("dialog", { name: "Busy favourite" })).toBeTruthy();
-    expect(screen.getByText("7 people in-world")).toBeTruthy();
+    expect(screen.getByRole("img", { name: "7 people in-world" })).toBeTruthy();
   });
 
   it("should remove old account caches and rows on account switch and sign-out", async () => {

@@ -1,7 +1,7 @@
 import { catalystBase, type GetOptions } from "../client";
 import { EVENT_CALENDAR_LIMIT, fetchEvents } from "./events";
 
-type CalendarFilters = { search?: string; recurrent?: boolean; from: string; to: string };
+type CalendarFilters = { search?: string; recurrent?: boolean; from?: string; to?: string; order?: "asc" | "desc" };
 type CalendarOptions = Pick<GetOptions, "base" | "signal">;
 type Calendar = Awaited<ReturnType<typeof fetchEvents>>;
 
@@ -60,7 +60,7 @@ export async function fetchEventCalendar(filters: CalendarFilters, options: Cale
   options.signal?.throwIfAborted();
   const now = Date.now();
   for (const [key, entry] of entries) if (entry.expires <= now) entries.delete(key);
-  const key = JSON.stringify([catalystBase(options.base), filters.search ?? "", filters.recurrent ?? null, filters.from, filters.to]);
+  const key = JSON.stringify([catalystBase(options.base), filters.search ?? "", filters.recurrent ?? null, filters.from ?? null, filters.to ?? null, filters.order ?? null]);
   const cached = entries.get(key);
   if (cached) {
     entries.delete(key);

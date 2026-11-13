@@ -1,0 +1,95 @@
+/* decentraland/sites@17b3535a src/components/Carousel/Carousel.styled.ts */
+.root {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+  padding-top: var(--dcl-space-24);
+}
+.root:hover .nav { opacity: 1; }
+
+.track {
+  display: flex;
+  align-items: stretch;
+  will-change: transform;
+  cursor: grab;
+  user-select: none;
+}
+.track:active { cursor: grabbing; }
+
+.slide {
+  flex-shrink: 0;
+  border-radius: var(--dcl-radius-lg);
+  overflow: hidden;
+  opacity: 0;
+  transform: scale(0.8);
+  transition: opacity 0.4s ease, box-shadow 0.4s ease, transform 0.4s ease;
+}
+.active {
+  opacity: 1;
+  transform: scale(1);
+  box-shadow: 0 2px 8px 8px rgba(255, 255, 255, 0.15);
+}
+.prev {
+  opacity: 0.7;
+  mask-image: linear-gradient(to right, transparent 0%, black 50%);
+}
+.next {
+  opacity: 0.7;
+  mask-image: linear-gradient(to right, black 50%, transparent 100%);
+}
+
+.dots {
+  position: relative;
+  z-index: 3;
+  display: flex;
+  justify-content: center;
+  gap: var(--dcl-space-8);
+  padding-top: var(--dcl-space-24);
+}
+.dot {
+  width: 8px;
+  height: 8px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background-color: var(--dcl-transparencies-white-40);
+  cursor: pointer;
+  transition: background-color 0.3s ease;
+}
+.dotActive { background-color: var(--dcl-neutrals-white); }
+.dot:focus-visible { outline: 2px solid var(--dcl-primary-primary); outline-offset: 2px; }
+
+.nav {
+  position: absolute;
+  top: 45%;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  border: 2px solid rgba(255, 255, 255, 0.5);
+  border-radius: 50%;
+  background-color: var(--dcl-transparencies-black-40);
+  color: var(--dcl-neutrals-white);
+  font-size: var(--dcl-font-size-heading-2);
+  cursor: pointer;
+  opacity: 0;
+  transform: translateY(-50%);
+  transition: opacity 250ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.nav:hover { background-color: var(--dcl-transparencies-black-60); }
+.nav:focus-visible { opacity: 1; outline: 2px solid var(--dcl-primary-primary); outline-offset: 2px; }
+.navPrev { left: var(--dcl-space-24); }
+.navNext { right: var(--dcl-space-24); }
+
+@media (max-width: 991px) {
+  .nav { display: none; }
+}
+@media (max-width: 990.95px) {
+  .slide { transform: scale(1); }
+  .slide:not(.prev, .next) { opacity: 1; }
+  .slide > * { width: 100%; min-width: 0; }
+  .active { box-shadow: none; }
+  .prev, .next { mask-image: none; }
+}

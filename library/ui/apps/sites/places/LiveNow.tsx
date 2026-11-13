@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent } from 'react'
-import { GeneralLeftArrow, GeneralLive, GeneralRightArrow } from '../../../foundations/icons'
+import { GeneralLeftArrow, GeneralRightArrow } from '../../../foundations/icons'
 import { Button } from '../shared/Button/Button'
 import { LiveEventCardSlot } from './cards/LiveEventCardSlot'
 import type { PlaceCardData, PlaceCardHandlers, PlaceCardLabels } from './cards/types'
@@ -22,6 +22,36 @@ type LiveNowProps = {
   labels: LiveNowLabels
   cardLabels: PlaceCardLabels
 } & PlaceCardHandlers
+
+/** Source's heading glyph: a dot between two pairs of broadcast arcs, wider than it is tall. */
+function LiveHeadingGlyph({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 34.7077 26.4477" fill="none" aria-hidden="true">
+      <circle
+        cx="17.3539"
+        cy="13.2237"
+        r="3.57023"
+        fill="currentColor"
+        stroke="currentColor"
+        strokeWidth="1.61412"
+      />
+      <path
+        d="M23.4508 6.78243C25.1579 8.39872 26.2228 10.6864 26.2228 13.2228C26.2228 15.7592 25.1579 18.0469 23.4508 19.6632M11.2593 6.78243C9.55219 8.39872 8.48731 10.6864 8.48731 13.2228C8.48731 15.7592 9.55219 18.0469 11.2593 19.6632"
+        stroke="currentColor"
+        strokeWidth="2.2998"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M27.9388 1.72486C31.04 4.58095 32.9829 8.67551 32.9829 13.2238C32.9829 17.7722 31.04 21.8667 27.9388 24.7228M6.76889 1.72486C3.66775 4.58095 1.72485 8.67551 1.72485 13.2238C1.72485 17.7722 3.66775 21.8667 6.76889 24.7228"
+        stroke="currentColor"
+        strokeWidth="3.4497"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
+}
 
 function scrollBehavior(): ScrollBehavior {
   return window.matchMedia?.(REDUCED_MOTION).matches ? 'auto' : 'smooth'
@@ -108,7 +138,7 @@ function LiveNow({ title, cards, labels, cardLabels, onOpen, onJumpIn }: LiveNow
   return (
     <section className={styles.root} aria-labelledby={titleId}>
       <h2 id={titleId} className={styles.heading}>
-        <GeneralLive className={styles.headingIcon} aria-hidden="true" />
+        <LiveHeadingGlyph className={styles.headingIcon} />
         {title}
       </h2>
       <div

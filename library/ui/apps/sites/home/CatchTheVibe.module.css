@@ -1,22 +1,25 @@
-/* position and isolation keep the decorative glow behind the content. */
+/* Source paint: decentraland/sites@17b3535a, components/Home/CatchTheVibe/CatchTheVibe.styled.ts and
+   shared/HangOutButton.styled.ts. position and isolation keep the decorative glow behind the content. */
 .root {
   position: relative;
   isolation: isolate;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: var(--dcl-layout-section-gap);
+  gap: var(--dcl-space-32);
+  width: 100%;
+  box-sizing: border-box;
+  padding: var(--dcl-space-48) 0;
   overflow: hidden;
-  padding: var(--dcl-layout-section-padding-y) 0;
-  /* Source paint: decentraland/sites@5aabce35, CatchTheVibeContainer. */
-  background: var(--dcl-bg-surface-brand);
+  background-color: #570f88;
   color: var(--dcl-text-primary);
 }
 
-/* Decorative, desktop only (from breakpoints.desktop), as source. */
+/* Decorative, desktop only, as source. */
 .glow {
   position: absolute;
-  inset: 0 auto 0 0;
+  top: 0;
+  left: 0;
   z-index: -1;
   display: none;
   width: 60%;
@@ -26,88 +29,144 @@
   pointer-events: none;
 }
 
-@media (min-width: 1024px) {
-  .glow {
-    display: block;
-  }
-}
-
 .title {
   margin: 0;
-  padding: 0 var(--dcl-layout-margin-x);
-  font-size: var(--dcl-font-size-heading-lg);
+  padding: 0 var(--dcl-space-24);
+  color: var(--dcl-neutrals-white);
+  font-size: var(--dcl-font-size-heading-1);
+  font-weight: 600;
+  line-height: 1.167;
+  letter-spacing: normal;
   text-align: center;
 }
 
-/* breakpoints.desktop: the clips side by side. Below it, the carousel instead (source switches at
-   its 991px sm breakpoint). */
+/* Desktop: the clips side by side; below 991px the carousel instead. */
 .cards {
   display: none;
   gap: var(--dcl-space-24);
+  justify-content: center;
   width: 100%;
   margin: 0;
-  padding: 0;
+  box-sizing: border-box;
+  padding: 0 20px;
   list-style: none;
 }
 
-@media (min-width: 1024px) {
-  .root {
-    padding-inline: var(--dcl-layout-margin-x);
-  }
-
-  .title {
-    padding: 0;
-  }
-
-  .cards {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
-  }
-
-  .carousel {
-    display: none;
-  }
+.carousel {
+  width: 100%;
 }
 
 /* Source: one rounded card per clip, the media on top and the creator bar at the bottom. */
 .card {
+  position: relative;
   display: flex;
+  flex: 1 1 0;
   flex-direction: column;
-  overflow: hidden;
+  min-width: 0;
+  max-width: 680px;
+  height: 320px;
+  margin: 0 auto;
   border-radius: var(--dcl-radius-xl);
-  background: var(--dcl-transparencies-black-60);
+  overflow: hidden;
+  background-color: var(--dcl-transparencies-black-60);
+  box-shadow: 0 2px 4px 0 rgba(0, 0, 0, 0.04);
+  cursor: pointer;
 }
 
 .media {
   position: relative;
-  overflow: hidden;
-  aspect-ratio: 16 / 9;
+  flex: 1;
+  min-height: 0;
   border-radius: var(--dcl-radius-xl);
-  background: var(--dcl-bg-surface);
+  overflow: hidden;
 }
 
+.image,
 .video {
-  display: block;
+  position: absolute;
+  top: 0;
+  left: 0;
   width: 100%;
   height: 100%;
   object-fit: cover;
+  transition: opacity 0.4s ease;
 }
 
-/* Bottom left, where source keeps its duration chip. */
+.image {
+  z-index: 1;
+}
+
+.video {
+  opacity: 0;
+}
+
+.card:hover .video,
+.card[data-playing='true'] .video {
+  opacity: 1;
+}
+
+.card:hover .image,
+.card[data-playing='true'] .image {
+  opacity: 0;
+}
+
+/* Phones: source's play overlay fills the clip; desktop keeps its duration chip bottom left. */
 .controls {
   position: absolute;
-  left: var(--dcl-space-12);
-  bottom: var(--dcl-space-12);
+  inset: 0;
+  z-index: 2;
   display: flex;
   gap: var(--dcl-space-8);
 }
 
+.controls .playChip {
+  flex: 1;
+  justify-content: center;
+  align-items: center;
+  gap: 0;
+  width: 100%;
+  min-width: 0;
+  height: auto;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background-color: rgba(0, 0, 0, 0.3);
+  box-shadow: none;
+}
+
+.playIcon {
+  flex-shrink: 0;
+  width: 0;
+  height: 0;
+  border-style: solid;
+  border-color: transparent transparent transparent var(--dcl-neutrals-snow);
+  border-width: 20px 0 20px 34px;
+}
+
 .duration {
+  display: none;
+  color: var(--dcl-neutrals-snow);
+  font-size: var(--dcl-font-size-body-sm);
+  font-weight: 600;
+  line-height: normal;
+  letter-spacing: 0.00938em;
+  white-space: nowrap;
   text-transform: none;
+}
+
+.controls .muteChip {
+  align-self: flex-end;
+  height: 26px;
+  margin: 0 13px 13px 0;
+  padding: 5.5px 6px;
+  border-radius: var(--dcl-radius-sm);
+  background-color: var(--dcl-neutrals-shadow);
 }
 
 .footer {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
   gap: var(--dcl-space-8);
   padding: var(--dcl-space-16) var(--dcl-space-12) var(--dcl-space-16) var(--dcl-space-16);
@@ -121,8 +180,11 @@
 }
 
 .creator {
-  composes: text626f64792f736d2d7374726f6e67 from '../../../foundations/typography/text-styles.module.css';
   color: var(--dcl-neutrals-white);
+  font-size: var(--dcl-font-size-body-sm);
+  font-weight: 600;
+  line-height: 1.57;
+  letter-spacing: 0.00938em;
   text-decoration: none;
 }
 
@@ -133,4 +195,97 @@ a.creator:hover {
 a.creator:focus-visible {
   outline: 2px solid var(--dcl-neutrals-snow);
   outline-offset: 2px;
+}
+
+/* HANG OUT NOW is JumpInCTA xl (primary fill, radius-lg, uppercase); the page sets the reference's
+   size, label and 32px icon. */
+.hangOut {
+  gap: var(--dcl-space-24);
+  width: 240px;
+  height: 52px;
+  padding: 6px var(--dcl-space-16);
+  color: var(--dcl-neutrals-snow);
+  font-size: var(--dcl-font-size-button-md);
+  font-weight: 600;
+  line-height: 24px;
+  letter-spacing: 0.4px;
+  --jump-in-icon: 32px;
+}
+
+.hangOut > svg {
+  margin-right: -4px;
+}
+
+/* Source's useDesktopMediaQuery. */
+@media (min-width: 991px) {
+  .root {
+    gap: var(--dcl-space-48);
+    padding: 80px 20px;
+  }
+
+  .glow {
+    display: block;
+  }
+
+  .title {
+    padding: 0;
+    font-size: var(--dcl-font-size-heading-lg);
+  }
+
+  .cards {
+    display: flex;
+  }
+
+  .carousel {
+    display: none;
+  }
+
+  .controls {
+    inset: auto auto 13px 13px;
+  }
+
+  .controls .playChip {
+    width: auto;
+    height: 26px;
+    padding: 5.5px 6px;
+    border-radius: var(--dcl-radius-sm);
+    background-color: var(--dcl-neutrals-shadow);
+  }
+
+  .controls .muteChip {
+    margin: 0;
+  }
+
+  .playIcon {
+    border-width: 5px 0 5px 8px;
+  }
+
+  .duration {
+    display: block;
+  }
+
+  .hangOut {
+    width: 270px;
+    height: 60px;
+  }
+}
+
+/* Source's card heights by its lg and md breakpoints. */
+@media (min-width: 1024px) {
+  .card {
+    height: 380px;
+  }
+}
+
+@media (min-width: 1280px) {
+  .card {
+    height: 450px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .image,
+  .video {
+    transition: none;
+  }
 }

@@ -54,9 +54,11 @@ function Carousel<T>({
   const [focused, setFocused] = useState(false)
   const [dragging, setDragging] = useState(false)
   const [visible, setVisible] = useState(true)
+  const [inView, setInView] = useState(false)
   const [interaction, setInteraction] = useState(0)
   const current = total ? ((position % total) + total) % total : 0
-  const paused = hovered || focused || dragging || !visible
+  const paused = hovered || focused || dragging || !visible || !inView
+  const root = useRef<HTMLDivElement | null>(null)
   const activeSlide = useRef<HTMLDivElement | null>(null)
   const keepFocus = useRef<'slide' | 'control' | false>(false)
   const drag = useRef<{ x: number; y: number } | null>(null)
@@ -75,6 +77,21 @@ function Carousel<T>({
     update()
     document.addEventListener('visibilitychange', update)
     return () => document.removeEventListener('visibilitychange', update)
+  }, [])
+  useEffect(() => {
+    // Autoplay runs while at least half the carousel is on screen, as source's lower sections
+    // mount (and start their carousels) only once scrolled to.
+    const element = root.current
+    if (!element || typeof IntersectionObserver === 'undefined') {
+      setInView(true)
+      return
+    }
+    const observer = new IntersectionObserver(
+      ([entry]) => setInView(entry?.isIntersecting ?? false),
+      { threshold: 0.5 }
+    )
+    observer.observe(element)
+    return () => observer.disconnect()
   }, [])
   useEffect(() => () => clearTimeout(clickReset.current), [])
   useEffect(() => {
@@ -215,6 +232,7 @@ function Carousel<T>({
   if (!total) return null
   return (
     <div
+      ref={root}
       className={[styles.carousel, className].filter(Boolean).join(' ')}
       role="group"
       aria-roledescription="carousel"
@@ -254,7 +272,6 @@ function Carousel<T>({
       >
         {[...items, ...items, ...items].map((item, index) => {
           const active = index === position
-          const neighbour = total > 1 && Math.abs(index - position) === 1
           return (
             <div
               key={`${getKey(item)}-${index}`}
@@ -276,7 +293,7 @@ function Carousel<T>({
               aria-hidden={!active || undefined}
               inert={!active || undefined}
             >
-              {active || neighbour ? renderSlide(item, !active) : null}
+              {renderSlide(item, !active)}
             </div>
           )
         })}

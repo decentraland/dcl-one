@@ -1,13 +1,14 @@
-/* TODO(figma-ds): replace with the Figma-generated profile header's styles. */
-.root {
+/* TODO(figma-ds): replace with the profile header's styles (ProfileHeader.styled.ts), until the Figma-generated header's. */
+/* The profile site's ProfileHeader (ProfileHeader.styled.ts): MUI h5 name (24px/500 on 1.334), body1 address. */
+.header {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: var(--dcl-space-12);
-  box-sizing: border-box;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--dcl-space-16);
   width: 100%;
-  padding: var(--dcl-space-16);
-  border-bottom: 1px solid var(--dcl-border-subtle);
+  padding: var(--dcl-space-16) var(--dcl-space-24);
+  border-bottom: 1px solid rgb(255 255 255 / 8%);
 }
 
 .identity {
@@ -16,10 +17,6 @@
   align-items: center;
   gap: var(--dcl-space-12);
   min-width: 0;
-}
-
-.identity .avatar {
-  --avatar-size: 48px;
 }
 
 .nameBlock {
@@ -37,9 +34,7 @@
 
 .name,
 .discriminator {
-  margin: 0;
-  font-family: 'Inter', sans-serif;
-  font-size: 18px;
+  font-size: var(--dcl-font-size-heading-2);
   font-weight: 500;
   line-height: 1.334;
 }
@@ -47,13 +42,13 @@
 .name {
   overflow: hidden;
   max-width: 20ch;
-  color: var(--name-color);
+  letter-spacing: normal;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .discriminator {
-  color: var(--dcl-text-secondary);
+  color: var(--dcl-neutrals-gray);
 }
 
 .verified {
@@ -63,25 +58,33 @@
   justify-content: center;
   width: 16px;
   height: 16px;
-  border-radius: var(--dcl-radius-full);
-  background: var(--name-color);
-  color: var(--dcl-neutrals-pale-black);
-  font-size: 10px;
+  border-radius: 50%;
+  color: #0f0e11;
+  font-size: var(--dcl-font-size-caption);
   font-weight: 700;
+  line-height: 1.5;
 }
 
 .addressRow {
   display: flex;
   align-items: center;
   gap: 6px;
-  color: var(--dcl-text-secondary);
+  color: rgb(240 240 240 / 70%);
 }
 
-.address {
-  color: var(--dcl-text-primary);
-  font-family: 'Inter', sans-serif;
+.walletIcon {
+  display: inline-flex;
+}
+
+.walletIcon svg[data-testid] {
+  font-size: 18px;
+}
+
+.addressText {
+  color: #f0f0f0;
   font-size: var(--dcl-font-size-body-md);
-  line-height: 1.75;
+  font-weight: 400;
+  line-height: 28px;
 }
 
 .copyWrap {
@@ -89,25 +92,25 @@
   display: inline-flex;
 }
 
-.copy {
+.copyButton {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 24px;
   height: 24px;
-  padding: 0;
+  padding: 5px;
   border: 0;
-  border-radius: var(--dcl-radius-full);
+  border-radius: 50%;
   background: transparent;
-  color: var(--dcl-text-secondary);
+  color: inherit;
   cursor: pointer;
 }
 
-.copy:hover {
-  background: var(--dcl-bg-hover);
+.copyButton svg[data-testid] {
+  font-size: 16px;
 }
 
-.copy:focus-visible {
+.copyButton:focus-visible {
   outline: 2px solid var(--dcl-text-primary);
   outline-offset: 2px;
 }
@@ -116,9 +119,6 @@
   position: absolute;
   bottom: calc(100% + var(--dcl-space-8));
   left: 50%;
-  display: inline-flex;
-  align-items: center;
-  gap: var(--dcl-space-4);
   padding: var(--dcl-space-4) var(--dcl-space-8);
   border-radius: var(--dcl-radius-sm);
   background: var(--dcl-bg-surface-raised);
@@ -130,33 +130,27 @@
 
 .actions {
   display: flex;
-  flex-wrap: wrap;
+  flex-shrink: 0;
   align-items: center;
   gap: var(--dcl-space-12);
-  width: 100%;
 }
 
-@media (min-width: 1024px) {
-  .root {
-    flex-direction: row;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--dcl-space-16);
-    padding: var(--dcl-space-16) var(--dcl-space-24);
-  }
-
-  .identity .avatar {
-    --avatar-size: 76px;
+@media (max-width: 991.95px) {
+  .header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--dcl-space-12);
+    padding: var(--dcl-space-16);
   }
 
   .name,
   .discriminator {
-    font-size: 24px;
+    font-size: var(--dcl-font-size-heading-5);
   }
 
   .actions {
-    flex-shrink: 0;
-    flex-wrap: nowrap;
-    width: auto;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    width: 100%;
   }
 }

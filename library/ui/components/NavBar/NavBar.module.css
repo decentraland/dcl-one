@@ -2,19 +2,24 @@
 
 /* Breakpoints are the foundations' (layout.ts): tablet 768px, desktop 1024px. */
 @layer dcl.components {
+  /* A host whose chrome must keep another bar's metrics sets the --dcl-navbar-* properties; each falls back to
+     the component's own value. */
   .root {
     box-sizing: border-box;
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: var(--dcl-space-16);
-    min-height: var(--dcl-space-64);
-    block-size: 64px;
-    padding: var(--dcl-space-12) var(--dcl-layout-margin-x);
-    background: var(--dcl-bg-navbar-mobile);
-    box-shadow:
+    min-height: var(--dcl-navbar-block-size, var(--dcl-space-64));
+    block-size: var(--dcl-navbar-block-size, 64px);
+    padding: var(--dcl-navbar-padding-block, var(--dcl-space-12))
+      var(--dcl-navbar-padding-inline, var(--dcl-layout-margin-x));
+    background: var(--dcl-navbar-background, var(--dcl-bg-navbar-mobile));
+    box-shadow: var(
+      --dcl-navbar-shadow,
       0 4px 8px -1px var(--dcl-transparencies-black-20),
-      0 8px 24px 0 var(--dcl-transparencies-black-10);
+      0 8px 24px 0 var(--dcl-transparencies-black-10)
+    );
     color: var(--dcl-text-primary);
   }
 
@@ -37,11 +42,11 @@
   }
 
   .start {
-    gap: var(--dcl-space-24);
+    gap: var(--dcl-navbar-start-gap, var(--dcl-space-24));
   }
 
   .end {
-    gap: var(--dcl-space-12);
+    gap: var(--dcl-navbar-end-gap, var(--dcl-space-12));
   }
 
   .logo {
@@ -153,12 +158,15 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    padding: var(--dcl-space-8) var(--dcl-space-24);
-    border: 0;
+    padding: var(--dcl-navbar-sign-in-padding, var(--dcl-space-8) var(--dcl-space-24));
+    border: var(--dcl-navbar-sign-in-border, 0);
     border-radius: var(--dcl-radius-xs);
     background: transparent;
-    box-shadow: inset 0 0 0 1px currentColor;
+    box-shadow: var(--dcl-navbar-sign-in-ring, inset 0 0 0 1px currentColor);
     color: var(--dcl-text-primary);
+    font-weight: var(--dcl-navbar-sign-in-font-weight, 700);
+    line-height: var(--dcl-navbar-sign-in-line-height, 1.25);
+    letter-spacing: var(--dcl-navbar-sign-in-letter-spacing, 0.5px);
     text-decoration: none;
     white-space: nowrap;
     cursor: pointer;
@@ -169,6 +177,10 @@
     display: none;
     align-items: center;
     gap: var(--dcl-space-16);
+  }
+
+  .barBalances {
+    display: var(--dcl-navbar-balances-display, none);
   }
 
   .compositionControl {
@@ -219,7 +231,7 @@
     flex-shrink: 0;
     align-items: center;
     justify-content: center;
-    padding: var(--dcl-space-8);
+    padding: var(--dcl-navbar-control-padding, var(--dcl-space-8));
     border: 0;
     border-radius: var(--dcl-radius-sm);
     background: transparent;
@@ -257,10 +269,11 @@
   .avatar {
     display: inline-flex;
     overflow: hidden;
-    width: 40px;
-    height: 40px;
+    width: var(--dcl-navbar-avatar-size, 40px);
+    height: var(--dcl-navbar-avatar-size, 40px);
+    border: var(--dcl-navbar-avatar-border, 0);
     border-radius: var(--dcl-radius-full);
-    background: var(--dcl-bg-surface-raised);
+    background: var(--dcl-navbar-avatar-background, var(--dcl-bg-surface-raised));
   }
 
   .avatarImage {
@@ -299,6 +312,7 @@
   }
 
   .menuButton {
+    display: var(--dcl-navbar-menu-button-display, inline-flex);
     width: 40px;
     height: 40px;
     background: var(--dcl-bg-hover);
@@ -427,16 +441,16 @@
 
   @media (min-width: 768px) {
     .barBalances {
-      display: flex;
+      display: var(--dcl-navbar-balances-display, flex);
     }
   }
 
   @media (min-width: 1024px) {
     .root {
-      min-height: 80px;
-      block-size: 80px;
-      padding-block: var(--dcl-space-16);
-      background: var(--dcl-bg-navbar);
+      min-height: var(--dcl-navbar-block-size, 80px);
+      block-size: var(--dcl-navbar-block-size, 80px);
+      padding-block: var(--dcl-navbar-padding-block, var(--dcl-space-16));
+      background: var(--dcl-navbar-background, var(--dcl-bg-navbar));
     }
 
     .sections,
@@ -445,7 +459,7 @@
     }
 
     .end {
-      gap: var(--dcl-space-24);
+      gap: var(--dcl-navbar-end-gap, var(--dcl-space-24));
     }
 
     .menuButton,
@@ -454,14 +468,14 @@
     }
 
     .avatar {
-      width: var(--dcl-space-48);
-      height: var(--dcl-space-48);
+      width: var(--dcl-navbar-avatar-size, var(--dcl-space-48));
+      height: var(--dcl-navbar-avatar-size, var(--dcl-space-48));
     }
   }
 
   @media (min-width: 1536px) {
     .start {
-      gap: var(--dcl-space-48);
+      gap: var(--dcl-navbar-start-gap, var(--dcl-space-48));
     }
   }
 }

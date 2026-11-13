@@ -178,5 +178,23 @@
     "rule": "fabricated-default",
     "text": "early.response.catch(() => fetch(url, {\n    signal: AbortSignal.timeout(5_000),\n    headers: { accept: \"application/x-ndjson\" },\n  }))",
     "why": "A failed speculative request is retried with a real fetch of the same URL. The caller receives that network response, and a failed retry rejects. No data or successful status is fabricated."
+  },
+  {
+    "file": "src/data/lib/catalyst/landings/referral.server.ts",
+    "rule": "fabricated-default",
+    "text": "fetchReferrerProfile(address, { signal }).catch(() => referrerFromAddress(address))",
+    "why": "`referrerFromAddress` is the no-profile state, not a profile: `name: null`, `hasClaimedName: false` and `resolved: false`, the same value `fetchReferrerProfile` gives an address with no Catalyst profile. The invite page reads `name: null` as decentraland.org does when its profile query has no data (sites@17b3535a InvitePage.tsx: `getInviterName(null)` falls back to the generic title), so a failed read shows the page without a name and never an invented one."
+  },
+  {
+    "file": "src/data/lib/catalyst/places/jump.server.ts",
+    "rule": "fabricating-catch",
+    "text": "return { invalid: true };",
+    "why": "`{ invalid: true }` is the jump page's failure state, not an event: the route renders the invalid-event page for it. decentraland.org does the same on a failed read (sites@17b3535a pages/jump/EventsPage.tsx: `byIdQuery.isError || byPositionQuery.isError` navigates to the invalid page), so a broken events answer shows \"invalid\" and never a made-up event card."
+  },
+  {
+    "file": "src/data/lib/catalyst/places/live-now.server.ts",
+    "rule": "fabricated-default",
+    "text": "withDeployers(placed, opts).catch(() => placed)",
+    "why": "`withDeployers` only adds `creatorAddress` to the place cards the catalogue left uncredited, from the content server's deployments. When that lookup fails, `placed` is the same measured list before the credit, not a stand-in: every card keeps the catalogue's own credit and renders without a creator, which is what decentraland.org renders when its deployer lookup fails (sites: features/events/events.discovery.ts, `enrichWithDeployers` returns null and the cards already committed stay)."
   }
 ]

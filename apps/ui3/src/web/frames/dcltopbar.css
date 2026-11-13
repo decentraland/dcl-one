@@ -1,6 +1,9 @@
 @import "../../components/site-navigation.css";
 
-.dtb, .dtb * { box-sizing: border-box; }
+/* In the reset layer so the library's nav pieces (layer dcl.components) keep their own box model. */
+@layer dcl.reset {
+  .dtb, .dtb * { box-sizing: border-box; }
+}
 
 .dtb {
   flex: 0 0 auto;
@@ -8,12 +11,12 @@
   z-index: 3;
   display: flex;
   align-items: center;
-  gap: 32px;
+  gap: var(--dcl-space-32);
   height: var(--site-header-h, 72px);
-  padding: 0 var(--site-nav-pad, 24px);
+  padding: 0 var(--site-nav-pad, var(--dcl-space-24));
   background: var(--site-nav-bg, #101014);
-  border-bottom: 1px solid var(--site-nav-line, rgba(255, 255, 255, 0.1));
-  color: #fff;
+  border-bottom: 1px solid var(--site-nav-line, var(--dcl-transparencies-white-10));
+  color: var(--dcl-neutrals-white);
 }
 
 .dtb--transparent {
@@ -48,7 +51,7 @@
   cursor: pointer;
   border-radius: var(--r-control);
 }
-.dtb__burger:hover { background: var(--fill-3); color: #fff; }
+.dtb__burger:hover { background: var(--fill-3); color: var(--dcl-neutrals-white); }
 .dtb__burger::before {
   content: "";
   width: 22px;
@@ -66,13 +69,13 @@
   justify-content: space-between;
   text-decoration: none;
   color: var(--ink-85);
-  font-size: 16px;
+  font-size: var(--dcl-font-size-body-md);
   font-weight: 600;
-  padding: 15px 4px;
+  padding: 15px var(--dcl-space-4);
   border-bottom: 1px solid var(--line);
 }
-.dtb__menulink:hover { color: #fff; }
-.dtb__menulink.is-active { color: #fff; }
+.dtb__menulink:hover { color: var(--dcl-neutrals-white); }
+.dtb__menulink.is-active { color: var(--dcl-neutrals-white); }
 .dtb__menulink--caret::after {
   content: "";
   flex: 0 0 auto;
@@ -84,45 +87,46 @@
 }
 .dtb__menugroup { display: contents; }
 .dtb__globalmenu { display: flex; flex-direction: column; }
-.dtb__menu--context .dtb__globalmenu { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); padding: 8px 0 16px; border-bottom: 1px solid var(--site-nav-line); }
+.dtb__menu--context .dtb__globalmenu { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); padding: var(--dcl-space-8) 0 var(--dcl-space-16); border-bottom: 1px solid var(--site-nav-line); }
 .dtb__menu--context .dtb__menugroup { display: flex; flex-direction: column; }
-.dtb__menu--context .dtb__menulink { min-height: 44px; padding: 10px; border: 0; font-size: 14px; }
-.dtb__menu--context .dtb__menulink--sub { font-size: 13px; min-height: 36px; padding: 8px 10px; }
+.dtb__menu--context .dtb__menulink { min-height: 44px; padding: 10px; border: 0; font-size: var(--dcl-font-size-body-sm); }
+.dtb__menu--context .dtb__menulink--sub { font-size: var(--dcl-font-size-button-sm); min-height: 36px; padding: var(--dcl-space-8) 10px; }
 .dtb__menulink--sub { padding-left: 20px; font-weight: 400; color: var(--ink-7); }
 
 .dtb__links {
   flex: 1 1 auto;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--dcl-space-8);
   min-width: 0;
   overflow: visible;
 }
 
-.dtb__link {
+/* The shop and account bars' tab; the sites bar draws the library's NavMenuTab. */
+.dtb:not(.dtb--sites) .dtb__link {
   flex: 0 0 auto;
   text-decoration: none;
-  color: #ecebed;
-  font-size: 16px;
+  color: var(--dcl-neutrals-pearl);
+  font-size: var(--dcl-font-size-body-md);
   font-weight: 400;
-  padding: 10px 16px;
-  border-radius: 8px;
+  padding: 10px var(--dcl-space-16);
+  border-radius: var(--dcl-radius-sm);
   display: inline-flex;
   align-items: center;
   white-space: nowrap;
   transition: background-color 0.15s ease, color 0.15s ease;
 }
-.dtb__link:hover {
-  color: #fff;
+.dtb:not(.dtb--sites) .dtb__link:hover {
+  color: var(--dcl-neutrals-white);
   background: rgba(255, 255, 255, 0.08);
   text-shadow: 0 0 0.5px currentColor, 0 0 0.5px currentColor;
 }
-.dtb__link.is-active {
-  color: #fff;
+.dtb:not(.dtb--sites) .dtb__link.is-active {
+  color: var(--dcl-neutrals-white);
   background: rgba(255, 255, 255, 0.08);
   text-shadow: 0 0 0.5px currentColor, 0 0 0.5px currentColor;
 }
-.dtb__link[aria-haspopup]::after {
+.dtb:not(.dtb--sites) .dtb__link[aria-haspopup]::after {
   content: "";
   flex: 0 0 auto;
   width: 13px;
@@ -132,7 +136,7 @@
   -webkit-mask: var(--mi-chevron-down) center / contain no-repeat;
   mask: var(--mi-chevron-down) center / contain no-repeat;
 }
-.dtb__link[aria-haspopup]:hover::after { background-color: #fff; }
+.dtb:not(.dtb--sites) .dtb__link[aria-haspopup]:hover::after { background-color: var(--dcl-neutrals-white); }
 
 .dtb__dd { position: relative; flex: 0 0 auto; }
 .dtb__ddmenu {
@@ -151,35 +155,35 @@
 .dtb__ddmenu.is-open { display: flex; flex-direction: column; }
 .dtb__dditem {
   display: block;
-  padding: 9px 12px;
+  padding: 9px var(--dcl-space-12);
   border-radius: 7px;
   text-decoration: none;
   color: var(--ink-85);
-  font-size: 15px;
+  font-size: var(--dcl-font-size-button-lg);
   white-space: nowrap;
 }
 .dtb__dditem:hover,
-.dtb__dditem:focus-visible { background: var(--fill-3); color: #fff; }
+.dtb__dditem:focus-visible { background: var(--fill-3); color: var(--dcl-neutrals-white); }
 
 /* As ui2's navbar: one 24px gap between every item of the row (balances, bell, avatar). */
 .dtb__right {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
-  gap: 24px;
+  gap: var(--dcl-space-24);
 }
 
 .dtb__signin {
   cursor: pointer;
   font: inherit;
-  font-size: 15px;
+  font-size: var(--dcl-font-size-button-lg);
   font-weight: 600;
   letter-spacing: 0;
   color: var(--ink-85);
   background: transparent;
   border: 1px solid var(--ink-85);
   padding: 9px 18px;
-  border-radius: 6px;
+  border-radius: var(--dcl-radius-xs);
   transition: background 0.15s ease, border-color 0.15s ease;
 }
 .dtb__signin:hover { background: var(--line); border-color: var(--ink-7); }
@@ -194,7 +198,7 @@
   border: 0;
   border-radius: 4px;
   background: transparent;
-  color: #fcfcfc;
+  color: var(--dcl-neutrals-snow);
   cursor: pointer;
   transition: opacity 0.15s ease;
 }
@@ -211,26 +215,26 @@
   overflow-y: auto;
   background: #17131f;
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: var(--dcl-radius-md);
   box-shadow: 0 14px 30px rgba(0, 0, 0, 0.55);
 }
 .dtb__notifhead {
-  padding: 12px 14px;
-  font-size: 13px;
+  padding: var(--dcl-space-12) 14px;
+  font-size: var(--dcl-font-size-button-sm);
   font-weight: 800;
   letter-spacing: 0.5px;
   text-transform: uppercase;
   color: var(--ink-6);
   border-bottom: 1px solid var(--line);
 }
-.dtb__notifmsg { padding: 22px 14px; font-size: 14px; color: var(--ink-7); text-align: center; }
+.dtb__notifmsg { padding: 22px 14px; font-size: var(--dcl-font-size-body-sm); color: var(--ink-7); text-align: center; }
 .dtb__notiflist { list-style: none; margin: 0; padding: 6px; display: flex; flex-direction: column; }
 .dtb__notifitem {
   display: flex;
   align-items: flex-start;
   gap: 10px;
   padding: 10px;
-  border-radius: 8px;
+  border-radius: var(--dcl-radius-sm);
 }
 .dtb__notifitem:hover { background: var(--fill-2); }
 .dtb__notiflink {
@@ -251,16 +255,16 @@
 }
 .dtb__notifitem.is-unread .dtb__notifdot { background: var(--brand); }
 .dtb__notifbody { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.dtb__notiftitle { font-size: 14px; font-weight: 600; color: #fff; }
+.dtb__notiftitle { font-size: var(--dcl-font-size-body-sm); font-weight: 600; color: var(--dcl-neutrals-white); }
 .dtb__notifdesc {
-  font-size: 13px;
+  font-size: var(--dcl-font-size-button-sm);
   color: var(--ink-7);
   overflow: hidden;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
 }
-.dtb__notiftime { flex: 0 0 auto; font-size: 12px; color: var(--ink-45); margin-top: 2px; }
+.dtb__notiftime { flex: 0 0 auto; font-size: var(--dcl-font-size-body-xs); color: var(--ink-45); margin-top: 2px; }
 
 .dtb__usermenu {
   display: inline-flex;
@@ -277,7 +281,7 @@
   --sz: 48px;
   box-sizing: content-box;
   border: 2px solid rgba(255, 255, 255, 0.5);
-  background: #ff4bed;
+  background: var(--dcl-rarities-mythic);
 }
 .dtb__avatar-logo {
   position: absolute;
@@ -289,7 +293,7 @@
 
 @media (max-width: 991px) {
   .dtb__avatar { --sz: 40px; }
-  .dtb { gap: 12px; height: 64px; padding: 0 16px; }
+  .dtb { gap: var(--dcl-space-12); height: 64px; padding: 0 var(--dcl-space-16); }
   .dtb__brand img { width: 32px; height: 32px; }
   .dtb__burger { display: inline-flex; order: 99; }
   .dtb__links { display: none; }
@@ -305,7 +309,7 @@
     right: 0;
     z-index: 5;
     gap: 0;
-    padding: 0 16px 10px;
+    padding: 0 var(--dcl-space-16) 10px;
     background: var(--site-nav-bg, #101014);
     max-height: calc(100dvh - 64px);
     overflow-y: auto;

@@ -1,118 +1,161 @@
+/* Source paint: decentraland/sites@17b3535a, components/Home/WhatsOn/WhatsOn.styled.ts and the ui2
+   EventCard; the owning route's animation sits behind the content. */
 .root {
+  position: relative;
+  isolation: isolate;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: var(--dcl-layout-section-gap);
-  padding: var(--dcl-layout-section-padding-y) var(--dcl-layout-margin-x);
-  background: var(--dcl-gradient-radial-background), var(--dcl-bg-page);
+  gap: var(--dcl-space-48);
+  width: 100%;
+  box-sizing: border-box;
+  padding: var(--dcl-space-48) var(--dcl-space-16);
+  overflow: hidden;
   color: var(--dcl-text-primary);
 }
 
+.background {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+}
+
 .title {
-  composes: text68656164696e672f6c67 from '../../../foundations/typography/text-styles.module.css';
   margin: 0;
+  color: var(--dcl-neutrals-white);
+  font-size: var(--dcl-font-size-heading-1);
+  font-weight: 700;
+  line-height: 1.167;
+  letter-spacing: normal;
   text-align: center;
 }
 
-/* Phones scroll the cards sideways; from breakpoints.tablet they share the row, centered, as
-   source (one card up to 850px wide, a design measurement). */
-.cards {
-  display: grid;
-  grid-auto-flow: column;
-  grid-auto-columns: 85%;
-  gap: var(--dcl-space-16);
+/* Desktop: the cards share one row; phones: source's carousel instead. */
+.grid {
+  display: none;
+  gap: var(--dcl-space-24);
+  justify-content: center;
   width: 100%;
   margin: 0;
   padding: 0;
-  overflow-x: auto;
-  scroll-snap-type: x mandatory;
   list-style: none;
 }
 
-@media (min-width: 768px) {
-  .cards {
-    display: flex;
-    justify-content: center;
-    gap: var(--dcl-space-24);
-    overflow-x: visible;
-  }
-
-  .card {
-    flex: 1 1 0;
-    max-width: 850px;
-  }
+.carousel {
+  width: 100%;
 }
 
+/* The reference card is a button (ui2 EventCard): what it does not style takes the browser's button
+   font. */
 .card {
+  font-family: Arial; /* reference Arial, the browser's button font, no token */
+  font-size: 13.3333px; /* reference 13.3333px, the browser's button font size, no token */
+  line-height: normal;
+  letter-spacing: normal;
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  min-width: 0;
+  max-width: 850px;
+  border-radius: var(--dcl-radius-lg);
+  overflow: hidden;
+  color: #f0f0f0; /* reference #f0f0f0 (ui2 EventCard text), no token */
+}
+
+.grid > .card:only-child,
+.grid > .card:first-child:nth-last-child(2),
+.grid > .card:first-child:nth-last-child(2) ~ .card {
+  min-height: 427px;
+}
+
+.paper {
   position: relative;
   display: flex;
+  flex: 1;
   flex-direction: column;
-  overflow: hidden;
-  scroll-snap-align: start;
+  max-width: 100%;
   border-radius: var(--dcl-radius-lg);
+  overflow: hidden;
+  background-image: linear-gradient(rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.05));
+  box-shadow:
+    var(--dcl-transparencies-black-20) 0 2px 1px -1px,
+    rgba(0, 0, 0, 0.14) 0 1px 1px 0,
+    rgba(0, 0, 0, 0.12) 0 1px 3px 0;
 }
 
-.card:focus-within {
-  outline: 2px solid var(--dcl-neutrals-snow);
-  outline-offset: 2px;
-}
-
-.media {
-  position: relative;
-  aspect-ratio: 16 / 9;
-  background: var(--dcl-gradient-amethyst);
-}
-
-/* Source's cover is 297px tall from desktop (a design measurement). */
-@media (min-width: 1024px) {
-  .media {
-    aspect-ratio: auto;
-    height: 297px;
-  }
-}
-
-.image {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
+.grid .paper {
+  container-type: inline-size;
+  flex: none;
+  height: min(62.5cqw + 130px, 427px);
 }
 
 .badges {
   position: absolute;
   top: var(--dcl-space-16);
   left: var(--dcl-space-16);
+  right: var(--dcl-space-16);
+  z-index: 2;
   display: flex;
   gap: var(--dcl-space-8);
+  align-items: center;
+  pointer-events: none;
 }
 
-/* Source's badges: 24px tall pills. */
-.badge {
-  composes: text6c6162656c2f746167 from '../../../foundations/typography/text-styles.module.css';
-  display: inline-flex;
+.live,
+.users {
+  display: flex;
   align-items: center;
-  gap: var(--dcl-space-4);
-  height: var(--dcl-space-24);
+  height: 26px;
   padding: 0 var(--dcl-space-12);
   border-radius: var(--dcl-radius-sm);
-  color: var(--dcl-neutrals-white);
+  font-size: var(--dcl-font-size-body-xs);
+  font-weight: 700;
+  line-height: 1;
 }
 
 .live {
-  composes: badge;
-  background: var(--dcl-system-red);
+  gap: var(--dcl-space-4);
+  background-color: var(--dcl-system-red);
+  color: var(--dcl-neutrals-white);
   text-transform: uppercase;
 }
 
+.liveIcon {
+  flex-shrink: 0;
+  width: 1em;
+  height: 1em;
+  font-size: var(--dcl-font-size-body-sm);
+  animation: livePulse 1.5s ease-in-out infinite;
+}
+
+@keyframes livePulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+
+  50% {
+    transform: scale(1.3);
+  }
+}
+
 .users {
-  composes: badge;
-  background: var(--dcl-neutrals-shadow);
+  gap: 6px;
+  background-color: var(--dcl-neutrals-shadow);
 }
 
 .dot {
   width: var(--dcl-space-8);
   height: var(--dcl-space-8);
   border-radius: var(--dcl-radius-full);
-  background: var(--dcl-system-green);
+  background-color: var(--dcl-system-green);
+}
+
+.usersIcon {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
 }
 
 .visuallyHidden {
@@ -124,18 +167,57 @@
   white-space: nowrap;
 }
 
+.mediaBox {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+  background-color: #3a3a3a;
+}
+
+.media {
+  width: 100%;
+  height: 329px;
+  border-radius: var(--dcl-radius-lg) var(--dcl-radius-lg) 0 0;
+  background-color: #2a2435;
+  background-size: cover;
+  background-position: center;
+}
+
+.grid .media {
+  height: min(62.5cqw, 297px);
+  transition: height 0.3s ease;
+}
+
+.grid .paper:hover .media {
+  height: min(calc(62.5cqw - 62px), 235px);
+}
+
 .body {
   display: flex;
   flex: 1;
   flex-direction: column;
-  gap: var(--dcl-space-32);
+  min-height: 149px;
+  box-sizing: border-box;
   padding: var(--dcl-space-16);
-  background: var(--dcl-transparencies-black-60);
+  overflow: hidden;
+  border-radius: 0 0 var(--dcl-radius-lg) var(--dcl-radius-lg);
+  background-color: var(--dcl-transparencies-black-60);
+}
+
+.grid .body {
+  min-height: 123px;
 }
 
 .cardTitle {
-  composes: text68656164696e672f34 from '../../../foundations/typography/text-styles.module.css';
-  margin: 0;
+  margin: 0 0 7px;
+  overflow: hidden;
+  font-family: Inter, Helvetica, Arial, sans-serif;
+  font-size: var(--dcl-font-size-heading-4);
+  font-weight: 500;
+  line-height: 1.6;
+  letter-spacing: 0.15px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .titleLink {
@@ -149,37 +231,66 @@
   content: '';
   position: absolute;
   inset: 0;
+  border-radius: var(--dcl-radius-lg);
 }
 
+.card:focus-within {
+  outline: 2px solid var(--dcl-neutrals-snow);
+  outline-offset: 2px;
+}
+
+/* Above the covering title link, so the creator stays a target of their own. */
 .creatorRow {
+  position: relative;
+  z-index: 1;
   display: flex;
-  align-items: center;
   gap: var(--dcl-space-8);
+  align-items: center;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.grid .creatorRow {
+  margin-top: auto;
 }
 
 .avatar {
-  composes: text626f64792f6d642d7374726f6e67 from '../../../foundations/typography/text-styles.module.css';
-  display: grid;
-  flex: none;
-  place-items: center;
+  display: flex;
+  flex: 0 0 auto;
+  justify-content: center;
+  align-items: center;
   width: var(--dcl-space-32);
   height: var(--dcl-space-32);
   border-radius: var(--dcl-radius-full);
-  background: var(--dcl-brand-lavender);
+  overflow: hidden;
+  background-color: var(--dcl-brand-lavender);
   color: var(--dcl-neutrals-white);
+  font-family: Inter, Helvetica, Arial, sans-serif;
+  font-size: var(--dcl-font-size-body-md);
+  font-weight: 700;
+}
+
+.face {
+  width: 100%;
+  height: 100%;
   object-fit: cover;
 }
 
 .by {
-  composes: text626f64792f736d from '../../../foundations/typography/text-styles.module.css';
+  flex: 1;
+  min-width: 0;
   margin: 0;
+  overflow: hidden;
+  font-family: Inter, Helvetica, Arial, sans-serif;
+  font-size: var(--dcl-font-size-body-sm);
+  line-height: 1.43;
+  letter-spacing: 0.01071em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-/* Above the card's covering title link, so it stays its own target. */
 .creator {
-  position: relative;
-  z-index: 1;
-  color: var(--dcl-brand-ruby);
+  color: var(--dcl-primary-primary);
   font-weight: 700;
   text-decoration: none;
 }
@@ -191,4 +302,92 @@ a.creator:hover {
 a.creator:focus-visible {
   outline: 2px solid var(--dcl-neutrals-snow);
   outline-offset: 2px;
+}
+
+.jumpBox {
+  position: relative;
+  z-index: 2;
+  margin-top: var(--dcl-space-8);
+}
+
+/* Desktop: the call rises into the card on hover, as source. */
+.grid .jumpBox {
+  position: absolute;
+  bottom: var(--dcl-space-16);
+  left: var(--dcl-space-16);
+  right: var(--dcl-space-16);
+  margin-top: 0;
+  opacity: 0;
+  transform: translateY(calc(100% + var(--dcl-space-16)));
+  transition:
+    opacity 375ms,
+    transform 375ms;
+}
+
+.grid .paper:hover .jumpBox,
+.grid .jumpBox:focus-within {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* The card CTA is JumpInCTA xl. The reference card is a button (ui2 EventCard), so its CTA keeps the
+   browser's button font instead of the button/xl text style. */
+.jump {
+  width: 100%;
+  font-family: Arial; /* reference Arial (Figma Inter), no token */
+  line-height: normal; /* reference normal (Figma 1.25) */
+  letter-spacing: normal; /* reference normal (Figma 0.5px) */
+}
+
+/* View All is the tertiary Button with the reference's 2px white outline, size and label, which no
+   variant has; two classes outrank the Button's own. */
+.root .viewAll {
+  gap: var(--dcl-space-12);
+  height: auto;
+  padding: 9px var(--dcl-space-32);
+  border: 2px solid var(--dcl-neutrals-white);
+  border-radius: 10px;
+  box-shadow: none;
+  background: transparent;
+  color: var(--dcl-neutrals-white);
+  font-size: var(--dcl-font-size-body-md);
+  font-weight: 700;
+  line-height: 16px;
+  letter-spacing: inherit;
+}
+
+.viewAllIcon {
+  width: 20px;
+  height: 20px;
+  fill: currentColor;
+}
+
+/* Source's useDesktopMediaQuery: the row replaces the carousel. */
+@media (min-width: 991px) {
+  .root {
+    padding: 80px var(--dcl-space-64);
+  }
+
+  .title {
+    font-size: var(--dcl-font-size-heading-lg);
+  }
+
+  .grid {
+    display: flex;
+  }
+
+  .carousel {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .liveIcon {
+    animation: none;
+  }
+
+  .grid .media,
+  .grid .jumpBox {
+    transition: none;
+  }
 }

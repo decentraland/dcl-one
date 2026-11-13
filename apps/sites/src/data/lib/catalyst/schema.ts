@@ -31,6 +31,11 @@ export type Place = {
   like_rate: number | null;
   world: boolean;
   world_name: string | null;
+  /** The wallet that deployed the scene (destinations only). */
+  creator_address?: string | null;
+  /** An event runs here now (destinations with `with_live_events`). */
+  live?: boolean;
+  live_event_name?: string | null;
 };
 
 export type Category = {

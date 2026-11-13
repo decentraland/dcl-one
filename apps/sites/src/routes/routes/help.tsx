@@ -1,4 +1,3 @@
-import "@dcl/one-ui/foundations/foundations.css";
 import SitesChrome from "@ui/web/frames/SitesChrome";
 import { useEffect, useRef } from "react";
 

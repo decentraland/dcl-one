@@ -78,11 +78,13 @@ export function loadDownloadFixture(): DownloadFixture {
 export type OsKey = "macos" | "windows";
 type ArchKey = "arm64" | "amd64";
 
-function detectOs(userAgent: string | null | undefined): OsKey {
+/** The desktop system the User-Agent names; phones, tablets and Linux have no Creator Hub installer. */
+function detectOs(userAgent: string | null | undefined): OsKey | undefined {
   const ua = (userAgent ?? "").toLowerCase();
+  if (/iphone|ipad|ipod|android|mobile/.test(ua)) return undefined;
   if (/windows|win64|win32|wow64/.test(ua)) return "windows";
   if (/mac os x|macintosh|mac_powerpc|darwin/.test(ua)) return "macos";
-  return "macos";
+  return undefined;
 }
 
 function detectArch(userAgent: string | null | undefined, os: OsKey): ArchKey {
@@ -112,6 +114,8 @@ type ResolvedDownload = {
   releaseUrl: string;
   repo: string;
   overridden: boolean;
+  /** False when neither an override nor the User-Agent names Windows or macOS: the page offers no installer. */
+  installable: boolean;
   detectedOs: OsKey;
   detectedArch: ArchKey;
   primary: DownloadOption;
@@ -136,7 +140,8 @@ export function resolveDownload(
   override?: { os?: string | null; arch?: string | null },
 ): ResolvedDownload {
   const osOverride = normalizeOs(override?.os);
-  const detectedOs = osOverride ?? detectOs(userAgent);
+  const uaOs = detectOs(userAgent);
+  const detectedOs = osOverride ?? uaOs ?? "macos";
   const archOverride = normalizeArch(override?.arch);
   const detectedArch = archOverride ?? detectArch(userAgent, detectedOs);
 
@@ -161,6 +166,7 @@ export function resolveDownload(
     releaseUrl: fixture.releaseUrl,
     repo: fixture.repo,
     overridden: osOverride !== undefined || archOverride !== undefined,
+    installable: (osOverride ?? uaOs) !== undefined,
     detectedOs,
     detectedArch,
     primary,

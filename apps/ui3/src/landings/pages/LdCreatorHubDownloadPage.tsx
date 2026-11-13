@@ -1,8 +1,7 @@
 import type { MouseEvent } from "react";
 
 import StCreatorHubDownload from "../../web/pages/StCreatorHubDownload";
-import StCreatorHubDownloadSuccess from "../../web/pages/StCreatorHubDownloadSuccess";
-import "./ldcreatorhubdownloadpage.css";
+import styles from "./LdCreatorHubDownloadPage.module.css";
 
 type LdChdOsKey = "windows" | "macos";
 
@@ -30,61 +29,42 @@ function toUiOption(opt: LdChdOption) {
   return { text: opt.os, image: OS_GLYPH[opt.osKey], link: opt.url, arch: opt.arch };
 }
 
-type LdCreatorHubDownloadPageProps = {
-  step?: "view" | "success";
-  os?: LdChdOsKey;
+type LdCreatorHubDownloadPageProps<O extends LdChdOption> = {
   version?: string;
-  primary?: LdChdOption;
-  secondary?: LdChdOption[];
-  successHref?: string;
-  onSurfaceClick?: (e: MouseEvent<HTMLDivElement>) => void;
-  onSuccessLinkClick?: (e: MouseEvent<HTMLAnchorElement>) => void;
+  /** None when the visitor's system has no installer: the page then shows its title and banner only. */
+  primary?: O | null;
+  secondary?: O[];
+  onDownload?: (option: O, e: MouseEvent<HTMLAnchorElement>) => void;
 };
 
-export default function LdCreatorHubDownloadPage({
-  step = "view",
-  os = "macos",
+export default function LdCreatorHubDownloadPage<O extends LdChdOption>({
   version = "",
-  primary = undefined,
+  primary = null,
   secondary = [],
-  successHref = "",
-  onSurfaceClick = undefined,
-  onSuccessLinkClick = undefined,
-}: LdCreatorHubDownloadPageProps) {
-  if (step === "success") {
-    return (
-      <div className="creatorhub-download-route" data-step="success" data-os={os}>
-        <StCreatorHubDownloadSuccess os={os} />
-      </div>
-    );
-  }
-
-  if (!primary) return null;
-
+  onDownload = undefined,
+}: LdCreatorHubDownloadPageProps<O>) {
+  const options = primary ? [primary, ...secondary] : [];
   return (
     <div
-      className="creatorhub-download-route"
-      onClickCapture={onSurfaceClick}
-      data-os={primary.osKey}
-      data-arch={primary.arch}
+      className={styles.route}
+      data-os={primary?.osKey}
+      data-arch={primary?.arch}
       data-version={version}
     >
       <StCreatorHubDownload
-        primaryOption={toUiOption(primary)}
-        secondaryOptions={secondary.map(toUiOption)}
+        primaryOption={primary ? toUiOption(primary) : null}
+        secondaryOptions={primary ? secondary.map(toUiOption) : []}
+        onDownload={onDownload && ((ui, e) => {
+          const option = options.find((o) => o.url === ui.link && o.os === ui.text);
+          if (option) onDownload(option, e);
+        })}
       />
 
-      <noscript>
-        <a href={primary.url}>Download Decentraland Creator Hub for {primary.os}</a>
-      </noscript>
-
-      <a
-        className="creatorhub-download-route__success-link"
-        href={successHref}
-        onClick={onSuccessLinkClick}
-      >
-        I&apos;ve started my download
-      </a>
+      {primary && (
+        <noscript>
+          <a href={primary.url}>Download Decentraland Creator Hub for {primary.os}</a>
+        </noscript>
+      )}
     </div>
   );
 }

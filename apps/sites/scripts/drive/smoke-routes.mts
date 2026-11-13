@@ -20,6 +20,7 @@ const HEADLESS_NO_GPU = [
 
 export const ROUTES: Route[] = [
   { path: "/create", auth: "both" },
+  { path: "/create/home", auth: "both" },
   { path: "/create/scenes", auth: "both" },
   { path: "/create/templates", auth: "out" },
   { path: "/create/wearables", auth: "out", allowConsole: [AUTH_PROBE] },

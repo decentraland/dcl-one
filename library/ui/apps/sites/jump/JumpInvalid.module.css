@@ -1,50 +1,68 @@
+/*
+ * decentraland.org's invalid-link notice (sites: pages/jump/InvalidPage.tsx, InvalidPage.styled.ts): a phone reads
+ * the second message, loses Jump into Decentraland and gets the fixed Go to Homepage bar (ui2 breakpoints: xs 768,
+ * sm 991). The page around it (JumpPage, `invalid`) carries the frame's padding.
+ */
 .root {
   display: flex;
-  width: min(100%, 32.5rem);
+  width: 100%;
+  max-width: 520px;
   flex-direction: column;
   align-items: center;
   gap: var(--dcl-space-16);
-  margin: auto;
-  padding: var(--dcl-space-48) var(--dcl-space-24);
   text-align: center;
 }
 
 .title {
-  composes: text68656164696e672f786c from '../../../foundations/typography/text-styles.module.css';
-  margin: 0 0 var(--dcl-space-8);
+  margin: 0 0 var(--dcl-space-24);
+  font-size: 48px; /* the reference's 3rem at every width; --dcl-font-size-heading-lg is 32px below 768px */
+  font-weight: 600;
+  letter-spacing: normal;
+  line-height: 1.167;
 }
 
 .message {
-  composes: text626f64792f6c67 from '../../../foundations/typography/text-styles.module.css';
-  margin: 0 0 var(--dcl-space-8);
+  margin: 0 0 var(--dcl-space-24);
+  font-size: var(--dcl-font-size-heading-4);
+  font-weight: 500;
+  letter-spacing: 0.0075em;
+  line-height: 1.6;
 }
 
-.actions {
-  display: flex;
-  width: 100%;
-  flex-direction: column;
-  gap: var(--dcl-space-16);
-}
-
-.wide {
+.jumpInto {
   width: 100%;
 }
 
-.mobileOnly {
+.jumpIn {
+  composes: jumpIn from './JumpButtons.module.css';
+}
+
+.explore {
+  composes: explore from './JumpButtons.module.css';
+}
+
+.home {
+  composes: home from './JumpButtons.module.css';
+}
+
+.mobileOnly,
+.mobileBar {
   display: none;
 }
 
-@media (max-width: 1023px) {
+@media (max-width: 990.98px) {
   .root {
-    padding-bottom: 7.5rem;
+    max-width: 100%;
   }
+}
 
+@media (max-width: 767.98px) {
   .desktopOnly {
     display: none;
   }
 
   .mobileOnly {
-    display: block;
+    display: inline;
   }
 
   .mobileBar {
@@ -52,8 +70,10 @@
     right: 0;
     bottom: 0;
     left: 0;
+    z-index: 1000;
+    display: block;
     padding: var(--dcl-space-16) var(--dcl-space-24) var(--dcl-space-32);
     border-top: 1px solid var(--dcl-transparencies-white-10);
-    background: var(--dcl-gradient-amethyst);
+    background: linear-gradient(100.12deg, #130119 0%, #320524 100%);
   }
 }

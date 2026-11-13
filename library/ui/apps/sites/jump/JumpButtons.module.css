@@ -1,0 +1,76 @@
+/*
+ * decentraland.org draws the jump pages' controls as decentraland-ui2's MUI buttons (sites: components/jump/JumpInButton,
+ * pages/jump/InvalidPage.tsx, EventsPage.styled.ts). Its contained large button (Jump In, EXPLORE EVENTS, Go to
+ * Homepage) is 40px tall on a 6px radius with a 15px label; these classes set the shared Button back to those metrics.
+ * The shared Button's own rules can follow these in the built stylesheet, so every rule names the element the Button
+ * renders (an `a` with a link, else a `button`) and outranks them whatever the order.
+ */
+a.contained,
+button.contained {
+  min-width: 64px;
+  padding: var(--dcl-space-8) 22px;
+  border-radius: var(--dcl-radius-xs);
+  font-size: var(--dcl-font-size-button-lg);
+  font-weight: 600;
+  letter-spacing: 0.46px;
+  line-height: 24px;
+}
+
+a.secondary,
+button.secondary {
+  background: var(--dcl-neutrals-pale-black);
+  color: var(--dcl-neutrals-snow);
+}
+
+a.secondary:hover:not(:disabled),
+button.secondary:hover:not(:disabled) {
+  background: var(--dcl-neutrals-pale-black);
+}
+
+/* The reference's Button theme keeps Jump In in capitals, over its own textTransform none. The padding is 22px
+   left and 18px right: the reference icon has margin 8px left and -4px right, and this places label and icon at
+   the same positions. */
+.jumpIn {
+  composes: contained;
+}
+
+a.jumpIn,
+button.jumpIn {
+  width: 100%;
+  padding-right: 18px;
+  font-feature-settings:
+    'liga' off,
+    'clig' off;
+  --jump-in-icon: 22px;
+}
+
+a.jumpIn:hover:not(:disabled),
+button.jumpIn:hover:not(:disabled) {
+  background: #ff4d75; /* MUI primary hover, no token */
+  box-shadow:
+    0 3px 1px -2px var(--dcl-transparencies-black-20),
+    0 2px 2px 0 rgba(0, 0, 0, 0.14),
+    0 1px 5px 0 rgba(0, 0, 0, 0.12); /* MUI elevation 2, no token */
+}
+
+.explore {
+  composes: contained secondary;
+}
+
+a.explore,
+button.explore {
+  width: 100%;
+}
+
+.home {
+  composes: contained;
+}
+
+a.home,
+button.home {
+  width: 100%;
+}
+
+.home svg {
+  margin-left: calc(-1 * var(--dcl-space-4));
+}

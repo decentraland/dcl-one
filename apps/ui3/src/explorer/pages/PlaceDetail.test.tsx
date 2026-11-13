@@ -1,9 +1,13 @@
 import { describe, expect, test, vi } from "vitest";
-import { fireEvent, render as rtlRender, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render as rtlRender, screen, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import type { ReactElement } from "react";
+import type { ReactElement, ReactNode } from "react";
 
 import PlaceDetail from "./PlaceDetail";
+import { fetchCommunityProfiles } from "../../data/hooks/useCommunityProfiles";
+
+// The node answers a profile lookup with the profiles it holds: none for these wallets.
+vi.mock("../../data/hooks/useCommunityProfiles", () => ({ fetchCommunityProfiles: vi.fn(async () => ({})) }));
 
 function render(ui: ReactElement) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, enabled: false } } });
@@ -12,81 +16,118 @@ function render(ui: ReactElement) {
 
 const place = {
   id: "p1",
-  title: "Mana Mania Raffle",
-  coords: "-13,1",
-  parcels: 1,
-  favorites: 2,
-  views: 0,
-  approval: 0,
-  creator: "metaskins studios",
-  creatorAddress: "0x296fa4213a6a88590328008dd5f5b535cf37bd66",
-  categories: ["game", "poi"],
-  updated: "5/9/2023",
-  description: "My new Decentraland project",
-  hue: 120,
+  title: "Meta GamiMall",
+  coords: "1,95",
+  description: "Shops and games",
+  image: "https://example.test/content/contents/bafkcover",
+  contactName: "MetaDoge",
+  owner: "0x797066a17F83425C1B4C7a8Cca52D19095520a52",
 };
+const JUMP = "/play/?position=1%2C95";
+const mount = (over: Partial<Parameters<typeof PlaceDetail>[0]> = {}) => render(<PlaceDetail place={place} livePlayers={6} jumpHref={JUMP} {...over} />);
 
 describe("PlaceDetail", () => {
-  test("hides the visit and like counters while both are zero, and has no Home button", () => {
-    render(<PlaceDetail place={place} />);
-    expect(screen.queryByTitle("Visits")).toBeNull();
-    expect(screen.queryByTitle("Likes")).toBeNull();
-    expect(screen.queryByRole("button", { name: "Home" })).toBeNull();
-    expect(screen.getByRole("button", { name: "Like" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Share" })).toBeInTheDocument();
+  test("with players in the scene, a desktop visitor gets the viewer, the chat panel and what to expect", () => {
+    mount();
+    const viewer = screen.getByRole("region", { name: "Meta GamiMall" });
+    expect(within(viewer).getByRole("heading", { level: 1, name: "Meta GamiMall" })).toBeInTheDocument();
+    expect(within(viewer).getByText("MetaDoge")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Jump into 1,95 (opens in a new tab)" })).toHaveAttribute("href", JUMP);
+    expect(screen.getByRole("link", { name: "Jump in" })).toHaveAttribute("href", JUMP);
+    expect(screen.getByRole("heading", { name: "In-World Chat" })).toBeInTheDocument();
+    expect(screen.getByText("No messages yet.")).toBeInTheDocument();
+    expect(screen.getByText("What to expect")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 
-  test("shows the counters once either is non-zero", () => {
-    render(<PlaceDetail place={{ ...place, views: 12 }} />);
-    expect(screen.getByTitle("Visits")).toHaveTextContent("12");
-    expect(screen.getByTitle("Likes")).toHaveTextContent("0%");
+  test("the chat panel keeps one shell through its states: empty while the room is asked for or silent, and says when there is none", () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, enabled: false } } });
+    const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+    const { rerender } = rtlRender(<PlaceDetail place={place} livePlayers={6} jumpHref={JUMP} chat={{ status: "loading", messages: [] }} />, { wrapper });
+    const footer = () => screen.getByText(/in Decentraland to participate in the chat/).textContent;
+    expect(screen.getByText("No messages yet.")).toBeInTheDocument();
+    expect(footer()).toBe("Jump into Meta GamiMall in Decentraland to participate in the chat.");
+    rerender(<PlaceDetail place={place} livePlayers={6} jumpHref={JUMP} chat={{ status: "unavailable", messages: [] }} />);
+    expect(screen.getByText("Chat is unavailable right now.")).toBeInTheDocument();
+    rerender(<PlaceDetail place={place} livePlayers={6} jumpHref={JUMP} chat={{ status: "ready", messages: [] }} />);
+    expect(screen.getByText("No messages yet.")).toBeInTheDocument();
+    const at = new Date(2026, 0, 1, 9, 5).getTime();
+    const messages = [
+      { sender: "brave-lynx", timestamp: at, message: "hello from the cast" },
+      { sender: "0x797066a17F83425C1B4C7a8Cca52D19095520a52", timestamp: at, message: "gm" },
+    ];
+    rerender(<PlaceDetail place={place} livePlayers={6} jumpHref={JUMP} chat={{ status: "ready", messages }} />);
+    expect(screen.queryByText("No messages yet.")).toBeNull();
+    expect(screen.getByText("brave-lynx")).toBeInTheDocument();
+    expect(screen.getByText("hello from the cast")).toBeInTheDocument();
+    expect(screen.getByText("gm")).toBeInTheDocument();
+    // A wallet's name waits for its profile; the time is the viewer's clock.
+    expect(screen.getByText("…")).toBeInTheDocument();
+    expect(screen.getAllByText(new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }))).toHaveLength(2);
+    expect(footer()).toBe("Jump into Meta GamiMall in Decentraland to participate in the chat.");
   });
 
-  test("the creator is a profile button when the catalog has an address, plain text otherwise", () => {
-    const { unmount } = render(<PlaceDetail place={place} />);
-    const creator = screen.getByRole("button", { name: "metaskins studios" });
-    expect(creator).toHaveAttribute("title", place.creatorAddress);
+  test("a wallet without a profile shows its short address once the lookup settles", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const messages = [{ sender: "0x797066a17F83425C1B4C7a8Cca52D19095520a52", timestamp: Date.now(), message: "gm" }];
+    rtlRender(<QueryClientProvider client={client}><PlaceDetail place={place} livePlayers={6} jumpHref={JUMP} chat={{ status: "ready", messages }} /></QueryClientProvider>);
+    expect(await screen.findByText("0x7970...0a52")).toBeInTheDocument();
+    expect(fetchCommunityProfiles).toHaveBeenCalledWith(["0x797066a17f83425c1b4c7a8cca52d19095520a52"], expect.anything());
+  });
+
+  test("a world with more than one scene picks the scene to jump into; with one there is no picker", () => {
+    const onChange = vi.fn();
+    const options = [{ value: "a", label: "Plaza (0,0)" }, { value: "b", label: "Arena (10,4)" }];
+    const { unmount } = mount({ scenePicker: { options, value: "a", onChange } });
+    fireEvent.change(screen.getByRole("combobox", { name: "Scene" }), { target: { value: "b" } });
+    expect(onChange).toHaveBeenCalledWith("b");
     unmount();
-    render(<PlaceDetail place={{ ...place, creatorAddress: null }} />);
-    expect(screen.queryByRole("button", { name: "metaskins studios" })).toBeNull();
-    expect(screen.getByText("metaskins studios")).toBeInTheDocument();
+    mount({ scenePicker: { options: options.slice(0, 1), value: "a", onChange } });
+    expect(screen.queryByRole("combobox")).toBeNull();
   });
 
-  test("categories show as tags", () => {
-    render(<PlaceDetail place={place} />);
-    const tags = screen.getByRole("list", { name: "Categories" });
-    expect(within(tags).getAllByRole("listitem").map((li) => li.textContent)).toEqual(["Game", "Point of interest"]);
+  test("explore the scene opens the explorer in the viewer, and stop closes it", () => {
+    mount();
+    fireEvent.click(screen.getByRole("button", { name: "Explore the scene" }));
+    expect(screen.getByTitle("Meta GamiMall")).toHaveAttribute("src", JUMP);
+    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
+    expect(screen.queryByTitle("Meta GamiMall")).toBeNull();
   });
 
-  test("a world names its realm", () => {
-    render(<PlaceDetail place={{ ...place, world: true, worldName: "metaskins.dcl.eth" }} />);
-    expect(screen.getByText("metaskins.dcl.eth")).toBeInTheDocument();
+  test("the creator's name opens the owner's profile", () => {
+    const onCreator = vi.fn();
+    mount({ onCreator });
+    fireEvent.click(screen.getByRole("button", { name: "MetaDoge" }));
+    expect(onCreator).toHaveBeenCalledWith("0x797066a17f83425c1b4c7a8cca52d19095520a52");
   });
 
-  test("favorite and like save through the host's writes with the place id", async () => {
-    const onLike = vi.fn(async () => true);
-    const onFavorite = vi.fn(async () => true);
-    render(<PlaceDetail place={place} onLike={onLike} onFavorite={onFavorite} />);
-
-    fireEvent.click(screen.getByRole("button", { name: "Favorite" }));
-    expect(onFavorite).toHaveBeenLastCalledWith("p1", true);
-    fireEvent.click(screen.getByRole("button", { name: "Like" }));
-    expect(onLike).toHaveBeenLastCalledWith("p1", true);
-    fireEvent.click(screen.getByRole("button", { name: "Like" }));
-    expect(onLike).toHaveBeenLastCalledWith("p1", null);
-    fireEvent.click(screen.getByRole("button", { name: "Dislike" }));
-    expect(onLike).toHaveBeenLastCalledWith("p1", false);
-
-    await waitFor(() => expect(screen.getByRole("button", { name: "Favorite" })).toHaveAttribute("aria-pressed", "true"));
-    expect(screen.getByRole("button", { name: "Dislike" })).toHaveAttribute("aria-pressed", "true");
+  test("an empty scene shows the jump-in card without the live badges", () => {
+    mount({ livePlayers: 0 });
+    const dialog = screen.getByRole("dialog", { name: "Meta GamiMall" });
+    expect(within(dialog).getByRole("button", { name: "Close" })).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Copy link" })).toBeInTheDocument();
+    expect(within(dialog).getByRole("link", { name: "Jump in" })).toHaveAttribute("href", JUMP);
+    expect(screen.queryByTestId("SensorsRoundedIcon")).toBeNull();
+    expect(screen.queryByText("In-World Chat")).toBeNull();
   });
 
-  test("a write that fails puts the button back", async () => {
-    const onFavorite = vi.fn(() => Promise.reject(new Error("Sign in to save places.")));
-    render(<PlaceDetail place={place} onFavorite={onFavorite} />);
-    const button = screen.getByRole("button", { name: "Favorite" });
-    fireEvent.click(button);
-    expect(button).toHaveAttribute("aria-pressed", "true");
-    await waitFor(() => expect(button).toHaveAttribute("aria-pressed", "false"));
+  test("a phone gets the jump-in card with the live player count", () => {
+    mount({ mobile: true });
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(screen.getByText("Live")).toBeInTheDocument();
+    expect(screen.getByTestId("PermIdentityRoundedIcon").parentElement).toHaveTextContent("6");
+  });
+
+  test("the creator is the contact name, the foundation by its logo, and the title when the contact is junk", () => {
+    const { unmount } = render(<PlaceDetail place={{ ...place, contactName: "decentraland foundation" }} livePlayers={0} />);
+    expect(screen.getByText("Decentraland Foundation")).toBeInTheDocument();
+    unmount();
+    render(<PlaceDetail place={{ ...place, contactName: "sdk" }} livePlayers={0} />);
+    expect(screen.getByRole("dialog")).toHaveTextContent("By Meta GamiMall");
+  });
+
+  test("a missing place says so", () => {
+    render(<PlaceDetail notFound />);
+    expect(screen.getByRole("heading", { name: "Scene not found" })).toBeInTheDocument();
   });
 });

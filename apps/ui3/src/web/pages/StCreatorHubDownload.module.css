@@ -1,0 +1,174 @@
+/* from: sites@17b3535a:src/pages/download/CreatorHubDownload.tsx and its styled components. Values come from the
+   @dcl/one-ui foundations tokens. The foundations have no font-weight, line-height or letter-spacing token outside
+   the text styles, and no text on this page matches a whole text style, so those stay as the reference writes them. */
+.root {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(150deg, #2a0c43 0%, #1a0a2e 50%, #3d1464 100%);
+  min-height: calc(100vh - 64px);
+  padding: 80px 0;
+  box-sizing: border-box;
+}
+
+.card {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  width: calc(100% - 144px);
+  max-width: 1100px;
+  min-height: 460px;
+  background: rgba(28, 7, 47, 0.7);
+  border-radius: 32px;
+  border: 1px solid rgba(160, 155, 168, 0.2);
+  padding: var(--dcl-space-64);
+  gap: var(--dcl-space-48);
+  box-sizing: border-box;
+}
+
+.info {
+  display: flex;
+  flex-direction: column;
+  gap: var(--dcl-space-24);
+  flex: 1;
+  min-width: 0;
+}
+
+.logo {
+  display: block;
+  width: 20px;
+  height: 20px;
+}
+
+.title {
+  margin: 0;
+  font-weight: 600;
+  font-size: 2.5rem; /* reference 40px, no token */
+  line-height: 1.2;
+  letter-spacing: normal;
+  /* The reference's Typography inherits the theme's text color. */
+  color: rgba(240, 240, 240, 1);
+}
+
+.actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--dcl-space-16);
+  align-items: flex-start;
+}
+
+/* The reference's MUI contained CTA (24px 48px padding, 6px corners, a white ring on hover): no @dcl/one-ui
+   Button size has its padding, corners or ring. */
+.cta {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
+  background: var(--dcl-primary-primary-dark-2);
+  color: var(--dcl-neutrals-white);
+  padding: var(--dcl-space-24) var(--dcl-space-48);
+  border-radius: var(--dcl-radius-xs);
+  box-shadow: var(--dcl-transparencies-black-40) 0 2px 8px;
+  font-size: 19.89px;
+  font-weight: 600;
+  line-height: 31.82px;
+  letter-spacing: 0.61px;
+  text-transform: uppercase;
+  transition: background 0.15s ease;
+}
+.cta:hover {
+  background: var(--dcl-primary-primary);
+  box-shadow: var(--dcl-transparencies-black-40) 0 2px 8px;
+}
+.cta::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border: 4px solid var(--dcl-neutrals-white);
+  border-radius: 14px;
+  opacity: 0;
+  transition: inset 0.15s ease-in-out, opacity 0.15s ease-in-out;
+  pointer-events: none;
+}
+.cta:hover::before {
+  opacity: 1;
+  inset: -7.5px;
+}
+.ctaLabel {
+  display: flex;
+  flex-direction: column;
+}
+.btnIcon {
+  margin-left: 42px;
+  width: 20px;
+  height: 20px;
+  display: block;
+}
+
+.also {
+  display: flex;
+  align-items: center;
+  gap: var(--dcl-space-8);
+  margin-top: var(--dcl-space-8);
+  justify-content: center;
+}
+.alsoText {
+  font-size: var(--dcl-font-size-body-sm);
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.altIcon {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: var(--dcl-space-4);
+  display: flex;
+  align-items: center;
+  outline: none;
+}
+.altIcon:focus-visible {
+  outline: 2px solid var(--dcl-primary-primary);
+  outline-offset: 2px;
+}
+.altIcon img {
+  width: 20px;
+  height: 20px;
+  display: block;
+}
+
+/* The reference's BannerImage: half the row up to 480px wide, its 752x500 PNG setting the height. */
+.banner {
+  width: 50%;
+  max-width: 480px;
+  height: auto;
+  object-fit: contain;
+  flex-shrink: 0;
+  align-self: center;
+  display: block;
+}
+
+/* The decentraland-ui2 theme's breakpoints: down("md") is max-width 1023.95px, down("sm") 990.95px. */
+@media (max-width: 990.95px) {
+  .root {
+    padding: 40px 0;
+  }
+  .title {
+    font-size: 1.75rem; /* reference 28px, no token */
+  }
+}
+
+@media (max-width: 1023.95px) {
+  .card {
+    flex-direction: column;
+    width: calc(100% - 48px);
+    padding: 40px;
+    min-height: auto;
+  }
+  .banner {
+    width: 100%;
+    max-width: 400px;
+  }
+}

@@ -7,13 +7,21 @@ const PROFILE_IMAGE_HOSTS = new Set([
 
 /** Use the local image cache instead of the upstream cookie-setting redirect. */
 export function profileFaceUrl(face: string | undefined, base = catalystBase()): string {
+  return profileSnapshotUrl(face, "face", base);
+}
+
+export function profileBodyUrl(body: string | undefined, base = catalystBase()): string {
+  return profileSnapshotUrl(body, "body", base);
+}
+
+function profileSnapshotUrl(face: string | undefined, kind: "face" | "body", base: string): string {
   if (!face) return "";
   if (/^https?:\/\//i.test(face)) {
     try {
       const url = new URL(face);
-      const path = url.pathname.match(/^\/(?:v1\/)?entities\/([a-zA-Z0-9]+)\/face\.png$/);
-      if (PROFILE_IMAGE_HOSTS.has(url.hostname) && path) {
-        return `${base}/profile-images/entities/${path[1]}/face.png`;
+      const path = url.pathname.match(/^\/(?:v1\/)?entities\/([a-zA-Z0-9]+)\/(face|body)\.png$/);
+      if (PROFILE_IMAGE_HOSTS.has(url.hostname) && path && path[2] === kind) {
+        return `${base}/profile-images/entities/${path[1]}/${kind}.png`;
       }
     } catch {
       return "";

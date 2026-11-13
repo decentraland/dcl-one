@@ -1,10 +1,11 @@
-// TODO(figma-ds): replace with the Figma-generated profile overview from library/ui/components.
+// TODO(figma-ds): replace with the Overview tab's cards, until the Figma-generated profile overview from library/ui/components.
 import type { ReactNode } from 'react'
-import { GeneralLink } from '../../../../foundations/icons'
+import { Icon } from './icons'
 import styles from './ProfileOverview.module.css'
 
 type ProfileInfoItem = { key: string; label: string; value: string; icon?: ReactNode }
 type ProfileLinkItem = { title: string; url: string }
+type ProfileBadgeItem = { id: string; name: string; image: string | null }
 
 type ProfileOverviewProps = {
   bio: string
@@ -12,7 +13,12 @@ type ProfileOverviewProps = {
   emptyBio: string
   info: readonly ProfileInfoItem[]
   links: readonly ProfileLinkItem[]
-  /** Further cards below About (badges, equipped items). */
+  badges?: readonly ProfileBadgeItem[]
+  /** The worn items that are not base-avatar defaults. */
+  equipped?: readonly string[]
+  /** The owner's Edit button opens the avatar editor. */
+  onEdit?: () => void
+  /** Further cards below the two the profile site shows. */
   children?: ReactNode
 }
 
@@ -33,8 +39,17 @@ function linkProvider(url: string): string {
   return first.charAt(0).toUpperCase() + first.slice(1)
 }
 
-/** About, the profile's details and its links, in the source's translucent card. */
-function ProfileOverview({ bio, emptyBio, info, links, children }: ProfileOverviewProps) {
+/** The Overview tab's two translucent cards: Badges, About and Links, then Equipped items. */
+function ProfileOverview({
+  bio,
+  emptyBio,
+  info,
+  links,
+  badges = [],
+  equipped = [],
+  onEdit,
+  children
+}: ProfileOverviewProps) {
   const safeLinks = links.flatMap((link) => {
     const url = safeUrl(link.url)
     return url
@@ -42,52 +57,111 @@ function ProfileOverview({ bio, emptyBio, info, links, children }: ProfileOvervi
       : []
   })
   const text = bio.trim()
+  const edit = onEdit ? (
+    <button type="button" className={styles.editButton} onClick={onEdit}>
+      Edit
+      <span className={styles.editIcon}>
+        <Icon name="EditOutlined" />
+      </span>
+    </button>
+  ) : null
 
   return (
-    <div className={styles.root}>
-      <section className={styles.surface}>
-        <div className={styles.section}>
-          <h2 className={styles.title}>About</h2>
-          {text ? <p className={styles.bio}>{text}</p> : <p className={styles.empty}>{emptyBio}</p>}
-          {info.length > 0 ? (
-            <dl className={styles.info}>
-              {info.map((item) => (
-                <div key={item.key} className={styles.infoItem}>
-                  <dt className={styles.infoLabel}>
-                    {item.icon ? <span className={styles.infoIcon}>{item.icon}</span> : null}
-                    {item.label}
-                  </dt>
-                  <dd className={styles.infoValue}>{item.value}</dd>
+    <div className={styles.overview}>
+      <div className={styles.surface}>
+        {edit}
+        <section className={styles.section}>
+          <div className={styles.sectionHeader}>
+            <h2 className={styles.sectionTitle}>Badges</h2>
+          </div>
+          {badges.length > 0 ? (
+            <div className={styles.badges}>
+              {badges.map((badge) => (
+                <div key={badge.id} className={styles.badgeSlot} title={badge.name}>
+                  {badge.image ? (
+                    <img
+                      className={styles.badgeImage}
+                      src={badge.image}
+                      alt={badge.name}
+                      loading="lazy"
+                    />
+                  ) : (
+                    <span className={styles.badgeFallback} role="img" aria-label={badge.name}>
+                      {badge.name.charAt(0).toUpperCase()}
+                    </span>
+                  )}
                 </div>
               ))}
-            </dl>
+            </div>
+          ) : (
+            <p className={styles.empty}>
+              No badges yet. Jump in world and start collecting badges!
+            </p>
+          )}
+        </section>
+        <section className={styles.section}>
+          <h2 className={styles.sectionTitle}>About</h2>
+          {text ? (
+            <p className={`${styles.bio} ${styles.spaced}`}>{text}</p>
+          ) : (
+            <p className={`${styles.empty} ${styles.spaced}`}>{emptyBio}</p>
+          )}
+          {info.length > 0 ? (
+            <div className={styles.infoGrid}>
+              {info.map((item) => (
+                <div key={item.key} className={styles.infoItem}>
+                  <p className={styles.infoLabel}>
+                    {item.icon ? <span className={styles.infoIcon}>{item.icon}</span> : null}
+                    {item.label}
+                  </p>
+                  <p className={styles.infoValue}>{item.value}</p>
+                </div>
+              ))}
+            </div>
           ) : null}
-        </div>
+        </section>
         {safeLinks.length > 0 ? (
-          <div className={styles.section}>
-            <h2 className={styles.title}>Links</h2>
-            <ul className={styles.links}>
+          <section className={styles.section}>
+            <h2 className={styles.sectionTitle}>Links</h2>
+            <div className={`${styles.links} ${styles.spaced}`}>
               {safeLinks.map((link) => (
-                <li key={link.url}>
-                  <a
-                    className={styles.link}
-                    href={link.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    <GeneralLink size={22} aria-hidden="true" />
-                    {link.title}
-                  </a>
+                <a
+                  key={link.url}
+                  className={styles.linkPill}
+                  href={link.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  <span className={styles.linkPillIcon}>
+                    <Icon name="InsertLink" />
+                  </span>
+                  {link.title}
+                </a>
+              ))}
+            </div>
+          </section>
+        ) : null}
+      </div>
+      <div className={styles.surface}>
+        <section className={styles.section}>
+          <h2 className={styles.sectionTitle}>Equipped items</h2>
+          {equipped.length > 0 ? (
+            <ul className={`${styles.equipped} ${styles.spaced}`}>
+              {equipped.map((urn) => (
+                <li key={urn} className={styles.equippedItem}>
+                  {urn}
                 </li>
               ))}
             </ul>
-          </div>
-        ) : null}
-      </section>
+          ) : (
+            <p className={`${styles.empty} ${styles.spaced}`}>No equipped items yet.</p>
+          )}
+        </section>
+      </div>
       {children}
     </div>
   )
 }
 
 export { ProfileOverview, safeUrl }
-export type { ProfileInfoItem, ProfileLinkItem, ProfileOverviewProps }
+export type { ProfileBadgeItem, ProfileInfoItem, ProfileLinkItem, ProfileOverviewProps }

@@ -17,7 +17,7 @@ vi.mock("@/core/lib/telemetry/page-loader", () => ({
     ) => ({
       sid: "sid-1",
       data: await load({ sid: "sid-1" }),
-      wrap: (payload: unknown, init?: { status?: number }) => ({ payload, status: init?.status ?? 200 }),
+      wrap: (payload: unknown, init?: { status?: number }) => ({ data: payload, init: { status: init?.status ?? 200 } }),
     }),
   ),
 }));
@@ -39,9 +39,10 @@ beforeEach(() => vi.clearAllMocks());
 describe("/places/:id", () => {
   it("serves a place under its own id", async () => {
     vi.mocked(loadPlace).mockResolvedValueOnce(place(CANONICAL) as never);
-    const result = (await run(`/places/${CANONICAL}`, CANONICAL)) as unknown as { status: number; payload: { id: string } };
-    expect(result.status).toBe(200);
-    expect(result.payload.id).toBe(CANONICAL);
+    const result = (await run(`/places/${CANONICAL}`, CANONICAL)) as unknown as { init: { status: number; headers: Headers }; data: { place: { id: string } } };
+    expect(result.init.status).toBe(200);
+    expect(result.data.place.id).toBe(CANONICAL);
+    expect(result.init.headers.get("Vary")).toBe("User-Agent");
   });
 
   it("redirects a derive-era parcel id to the canonical place URL, keeping the query", async () => {
@@ -56,14 +57,14 @@ describe("/places/:id", () => {
 
   it("answers 404 for an id nothing resolves", async () => {
     vi.mocked(loadPlace).mockRejectedValueOnce(new CatalystError("not found", "/api/places/x", 404));
-    const result = (await run("/places/x", "x")) as unknown as { status: number; payload: { place: unknown } };
-    expect(result.status).toBe(404);
-    expect(result.payload.place).toBeNull();
+    const result = (await run("/places/x", "x")) as unknown as { init: { status: number }; data: { place: unknown } };
+    expect(result.init.status).toBe(404);
+    expect(result.data.place).toBeNull();
   });
 
   it("answers 503 when the places service is unreachable", async () => {
     vi.mocked(loadPlace).mockRejectedValueOnce(new Error("connect ECONNREFUSED"));
-    const result = (await run("/places/x", "x")) as unknown as { status: number };
-    expect(result.status).toBe(503);
+    const result = (await run("/places/x", "x")) as unknown as { init: { status: number } };
+    expect(result.init.status).toBe(503);
   });
 });

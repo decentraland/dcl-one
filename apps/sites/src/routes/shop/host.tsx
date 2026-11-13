@@ -8,7 +8,7 @@
 import { useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { useLocation } from "react-router";
 
-import { createShopClient, hostApiOptions, identitySigner, setShopClient } from "@ui/shop/api";
+import { identitySigner } from "@ui/shop/api";
 import { ShopServicesProvider, type ShopServices } from "@ui/shop/checkout/services";
 import ShopChrome from "@ui/shop/discovery/frames/ShopChrome";
 import { ShopWalletProvider } from "@ui/shop/wallet/context";
@@ -16,18 +16,11 @@ import type { ShopWalletHost } from "@ui/shop/wallet/session";
 import type { AuthIdentity } from "@ui/data/auth/identity";
 
 import { useAuth } from "@/data/lib/auth/index";
-import { getIdentity } from "@/data/lib/auth/session";
 import { browserProvider, currentWalletKind, inAppSessionFor, managedShopProvider, web3Usable } from "@/data/lib/auth/shop-wallet";
+import { installSitesShopClient } from "@/data/lib/auth/shop-client";
 import { openSignIn } from "@/features/components/auth/signin-store";
 
-let installed = false;
-
-/** The document's Shop client signs with sites' current identity, read per request. */
-export function installSitesShopClient(): void {
-  if (installed || typeof window === "undefined") return;
-  installed = true;
-  setShopClient(createShopClient(hostApiOptions({ signer: () => identitySigner(getIdentity() as AuthIdentity | null) })));
-}
+export { installSitesShopClient };
 
 const noSubscription = () => () => {};
 

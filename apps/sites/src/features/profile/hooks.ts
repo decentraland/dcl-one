@@ -5,8 +5,10 @@ import type { AuthIdentity } from "@/data/lib/auth/types";
 import { withCreatorName, type Creations } from "@/data/lib/catalyst/marketplace/index";
 import { withContactName, type ProfilePlace } from "@/data/lib/catalyst/places/index";
 import {
+  badgesQuery,
   canReadProfile,
   creationsQuery,
+  emptyTabsQuery,
   myCommunitiesQuery,
   ownedNamesQuery,
   ownedWearablesQuery,
@@ -50,6 +52,15 @@ export function useProfilePlaces(address: string, contactName?: string) {
     [contactName],
   );
   return useQuery({ ...placesQuery(address), enabled: canReadProfile(address), select });
+}
+
+export function useProfileBadges(address: string) {
+  return useQuery({ ...badgesQuery(address), enabled: canReadProfile(address) });
+}
+
+/** A visitor's view probes which member tabs have a row; the owner's view never asks. */
+export function useEmptyTabs(address: string, enabled: boolean) {
+  return useQuery({ ...emptyTabsQuery(address), enabled: enabled && canReadProfile(address) });
 }
 
 export function useProfilePhotos(address: string) {

@@ -61,7 +61,8 @@ describe("home sections", () => {
         <WhatsOn
           title="Live"
           cards={[]}
-          labels={{ live: "LIVE", by: "by" }}
+          labels={{ live: "LIVE", by: "by", jumpIn: "Jump in" }}
+          carouselLabels={labels}
           viewAll={{ label: "All", href: "/whats-on" }}
         />,
       ),
@@ -79,7 +80,8 @@ describe("home sections", () => {
             href: "/events?id=event",
           },
         ]}
-        labels={{ live: "LIVE", by: "by" }}
+        labels={{ live: "LIVE", by: "by", jumpIn: "Jump in" }}
+        carouselLabels={labels}
         viewAll={{ label: "All", href: "/whats-on" }}
       />,
     );

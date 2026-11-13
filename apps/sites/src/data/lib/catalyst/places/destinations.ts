@@ -2,7 +2,7 @@ import { z } from "zod";
 import { readCopy, type CopyStamp } from "@ui/data/copyAsOf";
 import type { AuthIdentity } from "../../auth/types";
 import { getJSON, signedGetJSON, type GetOptions } from "../client";
-import { ApiDataTotalSchema, DestinationSchema } from "../generated-schemas/places";
+import { ApiDataTotalSchema, DestinationSchema, WorldRowSchema } from "../generated-schemas/places";
 import type { Place } from "../schema";
 import { reportSchemaDrift } from "../schema-drift";
 
@@ -75,4 +75,25 @@ export async function resolveLegacyPlace(kind: "place" | "world", value: string,
   const raw = await getJSON("/places/api/places", { ...options, query: { positions: positions.join(","), limit: 1 } });
   const result = ApiDataTotalSchema(z.object({ id: z.string() })).parse(raw);
   return result.data[0]?.id ?? null;
+}
+
+const WorldRow = WorldRowSchema.pick({
+  id: true, title: true, description: true, image: true, owner: true, world_name: true, contact_name: true, base_position: true,
+  categories: true, highlighted: true, highlighted_image: true, user_count: true, user_visits: true, favorites: true, likes: true,
+  like_rate: true, created_at: true, updated_at: true,
+});
+
+/** A world by its name, as decentraland.org's world page reads it (`/api/worlds?names=`); null when no world has it. */
+export async function loadWorldPlace(name: string, options: GetOptions = {}): Promise<Place | null> {
+  const world = name.trim().toLowerCase();
+  if (!world || world.length > 255 || world.includes(",")) return null;
+  const raw = await getJSON("/places/api/worlds", { ...options, query: { names: world } });
+  const row = ApiDataTotalSchema(z.unknown()).parse(raw).data[0];
+  if (row === undefined) return null;
+  const parsed = WorldRow.safeParse(row);
+  if (!parsed.success) {
+    reportSchemaDrift("World", parsed.error.issues);
+    return null;
+  }
+  return { ...parsed.data, positions: [parsed.data.base_position], world: true };
 }

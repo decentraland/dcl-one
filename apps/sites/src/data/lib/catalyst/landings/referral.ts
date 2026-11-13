@@ -2,7 +2,7 @@ import { z } from "zod";
 
 import { getJSON } from "../client";
 import type { GetOptions } from "../client";
-import { shortAddress, ETH_ADDRESS_RE } from "../format/address";
+import { ETH_ADDRESS_RE } from "../format/address";
 
 const AvatarSchema = z.object({
   userId: z.string().optional(),
@@ -33,45 +33,37 @@ export const ReferralStateSchema = z.object({
 export type ReferralState = z.infer<typeof ReferralStateSchema>;
 
 export type ReferrerVM = {
-  name: string;
+  /** The inviter's display name, as decentraland.org shows it: the profile's first avatar name, trimmed (sites@17b3535a, features/invite/invite.helpers.ts). */
+  name: string | null;
   address: string | null;
   hasClaimedName: boolean;
   resolved: boolean;
 };
 
-function truncateAddress(addr: string): string {
-  return shortAddress(addr);
-}
-
-function toReferrerVM(profile: ProfileLambda): ReferrerVM | null {
+function toReferrerVM(profile: ProfileLambda, address: string): ReferrerVM {
   const a = profile.avatars[0];
-  if (!a) return null;
-  const claimed = Boolean(a.hasClaimedName && a.name);
-  const address = a.ethAddress ? a.ethAddress.toLowerCase() : null;
-  const name = claimed
-    ? (a.name as string)
-    : address
-      ? truncateAddress(address)
-      : "A friend";
-  return { name, address, hasClaimedName: claimed, resolved: true };
+  const name = a?.name?.trim() || null;
+  return { name, address, hasClaimedName: Boolean(a?.hasClaimedName && name), resolved: Boolean(a) };
 }
 
-export function referrerFromParam(param: string): ReferrerVM {
-  const p = param.trim();
-  if (ETH_ADDRESS_RE.test(p)) {
-    return { name: truncateAddress(p.toLowerCase()), address: p.toLowerCase(), hasClaimedName: false, resolved: false };
-  }
-  return { name: p || "A friend", address: null, hasClaimedName: false, resolved: false };
+export function referrerFromAddress(address: string | null): ReferrerVM {
+  return { name: null, address, hasClaimedName: false, resolved: false };
+}
+
+/** The wallet an invite names: the address itself, or the owner of the NAME (sites@17b3535a:src/pages/invite/InvitePage.tsx resolveReferrerAddress). */
+export async function resolveReferrerAddress(referrer: string, opts: GetOptions = {}): Promise<string | null> {
+  const p = referrer.trim();
+  if (ETH_ADDRESS_RE.test(p)) return p.toLowerCase();
+  if (!p) return null;
+  const raw = await getJSON<{ owner?: unknown } | null>(`/lambdas/names/${encodeURIComponent(p)}/owner`, opts).catch(() => null);
+  return raw?.owner ? String(raw.owner).toLowerCase() : null;
 }
 
 export async function fetchReferrerProfile(
   address: string,
   opts: GetOptions = {},
-): Promise<ReferrerVM | null> {
-  const raw = await getJSON<unknown>(
-    `/lambdas/profiles/${encodeURIComponent(address.toLowerCase())}`,
-    opts,
-  );
-  const profile = ProfileLambdaSchema.parse(raw);
-  return toReferrerVM(profile);
+): Promise<ReferrerVM> {
+  const lower = address.toLowerCase();
+  const raw = await getJSON<unknown>(`/lambdas/profiles/${encodeURIComponent(lower)}`, opts);
+  return toReferrerVM(ProfileLambdaSchema.parse(raw), lower);
 }

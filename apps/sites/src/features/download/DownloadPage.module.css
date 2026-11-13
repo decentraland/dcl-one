@@ -1,0 +1,460 @@
+/* from: sites@17b3535a:src/components/Layout/DownloadLayout.styled.ts and
+   src/components/DownloadOptions/DownloadOptions.styled.ts. The reference theme's breakpoints are xs 768, sm 991,
+   md 1024 and lg 1280 (decentraland-ui2 theme): down(sm) is max-width 990.95px.
+   Values come from the @dcl/one-ui foundations tokens. The foundations have no font-weight, line-height or
+   letter-spacing token outside the text styles, and no text on this page matches a whole text style, so those
+   stay as the reference writes them. */
+
+.page {
+  position: relative;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  height: 100vh;
+  min-height: 650px;
+  background-position: center;
+  background-size: cover;
+  color: rgb(240, 240, 240);
+  /* The reference's links keep the browser's underline offset; the .st surface sets 3px. */
+  text-underline-offset: auto;
+}
+
+.signedOut {
+  background-image:
+    linear-gradient(270deg, rgba(42, 12, 67, 0) 13.9%, rgba(42, 12, 67, 0.84) 53.91%, #2a0c43 86.65%),
+    url("./assets/download_background.webp");
+}
+
+.signedIn {
+  background-image:
+    linear-gradient(150deg, #2a0c43 0%, #2a0c43 25%, transparent 100%),
+    linear-gradient(225deg, #2a0c43 0%, rgba(42, 12, 67, 0.8) 15%, transparent 100%),
+    url("./assets/download_background.webp");
+}
+
+.container {
+  z-index: 2;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  box-sizing: border-box;
+  width: calc(100% - 144px);
+  height: 100vh;
+  margin: 0 auto;
+  padding: 0 72px 0 140px;
+  border-radius: 32px;
+}
+
+.logo {
+  position: absolute;
+  top: 72px;
+  left: 72px;
+  z-index: 10;
+  display: block;
+  width: 48px;
+  height: 48px;
+  line-height: 0;
+}
+
+.logo img {
+  width: 48px;
+  height: 48px;
+}
+
+/* The MUI outlined large button of the reference: no @dcl/one-ui Button variant has its 1px border. */
+.signIn {
+  all: unset;
+  position: absolute;
+  top: 72px;
+  right: 72px;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  padding: var(--dcl-space-8) 22px;
+  border: 1px solid var(--dcl-neutrals-snow);
+  border-radius: var(--dcl-radius-xs);
+  color: var(--dcl-neutrals-snow);
+  font-size: var(--dcl-font-size-button-lg);
+  font-weight: 600;
+  line-height: 24px;
+  letter-spacing: 0.46px;
+  text-transform: uppercase;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.signIn:hover {
+  border-color: rgba(255, 255, 255, 0.7);
+  background-color: rgba(255, 255, 255, 0.08);
+}
+
+.signIn:active {
+  background-color: rgba(255, 255, 255, 0.12);
+}
+
+.signIn:focus-visible {
+  outline: 2px solid var(--dcl-primary-primary);
+  outline-offset: 2px;
+}
+
+.desktop {
+  display: contents;
+}
+
+.alreadyDownloaded {
+  position: absolute;
+  bottom: 10%;
+  left: 212px;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: var(--dcl-space-4);
+}
+
+.alreadyText {
+  margin: 0;
+  font-size: var(--dcl-font-size-heading-4);
+  font-weight: 500;
+  line-height: 160%;
+  letter-spacing: 0.00938em;
+}
+
+.jumpIn {
+  color: var(--dcl-primary-primary);
+  text-decoration: underline;
+  text-decoration-thickness: 0%;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.options {
+  position: relative;
+  z-index: 10;
+  flex-shrink: 0;
+  width: fit-content;
+}
+
+.preTitle {
+  display: flex;
+  align-items: center;
+  gap: var(--dcl-space-8);
+}
+
+.check {
+  flex-shrink: 0;
+  width: 35px;
+  height: 35px;
+  fill: var(--dcl-system-green);
+}
+
+.preTitleText {
+  margin: 0;
+  font-size: 2.125rem; /* reference 34px, no token */
+  font-weight: 500;
+  line-height: 1.235;
+  letter-spacing: 0.00735em;
+}
+
+.title {
+  margin: var(--dcl-space-8) 0 0;
+  font-size: 3.75rem; /* reference 60px, no fixed token (heading/xl is 60px only from 768px) */
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: -0.00833em;
+  white-space: pre-line;
+}
+
+.actions {
+  display: flex;
+  flex-direction: column;
+  margin-top: 60px;
+}
+
+.buttons {
+  display: flex;
+  flex-direction: row;
+  gap: var(--dcl-space-16);
+}
+
+/* from: sites@17b3535a:src/components/Home/Hero/Hero.styled.ts DownloadButton and EpicButton. They are
+   @dcl/one-ui Button xl (download: primary), as on the landing; the page sets the reference's box and text (the
+   Button's xl is 56px, 16px/700, line-height 1.25, letter-spacing 0.5px with a 1px border), its width and the
+   Epic CTA's white fill, which no Button variant has. The Button's own styles are layered, so these win. */
+.download,
+.epic {
+  --button-height: 64px; /* reference 64px */
+  --button-gap: var(--dcl-space-16);
+  width: 304px;
+  border: 0;
+  font-size: 19.89px; /* reference 19.89px, no token */
+  font-weight: 600;
+  line-height: 1.5;
+  letter-spacing: 0.61px;
+}
+
+.download {
+  --button-color: var(--dcl-neutrals-snow); /* reference #FCFCFC */
+}
+
+.download img {
+  filter: brightness(0) invert(1);
+}
+
+.epic {
+  --button-gap: var(--dcl-space-24);
+  border: 3px solid var(--dcl-neutrals-white);
+  background-color: var(--dcl-neutrals-white);
+  color: #242129;
+}
+
+.epic img {
+  width: 40px;
+  height: 40px;
+  filter: brightness(0);
+}
+
+.alternatives {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  justify-content: flex-start;
+  width: 100%;
+  margin-top: var(--dcl-space-16);
+}
+
+.alternativeButtons {
+  display: flex;
+  flex-direction: row;
+  gap: 10px;
+}
+
+/* The reference's DownloadCounts: a body1 Typography with a hairline rule between it and the alternatives. */
+.counts {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: fit-content;
+  margin: 8px 16px 0 0;
+  padding-right: 16px;
+  border-right: 0.5px solid;
+  font-size: 16px;
+  font-weight: 400;
+  line-height: 1.5;
+}
+
+/* The MUI text button of the reference: 6px 8px padding around a 24px icon. */
+.alternative {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  min-width: 24px;
+  padding: 6px var(--dcl-space-8);
+  border-radius: var(--dcl-radius-xs);
+  color: inherit;
+}
+
+.alternative:hover {
+  background-color: rgba(240, 240, 240, 0.08);
+}
+
+.alternative img {
+  width: 24px;
+  height: 24px;
+  filter: brightness(0) invert(1);
+}
+
+.mobileTitle {
+  display: none;
+  z-index: 10;
+  margin: var(--dcl-space-48) 0 0;
+  font-size: 30px;
+  font-weight: 600;
+  line-height: 124%;
+  letter-spacing: 0;
+  white-space: pre-line;
+}
+
+.image {
+  position: relative;
+  display: flex;
+  overflow: hidden;
+  width: 100%;
+  min-width: 50vh;
+  max-width: 900px;
+  height: 100%;
+  border: none;
+  border-radius: var(--dcl-radius-xl);
+}
+
+.imageOverlay {
+  display: none;
+}
+
+.preview {
+  position: absolute;
+  top: 50%;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 2;
+  width: 100%;
+  height: 110%;
+  min-height: 500px;
+  max-height: 700px;
+  transform: translateY(-50%);
+}
+
+.preview > * {
+  width: 100%;
+  height: 100%;
+}
+
+.share {
+  display: none;
+}
+
+.storeButton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: calc(100% - 32px);
+  max-width: 345px;
+  height: 64px;
+  border-radius: var(--dcl-radius-md);
+  background-color: var(--dcl-primary-primary);
+  box-shadow: var(--dcl-transparencies-black-40) 0 2px 8px;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.storeButton:hover {
+  opacity: 0.9;
+}
+
+.storeButton:active {
+  opacity: 0.8;
+}
+
+.storeBadge {
+  width: auto;
+  height: 40px;
+}
+
+@media (max-width: 1279.95px) {
+  .container {
+    padding-left: 72px;
+  }
+
+  .buttons {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
+@media (max-width: 1023.95px) {
+  .alternatives {
+    justify-content: center;
+  }
+}
+
+@media (max-width: 990.95px) {
+  .page {
+    overflow: hidden;
+    height: 100svh;
+    min-height: unset;
+  }
+
+  .signedOut {
+    background-image: linear-gradient(180deg, #380169 16.82%, rgba(56, 1, 105, 0) 76.7%), url("./assets/download_background.webp");
+  }
+
+  .container {
+    overflow: visible;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: flex-start;
+    width: calc(100% - 32px);
+    height: 100svh;
+    padding: 124px;
+  }
+
+  .signedIn .container {
+    justify-content: space-between;
+    padding-top: var(--dcl-space-64);
+  }
+
+  .logo {
+    position: static;
+  }
+
+  .signIn {
+    top: 32px;
+    right: 24px;
+  }
+
+  .desktop {
+    display: none;
+  }
+
+  .mobileTitle {
+    display: block;
+  }
+
+  .image {
+    overflow: visible;
+    min-width: unset;
+    max-width: 100%;
+  }
+
+  .imageOverlay {
+    position: absolute;
+    inset: 0;
+    z-index: 3;
+    display: block;
+    background: transparent;
+  }
+
+  .preview {
+    top: 40%;
+    height: 60%;
+    min-height: unset;
+  }
+
+  .share {
+    position: fixed;
+    bottom: 0;
+    z-index: 100;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: var(--dcl-space-16);
+    box-sizing: border-box;
+    width: 100%;
+    padding: var(--dcl-space-24);
+    background: linear-gradient(100.12deg, #130119 0%, #320524 100%);
+  }
+
+  .frame {
+    padding-bottom: 200px;
+  }
+}
+
+@media (max-width: 767.95px) {
+  .container {
+    width: 100%;
+    padding: var(--dcl-space-24);
+  }
+
+  .signedIn .container {
+    padding-top: var(--dcl-space-64);
+  }
+}

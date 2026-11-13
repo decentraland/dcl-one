@@ -76,11 +76,12 @@ describe('DownloadSuccess', () => {
       )
     })
 
-    it('should render step images as decorative', () => {
+    it('should render the logo and step images as decorative', () => {
       const { container } = renderPage()
 
-      expect(container.querySelectorAll('img')).toHaveLength(1)
-      expect(container.querySelector('img')).toHaveAttribute('alt', '')
+      const images = container.querySelectorAll('img')
+      expect(images).toHaveLength(2)
+      for (const image of images) expect(image).toHaveAttribute('alt', '')
     })
   })
 

@@ -5,7 +5,6 @@ import { EventRecordSchema } from "../generated-schemas/events";
 import { ApiDataTotalSchema, PlaceRowSchema, WorldRowSchema } from "../generated-schemas/places";
 import { reportSchemaDrift } from "../schema-drift";
 import { fetchEvent, fetchEvents } from "../places/events";
-import { fetchProfile } from "../social/profile";
 import { placesApiPath } from "../typed";
 import { isEnsRealm, type JumpEventRecord, type JumpPlaceRecord } from "./jump";
 
@@ -88,14 +87,51 @@ export function loadWorldEntity(realm: string, opts: GetOptions = {}): Promise<A
   return postActiveEntity(`${worldsBase()}/entities/active`, realm.toLowerCase(), opts);
 }
 
-export type JumpCreator = { address: string; name: string; avatar?: string };
+export type JumpCreator = { address: string; name: string; avatar?: string; hasClaimedName?: boolean };
 
-/** Null when the wallet has no profile name, so the card keeps the catalogue's name. */
+/** The fields a card reads from a profile. */
+const ProfileRow = z
+  .object({
+    avatars: z.array(
+      z
+        .object({
+          name: z.string().nullish(),
+          realName: z.string().nullish(),
+          hasClaimedName: z.boolean().nullish(),
+          ethAddress: z.string().nullish(),
+          avatar: z
+            .object({ snapshots: z.object({ face256: z.string().nullish() }).passthrough().nullish() })
+            .passthrough()
+            .nullish(),
+        })
+        .passthrough(),
+    ),
+  })
+  .passthrough();
+
+/**
+ * Null when the wallet has no profile name, so the card keeps the catalogue's name. Asked as decentraland.org
+ * asks it (sites: features/places/places.client.ts `fetchPeerProfile`): `POST /lambdas/profiles` with the one
+ * id, spelled as the deployment or event names it. The profile's own address feeds the avatar colour.
+ */
 export async function loadCreator(address: string, opts: GetOptions = {}): Promise<JumpCreator | null> {
-  const avatar = await fetchProfile(address, opts);
+  const url = `${catalystBase(opts.base)}/lambdas/profiles`;
+  const res = await (opts.fetchImpl ?? fetch)(url, {
+    method: "POST",
+    headers: { accept: "application/json", "content-type": "application/json" },
+    body: JSON.stringify({ ids: [address] }),
+    signal: opts.signal,
+  });
+  if (!res.ok) throw await errorFromResponse(res, url);
+  const avatar = z.array(ProfileRow).parse(await res.json())[0]?.avatars[0];
   const name = avatar?.name || avatar?.realName;
   if (!name) return null;
-  return { address, name, avatar: avatar?.avatar?.snapshots?.face256 };
+  return {
+    address: avatar.ethAddress || address,
+    name,
+    avatar: avatar.avatar?.snapshots?.face256 ?? undefined,
+    hasClaimedName: avatar.hasClaimedName ?? undefined,
+  };
 }
 
 const Deployments = z.object({ deployments: z.array(z.object({ deployedBy: z.string() }).passthrough()) });
@@ -104,7 +140,8 @@ const Deployments = z.object({ deployments: z.array(z.object({ deployedBy: z.str
 export async function loadParcelCreator(coordinates: [number, number], opts: GetOptions = {}): Promise<JumpCreator | null> {
   const entity = await postActiveEntity(`${catalystBase(opts.base)}/content/entities/active`, coordinates.join(","), opts);
   if (!entity) return null;
-  const raw = await getJSON("/content/deployments", { ...opts, query: { entityId: entity.id } });
+  // The slash is part of the path decentraland.org asks (`fetchPeerDeployment`).
+  const raw = await getJSON("/content/deployments/", { ...opts, query: { entityId: entity.id } });
   const deployedBy = Deployments.parse(raw).deployments[0]?.deployedBy;
   return deployedBy ? loadCreator(deployedBy, opts) : null;
 }
@@ -132,8 +169,9 @@ const JumpEventRow = EventRecordSchema.pick({
 const toJumpEvent = (event: unknown): JumpEventRecord => JumpEventRow.parse(event);
 
 /**
- * The event a link names: by id, else the first one at the link's World or Genesis City parcel. A
- * Genesis City lookup excludes World events, which mostly sit at 0,0 too. Null when there is none.
+ * The event a link names: by id, else the first one at the link's World or Genesis City parcel, asked
+ * for as decentraland.org asks (sites: features/places/places.client.ts, `position` alone). A Genesis
+ * City lookup skips World events, which mostly sit at 0,0 too. Null when there is none.
  */
 export async function loadJumpEvent(
   target: { id: string | null; lookup: [number, number] | undefined; realm: string | undefined },
@@ -150,7 +188,8 @@ export async function loadJumpEvent(
   }
   // A World link without a position asks for the World's events wherever they are in it.
   const position = target.lookup?.join(",");
-  const params = target.realm ? { position, world_names: target.realm } : { position, world: false };
-  const [first] = (await fetchEvents({ ...params, limit: 1 }, opts)).data;
+  const params = target.realm ? { position, world_names: target.realm } : { position };
+  const { data } = await fetchEvents(params, opts);
+  const first = target.realm ? data[0] : data.find((event) => !event.world);
   return first ? toJumpEvent(first) : null;
 }

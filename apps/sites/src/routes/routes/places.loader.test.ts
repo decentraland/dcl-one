@@ -67,7 +67,7 @@ describe("when the /places document loads", () => {
     const { status } = await run("http://localhost/places?tab=favourites");
     expect(status).toBe(200);
     expect(fetchDestinations).toHaveBeenCalledTimes(1);
-    expect(fetchDestinations).toHaveBeenCalledWith({ limit: 40 }, expect.anything());
+    expect(fetchDestinations).toHaveBeenCalledWith({ limit: 40, offset: 0 }, expect.anything());
   });
 
   it("should detect a phone from the user agent", async () => {

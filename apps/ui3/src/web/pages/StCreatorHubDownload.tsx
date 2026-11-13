@@ -1,7 +1,8 @@
+import type { MouseEvent } from "react";
 import SitesChrome from "../frames/SitesChrome";
 import { asset } from "../../asset";
-import ThumbnailImage from "../../components/ThumbnailImage";
-import "./stcreatorhubdownload.css";
+import logo from "../../atoms/assets/decentraland-logo.svg?url";
+import styles from "./StCreatorHubDownload.module.css";
 
 const L = {
   title: "Decentraland Creator Hub",
@@ -22,7 +23,7 @@ export const ICON = {
     ),
 };
 
-type DownloadOption = {
+export type DownloadOption = {
   text: string;
   image: string;
   link: string;
@@ -44,73 +45,65 @@ const SECONDARY: DownloadOption[] = [
   },
 ];
 
+// from: sites@17b3535a:src/pages/download/CreatorHubDownload.tsx (decentraland-ui2 Logo, size "normal": 20px)
 function DclLogo() {
-  return (
-    <div className="stcreatorhubdownload__logo" aria-label="Decentraland">
-      <img src={asset("assets/dcl-logo.webp")} alt="" width="40" height="40" />
-      <span className="stcreatorhubdownload__wordmark">decentraland</span>
-    </div>
-  );
+  return <img className={styles.logo} src={logo} alt="Decentraland" width="20" height="20" />;
 }
 
+/** The reference's 752x500 PNG (sites: src/images/download/creator-hub), the same bytes. */
 function BannerArt() {
-  return (
-    <ThumbnailImage
-      className="stcreatorhubdownload__banner"
-      src={asset("assets/creator-hub-banner-640.webp")}
-      srcSet={[320, 640, 752].map(width => `${asset(`assets/creator-hub-banner-${width}.webp`)} ${width}w`).join(", ")}
-      sizes="(max-width: 530px) calc(100vw - 130px), (max-width: 900px) 400px, (max-width: 1244px) calc(50vw - 137px), 480px"
-      fallbackSrc={asset("assets/creator-hub-banner.png")}
-      width={752} height={500} decoding="async"
-      alt="Decentraland Creator Hub"
-    />
-  );
+  return <img className={styles.banner} src={asset("assets/creator-hub-banner.png")} width={752} height={500} alt="Decentraland Creator Hub" />;
 }
 
 const DownloadGlyph = ({ src, alt }: { src: string; alt: string }) => (
-  <img className="stcreatorhubdownload__btnicon" src={src} alt={alt} width="20" height="20" />
+  <img className={styles.btnIcon} src={src} alt={alt} width="20" height="20" />
 );
 
 type StCreatorHubDownloadProps = {
-  primaryOption?: DownloadOption;
+  /** The installer for the visitor's system; none on phones, tablets and Linux, which then see no download actions. */
+  primaryOption?: DownloadOption | null;
   secondaryOptions?: DownloadOption[];
+  onDownload?: (option: DownloadOption, event: MouseEvent<HTMLAnchorElement>) => void;
 };
 
 export default function StCreatorHubDownload({
   primaryOption = PRIMARY,
   secondaryOptions = SECONDARY,
+  onDownload = undefined,
 }: StCreatorHubDownloadProps) {
   return (
-    <SitesChrome active="create" overlayNav>
-      <main className="stcreatorhubdownload">
-        <div className="stcreatorhubdownload__card">
-          <div className="stcreatorhubdownload__info">
+    <SitesChrome active="none" overlayNav>
+      <main className={styles.root}>
+        <div className={styles.card}>
+          <div className={styles.info}>
             <DclLogo />
-            <h1 className="stcreatorhubdownload__title">{L.title}</h1>
+            <h1 className={styles.title}>{L.title}</h1>
 
             {primaryOption?.link && (
-              <div className="stcreatorhubdownload__actions">
+              <div className={styles.actions}>
                 <a
-                  className="stcreatorhubdownload__cta"
+                  className={styles.cta}
                   href={primaryOption.link}
                   data-os={primaryOption.text}
+                  onClick={onDownload && ((e) => onDownload(primaryOption, e))}
                 >
-                  <span className="stcreatorhubdownload__cta-label">
+                  <span className={styles.ctaLabel}>
                     {L.downloadFor(primaryOption.text)}
                   </span>
                   <DownloadGlyph src={primaryOption.image} alt="" />
                 </a>
 
                 {secondaryOptions.length > 0 && (
-                  <div className="stcreatorhubdownload__also">
-                    <span className="stcreatorhubdownload__also-text">{L.alsoAvailable}</span>
+                  <div className={styles.also}>
+                    <span className={styles.alsoText}>{L.alsoAvailable}</span>
                     {secondaryOptions.map((option) => (
                       <a
                         key={option.text}
-                        className="stcreatorhubdownload__alticon"
+                        className={styles.altIcon}
                         href={option.link}
                         data-os={option.text}
                         aria-label={L.downloadFor(option.text)}
+                        onClick={onDownload && ((e) => onDownload(option, e))}
                       >
                         <img src={option.image} alt="" width="20" height="20" />
                       </a>

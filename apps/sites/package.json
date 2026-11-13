@@ -32,6 +32,7 @@
     "gen:seed-catalog": "node scripts/gen-seed-catalog.mjs",
     "gen:seed-catalog:check": "node scripts/gen-seed-catalog.mjs --check",
     "gen:docs-content": "node scripts/gen-docs-content.mts",
+    "gen:docs-content:capture": "node scripts/gen-docs-content.mts --capture",
     "gen:docs-content:check": "node scripts/gen-docs-content.mts --check"
   },
   "dependencies": {
@@ -48,6 +49,7 @@
     "@xstate/react": "6.1.0",
     "fflate": "0.8.3",
     "isbot": "5.2.2",
+    "livekit-client": "2.19.1",
     "magic-sdk": "27.0.0",
     "marked": "18.1.1",
     "monaco-editor": "0.57.0",

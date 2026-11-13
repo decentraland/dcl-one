@@ -47,6 +47,12 @@ describe("JumpCard", () => {
     expect(screen.queryByRole("link", { name: /profile/ })).toBeNull();
   });
 
+  it("should tint the disc behind the avatar with the creator's colour", () => {
+    render(<JumpCard {...base} creator={{ name: "Studio", color: "#123456" }} />);
+    const avatar = screen.getByRole("heading", { name: "Plaza" }).parentElement?.querySelector("img");
+    expect(avatar?.style.getPropertyValue("--avatar-bg")).toBe("#123456");
+  });
+
   it("should describe the placeholder image when the title is empty", () => {
     render(<JumpCard {...base} title="" />);
     expect(screen.getByRole("img", { name: "Place image" })).toBeTruthy();
@@ -70,7 +76,7 @@ describe("JumpCard", () => {
 
   it.each([
     [{ kind: "live", count: 4 } as const, "LIVE +4"],
-    [{ kind: "live", count: 0 } as const, "LIVE"],
+    [{ kind: "live", count: 0 } as const, "LIVE +0"],
     [{ kind: "attendees", count: 9 } as const, "+9"],
     [{ kind: "players", count: 2 } as const, "2"],
   ])("should show the %o badge", (badge, text) => {
@@ -90,7 +96,7 @@ describe("JumpEventActions", () => {
         onShare={vi.fn()}
       />,
     );
-    const remind = screen.getByRole("button", { name: "Remind me" });
+    const remind = screen.getByRole("button", { name: /remind me/i });
     expect(remind.getAttribute("aria-pressed")).toBe("true");
     await userEvent.setup().click(remind);
     expect(onToggle).toHaveBeenCalledOnce();
@@ -99,7 +105,7 @@ describe("JumpEventActions", () => {
 
   it("should disable Remind me while it is pending and omit calendar without a link", () => {
     render(<JumpEventActions state="upcoming" remind={{ active: false, pending: true, onToggle: vi.fn() }} onShare={vi.fn()} />);
-    expect((screen.getByRole("button", { name: "Remind me" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: /remind me/i }) as HTMLButtonElement).disabled).toBe(true);
     expect(screen.queryByRole("link", { name: "Add to calendar" })).toBeNull();
   });
 
@@ -120,7 +126,7 @@ describe("JumpEventActions", () => {
 
   it("should point an ended event to the events list", () => {
     render(<JumpEventActions state="ended" eventsHref="/whats-on" />);
-    expect(screen.getByRole("link", { name: "Explore events" }).getAttribute("href")).toBe("/whats-on");
+    expect(screen.getByRole("link", { name: /explore events/i }).getAttribute("href")).toBe("/whats-on");
   });
 
   it("should tell a deleted event is gone", () => {
@@ -135,9 +141,9 @@ describe("JumpInvalid", () => {
 
   it("should offer events only on an event link", () => {
     const { rerender } = render(<JumpInvalid kind="place" {...hrefs} />);
-    expect(screen.queryByRole("link", { name: "Explore events" })).toBeNull();
+    expect(screen.queryByRole("link", { name: /explore events/i })).toBeNull();
     rerender(<JumpInvalid kind="event" {...hrefs} />);
-    expect(screen.getByRole("link", { name: "Explore events" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: /explore events/i })).toBeTruthy();
   });
 
   it("should offer Jump In and the homepage", () => {

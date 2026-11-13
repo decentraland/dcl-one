@@ -1,12 +1,7 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
+import { JumpInCTA } from '../../../components/JumpInCTA/JumpInCTA'
 import { Button } from '../shared/Button/Button'
-import {
-  EditorPause,
-  GeneralAudioOff,
-  GeneralAudioOn,
-  GeneralJumpIn,
-  GeneralPlay
-} from '../../../foundations/icons'
+import { EditorPause, GeneralAudioOff, GeneralAudioOn } from '../../../foundations/icons'
 import avatarFace from '../assets/avatar_face.webp'
 import glow from '../assets/ellipse_gradient.webp'
 import { Carousel, type CarouselLabels } from '../shared/Carousel'
@@ -28,8 +23,8 @@ type CatchTheVibeProps = {
   labels: VibeLabels
   /** The phone and tablet carousel's controls. */
   carouselLabels: CarouselLabels
-  /** The "Hang out now" call under the clips. */
-  hangOut?: { label: string; onClick: () => void }
+  /** The "Hang out now" call under the clips: a link into the world, or a button. */
+  hangOut?: { label: string; href?: string; onClick?: () => void }
 }
 
 // Hover previews only where a pointer can hover and the visitor accepts motion.
@@ -168,6 +163,7 @@ function VibeCard({
   return (
     <Root
       className={styles.card}
+      data-playing={playing}
       onMouseEnter={() => {
         if (!enabled || !hoverPreview() || playing) return
         hoverStarted.current = true
@@ -180,6 +176,15 @@ function VibeCard({
       }}
     >
       <div className={styles.media}>
+        {/* Source's poster, an image of its own above the clip until it plays. */}
+        <img
+          className={`catch-vibe-image ${styles.image}`}
+          src={item.image}
+          alt={item.creator.name}
+          loading="lazy"
+          width={680}
+          height={382}
+        />
         <video
           ref={video}
           className={styles.video}
@@ -194,6 +199,7 @@ function VibeCard({
         <div className={styles.controls}>
           {/* Stopped, the play control is source's duration chip: play mark and the clip length. */}
           <Button
+            className={styles.playChip}
             variant="quaternary"
             size="sm"
             aria-label={`${playing ? labels.pause : labels.play}: ${item.creator.name}`}
@@ -209,13 +215,14 @@ function VibeCard({
               <EditorPause size={16} aria-hidden="true" />
             ) : (
               <>
-                <GeneralPlay size={16} aria-hidden="true" />
+                <span className={styles.playIcon} aria-hidden="true" />
                 <span className={styles.duration}>{duration ?? '0:00'}</span>
               </>
             )}
           </Button>
           {playing ? (
             <Button
+              className={styles.muteChip}
               variant="quaternary"
               size="sm"
               aria-label={muted ? labels.unmute : labels.mute}
@@ -258,7 +265,7 @@ function CatchTheVibe({ title, items, labels, carouselLabels, hangOut }: CatchTh
   const titleId = useId()
   const [layout, setLayout] = useState<'wide' | 'narrow' | null>(null)
   useEffect(() => {
-    const media = window.matchMedia('(min-width: 1024px)')
+    const media = window.matchMedia('(min-width: 991px)')
     const update = () => setLayout(media.matches ? 'wide' : 'narrow')
     update()
     media.addEventListener('change', update)
@@ -275,7 +282,7 @@ function CatchTheVibe({ title, items, labels, carouselLabels, hangOut }: CatchTh
           <VibeCard key={item.id} item={item} labels={labels} enabled={layout === 'wide'} />
         ))}
       </ul>
-      {/* Below breakpoints.desktop the clips are source's carousel instead of a row. */}
+      {/* Below 991px (source's useDesktopMediaQuery) the clips are source's carousel instead of a row. */}
       <Carousel
         className={styles.carousel}
         items={items}
@@ -292,11 +299,15 @@ function CatchTheVibe({ title, items, labels, carouselLabels, hangOut }: CatchTh
           />
         )}
       />
-      {hangOut ? (
-        <Button onClick={hangOut.onClick}>
-          {hangOut.label}
-          <GeneralJumpIn size={32} aria-hidden="true" />
-        </Button>
+      {hangOut?.href ? (
+        <JumpInCTA
+          className={styles.hangOut}
+          href={hangOut.href}
+          label={hangOut.label}
+          onClick={hangOut.onClick}
+        />
+      ) : hangOut ? (
+        <JumpInCTA className={styles.hangOut} label={hangOut.label} onClick={hangOut.onClick} />
       ) : null}
     </section>
   )

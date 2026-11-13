@@ -17,13 +17,14 @@ const renderBoundary = (error: unknown) => {
 };
 
 describe("root error boundary", () => {
-  it("renders the branded 404 screen with its art and navigation", () => {
+  it("renders decentraland.org's not-found page for a 404, with its art, home link and events link", () => {
     const html = renderBoundary(routeError(404, "Not Found", "No route matches /nope"));
     expect(html).toContain('data-status="404"');
-    expect(html).toContain("Nothing built on this parcel");
-    expect(html).toContain("assets/errors/lost.webp");
-    expect(html).toContain("Go to homepage");
-    expect(html).toContain("Go back");
+    expect(html).toContain("This page has left the world.");
+    expect(html).toContain("assets/errors/not-found-avatar.webp");
+    expect(html).toContain('aria-label="Decentraland Home"');
+    expect(html).toMatch(/href="\/whats-on"[^>]*>(<span[^>]*>)*See Events</);
+    expect(html).not.toContain("Nothing built on this parcel");
   });
 
   it("offers a retry on 5xx and uses the crew art", () => {

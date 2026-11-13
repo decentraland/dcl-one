@@ -18,7 +18,7 @@ import {
 const ADDRESS = "0x17A253C2ac0d5BA92cadBBF665e3390C9913dC5D";
 const LOWER = ADDRESS.toLowerCase();
 
-let calls: { url: URL; signal: AbortSignal | null | undefined }[];
+let calls: { url: URL; signal: AbortSignal | null | undefined; method?: string; body?: BodyInit | null }[];
 let respond: (url: URL) => Response;
 
 beforeEach(() => {
@@ -27,7 +27,7 @@ beforeEach(() => {
     "fetch",
     vi.fn(async (input: string, init?: RequestInit) => {
       const url = new URL(input);
-      calls.push({ url, signal: init?.signal });
+      calls.push({ url, signal: init?.signal, method: init?.method, body: init?.body });
       return respond(url);
     }),
   );
@@ -80,15 +80,17 @@ describe("canReadProfile", () => {
 describe("profileQuery", () => {
   it("reads the lowercased address, passes the query's signal and maps the first avatar", async () => {
     respond = () =>
-      json({
+      json([{
         avatars: [{ name: "Alice", hasClaimedName: true, description: "hi", country: "AR" }],
-      });
+      }]);
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
     const profile = await client.fetchQuery(profileQuery(ADDRESS));
 
     expect(calls).toHaveLength(1);
-    expect(calls[0].url.pathname).toBe(`/lambdas/profile/${LOWER}`);
+    expect(calls[0].url.pathname).toBe("/lambdas/profiles");
+    expect(calls[0].method).toBe("POST");
+    expect(JSON.parse(String(calls[0].body))).toEqual({ ids: [LOWER] });
     expect(calls[0].signal).toBeInstanceOf(AbortSignal);
     expect(profile).toMatchObject({
       address: LOWER,
@@ -99,8 +101,8 @@ describe("profileQuery", () => {
     });
   });
 
-  it("returns null when the address has no avatar", async () => {
-    respond = () => json({ avatars: [] });
+  it("returns null when the address has no profile", async () => {
+    respond = () => json([]);
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
     await expect(client.fetchQuery(profileQuery(ADDRESS))).resolves.toBeNull();
@@ -115,7 +117,7 @@ describe("profileQuery", () => {
   });
 
   it("fails on a body that is not a profile envelope", async () => {
-    respond = () => json({ avatars: "nope" });
+    respond = () => json([{ avatars: "nope" }]);
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
     await expect(client.fetchQuery(profileQuery(ADDRESS))).rejects.toThrow();

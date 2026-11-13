@@ -1,8 +1,18 @@
 import { fetchEvents, type Event } from "../places/events";
 import { fetchMostActivePlaces } from "../places/index";
 import type { GetOptions } from "../client";
+import {
+  joinLiveNow,
+  loadProfiles,
+  plazaCard,
+  readLiveNow,
+  withDeployers,
+  type HotScene,
+  type LiveEvent,
+  type LiveNowCard,
+  type Profile,
+} from "../places/live-now.server";
 import { ttlMemo } from "../../ttl-memo";
-import { withDeadline } from "../../request-deadline";
 import {
   eventToRitualItem,
   eventWeekday,
@@ -79,7 +89,6 @@ function loadHomeContent(): HomeContent {
 }
 
 const HOME_TTL_MS = 60_000;
-const HOME_EVENTS_TIMEOUT_MS = 2_000;
 const HOME_EVENTS_FAILURE_TTL_MS = 5_000;
 
 type HomeData = { content: HomeContent; live: boolean; unreadable: string[] };
@@ -88,7 +97,7 @@ const homeMemo = ttlMemo({
   ttlMs: HOME_TTL_MS,
   keyOf: (opts: GetOptions) => (opts.fetchImpl || opts.base ? null : ""),
   keep: (d: HomeData) => d.unreadable.length === 0,
-  load: (opts) => loadHomeLive(opts.fetchImpl || opts.base ? opts : {}),
+  load: (opts) => loadHomeRails(opts.fetchImpl || opts.base ? opts : {}),
 });
 
 // The rails are visitor-independent; a fully readable result serves a minute of requests.
@@ -96,47 +105,90 @@ export function loadHome(opts: GetOptions = {}): Promise<HomeData> {
   return homeMemo(opts);
 }
 
-export function createHomeEventsLoader(
-  readEvents: typeof fetchEvents = fetchEvents,
-) {
-  const memo = ttlMemo({
-    ttlMs: HOME_TTL_MS,
-    ttlMsForValue: (data: HomeData) =>
-      data.unreadable.length === 0 ? HOME_TTL_MS : HOME_EVENTS_FAILURE_TTL_MS,
-    keyOf: (opts: GetOptions) => (opts.fetchImpl || opts.base ? null : ""),
-    load: async (opts: GetOptions): Promise<HomeData> => {
-      const events = await withDeadline(
-        (signal) =>
-          readEvents(
-            { list: "live", limit: LIVE_RAIL_LIMIT },
-            { ...opts, signal },
-          ),
-        HOME_EVENTS_TIMEOUT_MS,
-        opts.signal,
-      )
-        .then((result) => result.data)
-        .catch(() => null);
-      const content = loadHomeContent();
-      const live =
-        events?.filter((event) => event.live).slice(0, LIVE_RAIL_LIMIT) ?? [];
-      return {
-        content: withLiveEvents(content, live),
-        live: live.length > 0,
-        unreadable: events === null ? ["events"] : [],
-      };
-    },
-  });
-  return (opts: GetOptions = {}) => memo(opts);
+// The reference home page's "Jump Into What's Happening" (sites@17b3535a: features/events/
+// events.discovery.ts, events.discovery.helpers.ts, features/profile/profile.client.ts): the live
+// events, the realm's hot scenes, their places and the creators' profiles, read as /whats-on's Live
+// Now reads them.
+
+const LIVE_CARDS = 3;
+
+/** The Catch the Vibe creators, after the cards' creators in the one profile request. */
+export const VIBE_ADDRESSES = [
+  "0xd82d005e8f8d5385db40ba23884a5c967bb1e8af",
+  "0x54e93609eb454a1f152edefdf022480794ce2130",
+];
+
+export type HomeLiveData = HomeData & {
+  cards: LiveNowCard[];
+  profiles: Record<string, Profile>;
+};
+
+/** Hot scenes with at least five people, those with a live event first, then Genesis Plaza when fewer than three. */
+export function buildHomeLiveCards(
+  liveEvents: LiveEvent[],
+  hotScenes: HotScene[],
+): LiveNowCard[] {
+  const cards = joinLiveNow(liveEvents, hotScenes);
+  if (cards.length < LIVE_CARDS) {
+    const plaza = plazaCard(hotScenes);
+    if (!cards.some((card) => card.id === plaza.id)) cards.push(plaza);
+  }
+  return cards.slice(0, LIVE_CARDS);
 }
 
-const homeEventsMemo = createHomeEventsLoader();
-
-/** Home's live-event rail does not fetch the unused legacy hotspot and ritual feeds. */
-export function loadHomeEvents(opts: GetOptions = {}): Promise<HomeData> {
-  return homeEventsMemo(opts);
+/** The cards as the agent markdown's event rail (heroEventCards). */
+function withLiveCards(content: HomeContent, cards: LiveNowCard[]): HomeContent {
+  const items = cards.map((card) => ({
+    id: card.id,
+    category: "LIVE",
+    title: card.title,
+    when: "Live now",
+    live: true,
+    image: card.image || null,
+  }));
+  return {
+    ...content,
+    rails: content.rails.map((rail) =>
+      rail.kind === "events" ? { ...rail, items } : rail,
+    ),
+  };
 }
 
-async function loadHomeLive(opts: GetOptions): Promise<HomeData> {
+async function loadHomeLiveNow(opts: GetOptions): Promise<HomeLiveData> {
+  const { events, scenes } = await readLiveNow(opts, { world: false });
+  const unreadable = events === null && scenes === null ? ["events"] : [];
+  const built = buildHomeLiveCards(events ?? [], scenes ?? []);
+  const cards = (await withDeployers(built, opts).catch(() => null)) ?? built;
+  const creators = cards.flatMap((card) =>
+    card.creatorAddress ? [card.creatorAddress] : [],
+  );
+  const profiles =
+    (await loadProfiles([...creators, ...VIBE_ADDRESSES], opts).catch(
+      () => null,
+    )) ?? {};
+  return {
+    content: withLiveCards(loadHomeContent(), cards),
+    live: cards.length > 0,
+    unreadable,
+    cards,
+    profiles,
+  };
+}
+
+const homeLiveMemo = ttlMemo({
+  ttlMs: HOME_TTL_MS,
+  ttlMsForValue: (data: HomeLiveData) =>
+    data.unreadable.length === 0 ? HOME_TTL_MS : HOME_EVENTS_FAILURE_TTL_MS,
+  keyOf: (opts: GetOptions) => (opts.fetchImpl || opts.base ? null : ""),
+  load: (opts: GetOptions) => loadHomeLiveNow(opts),
+});
+
+/** Visitor-independent: one read serves a minute of requests, five seconds after an unreadable one. */
+export function loadHomeLive(opts: GetOptions = {}): Promise<HomeLiveData> {
+  return homeLiveMemo(opts);
+}
+
+async function loadHomeRails(opts: GetOptions): Promise<HomeData> {
   let content = loadHomeContent();
 
   const [events, hotspots, rituals] = await Promise.all([

@@ -1,5 +1,5 @@
-/* TODO(figma-ds): replace with the Figma-generated avatar's styles. Sizes follow the source: the
- * border is 4.17% of the size and the inner padding 5%. */
+/* TODO(figma-ds): replace with the avatar's styles (ProfileAvatar.styled.ts), until the Figma-generated Avatar's. */
+/* The profile site's ProfileAvatar (ProfileAvatar.styled.ts): a 3px translucent ring and a 5% inner padding. */
 .root {
   --avatar-size: 76px;
 
@@ -11,7 +11,7 @@
   width: var(--avatar-size);
   height: var(--avatar-size);
   padding: calc(var(--avatar-size) * 0.05);
-  border: calc(var(--avatar-size) * 0.0417) solid var(--dcl-transparencies-white-40);
+  border: 3px solid rgb(255 255 255 / 50%);
   border-radius: var(--dcl-radius-full);
   background: var(--avatar-color);
 }
@@ -27,7 +27,7 @@
 .initial {
   color: var(--dcl-neutrals-white);
   font-family: 'Inter', sans-serif;
-  font-size: calc(var(--avatar-size) * 0.45);
+  font-size: 34px;
   font-weight: 600;
   line-height: 1;
 }

@@ -16,7 +16,7 @@ export default function ChFlowMapPage({ LinkComponent = undefined }: ChFlowMapPa
       stats={STATS}
       ascii={ASCII_SOURCE}
       copy={{
-        backHref: "/create",
+        backHref: "/create/home",
         backLabel: "\u{2190} Creator Hub",
         crumb: "sites / creator-hub / map",
         lede: (

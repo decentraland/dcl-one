@@ -25,13 +25,19 @@ type DownloadAlternative = {
 type DownloadActionsProps = {
   /** Opt into the measured landing CTA geometry without changing other download contexts. */
   appearance?: DownloadAppearance
-  /** The installer for the visitor's OS; absent when none can run there. */
-  primary?: { label: ReactNode; os: DesktopOs; osName: string; href: string; onClick?: Click }
+  /** The installer for the visitor's OS; absent when none can run there. Without `os` (a desktop
+      the installers do not cover) the label keeps source's blank icon slot. */
+  primary?: { label: ReactNode; os?: DesktopOs; osName?: string; href: string; onClick?: Click }
   epic?: { label: ReactNode; iconLabel: string; href: string; onClick?: Click }
   /** The download counter line, e.g. "Total Downloads: +400K". */
   downloads?: ReactNode
   /** Other platforms as icon-only controls, each named by `label`. */
   alternatives?: readonly DownloadAlternative[]
+  /** Source's hero keeps each platform in a group of its own (an empty one when the visitor's OS
+      has no other installer); `alternatives` is one group. */
+  alternativeGroups?: readonly (readonly DownloadAlternative[])[]
+  /** The counter takes its own width; source's hero reserves 210px for it. */
+  fit?: boolean
   /** `center` for centered layouts such as the home hero; rows start-align by default. */
   align?: 'start' | 'center'
 }
@@ -62,11 +68,15 @@ function DownloadActions({
   epic,
   downloads,
   alternatives = [],
+  alternativeGroups,
+  fit = false,
   align = 'start',
   appearance = 'default'
 }: DownloadActionsProps) {
   const centered = align === 'center'
   const source = appearance === 'source'
+  const groups = alternativeGroups ?? (alternatives.length ? [alternatives] : [])
+  const hasAlternatives = groups.some((group) => group.length > 0)
   const actionClass = source ? styles.sourceAction : undefined
   const alternativeClass = source ? styles.sourceAlternative : undefined
   const row = (base?: string) => [base, centered && styles.centeredRow].filter(Boolean).join(' ')
@@ -81,7 +91,12 @@ function DownloadActions({
           {primary ? (
             <Button className={actionClass} href={primary.href} onClick={primary.onClick}>
               {/* The space keeps the accessible name "Download for Windows", not "forWindows". */}
-              {primary.label} <OsIcon os={primary.os} label={primary.osName} />
+              {primary.label}{' '}
+              {primary.os ? (
+                <OsIcon os={primary.os} label={primary.osName} />
+              ) : (
+                <span className={styles.osSlot} aria-hidden="true" />
+              )}
             </Button>
           ) : null}
           {epic ? (
@@ -103,21 +118,29 @@ function DownloadActions({
         </div>
       ) : null}
 
-      {downloads || alternatives.length ? (
-        <div className={row(styles.alternatives)}>
+      {downloads || hasAlternatives ? (
+        <div
+          className={[row(styles.alternatives), source && fit && styles.sourceFit]
+            .filter(Boolean)
+            .join(' ')}
+        >
           {downloads ? (
             <p
               className={[styles.downloads, source && styles.sourceDownloads]
                 .filter(Boolean)
                 .join(' ')}
             >
-              <VerifiedIcon />
+              <VerifiedIcon size={source ? 24 : 18} />
               {downloads}
             </p>
           ) : null}
-          {alternatives.length ? (
-            <ul className={styles.altList}>
-              {alternatives.map((alt) => (
+          {/* Source's hairline between the counter and the platform icons. */}
+          {source && downloads && groups.length ? (
+            <span className={styles.separator} aria-hidden="true" />
+          ) : null}
+          {groups.map((group, index) => (
+            <ul key={index} className={styles.altList}>
+              {group.map((alt) => (
                 <li key={alt.icon}>
                   {alt.href !== undefined ? (
                     <Button
@@ -143,7 +166,7 @@ function DownloadActions({
                 </li>
               ))}
             </ul>
-          ) : null}
+          ))}
         </div>
       ) : null}
     </div>
