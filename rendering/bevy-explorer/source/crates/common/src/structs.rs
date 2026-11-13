@@ -603,6 +603,10 @@ pub struct AppConfig {
     pub camera_smoothing: CameraSmoothing,
     /// The language the player chose (BCP-47); `None` follows the system language.
     pub language: Option<String>,
+    /// Base url of an abgen Bevy variants service (prototype), when `--bevy-variants-url` /
+    /// `?bevyVariants=` is absent; `None` = the asset-bundle generator's CDN for the base
+    /// domain, `off` = off.
+    pub bevy_variants_url: Option<String>,
     // field-level default (0) so configs saved before this field existed read as outdated,
     // rather than taking the current generation from the container-level default
     #[serde(default)]
@@ -661,6 +665,7 @@ impl Default for AppConfig {
             dm_privacy: None,
             camera_smoothing: Default::default(),
             language: None,
+            bevy_variants_url: None,
             settings_generation: SETTINGS_GENERATION,
             inputs_generation: INPUTS_GENERATION,
             is_fresh_user_id: true,

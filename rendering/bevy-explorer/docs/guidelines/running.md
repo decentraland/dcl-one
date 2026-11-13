@@ -220,6 +220,14 @@ State, in every build:
   emote markers and direct messages are left out; `/dm_history` has those.
 - `/voice_state`: the mic (`available`, `enabled`) and, in LiveKit builds, each voice room's state
   and the addresses speaking.
+- `/bevy_variants`: the abgen Bevy variants client as JSON: `base` (the variants origin, `null`
+  when off), `state` (on, off and why, or waiting for the GPU's texture formats), `formats` (the
+  variant formats this build takes and those it does not), `manifestCounts` (manifests loaded,
+  none, failed, not eligible and pending), `manifests` (each entity's manifest state: scene,
+  wearable or emote), `served` (variants downloaded and read from the cache), `servedByFormat`
+  (the same per format: `ktx2-bc`, and `glb-br` on web), `fallbacks` (files that loaded their
+  original instead) and `recentFallbacks` (the last 20, with the file, its entity and the
+  reason).
 - `/ban_block_state [address]`: the ban and block status as JSON: the local user's address, the
   social blocks (`state` live or unavailable with its `reason`, `blocked`, `blockedBy`), the
   platform ban (`state` unknown, checked or failed, `isBanned`, `source`, `reason`,

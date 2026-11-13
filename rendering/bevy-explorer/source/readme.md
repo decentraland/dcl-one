@@ -144,6 +144,30 @@ cargo build --release --bin headless --no-default-features --features headless,l
 
 The launch parameters shared with the web build — realm, spawn parcel, ui scene, portables, preview, editor, content server, pulse server, imposter source, base domain, fps logging, gpu bytes per frame — are declared once, in `crates/system_api_types/src/launch_options.rs`: each field is the native `--flag`, the `engine_run` options key and the entry-url query param, and the react page's parameter table is generated from it. Which of those a link may set without a warning is the page's own policy (`react-web/src/lib/launchGate.ts`). Native-only flags (rendering, imposters, debug, the `--builtin-*` ui pieces) live on `DecentralandArguments` in `src/lib.rs`.
 
+### Bevy variants (prototype)
+
+abgen can publish, per scene, wearable and emote entity, GPU-ready variants of its textures: KTX2 files holding BC7, BC1 or BC5 blocks, level 0 alone or with its mip chain, each level zstd-supercompressed. The explorer reads them from `--bevy-variants-url <url>` natively, `?bevyVariants=<url>` on web, or the `bevy_variants_url` field of the config file, and otherwise from abgen's CDN for the base domain (`https://abgen-cdn.decentraland.org`, or the `abgen_cdn` service's override). `off` in any of them turns variants off.
+
+With a base url:
+
+- For each scene, wearable and emote entity it loads, the explorer fetches `{base}/bevy/manifest/{entityId}.json` once per session; a scene's is requested with its entity file. Manifests and variants are fetched in one attempt with short timeouts, since the original is the retry. A 404 means no variants for that entity. The entity's files wait for the manifest for at most two seconds from the request; after that they load their originals, and a manifest that arrives later serves only the files read after it. The manifest (schema `v: 3`) maps each original content CID to the paths of its variants, `bevy/{prefix}/{name}`; a prefix's first letter is the variant's class (`t` a BC KTX2 texture, `m` a `glb-br` model, `g` a GLB). It names no hash for a variant: abgen keeps a path's bytes fixed for the life of its generation, so the explorer trusts a variant by its path from the configured service and rejects only what fails to decode.
+- Nothing in preview mode asks for a manifest, including wearables and emotes, nor do `b64-` entity ids or entities served from a loopback or `file://` content server.
+- When a content file `.png`, `.jpg`, `.jpeg`, `.webp` or `.ktx2`, or one without an extension, has a texture variant and the GPU supports BC textures, the file is read from `{base}/{path}` instead. The bytes are cached under a digest of that url, never under the original's hash.
+- The reader hands the KTX2 to the image loaders as it is, after checking that its header names a BC format (BC1, BC5 or BC7). The loaders for `.png`, `.jpg`, `.jpeg`, `.webp`, `.ktx2` and paths without an extension unwrap it into a DDS with a DX10 header, inside the asset load: each level is zstd-decoded, and its size must be exactly the block bytes its dimensions need. Dimensions above 8192, a level 0 that is not whole 4×4 blocks, more levels than the mip chain, sRGB or other formats, and any other supercompression are rejected. The asset keeps its original path, and the texture is sRGB or linear as it is requested.
+- On web, a `.glb` file with a `glb-br` variant is read from `{base}/{path}.br`, the Brotli copy of the original file, which the browser decodes. The bytes must hash to the original file's own content id (they are the original byte for byte), then go to the glTF loader of the original path; anything else falls back to the original. The native explorer loads original models for now.
+- `glb` variants are not used. They embed their textures as KTX2 under `KHR_texture_basisu`, and the glTF loader rejects a file that requires that extension.
+- Any failure falls back to the original for that file: no variant of a supported class, a failed fetch, a KTX2 that does not unwrap, or an image that fails to load from the variant. A failed variant is not tried again that session, and its cached copy is dropped. Five consecutive failed requests to the service turn variants off for the session.
+- Image processing skips assets loaded from a variant, so their bytes are never re-encoded or written over the original's cache entry.
+- The runtime debug panel's "Optimized variants" section, and the `/bevy_variants` console command, show the base url, the formats taken, each scene's manifest state, how many variants were served in all and per format, and recent fallbacks with their reasons.
+
+On web, a link that sets `?bevyVariants=` to a host outside Decentraland's own deployments stops on the launch gate, as `?contentServer=` does. The variants service decides what those scenes look like. On web the service must also send CORS headers for the explorer's origin.
+
+To try it against a local abgen:
+
+```bash
+just native-release --realm https://realm-provider-ea.decentraland.org/main --position 0,0 --bevy-variants-url http://localhost:5147
+```
+
 ## Testing
 
 ```bash

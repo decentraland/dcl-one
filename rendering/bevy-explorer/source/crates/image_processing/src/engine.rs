@@ -100,6 +100,7 @@ struct ImgReprocessStats {
     skip_unknown: usize,
     skip_unhashable: usize,
     skip_shouldnt_cache: usize,
+    skip_variant: usize,
     already_compressed: usize,
     started: usize,
     processed: usize,
@@ -158,6 +159,12 @@ fn check_assets(
                 stats.skip_unloaded += 1;
                 continue;
             };
+            // an abgen variant is not the original's bytes: compressing it, or writing the
+            // result over the original's cache entry, would mix the two
+            if ipfas.ipfs().served_bevy_variant(asset_path.path()) {
+                stats.skip_variant += 1;
+                continue;
+            }
             // a `.ktx2` loads compressed already; when the loader transcoded it, the dds is
             // waiting in `KTX2_RESULTS` to be written over the cached ktx2 bytes. a cached
             // or bc7 ktx2 has nothing waiting and is left as it is
@@ -254,6 +261,11 @@ fn check_assets(
             continue;
         }
         let asset_path = ev.path.clone();
+        // a failed variant falls back to its original (`ipfs::bevy_variants`), which comes
+        // through here on its own if it fails too
+        if ipfas.ipfs().served_bevy_variant(asset_path.path()) {
+            continue;
+        }
         let Ok(Some(ipfs_path)) = IpfsPath::new_from_path(asset_path.path()) else {
             stats.skip_unknown += 1;
             continue;
