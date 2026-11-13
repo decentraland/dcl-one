@@ -8,6 +8,9 @@ pub mod audio_sink;
 #[cfg(any(feature = "ffmpeg", feature = "html"))]
 pub mod video_stream;
 
+// audio analysis (scene-facing amplitude and bands of a clip or stream)
+pub mod audio_analysis;
+
 // audio source (non-streaming audio)
 #[cfg(feature = "html")]
 pub mod audio_host_wasm;

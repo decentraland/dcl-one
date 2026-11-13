@@ -21,6 +21,7 @@
 - [Shared UI library](adr/2026-10-30-shared-ui-library.md)
 - [Explorer HUD UI in `library/ui/apps/hud`](adr/2026-11-10-shared-explorer-hud-ui.md)
 - [Explorer vendored Bevy](adr/2026-11-05-explorer-vendored-bevy.md)
+- [Explorer audio analysis in the engine](adr/2026-11-05-explorer-audio-analysis.md)
 - [Dormant schema release definitions (proposed)](adr/2026-11-04-dormant-schema-release-definitions.md)
 - [Referral trusted proxy ingress (proposed)](adr/2026-11-04-referral-trusted-proxy-ingress.md)
 - [Referral Slack effect budget (proposed)](adr/2026-11-04-referral-slack-effect-budget.md)

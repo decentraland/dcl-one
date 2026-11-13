@@ -204,6 +204,7 @@ test is in the spec file's header. Port 43, Partial 33, Gap 11, Drop 2.
 | SelfPreview (2) | `self-preview` | | | 2 | | No `--self-preview-wearables` launch option |
 | ViewSignalSmoke (2) | `view-signal` | | | | 2 | A Unity harness self-test |
 | Visual (17) | `visual/visual` | 17 | | | | The scenes at their own parcels; references recorded anew |
+| AudioAnalysis (unity-explorer's playground and buffer tests) | `visual/audio` | 2 | 1 | 1 | | One scenario on the `audio` scene, standalone only: a clip in log and raw mode, a stream and a video's audio report amplitude and bands, the window moves, a paused clip holds its values; the single-slot buffer is an engine unit test |
 
 Beyond explorer-automation, `specs/community-chat.test.ts` covers community text chat: a
 member's community card opens its chat (`Open chat`), the rail shows a
@@ -242,6 +243,14 @@ the scenes hide avatars, not the nametag over the hidden guest, whose name chang
 teleports to each scene, waits for its entities and its settle time, and compares the engine's frame (`/screenshot`, the canvas without the HUD) with `references/<id>.png`: a pixel
 differs when any RGB channel differs by more than 8, and the scene passes when at most 0.3% of the
 pixels differ (1.5% for `avatar-shape`), as explorer-automation compared.
+
+`specs/visual/audio.test.ts` plays the `audio` scene ([scenes/README.md](scenes/README.md)) on
+the same realm (`specs/visual/realm.ts` serves every workspace scene once per process), on the
+standalone only (the web build writes no analysis): four sources with an `AudioAnalysis`, a
+looping clip in log and raw mode, a stream and a video, and it asserts the amplitude and bands
+the engine writes back, that they move while the audio plays and hold once the scene pauses its
+clip. This workflow drives the web build, where it skips; the scenes workflow
+(`.github/workflows/bevy-explorer-scenes.yml`) runs it on the standalone it builds.
 
 Build the scenes first with `apps/dcl-scene-cli`:
 
@@ -353,6 +362,7 @@ change on the left updates what is on the right in the same change, then runs th
 | `--automation-token`, `--automation-port`, their environment fallbacks, the `dcl/console` methods, or the `__dclTrustedInput` contract | `driver/native.ts`, `driver/web.ts`, `local-harness/web-driver` and its README; the readme section | `npm test`; the web driver's tests |
 | The smart-wearable fixture (`scenes/smart-wearable`: its title, name, log line or label), `/preview-wearables` or `buildScene` in `driver/realm.ts`, the `/smart_wearable*`, `/portables` or `/stop_portable` commands, or the HUD's `Portable experiences` button, popover or its `Stop`/`Restart` rows | `specs/smart-wearables.test.ts`, `test/realm.test.ts`, `scenes/README.md` | `npm test`; the scenario in CI |
 | A scene under `scenes/`, its parcels or spawn, `specs/visual/scenes.ts`, the 960x540 window or the tolerance | The references, re-recorded in CI (`record`) and committed in a PR; `scenes/README.md` | the visual scenarios in CI |
+| The `audio` scene, its fixtures (`scenes/audio/generate-fixture.sh`), the engine's `AudioAnalysis` maths or windowing (`crates/av/src/audio_analysis`, `crates/media/src/capture.rs`) or the FFmpeg decoder's capture (`crates/media/src/ffmpeg/audio_context.rs`) | `specs/visual/audio.test.ts` (the modes, the moving window, the pause hold); `scenes/README.md`; the scenes workflow's audio steps | `npm run typecheck`; the audio scenario on the standalone (the scenes workflow); it skips on the web |
 | A path moved under `apps/bevy-explorer/e2e`, `tooling/bevy-e2e-*.py` or the workflow | The workflow's `paths` filters, `tooling/bevy-ci.py` and `tooling/tests/test_bevy_ci.py`, the LFS patterns in `.gitattributes`, the links in this README | the tooling tests |
 | The CI workflow's name, its job names, the `bevy-explorer-web-<sha>` artifact or the status comment's sections | `tooling/bevy-e2e-inputs.py`, `tooling/bevy-e2e-report.py` and their tests; the e2e workflow's `workflow_run` | the tooling tests |
 | A scenario the HUD can no longer run, or a Gap whose feature landed | A `todo` with the reason, or the todo back into a scenario; its header row and the scenario map | the scenarios in CI |

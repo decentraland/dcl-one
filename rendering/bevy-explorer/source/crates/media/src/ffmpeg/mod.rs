@@ -3,7 +3,7 @@ mod stream_processor;
 mod util;
 mod video_context;
 
-use std::path::Path;
+use std::{path::Path, sync::Arc};
 
 use bevy::log::debug;
 use common::structs::AudioDecoderError;
@@ -14,7 +14,7 @@ use kira::sound::streaming::StreamingSoundData;
 use tokio::sync::mpsc::WeakUnboundedSender;
 
 use crate::{
-    AVCommand, VideoData,
+    AVCommand, AudioCapture, VideoData,
     ffmpeg::{
         audio_context::{AudioContext, AudioError},
         stream_processor::{AudioOutput, process_streams},
@@ -60,6 +60,7 @@ pub fn ffmpeg_worker(
     audio: tokio::sync::mpsc::Sender<StreamingSoundData<AudioDecoderError>>,
     state_sender: tokio::sync::watch::Sender<VideoState>,
     audio_handle: tokio::sync::oneshot::Receiver<AudioHandle>,
+    capture: Arc<AudioCapture>,
     mut path: String,
     hash: String,
 ) -> Result<(), anyhow::Error> {
@@ -145,11 +146,12 @@ pub fn ffmpeg_worker(
     };
 
     // try and get an audio context
-    let audio_context: Option<AudioContext> = match AudioContext::init(&input_context, audio) {
-        Ok(ac) => Some(ac),
-        Err(AudioError::NoStream) => None,
-        Err(AudioError::Failed(ffmpeg_err)) => Err(ffmpeg_err)?,
-    };
+    let audio_context: Option<AudioContext> =
+        match AudioContext::init(&input_context, audio, capture) {
+            Ok(ac) => Some(ac),
+            Err(AudioError::NoStream) => None,
+            Err(AudioError::Failed(ffmpeg_err)) => Err(ffmpeg_err)?,
+        };
 
     if video_context.is_none() && audio_context.is_none() {
         debug!("No data for video from path {path}.");

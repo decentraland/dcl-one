@@ -58,6 +58,7 @@ pub fn av_sinks<T: AVPlayer>(
     let audio = {
         let (audio_sender, audio_receiver) = tokio::sync::mpsc::channel(10);
         let (handle_sender, handle_receiver) = tokio::sync::oneshot::channel();
+        let capture = std::sync::Arc::new(media::AudioCapture::default());
         spawn_av_thread(
             ipfs,
             SendersAndReceivers {
@@ -67,11 +68,12 @@ pub fn av_sinks<T: AVPlayer>(
                 audio: audio_sender,
                 state_sender,
                 audio_handle: handle_receiver,
+                capture: capture.clone(),
             },
             source.clone(),
             hash,
         );
-        Some(AudioSink::new(audio_receiver, handle_sender))
+        Some(AudioSink::new(audio_receiver, handle_sender, capture))
     };
     #[cfg(feature = "html")]
     {
@@ -122,6 +124,7 @@ pub struct SendersAndReceivers {
     audio: tokio::sync::mpsc::Sender<StreamingSoundData<AudioDecoderError>>,
     state_sender: tokio::sync::watch::Sender<VideoState>,
     audio_handle: tokio::sync::oneshot::Receiver<AudioHandle>,
+    capture: std::sync::Arc<media::AudioCapture>,
 }
 
 #[cfg(feature = "ffmpeg")]
@@ -187,6 +190,7 @@ fn av_thread(
         audio,
         state_sender,
         audio_handle,
+        capture,
     } = senders_and_receivers;
     if let Err(e) = ffmpeg_worker(
         &ipfs,
@@ -196,6 +200,7 @@ fn av_thread(
         audio,
         state_sender.clone(),
         audio_handle,
+        capture,
         path,
         hash,
     ) {
@@ -219,7 +224,11 @@ pub fn noop_sinks<T: AVPlayer>(source: String, image: Option<Handle<Image>>) -> 
         let (handle_sender, _handle_receiver) = tokio::sync::oneshot::channel();
         drop(command_receiver);
         drop(video_sender);
-        Some(AudioSink::new(audio_receiver, handle_sender))
+        Some(AudioSink::new(
+            audio_receiver,
+            handle_sender,
+            Default::default(),
+        ))
     };
     #[cfg(feature = "html")]
     media::spawn_av(

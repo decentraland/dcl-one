@@ -111,6 +111,7 @@ jobs:
       - name: install xvfb, llvmpipe and lavapipe
         run: sudo apt install -y xvfb libegl1-mesa libgl1-mesa-dri libxcb-xfixes0-dev mesa-vulkan-drivers
       - name: Build the graphical test engine and scene runtime sidecar
+        id: engine
         # Cargo unifies the engine and sidecar features here, including dcl_deno/inspect.
         # Desktop and Headless packaging build their sidecars in separate invocations.
         run: cargo build --release --locked --timings -p decentra-bevy -p dcl_deno_ipc --bin decentra-bevy --bin dcl_deno_ipc
@@ -143,6 +144,52 @@ jobs:
           SCENE_PARCELS="$(python3 ../../../tooling/bevy-ci.py scene-suite --suite "$SCENE_SUITE")"
           xvfb-run -s "-screen 0 320x240x24" target/release/decentra-bevy --realm https://decentraland.github.io/scene-explorer-tests/scene-explorer-tests --test_scenes "$SCENE_PARCELS" --no_fog --distance 1 --scene_log_to_console 2>&1 | tee scene-tests.log
           grep -Eq 'all tests passed!|all failures were allowed' scene-tests.log
+      # Scene audio analysis through the engine: the end-to-end suite's `audio` scene, played by the
+      # standalone just built and driven through its console under xvfb
+      # (apps/bevy-explorer/e2e/specs/visual/audio.test.ts). The E2E workflow drives the web build,
+      # where the scenario skips.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: ${{ !cancelled() && steps.engine.outcome == 'success' && inputs.suite != 'snapshots' }}
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: apps/bevy-explorer/e2e/package-lock.json
+      - name: Fetch the end-to-end scenes' assets
+        if: ${{ !cancelled() && steps.engine.outcome == 'success' && inputs.suite != 'snapshots' }}
+        run: git lfs pull --include 'apps/bevy-explorer/e2e/scenes/**'
+      - name: Install the end-to-end suite
+        if: ${{ !cancelled() && steps.engine.outcome == 'success' && inputs.suite != 'snapshots' }}
+        working-directory: apps/bevy-explorer/e2e
+        run: npm ci
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        if: ${{ !cancelled() && steps.engine.outcome == 'success' && inputs.suite != 'snapshots' }}
+        with:
+          workspaces: apps/dcl-scene-cli
+          key: e2e-scene-cli
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Build dcl-scene-cli
+        if: ${{ !cancelled() && steps.engine.outcome == 'success' && inputs.suite != 'snapshots' }}
+        working-directory: apps/dcl-scene-cli
+        # The crate is a member of the catalyst workspace (services/catalyst), whose target folder
+        # would otherwise take the binary; its own keeps the path below and the cache local.
+        run: cargo build --release --locked --target-dir target
+      - name: Build the end-to-end scenes
+        if: ${{ !cancelled() && steps.engine.outcome == 'success' && inputs.suite != 'snapshots' }}
+        working-directory: apps/bevy-explorer/e2e
+        env:
+          DCL_SCENE_CLI: ${{ github.workspace }}/apps/dcl-scene-cli/target/release/dcl-scene-cli
+        # the visual specs' realm (specs/visual/realm.ts) serves every workspace scene
+        run: npm run build-scenes
+      - name: Audio analysis through the engine
+        id: audio
+        if: ${{ !cancelled() && steps.engine.outcome == 'success' && inputs.suite != 'snapshots' }}
+        continue-on-error: true
+        timeout-minutes: 20
+        working-directory: apps/bevy-explorer/e2e
+        env:
+          DCL_E2E_TRANSPORT: native
+          DCL_E2E_NATIVE_BIN: ${{ github.workspace }}/rendering/bevy-explorer/source/target/release/decentra-bevy
+        run: xvfb-run -s "-screen 0 960x540x24" npm run e2e -- --visual --filter 'audio analysis'
       - name: Record graphical scene result
         if: always() && steps.scenes.outcome != '' && steps.scenes.outcome != 'skipped'
         env:
@@ -150,6 +197,12 @@ jobs:
           SCENE_SUITE: ${{ inputs.suite || 'full' }}
         run: |
           python3 ../../../tooling/bevy-ci.py scene-summary --suite "$SCENE_SUITE" --outcome "$SCENE_OUTCOME" --log scene-tests.log | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Record the audio analysis result
+        if: always() && steps.audio.outcome != '' && steps.audio.outcome != 'skipped'
+        env:
+          AUDIO_OUTCOME: ${{ steps.audio.outcome }}
+        run: |
+          printf 'Audio analysis through the engine (the end-to-end `audio` scene): **%s**. See the end-to-end report artifact.\n' "$AUDIO_OUTCOME" >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
@@ -160,6 +213,33 @@ jobs:
             rendering/bevy-explorer/source/target/cargo-timings/*.html
           if-no-files-found: ignore
           retention-days: 14
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always() && steps.audio.outcome != '' && steps.audio.outcome != 'skipped'
+        with:
+          name: bevy-explorer-audio-e2e-${{ needs.changes.outputs.sha }}
+          path: apps/bevy-explorer/e2e/report/
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Fail on an audio analysis failure, or on a run that did not play its test
+        if: always() && steps.audio.outcome != '' && steps.audio.outcome != 'skipped'
+        env:
+          AUDIO_OUTCOME: ${{ steps.audio.outcome }}
+          AUDIO_TEST: audio analysis reaches the scene
+        # `--filter` is a name pattern and node's runner exits 0 when nothing matches, so the
+        # JUnit report must name the expected test, run and not skipped.
+        run: |
+          python3 - <<'PY'
+          import os, sys, xml.etree.ElementTree as ET
+          report = "../../../apps/bevy-explorer/e2e/report/junit-visual.xml"
+          expected = os.environ["AUDIO_TEST"]
+          try:
+              cases = [case for case in ET.parse(report).getroot().iter("testcase") if case.get("name") == expected]
+          except (OSError, ET.ParseError) as error:
+              sys.exit(f"no readable JUnit report at {report}: {error}")
+          ran = [case for case in cases if case.find("skipped") is None]
+          print(f"'{expected}': {len(cases)} found, {len(ran)} ran; outcome {os.environ['AUDIO_OUTCOME']}")
+          sys.exit(0 if ran and os.environ["AUDIO_OUTCOME"] == "success" else 1)
+          PY
     defaults:
       run:
         working-directory: rendering/bevy-explorer/source

@@ -71,6 +71,13 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   Scene roots and avatars register their hashes through component hooks; the publisher writes
   the values in place. See the
   [ADR](../../../../docs/adr/2026-11-02-explorer-nearest-first-priority.md).
+- **AudioAnalysis reads a clip's decoded frames at the instance's position**, not the mixed
+  output: pitch and volume are not applied and a clip is analysed at its own sample rate, where
+  unity-explorer taps `OnAudioFilterRead`. The window stays Unity's: 1024 frames of interleaved
+  stereo at the nominal rate, so a stereo tone reads an octave down with an image near Nyquist,
+  as scenes authored against unity-explorer expect. No frame-time budget, and no results on the
+  web (Unity has none on WebGL either). See the
+  [ADR](../../../../docs/adr/2026-11-05-explorer-audio-analysis.md).
 - **Voice chat (private calls and community streams)** keeps the call statuses and guards, the
   3 × 2000 ms re-dial budget, the 1 s hang-up-before-join delay and the server's 60 s ring.
   - Don't add hold-to-talk to the call mic: `T` opens the chat. The `Microphone` key (`V`) toggles

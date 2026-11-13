@@ -48,6 +48,7 @@ impl Plugin for AVPlayerPlugin {
         crate::debug_panel::register(app);
         app.add_plugins(AudioSourcePlugin);
         app.add_plugins(AudioSourcePluginImpl);
+        app.add_plugins(crate::audio_analysis::AudioAnalysisPlugin);
 
         app.add_crdt_lww_component::<PbAudioStream, AudioStream>(
             SceneComponentId::AUDIO_STREAM,

@@ -1,6 +1,7 @@
 use super::*;
+use crate::audio_analysis::{AudioAnalysis, AudioAnalysisState};
 use bevy_console::ConsoleCommand;
-use common::structs::PrimaryUser;
+use common::structs::{AudioEmitter, PrimaryUser};
 use console::{AddDebugSection, DebugSection, DoAddConsoleCommand};
 use scene_runner::{renderer_context::RendererSceneContext, ContainingScene, SceneEntity};
 use serde_json::json;
@@ -21,6 +22,7 @@ pub(super) fn register(app: &mut App) {
                 ("Current parcel audio streams", "parcelAudio"),
                 ("Current parcel HTTP media", "parcelExternal"),
                 ("Players", "players"),
+                ("Audio analyses", "analysis"),
             ],
             actions: &[],
             inputs: &[],
@@ -48,6 +50,13 @@ fn media_state(
         &SceneEntity,
         Has<InScene>,
         Has<ShouldBePlaying<AudioStream>>,
+    )>,
+    analyses: Query<(
+        Entity,
+        &SceneEntity,
+        &AudioAnalysis,
+        Option<&AudioAnalysisState>,
+        Has<AudioEmitter>,
     )>,
     scenes: Query<&RendererSceneContext>,
     player: Query<Entity, With<PrimaryUser>>,
@@ -95,6 +104,41 @@ fn media_state(
         add_sink(&mut item, audio_sinks.get(_ent).ok(), &images);
         rows.push(item);
     }
+    // AudioAnalysis: the scene's parameters, the last result and how the audio reaches it
+    let analysis_rows = analyses
+        .iter()
+        .map(|(_ent, entity, analysis, state, is_clip)| {
+            #[cfg(feature = "ffmpeg")]
+            let (kind, capture) = {
+                let audio = audio_sinks.get(_ent).ok();
+                let video = video_sinks.get(_ent).ok();
+                let kind = if is_clip {
+                    "clip"
+                } else if audio.is_some() {
+                    "audio"
+                } else if video.is_some() {
+                    "video"
+                } else {
+                    "none"
+                };
+                (kind, crate::audio_analysis::capture_enabled(audio, video))
+            };
+            #[cfg(not(feature = "ffmpeg"))]
+            let (kind, capture): (&str, Option<(bool, u32)>) =
+                (if is_clip { "clip" } else { "none" }, None);
+            json!({"entity":entity.id.to_string(), "scene":scenes.get(entity.root).ok().map(|ctx| &ctx.title),
+                   "kind":kind, "mode":analysis.0.mode().as_str_name(), "amplitudeGain":analysis.0.amplitude_gain, "bandsGain":analysis.0.bands_gain,
+                   "windowFrames":state.map(|s| s.window_frames), "sampleRate":state.map(|s| s.sample_rate),
+                   "amplitude":state.map(|s| s.last.amplitude), "bands":state.map(|s| s.last.bands),
+                   "analyses":state.map(|s| s.analyses),
+                   "captureEnabled":capture.map(|(enabled, _)| enabled), "droppedChunks":capture.map(|(_, dropped)| dropped)})
+        })
+        .collect::<Vec<_>>();
+    let analysis_unavailable = if cfg!(feature = "html") {
+        "Audio analysis runs on the standalone only."
+    } else {
+        "No AudioAnalysis on a scene entity."
+    };
     let backend = if cfg!(feature = "html") {
         "HTML media"
     } else if cfg!(feature = "ffmpeg") {
@@ -103,7 +147,8 @@ fn media_state(
         "No playback backend"
     };
     cmd.reply_ok(json!({"backend":backend, "scene":scene, "video":video.iter().len(), "audio":audio.iter().len(), "parcelVideo":parcel_video, "parcelAudio":parcel_audio, "parcelExternal":parcel_external, "players":rows,
-        "unavailable":{"scene":"No loaded scene at the player's parcel."}}).to_string());
+        "analysis":(!analysis_rows.is_empty()).then_some(analysis_rows),
+        "unavailable":{"scene":"No loaded scene at the player's parcel.", "analysis":analysis_unavailable}}).to_string());
 }
 
 // Stream paths and queries can contain credentials. A remote origin or a local content key

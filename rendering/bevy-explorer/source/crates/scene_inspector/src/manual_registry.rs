@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use dcl_component::{
     component_name_registry::{derive_component_name, make_proto_closures},
     proto_components::sdk::components::{
-        PbAudioAnalysis, PbAudioEvent, PbAvatarBase, PbAvatarEmoteCommand, PbAvatarEquippedData,
+        PbAudioEvent, PbAvatarBase, PbAvatarEmoteCommand, PbAvatarEquippedData,
         PbAvatarMovementInfo, PbAvatarNametag, PbCameraMode, PbEngineInfo,
         PbExplorerItemPurchaseResult, PbExplorerUiEventsResult, PbGltfContainerLoadingState,
         PbGltfNodeState, PbPlayerIdentityData, PbPointerEventsResult, PbPointerLock,
@@ -192,8 +192,8 @@ pub fn register_engine_components(app: &mut App) {
     );
     // Scene→engine components this engine does not implement (TouchScreenControls is a no-op
     // without on-screen controls). Registered so the snapshot names them and the editor can
-    // author and save them; AudioAnalysis and ExplorerItemPurchaseResult carry engine output, so
-    // they stay read-only.
+    // author and save them; ExplorerItemPurchaseResult carries engine output, so it stays
+    // read-only.
     reg!(
         PbTouchScreenControls,
         SceneComponentId::TOUCH_SCREEN_CONTROLS,
@@ -205,12 +205,6 @@ pub fn register_engine_components(app: &mut App) {
         SceneComponentId::TWEEN_SEQUENCE,
         CrdtType::LWW_ENT,
         rw
-    );
-    reg!(
-        PbAudioAnalysis,
-        SceneComponentId::AUDIO_ANALYSIS,
-        CrdtType::LWW_ENT,
-        ro
     );
     reg!(
         PbUiInputBinding,
@@ -328,7 +322,6 @@ mod tests {
                 true,
             ),
             (SceneComponentId::TWEEN_SEQUENCE, "TweenSequence", true),
-            (SceneComponentId::AUDIO_ANALYSIS, "AudioAnalysis", false),
             (SceneComponentId::UI_INPUT_BINDING, "UiInputBinding", true),
             (SceneComponentId::AVATAR_NAMETAG, "AvatarNametag", true),
             (

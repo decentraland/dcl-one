@@ -1,4 +1,4 @@
-use std::{collections::VecDeque, time::Duration};
+use std::{collections::VecDeque, sync::Arc, time::Duration};
 
 use bevy::prelude::*;
 use common::{structs::AudioDecoderError, util::ReportErr};
@@ -9,7 +9,7 @@ use kira::sound::streaming::StreamingSoundData;
 use thiserror::Error;
 use tokio::sync::mpsc::error::TryRecvError;
 
-use crate::ffmpeg::stream_processor::FfmpegContext;
+use crate::{AudioCapture, ffmpeg::stream_processor::FfmpegContext};
 
 trait SampleFormatHelper {
     fn is_planar(&self) -> bool;
@@ -96,6 +96,8 @@ pub struct FfmpegKiraBridge {
     channels: usize,
     data: tokio::sync::mpsc::Receiver<ffmpeg_next::frame::Audio>,
     step: usize,
+    /// Every chunk decoded is also written here, for the analysis, while it is enabled.
+    capture: Arc<AudioCapture>,
 }
 
 impl kira::sound::streaming::Decoder for FfmpegKiraBridge {
@@ -180,6 +182,7 @@ impl kira::sound::streaming::Decoder for FfmpegKiraBridge {
                         std::thread::sleep(Duration::from_secs_f64(self.frame_time.max(0.1)));
                     } else {
                         trace!("Collected {} frames.", frames.len());
+                        self.capture.push(&frames);
                         return Ok(frames);
                     }
                 }
@@ -187,6 +190,7 @@ impl kira::sound::streaming::Decoder for FfmpegKiraBridge {
                     if frames.is_empty() {
                         return Err(AudioDecoderError::StreamClosed);
                     } else {
+                        self.capture.push(&frames);
                         return Ok(frames);
                     }
                 }
@@ -231,6 +235,7 @@ impl AudioContext {
     pub fn init(
         input_context: &Input,
         channel: tokio::sync::mpsc::Sender<StreamingSoundData<AudioDecoderError>>,
+        capture: Arc<AudioCapture>,
     ) -> Result<Self, AudioError> {
         let input_stream = input_context
             .streams()
@@ -272,6 +277,7 @@ impl AudioContext {
 
         let (sx, rx) = tokio::sync::mpsc::channel(10);
 
+        capture.set_sample_rate(p_raw_sample_rate);
         let kira_decoder = FfmpegKiraBridge {
             sample_rate: p_raw_sample_rate,
             num_frames: input_stream.frames() as usize,
@@ -281,6 +287,7 @@ impl AudioContext {
             channels: decoder.channels() as usize,
             data: rx,
             step: 0,
+            capture,
         };
 
         let sound_data = kira::sound::streaming::StreamingSoundData::from_decoder(kira_decoder);
