@@ -94,7 +94,10 @@
 //!   request at 25 MiB (upstream: actix-multipart's 2 MiB in-memory form
 //!   limit);
 //! - `HEAD` is answered on the `GET` routes, `GET /health` beside
-//!   `/health/live`, and the Swagger page loads swagger-ui from unpkg.
+//!   `/health/live`, and the Swagger page loads swagger-ui from unpkg;
+//! - the OpenAPI document defines `GalleryImageWithPlace`, the component
+//!   upstream's references from `GetMultiplePlacesImagesResponse` but never
+//!   defines.
 //!
 //! Not carried: `dcl-scene-cli` and what only it consumes
 //! (`dcl-scene-authoring`, `dcl-preview-tunnel`,
