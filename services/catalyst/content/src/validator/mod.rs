@@ -42,7 +42,7 @@ pub(crate) mod fake_chain;
 mod helpers;
 pub mod image_metadata;
 mod item_hash;
-mod jsjson;
+pub(crate) mod jsjson;
 pub mod merkle;
 mod metadata_schema;
 pub(crate) mod onchain;

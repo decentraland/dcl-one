@@ -5,8 +5,14 @@ use std::path::{Path, PathBuf};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
 pub enum ProjectKind {
+    /// `scene-template` is upstream's name for it.
+    #[value(alias = "scene-template")]
     Scene,
     SmartWearable,
+    /// A scene manifest flagged `isPortableExperience`.
+    PxTemplate,
+    /// An SDK library a scene imports, previewable as a scene.
+    Library,
 }
 
 impl ProjectKind {
@@ -14,6 +20,8 @@ impl ProjectKind {
         match self {
             ProjectKind::Scene => "scene",
             ProjectKind::SmartWearable => "smart wearable",
+            ProjectKind::PxTemplate => "portable experience",
+            ProjectKind::Library => "library",
         }
     }
 }
@@ -23,6 +31,21 @@ pub struct InitOptions {
     pub project: Option<ProjectKind>,
     pub yes: bool,
     pub node_modules_only: bool,
+}
+
+/// `init --template` / `--github-repo`: a project unpacked from elsewhere.
+pub enum RemoteSource {
+    /// A zip by http(s) URL or local path, with one top-level folder.
+    Zip(String),
+    /// `https://github.com/<owner>/<repo>` or `…/tree/<branch>/<path>`.
+    GitHub(String),
+}
+
+pub struct RemoteInitOptions {
+    pub dir: PathBuf,
+    pub yes: bool,
+    pub skip_install: bool,
+    pub source: RemoteSource,
 }
 
 pub struct FileSpec {
@@ -43,11 +66,24 @@ const SW_SCENE_JSON: &str = include_str!("templates/init/smart-wearable/scene.js
 const SW_PACKAGE_JSON: &str = include_str!("templates/init/smart-wearable/package.json");
 const SW_INDEX_TS: &str = include_str!("templates/init/smart-wearable/index.ts");
 const SW_README: &str = include_str!("templates/init/smart-wearable/README.md");
+const SW_MODEL_GLB: &[u8] = include_bytes!("templates/init/smart-wearable/model.glb");
+const SW_THUMBNAIL: &[u8] = include_bytes!("templates/init/smart-wearable/thumbnail.png");
+const PX_SCENE_JSON: &str = include_str!("templates/init/px/scene.json");
+const LIB_PACKAGE_JSON: &str = include_str!("templates/init/library/package.json");
+const LIB_TSCONFIG: &str = include_str!("templates/init/library/tsconfig.json");
+const LIB_INDEX_TS: &str = include_str!("templates/init/library/index.ts");
+const LIB_README: &str = include_str!("templates/init/library/README.md");
 const VENDORED_NODE_MODULES: &[u8] = include_bytes!("vendor/node_modules.zip");
 
 const INSTALLED_NOTE: &str = "Installed node_modules from the vendored SDK — no npm needed";
 
 pub fn init(opts: &InitOptions) -> Result<()> {
+    init_with(opts, false)
+}
+
+/// [`init`], or with `skip_install` the same scaffold without node_modules
+/// (`--skip-install`).
+pub fn init_with(opts: &InitOptions, skip_install: bool) -> Result<()> {
     if opts.node_modules_only {
         let root = dunce::canonicalize(&opts.dir).map_err(|e| {
             UserError::new(
@@ -77,27 +113,403 @@ pub fn init(opts: &InitOptions) -> Result<()> {
         display_dir(&opts.dir),
         files.len()
     ));
-    steps.done(match install_vendored_node_modules(&root)? {
-        true => INSTALLED_NOTE,
-        false => "Kept the existing node_modules",
-    });
+    steps.done(node_modules_step(&root, skip_install)?);
     steps.done("Next steps:");
     if opts.dir != Path::new(".") {
         ux::note(format!("  cd {}", display_dir(&opts.dir)));
     }
     ux::note("  dcl-scene-cli start");
     match kind {
-        ProjectKind::Scene => {
+        ProjectKind::Scene | ProjectKind::PxTemplate => {
             ux::note("  dcl-scene-cli deploy   when you are ready to publish");
+        }
+        ProjectKind::Library => {
+            ux::note(
+                "  npm run build:lib      bundles src/index.ts beside its source and writes dist/*.d.ts",
+            );
         }
         ProjectKind::SmartWearable => {
             ux::note(
-                "  add model.glb and thumbnail.png (256x256, transparent background) — wearable.json references them",
+                "  replace the placeholder model.glb and thumbnail.png (256x256, transparent background) — wearable.json references them",
             );
             ux::note(
                 "  dcl-scene-cli pack     to produce smart-wearable.zip when you are ready to publish",
             );
         }
+    }
+    Ok(())
+}
+
+fn node_modules_step(root: &Path, skip_install: bool) -> Result<&'static str> {
+    Ok(match skip_install {
+        true => "Skipped node_modules (--skip-install)",
+        false => match install_vendored_node_modules(root)? {
+            true => INSTALLED_NOTE,
+            false => "Kept the existing node_modules",
+        },
+    })
+}
+
+pub async fn init_remote(opts: &RemoteInitOptions) -> Result<()> {
+    let root = prepare_dir(&opts.dir, opts.yes)?;
+    let mut steps = ux::Steps::new(3);
+    let (bytes, inner, label) = match &opts.source {
+        RemoteSource::Zip(from) => (fetch_zip(from).await?, None, from.clone()),
+        RemoteSource::GitHub(url) => {
+            let repo = GitHubRef::parse(url)?;
+            (repo.fetch_zip().await?, repo.path.clone(), url.clone())
+        }
+    };
+    steps.done(format!(
+        "Fetched {label} ({})",
+        crate::deploy::human_size(bytes.len() as u64)
+    ));
+    let written = unpack_template(&bytes, &root, inner.as_deref())?;
+    steps.done(format!(
+        "Unpacked {written} file{} into {}",
+        crate::build::plural(written as u64),
+        display_dir(&opts.dir)
+    ));
+    steps.done(node_modules_step(&root, opts.skip_install)?);
+    if !opts.skip_install {
+        let missing = missing_dependencies(&root);
+        if !missing.is_empty() {
+            ux::note(format!(
+                "the project depends on packages the vendored SDK does not carry: {} \u{2014} npm install adds them",
+                missing.join(", ")
+            ));
+        }
+    }
+    ux::note("Next steps:");
+    if opts.dir != Path::new(".") {
+        ux::note(format!("  cd {}", display_dir(&opts.dir)));
+    }
+    ux::note("  dcl-scene-cli start");
+    Ok(())
+}
+
+/// A local zip, or one downloaded from an http(s) URL.
+async fn fetch_zip(from: &str) -> Result<Vec<u8>> {
+    if from.starts_with("http://") || from.starts_with("https://") {
+        return download(from).await;
+    }
+    let path = Path::new(from);
+    if path.is_file() {
+        return std::fs::read(path).with_context(|| format!("reading {}", path.display()));
+    }
+    Err(UserError::new(
+        format!("--template {from} is neither a file nor an http(s) URL"),
+        TrySteps::one("pass a zip with one top-level folder: a path, or a URL such as https://github.com/<owner>/<repo>/archive/refs/heads/main.zip"),
+    )
+    .into())
+}
+
+/// The most a template download may hold, and the most it may unpack to.
+const DOWNLOAD_LIMIT: u64 = 256 * 1024 * 1024;
+const UNPACKED_LIMIT: u64 = 1024 * 1024 * 1024;
+const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+/// The longest silence of a download in flight.
+const READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+fn too_large(what: &str, limit: u64) -> anyhow::Error {
+    UserError::new(
+        format!("{what} is larger than {} MB", limit / (1024 * 1024)),
+        TrySteps::one("use a smaller template, or download and unzip it yourself"),
+    )
+    .into()
+}
+
+/// An https URL stays https through every redirect; a stalled server and a
+/// body past [`DOWNLOAD_LIMIT`] end the download.
+async fn download(url: &str) -> Result<Vec<u8>> {
+    let https = url.starts_with("https://");
+    if !https {
+        ux::note_absent(format!(
+            "{url} is plain http: the template can be changed on the network, and its scripts.build runs on the next build"
+        ));
+    }
+    let client = reqwest::Client::builder()
+        .user_agent("dcl-scene-cli")
+        .https_only(https)
+        .connect_timeout(CONNECT_TIMEOUT)
+        .read_timeout(READ_TIMEOUT)
+        .build()
+        .context("building the http client")?;
+    let response = client.get(url).send().await.map_err(|e| {
+        UserError::new(
+            format!("could not download {url}"),
+            TrySteps::one("check the URL and the network connection"),
+        )
+        .caused_by(e)
+    })?;
+    let status = response.status();
+    if !status.is_success() {
+        return Err(UserError::new(
+            format!("{url} answered HTTP {}", status.as_u16()),
+            TrySteps::one("check the URL: a GitHub zip is https://github.com/<owner>/<repo>/archive/refs/heads/<branch>.zip"),
+        )
+        .into());
+    }
+    let mut response = response;
+    let mut bytes = Vec::new();
+    if response
+        .content_length()
+        .is_some_and(|n| n > DOWNLOAD_LIMIT)
+    {
+        return Err(too_large(url, DOWNLOAD_LIMIT));
+    }
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .with_context(|| format!("reading the download from {url}"))?
+    {
+        if (bytes.len() + chunk.len()) as u64 > DOWNLOAD_LIMIT {
+            return Err(too_large(url, DOWNLOAD_LIMIT));
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok(bytes)
+}
+
+/// `https://github.com/<owner>/<repo>[/tree/<branch>[/<path>]]`.
+struct GitHubRef {
+    owner: String,
+    repo: String,
+    branch: Option<String>,
+    path: Option<String>,
+}
+
+impl GitHubRef {
+    fn parse(url: &str) -> Result<Self> {
+        let bad = || {
+            UserError::new(
+                format!("{url} is not a GitHub repository URL"),
+                TrySteps::one(
+                    "expected https://github.com/<owner>/<repo>, or https://github.com/<owner>/<repo>/tree/<branch>/<path> for one folder of it",
+                ),
+            )
+        };
+        let rest = url
+            .trim()
+            .trim_end_matches('/')
+            .strip_prefix("https://github.com/")
+            .or_else(|| {
+                url.trim()
+                    .trim_end_matches('/')
+                    .strip_prefix("http://github.com/")
+            })
+            .ok_or_else(bad)?;
+        let mut parts = rest.splitn(5, '/');
+        let owner = parts.next().filter(|s| !s.is_empty()).ok_or_else(bad)?;
+        let repo = parts
+            .next()
+            .filter(|s| !s.is_empty())
+            .map(|r| r.trim_end_matches(".git"))
+            .ok_or_else(bad)?;
+        let (branch, path) = match (parts.next(), parts.next(), parts.next()) {
+            (None, _, _) => (None, None),
+            (Some("tree"), Some(branch), path) if !branch.is_empty() => (
+                Some(branch.to_string()),
+                path.map(|p| p.trim_matches('/').to_string())
+                    .filter(|p| !p.is_empty()),
+            ),
+            _ => return Err(bad().into()),
+        };
+        Ok(GitHubRef {
+            owner: owner.to_string(),
+            repo: repo.to_string(),
+            branch,
+            path,
+        })
+    }
+
+    /// The archive of the branch; a URL without one tries main, then master.
+    fn zip_urls(&self) -> Vec<String> {
+        let branches: Vec<&str> = match &self.branch {
+            Some(b) => vec![b.as_str()],
+            None => vec!["main", "master"],
+        };
+        branches
+            .into_iter()
+            .map(|b| {
+                format!(
+                    "https://codeload.github.com/{}/{}/zip/refs/heads/{b}",
+                    self.owner, self.repo
+                )
+            })
+            .collect()
+    }
+
+    async fn fetch_zip(&self) -> Result<Vec<u8>> {
+        let mut last = None;
+        for url in self.zip_urls() {
+            match download(&url).await {
+                Ok(bytes) => return Ok(bytes),
+                Err(e) => last = Some(e),
+            }
+        }
+        Err(last.expect("at least one archive URL"))
+    }
+}
+
+/// Unpacks the zip's one top-level folder (or `inner` within it) into `root`;
+/// the number of files written.
+fn unpack_template(bytes: &[u8], root: &Path, inner: Option<&str>) -> Result<usize> {
+    unpack_template_within(bytes, root, inner, UNPACKED_LIMIT)
+}
+
+/// As [`unpack_template`], refusing once the files written pass `limit`
+/// bytes: the sizes a zip declares are not trusted.
+fn unpack_template_within(
+    bytes: &[u8],
+    root: &Path,
+    inner: Option<&str>,
+    limit: u64,
+) -> Result<usize> {
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).map_err(|e| {
+        UserError::new(
+            "the template is not a zip archive",
+            TrySteps::one("--template takes a zip; a GitHub branch is https://github.com/<owner>/<repo>/archive/refs/heads/<branch>.zip"),
+        )
+        .caused_by(e)
+    })?;
+    let names: Vec<String> = archive
+        .file_names()
+        .map(|n| n.map(|n| n.into_owned()))
+        .collect::<std::result::Result<_, _>>()
+        .context("reading the zip's file names")?;
+    let tops: std::collections::BTreeSet<&str> = names
+        .iter()
+        .filter(|n| !n.starts_with("__MACOSX/"))
+        .map(|n| n.split('/').next().unwrap_or(n.as_str()))
+        .collect();
+    let [top] = tops.iter().copied().collect::<Vec<_>>()[..] else {
+        return Err(UserError::new(
+            format!(
+                "the template zip must hold exactly one top-level folder; this one has {}",
+                tops.len()
+            ),
+            TrySteps::one("zip the project folder itself, not the files inside it"),
+        )
+        .into());
+    };
+    let prefix = match inner {
+        Some(path) => format!("{top}/{path}/"),
+        None => format!("{top}/"),
+    };
+    let mut written = 0;
+    let mut unpacked = 0u64;
+    for name in &names {
+        let Some(rel) = name.strip_prefix(&prefix) else {
+            continue;
+        };
+        if rel.is_empty() || rel.ends_with('/') {
+            continue;
+        }
+        let rel_path = Path::new(rel);
+        if rel_path
+            .components()
+            .any(|c| !matches!(c, std::path::Component::Normal(_)))
+        {
+            return Err(anyhow::anyhow!(
+                "the zip entry {name} would escape the project folder"
+            ));
+        }
+        let dest = root.join(rel_path);
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| write_error(parent, e))?;
+        }
+        let mut entry = archive
+            .by_name(name)
+            .with_context(|| format!("reading {name} from the zip"))?;
+        let mut out = std::fs::File::create(&dest).map_err(|e| write_error(&dest, e))?;
+        let room = limit - unpacked;
+        unpacked += std::io::copy(&mut std::io::Read::take(&mut entry, room + 1), &mut out)
+            .map_err(|e| write_error(&dest, e))?;
+        if unpacked > limit {
+            return Err(too_large("the unpacked template", limit));
+        }
+        written += 1;
+    }
+    if written == 0 {
+        return Err(UserError::new(
+            match inner {
+                Some(path) => format!("the repository has no files under {path}"),
+                None => "the template zip holds no files".to_string(),
+            },
+            TrySteps::one("check the folder path in the URL"),
+        )
+        .into());
+    }
+    Ok(written)
+}
+
+/// package.json dependencies with no folder under node_modules.
+fn missing_dependencies(root: &Path) -> Vec<String> {
+    let Ok(bytes) = std::fs::read(root.join("package.json")) else {
+        return Vec::new();
+    };
+    let Ok(package) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+        return Vec::new();
+    };
+    let mut missing: Vec<String> = ["dependencies", "devDependencies"]
+        .iter()
+        .filter_map(|section| package[section].as_object())
+        .flat_map(|deps| deps.keys().cloned())
+        .filter(|name| {
+            !root
+                .join("node_modules")
+                .join(name)
+                .join("package.json")
+                .is_file()
+        })
+        .collect();
+    missing.sort();
+    missing.dedup();
+    missing
+}
+
+static RESTORE_NODE_MODULES: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(true);
+
+/// `--skip-install`: a build never writes node_modules.
+pub fn set_restore_node_modules(on: bool) {
+    RESTORE_NODE_MODULES.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// A scene with no node_modules at all (a fresh clone, a copied folder) gets
+/// the vendored SDK before the built-in build looks for it, and a line saying
+/// so. An existing node_modules is never touched, whatever it lacks: that is
+/// an install someone made, and the missing-package error names the fix.
+pub fn restore_missing_node_modules(root: &Path) -> Result<()> {
+    if !RESTORE_NODE_MODULES.load(std::sync::atomic::Ordering::Relaxed)
+        || root.join("node_modules").exists()
+    {
+        return Ok(());
+    }
+    install_vendored_node_modules(root)?;
+    ux::note(
+        "node_modules was missing \u{2014} restored it from the vendored SDK (--skip-install keeps a build from doing this)",
+    );
+    let version = |path: PathBuf, keys: &[&str]| -> Option<String> {
+        let json: serde_json::Value = serde_json::from_slice(&std::fs::read(path).ok()?).ok()?;
+        keys.iter()
+            .find_map(|k| json.pointer(k)?.as_str().map(str::to_string))
+    };
+    let vendored = version(
+        root.join("node_modules/@dcl/sdk/package.json"),
+        &["/version"],
+    );
+    let asked = version(
+        root.join("package.json"),
+        &["/devDependencies/@dcl~1sdk", "/dependencies/@dcl~1sdk"],
+    );
+    if let (Some(vendored), Some(asked)) = (vendored, asked)
+        && asked != vendored
+    {
+        ux::note(format!(
+            "package.json asks for @dcl/sdk {asked}; the vendored SDK is {vendored} \u{2014} run npm install to build with {asked} instead"
+        ));
     }
     Ok(())
 }
@@ -177,11 +589,11 @@ fn resolve_kind(flag: Option<ProjectKind>) -> Result<ProjectKind> {
     if let Some(kind) = flag {
         return Ok(kind);
     }
-    if std::io::stdin().is_terminal() && std::io::stdout().is_terminal() {
+    if std::io::stdin().is_terminal() && std::io::stdout().is_terminal() && !ux::ci() {
         return prompt_kind();
     }
     ux::note(
-        "no --project given and no terminal to ask — scaffolding the default scene project (pass --project scene|smart-wearable to choose)",
+        "no --project given and no terminal to ask (or CI) — scaffolding the default scene project (pass --project scene|smart-wearable|px-template|library to choose)",
     );
     Ok(ProjectKind::Scene)
 }
@@ -190,7 +602,9 @@ fn prompt_kind() -> Result<ProjectKind> {
     println!("What would you like to create?");
     println!("  1) scene           a standard Decentraland scene (default)");
     println!("  2) smart-wearable  a wearable with its own portable-experience code");
-    print!("Choose [1/2] (enter = 1): ");
+    println!("  3) px-template     a portable experience without a wearable");
+    println!("  4) library         an SDK library scenes import, previewable as a scene");
+    print!("Choose [1-4] (enter = 1): ");
     std::io::stdout().flush().ok();
     let mut line = String::new();
     std::io::stdin()
@@ -201,11 +615,13 @@ fn prompt_kind() -> Result<ProjectKind> {
 
 fn parse_kind_choice(answer: &str) -> Result<ProjectKind> {
     match answer.to_ascii_lowercase().as_str() {
-        "" | "1" | "scene" => Ok(ProjectKind::Scene),
+        "" | "1" | "scene" | "scene-template" => Ok(ProjectKind::Scene),
         "2" | "smart-wearable" | "smart wearable" | "wearable" => Ok(ProjectKind::SmartWearable),
+        "3" | "px-template" | "px" | "portable experience" => Ok(ProjectKind::PxTemplate),
+        "4" | "library" | "lib" => Ok(ProjectKind::Library),
         other => Err(UserError::new(
             format!("\"{other}\" is not a project kind"),
-            TrySteps::one("answer 1 (scene) or 2 (smart-wearable)")
+            TrySteps::one("answer 1 (scene), 2 (smart-wearable), 3 (px-template) or 4 (library)")
                 .and("or skip the prompt: dcl-scene-cli init --project scene"),
         )
         .into()),
@@ -217,6 +633,8 @@ pub fn scaffold_files(kind: ProjectKind, title: &str) -> Vec<FileSpec> {
     let description = match kind {
         ProjectKind::Scene => "A new Decentraland scene.",
         ProjectKind::SmartWearable => "A new Decentraland smart wearable.",
+        ProjectKind::PxTemplate => "A new Decentraland portable experience.",
+        ProjectKind::Library => "A new Decentraland SDK library.",
     };
     let sub = |template: &str| {
         template
@@ -229,7 +647,7 @@ pub fn scaffold_files(kind: ProjectKind, title: &str) -> Vec<FileSpec> {
         body: body.into_bytes(),
     };
     let raw = |rel, body: &str| file(rel, body.to_string());
-    let (head, index, readme): (Vec<FileSpec>, _, _) = match kind {
+    let (head, index, readme, tsconfig): (Vec<FileSpec>, _, _, _) = match kind {
         ProjectKind::Scene => (
             vec![
                 file("scene.json", sub(SCENE_SCENE_JSON)),
@@ -237,6 +655,25 @@ pub fn scaffold_files(kind: ProjectKind, title: &str) -> Vec<FileSpec> {
             ],
             SCENE_INDEX_TS,
             SCENE_README,
+            SCENE_TSCONFIG,
+        ),
+        ProjectKind::PxTemplate => (
+            vec![
+                file("scene.json", sub(PX_SCENE_JSON)),
+                file("package.json", sub(SCENE_PACKAGE_JSON)),
+            ],
+            SCENE_INDEX_TS,
+            SCENE_README,
+            SCENE_TSCONFIG,
+        ),
+        ProjectKind::Library => (
+            vec![
+                file("scene.json", sub(SCENE_SCENE_JSON)),
+                file("package.json", sub(LIB_PACKAGE_JSON)),
+            ],
+            LIB_INDEX_TS,
+            LIB_README,
+            LIB_TSCONFIG,
         ),
         ProjectKind::SmartWearable => (
             vec![
@@ -252,21 +689,33 @@ pub fn scaffold_files(kind: ProjectKind, title: &str) -> Vec<FileSpec> {
             ],
             SW_INDEX_TS,
             SW_README,
+            SCENE_TSCONFIG,
         ),
     };
     let mut files = head;
     files.extend([
-        raw("tsconfig.json", SCENE_TSCONFIG),
+        raw("tsconfig.json", tsconfig),
         file("src/index.ts", sub(index)),
         raw(".gitignore", SCENE_GITIGNORE),
         raw(".dclignore", SCENE_DCLIGNORE),
         file("README.md", sub(readme)),
     ]);
-    if kind == ProjectKind::Scene {
-        files.push(FileSpec {
+    match kind {
+        ProjectKind::Scene | ProjectKind::Library => files.push(FileSpec {
             rel: "images/scene-thumbnail.png",
             body: SCENE_THUMBNAIL.to_vec(),
-        });
+        }),
+        ProjectKind::PxTemplate => {}
+        ProjectKind::SmartWearable => files.extend([
+            FileSpec {
+                rel: "model.glb",
+                body: SW_MODEL_GLB.to_vec(),
+            },
+            FileSpec {
+                rel: "thumbnail.png",
+                body: SW_THUMBNAIL.to_vec(),
+            },
+        ]),
     }
     files
 }
@@ -364,6 +813,27 @@ fn uuid_v4() -> String {
 mod tests {
     use super::*;
 
+    /// The cap counts the bytes written, whatever sizes the zip declares.
+    #[test]
+    fn a_template_that_unpacks_past_the_limit_is_refused() {
+        let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let opts = zip::write::SimpleFileOptions::default();
+        for name in ["t/scene.json", "t/big.bin"] {
+            zip.start_file(name, opts).unwrap();
+            zip.write_all(&[b'x'; 600]).unwrap();
+        }
+        let bytes = zip.finish().unwrap().into_inner();
+        let fits = crate::deploy::TempTree::new("init-unpack-fits");
+        assert_eq!(
+            unpack_template_within(&bytes, &fits.0, None, 1200).unwrap(),
+            2
+        );
+        let over = crate::deploy::TempTree::new("init-unpack-over");
+        let err = unpack_template_within(&bytes, &over.0, None, 1000).unwrap_err();
+        let shown = ux::render(&err, false, false);
+        assert!(shown.contains("the unpacked template is larger"), "{shown}");
+    }
+
     #[test]
     fn slug_matches_the_ported_projectslug() {
         assert_eq!(project_slug("My Awesome Scene"), "my-awesome-scene");
@@ -390,7 +860,12 @@ mod tests {
             parse_kind_choice("wearable").unwrap(),
             ProjectKind::SmartWearable
         );
-        assert!(parse_kind_choice("library").is_err());
+        assert_eq!(parse_kind_choice("3").unwrap(), ProjectKind::PxTemplate);
+        assert_eq!(parse_kind_choice("px").unwrap(), ProjectKind::PxTemplate);
+        assert_eq!(parse_kind_choice("4").unwrap(), ProjectKind::Library);
+        assert_eq!(parse_kind_choice("library").unwrap(), ProjectKind::Library);
+        assert!(parse_kind_choice("5").is_err());
+        assert!(parse_kind_choice("quest").is_err());
     }
 
     #[test]

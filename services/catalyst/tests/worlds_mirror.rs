@@ -1,15 +1,19 @@
 //! The worlds mirror against an in-process upstream (`/index`,
-//! `/world/{name}/about`, `/contents/{hash}`) on a scratch database and a
-//! temp blob store: a complete pass with its marker, the read routes over the
-//! mirrored rows, an unchanged pass making no /about calls, a local publish
-//! refused (never overwritten, also when it lands mid-download), a world
-//! unlisted upstream retired, an interrupted pass resumed from its persisted
-//! cursor, and the loop/hash guards. Needs CATALYST_TEST_DATABASE_URL;
-//! skipped without it.
+//! `/world/{name}/about`, `/world/{name}/scenes`, `/world/{name}/settings`,
+//! `/world/{name}/permissions`, `/contents/{hash}`) on a scratch database and a
+//! temp blob store: a complete
+//! pass with its marker, the read routes over the mirrored rows, an unchanged
+//! pass making no /about calls, a local publish refused (never overwritten,
+//! also when it lands mid-download), a world unlisted upstream retired, an
+//! interrupted pass resumed from its persisted cursor, the loop/hash guards,
+//! and the deploy times, signed chains, world settings, thumbnails and access
+//! setting a pass copies, also for a world whose scenes are all held.
+//! Needs CATALYST_TEST_DATABASE_URL; skipped without it.
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
+use alloy::signers::{Signer, local::PrivateKeySigner};
 use axum::body::Body;
 use axum::extract::{Path, State};
 use axum::http::{Request, StatusCode};
@@ -26,7 +30,9 @@ use tower::ServiceExt;
 use catalyst::auth::hash::hash_bytes_v1;
 use catalyst::jobs::{JobContext, Jobs};
 use catalyst::storage::Storage;
+use catalyst::worlds::core::{CoreState, Settings as CoreSettings};
 use catalyst::worlds::mirror::{MirrorSettings, run_pass};
+use catalyst::worlds::policy::{PersonalWorldsPolicy, Policy};
 use catalyst::worlds::{Settings, WorldsState, ZERO_ADDRESS};
 
 #[path = "support/db.rs"]
@@ -37,6 +43,28 @@ mod db;
 struct Scene {
     id: String,
     entity: Value,
+    /// What `/scenes` lists for the deployment: `createdAt`/`updatedAt` (left out when `None`;
+    /// the listing pages by `createdAt`), `deploymentAuthChain`, `deployer` and `size`.
+    created_at: Option<String>,
+    updated_at: Option<String>,
+    chain: Value,
+    deployer: Option<String>,
+    size: String,
+}
+
+impl Scene {
+    /// Listed with no times, an empty chain, no deployer and size `"0"`.
+    fn new(id: String, entity: Value) -> Self {
+        Self {
+            id,
+            entity,
+            created_at: None,
+            updated_at: None,
+            chain: json!([]),
+            deployer: None,
+            size: "0".to_string(),
+        }
+    }
 }
 
 #[derive(Default)]
@@ -58,6 +86,14 @@ struct Upstream {
     scenes_ignore_offset: bool,
     scenes_without_rows: bool,
     scenes_hide: Option<String>,
+    /// name -> the `/world/{name}/settings` body; a world without one answers 404.
+    settings: HashMap<String, Value>,
+    /// name -> the `/world/{name}/permissions` body; a world without one answers the default
+    /// (unrestricted, no grants), as upstream does for any name.
+    permissions: HashMap<String, Value>,
+    /// While set, `/permissions` answers this status instead.
+    permissions_status: Option<StatusCode>,
+    permissions_calls: usize,
 }
 
 type Shared = Arc<Mutex<Upstream>>;
@@ -82,11 +118,23 @@ fn add_scene(
     base: &str,
     files: &[(&str, &[u8])],
 ) -> String {
+    let entity = scene_entity(state, world, title, base, files);
+    push_scene(state, world, entity)
+}
+
+/// A scene entity whose files are stored as blobs on the upstream; the entity itself is not.
+fn scene_entity(
+    state: &mut Upstream,
+    world: &str,
+    title: &str,
+    base: &str,
+    files: &[(&str, &[u8])],
+) -> Value {
     let content: Vec<Value> = files
         .iter()
         .map(|(file, bytes)| json!({"file": file, "hash": blob(state, bytes)}))
         .collect();
-    let entity = json!({
+    json!({
         "version": "v3",
         "type": "scene",
         "pointers": [base],
@@ -98,18 +146,43 @@ fn add_scene(
             "worldConfiguration": {"name": world, "skyboxConfig": {"fixedTime": 36000}},
             "runtimeVersion": "7"
         }
-    });
+    })
+}
+
+/// Stores `entity` as a blob and lists it as the world's newest scene; returns its id.
+fn push_scene(state: &mut Upstream, world: &str, entity: Value) -> String {
     let bytes = serde_json::to_vec(&entity).unwrap();
     let id = blob(state, &bytes);
     state
         .worlds
         .entry(world.to_string())
         .or_default()
-        .push(Scene {
-            id: id.clone(),
-            entity,
-        });
+        .push(Scene::new(id.clone(), entity));
     id
+}
+
+fn scene_mut<'a>(state: &'a mut Upstream, world: &str, id: &str) -> &'a mut Scene {
+    state
+        .worlds
+        .get_mut(world)
+        .and_then(|scenes| scenes.iter_mut().find(|sc| sc.id == id))
+        .unwrap()
+}
+
+const DEPLOYER_KEY: &str = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+
+fn address(key: &str) -> String {
+    format!("{:#x}", key.parse::<PrivateKeySigner>().unwrap().address())
+}
+
+/// A SIGNER + ECDSA_SIGNED_ENTITY chain naming `entity_id`, signed by `key` over `signed_id`.
+async fn chain(key: &str, entity_id: &str, signed_id: &str) -> Value {
+    let key: PrivateKeySigner = key.parse().unwrap();
+    let signature = key.sign_message(signed_id.as_bytes()).await.unwrap();
+    json!([
+        {"type": "SIGNER", "payload": format!("{:#x}", key.address())},
+        {"type": "ECDSA_SIGNED_ENTITY", "payload": entity_id, "signature": signature.to_string()}
+    ])
 }
 
 /// title, base parcel, (file, bytes) pairs.
@@ -155,9 +228,10 @@ async fn fake_about(
             .get(&name)
             .cloned()
             .unwrap_or_else(|| format!("{base}/contents/"));
-        // The newest scene only, as upstream's /about answers.
+        // The newest scene only, as upstream's /about answers (the last listed on a tie).
         let urns: Vec<String> = scenes
-            .last()
+            .iter()
+            .max_by_key(|sc| sc.created_at.clone())
             .map(|sc| format!("urn:decentraland:entity:{}?=&baseUrl={content_base}", sc.id))
             .into_iter()
             .collect();
@@ -185,7 +259,8 @@ struct Page {
     entity_id: Option<String>,
 }
 
-/// Every scene of the world, oldest first and paged, as upstream's `/scenes` answers.
+/// Every scene of the world, oldest first by `createdAt` and paged, as upstream's `/scenes`
+/// answers.
 async fn fake_scenes(
     State((s, _)): State<(Shared, String)>,
     Path(name): Path<String>,
@@ -198,7 +273,7 @@ async fn fake_scenes(
     if st.scenes_without_rows {
         return Json(json!({"total": 1})).into_response();
     }
-    let all: Vec<&Scene> = st
+    let mut all: Vec<&Scene> = st
         .worlds
         .get(&name)
         .into_iter()
@@ -208,6 +283,7 @@ async fn fake_scenes(
             None => st.scenes_hide.as_ref() != Some(&sc.id),
         })
         .collect();
+    all.sort_by_key(|sc| sc.created_at.clone());
     let offset = match st.scenes_ignore_offset {
         true => 0,
         false => page.offset.unwrap_or(0),
@@ -217,11 +293,57 @@ async fn fake_scenes(
         .skip(offset)
         .take(page.limit.unwrap_or(100))
         .map(|sc| {
-            json!({"worldName": name, "entityId": sc.id, "entity": sc.entity,
-                   "deploymentAuthChain": [], "size": "0", "status": "DEPLOYED"})
+            let mut row = json!({"worldName": name, "entityId": sc.id, "entity": sc.entity,
+                   "deploymentAuthChain": sc.chain, "size": sc.size, "status": "DEPLOYED"});
+            for (key, value) in [
+                ("deployer", &sc.deployer),
+                ("createdAt", &sc.created_at),
+                ("updatedAt", &sc.updated_at),
+            ] {
+                if let Some(value) = value {
+                    row[key] = json!(value);
+                }
+            }
+            row
         })
         .collect();
     Json(json!({"scenes": scenes, "total": all.len()})).into_response()
+}
+
+async fn fake_settings(
+    State((s, _)): State<(Shared, String)>,
+    Path(name): Path<String>,
+) -> axum::response::Response {
+    match s.lock().settings.get(&name) {
+        Some(body) => Json(body.clone()).into_response(),
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": format!("World \"{name}\" not found.")})),
+        )
+            .into_response(),
+    }
+}
+
+async fn fake_permissions(
+    State((s, _)): State<(Shared, String)>,
+    Path(name): Path<String>,
+) -> axum::response::Response {
+    let mut st = s.lock();
+    st.permissions_calls += 1;
+    if let Some(status) = st.permissions_status {
+        return status.into_response();
+    }
+    let body = st.permissions.get(&name).cloned().unwrap_or_else(|| {
+        json!({
+            "permissions": {
+                "deployment": {"type": "allow-list", "wallets": []},
+                "streaming": {"type": "allow-list", "wallets": []},
+                "access": {"type": "unrestricted"}
+            },
+            "summary": {}
+        })
+    });
+    Json(body).into_response()
 }
 
 async fn fake_contents(
@@ -243,6 +365,8 @@ async fn start_fake() -> Fake {
         .route("/index", get(fake_index))
         .route("/world/{name}/about", get(fake_about))
         .route("/world/{name}/scenes", get(fake_scenes))
+        .route("/world/{name}/settings", get(fake_settings))
+        .route("/world/{name}/permissions", get(fake_permissions))
         .route("/contents/{hash}", get(fake_contents))
         .layer(axum::Extension(hold.clone()))
         .with_state((state.clone(), base.clone()));
@@ -293,10 +417,23 @@ impl Node {
         rx.await.unwrap()
     }
 
+    /// A pass whose owner lookup is a policy without a live authority: the `owner` column.
     async fn pass(&self, ctx: &JobContext) -> catalyst::worlds::mirror::PassSummary {
-        run_pass(&self.client, &self.pool, &self.storage, &self.settings, ctx)
-            .await
-            .expect("mirror pass")
+        let owners = Arc::new(Policy::new(
+            self.pool.clone(),
+            PersonalWorldsPolicy::disabled(),
+            None,
+        ));
+        run_pass(
+            &self.client,
+            &self.pool,
+            &self.storage,
+            &self.settings,
+            Some(owners),
+            ctx,
+        )
+        .await
+        .expect("mirror pass")
     }
 
     fn router(&self) -> Router {
@@ -310,7 +447,16 @@ impl Node {
             Some(self.settings.clone()),
             self.client.clone(),
         ));
-        catalyst::worlds::router(state)
+        // `/worlds` and `/world/{name}/settings` are the core's routes.
+        let policy = Policy::new(self.pool.clone(), PersonalWorldsPolicy::disabled(), None);
+        let core = Arc::new(CoreState::new(
+            self.pool.clone(),
+            self.storage.clone(),
+            Arc::new(policy),
+            CoreSettings::for_tests(None),
+            None,
+        ));
+        catalyst::worlds::router(state).merge(catalyst::worlds::core::root_router(core))
     }
 
     async fn get(&self, path: &str) -> (StatusCode, Value) {
@@ -473,7 +619,7 @@ async fn mirror_passes_are_complete_resumable_and_never_touch_local_publishes() 
     );
     assert_eq!(
         about["configurations"]["skybox"]["fixedHour"], 43200.0,
-        "the upstream about's fixedHour"
+        "the source's /about fixedHour while it answers no world settings"
     );
     assert_eq!(about["spawnCoordinates"], "0,0");
     assert_eq!(
@@ -874,7 +1020,7 @@ async fn mirror_assigns_storage_identities_in_entity_timestamp_order() {
                          "worldConfiguration": {"name": world}}
         });
         let id = blob(st, &serde_json::to_vec(&entity).unwrap());
-        Scene { id, entity }
+        Scene::new(id, entity)
     };
     {
         let mut st = fake.state.lock();
@@ -1144,6 +1290,973 @@ async fn a_world_of_many_scenes_is_mirrored_whole_from_the_paged_listing() {
     let summary = node.pass(&ctx).await;
     assert_eq!(summary.scenes.synced, 1);
     assert_eq!(node.scene_rows(world).await.len(), 26);
+
+    node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
+    drop(node);
+    scratch.teardown().await;
+}
+
+/// Each mirrored row keeps its deployment's times upstream (`toWorldScene`,
+/// `worlds-manager.ts:66-77`): `/about` names the newest scene (`getWorldScenes` by `created_at`
+/// descending, `:403-407`), `/scenes` pages by `createdAt` (`:1015-1019`) and `/worlds` sorts by
+/// the newest (`:1366-1404`), not by when this node copied them.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_mirrored_world_keeps_the_upstream_deploy_times() {
+    let Some(scratch) = db::scratch_database().await else {
+        eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
+        return;
+    };
+    let fake = start_fake().await;
+    let node = Node::new(scratch.pool.clone(), &fake.base, "times").await;
+    let world = "times.dcl.eth";
+    let mut ids = set_scenes(
+        &mut fake.state.lock(),
+        world,
+        &[
+            ("T0", "0,0", &[("a.txt", b"t0")]),
+            ("T1", "1,0", &[("b.txt", b"t1")]),
+            ("T2", "2,0", &[("c.txt", b"t2")]),
+        ],
+    );
+    ids.sort();
+    // The smallest id is the newest, so neither the id order nor a tie names it.
+    let times = [
+        (
+            ids[1].clone(),
+            "2026-01-01T00:00:00.000Z",
+            "2026-01-01T01:00:00.000Z",
+        ),
+        (
+            ids[2].clone(),
+            "2026-02-01T00:00:00.000Z",
+            "2026-02-01T01:00:00.000Z",
+        ),
+        (
+            ids[0].clone(),
+            "2026-03-01T00:00:00.000Z",
+            "2026-03-01T01:00:00.000Z",
+        ),
+    ];
+    {
+        let mut st = fake.state.lock();
+        for (id, created, updated) in &times {
+            let scene = scene_mut(&mut st, world, id);
+            scene.created_at = Some(created.to_string());
+            scene.updated_at = Some(updated.to_string());
+        }
+    }
+
+    let summary = node.pass(&node.ctx().await).await;
+    assert_eq!(
+        (summary.scenes.synced, summary.scenes.scenes),
+        (1, 3),
+        "{summary:?}"
+    );
+
+    let (status, about) = node.get(&format!("/world/{world}/about")).await;
+    assert_eq!(status, StatusCode::OK, "{about}");
+    let urns = about["configurations"]["scenesUrn"].as_array().unwrap();
+    assert_eq!(urns.len(), 1, "{about}");
+    assert!(
+        urns[0]
+            .as_str()
+            .unwrap()
+            .starts_with(&format!("urn:decentraland:entity:{}?", ids[0])),
+        "the newest createdAt: {about}"
+    );
+
+    let (status, scenes) = node.get(&format!("/world/{world}/scenes")).await;
+    assert_eq!(status, StatusCode::OK, "{scenes}");
+    let listed: Vec<(String, String, String)> = scenes["scenes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| {
+            let text = |key: &str| s[key].as_str().unwrap().to_string();
+            (text("entityId"), text("createdAt"), text("updatedAt"))
+        })
+        .collect();
+    let expected: Vec<(String, String, String)> = times
+        .iter()
+        .map(|(id, created, updated)| (id.clone(), created.to_string(), updated.to_string()))
+        .collect();
+    assert_eq!(listed, expected, "upstream's order and times");
+
+    let (status, worlds) = node.get("/worlds?sort=last_deployed_at").await;
+    assert_eq!(status, StatusCode::OK, "{worlds}");
+    let entry = worlds["worlds"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|w| w["name"] == world)
+        .cloned()
+        .unwrap();
+    assert_eq!(entry["last_deployed_at"], "2026-03-01T00:00:00.000Z");
+
+    node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
+    drop(node);
+    scratch.teardown().await;
+}
+
+/// A pass keeps each row's `deployer`, `deploymentAuthChain` and `size` as upstream stored them
+/// (`toWorldScene`; `scenes-handler.ts:73-84` serves the size as a string), the chain and
+/// deployer only when the chain signs the scene and its signer is the listed deployer.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_mirror_pass_keeps_the_upstream_deployer_and_chain() {
+    let Some(scratch) = db::scratch_database().await else {
+        eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
+        return;
+    };
+    let fake = start_fake().await;
+    let node = Node::new(scratch.pool.clone(), &fake.base, "signed").await;
+    let deployer = address(DEPLOYER_KEY);
+    let (signed_id, forged_id, other_id) = {
+        let mut st = fake.state.lock();
+        (
+            add_scene(
+                &mut st,
+                "signed.dcl.eth",
+                "S",
+                "0,0",
+                &[("s.txt", b"signed")],
+            ),
+            add_scene(
+                &mut st,
+                "forged.dcl.eth",
+                "F",
+                "0,0",
+                &[("f.txt", b"forged")],
+            ),
+            add_scene(&mut st, "other.dcl.eth", "O", "0,0", &[("o.txt", b"other")]),
+        )
+    };
+    let signed_chain = chain(DEPLOYER_KEY, &signed_id, &signed_id).await;
+    // Names its scene but signs another id.
+    let forged_chain = chain(DEPLOYER_KEY, &forged_id, &signed_id).await;
+    // Signs its scene, while the listing names someone else as the deployer.
+    let other_chain = chain(DEPLOYER_KEY, &other_id, &other_id).await;
+    let someone_else = "0x1111111111111111111111111111111111111111".to_string();
+    {
+        let mut st = fake.state.lock();
+        for (world, id, chain, who) in [
+            ("signed.dcl.eth", &signed_id, &signed_chain, &deployer),
+            ("forged.dcl.eth", &forged_id, &forged_chain, &deployer),
+            ("other.dcl.eth", &other_id, &other_chain, &someone_else),
+        ] {
+            let scene = scene_mut(&mut st, world, id);
+            scene.chain = chain.clone();
+            scene.deployer = Some(who.clone());
+            scene.size = "1234".to_string();
+        }
+    }
+
+    let summary = node.pass(&node.ctx().await).await;
+    assert_eq!(summary.scenes.synced, 3, "{summary:?}");
+
+    let (status, body) = node.get("/world/signed.dcl.eth/scenes").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let row = &body["scenes"][0];
+    assert_eq!(row["deployer"], json!(deployer));
+    assert_eq!(row["deploymentAuthChain"], signed_chain);
+    assert_eq!(row["size"], "1234");
+    for world in ["forged.dcl.eth", "other.dcl.eth"] {
+        let (status, body) = node.get(&format!("/world/{world}/scenes")).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let row = &body["scenes"][0];
+        assert_eq!(row["deployer"], ZERO_ADDRESS, "{world}");
+        assert_eq!(row["deploymentAuthChain"], json!([]), "{world}");
+        assert_eq!(row["size"], "1234", "{world}");
+    }
+
+    node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
+    drop(node);
+    scratch.teardown().await;
+}
+
+/// A pass copies the world settings upstream stores (`GET /world/:n/settings`,
+/// `world-settings-handler.ts:155-178`, `worlds-manager.ts:1222-1262`), version included,
+/// instead of deriving them from `/about`, whose fixed hour and offline adapter here are the
+/// scene's own. Without an answer the copied settings stay.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_mirror_pass_copies_the_upstream_world_settings() {
+    let Some(scratch) = db::scratch_database().await else {
+        eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
+        return;
+    };
+    let fake = start_fake().await;
+    let node = Node::new(scratch.pool.clone(), &fake.base, "settings").await;
+    let world = "globe.dcl.eth";
+    let upstream = json!({
+        "title": "Globe", "description": "d", "content_rating": "T", "spawn_coordinates": "0,0",
+        "skybox_time": null, "categories": ["art"], "single_player": false,
+        "show_in_places": false, "access_type": "unrestricted", "settings_version": 7
+    });
+    {
+        let mut st = fake.state.lock();
+        let mut entity = scene_entity(&mut st, world, "G", "0,0", &[("g.txt", b"globe")]);
+        let configuration = &mut entity["metadata"]["worldConfiguration"];
+        configuration["skyboxConfig"]["fixedTime"] = json!(43200);
+        configuration["fixedAdapter"] = json!("offline:offline");
+        push_scene(&mut st, world, entity);
+        st.settings.insert(world.to_string(), upstream.clone());
+    }
+
+    let ctx = node.ctx().await;
+    let summary = node.pass(&ctx).await;
+    assert_eq!(summary.scenes.synced, 1, "{summary:?}");
+
+    let (status, settings) = node.get(&format!("/world/{world}/settings")).await;
+    assert_eq!(status, StatusCode::OK, "{settings}");
+    let mut expected = upstream.clone();
+    expected["realm_name_override"] = Value::Null;
+    expected["preview_wearable_urns"] = Value::Null;
+    assert_eq!(settings, expected);
+
+    let (status, worlds) = node.get("/worlds").await;
+    assert_eq!(status, StatusCode::OK, "{worlds}");
+    let entry = worlds["worlds"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|w| w["name"] == world)
+        .cloned()
+        .unwrap();
+    assert_eq!(
+        (
+            &entry["title"],
+            &entry["description"],
+            &entry["content_rating"]
+        ),
+        (&json!("Globe"), &json!("d"), &json!("T"))
+    );
+
+    let (status, about) = node.get(&format!("/world/{world}/about")).await;
+    assert_eq!(status, StatusCode::OK, "{about}");
+    assert_eq!(about["configurations"]["skybox"]["fixedHour"], 43200.0);
+    assert_eq!(about["comms"]["adapter"], "fixed-adapter:offline:offline");
+
+    // A new scene and no settings answer: the copied settings stay.
+    {
+        let mut st = fake.state.lock();
+        st.settings.remove(world);
+        add_scene(&mut st, world, "G2", "1,0", &[("g2.txt", b"globe2")]);
+    }
+    let summary = node.pass(&ctx).await;
+    assert_eq!(summary.scenes.synced, 1, "{summary:?}");
+    let (_, kept) = node.get(&format!("/world/{world}/settings")).await;
+    assert_eq!(kept, expected);
+
+    node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
+    drop(node);
+    scratch.teardown().await;
+}
+
+/// The source's access setting (`GET /world/{name}/permissions`, `permissions.access`) is
+/// copied onto a world the mirror holds on every pass, changed scenes or not, and comms
+/// admission follows it; its deployment and streaming grants are not copied. A shared secret
+/// is stored as one no secret matches, an unreadable answer fails the world's sync and keeps
+/// the stored setting, and a world published here keeps its own.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_mirror_pass_copies_the_upstream_access_setting() {
+    use catalyst::comms::world_identity::WorldName;
+    use catalyst::shared::identity::Address;
+    use catalyst::worlds::policy::{Access, AccessGrant};
+
+    let Some(scratch) = db::scratch_database().await else {
+        eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
+        return;
+    };
+    let fake = start_fake().await;
+    let node = Node::new(scratch.pool.clone(), &fake.base, "access").await;
+    let world = "gated.dcl.eth";
+    let (a, b, c, d) = (
+        "0x00000000000000000000000000000000000000a1",
+        "0x00000000000000000000000000000000000000b2",
+        "0x00000000000000000000000000000000000000c3",
+        "0x00000000000000000000000000000000000000d4",
+    );
+    let community = "6f1c2d3e-4b5a-4c7d-8e9f-0a1b2c3d4e5f";
+    {
+        let mut st = fake.state.lock();
+        add_scene(&mut st, world, "G", "0,0", &[("g.txt", b"gated")]);
+        st.permissions.insert(
+            world.to_string(),
+            json!({
+                "owner": "0x00000000000000000000000000000000000000ee",
+                "permissions": {
+                    "deployment": {"type": "allow-list", "wallets": [a]},
+                    "streaming": {"type": "allow-list", "wallets": [b]},
+                    "access": {"type": "allow-list", "wallets": [c.to_uppercase().replace("0X", "0x")],
+                               "communities": [community]}
+                },
+                "summary": {
+                    a: [{"permission": "deployment", "world_wide": true}],
+                    b: [{"permission": "streaming", "world_wide": true}]
+                }
+            }),
+        );
+    }
+
+    let ctx = node.ctx().await;
+    let summary = node.pass(&ctx).await;
+    assert_eq!(summary.scenes.synced, 1, "{summary:?}");
+    let (status, permissions) = node.get(&format!("/world/{world}/permissions")).await;
+    assert_eq!(status, StatusCode::OK, "{permissions}");
+    assert_eq!(
+        permissions["permissions"]["access"],
+        json!({"type": "allow-list", "wallets": [c], "communities": [community]})
+    );
+    // Grants are this node's: none is taken from the source.
+    assert_eq!(
+        permissions["permissions"]["deployment"]["wallets"],
+        json!([])
+    );
+    assert_eq!(
+        permissions["permissions"]["streaming"]["wallets"],
+        json!([])
+    );
+    assert_eq!(permissions["summary"], json!({}));
+
+    let policy = Policy::new(scratch.pool.clone(), PersonalWorldsPolicy::disabled(), None);
+    let name = WorldName::parse(world).unwrap();
+    let now = chrono::Utc::now().naive_utc();
+    let (p, n) = (&policy, &name);
+    let access = move |who: &'static str| async move {
+        p.can_access(n, &Address::parse(who).unwrap(), None, None, None, now)
+            .await
+            .unwrap()
+    };
+    assert_eq!(access(c).await, Access::Allowed(AccessGrant::AllowListed));
+    assert_eq!(access(d).await, Access::NotAllowed);
+    let rechecks: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM social.world_access_rechecks WHERE world_name = $1",
+    )
+    .bind(world)
+    .fetch_one(&scratch.pool)
+    .await
+    .unwrap();
+    assert_eq!(rechecks, 1, "the change queues the access recheck");
+
+    // The scenes are unchanged; the setting changes upstream and the next pass copies it.
+    fake.state.lock().permissions.insert(
+        world.to_string(),
+        json!({"permissions": {"access": {"type": "shared-secret"}}, "summary": {}}),
+    );
+    let calls = fake.state.lock().permissions_calls;
+    let summary = node.pass(&ctx).await;
+    assert_eq!(summary.scenes.unchanged, 1, "{summary:?}");
+    assert_eq!(fake.state.lock().permissions_calls, calls + 1);
+    let (_, permissions) = node.get(&format!("/world/{world}/permissions")).await;
+    assert_eq!(
+        permissions["permissions"]["access"],
+        json!({"type": "shared-secret"})
+    );
+    let presented = policy
+        .can_access(
+            &name,
+            &Address::parse(d).unwrap(),
+            Some("any secret"),
+            None,
+            None,
+            now,
+        )
+        .await
+        .unwrap();
+    assert_eq!(presented, Access::InvalidSecret, "no secret admits");
+    let listed: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM worlds.world_permissions WHERE world_name = $1")
+            .bind(world)
+            .fetch_one(&scratch.pool)
+            .await
+            .unwrap();
+    assert_eq!(listed, 0, "the allow-list goes with its type");
+
+    // An unreadable or unknown setting keeps what is stored; a world whose scenes are all held
+    // still syncs the rest.
+    for (status, body) in [
+        (Some(StatusCode::INTERNAL_SERVER_ERROR), json!({})),
+        (
+            None,
+            json!({"permissions": {"access": {"type": "members-only"}}}),
+        ),
+    ] {
+        {
+            let mut st = fake.state.lock();
+            st.permissions_status = status;
+            st.permissions.insert(world.to_string(), body);
+        }
+        let summary = node.pass(&ctx).await;
+        assert_eq!(summary.scenes.unchanged, 1, "{summary:?}");
+        let (_, permissions) = node.get(&format!("/world/{world}/permissions")).await;
+        assert_eq!(
+            permissions["permissions"]["access"]["type"],
+            "shared-secret"
+        );
+    }
+    fake.state.lock().permissions_status = None;
+
+    // A world published here keeps its own setting.
+    sqlx::query("UPDATE worlds.world_scenes SET mirror_source = NULL WHERE world_name = $1")
+        .bind(world)
+        .execute(&scratch.pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE worlds.worlds SET mirror_source = NULL, access_type = 'nft-ownership', \
+         access_secret_hash = NULL, access_nft = 'urn:x' WHERE name = $1",
+    )
+    .bind(world)
+    .execute(&scratch.pool)
+    .await
+    .unwrap();
+    fake.state.lock().permissions.insert(
+        world.to_string(),
+        json!({"permissions": {"access": {"type": "unrestricted"}}, "summary": {}}),
+    );
+    let summary = node.pass(&ctx).await;
+    assert_eq!(summary.scenes.refused, 1, "{summary:?}");
+    let (_, permissions) = node.get(&format!("/world/{world}/permissions")).await;
+    assert_eq!(
+        permissions["permissions"]["access"],
+        json!({"type": "nft-ownership", "nft": "urn:x"})
+    );
+
+    node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
+    drop(node);
+    scratch.teardown().await;
+}
+
+/// The owner's access writes on this node stick, as upstream's `storeAccess` and
+/// `modifyAccessAtomically` writes do: a world whose owner set its access here before any scene
+/// keeps it when a scheduled pass takes the row over, and an allow-list edit on a mirrored world
+/// is not undone by the next pass, whatever the source then reports.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_access_setting_the_owner_made_here_is_kept_by_the_mirror() {
+    use catalyst::comms::world_identity::WorldName;
+    use catalyst::shared::identity::Address;
+    use catalyst::worlds::core::store::{
+        AccessCaps, AccessSetting, AllowListEdit, AllowListEditOutcome, modify_allow_list_access,
+        store_access_for_owner,
+    };
+
+    let Some(scratch) = db::scratch_database().await else {
+        eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
+        return;
+    };
+    let fake = start_fake().await;
+    let node = Node::new(scratch.pool.clone(), &fake.base, "access-here").await;
+    let owner = Address::parse("0x00000000000000000000000000000000000000ee").unwrap();
+    let (c, d) = (
+        "0x00000000000000000000000000000000000000c3",
+        "0x00000000000000000000000000000000000000d4",
+    );
+    let (early, edited) = ("early.dcl.eth", "edited.dcl.eth");
+    {
+        let mut st = fake.state.lock();
+        add_scene(&mut st, early, "E", "0,0", &[("e.txt", b"early")]);
+        add_scene(&mut st, edited, "F", "0,0", &[("f.txt", b"edited")]);
+        st.permissions.insert(
+            edited.to_string(),
+            json!({"permissions": {"access": {"type": "allow-list", "wallets": [c]}}, "summary": {}}),
+        );
+    }
+    // Set here before the mirror holds anything of the world: the source reports it open.
+    store_access_for_owner(
+        &scratch.pool,
+        &WorldName::parse(early).unwrap(),
+        &owner,
+        &AccessSetting::NftOwnership {
+            nft: "urn:x".into(),
+        },
+    )
+    .await
+    .unwrap();
+
+    let ctx = node.ctx().await;
+    let summary = node.pass(&ctx).await;
+    assert_eq!(summary.scenes.synced, 2, "{summary:?}");
+    let mirrored: Option<String> =
+        sqlx::query_scalar("SELECT mirror_source FROM worlds.worlds WHERE name = $1")
+            .bind(early)
+            .fetch_one(&scratch.pool)
+            .await
+            .unwrap();
+    assert!(mirrored.is_some(), "the pass took the row over");
+    let access = |world: &'static str| {
+        let node = &node;
+        async move {
+            let (status, body) = node.get(&format!("/world/{world}/permissions")).await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            body["permissions"]["access"].clone()
+        }
+    };
+    assert_eq!(
+        access(early).await,
+        json!({"type": "nft-ownership", "nft": "urn:x"})
+    );
+    assert_eq!(
+        access(edited).await,
+        json!({"type": "allow-list", "wallets": [c], "communities": []})
+    );
+
+    // The owner edits the mirrored allow-list here; the source then opens the world.
+    let added = modify_allow_list_access(
+        &scratch.pool,
+        &WorldName::parse(edited).unwrap(),
+        &owner,
+        AccessCaps::default(),
+        AllowListEdit::AddWallet(&Address::parse(d).unwrap()),
+    )
+    .await
+    .unwrap();
+    assert_eq!(added, AllowListEditOutcome::Applied);
+    fake.state.lock().permissions.insert(
+        edited.to_string(),
+        json!({"permissions": {"access": {"type": "unrestricted"}}, "summary": {}}),
+    );
+    let summary = node.pass(&ctx).await;
+    assert_eq!(summary.scenes.unchanged, 2, "{summary:?}");
+    assert_eq!(
+        access(edited).await,
+        json!({"type": "allow-list", "wallets": [c, d], "communities": []})
+    );
+    assert_eq!(
+        access(early).await,
+        json!({"type": "nft-ownership", "nft": "urn:x"})
+    );
+
+    node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
+    drop(node);
+    scratch.teardown().await;
+}
+
+async fn world_row(pool: &PgPool, world: &str) -> (Option<String>, Option<i32>, i64) {
+    sqlx::query_as("SELECT title, skybox_time, settings_version FROM worlds.worlds WHERE name = $1")
+        .bind(world)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+async fn access_type(node: &Node, world: &str) -> Value {
+    let (_, body) = node.get(&format!("/world/{world}/permissions")).await;
+    body["permissions"]["access"]["type"].clone()
+}
+
+async fn set_here(pool: &PgPool, world: &str) -> (bool, Option<String>, bool, Option<String>) {
+    sqlx::query_as(
+        "SELECT access_set_here, access_set_by, settings_set_here, settings_set_by \
+         FROM worlds.worlds WHERE name = $1",
+    )
+    .bind(world)
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
+/// The owner's settings and access writes on this node stick while that owner holds the name, as
+/// this node's own owner lookup says (`Policy::current_owner`; without a live authority, the
+/// `owner` column these tests set). The source's `/permissions` owner trails a sale, so it never
+/// decides: a new holder's restriction survives a source that still names the seller, and a
+/// later transfer lets the source's settings and access in again. A copied access change bumps
+/// `settings_version`; a disabled row takes no copy.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_owner_edit_here_is_kept_while_that_owner_holds_the_name() {
+    use catalyst::comms::world_identity::WorldName;
+    use catalyst::shared::identity::Address;
+    use catalyst::worlds::core::store::{
+        AccessSetting, WorldSettingsUpdate, store_access_for_owner, update_world_settings,
+    };
+
+    let Some(scratch) = db::scratch_database().await else {
+        eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
+        return;
+    };
+    let fake = start_fake().await;
+    let node = Node::new(scratch.pool.clone(), &fake.base, "set-here").await;
+    let world = "kept.dcl.eth";
+    let (seller, buyer, third) = (
+        "0x00000000000000000000000000000000000000a1",
+        "0x00000000000000000000000000000000000000b2",
+        "0x00000000000000000000000000000000000000c3",
+    );
+    let permissions = |owner: &str, access: Value| json!({"owner": owner, "permissions": {"access": access}, "summary": {}});
+    let holds = |owner: &'static str| {
+        let pool = node.pool.clone();
+        async move {
+            sqlx::query("UPDATE worlds.worlds SET owner = $2 WHERE name = $1")
+                .bind(world)
+                .bind(owner)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+    };
+    {
+        let mut st = fake.state.lock();
+        add_scene(&mut st, world, "K", "0,0", &[("k.txt", b"kept")]);
+        st.settings.insert(
+            world.to_string(),
+            json!({"title": "Source", "settings_version": 1}),
+        );
+        st.permissions.insert(
+            world.to_string(),
+            permissions(seller, json!({"type": "unrestricted"})),
+        );
+    }
+    let ctx = node.ctx().await;
+    let summary = node.pass(&ctx).await;
+    assert_eq!(summary.scenes.synced, 1, "{summary:?}");
+    assert_eq!(
+        world_row(&node.pool, world).await.0.as_deref(),
+        Some("Source")
+    );
+    holds(seller).await;
+
+    // The seller retitles the world here; the source keeps its own title.
+    update_world_settings(
+        &node.pool,
+        &WorldName::parse(world).unwrap(),
+        &Address::parse(seller).unwrap(),
+        Some(&Address::parse(seller).unwrap()),
+        &WorldSettingsUpdate {
+            title: Some("Mine".into()),
+            ..WorldSettingsUpdate::default()
+        },
+    )
+    .await
+    .unwrap();
+    let edited = world_row(&node.pool, world).await;
+    assert_eq!(edited.0.as_deref(), Some("Mine"));
+    for _ in 0..2 {
+        let summary = node.pass(&ctx).await;
+        assert_eq!(summary.scenes.unchanged, 1, "{summary:?}");
+        assert_eq!(
+            world_row(&node.pool, world).await,
+            edited,
+            "no revert, no bump"
+        );
+    }
+    assert_eq!(
+        set_here(&node.pool, world).await,
+        (false, None, true, Some(seller.into()))
+    );
+
+    // The source restricts the world: the copied access bumps the version even though the
+    // source's settings counter is not ahead.
+    fake.state.lock().permissions.insert(
+        world.to_string(),
+        permissions(seller, json!({"type": "allow-list", "wallets": [seller]})),
+    );
+    node.pass(&ctx).await;
+    assert_eq!(access_type(&node, world).await, "allow-list");
+    assert_eq!(world_row(&node.pool, world).await.2, edited.2 + 1);
+
+    // A marked row from before the setter was recorded takes this node's holder as it.
+    sqlx::query(
+        "UPDATE worlds.worlds SET access_set_here = true, access_set_by = NULL WHERE name = $1",
+    )
+    .bind(world)
+    .execute(&node.pool)
+    .await
+    .unwrap();
+    node.pass(&ctx).await;
+    assert_eq!(
+        set_here(&node.pool, world).await,
+        (true, Some(seller.into()), true, Some(seller.into()))
+    );
+
+    // A disabled row takes no copy.
+    sqlx::query("UPDATE worlds.worlds SET blocked_since = timezone('UTC', now()) WHERE name = $1")
+        .bind(world)
+        .execute(&node.pool)
+        .await
+        .unwrap();
+    {
+        let mut st = fake.state.lock();
+        st.settings.insert(
+            world.to_string(),
+            json!({"title": "Sold", "settings_version": 2}),
+        );
+        st.permissions.insert(
+            world.to_string(),
+            permissions(seller, json!({"type": "unrestricted"})),
+        );
+    }
+    holds(buyer).await;
+    let before = world_row(&node.pool, world).await;
+    node.pass(&ctx).await;
+    assert_eq!(world_row(&node.pool, world).await, before);
+    sqlx::query("UPDATE worlds.worlds SET blocked_since = NULL WHERE name = $1")
+        .bind(world)
+        .execute(&node.pool)
+        .await
+        .unwrap();
+
+    // The name sold to the buyer, who restricts it here, while the source still names the
+    // seller and reports the world open: the buyer's restriction stays, and the seller's
+    // settings give way to the source's.
+    store_access_for_owner(
+        &node.pool,
+        &WorldName::parse(world).unwrap(),
+        &Address::parse(buyer).unwrap(),
+        &AccessSetting::AllowList {
+            wallets: vec![buyer.into()],
+            communities: Vec::new(),
+        },
+    )
+    .await
+    .unwrap();
+    for _ in 0..2 {
+        node.pass(&ctx).await;
+        assert_eq!(
+            access_type(&node, world).await,
+            "allow-list",
+            "the stale owner never opens it"
+        );
+    }
+    assert_eq!(
+        set_here(&node.pool, world).await,
+        (true, Some(buyer.into()), false, None)
+    );
+    assert_eq!(
+        world_row(&node.pool, world).await.0.as_deref(),
+        Some("Sold")
+    );
+    // The source catching up changes nothing.
+    fake.state.lock().permissions.insert(
+        world.to_string(),
+        permissions(buyer, json!({"type": "unrestricted"})),
+    );
+    node.pass(&ctx).await;
+    assert_eq!(access_type(&node, world).await, "allow-list");
+
+    // Sold again: the buyer's mark gives way to the source's access.
+    holds(third).await;
+    node.pass(&ctx).await;
+    assert_eq!(
+        set_here(&node.pool, world).await,
+        (false, None, false, None)
+    );
+    assert_eq!(access_type(&node, world).await, "unrestricted");
+
+    // Without an owner lookup (no policy), a mark is kept.
+    store_access_for_owner(
+        &node.pool,
+        &WorldName::parse(world).unwrap(),
+        &Address::parse(third).unwrap(),
+        &AccessSetting::AllowList {
+            wallets: vec![third.into()],
+            communities: Vec::new(),
+        },
+    )
+    .await
+    .unwrap();
+    holds(seller).await;
+    run_pass(
+        &node.client,
+        &node.pool,
+        &node.storage,
+        &node.settings,
+        None,
+        &ctx,
+    )
+    .await
+    .expect("mirror pass");
+    assert_eq!(access_type(&node, world).await, "allow-list");
+
+    node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
+    drop(node);
+    scratch.teardown().await;
+}
+
+/// Upstream changes a world's settings and access without a deployment and bumps
+/// `settings_version` (`worlds-manager.ts:143-164`, `:768-776`), and its `/index` carries neither,
+/// so a pass that finds every scene held still reads the settings and the `/scenes` listing:
+/// a settings edit lands, a first pass without a settings answer is caught up, and rows written
+/// before the listing's times, chain and deployer were kept take them. The copied version never
+/// goes back.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_unchanged_mirrored_world_takes_settings_and_listing_updates() {
+    let Some(scratch) = db::scratch_database().await else {
+        eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
+        return;
+    };
+    let fake = start_fake().await;
+    let node = Node::new(scratch.pool.clone(), &fake.base, "unchanged").await;
+    let world = "still.dcl.eth";
+    let id = add_scene(
+        &mut fake.state.lock(),
+        world,
+        "S",
+        "0,0",
+        &[("s.txt", b"still")],
+    );
+    let ctx = node.ctx().await;
+
+    // 1. No settings answer and a listing without times or chain: the `/about` fallback.
+    let summary = node.pass(&ctx).await;
+    assert_eq!(summary.scenes.synced, 1, "{summary:?}");
+    assert_eq!(
+        world_row(&node.pool, world).await,
+        (None, Some(43200), 0),
+        "the source's /about fixed hour"
+    );
+    assert_eq!(node.scene_rows(world).await[0].1, ZERO_ADDRESS);
+
+    // 2. Nothing redeployed; the source now answers settings and lists the deployment's
+    // times, chain and deployer.
+    let chain = chain(DEPLOYER_KEY, &id, &id).await;
+    {
+        let mut st = fake.state.lock();
+        st.settings.insert(
+            world.to_string(),
+            json!({"title": "Still", "skybox_time": null, "settings_version": 3}),
+        );
+        let scene = scene_mut(&mut st, world, &id);
+        scene.chain = chain.clone();
+        scene.deployer = Some(address(DEPLOYER_KEY));
+        scene.created_at = Some("2026-01-02T03:04:05.000Z".into());
+        scene.size = "77".into();
+    }
+    let about_before = about_calls(&fake, world);
+    let summary = node.pass(&ctx).await;
+    assert_eq!(
+        (summary.scenes.synced, summary.scenes.unchanged),
+        (0, 1),
+        "{summary:?}"
+    );
+    assert_eq!(about_calls(&fake, world), about_before, "no /about read");
+    assert_eq!(
+        world_row(&node.pool, world).await,
+        (Some("Still".into()), None, 3)
+    );
+    let (_, scenes) = node.get(&format!("/world/{world}/scenes")).await;
+    let row = &scenes["scenes"][0];
+    assert_eq!(row["deployer"], json!(address(DEPLOYER_KEY)), "{scenes}");
+    assert_eq!(row["deploymentAuthChain"], chain);
+    assert_eq!(row["createdAt"], "2026-01-02T03:04:05.000Z");
+    assert_eq!(row["size"], "77");
+
+    // 3. A settings edit upstream, no deployment.
+    fake.state.lock().settings.insert(
+        world.to_string(),
+        json!({"title": "Edited", "skybox_time": 600, "settings_version": 4}),
+    );
+    node.pass(&ctx).await;
+    assert_eq!(
+        world_row(&node.pool, world).await,
+        (Some("Edited".into()), Some(600), 4)
+    );
+
+    // 4. A row ahead of its source (bumped by earlier ingests) never goes back: an unchanged
+    // answer leaves it, a change moves it one past.
+    sqlx::query("UPDATE worlds.worlds SET settings_version = 9 WHERE name = $1")
+        .bind(world)
+        .execute(&node.pool)
+        .await
+        .unwrap();
+    node.pass(&ctx).await;
+    assert_eq!(world_row(&node.pool, world).await.2, 9);
+    fake.state.lock().settings.insert(
+        world.to_string(),
+        json!({"title": "Again", "skybox_time": 600, "settings_version": 5}),
+    );
+    node.pass(&ctx).await;
+    assert_eq!(
+        world_row(&node.pool, world).await,
+        (Some("Again".into()), Some(600), 10)
+    );
+
+    node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
+    drop(node);
+    scratch.teardown().await;
+}
+
+/// A thumbnail the source took from an upload is stored there under the SHA-256 hex of its
+/// bytes (`logic/settings/component.ts:65`) and served only by the source. The mirror fetches it,
+/// checks the digest and keeps it under its CIDv1, which `/contents` and Places' `image` serve
+/// here; a key whose bytes are not an image, or that the source does not serve, is not kept.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_mirrored_world_holds_the_thumbnail_its_settings_name() {
+    use sha2::Digest;
+    let Some(scratch) = db::scratch_database().await else {
+        eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
+        return;
+    };
+    let fake = start_fake().await;
+    let node = Node::new(scratch.pool.clone(), &fake.base, "thumbs").await;
+    let png = [
+        &[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a][..],
+        &[7u8; 300_000],
+    ]
+    .concat();
+    let sha = hex::encode(sha2::Sha256::digest(&png));
+    let text = b"not an image".to_vec();
+    let text_sha = hex::encode(sha2::Sha256::digest(&text));
+    {
+        let mut st = fake.state.lock();
+        for (world, key) in [
+            ("upload.dcl.eth", sha.as_str()),
+            ("text.dcl.eth", text_sha.as_str()),
+            ("missing.dcl.eth", &"0".repeat(64)),
+        ] {
+            add_scene(&mut st, world, "T", "0,0", &[("t.txt", world.as_bytes())]);
+            st.settings.insert(
+                world.to_string(),
+                json!({"title": "Thumb", "thumbnail_hash": key, "settings_version": 1}),
+            );
+        }
+        st.blobs.insert(sha.clone(), png.clone());
+        st.blobs.insert(text_sha.clone(), text);
+    }
+    let summary = node.pass(&node.ctx().await).await;
+    assert_eq!(summary.scenes.synced, 3, "{summary:?}");
+
+    let cid = hash_bytes_v1(&png);
+    let (_, settings) = node.get("/world/upload.dcl.eth/settings").await;
+    assert_eq!(settings["thumbnail_hash"], json!(cid), "{settings}");
+    assert_eq!(
+        node.storage.retrieve(&cid).await.unwrap().as_deref(),
+        Some(&png[..])
+    );
+    for world in ["text.dcl.eth", "missing.dcl.eth"] {
+        let (_, settings) = node.get(&format!("/world/{world}/settings")).await;
+        assert_eq!(settings["title"], "Thumb", "{settings}");
+        assert!(
+            settings.get("thumbnail_hash").is_none(),
+            "{world}: {settings}"
+        );
+    }
+
+    // A later pass keeps the copy without fetching it again.
+    fake.state.lock().blobs.remove(&sha);
+    node.pass(&node.ctx().await).await;
+    let (_, settings) = node.get("/world/upload.dcl.eth/settings").await;
+    assert_eq!(settings["thumbnail_hash"], json!(cid), "{settings}");
+
+    // A row that stored the source's hex key itself takes the held copy on the next pass.
+    sqlx::query("UPDATE worlds.worlds SET thumbnail_hash = $2 WHERE name = $1")
+        .bind("upload.dcl.eth")
+        .bind(&sha)
+        .execute(&node.pool)
+        .await
+        .unwrap();
+    fake.state.lock().blobs.insert(sha.clone(), png.clone());
+    node.pass(&node.ctx().await).await;
+    let (_, settings) = node.get("/world/upload.dcl.eth/settings").await;
+    assert_eq!(settings["thumbnail_hash"], json!(cid), "{settings}");
+
+    // A thumbnail the source names but fails to serve keeps the stored one and its version.
+    let version = world_row(&node.pool, "upload.dcl.eth").await.2;
+    fake.state.lock().settings.insert(
+        "upload.dcl.eth".to_string(),
+        json!({"title": "Thumb", "thumbnail_hash": "1".repeat(64), "settings_version": 1}),
+    );
+    node.pass(&node.ctx().await).await;
+    let (_, settings) = node.get("/world/upload.dcl.eth/settings").await;
+    assert_eq!(settings["thumbnail_hash"], json!(cid), "{settings}");
+    assert_eq!(world_row(&node.pool, "upload.dcl.eth").await.2, version);
 
     node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
     drop(node);

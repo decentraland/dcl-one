@@ -269,7 +269,7 @@ pub(super) fn join_control(
     let carry = target.carry;
     let player_control = player_control(knobs, target.key == WHERE_WEB);
     let launch = if target.url.is_empty() {
-        r#"<span class="jn__cta" id="launch" aria-disabled="true">Launch</span>"#.to_string()
+        r#"<span class="btn btn--primary btn--lg jn__cta is-disabled" id="launch" aria-disabled="true">Launch</span>"#.to_string()
     } else {
         // A web player opens in its own tab, so this page stays put to relaunch or
         // retune; a decentraland:// deep link would leave a blank tab, so it stays here.
@@ -279,7 +279,7 @@ pub(super) fn join_control(
             ""
         };
         format!(
-            r#"<a class="jn__cta" id="launch" href="{}"{new_tab}>Launch</a>"#,
+            r#"<a class="btn btn--primary btn--lg jn__cta" id="launch" href="{}"{new_tab}>Launch</a>"#,
             esc(&target.url)
         )
     };
@@ -360,7 +360,7 @@ pub(super) fn join_control(
     };
 
     format!(
-        r#"<div class="jn"><form class="side" method="get" action="{action}"><div class="jn2__head"><div class="jn2__title"><h2>Join this preview</h2><span class="jn__hint">{hint}</span></div></div><fieldset class="knob knob--tabs"><legend class="knob__k u-sr-only">where</legend><div class="jn2__tabs">{tabs}</div></fieldset><div class="jn2__body"><div class="jn2__col">{player_control}{spawn_knob}<fieldset class="knob"><legend class="knob__k">Scene errors in the terminal</legend>{mcp_control}{mcp_note}</fieldset><button class="knob__go" type="submit">Apply</button></div><div class="jn2__col"><fieldset class="knob"><legend class="knob__k">Deep-link flags{flag_count}</legend><div class="flags">{flags}</div></fieldset></div></div><div class="jn2__foot">{launch}<span class="jn2__link"><span class="jn__url" id="deep-link">{u}</span><button class="deep__copy" id="copy-link" type="button" hidden>Copy</button></span>{qr}</div></form></div>"#,
+        r#"<div class="ui-card jn"><form class="side" method="get" action="{action}"><div class="jn2__head"><div class="jn2__title"><h2>Join this preview</h2><span class="jn__hint">{hint}</span></div></div><fieldset class="knob knob--tabs"><legend class="knob__k u-sr-only">where</legend><div class="jn2__tabs">{tabs}</div></fieldset><div class="jn2__body"><div class="jn2__col">{player_control}{spawn_knob}<fieldset class="knob"><legend class="knob__k">Scene errors in the terminal</legend>{mcp_control}{mcp_note}</fieldset><button class="btn btn--secondary btn--md knob__go" type="submit">Apply</button></div><div class="jn2__col"><fieldset class="knob"><legend class="knob__k">Deep-link flags{flag_count}</legend><div class="flags">{flags}</div></fieldset></div></div><div class="jn2__foot">{launch}<span class="jn2__link"><span class="jn__url" id="deep-link">{u}</span><button class="btn btn--secondary btn--sm" id="copy-link" type="button" hidden>Copy</button></span>{qr}</div></form></div>"#,
         action = esc(&format!("{prefix}/")),
         hint = esc(&target.hint),
         u = esc(&target.url),

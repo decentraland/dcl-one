@@ -1030,6 +1030,17 @@ describe('the shell purchase', () => {
     expect(t.provider.requests).toEqual([])
   })
 
+  it('shares the one dialog with Donate: a purchase still starting counts, and waits while Donate is up', async () => {
+    const t = setup()
+    const started = t.buy()
+    expect(t.shop.dialogOpen()).toBe(true)
+    await started
+    expect(t.shop.dialogOpen()).toBe(true)
+    const u = setup()
+    ;(u.deps as { otherDialogOpen?: () => boolean }).otherDialogOpen = () => true
+    await expect(u.buy()).rejects.toMatchObject({ code: SHOP_BUSY })
+  })
+
   it('runs one dialog at a time', async () => {
     const t = setup()
     await t.buy()

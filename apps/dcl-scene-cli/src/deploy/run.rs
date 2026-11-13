@@ -4,11 +4,11 @@ use super::net::{
     simple_auth_chain, upload_entity_with_chain_to,
 };
 use super::{
-    DeployOptions, Prepared, base_parcel, build_entity, build_metadata, caused, extract_pointers,
-    nameless_world_section, now_ms, prepare, refuse_nameless_world, scene_title, world_name,
+    DeployOptions, Prepared, base_parcel, build_entity, caused, extract_pointers,
+    nameless_world_section, now_ms, refuse_nameless_world, scene_title, world_name,
 };
 use crate::build;
-use crate::linker;
+use crate::linker::{self, Published};
 use crate::scene::Project;
 use crate::ux::{self, TrySteps, UserError};
 use anyhow::{Context, Result};
@@ -133,10 +133,15 @@ struct Packed {
 fn pack(opts: &DeployOptions, prepared: &Prepared, total_steps: usize) -> Result<Packed> {
     let timestamp = opts.timestamp.unwrap_or_else(now_ms);
     let (entity_id, entity_bytes) = build_entity(prepared, timestamp)?;
-    let mut steps = ux::Steps::new(total_steps);
-    println!("entityId={entity_id}");
-    println!("timestamp={timestamp}");
-    print_file_listing(&prepared.files);
+    let mut steps = match opts.quiet {
+        true => ux::Steps::silent(),
+        false => ux::Steps::new(total_steps),
+    };
+    if !opts.quiet {
+        println!("entityId={entity_id}");
+        println!("timestamp={timestamp}");
+        print_file_listing(&prepared.files);
+    }
     let message = format!(
         "Entity packed \u{2014} {} files ({entity_id})",
         prepared.files.len()
@@ -156,10 +161,37 @@ fn pack(opts: &DeployOptions, prepared: &Prepared, total_steps: usize) -> Result
 }
 
 /// `Ok` is the upload's outcome line, `Deployed <entity id> (HTTP <status>)`.
-pub async fn deploy(opts: &DeployOptions) -> Result<String> {
+/// Validations are skipped on request, and for a custom target: its limits
+/// are its own, as upstream also assumes.
+fn validates(opts: &DeployOptions) -> bool {
+    !(opts.skip_validations || opts.target.is_some() || opts.target_content.is_some())
+}
+
+/// `Ok` is what was published, its message the upload's outcome line. A
+/// programmatic run also prints the final deployment state as one JSON line,
+/// whatever ended it.
+pub async fn deploy(opts: &DeployOptions) -> Result<Published> {
+    let outcome = publish(opts).await;
+    if opts.programmatic {
+        let mut line = serde_json::to_value(linker::final_state(&outcome)).unwrap_or_default();
+        line["event"] = "state".into();
+        println!("{line}");
+    }
+    outcome
+}
+
+async fn publish(opts: &DeployOptions) -> Result<Published> {
+    let deploy_token = linker::resolve_deploy_token(opts.deploy_token.as_deref())?;
     let project = Project::load(&opts.dir)?;
     super::forget_remembered_target(&project.root);
-    let metadata = build_metadata(&project)?;
+    super::net::set_force_upload(opts.force_upload);
+    let validate = validates(opts);
+    if opts.skip_validations && !opts.quiet {
+        ux::note(
+            "--skip-validations: scene.json media permissions and the per-file size limit are not checked",
+        );
+    }
+    let metadata = super::build_metadata_checked(&project, validate)?;
     let pointers = extract_pointers(&metadata)?;
     if nameless_world_section(&metadata) {
         return Err(refuse_nameless_world());
@@ -168,10 +200,13 @@ pub async fn deploy(opts: &DeployOptions) -> Result<String> {
 
     if opts.dry_run {
         build_unless_skipped(opts).await?;
-        let packed = pack(opts, &prepare(&project)?, 1)?;
+        let packed = pack(opts, &super::prepare_checked(&project, validate)?, 1)?;
         tracing::info!("dry run — not uploading");
         ux::note("dry run \u{2014} entity not uploaded");
-        return Ok(format!("{}, not uploaded (dry run)", packed.message));
+        return Ok(Published {
+            message: format!("{}, not uploaded (dry run)", packed.message),
+            entity_id: packed.entity_id,
+        });
     }
 
     let headless = has_headless_signer(opts);
@@ -192,7 +227,7 @@ pub async fn deploy(opts: &DeployOptions) -> Result<String> {
     build_unless_skipped(opts).await?;
     let prepared = {
         let project = project.clone();
-        tokio::task::spawn_blocking(move || prepare(&project))
+        tokio::task::spawn_blocking(move || super::prepare_checked(&project, validate))
             .await
             .context("preparing the payload")??
     };
@@ -200,7 +235,14 @@ pub async fn deploy(opts: &DeployOptions) -> Result<String> {
     if headless {
         deploy_headless(opts, prepared, &target, world.as_deref(), needs_delete).await
     } else {
-        deploy_via_linker(opts, prepared, &metadata, target, world, needs_delete).await
+        let via = LinkerRun {
+            target,
+            world,
+            needs_delete,
+            deploy_token,
+            skip_validations: !validate,
+        };
+        deploy_via_linker(opts, prepared, &metadata, via).await
     }
 }
 
@@ -210,7 +252,7 @@ async fn deploy_headless(
     target: &str,
     world: Option<&str>,
     needs_delete: bool,
-) -> Result<String> {
+) -> Result<Published> {
     let Packed {
         mut steps,
         entity_id,
@@ -297,11 +339,23 @@ async fn deploy_headless(
     )
     .await?;
     steps.done(&message);
-    ux::note(jump_in_url(
-        world,
-        &base_parcel(&prepared.metadata, &prepared.pointers),
-    ));
-    Ok(message)
+    if !opts.quiet {
+        ux::note(jump_in_url(
+            world,
+            &base_parcel(&prepared.metadata, &prepared.pointers),
+        ));
+    }
+    Ok(Published { entity_id, message })
+}
+
+/// What the browser run needs beyond the options: the resolved target and
+/// what the API tells a program.
+struct LinkerRun {
+    target: String,
+    world: Option<String>,
+    needs_delete: bool,
+    deploy_token: String,
+    skip_validations: bool,
 }
 
 fn permission_gate(
@@ -322,10 +376,15 @@ async fn deploy_via_linker(
     opts: &DeployOptions,
     prepared: Prepared,
     metadata: &JsValue,
-    target: String,
-    world: Option<String>,
-    needs_delete: bool,
-) -> Result<String> {
+    via: LinkerRun,
+) -> Result<Published> {
+    let LinkerRun {
+        target,
+        world,
+        needs_delete,
+        deploy_token,
+        skip_validations,
+    } = via;
     let mut steps = match opts.quiet {
         true => ux::Steps::silent(),
         false => ux::Steps::new(2),
@@ -351,17 +410,20 @@ async fn deploy_via_linker(
         base_parcel: base.clone(),
         multi_scene: opts.multi_scene,
         gate,
+        deploy_token,
+        skip_validations,
     };
     let lopts = linker::LinkerOptions {
         port: opts.port,
-        open_browser: !opts.no_browser && !opts.ci,
+        open_browser: !opts.no_browser && !opts.ci && !opts.programmatic,
         timeout: linker::linker_timeout(),
+        programmatic: opts.programmatic,
         host: opts.host_signer.clone(),
     };
-    let message = linker::run(dep, lopts).await?;
-    steps.done(&message);
+    let published = linker::run(dep, lopts).await?;
+    steps.done(&published.message);
     if !opts.quiet {
         ux::note(jump_in_url(world.as_deref(), &base));
     }
-    Ok(message)
+    Ok(published)
 }

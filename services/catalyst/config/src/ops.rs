@@ -71,9 +71,10 @@ pub struct AdminConfig {
     pub admin_cookie_insecure: bool,
 
     /// The abgen runtime's admin endpoint the console's `/admin/api/create/*`
-    /// calls (registry re-ingest, cache flush, queues, denylist): a loopback
-    /// URL only (abgen binds `127.0.0.1:5147`); unset, those routes answer the
-    /// unconfigured-service envelope.
+    /// calls (registry re-ingest, cache flush, queues, denylist) and the worlds
+    /// `POST /reprocess-ab` hands scenes to: a loopback URL only (abgen binds
+    /// `127.0.0.1:5147`); unset, the console routes answer the
+    /// unconfigured-service envelope and `/reprocess-ab` answers 500.
     #[arg(long, env = "ABGEN_ADMIN_URL")]
     pub abgen_admin_url: Option<String>,
 

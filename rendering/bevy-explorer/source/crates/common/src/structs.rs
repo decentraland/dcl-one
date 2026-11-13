@@ -11,6 +11,7 @@ use alloy_core::primitives::Address;
 use bevy::{
     color::palettes,
     math::DVec3,
+    pbr::CascadeShadowConfig,
     platform::collections::{HashMap, HashSet},
     prelude::*,
     render::{primitives::Aabb, view::RenderLayers},
@@ -604,6 +605,10 @@ pub struct AppConfig {
     pub camera_smoothing: CameraSmoothing,
     /// The language the player chose (BCP-47); `None` follows the system language.
     pub language: Option<String>,
+    /// Base url of an abgen Bevy variants service (prototype), when `--bevy-variants-url` /
+    /// `?bevyVariants=` is absent; `None` = the asset-bundle generator's CDN for the base
+    /// domain, `off` = off.
+    pub bevy_variants_url: Option<String>,
     // field-level default (0) so configs saved before this field existed read as outdated,
     // rather than taking the current generation from the container-level default
     #[serde(default)]
@@ -663,6 +668,7 @@ impl Default for AppConfig {
             dm_privacy: None,
             camera_smoothing: Default::default(),
             language: None,
+            bevy_variants_url: None,
             settings_generation: SETTINGS_GENERATION,
             inputs_generation: INPUTS_GENERATION,
             is_fresh_user_id: true,
@@ -804,13 +810,33 @@ impl AppConfig {
         self.inputs
             .0
             .retain(|(action, _)| *action != Action::System(SystemAction::ShowProfile));
-        for (action, bindings) in InputMapSerialized::default().0 {
+        // A merged default leaves out inputs the user gave another action, or one press would
+        // fire both. Inputs the defaults share on purpose still merge.
+        let defaults = InputMapSerialized::default().0;
+        let chosen: HashSet<InputIdentifier> = self
+            .inputs
+            .0
+            .iter()
+            .flat_map(|(action, bindings)| {
+                let own = defaults
+                    .iter()
+                    .find(|(default_action, _)| default_action == action)
+                    .map(|(_, default_bindings)| default_bindings.as_slice())
+                    .unwrap_or_default();
+                bindings.iter().filter(move |id| !own.contains(id)).copied()
+            })
+            .collect();
+        for (action, bindings) in defaults {
             if !self
                 .inputs
                 .0
                 .iter()
                 .any(|(existing, _)| *existing == action)
             {
+                let bindings = bindings
+                    .into_iter()
+                    .filter(|id| !chosen.contains(id))
+                    .collect();
                 self.inputs.0.push((action, bindings));
             }
         }
@@ -1011,8 +1037,46 @@ impl AudioSettings {
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ShadowSetting {
     Off,
+    /// one cascade, hardware 2x2 filtering
     Low,
+    /// four soft cascades
     High,
+}
+
+/// The far bounds of High's first three cascades, as fractions of the shadow distance.
+pub const SUN_CASCADE_4_SPLITS: [f32; 3] = [0.102, 0.282, 0.474];
+/// How far from the player a spot light can cast shadows, in metres.
+pub const SPOT_SHADOW_MAX_DISTANCE: f32 = 20.0;
+pub const MIN_CASCADE: f32 = 0.1;
+
+/// The sun's cascades for a quality and a shadow distance, `None` when it casts no shadows.
+pub fn sun_cascades(setting: ShadowSetting, distance: f32) -> Option<CascadeShadowConfig> {
+    if distance <= 0.0 {
+        return None;
+    }
+    let far = distance.max(MIN_CASCADE + f32::EPSILON);
+    let bounds = match setting {
+        ShadowSetting::Off => return None,
+        ShadowSetting::Low => vec![far],
+        ShadowSetting::High => {
+            let mut previous = MIN_CASCADE;
+            SUN_CASCADE_4_SPLITS
+                .iter()
+                .map(|split| (f64::from(*split) * f64::from(far)) as f32)
+                .chain([far])
+                .map(|bound| {
+                    // bounds must increase strictly, even for a distance under the minimum
+                    previous = bound.max(previous + f32::EPSILON);
+                    previous
+                })
+                .collect()
+        }
+    };
+    Some(CascadeShadowConfig {
+        bounds,
+        overlap_proportion: 0.2,
+        minimum_distance: MIN_CASCADE,
+    })
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
@@ -1093,8 +1157,9 @@ pub struct SceneLoadDistance {
     pub load_imposter: f32,
 }
 
-/// The Landscape Distance setting in metres: how far the hills are displaced and the cliffs and
-/// the sea are drawn.
+/// The Landscape Distance setting in metres: how far the hills are displaced, the trees, bushes
+/// and stones stand and the cliffs and the sea are drawn. Set from the config's
+/// `landscape_distance` at startup and changed by the Graphics setting.
 #[derive(Resource, Clone, Copy, Debug, PartialEq)]
 pub struct LandscapeDistance(pub f32);
 
@@ -1216,6 +1281,45 @@ pub struct SceneMeta {
     pub spawn_points: Option<Vec<SpawnPoint>>,
     pub skybox_config: Option<SkyboxConfig>,
     pub authoritative_multiplayer: Option<bool>,
+    /// `featureToggles`: a host scene's switches, of which `portableExperiences` is read
+    /// ([`PortableExperiencesToggle`]). Kept as raw json so a value of another shape never
+    /// fails the scene.json.
+    pub feature_toggles: Option<serde_json::Value>,
+}
+
+impl SceneMeta {
+    /// What this scene says about portable experiences while the player stands in it.
+    pub fn portable_experiences_toggle(&self) -> PortableExperiencesToggle {
+        self.feature_toggles
+            .as_ref()
+            .and_then(|toggles| toggles.get("portableExperiences"))
+            .and_then(serde_json::Value::as_str)
+            .map(|value| value.parse().unwrap_or_default())
+            .unwrap_or_default()
+    }
+}
+
+/// A host scene's `featureToggles.portableExperiences`: whether portable experiences run (and
+/// show their UI) while the player is inside the scene. Anything but `disabled` lets them run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum PortableExperiencesToggle {
+    #[default]
+    Enabled,
+    Disabled,
+    HideUi,
+}
+
+impl std::str::FromStr for PortableExperiencesToggle {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "enabled" => Ok(Self::Enabled),
+            "disabled" => Ok(Self::Disabled),
+            "hideui" => Ok(Self::HideUi),
+            _ => Err(()),
+        }
+    }
 }
 
 pub trait PermissionStrings {
@@ -1946,6 +2050,21 @@ pub struct PointAtMarkerVisibilityChanged;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::inputs::CommonInputAction;
+
+    #[test]
+    fn sun_cascades_split_the_shadow_distance() {
+        let high = sun_cascades(ShadowSetting::High, 100.0).unwrap();
+        assert_eq!(high.bounds, vec![10.2, 28.2, 47.4, 100.0]);
+        assert_eq!(high.minimum_distance, MIN_CASCADE);
+        let medium = sun_cascades(ShadowSetting::Low, 60.0).unwrap();
+        assert_eq!(medium.bounds, vec![60.0]);
+        assert!(sun_cascades(ShadowSetting::Off, 60.0).is_none());
+        assert!(sun_cascades(ShadowSetting::High, 0.0).is_none());
+        // a distance under the minimum still yields a strictly increasing config
+        let tiny = sun_cascades(ShadowSetting::High, 0.05).unwrap();
+        assert!(tiny.bounds.windows(2).all(|w| w[0] < w[1]) && tiny.bounds[0] > MIN_CASCADE);
+    }
 
     #[test]
     fn a_config_saved_before_the_voice_chat_volume_keeps_its_audio() {
@@ -2016,6 +2135,11 @@ mod tests {
                         Action::System(SystemAction::QuickEmote4),
                         vec![InputIdentifier::Key(KeyCode::KeyX)],
                     ),
+                    // a default binding that a photo-mode default shares
+                    (
+                        Action::Scene(CommonInputAction::IaPrimary),
+                        vec![InputIdentifier::Key(KeyCode::KeyE)],
+                    ),
                 ],
                 Default::default(),
             ),
@@ -2045,6 +2169,18 @@ mod tests {
             get(&config, SystemAction::Places),
             Some(vec![InputIdentifier::Key(KeyCode::KeyZ)])
         );
+        // ...but not onto a key the user gave another action: X stays QuickEmote4's alone
+        assert_eq!(get(&config, SystemAction::Events), Some(vec![]));
+        // a key the defaults share on purpose still merges
+        let photo_tilt_right = InputMapSerialized::default()
+            .0
+            .into_iter()
+            .find(|(a, _)| *a == Action::System(SystemAction::PhotoTiltRight))
+            .map(|(_, bindings)| bindings);
+        assert!(photo_tilt_right
+            .as_ref()
+            .is_some_and(|b| b.contains(&InputIdentifier::Key(KeyCode::KeyE))));
+        assert_eq!(get(&config, SystemAction::PhotoTiltRight), photo_tilt_right);
         assert_eq!(config.inputs_generation, INPUTS_GENERATION);
         // fixed bindings restored: the wheel always scrolls
         assert_eq!(
@@ -2096,6 +2232,42 @@ mod tests {
         assert!(parse(r#"{"sizes":[],"satelliteView":{"topLeftOffset":null}}"#).is_none());
         assert!(parse(r#"{"sizes":[],"satelliteView":{"topLeftOffset":{"x":1}}}"#).is_none());
         assert!(parse(r#"{"sizes":[],"satelliteView":{"version":1}}"#).is_none());
+    }
+
+    #[test]
+    fn feature_toggles_parse_leniently() {
+        let meta = |toggles: &str| -> SceneMeta {
+            serde_json::from_str(&format!(
+                r#"{{"main":"bin/index.js","scene":{{"base":"0,0","parcels":["0,0"]}}{toggles}}}"#
+            ))
+            .unwrap()
+        };
+        assert_eq!(
+            meta("").portable_experiences_toggle(),
+            PortableExperiencesToggle::Enabled
+        );
+        assert_eq!(
+            meta(r#","featureToggles":{"portableExperiences":"disabled","voiceChat":false}"#)
+                .portable_experiences_toggle(),
+            PortableExperiencesToggle::Disabled
+        );
+        assert_eq!(
+            meta(r#","featureToggles":{"portableExperiences":"hideUi"}"#)
+                .portable_experiences_toggle(),
+            PortableExperiencesToggle::HideUi
+        );
+        // values of another shape are ignored rather than failing the scene.json
+        for toggles in [
+            r#","featureToggles":{"portableExperiences":1}"#,
+            r#","featureToggles":["disabled"]"#,
+            r#","featureToggles":{"portableExperiences":"unknown"}"#,
+        ] {
+            assert_eq!(
+                meta(toggles).portable_experiences_toggle(),
+                PortableExperiencesToggle::Enabled,
+                "{toggles}"
+            );
+        }
     }
 }
 

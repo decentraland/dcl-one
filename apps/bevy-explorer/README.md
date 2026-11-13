@@ -42,6 +42,10 @@ make headless     # headless engine + sidecar -> dist/headless/native
 python3 build-headless.py --target x86_64-unknown-linux-gnu
 ```
 
+Windows has no `make`, and `python3` there is a Microsoft Store stub: run `python build-web.py`
+(`--no-opt` for `web-dev`) from PowerShell or Git Bash, or `make web PYTHON=python` where make is
+installed. It needs Git for Windows: the bindings script runs in Git's bash, never WSL's.
+
 Native dev loop: in the source directory, `just setup-cef`, then `just native-release` or
 `just native-debug`. For packaging, follow the checked-in
 [desktop workflow](../../.github/workflows/bevy-explorer-desktop.yml) and
@@ -187,7 +191,7 @@ replays can overwrite tags. Desktop/headless `publish` creates a prerelease tagg
 
 | Package | Published by | Contents |
 | --- | --- | --- |
-| `@dcl-regenesislabs/bevy-explorer-web` | `bevy-explorer-ci.yml`, web job | `deploy/web` addressed to `https://cdn.decentraland.org/<package>/<version>` |
+| `@dcl-regenesislabs/bevy-explorer-web` | `bevy-explorer-ci.yml`, `publish-web` job | The web job's `deploy/web`, addressed to `https://cdn.decentraland.org/<package>/<version>` |
 | `@dcl-regenesislabs/bevy-headless-server` + `-darwin-arm64`, `-darwin-x64`, `-linux-x64`, `-win32-x64` | `bevy-explorer-headless.yml`, `publish` job | Launcher, engine and `dcl_deno_ipc` sidecar |
 
 `decentraland/oddish-action` stamps `0.1.0-<run id>.commit-<sha>`: `next` from main, `latest` from a

@@ -12,20 +12,22 @@ use serde_json::{Value, json};
 
 use super::{
     MarketplaceState, PROFILE_IDS_MAX, SharedState, active_entities, process_profiles_positional,
-    rewrite_snapshot_urls,
 };
 
 const INVALID_IDS: &str = "The ids property must be an array of non-empty strings";
 /// Largest request body: 1000 ids of a few dozen bytes each fit well within it.
 const BODY_LIMIT: usize = 256 * 1024;
 
-/// Mount under `/asset-bundle-registry`, using the existing market state.
+/// Mount under `/asset-bundle-registry`, using the existing market state,
+/// with the Registry's CORS like the gateway half of that prefix.
 pub fn router(state: SharedState) -> Router {
     Router::new()
         .route("/profiles", post(profiles))
         .route("/profiles/metadata", post(metadata))
         .layer(DefaultBodyLimit::max(BODY_LIMIT))
-        .layer(tower_http::cors::CorsLayer::permissive())
+        .layer(axum::middleware::from_fn(
+            crate::explore::api::registry::cors,
+        ))
         .with_state(state)
 }
 
@@ -215,14 +217,27 @@ fn project(
     compact: bool,
 ) -> Option<Value> {
     let id = entity.get("id").and_then(Value::as_str)?;
-    // Registry always replaces snapshots. Reuse the shared rewriter,
-    // pointing at this node's existing profile-images routes.
-    rewrite_snapshot_urls(
-        id,
-        &mut profile,
-        Some(&state.settings.profile_images_public_url),
-        &state.settings.profile_images_public_url,
-    );
+    let images = state
+        .settings
+        .profile_images_public_url
+        .trim_end_matches('/');
+    // The Registry's sanitizer replaces every avatar's `snapshots` with
+    // exactly `face256` and `body` on this node's profile-images routes,
+    // dropping any other deployed key (Lambdas keeps those).
+    let snapshots = json!({
+        "face256": format!("{images}/entities/{id}/face.png"),
+        "body": format!("{images}/entities/{id}/body.png"),
+    });
+    for avatar in profile
+        .get_mut("avatars")
+        .and_then(Value::as_array_mut)
+        .into_iter()
+        .flatten()
+    {
+        if let Some(avatar) = avatar.get_mut("avatar").and_then(Value::as_object_mut) {
+            avatar.insert("snapshots".into(), snapshots.clone());
+        }
+    }
     if compact {
         let pointer = entity
             .get("pointers")
@@ -236,10 +251,7 @@ fn project(
             .and_then(Value::as_object)?;
         let mut result = json!({
             "pointer": pointer,
-            "thumbnailUrl": format!(
-                "{}/entities/{id}/face.png",
-                state.settings.profile_images_public_url.trim_end_matches('/'),
-            ),
+            "thumbnailUrl": snapshots["face256"],
         });
         for field in ["hasClaimedName", "name", "nameColor"] {
             if let Some(value) = avatar.get(field) {
@@ -374,45 +386,74 @@ mod tests {
         assert_eq!(full[0]["timestamp"], "1700000000000");
     }
 
+    /// The Registry's CORS (`captures/abr/AB-12-preflight.json`): the
+    /// captured preflight headers exactly, and origin `*` on a read only when
+    /// the request names an origin.
     #[tokio::test]
     async fn registry_profile_preflight_and_empty_reads_allow_browser_clients() {
+        let capture: Value = serde_json::from_str(include_str!(concat!(
+            env!("DCL_ONE_ROOT"),
+            "/services/catalyst/tests/fixtures/conformance/content-lambdas/captures/abr/AB-12-preflight.json"
+        )))
+        .unwrap();
         let app = router(state_without_db());
         for path in ["/profiles", "/profiles/metadata"] {
+            let mut request = Request::builder().method("OPTIONS").uri(path);
+            for (name, value) in capture["request"]["headers"].as_object().unwrap() {
+                request = request.header(name.as_str(), value.as_str().unwrap());
+            }
             let preflight = app
                 .clone()
-                .oneshot(
-                    Request::builder()
-                        .method("OPTIONS")
-                        .uri(path)
-                        .header("origin", "https://explorer.example")
-                        .header("access-control-request-method", "POST")
-                        .header("access-control-request-headers", "content-type")
-                        .body(Body::empty())
-                        .unwrap(),
-                )
+                .oneshot(request.body(Body::empty()).unwrap())
                 .await
                 .unwrap();
-            assert!(preflight.status().is_success());
-            assert_eq!(preflight.headers()["access-control-allow-origin"], "*");
-            assert_eq!(preflight.headers()["access-control-allow-methods"], "*");
-            assert_eq!(preflight.headers()["access-control-allow-headers"], "*");
-            let response = app
-                .clone()
-                .oneshot(
-                    Request::post(path)
-                        .header("origin", "https://explorer.example")
-                        .header("content-type", "application/json")
-                        .body(Body::from(r#"{"ids":[]}"#))
-                        .unwrap(),
-                )
-                .await
-                .unwrap();
-            assert_eq!(response.status(), StatusCode::OK);
-            assert_eq!(response.headers()["access-control-allow-origin"], "*");
             assert_eq!(
-                to_bytes(response.into_body(), 1024).await.unwrap().as_ref(),
-                b"[]"
+                u64::from(preflight.status().as_u16()),
+                capture["response"]["status"].as_u64().unwrap()
             );
+            let headers: serde_json::Map<String, Value> = preflight
+                .headers()
+                .iter()
+                // The capture keeps the CORS headers; axum also adds framing
+                // (`content-length`) and `Allow` for a route without an
+                // OPTIONS handler.
+                .filter(|(name, _)| name.as_str().starts_with("access-control-") || *name == "vary")
+                .map(|(name, value)| (name.to_string(), json!(value.to_str().unwrap())))
+                .collect();
+            assert_eq!(
+                Value::Object(headers),
+                capture["response"]["headers"],
+                "{path}"
+            );
+            for origin in [Some("https://explorer.example"), None] {
+                let mut request = Request::post(path).header("content-type", "application/json");
+                if let Some(origin) = origin {
+                    request = request.header("origin", origin);
+                }
+                let response = app
+                    .clone()
+                    .oneshot(request.body(Body::from(r#"{"ids":[]}"#)).unwrap())
+                    .await
+                    .unwrap();
+                assert_eq!(response.status(), StatusCode::OK);
+                assert_eq!(
+                    response
+                        .headers()
+                        .get("access-control-allow-origin")
+                        .map(|v| v.to_str().unwrap()),
+                    origin.map(|_| "*")
+                );
+                assert!(
+                    response
+                        .headers()
+                        .get("access-control-expose-headers")
+                        .is_none()
+                );
+                assert_eq!(
+                    to_bytes(response.into_body(), 1024).await.unwrap().as_ref(),
+                    b"[]"
+                );
+            }
         }
     }
 
@@ -471,7 +512,12 @@ mod tests {
     #[tokio::test]
     async fn registry_projection_uses_shared_ownership_and_entity_snapshot_identity() {
         let state = state_with_empty_readers(None).await;
-        let entities = [entity()];
+        let mut entity = entity();
+        entity["metadata"]["avatars"][0]["avatar"]["snapshots"] = json!({
+            "face256": "https://external.example/face", "body": "old",
+            "face128": "bafkold", "face": "bafkold2",
+        });
+        let entities = [entity];
         let full = project_profiles(&state, &entities, false)
             .await
             .unwrap_or_else(|_| panic!("profile processing failed"));
@@ -486,9 +532,13 @@ mod tests {
             avatar["avatar"]["wearables"],
             json!(["urn:decentraland:off-chain:base-avatars:eyes_00"])
         );
+        // The Registry sanitizer's snapshots: exactly these two keys.
         assert_eq!(
-            avatar["avatar"]["snapshots"]["face256"],
-            "http://localhost/profile-images/entities/bafkprofile/face.png"
+            avatar["avatar"]["snapshots"],
+            json!({
+                "face256": "http://localhost/profile-images/entities/bafkprofile/face.png",
+                "body": "http://localhost/profile-images/entities/bafkprofile/body.png",
+            })
         );
         assert_eq!(
             compact,
@@ -497,6 +547,21 @@ mod tests {
                 "thumbnailUrl":"http://localhost/profile-images/entities/bafkprofile/face.png"
             })]
         );
+    }
+
+    /// Like the Registry sanitizer, an avatar without an `avatar` object
+    /// gets no snapshots.
+    #[tokio::test]
+    async fn registry_projection_leaves_an_avatar_without_avatar_object_unchanged() {
+        let avatars = json!([{"name": "Bob", "userId": "0xabc"}]);
+        let projected = project(
+            &state_without_db(),
+            &entity(),
+            json!({"avatars": avatars.clone()}),
+            false,
+        )
+        .unwrap();
+        assert_eq!(projected["avatars"], avatars);
     }
 
     #[tokio::test]

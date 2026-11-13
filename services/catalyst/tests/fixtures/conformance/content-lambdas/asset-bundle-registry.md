@@ -117,10 +117,10 @@ Upstream routes: `decentraland/asset-bundle-registry:src/controllers/routes.ts:3
 | handler 400/404 | `{"ok":false,"message":<msg>}` (`decentraland/asset-bundle-registry:src/controllers/handlers/get-active-entities.ts:13-21`) | `{"error":<msg>}` | DIVERGENT |
 | unhandled error (unparseable JSON, empty body) | `500 {"error":"Internal Server Error"}` ([`AB-3-not-json.json`](captures/abr/AB-3-not-json.json), [`AB-3-empty-body.json`](captures/abr/AB-3-empty-body.json)) | axum `Json` rejection: `400` `text/plain` | DIVERGENT |
 | `Content-Type` | ignored: `text/plain` with a JSON body answers `200` ([`AB-3-text-plain.json`](captures/abr/AB-3-text-plain.json)) | axum `Json`: `415` `text/plain` | DIVERGENT |
-| unknown route | `404 Not found` `text/plain; charset=utf-8` ([`AB-12-unknown-route.json`](captures/abr/AB-12-unknown-route.json)) | falls through to the content 404 (`text/plain` `Not found`) | MATCH |
+| unknown route | `404 Not found` `text/plain; charset=utf-8` ([`AB-12-unknown-route.json`](captures/abr/AB-12-unknown-route.json)) | the gateway half's fallback (`services/catalyst/explore/src/api/registry.rs:65-73`): `404` `text/plain; charset=utf-8` `Not found`, inside the Registry's CORS | MATCH |
 | wrong method | `405`, empty body, `Allow: POST` ([`AB-1-get.json`](captures/abr/AB-1-get.json), [`AB-1-put.json`](captures/abr/AB-1-put.json)) | axum `405`, empty body, `Allow: POST` | MATCH |
 | trailing slash | `POST /profiles/metadata/` answers as without it ([`AB-1-trailing-slash.json`](captures/abr/AB-1-trailing-slash.json)) | trimmed for the whole app (`services/catalyst/src/serve.rs:1369`) | MATCH |
-| CORS preflight | `204`, `allow-origin: *`, `allow-methods: GET,HEAD,OPTIONS,DELETE,POST,PUT`, `allow-headers` reflected, `max-age: 86400`, `vary: Access-Control-Request-Headers` ([`AB-12-preflight.json`](captures/abr/AB-12-preflight.json)) | `CorsLayer::permissive()` (`services/catalyst/explore/src/api/mod.rs:741`): any origin, any method, any header, expose any header, no max-age | DIVERGENT |
+| CORS preflight | `204`, `allow-origin: *`, `allow-methods: GET,HEAD,OPTIONS,DELETE,POST,PUT`, `allow-headers` reflected, `max-age: 86400`, `vary: Access-Control-Request-Headers` ([`AB-12-preflight.json`](captures/abr/AB-12-preflight.json)) | `registry::cors` (`services/catalyst/explore/src/api/registry.rs:78-122`) on both halves of the prefix and on the gateway half's fallback (`registry.rs:65-66`, `services/catalyst/shop/src/market/profiles/registry.rs:29`; `services/catalyst/explore/src/api/mod.rs:743-761` nests the Registry outside the gateway's permissive CORS): every `OPTIONS` under the prefix, routed or not, is `204` with the captured headers; other responses get `allow-origin: *` only when the request has an `Origin`, and no exposed headers. axum also adds `Allow` to a preflight on a route without an `OPTIONS` handler | MATCH |
 | upstream failure | n/a | `502 {"error":"asset-bundle registry upstream: <route> failed"}` `services/catalyst/explore/src/api/registry.rs:149-155` | dcl-one only |
 | no source configured | n/a | every POST answers `200 []` `services/catalyst/explore/src/api/registry.rs:165-167`; `EXPLORER_REGISTRY_SOURCE_URL` is set only by `NODE_POSTURE=mirror` (`services/catalyst/config/src/posture.rs:427-431`) | dcl-one only |
 | rate limits | none in ABR | gateway limit by IP (README "Rate limits") | as the other areas |
@@ -217,7 +217,7 @@ empty, no cap.
 
 | trigger | status | body | upstream | dcl-one read-through | verdict |
 |---|---|---|---|---|---|
-| found | 200 | `[{"timestamp":<number>,"avatars":[…]}]`; each avatar keeps the stored keys and order; `avatar.snapshots` is replaced by `{"face256":"<PROFILE_IMAGES_URL>/entities/<entityId>/face.png","body":"…/body.png"}` ([`AB-2-one-known.json`](captures/abr/AB-2-one-known.json)). `timestamp` is a number on a cache hit or a Catalyst fallback and the raw Postgres `bigint` (a string) when the profile was read from ABR's database in that request | `get-profiles.ts:11-22`, `profile-sanitizer.ts:118-152`, `profile-retriever.ts:32-54`, `src/migrations/1763329911778_profiles.ts:10` | ABR's documents, cached 60 s per address `registry.rs:364-442` | MATCH for profiles ABR holds |
+| found | 200 | `[{"timestamp":<number>,"avatars":[…]}]`; each avatar keeps the stored keys and order; `avatar.snapshots` is replaced by `{"face256":"<PROFILE_IMAGES_URL>/entities/<entityId>/face.png","body":"…/body.png"}` ([`AB-2-one-known.json`](captures/abr/AB-2-one-known.json)). `timestamp` is a number on a cache hit or a Catalyst fallback and the raw Postgres `bigint` (a string) when the profile was read from ABR's database in that request | `get-profiles.ts:11-22`, `profile-sanitizer.ts:118-152`, `profile-retriever.ts:32-54`, `src/migrations/1763329911778_profiles.ts:10` | the node's processed profiles; every avatar with an `avatar` object gets exactly `{face256, body}` on the node's profile-images base, other deployed snapshot keys dropped (`services/catalyst/shop/src/market/profiles/registry.rs:220-240`) | MATCH for profiles ABR holds |
 | profile deployed to this node only | 200 | ABR hydrates a miss from a Catalyst and persists it (`profile-retriever.ts:110-124`) | — | absent; an `island` node answers `[]` | GAP |
 | errors | | as section 10 | | as section 10 | DIVERGENT |
 
@@ -411,9 +411,14 @@ In dcl-one the operator console reaches the external abgen runtime for these
     pending fix: `decentraland/dcl-one#275`. Severity: P0.
 11. **AB-11** `POST /entities/versions` error bodies and selector: `{"ok":false,"message":"No pointers provided"}`,
     `pointers` only, no cap (`get-entity-versions.ts:10-21`). Change: `registry.rs:303-336`. Severity: P2.
-12. **AB-12** CORS on the ABR host: expected the captured preflight (`allow-origin: *`, `allow-methods:
-    GET,HEAD,OPTIONS,DELETE,POST,PUT`, reflected `allow-headers`, `max-age: 86400`). Change:
-    `services/catalyst/explore/src/api/mod.rs:741`. Severity: P2.
+12. **AB-12** CORS on the ABR host. Status: MATCH. Both halves of `/asset-bundle-registry` answer the
+    captured preflight (`allow-origin: *`, `allow-methods: GET,HEAD,OPTIONS,DELETE,POST,PUT`, reflected
+    `allow-headers`, `vary: Access-Control-Request-Headers`, `max-age: 86400`) and add `allow-origin: *`
+    to other responses only when the request has an `Origin` (`@dcl/http-server` `cors.js` with
+    `decentraland/asset-bundle-registry@3608576f1ff8f76ffa43cfa47f3b1fe0449ac528:src/components.ts:54-62`;
+    `services/catalyst/explore/src/api/registry.rs:78-122`), on paths neither half routes too: the gateway
+    half holds the prefix's fallback (`registry.rs:65-73`), as ABR's CORS middleware runs before its router. Remaining difference: axum adds an `Allow`
+    header to a preflight on a route without an `OPTIONS` handler.
 13. **AB-13** error envelopes on the ABR host: `{"ok":false,"message":…}` from handlers, the
     http-commons `{"error":"Bad request","message":…}` for invalid requests,
     `500 {"error":"Internal Server Error"}` for unhandled errors, `Content-Type` ignored (section 2,
@@ -429,7 +434,17 @@ In dcl-one the operator console reaches the external abgen runtime for these
 
 ## 14. Routes dcl-one serves here that ABR does not
 
-- `GET /asset-bundle-registry/health` → `{"status":"ok"}` (`services/catalyst/explore/src/api/registry.rs:455-457`).
+- `GET /asset-bundle-registry/health` → `{"status":"ok"}` (`services/catalyst/explore/src/api/registry.rs`, `health`).
+
+The status-check probes of ABR's `createStatusCheckComponent`
+(`decentraland/asset-bundle-registry@3608576f1ff8f76ffa43cfa47f3b1fe0449ac528:src/components.ts:64`) are
+served under the prefix as ABR answers them: `GET /asset-bundle-registry/health/live` → `200 alive`,
+`/health/ready` and `/health/startup` → the `application/health+json` pass document
+`{"details":{"server":{"status":"pass"}},"status":"pass"}` (`services/catalyst/explore/src/api/registry.rs:62-64`,
+`services/catalyst/shared/src/health.rs`). `@dcl/http-server`'s `status-checks.js` keys `details` by the
+component's name in the service's component map, and ABR names its http server `server`
+(`src/components.ts:54,226`; `@dcl/http-server` 2.2.1, `yarn.lock:1247-1249`), its only component with a
+probe. They describe the Catalyst gateway, not the abgen runtime.
 - `POST /entities/active` and `/entities/versions` with `{"ids":[…]}` (forwarded; ABR answers 400).
 - Every route again under the `/asset-bundle-registry` prefix on the main host; production answers that
   prefix with the gateway 404 ([`AB-14-peer-get-abr-prefix-status.json`](captures/abr/AB-14-peer-get-abr-prefix-status.json)).
