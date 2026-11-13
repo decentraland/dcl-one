@@ -10,7 +10,7 @@ use bevy::{
 };
 use common::{
     sets::RealmLifecycle,
-    structs::{LandscapeDistance, PrimaryUser},
+    structs::{LandscapeDistance, PrimaryCamera, PrimaryUser, PLAYER_CAMERA_FOV},
     terrain::{Occupancy, TerrainTargets},
 };
 use scene_runner::initialize_scene::{PointerResult, ScenePointers};
@@ -27,7 +27,7 @@ use crate::{
     terrain::TerrainSurface,
 };
 
-const GENESIS: &[u8] = include_bytes!(concat!(
+pub(super) const GENESIS: &[u8] = include_bytes!(concat!(
     env!("DCL_ONE_ROOT"),
     "/rendering/bevy-explorer/source/crates/assets/src/assets/landscape/layout/genesis.trees"
 ));
@@ -38,7 +38,8 @@ const WORLDS: &[u8] = include_bytes!(concat!(
 
 /// A headless app running `update_trees` over a settled terrain from parcel -`extent` to
 /// `extent` (plus the terrain's padding), in a realm spanning `realm`: parcels outside it read as
-/// empty, parcels inside it as unknown until a test resolves them. The player stands at `player`.
+/// empty, parcels inside it as unknown until a test resolves them. The player stands at `player`,
+/// and the camera with them.
 fn app(extent: i32, realm: (IVec2, IVec2), player: Vec3) -> App {
     let corners = [IVec2::splat(-extent), IVec2::splat(extent)];
     let mut targets = TerrainTargets::default();
@@ -70,6 +71,7 @@ fn app(extent: i32, realm: (IVec2, IVec2), player: Vec3) -> App {
         genesis,
         worlds,
         scenes: default(),
+        impostors: default(),
     })
     .insert_resource(TerrainSurface::settled(&targets))
     .insert_resource(pointers)
@@ -78,6 +80,14 @@ fn app(extent: i32, realm: (IVec2, IVec2), player: Vec3) -> App {
     app.world_mut().spawn((
         PrimaryUser::default(),
         GlobalTransform::from_translation(player),
+    ));
+    app.world_mut().spawn((
+        PrimaryCamera::default(),
+        GlobalTransform::from_translation(player),
+        Projection::Perspective(PerspectiveProjection {
+            fov: PLAYER_CAMERA_FOV,
+            ..default()
+        }),
     ));
     app
 }
@@ -93,7 +103,7 @@ fn parcel_centre(parcel: IVec2) -> Vec3 {
 
 /// A city whose realm is one parcel far from the origin, so the parcels around the origin are
 /// outside it and read as empty.
-fn open_land(extent: i32, player: Vec3) -> App {
+pub(super) fn open_land(extent: i32, player: Vec3) -> App {
     app(extent, (IVec2::splat(1000), IVec2::splat(1000)), player)
 }
 
@@ -115,14 +125,14 @@ fn occupied() -> PointerResult {
     }
 }
 
-struct Spawned {
-    parcel: IVec2,
-    index: u32,
-    transform: Transform,
-    solid: bool,
+pub(super) struct Spawned {
+    pub parcel: IVec2,
+    pub index: u32,
+    pub transform: Transform,
+    pub solid: bool,
 }
 
-fn spawned(app: &mut App) -> Vec<Spawned> {
+pub(super) fn spawned(app: &mut App) -> Vec<Spawned> {
     let mut trees = app
         .world_mut()
         .query::<(&Tree, &Transform, Option<&Solid>)>();
@@ -581,6 +591,8 @@ fn spawned_meshes_wear_the_surface_materials() {
     .init_asset::<TreeLayout>()
     .init_asset::<TreeMaterial>()
     .init_asset::<StoneMaterial>()
+    .init_asset::<boimp::Imposter>()
+    .init_asset::<super::impostor::TreeImpostor>()
     .init_resource::<TreeWind>()
     .add_systems(Startup, setup)
     .add_systems(PostUpdate, dress_trees);

@@ -13,7 +13,10 @@ use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddCo
 use serde_json::json;
 
 use crate::{
-    landscape_trees::{Tree, TreeWind},
+    landscape_trees::{
+        lod::{ImpostorsEnabled, TreeInstances},
+        Tree, TreeWind,
+    },
     shell_texturing::{Ground, ParcelGrass},
     CloudCover, ShadowBiasOverride, SUN_SHADOW_BIAS,
 };
@@ -65,6 +68,7 @@ pub(super) fn register(app: &mut App) {
             ("Scene load distance (m)", "loadDistance"),
             ("Landscape distance (m)", "landscapeDistance"),
             ("Loaded trees", "treeCount"),
+            ("Trees in range (mesh / impostor / culled)", "treeLods"),
             ("Grass parcels", "grassParcels"),
         ],
         actions: &[],
@@ -72,6 +76,11 @@ pub(super) fn register(app: &mut App) {
             toggle("Ground", "ground", "/landscape ground {value}"),
             toggle("Trees", "trees", "/landscape trees {value}"),
             toggle("Tree wind", "treeWind", "/tree_wind {value}"),
+            toggle(
+                "Tree impostors",
+                "impostors",
+                "/landscape impostors {value}",
+            ),
             toggle("Parcel grass", "grass", "/landscape grass {value}"),
         ],
     })
@@ -190,11 +199,12 @@ struct LandscapeLayers {
     grass: bool,
 }
 
-/// Change visibility for a landscape render layer, including subsequently streamed entities.
+/// Change visibility for a landscape render layer, including subsequently streamed entities, or
+/// whether distant trees draw their impostors (without, they are culled past their model's range).
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/landscape")]
 struct LandscapeCommand {
-    #[arg(value_parser = ["ground", "trees", "grass"], requires = "visible")]
+    #[arg(value_parser = ["ground", "trees", "grass", "impostors"], requires = "visible")]
     layer: Option<String>,
     #[arg(requires = "layer")]
     visible: Option<bool>,
@@ -206,6 +216,7 @@ fn landscape_command(
     mut layers: ResMut<LandscapeLayers>,
     (load, landscape): (Res<SceneLoadDistance>, Res<LandscapeDistance>),
     (trees, wind): (Query<(), With<Tree>>, Option<Res<TreeWind>>),
+    (instances, mut impostors): (Option<Res<TreeInstances>>, Option<ResMut<ImpostorsEnabled>>),
     grass: Query<(), With<ParcelGrass>>,
 ) {
     let Some(Ok(args)) = cmd.take() else { return };
@@ -217,12 +228,18 @@ fn landscape_command(
         match layer {
             "ground" => layers.ground = value,
             "trees" => layers.trees = value,
+            "impostors" => {
+                if let Some(impostors) = impostors.as_mut() {
+                    impostors.0 = value;
+                }
+            }
             _ => layers.grass = value,
         }
     }
     cmd.reply_ok(json!({"ground":layers.ground, "trees":layers.trees, "grass":layers.grass,
         "treeCount":trees.iter().len(), "grassParcels":grass.iter().len(), "loadDistance":load.load, "landscapeDistance":landscape.0,
-        "treeWind":wind.is_some_and(|wind| wind.0)}).to_string());
+        "treeWind":wind.is_some_and(|wind| wind.0), "impostors":impostors.is_some_and(|impostors| impostors.0),
+        "treeLods":instances.map(|instances| instances.counts())}).to_string());
 }
 
 type LandscapeObjects = Or<(With<Ground>, With<Tree>, With<ParcelGrass>)>;

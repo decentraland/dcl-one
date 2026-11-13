@@ -285,10 +285,18 @@ State, in every build:
 - `/tree_wind [true|false]`: whether the landscape's trees and bushes sway in the wind. Still,
   they stand in their rest pose, so two frames of them agree whenever they were taken; the visual
   scenarios hold them still for their frames. The debug panel's "Landscape" section toggles it ("Tree wind").
-- `/landscape [ground|trees|grass] [true|false]`: the landscape layers as JSON:
-  `ground`, `trees` and `grass` (each layer's toggle), `treeCount`, `grassParcels`,
-  `loadDistance`, and `treeWind` (whether the trees sway, as `/tree_wind` sets it). With a layer and a value it shows or hides that layer, in preview
-  mode only. The debug panel's "Landscape" section binds it.
+- `/landscape [ground|trees|grass|impostors] [true|false]`: the landscape layers as JSON:
+  `ground`, `trees` and `grass` (each layer's toggle), `treeCount` (the trees, bushes and stones
+  drawing a model or an impostor), `treeLods` (those in range by what they draw: model, impostor,
+  nothing), `grassParcels`, `loadDistance`, `treeWind` (whether the trees sway, as `/tree_wind`
+  sets it) and `impostors` (whether distant trees and bushes draw their impostors; without, they
+  are culled once past their model's range). With a layer and a value it shows or hides that
+  layer, or switches the impostors, in preview mode only. The debug panel's "Landscape" section
+  binds it.
+- `/bake_landscape_impostors <out_dir>` (native, outside preview mode): bakes the trees' and
+  bushes' impostors into `<out_dir>/<model>.boimp`, as the embedded ones were made, replacing
+  the old files, and answers with the files written, or fails if one was not written or the bake
+  took over 300 s. The trees hold still while it runs.
 
 The HUD and input:
 

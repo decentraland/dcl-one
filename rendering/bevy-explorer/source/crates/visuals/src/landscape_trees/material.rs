@@ -17,6 +17,7 @@ use bevy::{
         },
     },
 };
+use boimp::bake::ImposterBakeMaterialExtension;
 
 use super::ASSET_DIR;
 
@@ -249,6 +250,13 @@ impl MaterialExtension for TreeSway {
     }
     fn fragment_shader() -> ShaderRef {
         super::soft_shadows_fragment()
+    }
+}
+
+/// Baked into an impostor, a surface keeps its colour, cut-out, normals and roughness.
+impl ImposterBakeMaterialExtension for TreeSway {
+    fn imposter_fragment_shader() -> ShaderRef {
+        super::tree_bake_shader()
     }
 }
 

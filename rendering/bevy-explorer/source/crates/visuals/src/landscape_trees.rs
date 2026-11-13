@@ -2,7 +2,8 @@
 //!
 //! Only parcels confirmed empty carry them: a parcel that is unknown, occupied or outside the
 //! terrain counts as occupied, and an instance whose footprint reaches such a parcel is hidden.
-//! They stand within the Landscape Distance of the player, on the eased terrain.
+//! They stand within the Landscape Distance of the player, on the eased terrain, and draw their
+//! model, their baked impostor or nothing by their size on screen (`lod`).
 
 use bevy::{
     asset::{embedded_asset, embedded_path, RenderAssetUsages},
@@ -13,6 +14,7 @@ use bevy::{
     render::{mesh::MeshAabb, render_resource::ShaderRef, view::VisibilitySystems},
 };
 use bevy_console::ConsoleCommand;
+use boimp::{Imposter, ImposterBakePlugin, ImposterLoaderSettings, ImposterRenderPlugin};
 use common::{
     partition::PARCEL_SIZE,
     sets::RealmLifecycle,
@@ -25,43 +27,77 @@ use scene_runner::{
 };
 use serde_json::json;
 
-use crate::{
-    solids::{prototype_solids, Solid},
-    terrain::{TerrainSet, TerrainSurface},
-};
+use crate::terrain::{TerrainSet, TerrainSurface};
+use impostor::{tree_impostor_plugin, TreeImpostor};
 use layout::{hidden_by_occupancy, TreeLayout, TreeLayoutLoader};
+use lod::{
+    impostor_step_scale, update_lods, ImpostorDraw, ImpostorsEnabled, TreeInstances,
+    IMPOSTOR_SCALES,
+};
 use material::{
     add_mips, stone_material, surface_material, StoneMaterial, Surface, SurfaceMaterial,
     TreeMaterial, TreeSway, ALL_SURFACES,
 };
 use prototypes::PROTOTYPES;
 
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) mod bake;
+pub(crate) mod impostor;
 pub(crate) mod layout;
+pub(crate) mod lod;
 pub(crate) mod material;
 pub(crate) mod prototypes;
 
 const ASSET_DIR: &str = "embedded://landscape/trees";
+const IMPOSTOR_DIR: &str = "embedded://landscape/impostors";
 
 pub(crate) struct LandscapeTreesPlugin;
 
 impl Plugin for LandscapeTreesPlugin {
     fn build(&self, app: &mut App) {
         embed_shaders(app);
+        let preview = app
+            .world()
+            .get_resource::<common::structs::PreviewMode>()
+            .is_some_and(|preview| preview.is_preview);
+        add_impostor_plugins(app, !preview);
         app.init_asset::<TreeLayout>()
             .init_asset_loader::<TreeLayoutLoader>()
             .add_plugins((
                 MaterialPlugin::<TreeMaterial>::default(),
                 MaterialPlugin::<StoneMaterial>::default(),
+                tree_impostor_plugin(),
             ))
             .init_resource::<TreeWind>()
             .add_console_command::<TreeWindCommand, _>(tree_wind_command)
             .add_systems(Startup, setup)
-            .add_systems(Update, (add_texture_mips, apply_tree_wind))
+            .add_systems(Update, (add_texture_mips, apply_tree_wind, scale_impostors))
             .add_systems(
                 PostUpdate,
                 dress_trees.before(VisibilitySystems::CalculateBounds),
             );
+        #[cfg(not(target_arch = "wasm32"))]
+        if !preview {
+            bake::add_bake_command(app);
+        }
         add_spawn_systems(app);
+    }
+}
+
+/// boimp's plugins. Drawing needs its render plugin (its shaders and loader); outside preview
+/// mode the scene impostors bake, and their plugin's bake plugin brings the render plugin with
+/// it, so it is added here in its place, whichever of the two plugins is built first. The tree
+/// material bakes on native builds outside preview mode, where the bake command runs.
+fn add_impostor_plugins(app: &mut App, scenes_bake: bool) {
+    let bake = app.is_plugin_added::<ImposterBakePlugin>();
+    if scenes_bake && !bake {
+        app.add_plugins(ImposterBakePlugin);
+    } else if !bake && !app.is_plugin_added::<ImposterRenderPlugin>() {
+        app.add_plugins(ImposterRenderPlugin);
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    if scenes_bake {
+        app.add_plugins(boimp::bake::ImposterBakeMaterialPlugin::<TreeMaterial>::default());
     }
 }
 
@@ -70,10 +106,16 @@ impl Plugin for LandscapeTreesPlugin {
 /// would close a cycle through the collider update, so a tree spawned here gets its colliders in
 /// the next frame's collider update.
 pub(crate) fn add_spawn_systems(app: &mut App) {
-    app.add_systems(
-        PostUpdate,
-        update_trees.after(TerrainSet).after(RealmLifecycle),
-    );
+    app.init_resource::<TreeInstances>()
+        .init_resource::<ImpostorsEnabled>()
+        .init_resource::<ImpostorDraw>()
+        .add_systems(
+            PostUpdate,
+            (update_trees, update_lods)
+                .chain()
+                .after(TerrainSet)
+                .after(RealmLifecycle),
+        );
 }
 
 /// The farthest the wind moves a vertex, in metres: the sway at full force (a crest of the wave
@@ -99,6 +141,30 @@ pub(crate) fn wind_padding(wind: Option<&material::Wind>) -> f32 {
 fn embed_shaders(app: &mut App) {
     embedded_asset!(app, "landscape_tree.wgsl");
     embedded_asset!(app, "soft_shadows.wgsl");
+    embedded_asset!(app, "landscape_tree_bake.wgsl");
+    embedded_asset!(app, "landscape_tree_impostor.wgsl");
+}
+
+/// The fragment stage the impostors draw with.
+pub(crate) fn tree_impostor_shader() -> ShaderRef {
+    ShaderRef::Path(
+        format!(
+            "embedded://{}",
+            embedded_path!("landscape_tree_impostor.wgsl").display()
+        )
+        .into(),
+    )
+}
+
+/// The tree material's fragment stage when it is baked into an impostor.
+pub(crate) fn tree_bake_shader() -> ShaderRef {
+    ShaderRef::Path(
+        format!(
+            "embedded://{}",
+            embedded_path!("landscape_tree_bake.wgsl").display()
+        )
+        .into(),
+    )
 }
 
 pub(crate) fn tree_vertex_shader() -> ShaderRef {
@@ -121,8 +187,12 @@ pub(crate) fn soft_shadows_fragment() -> ShaderRef {
     )
 }
 
-/// A spawned instance of the layout: its parcel and its index among the parcel's instances.
+/// A drawn instance of the layout: its parcel and its index among the parcel's instances.
 #[derive(Component)]
+#[allow(
+    dead_code,
+    reason = "names the instance an entity draws, for tests and inspection"
+)]
 pub(crate) struct Tree {
     pub parcel: IVec2,
     pub index: u32,
@@ -134,6 +204,8 @@ pub(crate) struct LandscapeTreeAssets {
     pub worlds: Handle<TreeLayout>,
     /// By prototype.
     pub scenes: [Handle<Scene>; 8],
+    /// By prototype, for those with an impostor, at scale 1.
+    pub impostors: [Option<Handle<Imposter>>; 8],
 }
 
 /// The surfaces' materials, the models' own materials they replace, and the textures they use.
@@ -158,6 +230,7 @@ fn setup(
     mut materials: ResMut<Assets<TreeMaterial>>,
     mut stone_materials: ResMut<Assets<StoneMaterial>>,
     wind: Res<TreeWind>,
+    (mut meshes, impostor_materials): (ResMut<Assets<Mesh>>, Res<Assets<TreeImpostor>>),
 ) {
     let mut textures = Vec::new();
     let surfaces: Vec<_> = ALL_SURFACES
@@ -196,10 +269,32 @@ fn setup(
         }
         asset_server.load(GltfAssetLabel::Scene(0).from_asset(path))
     });
+    let impostors = std::array::from_fn(|index| {
+        let prototype = &PROTOTYPES[index];
+        prototype.lod.impostor.map(|_| {
+            asset_server.load_with_settings::<Imposter, ImposterLoaderSettings>(
+                format!("{IMPOSTOR_DIR}/{}.boimp", prototype.asset),
+                |settings| *settings = impostor_loader_settings(),
+            )
+        })
+    });
+    commands.insert_resource(ImpostorDraw {
+        cube: meshes.add(Cuboid::from_length(1.0)),
+        materials: std::array::from_fn(|index| {
+            if PROTOTYPES[index].lod.impostor.is_some() {
+                (0..IMPOSTOR_SCALES)
+                    .map(|_| impostor_materials.reserve_handle())
+                    .collect()
+            } else {
+                Vec::new()
+            }
+        }),
+    });
     commands.insert_resource(LandscapeTreeAssets {
         genesis: asset_server.load("embedded://landscape/layout/genesis.trees"),
         worlds: asset_server.load("embedded://landscape/layout/worlds.trees"),
         scenes,
+        impostors,
     });
     commands.insert_resource(TreeMaterials {
         surfaces,
@@ -207,6 +302,53 @@ fn setup(
         _model_materials: model_materials,
         textures,
     });
+}
+
+/// Impostors loaded for `TreeImpostor`, which takes their bindings and cuts them out itself (the
+/// loader's alpha mode is unused), with their images kept on the GPU only.
+pub(crate) fn impostor_loader_settings() -> ImposterLoaderSettings {
+    ImposterLoaderSettings {
+        multisample: false,
+        alpha: 1.0,
+        alpha_blend: impostor::IMPOSTOR_CUTOFF,
+        multisample_amount: 0.0,
+        asset_usages: RenderAssetUsages::RENDER_WORLD,
+        ..default()
+    }
+}
+
+/// An impostor's size lives in its material: give each loaded impostor its material at each of
+/// its prototype's scale steps.
+fn scale_impostors(
+    mut events: EventReader<AssetEvent<Imposter>>,
+    assets: Option<Res<LandscapeTreeAssets>>,
+    draw: Option<Res<ImpostorDraw>>,
+    (imposters, mut materials): (Res<Assets<Imposter>>, ResMut<Assets<TreeImpostor>>),
+) {
+    let (Some(assets), Some(draw)) = (assets, draw) else {
+        events.clear();
+        return;
+    };
+    for event in events.read() {
+        let AssetEvent::LoadedWithDependencies { id } = event else {
+            continue;
+        };
+        let Some(prototype) = assets
+            .impostors
+            .iter()
+            .position(|handle| handle.as_ref().is_some_and(|handle| handle.id() == *id))
+        else {
+            continue;
+        };
+        let Some(base) = imposters.get(*id).map(TreeImpostor::from) else {
+            continue;
+        };
+        for (step, handle) in draw.materials[prototype].iter().enumerate() {
+            let mut scaled = base.clone();
+            scaled.data.center_and_scale.w *= impostor_step_scale(prototype, step);
+            materials.insert(handle.id(), scaled);
+        }
+    }
 }
 
 /// The textures load without mips: give them theirs, then let the main world drop its copy.
@@ -377,12 +519,14 @@ fn desired_trees(
     desired
 }
 
-/// Spawn and drop the layout's instances around the player, and keep them on the eased terrain.
+/// Keep the layout's instances in range of the player, and the drawn ones on the eased terrain.
+/// What each draws, if anything, `update_lods` decides after.
 fn update_trees(
     mut commands: Commands,
     landscape: Landscape,
     player: Query<&GlobalTransform, With<PrimaryUser>>,
-    mut trees: Query<(Entity, &Tree, &mut Transform)>,
+    mut trees: Query<&mut Transform, With<Tree>>,
+    mut instances: ResMut<TreeInstances>,
     mut state: Local<TreeState>,
 ) {
     let Ok(player) = player.single() else {
@@ -416,42 +560,18 @@ fn update_trees(
     });
     // a realm of the other kind: the old layout's trees go at once, whether or not the new
     // layout has loaded
-    let switched = state.world != Some(world);
-    if switched {
-        for (entity, _, _) in &trees {
-            commands.entity(entity).despawn();
-        }
+    if state.world != Some(world) {
+        instances.clear(&mut commands);
         state.world = Some(world);
     }
     if let (true, Some(layout)) = (state.pending, layout) {
         state.centre = Some(centre);
         state.pending = false;
         // unknown parcels stay clear until the realm confirms they are empty
-        let mut desired = desired_trees(layout, position, distance.0, |parcel| {
+        let desired = desired_trees(layout, position, distance.0, |parcel| {
             surface.contains(parcel) && matches!(pointers.get(parcel), Some(PointerResult::Nothing))
         });
-        // after a switch the old trees are already going
-        if !switched {
-            for (entity, tree, _) in &trees {
-                if desired.remove(&(tree.parcel, tree.index)).is_none() {
-                    commands.entity(entity).despawn();
-                }
-            }
-        }
-        for ((parcel, index), (prototype, mut transform)) in desired {
-            let translation = transform.translation;
-            transform.translation.y = surface.height(translation.x, -translation.z);
-            let mut tree = commands.spawn((
-                Name::new(PROTOTYPES[prototype].name),
-                Tree { parcel, index },
-                SceneRoot(assets.scenes[prototype].clone()),
-                transform,
-            ));
-            let solids = prototype_solids(prototype);
-            if !solids.is_empty() {
-                tree.insert(Solid(solids));
-            }
-        }
+        instances.replace(&mut commands, &surface, desired);
     }
 
     // parcels whose values reach a tree's parcel through bilinear sampling
@@ -462,14 +582,12 @@ fn update_trees(
                 (min - 1).cmple(parcel).all() && (max + 1).cmpge(parcel).all()
             })
     };
-    for (_, tree, mut transform) in &mut trees {
-        if !resnap(tree.parcel) {
-            continue;
-        }
-        let y = surface.height(transform.translation.x, -transform.translation.z);
-        if transform.translation.y != y {
-            transform.translation.y = y;
-        }
+    if changes.relayout || changes.params || changes.eased.is_some() {
+        instances.resnap(&surface, resnap, |entity, y| {
+            if let Ok(mut transform) = trees.get_mut(entity) {
+                transform.translation.y = y;
+            }
+        });
     }
 }
 
@@ -478,3 +596,6 @@ mod tests;
 
 #[cfg(test)]
 mod spawn_tests;
+
+#[cfg(test)]
+mod impostor_tests;

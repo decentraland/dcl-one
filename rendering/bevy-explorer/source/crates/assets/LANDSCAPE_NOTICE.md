@@ -1,6 +1,6 @@
 # Landscape assets
 
-The files under `src/assets/landscape/` come from the Decentraland Unity explorer,
+The files under `src/assets/landscape/`, the impostors excepted, come from the Decentraland Unity explorer,
 [decentraland/unity-explorer](https://github.com/decentraland/unity-explorer), and are embedded
 into the build as `embedded://landscape/...`. They are stored in Git LFS (see the repository's
 `.gitattributes`). Every CI job that builds the Explorer pulls only this folder from LFS after its
@@ -18,6 +18,25 @@ run as `blender --background --factory-startup --python-exit-code 1 --python lan
 from this crate's folder, with `$U` standing for the Unity repository's `Explorer/Assets` folder. The
 `mesh` command keeps the first level of detail only and writes no textures; the `texture` command
 writes the image at 512x512 with its stored values unchanged.
+
+The impostors under `src/assets/landscape/impostors/` are generated here, not taken from Unity:
+each is baked by the explorer's own impostor library, boimp (git revision
+`dd1953bf0ccb1cbf692b75b000b940fbfeb34f72`, MIT or Apache-2.0), from the model of the same name
+under `src/assets/landscape/trees/` dressed in its textures, so it carries that model's licence.
+The bake photographs the model, held still, from 8 by 8 directions over the upper hemisphere,
+64 by 64 texels each (a 512 by 512 atlas before boimp trims the empty edges), with 8 by 8 samples
+per texel, framing a sphere around the model's bounds, and stores it with boimp's palette format
+at an RGB error budget of 10. It runs as a test in a renderer with no window, from
+`rendering/bevy-explorer/source` on a machine with a GPU:
+
+```sh
+LANDSCAPE_IMPOSTORS_OUT="$PWD/crates/assets/src/assets/landscape/impostors" cargo test -p visuals bake_landscape_impostors -- --ignored --nocapture
+```
+
+The client's `/bake_landscape_impostors <out_dir>` console command (native builds outside preview
+mode) runs the same bake. Both delete the old files first and check each was written anew.
+A bake is not byte-for-byte repeatable: the GPU's sampling and the palette's ordering vary the
+bytes from run to run.
 
 | Files here | Unity repository and commit | Unity source path | Licence | Conversion | Tool and version |
 | --- | --- | --- | --- | --- | --- |
@@ -42,3 +61,8 @@ writes the image at 512x512 with its stored values unchanged.
 | `src/assets/landscape/trees/stone03_color.jpg` (17,278 bytes) | decentraland/unity-explorer `206efdac5b8d447899e70dd732f45af9482ed97b` | `DCL/Landscape/Assets/Textures/stylizedRock03_baseColor.png` | Apache-2.0 | `texture --image $U/DCL/Landscape/Assets/Textures/stylizedRock03_baseColor.png --size 512 --out src/assets/landscape/trees/stone03_color.jpg` | Blender 4.5.9 LTS |
 | `src/assets/landscape/trees/stone03_normal.jpg` (28,053 bytes) | decentraland/unity-explorer `206efdac5b8d447899e70dd732f45af9482ed97b` | `DCL/Landscape/Assets/Textures/stylizedRock03_normal.png` | Apache-2.0 | `texture --image $U/DCL/Landscape/Assets/Textures/stylizedRock03_normal.png --size 512 --out src/assets/landscape/trees/stone03_normal.jpg` | Blender 4.5.9 LTS |
 | `src/assets/landscape/trees/terrain_color.jpg` (18,326 bytes) | decentraland/unity-explorer `206efdac5b8d447899e70dd732f45af9482ed97b` | `DCL/Landscape/Assets/Terrain/TerrainBase_basecolor.tga` | Apache-2.0 | `texture --image $U/DCL/Landscape/Assets/Terrain/TerrainBase_basecolor.tga --size 512 --out src/assets/landscape/trees/terrain_color.jpg` | Blender 4.5.9 LTS |
+| `src/assets/landscape/impostors/tree01.boimp` (124,341 bytes) | generated | baked from `src/assets/landscape/trees/tree01.glb` | as its model, Apache-2.0 | the bake above | boimp `dd1953b` |
+| `src/assets/landscape/impostors/tree02.boimp` (131,314 bytes) | generated | baked from `src/assets/landscape/trees/tree02.glb` | as its model, Apache-2.0 | the bake above | boimp `dd1953b` |
+| `src/assets/landscape/impostors/tree03.boimp` (115,425 bytes) | generated | baked from `src/assets/landscape/trees/tree03.glb` | as its model, Apache-2.0 | the bake above | boimp `dd1953b` |
+| `src/assets/landscape/impostors/bush01.boimp` (43,708 bytes) | generated | baked from `src/assets/landscape/trees/bush01.glb` | as its model, Apache-2.0 | the bake above | boimp `dd1953b` |
+| `src/assets/landscape/impostors/bush02.boimp` (121,007 bytes) | generated | baked from `src/assets/landscape/trees/bush02.glb` | as its model, Apache-2.0 | the bake above | boimp `dd1953b` |
