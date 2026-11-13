@@ -196,7 +196,7 @@ pub async fn load_or_reload(state: &SceneHostState, key: &SceneKey) -> Result<()
     if state.is_key_parked(&name) {
         bail!("{name} ran out of memory earlier; it is not loaded again until restart");
     }
-    if let Some(prev) = state.scenes.remove(&name) {
+    if let Some(prev) = state.take_scene(&name) {
         tracing::info!(scene = %name, "stopping existing scene");
         prev.kick_all();
         drop(prev);
@@ -226,6 +226,13 @@ pub async fn load_or_reload(state: &SceneHostState, key: &SceneKey) -> Result<()
                 ),
                 other => anyhow!("no local active Genesis scene for {other}"),
             })?;
+            if !matches!(key, SceneKey::World(_))
+                && state.covers_parked_parcel(&resolved.deployment.parcels.canonical())
+            {
+                bail!(
+                    "{name} stands on parcels of a scene that ran out of memory; not loaded until restart"
+                );
+            }
             let code = read_blob(state, &resolved.code_hash, "scene code").await?;
             let static_crdt = match &resolved.crdt_hash {
                 Some(h) => read_blob(state, h, "main.crdt").await?,

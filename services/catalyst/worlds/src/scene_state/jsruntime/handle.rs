@@ -311,6 +311,12 @@ pub fn is_parked(scene_hash: &str) -> bool {
     PARKED.contains(scene_hash)
 }
 
+/// Marks `scene_hash` as parked, as the OOM handler does.
+#[cfg(test)]
+pub fn park_for_tests(scene_hash: &str) {
+    PARKED.add(scene_hash);
+}
+
 thread_local! {
     static OOM_SCENE: std::cell::RefCell<Option<OomScene>> = const { std::cell::RefCell::new(None) };
 }
@@ -1624,8 +1630,6 @@ mod tests {
         assert!(handle.shared.running.load(Ordering::SeqCst));
     }
 
-    /// Runs `body` in `onStart`; true when it set `leaked`, i.e. an
-    /// allocation past the budget succeeded.
     /// Runs `body` in `onStart`: `(leaked, stopped)`, where `leaked` means an
     /// allocation past the budget succeeded and `stopped` that the scene was
     /// terminated rather than finishing `onStart`.
@@ -1705,12 +1709,14 @@ mod tests {
         assert!(
             scene_reports(
                 "harden-coerce",
-                "var calls = 0; \
-                 var len = { valueOf: function () { calls++; return 8; } }; \
-                 ok = new ArrayBuffer(len).byteLength === 8 && calls === 1;",
+                "function native(name) { return new Error().stack.indexOf('new ' + name) >= 0; } \
+                 var inDataView, inArrayBuffer; \
+                 new DataView(new ArrayBuffer(8), { valueOf: function () { inDataView = native('DataView'); return 0; } }); \
+                 var b = new ArrayBuffer({ valueOf: function () { inArrayBuffer = native('ArrayBuffer'); return 8; } }); \
+                 ok = inDataView === true && inArrayBuffer === false && b.byteLength === 8;",
                 RuntimeLimits::default(),
             ),
-            "the length is converted once, by the trap"
+            "the length is converted by the trap, outside any native constructor frame"
         );
     }
 

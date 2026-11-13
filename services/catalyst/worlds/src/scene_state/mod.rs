@@ -543,9 +543,20 @@ pub struct SceneHostState {
     /// The jobs' root token once `spawn_jobs` ran: every per-scene delegation
     /// renewal loop stops with it, not only when its scene is dropped.
     shutdown: std::sync::OnceLock<tokio_util::sync::CancellationToken>,
-    /// Keys whose scene was parked by a V8 OOM: not loaded again, redeploys
-    /// included, until restart.
-    parked_keys: parking_lot::Mutex<std::collections::HashSet<String>>,
+    /// What a V8 OOM parked since start: refused until restart.
+    parked: parking_lot::Mutex<ParkedScenes>,
+}
+
+/// Scenes this host retired after a V8 OOM parked their isolate.
+#[derive(Default)]
+struct ParkedScenes {
+    /// Room keys refused from then on.
+    keys: std::collections::HashSet<String>,
+    /// Genesis parcels refused from then on, so a redeploy under a new id
+    /// cannot take the slot again.
+    parcels: std::collections::HashSet<String>,
+    /// Isolates still held; each keeps a slot.
+    isolates: usize,
 }
 
 pub type SharedState = Arc<SceneHostState>;
@@ -588,7 +599,7 @@ impl SceneHostState {
             eip1654,
             loads: tokio::sync::Mutex::new(()),
             shutdown: std::sync::OnceLock::new(),
-            parked_keys: parking_lot::Mutex::new(std::collections::HashSet::new()),
+            parked: parking_lot::Mutex::new(ParkedScenes::default()),
         })
     }
 
@@ -606,15 +617,16 @@ impl SceneHostState {
     }
 
     /// Loads (or reloads) `key` under the load lock and the scene cap. A
-    /// reload of an already hosted scene never counts against the cap.
+    /// reload does not count its own hosted scene; parked isolates always
+    /// count.
     pub async fn load(&self, key: &SceneKey) -> anyhow::Result<()> {
         let _guard = self.loads.lock().await;
         self.retire_parked();
         let hosted = self.scenes.get(&key.room_key()).is_some();
         // Isolates parked by an OOM keep their memory, so they hold a slot,
         // reloads included.
-        let others = self.scenes.len() - usize::from(hosted);
-        if others + jsruntime::parked_isolates() >= self.settings.max_scenes {
+        let others = self.scenes.len().saturating_sub(usize::from(hosted));
+        if others + self.parked_count() >= self.settings.max_scenes {
             anyhow::bail!(
                 "scene host is full ({} scenes hosted, SCENE_HOST_MAX_SCENES)",
                 self.settings.max_scenes
@@ -623,30 +635,62 @@ impl SceneHostState {
         load_or_reload(self, key).await
     }
 
-    /// Unloads every scene an OOM parked and refuses its key from then on;
-    /// its isolate is counted by `parked_isolates` instead.
+    /// Unloads every scene an OOM parked; [`Self::take_scene`] records it.
     pub fn retire_parked(&self) -> usize {
+        if jsruntime::parked_isolates() == 0 {
+            return 0;
+        }
         let mut retired = 0;
         for scene in self.scenes.all() {
-            if jsruntime::is_parked(&scene.scene_hash()) {
-                let key = scene.identity.key.clone();
-                self.parked_keys.lock().insert(key.room_key());
-                tracing::error!(scene = %key, "scene ran out of memory; unloaded and not loaded again until restart");
-                self.unload(&key);
+            if jsruntime::is_parked(scene.runtime.scene_hash())
+                && let Some(scene) = self.take_scene(&scene.identity.key.room_key())
+            {
+                scene.kick_all();
                 retired += 1;
             }
         }
         retired
     }
 
+    /// Removes the scene hosted under `name`. If an OOM parked it, its key
+    /// (and a Genesis scene's parcels) are refused until restart and its
+    /// isolate keeps a slot.
+    pub(crate) fn take_scene(&self, name: &str) -> Option<Arc<scene::Scene>> {
+        let scene = self.scenes.remove(name)?;
+        if jsruntime::is_parked(scene.runtime.scene_hash()) {
+            let key = &scene.identity.key;
+            tracing::error!(scene = %key, "scene ran out of memory; unloaded and not loaded again until restart");
+            let mut parked = self.parked.lock();
+            parked.keys.insert(key.room_key());
+            if matches!(key, SceneKey::Genesis(_) | SceneKey::GenesisParcel(_))
+                && let Some(deployment) = &scene.identity.deployment
+            {
+                parked.parcels.extend(deployment.parcels.canonical());
+            }
+            parked.isolates += 1;
+        }
+        Some(scene)
+    }
+
     /// Whether an OOM parked the scene under `room_key` since start.
     pub fn is_key_parked(&self, room_key: &str) -> bool {
-        self.parked_keys.lock().contains(room_key)
+        self.parked.lock().keys.contains(room_key)
+    }
+
+    /// Whether a scene on any of `parcels` was parked by an OOM since start.
+    pub fn covers_parked_parcel(&self, parcels: &[String]) -> bool {
+        let parked = self.parked.lock();
+        parcels.iter().any(|p| parked.parcels.contains(p))
+    }
+
+    /// Isolates this host retired after an OOM; each keeps a slot.
+    pub fn parked_count(&self) -> usize {
+        self.parked.lock().isolates
     }
 
     /// Stops hosting `key`: every client is kicked and the runtime dropped.
     pub fn unload(&self, key: &SceneKey) -> usize {
-        match self.scenes.remove(&key.room_key()) {
+        match self.take_scene(&key.room_key()) {
             Some(scene) => {
                 let kicked = scene.kick_all();
                 tracing::info!(scene = %key, kicked, "scene unloaded");
