@@ -378,6 +378,80 @@ describe('when a public NavBar composes app-owned controls in Chromium', () => {
     expect(await evaluate('document.body.style.overflow')).not.toBe('hidden')
   }, 30_000)
 
+  for (const mode of ['keyboard', 'pointer']) {
+    it(`should retain modal ownership for ${mode} interaction above an offset header`, async () => {
+      await session.send('Emulation.setDeviceMetricsOverride', {
+        width: 390,
+        height: 844,
+        deviceScaleFactor: 1,
+        mobile: true
+      })
+      await session.navigate(origin + '?surface-proof&offset')
+      await evaluate(
+        `(async()=>{for(let n=0;n<100&&!document.querySelector('#page-outside');n++)await new Promise(r=>setTimeout(r,50));const b=document.querySelector('#page-outside');b.style.cssText='position:fixed;top:0;left:0;height:20px;z-index:5';window.outsideClicks=0;b.addEventListener('click',()=>outsideClicks++)})()`
+      )
+      await click('button[aria-label="Open menu"]')
+      if (mode === 'keyboard') {
+        await evaluate(`document.querySelector('#page-outside').focus()`)
+        await key('Escape')
+      } else {
+        await click('#page-outside')
+        expect(await evaluate('outsideClicks')).toBe(0)
+      }
+      expect(await evaluate('!!document.querySelector("[role=dialog]")')).toBe(false)
+      expect(await evaluate('document.activeElement.getAttribute("aria-label")')).toBe('Open menu')
+    }, 30_000)
+  }
+
+  it('should preserve caller sticky positioning on the outer mobile navigation root', async () => {
+    await session.send('Emulation.setDeviceMetricsOverride', {
+      width: 390,
+      height: 844,
+      deviceScaleFactor: 1,
+      mobile: true
+    })
+    await session.navigate(origin + '?class-sticky')
+    await evaluate(
+      `(async()=>{for(let n=0;n<100&&!document.querySelector('.caller-sticky');n++)await new Promise(r=>setTimeout(r,50));const style=document.createElement('style');style.textContent='.caller-sticky{position:sticky;top:24px;z-index:10}main{min-height:2200px}';document.head.append(style);scrollTo(0,200);await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))})()`
+    )
+    expect(
+      await evaluate(`document.querySelector('nav[aria-label="Main"]').getBoundingClientRect().top`)
+    ).toBe(24)
+    await click('button[aria-label="Open menu"]')
+    expect(
+      await evaluate(`document.querySelector('[role=dialog]').classList.contains('caller-sticky')`)
+    ).toBe(true)
+    expect(
+      await evaluate(
+        `document.querySelector('[data-testid=navbar-panel]').getBoundingClientRect().top`
+      )
+    ).toBe(88)
+    await key('Escape')
+  }, 30_000)
+
+  it('should ignore lower-panel scroll while observing scroll ancestors of the header', async () => {
+    await session.send('Emulation.setDeviceMetricsOverride', {
+      width: 390,
+      height: 844,
+      deviceScaleFactor: 1,
+      mobile: true
+    })
+    await session.navigate(origin + '?surface-proof&long')
+    await evaluate(
+      `(async()=>{for(let n=0;n<100&&!document.querySelector('button[aria-label="Open menu"]');n++)await new Promise(r=>setTimeout(r,50));await document.fonts.ready})()`
+    )
+    await click('button[aria-label="Open menu"]')
+    await evaluate(
+      `(async()=>{await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));window.measureCalls=0;const h=document.querySelector('nav[aria-label="Main"]'),measure=h.getBoundingClientRect.bind(h);h.getBoundingClientRect=()=>{measureCalls++;return measure()};document.querySelector('[data-testid=navbar-panel]').scrollTop=200;await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))})()`
+    )
+    expect(await evaluate('measureCalls')).toBe(0)
+    await evaluate(
+      `scrollTo(0,200);new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))`
+    )
+    expect(await evaluate('measureCalls')).toBeGreaterThan(0)
+    await key('Escape')
+  }, 30_000)
+
   it('should include native summary and exclude closed details descendants from the modal cycle', async () => {
     await session.send('Emulation.setDeviceMetricsOverride', {
       width: 390,
@@ -484,10 +558,21 @@ describe('when a public NavBar composes app-owned controls in Chromium', () => {
         `document.querySelectorAll('button[aria-label="Notifications, 1 unread"]').length`
       )
     ).toBe(1)
-    await key('Tab')
-    expect(
-      await evaluate('document.querySelector("dialog").contains(document.activeElement)')
-    ).toBe(true)
+    // Native dialogs may visit the browser-chrome/body focus boundary between cycles.
+    // Background page controls must remain inert and NavBar must not steal that ownership.
+    for (let index = 0; index < 4; index++) {
+      await key('Tab')
+      expect(
+        await evaluate(
+          `(()=>{const d=document.querySelector('dialog');return {modal:d.matches(':modal'),owned:d.contains(document.activeElement)||document.activeElement===document.body}})()`
+        )
+      ).toEqual({ modal: true, owned: true })
+      expect(
+        await evaluate(
+          `(()=>{const outside=document.querySelector('#page-outside');outside.focus();return document.activeElement===outside})()`
+        )
+      ).toBe(false)
+    }
     await key('Escape')
     expect(await evaluate('!!document.querySelector("dialog")')).toBe(false)
     expect(await evaluate('document.activeElement.getAttribute("aria-label")')).toBe(
@@ -556,6 +641,13 @@ describe('when a public NavBar composes app-owned controls in Chromium', () => {
           await evaluate("document.documentElement.style.scrollbarGutter = 'auto'")
           await click('button[aria-label="Open menu"]')
           expect(await evaluate('document.documentElement.clientWidth')).toBe(width)
+          if (width === 768 || width === 1023) {
+            expect(
+              await evaluate(
+                `(()=>{const entries=Array.from(document.querySelectorAll('[data-balance]'));return {count:entries.length,lower:entries.every(entry=>!!entry.closest('[data-testid=navbar-panel]'))}})()`
+              )
+            ).toEqual({ count: 2, lower: true })
+          }
           const measure = await evaluate(
             `(()=>{const d=document.querySelector('[data-testid=navbar-panel]'),layer=d.parentElement,r=d.getBoundingClientRect(),l=layer.getBoundingClientRect();return{dialog:{x:r.x,y:r.y,width:r.width,height:r.height},layer:{x:l.x,y:l.y,width:l.width,height:l.height},background:getComputedStyle(d).backgroundColor,bottomInside:d.contains(document.elementFromPoint(innerWidth-1,innerHeight-1)),bottomBackdrop:document.elementFromPoint(1,innerHeight-1)===layer.firstElementChild}})()`
           )

@@ -71,18 +71,21 @@ function CompositionExample() {
     <>
       <header
         style={
-          params.has('surface-proof')
-            ? {
-                position: params.has('sticky') ? 'sticky' : 'fixed',
-                top: params.has('offset') || params.has('sticky') ? 24 : 0,
-                marginTop: params.has('sticky') ? 80 : undefined,
-                insetInline: 0,
-                zIndex: 10
-              }
-            : undefined
+          params.has('class-sticky')
+            ? { display: 'contents' }
+            : params.has('surface-proof')
+              ? {
+                  position: params.has('sticky') ? 'sticky' : 'fixed',
+                  top: params.has('offset') || params.has('sticky') ? 24 : 0,
+                  marginTop: params.has('sticky') ? 80 : undefined,
+                  insetInline: 0,
+                  zIndex: 10
+                }
+              : undefined
         }
       >
         <NavBar
+          className={params.has('class-sticky') ? 'caller-sticky' : undefined}
           surface={
             new URLSearchParams(window.location.search).get('surface') === 'overlay'
               ? 'overlay'

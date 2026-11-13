@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent, { type UserEvent } from '@testing-library/user-event'
 import { renderToString } from 'react-dom/server'
 import { useState } from 'react'
@@ -33,6 +33,48 @@ describe('when NavBar accepts app-owned composition controls', () => {
         </nav>
       )
     }
+  })
+
+  it('should recover unclaimed outside focus while respecting an explicitly consumed key', async () => {
+    render(
+      <>
+        <button>Outside</button>
+        <NavBar {...props} />
+      </>
+    )
+    await user.click(screen.getByRole('button', { name: 'Open menu' }))
+    const outside = screen.getByRole('button', { name: 'Outside' })
+    outside.focus()
+    expect(fireEvent.keyDown(outside, { key: 'Tab' })).toBe(false)
+    expect(screen.getByRole('link', { name: 'Decentraland home' })).toHaveFocus()
+    outside.focus()
+    outside.addEventListener('keydown', (event) => event.preventDefault(), { once: true })
+    fireEvent.keyDown(outside, { key: 'Escape' })
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    expect(outside).toHaveFocus()
+    fireEvent.keyDown(outside, { key: 'Escape' })
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Open menu' })).toHaveFocus()
+  })
+
+  it('should cycle through native summary while excluding closed disclosure content', async () => {
+    render(
+      <NavBar
+        {...props}
+        accountControl={
+          <details>
+            <summary>Wallet options</summary>
+            <button>Hidden wallet action</button>
+          </details>
+        }
+      />
+    )
+    await user.click(screen.getByRole('button', { name: 'Open menu' }))
+    screen.getByRole('link', { name: 'Decentraland home' }).focus()
+    await user.tab({ shift: true })
+    expect(screen.getByText('Wallet options')).toHaveFocus()
+    await user.tab()
+    expect(screen.getByRole('link', { name: 'Decentraland home' })).toHaveFocus()
   })
 
   it('should keep the one real header inside the open menu modal ownership', async () => {

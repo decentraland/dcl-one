@@ -333,9 +333,9 @@
   }
 
   .backdrop {
-    position: absolute;
+    position: fixed;
     inset: 0;
-    background: var(--dcl-bg-backdrop);
+    background: transparent;
   }
 
   .drawer {
@@ -389,21 +389,8 @@
     border-top: 1px solid var(--dcl-border-subtle);
   }
 
-  .drawerIdentity {
-    display: flex;
-    align-items: center;
-    gap: var(--dcl-space-12);
-    min-width: 0;
-  }
-
   .drawerAccount .balances {
     flex-wrap: wrap;
-  }
-
-  .drawerAccount .menuList {
-    margin: 0;
-    padding: 0;
-    border: 0;
   }
 
   .visuallyHidden {

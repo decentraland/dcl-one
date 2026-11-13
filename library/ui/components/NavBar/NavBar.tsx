@@ -91,6 +91,7 @@ type NavBarCommonProps = {
   sections: readonly NavBarSection[]
   /** Defaults to `/`. */
   logoHref?: string
+  /** Numeric balances move into the lower panel while the mobile menu is open. */
   balances?: NavBarBalances
   /** Responsive tinted backdrop or minimal desktop overlay. The host positions and stacks the header above page content. */
   surface?: 'solid' | 'overlay'
@@ -111,6 +112,7 @@ type NavBarCommonProps = {
    * page's locale so server and client agree.
    */
   locale?: string
+  /** Applied to the outer navigation frame, including caller positioning and stacking. */
   className?: string
 }
 
@@ -476,14 +478,24 @@ function Drawer({
     const observer =
       typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(schedule)
     if (headerRef.current) observer?.observe(headerRef.current)
+    const onScroll = (event: Event) => {
+      const target = event.target
+      const header = headerRef.current
+      if (
+        target === document ||
+        target === window ||
+        (target instanceof Element && header && target.contains(header))
+      )
+        schedule()
+    }
     window.addEventListener('resize', schedule)
-    window.addEventListener('scroll', schedule, { capture: true, passive: true })
+    window.addEventListener('scroll', onScroll, { capture: true, passive: true })
     window.visualViewport?.addEventListener('resize', schedule)
     return () => {
       observer?.disconnect()
       window.cancelAnimationFrame(frame)
       window.removeEventListener('resize', schedule)
-      window.removeEventListener('scroll', schedule, true)
+      window.removeEventListener('scroll', onScroll, true)
       window.visualViewport?.removeEventListener('resize', schedule)
     }
   }, [headerRef])
@@ -499,8 +511,6 @@ function Drawer({
       if (event.defaultPrevented) return
       const scope = scopeRef.current
       const active = document.activeElement
-      // A deliberately focused external dialog owns its keys; body focus can still be recovered.
-      if (active && active !== document.body && !scope?.contains(active)) return
       if (event.key === 'Escape') {
         event.preventDefault()
         onClose()
@@ -619,7 +629,7 @@ export function NavBar({
   return (
     <div
       ref={scopeRef}
-      className={styles.frame}
+      className={className ? `${styles.frame} ${className}` : styles.frame}
       id={drawerOpen ? drawerId : undefined}
       role={drawerOpen ? 'dialog' : undefined}
       aria-modal={drawerOpen ? true : undefined}
@@ -627,7 +637,7 @@ export function NavBar({
     >
       <nav
         ref={navRef}
-        className={className ? `${styles.root} ${className}` : styles.root}
+        className={styles.root}
         aria-label={labels.navigation}
         data-surface={surface}
         data-menu-open={drawerOpen || undefined}
@@ -663,7 +673,7 @@ export function NavBar({
               {account && balances ? (
                 <Balances balances={balances} labels={labels} format={format} />
               ) : null}
-              {!drawerOpen && hasSlot(balanceAction) ? (
+              {hasSlot(balanceAction) ? (
                 <div className={styles.compositionControl}>{balanceAction}</div>
               ) : null}
             </div>
