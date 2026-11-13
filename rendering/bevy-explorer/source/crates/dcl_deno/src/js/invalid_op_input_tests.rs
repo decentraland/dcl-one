@@ -478,6 +478,9 @@ fn structured_clone_failures_are_data_clone_errors() {
         let hostRefusal;
         try { Deno.core.ops.op_serialize(1, []); } catch (e) { hostRefusal = e; }
         if (!(hostRefusal instanceof TypeError)) { throw new Error(`host objects: ${hostRefusal}`); }
+        let badRead;
+        try { Deno.core.ops.op_deserialize(new Uint8Array([0x01, 0x02])); } catch (e) { badRead = e; }
+        if (!(badRead instanceof TypeError)) { throw new Error(`deserialize: ${badRead}`); }
         "#,
     )
     .unwrap();

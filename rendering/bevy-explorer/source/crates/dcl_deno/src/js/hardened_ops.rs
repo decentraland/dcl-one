@@ -336,6 +336,8 @@ impl v8::ValueSerializerImpl for SceneClone {
         None
     }
 
+    // On None the rusty_v8 glue calls V8's default, which throws a plain Error after ours;
+    // release V8 keeps the first exception, so the TypeError is what the scene sees.
     fn get_shared_array_buffer_id<'s>(
         &self,
         scope: &mut v8::PinScope<'s, '_>,
@@ -395,11 +397,11 @@ fn op_deserialize<'s>(
     let deserializer = v8::ValueDeserializer::new(scope, Box::new(SceneClone), &zero_copy);
     let context = scope.get_current_context();
     if !deserializer.read_header(context).unwrap_or_default() {
-        return Err(anyhow::anyhow!("could not deserialize value").into());
+        return Err(super::errors::type_error("could not deserialize value").into());
     }
     Ok(deserializer
         .read_value(context)
-        .ok_or_else(|| anyhow::anyhow!("could not deserialize value"))?)
+        .ok_or_else(|| super::errors::type_error("could not deserialize value"))?)
 }
 
 // `core.structuredClone` (performance.mark/measure `detail`, stream tees). The original
