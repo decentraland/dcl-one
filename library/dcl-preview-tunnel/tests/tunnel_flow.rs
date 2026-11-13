@@ -705,3 +705,55 @@ async fn a_cancelled_request_frees_its_channel_slot() {
     ));
     next.abort();
 }
+
+#[tokio::test]
+async fn a_declared_oversize_body_is_refused_before_it_is_read() {
+    let addr = spawn_service(Config {
+        body_max_bytes: 4,
+        ..anonymous()
+    })
+    .await;
+    let (_trunk, id, _, _) = connect_agent(addr, plain_hello()).await;
+    let response = reqwest::Client::new()
+        .post(format!("http://{addr}/t/{id}/upload"))
+        .body("too long")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 413);
+}
+
+#[tokio::test]
+async fn a_trickled_body_times_out_and_frees_its_slot() {
+    let addr = spawn_service(Config {
+        max_channels_per_agent: 1,
+        body_timeout_secs: 1,
+        ..anonymous()
+    })
+    .await;
+    let (mut trunk, id, _, _) = connect_agent(addr, plain_hello()).await;
+    let client = reqwest::Client::new();
+    // One chunk, then nothing: the body never completes.
+    let stalled = futures::stream::once(async { Ok::<_, std::io::Error>(vec![b'x']) })
+        .chain(futures::stream::pending());
+    let response = tokio::time::timeout(
+        HANG_GUARD,
+        client
+            .post(format!("http://{addr}/t/{id}/upload"))
+            .body(reqwest::Body::wrap_stream(stalled))
+            .send(),
+    )
+    .await
+    .expect("the relay never answered the stalled upload")
+    .unwrap();
+    assert_eq!(response.status(), 408);
+    let next = tokio::spawn({
+        let url = format!("http://{addr}/t/{id}/next");
+        async move { client.get(url).send().await.unwrap() }
+    });
+    assert!(matches!(
+        recv_control(&mut trunk).await,
+        Control::Open { .. }
+    ));
+    next.abort();
+}

@@ -270,12 +270,17 @@ fn register(
             }
         }
     } else {
-        st.cfg
-            .allow_ids
-            .iter()
-            .find(|cand| agents.get(cand.as_str()).is_none_or(|e| e.conn.is_none()))
-            .cloned()
-            .ok_or("no free tunnel id (TUNNEL_ALLOW_IDS exhausted)")?
+        // At the cap only a grace-held id can be taken, since it adds no entry.
+        let free = |cand: &&String| {
+            agents
+                .get(cand.as_str())
+                .map_or(!full, |e| e.conn.is_none())
+        };
+        match st.cfg.allow_ids.iter().find(free) {
+            Some(id) => id.clone(),
+            None if full => return Err("tunnel capacity reached"),
+            None => return Err("no free tunnel id (TUNNEL_ALLOW_IDS exhausted)"),
+        }
     };
     // A grace-held allow-listed id is reused in place; only a new entry counts.
     if full && !agents.contains_key(&id) {
@@ -518,6 +523,7 @@ const ORIGIN_WIDE_RESPONSE_HEADERS: &[&str] = &[
     "accept-ch",
     "critical-ch",
     "origin-agent-cluster",
+    "set-login",
 ];
 
 fn is_cross_tunnel_response_header(name: &str) -> bool {
@@ -542,11 +548,14 @@ fn collect_headers(headers: &HeaderMap) -> Vec<(String, String)> {
 
 /// A channel's entry in its agent's table. Dropping it frees the slot and, if
 /// the agent was told about the channel and has not ended it, closes it there.
+/// That `Close` may follow the relay's own `End`; agents treat a `Close` for a
+/// finished or unknown channel as a no-op.
 struct ChannelSlot {
     conn: AgentConn,
     ch: u32,
     announced: bool,
     close_code: Option<u16>,
+    close_reason: Option<&'static str>,
 }
 
 impl ChannelSlot {
@@ -560,11 +569,20 @@ impl Drop for ChannelSlot {
     fn drop(&mut self) {
         let present = lock(&self.conn.channels).remove(&self.ch).is_some();
         if present && self.announced {
-            let _ = self.conn.tx.try_send(TrunkOut::Control(Control::Close {
+            let close = TrunkOut::Control(Control::Close {
                 ch: self.ch,
                 code: self.close_code,
-                reason: None,
-            }));
+                reason: self.close_reason.map(str::to_owned),
+            });
+            // A full trunk queue still gets the close, bounded like any other send.
+            if let Err(mpsc::error::TrySendError::Full(close)) = self.conn.tx.try_send(close)
+                && let Ok(runtime) = tokio::runtime::Handle::try_current()
+            {
+                let tx = self.conn.tx.clone();
+                runtime.spawn(async move {
+                    let _ = tx.send_timeout(close, EVENT_SEND_TIMEOUT).await;
+                });
+            }
         }
     }
 }
@@ -596,8 +614,13 @@ fn open_channel(st: &AppState, conn: &AgentConn, is_ws: bool) -> Option<OpenedCh
         ch,
         announced: false,
         close_code: is_ws.then_some(1001),
+        close_reason: None,
     };
     Some((slot, reply_rx, events_rx))
+}
+
+fn too_large() -> Response {
+    (StatusCode::PAYLOAD_TOO_LARGE, "request body too large").into_response()
 }
 
 fn too_many_channels() -> Response {
@@ -610,15 +633,19 @@ fn too_many_channels() -> Response {
 
 async fn await_open_reply(
     st: &AppState,
+    slot: &mut ChannelSlot,
     reply_rx: oneshot::Receiver<Control>,
 ) -> Result<Control, (StatusCode, &'static str)> {
     match tokio::time::timeout(Duration::from_secs(st.cfg.open_timeout_secs), reply_rx).await {
         Ok(Ok(control)) => Ok(control),
         Ok(Err(_)) => Err((StatusCode::BAD_GATEWAY, "tunnel agent disconnected")),
-        Err(_) => Err((
-            StatusCode::GATEWAY_TIMEOUT,
-            "tunnel agent did not answer in time",
-        )),
+        Err(_) => {
+            slot.close_reason = Some("open timed out");
+            Err((
+                StatusCode::GATEWAY_TIMEOUT,
+                "tunnel agent did not answer in time",
+            ))
+        }
     }
 }
 
@@ -629,15 +656,31 @@ async fn handle_public_http(
     req: Request,
 ) -> Response {
     let (parts, body) = req.into_parts();
+    let declared = parts
+        .headers
+        .get(header::CONTENT_LENGTH)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse::<u64>().ok());
+    if declared.is_some_and(|len| len > st.cfg.body_max_bytes as u64) {
+        return too_large();
+    }
     // Claim the slot before buffering, so a request over the limit costs no body.
     let Some((mut slot, reply_rx, events_rx)) = open_channel(&st, &conn, false) else {
         return too_many_channels();
     };
     let ch = slot.ch;
-    let body = match axum::body::to_bytes(body, st.cfg.body_max_bytes).await {
-        Ok(bytes) => bytes,
+    // A trickled body must not hold the slot past the read deadline.
+    let read = axum::body::to_bytes(body, st.cfg.body_max_bytes);
+    let body = match tokio::time::timeout(Duration::from_secs(st.cfg.body_timeout_secs), read).await
+    {
+        Ok(Ok(bytes)) => bytes,
+        Ok(Err(_)) => return too_large(),
         Err(_) => {
-            return (StatusCode::PAYLOAD_TOO_LARGE, "request body too large").into_response();
+            return (
+                StatusCode::REQUEST_TIMEOUT,
+                "request body not received in time",
+            )
+                .into_response();
         }
     };
     let open = Control::Open {
@@ -670,7 +713,7 @@ async fn handle_public_http(
     {
         return (StatusCode::BAD_GATEWAY, "tunnel agent disconnected").into_response();
     }
-    let reply = match await_open_reply(&st, reply_rx).await {
+    let reply = match await_open_reply(&st, &mut slot, reply_rx).await {
         Ok(reply) => reply,
         Err(refusal) => return refusal.into_response(),
     };
@@ -766,7 +809,7 @@ async fn handle_public_ws(
         return (StatusCode::BAD_GATEWAY, "tunnel agent disconnected").into_response();
     }
     slot.announced = true;
-    let reply = match await_open_reply(&st, reply_rx).await {
+    let reply = match await_open_reply(&st, &mut slot, reply_rx).await {
         Ok(reply) => reply,
         Err(refusal) => return refusal.into_response(),
     };
@@ -939,6 +982,8 @@ mod tests {
             "Alt-Svc",
             "Accept-CH",
             "Critical-CH",
+            "Origin-Agent-Cluster",
+            "Set-Login",
         ] {
             assert!(is_cross_tunnel_response_header(name), "{name}");
         }
@@ -954,5 +999,37 @@ mod tests {
         headers.insert(header::SEC_WEBSOCKET_PROTOCOL, "rfc5".parse().unwrap());
         let collected = collect_headers(&headers);
         assert_eq!(collected, vec![("accept".to_string(), "*/*".to_string())]);
+    }
+
+    fn agent() -> AgentConn {
+        AgentConn {
+            tx: mpsc::channel(1).0,
+            channels: Arc::new(Mutex::new(HashMap::new())),
+            next_ch: Arc::new(AtomicU32::new(0)),
+        }
+    }
+
+    #[test]
+    fn at_the_agent_cap_any_grace_held_allowed_id_is_reused() {
+        let st = Arc::new(AppState::new(Config {
+            allow_ids: vec!["a".into(), "b".into()],
+            max_agents: 1,
+            allow_anonymous: true,
+            ..Config::default()
+        }));
+        lock(&st.agents).insert(
+            "b".into(),
+            AgentEntry {
+                resume_key: random_key(),
+                epoch: 0,
+                conn: None,
+            },
+        );
+        let (id, _, _) = register(&st, agent(), None).unwrap();
+        assert_eq!(id, "b", "the free id that adds no entry is the one taken");
+        assert_eq!(
+            register(&st, agent(), None).unwrap_err(),
+            "tunnel capacity reached"
+        );
     }
 }

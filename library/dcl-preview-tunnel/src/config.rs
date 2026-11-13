@@ -18,6 +18,8 @@ pub struct Config {
     pub ping_secs: u64,
     pub open_timeout_secs: u64,
     pub body_max_bytes: usize,
+    /// Seconds a proxied request body may take to arrive.
+    pub body_timeout_secs: u64,
 }
 
 impl Default for Config {
@@ -35,6 +37,7 @@ impl Default for Config {
             ping_secs: 20,
             open_timeout_secs: 15,
             body_max_bytes: 64 * 1024 * 1024,
+            body_timeout_secs: 60,
         }
     }
 }
@@ -73,6 +76,11 @@ impl Config {
             )
             .max(1),
             body_max_bytes: parse_or(opt("TUNNEL_BODY_MAX_BYTES"), defaults.body_max_bytes),
+            body_timeout_secs: parse_or(
+                opt("TUNNEL_BODY_TIMEOUT_SECS"),
+                defaults.body_timeout_secs,
+            )
+            .max(1),
         };
         cfg.validate()?;
         Ok(cfg)

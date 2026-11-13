@@ -15,6 +15,10 @@ const ENV_DOCS: &[(&str, &str)] = &[
         "comma-separated bearer tokens required to open a trunk (required unless TUNNEL_ALLOW_ANONYMOUS)",
     ),
     (
+        "TUNNEL_BODY_TIMEOUT_SECS",
+        "seconds a proxied request body may take to arrive (default 60, min 1)",
+    ),
+    (
         "TUNNEL_ALLOW_ANONYMOUS",
         "true to accept trunks without a token, for a local relay only (default false)",
     ),
