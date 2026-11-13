@@ -1,0 +1,29 @@
+name = "camera-reel-service"
+repository = "github.com/decentraland/camera-reel-service"
+revision = "3e8bd0b099400e7c15b95477c1f003c63042d461"
+database_env = "CAMERA_REEL_DATABASE_URL"
+after = []
+notes = """
+Canonical historical photos only. Requires filename/MIME-capable target schema,
+CAMERA_REEL_IMPORT_API_URL matching the target API URL, and the shared blob root.
+Copy original objects with `blobs camera-reel-service --from-dir --object-metadata` first.
+Original MIME metadata is required; neither headers nor thumbnails are inferred.
+Unsupported rows and conflicting target facts fail; no thumbnails are generated.
+See MAPPING.md for snapshot, inventory and cutover prerequisites.
+"""
+
+[[step]]
+name = "image"
+targets = ["camera_reel.images"]
+extract = "image.extract.sql"
+load = "image.load.sql"
+key = ["id"]
+columns = [
+  { name = "id", type = "uuid" },
+  { name = "user_address", type = "text" },
+  { name = "url", type = "text" },
+  { name = "thumbnail_url", type = "text" },
+  { name = "is_public", type = "boolean" },
+  { name = "metadata", type = "jsonb" },
+  { name = "created_at", type = "timestamptz" },
+]

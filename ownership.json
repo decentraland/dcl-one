@@ -154,7 +154,10 @@
       ],
       "paths": [
         "/schemas/",
-        "/services/catalyst/db/"
+        "/services/catalyst/db/",
+        "/tooling/migration/",
+        "/tooling/tests/migration_*.py",
+        "/tooling/tests/test_migration.py"
       ]
     },
     {

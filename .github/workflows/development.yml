@@ -12,6 +12,7 @@ on:
       - 'tooling/enet-provenance.py'
       - 'tooling/*.py'
       - 'tooling/tests/**'
+      - 'tooling/migration/**'
       - 'services/catalyst/**'
       - 'library/**'
       - '.cargo/**'

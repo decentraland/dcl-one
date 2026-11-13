@@ -1,0 +1,78 @@
+name = "signatures-server"
+repository = "github.com/decentraland/signatures-server"
+revision = "049445ee8bd7857d57ee41e34b629d18b24c3058"
+database_env = "SIGNATURES_SERVER_DATABASE_URL"
+after = []
+notes = """Rentals listings (LAND/Estate offers signed off-chain), public schema.
+See MAPPING.md. Signatures are copied as stored. status, started_at,
+rented_days and tenant are upstream's rentals-subgraph sync; they seed the
+node, whose `rentals` chain index refolds them once published. Rentals
+without a listing row (none expected) are skipped. Not migrated:
+rentals_offers (never written by the server), updates (the subgraph sync
+cursor; the node keeps its own chain cursor), pgmigrations."""
+
+[[step]]
+name = "rental_assets"
+targets = ["signatures.rental_assets"]
+extract = "rental_assets.extract.sql"
+load = "rental_assets.load.sql"
+key = ["contract_address", "token_id"]
+columns = [
+  { name = "contract_address", type = "text" },
+  { name = "token_id", type = "numeric" },
+  { name = "nft_id", type = "text" },
+  { name = "network", type = "text" },
+  { name = "chain_id", type = "integer" },
+  { name = "category", type = "text" },
+  { name = "search_text", type = "text" },
+  { name = "distance_to_plaza", type = "smallint" },
+  { name = "adjacent_to_road", type = "boolean" },
+  { name = "estate_size", type = "smallint" },
+  { name = "nft_created_at", type = "timestamptz" },
+  { name = "nft_updated_at", type = "timestamptz" },
+  { name = "fetched_at", type = "timestamptz" },
+]
+
+[[step]]
+name = "rentals"
+targets = ["signatures.rentals", "signatures.rental_listings"]
+extract = "rentals.extract.sql"
+load = "rentals.load.sql"
+key = ["id"]
+watermark = "updated_at"
+columns = [
+  { name = "id", type = "uuid" },
+  { name = "contract_address", type = "text" },
+  { name = "token_id", type = "numeric" },
+  { name = "network", type = "text" },
+  { name = "chain_id", type = "integer" },
+  { name = "expiration", type = "timestamptz" },
+  { name = "nonces", type = "text[]" },
+  { name = "signature", type = "text" },
+  { name = "rental_contract_address", type = "text" },
+  { name = "status", type = "text" },
+  { name = "target", type = "text" },
+  { name = "rented_days", type = "integer" },
+  { name = "period_chosen", type = "uuid" },
+  { name = "created_at", type = "timestamptz" },
+  { name = "updated_at", type = "timestamptz" },
+  { name = "started_at", type = "timestamptz" },
+  { name = "lessor", type = "text" },
+  { name = "tenant", type = "text" },
+]
+
+[[step]]
+name = "rental_periods"
+targets = ["signatures.rental_periods"]
+extract = "rental_periods.extract.sql"
+load = "rental_periods.load.sql"
+key = ["id"]
+columns = [
+  { name = "id", type = "uuid" },
+  { name = "rental_id", type = "uuid" },
+  { name = "min_days", type = "integer" },
+  { name = "max_days", type = "integer" },
+  { name = "price_per_day", type = "numeric" },
+  { name = "parent_signature", type = "text" },
+  { name = "parent_updated_at", type = "timestamptz" },
+]

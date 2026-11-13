@@ -1,0 +1,131 @@
+name = "comms-gatekeeper"
+repository = "github.com/decentraland/comms-gatekeeper"
+revision = "33d2e28aefad26b72902a8c5d694129df0de3b77"
+database_env = "COMMS_GATEKEEPER_DATABASE_URL"
+after = ["places", "worlds-content-server"]
+notes = """
+Not migrated: voice_chat_users and community_voice_chat_users (live LiveKit
+session membership; the node rebuilds it from webhooks and rejoins), and the
+upstream lease columns of scene_stream_access (ingress_cleanup_claim_*,
+ingress_cleanup_retry_at: in-flight claims of the old process).
+The gatekeeper keeps no private_messages_privacy (it only forwards
+social-service's value to LiveKit metadata) and no player reports, so it
+writes neither social.user_settings nor social.player_reports.
+scene_admin and scene_bans resolve source Places UUIDs to the target runtime
+identity. Unresolved/ambiguous identities (including old world-name keys) stop
+the batch; do not cut over with missing moderation state. Rows whose wallet
+is not a 0x + 40 hex address are skipped. See MAPPING.md.
+Upstream timestamp columns (user_bans, user_warnings) are read as UTC.
+Only player_connection has a reliable watermark. Moderation steps read the
+whole source set so aliases of one target identity are resolved together;
+re-scan other steps with --restart. Scene unbans are upstream DELETEs and are
+not propagated: use a frozen snapshot into an empty destination or explicitly
+reconcile deletions before activation. scene_stream_access retires
+(active = false) any older active target credential of a place whose
+upstream active credential it loads, to keep the one-active index, and queues
+the retired credential's ingress cleanup. Re-runs keep node-side lifts,
+admin revocations/grants and retired credentials.
+"""
+
+[[step]]
+name = "scene_admin"
+targets = ["social.scene_admins"]
+extract = "scene_admin.extract.sql"
+load = "scene_admin.load.sql"
+whole = true
+key = ["place_id", "admin_address"]
+columns = [
+  { name = "place_id", type = "text" },
+  { name = "admin_address", type = "text" },
+  { name = "added_by", type = "text" },
+  { name = "added_at", type = "timestamptz" },
+  { name = "active", type = "boolean" },
+]
+
+[[step]]
+name = "scene_ban"
+targets = ["social.scene_bans"]
+extract = "scene_ban.extract.sql"
+load = "scene_ban.load.sql"
+whole = true
+key = ["place_id", "banned_address"]
+columns = [
+  { name = "place_id", type = "text" },
+  { name = "banned_address", type = "text" },
+  { name = "banned_by", type = "text" },
+  { name = "banned_at", type = "timestamptz" },
+]
+
+[[step]]
+name = "scene_stream_access"
+targets = ["social.scene_stream_access", "social.scene_stream_cleanup"]
+extract = "scene_stream_access.extract.sql"
+load = "scene_stream_access.load.sql"
+key = ["id"]
+columns = [
+  { name = "id", type = "uuid" },
+  { name = "place_id", type = "text" },
+  { name = "streaming_url", type = "text" },
+  { name = "streaming_key", type = "text" },
+  { name = "ingress_id", type = "text" },
+  { name = "room_id", type = "text" },
+  { name = "generated_by", type = "text" },
+  { name = "created_at", type = "timestamptz" },
+  { name = "expiration_time", type = "timestamptz" },
+  { name = "streaming", type = "boolean" },
+  { name = "streaming_start_time", type = "timestamptz" },
+  { name = "streaming_state_version", type = "bigint" },
+  { name = "streaming_checked_at", type = "timestamptz" },
+  { name = "active", type = "boolean" },
+  { name = "cleanup_pending", type = "boolean" },
+  { name = "cleanup_expired", type = "boolean" },
+]
+
+[[step]]
+name = "user_ban"
+targets = ["social.user_bans"]
+extract = "user_ban.extract.sql"
+load = "user_ban.load.sql"
+key = ["id"]
+columns = [
+  { name = "id", type = "uuid" },
+  { name = "banned_address", type = "text" },
+  { name = "banned_by", type = "text" },
+  { name = "reason", type = "text" },
+  { name = "custom_message", type = "text" },
+  { name = "banned_device_id", type = "text" },
+  { name = "banned_at", type = "timestamptz" },
+  { name = "expires_at", type = "timestamptz" },
+  { name = "lifted_at", type = "timestamptz" },
+  { name = "lifted_by", type = "text" },
+  { name = "created_at", type = "timestamptz" },
+]
+
+[[step]]
+name = "user_warning"
+targets = ["social.user_warnings"]
+extract = "user_warning.extract.sql"
+load = "user_warning.load.sql"
+key = ["id"]
+columns = [
+  { name = "id", type = "uuid" },
+  { name = "warned_address", type = "text" },
+  { name = "warned_by", type = "text" },
+  { name = "reason", type = "text" },
+  { name = "warned_at", type = "timestamptz" },
+]
+
+[[step]]
+name = "player_connection"
+targets = ["social.player_connections"]
+extract = "player_connection.extract.sql"
+load = "player_connection.load.sql"
+key = ["address"]
+watermark = "updated_at"
+columns = [
+  { name = "address", type = "text" },
+  { name = "ip_address", type = "text" },
+  { name = "device_id", type = "text" },
+  { name = "created_at", type = "timestamptz" },
+  { name = "updated_at", type = "timestamptz" },
+]

@@ -1,0 +1,132 @@
+name = "worlds-content-server"
+repository = "github.com/decentraland/worlds-content-server"
+revision = "adc123b2059768407cc4d893ed39d6fbcb956a68"
+database_env = "WORLDS_CONTENT_SERVER_DATABASE_URL"
+# places seeds explore.place and the exact explore.world_scene_place bindings;
+# world_scene_place binds only the imported scenes it left unbound.
+after = ["places"]
+notes = """
+Imports the worlds, their DEPLOYED scenes as local publishes, the grants, the
+access settings and the storage-quota blocks (into worlds.quota_blocks, never
+the platform-wide worlds.blocked_wallets); binds every imported scene to its
+Places identity. See MAPPING.md.
+
+Prerequisite: `migrate.py blobs worlds-content-server` copies each scene's
+entity file and content files and each world's thumbnail into the blob store
+first; world and world_scene stop on a hash it has not recorded, and a run of
+either ends by checking the store (--storage-root) holds every imported blob.
+Never run the node's storage GC between `blobs` and `run`. Per-world
+limits come from upstream's WHITELIST_URL document (`migrate.py
+worlds-limits`), not its database.
+
+Not migrated: UNDEPLOYED world_scenes (replaced history, evicted upstream;
+they only drive deletes here), pending_scenes, pending_scene_files,
+completed_scene_uploads, partial_upload_rates (in-flight partial uploads),
+migrations, and the derived worlds columns (last_deployed_at,
+deployed_scene_count, scene_min/max_x/y, search_vector).
+
+Deletes: world_scene deletes the local row of a scene upstream marks
+UNDEPLOYED, and the mirrored (mirror_source IS NOT NULL) scenes of a world it
+imports, as a local publish does, and retires the identities of scenes so
+removed. world replaces each imported world's `access` grants
+and access communities with the upstream list (one row carries the whole
+list), unless the node changed the world's settings after upstream last did.
+world_permission reads every deployment/streaming grant each run and deletes
+the grants it imported that upstream no longer holds; grants made or edited
+on the node are kept (dcl_migration.world_permission_loaded). Lifted quota
+blocks are not detected.
+"""
+
+[[step]]
+name = "world"
+targets = ["worlds.worlds", "worlds.world_permissions", "worlds.world_access_communities"]
+extract = "world.extract.sql"
+load = "world.load.sql"
+key = ["name"]
+watermark = "updated_at"
+columns = [
+  { name = "name", type = "text" },
+  { name = "owner", type = "text" },
+  { name = "access_type", type = "text" },
+  { name = "access_secret_hash", type = "text" },
+  { name = "access_nft", type = "text" },
+  { name = "access_wallets", type = "text[]" },
+  { name = "access_communities", type = "text[]" },
+  { name = "access_coerced", type = "boolean" },
+  { name = "spawn_coordinates", type = "text" },
+  { name = "title", type = "text" },
+  { name = "description", type = "text" },
+  { name = "content_rating", type = "text" },
+  { name = "skybox_time", type = "integer" },
+  { name = "categories", type = "text[]" },
+  { name = "single_player", type = "boolean" },
+  { name = "show_in_places", type = "boolean" },
+  { name = "thumbnail_hash", type = "text" },
+  { name = "settings_version", type = "bigint" },
+  { name = "created_at", type = "timestamptz" },
+  { name = "updated_at", type = "timestamptz" },
+]
+
+[[step]]
+name = "world_scene"
+targets = ["worlds.world_scenes", "explore.world_scene_place"]
+extract = "world_scene.extract.sql"
+load = "world_scene.load.sql"
+key = ["world_name", "entity_id"]
+watermark = "updated_at"
+columns = [
+  { name = "world_name", type = "text" },
+  { name = "entity_id", type = "text" },
+  { name = "deployed", type = "boolean" },
+  { name = "deployment_auth_chain", type = "json" },
+  { name = "entity", type = "jsonb" },
+  { name = "deployer", type = "text" },
+  { name = "parcels", type = "text[]" },
+  { name = "size", type = "bigint" },
+  { name = "created_at", type = "timestamptz" },
+  { name = "updated_at", type = "timestamptz" },
+]
+
+[[step]]
+name = "world_scene_place"
+targets = ["explore.world_scene_place"]
+extract = "world_scene_place.extract.sql"
+load = "world_scene_place.load.sql"
+key = ["world_name", "entity_id"]
+watermark = "updated_at"
+columns = [
+  { name = "world_name", type = "text" },
+  { name = "entity_id", type = "text" },
+  { name = "updated_at", type = "timestamptz" },
+]
+
+[[step]]
+name = "world_permission"
+targets = ["worlds.world_permissions", "worlds.world_permission_parcels"]
+extract = "world_permission.extract.sql"
+load = "world_permission.load.sql"
+key = ["world_name", "permission", "address"]
+# Upstream deletes a revoked grant; only the whole set shows it is gone.
+whole = true
+columns = [
+  { name = "world_name", type = "text" },
+  { name = "permission", type = "text" },
+  { name = "address", type = "text" },
+  { name = "parcels", type = "text[]" },
+  { name = "invalid_parcels", type = "integer" },
+  { name = "created_at", type = "timestamptz" },
+  { name = "updated_at", type = "timestamptz" },
+]
+
+[[step]]
+name = "quota_block"
+targets = ["worlds.quota_blocks"]
+extract = "quota_block.extract.sql"
+load = "quota_block.load.sql"
+key = ["wallet"]
+watermark = "updated_at"
+columns = [
+  { name = "wallet", type = "text" },
+  { name = "created_at", type = "timestamptz" },
+  { name = "updated_at", type = "timestamptz" },
+]
