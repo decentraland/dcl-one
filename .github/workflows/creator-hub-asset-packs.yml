@@ -1,6 +1,15 @@
 name: Asset Packs
 on:
   workflow_call:
+    secrets:
+      BUILDER_ITEMS_S3_BUCKET_PRD:
+        required: false
+      SDK_TEAM_AWS_REGION:
+        required: false
+      SDK_TEAM_S3_BASE_URL:
+        required: false
+      SDK_TEAM_S3_BUCKET:
+        required: false
     outputs:
       s3_bucket_key:
         description: "S3 bucket key for the published Asset Packs package"
