@@ -23,6 +23,8 @@ use v8::{ValueDeserializerHelper, ValueSerializerHelper};
 pub fn override_ops() -> Vec<OpDecl> {
     vec![
         op_panic(),
+        op_add(),
+        op_add_async(),
         op_current_user_call_site(),
         op_leak_tracing_submit(),
         op_leak_tracing_get(),
@@ -75,6 +77,18 @@ pub const DISABLED_OPS: &[&str] = &[
 #[op2(fast)]
 fn op_panic(#[string] _message: String) -> Result<(), OpError> {
     bail!("op_panic is not available to scenes")
+}
+
+// the originals overflow-panic in debug builds
+#[op2(fast)]
+fn op_add(a: i32, b: i32) -> i32 {
+    a.wrapping_add(b)
+}
+
+#[allow(clippy::unused_async)]
+#[op2]
+async fn op_add_async(a: i32, b: i32) -> i32 {
+    a.wrapping_add(b)
 }
 
 /// Writes the first user frame's line and column into `ret_buf` and returns its file name.
