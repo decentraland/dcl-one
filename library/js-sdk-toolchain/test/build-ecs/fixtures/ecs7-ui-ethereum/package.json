@@ -14,8 +14,8 @@
     "watch": "sdk-commands build --watch"
   },
   "devDependencies": {
-    "@dcl/js-runtime": "file:../../../../packages/@dcl/js-runtime",
-    "@dcl/sdk-commands": "file:../../../../packages/@dcl/sdk-commands",
-    "@dcl/sdk": "file:../../../../packages/@dcl/sdk"
+    "@dcl/js-runtime": "workspace:*",
+    "@dcl/sdk-commands": "workspace:*",
+    "@dcl/sdk": "workspace:*"
   }
 }

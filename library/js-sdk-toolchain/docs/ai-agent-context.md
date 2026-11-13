@@ -20,7 +20,7 @@
 - Language: TypeScript 5.0.2
 - Build: TypeScript compiler (tsc) + esbuild (CLI bundling) + Makefile orchestration
 - Test: Jest 29.5.0 with ts-jest; snapshot/golden-file tests for QuickJS opcode regression
-- Monorepo: npm workspaces under `packages/@dcl/`
+- Monorepo: a pnpm workspace under `packages/@dcl/`
 - Linting: ESLint with @dcl/eslint-config, Prettier, syncpack (cross-package dep version sync)
 - Docs: TypeDoc (API docs), ADR links (architecture decisions)
 - React: react@18.2.0 + react-reconciler@0.29.0 (custom fiber)
@@ -68,10 +68,10 @@ All commands accept `--dir <path>` to target a project directory other than the 
 | `--project <type>` | Template: `scene-template` (default), `px-template`, `smart-wearable`, `library` |
 | `--github-repo <url>` | Clone from a specific GitHub repository |
 | `--template <url>` | Download a ZIP from a custom URL |
-| `--skip-install` | Skip `npm install` after scaffolding |
+| `--skip-install` | Skip the dependency install after scaffolding |
 | `-y, --yes` | Skip the empty-directory confirmation |
 
-Downloads a ZIP from the official GitHub template, extracts it, then runs `npm install`. Produces `scene.json`, `package.json`, `tsconfig.json`, `src/index.ts`, and `bin/index.js`.
+Downloads a ZIP from the official GitHub template, extracts it, then installs the dependencies (pnpm when the scene has a `pnpm-lock.yaml`, npm otherwise). Produces `scene.json`, `package.json`, `tsconfig.json`, `src/index.ts`, and `bin/index.js`.
 
 **`scene.json` key fields:**
 ```json
@@ -92,7 +92,7 @@ Downloads a ZIP from the official GitHub template, extracts it, then runs `npm i
 | --- | --- |
 | `-w, --watch` | Watch and rebuild incrementally on file changes |
 | `-p, --production` | Minify output and emit external sourcemaps instead of inline |
-| `--skip-install` | Skip `npm install` before build |
+| `--skip-install` | Skip the dependency install before build |
 
 Uses esbuild with `platform: 'browser'`, `format: 'cjs'`, `target: 'es2020'`, and `treeShaking: true`. Bakes `DEBUG=true` (dev) or `DEBUG=false` (production) into the bundle. Runs TypeScript type-checking in a separate process (`tsc --noEmit`). Generates a virtual entry point that imports the scene's `src/index.ts`, SDK composites, and the `main()` startup system. Output path is taken from `scene.json`'s `main` field.
 
@@ -339,7 +339,7 @@ js-sdk-toolchain/
 ├── docs/                        # Architecture notes and ADR summaries
 ├── scripts/                     # Build scripts, code generation, RPC proto compilation
 ├── Makefile                     # Build orchestration (install / build / test / lint)
-└── package.json                 # npm workspaces root
+└── package.json                 # pnpm workspace root
 ```
 
 **Configuration:**
@@ -348,7 +348,7 @@ The monorepo is built and tested via `make`:
 
 | Command | Purpose |
 | --- | --- |
-| `make install` | `npm install` + install protobuf binary |
+| `make install` | `pnpm install` + install protobuf binary |
 | `make build` | Full build: tsc all packages, generate types from protocol buffers, run build spec |
 | `make test` | Jest test suite including snapshot/golden tests |
 | `make lint-fix` | ESLint + Prettier auto-fix |

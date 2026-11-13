@@ -1,6 +1,7 @@
 {
   "name": "@dcl/protocol",
   "version": "1.0.0",
+  "packageManager": "pnpm@12.9.0",
   "description": "",
   "private": true,
   "repository": {
@@ -15,12 +16,12 @@
   "license": "Apache-2.0",
   "main": "index.js",
   "scripts": {
-    "build": "./scripts/generate.sh",
-    "test": "./scripts/check-proto-compabitility.sh",
+    "build": "bash scripts/generate.sh",
+    "test": "bash scripts/check-proto-compabitility.sh",
     "gen:test": "node protoc-gen-bitwise/test/generator.test.js"
   },
   "devDependencies": {
-    "@protobuf-ts/protoc": "^2.8.1",
+    "@protobuf-ts/protoc": "2.11.1",
     "@types/node": "^24.10.1",
     "typescript": "7.0.2"
   },
@@ -28,6 +29,7 @@
     "protocVersion": "22.2"
   },
   "dependencies": {
+    "long": "5.3.2",
     "protobufjs": "7.2.4",
     "ts-proto": "1.181.2"
   },

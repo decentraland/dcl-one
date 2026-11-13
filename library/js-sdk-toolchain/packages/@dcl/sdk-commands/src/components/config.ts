@@ -10,6 +10,7 @@ import { IFileSystemComponent } from './fs'
 export type ConfigKeys =
   | 'DCL_ANON_ID' // anonymous ID used for analytics
   | 'DCL_DISABLE_ANALYTICS' // when true, all telemetry events are disabled
+  | 'DCL_DISABLE_PNPM_HINT' // when true, build and start stop suggesting pnpm to a project installed with npm
   | 'DCL_LAND_REGISTRY_ADDRESS' // Address of the LAND_REGISTRY smart contract
   | 'DCL_ESTATE_REGISTRY_ADDRESS' // Address of the ESTATE_REGISTRY smart contract
   | 'DCL_CATALYST' // Default catalyst

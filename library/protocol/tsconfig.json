@@ -1,9 +1,9 @@
 {
   "compilerOptions": {
     "target": "es2016" /* Set the JavaScript language version for emitted JavaScript and include compatible library declarations. */,
+    "lib": ["es2017"] /* The generated maps use Object.entries; nothing hoisted supplies the lib by accident now. */,
     "module": "commonjs" /* Specify what module code is generated. */,
     "rootDir": "./out-ts",
-    "lib": ["es2017"],
     "types": ["node"] /* The generated base64 helpers probe globalThis.Buffer; TypeScript 7 includes no @types package by default. */,
     "outDir": "out-js",
     "declaration": true,

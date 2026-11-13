@@ -95,18 +95,21 @@ export async function downloadAndUnzipUrlContainFolder(url: string, dest: string
   const zipFilePath = path.resolve(dest, 'temp-zip-project.zip')
   const zip = await download(options.components, url, zipFilePath)
 
-  const zipExtracted = await extract(zip, dest)
-  if (zipExtracted.topLevelFolders.length !== 1) {
-    throw new CliError('INIT_INVALID_TEMPLATE_ZIP_URL', i18next.t('errors.init.invalid_template_zip_url'))
+  try {
+    const zipExtracted = await extract(zip, dest)
+    if (zipExtracted.topLevelFolders.length !== 1) {
+      throw new CliError('INIT_INVALID_TEMPLATE_ZIP_URL', i18next.t('errors.init.invalid_template_zip_url'))
+    }
+
+    const extractedPath = path.resolve(dest, zipExtracted.topLevelFolders[0])
+    const filesToMove = await options.components.fs.readdir(extractedPath)
+
+    for (const filePath of filesToMove) {
+      await options.components.fs.rename(path.resolve(extractedPath, filePath), path.resolve(dest, filePath))
+    }
+
+    await options.components.fs.rmdir(extractedPath)
+  } finally {
+    await options.components.fs.unlink(zipFilePath)
   }
-
-  const extractedPath = path.resolve(dest, zipExtracted.topLevelFolders[0])
-  const filesToMove = await options.components.fs.readdir(extractedPath)
-
-  for (const filePath of filesToMove) {
-    await options.components.fs.rename(path.resolve(extractedPath, filePath), path.resolve(dest, filePath))
-  }
-
-  await options.components.fs.rmdir(extractedPath)
-  await options.components.fs.unlink(zipFilePath)
 }

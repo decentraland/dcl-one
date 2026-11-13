@@ -223,10 +223,13 @@ function processDeclarations(apiName: string, filePath: string) {
 
   let content = blocks.join('\n\t// Function declaration section').replace(/^[ \t]*import\b(.*)\n/gm, '')
   for (const typeName of typesFromEcs) {
-    // '../ecs' is @dcl/ecs, always a sibling of @dcl/js-runtime (both under @dcl/) and the
-    // same nominal types that @dcl/sdk/ecs re-exports. Inlined at each reference (instead of
-    // a local alias) because everything declared in an ambient module is importable from it.
-    content = content.replace(new RegExp(`\\b${typeName}\\b`, 'g'), `import('../ecs').${typeName}`)
+    // @dcl/ecs is a dependency of @dcl/js-runtime, so the import resolves in every layout
+    // (npm hoists it, pnpm links it next to the package) to the same nominal types that
+    // @dcl/sdk/ecs re-exports, as long as the scene's @dcl/js-runtime and @dcl/sdk are one
+    // version (both pin @dcl/ecs exactly; `build` warns when they differ). Inlined at each
+    // reference (instead of a local alias) because everything declared in an ambient module is
+    // importable from it.
+    content = content.replace(new RegExp(`\\b${typeName}\\b`, 'g'), `import('@dcl/ecs').${typeName}`)
   }
   writeFileSync(filePath, `declare module "~system/${apiName}" {\n${content}\n}`)
 }

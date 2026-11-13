@@ -56,7 +56,13 @@
       "dir_not_empty": "指定的目标目录不为空。使用 --yes 运行此命令以覆盖。",
       "invalid_arguments": "不允许同时指定 --template 和 --project。请只指定其中一个。",
       "invalid_project": "请求的场景不存在。有效选项：{{options}}",
-      "invalid_template_zip_url": "下载的压缩包在根目录有多个文件夹，请确保根目录只有一个文件夹。"
+      "invalid_template_zip_url": "下载的压缩包在根目录有多个文件夹，请确保根目录只有一个文件夹。",
+      "invalid_template_zip": "无法解压 {{path}}：{{reason}}。",
+      "template_download_failed": "下载 {{url}} 失败，HTTP 状态码 {{status}}。",
+      "template_zip_escapes": "{{path}} 中有一个条目会被写到目标目录之外：{{entry}}。"
+    },
+    "install": {
+      "pnpm_not_found": "pnpm 未安装，而 {{workingDirectory}} 使用它安装依赖（其锁文件是 pnpm 的）。请运行 \"npm install -g pnpm\" 安装，或运行 \"corepack enable\" 启用。"
     },
     "quests": {
       "invalid_target": "提供的目标不是有效的 URL",
@@ -79,6 +85,14 @@
       "build_failed": "构建场景失败：{{error}}",
       "bundle_not_found": "在 {{bundlePath}} 找不到打包的场景",
       "execution_failed": "执行场景代码失败：{{error}}"
+    }
+  },
+  "warnings": {
+    "install": {
+      "use_pnpm": "{{workingDirectory}} 是用 npm 安装的。pnpm 更快，并且除非你允许，否则不会运行依赖的安装脚本：安装它（npm install -g pnpm），运行 \"pnpm import\" 转换 package-lock.json，删除 package-lock.json，然后运行 \"pnpm add -D @dcl/sdk-commands@{{version}}\"，这样脚本才能找到 CLI。"
+    },
+    "build": {
+      "js_runtime_version": "已安装的 @dcl/js-runtime {{runtime}} 与 @dcl/sdk {{sdk}} 版本不同。两者各自固定自己的 @dcl/ecs，~system 模块的类型可能与场景的不一致：请安装 @dcl/js-runtime@{{sdk}}。"
     }
   }
 }

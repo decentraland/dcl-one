@@ -30,12 +30,18 @@ jobs:
         working-directory: library/js-sdk-toolchain
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install pnpm
+        # Not pnpm/action-setup: the repository's actions policy (tooling/repo-actions-policy.sh) allows
+        # GitHub's own actions, verified creators' actions and the third-party actions it lists, and a
+        # workflow naming any other fails at startup. The version is package.json's packageManager field.
+        run: npm install --global --ignore-scripts "$(jq -r .packageManager package.json)"
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24.16.0
-          cache: npm
-          # library/protocol keeps no lockfile (it ignores package-lock.json)
-          cache-dependency-path: library/js-sdk-toolchain/package-lock.json
+          cache: pnpm
+          cache-dependency-path: |
+            library/js-sdk-toolchain/pnpm-lock.yaml
+            library/protocol/pnpm-lock.yaml
       - name: Install (builds library/protocol's out-ts first)
         run: make install
       - name: Lint
@@ -51,12 +57,18 @@ jobs:
         working-directory: library/js-sdk-toolchain
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install pnpm
+        # Not pnpm/action-setup: the repository's actions policy (tooling/repo-actions-policy.sh) allows
+        # GitHub's own actions, verified creators' actions and the third-party actions it lists, and a
+        # workflow naming any other fails at startup. The version is package.json's packageManager field.
+        run: npm install --global --ignore-scripts "$(jq -r .packageManager package.json)"
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24.16.0
-          cache: npm
-          # library/protocol keeps no lockfile (it ignores package-lock.json)
-          cache-dependency-path: library/js-sdk-toolchain/package-lock.json
+          cache: pnpm
+          cache-dependency-path: |
+            library/js-sdk-toolchain/pnpm-lock.yaml
+            library/protocol/pnpm-lock.yaml
       - name: Install (builds library/protocol's out-ts first)
         run: make install
       - name: Build

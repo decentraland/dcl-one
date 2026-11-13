@@ -56,7 +56,13 @@
       "dir_not_empty": "El directorio de destino especificado no está vacío. Ejecuta este comando con --yes para sobrescribir.",
       "invalid_arguments": "No se permite especificar --template y --project al mismo tiempo. Por favor especifica solo uno de ellos.",
       "invalid_project": "La escena solicitada no existe. Opciones válidas son: {{options}}",
-      "invalid_template_zip_url": "El zip descargado tiene muchas carpetas en la raíz, asegúrate de que tenga solo una carpeta en la raíz."
+      "invalid_template_zip_url": "El zip descargado tiene muchas carpetas en la raíz, asegúrate de que tenga solo una carpeta en la raíz.",
+      "invalid_template_zip": "No se puede extraer {{path}}: {{reason}}.",
+      "template_download_failed": "La descarga de {{url}} falló con el estado HTTP {{status}}.",
+      "template_zip_escapes": "{{path}} tiene una entrada que se escribiría fuera del destino: {{entry}}."
+    },
+    "install": {
+      "pnpm_not_found": "pnpm no está instalado y {{workingDirectory}} se instala con él (su lockfile es de pnpm). Instálalo con \"npm install -g pnpm\" o actívalo con \"corepack enable\"."
     },
     "quests": {
       "invalid_target": "El objetivo proporcionado no es una URL válida",
@@ -79,6 +85,14 @@
       "build_failed": "Error al construir la escena: {{error}}",
       "bundle_not_found": "No se pudo encontrar la escena empaquetada en {{bundlePath}}",
       "execution_failed": "Error al ejecutar el código de la escena: {{error}}"
+    }
+  },
+  "warnings": {
+    "install": {
+      "use_pnpm": "{{workingDirectory}} se instaló con npm. pnpm es más rápido y no ejecuta scripts de instalación de las dependencias salvo que los permitas: instálalo (npm install -g pnpm), ejecuta \"pnpm import\" para convertir package-lock.json, borra package-lock.json y ejecuta \"pnpm add -D @dcl/sdk-commands@{{version}}\" para que los scripts encuentren la CLI."
+    },
+    "build": {
+      "js_runtime_version": "@dcl/js-runtime {{runtime}} está instalado junto a @dcl/sdk {{sdk}}. Cada uno fija su propio @dcl/ecs, así que los tipos de los módulos ~system pueden no coincidir con los de la escena: instala @dcl/js-runtime@{{sdk}}."
     }
   }
 }
