@@ -378,6 +378,23 @@ describe('the bridge outfits domain', () => {
     })
   })
 
+  describe('when the look saved again matches a catalyst outfit in another key order', () => {
+    beforeEach(() => {
+      player = { userId: '0xA', isGuest: false }
+      const color = { color: { a: 1, b: 0.5, g: 0.5, r: 0.5 } }
+      const read = { wearables: ['urn:a'], forceRender: [], skin: color, hair: color, eyes: color, bodyShape: FEMALE }
+      stored = { outfits: [{ slot: 1, outfit: read }], namesForExtraSlots: [] }
+      getJson.mockResolvedValue({ metadata: stored })
+    })
+
+    it('should deploy nothing and report no failure', async () => {
+      const { request, failures } = await bridge()
+      await request({ kind: 'saveOutfit', slot: 1 })
+      expect(deployOutfits).not.toHaveBeenCalled()
+      expect(failures()).toEqual([])
+    })
+  })
+
   describe('when a stored outfit color carries its own alpha', () => {
     beforeEach(() => {
       player = { userId: '0xA', isGuest: false }

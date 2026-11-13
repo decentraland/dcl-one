@@ -332,10 +332,14 @@ export async function readOwnedNames(address: string): Promise<string[] | undefi
   ownedNames = { address: address.toLowerCase(), names }
   return names
 }
-/** This session's list for `address`, else a fresh one; a failed lookup is [] and not kept. */
-export async function fetchOwnedNames(address: string): Promise<string[]> {
+/** This session's list for `address`, else a fresh one, or undefined when the lookup failed. */
+async function knownOwnedNames(address: string): Promise<string[] | undefined> {
   if (ownedNames?.address === address.toLowerCase()) return ownedNames.names
-  return (await readOwnedNames(address)) ?? []
+  return await readOwnedNames(address)
+}
+/** As `knownOwnedNames`, with a failed lookup as [] (not kept). */
+export async function fetchOwnedNames(address: string): Promise<string[]> {
+  return (await knownOwnedNames(address)) ?? []
 }
 
 /**
@@ -374,7 +378,8 @@ function toProfileExtras(msg: SaveProfileRequest): Record<string, JsonValue> {
 export function registerProfile(ctx: Ctx): void {
   ctx.on('getOwnedNames', async () => {
     const player = getPlayer()
-    ctx.send({ kind: 'ownedNames', names: player == null ? [] : await fetchOwnedNames(player.userId).catch(() => []) })
+    const names = player == null ? [] : await knownOwnedNames(player.userId).catch(() => undefined)
+    ctx.send(names != null ? { kind: 'ownedNames', names } : { kind: 'ownedNames', names: [], failed: true })
   })
 
   ctx.on('saveProfile', async (msg) => {

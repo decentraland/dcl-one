@@ -1330,6 +1330,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const [profileOpen, setProfileOpen] = useState(false)
   // Own-profile edit: the claimed names the picker offers, and the state of the save in flight.
   const [ownedNames, setOwnedNames] = useState<string[]>([])
+  const [ownedNamesKnown, setOwnedNamesKnown] = useState(false)
   const [profileSaving, setProfileSaving] = useState(false)
   const [profileSaveError, setProfileSaveError] = useState<string | null>(null)
   // What the profile looked like before the in-flight save, to put back if the engine rejects it.
@@ -1894,6 +1895,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           break
         case 'ownedNames':
           setOwnedNames(msg.names)
+          setOwnedNamesKnown(msg.failed !== true)
           break
         case 'profileSaved':
           settleProfileSave(msg.ok, msg.error)
@@ -3522,8 +3524,10 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     driverRef.current?.send({ kind: 'deleteOutfit', slot })
   }, [])
   const dismissOutfitError = useCallback(() => setOutfitError(null), [])
-  // A failed names lookup must not hide outfits already saved past the free slots.
-  const extraOutfitSlots = ownedNames.length > 0 || outfits.namesForExtraSlots.length > 0 || outfits.outfits.some((o) => o.slot >= 5)
+  // The live names lookup decides; until it answers, the outfits read does.
+  const extraOutfitSlots = ownedNamesKnown
+    ? ownedNames.length > 0
+    : outfits.namesForExtraSlots.length > 0 || outfits.outfits.some((o) => o.slot >= 5)
   const equipOutfit = useCallback((slot: number) => {
     // The bridge resolves the outfit's wearables by urn and re-emits the full `wearables` set (incl.
     // items off the loaded catalog page), which becomes the authoritative equipped set — so no
@@ -3815,6 +3819,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     setProfile(null)
     setPrevUserId(null)
     setOwnedNames([])
+    setOwnedNamesKnown(false)
     setProfileSaving(false)
     setProfileSaveError(null)
     setSaveError(null)
