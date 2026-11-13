@@ -335,6 +335,21 @@ def client(args):
                         headers={"X-Forwarded-For": f"198.51.100.{i + 1}"})[0] for i in range(8)]
     assert_budget(statuses, 3)
     print("Real-nginx storage read, write and trusted ceilings passed.", flush=True)
+    # Worlds reads are not limited on either mount; writes and admin calls keep a budget,
+    # and a non-worlds read still has the server-wide one.
+    for i, (path, vhost) in enumerate([("/worlds-content-server/status", "example.test"),
+                                       ("/world/w.dcl.eth/about", "worlds.example.test"),
+                                       ("/status", "worlds-content-server.example.test")]):
+        statuses = [request(rate_public, path, vhost=vhost,
+                            headers={"X-Forwarded-For": f"198.51.100.{81 + i}"})[0] for _ in range(8)]
+        assert statuses == [200] * 8, ("worlds read", path, vhost, statuses)
+    for i, (method, path) in enumerate([("PUT", "/worlds-content-server/world/w.dcl.eth/permissions/deployment/0xa"),
+                                        ("GET", "/worlds-content-server/admin/worlds"),
+                                        ("GET", "/about")]):
+        statuses = [request(rate_public, path, method=method, body=b"{}" if method == "PUT" else None,
+                            headers={"X-Forwarded-For": f"198.51.100.{91 + i}"})[0] for _ in range(6)]
+        assert_budget(statuses, 3)
+    print("Real-nginx worlds reads are unlimited; worlds writes, admin calls and other reads keep budgets.", flush=True)
 
 
 def rate_fixture(args):
@@ -344,7 +359,7 @@ def rate_fixture(args):
     nginx = re.search(r"--nginx ([^ \"']+)", wrapper)[1]
     mime = re.search(r"--mime ([^ \"']+)", wrapper)[1]
     text = gateway.render(json.loads(Path(args.table).read_text()), gateway.settings(os.environ), mime)
-    for zone, burst in [("storage", 2), ("storage_write", 1), ("storage_trusted", 5)]:
+    for zone, burst in [("storage", 2), ("storage_write", 1), ("storage_trusted", 5), ("read", 2), ("worlds", 2)]:
         text, n = re.subn(rf"(zone={zone}:10m rate=)[0-9]+r/s", r"\g<1>1r/m", text)
         assert n == 1, (zone, n)
         text = re.sub(rf"(limit_req zone={zone} burst=)[0-9]+", rf"\g<1>{burst}", text)

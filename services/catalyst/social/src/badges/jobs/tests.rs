@@ -501,7 +501,13 @@ async fn deployments_start_at_the_head_then_grant_by_entity_type() {
     let Some(pool) = private_pool("badges_deploy").await else {
         return;
     };
-    let p = pass(&pool);
+    assert_eq!(
+        ProcessorSettings::default().deployment_max_lag,
+        None,
+        "upstream had no lag filter"
+    );
+    let mut p = pass(&pool);
+    p.settings.deployment_max_lag = Some(std::time::Duration::from_secs(86_400));
     let a = fresh_address();
     let a = a.as_str();
     deploy(&pool, "scene", a, &["1,1"], json!({})).await;
@@ -1163,4 +1169,84 @@ async fn client_event_values_are_capped_and_receivers_must_be_wallets() {
     .await;
     drain_client_events(&p).await;
     assert!(progress(&pool, a, "vertical_voyager").await.unwrap().2);
+}
+
+#[tokio::test]
+async fn a_client_event_achieves_one_tier_as_upstreams_find() {
+    let Some(pool) = private_pool("badges_one_tier").await else {
+        return;
+    };
+    let p = pass(&pool);
+    client_events::batch(&p).await.unwrap();
+    let a = fresh_address();
+    let a = a.as_str();
+    // imported steps past the starter and bronze targets, no tier held yet
+    sqlx::query(
+        "INSERT INTO social.user_badge_progress (address, badge_id, steps_done, progress) \
+         VALUES ($1, 'walkabout_wanderer', 39999, '{\"steps\": 39999}')",
+    )
+    .bind(a)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let walk = |n: i64| {
+        client_event(
+            &pool,
+            a,
+            "walked-distance",
+            None,
+            now(),
+            json!({"stepCount": n}),
+        )
+    };
+    walk(1).await;
+    drain_client_events(&p).await;
+    assert_eq!(
+        tiers(&pool, a, "walkabout_wanderer").await,
+        ["walkabout-wanderer-starter"]
+    );
+    assert_eq!(granted(&pool, a).await, ["Walkabout Wanderer Starter"]);
+    walk(1).await;
+    drain_client_events(&p).await;
+    assert_eq!(
+        tiers(&pool, a, "walkabout_wanderer").await,
+        ["walkabout-wanderer-starter", "walkabout-wanderer-bronze"]
+    );
+    assert_eq!(
+        progress(&pool, a, "walkabout_wanderer").await.unwrap().0,
+        40001
+    );
+}
+
+#[tokio::test]
+async fn a_referral_recount_never_lowers_imported_steps() {
+    let Some(pool) = private_pool("badges_referral_steps").await else {
+        return;
+    };
+    let p = pass(&pool);
+    let referrer = fresh_address();
+    let r = referrer.as_str();
+    sqlx::query(
+        "INSERT INTO social.user_badge_progress (address, badge_id, steps_done, progress) \
+         VALUES ($1, 'referral', 9, '{\"steps\": 9}')",
+    )
+    .bind(r)
+    .execute(&pool)
+    .await
+    .unwrap();
+    for _ in 0..5 {
+        sqlx::query("INSERT INTO social.referral_progress (invited_user, referrer, status, tier_granted) VALUES ($1, $2, 'tier_granted', true)")
+            .bind(fresh_address().as_str())
+            .bind(r)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+    assert_eq!(
+        recount::run_one(&p, Recount::Referrals).await.unwrap(),
+        0,
+        "not behind"
+    );
+    assert_eq!(progress(&pool, r, "referral").await.unwrap().0, 9);
+    assert!(tiers(&pool, r, "referral").await.is_empty());
 }
