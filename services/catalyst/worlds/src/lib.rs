@@ -357,9 +357,17 @@ impl WorldsState {
         jobs.spawn_periodic_leased("worlds-content-mirror", cfg, move |ctx| {
             let (state, mirror) = (state.clone(), mirror.clone());
             async move {
-                let summary =
-                    mirror::run_pass(&state.http, &state.pool, &state.storage, &mirror, &ctx)
-                        .await?;
+                // Asked at run time: serve attaches the policy after the jobs are registered.
+                let owners = state.policy().cloned();
+                let summary = mirror::run_pass(
+                    &state.http,
+                    &state.pool,
+                    &state.storage,
+                    &mirror,
+                    owners,
+                    &ctx,
+                )
+                .await?;
                 tracing::info!(?summary, "worlds mirror pass");
                 Ok(())
             }

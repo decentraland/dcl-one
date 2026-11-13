@@ -778,8 +778,8 @@ tree, and orders by name (upstream: group order). `owner` is `null` for worlds w
       20), `show_in_places`, `single_player`, `skybox_time` (`null` clears) and `thumbnail_hash`
       (`WorldSettingsCopy`, `apply_settings` in `mirror.rs`). An owner's `PUT /world/{name}/settings` here that
       changes one of these marks the row `settings_set_here` by that owner, and no pass replaces those settings
-      while the source's `/permissions` names that owner; after a NAME transfer the source's settings apply again
-      (`store::mirror_keeps_local`). `settings_version` takes the
+      while that owner holds the name as this node's own owner lookup says; after a NAME transfer the source's
+      settings apply again (`store::mirror_keeps_local`, worlds-permissions.md WP-21). `settings_version` takes the
       source's counter and never goes back: a row ahead of its source (bumped by earlier ingests) moves one past
       its own value when a copied column changes. No answer, a refusal or a body that is not an object leaves
       the stored settings as they are and is logged as a warning; a new row then takes the fixed hour and offline adapter the source's

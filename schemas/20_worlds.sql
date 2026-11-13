@@ -75,11 +75,13 @@ CREATE SCHEMA worlds;
 -- (POST /permissions/access and the allow-list edits, core::store) and
 -- `settings_set_here` by a PUT /settings that changes a setting the mirror
 -- copies; `*_set_by` is the owner that wrote it. The worlds mirror leaves
--- either setting as it is while the source's /permissions names that owner
--- (core::store::mirror_keeps_local, under the row lock it already takes). It
--- clears both columns and copies the source's once the source names another
--- owner, after a NAME transfer. A row marked before the setter was recorded
--- (`*_set_by` NULL) takes the source's owner of the next pass as its setter.
+-- either setting as it is while that owner holds the name, as this node's
+-- own owner lookup says (Policy::current_owner, never the source's
+-- /permissions owner, which trails a sale; core::store::mirror_keeps_local,
+-- under the row lock it already takes). It clears the pair and copies the
+-- source's once the name has another holder. A row marked before the setter
+-- was recorded (`*_set_by` NULL) takes the holder of the next pass as its
+-- setter, and an unknown holder keeps every mark.
 -- No index: they are read only with the row by its primary key.
 CREATE TABLE worlds.worlds (
     name text NOT NULL,

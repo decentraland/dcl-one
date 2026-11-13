@@ -417,10 +417,23 @@ impl Node {
         rx.await.unwrap()
     }
 
+    /// A pass whose owner lookup is a policy without a live authority: the `owner` column.
     async fn pass(&self, ctx: &JobContext) -> catalyst::worlds::mirror::PassSummary {
-        run_pass(&self.client, &self.pool, &self.storage, &self.settings, ctx)
-            .await
-            .expect("mirror pass")
+        let owners = Arc::new(Policy::new(
+            self.pool.clone(),
+            PersonalWorldsPolicy::disabled(),
+            None,
+        ));
+        run_pass(
+            &self.client,
+            &self.pool,
+            &self.storage,
+            &self.settings,
+            Some(owners),
+            ctx,
+        )
+        .await
+        .expect("mirror pass")
     }
 
     fn router(&self) -> Router {
@@ -1825,6 +1838,11 @@ async fn world_row(pool: &PgPool, world: &str) -> (Option<String>, Option<i32>, 
         .unwrap()
 }
 
+async fn access_type(node: &Node, world: &str) -> Value {
+    let (_, body) = node.get(&format!("/world/{world}/permissions")).await;
+    body["permissions"]["access"]["type"].clone()
+}
+
 async fn set_here(pool: &PgPool, world: &str) -> (bool, Option<String>, bool, Option<String>) {
     sqlx::query_as(
         "SELECT access_set_here, access_set_by, settings_set_here, settings_set_by \
@@ -1836,15 +1854,19 @@ async fn set_here(pool: &PgPool, world: &str) -> (bool, Option<String>, bool, Op
     .unwrap()
 }
 
-/// The owner's settings and access writes on this node stick while that owner holds the name,
-/// as the source's `/permissions` owner says, and a NAME transfer upstream lets the source's
-/// settings and access in again. A copied access change bumps `settings_version`; a disabled
-/// row takes no copy.
+/// The owner's settings and access writes on this node stick while that owner holds the name, as
+/// this node's own owner lookup says (`Policy::current_owner`; without a live authority, the
+/// `owner` column these tests set). The source's `/permissions` owner trails a sale, so it never
+/// decides: a new holder's restriction survives a source that still names the seller, and a
+/// later transfer lets the source's settings and access in again. A copied access change bumps
+/// `settings_version`; a disabled row takes no copy.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn an_owner_edit_here_is_kept_while_that_owner_holds_the_name() {
     use catalyst::comms::world_identity::WorldName;
     use catalyst::shared::identity::Address;
-    use catalyst::worlds::core::store::{WorldSettingsUpdate, update_world_settings};
+    use catalyst::worlds::core::store::{
+        AccessSetting, WorldSettingsUpdate, store_access_for_owner, update_world_settings,
+    };
 
     let Some(scratch) = db::scratch_database().await else {
         eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
@@ -1853,11 +1875,23 @@ async fn an_owner_edit_here_is_kept_while_that_owner_holds_the_name() {
     let fake = start_fake().await;
     let node = Node::new(scratch.pool.clone(), &fake.base, "set-here").await;
     let world = "kept.dcl.eth";
-    let (holder, buyer) = (
+    let (seller, buyer, third) = (
         "0x00000000000000000000000000000000000000a1",
         "0x00000000000000000000000000000000000000b2",
+        "0x00000000000000000000000000000000000000c3",
     );
     let permissions = |owner: &str, access: Value| json!({"owner": owner, "permissions": {"access": access}, "summary": {}});
+    let holds = |owner: &'static str| {
+        let pool = node.pool.clone();
+        async move {
+            sqlx::query("UPDATE worlds.worlds SET owner = $2 WHERE name = $1")
+                .bind(world)
+                .bind(owner)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+    };
     {
         let mut st = fake.state.lock();
         add_scene(&mut st, world, "K", "0,0", &[("k.txt", b"kept")]);
@@ -1867,7 +1901,7 @@ async fn an_owner_edit_here_is_kept_while_that_owner_holds_the_name() {
         );
         st.permissions.insert(
             world.to_string(),
-            permissions(holder, json!({"type": "unrestricted"})),
+            permissions(seller, json!({"type": "unrestricted"})),
         );
     }
     let ctx = node.ctx().await;
@@ -1877,12 +1911,13 @@ async fn an_owner_edit_here_is_kept_while_that_owner_holds_the_name() {
         world_row(&node.pool, world).await.0.as_deref(),
         Some("Source")
     );
+    holds(seller).await;
 
-    // The holder retitles the world here; the source keeps its own title.
+    // The seller retitles the world here; the source keeps its own title.
     update_world_settings(
         &node.pool,
         &WorldName::parse(world).unwrap(),
-        &Address::parse(holder).unwrap(),
+        &Address::parse(seller).unwrap(),
         &WorldSettingsUpdate {
             title: Some("Mine".into()),
             ..WorldSettingsUpdate::default()
@@ -1903,21 +1938,20 @@ async fn an_owner_edit_here_is_kept_while_that_owner_holds_the_name() {
     }
     assert_eq!(
         set_here(&node.pool, world).await,
-        (false, None, true, Some(holder.into()))
+        (false, None, true, Some(seller.into()))
     );
 
     // The source restricts the world: the copied access bumps the version even though the
     // source's settings counter is not ahead.
     fake.state.lock().permissions.insert(
         world.to_string(),
-        permissions(holder, json!({"type": "allow-list", "wallets": [holder]})),
+        permissions(seller, json!({"type": "allow-list", "wallets": [seller]})),
     );
     node.pass(&ctx).await;
-    let (_, access) = node.get(&format!("/world/{world}/permissions")).await;
-    assert_eq!(access["permissions"]["access"]["type"], "allow-list");
+    assert_eq!(access_type(&node, world).await, "allow-list");
     assert_eq!(world_row(&node.pool, world).await.2, edited.2 + 1);
 
-    // A marked row from before the setter was recorded takes the source's owner as it.
+    // A marked row from before the setter was recorded takes this node's holder as it.
     sqlx::query(
         "UPDATE worlds.worlds SET access_set_here = true, access_set_by = NULL WHERE name = $1",
     )
@@ -1928,7 +1962,7 @@ async fn an_owner_edit_here_is_kept_while_that_owner_holds_the_name() {
     node.pass(&ctx).await;
     assert_eq!(
         set_here(&node.pool, world).await,
-        (true, Some(holder.into()), true, Some(holder.into()))
+        (true, Some(seller.into()), true, Some(seller.into()))
     );
 
     // A disabled row takes no copy.
@@ -1945,9 +1979,10 @@ async fn an_owner_edit_here_is_kept_while_that_owner_holds_the_name() {
         );
         st.permissions.insert(
             world.to_string(),
-            permissions(buyer, json!({"type": "unrestricted"})),
+            permissions(seller, json!({"type": "unrestricted"})),
         );
     }
+    holds(buyer).await;
     let before = world_row(&node.pool, world).await;
     node.pass(&ctx).await;
     assert_eq!(world_row(&node.pool, world).await, before);
@@ -1957,18 +1992,77 @@ async fn an_owner_edit_here_is_kept_while_that_owner_holds_the_name() {
         .await
         .unwrap();
 
-    // The name changed hands upstream: the source's settings and access apply again.
-    node.pass(&ctx).await;
+    // The name sold to the buyer, who restricts it here, while the source still names the
+    // seller and reports the world open: the buyer's restriction stays, and the seller's
+    // settings give way to the source's.
+    store_access_for_owner(
+        &node.pool,
+        &WorldName::parse(world).unwrap(),
+        &Address::parse(buyer).unwrap(),
+        &AccessSetting::AllowList {
+            wallets: vec![buyer.into()],
+            communities: Vec::new(),
+        },
+    )
+    .await
+    .unwrap();
+    for _ in 0..2 {
+        node.pass(&ctx).await;
+        assert_eq!(
+            access_type(&node, world).await,
+            "allow-list",
+            "the stale owner never opens it"
+        );
+    }
     assert_eq!(
         set_here(&node.pool, world).await,
-        (false, None, false, None)
+        (true, Some(buyer.into()), false, None)
     );
     assert_eq!(
         world_row(&node.pool, world).await.0.as_deref(),
         Some("Sold")
     );
-    let (_, access) = node.get(&format!("/world/{world}/permissions")).await;
-    assert_eq!(access["permissions"]["access"]["type"], "unrestricted");
+    // The source catching up changes nothing.
+    fake.state.lock().permissions.insert(
+        world.to_string(),
+        permissions(buyer, json!({"type": "unrestricted"})),
+    );
+    node.pass(&ctx).await;
+    assert_eq!(access_type(&node, world).await, "allow-list");
+
+    // Sold again: the buyer's mark gives way to the source's access.
+    holds(third).await;
+    node.pass(&ctx).await;
+    assert_eq!(
+        set_here(&node.pool, world).await,
+        (false, None, false, None)
+    );
+    assert_eq!(access_type(&node, world).await, "unrestricted");
+
+    // Without an owner lookup (no policy), a mark is kept.
+    store_access_for_owner(
+        &node.pool,
+        &WorldName::parse(world).unwrap(),
+        &Address::parse(third).unwrap(),
+        &AccessSetting::AllowList {
+            wallets: vec![third.into()],
+            communities: Vec::new(),
+        },
+    )
+    .await
+    .unwrap();
+    holds(seller).await;
+    run_pass(
+        &node.client,
+        &node.pool,
+        &node.storage,
+        &node.settings,
+        None,
+        &ctx,
+    )
+    .await
+    .expect("mirror pass");
+    assert_eq!(access_type(&node, world).await, "allow-list");
 
     node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
     drop(node);

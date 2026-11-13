@@ -12,8 +12,9 @@
 //! reaches, changed or not, also gets the access setting its
 //! `GET {source}/world/{name}/permissions` reports (a shared secret stored as one no secret
 //! matches), and the settings `/settings` reports. Either is kept while the owner that set it on
-//! this node (`access_set_here`, `settings_set_here`) still holds the name, as the source's
-//! `/permissions` owner says ([`mirror_keeps_local`]). An unreadable or unknown access setting
+//! this node (`access_set_here`, `settings_set_here`) still holds the name, as this node's own
+//! owner lookup says ([`name_holder`], [`mirror_keeps_local`]); the source's `/permissions` owner
+//! trails a sale, so it never decides. An unreadable or unknown access setting
 //! keeps the stored one: it fails the sync of a changed world, so a world restricted upstream is
 //! never stored open, and a world whose scenes are all held skips only the access copy. The
 //! deployment and streaming grants it lists are not copied. A world whose scenes are all held
@@ -392,6 +393,7 @@ pub async fn run_pass(
     pool: &PgPool,
     storage: &Arc<Storage>,
     settings: &MirrorSettings,
+    owners: Option<Arc<Policy>>,
     ctx: &JobContext,
 ) -> Result<PassSummary> {
     let catalogue = match catalogue_pass(client, pool, settings, ctx).await {
@@ -410,7 +412,7 @@ pub async fn run_pass(
             },
         });
     }
-    let scenes = match scenes_pass(client, pool, storage, settings, ctx).await {
+    let scenes = match scenes_pass(client, pool, storage, settings, owners, ctx).await {
         Ok(out) => out,
         Err(e) => {
             record_error(pool, "scenes", &settings.source, &format!("{e:#}")).await?;
@@ -629,6 +631,7 @@ async fn scenes_pass(
     pool: &PgPool,
     storage: &Arc<Storage>,
     settings: &MirrorSettings,
+    owners: Option<Arc<Policy>>,
     ctx: &JobContext,
 ) -> Result<ScenesOutcome> {
     let mut out = ScenesOutcome::default();
@@ -687,17 +690,26 @@ async fn scenes_pass(
         ));
         let mut set = tokio::task::JoinSet::new();
         for (name, scene_ids) in &batch {
-            let (client, pool, storage, settings) = (
+            let (client, pool, storage, settings, owners) = (
                 client.clone(),
                 pool.clone(),
                 storage.clone(),
                 settings.clone(),
+                owners.clone(),
             );
             let (name, scene_ids) = (name.clone(), scene_ids.clone());
             set.spawn(async move {
-                let result =
-                    mirror_world(&client, &pool, &storage, &settings, &name, &scene_ids, None)
-                        .await;
+                let result = mirror_world(
+                    &client,
+                    &pool,
+                    &storage,
+                    &settings,
+                    owners.as_deref(),
+                    &name,
+                    &scene_ids,
+                    None,
+                )
+                .await;
                 (name, result)
             });
         }
@@ -990,7 +1002,17 @@ pub async fn mirror_one(
     verify: &Verify<'_>,
 ) -> Result<bool> {
     let synced = matches!(
-        mirror_world(client, pool, storage, settings, name, &[], Some(verify)).await?,
+        mirror_world(
+            client,
+            pool,
+            storage,
+            settings,
+            Some(verify.policy),
+            name,
+            &[],
+            Some(verify)
+        )
+        .await?,
         Outcome::Synced { .. }
     );
     if synced {
@@ -1028,25 +1050,42 @@ async fn fetch_permissions(client: &crate::http::Outbound, url: &str) -> Result<
         .with_context(|| format!("parsing {url}"))
 }
 
-/// The world's access setting at the source ([`parse_upstream_access`]) and the owner it names,
-/// read on every pass that reaches the world, a changed one or not.
-struct UpstreamAccess {
-    setting: AccessSetting,
-    /// `owner`, when it is an address: who holds the name, for [`mirror_keeps_local`].
-    owner: Option<Address>,
-}
-
+/// The world's access setting at the source ([`parse_upstream_access`]), read on every pass that
+/// reaches the world, a changed one or not.
 async fn upstream_access(
     client: &crate::http::Outbound,
     source: &str,
     name: &str,
-) -> Result<UpstreamAccess> {
+) -> Result<AccessSetting> {
     let url = world_url(source, name, "permissions")?;
-    let body = fetch_permissions(client, &url).await?;
-    Ok(UpstreamAccess {
-        setting: parse_upstream_access(&body)?,
-        owner: body["owner"].as_str().and_then(|o| Address::parse(o).ok()),
-    })
+    parse_upstream_access(&fetch_permissions(client, &url).await?)
+}
+
+/// Who holds `world`'s name as this node's own owner lookup says ([`Policy::current_owner`]),
+/// asked only when an owner marked a setting of the row here: the source's `/permissions` owner
+/// is the source's stored copy and trails a sale by up to its owner job's interval. `None`
+/// (no policy, no answer, nobody) keeps every mark ([`mirror_keeps_local`]).
+async fn name_holder(pool: &PgPool, owners: Option<&Policy>, world: &WorldName) -> Option<Address> {
+    let owners = owners?;
+    let marked: bool = sqlx::query_scalar(
+        "SELECT access_set_here OR settings_set_here FROM worlds.worlds WHERE name = $1",
+    )
+    .bind(world.key())
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten()
+    .unwrap_or(false);
+    if !marked {
+        return None;
+    }
+    match owners.current_owner(world).await {
+        Ok(holder) => holder,
+        Err(e) => {
+            tracing::warn!(%world, error = ?e, "name holder unknown; the marks set here are kept");
+            None
+        }
+    }
 }
 
 /// The access setting the source's `/permissions` reports (`permissions.access`, upstream's
@@ -1532,8 +1571,7 @@ fn contents_url(source: &str, key: &str) -> Result<String> {
 }
 
 /// Writes a source's settings answer onto a mirrored row that is not disabled, unless the owner
-/// that set its settings here still holds the name ([`mirror_keeps_local`], with the source's
-/// `/permissions` owner). A thumbnail the pass could not fetch keeps the stored one. `settings_version` never goes back: it takes the source's counter, or this row's
+/// that set its settings here still holds the name ([`mirror_keeps_local`], with [`name_holder`]). A thumbnail the pass could not fetch keeps the stored one. `settings_version` never goes back: it takes the source's counter, or this row's
 /// plus one when a copied column changes and the source's is not ahead, so a consumer ordering
 /// by it never sees an update out of order (a row bumped by earlier ingests can be ahead of its
 /// source). No write when nothing changes.
@@ -1541,10 +1579,10 @@ async fn apply_settings(
     conn: &mut sqlx::PgConnection,
     world: &WorldName,
     copy: &WorldSettingsCopy,
-    source_owner: Option<&Address>,
+    holder: Option<&Address>,
 ) -> Result<()> {
     let name = world.key();
-    if mirror_keeps_local(conn, world, SetHere::Settings, source_owner)
+    if mirror_keeps_local(conn, world, SetHere::Settings, holder)
         .await
         .with_context(|| format!("settings of {name}"))?
         != Some(false)
@@ -1674,11 +1712,13 @@ async fn refresh_listed_scenes(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn mirror_world(
     client: &crate::http::Outbound,
     pool: &PgPool,
     storage: &Arc<Storage>,
     settings: &MirrorSettings,
+    owners: Option<&Policy>,
     name: &str,
     catalogue_scene_ids: &[String],
     verify: Option<&Verify<'_>>,
@@ -1742,15 +1782,15 @@ async fn mirror_world(
             let listed = listed_scenes(client, source, name).await?;
             let world_settings = upstream_settings(client, pool, storage, source, name).await;
             let world = WorldName::parse(name)?;
-            let source_owner = access.as_ref().and_then(|a| a.owner.as_ref());
+            let holder = name_holder(pool, owners, &world).await;
             let mut tx = pool.begin().await.context("begin tx")?;
             if let Some(access) = &access {
-                replace_mirrored_access(&mut tx, &world, &access.setting, source_owner)
+                replace_mirrored_access(&mut tx, &world, access, holder.as_ref())
                     .await
                     .with_context(|| format!("access setting of {name}"))?;
             }
             if let Some(copy) = &world_settings {
-                apply_settings(&mut tx, &world, copy, source_owner).await?;
+                apply_settings(&mut tx, &world, copy, holder.as_ref()).await?;
             }
             refresh_listed_scenes(&mut tx, name, &listed).await?;
             tx.commit().await.context("commit tx")?;
@@ -1936,6 +1976,8 @@ async fn mirror_world(
         });
     }
 
+    let world = WorldName::parse(name)?;
+    let holder = name_holder(pool, owners, &world).await;
     let mut tx = pool.begin().await.context("begin tx")?;
     // A new row takes the source's settings (the `/about` fallback without them); a held one
     // keeps its settings here and takes the answer through `apply_settings` below.
@@ -1994,14 +2036,13 @@ async fn mirror_world(
         let retired = retire_beside_local(pool, name).await?;
         return Ok(Outcome::RefusedLocalPublish { retired });
     }
-    let world = WorldName::parse(name)?;
-    replace_mirrored_access(&mut tx, &world, &access.setting, access.owner.as_ref())
+    replace_mirrored_access(&mut tx, &world, &access, holder.as_ref())
         .await
         .with_context(|| format!("access setting of {name}"))?;
     // A held row keeps its settings without an answer: the `/about` values mix the newest
     // scene's own with the stored ones, so writing them would flap with each failed read.
     if copied.present {
-        apply_settings(&mut tx, &world, &copied, access.owner.as_ref()).await?;
+        apply_settings(&mut tx, &world, &copied, holder.as_ref()).await?;
     }
 
     let cids: Vec<&str> = records.iter().map(|r| r.cid.as_str()).collect();

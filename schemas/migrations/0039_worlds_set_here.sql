@@ -6,7 +6,7 @@
 -- Before this step the mirror copied no access setting, and of the settings
 -- only `skybox_time` and `single_player`, so a mirrored row's other values
 -- were written by the owner here and are marked as such. Their setter is not
--- known; the mirror records the source's owner of its next pass as it. An
+-- known; the mirror records the name's holder at its next pass as it. An
 -- owner who explicitly set `unrestricted` here cannot be told from the
 -- default and is not marked: the mirror then copies the source's access,
 -- which can only restrict that world.

@@ -1653,15 +1653,15 @@ pub enum SetHere {
 /// Whether the mirror leaves `which` of `world` as it is, in the transaction that syncs it, under
 /// the row lock (taken here): `None` when the row is not the mirror's (`mirror_source` unset, or
 /// disabled), so nothing is copied; `Some(true)` while the owner that set it on this node still
-/// holds the name, as `source_owner` (the source's `/permissions` owner) says. A row marked
-/// before its setter was recorded takes `source_owner` as it. Once the source names another
-/// owner (a NAME transfer), the mark is cleared and `Some(false)` lets the source's setting in.
-/// Without a `source_owner` a marked setting is kept.
+/// holds the name, as `holder` (this node's own owner lookup, never the source's `/permissions`
+/// owner, which trails a sale) says. A row marked before its setter was recorded takes `holder`
+/// as it. Once `holder` is another address (a NAME transfer), the mark is cleared and
+/// `Some(false)` lets the source's setting in. Without a `holder` a marked setting is kept.
 pub async fn mirror_keeps_local(
     conn: &mut sqlx::PgConnection,
     world: &WorldName,
     which: SetHere,
-    source_owner: Option<&Address>,
+    holder: Option<&Address>,
 ) -> Result<Option<bool>, sqlx::Error> {
     let (here, by) = match which {
         SetHere::Access => ("access_set_here", "access_set_by"),
@@ -1680,24 +1680,24 @@ pub async fn mirror_keeps_local(
     if !set_here {
         return Ok(Some(false));
     }
-    let Some(source_owner) = source_owner else {
+    let Some(holder) = holder else {
         return Ok(Some(true));
     };
-    let source_owner = source_owner.as_str();
+    let holder = holder.as_str();
     match set_by.as_deref() {
-        Some(setter) if setter.eq_ignore_ascii_case(source_owner) => Ok(Some(true)),
+        Some(setter) if setter.eq_ignore_ascii_case(holder) => Ok(Some(true)),
         None => {
             sqlx::query(sqlx::AssertSqlSafe(format!(
                 "UPDATE worlds.worlds SET {by} = $2 WHERE name = $1"
             )))
             .bind(world.key())
-            .bind(source_owner)
+            .bind(holder)
             .execute(&mut *conn)
             .await?;
             Ok(Some(true))
         }
         Some(setter) => {
-            tracing::info!(%world, setter, owner = source_owner, ?which,
+            tracing::info!(%world, setter, holder, ?which,
                 "the owner that set this here no longer holds the name; the source's setting applies");
             sqlx::query(sqlx::AssertSqlSafe(format!(
                 "UPDATE worlds.worlds SET {here} = false, {by} = NULL WHERE name = $1"
@@ -1712,8 +1712,8 @@ pub async fn mirror_keeps_local(
 
 /// The mirror's copy of the source's access setting, in the transaction that
 /// syncs `world`: written only while the row is the mirror's and the setting
-/// is not one its owner made here ([`mirror_keeps_local`], with the source's
-/// `/permissions` owner), and only where it differs, so an unchanged pass
+/// is not one its owner made here ([`mirror_keeps_local`], with the name's
+/// `holder` as this node looks it up), and only where it differs, so an unchanged pass
 /// writes nothing. A change bumps `settings_version` (the settings copy then
 /// keeps it from going back) and queues the access recheck, as an owner's
 /// edit does, so a connected wallet the new setting refuses leaves; no
@@ -1722,9 +1722,9 @@ pub async fn replace_mirrored_access(
     conn: &mut sqlx::PgConnection,
     world: &WorldName,
     access: &AccessSetting,
-    source_owner: Option<&Address>,
+    holder: Option<&Address>,
 ) -> Result<bool, sqlx::Error> {
-    if mirror_keeps_local(conn, world, SetHere::Access, source_owner).await? != Some(false) {
+    if mirror_keeps_local(conn, world, SetHere::Access, holder).await? != Some(false) {
         return Ok(false);
     }
     let (secret_hash, nft, wallets, communities) = access_columns(access);
