@@ -129,3 +129,110 @@ describe('Tree', () => {
     });
   });
 });
+
+describe('when a row is double-clicked', () => {
+  const renderTree = (extra: Partial<React.ComponentProps<typeof NodeTree>>) =>
+    render(
+      <DndProvider backend={HTML5Backend}>
+        <TreeRoot label="Test">
+          <NodeTree
+            value={parent}
+            contextMenuLabel="Options"
+            getId={n => n.id}
+            getChildren={n => n.children}
+            getLabel={n => n.name}
+            isOpen={() => true}
+            isSelected={() => false}
+            isHidden={() => false}
+            onSetOpen={vi.fn()}
+            onSelect={vi.fn()}
+            onDrop={vi.fn()}
+            onRename={vi.fn()}
+            onAddChild={vi.fn()}
+            onRemove={vi.fn()}
+            onDuplicate={vi.fn()}
+            {...extra}
+          />
+        </TreeRoot>
+      </DndProvider>,
+    );
+  const doubleClick = (name: string) => {
+    const area = screen.getByText(name).closest('.selectable-area')!;
+    fireEvent.click(area, { detail: 1 });
+    fireEvent.click(area, { detail: 2 });
+  };
+  const editInputs = () => document.querySelectorAll('.Tree input');
+
+  afterEach(cleanup);
+
+  describe('and the tree renames on double-click', () => {
+    it('should open the rename field for that row', () => {
+      renderTree({ doubleClick: 'rename' });
+
+      doubleClick('Child');
+
+      expect(editInputs()).toHaveLength(1);
+      expect((editInputs()[0] as HTMLInputElement).value).toBe('Child');
+    });
+
+    it('should not open it for a row that cannot be renamed', () => {
+      renderTree({ doubleClick: 'rename', canRename: n => n.id !== 'child' });
+
+      doubleClick('Child');
+
+      expect(editInputs()).toHaveLength(0);
+    });
+  });
+
+  describe('and the tree renders its own rename field', () => {
+    it('should put the field in place of the label, keeping the row and its glyph', () => {
+      renderTree({
+        doubleClick: 'rename',
+        getIcon: () => <svg data-testid="glyph" />,
+        renderRenameField: (n, { label }) => <input aria-label={`Rename ${label}`} />,
+      });
+
+      doubleClick('Child');
+
+      const field = screen.getByLabelText('Rename Child');
+      const area = field.closest('.item-area') as HTMLElement;
+      expect(area.style.display).not.toBe('none');
+      expect(area.querySelectorAll('[data-testid="glyph"]')).toHaveLength(1);
+      expect(area.querySelector('.label')).toBeNull();
+    });
+  });
+
+  describe('and a row is renamed in its own field', () => {
+    it('should hide the row actions until the rename ends', () => {
+      renderTree({
+        doubleClick: 'rename',
+        renderRenameField: (n, { label, onCancel }) => (
+          <input
+            aria-label={`Rename ${label}`}
+            onKeyDown={e => e.key === 'Escape' && onCancel()}
+          />
+        ),
+        renderActionArea: n => <button type="button">Lock {n.name}</button>,
+      });
+      expect(screen.getByText('Lock Child')).toBeTruthy();
+
+      doubleClick('Child');
+
+      expect(screen.queryByText('Lock Child')).toBeNull();
+      fireEvent.keyDown(screen.getByLabelText('Rename Child'), { key: 'Escape' });
+      expect(screen.getByText('Lock Child')).toBeTruthy();
+    });
+  });
+
+  describe('and the tree keeps the default double-click', () => {
+    it('should call onDoubleSelect and open no rename field', () => {
+      const onDoubleSelect = vi.fn();
+      renderTree({ onDoubleSelect });
+
+      doubleClick('Child');
+
+      expect(onDoubleSelect).toHaveBeenCalledWith(child);
+      expect(editInputs()).toHaveLength(0);
+    });
+  });
+});

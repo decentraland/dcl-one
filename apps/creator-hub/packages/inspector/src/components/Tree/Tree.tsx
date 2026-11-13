@@ -47,6 +47,14 @@ type Props<T> = {
   onSetOpen: (value: T, isOpen: boolean) => void;
   onSelect: (value: T, clickType?: 'single' | 'ctrl' | 'shift') => void;
   onDoubleSelect?: (value: T) => void;
+  contextMenuSize?: 'default' | 'compact';
+  /** Renders the rename field in place of the label, keeping the row's glyph and indent; omitted, the row is replaced by the default field. */
+  renderRenameField?: (
+    value: T,
+    field: { label: string; onSubmit: (next: string) => void; onCancel: () => void },
+  ) => React.ReactNode;
+  /** `'rename'` opens a renameable row's name field on double-click (the UI Designer trees); omitted, a double-click only calls `onDoubleSelect`. */
+  doubleClick?: 'rename';
   onDrop: (source: T, target: T, dropType: DropType) => void;
   onRename: (value: T, label: string) => void;
   onAddChild: (value: T, label: string) => void;
@@ -80,6 +88,8 @@ export function Tree<T>() {
       const {
         getExtraContextMenu,
         contextMenuLabel,
+        contextMenuSize,
+        renderRenameField,
         className,
         contextMenuId,
         value,
@@ -106,6 +116,7 @@ export function Tree<T>() {
         onRemove,
         onDuplicate,
         onDoubleSelect,
+        doubleClick,
         onSetOpen,
         isRoot,
         getDragContext = () => ({}),
@@ -254,6 +265,7 @@ export function Tree<T>() {
 
         onSelect(value, clickType);
         if (isDoubleClick) onDoubleSelect(value);
+        if (event.detail > 1 && doubleClick === 'rename' && enableRename) setEditMode(true);
       };
 
       const handleOpen = (_: React.MouseEvent) => {
@@ -286,7 +298,7 @@ export function Tree<T>() {
       const [, drag] = useDrag(
         () => ({
           type: dndType,
-          canDrag: enableDrag,
+          canDrag: enableDrag && !editMode,
           item: () => {
             const selectedItems = getSelectedItems ? getSelectedItems() : [];
             const isPartOfSelection =
@@ -296,7 +308,7 @@ export function Tree<T>() {
             return getDragItem ? getDragItem(items, context) : { items, context };
           },
         }),
-        [value, getSelectedItems, getId, getDragItem],
+        [value, getSelectedItems, getId, getDragItem, enableDrag, editMode],
       );
 
       const handleRemove = () => {
@@ -373,6 +385,7 @@ export function Tree<T>() {
       const controlsProps = {
         id: contextMenuId,
         label: contextMenuLabel,
+        size: contextMenuSize,
         enableAdd: enableAddChild,
         enableEdit:
           (enableRename &&
@@ -415,7 +428,7 @@ export function Tree<T>() {
             <ContextMenu {...controlsProps} />
             <div
               ref={ref}
-              style={getEditModeStyles(editMode)}
+              style={getEditModeStyles(editMode && !renderRenameField)}
               className="item-area"
             >
               <DisclosureWidget
@@ -428,21 +441,31 @@ export function Tree<T>() {
                 className="selectable-area"
               >
                 {props.getIcon && props.getIcon(value)}
-                <div
-                  className="label"
-                  id={labelId}
-                >
-                  {label || id}
-                </div>
-                {props.renderActionArea
-                  ? props.renderActionArea(value, tabIndex)
-                  : isEntity && (
-                      <ActionArea
-                        entity={value as Entity}
-                        label={typeof label === 'string' ? label : id}
-                        tabIndex={tabIndex}
-                      />
-                    )}
+                {editMode && renderRenameField && typeof label === 'string' ? (
+                  renderRenameField(value, {
+                    label,
+                    onSubmit: onChangeEditValue,
+                    onCancel: quitEditMode,
+                  })
+                ) : (
+                  <div
+                    className="label"
+                    id={labelId}
+                  >
+                    {label || id}
+                  </div>
+                )}
+                {editMode && renderRenameField
+                  ? null
+                  : props.renderActionArea
+                    ? props.renderActionArea(value, tabIndex)
+                    : isEntity && (
+                        <ActionArea
+                          entity={value as Entity}
+                          label={typeof label === 'string' ? label : id}
+                          tabIndex={tabIndex}
+                        />
+                      )}
                 {!isRoot?.(value as T) && isEntityOutOfBoundaries && (
                   <InfoTooltip
                     text="This entity is out of bounds and might not display correctly in-world."
@@ -452,7 +475,7 @@ export function Tree<T>() {
                 )}
               </div>
             </div>
-            {editMode && typeof label === 'string' && (
+            {editMode && !renderRenameField && typeof label === 'string' && (
               <EditInput
                 value={label}
                 onCancel={quitEditMode}

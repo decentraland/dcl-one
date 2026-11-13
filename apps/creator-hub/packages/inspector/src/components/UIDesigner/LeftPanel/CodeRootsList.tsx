@@ -3,12 +3,16 @@ import { useDrag } from 'react-dnd';
 import cx from 'classnames';
 
 import { useAppDispatch, useAppSelector } from '../../../redux/hooks';
+import { isMenuOpen } from '../../../hooks/useHotkey';
+import { withContextMenu } from '../../../hoc/withContextMenu';
+import { ContextMenu } from '../../Tree/ContextMenu';
 import { getMobileHudSelected, selectMobileHud, selectNode } from '../../../redux/ui-designer';
 import { UI_DESIGNER_DND_TYPE, type UIDesignerDragItem } from '../shared/dnd';
 import { GuiGridIcon, MobileHudIcon } from '../shared/widget-icons';
-import { EyeIcon, EyeOffIcon, TrashIcon } from '../icons';
+import { EyeIcon, EyeOffIcon } from '../icons';
 import {
   type CodeRoot,
+  duplicateRoot,
   removeRoot,
   renameRoot,
   selectRootFile,
@@ -16,6 +20,7 @@ import {
   useCodeState,
 } from '../code/store';
 import { loadMobileHudConfig, removeMobileHud } from '../MobileHud/mobile-hud-store';
+import { RenameField } from './RenameField';
 
 import './CodeRootsList.css';
 
@@ -48,28 +53,31 @@ const MobileHudRow: React.FC = () => {
   );
 };
 
-const RootRow: React.FC<{
+const noop = () => undefined;
+
+type RootRowProps = {
   root: CodeRoot;
   active: boolean;
   editing: boolean;
-  draft: string;
   onSelect: () => void;
   onBeginEdit: () => void;
-  onDraft: (value: string) => void;
-  onCommit: () => void;
+  onRename: (next: string) => void;
   onCancel: () => void;
-  onRemove: (e: React.MouseEvent) => void;
-}> = ({
+  onRemove: () => void;
+  onDuplicate: () => void;
+};
+
+const RootRowImpl: React.FC<RootRowProps & { contextMenuId: string }> = ({
+  contextMenuId,
   root,
   active,
   editing,
-  draft,
   onSelect,
   onBeginEdit,
-  onDraft,
-  onCommit,
+  onRename,
   onCancel,
   onRemove,
+  onDuplicate,
 }) => {
   const [{ isDragging }, drag] = useDrag<UIDesignerDragItem, unknown, { isDragging: boolean }>(
     () => ({
@@ -93,30 +101,38 @@ const RootRow: React.FC<{
       aria-current={active}
       onClick={onSelect}
       onKeyDown={e => {
-        if (e.key !== 'Enter' && e.key !== ' ') return;
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onSelect();
+          return;
+        }
+        if (isMenuOpen()) return;
+        const remove = e.key === 'Delete' || e.key === 'Backspace';
+        const duplicate = (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'd';
+        if (!remove && !duplicate) return;
         e.preventDefault();
-        onSelect();
+        e.stopPropagation();
+        if (remove) onRemove();
+        else onDuplicate();
       }}
       title={`Drag onto the canvas to nest ${root.name} as a component`}
     >
+      <ContextMenu
+        id={contextMenuId}
+        label="GUI Options"
+        size="compact"
+        enableAdd={false}
+        onAddChild={noop}
+        onEdit={onBeginEdit}
+        onRemove={onRemove}
+        onDuplicate={onDuplicate}
+      />
       <GuiGridIcon />
       {editing ? (
-        <input
-          className="ui-designer-code-root-name-input"
-          value={draft}
-          autoFocus
-          spellCheck={false}
-          autoCorrect="off"
-          autoCapitalize="off"
-          aria-label={`Rename ${root.name}`}
-          onClick={e => e.stopPropagation()}
-          onChange={e => onDraft(e.target.value)}
-          onKeyDown={e => {
-            e.stopPropagation();
-            if (e.key === 'Enter') onCommit();
-            else if (e.key === 'Escape') onCancel();
-          }}
-          onBlur={onCommit}
+        <RenameField
+          name={root.name}
+          onSubmit={onRename}
+          onCancel={onCancel}
         />
       ) : (
         <span
@@ -147,19 +163,12 @@ const RootRow: React.FC<{
         >
           {root.topLevel ? <EyeIcon /> : <EyeOffIcon />}
         </button>
-        <button
-          type="button"
-          className="ui-designer-code-root-remove ui-designer-icon-btn ui-designer-compact"
-          title={`Delete ${root.name}`}
-          aria-label={`Delete ${root.name}`}
-          onClick={onRemove}
-        >
-          <TrashIcon />
-        </button>
       </div>
     </div>
   );
 };
+
+const RootRow = withContextMenu<RootRowProps>(RootRowImpl);
 
 /** Code-mode roots list: files under src/ui/ backed by the code store; selecting a root loads its file as the active source the canvas edits. */
 export const CodeRootsList: React.FC<{ filter?: string }> = ({ filter = '' }) => {
@@ -168,21 +177,13 @@ export const CodeRootsList: React.FC<{ filter?: string }> = ({ filter = '' }) =>
   const mobileHudSelected = useAppSelector(getMobileHudSelected);
 
   const [editing, setEditing] = useState<string | null>(null);
-  const [draft, setDraft] = useState('');
 
-  const beginEdit = useCallback((root: CodeRoot) => {
-    setEditing(root.filename);
-    setDraft(root.name);
+  const beginEdit = useCallback((root: CodeRoot) => setEditing(root.filename), []);
+
+  const commitRename = useCallback((root: CodeRoot, next: string) => {
+    setEditing(null);
+    void renameRoot(root.filename, next);
   }, []);
-
-  const commitEdit = useCallback(
-    (root: CodeRoot) => {
-      const next = draft.trim();
-      setEditing(null);
-      if (next && next !== root.name) void renameRoot(root.filename, next);
-    },
-    [draft],
-  );
 
   const prevFile = useRef<string | null>(null);
   useEffect(() => {
@@ -210,8 +211,7 @@ export const CodeRootsList: React.FC<{ filter?: string }> = ({ filter = '' }) =>
     [filename, parsed, dispatch],
   );
 
-  const handleRemove = useCallback((e: React.MouseEvent, root: CodeRoot) => {
-    e.stopPropagation();
+  const handleRemove = useCallback((root: CodeRoot) => {
     void removeRoot(root.filename);
   }, []);
 
@@ -236,13 +236,12 @@ export const CodeRootsList: React.FC<{ filter?: string }> = ({ filter = '' }) =>
             root={root}
             active={!mobileHudSelected && root.filename === filename}
             editing={editing === root.filename}
-            draft={draft}
             onSelect={() => handleSelect(root)}
             onBeginEdit={() => beginEdit(root)}
-            onDraft={setDraft}
-            onCommit={() => commitEdit(root)}
+            onRename={next => commitRename(root, next)}
             onCancel={() => setEditing(null)}
-            onRemove={e => handleRemove(e, root)}
+            onRemove={() => handleRemove(root)}
+            onDuplicate={() => void duplicateRoot(root.filename)}
           />
         ))}
       </div>

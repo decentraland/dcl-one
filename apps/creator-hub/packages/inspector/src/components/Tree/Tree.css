@@ -20,11 +20,11 @@
   padding-left: calc(var(--tree-level, 0) * 10px);
 }
 
-.Tree .item:hover:not(:has(input)) {
+.Tree .item:hover:not(:has(input.Input)) {
   background-color: var(--hover-row);
 }
 
-.Tree .item.selected:not(:has(input)) {
+.Tree .item.selected:not(:has(input.Input)) {
   background-color: var(--selected-row);
   color: var(--palette-neutral-softWhite);
 }
@@ -78,7 +78,7 @@
   flex-direction: row;
 }
 
-.Tree input {
+.Tree input.Input {
   border: none;
   background-color: var(--input-bg-color);
   outline: var(--input-border-color);

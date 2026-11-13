@@ -9,6 +9,7 @@ import { useContextMenu } from '../../../hooks/sdk/useContextMenu';
 export interface Props {
   id: string;
   label: string;
+  size?: 'default' | 'compact';
   enableAdd?: boolean;
   enableEdit?: boolean;
   enableRemove?: boolean;
@@ -25,6 +26,7 @@ export interface Props {
 function ContextMenu({
   id,
   label,
+  size,
   enableAdd = true,
   enableEdit = true,
   enableRemove = true,
@@ -46,6 +48,7 @@ function ContextMenu({
     <Menu
       id={id}
       label={label}
+      size={size}
     >
       <Item
         hidden={!enableEdit}
