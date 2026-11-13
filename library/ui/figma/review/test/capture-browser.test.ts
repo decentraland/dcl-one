@@ -1,8 +1,12 @@
-import { after, afterEach, before, describe, it } from 'node:test'
+import { after, afterEach, before, beforeEach, describe, it, mock } from 'node:test'
 import assert from 'node:assert/strict'
 import { chmod, mkdtemp, readFile, rm, writeFile, stat } from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
+import fs from 'node:fs/promises'
+import childProcess from 'node:child_process'
+import timers from 'node:timers/promises'
+import { syncBuiltinESMExports } from 'node:module'
 import { EventEmitter } from 'node:events'
 import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
@@ -135,11 +139,14 @@ class FakeSocket extends EventTarget {
     this.readyState = FakeSocket.CLOSED
   }
 }
+const devtoolsRequests: string[] = []
 async function stubbedOpenSession(): Promise<typeof openSession> {
   const { fetch, WebSocket } = globalThis
   Object.assign(globalThis, {
-    fetch: async () =>
-      new Response(JSON.stringify({ webSocketDebuggerUrl: 'ws://127.0.0.1:1/devtools' })),
+    fetch: async (url: string) => {
+      devtoolsRequests.push(url)
+      return new Response(JSON.stringify({ webSocketDebuggerUrl: 'ws://127.0.0.1:1/devtools' }))
+    },
     WebSocket: FakeSocket
   })
   try {
@@ -152,6 +159,192 @@ async function stubbedOpenSession(): Promise<typeof openSession> {
 // A browser that publishes a DevTools port in its profile and then stays up until it is stopped.
 const PORT_BROWSER =
   'const dir = process.argv.find(x=>x.startsWith("--user-data-dir=")).slice(16); require("node:fs").writeFileSync(dir + "/DevToolsActivePort", "1\\n"); setInterval(()=>{},1000)'
+
+describe('when waiting for the capture browser port file', () => {
+  let open: typeof openSession
+  let browser: EventEmitter & {
+    pid: number
+    exitCode: number | null
+    signalCode: string | null
+    kill: (signal: string) => void
+  }
+  let reads: string[]
+  let attempts: number
+  let waits: number[]
+  let profile: string
+  let onWait: () => void
+  let controller: AbortController
+  let readError: Error | undefined
+  const originalRead = fs.readFile
+
+  beforeEach(async () => {
+    open = await stubbedOpenSession()
+    controller = new AbortController()
+    reads = ['4321\n']
+    attempts = 0
+    waits = []
+    profile = ''
+    onWait = () => {}
+    readError = undefined
+    FakeSocket.last = undefined
+    devtoolsRequests.length = 0
+    browser = Object.assign(new EventEmitter(), {
+      pid: 1,
+      exitCode: null as number | null,
+      signalCode: null as string | null,
+      kill(signal: string) {
+        this.signalCode = signal
+        this.emit('exit')
+      }
+    })
+    mock.method(childProcess, 'spawn', () => browser)
+    mock.method(fs, 'readFile', async (file: string) => {
+      if (path.basename(file) !== 'DevToolsActivePort') return originalRead(file, 'utf8')
+      profile = path.dirname(file)
+      attempts++
+      if (readError) throw readError
+      return reads[Math.min(attempts - 1, reads.length - 1)]!
+    })
+    mock.method(timers, 'setTimeout', async (ms: number) => {
+      waits.push(ms)
+      onWait()
+    })
+    syncBuiltinESMExports()
+  })
+  afterEach(() => {
+    mock.restoreAll()
+    syncBuiltinESMExports()
+  })
+
+  for (const partial of ['', '4', 'bad\n', '0\n', '65536\n', '123456\n']) {
+    describe(`and the first read is ${JSON.stringify(partial)}`, () => {
+      beforeEach(() => {
+        reads = [partial, '4321\n/devtools/browser/test']
+      })
+      it('should wait for a complete valid port before connecting', async () => {
+        const session = await open('synthetic-browser')
+        try {
+          assert.equal(attempts, 2)
+          assert.deepEqual(devtoolsRequests, ['http://127.0.0.1:4321/json/new?about:blank'])
+          assert.deepEqual(waits, [100])
+          assert.equal(FakeSocket.last?.readyState, FakeSocket.OPEN)
+        } finally {
+          await session.close()
+        }
+        assert.equal(browser.signalCode, 'SIGTERM')
+        assert.equal(FakeSocket.last?.readyState, FakeSocket.CLOSED)
+        await assert.rejects(stat(profile), { code: 'ENOENT' })
+      })
+    })
+  }
+  for (const portLine of ['1\n', '65535\n', '4321\r\n']) {
+    describe(`and the first read has valid port ${JSON.stringify(portLine)}`, () => {
+      beforeEach(() => {
+        reads = [portLine]
+      })
+      it('should connect without another poll', async () => {
+        const session = await open('synthetic-browser')
+        try {
+          assert.equal(attempts, 1)
+          assert.deepEqual(waits, [])
+        } finally {
+          await session.close()
+        }
+      })
+    })
+  }
+  describe('and the final allowed read completes the port line', () => {
+    beforeEach(() => {
+      reads = [...Array<string>(99).fill(''), '4321\n']
+    })
+    it('should connect within the existing wait budget', async () => {
+      const session = await open('synthetic-browser')
+      try {
+        assert.equal(attempts, 100)
+        assert.deepEqual(waits, Array(99).fill(100))
+      } finally {
+        await session.close()
+      }
+    })
+  })
+  describe('and no usable port is ever published', () => {
+    beforeEach(() => {
+      reads = ['']
+    })
+    it('should exhaust the existing wait budget and remove its profile', async () => {
+      await assert.rejects(open('synthetic-browser'), /Capture browser did not start/)
+      assert.equal(attempts, 100)
+      assert.deepEqual(waits, Array(100).fill(100))
+      assert.equal(FakeSocket.last, undefined)
+      assert.deepEqual(devtoolsRequests, [])
+      assert.equal(browser.signalCode, 'SIGTERM')
+      await assert.rejects(stat(profile), { code: 'ENOENT' })
+    })
+  })
+  describe('and a read fails before the valid port is available', () => {
+    beforeEach(() => {
+      readError = new Error('port file not ready')
+      onWait = () => {
+        readError = undefined
+      }
+    })
+    it('should continue waiting after the I/O failure', async () => {
+      const session = await open('synthetic-browser')
+      try {
+        assert.equal(attempts, 2)
+        assert.deepEqual(waits, [100])
+      } finally {
+        await session.close()
+      }
+    })
+  })
+  describe('and startup is aborted while the file is incomplete', () => {
+    beforeEach(() => {
+      reads = ['']
+      onWait = () => controller.abort(new Error('cancelled partial port'))
+    })
+    it('should preserve the abort reason and remove its profile', async () => {
+      await assert.rejects(
+        open('synthetic-browser', { signal: controller.signal }),
+        /cancelled partial port/
+      )
+      assert.equal(attempts, 1)
+      assert.equal(FakeSocket.last, undefined)
+      assert.deepEqual(devtoolsRequests, [])
+      assert.equal(browser.signalCode, 'SIGTERM')
+      await assert.rejects(stat(profile), { code: 'ENOENT' })
+    })
+  })
+  describe('and spawning the child reports an error while waiting', () => {
+    beforeEach(() => {
+      reads = ['']
+      onWait = () => browser.emit('error', new Error('launch failed'))
+    })
+    it('should preserve the launch error and remove its profile', async () => {
+      await assert.rejects(open('synthetic-browser'), /launch failed/)
+      assert.equal(attempts, 1)
+      assert.equal(FakeSocket.last, undefined)
+      assert.deepEqual(devtoolsRequests, [])
+      assert.equal(browser.signalCode, 'SIGTERM')
+      await assert.rejects(stat(profile), { code: 'ENOENT' })
+    })
+  })
+  describe('and the child exits while the file is incomplete', () => {
+    beforeEach(() => {
+      reads = ['']
+      onWait = () => {
+        browser.exitCode = 7
+      }
+    })
+    it('should report the child exit and remove its profile', async () => {
+      await assert.rejects(open('synthetic-browser'), /Capture browser exited during startup/)
+      assert.equal(attempts, 1)
+      assert.equal(FakeSocket.last, undefined)
+      assert.deepEqual(devtoolsRequests, [])
+      await assert.rejects(stat(profile), { code: 'ENOENT' })
+    })
+  })
+})
 
 describe('when a command is sent on a capture session that can no longer answer', () => {
   it('should reject a send after close at once instead of waiting out the CDP timeout', async () => {
