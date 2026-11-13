@@ -6,20 +6,15 @@
 
 use std::env;
 
-/// What is left of the clustering config now that Pulse owns cluster composition: how long a
-/// silent peer stays in this replica's directory, and how often the two sweeps run.
+/// Connected-wallet moderation cadence; statistics have no peer expiry.
 #[derive(Clone, Debug)]
 pub struct ClusterConfig {
-    pub heartbeat_timeout_secs: u64,
-    pub peer_expiry_interval_secs: u64,
     pub ban_sweep_interval_secs: u64,
 }
 
 impl Default for ClusterConfig {
     fn default() -> Self {
         Self {
-            heartbeat_timeout_secs: 30,
-            peer_expiry_interval_secs: 2,
             ban_sweep_interval_secs: 30,
         }
     }
@@ -31,14 +26,14 @@ pub struct ServerConfig {
     /// `ISLAND_CHANGED_DEDUP_MS`: the window inside which the same room handed to the same socket
     /// twice is the client's own assignment arriving again through the re-announce path; it
     /// already holds a token for it.
-    pub island_changed_dedup_ms: u64,
+    pub island_changed_dedup_ms: f64,
 }
 
 impl Default for ServerConfig {
     fn default() -> Self {
         Self {
             max_sockets: 3000,
-            island_changed_dedup_ms: 10_000,
+            island_changed_dedup_ms: 10_000.0,
         }
     }
 }
@@ -85,7 +80,7 @@ pub struct RawSettings {
     /// `DENY_LIST_URL`.
     pub deny_list_url: Option<String>,
     /// `ISLAND_CHANGED_DEDUP_MS`.
-    pub island_changed_dedup_ms: u64,
+    pub island_changed_dedup_ms: f64,
     /// `COMMIT_HASH`.
     pub commit_hash: Option<String>,
 }
@@ -154,14 +149,8 @@ impl Settings {
                 .ok_or_else(|| anyhow::anyhow!("WS_MAX_SOCKETS must be a positive integer"))?;
         }
         if let Ok(v) = env::var("ISLAND_CHANGED_DEDUP_MS") {
-            match v.trim().parse::<u64>() {
-                Ok(ms) => server.island_changed_dedup_ms = ms,
-                Err(_) => {
-                    return Err(anyhow::anyhow!(
-                        "ISLAND_CHANGED_DEDUP_MS must be a whole number of milliseconds, got {v:?}"
-                    ));
-                }
-            }
+            server.island_changed_dedup_ms =
+                catalyst_config::parse_island_changed_dedup_ms(&v).map_err(anyhow::Error::msg)?;
         }
         Ok(Self {
             cluster: ClusterConfig::default(),

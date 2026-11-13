@@ -6,7 +6,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::error::ValidationResponse;
-use super::jsjson::{self, JsValue};
+use super::jsjson::{self, LegacyValue};
 use super::types::*;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -165,9 +165,9 @@ pub fn verify_third_party_merkle_proof(proof: &MerkleProof, root: &[u8; 32]) -> 
 /// it in JS property order. `None` when the bytes are not valid JSON or carry
 /// no `metadata` object.
 fn entity_hash_from_entity_bytes(entity_bytes: &[u8], hashing_keys: &[String]) -> Option<String> {
-    let root: JsValue = serde_json::from_slice(entity_bytes).ok()?;
+    let root: LegacyValue = serde_json::from_slice(entity_bytes).ok()?;
     let metadata = root.get("metadata")?.as_object()?;
-    let mut picked: Vec<(&str, &JsValue)> = Vec::new();
+    let mut picked: Vec<(&str, &LegacyValue)> = Vec::new();
     for key in hashing_keys {
         if picked.iter().any(|(k, _)| k == key) {
             continue;
@@ -199,6 +199,22 @@ pub fn hex_to_bytes(value: &str) -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn third_party_hash_explicitly_retains_legacy_number_marker_interpretation() {
+        let keys = vec!["name".to_owned()];
+        assert_eq!(
+            entity_hash_from_entity_bytes(br#"{"metadata":{"name":9007199254740993}}"#, &keys),
+            Some(hex::encode(alloy_primitives::keccak256(
+                br#"{"name":9007199254740992}"#
+            )))
+        );
+        let marker = br#"{"metadata":{"name":{"$serde_json::private::Number":"12"}}}"#;
+        assert_eq!(
+            entity_hash_from_entity_bytes(marker, &keys),
+            Some(hex::encode(alloy_primitives::keccak256(br#"{"name":12}"#)))
+        );
+    }
 
     const WOODIE_0: &[u8] = include_bytes!("third_party_fixtures/woodie_0.entity.json");
     const WOODIE_1: &[u8] = include_bytes!("third_party_fixtures/woodie_1.entity.json");

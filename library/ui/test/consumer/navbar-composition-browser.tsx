@@ -66,56 +66,79 @@ function CompositionExample() {
     )
   return (
     <>
-      <NavBar
-        surface={
-          new URLSearchParams(window.location.search).get('surface') === 'overlay'
-            ? 'overlay'
-            : 'solid'
+      <header
+        style={
+          params.has('surface-proof')
+            ? { position: 'fixed', top: 0, insetInline: 0, zIndex: 10 }
+            : undefined
         }
-        sections={[
-          { label: 'Discover', href: '/discover' },
-          { label: 'Learn', items: [{ label: 'Docs', href: '/docs' }] }
-        ]}
-        account={{ address: '0x1234', name: 'Ada' }}
-        balances={{ credits: 8, mana: 2 }}
-        balanceAction={
-          geometry ? (
-            geometryAction
-          ) : (
-            <Button id="balance-action" variant="secondary" size="sm">
-              Buy credits
-            </Button>
-          )
-        }
-        accountControl={
-          geometry ? (
-            params.get('account') === 'custom' ? (
-              <Button id="geometry-account" iconOnly size="lg" aria-label="Custom account">
-                AC
+      >
+        <NavBar
+          surface={
+            new URLSearchParams(window.location.search).get('surface') === 'overlay'
+              ? 'overlay'
+              : 'solid'
+          }
+          sections={[
+            { label: 'Discover', href: '/discover' },
+            {
+              label: 'Learn',
+              items: [
+                { label: 'Docs', href: '/docs' },
+                { label: 'Blog', href: '#blog' }
+              ]
+            }
+          ]}
+          account={{ address: '0x1234', name: 'Ada' }}
+          balances={{ credits: 8, mana: 2 }}
+          balanceAction={
+            geometry ? (
+              geometryAction
+            ) : (
+              <Button id="balance-action" variant="secondary" size="sm">
+                Buy credits
               </Button>
-            ) : undefined
-          ) : (
-            <AppAccountControl onConnect={() => setConnections((value) => value + 1)} />
-          )
+            )
+          }
+          accountControl={
+            geometry ? (
+              params.get('account') === 'custom' ? (
+                <Button id="geometry-account" iconOnly size="lg" aria-label="Custom account">
+                  AC
+                </Button>
+              ) : undefined
+            ) : (
+              <AppAccountControl onConnect={() => setConnections((value) => value + 1)} />
+            )
+          }
+          mobileSecondaryNavigation={({ closeDrawer }) => (
+            <nav aria-label="Profile sections">
+              <Button
+                id="secondary-link"
+                href="/profile/photos"
+                variant="text"
+                size="md"
+                onClick={(event) => {
+                  event.preventDefault()
+                  closeDrawer()
+                }}
+              >
+                Photos
+              </Button>
+            </nav>
+          )}
+        />
+      </header>
+      <main
+        style={
+          params.has('surface-proof')
+            ? {
+                minHeight: 2200,
+                background: 'repeating-linear-gradient(45deg,#eee 0 12px,#222 12px 24px)'
+              }
+            : undefined
         }
-        mobileSecondaryNavigation={({ closeDrawer }) => (
-          <nav aria-label="Profile sections">
-            <Button
-              id="secondary-link"
-              href="/profile/photos"
-              variant="text"
-              size="md"
-              onClick={(event) => {
-                event.preventDefault()
-                closeDrawer()
-              }}
-            >
-              Photos
-            </Button>
-          </nav>
-        )}
-      />
-      <main>
+      >
         <p role="status">Connections: {connections}</p>
         {geometry
           ? ['none', 'loading', 'zero', 'positive', 'iap'].map((mode) => (

@@ -6,6 +6,7 @@ mod wasm_fs;
 use std::{collections::VecDeque, io::Write};
 
 use base64::{engine::general_purpose, Engine};
+use bevy::image::KTX2_MAGIC;
 use bevy::log::{
     tracing::{error, info},
     warn,
@@ -105,9 +106,9 @@ pub(crate) async fn process_events(
     }
 }
 
-/// The dds `Ktx2Loader` stashed for `req.base_path`, removed from the stash.
+/// The dds `ktx2::transcode_ktx2_image` stashed for `req.base_path`, removed from the stash.
 fn take_ktx2_result(req: &AssetForProcessing) -> Option<Vec<u8>> {
-    crate::ktx2_loader::KTX2_RESULTS
+    crate::ktx2::KTX2_RESULTS
         .lock()
         .ok()?
         .remove(&req.base_path.to_string())
@@ -210,8 +211,6 @@ pub(crate) fn transcode_ktx2(bytes: &[u8]) -> Result<Vec<u8>, ImageProcessError>
         .ok_or(ImageProcessError::CantLoad)?;
     compress_decoded(image::DynamicImage::ImageRgba8(img))
 }
-
-const KTX2_MAGIC: &[u8] = b"\xABKTX 20\xBB\r\n\x1A\n";
 
 /// The largest KTX2 width or height taken. Its RGBA fallback is 256 MB, within the 512 MB
 /// `image` allows a PNG.
@@ -809,7 +808,7 @@ mod tests {
 
     #[test]
     fn basisu_texture_with_a_bad_ktx2_keeps_its_fallback() {
-        let bad_ktx2 = [KTX2_MAGIC, &[0; 100]].concat();
+        let bad_ktx2 = [&KTX2_MAGIC[..], &[0; 100]].concat();
         let json = |required: &str| {
             format!(
                 r#"{{"asset":{{"version":"2.0"}},

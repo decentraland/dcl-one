@@ -45,12 +45,95 @@ pub fn command(root: &Path) -> Result<Option<String>> {
     if script.is_empty() {
         bail!("package.json scripts.build must be a nonempty string");
     }
-    // Existing SDK scaffolds delegated straight back to us. Preserve them as
-    // a built-in alias; more complex delegations must use --built-in explicitly.
-    if matches!(script, "dcl-scene-cli build" | "dcl-scene-cli build --built-in") {
+    if toolchain_build(script).is_some() {
         return Ok(None);
     }
     Ok(Some(script.to_owned()))
+}
+
+/// What a `scripts.build` that is the SDK build itself asks for, applied on
+/// top of the command line's options. A preview build takes only the two
+/// flags that shape the entrypoint: `--production` is `build`'s and
+/// `deploy`'s, never `start`'s (a minified bundle without sourcemaps is no
+/// preview).
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct ScriptFlags {
+    pub production: bool,
+    pub ignore_composite: bool,
+    pub custom_entry_point: bool,
+    /// Upstream build flags this pipeline has no equivalent for.
+    pub ignored: Vec<String>,
+}
+
+impl ScriptFlags {
+    pub fn apply(&self, opts: &BuildOptions, preview: bool) -> BuildOptions {
+        BuildOptions {
+            production: opts.production || (self.production && !preview),
+            ignore_composite: opts.ignore_composite || self.ignore_composite,
+            custom_entry_point: opts.custom_entry_point || self.custom_entry_point,
+            ..opts.clone()
+        }
+    }
+}
+
+/// The options of a preview or a watcher: the script's `--ignoreComposite`
+/// and `--customEntryPoint` apply, its `--production` does not.
+pub fn preview_options(opts: &BuildOptions) -> BuildOptions {
+    script_flags(&opts.dir).apply(opts, true)
+}
+
+/// The flags of this project's `scripts.build` when it is the SDK build.
+pub fn script_flags(root: &Path) -> ScriptFlags {
+    std::fs::read(root.join("package.json"))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+        .and_then(|package| package["scripts"]["build"].as_str().map(str::to_owned))
+        .and_then(|script| toolchain_build(&script))
+        .unwrap_or_default()
+}
+
+const RUNNERS: &[&str] = &["npx", "pnpx", "bunx", "yarn", "pnpm", "npm", "bun"];
+const RUNNER_VERBS: &[&str] = &["exec", "dlx", "x"];
+const BUILD_TOOLS: &[&str] = &["dcl-scene-cli", "sdk-commands", "@dcl/sdk-commands"];
+
+/// A `scripts.build` that is the SDK build — this binary or upstream's
+/// `sdk-commands build`, with or without a package runner in front — and the
+/// flags it carries. Such a script never spawns: the scaffold lists
+/// `@dcl/sdk-commands` as a dependency, and running it from `node_modules`
+/// would build with upstream's bundler instead of this one. Anything else
+/// (another tool, a shell pipeline) is a custom build and runs as written.
+pub fn toolchain_build(script: &str) -> Option<ScriptFlags> {
+    let mut words = script.split_whitespace().peekable();
+    while words
+        .peek()
+        .is_some_and(|w| RUNNERS.contains(w) || RUNNER_VERBS.contains(w))
+    {
+        words.next();
+    }
+    let tool = words.next()?;
+    let tool = match tool.rsplit_once('@') {
+        Some((name, version)) if !name.is_empty() && !version.contains('/') => name,
+        _ => tool,
+    };
+    if !BUILD_TOOLS.contains(&tool) || words.next()? != "build" {
+        return None;
+    }
+    let mut flags = ScriptFlags::default();
+    while let Some(word) = words.next() {
+        match word {
+            "--production" | "-p" => flags.production = true,
+            "--ignoreComposite" | "--ignore-composite" => flags.ignore_composite = true,
+            "--customEntryPoint" | "--custom-entry-point" => flags.custom_entry_point = true,
+            "--built-in" | "--skip-install" => {}
+            "--single" | "--dir" => {
+                words.next()?;
+                flags.ignored.push(word.to_owned());
+            }
+            other if other.starts_with('-') => flags.ignored.push(other.to_owned()),
+            _ => return None,
+        }
+    }
+    Some(flags)
 }
 
 pub fn selected(project: &Project, opts: &BuildOptions) -> Result<Option<String>> {
@@ -105,7 +188,12 @@ pub async fn run(project: Project, opts: &BuildOptions, script: &str) -> Result<
         .env("DCL_SCENE_CLI_MAIN", &main)
         .env(QUIET, if opts.quiet { "1" } else { "0" })
         .stdin(Stdio::inherit())
-        .stdout(Stdio::inherit())
+        // --json and deploy --programmatic keep stdout for the lines a
+        // program parses: the script's own output joins stderr.
+        .stdout(match ux::quiet() {
+            true => Stdio::from(std::io::stderr()),
+            false => Stdio::inherit(),
+        })
         .stderr(Stdio::inherit())
         .kill_on_drop(true)
         .status()
@@ -138,4 +226,59 @@ pub async fn run(project: Project, opts: &BuildOptions, script: &str) -> Result<
         ));
     }
     Ok(built)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn opts() -> BuildOptions {
+        BuildOptions {
+            built_in: false,
+            dir: std::path::PathBuf::from("scene"),
+            production: false,
+            ignore_composite: false,
+            custom_entry_point: false,
+            skip_type_check: false,
+            out_root: None,
+            quiet: true,
+        }
+    }
+
+    #[test]
+    fn a_preview_takes_the_entrypoint_flags_of_the_script_but_not_production() {
+        let flags =
+            toolchain_build("sdk-commands build -p --ignoreComposite --customEntryPoint").unwrap();
+        assert!(flags.production && flags.ignore_composite && flags.custom_entry_point);
+        let built = flags.apply(&opts(), false);
+        assert!(built.production && built.ignore_composite && built.custom_entry_point);
+        let preview = flags.apply(&opts(), true);
+        assert!(
+            !preview.production,
+            "start never minifies on the script's say"
+        );
+        assert!(preview.ignore_composite && preview.custom_entry_point);
+        let mut explicit = opts();
+        explicit.production = true;
+        assert!(
+            flags.apply(&explicit, true).production,
+            "the caller's own flag stands"
+        );
+    }
+
+    /// `build --watch` and `start` read the script of the folder they build.
+    #[test]
+    fn a_watcher_reads_the_flags_of_the_project_script() {
+        let t = crate::deploy::TempTree::new("watch-script-flags");
+        t.write(
+            "package.json",
+            r#"{"scripts":{"build":"sdk-commands build --production --ignoreComposite --customEntryPoint"}}"#,
+        );
+        let mut watched = opts();
+        watched.dir = t.0.clone();
+        let watched = preview_options(&watched);
+        assert!(watched.ignore_composite && watched.custom_entry_point);
+        assert!(!watched.production);
+        assert!(!preview_options(&opts()).custom_entry_point, "no script");
+    }
 }
