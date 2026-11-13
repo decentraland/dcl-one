@@ -1,17 +1,17 @@
 use std::collections::HashSet;
 
+use crate::OrderedJson;
 use metrics::counter;
-use serde_json::Value;
 
 const SYNCED_SCENE_PARCELS_DIFFER: &str = "content_sync_scene_parcels_differ_total";
 
-pub(super) fn parcels_differ(pointers: &[String], metadata: Option<&Value>) -> bool {
+pub(super) fn parcels_differ(pointers: &[String], metadata: Option<&OrderedJson>) -> bool {
     let Some(parcels) = metadata
-        .and_then(|m| m.pointer("/scene/parcels"))
-        .and_then(Value::as_array)
+        .and_then(|m| m.get("scene").and_then(|scene| scene.get("parcels")))
+        .and_then(OrderedJson::as_array)
         .and_then(|list| {
             list.iter()
-                .map(Value::as_str)
+                .map(OrderedJson::as_str)
                 .collect::<Option<HashSet<&str>>>()
         })
     else {
@@ -24,7 +24,7 @@ pub(super) fn report_drift(
     entity_type: &str,
     entity_id: &str,
     pointers: &[String],
-    metadata: Option<&Value>,
+    metadata: Option<&OrderedJson>,
 ) -> bool {
     if entity_type != "scene" || !parcels_differ(pointers, metadata) {
         return false;
@@ -40,7 +40,7 @@ pub(super) fn report_drift(
 
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
+    use serde_json::{Value, json};
 
     use super::*;
 
@@ -48,8 +48,11 @@ mod tests {
         list.iter().map(|s| s.to_string()).collect()
     }
 
-    fn scene(parcels: Value) -> Value {
-        json!({ "main": "bin/index.js", "scene": { "base": "0,0", "parcels": parcels } })
+    fn scene(parcels: Value) -> OrderedJson {
+        serde_json::from_value(
+            json!({ "main": "bin/index.js", "scene": { "base": "0,0", "parcels": parcels } }),
+        )
+        .unwrap()
     }
 
     #[test]
@@ -63,7 +66,10 @@ mod tests {
         assert!(differ(json!(["0,0", "0,1", "-1,1"])));
         assert!(differ(json!("0,0")));
         assert!(differ(json!(["0,0", "0,1", 7])));
-        assert!(parcels_differ(&both, Some(&json!({ "scene": {} }))));
+        assert!(parcels_differ(
+            &both,
+            Some(&serde_json::from_value(json!({ "scene": {} })).unwrap())
+        ));
         assert!(parcels_differ(&both, None));
     }
 

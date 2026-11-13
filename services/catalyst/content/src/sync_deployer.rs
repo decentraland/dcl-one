@@ -42,7 +42,7 @@ struct ParsedEntity {
     version: String,
     entity_type: String,
     entity_id: String,
-    entity_metadata: Value,
+    entity_metadata: crate::OrderedJson,
     entity_timestamp: f64,
     entity_pointers: Vec<String>,
     auth_chain: Value,
@@ -220,10 +220,8 @@ fn parse_entity_for_deploy(
 
     let auth_chain_json =
         serde_json::to_value(auth_chain).map_err(|e| SyncError::Storage(e.to_string()))?;
-    let metadata = match entity.get("metadata") {
-        Some(m) if !m.is_null() => serde_json::json!({"v": m}),
-        _ => Value::Null,
-    };
+    let metadata =
+        crate::entity::deployment_metadata(entity_data, crate::entity::MetadataInput::SyncObject)?;
 
     Ok(ParsedEntity {
         deployer_address: deployer,
@@ -601,6 +599,10 @@ async fn flush_batch(pool: &PgPool, entities: &[ParsedEntity]) -> Result<(), Syn
     };
 
     let count = entities.len();
+    let metadatas: Vec<String> = entities
+        .iter()
+        .map(|e| serde_json::to_string(&e.entity_metadata))
+        .collect::<Result<_, _>>()?;
     let mut tx = pool
         .begin()
         .await
@@ -620,7 +622,6 @@ async fn flush_batch(pool: &PgPool, entities: &[ParsedEntity]) -> Result<(), Syn
     let mut versions: Vec<String> = Vec::with_capacity(count);
     let mut entity_types: Vec<String> = Vec::with_capacity(count);
     let mut entity_ids: Vec<String> = Vec::with_capacity(count);
-    let mut metadatas: Vec<Value> = Vec::with_capacity(count);
     let mut timestamps: Vec<f64> = Vec::with_capacity(count);
     let mut pointers_json: Vec<Value> = Vec::with_capacity(count);
     let mut auth_chains: Vec<Value> = Vec::with_capacity(count);
@@ -630,7 +631,6 @@ async fn flush_batch(pool: &PgPool, entities: &[ParsedEntity]) -> Result<(), Syn
         versions.push(e.version.clone());
         entity_types.push(e.entity_type.clone());
         entity_ids.push(e.entity_id.clone());
-        metadatas.push(e.entity_metadata.clone());
         timestamps.push(e.entity_timestamp);
         pointers_json.push(Value::Array(
             e.entity_pointers
@@ -641,18 +641,20 @@ async fn flush_batch(pool: &PgPool, entities: &[ParsedEntity]) -> Result<(), Syn
         auth_chains.push(e.auth_chain.clone());
     }
 
+    // Retain JSONB's validation boundary while storing the ordered JSON text.
+    // Some downstream readers still require metadata to be representable as JSONB.
     let rows: Vec<(String, i32)> = sqlx::query_as(
         r#"
         INSERT INTO content.deployments
             (deployer_address, version, entity_type, entity_id, entity_metadata,
              entity_timestamp, entity_pointers, local_timestamp, auth_chain)
-        SELECT da, v, et, ei, em::json,
+        SELECT da, v, et, ei, CASE WHEN em::jsonb IS NOT NULL THEN em::json ELSE NULL END,
                to_timestamp(ts / 1000.0),
                ARRAY(SELECT json_array_elements_text(ep::json)),
                now(), ac::json
         FROM unnest(
             $1::text[], $2::text[], $3::text[], $4::text[],
-            $5::jsonb[], $6::float8[], $7::jsonb[], $8::jsonb[]
+            $5::text[], $6::float8[], $7::jsonb[], $8::jsonb[]
         ) AS t(da, v, et, ei, em, ts, ep, ac)
         ON CONFLICT (entity_id) DO NOTHING
         RETURNING entity_id, id

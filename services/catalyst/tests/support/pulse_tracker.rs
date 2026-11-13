@@ -34,13 +34,15 @@ impl World {
 
     pub fn with_options(options: NatsFeedOptions) -> Self {
         let feed = Arc::new(NatsClusterFeed::spawn(options));
-        Self {
+        let mut world = Self {
             grids: RealmSpatialGrids::new(SPATIAL_GRID_CELL_SIZE, CAP),
             board: SnapshotBoard::new(CAP, 4),
             identity: IdentityBoard::new(CAP),
             tracker: ClusterTracker::new(ClusterOptions::default(), CAP, feed.clone()),
             feed,
-        }
+        };
+        world.tracker.bind_identity(&mut world.identity);
+        world
     }
 
     pub fn enable_control_positions(&self, audience: &str) {

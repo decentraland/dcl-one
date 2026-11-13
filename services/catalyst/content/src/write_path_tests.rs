@@ -49,6 +49,10 @@ fn address(signer: &PrivateKeySigner) -> String {
 /// An entity file signed by `signer`: its bytes, id and auth chain.
 async fn signed_entity(signer: &PrivateKeySigner, entity: Value) -> (Bytes, String, Value) {
     let bytes = Bytes::from(serde_json::to_vec(&entity).unwrap());
+    signed_entity_bytes(signer, bytes).await
+}
+
+async fn signed_entity_bytes(signer: &PrivateKeySigner, bytes: Bytes) -> (Bytes, String, Value) {
     let id = hash_bytes_v1(&bytes);
     let signature = signer
         .sign_message(id.as_bytes())
@@ -748,6 +752,15 @@ async fn index_land_events(pool: &PgPool, grants: &[(&'static str, (i32, i32), &
 /// unpublish; the owner can, once, and the parcel is empty afterwards.
 #[tokio::test]
 async fn a_signed_scene_deploys_serves_and_unpublishes_end_to_end() {
+    signed_scene_roundtrip(false).await;
+}
+
+#[tokio::test]
+async fn a_signed_positional_scene_keeps_metadata_and_immutable_bytes() {
+    signed_scene_roundtrip(true).await;
+}
+
+async fn signed_scene_roundtrip(positional: bool) {
     require_test_db!(Some(db) = OwnDb::create("contentw").await);
     let (owner, stranger) = (key(OWNER_KEY), key(STRANGER_KEY));
     let (x, y) = (37, -11);
@@ -782,8 +795,25 @@ async fn a_signed_scene_deploys_serves_and_unpublishes_end_to_end() {
 
     let code = Bytes::from_static(b"export function onUpdate() {}");
     let code_hash = hash_bytes_v1(&code);
-    let (entity_bytes, entity_id, chain) =
-        signed_entity(&owner, scene(&[&parcel], &[("bin/index.js", &code_hash)])).await;
+    let metadata = format!(
+        r#"{{"display":{{"title":"write path e2e"}},"main":"bin/index.js","scene":{{"base":"{parcel}","parcels":["{parcel}"]}},"extra":{{"z":9007199254740993,"a":18446744073709551615,"nested":{{"z":"é","a":"quoted\\\""}}}}}}"#
+    );
+    let timestamp = chrono::Utc::now().timestamp_millis();
+    let raw = if positional {
+        format!(
+            r#"["untrusted-document-id","scene",["{parcel}"],{timestamp},[{{"file":"bin/index.js","hash":"{code_hash}"}}],"v3",{metadata}]"#
+        )
+    } else {
+        format!(
+            r#"{{"id":"untrusted-document-id","version":"v3","type":"scene","pointers":["{parcel}"],"timestamp":{timestamp},"content":[{{"file":"bin/index.js","hash":"{code_hash}"}}],"metadata":{metadata},"unused":1e400}}"#
+        )
+    };
+    let semantic: crate::entity::Entity = serde_json::from_str(&raw).unwrap();
+    assert_eq!(
+        semantic.metadata,
+        Some(serde_json::from_str(&metadata).unwrap())
+    );
+    let (entity_bytes, entity_id, chain) = signed_entity_bytes(&owner, Bytes::from(raw)).await;
     state
         .deployments_cache
         .insert("stale".into(), Bytes::from_static(b"[]"));
@@ -798,6 +828,32 @@ async fn a_signed_scene_deploys_serves_and_unpublishes_end_to_end() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{}", json_of(&body));
+    let stored: String = sqlx::query_scalar(
+        "SELECT entity_metadata::text FROM content.deployments WHERE entity_id=$1",
+    )
+    .bind(&entity_id)
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(stored, format!(r#"{{"v":{metadata}}}"#));
+    eprintln!("validated_local_sql={stored}");
+    let selected = crate::queries::active_entity_docs_with_ordered_metadata_by_pointers(
+        &db.pool,
+        std::slice::from_ref(&parcel),
+    )
+    .await
+    .unwrap();
+    assert_eq!(selected.len(), 1);
+    let selected_text = std::str::from_utf8(&selected[0].json).unwrap();
+    assert!(selected_text.contains(&format!(r#""metadata":{metadata}"#)));
+    let ordinary =
+        crate::queries::active_entity_docs_by_pointers(&db.pool, std::slice::from_ref(&parcel))
+            .await
+            .unwrap();
+    assert_eq!(
+        serde_json::from_slice::<Value>(&selected[0].json).unwrap(),
+        serde_json::from_slice::<Value>(&ordinary[0].json).unwrap()
+    );
     let created = json_of(&body)["creationTimestamp"].as_i64().unwrap();
     assert!((created - chrono::Utc::now().timestamp_millis()).abs() < 60_000);
     assert!(
@@ -865,6 +921,34 @@ async fn a_signed_scene_deploys_serves_and_unpublishes_end_to_end() {
             (StatusCode::OK, json!({"creationTimestamp": created}))
         );
     }
+    // An otherwise valid ordinary scene string reaches the database expression index.
+    // Failure leaves immutable bytes available but commits no deployment state.
+    state.deployer().unwrap().clear_rate_limits();
+    let nul_raw = String::from_utf8(entity_bytes.to_vec())
+        .unwrap()
+        .replace("write path e2e", r#"write\u0000path"#);
+    let nul_raw = nul_raw.replace(&timestamp.to_string(), &(timestamp + 1).to_string());
+    let (nul_bytes, nul_id, nul_chain) = signed_entity_bytes(&owner, Bytes::from(nul_raw)).await;
+    let (nul_status, _, nul_body) = call(
+        &router,
+        deploy_request(
+            "/content/entities",
+            &nul_id,
+            &nul_chain,
+            &[(&nul_id, &nul_bytes), (&code_hash, &code)],
+        ),
+    )
+    .await;
+    assert_eq!(
+        nul_status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "{}",
+        json_of(&nul_body)
+    );
+    assert!(String::from_utf8_lossy(&nul_body).contains("There was an error deploying the entity"));
+    let nul_rows: (i64,i64,i64) = sqlx::query_as("SELECT (SELECT count(*) FROM content.deployments WHERE entity_id=$1),(SELECT count(*) FROM content.local_entities WHERE entity_id=$1),(SELECT count(*) FROM content.forward_outbox WHERE entity_id=$1)").bind(&nul_id).fetch_one(&db.pool).await.unwrap();
+    assert_eq!(nul_rows, (0, 0, 0));
+    assert_eq!(storage.retrieve(&nul_id).await.unwrap(), Some(nul_bytes));
     deployer.clear_rate_limits();
     assert_eq!(
         deployer
@@ -1358,6 +1442,106 @@ fn profile(owner: &str, wearables: &[&str]) -> Value {
 }
 
 const PROFILE_CLIENT_IP: &str = "203.0.113.30";
+
+#[tokio::test]
+async fn a_profile_with_nul_metadata_preserves_the_write_error_and_active_profile() {
+    let node = TestNode::with_db("profile-metadata-validity")
+        .await
+        .expect("test database required");
+    node.state.sync.set_state(SyncState::Syncing);
+    attach(&node.state, true, None, None);
+    let owner = PrivateKeySigner::random();
+    let pointer = address(&owner);
+    let mut entity = profile(&pointer, &[]);
+    entity["metadata"]["avatars"][0]["description"] = json!(r"literal \u0000 is valid");
+    let (bytes, accepted, chain) = signed_entity(&owner, entity.clone()).await;
+    let (status, _, body) = call(
+        &node.router(),
+        deploy_request(
+            "/content/entities",
+            &accepted,
+            &chain,
+            &[(&accepted, &bytes)],
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{}", json_of(&body));
+    let before: String = sqlx::query_scalar(
+        "SELECT entity_metadata::text FROM content.deployments WHERE entity_id=$1",
+    )
+    .bind(&accepted)
+    .fetch_one(&node.state.pool)
+    .await
+    .unwrap();
+    // The accepted profile reserves this pointer's rate window. Clear that independent
+    // gate so the schema-valid successor reaches persistence rather than an early 400.
+    let deployer = node.state.deployer().unwrap();
+    deployer.clear_rate_limits();
+    assert!(!deployer.is_rate_limited("profile", &pointer));
+    entity["timestamp"] = json!(entity["timestamp"].as_i64().unwrap() + 1);
+    entity["metadata"]["avatars"][0]["version"] = json!(2);
+    entity["metadata"]["avatars"][0]["description"] = json!("escaped \0 is invalid");
+    let (bytes, rejected, chain) = signed_entity(&owner, entity).await;
+    assert!(
+        node.state
+            .storage
+            .retrieve(&rejected)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let (status, headers, body) = call(
+        &node.router(),
+        deploy_request(
+            "/content/entities",
+            &rejected,
+            &chain,
+            &[(&rejected, &bytes)],
+        ),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "{}",
+        json_of(&body)
+    );
+    assert_eq!(
+        headers[header::RETRY_AFTER],
+        writes::UNAVAILABLE_RETRY_AFTER_SECS
+    );
+    assert_eq!(
+        json_of(&body),
+        json!({"errors":[super::write_deployer::DEPLOY_ERROR_MESSAGE]})
+    );
+    assert_eq!(
+        node.state.storage.retrieve(&rejected).await.unwrap(),
+        Some(bytes),
+        "the validator must pass and immutable bytes must reach persistence before JSONB refuses metadata"
+    );
+    let after: String = sqlx::query_scalar(
+        "SELECT entity_metadata::text FROM content.deployments WHERE entity_id=$1",
+    )
+    .bind(&accepted)
+    .fetch_one(&node.state.pool)
+    .await
+    .unwrap();
+    assert_eq!(after, before);
+    assert_eq!(
+        active_by_pointers(&node.router(), &[&pointer]).await[0]["id"],
+        accepted
+    );
+    let present: bool =
+        sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM content.deployments WHERE entity_id=$1)")
+            .bind(&rejected)
+            .fetch_one(&node.state.pool)
+            .await
+            .unwrap();
+    assert!(
+        !present,
+        "invalid metadata must not reach peers or JSONB readers"
+    );
+}
 
 /// The old `profile_batch_no_overlay` contract on the write path: with no
 /// escrow lease anywhere, a worn item counts for the wallet that holds that
