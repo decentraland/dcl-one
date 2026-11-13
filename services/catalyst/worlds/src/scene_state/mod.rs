@@ -230,12 +230,16 @@ pub struct RawSettings {
     /// `SCENE_HOST_MAX_SCENES` (64): hosted scenes at once (one isolate,
     /// two threads and up to `JS_HEAP_LIMIT_MB` each).
     pub max_scenes: usize,
-    /// `SCENE_HOST_AUTOLOAD` (true): `/ws/{scene}` loads an unhosted scene
-    /// that has a local active deployment.
+    /// `SCENE_HOST_AUTOLOAD` (true): `/ws/{scene}` loads, for an admitted
+    /// client, an unhosted scene that has a local active deployment with
+    /// `authoritativeMultiplayer` set.
     pub autoload: bool,
     /// `SCENE_HOST_SWEEP_INTERVAL_SECS` (30; 0 disables): the re-admission and
     /// redeploy sweep.
     pub sweep_interval_secs: u64,
+    /// `SCENE_HOST_IDLE_UNLOAD_SECS` (300; 0 disables): the sweep unloads a
+    /// scene that has had no client for this long.
+    pub idle_unload_secs: u64,
 }
 
 /// Masks the key, the tokens and the pre-minted delegation.
@@ -284,6 +288,7 @@ impl std::fmt::Debug for RawSettings {
             .field("max_scenes", &self.max_scenes)
             .field("autoload", &self.autoload)
             .field("sweep_interval_secs", &self.sweep_interval_secs)
+            .field("idle_unload_secs", &self.idle_unload_secs)
             .finish()
     }
 }
@@ -320,6 +325,7 @@ impl Default for RawSettings {
             max_scenes: 64,
             autoload: true,
             sweep_interval_secs: 30,
+            idle_unload_secs: 300,
         }
     }
 }
@@ -358,6 +364,7 @@ pub struct Settings {
     pub max_scenes: usize,
     pub autoload: bool,
     pub sweep_interval: Option<Duration>,
+    pub idle_unload: Option<Duration>,
 }
 
 fn non_empty(value: Option<String>) -> Option<String> {
@@ -450,6 +457,8 @@ impl Settings {
             autoload: raw.autoload,
             sweep_interval: (raw.sweep_interval_secs > 0)
                 .then(|| Duration::from_secs(raw.sweep_interval_secs)),
+            idle_unload: (raw.idle_unload_secs > 0)
+                .then(|| Duration::from_secs(raw.idle_unload_secs)),
         })
     }
 
@@ -537,10 +546,47 @@ impl SceneHostState {
         self.eip1654.as_deref()
     }
 
+    /// The key a scene is hosted under: a Genesis parcel names the scene
+    /// standing on it, so every parcel of a scene shares one host.
+    pub async fn canonical_key(&self, key: &SceneKey) -> SceneKey {
+        if let SceneKey::GenesisParcel(_) = key
+            && let Ok(Some(id)) = loader::current_scene_id(self, key).await
+        {
+            return SceneKey::Genesis(id);
+        }
+        key.clone()
+    }
+
+    /// The scene hosted for `key`, parcel aliases included.
+    pub async fn hosted(&self, key: &SceneKey) -> Option<Arc<scene::Scene>> {
+        self.scenes.get(&self.canonical_key(key).await.room_key())
+    }
+
     /// Loads (or reloads) `key` under the load lock and the scene cap. A
     /// reload of an already hosted scene never counts against the cap.
     pub async fn load(&self, key: &SceneKey) -> anyhow::Result<()> {
+        let key = self.canonical_key(key).await;
         let _guard = self.loads.lock().await;
+        self.ensure_capacity(&key)?;
+        load_or_reload(self, &key).await
+    }
+
+    /// Loads `key` for an admitted client unless it is already hosted; only
+    /// a scene that sets `authoritativeMultiplayer` is loaded this way.
+    pub async fn autoload(&self, key: &SceneKey) -> anyhow::Result<Arc<scene::Scene>> {
+        let key = self.canonical_key(key).await;
+        let _guard = self.loads.lock().await;
+        if let Some(scene) = self.scenes.get(&key.room_key()) {
+            return Ok(scene);
+        }
+        self.ensure_capacity(&key)?;
+        loader::load_scene(self, &key, true).await?;
+        self.scenes
+            .get(&key.room_key())
+            .ok_or_else(|| anyhow!("{key} was not hosted after loading"))
+    }
+
+    fn ensure_capacity(&self, key: &SceneKey) -> anyhow::Result<()> {
         let hosted = self.scenes.get(&key.room_key()).is_some();
         if !hosted && self.scenes.len() >= self.settings.max_scenes {
             anyhow::bail!(
@@ -548,7 +594,25 @@ impl SceneHostState {
                 self.settings.max_scenes
             );
         }
-        load_or_reload(self, key).await
+        Ok(())
+    }
+
+    /// Unloads every scene other than the local one that has had no client
+    /// for the idle timeout.
+    pub fn unload_idle(&self) -> usize {
+        let Some(timeout) = self.settings.idle_unload else {
+            return 0;
+        };
+        let mut unloaded = 0;
+        for scene in self.scenes.all() {
+            let key = scene.identity.key.clone();
+            if key != SceneKey::Local && scene.idle_for().is_some_and(|idle| idle >= timeout) {
+                tracing::info!(scene = %key, "no clients for the idle timeout; unloading");
+                self.unload(&key);
+                unloaded += 1;
+            }
+        }
+        unloaded
     }
 
     /// Stops hosting `key`: every client is kicked and the runtime dropped.
@@ -608,7 +672,9 @@ impl SceneHostState {
                 let prior = client
                     .grant
                     .filter(|g| !void_secrets || *g != AccessGrant::SharedSecret);
-                if let Err(reason) = ws::admit(self, &scene, &address, None, prior, now).await {
+                if let Err(reason) =
+                    ws::admit(self, &scene.identity, &address, None, prior, now).await
+                {
                     if let ws::AdmissionRefused::Undetermined(why) = &reason {
                         tracing::warn!(scene = %scene.identity.key, %address, %why, "admission undetermined; client kept");
                         continue;
@@ -626,7 +692,10 @@ impl SceneHostState {
     /// (or unload one that lost it), then re-run admission for every
     /// connected client and kick the refused.
     pub async fn sweep(&self) -> SweepSummary {
-        let mut summary = SweepSummary::default();
+        let mut summary = SweepSummary {
+            unloaded: self.unload_idle(),
+            ..SweepSummary::default()
+        };
         for scene in self.scenes.all() {
             let key = scene.identity.key.clone();
             match loader::current_scene_id(self, &key).await {
@@ -661,7 +730,7 @@ impl SceneHostState {
                 let Ok(address) = crate::shared::identity::Address::parse(&client.address) else {
                     continue;
                 };
-                match ws::admit(self, &scene, &address, None, client.grant, now).await {
+                match ws::admit(self, &scene.identity, &address, None, client.grant, now).await {
                     Ok(_) => {}
                     // An authority or store fault keeps the client, as the comms re-admit does.
                     Err(ws::AdmissionRefused::Undetermined(why)) => {

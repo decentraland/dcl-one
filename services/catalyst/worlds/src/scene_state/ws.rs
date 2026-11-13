@@ -1,7 +1,8 @@
 //! `GET /ws/{scene}`: the client socket. Handshake, then one signed auth
 //! frame within the deadline, then admission by the permission core, then
-//! the `Init` frame (the entity range and the state snapshot) and the CRDT
-//! relay until either side closes or the client is removed.
+//! (for an unhosted scene that opts in) the load, then the `Init` frame (the
+//! entity range and the state snapshot) and the CRDT relay until either side
+//! closes or the client is removed.
 
 use std::sync::Arc;
 
@@ -18,8 +19,28 @@ use crate::shared::identity::{Address, AuthorityNotEstablished};
 
 use super::auth::{candidate_paths, verify_auth_frame};
 use super::protocol::{MessageType, decode_message, encode_init_message, encode_message};
-use super::scene::Scene;
-use super::{SceneHostState, SceneKey, SharedState};
+use super::scene::{Scene, SceneIdentity};
+use super::{SceneHostState, SceneKey, SharedState, loader};
+
+/// Shared-secret attempts per world per window from every source together,
+/// on top of the per-source budget.
+pub const WORLD_SECRET_MAX_ATTEMPTS: u32 = 30;
+const WORLD_SECRET_SUBJECT: &str = "scene-host:*";
+
+/// What a socket joins: a hosted scene, or one loaded once the client is admitted.
+enum Target {
+    Hosted(Arc<Scene>),
+    Autoload(SceneIdentity),
+}
+
+impl Target {
+    fn identity(&self) -> &SceneIdentity {
+        match self {
+            Self::Hosted(scene) => &scene.identity,
+            Self::Autoload(identity) => identity,
+        }
+    }
+}
 
 /// Why a verified identity is not let into a scene.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -55,14 +76,14 @@ fn undetermined(e: AuthorityNotEstablished) -> AdmissionRefused {
 /// an authority fault leaves a client admitted as owner undetermined.
 pub async fn admit(
     state: &SceneHostState,
-    scene: &Scene,
+    scene: &SceneIdentity,
     address: &Address,
     secret: Option<&str>,
     prior: Option<AccessGrant>,
     now: NaiveDateTime,
 ) -> Result<Option<AccessGrant>, AdmissionRefused> {
-    let scene_id = scene.identity.scene_id();
-    match &scene.identity.key {
+    let scene_id = scene.scene_id();
+    match &scene.key {
         SceneKey::Local => Ok(None),
         SceneKey::World(world) => match state
             .policy
@@ -100,35 +121,41 @@ pub async fn ws_upgrade(
     State(state): State<SharedState>,
 ) -> axum::response::Response {
     let Ok(key) = SceneKey::parse(&scene_name) else {
-        return (
-            StatusCode::NOT_FOUND,
-            format!("{scene_name} is not currently loaded in the server"),
-        )
-            .into_response();
+        return not_loaded(&scene_name, None);
     };
-    let mut scene = state.scenes.get(&key.room_key());
-    if scene.is_none() && state.settings.autoload && key != SceneKey::Local {
-        if let Err(e) = state.load(&key).await {
-            tracing::info!(scene = %key, error = %e, "autoload refused");
-            let status = if e.to_string().contains("scene host is full") {
-                StatusCode::SERVICE_UNAVAILABLE
-            } else {
-                StatusCode::NOT_FOUND
-            };
-            return (
-                status,
-                format!("{scene_name} is not currently loaded in the server: {e}"),
-            )
-                .into_response();
+    let key = state.canonical_key(&key).await;
+    // Nothing is loaded before the client is admitted.
+    let target = match state.scenes.get(&key.room_key()) {
+        Some(scene) => Target::Hosted(scene),
+        None if state.settings.autoload && key != SceneKey::Local => {
+            if state.scenes.len() >= state.settings.max_scenes {
+                return (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    format!(
+                        "{scene_name} is not currently loaded in the server: scene host is full"
+                    ),
+                )
+                    .into_response();
+            }
+            match loader::resolve(&state, &key).await {
+                Ok(Some(resolved)) if resolved.authoritative => Target::Autoload(SceneIdentity {
+                    key: key.clone(),
+                    deployment: Some(resolved.deployment),
+                }),
+                Ok(Some(_)) => {
+                    return not_loaded(
+                        &scene_name,
+                        Some("the scene does not enable authoritativeMultiplayer"),
+                    );
+                }
+                Ok(None) => return not_loaded(&scene_name, Some("no local active deployment")),
+                Err(e) => {
+                    tracing::info!(scene = %key, error = %e, "autoload refused");
+                    return not_loaded(&scene_name, Some(&e.to_string()));
+                }
+            }
         }
-        scene = state.scenes.get(&key.room_key());
-    }
-    let Some(scene) = scene else {
-        return (
-            StatusCode::NOT_FOUND,
-            format!("{scene_name} is not currently loaded in the server"),
-        )
-            .into_response();
+        None => return not_loaded(&scene_name, None),
     };
 
     let route = format!("/ws/{scene_name}");
@@ -140,20 +167,30 @@ pub async fn ws_upgrade(
     let mgr = Arc::clone(&state);
     ws.on_upgrade(move |socket| async move {
         mgr.scenes.on_ws_connected();
-        handle_socket(&mgr, socket, scene, paths, caller_ip).await;
+        handle_socket(&mgr, socket, target, paths, caller_ip).await;
         mgr.scenes.on_ws_closed();
     })
     .into_response()
 }
 
+fn not_loaded(scene_name: &str, why: Option<&str>) -> axum::response::Response {
+    let body = match why {
+        Some(why) => format!("{scene_name} is not currently loaded in the server: {why}"),
+        None => format!("{scene_name} is not currently loaded in the server"),
+    };
+    (StatusCode::NOT_FOUND, body).into_response()
+}
+
 async fn handle_socket(
     state: &SceneHostState,
     socket: WebSocket,
-    scene: Arc<Scene>,
+    target: Target,
     paths: Vec<String>,
     caller_ip: String,
 ) {
     let (mut sink, mut stream) = socket.split();
+    let identity = target.identity().clone();
+    let name = identity.key.room_key();
 
     let auth = tokio::time::timeout(state.settings.auth_timeout, async {
         while let Some(Ok(msg)) = stream.next().await {
@@ -171,12 +208,12 @@ async fn handle_socket(
     let authed = match auth {
         Ok(Some(Ok(a))) => a,
         Ok(Some(Err(e))) => {
-            tracing::debug!(scene = %scene.name, error = %e, "ws auth failed");
+            tracing::debug!(scene = %name, error = %e, "ws auth failed");
             let _ = sink.close().await;
             return;
         }
         _ => {
-            tracing::debug!(scene = %scene.name, "ws auth missing or timed out");
+            tracing::debug!(scene = %name, "ws auth missing or timed out");
             let _ = sink.close().await;
             return;
         }
@@ -190,12 +227,12 @@ async fn handle_socket(
     let now = chrono::Utc::now().naive_utc();
     // Resolve authority without a secret first. Store failures close below, and a
     // world that changes to shared-secret access cannot skip its attempt budget.
-    let mut admission = admit(state, &scene, &authed.signer, None, None, now).await;
+    let mut admission = admit(state, &identity, &authed.signer, None, None, now).await;
     if matches!(admission, Err(AdmissionRefused::InvalidSecret))
         || (matches!(admission, Err(AdmissionRefused::Undetermined(_)))
             && authed.presented_secret().is_some())
     {
-        let SceneKey::World(world) = &scene.identity.key else {
+        let SceneKey::World(world) = &identity.key else {
             let _ = sink.close().await;
             return;
         };
@@ -212,29 +249,52 @@ async fn handle_socket(
                 return;
             }
         };
+        let world_throttle = crate::comms::gatekeeper::admission::world_mint::SecretThrottle {
+            subject: WORLD_SECRET_SUBJECT,
+            max_attempts: WORLD_SECRET_MAX_ATTEMPTS,
+            ..throttle
+        };
+        let world_reservation = match world_throttle.reserve(now).await {
+            Ok(Some(reservation)) => reservation,
+            _ => {
+                tracing::info!(scene = %name, "world-wide shared-secret attempt budget spent");
+                throttle.settle(false, reservation).await;
+                let _ = sink.close().await;
+                return;
+            }
+        };
         admission = admit(
             state,
-            &scene,
+            &identity,
             &authed.signer,
             authed.presented_secret(),
             None,
             now,
         )
         .await;
-        throttle
-            .settle(
-                matches!(admission, Err(AdmissionRefused::InvalidSecret)),
-                reservation,
-            )
-            .await;
+        let invalid = matches!(admission, Err(AdmissionRefused::InvalidSecret));
+        throttle.settle(invalid, reservation).await;
+        world_throttle.settle(invalid, world_reservation).await;
     }
     let grant = match admission {
         Ok(grant) => grant,
         Err(reason) => {
-            tracing::info!(scene = %scene.name, address = %authed.signer, %reason, "ws admission refused");
+            tracing::info!(scene = %name, address = %authed.signer, %reason, "ws admission refused");
             let _ = sink.close().await;
             return;
         }
+    };
+
+    let scene = match target {
+        Target::Hosted(scene) => scene,
+        Target::Autoload(identity) => match state.autoload(&identity.key).await {
+            Ok(scene) => scene,
+            Err(e) => {
+                tracing::info!(scene = %name, error = %e, "autoload refused");
+                let _ = sink.close().await;
+                return;
+            }
+        },
     };
 
     let (tx, mut rx) = mpsc::channel::<Vec<u8>>(state.settings.limits.client_outbound_max.max(1));

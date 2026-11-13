@@ -1947,6 +1947,7 @@ async fn worlds_states(
                 max_scenes: config.worlds.scene_host_max_scenes,
                 autoload: config.worlds.scene_host_autoload,
                 sweep_interval_secs: config.worlds.scene_host_sweep_interval_secs,
+                idle_unload_secs: config.worlds.scene_host_idle_unload_secs,
             },
             http_client,
         )

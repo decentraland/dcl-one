@@ -82,6 +82,9 @@ pub struct Scene {
     pub runtime: Arc<dyn SceneRuntime>,
     clients: DashMap<u32, Arc<Client>>,
 
+    /// When the last client left (or the scene loaded with none).
+    empty_since: Mutex<Option<std::time::Instant>>,
+
     renewal: Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
 
@@ -101,6 +104,7 @@ impl Scene {
             identity,
             runtime,
             clients: DashMap::new(),
+            empty_since: Mutex::new(Some(std::time::Instant::now())),
             renewal: Mutex::new(renewal),
         }
     }
@@ -111,6 +115,14 @@ impl Scene {
 
     pub fn client_count(&self) -> usize {
         self.clients.len()
+    }
+
+    /// How long the scene has had no clients, `None` while any is connected.
+    pub fn idle_for(&self) -> Option<std::time::Duration> {
+        if !self.clients.is_empty() {
+            return None;
+        }
+        self.empty_since.lock().map(|since| since.elapsed())
     }
 
     /// Every connected client, in index order.
@@ -155,6 +167,7 @@ impl Scene {
             grant,
         });
         self.clients.insert(index, Arc::clone(&client));
+        *self.empty_since.lock() = None;
         (client, init)
     }
 
@@ -176,6 +189,11 @@ impl Scene {
     pub fn remove_client(&self, index: u32) {
         if let Some((_, client)) = self.clients.remove(&index) {
             client.cancel.cancel();
+        }
+        if self.clients.is_empty() {
+            self.empty_since
+                .lock()
+                .get_or_insert_with(std::time::Instant::now);
         }
 
         for body in self.runtime.on_client_close(index) {
