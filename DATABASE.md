@@ -1573,11 +1573,10 @@ catalog rows, and the bootstrap seed reaches only new databases.
    `BADGES_PUBLIC_ASSET_BASE_URL` names (upstream's by default), or mirror it
    into `BADGES_ASSETS_DIR` under the same relative paths when the base is
    `<node>/badges/assets`.
-3. `PATCH /badges/badges/{id}` `{"published": true}`. The badge is
-   awardable, and listed only once this build can grant it, as upstream
-   serves it: an evaluator, a backfill import or a presence configuration
-   (`social.presence_badges`). An active badge without one is left out of
-   every read route and named in a warning at startup.
+3. `PATCH /badges/badges/{id}` `{"published": true}`. The badge is listed and
+   awardable. An active badge with no evaluator, backfill import or presence
+   configuration (`social.presence_badges`) is named in a warning at startup,
+   since only console grants award it.
 4. Grant it per wallet with the console grant (`POST
    /badges/users/{address}/badges/{id}`), the one caller of `apply_progress`.
 

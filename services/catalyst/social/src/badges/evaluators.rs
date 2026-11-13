@@ -78,8 +78,7 @@ pub fn tier_grant(badge_id: &str) -> TierGrant {
 
 /// Upstream's `BADGE_EVALUATORS` rule: a badge this build can grant, through
 /// an evaluator here or a backfill import. A published badge that is neither
-/// (nor archived, nor presence-configured) was published ahead of its code
-/// and is not served.
+/// (nor archived, nor presence-configured) is named in a startup warning.
 pub fn has_evaluator(badge_id: &str) -> bool {
     EVALUATED.contains(&badge_id)
         || backfill::kind(badge_id).is_some_and(|k| k != Kind::Unsupported)

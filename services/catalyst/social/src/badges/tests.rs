@@ -888,7 +888,6 @@ async fn the_asset_base_resolves_relative_and_legacy_paths() {
     };
     let pool = state.badges.pool().clone();
     let badge = own_badge(&pool, 1).await;
-    configure_presence(&pool, &badge).await;
     sqlx::query(
         "UPDATE social.badge_definitions SET assets = jsonb_build_object('2d', jsonb_build_object('normal', \
          'https://badges.decentraland.org/assets/' || id || '/2d/normal.png')) WHERE id = $1",
@@ -1339,13 +1338,6 @@ async fn a_single_badge_is_created_unpublished_then_published_and_awarded() {
     .await;
     assert_eq!(status, StatusCode::OK, "{resp}");
     assert!(resp["data"]["badge"]["publishedAt"].is_i64());
-    let (status, _) = get(app(state.clone()), &uri).await;
-    assert_eq!(
-        status,
-        StatusCode::NOT_FOUND,
-        "published ahead of its code: not served"
-    );
-    configure_presence(&pool, &id).await;
     let (status, resp) = get(app(state.clone()), &uri).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(
@@ -1794,7 +1786,7 @@ async fn a_write_achieves_the_tiers_its_grant_allows() {
 }
 
 #[tokio::test]
-async fn a_badge_published_ahead_of_its_code_is_not_served() {
+async fn a_badge_published_ahead_of_its_code_is_served_and_warned() {
     let Some(state) = state(Settings::default()).await else {
         return;
     };
@@ -1827,10 +1819,8 @@ async fn a_badge_published_ahead_of_its_code_is_not_served() {
         }
     };
 
-    assert_eq!(
-        served(state.clone()).await,
-        (false, StatusCode::NOT_FOUND, false)
-    );
+    // served so admin grants stay visible; only the startup check names it
+    assert_eq!(served(state.clone()).await, (true, StatusCode::OK, true));
     assert!(
         state
             .badges
@@ -1851,7 +1841,14 @@ async fn a_badge_published_ahead_of_its_code_is_not_served() {
 
     // a presence configuration evaluates it
     configure_presence(&pool, &id).await;
-    assert_eq!(served(state.clone()).await, (true, StatusCode::OK, true));
+    assert!(
+        !state
+            .badges
+            .warn_ahead_of_code()
+            .await
+            .unwrap()
+            .contains(&id)
+    );
     sqlx::query("DELETE FROM social.presence_badges WHERE badge_id = $1")
         .bind(&id)
         .execute(&pool)
