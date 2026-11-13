@@ -98,7 +98,7 @@ function foundationTokens(collections: TokenCollection[], excluded: readonly str
   )
 }
 
-async function writeReviewManifest(app: App, root?: string) {
+async function createReviewManifest(app: App) {
   const source = app.createSource('snapshot')
   const { components: reviewed, strokeWidths } = await reviewComponents(source, app.config)
   // The gallery publishes no Figma imagery: it says, per component, how many image fills its generated
@@ -120,9 +120,6 @@ async function writeReviewManifest(app: App, root?: string) {
     source.getSyncState?.()
   ])
   const tokens = foundationTokens(collections, app.config.excludedPrimitives)
-  const reviewRoot = root ? path.resolve(app.cwd, root) : path.resolve(app.resolveOutDir(), '../..')
-  const directory = path.join(reviewRoot, 'src/review')
-  await mkdir(directory, { recursive: true })
   const manifest = {
     components,
     pages: syncState?.pages ?? [],
@@ -145,14 +142,25 @@ async function writeReviewManifest(app: App, root?: string) {
       effects: { ready: false, status: 'Disabled in Figma. Existing captured effects are frozen.' }
     }
   }
+  return manifest
+}
+
+async function writeReviewManifest(app: App, root?: string) {
+  const manifest = await createReviewManifest(app)
+  const reviewRoot = root ? path.resolve(app.cwd, root) : path.resolve(app.resolveOutDir(), '../..')
+  const directory = path.join(reviewRoot, 'src/review')
+  await mkdir(directory, { recursive: true })
   await writeFile(path.join(directory, 'catalog.json'), JSON.stringify(manifest, null, 2) + '\n')
   return {
-    components: components.length,
-    variants: components.reduce((count, component) => count + component.variants.length, 0),
-    tokens: tokens.length,
-    textStyles: textStyles.length,
-    icons: icons.length
+    components: manifest.components.length,
+    variants: manifest.components.reduce(
+      (count, component) => count + component.variants.length,
+      0
+    ),
+    tokens: manifest.foundations.tokens.length,
+    textStyles: manifest.foundations.textStyles.length,
+    icons: manifest.foundations.icons.length
   }
 }
 
-export { foundationTokens, reviewComponents, writeReviewManifest }
+export { foundationTokens, reviewComponents, createReviewManifest, writeReviewManifest }
