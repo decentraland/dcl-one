@@ -335,7 +335,7 @@ def client(args):
                         headers={"X-Forwarded-For": f"198.51.100.{i + 1}"})[0] for i in range(8)]
     assert_budget(statuses, 3)
     print("Real-nginx storage read, write and trusted ceilings passed.", flush=True)
-    # Worlds reads are not limited on either mount; writes and admin calls keep a budget,
+    # Worlds reads are not limited on either mount; writes keep a budget,
     # and a non-worlds read still has the server-wide one.
     for i, (path, vhost) in enumerate([("/worlds-content-server/status", "example.test"),
                                        ("/world/w.dcl.eth/about", "worlds.example.test"),
@@ -344,12 +344,15 @@ def client(args):
                             headers={"X-Forwarded-For": f"198.51.100.{81 + i}"})[0] for _ in range(8)]
         assert statuses == [200] * 8, ("worlds read", path, vhost, statuses)
     for i, (method, path) in enumerate([("PUT", "/worlds-content-server/world/w.dcl.eth/permissions/deployment/0xa"),
-                                        ("GET", "/worlds-content-server/admin/worlds"),
                                         ("GET", "/about")]):
         statuses = [request(rate_public, path, method=method, body=b"{}" if method == "PUT" else None,
                             headers={"X-Forwarded-For": f"198.51.100.{91 + i}"})[0] for _ in range(6)]
         assert_budget(statuses, 3)
-    print("Real-nginx worlds reads are unlimited; worlds writes, admin calls and other reads keep budgets.", flush=True)
+    # Worlds admin calls are operator paths: a public client is refused before any budget.
+    statuses = [request(rate_public, "/worlds-content-server/admin/worlds",
+                        headers={"X-Forwarded-For": "198.51.100.99"})[0] for _ in range(6)]
+    assert statuses == [403] * 6, ("worlds admin", statuses)
+    print("Real-nginx worlds reads are unlimited; worlds writes and other reads keep budgets; admin calls are gated.", flush=True)
 
 
 def rate_fixture(args):
