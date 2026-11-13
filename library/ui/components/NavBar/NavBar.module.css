@@ -2,6 +2,21 @@
 
 /* Breakpoints are the foundations' (layout.ts): tablet 768px, desktop 1024px. */
 @layer dcl.components {
+  .frame {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .root[data-menu-open] > .start,
+  .root[data-menu-open] > .end {
+    position: relative;
+    z-index: 11;
+  }
+
+  .menuButton[aria-expanded='true'] > svg:first-child {
+    display: none;
+  }
+
   .root {
     box-sizing: border-box;
     position: relative;
@@ -318,9 +333,9 @@
   }
 
   .backdrop {
-    position: absolute;
+    position: fixed;
     inset: 0;
-    background: var(--dcl-bg-backdrop);
+    background: transparent;
   }
 
   .drawer {
@@ -338,15 +353,22 @@
     color: var(--dcl-text-primary);
   }
 
-  .drawerHeader {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
+  @keyframes drawerReveal {
+    from {
+      clip-path: inset(0 0 100% 0);
+    }
+    to {
+      clip-path: inset(0);
+    }
   }
 
-  .drawerTitle {
-    composes: text68656164696e672f35 from '../../foundations/typography/text-styles.module.css';
-    margin: 0;
+  @media (prefers-reduced-motion: no-preference) {
+    .drawer {
+      animation: drawerReveal 180ms ease-out both;
+    }
+    .drawer[data-entry-revealed] {
+      animation: none;
+    }
   }
 
   .drawerSections,
@@ -385,21 +407,8 @@
     border-top: 1px solid var(--dcl-border-subtle);
   }
 
-  .drawerIdentity {
-    display: flex;
-    align-items: center;
-    gap: var(--dcl-space-12);
-    min-width: 0;
-  }
-
   .drawerAccount .balances {
     flex-wrap: wrap;
-  }
-
-  .drawerAccount .menuList {
-    margin: 0;
-    padding: 0;
-    border: 0;
   }
 
   .visuallyHidden {
