@@ -68,11 +68,13 @@ pub(crate) enum FiledUnder<'a> {
 
 /// Whether a cached entry's bytes are not what its name vouches for, and so may be dropped. An
 /// entry under a name that is no hash was not filed by the cache (a scene can name any file in the
-/// cache folder that way) and is kept.
+/// cache folder that way) and is kept. So is an entry whose bytes match its name in any letter
+/// case, since a case-insensitive file system opens it under any spelling.
 pub(crate) fn holds_other_bytes(filed: FiledUnder, bytes: &[u8]) -> bool {
     match filed {
         FiledUnder::Hash(hash) => {
-            content_hash::is_hash_name(hash) && !content_hash::matches_content_hash(hash, bytes)
+            content_hash::is_hash_name(hash)
+                && !content_hash::matches_content_hash_ignoring_case(hash, bytes)
         }
         FiledUnder::Url => true,
     }

@@ -1,6 +1,6 @@
 use super::*;
 use crate::{
-    content_hash::raw_cid,
+    content_hash::{raw_cid, sha256_cid_v0},
     ipfs_path::{IpfsPath, IpfsType},
     ContentMap, EndpointConfig, IpfsEntity, RealmConfig, ServerAbout,
 };
@@ -269,6 +269,42 @@ fn an_entry_is_kept_while_its_bytes_match_its_hash_or_its_name_is_no_hash() {
 }
 
 #[test]
+fn a_hash_in_another_letter_case_never_drops_the_verified_entry() {
+    let raw = raw_cid(b"png");
+    let flipped = flip_case_after(&raw, 7);
+    assert_ne!(flipped, raw);
+    assert!(!holds_other_bytes(FiledUnder::Hash(&flipped), b"png"));
+    let file_cid_spelling = raw.replacen("bafkrei", "bafKrei", 1);
+    assert!(!holds_other_bytes(
+        FiledUnder::Hash(&file_cid_spelling),
+        b"png"
+    ));
+    assert!(holds_other_bytes(FiledUnder::Hash(&raw), b"DDS processed"));
+
+    let qm = sha256_cid_v0(b"png");
+    let flipped = flip_case_after(&qm, 2);
+    assert_ne!(flipped, qm);
+    assert!(!holds_other_bytes(FiledUnder::Hash(&flipped), b"png"));
+    assert!(!holds_other_bytes(FiledUnder::Hash(&qm), b"png"));
+    assert!(holds_other_bytes(FiledUnder::Hash(&qm), b"DDS processed"));
+}
+
+// flips the case of the first letter at or after `from`
+fn flip_case_after(name: &str, from: usize) -> String {
+    let at = name
+        .char_indices()
+        .find(|(i, c)| *i >= from && c.is_ascii_alphabetic())
+        .map(|(i, _)| i)
+        .unwrap();
+    let mut flipped = name.to_owned();
+    flipped[at..=at].make_ascii_uppercase();
+    if flipped == name {
+        flipped[at..=at].make_ascii_lowercase();
+    }
+    flipped
+}
+
+#[test]
 fn each_entry_is_checked_once_and_the_session_holds_at_most_1024() {
     let heals = CacheHeals::default();
     assert!(heals.begin("a"));
@@ -339,6 +375,20 @@ async fn a_name_that_is_no_hash_never_drops_a_cache_file() {
     );
     assert_eq!(std::fs::read(dir.join(name)).unwrap(), b"imposter bytes");
     assert!(!io.cache_entry_dropped(name));
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[tokio::test]
+async fn a_verified_entry_survives_a_hash_spelled_in_another_case() {
+    let (io, dir) = io_with_cache("other-case");
+    let hash = raw_cid(b"original");
+    let flipped = flip_case_after(&hash, 7);
+    scene_with(&io, "https://content.invalid", "a.png", &flipped).await;
+    std::fs::write(dir.join(&hash), b"original").unwrap();
+
+    // the file is found under the other spelling only where the file system ignores case
+    io.drop_bad_cached_entry(&content_path("a.png")).await;
+    assert_eq!(std::fs::read(dir.join(&hash)).unwrap(), b"original");
     std::fs::remove_dir_all(dir).unwrap();
 }
 
