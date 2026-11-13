@@ -31,7 +31,7 @@ separate from the current runtime described here.
 | `gatekeeper::admission` | `serve` | scene, server-scene, world (`world_mint`) and island tokens; the Pulse room authority (`relay_authority`) |
 | `gatekeeper::moderation`, `removal` | `serve` | bans, warnings, scene admins, durable ban kicks, disabled-place cleanup, room metadata repair |
 | `gatekeeper::voice`, `streaming`, `streaming_jobs` | `serve` | private and community voice; stream access, LiveKit Ingress, streaming expiry; `/cast/*` answers 501 |
-| `gatekeeper::webhook`, `events` | `serve` | the one LiveKit webhook; a typed nine-field `RoomEvent` to `RoomEventSink` |
+| `gatekeeper::webhook`, `events` | `serve` | the one LiveKit webhook; a typed nine-field `RoomEvent` to `RoomEventSink` and `RoomEventStore` |
 | `gatekeeper::bus` | `serve` | `serve`'s one NATS link |
 | `presence`, `topology` | every `serve` | `/live-data`, `/wallet/{w}/connected-world`, capacity counts from LiveKit occupancy; social online from Pulse's topology |
 | `protocol` | all | Pulse proto, legacy archipelago, `bus`, `room_authority`: the only module the services share |
@@ -53,6 +53,7 @@ player report routes, `POST /auth/challenge`, `/auth/livekit-token` and
 | `interfaces::SocialDirectory` | `social::comms_directory::Directory` | privacy, friendships, community roles; notices inserted on the caller's transaction |
 | `interfaces::NameOwnerReader` | shop `MarketplaceState` | name ownership for Admin Toolkit targets |
 | `gatekeeper::events::RoomEventSink` | `worlds::core::CoreState` | worlds' join/leave access log |
+| `gatekeeper::events::RoomEventStore` | `social::badges::presence::EventSink` | every verified join/leave, stored before the webhook answers (503 on failure) |
 | `stats::http::MetricsMatcher` | root `metrics_matcher` | fallible configured route evaluation on the pinned embedded engine; one async permit retained inside each submitted blocking operation |
 
 | Comms offers | Consumers |
@@ -122,8 +123,9 @@ successful view, and an outage retains the last complete snapshot without public
 Social keeps its existing topology subscription and LiveKit keeps occupancy authority.
 Hot-scene HTTP and archive enrichment use serve's existing content pool and shared
 content denylist, preserving selected local document order before projection,
-stable count sorting and top-100 selection. `CONTENT_URL` supplies thumbnail
-construction; local SQL determines the corpus and dependency failures. The
+stable count sorting and top-100 selection. Thumbnails name `CONTENT_URL`, or
+this node's own `/content` when it is unset; local SQL determines the corpus and
+dependency failures. The
 [local content source ADR](../../../../docs/adr/2026-11-12-stats-local-content-source.md)
 records the accepted source semantics and preserved rendering and snapshot obligations.
 The discovery subscription and original frame validation remain for transport compatibility;

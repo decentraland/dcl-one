@@ -197,9 +197,9 @@ fn openapi_spec() -> Value {
                     "tags": ["images"],
                     "operationId": "get_wearable_images",
                     "parameters": [
-                        { "name": "item", "in": "path", "required": true, "description": "The item id, as `<contract>-<itemId>`", "schema": { "type": "string" } },
                         { "name": "offset", "in": "query", "required": false, "schema": { "type": "integer", "format": "int64", "minimum": 0 } },
-                        { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "format": "int64", "minimum": 0 } }
+                        { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "format": "int64", "minimum": 0 } },
+                        { "name": "item", "in": "path", "required": true, "schema": { "type": "string" } }
                     ],
                     "responses": {
                         "200": { "description": "Public images of people wearing the item", "content": { "application/json": { "schema": ref_to("GetWearableImagesResponse") } } },
@@ -307,13 +307,14 @@ fn openapi_spec() -> Value {
                     }
                 },
                 "UploadResponse": {
-                    "type": "object",
-                    "required": ["image", "currentImages", "maxImages"],
-                    "properties": {
-                        "image": ref_to("Image"),
-                        "currentImages": { "type": "integer", "format": "int64", "minimum": 0 },
-                        "maxImages": { "type": "integer", "format": "int64", "minimum": 0 }
-                    }
+                    "allOf": [
+                        ref_to("UserDataResponse"),
+                        {
+                            "type": "object",
+                            "required": ["image"],
+                            "properties": { "image": ref_to("Image") }
+                        }
+                    ]
                 },
                 "UpdateVisibility": {
                     "type": "object",
@@ -338,30 +339,34 @@ fn openapi_spec() -> Value {
                     }
                 },
                 "GetImagesResponse": {
-                    "type": "object",
-                    "required": ["images", "currentImages", "maxImages"],
-                    "properties": {
-                        "images": { "type": "array", "items": ref_to("Image") },
-                        "currentImages": { "type": "integer", "format": "int64", "minimum": 0 },
-                        "maxImages": { "type": "integer", "format": "int64", "minimum": 0 }
-                    }
+                    "allOf": [
+                        ref_to("UserDataResponse"),
+                        {
+                            "type": "object",
+                            "required": ["images"],
+                            "properties": { "images": { "type": "array", "items": ref_to("Image") } }
+                        }
+                    ]
                 },
                 "GetGalleryImagesResponse": {
-                    "type": "object",
-                    "required": ["images", "currentImages", "maxImages"],
-                    "properties": {
-                        "images": { "type": "array", "items": ref_to("GalleryImage") },
-                        "currentImages": { "type": "integer", "format": "int64", "minimum": 0 },
-                        "maxImages": { "type": "integer", "format": "int64", "minimum": 0 }
-                    }
+                    "allOf": [
+                        ref_to("UserDataResponse"),
+                        {
+                            "type": "object",
+                            "required": ["images"],
+                            "properties": { "images": { "type": "array", "items": ref_to("GalleryImage") } }
+                        }
+                    ]
                 },
                 "GetPlaceImagesResponse": {
-                    "type": "object",
-                    "required": ["images", "maxImages"],
-                    "properties": {
-                        "images": { "type": "array", "items": ref_to("GalleryImage") },
-                        "maxImages": { "type": "integer", "format": "int64", "minimum": 0 }
-                    }
+                    "allOf": [
+                        ref_to("PlaceDataResponse"),
+                        {
+                            "type": "object",
+                            "required": ["images"],
+                            "properties": { "images": { "type": "array", "items": ref_to("GalleryImage") } }
+                        }
+                    ]
                 },
                 "GetMultiplePlacesImagesBody": {
                     "type": "object",
@@ -371,18 +376,24 @@ fn openapi_spec() -> Value {
                     }
                 },
                 "GetMultiplePlacesImagesResponse": {
-                    "type": "object",
-                    "required": ["images", "maxImages"],
-                    "properties": {
-                        "images": { "type": "array", "items": ref_to("GalleryImageWithPlace") },
-                        "maxImages": { "type": "integer", "format": "int64", "minimum": 0 }
-                    }
+                    "allOf": [
+                        ref_to("PlaceDataResponse"),
+                        {
+                            "type": "object",
+                            "required": ["images"],
+                            "properties": { "images": { "type": "array", "items": ref_to("GalleryImageWithPlace") } }
+                        }
+                    ]
                 },
                 "GetWearableImagesResponse": {
                     "type": "object",
                     "required": ["images", "maxImages"],
                     "properties": {
-                        "images": { "type": "array", "items": ref_to("Image") },
+                        "images": {
+                            "type": "array",
+                            "items": ref_to("Image"),
+                            "description": "Full images rather than gallery rows: a consumer showing \"people wearing this\" needs who is in\nthe shot and where it was taken, and asking for the metadata of every photo it just received\nwould be one request per photo."
+                        },
                         "maxImages": { "type": "integer", "format": "int64", "minimum": 0 }
                     }
                 },
@@ -416,6 +427,29 @@ fn openapi_spec() -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The production document (`docs-openapi`, 2026-09-25) with what
+    /// upstream 3e8bd0b added after it (#61: `User.screenRect` and the
+    /// `ScreenRect` component) and the one component it references but never
+    /// defines (`GalleryImageWithPlace`).
+    #[test]
+    fn the_spec_is_the_captured_one_plus_the_later_upstream_screen_rect() {
+        let path = format!(
+            "{}/services/catalyst/tests/fixtures/conformance/social/camera-reel/docs-openapi.json",
+            env!("DCL_ONE_ROOT")
+        );
+        let captured: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        let spec = openapi_spec();
+        let ours = &spec["components"]["schemas"];
+        let mut expected = captured["response"]["body_json"].clone();
+        expected["info"]["version"] = json!(env!("CARGO_PKG_VERSION"));
+        let schemas = &mut expected["components"]["schemas"];
+        assert!(schemas.get("GalleryImageWithPlace").is_none());
+        schemas["GalleryImageWithPlace"] = ours["GalleryImageWithPlace"].clone();
+        schemas["ScreenRect"] = ours["ScreenRect"].clone();
+        schemas["User"]["properties"]["screenRect"] = ref_to("ScreenRect");
+        assert_eq!(spec, expected);
+    }
 
     #[test]
     fn the_spec_documents_the_wire_and_every_path_parameter() {
