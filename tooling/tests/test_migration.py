@@ -21,8 +21,10 @@ import urllib.error
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
-if __name__ == "__main__":
-    sys.modules["tooling.tests.test_migration"] = sys.modules[__name__]
+# Discovery imports this file as `test_migration`; mixins use its package name.
+# Both entrypoints must share the harness and its dynamically loaded exception types.
+sys.modules["tooling.tests.test_migration"] = sys.modules[__name__]
+sys.modules["test_migration"] = sys.modules[__name__]
 
 from tooling.tests.migration_comms_cases import CommsMigrationCases
 from tooling.tests.migration_social_cases import SocialMigrationCases
@@ -92,6 +94,28 @@ def write_source(root, files=FILES, name='toy'):
     for file, text in files.items():
         (directory / file).write_text(text)
     return directory
+
+
+class HarnessImports(unittest.TestCase):
+    def test_package_import_reuses_the_running_harness_and_exception_type(self):
+        from tooling.tests import test_migration as harness
+        self.assertIs(harness, sys.modules[__name__])
+        self.assertIs(harness.migrate.MigrationError, migrate.MigrationError)
+
+    def test_both_import_orders_share_one_harness_in_a_fresh_process(self):
+        script = """
+import importlib
+import sys
+sys.path.insert(0, 'tooling/tests')
+first = importlib.import_module(sys.argv[1])
+second = importlib.import_module(sys.argv[2])
+assert first is second
+assert first.migrate.MigrationError is second.migrate.MigrationError
+"""
+        names = ('test_migration', 'tooling.tests.test_migration')
+        for order in (names, names[::-1]):
+            with self.subTest(first=order[0]):
+                subprocess.run([sys.executable, '-c', script, *order], cwd=ROOT, check=True)
 
 
 class Manifests(unittest.TestCase):

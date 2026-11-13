@@ -1,0 +1,74 @@
+{
+  "version": 2,
+  "source": "places",
+  "adapter": "places_hybrid_commands_v1",
+  "direction": "production_to_dcl_one",
+  "authority": {
+    "writes": "production",
+    "jobs": "production",
+    "external_effects": "production"
+  },
+  "activation": "rehearsal_only",
+  "scope": {
+    "entity_ids": "Explicit immutable UUID allowlist supplied to install-source; gateway paths must match",
+    "catalogue": "Existing canonical Genesis places; no worlds or mirrored target identities",
+    "command": {
+      "method": "PATCH",
+      "operation_header": "x-dcl-operation-id",
+      "actor": "verified source authentication",
+      "paths": [
+        "/api/places/{uuid}/favorites",
+        "/api/places/{uuid}/likes"
+      ],
+      "identity": "Stable caller ID by default; opt-in gateway per-attempt IDs for these setters only"
+    },
+    "native_interactions": [
+      "favorites",
+      "likes",
+      "dislikes",
+      "vote_withdrawal"
+    ],
+    "residual": {
+      "producer": "places_poi_category_update_v1",
+      "field": "POI membership only",
+      "target": "existing strictly owned Genesis place categories and raw.categories"
+    }
+  },
+  "classification": {
+    "transaction_with_atomic_source_command": "native_replay_then_verify_receipt_without_domain_reapply",
+    "transaction_without_command": "only_approved_poi_producer_result_else_block",
+    "unrecognized_mapping_or_conflict": "block_ordered_head",
+    "truncate": "reject_at_source_while_capture_installed",
+    "ddl": "operator_change_requires_stop_and_compatibility_review",
+    "residual_database_sync": "poi_membership_only"
+  },
+  "dependencies": [
+    "frozen_or_reviewed_catalogue",
+    "consistent_interaction_and_poi_baseline"
+  ],
+  "excluded": [
+    "shop",
+    "credits",
+    "marketplace_favorites",
+    "worlds",
+    "social",
+    "voice",
+    "notifications",
+    "external_providers",
+    "likes_continuous_sync",
+    "catalogue_continuous_sync",
+    "events_schedules",
+    "social_settings"
+  ],
+  "unverified_gates": [
+    "deployed_source_writer_inventory_and_replica_configuration",
+    "production_source_lock_contention_budget",
+    "client_operation_identity_and_signed_gateway_aliases",
+    "public_read_response_compatibility",
+    "actual_scheduled_job_owned_dataset",
+    "permission_and_notification_workflow",
+    "failover_restore_retention_and_multi_day_soak"
+  ],
+  "baseline": "one_time_consistent_interaction_and_poi_snapshot_before_activation",
+  "capture_control_version": 4
+}

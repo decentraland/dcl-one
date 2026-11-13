@@ -1016,7 +1016,7 @@ mod tests {
 
     #[tokio::test]
     async fn owner_pointer_opt_out_and_world_names_keep_their_independent_meanings() {
-        let Some(pool) = crate::db::scratch::pool(4).await else {
+        let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
             return;
         };
         let token = uuid::Uuid::new_v4().simple().to_string();

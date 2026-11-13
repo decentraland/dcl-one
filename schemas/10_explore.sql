@@ -124,6 +124,10 @@ CREATE TABLE explore.place (
 CREATE INDEX place_world_name_col_idx ON explore.place (lower(world_name));
 CREATE INDEX place_fetched_at_idx ON explore.place (fetched_at);
 CREATE INDEX place_positions_path_gin ON explore.place USING gin ((raw->'positions') jsonb_path_ops);
+-- A bounded content-derive page finds cached scene metadata by immutable deployment,
+-- because the public place UUID survives deployment changes and imported UUIDs.
+CREATE INDEX place_content_deployment_idx ON explore.place ((raw->>'deployment_id'))
+    WHERE raw->>'source' = 'content';
 
 -- No index on base_position: the destinations feed probes road_positions by
 -- it (rp.position = base_position, served by road_positions_pkey), the ranking

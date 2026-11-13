@@ -10,6 +10,7 @@ pub mod ops;
 pub mod presence;
 pub use catalyst_db::schema_migrate;
 pub mod index;
+pub mod migration_follower;
 pub mod serve;
 
 pub use catalyst_builder as builder;

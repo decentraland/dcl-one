@@ -1559,3 +1559,25 @@ any wallet has a row of it. Each upsert (with the definition it wrote) and
 each publication or archive transition appends a row to
 `social.badge_catalog_audit`; `badge_admin_audit` keeps per-wallet grants and
 revokes, whose `address` a catalog write does not have.
+
+## Removable hybrid migration coordinator
+
+`services/migration-sync` owns source acceptance evidence, inboxes, stream progress
+and native execution receipts. A stream row lock serializes replay. Source acceptance
+and target native mutations each commit with their own durable receipt. Progress
+advances only after verified execution; unreceipted mutations block without changing
+business rows. The one-time favorite/vote/POI baseline is pre-activation migration, not a
+continuous interaction row-copy mapping.
+
+Duplicate compatible operations first. Any future residual DB mapping must identify
+its non-replayable writer/result and preserve mixed-transaction ordering without
+reapplying native results. The only residual mapping is the POI job membership bit: it preserves unrelated
+category/raw fields and shares ordering with accepted favorite/vote commands.
+Untyped or unmarked POI changes block; no broad catalogue adapter is enabled.
+The previous broad likes/catalogue/schedules/settings metadata was removed.
+Never reset or downgrade an existing rehearsal database to fit these changes.
+
+Source capture uses an explicit local transactional outbox with read-only polling;
+source DDL/grants and writer fencing are operator work. Target jobs/providers stay
+off. Production load, history retention, public API compatibility and effect handover
+remain unverified. See [the decision summary](sync-migration/README.md).

@@ -12,6 +12,8 @@ let
       (backend + /Cargo.toml)
       (backend + /Cargo.lock)
       (backend + /src)
+      # Independent workspace member; Cargo resolves its manifest even for the API binary.
+      (root + /services/migration-sync)
       (root + /schemas)
       # Embedded by the events fallback-image route.
       (root + /apps/ui3/public/assets/event-default.webp)

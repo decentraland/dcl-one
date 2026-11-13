@@ -473,6 +473,19 @@ pub async fn set_favorite_in(
     favorite: bool,
     user_activity: f64,
 ) -> Result<(), ApiError> {
+    set_favorite_at_in(tx, entity_id, user, favorite, user_activity, now()).await
+}
+
+/// The native favorite transition with an explicit accepted-source clock for
+/// ordered migration replay. Existing requests retain the local clock above.
+pub async fn set_favorite_at_in(
+    tx: &mut PgConnection,
+    entity_id: &str,
+    user: &str,
+    favorite: bool,
+    user_activity: f64,
+    created_at: chrono::NaiveDateTime,
+) -> Result<(), ApiError> {
     let user = user.to_lowercase();
     lock_counts(&mut *tx, entity_id).await?;
     if favorite {
@@ -482,7 +495,7 @@ pub async fn set_favorite_in(
             .bind(&user)
             .bind(entity_id)
             .bind(user_activity)
-            .bind(now())
+            .bind(created_at)
             .execute(&mut *tx)
             .await?;
     } else {
@@ -518,6 +531,19 @@ pub async fn set_like_in(
     like: Option<bool>,
     user_activity: f64,
 ) -> Result<(), ApiError> {
+    set_like_at_in(tx, entity_id, user, like, user_activity, now()).await
+}
+
+/// Native vote transition using the accepted source update clock. A no-op vote
+/// preserves its original activity and timestamps, exactly as ordinary requests.
+pub async fn set_like_at_in(
+    tx: &mut PgConnection,
+    entity_id: &str,
+    user: &str,
+    like: Option<bool>,
+    user_activity: f64,
+    timestamp: chrono::NaiveDateTime,
+) -> Result<(), ApiError> {
     let user = user.to_lowercase();
     lock_counts(&mut *tx, entity_id).await?;
     match like {
@@ -536,7 +562,7 @@ pub async fn set_like_in(
             .bind(entity_id)
             .bind(value)
             .bind(user_activity)
-            .bind(now())
+            .bind(timestamp)
             .execute(&mut *tx)
             .await?;
         }

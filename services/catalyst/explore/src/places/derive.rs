@@ -5,7 +5,7 @@
 //! - [`DeriveScope::All`] (`PLACES_DERIVE_FROM_CONTENT` without
 //!   `PLACES_MIRROR_UPSTREAM`, the old production mode): every active scene
 //!   becomes a place row, `raw.source = "content"`, keyed by the UUIDv5 of
-//!   its base parcel so a scene keeps one id across redeployments.
+//!   the creating deployment; matching base/footprint updates retain the existing id.
 //! - [`DeriveScope::Local`] (every other node): only the scenes this node
 //!   accepted itself (`content.local_entities`, not tombstoned), so a local
 //!   deploy appears among the places whether or not the upstream catalogue
@@ -122,7 +122,9 @@ fn creator_categories(tags: &[String]) -> Vec<String> {
     categories
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn derive(
+    entity_id: &str,
     deployer_address: &str,
     pointers: &[String],
     deployed_at: Option<NaiveDateTime>,
@@ -166,10 +168,11 @@ pub fn derive(
     let creator_address = non_empty(Some(deployer_address)).map(|s| s.to_lowercase());
     let owner = creator_address.clone();
     let categories = creator_categories(&tags);
-    let id = super::parcel_place_id(&base);
+    let id = super::identity::new_place_id(None, entity_id)?.to_string();
     let at = deployed_at.map(|d| DateTime::<Utc>::from_naive_utc_and_offset(d, Utc));
     let mut raw = json!({
         "id": id,
+        "deployment_id": entity_id,
         "title": title,
         "description": description,
         "owner": owner,
@@ -268,6 +271,8 @@ const UPSERT: &str = r#"
     LEFT JOIN explore.place_moderation m ON m.place_id = u.id
     LEFT JOIN explore.place_ranking r ON r.place_id = u.id
     ON CONFLICT (id) DO UPDATE SET
+        disabled = CASE WHEN explore.place.raw->>'disabled_reason' IN ('overwritten','undeployment')
+                        THEN EXCLUDED.disabled ELSE explore.place.disabled END,
         base_position   = EXCLUDED.base_position,
         title           = EXCLUDED.title,
         description     = EXCLUDED.description,
@@ -284,12 +289,13 @@ const UPSERT: &str = r#"
             'like_score',           explore.place.raw->'like_score',
             'like_rate',            explore.place.raw->'like_rate',
             'created_at',           explore.place.raw->'created_at',
-            'disabled_at',          explore.place.raw->'disabled_at',
-            'disabled_reason',      explore.place.raw->'disabled_reason'
+            'disabled_at',          CASE WHEN explore.place.raw->>'disabled_reason' NOT IN ('overwritten','undeployment') THEN explore.place.raw->'disabled_at' END,
+            'disabled_reason',      CASE WHEN explore.place.raw->>'disabled_reason' NOT IN ('overwritten','undeployment') THEN explore.place.raw->'disabled_reason' END
         )),
         fetched_at = timezone('UTC', now()),
         origin     = EXCLUDED.origin
     WHERE explore.place.raw->>'source' = 'content'
+       OR (explore.place.origin = 'local' AND explore.place.raw->>'source' = 'places')
     RETURNING id, (xmax = 0) AS inserted
 "#;
 
@@ -561,6 +567,7 @@ async fn run_once_with_storage(
             let local: bool = row.try_get("local").unwrap_or(false);
             let thumb: Option<String> = row.try_get("thumbnail_hash").unwrap_or(None);
             if let Some(place) = derive(
+                &row.try_get::<String, _>("entity_id")?,
                 &deployer,
                 &pointers,
                 deployed_at,
@@ -577,14 +584,14 @@ async fn run_once_with_storage(
                 ));
             }
         }
-        // One primary-key lookup per bounded page. Immutable scene blobs are re-read only
+        // One deployment-identity lookup per bounded page. Immutable scene blobs are re-read only
         // when their deployment or hash changes; a failed read is retried next pass.
         let ids: Vec<&str> = candidates
             .iter()
-            .map(|(place, ..)| place.id.as_str())
+            .map(|(_, entity, ..)| entity.as_str())
             .collect();
         let cached: HashMap<String, Value> = sqlx::query_as::<_, (String, Value)>(
-            "SELECT id, raw FROM explore.place WHERE id = ANY($1) AND raw->>'source' = 'content'",
+            "SELECT raw->>'deployment_id', raw FROM explore.place WHERE raw->>'deployment_id' = ANY($1) AND raw->>'source' = 'content'",
         )
         .bind(&ids)
         .fetch_all(pool)
@@ -595,7 +602,7 @@ async fn run_once_with_storage(
         let mut failed = Vec::new();
         for (mut place, entity, hash, meta) in candidates {
             if let (Some(storage), Some(hash)) = (storage, hash) {
-                let previous = cached.get(&place.id).filter(|raw| {
+                let previous = cached.get(&entity).filter(|raw| {
                     raw["scene_metadata_entity"].as_str() == Some(entity.as_str())
                         && raw["scene_metadata_hash"].as_str() == Some(hash.as_str())
                 });
@@ -614,7 +621,7 @@ async fn run_once_with_storage(
                         }
                         Err(error) => {
                             tracing::warn!(%entity, %hash, %error, "skipping place with unreadable scene metadata");
-                            failed.push(place.id);
+                            failed.extend(positions_of(&place));
                             continue;
                         }
                     }
@@ -628,7 +635,7 @@ async fn run_once_with_storage(
         // Preserve the last usable catalogue row on transient I/O failures; pruning still
         // removes deployments absent from this pass, and failed rows remain due next pass.
         if !failed.is_empty() {
-            sqlx::query("UPDATE explore.place SET fetched_at = timezone('UTC', clock_timestamp()) WHERE id = ANY($1) AND raw->>'source' = 'content'")
+            sqlx::query("UPDATE explore.place SET fetched_at = timezone('UTC', clock_timestamp()) WHERE raw->'positions' ?| $1::text[] AND raw->>'source' = 'content'")
                 .bind(&failed).execute(pool).await?;
         }
         upsert_page(pool, page).await?;
@@ -673,7 +680,89 @@ fn positions_of(p: &DerivedPlace) -> Vec<String> {
 
 /// One transaction per page: a multi-row upsert, one overlap query for the fresh rows,
 /// and one batched curation update. Later duplicates of an id win, as they did row by row.
-async fn upsert_page(pool: &PgPool, page: Vec<DerivedPlace>) -> Result<()> {
+async fn upsert_page(pool: &PgPool, mut page: Vec<DerivedPlace>) -> Result<()> {
+    if page.is_empty() {
+        return Ok(());
+    }
+    let mut tx = pool.begin().await?;
+    // The derivation job is normally single-owner. Serialize identity decisions also
+    // across explicit concurrent rebuilds, before reading their overlap candidates.
+    sqlx::query("SELECT pg_advisory_xact_lock(179322, 1)")
+        .execute(&mut *tx)
+        .await?;
+    type Candidate = (String, String, Vec<String>, Option<NaiveDateTime>);
+    type SlottedCandidate = (i64, String, String, Vec<String>, Option<NaiveDateTime>);
+    let found: Vec<SlottedCandidate> = sqlx::query_as(
+        "SELECT incoming.ordinality, p.id, p.base_position, ARRAY(SELECT jsonb_array_elements_text(p.raw->'positions')), p.deployed_at \
+         FROM unnest($1::jsonb[]) WITH ORDINALITY AS incoming(positions, ordinality) \
+         JOIN explore.place p ON p.raw->'positions' ?| ARRAY(SELECT jsonb_array_elements_text(incoming.positions)) \
+         WHERE p.world IS FALSE AND p.disabled IS FALSE \
+         AND (p.raw->>'source' = 'content' OR (p.origin = 'local' AND p.raw->>'source' = 'places')) \
+         ORDER BY incoming.ordinality, p.id FOR UPDATE OF p")
+        .bind(page.iter().map(|p| json!(positions_of(p))).collect::<Vec<_>>())
+        .fetch_all(&mut *tx).await?;
+    let mut by_slot: HashMap<usize, Vec<Candidate>> = HashMap::new();
+    for (ordinal, id, base, positions, at) in found {
+        by_slot
+            .entry((ordinal - 1) as usize)
+            .or_default()
+            .push((id, base, positions, at));
+    }
+    let mut replaced = Vec::new();
+    let mut minted = Vec::new();
+    for (slot, place) in page.iter_mut().enumerate() {
+        let positions = positions_of(place);
+        let candidates = by_slot.remove(&slot).unwrap_or_default();
+        anyhow::ensure!(
+            !candidates.iter().any(|(_, _, _, at)| at
+                .zip(place.deployed_at)
+                .is_some_and(|(old, new)| old > new)),
+            "place identity overlaps a newer deployment; ordered reconciliation required"
+        );
+        let kept = candidates
+            .iter()
+            .find(|(_, base, _, _)| base == &place.base_position)
+            .or_else(|| {
+                candidates.iter().find(|(_, _, old, _)| {
+                    old.len() == positions.len() && old.iter().all(|p| positions.contains(p))
+                })
+            });
+        if let Some((id, _, _, _)) = kept {
+            place.id.clone_from(id);
+            place.raw["id"] = json!(id);
+        } else {
+            minted.push(place.id.clone());
+        }
+        replaced.extend(
+            candidates
+                .iter()
+                .filter(|(id, ..)| id != &place.id)
+                .map(|(id, ..)| (id.clone(), place.id.clone())),
+        );
+    }
+    if !minted.is_empty() {
+        let conflicts: Vec<String> = sqlx::query_scalar(
+            "SELECT id FROM explore.place WHERE id = ANY($1) \
+             AND (disabled IS FALSE OR COALESCE(raw->>'disabled_reason','') NOT IN ('overwritten','undeployment')) \
+             AND (raw->>'source' = 'content' OR (origin = 'local' AND raw->>'source' = 'places')) FOR UPDATE")
+            .bind(&minted).fetch_all(&mut *tx).await?;
+        anyhow::ensure!(
+            conflicts.is_empty(),
+            "generated place identity already belongs to an active place"
+        );
+    }
+    // A page of current active scenes must not assign the same predecessor to two
+    // distinct deployments. A missed split needs ordered reconciliation, not guessing.
+    let mut bound = HashMap::new();
+    for place in &page {
+        if let Some(previous) = bound.insert(&place.id, &place.raw["deployment_id"]) {
+            anyhow::ensure!(
+                previous == &place.raw["deployment_id"],
+                "multiple active deployments claim one place identity"
+            );
+        }
+    }
+    replaced.retain(|(id, _)| !page.iter().any(|place| &place.id == id));
     let mut slot_of: HashMap<&str, usize> = HashMap::new();
     let mut order: Vec<usize> = Vec::with_capacity(page.len());
     for (i, p) in page.iter().enumerate() {
@@ -689,7 +778,6 @@ async fn upsert_page(pool: &PgPool, page: Vec<DerivedPlace>) -> Result<()> {
     if rows.is_empty() {
         return Ok(());
     }
-    let mut tx = pool.begin().await?;
     let inserted: HashMap<String, bool> = sqlx::query(UPSERT)
         .bind(rows.iter().map(|p| p.id.clone()).collect::<Vec<_>>())
         .bind(
@@ -730,6 +818,10 @@ async fn upsert_page(pool: &PgPool, page: Vec<DerivedPlace>) -> Result<()> {
             )
         })
         .collect();
+    let replaced: Vec<String> = replaced
+        .into_iter()
+        .filter_map(|(old, successor)| inserted.contains_key(&successor).then_some(old))
+        .collect();
     let fresh: Vec<(&DerivedPlace, Vec<String>)> = rows
         .iter()
         .filter(|p| inserted.get(&p.id).copied().unwrap_or(false))
@@ -737,6 +829,10 @@ async fn upsert_page(pool: &PgPool, page: Vec<DerivedPlace>) -> Result<()> {
         .filter(|(_, positions)| !positions.is_empty())
         .collect();
     if fresh.is_empty() {
+        if !replaced.is_empty() {
+            sqlx::query("UPDATE explore.place SET disabled = true, raw = raw || jsonb_build_object('disabled', true, 'disabled_reason', 'overwritten') WHERE id = ANY($1) AND (raw->>'source' = 'content' OR (origin = 'local' AND raw->>'source' = 'places'))")
+            .bind(&replaced).execute(&mut *tx).await?;
+        }
         tx.commit().await?;
         return Ok(());
     }
@@ -816,6 +912,10 @@ async fn upsert_page(pool: &PgPool, page: Vec<DerivedPlace>) -> Result<()> {
             .execute(&mut *tx)
             .await?;
     }
+    if !replaced.is_empty() {
+        sqlx::query("UPDATE explore.place SET disabled = true, raw = raw || jsonb_build_object('disabled', true, 'disabled_reason', 'overwritten') WHERE id = ANY($1) AND (raw->>'source' = 'content' OR (origin = 'local' AND raw->>'source' = 'places'))")
+            .bind(&replaced).execute(&mut *tx).await?;
+    }
     tx.commit().await?;
     Ok(())
 }
@@ -861,9 +961,183 @@ mod tests {
         }})
     }
 
+    #[tokio::test]
+    async fn genesis_identity_keeps_imported_ids_and_mints_only_for_replacements() {
+        let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
+            return;
+        };
+        let legacy = uuid::Uuid::new_v4().to_string();
+        let base = format!("{},0", 100000 + (uuid::Uuid::new_v4().as_u128() % 100000));
+        let next = format!("{},1", base.split(',').next().unwrap());
+        let after = format!("{},2", base.split(',').next().unwrap());
+        let at = chrono::DateTime::from_timestamp(100, 0)
+            .unwrap()
+            .naive_utc();
+        sqlx::query("INSERT INTO explore.place(id,base_position,origin,raw,deployed_at) VALUES($1,$2,'local',$3,$4)")
+            .bind(&legacy).bind(&base).bind(json!({"source":"places","positions":[base,next],"id":legacy})).bind(at).execute(&pool).await.unwrap();
+        let build = |entity: &str, base: &str, positions: Vec<&str>, seconds| {
+            derive(
+                entity,
+                "0xauthor",
+                &[],
+                Some(
+                    chrono::DateTime::from_timestamp(seconds, 0)
+                        .unwrap()
+                        .naive_utc(),
+                ),
+                &json!({"scene":{"base":base,"parcels":positions}}),
+                None,
+                "/content",
+                true,
+            )
+            .unwrap()
+        };
+        upsert_page(
+            &pool,
+            vec![build("same-base", &base, vec![&base, &next], 101)],
+        )
+        .await
+        .unwrap();
+        let current: String = sqlx::query_scalar("SELECT id FROM explore.place WHERE raw->>'deployment_id'='same-base' AND base_position=$1").bind(&base).fetch_one(&pool).await.unwrap();
+        assert_eq!(current, legacy);
+        upsert_page(
+            &pool,
+            vec![build("moved-base", &next, vec![&next, &base], 102)],
+        )
+        .await
+        .unwrap();
+        let current: String = sqlx::query_scalar("SELECT id FROM explore.place WHERE raw->>'deployment_id'='moved-base' AND base_position=$1").bind(&next).fetch_one(&pool).await.unwrap();
+        assert_eq!(current, legacy);
+        let entity = format!("replacement-{legacy}");
+        upsert_page(
+            &pool,
+            vec![build(&entity, &after, vec![&next, &after], 103)],
+        )
+        .await
+        .unwrap();
+        let current: String =
+            sqlx::query_scalar("SELECT id FROM explore.place WHERE raw->>'deployment_id'=$1")
+                .bind(&entity)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            current,
+            super::super::identity::new_place_id(None, &entity)
+                .unwrap()
+                .to_string()
+        );
+        assert_ne!(current, legacy);
+        // The creating deployment's deterministic ID may have moved to a disjoint
+        // footprint through later identity-preserving updates. It cannot be stolen.
+        let new_base = format!("{},3", base.split(',').next().unwrap());
+        sqlx::query("UPDATE explore.place SET base_position=$2,raw=raw || jsonb_build_object('positions',jsonb_build_array($2::text),'deployment_id','newer-binding') WHERE id=$1")
+            .bind(&current).bind(&new_base).execute(&pool).await.unwrap();
+        assert!(
+            upsert_page(&pool, vec![build(&entity, &after, vec![&after], 104)])
+                .await
+                .is_err()
+        );
+        let binding: String =
+            sqlx::query_scalar("SELECT raw->>'deployment_id' FROM explore.place WHERE id=$1")
+                .bind(&current)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(binding, "newer-binding");
+        assert!(
+            upsert_page(&pool, vec![build("stale", &new_base, vec![&new_base], 99)])
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn genesis_same_page_split_keeps_one_identity_and_merge_mints_another() {
+        let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
+            return;
+        };
+        let build = |entity: &str, base: &str, positions: Vec<&str>, seconds| {
+            derive(
+                entity,
+                "0xauthor",
+                &[],
+                Some(
+                    chrono::DateTime::from_timestamp(seconds, 0)
+                        .unwrap()
+                        .naive_utc(),
+                ),
+                &json!({"scene":{"base":base,"parcels":positions}}),
+                None,
+                "/content",
+                true,
+            )
+            .unwrap()
+        };
+        upsert_page(&pool, vec![build("parent", "0,0", vec!["0,0", "0,1"], 1)])
+            .await
+            .unwrap();
+        let original = super::super::identity::new_place_id(None, "parent")
+            .unwrap()
+            .to_string();
+        upsert_page(
+            &pool,
+            vec![
+                build("left", "0,0", vec!["0,0"], 2),
+                build("right", "0,1", vec!["0,1"], 2),
+            ],
+        )
+        .await
+        .unwrap();
+        let rows: Vec<(String, bool)> =
+            sqlx::query_as("SELECT id,disabled FROM explore.place ORDER BY id")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(rows.len(), 2);
+        assert!(
+            rows.iter()
+                .any(|(id, disabled)| id == &original && !disabled)
+        );
+        assert!(rows.iter().all(|(_, disabled)| !disabled));
+        upsert_page(
+            &pool,
+            vec![build("merge", "0,2", vec!["0,0", "0,1", "0,2"], 3)],
+        )
+        .await
+        .unwrap();
+        let active: Vec<String> =
+            sqlx::query_scalar("SELECT id FROM explore.place WHERE NOT disabled")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            active,
+            vec![
+                super::super::identity::new_place_id(None, "merge")
+                    .unwrap()
+                    .to_string()
+            ]
+        );
+        // An accepted activation after retirement uses the original immutable entity.
+        // Actual deployment ordering/tombstone checks are owned by content ingestion.
+        sqlx::query("UPDATE explore.place SET disabled=true,raw=raw || jsonb_build_object('disabled_reason','undeployment') WHERE NOT disabled")
+            .execute(&pool).await.unwrap();
+        upsert_page(&pool, vec![build("parent", "0,0", vec!["0,0", "0,1"], 1)])
+            .await
+            .unwrap();
+        let active: Vec<String> =
+            sqlx::query_scalar("SELECT id FROM explore.place WHERE NOT disabled")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(active, vec![original]);
+    }
+
     #[test]
     fn derives_from_v_wrapped_scene() {
         let p = derive(
+            "bafy-test-entity",
             "0xABC",
             &["135,2".to_string()],
             None,
@@ -882,7 +1156,17 @@ mod tests {
         assert_eq!(p.raw["source"], "content");
         assert_eq!(p.raw["world"], false);
         assert!(p.raw.get("local").is_none());
-        let local = derive("0xABC", &[], None, &wrapped(), None, "/content", true).unwrap();
+        let local = derive(
+            "bafy-test-entity",
+            "0xABC",
+            &[],
+            None,
+            &wrapped(),
+            None,
+            "/content",
+            true,
+        )
+        .unwrap();
         assert_eq!(local.raw["local"], true);
     }
 
@@ -893,7 +1177,17 @@ mod tests {
         metadata["v"]["runtimeVersion"] = json!("6");
         metadata["v"]["tags"] =
             json!(["poi", "game", "game", "art", "social", "music", "featured"]);
-        let mut place = derive("0xDEPLOYER", &[], None, &metadata, None, "/content", true).unwrap();
+        let mut place = derive(
+            "bafy-test-entity",
+            "0xDEPLOYER",
+            &[],
+            None,
+            &metadata,
+            None,
+            "/content",
+            true,
+        )
+        .unwrap();
         apply_scene_file(
             &mut place,
             &json!({ "creator": "0xAUTHOR", "runtimeVersion": "7.1" }),
@@ -924,14 +1218,36 @@ mod tests {
         );
         meta["v"]["scene"]["base"] = json!(base);
         meta["v"]["scene"]["parcels"] = json!([base]);
-        let place = derive("0xauthor", &[], None, &meta, None, "/content", true).unwrap();
+        let place = derive(
+            "bafy-test-entity",
+            "0xauthor",
+            &[],
+            None,
+            &meta,
+            None,
+            "/content",
+            true,
+        )
+        .unwrap();
         let id = place.id.clone();
         upsert_page(&pool, vec![place]).await.unwrap();
         sqlx::query("UPDATE explore.place SET categories = array_append(categories, 'featured') WHERE id = $1").bind(&id).execute(&pool).await.unwrap();
         meta["v"]["tags"] = json!(["music"]);
         upsert_page(
             &pool,
-            vec![derive("0xauthor", &[], None, &meta, None, "/content", true).unwrap()],
+            vec![
+                derive(
+                    "bafy-test-entity",
+                    "0xauthor",
+                    &[],
+                    None,
+                    &meta,
+                    None,
+                    "/content",
+                    true,
+                )
+                .unwrap(),
+            ],
         )
         .await
         .unwrap();
@@ -945,7 +1261,19 @@ mod tests {
         meta["v"]["tags"] = json!(["unknown", "poi"]);
         upsert_page(
             &pool,
-            vec![derive("0xauthor", &[], None, &meta, None, "/content", true).unwrap()],
+            vec![
+                derive(
+                    "bafy-test-entity",
+                    "0xauthor",
+                    &[],
+                    None,
+                    &meta,
+                    None,
+                    "/content",
+                    true,
+                )
+                .unwrap(),
+            ],
         )
         .await
         .unwrap();
@@ -963,7 +1291,17 @@ mod tests {
         let at = DateTime::parse_from_rfc3339("2026-03-01T10:00:00Z")
             .expect("parse")
             .naive_utc();
-        let p = derive("0x1", &[], Some(at), &wrapped(), None, "/content", false).expect("derives");
+        let p = derive(
+            "bafy-test-entity",
+            "0x1",
+            &[],
+            Some(at),
+            &wrapped(),
+            None,
+            "/content",
+            false,
+        )
+        .expect("derives");
         let wire = json!(DateTime::<Utc>::from_naive_utc_and_offset(at, Utc));
         assert_eq!(p.raw["deployed_at"], wire);
         assert_eq!(p.raw["created_at"], wire);
@@ -972,21 +1310,59 @@ mod tests {
 
     #[test]
     fn id_is_stable_for_base_position() {
-        let a = derive("0x1", &[], None, &wrapped(), None, "/content", false).unwrap();
-        let b = derive("0x2", &[], None, &wrapped(), None, "/content", false).unwrap();
+        let a = derive(
+            "bafy-test-entity",
+            "0x1",
+            &[],
+            None,
+            &wrapped(),
+            None,
+            "/content",
+            false,
+        )
+        .unwrap();
+        let b = derive(
+            "bafy-test-entity",
+            "0x2",
+            &[],
+            None,
+            &wrapped(),
+            None,
+            "/content",
+            false,
+        )
+        .unwrap();
         assert_eq!(a.id, b.id);
-        assert_eq!(a.id, super::super::parcel_place_id("135,2"));
+        assert_eq!(
+            a.id,
+            super::super::identity::new_place_id(None, "bafy-test-entity")
+                .unwrap()
+                .to_string()
+        );
     }
 
     #[test]
     fn no_scene_yields_none() {
-        assert!(derive("0x1", &[], None, &json!({"v": {}}), None, "/content", false).is_none());
+        assert!(
+            derive(
+                "bafy-test-entity",
+                "0x1",
+                &[],
+                None,
+                &json!({"v": {}}),
+                None,
+                "/content",
+                false
+            )
+            .is_none()
+        );
     }
 
     #[test]
     fn falls_back_to_pointer_when_base_missing() {
         let meta = json!({ "v": { "scene": { "parcels": [] } } });
         let p = derive(
+            "bafy-test-entity",
             "0x1",
             &["10,10".to_string()],
             None,
@@ -1298,7 +1674,18 @@ mod tests {
             .await
             .unwrap();
         }
-        let place = |base: &str| super::super::parcel_place_id(base);
+        let place = |base: &str| {
+            let entity = if base == local_base {
+                &local_id
+            } else if base == synced_base {
+                &synced_id
+            } else {
+                &gone_id
+            };
+            super::super::identity::new_place_id(None, entity)
+                .unwrap()
+                .to_string()
+        };
         let row = |id: String| {
             let pool = pool.clone();
             async move {

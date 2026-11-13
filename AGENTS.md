@@ -31,7 +31,7 @@ Code that serves none of these deliverables is removed, not kept for reference:
 7. `/docs`: the docs.decentraland.org rewrite;
 8. page-coherence scripts (`apps/sites/scripts`);
 9. one backend schema (`schemas/`);
-10. the `catalyst` binary: every backend area behind one base domain;
+10. the `catalyst` binary: every backend area behind one base domain, plus the separately deployed, removable `services/migration-sync` worker;
 11. the protocol (`library/protocol`): the `.proto` contract and the `@dcl/protocol` package;
 12. the creator SDK (`library/js-sdk-toolchain`): the `@dcl/sdk` packages, built from the protocol beside it.
 
@@ -74,6 +74,7 @@ Code that serves none of these deliverables is removed, not kept for reference:
   - Only the primary `serve` (`FLEET_JOBS_ENABLED`) serves `/ws` and the island subscriber.
   - Social replicas derive online status from Pulse's wallet topology over NATS; every `serve` recovers room occupancy through the gatekeeper's LiveKit adapter; presence owns observations, source age and public/admission projections.
 - `storage`: the shared hash-addressed blob store.
+- `migration-sync`: separately deployed migration coordinator, not linked into Catalyst. Owns `migration_sync` evidence and progress. The bounded pilots verify consistent baselines, replay favorite/vote and accepted player-storage commands natively, and map trusted POI membership plus scoped committed Worlds owner/quota outcomes; unreceipted/unclassified changes block. Build DB sync only for demonstrated non-replayable outcomes, never as the default for compatible requests. Production retains jobs/providers. See `sync-migration/README.md` and `docs/adr/2026-11-12-removable-migration-sync-service.md`.
 - Domain ownership is not a separate deployable; keep the shared SQL and process contracts.
 
 - Prefer the smallest readable implementation: no forwarding layers, internal HTTP hops or per-service pools; direct SQL and a passed transaction for atomic writes.

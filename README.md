@@ -11,6 +11,7 @@ conformance capture corpus and internal docs stay in the private repository.
 | Path | Contents |
 | --- | --- |
 | `services/catalyst/` | Rust workspace: the `catalyst` binary (APIs, content, comms, worlds, shop, social) |
+| [`services/migration-sync/`](services/migration-sync/README.md) | Separately deployed, removable one-way synchronization worker; isolated rehearsal support |
 | `apps/sites/` | Web sites |
 | `apps/dcl-scene-cli/` | The scene SDK toolchain (`dcl-scene-cli`) |
 | `apps/creator-hub/` | Creator Hub native shell |

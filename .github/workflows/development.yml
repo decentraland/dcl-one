@@ -13,6 +13,7 @@ on:
       - 'tooling/tests/**'
       - 'tooling/migration/**'
       - 'services/catalyst/**'
+      - 'services/migration-sync/**'
       - 'library/**'
       - '.cargo/**'
       - 'apps/sites/**'
@@ -175,7 +176,7 @@ jobs:
         run: |
           # Hash tracked inputs, not the commit: unrelated documentation edits
           # reuse a snapshot, while schema, protocol and vendored SDK edits do not.
-          source=$(git ls-tree -r HEAD -- services/catalyst library schemas .cargo apps/dcl-scene-cli flake.nix Makefile tooling infra/dev .github/workflows/development.yml | git hash-object --stdin)
+          source=$(git ls-tree -r HEAD -- services/catalyst services/migration-sync library schemas .cargo apps/dcl-scene-cli flake.nix Makefile tooling infra/dev .github/workflows/development.yml | git hash-object --stdin)
           echo "source=$source" >> "$GITHUB_OUTPUT"
       - name: Restore Rust build cache
         id: rust-cache

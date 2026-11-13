@@ -11,6 +11,7 @@ pub mod content_quality;
 pub mod derive;
 pub mod destinations;
 pub mod handlers;
+pub mod identity;
 pub mod interactions;
 pub mod live;
 pub mod mirror;

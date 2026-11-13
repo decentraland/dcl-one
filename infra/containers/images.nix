@@ -1,4 +1,4 @@
-{ pkgs, catalyst, sites, gateway, revision }:
+{ pkgs, catalyst, migrationSync, sites, gateway, revision }:
 let
   inherit (pkgs) lib;
   accounts = pkgs.runCommand "foundation-container-accounts" { } ''
@@ -65,6 +65,11 @@ in {
       "PROFILE_IMAGES_CACHE_DIR=/data/profile-images" "BVIMPOSTERS_STORE_ROOT=/data/imposters"
     ];
     ExposedPorts."5210/tcp" = { };
+  };
+  # Optional migration worker: no exposed port, no automatic stream registration or startup.
+  image-migration-sync = image "foundation-migration-sync" migrationSync {
+    Entrypoint = [ "${lib.getExe migrationSync}" ];
+    Cmd = [ "--help" ];
   };
   image-sites = image "foundation-sites" sites (sitesConfig sites);
   # The same Sites image built for dcl-one's Polygon CreditsManager (`sitesPolygonCredits` above),

@@ -470,33 +470,13 @@ impl Store {
         limits: NamespaceLimits,
     ) -> Result<(), ApiError> {
         let size = value_size_bytes(serialized);
-        let mut tx = self.pool.begin().await?;
-        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
-            .bind(quota_lock_key("player-storage", ns, Some(player.as_str())))
-            .execute(&mut *tx)
-            .await?;
-        let sql = quota_upsert_sql(
-            size_info_sql("player_storage", ns, " AND player_address = $4"),
-            "INSERT INTO worlds.player_storage (realm, scene_namespace, player_address, key, value, value_size, created_at, updated_at)
-             SELECT $1::text, $2::text, $4::text, $3::text, $5::jsonb, ($6::bigint)::int, $9::timestamp, $9::timestamp FROM info
-             WHERE $6::bigint <= $7::bigint AND info.total - info.existing + $6::bigint <= $8::bigint
-             ON CONFLICT (realm, scene_namespace, player_address, key)
-             DO UPDATE SET value = $5::jsonb, value_size = ($6::bigint)::int, updated_at = $9::timestamp",
-        );
-        let row = sqlx::query(sqlx::AssertSqlSafe(sql))
-            .bind(ns.realm())
-            .bind(ns.scene_namespace())
-            .bind(key)
-            .bind(player)
-            .bind(serialized)
-            .bind(size)
-            .bind(limits.max_value_size_bytes)
-            .bind(limits.max_total_size_bytes)
-            .bind(now_utc())
-            .fetch_one(&mut *tx)
-            .await?;
+        let now = now_utc();
+        let row = sqlx::query("SELECT * FROM worlds.apply_player_storage_command_v1('set',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10)")
+            .bind(ns.realm()).bind(ns.scene_namespace()).bind(ns.is_shared_realm())
+            .bind(player).bind(key).bind(serialized).bind(size)
+            .bind(limits.max_value_size_bytes).bind(limits.max_total_size_bytes).bind(now)
+            .fetch_one(&self.pool).await?;
         quota_outcome(&row, size, limits)?;
-        tx.commit().await?;
         self.cache
             .invalidate(&player_value_cache_key(ns, player.as_str(), key));
         Ok(())
@@ -508,16 +488,9 @@ impl Store {
         player: &Address,
         key: &str,
     ) -> Result<(), ApiError> {
-        sqlx::query(
-            "DELETE FROM worlds.player_storage
-             WHERE realm = $1 AND scene_namespace = $2 AND player_address = $3 AND key = $4",
-        )
-        .bind(ns.realm())
-        .bind(ns.scene_namespace())
-        .bind(player)
-        .bind(key)
-        .execute(&self.pool)
-        .await?;
+        sqlx::query("SELECT * FROM worlds.apply_player_storage_command_v1('delete',$1,$2,$3,$4,$5,NULL,NULL,NULL,NULL,NULL,NULL)")
+            .bind(ns.realm()).bind(ns.scene_namespace()).bind(ns.is_shared_realm())
+            .bind(player).bind(key).execute(&self.pool).await?;
         self.cache
             .invalidate(&player_value_cache_key(ns, player.as_str(), key));
         Ok(())
@@ -528,23 +501,18 @@ impl Store {
         ns: &SceneNamespace,
         player: &Address,
     ) -> Result<(), ApiError> {
-        sqlx::query("DELETE FROM worlds.player_storage WHERE realm = $1 AND scene_namespace = $2 AND player_address = $3")
-            .bind(ns.realm())
-            .bind(ns.scene_namespace())
-            .bind(player)
-            .execute(&self.pool)
-            .await?;
+        sqlx::query("SELECT * FROM worlds.apply_player_storage_command_v1('clear_player',$1,$2,$3,$4,NULL,NULL,NULL,NULL,NULL,NULL,NULL)")
+            .bind(ns.realm()).bind(ns.scene_namespace()).bind(ns.is_shared_realm())
+            .bind(player).execute(&self.pool).await?;
         self.cache
             .invalidate_prefix(&player_scope_prefix(ns, Some(player.as_str())));
         Ok(())
     }
 
     pub async fn player_delete_all(&self, ns: &SceneNamespace) -> Result<(), ApiError> {
-        sqlx::query("DELETE FROM worlds.player_storage WHERE realm = $1 AND scene_namespace = $2")
-            .bind(ns.realm())
-            .bind(ns.scene_namespace())
-            .execute(&self.pool)
-            .await?;
+        sqlx::query("SELECT * FROM worlds.apply_player_storage_command_v1('clear_scene',$1,$2,$3,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL)")
+            .bind(ns.realm()).bind(ns.scene_namespace()).bind(ns.is_shared_realm())
+            .execute(&self.pool).await?;
         self.cache.invalidate_prefix(&player_scope_prefix(ns, None));
         Ok(())
     }

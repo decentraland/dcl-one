@@ -39,6 +39,13 @@ class DevCiTest(unittest.TestCase):
             with self.subTest(changed=changed):
                 self.assertFalse(self.macos(*changed))
 
+    def test_independent_sync_worker_changes_select_rust_jobs(self):
+        source = 'services/migration-sync/src/store.rs'
+        manifest = 'services/migration-sync/Cargo.toml'
+        self.assertEqual(dev.watched_changes([source], self.dev), [source])
+        self.assertFalse(self.macos(source))
+        self.assertTrue(self.macos(manifest))
+
     def test_build_and_dev_stack_inputs_run_macos(self):
         for path in ('services/catalyst/Cargo.lock', 'services/catalyst/social/Cargo.toml',
                      'services/catalyst/comms/build.rs', 'services/catalyst/.cargo/config.toml',
