@@ -39,6 +39,10 @@ pub mod queries;
 pub mod sync_types;
 pub mod validation;
 pub mod validator;
+
+/// JSON preserving decoded property insertion order, with JavaScript index-key enumeration.
+/// Literal user objects are never interpreted as serializer number markers.
+pub type OrderedJson = validator::jsjson::JsValue<false>;
 pub mod wire_types;
 
 // The write path peer sync drives: remote entity fetch + hash proof, auth-chain
