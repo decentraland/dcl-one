@@ -11,7 +11,7 @@ use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions};
 use catalyst::schema_migrate::{self, MigrateError};
 
 /// The steps a prepared version-2 database has not recorded.
-const PREPARED_PENDING_STEPS: [&str; 17] = [
+const PREPARED_PENDING_STEPS: [&str; 18] = [
     "0018_event_hook_compatibility",
     "0019_event_hook_admin_priority",
     "0023_social_referral_pending_reward",
@@ -29,6 +29,7 @@ const PREPARED_PENDING_STEPS: [&str; 17] = [
     "0036_credits_authorization_request_digest",
     "0037_social_badges_catalog_parity",
     "0038_social_badge_processor",
+    "0039_worlds_set_here",
 ];
 type LedgerRow = (String, String, bool, chrono::NaiveDateTime);
 /// id, category, is_tier, criteria_steps, published, created_at
@@ -571,6 +572,17 @@ async fn a_database_stamped_with_the_closure_base_upgrades_to_head_with_its_rows
         .await
         .unwrap();
     let client_events_before = client_events_filenode(pool).await;
+    // Mirrored worlds before 0039_worlds_set_here: one whose owner restricted it and titled it
+    // here, one left as the mirror wrote it.
+    sqlx::raw_sql(
+        "INSERT INTO worlds.worlds (name, access_type, title, mirror_source) \
+           VALUES ('owner-set.dcl.eth', 'allow-list', 'Mine', 'https://up.example'); \
+         INSERT INTO worlds.worlds (name, mirror_source) \
+           VALUES ('as-mirrored.dcl.eth', 'https://up.example')",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
     let done =
         schema_migrate::migrate(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
             .await
@@ -646,6 +658,21 @@ async fn a_database_stamped_with_the_closure_base_upgrades_to_head_with_its_rows
             .await
             .unwrap();
     assert_eq!(worlds, 1);
+    let marked: Vec<(String, bool, Option<String>, bool, Option<String>)> = sqlx::query_as(
+        "SELECT name, access_set_here, access_set_by, settings_set_here, settings_set_by \
+         FROM worlds.worlds WHERE name IN ('owner-set.dcl.eth', 'as-mirrored.dcl.eth') ORDER BY name",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        marked,
+        vec![
+            ("as-mirrored.dcl.eth".into(), false, None, false, None),
+            ("owner-set.dcl.eth".into(), true, None, true, None),
+        ],
+        "0039 marks what the owner set here, with no known setter"
+    );
     let constraints: Vec<String> =
         sqlx::query_scalar("SELECT conname FROM pg_constraint WHERE conrelid = to_regclass('credits.purchases') AND conname IN ('purchases_quantity_check', 'purchases_source_check') ORDER BY 1")
             .fetch_all(pool)

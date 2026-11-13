@@ -469,6 +469,51 @@ fn missing_dependencies(root: &Path) -> Vec<String> {
     missing
 }
 
+static RESTORE_NODE_MODULES: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(true);
+
+/// `--skip-install`: a build never writes node_modules.
+pub fn set_restore_node_modules(on: bool) {
+    RESTORE_NODE_MODULES.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// A scene with no node_modules at all (a fresh clone, a copied folder) gets
+/// the vendored SDK before the built-in build looks for it, and a line saying
+/// so. An existing node_modules is never touched, whatever it lacks: that is
+/// an install someone made, and the missing-package error names the fix.
+pub fn restore_missing_node_modules(root: &Path) -> Result<()> {
+    if !RESTORE_NODE_MODULES.load(std::sync::atomic::Ordering::Relaxed)
+        || root.join("node_modules").exists()
+    {
+        return Ok(());
+    }
+    install_vendored_node_modules(root)?;
+    ux::note(
+        "node_modules was missing \u{2014} restored it from the vendored SDK (--skip-install keeps a build from doing this)",
+    );
+    let version = |path: PathBuf, keys: &[&str]| -> Option<String> {
+        let json: serde_json::Value = serde_json::from_slice(&std::fs::read(path).ok()?).ok()?;
+        keys.iter()
+            .find_map(|k| json.pointer(k)?.as_str().map(str::to_string))
+    };
+    let vendored = version(
+        root.join("node_modules/@dcl/sdk/package.json"),
+        &["/version"],
+    );
+    let asked = version(
+        root.join("package.json"),
+        &["/devDependencies/@dcl~1sdk", "/dependencies/@dcl~1sdk"],
+    );
+    if let (Some(vendored), Some(asked)) = (vendored, asked)
+        && asked != vendored
+    {
+        ux::note(format!(
+            "package.json asks for @dcl/sdk {asked}; the vendored SDK is {vendored} \u{2014} run npm install to build with {asked} instead"
+        ));
+    }
+    Ok(())
+}
+
 fn install_vendored_node_modules(root: &Path) -> Result<bool> {
     if root.join("node_modules").exists() {
         return Ok(false);

@@ -173,11 +173,69 @@ pub fn concise_cause(err: &anyhow::Error) -> String {
     cleaned
 }
 
+/// An error nobody wrote steps for still says what failed, why (the root
+/// cause, which the outer message alone often leaves out) and, when the
+/// cause is one of the common ones, what to do about it.
 fn fallback(err: &anyhow::Error) -> UserError {
-    UserError::new(
-        err.to_string(),
-        TrySteps::one("re-run with --verbose for the full error chain"),
-    )
+    let what = err.to_string();
+    let cause = concise_cause(err);
+    let steps = match step_for_cause(&cause) {
+        Some(step) => TrySteps::one(step),
+        None => TrySteps::one("re-run with --verbose for the full error chain"),
+    };
+    let user = UserError::new(what.clone(), steps);
+    match err.chain().count() > 1 && cause != what {
+        true => user.why(cause),
+        false => user,
+    }
+}
+
+/// The next step for a root cause the operating system or the network names
+/// the same way wherever it happens.
+fn step_for_cause(cause: &str) -> Option<&'static str> {
+    let cause = cause.to_lowercase();
+    let has = |needles: &[&str]| needles.iter().any(|n| cause.contains(n));
+    Some(if has(&["connection refused"]) {
+        "nothing is listening there: check that the service is running and that the address and port are right"
+    } else if has(&[
+        "dns error",
+        "failed to lookup address",
+        "name or service not known",
+        "no such host",
+    ]) {
+        "the host name did not resolve: check its spelling and this machine's network connection"
+    } else if has(&["timed out", "timeout", "deadline has elapsed"]) {
+        "the other side did not answer in time: check the network connection and run the command again"
+    } else if has(&["certificate", "tls handshake", "invalid peer"]) {
+        "the server's TLS certificate was not accepted: check the URL's scheme and host, and this machine's clock"
+    } else if has(&["address already in use", "address in use"]) {
+        "another process holds that port: stop it, or pass a different --port"
+    } else if has(&[
+        "permission denied",
+        "operation not permitted",
+        "access is denied",
+    ]) {
+        "this user may not read or write that path: check its owner and permissions"
+    } else if has(&["no space left", "disk quota"]) {
+        "the disk is full: free some space and run the command again"
+    } else if has(&["too many open files"]) {
+        "the open-file limit was reached: raise it (ulimit -n 4096) and run the command again"
+    } else if has(&[
+        "no such file or directory",
+        "cannot find the path",
+        "cannot find the file",
+    ]) {
+        "a file or folder the command needs is missing: check the path, and that you are in the scene folder (or pass --dir)"
+    } else if has(&[
+        "connection reset",
+        "broken pipe",
+        "connection closed",
+        "unexpected eof",
+    ]) {
+        "the connection dropped mid-way: run the command again, and check the network or the server if it repeats"
+    } else {
+        return None;
+    })
 }
 
 fn arrow_line(color: bool, label: &str, text: &str) -> String {
@@ -228,7 +286,200 @@ pub fn report(err: &anyhow::Error, verbose: bool) {
 }
 
 pub fn report_watch(err: &anyhow::Error) {
+    report_topic(Topic::Preview, err);
+}
+
+/// A failed rebuild in a running preview: printed as [`report_watch`] prints
+/// and kept for the preview's pages until a later build succeeds.
+pub fn report_build(err: &anyhow::Error) {
+    report_topic(Topic::Build, err);
+}
+
+/// A failed type check beside the watch loop; [`resolve`] drops it on a pass.
+pub fn report_types(err: &anyhow::Error) {
+    report_topic(Topic::Types, err);
+}
+
+fn report_topic(topic: Topic, err: &anyhow::Error) {
     eprint!("{}", user_block(err, "warning:", "1;33", stderr_color()));
+    let fallen;
+    let user = match find_user(err) {
+        Some(u) => u,
+        None => {
+            fallen = fallback(err);
+            &fallen
+        }
+    };
+    record(
+        topic,
+        user.what.clone(),
+        user.why.clone(),
+        user.try_next.clone(),
+    );
+}
+
+/// What a problem is about, which decides when it stops being one: a build
+/// or type-check problem is replaced by the next attempt's outcome, a scene
+/// error ends with the reload that follows a successful build, and a preview
+/// problem (a tunnel, a port, a watcher) stays for the session.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Topic {
+    Build,
+    Types,
+    Scene,
+    Preview,
+}
+
+/// One open problem of a running preview, as `/api/problems` serves it and
+/// the preview's pages draw it: the same three parts the terminal prints.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct Problem {
+    pub id: u64,
+    pub topic: Topic,
+    /// Unix milliseconds.
+    pub at: u64,
+    pub what: String,
+    pub why: Option<String>,
+    pub steps: Vec<String>,
+    #[serde(skip)]
+    stale: bool,
+}
+
+#[derive(Default)]
+struct Board {
+    revision: u64,
+    next_id: u64,
+    open: std::collections::VecDeque<Problem>,
+}
+
+/// Enough for a page to show what is wrong now; older ones scrolled off the
+/// terminal too.
+const BOARD_CAP: usize = 12;
+
+static BOARD: Mutex<Option<Board>> = Mutex::new(None);
+
+fn with_board<T>(f: impl FnOnce(&mut Board) -> T) -> T {
+    let mut guard = BOARD.lock().unwrap_or_else(PoisonError::into_inner);
+    f(guard.get_or_insert_with(Board::default))
+}
+
+fn record(topic: Topic, what: String, why: Option<String>, steps: Vec<String>) {
+    let at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or_default();
+    let what = sanitize(&strip_sgr(&what));
+    let why = why.as_deref().map(sanitize_block);
+    with_board(|b| {
+        // A client that throws every frame says one thing, once.
+        if let Some(same) = b
+            .open
+            .iter_mut()
+            .find(|p| p.topic == topic && p.what == what && p.why == why)
+        {
+            if same.stale {
+                same.stale = false;
+                same.at = at;
+                b.revision += 1;
+            }
+            return;
+        }
+        if matches!(topic, Topic::Types) {
+            b.open.retain(|p| p.topic != topic);
+        }
+        b.next_id += 1;
+        b.revision += 1;
+        b.open.push_back(Problem {
+            id: b.next_id,
+            topic,
+            at,
+            what,
+            why,
+            steps,
+            stale: false,
+        });
+        while b.open.len() > BOARD_CAP {
+            b.open.pop_front();
+        }
+    });
+}
+
+/// Drops every open problem of `topic`.
+pub fn resolve(topic: Topic) {
+    with_board(|b| {
+        let before = b.open.len();
+        b.open.retain(|p| p.topic != topic);
+        if b.open.len() != before {
+            b.revision += 1;
+        }
+    });
+}
+
+/// The open problems, oldest first, and a number that moves whenever they
+/// change.
+pub fn problems() -> (u64, Vec<Problem>) {
+    with_board(|b| (b.revision, b.open.iter().cloned().collect()))
+}
+
+/// One rebuild of a running preview. Problems the previous attempt left are
+/// dropped when this one ends unless it reported them again, and a rebuild
+/// that reported nothing also ends the scene errors of the code it replaced.
+pub struct BuildAttempt(());
+
+pub fn build_attempt() -> BuildAttempt {
+    with_board(|b| {
+        for p in b.open.iter_mut().filter(|p| p.topic == Topic::Build) {
+            p.stale = true;
+        }
+    });
+    BuildAttempt(())
+}
+
+impl Drop for BuildAttempt {
+    fn drop(&mut self) {
+        with_board(|b| {
+            let before = b.open.len();
+            b.open.retain(|p| !p.stale);
+            if !b.open.iter().any(|p| p.topic == Topic::Build) {
+                b.open.retain(|p| p.topic != Topic::Scene);
+            }
+            if b.open.len() != before {
+                b.revision += 1;
+            }
+        });
+    }
+}
+
+/// A diagnostic as a page can show it: a compiler colours its output for
+/// the terminal, and a page gets text.
+fn sanitize_block(s: &str) -> String {
+    strip_sgr(s)
+        .lines()
+        .map(sanitize)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn strip_sgr(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        if c != '\x1b' {
+            out.push(c);
+            continue;
+        }
+        let mut rest = chars.clone();
+        if rest.next() == Some('[') {
+            chars = rest;
+            for c in chars.by_ref() {
+                if ('\x40'..='\x7e').contains(&c) {
+                    break;
+                }
+            }
+        }
+    }
+    out
 }
 
 pub struct Steps {
@@ -573,6 +824,22 @@ pub fn scene_note(
         }
     }
     eprint!("{out}");
+    if kind != SceneNote::LoggedWarning {
+        let (_, label, prep, _) = kind.shape();
+        let step = match blamed {
+            Some(f) => format!(
+                "fix {}:{} and save \u{2014} the preview reloads the scene",
+                f.file, f.line
+            ),
+            None => "the error has no frame in your code: check the scene's last change, or re-run start with --error-source-lines-context 3".to_string(),
+        };
+        record(
+            Topic::Scene,
+            format!("{label} {prep} {where_}"),
+            Some(message.to_string()),
+            vec![step],
+        );
+    }
 }
 
 /// Client text comes off the wire, so it must not be able to move the cursor,
@@ -973,6 +1240,87 @@ mod tests {
             bundle_failed(body).to_string(),
             "build failed \u{2014} 2 errors (first: src/a.ts)"
         );
+    }
+
+    #[test]
+    fn a_bare_error_names_its_root_cause_and_a_step_for_it() {
+        let io = std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "Permission denied (os error 13)",
+        );
+        let e = anyhow::Error::from(io).context("writing bin/index.js");
+        let out = render(&e, false, false);
+        assert!(out.starts_with("Error: writing bin/index.js\n"), "{out}");
+        assert!(out.contains("  Permission denied\n"), "{out}");
+        assert!(
+            out.contains("\u{2192} try: this user may not read or write that path"),
+            "{out}"
+        );
+        assert!(
+            out.contains("\u{2192} more: re-run with --verbose"),
+            "{out}"
+        );
+
+        let plain = render(&anyhow::anyhow!("something odd"), false, false);
+        assert_eq!(
+            plain,
+            "Error: something odd\n  \u{2192} try: re-run with --verbose for the full error chain\n"
+        );
+    }
+
+    #[test]
+    fn the_board_keeps_what_still_holds() {
+        let open = || {
+            problems()
+                .1
+                .into_iter()
+                .filter(|p| p.what.starts_with("board-test "))
+                .map(|p| (p.topic, p.what))
+                .collect::<Vec<_>>()
+        };
+        let thrown = || {
+            record(
+                Topic::Scene,
+                "board-test scene error in src/a.ts:1".into(),
+                Some("\x1b[31mboom\x1b[0m".into()),
+                vec![],
+            )
+        };
+        thrown();
+        thrown();
+        assert_eq!(open().len(), 1, "a repeated error is one problem");
+        let kept = problems()
+            .1
+            .into_iter()
+            .find(|p| p.what.starts_with("board-test scene"));
+        assert_eq!(
+            kept.and_then(|p| p.why).as_deref(),
+            Some("boom"),
+            "no terminal colours on a page"
+        );
+        {
+            let _attempt = build_attempt();
+            record(Topic::Build, "board-test parse error".into(), None, vec![]);
+        }
+        assert_eq!(
+            open(),
+            vec![
+                (
+                    Topic::Scene,
+                    "board-test scene error in src/a.ts:1".to_string()
+                ),
+                (Topic::Build, "board-test parse error".to_string())
+            ],
+            "a failed rebuild did not replace the running scene, so its error stands"
+        );
+        let before = problems().0;
+        drop(build_attempt());
+        assert_eq!(
+            open(),
+            vec![],
+            "a clean rebuild ends the build problem and the old scene's errors"
+        );
+        assert!(problems().0 > before, "pages redraw on the revision");
     }
 
     #[test]
