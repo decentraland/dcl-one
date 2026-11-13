@@ -158,50 +158,68 @@ async fn initialize(
 }
 
 /// Receipts alone acknowledge events. Each bounded scan round captures a fixed
-/// committed upper id and wraps when exhausted, even while new photos arrive.
-/// A late commit or failed event below the scan hint is retried next round.
+/// upper id and advances monotonically; periodic reconciliation finds events
+/// whose sequence id committed late without rescanning the retention window on
+/// every worker tick.
 pub async fn process_batch(state: &SharedState, limit: i64) -> Result<u64, ApiError> {
     use std::sync::atomic::Ordering;
     let limit = limit.clamp(1, 500);
     let mut after = state.goal_scan_after.load(Ordering::Relaxed);
     let mut horizon = state.goal_scan_horizon.load(Ordering::Relaxed);
-    let current_horizon = || {
-        sqlx::query_scalar::<_, i64>(
-            "SELECT COALESCE(max(id),0) FROM camera_reel.photo_events WHERE kind='photo-taken'",
-        )
-        .fetch_one(&state.credits.pool)
-    };
+    const RECONCILE_INTERVAL_MS: i64 = 5 * 60 * 1000;
+    let current_horizon =
+        sqlx::query_scalar::<_, i64>("SELECT COALESCE(max(id),0) FROM camera_reel.photo_events")
+            .fetch_one(&state.credits.pool)
+            .await?;
     let select = |after, horizon| {
         sqlx::query_scalar::<_,i64>("SELECT e.id FROM camera_reel.photo_events e WHERE e.id>$2 AND e.id<=$3 AND e.kind='photo-taken' AND NOT EXISTS(SELECT 1 FROM credits.photo_goal_receipts r WHERE r.photo_id=e.photo_id) ORDER BY e.id LIMIT $1").bind(limit).bind(after).bind(horizon).fetch_all(&state.credits.pool)
     };
+    if horizon == 0 && current_horizon > after {
+        horizon = current_horizon;
+    } else if horizon == 0 {
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        let reconciled_at = state.goal_scan_reconcile_at_ms.load(Ordering::Relaxed);
+        if now_ms.saturating_sub(reconciled_at) < RECONCILE_INTERVAL_MS {
+            return Ok(0);
+        }
+        // Sequence values may commit out of order. Revisit old unreceipted
+        // events periodically, without rescanning the full retention window
+        // on every five-second worker tick.
+        after = 0;
+        horizon = current_horizon;
+        state
+            .goal_scan_reconcile_at_ms
+            .store(now_ms, Ordering::Relaxed);
+    }
     if horizon == 0 {
-        after = 0;
-        horizon = current_horizon().await?;
+        return Ok(0);
     }
-    let mut ids = select(after, horizon).await?;
-    if ids.is_empty() && after > 0 {
-        after = 0;
-        horizon = current_horizon().await?;
-        ids = select(after, horizon).await?;
-    }
+    let ids = select(after, horizon).await?;
     state.goal_scan_after.store(after, Ordering::Relaxed);
     state.goal_scan_horizon.store(horizon, Ordering::Relaxed);
     let round_complete = ids.len() < limit as usize || ids.last().is_some_and(|id| *id >= horizon);
     let mut processed = 0;
     let mut error = None;
     for id in ids {
-        state.goal_scan_after.store(id, Ordering::Relaxed);
         match process_event(state, id, super::store::now()).await {
-            Ok(applied) => processed += u64::from(applied),
+            Ok(applied) => {
+                processed += u64::from(applied);
+                after = id;
+                state.goal_scan_after.store(after, Ordering::Relaxed);
+            }
             Err(e) => {
                 tracing::warn!(event_id=id,error=%e,"photo goal event remains retryable");
                 error = Some(e);
+                break;
             }
         }
     }
-    if round_complete {
-        state.goal_scan_after.store(0, Ordering::Relaxed);
+    if round_complete && error.is_none() {
+        state.goal_scan_after.store(horizon, Ordering::Relaxed);
         state.goal_scan_horizon.store(0, Ordering::Relaxed);
+        state
+            .goal_scan_reconcile_at_ms
+            .store(chrono::Utc::now().timestamp_millis(), Ordering::Relaxed);
     }
     if let Some(error) = error {
         return Err(error);
