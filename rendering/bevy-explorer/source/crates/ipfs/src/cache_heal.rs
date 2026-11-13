@@ -93,26 +93,33 @@ enum Check {
 pub(crate) struct CacheHeals(Mutex<HashMap<String, Check>>);
 
 impl CacheHeals {
+    // A case-insensitive file system opens one file under every letter case of its name. Names are
+    // hashes or digests, so a case-only collision of two different ones is not a practical concern.
+    fn key(name: &str) -> String {
+        name.to_ascii_lowercase()
+    }
+
     /// Claims the one check `name` gets this session: false when it had it, or when the session
     /// is past [`MAX_CACHE_HEALS`].
     fn begin(&self, name: &str) -> bool {
+        let name = Self::key(name);
         let mut checked = self.0.lock().unwrap();
-        if checked.contains_key(name) || checked.len() >= MAX_CACHE_HEALS {
+        if checked.contains_key(&name) || checked.len() >= MAX_CACHE_HEALS {
             return false;
         }
-        checked.insert(name.to_owned(), Check::Checking);
+        checked.insert(name, Check::Checking);
         true
     }
 
     /// Records what the check of `name` found.
     fn finish(&self, name: &str, dropped: bool) {
-        if let Some(check) = self.0.lock().unwrap().get_mut(name) {
+        if let Some(check) = self.0.lock().unwrap().get_mut(&Self::key(name)) {
             *check = if dropped { Check::Dropped } else { Check::Kept };
         }
     }
 
     fn state(&self, name: &str) -> Option<Check> {
-        self.0.lock().unwrap().get(name).copied()
+        self.0.lock().unwrap().get(&Self::key(name)).copied()
     }
 
     fn was_dropped(&self, name: &str) -> bool {
@@ -137,10 +144,10 @@ impl IpfsIo {
         self.cache_heals.was_dropped(name)
     }
 
-    /// The name of the cache entry whose check covers the failed load of `path`: the check drops
-    /// the entry when its bytes are not what its name vouches for, once per entry per session. The
-    /// entry's state in `CacheHeals` says what the check found, or that one is still under way.
-    /// None when there is no entry to check.
+    /// The name, in lower case, of the cache entry whose check covers the failed load of `path`:
+    /// the check drops the entry when its bytes are not what its name vouches for, once per entry
+    /// per session. The entry's state in `CacheHeals` says what the check found, or that one is
+    /// still under way. None when there is no entry to check.
     pub(crate) async fn drop_bad_cached_entry(&self, path: &Path) -> Option<String> {
         let Ok(Some(ipfs_path)) = IpfsPath::new_from_path(path) else {
             return None;
@@ -150,7 +157,7 @@ impl IpfsIo {
         #[cfg(target_arch = "wasm32")]
         let remote = web_lookup_url(&ipfs_path, &context)?;
         drop(context);
-        let name = key.name().to_owned();
+        let name = key.name().to_ascii_lowercase();
         if !self.cache_heals.begin(&name) {
             return self.cache_heals.state(&name).is_some().then_some(name);
         }
@@ -170,6 +177,11 @@ impl IpfsIo {
 
     #[cfg(not(target_arch = "wasm32"))]
     async fn drop_bad_disk_entry(&self, key: &CacheKey) -> bool {
+        if let CacheKey::Content(hash) = key {
+            if !content_hash::is_hash_name(hash) {
+                return false;
+            }
+        }
         let Ok(Some(bytes)) = self.read_disk_cache(key).await else {
             return false;
         };

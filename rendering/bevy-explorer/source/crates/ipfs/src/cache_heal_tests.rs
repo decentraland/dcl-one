@@ -287,6 +287,10 @@ fn a_hash_in_another_letter_case_never_drops_the_verified_entry() {
     assert!(!holds_other_bytes(FiledUnder::Hash(&flipped), b"png"));
     assert!(!holds_other_bytes(FiledUnder::Hash(&qm), b"png"));
     assert!(holds_other_bytes(FiledUnder::Hash(&qm), b"DDS processed"));
+    assert!(holds_other_bytes(
+        FiledUnder::Hash(&flipped),
+        b"DDS processed"
+    ));
 }
 
 // flips the case of the first letter at or after `from`
@@ -381,14 +385,52 @@ async fn a_name_that_is_no_hash_never_drops_a_cache_file() {
 #[tokio::test]
 async fn a_verified_entry_survives_a_hash_spelled_in_another_case() {
     let (io, dir) = io_with_cache("other-case");
-    let hash = raw_cid(b"original");
-    let flipped = flip_case_after(&hash, 7);
+    let hash = sha256_cid_v0(b"original");
+    let flipped = flip_case_after(&hash, 2);
+    assert_ne!(flipped, hash);
     scene_with(&io, "https://content.invalid", "a.png", &flipped).await;
-    std::fs::write(dir.join(&hash), b"original").unwrap();
+    std::fs::write(dir.join(&flipped), b"original").unwrap();
 
-    // the file is found under the other spelling only where the file system ignores case
     io.drop_bad_cached_entry(&content_path("a.png")).await;
-    assert_eq!(std::fs::read(dir.join(&hash)).unwrap(), b"original");
+    assert_eq!(std::fs::read(dir.join(&flipped)).unwrap(), b"original");
+    assert!(!io.cache_entry_dropped(&hash));
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn every_letter_case_of_a_name_shares_one_check() {
+    let heals = CacheHeals::default();
+    assert!(heals.begin("QmAbC"));
+    assert!(!heals.begin("qmabc"));
+    heals.finish("QMABC", true);
+    assert!(heals.was_dropped("Qmabc"));
+    assert_eq!(heals.counts(), (1, 1));
+}
+
+#[tokio::test]
+async fn a_bad_entry_named_in_two_letter_cases_is_checked_once() {
+    let (io, dir) = io_with_cache("two-cases");
+    let hash = sha256_cid_v0(b"original");
+    let flipped = flip_case_after(&hash, 2);
+    let lower = hash.to_ascii_lowercase();
+    scene_with(&io, "https://content.invalid", "a.png", &hash).await;
+    std::fs::write(dir.join(&hash), b"processed bytes").unwrap();
+    assert_eq!(
+        io.drop_bad_cached_entry(&content_path("a.png")).await,
+        Some(lower.clone())
+    );
+    assert!(!dir.join(&hash).exists());
+
+    scene_with(&io, "https://content.invalid", "b.png", &flipped).await;
+    std::fs::write(dir.join(&flipped), b"processed bytes").unwrap();
+    assert_eq!(
+        io.drop_bad_cached_entry(&content_path("b.png")).await,
+        Some(lower)
+    );
+    assert!(dir.join(&flipped).exists());
+    assert!(io.cache_entry_dropped(&hash));
+    assert!(io.cache_entry_dropped(&flipped));
+    assert_eq!(io.cache_heals.counts(), (1, 1));
     std::fs::remove_dir_all(dir).unwrap();
 }
 
@@ -411,7 +453,10 @@ async fn a_url_keyed_copy_is_dropped() {
     assert_eq!(read_all(&io, &path).await, b"<html>not a picture</html>");
     assert!(log.lock().unwrap().is_empty());
 
-    assert_eq!(io.drop_bad_cached_entry(&path).await, Some(name.clone()));
+    assert_eq!(
+        io.drop_bad_cached_entry(&path).await,
+        Some(name.to_ascii_lowercase())
+    );
     assert!(!dir.join(&name).exists());
     assert_eq!(read_all(&io, &path).await, b"a picture");
     let requests = log.lock().unwrap().clone();
