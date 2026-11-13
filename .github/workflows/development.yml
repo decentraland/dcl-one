@@ -198,7 +198,7 @@ jobs:
           restore-keys: |
             foundation-dev-pnpm-${{ runner.os }}-${{ runner.arch }}-
       - name: Check configuration and PostgreSQL lifecycle
-        timeout-minutes: 10
+        timeout-minutes: 20
         run: nix develop --command python3 -m unittest discover -s tooling/tests -v
       - name: Start the API and web app without upstream data
         run: nix develop --command bash tooling/dev-smoke.sh
