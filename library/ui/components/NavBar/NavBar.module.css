@@ -2,6 +2,21 @@
 
 /* Breakpoints are the foundations' (layout.ts): tablet 768px, desktop 1024px. */
 @layer dcl.components {
+  .frame {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .root[data-menu-open] > .start,
+  .root[data-menu-open] > .end {
+    position: relative;
+    z-index: 11;
+  }
+
+  .menuButton[aria-expanded='true'] > svg:first-child {
+    display: none;
+  }
+
   .root {
     box-sizing: border-box;
     position: relative;
@@ -336,17 +351,6 @@
     padding: var(--dcl-space-12) var(--dcl-space-16) var(--dcl-space-24);
     background: var(--dcl-bg-surface);
     color: var(--dcl-text-primary);
-  }
-
-  .drawerHeader {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-  }
-
-  .drawerTitle {
-    composes: text68656164696e672f35 from '../../foundations/typography/text-styles.module.css';
-    margin: 0;
   }
 
   .drawerSections,

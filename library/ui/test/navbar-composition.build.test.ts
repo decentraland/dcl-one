@@ -55,13 +55,26 @@ async function click(selector: string) {
   )
 }
 
-async function key(value: 'Tab' | 'Escape', shift = false) {
+async function touch(selector: string) {
+  const point = await evaluate<{ x: number; y: number }>(
+    `(()=>{const r=document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2}})()`
+  )
+  await session.send('Input.dispatchTouchEvent', {
+    type: 'touchStart',
+    touchPoints: [{ ...point, radiusX: 1, radiusY: 1, force: 1, id: 1 }]
+  })
+  await session.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
+  await evaluate('new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))')
+}
+
+async function key(value: 'Tab' | 'Escape' | 'Enter', shift = false) {
   for (const type of ['keyDown', 'keyUp'])
     await session.send('Input.dispatchKeyEvent', {
       type,
       key: value,
       code: value,
-      windowsVirtualKeyCode: value === 'Tab' ? 9 : 27,
+      text: value === 'Enter' && type === 'keyDown' ? '\r' : undefined,
+      windowsVirtualKeyCode: value === 'Tab' ? 9 : value === 'Enter' ? 13 : 27,
       modifiers: type === 'keyDown' && shift ? 8 : 0
     })
 }
@@ -224,7 +237,9 @@ describe('when a public NavBar composes app-owned controls in Chromium', () => {
         code: 'Tab',
         windowsVirtualKeyCode: 9
       })
-      expect(await evaluate('document.activeElement.getAttribute("aria-label")')).toBe('Close menu')
+      expect(await evaluate('document.activeElement.getAttribute("aria-label")')).toBe(
+        'Decentraland home'
+      )
       await session.send('Input.dispatchKeyEvent', {
         type: 'keyDown',
         key: 'Escape',
@@ -239,6 +254,256 @@ describe('when a public NavBar composes app-owned controls in Chromium', () => {
       expect(await evaluate('document.activeElement.getAttribute("aria-label")')).toBe('Open menu')
     }, 30_000)
   }
+  it('should traverse the complete single-header and lower-panel sequence in both directions', async () => {
+    await session.send('Emulation.setDeviceMetricsOverride', {
+      width: 390,
+      height: 844,
+      deviceScaleFactor: 1,
+      mobile: true
+    })
+    await session.navigate(origin + '?surface-proof')
+    await evaluate(
+      `(async()=>{for(let n=0;n<100&&!document.querySelector('button[aria-label="Open menu"]');n++)await new Promise(r=>setTimeout(r,50))})()`
+    )
+    await click('button[aria-label="Open menu"]')
+    const active = () =>
+      evaluate<string>(
+        `document.activeElement.getAttribute('aria-label') || document.activeElement.textContent.trim()`
+      )
+    expect(await active()).toBe('Close menu')
+    for (const label of [
+      'Discover',
+      'Docs',
+      'Blog',
+      'Photos',
+      'Buy credits',
+      'Connect wallet',
+      'Decentraland home',
+      'Close menu'
+    ]) {
+      await key('Tab')
+      expect(await active()).toBe(label)
+    }
+    for (const label of [
+      'Decentraland home',
+      'Connect wallet',
+      'Buy credits',
+      'Photos',
+      'Blog',
+      'Docs',
+      'Discover',
+      'Close menu'
+    ]) {
+      await key('Tab', true)
+      expect(await active()).toBe(label)
+    }
+    await key('Escape')
+    expect(await active()).toBe('Open menu')
+    expect(await evaluate('document.body.style.overflow')).not.toBe('hidden')
+  }, 30_000)
+
+  it('should keep the original header toggle usable through actual touch activation', async () => {
+    await session.send('Emulation.setDeviceMetricsOverride', {
+      width: 390,
+      height: 844,
+      deviceScaleFactor: 1,
+      mobile: true
+    })
+    await session.send('Emulation.setTouchEmulationEnabled', { enabled: true })
+    await session.navigate(origin + '?surface-proof')
+    await evaluate(
+      `(async()=>{for(let n=0;n<100&&!document.querySelector('button[aria-label="Open menu"]');n++)await new Promise(r=>setTimeout(r,50))})()`
+    )
+    for (const expected of ['Close menu', 'Open menu']) {
+      await touch(`button[aria-label="${expected === 'Close menu' ? 'Open menu' : 'Close menu'}"]`)
+      expect(await evaluate('document.activeElement.getAttribute("aria-label")')).toBe(expected)
+      expect(await evaluate(`document.querySelectorAll('nav[aria-label="Main"]').length`)).toBe(1)
+    }
+  }, 30_000)
+
+  it('should preserve the touch sign-in opener through a native portal handoff', async () => {
+    await session.send('Emulation.setDeviceMetricsOverride', {
+      width: 390,
+      height: 844,
+      deviceScaleFactor: 1,
+      mobile: true
+    })
+    await session.send('Emulation.setTouchEmulationEnabled', { enabled: true })
+    await session.navigate(origin + '?surface-proof&portal&geometry&signed-out')
+    await evaluate(
+      `(async()=>{for(let n=0;n<100&&!document.querySelector('button[aria-label="Open menu"]');n++)await new Promise(r=>setTimeout(r,50))})()`
+    )
+    await touch('button[aria-label="Open menu"]')
+    expect(
+      await evaluate(
+        `Array.from(document.querySelectorAll('[role=dialog] button')).filter(button=>button.textContent==='Sign in').length`
+      )
+    ).toBe(1)
+    await touch('nav[aria-label="Main"] button:not([aria-label]):not([aria-expanded])')
+    expect(await evaluate('!!document.querySelector("[role=dialog]")')).toBe(false)
+    expect(await evaluate('!!document.querySelector("dialog[open]")')).toBe(true)
+    await key('Escape')
+    expect(await evaluate('document.activeElement.textContent')).toBe('Sign in')
+    expect(await evaluate('!!document.querySelector("dialog")')).toBe(false)
+  }, 30_000)
+
+  it('should scroll long lower-menu content while the real header and page position stay fixed', async () => {
+    await session.send('Emulation.setDeviceMetricsOverride', {
+      width: 390,
+      height: 844,
+      deviceScaleFactor: 1,
+      mobile: true
+    })
+    await session.navigate(origin + '?surface-proof&long')
+    await evaluate(
+      `(async()=>{for(let n=0;n<100&&!document.querySelector('button[aria-label="Open menu"]');n++)await new Promise(r=>setTimeout(r,50));scrollTo(0,200)})()`
+    )
+    await click('button[aria-label="Open menu"]')
+    expect(
+      await evaluate(
+        `(()=>{const p=document.querySelector('[data-testid=navbar-panel]');return p.scrollHeight>p.clientHeight})()`
+      )
+    ).toBe(true)
+    await evaluate(
+      `document.querySelector('[data-testid=navbar-panel] a[href="#route-39"]').scrollIntoView({block:'center'})`
+    )
+    expect(
+      await evaluate(
+        `(()=>{const p=document.querySelector('[data-testid=navbar-panel]');return {scroll:p.scrollTop>0,page:scrollY,header:document.querySelector('nav[aria-label="Main"]').getBoundingClientRect().bottom,locked:document.body.style.overflow}})()`
+      )
+    ).toEqual({ scroll: true, page: 200, header: 64, locked: 'hidden' })
+    await click('[data-testid=navbar-panel] a[href="#route-39"]')
+    expect(await evaluate('location.hash')).toBe('#route-39')
+    expect(await evaluate('!!document.querySelector("[role=dialog]")')).toBe(false)
+    expect(await evaluate('document.body.style.overflow')).not.toBe('hidden')
+  }, 30_000)
+
+  it('should include native summary and exclude closed details descendants from the modal cycle', async () => {
+    await session.send('Emulation.setDeviceMetricsOverride', {
+      width: 390,
+      height: 844,
+      deviceScaleFactor: 1,
+      mobile: true
+    })
+    await session.navigate(origin + '?surface-proof&details')
+    await evaluate(
+      `(async()=>{for(let n=0;n<100&&!document.querySelector('button[aria-label="Open menu"]');n++)await new Promise(r=>setTimeout(r,50))})()`
+    )
+    await click('button[aria-label="Open menu"]')
+    await evaluate(`document.querySelector('a[aria-label="Decentraland home"]').focus()`)
+    await key('Tab', true)
+    expect(await evaluate('document.activeElement.id')).toBe('wallet-summary')
+    await key('Tab')
+    expect(await evaluate('document.activeElement.getAttribute("aria-label")')).toBe(
+      'Decentraland home'
+    )
+    await key('Tab', true)
+    await key('Enter')
+    await key('Tab')
+    expect(await evaluate('document.activeElement.id')).toBe('wallet-inside')
+    await key('Tab')
+    expect(await evaluate('document.activeElement.getAttribute("aria-label")')).toBe(
+      'Decentraland home'
+    )
+    await key('Escape')
+    expect(await evaluate('document.activeElement.getAttribute("aria-label")')).toBe('Open menu')
+  }, 30_000)
+
+  for (const position of ['offset', 'sticky']) {
+    it(`should track the actual ${position} header bottom through scroll and resize`, async () => {
+      await session.send('Emulation.setDeviceMetricsOverride', {
+        width: 390,
+        height: 844,
+        deviceScaleFactor: 1,
+        mobile: true
+      })
+      await session.navigate(origin + '?surface-proof&' + position)
+      await evaluate(
+        `(async()=>{for(let n=0;n<100&&!document.querySelector('button[aria-label="Open menu"]');n++)await new Promise(r=>setTimeout(r,50))})()`
+      )
+      await click('button[aria-label="Open menu"]')
+      const measure = () =>
+        evaluate<{
+          bottom: number
+          top: number
+          height: number
+          viewport: number
+          locked: boolean
+        }>(
+          `(()=>{const h=document.querySelector('nav[aria-label="Main"]').getBoundingClientRect(),p=document.querySelector('[data-testid=navbar-panel]').getBoundingClientRect();return {bottom:h.bottom,top:p.top,height:p.height,viewport:innerHeight,locked:document.body.style.overflow==='hidden'}})()`
+        )
+      let bounds = await measure()
+      expect(bounds.top).toBe(position === 'offset' ? 88 : 144)
+      expect(bounds.top).toBe(bounds.bottom)
+      expect(bounds.height + bounds.top).toBe(bounds.viewport)
+      expect(bounds.locked).toBe(true)
+      await evaluate(
+        `scrollTo(0,200);new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))`
+      )
+      bounds = await measure()
+      expect(bounds.top).toBe(bounds.bottom)
+      expect(bounds.top).toBe(88)
+      await session.send('Emulation.setDeviceMetricsOverride', {
+        width: 768,
+        height: 700,
+        deviceScaleFactor: 1,
+        mobile: true
+      })
+      await evaluate(`new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))`)
+      bounds = await measure()
+      expect(bounds.top).toBe(bounds.bottom)
+      expect(bounds.height + bounds.top).toBe(700)
+      expect(
+        await evaluate(
+          `document.querySelector('[data-testid=navbar-panel]').contains(document.elementFromPoint(767,699))`
+        )
+      ).toBe(true)
+      await key('Escape')
+      expect(await evaluate('document.body.style.overflow')).not.toBe('hidden')
+      expect(await evaluate('document.activeElement.getAttribute("aria-label")')).toBe('Open menu')
+    }, 30_000)
+  }
+
+  it('should hand header notification activation to the actual portalled native dialog', async () => {
+    await session.send('Emulation.setDeviceMetricsOverride', {
+      width: 390,
+      height: 844,
+      deviceScaleFactor: 1,
+      mobile: true
+    })
+    await session.navigate(origin + '?surface-proof&portal&geometry')
+    await evaluate(
+      `(async()=>{for(let n=0;n<100&&!document.querySelector('button[aria-label="Open menu"]');n++)await new Promise(r=>setTimeout(r,50))})()`
+    )
+    await click('button[aria-label="Open menu"]')
+    await click('button[aria-label="Notifications, 1 unread"]')
+    expect(await evaluate('!!document.querySelector("[role=dialog]")')).toBe(false)
+    expect(await evaluate('!!document.querySelector("dialog[open]")')).toBe(true)
+    expect(
+      await evaluate(
+        `document.querySelectorAll('button[aria-label="Notifications, 1 unread"]').length`
+      )
+    ).toBe(1)
+    await key('Tab')
+    expect(
+      await evaluate('document.querySelector("dialog").contains(document.activeElement)')
+    ).toBe(true)
+    await key('Escape')
+    expect(await evaluate('!!document.querySelector("dialog")')).toBe(false)
+    expect(await evaluate('document.activeElement.getAttribute("aria-label")')).toBe(
+      'Notifications, 1 unread'
+    )
+    await click('button[aria-label="Open menu"]')
+    await click('button[aria-label="Account: Ada"]')
+    await evaluate(`document.querySelector('a[href="#profile"]').focus()`)
+    await key('Escape')
+    expect(await evaluate('!!document.querySelector("[role=dialog]")')).toBe(true)
+    expect(await evaluate('document.activeElement.getAttribute("aria-label")')).toBe('Account: Ada')
+    await key('Escape')
+    expect(await evaluate('!!document.querySelector("[role=dialog]")')).toBe(false)
+    expect(await evaluate('document.activeElement.getAttribute("aria-label")')).toBe('Open menu')
+  }, 30_000)
+
   for (const width of [360, 390, 414, 768, 1023, 1024, 1440]) {
     for (const surface of ['solid', 'overlay']) {
       it(`should preserve the production surface and viewport overlays at ${width}px on ${surface}`, async () => {
@@ -292,25 +557,26 @@ describe('when a public NavBar composes app-owned controls in Chromium', () => {
           await click('button[aria-label="Open menu"]')
           expect(await evaluate('document.documentElement.clientWidth')).toBe(width)
           const measure = await evaluate(
-            `(()=>{const d=document.querySelector('[role=dialog]'),layer=d.parentElement,r=d.getBoundingClientRect(),l=layer.getBoundingClientRect();return{dialog:{x:r.x,y:r.y,width:r.width,height:r.height},layer:{x:l.x,y:l.y,width:l.width,height:l.height},background:getComputedStyle(d).backgroundColor,bottomInside:d.contains(document.elementFromPoint(innerWidth-1,innerHeight-1)),bottomBackdrop:document.elementFromPoint(1,innerHeight-1)===layer.firstElementChild}})()`
+            `(()=>{const d=document.querySelector('[data-testid=navbar-panel]'),layer=d.parentElement,r=d.getBoundingClientRect(),l=layer.getBoundingClientRect();return{dialog:{x:r.x,y:r.y,width:r.width,height:r.height},layer:{x:l.x,y:l.y,width:l.width,height:l.height},background:getComputedStyle(d).backgroundColor,bottomInside:d.contains(document.elementFromPoint(innerWidth-1,innerHeight-1)),bottomBackdrop:document.elementFromPoint(1,innerHeight-1)===layer.firstElementChild}})()`
           )
           expect(measure).toMatchObject({
-            dialog: { x: 0, y: 0, width, height: 844 },
-            layer: { x: 0, y: 0, width, height: 844 },
+            dialog: { x: 0, y: 64, width, height: 780 },
+            layer: { x: 0, y: 64, width, height: 780 },
             bottomInside: true,
             bottomBackdrop: false
           })
           expect((measure as { background: string }).background).toMatch(/^rgb\(/)
+          await evaluate(`document.querySelector('a[aria-label="Decentraland home"]').focus()`)
           await key('Tab', true)
           expect(await evaluate('document.activeElement.id')).toBe('account-control')
           await key('Tab')
           expect(await evaluate('document.activeElement.getAttribute("aria-label")')).toBe(
-            'Close menu'
+            'Decentraland home'
           )
           await evaluate(
-            `document.querySelector('[role=dialog]').scrollTop=10000;document.querySelector('[role=dialog] a[href="#blog"]').scrollIntoView({block:'end'})`
+            `document.querySelector('[data-testid=navbar-panel]').scrollTop=10000;document.querySelector('[data-testid=navbar-panel] a[href="#blog"]').scrollIntoView({block:'end'})`
           )
-          await click('[role=dialog] a[href="#blog"]')
+          await click('[data-testid=navbar-panel] a[href="#blog"]')
           expect(await evaluate('location.hash')).toBe('#blog')
           expect(await evaluate('!!document.querySelector("[role=dialog]")')).toBe(false)
           await click('button[aria-label="Open menu"]')
