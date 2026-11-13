@@ -45,6 +45,7 @@ const GAMEPLAY_ACTIONS: [ActionWire, string][] = [
 const INTERFACE_ACTIONS: [ActionWire, string][] = [
   [{ System: 'Map' }, 'Map'],
   [{ System: 'Places' }, 'Places'],
+  [{ System: 'Events' }, 'Events'],
   [{ System: 'Communities' }, 'Communities'],
   [{ System: 'Backpack' }, 'Backpack'],
   [{ System: 'Gallery' }, 'Gallery'],

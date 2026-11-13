@@ -94,6 +94,10 @@
           "kind": "regular"
         },
         {
+          "name": "mockEvents.ts",
+          "kind": "regular"
+        },
+        {
           "name": "nameColor.ts",
           "kind": "regular"
         },
@@ -871,6 +875,10 @@
           "kind": "directory"
         },
         {
+          "name": "events",
+          "kind": "directory"
+        },
+        {
           "name": "loading",
           "kind": "directory"
         },
@@ -1301,6 +1309,103 @@
       "entries": [
         {
           "name": "tip.png",
+          "kind": "regular"
+        }
+      ]
+    },
+    {
+      "path": "library/ui/apps/hud/assets/events",
+      "entries": [
+        {
+          "name": "add-icn-gradient.png",
+          "kind": "regular"
+        },
+        {
+          "name": "add-icn.png",
+          "kind": "regular"
+        },
+        {
+          "name": "add-to-calendar-icn.png",
+          "kind": "regular"
+        },
+        {
+          "name": "arrow-down.png",
+          "kind": "regular"
+        },
+        {
+          "name": "arrow-left.png",
+          "kind": "regular"
+        },
+        {
+          "name": "arrow-right.png",
+          "kind": "regular"
+        },
+        {
+          "name": "arrow-up.png",
+          "kind": "regular"
+        },
+        {
+          "name": "calendar-icn.png",
+          "kind": "regular"
+        },
+        {
+          "name": "close-icn-thin.png",
+          "kind": "regular"
+        },
+        {
+          "name": "default-image-place.webp",
+          "kind": "regular"
+        },
+        {
+          "name": "empty-events-img.png",
+          "kind": "regular"
+        },
+        {
+          "name": "jump-in-outline.png",
+          "kind": "regular"
+        },
+        {
+          "name": "link-icn.png",
+          "kind": "regular"
+        },
+        {
+          "name": "live-event.png",
+          "kind": "regular"
+        },
+        {
+          "name": "live-icn.png",
+          "kind": "regular"
+        },
+        {
+          "name": "pin-outline.png",
+          "kind": "regular"
+        },
+        {
+          "name": "players-icn.png",
+          "kind": "regular"
+        },
+        {
+          "name": "remind-me-event.png",
+          "kind": "regular"
+        },
+        {
+          "name": "reminder-off.png",
+          "kind": "regular"
+        },
+        {
+          "name": "reminder-on.png",
+          "kind": "regular"
+        },
+        {
+          "name": "share-icn.png",
+          "kind": "regular"
+        },
+        {
+          "name": "time-icn.png",
+          "kind": "regular"
+        },
+        {
+          "name": "x-icn.png",
           "kind": "regular"
         }
       ]
@@ -2154,6 +2259,14 @@
           "kind": "regular"
         },
         {
+          "name": "Skeleton.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "Skeleton.tsx",
+          "kind": "regular"
+        },
+        {
           "name": "Slider.module.css",
           "kind": "regular"
         },
@@ -2734,10 +2847,6 @@
         {
           "name": "modal-light.png",
           "kind": "regular"
-        },
-        {
-          "name": "radial-glow.png",
-          "kind": "regular"
         }
       ]
     },
@@ -2745,7 +2854,59 @@
       "path": "library/ui/apps/hud/features/events",
       "entries": [
         {
+          "name": "EventCard.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "EventCard.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "EventDetail.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "EventDetail.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "EventsByDay.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "EventsByDay.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "EventsCalendar.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "EventsCalendar.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "EventsPage.module.css",
+          "kind": "regular"
+        },
+        {
           "name": "EventsPage.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "eventFormat.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "eventsStore.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "useEventActions.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "useEventsData.ts",
           "kind": "regular"
         },
         {
@@ -3647,7 +3808,19 @@
           "kind": "regular"
         },
         {
+          "name": "eventFixtures.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "eventFormat.test.ts",
+          "kind": "regular"
+        },
+        {
           "name": "events.test.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "eventsStore.test.ts",
           "kind": "regular"
         },
         {
@@ -4061,6 +4234,10 @@
       "sha256": "4725764b6afa53a81c6f5f9161a0cb5a5f3f5f0cc6a0be68bbcf46fc3ae39805"
     },
     {
+      "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/destinations.ts",
+      "sha256": "ea1af6442252aa9733ecdcafb8954bb1b1a9b1cd3501ad53982a90753d4a2bde"
+    },
+    {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/avatarDraft.ts",
       "sha256": "a5d2aa00bd530208e6348b1de17c24df318ad9446dbb34023feed9103950ac33"
     },
@@ -4070,7 +4247,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/communities.ts",
-      "sha256": "69407d1fe4c85b8358bcb6505fb7c685e9da4784f2b4420813b2ba8a13175125"
+      "sha256": "11803c812477585a9cffeffe25beb22e7afdb5ce43281bea547cc71737bb1ca5"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/connectivity.ts",
@@ -4083,6 +4260,10 @@
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/emotes.ts",
       "sha256": "4175d16b2c774c8072269f58a198aa64f9951ab90172d61afeadd7ac7f519c69"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/events.ts",
+      "sha256": "8177427b3bbdc481b552e80b01ab79da31000b8771b8048f613a184ace59c3cc"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/friends.ts",
@@ -4269,6 +4450,10 @@
       "sha256": "e890e5b55625e2e1d521abc45fe7bf28852bcdef7b371320a4da75187282f541"
     },
     {
+      "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeEvents.test.ts",
+      "sha256": "9f2cb697c7141dc5d7c320c28689e53b86a4a6d3b8775bc33d37c1d6f2f98565"
+    },
+    {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeFriends.test.ts",
       "sha256": "ce4fa4466eab3bcd939a2a6080c1dc2d005422c4d65f3828019eef41b2c54576"
     },
@@ -4418,7 +4603,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/tsconfig.json",
-      "sha256": "0a2ffaebad7d9dbbab5313bf3b2fbc23ceccb59140e8ee358fb5886712a6a8a3"
+      "sha256": "111bcbb47e47fc9f057aa50c0f7bb99203bdde4b6683126a6c61fbc3c61ab2d3"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -4461,6 +4646,7 @@
     "rendering/bevy-explorer/source/react-web/src/test/bridgeCommunities.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeConnectivity.test.tsx",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeEditor.test.ts",
+    "rendering/bevy-explorer/source/react-web/src/test/bridgeEvents.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeFriends.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeHashing.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeIdentity.test.ts",
@@ -4550,7 +4736,11 @@
     },
     {
       "path": "library/explorer-core/engine/mockBridge.ts",
-      "sha256": "8192971c764bea8335855349a82a11600b100da99816db8ef3a17a49970a2352"
+      "sha256": "902a69036243b4eee88ffcfb5c0c98155719a746bf216920f177529e5d994eeb"
+    },
+    {
+      "path": "library/explorer-core/engine/mockEvents.ts",
+      "sha256": "0c5b62277a7b4933ab5c90d6dbc9e4bfcb7dba76abaa1292aa73e85131216347"
     },
     {
       "path": "library/explorer-core/engine/nameColor.ts",
@@ -4574,7 +4764,7 @@
     },
     {
       "path": "library/explorer-core/engine/protocol.ts",
-      "sha256": "de312f26c21eebbecf16fb4afcfcaa94446d433a5d749f4b73ceca0da0aca05a"
+      "sha256": "ecd4204cf0114b04ffc2bf9160095b43414886d9e9198467120121670890192c"
     },
     {
       "path": "library/explorer-core/features/auth/authReturn.ts",
@@ -4686,7 +4876,7 @@
     },
     {
       "path": "library/explorer-core/features/events/eventsApi.ts",
-      "sha256": "5549886119df574027776a5f0f475f2ff2a0a450e56599a67e7adfedbcd29ab0"
+      "sha256": "9d380acf26a9a7f5a19d12bc1e97b2040d9ba154e3268d671fdaaa9055b520f9"
     },
     {
       "path": "library/explorer-core/features/friends/friendEvents.ts",
@@ -4694,7 +4884,7 @@
     },
     {
       "path": "library/explorer-core/features/lobby/lobbyApi.ts",
-      "sha256": "e8d2d8668fab4d745ce59c783652c5b9840f6e716891ea331037334b427b141b"
+      "sha256": "3a5e928e33876baf974fddb683090657958d36da3c3b1344ef6d651dc207d821"
     },
     {
       "path": "library/explorer-core/features/login/storedProfile.ts",
@@ -4966,7 +5156,7 @@
     },
     {
       "path": "library/ui/apps/hud/App.tsx",
-      "sha256": "d549fc65df868f8430ee2ec825d26ff8d9d13b9e6365e3177b588f266c1ed6ff"
+      "sha256": "5a4020bb85d94aad9c5ae98e47d11908fed7440167b7646843c4109601344779"
     },
     {
       "path": "library/ui/apps/hud/assets/backpack/add-gradient.webp",
@@ -5327,6 +5517,98 @@
     {
       "path": "library/ui/apps/hud/assets/donate/tip.png",
       "sha256": "4892de91637563e8335c7b44a3e070e705178c842b70ea3f091c68d188d4eab6"
+    },
+    {
+      "path": "library/ui/apps/hud/assets/events/add-icn-gradient.png",
+      "sha256": "dd057f7ec5b7fd4ae4e923264122d0d66be972f6c11b8acadac4bd5a863bead8"
+    },
+    {
+      "path": "library/ui/apps/hud/assets/events/add-icn.png",
+      "sha256": "44d24f16d1b3e104c6daa9bd96b4581614454dc9d9a4fedbefd7d28879bba43a"
+    },
+    {
+      "path": "library/ui/apps/hud/assets/events/add-to-calendar-icn.png",
+      "sha256": "dc3ae2cf7dc691cd1e98c43bdaaf74f7269ab0bac7ee2a6e1bf791bcb655b570"
+    },
+    {
+      "path": "library/ui/apps/hud/assets/events/arrow-down.png",
+      "sha256": "22ea3b89bb4b600dd1a08f260673895248125da5fcb4e27a5d704eae55daea0b"
+    },
+    {
+      "path": "library/ui/apps/hud/assets/events/arrow-left.png",
+      "sha256": "5bc5d8b5af16fa41bdf488257e76586fc252b03bcb5c088fe39bfecaf491f1c3"
+    },
+    {
+      "path": "library/ui/apps/hud/assets/events/arrow-right.png",
+      "sha256": "9e24b3ea64adf6ffcaaa002d0aba7ccbfe851571c2289217b26df374a7fa87b7"
+    },
+    {
+      "path": "library/ui/apps/hud/assets/events/arrow-up.png",
+      "sha256": "cdb249fa3f7e7f0ab42f37c7139e43e4d9adf48a0aba92ad8305fd7e23933767"
+    },
+    {
+      "path": "library/ui/apps/hud/assets/events/calendar-icn.png",
+      "sha256": "972ce1fdbdbb0dc1c626aa543a241dd73523adb37770c0502b5296894021a1f0"
+    },
+    {
+      "path": "library/ui/apps/hud/assets/events/close-icn-thin.png",
+      "sha256": "9d751af8ec2813679a81ed185aff4ab3e13ba046b9537a3a35c3aad948016fae"
+    },
+    {
+      "path": "library/ui/apps/hud/assets/events/default-image-place.webp",
+      "sha256": "8b2ab524e11a16268cfb36d16d0113bbac211c0dd72cc5b93a7615687b50546f"
+    },
+    {
+      "path": "library/ui/apps/hud/assets/events/empty-events-img.png",
+      "sha256": "8ce5f4b9ec1892031293e1e0b1cfaba1f72c07d1744c37efd4fe2883d0292fc4"
+    },
+    {
+      "path": "library/ui/apps/hud/assets/events/jump-in-outline.png",
+      "sha256": "232f2560d4d0cb473412e58f62aa177cb719772e841fe2364051a756c32f35db"
+    },
+    {
+      "path": "library/ui/apps/hud/assets/events/link-icn.png",
+      "sha256": "1c27dfbdabbd6bb191aeaceb38b2553dcbe083353091e6b5cb4eac045181f4b3"
+    },
+    {
+      "path": "library/ui/apps/hud/assets/events/live-event.png",
+      "sha256": "d759873d2ca242885ef3fbef56369d6e4ffc1c65730323671c92f975bfe982e1"
+    },
+    {
+      "path": "library/ui/apps/hud/assets/events/live-icn.png",
+      "sha256": "6c96a18bab96a62a444f44d759ea55d3680923ddafd0bbb2086dbc98def0f286"
+    },
+    {
+      "path": "library/ui/apps/hud/assets/events/pin-outline.png",
+      "sha256": "76ba1712beb95983f7c43bd1895d9d0786777758324cad4ad1ea93c19ea67c04"
+    },
+    {
+      "path": "library/ui/apps/hud/assets/events/players-icn.png",
+      "sha256": "00c5a1f61d3768694ddc9bbd37a789409916c81dc7c01e21e4682adde8b2b0fb"
+    },
+    {
+      "path": "library/ui/apps/hud/assets/events/remind-me-event.png",
+      "sha256": "8469a76514f0ec96f98bc5b0daa1cf7cea2b74425a3f2a3cc5c6fd0c0741bf1d"
+    },
+    {
+      "path": "library/ui/apps/hud/assets/events/reminder-off.png",
+      "sha256": "51328f1c15626845ebd536b5b69bb13f652b475fbd8a74b058cc908db54716e0"
+    },
+    {
+      "path": "library/ui/apps/hud/assets/events/reminder-on.png",
+      "sha256": "2c172ade73ff24222d73f0c532e355b004383e2ef5b905ae44ca95cdf30f3b79"
+    },
+    {
+      "path": "library/ui/apps/hud/assets/events/share-icn.png",
+      "sha256": "8aaf1360e7f0e3bab57b4ecb6bcea6b133cc93bde2d708fc97be59edb949925f"
+    },
+    {
+      "path": "library/ui/apps/hud/assets/events/time-icn.png",
+      "sha256": "cd9ca9f811aeec21454a42bc87e8cba089a133186e82360a00adedafbcb22d3f"
+    },
+    {
+      "path": "library/ui/apps/hud/assets/events/x-icn.png",
+      "sha256": "3f9d844bf0e67644aec5aa9a5110f768a139e56fa53504ec693503650a095ea6"
     },
     {
       "path": "library/ui/apps/hud/assets/loading-tips/add-friends.webp",
@@ -5862,11 +6144,11 @@
     },
     {
       "path": "library/ui/apps/hud/design/Button.module.css",
-      "sha256": "bff362b0bc48a6d0c5c011b99bf2785aeea766af559ea1500e0706bf652e1da2"
+      "sha256": "a051dfb44c8848a42853e0fa0b6580ae2ea2b4f40fc2091c16204f5ca46b8555"
     },
     {
       "path": "library/ui/apps/hud/design/Button.tsx",
-      "sha256": "8ba7fd34bf781d95a8da97bf4c59ff4cf891fddb366056600ff09f6ea9838870"
+      "sha256": "308be3bfcc7d771eb001d3f1c130f25df9326d51f27d68b93b8055ae5136ed28"
     },
     {
       "path": "library/ui/apps/hud/design/CharCounter.module.css",
@@ -6074,11 +6356,11 @@
     },
     {
       "path": "library/ui/apps/hud/design/ScrollThumb.module.css",
-      "sha256": "71a7e0eac72d66af5adcd5371c90f1e1983742d97af36feb2784a7e57286f727"
+      "sha256": "2483362e3fdc9bac25f42bbd5785a1c9812afd7efa71fb72ea4f5bce9b9d9a1f"
     },
     {
       "path": "library/ui/apps/hud/design/ScrollThumb.tsx",
-      "sha256": "16b07d632db6ea67c9b79527797bff0ad3ed7a1a2d723f3057b9d1169f25741d"
+      "sha256": "0aef2b7cd8897a634ce10e236a463ce5b1ad33f89001b39a5c18ccd69da8e144"
     },
     {
       "path": "library/ui/apps/hud/design/SearchField.module.css",
@@ -6098,7 +6380,15 @@
     },
     {
       "path": "library/ui/apps/hud/design/Showcase.tsx",
-      "sha256": "921b4c2db10ec9676f6b99478c272fa6c563d7be761dc5df8bdbcad198b59f84"
+      "sha256": "3447c6b8fdc95da38be944b771de524440f8c09001457313039e891a4702bc7e"
+    },
+    {
+      "path": "library/ui/apps/hud/design/Skeleton.module.css",
+      "sha256": "8f4fc80f5157213711a1643f7c8683ca1a3521524a607995bf8fb3fa36bf231b"
+    },
+    {
+      "path": "library/ui/apps/hud/design/Skeleton.tsx",
+      "sha256": "79e830f93fe22331dbf23c05b3c4b9c5b0db6c1aaa2346d26df5d17abca7d897"
     },
     {
       "path": "library/ui/apps/hud/design/Slider.module.css",
@@ -6202,15 +6492,15 @@
     },
     {
       "path": "library/ui/apps/hud/design/index.ts",
-      "sha256": "cc4fa10ecbe788f651a05b015b27f3253c0f383bbb3b2b30327d84ffdffc30a9"
+      "sha256": "5eea5eaabbbb57b79c7469845d108293ab2ad352bc25bf40b3c5e9201b76f654"
     },
     {
       "path": "library/ui/apps/hud/design/popups.module.css",
-      "sha256": "1416ed7c88ade3ca122189859d3346f04b438921aa3afe925c8b61dacbfbde55"
+      "sha256": "9c6733f0c550db0e27896609f81a0b78faf684d5249f5da883f98e52c55dcef6"
     },
     {
       "path": "library/ui/apps/hud/design/popups.tsx",
-      "sha256": "af96f90863d0ca315cfc27ef1f10df701c192ec6d695edfa6678dc1fcd208044"
+      "sha256": "6c2e4c9d94edcf83034263654344e81aef4e418070356a19d32d9b1e5a06fba0"
     },
     {
       "path": "library/ui/apps/hud/design/rarityArt.ts",
@@ -6226,11 +6516,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/backpack/BackpackPage.module.css",
-      "sha256": "8603f1e4efa0dc3ddd81f064a9c38399986f24cb6f861aa366b82af113faed27"
+      "sha256": "78fa1dc3ad2a7995fafd4c156a5240d6f94f591e3193be019c9430133ba22d79"
     },
     {
       "path": "library/ui/apps/hud/features/backpack/BackpackPage.tsx",
-      "sha256": "24f024ddb4abf8621e6e9899faff5b0a08b3ac485b18b688814defdb6849bc14"
+      "sha256": "2ac33fa1788053b0e731ba57c069ebc6b0a406cb2d9913f4ff9618e51b2162e3"
     },
     {
       "path": "library/ui/apps/hud/features/backpack/categoryIcons.tsx",
@@ -6450,7 +6740,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/error/ConnectivityFeedback.module.css",
-      "sha256": "27c3b6e4ea99506a1e3d24f0ee50713662680aa43fc46465b38bdde89459011a"
+      "sha256": "ac1d7b9600bab63bdda502498c9ae43475c950b2878b204cabfc67d99cdd219f"
     },
     {
       "path": "library/ui/apps/hud/features/error/ConnectivityFeedback.tsx",
@@ -6489,12 +6779,60 @@
       "sha256": "5833efc69f395cd94af5ffdf5edd29388e4d43d16d5d3a959567b0f629bbdd67"
     },
     {
-      "path": "library/ui/apps/hud/features/error/radial-glow.png",
-      "sha256": "e130cfd61d8c3ce39f492a972ed2029b8a45a6584d80291586b311f4634bac28"
+      "path": "library/ui/apps/hud/features/events/EventCard.module.css",
+      "sha256": "3418ac1b42c991696b550e59c312e447fd251a35bb9a819e5338eeaa8fcbad69"
+    },
+    {
+      "path": "library/ui/apps/hud/features/events/EventCard.tsx",
+      "sha256": "511a49a434ccd34a252fc3b12766a9297929557fe87d82e06118435fb4ac422e"
+    },
+    {
+      "path": "library/ui/apps/hud/features/events/EventDetail.module.css",
+      "sha256": "0d40c58e01a4dd7d33791f3ff5263a366e15808092b0d579959ef560fe9e212f"
+    },
+    {
+      "path": "library/ui/apps/hud/features/events/EventDetail.tsx",
+      "sha256": "789ac8cab7a1d7646430746e9b6e30440918eef60175ad81b9402f07e84f7728"
+    },
+    {
+      "path": "library/ui/apps/hud/features/events/EventsByDay.module.css",
+      "sha256": "1ab9648af75698d70ac3bbec51197f43ebd42f3da77202329ee3039be18b5df0"
+    },
+    {
+      "path": "library/ui/apps/hud/features/events/EventsByDay.tsx",
+      "sha256": "664e2ac652b887a427a73912c4e2a720092664cef7c8e0d1c83ef29140838877"
+    },
+    {
+      "path": "library/ui/apps/hud/features/events/EventsCalendar.module.css",
+      "sha256": "0d9326bfa56b5d59f8c2e3c990d8a43680cb45cf27e93ba09f6f5a312c0afc31"
+    },
+    {
+      "path": "library/ui/apps/hud/features/events/EventsCalendar.tsx",
+      "sha256": "c7e920c1a01e9e12ffe03f7276cf334e5ddc7afebe17be06bca111de44b4cf78"
+    },
+    {
+      "path": "library/ui/apps/hud/features/events/EventsPage.module.css",
+      "sha256": "af0b2f276f7952b12e72274ccf6f66aa7af42c00e231867dcd136224377cb664"
     },
     {
       "path": "library/ui/apps/hud/features/events/EventsPage.tsx",
-      "sha256": "4ed668214b0468d2f3851ee1a4cea92c34f08395087a51d47accbc409a66d9ff"
+      "sha256": "c16ac954fac2aaf0088488c5979338492c3fd79cf7ff00f01cb78bf9aa76638b"
+    },
+    {
+      "path": "library/ui/apps/hud/features/events/eventFormat.ts",
+      "sha256": "d0a1b315d68731607b38c172330081cb2ad4318be54c89d1d94db8d998c2e1c7"
+    },
+    {
+      "path": "library/ui/apps/hud/features/events/eventsStore.ts",
+      "sha256": "d90ff4e7e0e8e7131555c2723959c2d7e4db2e2dffb4017b746895f4b805dbc5"
+    },
+    {
+      "path": "library/ui/apps/hud/features/events/useEventActions.ts",
+      "sha256": "b9956c6a35bf835cbf9578b5dd089160826eb0e560751ee7bc5c737a721fd875"
+    },
+    {
+      "path": "library/ui/apps/hud/features/events/useEventsData.ts",
+      "sha256": "8010a17def06f4db8de92c9b4a092b13cae9991c9da74644ecd808769bd0e582"
     },
     {
       "path": "library/ui/apps/hud/features/events/useLiveEventCount.ts",
@@ -6630,7 +6968,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/menu/MainMenuShell.tsx",
-      "sha256": "90e2396ccbea89b45e776638ec70fccfaeb9ec10ed7559c16800565c8f210488"
+      "sha256": "61c1d3393ee01fb0c3acc422f95e06351dc4c24acd6660f42d42080e36ab545d"
     },
     {
       "path": "library/ui/apps/hud/features/menu/ProfileChip.module.css",
@@ -6846,7 +7184,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "97687965f09d92e3e83480dbe11ac1e2d43e62a3ff6490fc9fc6926b854bd1a7"
+      "sha256": "f20ad6d17f36f5a6c6170b3e80aaab82dda603cdd71099afe223de6874c9faea"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -6854,7 +7192,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.tsx",
-      "sha256": "ed84046055534f58bb5dcc9d6dc3ce9bfdd634981a307e9f87d92ae2615d2a24"
+      "sha256": "07972ca071bc1099772562f8e19114977413e67b22c21f83e54da30a3d9fc4da"
     },
     {
       "path": "library/ui/apps/hud/features/settings/SettingsPanel.module.css",
@@ -6878,7 +7216,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/sidebar/Sidebar.tsx",
-      "sha256": "00b86728a7b7dbcc40e8fa4f3a3cdfb806ba2accd6a2b1ea51d5e8b946b3bbea"
+      "sha256": "3f1655495d5a071d481830e0e133010aea232b792561dc4d21e73d2924e31454"
     },
     {
       "path": "library/ui/apps/hud/features/sidebar/useAutoHide.ts",
@@ -6970,7 +7308,7 @@
     },
     {
       "path": "library/ui/apps/hud/styles/tokens.css",
-      "sha256": "df6d61e7921f02d27b0ef235042b570125727718d7216400d7b43fe1a768fe19"
+      "sha256": "4732f5123165e2ade5f4138f89fc665211f2943e6470cd7d482f475bc322fbb3"
     },
     {
       "path": "library/ui/apps/hud/test/avatar.test.tsx",
@@ -7022,7 +7360,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/harness.tsx",
-      "sha256": "a177c027bb96d24c2ea34235fe8cef7531487aa3417d25cb94db6a1630ff457e"
+      "sha256": "a26465b08992169fd83c5ecae91b2ecaac704d10f7980a5231c78d8ca3038c22"
     },
     {
       "path": "library/ui/apps/hud/test/host.ts",
@@ -7165,8 +7503,20 @@
       "sha256": "ff707cafef3ae65e3aefaf7da473b9214f140de4d6ddf5cc3030632fffcaec5a"
     },
     {
+      "path": "library/ui/apps/hud/test/hosted/eventFixtures.ts",
+      "sha256": "78d9ab2efcd77d069fe3438e94906e5b9ab2cf6f05eb7e540c12dcdb71997f46"
+    },
+    {
+      "path": "library/ui/apps/hud/test/hosted/eventFormat.test.ts",
+      "sha256": "a0639f4dba27a62ff225bfcc0bb7d0b14e07d5f198df2ec95b3eeea0db4c3d62"
+    },
+    {
       "path": "library/ui/apps/hud/test/hosted/events.test.tsx",
-      "sha256": "4aa1936b12c2c2ee00d2a36129c95ad6a4564f231c2bc159e5eab15f487fb3d2"
+      "sha256": "8aafc44610d3b3823647a85e4ed6dfba33217268536c88e6ec4a3239ae7b3525"
+    },
+    {
+      "path": "library/ui/apps/hud/test/hosted/eventsStore.test.ts",
+      "sha256": "ba183fbbb0c0c4871d22f18443e135629ff597437453b66fbc1a8c9dbb1400c9"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/friends.test.tsx",
@@ -7202,7 +7552,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/lobby.test.tsx",
-      "sha256": "737f77fb2116a96747b055f738cf5da8b146a430df14d8aaf599aee25ec3abef"
+      "sha256": "632632b4db06109ea844fdd05105cc3afec0b1293bb681e6bc3a998a834e5f1d"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/login.clicks.test.tsx",
@@ -7322,7 +7672,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/systemActionShortcuts.test.tsx",
-      "sha256": "410094c5575dbbab792f775142cea4b3051957ecab6786823ed098d2113d7d50"
+      "sha256": "147544d9988c8b869070d790c4688a869ce2a94233eb31835d399a9843ee49be"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/voiceChat.test.tsx",
@@ -7731,6 +8081,21 @@
     },
     {
       "from": "library/explorer-core/engine/mockBridge.ts",
+      "to": "library/explorer-core/engine/mockEvents.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/engine/mockBridge.ts",
+      "to": "library/explorer-core/engine/mockEvents.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/engine/mockBridge.ts",
+      "to": "library/explorer-core/engine/mockEvents.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/explorer-core/engine/mockBridge.ts",
       "to": "library/explorer-core/engine/profileEdit.ts",
       "kind": "native:runtime"
     },
@@ -11241,6 +11606,21 @@
     },
     {
       "from": "library/ui/apps/hud/design/Showcase.tsx",
+      "to": "library/ui/apps/hud/design/Skeleton.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Showcase.tsx",
+      "to": "library/ui/apps/hud/design/Skeleton.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Showcase.tsx",
+      "to": "library/ui/apps/hud/design/Skeleton.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Showcase.tsx",
       "to": "library/ui/apps/hud/design/Slider.tsx",
       "kind": "native:runtime"
     },
@@ -11447,6 +11827,21 @@
     {
       "from": "library/ui/apps/hud/design/Showcase.tsx",
       "to": "library/ui/apps/hud/features/session/profileStore.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Skeleton.tsx",
+      "to": "library/ui/apps/hud/design/Skeleton.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Skeleton.tsx",
+      "to": "library/ui/apps/hud/design/Skeleton.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Skeleton.tsx",
+      "to": "library/ui/apps/hud/design/Skeleton.module.css",
       "kind": "test:runtime"
     },
     {
@@ -12497,6 +12892,21 @@
     {
       "from": "library/ui/apps/hud/design/index.ts",
       "to": "library/ui/apps/hud/design/Select.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/index.ts",
+      "to": "library/ui/apps/hud/design/Skeleton.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/index.ts",
+      "to": "library/ui/apps/hud/design/Skeleton.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/index.ts",
+      "to": "library/ui/apps/hud/design/Skeleton.tsx",
       "kind": "test:runtime"
     },
     {
@@ -16625,18 +17035,663 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/apps/hud/features/events/EventCard.tsx",
+      "to": "library/ui/apps/hud/assets/events/add-icn-gradient.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventCard.tsx",
+      "to": "library/ui/apps/hud/assets/events/add-icn-gradient.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventCard.tsx",
+      "to": "library/ui/apps/hud/assets/events/add-icn-gradient.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventCard.tsx",
+      "to": "library/ui/apps/hud/assets/events/add-to-calendar-icn.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventCard.tsx",
+      "to": "library/ui/apps/hud/assets/events/add-to-calendar-icn.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventCard.tsx",
+      "to": "library/ui/apps/hud/assets/events/add-to-calendar-icn.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventCard.tsx",
+      "to": "library/ui/apps/hud/assets/events/calendar-icn.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventCard.tsx",
+      "to": "library/ui/apps/hud/assets/events/calendar-icn.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventCard.tsx",
+      "to": "library/ui/apps/hud/assets/events/calendar-icn.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventCard.tsx",
+      "to": "library/ui/apps/hud/assets/events/default-image-place.webp",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventCard.tsx",
+      "to": "library/ui/apps/hud/assets/events/default-image-place.webp",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventCard.tsx",
+      "to": "library/ui/apps/hud/assets/events/default-image-place.webp",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventCard.tsx",
+      "to": "library/ui/apps/hud/assets/events/jump-in-outline.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventCard.tsx",
+      "to": "library/ui/apps/hud/assets/events/jump-in-outline.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventCard.tsx",
+      "to": "library/ui/apps/hud/assets/events/jump-in-outline.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventCard.tsx",
+      "to": "library/ui/apps/hud/assets/events/link-icn.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventCard.tsx",
+      "to": "library/ui/apps/hud/assets/events/link-icn.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventCard.tsx",
+      "to": "library/ui/apps/hud/assets/events/link-icn.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventCard.tsx",
+      "to": "library/ui/apps/hud/assets/events/live-event.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventCard.tsx",
+      "to": "library/ui/apps/hud/assets/events/live-event.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventCard.tsx",
+      "to": "library/ui/apps/hud/assets/events/live-event.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventCard.tsx",
+      "to": "library/ui/apps/hud/assets/events/live-icn.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventCard.tsx",
+      "to": "library/ui/apps/hud/assets/events/live-icn.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventCard.tsx",
+      "to": "library/ui/apps/hud/assets/events/live-icn.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventCard.tsx",
+      "to": "library/ui/apps/hud/assets/events/players-icn.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventCard.tsx",
+      "to": "library/ui/apps/hud/assets/events/players-icn.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventCard.tsx",
+      "to": "library/ui/apps/hud/assets/events/players-icn.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventCard.tsx",
+      "to": "library/ui/apps/hud/assets/events/reminder-off.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventCard.tsx",
+      "to": "library/ui/apps/hud/assets/events/reminder-off.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventCard.tsx",
+      "to": "library/ui/apps/hud/assets/events/reminder-off.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventCard.tsx",
+      "to": "library/ui/apps/hud/assets/events/reminder-on.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventCard.tsx",
+      "to": "library/ui/apps/hud/assets/events/reminder-on.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventCard.tsx",
+      "to": "library/ui/apps/hud/assets/events/reminder-on.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventCard.tsx",
+      "to": "library/ui/apps/hud/assets/events/share-icn.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventCard.tsx",
+      "to": "library/ui/apps/hud/assets/events/share-icn.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventCard.tsx",
+      "to": "library/ui/apps/hud/assets/events/share-icn.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventCard.tsx",
+      "to": "library/ui/apps/hud/assets/events/time-icn.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventCard.tsx",
+      "to": "library/ui/apps/hud/assets/events/time-icn.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventCard.tsx",
+      "to": "library/ui/apps/hud/assets/events/time-icn.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventCard.tsx",
+      "to": "library/ui/apps/hud/assets/events/x-icn.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventCard.tsx",
+      "to": "library/ui/apps/hud/assets/events/x-icn.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventCard.tsx",
+      "to": "library/ui/apps/hud/assets/events/x-icn.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventCard.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventCard.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventCard.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventCard.tsx",
+      "to": "library/ui/apps/hud/features/events/EventCard.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventCard.tsx",
+      "to": "library/ui/apps/hud/features/events/EventCard.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventCard.tsx",
+      "to": "library/ui/apps/hud/features/events/EventCard.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventCard.tsx",
+      "to": "library/ui/apps/hud/features/events/eventFormat.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventCard.tsx",
+      "to": "library/ui/apps/hud/features/events/eventFormat.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventCard.tsx",
+      "to": "library/ui/apps/hud/features/events/eventFormat.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventDetail.tsx",
+      "to": "library/ui/apps/hud/assets/events/add-to-calendar-icn.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventDetail.tsx",
+      "to": "library/ui/apps/hud/assets/events/add-to-calendar-icn.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventDetail.tsx",
+      "to": "library/ui/apps/hud/assets/events/add-to-calendar-icn.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventDetail.tsx",
+      "to": "library/ui/apps/hud/assets/events/close-icn-thin.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventDetail.tsx",
+      "to": "library/ui/apps/hud/assets/events/close-icn-thin.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventDetail.tsx",
+      "to": "library/ui/apps/hud/assets/events/close-icn-thin.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventDetail.tsx",
+      "to": "library/ui/apps/hud/assets/events/jump-in-outline.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventDetail.tsx",
+      "to": "library/ui/apps/hud/assets/events/jump-in-outline.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventDetail.tsx",
+      "to": "library/ui/apps/hud/assets/events/jump-in-outline.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventDetail.tsx",
+      "to": "library/ui/apps/hud/assets/events/pin-outline.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventDetail.tsx",
+      "to": "library/ui/apps/hud/assets/events/pin-outline.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventDetail.tsx",
+      "to": "library/ui/apps/hud/assets/events/pin-outline.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventDetail.tsx",
+      "to": "library/ui/apps/hud/assets/events/time-icn.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventDetail.tsx",
+      "to": "library/ui/apps/hud/assets/events/time-icn.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventDetail.tsx",
+      "to": "library/ui/apps/hud/assets/events/time-icn.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventDetail.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventDetail.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventDetail.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventDetail.tsx",
+      "to": "library/ui/apps/hud/features/events/EventCard.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventDetail.tsx",
+      "to": "library/ui/apps/hud/features/events/EventCard.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventDetail.tsx",
+      "to": "library/ui/apps/hud/features/events/EventCard.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventDetail.tsx",
+      "to": "library/ui/apps/hud/features/events/EventDetail.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventDetail.tsx",
+      "to": "library/ui/apps/hud/features/events/EventDetail.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventDetail.tsx",
+      "to": "library/ui/apps/hud/features/events/EventDetail.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventDetail.tsx",
+      "to": "library/ui/apps/hud/features/events/eventFormat.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventDetail.tsx",
+      "to": "library/ui/apps/hud/features/events/eventFormat.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventDetail.tsx",
+      "to": "library/ui/apps/hud/features/events/eventFormat.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventDetail.tsx",
+      "to": "library/ui/apps/hud/features/events/useEventActions.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventDetail.tsx",
+      "to": "library/ui/apps/hud/features/events/useEventActions.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventDetail.tsx",
+      "to": "library/ui/apps/hud/features/events/useEventActions.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventDetail.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventDetail.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventDetail.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventsByDay.tsx",
+      "to": "library/ui/apps/hud/assets/events/arrow-left.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventsByDay.tsx",
+      "to": "library/ui/apps/hud/assets/events/arrow-left.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventsByDay.tsx",
+      "to": "library/ui/apps/hud/assets/events/arrow-left.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventsByDay.tsx",
+      "to": "library/ui/apps/hud/assets/events/empty-events-img.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventsByDay.tsx",
+      "to": "library/ui/apps/hud/assets/events/empty-events-img.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventsByDay.tsx",
+      "to": "library/ui/apps/hud/assets/events/empty-events-img.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventsByDay.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventsByDay.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventsByDay.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventsByDay.tsx",
+      "to": "library/ui/apps/hud/features/events/EventCard.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventsByDay.tsx",
+      "to": "library/ui/apps/hud/features/events/EventCard.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventsByDay.tsx",
+      "to": "library/ui/apps/hud/features/events/EventCard.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventsByDay.tsx",
+      "to": "library/ui/apps/hud/features/events/EventsByDay.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventsByDay.tsx",
+      "to": "library/ui/apps/hud/features/events/EventsByDay.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventsByDay.tsx",
+      "to": "library/ui/apps/hud/features/events/EventsByDay.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventsByDay.tsx",
+      "to": "library/ui/apps/hud/features/events/eventFormat.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventsByDay.tsx",
+      "to": "library/ui/apps/hud/features/events/eventFormat.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventsByDay.tsx",
+      "to": "library/ui/apps/hud/features/events/eventFormat.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventsCalendar.tsx",
+      "to": "library/ui/apps/hud/assets/events/arrow-down.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventsCalendar.tsx",
+      "to": "library/ui/apps/hud/assets/events/arrow-down.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventsCalendar.tsx",
+      "to": "library/ui/apps/hud/assets/events/arrow-down.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventsCalendar.tsx",
+      "to": "library/ui/apps/hud/assets/events/arrow-left.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventsCalendar.tsx",
+      "to": "library/ui/apps/hud/assets/events/arrow-left.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventsCalendar.tsx",
+      "to": "library/ui/apps/hud/assets/events/arrow-left.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventsCalendar.tsx",
+      "to": "library/ui/apps/hud/assets/events/arrow-right.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventsCalendar.tsx",
+      "to": "library/ui/apps/hud/assets/events/arrow-right.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventsCalendar.tsx",
+      "to": "library/ui/apps/hud/assets/events/arrow-right.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventsCalendar.tsx",
+      "to": "library/ui/apps/hud/assets/events/arrow-up.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventsCalendar.tsx",
+      "to": "library/ui/apps/hud/assets/events/arrow-up.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventsCalendar.tsx",
+      "to": "library/ui/apps/hud/assets/events/arrow-up.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventsCalendar.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventsCalendar.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventsCalendar.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventsCalendar.tsx",
+      "to": "library/ui/apps/hud/features/events/EventCard.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventsCalendar.tsx",
+      "to": "library/ui/apps/hud/features/events/EventCard.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventsCalendar.tsx",
+      "to": "library/ui/apps/hud/features/events/EventCard.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventsCalendar.tsx",
+      "to": "library/ui/apps/hud/features/events/EventsCalendar.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventsCalendar.tsx",
+      "to": "library/ui/apps/hud/features/events/EventsCalendar.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventsCalendar.tsx",
+      "to": "library/ui/apps/hud/features/events/EventsCalendar.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventsCalendar.tsx",
+      "to": "library/ui/apps/hud/features/events/eventFormat.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventsCalendar.tsx",
+      "to": "library/ui/apps/hud/features/events/eventFormat.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventsCalendar.tsx",
+      "to": "library/ui/apps/hud/features/events/eventFormat.ts",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/apps/hud/features/events/EventsPage.tsx",
-      "to": "library/explorer-core/features/events/eventsApi.ts",
+      "to": "library/explorer-core/lib/analytics.ts",
       "kind": "native:runtime"
     },
     {
       "from": "library/ui/apps/hud/features/events/EventsPage.tsx",
-      "to": "library/explorer-core/features/events/eventsApi.ts",
+      "to": "library/explorer-core/lib/analytics.ts",
       "kind": "production:runtime"
     },
     {
       "from": "library/ui/apps/hud/features/events/EventsPage.tsx",
-      "to": "library/explorer-core/features/events/eventsApi.ts",
+      "to": "library/explorer-core/lib/analytics.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventsPage.tsx",
+      "to": "library/ui/apps/hud/assets/events/add-icn.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventsPage.tsx",
+      "to": "library/ui/apps/hud/assets/events/add-icn.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventsPage.tsx",
+      "to": "library/ui/apps/hud/assets/events/add-icn.png",
       "kind": "test:runtime"
     },
     {
@@ -16656,6 +17711,111 @@
     },
     {
       "from": "library/ui/apps/hud/features/events/EventsPage.tsx",
+      "to": "library/ui/apps/hud/features/events/EventDetail.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventsPage.tsx",
+      "to": "library/ui/apps/hud/features/events/EventDetail.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventsPage.tsx",
+      "to": "library/ui/apps/hud/features/events/EventDetail.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventsPage.tsx",
+      "to": "library/ui/apps/hud/features/events/EventsByDay.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventsPage.tsx",
+      "to": "library/ui/apps/hud/features/events/EventsByDay.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventsPage.tsx",
+      "to": "library/ui/apps/hud/features/events/EventsByDay.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventsPage.tsx",
+      "to": "library/ui/apps/hud/features/events/EventsCalendar.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventsPage.tsx",
+      "to": "library/ui/apps/hud/features/events/EventsCalendar.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventsPage.tsx",
+      "to": "library/ui/apps/hud/features/events/EventsCalendar.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventsPage.tsx",
+      "to": "library/ui/apps/hud/features/events/EventsPage.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventsPage.tsx",
+      "to": "library/ui/apps/hud/features/events/EventsPage.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventsPage.tsx",
+      "to": "library/ui/apps/hud/features/events/EventsPage.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventsPage.tsx",
+      "to": "library/ui/apps/hud/features/events/eventFormat.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventsPage.tsx",
+      "to": "library/ui/apps/hud/features/events/eventFormat.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventsPage.tsx",
+      "to": "library/ui/apps/hud/features/events/eventFormat.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventsPage.tsx",
+      "to": "library/ui/apps/hud/features/events/eventsStore.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventsPage.tsx",
+      "to": "library/ui/apps/hud/features/events/eventsStore.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventsPage.tsx",
+      "to": "library/ui/apps/hud/features/events/eventsStore.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventsPage.tsx",
+      "to": "library/ui/apps/hud/features/events/useEventActions.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventsPage.tsx",
+      "to": "library/ui/apps/hud/features/events/useEventActions.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventsPage.tsx",
+      "to": "library/ui/apps/hud/features/events/useEventActions.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventsPage.tsx",
       "to": "library/ui/apps/hud/features/menu/MainMenuShell.tsx",
       "kind": "native:runtime"
     },
@@ -16667,6 +17827,156 @@
     {
       "from": "library/ui/apps/hud/features/events/EventsPage.tsx",
       "to": "library/ui/apps/hud/features/menu/MainMenuShell.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/eventFormat.ts",
+      "to": "library/explorer-core/lib/utm.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/eventFormat.ts",
+      "to": "library/explorer-core/lib/utm.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/eventFormat.ts",
+      "to": "library/explorer-core/lib/utm.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/eventsStore.ts",
+      "to": "library/ui/apps/hud/features/events/eventFormat.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/eventsStore.ts",
+      "to": "library/ui/apps/hud/features/events/eventFormat.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/eventsStore.ts",
+      "to": "library/ui/apps/hud/features/events/eventFormat.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/useEventActions.ts",
+      "to": "library/explorer-core/features/events/eventsApi.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/useEventActions.ts",
+      "to": "library/explorer-core/features/events/eventsApi.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/useEventActions.ts",
+      "to": "library/explorer-core/features/events/eventsApi.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/useEventActions.ts",
+      "to": "library/explorer-core/lib/analytics.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/useEventActions.ts",
+      "to": "library/explorer-core/lib/analytics.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/useEventActions.ts",
+      "to": "library/explorer-core/lib/analytics.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/useEventActions.ts",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/useEventActions.ts",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/useEventActions.ts",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/useEventActions.ts",
+      "to": "library/ui/apps/hud/features/events/eventFormat.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/useEventActions.ts",
+      "to": "library/ui/apps/hud/features/events/eventFormat.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/useEventActions.ts",
+      "to": "library/ui/apps/hud/features/events/eventFormat.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/useEventActions.ts",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/useEventActions.ts",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/useEventActions.ts",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/useEventsData.ts",
+      "to": "library/ui/apps/hud/design/Toast.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/useEventsData.ts",
+      "to": "library/ui/apps/hud/design/Toast.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/useEventsData.ts",
+      "to": "library/ui/apps/hud/design/Toast.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/useEventsData.ts",
+      "to": "library/ui/apps/hud/features/events/eventFormat.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/useEventsData.ts",
+      "to": "library/ui/apps/hud/features/events/eventFormat.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/useEventsData.ts",
+      "to": "library/ui/apps/hud/features/events/eventFormat.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/useEventsData.ts",
+      "to": "library/ui/apps/hud/features/events/eventsStore.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/useEventsData.ts",
+      "to": "library/ui/apps/hud/features/events/eventsStore.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/useEventsData.ts",
+      "to": "library/ui/apps/hud/features/events/eventsStore.ts",
       "kind": "test:runtime"
     },
     {
@@ -21546,6 +22856,36 @@
     },
     {
       "from": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "to": "library/ui/apps/hud/features/events/eventFormat.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "to": "library/ui/apps/hud/features/events/eventFormat.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "to": "library/ui/apps/hud/features/events/eventFormat.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "to": "library/ui/apps/hud/features/events/useEventsData.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "to": "library/ui/apps/hud/features/events/useEventsData.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "to": "library/ui/apps/hud/features/events/useEventsData.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/session/useEngineSession.ts",
       "to": "library/ui/apps/hud/features/friends/friendToasts.tsx",
       "kind": "native:runtime"
     },
@@ -23751,6 +25091,21 @@
     },
     {
       "from": "library/ui/apps/hud/test/harness.tsx",
+      "to": "library/ui/apps/hud/features/events/eventsStore.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/harness.tsx",
+      "to": "library/ui/apps/hud/features/events/eventsStore.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/harness.tsx",
+      "to": "library/ui/apps/hud/features/events/eventsStore.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/harness.tsx",
       "to": "library/ui/apps/hud/features/session/useEngineSession.ts",
       "kind": "native:runtime"
     },
@@ -25310,18 +26665,93 @@
       "kind": "test:runtime"
     },
     {
-      "from": "library/ui/apps/hud/test/hosted/events.test.tsx",
+      "from": "library/ui/apps/hud/test/hosted/eventFormat.test.ts",
       "to": "library/explorer-core/features/events/eventsApi.ts",
       "kind": "native:runtime"
     },
     {
-      "from": "library/ui/apps/hud/test/hosted/events.test.tsx",
+      "from": "library/ui/apps/hud/test/hosted/eventFormat.test.ts",
       "to": "library/explorer-core/features/events/eventsApi.ts",
       "kind": "production:runtime"
     },
     {
-      "from": "library/ui/apps/hud/test/hosted/events.test.tsx",
+      "from": "library/ui/apps/hud/test/hosted/eventFormat.test.ts",
       "to": "library/explorer-core/features/events/eventsApi.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/eventFormat.test.ts",
+      "to": "library/ui/apps/hud/features/events/eventFormat.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/eventFormat.test.ts",
+      "to": "library/ui/apps/hud/features/events/eventFormat.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/eventFormat.test.ts",
+      "to": "library/ui/apps/hud/features/events/eventFormat.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/eventFormat.test.ts",
+      "to": "library/ui/apps/hud/test/hosted/eventFixtures.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/eventFormat.test.ts",
+      "to": "library/ui/apps/hud/test/hosted/eventFixtures.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/eventFormat.test.ts",
+      "to": "library/ui/apps/hud/test/hosted/eventFixtures.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/events.test.tsx",
+      "to": "library/explorer-core/lib/analytics.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/events.test.tsx",
+      "to": "library/explorer-core/lib/analytics.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/events.test.tsx",
+      "to": "library/explorer-core/lib/analytics.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/events.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/events.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/events.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/events.test.tsx",
+      "to": "library/ui/apps/hud/features/events/EventsCalendar.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/events.test.tsx",
+      "to": "library/ui/apps/hud/features/events/EventsCalendar.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/events.test.tsx",
+      "to": "library/ui/apps/hud/features/events/EventsCalendar.tsx",
       "kind": "test:runtime"
     },
     {
@@ -25337,6 +26767,66 @@
     {
       "from": "library/ui/apps/hud/test/hosted/events.test.tsx",
       "to": "library/ui/apps/hud/features/events/EventsPage.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/events.test.tsx",
+      "to": "library/ui/apps/hud/features/events/eventFormat.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/events.test.tsx",
+      "to": "library/ui/apps/hud/features/events/eventFormat.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/events.test.tsx",
+      "to": "library/ui/apps/hud/features/events/eventFormat.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/events.test.tsx",
+      "to": "library/ui/apps/hud/features/events/useEventsData.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/events.test.tsx",
+      "to": "library/ui/apps/hud/features/events/useEventsData.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/events.test.tsx",
+      "to": "library/ui/apps/hud/features/events/useEventsData.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/events.test.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/events.test.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/events.test.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/events.test.tsx",
+      "to": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/events.test.tsx",
+      "to": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/events.test.tsx",
+      "to": "library/ui/apps/hud/features/session/useEngineSession.ts",
       "kind": "test:runtime"
     },
     {
@@ -25367,6 +26857,66 @@
     {
       "from": "library/ui/apps/hud/test/hosted/events.test.tsx",
       "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/events.test.tsx",
+      "to": "library/ui/apps/hud/test/hosted/eventFixtures.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/events.test.tsx",
+      "to": "library/ui/apps/hud/test/hosted/eventFixtures.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/events.test.tsx",
+      "to": "library/ui/apps/hud/test/hosted/eventFixtures.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/eventsStore.test.ts",
+      "to": "library/ui/apps/hud/features/events/eventFormat.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/eventsStore.test.ts",
+      "to": "library/ui/apps/hud/features/events/eventFormat.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/eventsStore.test.ts",
+      "to": "library/ui/apps/hud/features/events/eventFormat.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/eventsStore.test.ts",
+      "to": "library/ui/apps/hud/features/events/eventsStore.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/eventsStore.test.ts",
+      "to": "library/ui/apps/hud/features/events/eventsStore.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/eventsStore.test.ts",
+      "to": "library/ui/apps/hud/features/events/eventsStore.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/eventsStore.test.ts",
+      "to": "library/ui/apps/hud/test/hosted/eventFixtures.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/eventsStore.test.ts",
+      "to": "library/ui/apps/hud/test/hosted/eventFixtures.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/eventsStore.test.ts",
+      "to": "library/ui/apps/hud/test/hosted/eventFixtures.ts",
       "kind": "test:runtime"
     },
     {
@@ -26931,6 +28481,21 @@
     },
     {
       "from": "library/ui/apps/hud/test/hosted/systemActionShortcuts.test.tsx",
+      "to": "library/explorer-core/lib/analytics.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/systemActionShortcuts.test.tsx",
+      "to": "library/explorer-core/lib/analytics.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/systemActionShortcuts.test.tsx",
+      "to": "library/explorer-core/lib/analytics.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/systemActionShortcuts.test.tsx",
       "to": "library/explorer-core/lib/cancelLayers.ts",
       "kind": "native:runtime"
     },
@@ -26972,6 +28537,21 @@
     {
       "from": "library/ui/apps/hud/test/hosted/systemActionShortcuts.test.tsx",
       "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/systemActionShortcuts.test.tsx",
+      "to": "library/ui/apps/hud/features/menu/MainMenuShell.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/systemActionShortcuts.test.tsx",
+      "to": "library/ui/apps/hud/features/menu/MainMenuShell.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/systemActionShortcuts.test.tsx",
+      "to": "library/ui/apps/hud/features/menu/MainMenuShell.tsx",
       "kind": "test:runtime"
     },
     {
@@ -28861,6 +30441,11 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/explorer-core/engine/mockEvents.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/explorer-core/engine/nameColor.ts",
       "kind": "type"
     },
@@ -29556,6 +31141,11 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/design/Skeleton.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/design/Slider.tsx",
       "kind": "type"
     },
@@ -29861,7 +31451,47 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/features/events/EventCard.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/features/events/EventDetail.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/features/events/EventsByDay.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/features/events/EventsCalendar.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/features/events/EventsPage.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/features/events/eventFormat.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/features/events/eventsStore.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/features/events/useEventActions.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/features/events/useEventsData.ts",
       "kind": "type"
     },
     {
@@ -30486,7 +32116,22 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/test/hosted/eventFixtures.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/test/hosted/eventFormat.test.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/test/hosted/events.test.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/test/hosted/eventsStore.test.ts",
       "kind": "type"
     },
     {
@@ -32271,6 +33916,351 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/events/add-icn-gradient.png",
+      "kind": "native:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/events/add-icn-gradient.png",
+      "kind": "production:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/events/add-icn-gradient.png",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/events/add-icn.png",
+      "kind": "native:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/events/add-icn.png",
+      "kind": "production:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/events/add-icn.png",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/events/add-to-calendar-icn.png",
+      "kind": "native:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/events/add-to-calendar-icn.png",
+      "kind": "production:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/events/add-to-calendar-icn.png",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/events/arrow-down.png",
+      "kind": "native:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/events/arrow-down.png",
+      "kind": "production:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/events/arrow-down.png",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/events/arrow-left.png",
+      "kind": "native:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/events/arrow-left.png",
+      "kind": "production:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/events/arrow-left.png",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/events/arrow-right.png",
+      "kind": "native:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/events/arrow-right.png",
+      "kind": "production:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/events/arrow-right.png",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/events/arrow-up.png",
+      "kind": "native:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/events/arrow-up.png",
+      "kind": "production:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/events/arrow-up.png",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/events/calendar-icn.png",
+      "kind": "native:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/events/calendar-icn.png",
+      "kind": "production:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/events/calendar-icn.png",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/events/close-icn-thin.png",
+      "kind": "native:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/events/close-icn-thin.png",
+      "kind": "production:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/events/close-icn-thin.png",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/events/default-image-place.webp",
+      "kind": "native:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/events/default-image-place.webp",
+      "kind": "production:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/events/default-image-place.webp",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/events/empty-events-img.png",
+      "kind": "native:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/events/empty-events-img.png",
+      "kind": "production:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/events/empty-events-img.png",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/events/jump-in-outline.png",
+      "kind": "native:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/events/jump-in-outline.png",
+      "kind": "production:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/events/jump-in-outline.png",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/events/link-icn.png",
+      "kind": "native:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/events/link-icn.png",
+      "kind": "production:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/events/link-icn.png",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/events/live-event.png",
+      "kind": "native:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/events/live-event.png",
+      "kind": "production:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/events/live-event.png",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/events/live-icn.png",
+      "kind": "native:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/events/live-icn.png",
+      "kind": "production:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/events/live-icn.png",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/events/pin-outline.png",
+      "kind": "native:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/events/pin-outline.png",
+      "kind": "production:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/events/pin-outline.png",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/events/players-icn.png",
+      "kind": "native:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/events/players-icn.png",
+      "kind": "production:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/events/players-icn.png",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/events/remind-me-event.png",
+      "kind": "native:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/events/remind-me-event.png",
+      "kind": "production:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/events/remind-me-event.png",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/events/reminder-off.png",
+      "kind": "native:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/events/reminder-off.png",
+      "kind": "production:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/events/reminder-off.png",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/events/reminder-on.png",
+      "kind": "native:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/events/reminder-on.png",
+      "kind": "production:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/events/reminder-on.png",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/events/share-icn.png",
+      "kind": "native:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/events/share-icn.png",
+      "kind": "production:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/events/share-icn.png",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/events/time-icn.png",
+      "kind": "native:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/events/time-icn.png",
+      "kind": "production:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/events/time-icn.png",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/events/x-icn.png",
+      "kind": "native:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/events/x-icn.png",
+      "kind": "production:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/events/x-icn.png",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/hud/assets/loading-tips/add-friends.webp",
       "kind": "native:asset"
     },
@@ -34187,21 +36177,6 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/hud/features/error/modal-light.png",
-      "kind": "test:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/features/error/radial-glow.png",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/features/error/radial-glow.png",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/features/error/radial-glow.png",
       "kind": "test:asset"
     }
   ]
