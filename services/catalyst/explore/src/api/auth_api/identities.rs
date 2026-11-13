@@ -19,6 +19,8 @@ use crate::api::Shared as AppState;
 const IDENTITY_TTL_SECONDS: i64 = 3600;
 const IDENTITY_STATUS_TTL_SECONDS: i64 = 14 * 24 * 3600;
 const MAX_PENDING_IDENTITIES: usize = 10_000;
+pub(super) const MAX_IDENTITIES_PER_SIGNER: usize = 5;
+const MAX_IDENTITIES_PER_IP: usize = 50;
 const MAX_IDENTITY_TOMBSTONES: usize = 50_000;
 const IDENTITY_SIGNED_PATH: &str = "/identities";
 
@@ -43,6 +45,7 @@ pub struct IdentityRecord {
     pub identity_id: String,
     pub identity: Value,
     pub ip_address: String,
+    pub signer: String,
     pub is_mobile: bool,
     pub created_at: DateTime<Utc>,
     pub expiration: DateTime<Utc>,
@@ -162,11 +165,35 @@ pub(super) async fn create_identity(
         )
             .into_response();
     }
+    let ip_address = client_ip(&headers);
+    let (mut by_signer, mut by_ip) = (0usize, 0usize);
+    for entry in state.auth_api.identities.iter() {
+        let record = entry.value();
+        if record.expiration < now {
+            continue;
+        }
+        if record.signer == signer {
+            by_signer += 1;
+        }
+        if !ip_address.is_empty() && record.ip_address == ip_address {
+            by_ip += 1;
+        }
+    }
+    if by_signer >= MAX_IDENTITIES_PER_SIGNER || by_ip >= MAX_IDENTITIES_PER_IP {
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(ErrorBody {
+                error: "Too many pending identities, retry shortly".into(),
+            }),
+        )
+            .into_response();
+    }
     let expiration = now + Duration::seconds(IDENTITY_TTL_SECONDS);
     let record = IdentityRecord {
         identity_id: identity_id.clone(),
         identity: body.identity,
-        ip_address: client_ip(&headers),
+        ip_address,
+        signer: signer.clone(),
         is_mobile: body.is_mobile.unwrap_or(false),
         created_at: now,
         expiration,

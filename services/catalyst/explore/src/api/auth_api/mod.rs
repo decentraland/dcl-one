@@ -29,6 +29,11 @@ use identities::{create_identity, get_identity};
 use validation::{validate_auth_chain, validate_request_message};
 
 const REQUEST_TTL_SECONDS: i64 = 300;
+/// An expired request still answers 410 for this long before the sweep drops it.
+const REQUEST_EXPIRED_GRACE_SECONDS: i64 = 300;
+const MAX_PENDING_REQUESTS: usize = 10_000;
+const MAX_REQUESTS_PER_SENDER: usize = 20;
+const MAX_REQUESTS_PER_IP: usize = 100;
 const DEFAULT_BODY_SIZE_BYTES: usize = 16 * 1024;
 const IDENTITY_SWEEP_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
 const CLIENT_HEADER: &str = "x-dcl-client";
@@ -93,7 +98,9 @@ pub fn spawn_identity_sweeper(state: &AppState, jobs: &crate::jobs::Jobs) {
             let state = state.clone();
             async move {
                 if let Some(state) = state.upgrade() {
-                    sweep_expired_identities(&state, Utc::now());
+                    let now = Utc::now();
+                    sweep_expired_identities(&state, now);
+                    sweep_expired_requests(&state, now);
                 }
                 Ok(())
             }
@@ -129,6 +136,7 @@ pub struct ChallengeRecord {
     pub expiration: DateTime<Utc>,
     pub requires_validation: bool,
     pub status: ChallengeStatus,
+    pub ip_address: String,
 }
 
 #[derive(Debug, Clone)]
@@ -383,8 +391,63 @@ async fn health_live() -> impl IntoResponse {
     })
 }
 
+pub fn sweep_expired_requests(state: &AppState, now: DateTime<Utc>) {
+    let horizon = now - Duration::seconds(REQUEST_EXPIRED_GRACE_SECONDS);
+    state
+        .auth_api
+        .requests
+        .retain(|_, record| record.expiration >= horizon);
+}
+
+/// Refuses a new request once the relay, its sender or its network holds too
+/// many unexpired ones.
+fn request_capacity_refusal(
+    state: &AppState,
+    sender: &str,
+    ip: &str,
+    now: DateTime<Utc>,
+) -> Option<Response> {
+    if state.auth_api.requests.len() >= MAX_PENDING_REQUESTS {
+        sweep_expired_requests(state, now);
+    }
+    if state.auth_api.requests.len() >= MAX_PENDING_REQUESTS {
+        return Some(
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(ErrorBody {
+                    error: "Too many pending requests, retry shortly".into(),
+                }),
+            )
+                .into_response(),
+        );
+    }
+    let (mut by_sender, mut by_ip) = (0usize, 0usize);
+    for entry in state.auth_api.requests.iter() {
+        let record = entry.value();
+        if record.expiration < now {
+            continue;
+        }
+        if record.sender.as_deref() == Some(sender) {
+            by_sender += 1;
+        }
+        if !ip.is_empty() && record.ip_address == ip {
+            by_ip += 1;
+        }
+    }
+    (by_sender >= MAX_REQUESTS_PER_SENDER || by_ip >= MAX_REQUESTS_PER_IP).then(|| {
+        (
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(ErrorBody {
+                error: "Too many pending requests, retry shortly".into(),
+            }),
+        )
+            .into_response()
+    })
+}
+
 async fn create_request(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(body): Json<CreateRequestBody>,
 ) -> Response {
     let validated = match validate_request_message(&body) {
@@ -392,12 +455,16 @@ async fn create_request(
         Err(msg) => return bad_request(&msg),
     };
     let sender = match validate_auth_chain(validated.auth_chain) {
-        Ok(verified) => Some(verified.sender.to_lowercase()),
+        Ok(verified) => verified.sender.to_lowercase(),
         Err(msg) => return bad_request(&msg),
     };
+    let now = Utc::now();
+    let ip_address = client_ip(&headers);
+    if let Some(refusal) = request_capacity_refusal(&state, &sender, &ip_address, now) {
+        return refusal;
+    }
 
     let request_id = Uuid::new_v4().to_string();
-    let now = Utc::now();
     let expiration = now + Duration::seconds(REQUEST_TTL_SECONDS);
     let code = random_pairing_code();
     let challenge = build_challenge(&request_id, code, &now, &body.method, validated.params);
@@ -406,13 +473,14 @@ async fn create_request(
         request_id: request_id.clone(),
         method: body.method.clone(),
         params: validated.params.to_vec(),
-        sender,
+        sender: Some(sender),
         code,
         challenge: challenge.clone(),
         created_at: now,
         expiration,
         requires_validation: false,
         status: ChallengeStatus::Pending,
+        ip_address,
     };
 
     state.auth_api.requests.insert(request_id.clone(), record);
@@ -1118,6 +1186,100 @@ mod tests {
                 Some("Identity was deleted due to IP mismatch")
             )
         );
+    }
+
+    #[tokio::test]
+    async fn a_sender_is_capped_on_unexpired_requests_and_the_sweep_frees_them() {
+        let state = crate::api::tests_support::state_without_db().await;
+        let app = Router::new().nest("/auth-api", routes().with_state(state.clone()));
+        let ephemeral = alloy_signer_local::PrivateKeySigner::random();
+        let body = serde_json::to_vec(&json!({ "method": "personal_sign", "params": ["hi"], "authChain": delegated(&format!("{:#x}", ephemeral.address())) })).unwrap();
+        for _ in 0..MAX_REQUESTS_PER_SENDER {
+            let (status, created) = call(&app, json_post("/auth-api/requests", body.clone())).await;
+            assert_eq!(status, StatusCode::CREATED, "{created}");
+        }
+        let (status, _) = call(&app, json_post("/auth-api/requests", body.clone())).await;
+        assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+
+        let past = Utc::now() - Duration::seconds(REQUEST_TTL_SECONDS);
+        for mut entry in state.auth_api.requests.iter_mut() {
+            entry.expiration = past;
+        }
+        let (status, _) = call(&app, json_post("/auth-api/requests", body)).await;
+        assert_eq!(status, StatusCode::CREATED, "expired requests do not count");
+
+        sweep_expired_requests(
+            &state,
+            Utc::now() + Duration::seconds(REQUEST_EXPIRED_GRACE_SECONDS),
+        );
+        assert_eq!(
+            state.auth_api.requests.len(),
+            1,
+            "only the unexpired request survives the sweep"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_network_is_capped_on_unexpired_requests() {
+        let state = crate::api::tests_support::state_without_db().await;
+        let now = Utc::now();
+        for i in 0..MAX_REQUESTS_PER_IP {
+            state.auth_api.requests.insert(
+                format!("r{i}"),
+                ChallengeRecord {
+                    request_id: format!("r{i}"),
+                    method: "personal_sign".into(),
+                    params: Vec::new(),
+                    sender: Some(format!("0x{i:040x}")),
+                    code: 1,
+                    challenge: String::new(),
+                    created_at: now,
+                    expiration: now + Duration::seconds(REQUEST_TTL_SECONDS),
+                    requires_validation: false,
+                    status: ChallengeStatus::Pending,
+                    ip_address: "203.0.113.9".into(),
+                },
+            );
+        }
+        let refused = request_capacity_refusal(&state, "0xnew", "203.0.113.9", now);
+        assert_eq!(
+            refused.map(|r| r.status()),
+            Some(StatusCode::TOO_MANY_REQUESTS)
+        );
+        assert!(request_capacity_refusal(&state, "0xnew", "198.51.100.7", now).is_none());
+    }
+
+    #[tokio::test]
+    async fn a_signer_is_capped_on_pending_identities() {
+        let state = crate::api::tests_support::state_without_db().await;
+        let app = Router::new().nest("/auth-api", routes().with_state(state.clone()));
+        let mut statuses = Vec::new();
+        for _ in 0..=identities::MAX_IDENTITIES_PER_SIGNER {
+            let ephemeral = alloy_signer_local::PrivateKeySigner::random();
+            let eph_address = format!("{:#x}", ephemeral.address());
+            let identity = json!({
+                "ephemeralIdentity": { "address": eph_address, "privateKey": format!("0x{}", hex::encode(ephemeral.to_bytes())), "publicKey": "0x04" },
+                "expiration": "2100-01-01T00:00:00.000Z",
+                "authChain": delegated(&eph_address),
+            });
+            let body = serde_json::to_vec(&json!({ "identity": identity })).unwrap();
+            let headers = crate::shared::signed_fetch::test_support::signed_headers(
+                "post",
+                "/auth-api/identities",
+                "{}",
+                true,
+            )
+            .await;
+            let mut req = json_post("/auth-api/identities", body);
+            req.headers_mut().extend(headers);
+            statuses.push(call(&app, req).await.0);
+        }
+        let (last, accepted) = statuses.split_last().unwrap();
+        assert!(
+            accepted.iter().all(|s| *s == StatusCode::CREATED),
+            "{statuses:?}"
+        );
+        assert_eq!(*last, StatusCode::TOO_MANY_REQUESTS);
     }
 
     #[tokio::test]

@@ -126,11 +126,39 @@ where
     }
 
     pub fn insert(&self, key: K, value: V) {
+        self.make_room(&key);
         let mut slot = self.map.entry(key).or_insert_with(Slot::empty);
         slot.cached = Some(Entry {
             at: Instant::now(),
             value,
         });
+    }
+
+    /// Keeps a bounded map under `max_entries` before `key` is added: expired
+    /// entries go first, then the oldest cached one. In-flight fetches stay.
+    fn make_room(&self, key: &K) {
+        let Some(max) = self.max_entries else { return };
+        if self.map.len() < max || self.map.contains_key(key) {
+            return;
+        }
+        let ttl = self.ttl;
+        self.map.retain(|_, slot| {
+            slot.notify.is_some() || slot.cached.as_ref().is_some_and(|e| e.at.elapsed() < ttl)
+        });
+        while self.map.len() >= max {
+            let oldest = self
+                .map
+                .iter()
+                .filter(|slot| slot.notify.is_none())
+                .min_by_key(|slot| slot.cached.as_ref().map(|e| e.at))
+                .map(|slot| slot.key().clone());
+            match oldest {
+                Some(oldest) => {
+                    self.map.remove(&oldest);
+                }
+                None => break,
+            }
+        }
     }
 
     /// The cached value, expired or not, while it is younger than `max_age`:
@@ -355,5 +383,43 @@ mod tests {
         release.notify_one();
         assert_eq!(misses.await, vec![Ok(3); 8]);
         assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn insert_on_a_full_bounded_map_evicts_the_oldest() {
+        let map: TtlMap<u32, u32> = TtlMap::bounded(Duration::from_secs(60), 3);
+        for k in 0..3 {
+            map.insert(k, k);
+            tokio::time::advance(Duration::from_millis(1)).await;
+        }
+        map.insert(1, 10);
+        assert_eq!(map.len(), 3, "replacing a key needs no room");
+        map.insert(3, 3);
+        assert_eq!(map.len(), 3);
+        assert_eq!(map.get_fresh(&0), None, "the oldest entry is evicted");
+        assert_eq!(map.get_fresh(&1), Some(10));
+        assert_eq!(map.get_fresh(&3), Some(3));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn insert_on_a_full_bounded_map_drops_expired_entries_first() {
+        let map: TtlMap<u32, u32> = TtlMap::bounded(Duration::from_secs(1), 3);
+        map.insert(0, 0);
+        map.insert(1, 1);
+        tokio::time::advance(Duration::from_secs(2)).await;
+        map.insert(2, 2);
+        map.insert(3, 3);
+        assert_eq!(map.len(), 2, "both expired entries are swept");
+        assert_eq!(map.get_fresh(&2), Some(2));
+        assert_eq!(map.get_fresh(&3), Some(3));
+    }
+
+    #[tokio::test]
+    async fn an_unbounded_map_keeps_every_insert() {
+        let map: TtlMap<u32, u32> = TtlMap::new(Duration::from_secs(60));
+        for k in 0..100 {
+            map.insert(k, k);
+        }
+        assert_eq!(map.len(), 100);
     }
 }
