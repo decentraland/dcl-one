@@ -29,6 +29,7 @@ REQUIRED = {
         "a_session_failure_is_answered_by_read_without_a_request",
         "a_preview_client_ignores_a_session_failure",
         "a_preview_client_does_not_keep_a_content_failure_for_the_session",
+        "a_preview_client_asks_again_for_a_missing_file_at_once",
     },
     "platform": {
         "grant_is_held_through_body_read_and_released_on_cancellation",
