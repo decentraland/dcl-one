@@ -778,10 +778,6 @@ mod tests {
     #[ignore = "needs a GPU; run with --ignored"]
     fn scene_environment_pipelines_compile() {
         use crate::nishita_cloud::{init_noise, NishitaCloud};
-        use assets::test_support::{
-            compile_pipelines, fragment_pipelines, headless_app_without_embedded_assets,
-            render_target,
-        };
         use bevy::{
             core_pipeline::tonemapping::Tonemapping,
             render::{
@@ -791,6 +787,10 @@ mod tests {
                 view::screenshot::{Screenshot, ScreenshotCaptured},
                 RenderApp,
             },
+        };
+        use pipeline_test::{
+            compile_pipelines, fragment_pipelines, headless_app_without_embedded_assets,
+            render_target,
         };
         #[derive(Resource, Default)]
         struct Captured(Option<Image>);
