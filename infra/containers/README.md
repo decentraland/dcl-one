@@ -122,3 +122,36 @@ with the administrative role before starting the new binaries.
 Keep the pre-migration database backup: old binaries cannot read stable world ban
 keys, so rollback must restore the matching backup. See `DATABASE.md` for the
 retention and token-remint behavior.
+
+### Pulse assignment upgrade
+
+Selected room evidence changes both Pulse authority replies and stored assignment
+stamps ([decision](../../docs/adr/2026-11-12-pulse-selected-room-evidence.md)).
+New gatekeepers refuse old Pulse authority; old closed JSON readers refuse new
+stamps. Use a coordinated maintenance window. This repository publishes images;
+it does not implement or prove the ingress/orchestrator fence required below.
+
+1. Fence native admission, signaling admission and every island-refresh mount,
+   and drain existing signaling/native connections in the shared authority scope.
+   `SOCIAL_WRITES_ENABLED=false` leaves admission open, and
+   `FLEET_JOBS_ENABLED=false` alone is not this fence.
+2. Preserve SQL assignments, revocation floors, cleanup dispatches and receipts.
+   Reconcile unfinished cleanup while the matching authorities remain available
+   behind the ingress fence, before replacing Pulse's in-memory authority;
+   keep admission fenced while any residual credential or cleanup state is
+   unresolved. Do not delete rows or infer selected identities from old strings.
+3. Stop all incompatible Pulse and gatekeeper/`serve` processes, including
+   refresh-serving API replicas. Replace them with one verified commit that supports
+   selected identities or recorded matching image digests. Verify no incompatible process remains
+   before allowing those roles to share live authority traffic.
+4. With public admission still fenced, verify current selected Pulse evidence and
+   residual SQL/SFU reconciliation. Old unproven SQL stamps must fail refresh;
+   fresh authenticated admission must establish replacement evidence through the
+   normal fenced path. Verify that every supported client re-admits after the
+   empty 403 response instead of repeatedly refreshing the rejected stamp.
+   Reopen only after the operator verifies these conditions.
+
+These are release preconditions, not evidence that a deployment has met them.
+After new stamps are written, rollback requires an image that supports selected
+identities or a forward fix. Starting an older incompatible reader is unsupported; clearing
+assignment or cleanup rows is not a rollback procedure.

@@ -52,7 +52,7 @@ fn login_database_error(error: sqlx::Error) -> CommError {
 }
 
 const LOGIN_MAX_AGE_MS: i64 = 86_400_000;
-// Match the existing signed-fetch symmetric clock tolerance.
+// Login timestamps may run up to five minutes ahead.
 const LOGIN_FUTURE_SKEW_MS: i64 = 300_000;
 
 /// node-pg sends a JavaScript numeric parameter as Number.toString(). In

@@ -157,12 +157,17 @@ impl Project {
         if p.exists() {
             return Ok(p);
         }
-        Err(UserError::new(
-            format!("{rel} is not installed in this scene"),
-            TrySteps::one("run dcl-scene-cli init --node-modules-only to restore the vendored node_modules (or npm install)"),
+        let steps = match self.root.join("node_modules").exists() {
+            true => TrySteps::one("run npm install: this node_modules is missing the package")
+                .and("or delete node_modules and build again: the vendored SDK is restored when the folder is absent"),
+            false => TrySteps::one("build again without --skip-install: the vendored SDK is restored when node_modules is absent")
+                .and("or run dcl-scene-cli init --node-modules-only, or npm install"),
+        };
+        Err(
+            UserError::new(format!("{rel} is not installed in this scene"), steps)
+                .why(format!("{} does not exist", p.display()))
+                .into(),
         )
-        .why(format!("{} does not exist", p.display()))
-        .into())
     }
 
     pub fn is_editor_scene(&self) -> bool {

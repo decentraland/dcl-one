@@ -128,6 +128,10 @@ class DevTest(unittest.TestCase):
           }
           python3() { echo "python:$*" >> "$CALLS"; }
           cargo() { echo "cargo:$*" >> "$CALLS"; }
+          # Resource handling has its own tests; isolate this lifecycle fixture
+          # from the machine's descriptor limits without changing them.
+          ulimit() { case "$*" in -Sn) echo 65536 ;; -Hn) echo unlimited ;; *) return 77 ;; esac; }
+          sysctl() { [ "$*" = '-n kern.maxfilesperproc' ] || return 77; echo 65536; }
           make() {
             echo "make:${*: -1}" >> "$CALLS"
             [ "$1" = -C ] && [ "$2" -ef "$FOUNDATION_DEV_ROOT" ] && [ "$3" = catalyst-test ] || exit 78
@@ -137,7 +141,7 @@ class DevTest(unittest.TestCase):
             [ "$ARCHIPELAGO_NATS_SERVER_BIN" = "$PULSE_NATS_SERVER_BIN" ] || exit 82
             return 42
           }
-          export -f foundation-dev python3 cargo make
+          export -f foundation-dev python3 cargo make ulimit sysctl
           bash "$1" rust
         '''
         calls = self.state / 'calls'
@@ -150,11 +154,15 @@ class DevTest(unittest.TestCase):
         self.assertEqual(calls.read_text().splitlines(),
                          ['up --postgres-only', 'wait --postgres-only --timeout 3600', 'env',
                           'nats:--version',
+                          "python:-m unittest discover -s tooling/tests -p test_catalyst_test_resources.py",
                           "python:-m unittest discover -s tooling/tests -p test_dev_regressions.py",
+                          "python:-m unittest discover -s tooling/tests -p test_archipelago_fixtures.py",
+                          'python:tooling/archipelago-fixtures.py check',
                           "python:-m unittest discover -s tooling/tests -p test_enet_provenance.py",
                           'python:library/vendor/rusty_enet/verify.py', 'python:tooling/dev-regressions.py',
                           'cargo:check --locked --manifest-path library/vendor/rusty_enet/Cargo.toml --all-features --all-targets',
                           'cargo:test --locked --manifest-path library/vendor/rusty_enet/Cargo.toml --lib',
+                          'python:tooling/dev-regressions.py --archipelago-external',
                           'make:catalyst-test', 'down'])
 
     @unittest.skipUnless(shutil.which('process-compose') and shutil.which('initdb') and shutil.which('psql')
@@ -198,6 +206,11 @@ class DevTest(unittest.TestCase):
         env = dev.pulse_env(self.config, self.state / 'cert.pem', self.state / 'key.pem')
         self.assertEqual(env['COMMS_MODERATOR_TOKEN'], token)
         self.assertEqual(env['PULSE_BANS_URL'], f"http://127.0.0.1:{self.config['port']}/comms-gatekeeper/bans")
+        self.assertNotIn('AUTHORITATIVE_SERVER_ADDRESS', env)
+        host = '0x1111111111111111111111111111111111111111'
+        hosted = dev.pulse_env({**self.config, 'AUTHORITATIVE_SERVER_ADDRESS': host},
+                               self.state / 'cert.pem', self.state / 'key.pem')
+        self.assertEqual(hosted['AUTHORITATIVE_SERVER_ADDRESS'], host)
         older = {k: v for k, v in self.config.items() if k != 'MODERATOR_TOKEN'}
         dev.save_json(dev.SETTINGS, older)
         self.assertEqual({k: dev.settings()[k] for k in older}, older, 'a stack from before the token keeps its secrets')

@@ -1,0 +1,35 @@
+.VideoControl {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+}
+
+.VideoControl .Title {
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--base-04);
+}
+
+.VideoControl .ScreenSetup {
+  display: flex;
+  flex-direction: row;
+  margin-bottom: 12px;
+}
+
+.VideoControl .ScreenSetup label {
+  margin-left: 8px;
+  text-wrap: wrap;
+  width: 80%;
+}
+
+.VideoControl .CheckboxGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.VideoControl .AddButton {
+  width: 100%;
+  margin-top: 8px;
+}

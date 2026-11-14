@@ -46,10 +46,22 @@ class DevCiTest(unittest.TestCase):
                      'library/vendor/rusty_enet/src/lib.rs', '.cargo/config.toml', 'flake.lock', 'Makefile',
                      'infra/dev/shell-hook.sh', 'tooling/dev.py',
                      'tooling/dev-test.sh', 'tooling/dev-ci.py', 'tooling/enet-provenance.py',
+                     'tooling/catalyst-test.sh', 'tooling/catalyst-test-resources.sh',
+                     'tooling/tests/test_catalyst_test_resources.py',
                      'tooling/tests/test_dev_regressions.py', 'tooling/tests/test_enet_provenance.py',
                      '.github/workflows/development.yml'):
             with self.subTest(path=path):
                 self.assertTrue(self.macos('apps/ui3/src/a.ts', path))
+
+    def test_hosted_descriptor_provisioning_precedes_the_rust_environment(self):
+        workflow = (dev.ROOT / '.github/workflows/development.yml').read_text()
+        for job in ('rust', 'smoke'):
+            with self.subTest(job=job):
+                steps = workflow.split(f'\n  {job}:', 1)[1]
+                steps = re.split(r'\n  [a-z][a-z-]*:', steps, maxsplit=1)[0]
+                provision = steps.index('provision_hosted_macos_test_resources')
+                self.assertLess(provision, steps.index('nix develop'))
+                self.assertIn("if: runner.os == 'macOS' && runner.environment == 'github-hosted'", steps[:provision])
 
     def test_every_script_the_rust_suite_runs_is_a_macos_input(self):
         script = (dev.ROOT / 'tooling/dev-test.sh').read_text()

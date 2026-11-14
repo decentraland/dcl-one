@@ -5,6 +5,58 @@
 pub const SUBJECT: &str = "archipelago.control.position.v1";
 pub const MAX_BYTES: usize = 640;
 
+/// An authenticated legacy candidate, independently ordered from owner-v1 input.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LegacyRoomIntent {
+    pub audience: String,
+    pub wallet: String,
+    pub session: String,
+    pub candidate_epoch: u64,
+    pub sequence: u64,
+    pub realm: String,
+    pub position: Option<[f32; 3]>,
+}
+
+impl LegacyRoomIntent {
+    pub const SUBJECT: &str = "archipelago.control.position.v2";
+
+    pub fn encode(&self) -> Option<Vec<u8>> {
+        if self.candidate_epoch > i64::MAX as u64
+            || (self.position.is_none() && !self.realm.is_empty())
+        {
+            return None;
+        }
+        self.position_update().encode()
+    }
+
+    pub fn decode(bytes: &[u8]) -> Option<Self> {
+        let value = ControlPosition::decode(bytes)?;
+        let intent = Self {
+            audience: value.audience,
+            wallet: value.wallet,
+            session: value.session,
+            candidate_epoch: value.epoch,
+            sequence: value.sequence,
+            realm: value.realm,
+            position: value.position,
+        };
+        intent.encode()?;
+        Some(intent)
+    }
+
+    pub(crate) fn position_update(&self) -> ControlPosition {
+        ControlPosition {
+            audience: self.audience.clone(),
+            wallet: self.wallet.clone(),
+            session: self.session.clone(),
+            epoch: self.candidate_epoch,
+            sequence: self.sequence,
+            realm: self.realm.clone(),
+            position: self.position,
+        }
+    }
+}
+
 pub fn valid_realm(realm: &str) -> bool {
     !realm.is_empty() && realm.len() <= 256 && !realm.chars().any(char::is_control)
 }
@@ -120,6 +172,55 @@ impl ControlPosition {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn selected_intent_vectors_use_exact_closed_bytes_and_preserve_signed_zero() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(concat!(
+            env!("DCL_ONE_ROOT"),
+            "/services/catalyst/tests/fixtures/pulse_selected_recovery.json"
+        )))
+        .unwrap();
+        for vector in fixture["intent_vectors"].as_array().unwrap() {
+            let bytes = hex::decode(vector["wire_hex"].as_str().unwrap()).unwrap();
+            assert_eq!(
+                bytes.len(),
+                vector["length_bytes"].as_u64().unwrap() as usize
+            );
+            if vector["subject"] == LegacyRoomIntent::SUBJECT {
+                let decoded = LegacyRoomIntent::decode(&bytes);
+                assert_eq!(
+                    decoded.is_some(),
+                    vector["expected_decode"].as_bool().unwrap(),
+                    "{}",
+                    vector["id"]
+                );
+                if let Some(decoded) = decoded {
+                    assert_eq!(decoded.encode().unwrap(), bytes);
+                    for end in 0..bytes.len() {
+                        assert!(LegacyRoomIntent::decode(&bytes[..end]).is_none());
+                    }
+                }
+            } else {
+                assert_eq!(
+                    ControlPosition::decode(&bytes).unwrap().encode().unwrap(),
+                    bytes
+                );
+            }
+        }
+        let intent = LegacyRoomIntent {
+            audience: "a".into(),
+            wallet: format!("0x{}", "00".repeat(20)),
+            session: format!("0x{}", "02".repeat(20)),
+            candidate_epoch: 1,
+            sequence: u64::MAX,
+            realm: "r".into(),
+            position: Some([-0.0, 0.0, -0.0]),
+        };
+        let decoded = LegacyRoomIntent::decode(&intent.encode().unwrap()).unwrap();
+        assert_eq!(
+            decoded.position.unwrap().map(f32::to_bits),
+            intent.position.unwrap().map(f32::to_bits)
+        );
+    }
     #[test]
     fn control_position_roundtrip_and_closed_frame_validation() {
         let mut value = ControlPosition {

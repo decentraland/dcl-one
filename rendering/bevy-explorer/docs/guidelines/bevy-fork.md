@@ -217,7 +217,8 @@ across workers:
   `PartialEq`.
 - Web screenshots blit through the sRGB swapchain view (upstream #22090).
 - Fixes with no API surface: unicode asset paths, skin buffer growth, missing cascades panic,
-  bad vertices for a frame on second mesh load, sparse index warning.
+  bad vertices for a frame on second mesh load, sparse index warning, `embedded_asset!` paths
+  from a Windows build host (`file!()` backslashes on a non-Windows target such as wasm).
 
 ## Changing bevy
 

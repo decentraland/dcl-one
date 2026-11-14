@@ -150,59 +150,6 @@ impl RawSettings {
             ..Default::default()
         }
     }
-
-    /// The process environment under the old names, for the wiring until
-    /// `Config` carries these fields.
-    pub fn from_env() -> Self {
-        let d = Self::defaults();
-        let var = |name: &str| {
-            std::env::var(name)
-                .ok()
-                .map(|v| v.trim().to_string())
-                .filter(|v| !v.is_empty())
-        };
-        let num = |name: &str, default: i64| {
-            var(name)
-                .and_then(|v| v.parse::<i64>().ok())
-                .unwrap_or(default)
-        };
-        Self {
-            livekit_host: var("LIVEKIT_HOST").unwrap_or(d.livekit_host),
-            livekit_api_host: var("LIVEKIT_API_HOST"),
-            livekit_ws_url: var("LIVEKIT_WS_URL"),
-            livekit_api_key: var("LIVEKIT_API_KEY").unwrap_or_default(),
-            livekit_api_secret: var("LIVEKIT_API_SECRET").unwrap_or_default(),
-            livekit_allow_dev_creds: matches!(
-                var("LIVEKIT_ALLOW_DEV_CREDS").as_deref(),
-                Some("1" | "true" | "TRUE" | "yes")
-            ),
-            private_messages_room_id: var("PRIVATE_MESSAGES_ROOM_ID")
-                .unwrap_or(d.private_messages_room_id),
-            authoritative_server_address: var("AUTHORITATIVE_SERVER_ADDRESS"),
-            moderator_token: var("MODERATOR_TOKEN"),
-            moderator_addresses: var("PLATFORM_USER_MODERATORS").unwrap_or_default(),
-            gatekeeper_auth_token: var("COMMS_GATEKEEPER_AUTH_TOKEN"),
-            land_operators_url: var("COMMS_LAND_OPERATORS_URL"),
-            lease_authorizations_url: var("LEASE_AUTHORIZATIONS_URL"),
-            voice_connection_interrupted_ttl_ms: num(
-                "VOICE_CHAT_CONNECTION_INTERRUPTED_TTL",
-                d.voice_connection_interrupted_ttl_ms,
-            ),
-            voice_initial_connection_ttl_ms: num(
-                "VOICE_CHAT_INITIAL_CONNECTION_TTL",
-                d.voice_initial_connection_ttl_ms,
-            ),
-            community_voice_no_moderator_ttl_ms: num(
-                "COMMUNITY_VOICE_CHAT_NO_MODERATOR_TTL",
-                d.community_voice_no_moderator_ttl_ms,
-            ),
-            voice_expired_batch_size: num(
-                "VOICE_CHAT_EXPIRED_BATCH_SIZE",
-                d.voice_expired_batch_size,
-            ),
-            commit_hash: var("COMMIT_HASH"),
-        }
-    }
 }
 
 pub use crate::shared::livekit::LiveKit;
@@ -435,6 +382,8 @@ pub struct CommsState {
     pub caches: admission::scene::SceneCaches,
     /// Where the LiveKit webhook's participant events are also handed.
     pub room_events: Option<Arc<dyn RoomEventSink>>,
+    /// Where every verified participant event is stored before it is acknowledged.
+    pub room_event_store: Option<Arc<dyn events::RoomEventStore>>,
     webhooks: webhook::WebhookCoordinator,
     /// The Pulse room authority, mounted when `PULSE_ROOM_AUTHORITY_KEY` is set.
     pub relay_authority: Option<Arc<admission::relay_authority::RelayAuthority>>,
@@ -491,6 +440,7 @@ impl CommsState {
             eip1654,
             caches: admission::scene::SceneCaches::default(),
             room_events: None,
+            room_event_store: None,
             webhooks: webhook::WebhookCoordinator::default(),
             relay_authority: None,
             world_mint: admission::world_mint::MintState::default(),
@@ -563,6 +513,11 @@ impl CommsState {
 
     pub fn with_room_event_sink(mut self, sink: Arc<dyn RoomEventSink>) -> Self {
         self.room_events = Some(sink);
+        self
+    }
+
+    pub fn with_room_event_store(mut self, store: Arc<dyn events::RoomEventStore>) -> Self {
+        self.room_event_store = Some(store);
         self
     }
 

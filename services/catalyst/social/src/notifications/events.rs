@@ -200,7 +200,18 @@ async fn recipients(
 
 fn metadata(intent: &Intent, recipient: &Recipient, links: &Links) -> Value {
     let base = links.base.trim_end_matches('/');
-    let name = text(&intent.event, "name");
+    let name = crate::explore::sanitize::strip_all_markup(text(&intent.event, "name"));
+    let community_name = recipient
+        .community_name
+        .as_deref()
+        .map(crate::explore::sanitize::strip_all_markup)
+        .filter(|n| !n.is_empty());
+    // A name that was only markup is left out of the sentence.
+    let named = if name.is_empty() {
+        String::new()
+    } else {
+        format!(" {name}")
+    };
     let description =
         crate::explore::sanitize::sanitize_event_description(text(&intent.event, "description"));
     // `Notifications/index.ts:48,85,205`: the jump-in link; the other kinds
@@ -219,26 +230,27 @@ fn metadata(intent: &Intent, recipient: &Recipient, links: &Links) -> Value {
         // `Notifications/index.ts:56-57`
         "events_starts_soon" => (
             "Event starts in an hour".to_string(),
-            format!("The event {name} starts in an hour."),
+            format!("The event{named} starts in an hour."),
         ),
         "events_started" if recipient.community => (
             "Community Event starting".into(),
             format!(
                 "A {} event is about to start.",
-                recipient.community_name.as_deref().unwrap_or("community")
+                community_name.as_deref().unwrap_or("community")
             ),
         ),
         "events_started" => (
             "Event started".into(),
-            format!("The event {name} has begun!"),
+            format!("The event{named} has begun!"),
         ),
         "event_created" => (
             "Community Event Added".into(),
             format!(
                 "The {} Community has added a new event.",
-                recipient.community_name.as_deref().unwrap_or("community")
+                community_name.as_deref().unwrap_or("community")
             ),
         ),
+        _ if name.is_empty() => ("Event".to_string(), description),
         _ => (name.to_string(), description),
     };
     let mut metadata = json!({"eventId":intent.event_id,"title":title,"description":description,"name":name,"image":catalyst_explore::events::posters::absolute_default_image(text(&intent.event,"image"),&links.asset_base),"link":link,"occurredAt":intent.occurred_at.and_utc().to_rfc3339()});
@@ -266,7 +278,7 @@ fn metadata(intent: &Intent, recipient: &Recipient, links: &Links) -> Value {
     if recipient.community {
         let community = text(&intent.event, "community_id");
         metadata["communityId"] = json!(community);
-        metadata["communityName"] = json!(recipient.community_name);
+        metadata["communityName"] = json!(community_name);
         if recipient.community_thumbnail {
             // The stored thumbnail lives under the canonical UUID.
             let id = Uuid::parse_str(community).map_or(community.to_string(), |id| id.to_string());
@@ -1832,6 +1844,55 @@ mod tests {
         assert!(
             generic.get("communityThumbnail").is_none(),
             "an RSVP-only notice is not community-scoped"
+        );
+    }
+
+    #[test]
+    fn notice_text_carries_the_event_name_without_rich_text_tags() {
+        let links = test_links("https://example.org");
+        let event =
+            json!({"name":"Party <link=\"file:///x\">here</link><size=300>","description":"d"});
+        let reminder = metadata(
+            &intent("events_starts_soon", event.clone()),
+            &recipient(false, false),
+            &links,
+        );
+        assert_eq!(
+            reminder["description"],
+            "The event Party here starts in an hour."
+        );
+        assert_eq!(reminder["name"], "Party here");
+        let approved = metadata(
+            &intent("event_approved", event),
+            &recipient(false, false),
+            &links,
+        );
+        assert_eq!(approved["title"], "Party here");
+        let plain = metadata(
+            &intent("event_approved", json!({"name":"Launch"})),
+            &recipient(false, false),
+            &links,
+        );
+        assert_eq!(plain["title"], "Launch");
+        let tags_only = json!({"name":"<size=300><b>","description":"d"});
+        let reminder = metadata(
+            &intent("events_starts_soon", tags_only.clone()),
+            &recipient(false, false),
+            &links,
+        );
+        assert_eq!(reminder["description"], "The event starts in an hour.");
+        let approved = metadata(
+            &intent("event_approved", tags_only.clone()),
+            &recipient(false, false),
+            &links,
+        );
+        assert_eq!(approved["title"], "Event");
+        let mut member = recipient(true, false);
+        member.community_name = Some("<b></b>".into());
+        let started = metadata(&intent("events_started", tags_only), &member, &links);
+        assert_eq!(
+            started["description"],
+            "A community event is about to start."
         );
     }
 

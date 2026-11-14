@@ -42,7 +42,7 @@ use chrono::NaiveDateTime;
 use sqlx::{PgConnection, PgPool};
 
 use super::SharedState;
-use super::progress::{Applied, ApplyOptions, Progress, apply_progress};
+use super::progress::{Applied, ApplyOptions, Progress, apply_progress_granting};
 use crate::identity::Address;
 
 pub use client_events::SOURCE as CLIENT_EVENTS_SOURCE;
@@ -77,7 +77,7 @@ impl Default for ProcessorSettings {
             enabled: false,
             batch_size: 200,
             max_event_age: None,
-            deployment_max_lag: Some(Duration::from_secs(86_400)),
+            deployment_max_lag: None,
             gap_grace: Duration::from_secs(600),
             items_mirror_enabled: false,
         }
@@ -557,7 +557,8 @@ pub(crate) async fn completed(
     Ok(rows.into_iter().collect())
 }
 
-/// One evaluator write, with its notification (`notify`) unless suppressed.
+/// One evaluator write, with its notification (`notify`) unless suppressed,
+/// achieving the tiers its observer would ([`super::evaluators::tier_grant`]).
 pub(crate) async fn award<F>(
     conn: &mut PgConnection,
     address: &Address,
@@ -573,7 +574,8 @@ where
         notify,
         granted_by: None,
     };
-    let applied = apply_progress(conn, address, badge_id, &options, update).await?;
+    let grant = super::evaluators::tier_grant(badge_id);
+    let applied = apply_progress_granting(conn, address, badge_id, &options, grant, update).await?;
     if let Applied::Written(change) = &applied
         && (change.completed || !change.new_tiers.is_empty())
     {

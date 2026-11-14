@@ -28,7 +28,7 @@ wasm: ts-bindings
 # regenerate the TypeScript bindings for the ~system/BevyExplorerApi boundary from the Rust
 # structs in crates/system_api_types, into library/explorer-core/engine/generated (+ a barrel index.ts).
 ts-bindings:
-    {{justfile_directory()}}/scripts/gen-ts-bindings.sh
+    ./scripts/gen-ts-bindings.sh
 
 # bundle the react HUD page + bridge scene into assets/ (the files native runs from).
 # ts-bindings first so the TS the page + bridge scene import is regenerated from the Rust structs.
@@ -45,7 +45,10 @@ _bundle-native-if-stale:
     set -eu
     stamp=target/.bundle-native-stamp
     status=0
-    python3 ../../../tooling/hud_shared_inputs.py --root ../../.. --newer-than "$stamp" || status=$?
+    # a stock Windows has only a Microsoft Store stub for python3; its installed Python is `python`
+    python=python3
+    "$python" -c '' >/dev/null 2>&1 || python=python
+    "$python" ../../../tooling/hud_shared_inputs.py --root ../../.. --newer-than "$stamp" || status=$?
     [ "$status" -le 1 ] || exit "$status"
     if [ "$status" -eq 0 ] \
        && [ -f "$stamp" ] && [ -f assets/react-hud/app.html ] \

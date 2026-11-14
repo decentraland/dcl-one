@@ -984,33 +984,52 @@ async fn canonical_stream_route_creates_and_persists_ingress_for_the_joined_scen
     state.livekit.configured = true;
     state.livekit.api_url = format!("http://{}", listener.local_addr().unwrap());
     let server = tokio::spawn(async move { axum::serve(listener, fixture).await.unwrap() });
-    let metadata = serde_json::json!({"signer":super::super::auth::SCENE_SIGNER,"realmName":"MiXeD.DCL.ETH","sceneId":"SceneB","parcel":"1,1"});
-    let response = super::super::streaming::scene_stream_access(
-        State(Arc::new(state)),
-        at("/scene-stream-access"),
-        axum::http::Method::POST,
-        signed(KEY, "post", "/scene-stream-access", &metadata.to_string()).await,
-    )
-    .await
-    .unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
-    assert_eq!(
-        observed.lock().unwrap()[0]["roomName"],
-        "w1:d:mixed.dcl.ethSceneB"
-    );
-    let stored: String = sqlx::query_scalar(
-        "SELECT room_id FROM social.scene_stream_access WHERE place_id = $1 AND active",
-    )
-    .bind(&place_id)
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-    assert_eq!(stored, "w1:d:mixed.dcl.ethSceneB");
-    sqlx::query("DELETE FROM social.scene_stream_access WHERE place_id = $1")
-        .bind(&place_id)
-        .execute(&pool)
+    let state = Arc::new(state);
+    let signer = super::super::auth::SCENE_SIGNER;
+    // With and without the parcel the world scene binds to its own deployment.
+    for metadata in [
+        serde_json::json!({"signer":signer,"realmName":"MiXeD.DCL.ETH","sceneId":"SceneB","parcel":"1,1"}),
+        serde_json::json!({"signer":signer,"realmName":"MiXeD.DCL.ETH","sceneId":"SceneB"}),
+    ] {
+        let response = super::super::streaming::scene_stream_access(
+            State(state.clone()),
+            at("/scene-stream-access"),
+            axum::http::Method::POST,
+            signed(KEY, "post", "/scene-stream-access", &metadata.to_string()).await,
+        )
         .await
         .unwrap();
+        assert_eq!(response.status(), StatusCode::OK, "{metadata}");
+        assert_eq!(
+            observed.lock().unwrap().last().unwrap()["roomName"],
+            "w1:d:mixed.dcl.ethSceneB"
+        );
+        let stored: String = sqlx::query_scalar(
+            "SELECT room_id FROM social.scene_stream_access WHERE place_id = $1 AND active",
+        )
+        .bind(&place_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(stored, "w1:d:mixed.dcl.ethSceneB");
+        sqlx::query("DELETE FROM social.scene_stream_access WHERE place_id = $1")
+            .bind(&place_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+    // A scene of the same world signed on a parcel it does not stand on.
+    let foreign = serde_json::json!({"signer":signer,"realmName":"MiXeD.DCL.ETH","sceneId":"SceneA","parcel":"1,1"});
+    let error = super::super::streaming::scene_stream_access(
+        State(state.clone()),
+        at("/scene-stream-access"),
+        axum::http::Method::POST,
+        signed(KEY, "post", "/scene-stream-access", &foreign.to_string()).await,
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(error.code, 400);
+    assert_eq!(observed.lock().unwrap().len(), 2);
     sqlx::query("DELETE FROM explore.place WHERE id = $1")
         .bind(&place_id)
         .execute(&pool)

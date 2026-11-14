@@ -378,11 +378,14 @@ pub fn signed_trade(trade: &TradeIn, venue: ContractRef) -> Result<SignedTrade, 
     })
 }
 
-/// The stored trade by id, as the trades read serializes it.
-pub async fn load_trade(pool: &PgPool, id: &str) -> Result<Option<TradeIn>, ResolveError> {
-    // Whatever its copy's age: cancelling a leftover must keep working, and
-    // the chain checks every action on a trade.
-    let Some(trade) = trades::get_trade_by_id(pool, id, None).await? else {
+/// The stored trade by id in `scope`, as the trades read serializes it,
+/// whatever its copy's age: the chain checks every action on a trade.
+pub async fn load_trade(
+    pool: &PgPool,
+    id: &str,
+    scope: trades::TradeScope,
+) -> Result<Option<TradeIn>, ResolveError> {
+    let Some(trade) = trades::get_trade_by_id(pool, id, None, scope).await? else {
         return Ok(None);
     };
     let value = serde_json::to_value(&trade).map_err(|e| ResolveError::Db(e.to_string()))?;
@@ -910,7 +913,8 @@ pub(crate) async fn resolve_trade(
     asset: AssetId,
     id: &str,
 ) -> Result<Resolved, ResolveError> {
-    let trade = load_trade(pool, id)
+    // A quote offers only what the node lists.
+    let trade = load_trade(pool, id, trades::TradeScope::Served)
         .await?
         .ok_or_else(|| ResolveError::TradeNotFound(id.to_string()))?;
     if let Some(trade_chain) = trade.chain_id

@@ -108,6 +108,7 @@ async fn fetch_snapshot(http: &Outbound, base: &str) -> anyhow::Result<SnapshotR
     let resp: SimplePriceResponse = serde_json::from_slice(&bytes).context("coingecko body")?;
     let row = map_snapshot(&resp);
     validate_snapshot(&row)?;
+    ensure_fresh_quote(&row, Utc::now())?;
     Ok(row)
 }
 
@@ -124,6 +125,60 @@ fn validate_snapshot(row: &SnapshotRow) -> anyhow::Result<()> {
         "CoinGecko response missing MANA quote timestamp"
     );
     Ok(())
+}
+
+/// A provider quote older than the freshness budget is never stored as new.
+fn ensure_fresh_quote(row: &SnapshotRow, now: DateTime<Utc>) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        row.source_updated_at
+            .is_some_and(|at| quote_is_fresh(at, now)),
+        "CoinGecko MANA quote is older than the snapshot freshness budget"
+    );
+    Ok(())
+}
+
+/// A quote from the future is not fresh beyond a minute of clock skew.
+fn quote_is_fresh(quoted_at: DateTime<Utc>, now: DateTime<Utc>) -> bool {
+    match (now - quoted_at).to_std() {
+        Ok(age) => age <= crate::store::SNAPSHOT_MAX_AGE,
+        Err(_) => (quoted_at - now) <= chrono::Duration::seconds(60),
+    }
+}
+
+/// How close another source must be for an outlier to stand.
+pub const CORROBORATION_FRACTION: f64 = 0.05;
+
+/// Whether another configured source than `source` quotes `next` within
+/// [`CORROBORATION_FRACTION`]; the first source that answers decides.
+async fn corroborated(http: &Outbound, sources: &Sources, source: &str, next: f64) -> bool {
+    for (exchange, base) in &sources.fallbacks {
+        if exchange.name() == source {
+            continue;
+        }
+        if let Ok(row) = fetch_exchange(http, *exchange, base).await
+            && let Some(other) = row.mana_usd.filter(|v| *v > 0.0)
+        {
+            return ((next - other) / other).abs() <= CORROBORATION_FRACTION;
+        }
+    }
+    false
+}
+
+/// The largest move against the previous fresh snapshot a pass publishes
+/// alone; a larger one needs another source to agree. With no
+/// `PRICE_FALLBACK_SOURCES` configured nothing can agree, so the move is held
+/// only until the previous snapshot ages out of the freshness budget.
+pub const MAX_MOVE_FRACTION: f64 = 0.3;
+
+/// Whether `next` moved from a still-fresh `previous` by more than [`MAX_MOVE_FRACTION`].
+pub fn is_outlier(previous: Option<&PriceSnapshot>, next: f64, now: DateTime<Utc>) -> bool {
+    let Some(prev) = previous.filter(|p| p.is_fresh_at(now)) else {
+        return false;
+    };
+    let Some(prev_usd) = prev.mana_usd.filter(|p| *p > 0.0) else {
+        return false;
+    };
+    ((next - prev_usd) / prev_usd).abs() > MAX_MOVE_FRACTION
 }
 
 /// Returns the stored row (numeric-rounded, the bound `taken_at`) so the
@@ -368,6 +423,19 @@ pub async fn run_pass(http: &Outbound, sources: &Sources, prices: &Prices) -> an
             found
         }
     };
+    let previous = prices
+        .latest()
+        .await
+        .context("previous snapshot read for the outlier check")?;
+    if let Some(next) = row.mana_usd
+        && is_outlier(previous.as_deref(), next, Utc::now())
+        && !corroborated(http, sources, source, next).await
+    {
+        anyhow::bail!(
+            "{source} MANA/USD {next} moved more than {}% from the previous snapshot and no other source agrees; not published",
+            MAX_MOVE_FRACTION * 100.0
+        );
+    }
     let (id, stored) = insert_snapshot(prices.pool(), source, &row, Utc::now())
         .await
         .context("failed to insert snapshot")?;
@@ -387,6 +455,59 @@ pub async fn run_pass(http: &Outbound, sources: &Sources, prices: &Prices) -> an
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn snapshot(usd: f64, taken_at: DateTime<Utc>, quoted_at: DateTime<Utc>) -> PriceSnapshot {
+        PriceSnapshot {
+            mana_usd: Some(usd),
+            mana_eth: None,
+            mana_btc: None,
+            market_cap_usd: None,
+            volume_24h_usd: None,
+            price_change_24h_pct: None,
+            source_updated_at: Some(quoted_at),
+            taken_at,
+        }
+    }
+
+    #[test]
+    fn a_large_move_against_a_fresh_snapshot_is_held_back() {
+        let now = Utc::now();
+        let fresh = snapshot(0.4, now, now);
+        assert!(!is_outlier(Some(&fresh), 0.5, now), "+25% publishes");
+        assert!(is_outlier(Some(&fresh), 0.6, now), "+50% is held");
+        assert!(is_outlier(Some(&fresh), 0.2, now), "-50% is held");
+        let stale = snapshot(
+            0.4,
+            now - chrono::Duration::hours(1),
+            now - chrono::Duration::hours(1),
+        );
+        assert!(
+            !is_outlier(Some(&stale), 0.6, now),
+            "a stale previous never blocks"
+        );
+        assert!(!is_outlier(None, 0.6, now));
+    }
+
+    #[test]
+    fn freshness_counts_from_the_provider_quote() {
+        let now = Utc::now();
+        let frozen = snapshot(0.4, now, now - chrono::Duration::hours(2));
+        assert!(
+            !frozen.is_fresh_at(now),
+            "a just-taken row of an old quote is stale"
+        );
+        assert!(snapshot(0.4, now, now).is_fresh_at(now));
+        assert!(quote_is_fresh(now - chrono::Duration::minutes(5), now));
+        assert!(!quote_is_fresh(now - chrono::Duration::hours(1), now));
+        assert!(
+            quote_is_fresh(now + chrono::Duration::seconds(30), now),
+            "clock skew"
+        );
+        assert!(
+            !quote_is_fresh(now + chrono::Duration::minutes(5), now),
+            "a quote from the future is not fresh"
+        );
+    }
 
     #[test]
     fn maps_simple_price_payload_to_snapshot_row() {

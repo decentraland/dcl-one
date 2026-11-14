@@ -17,11 +17,14 @@ use catalyst::comms::protocol::bus::topology::{DISCOVERY_SUBJECT, ISLANDS_SUBJEC
 use catalyst::comms::pulse::PeerClusterChange;
 use catalyst::comms::pulse::cluster::feed::{ClusterFeedPublisher, CurrentAssignment};
 use catalyst::comms::pulse::cluster::nats::{NatsClusterFeed, NatsFeedOptions};
-use catalyst::comms::pulse::cluster::{ClusterInfo, ClusterPass, ClusterPeerInfo};
+use catalyst::comms::pulse::cluster::{
+    ClusterInfo, ClusterOptions, ClusterPass, ClusterPeerInfo, ClusterTracker,
+};
 use catalyst::comms::pulse::decentraland::common::Vector3;
 use catalyst::comms::pulse::decentraland::kernel::comms::v3::{
     IslandStatusMessage, ServiceDiscoveryMessage,
 };
+use catalyst::comms::pulse::snapshot::IdentityBoard;
 use futures::StreamExt;
 use prost::Message as _;
 
@@ -32,6 +35,95 @@ const SESSION: &str = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 /// Long enough to absorb a loopback broker's scheduling, short enough that a genuinely missing
 /// message fails the test rather than hanging the suite.
 const DELIVERY_TIMEOUT: Duration = Duration::from_secs(5);
+
+#[tokio::test]
+async fn cancelled_terminal_disconnect_is_not_replayed_after_real_broker_reconnect() {
+    use catalyst::comms::gatekeeper::bus::{BrokerBus, NatsBus, PublishOutcome};
+    use catalyst::comms::protocol::bus::statistics::{Event, OBSERVATIONS_SUBJECT, Observation};
+    let binary = gate::require_env("PULSE_NATS_SERVER_BIN").expect("required NATS executable");
+    let broker = nats_broker::Broker::start(&binary, None);
+    let port = broker.port;
+    let bus = BrokerBus::new(Some(broker.url()), "terminal-reconnect");
+    let captured = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let received = captured.clone();
+    let _subscription = bus.subscribe(
+        OBSERVATIONS_SUBJECT,
+        None,
+        Arc::new(move |_, bytes| {
+            received
+                .lock()
+                .unwrap()
+                .push(Observation::decode(bytes).unwrap().sequence);
+        }),
+    );
+    bus.connect();
+    tokio::time::timeout(Duration::from_secs(8), async {
+        while !bus.is_ready() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    drop(broker);
+    tokio::time::timeout(Duration::from_secs(8), async {
+        while bus.is_ready() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let payload = |sequence| {
+        Observation {
+            version: 2,
+            incarnation: uuid::Uuid::nil(),
+            generation: 1,
+            producer: uuid::Uuid::nil(),
+            sequence,
+            event: Event::Disconnect {
+                address: "wallet".into(),
+            },
+        }
+        .encode()
+        .unwrap()
+    };
+    {
+        let cancelled = bus.publish_statistical_disconnect(
+            payload(1),
+            tokio::time::Instant::now() + catalyst::comms::protocol::bus::REQUEST_DEADLINE,
+        );
+        tokio::pin!(cancelled);
+        assert!(futures::poll!(cancelled.as_mut()).is_pending());
+    }
+    let _broker = nats_broker::Broker::start(&binary, Some(port));
+    tokio::time::timeout(Duration::from_secs(8), async {
+        while !bus.is_ready() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        bus.publish_statistical_disconnect(
+            payload(2),
+            tokio::time::Instant::now() + catalyst::comms::protocol::bus::REQUEST_DEADLINE
+        )
+        .await,
+        PublishOutcome::Submitted
+    );
+    tokio::time::timeout(DELIVERY_TIMEOUT, async {
+        while captured.lock().unwrap().is_empty() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    assert_eq!(
+        *captured.lock().unwrap(),
+        [2],
+        "the pre-existing subscription must see only the uncancelled terminal on the replacement link"
+    );
+}
 
 fn pass() -> ClusterPass {
     let mut pass = ClusterPass::default();
@@ -106,34 +198,32 @@ async fn the_cluster_feed_reaches_a_live_broker_on_every_subject() {
     client.publish(inbox, "ready".into()).await.unwrap();
     assert_eq!(next_payload(&mut ready).await, b"ready");
 
-    let feed = NatsClusterFeed::spawn(NatsFeedOptions {
+    let feed = Arc::new(NatsClusterFeed::spawn(NatsFeedOptions {
         url: url.clone(),
         server_name: "pulse-test".into(),
         discovery_interval_ms: 200,
         ..Default::default()
-    });
+    }));
+    let tracker = ClusterTracker::new(ClusterOptions::default(), 1, feed.clone());
+    let mut identity = IdentityBoard::new(1);
+    tracker.bind_identity(&mut identity);
 
     let pass = pass();
     feed.publish_topology(&pass, 3);
-    let assignment = |session: &str, cluster: &str| CurrentAssignment {
+    let assignment = |identity: &IdentityBoard, cluster: &str| CurrentAssignment {
         wallet: WALLET.into(),
-        session: session.into(),
+        session: identity.session_by_peer(0).unwrap().into(),
         cluster_id: cluster.into(),
         realm: "test-realm".into(),
-        owner_epoch: 1,
+        owner_epoch: identity.registration_by_peer(0),
+        selected_origin: 1,
         owner_peer: 0,
-        registration: None,
+        registration: Some(identity.registration_guard(0)),
     };
-    feed.replace_assignments(
-        1,
-        Duration::from_secs(2),
-        vec![assignment("0xsession-one", "C0")],
-    );
-    feed.replace_assignments(
-        2,
-        Duration::from_secs(2),
-        vec![assignment("0xsession-two", "C1")],
-    );
+    identity.set_with_session(0, WALLET.into(), "0xsession-one".into());
+    feed.replace_assignments(1, Duration::from_secs(2), vec![assignment(&identity, "C0")]);
+    identity.set_with_session(0, WALLET.into(), "0xsession-two".into());
+    feed.replace_assignments(2, Duration::from_secs(2), vec![assignment(&identity, "C1")]);
 
     let change = PeerClusterChange::decode(next_payload(&mut changes).await.as_slice())
         .expect("the change decodes as PeerClusterChange");
@@ -177,6 +267,10 @@ async fn a_broker_that_is_down_costs_the_publisher_nothing() {
         ..Default::default()
     });
     let publisher: Arc<dyn ClusterFeedPublisher> = Arc::new(feed);
+    let tracker = ClusterTracker::new(ClusterOptions::default(), 1, publisher.clone());
+    let mut identity = IdentityBoard::new(1);
+    tracker.bind_identity(&mut identity);
+    identity.set_with_session(0, WALLET.into(), SESSION.into());
     let pass = pass();
 
     let started = std::time::Instant::now();
@@ -189,9 +283,10 @@ async fn a_broker_that_is_down_costs_the_publisher_nothing() {
                 session: SESSION.into(),
                 cluster_id: format!("C{n}"),
                 realm: "test-realm".into(),
-                owner_epoch: 1,
+                owner_epoch: identity.registration_by_peer(0),
+                selected_origin: 1,
                 owner_peer: 0,
-                registration: None,
+                registration: Some(identity.registration_guard(0)),
             }],
         );
         publisher.publish_topology(&pass, 1);
@@ -250,6 +345,7 @@ async fn private_control_positions_reach_the_audience_scoped_snapshot() {
         cluster_id: "control-C1".into(),
         realm: "test-realm".into(),
         owner_epoch: epoch,
+        selected_origin: 2,
         owner_peer: 100_000,
         registration: None,
     };
@@ -303,6 +399,7 @@ async fn private_control_positions_reach_the_audience_scoped_snapshot() {
             cluster_id: "control-C1".into(),
             realm: "test-realm".into(),
             owner_epoch: 5,
+            selected_origin: 2,
             owner_peer: 100_000,
             registration: None,
         }],

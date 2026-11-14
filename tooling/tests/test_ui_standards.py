@@ -177,6 +177,52 @@ class UiStandardsIntegrationTest(unittest.TestCase):
         component.write_text("import styled from 'styled-components'\nexport const A = styled.div``\nexport const B = styled.span``\n")
         self.assertEqual(ui_standards.check('HEAD'), [])
 
+    def test_imported_files_pass_only_when_added(self):
+        (self.root / 'tooling').mkdir()
+        (self.root / ui_standards.IMPORTED).write_text('# imported\napps/sites/src/Old.tsx\napps/sites/src/Old.css\n')
+        component = self.path / 'Old.tsx'
+        component.write_text("import styled from 'styled-components'\n")
+        (self.path / 'Old.css').write_text('.root {}\n')
+        (self.path / 'New.tsx').write_text("import styled from 'styled-components'\n")
+        self.git('add', '.')
+        self.assertEqual(ui_standards.check('HEAD'), ['apps/sites/src/New.tsx: new CSS-in-JS imports are not allowed'])
+        self.commit('import')
+        component.write_text("import styled from 'styled-components'\nimport { css } from '@emotion/css'\n")
+        self.assertEqual(ui_standards.check('HEAD'), ['apps/sites/src/Old.tsx: new CSS-in-JS imports are not allowed'])
+
+    def test_import_list_cannot_grow_or_be_deleted_after_it_exists(self):
+        (self.root / 'tooling').mkdir()
+        listing = self.root / ui_standards.IMPORTED
+        listing.write_text('apps/sites/src/Old.tsx\n')
+        (self.path / 'Old.tsx').write_text("import styled from 'styled-components'\n")
+        self.git('add', '.')
+        self.commit('import')
+        listing.write_text('apps/sites/src/Old.tsx\napps/sites/src/New.tsx\n')
+        (self.path / 'New.tsx').write_text("import styled from 'styled-components'\n")
+        self.assertEqual(ui_standards.check('HEAD'), [
+            f'{ui_standards.IMPORTED}: paths can\'t be added to the import list',
+            'apps/sites/src/New.tsx: new CSS-in-JS imports are not allowed',
+        ])
+        listing.unlink()
+        self.assertEqual(ui_standards.check('HEAD')[0], f'{ui_standards.IMPORTED}: the import list can\'t be deleted; empty it instead')
+        listing.write_text('')
+        (self.path / 'New.tsx').unlink()
+        self.assertEqual(ui_standards.check('HEAD'), [])
+
+    def test_listed_path_deleted_then_re_added_is_checked(self):
+        (self.root / 'tooling').mkdir()
+        (self.root / ui_standards.IMPORTED).write_text('apps/sites/src/Old.tsx\n')
+        component = self.path / 'Old.tsx'
+        component.write_text("import styled from 'styled-components'\n")
+        self.git('add', '.')
+        self.commit('import')
+        self.git('rm', '-q', 'apps/sites/src/Old.tsx')
+        self.commit('delete')
+        self.path.mkdir(parents=True, exist_ok=True)
+        component.write_text("import styled from 'styled-components'\n")
+        self.git('add', '.')
+        self.assertEqual(ui_standards.check('HEAD'), ['apps/sites/src/Old.tsx: new CSS-in-JS imports are not allowed'])
+
     def test_colored_diff_config_does_not_hide_added_lines(self):
         self.git('config', 'color.diff', 'always')
         component = self.path / 'Card.tsx'

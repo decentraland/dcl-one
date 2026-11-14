@@ -229,28 +229,27 @@ pub fn loader_stub(
         .replace("__DCL_ONE_MP__", if mp { "true" } else { "false" })
 }
 
-pub fn write_loader_stub(
-    outfile: &Path,
-    sdk_chunk_rel: &str,
-    smart_chunk_rel: Option<&str>,
-    scene_chunk_rel: &str,
-    max_composite_entity: u32,
-    mp: bool,
-) -> Result<()> {
+/// The stub without its comment lines, blank lines and indentation, for a
+/// production build. Nothing is renamed and no line is joined: the chunks are
+/// direct-eval'd inside this scope, so its identifiers are part of the
+/// contract, and the statements rely on their line ends.
+pub fn compact_loader(stub: &str) -> String {
+    let mut out = String::with_capacity(stub.len());
+    for line in stub.lines().map(str::trim) {
+        if line.is_empty() || line.starts_with("//") {
+            continue;
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    out
+}
+
+pub fn write_loader_stub(outfile: &Path, stub: &str) -> Result<()> {
     if let Some(dir) = outfile.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
-    std::fs::write(
-        outfile,
-        loader_stub(
-            sdk_chunk_rel,
-            smart_chunk_rel,
-            scene_chunk_rel,
-            max_composite_entity,
-            mp,
-        ),
-    )
-    .map_err(|e| {
+    std::fs::write(outfile, stub).map_err(|e| {
         crate::ux::UserError::new(
             format!(
                 "cannot write the split loader stub to {}",
@@ -305,18 +304,23 @@ pub struct Loader {
     pub smart_installed: bool,
     pub max_composite_entity: u32,
     pub mp: bool,
+    /// A production build: written through [`compact_loader`].
+    pub compact: bool,
 }
 
 impl Loader {
     pub fn write(&self) -> Result<()> {
-        write_loader_stub(
-            &self.outfile,
+        let stub = loader_stub(
             &self.paths.sdk,
             self.smart_installed.then_some(self.paths.smart.as_str()),
             &self.paths.scene,
             self.max_composite_entity,
             self.mp,
-        )?;
+        );
+        match self.compact {
+            true => write_loader_stub(&self.outfile, &compact_loader(&stub))?,
+            false => write_loader_stub(&self.outfile, &stub)?,
+        }
         tracing::info!("loader stub saved {}", self.outfile.display());
         Ok(())
     }
@@ -359,6 +363,36 @@ mod tests {
             "the mp flag arms the comms wrap"
         );
         assert!(!s.contains("__DCL_ONE_MAX_COMPOSITE_ENTITY__"));
+    }
+
+    #[test]
+    fn the_compact_loader_drops_only_comments_blank_lines_and_indentation() {
+        let stub = loader_stub(
+            "bin/sdk-runtime.js",
+            Some("bin/sdk-smart-items.js"),
+            "bin/scene.js",
+            517,
+            true,
+        );
+        let compact = compact_loader(&stub);
+        assert!(compact.len() * 10 < stub.len() * 7, "it is worth doing");
+        let code: Vec<&str> = stub
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty() && !line.starts_with("//"))
+            .collect();
+        assert_eq!(compact.lines().collect::<Vec<_>>(), code);
+        assert!(compact.contains(LOADER_MARKER));
+        assert!(compact.contains("var __dclOneMp = true"));
+        assert!(compact.contains("//# sourceURL=dcl-one:///"));
+        assert!(
+            !stub.contains('`') || !code.iter().any(|line| line.contains('`')),
+            "a template literal could span lines, and trimming would change it"
+        );
+        assert!(
+            !code.iter().any(|line| line.contains("/*")),
+            "a block comment could span lines"
+        );
     }
 
     #[test]

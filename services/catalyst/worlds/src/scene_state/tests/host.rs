@@ -52,6 +52,14 @@ async fn host_with_names_down() -> Option<Host> {
 }
 
 async fn host_with(js: bool, names: Option<Arc<crate::chain_index::ChainIndex>>) -> Option<Host> {
+    host_tuned(js, names, |_| {}).await
+}
+
+async fn host_tuned(
+    js: bool,
+    names: Option<Arc<crate::chain_index::ChainIndex>>,
+    tune: impl FnOnce(&mut RawSettings),
+) -> Option<Host> {
     let pool = crate::db::scratch::pool(4).await?;
     let tmp = std::env::temp_dir().join(format!("catalyst-scene-host-{}", Uuid::new_v4().simple()));
     let storage = Arc::new(Storage::from_config(&tmp).await.unwrap());
@@ -60,11 +68,12 @@ async fn host_with(js: bool, names: Option<Arc<crate::chain_index::ChainIndex>>)
         PersonalWorldsPolicy::disabled(),
         names,
     ));
-    let raw = RawSettings {
+    let mut raw = RawSettings {
         disable_js_runtime: !js,
         auth_timeout_secs: 2,
         ..RawSettings::default()
     };
+    tune(&mut raw);
     let settings = Settings::resolve(raw, &crate::http::Outbound::for_tests()).unwrap();
     let state = Arc::new(SceneHostState::new(pool, storage, policy, settings, None).unwrap());
     Some(Host { state, _tmp: tmp })
@@ -118,7 +127,7 @@ async fn seed_scene(
         let crdt_hash = store(state, crdt).await;
         content.push(serde_json::json!({ "file": "main.crdt", "hash": crdt_hash }));
     }
-    let entity = serde_json::json!({ "metadata": { "main": "bin/game.js", "scene": { "base": base } }, "content": content });
+    let entity = serde_json::json!({ "metadata": { "main": "bin/game.js", "scene": { "base": base }, "authoritativeMultiplayer": true }, "content": content });
     sqlx::query(
         "INSERT INTO worlds.world_scenes (world_name, entity_id, deployment_auth_chain, entity, deployer, parcels, size, mirror_source) \
          VALUES ($1, $2, '[]'::json, $3, $4, $5, 1, $6)",
@@ -312,12 +321,20 @@ async fn a_genesis_scene_loads_by_id_and_by_parcel_into_the_main_scope() {
     assert_eq!((ns.realm(), ns.scene_namespace()), ("main", p2.clone()));
     let at = SceneKey::GenesisParcel(Parcel::parse(&p1).unwrap());
     h.state.load(&at).await.unwrap();
-    let same = h.state.scenes.get(&p1).unwrap();
+    assert!(
+        h.state.scenes.get(&p1).is_none(),
+        "a parcel is not its own host"
+    );
+    let same = h.state.hosted(&at).await.unwrap();
     assert_eq!(
         same.identity.deployment, scene.identity.deployment,
         "one deployment, two keys, one scope"
     );
-    assert_eq!(h.state.scenes.len(), 2);
+    assert_eq!(
+        h.state.scenes.len(),
+        1,
+        "every parcel shares the scene's host"
+    );
 
     sqlx::query("DELETE FROM content.active_pointers WHERE entity_id = $1")
         .bind(&id)
@@ -334,12 +351,12 @@ async fn a_genesis_scene_loads_by_id_and_by_parcel_into_the_main_scope() {
         .execute(&h.state.pool)
         .await
         .unwrap();
-    // Gone from the shared rows: the sweep unloads both.
+    // Gone from the shared rows: the sweep unloads it.
     let summary = h.state.sweep().await;
     assert_eq!(
         summary,
         SweepSummary {
-            unloaded: 2,
+            unloaded: 1,
             ..Default::default()
         }
     );
@@ -385,7 +402,16 @@ async fn join(
     key: &str,
     metadata: &str,
 ) -> Option<(Ws, Vec<u8>)> {
-    let path = format!("/scene-state/ws/{}", world.display());
+    join_name(addr, world.display(), key, metadata).await
+}
+
+async fn join_name(
+    addr: std::net::SocketAddr,
+    name: &str,
+    key: &str,
+    metadata: &str,
+) -> Option<(Ws, Vec<u8>)> {
+    let path = format!("/scene-state/ws/{name}");
     let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://{addr}{path}"))
         .await
         .unwrap();
@@ -592,12 +618,8 @@ async fn a_stored_owner_can_join_with_a_valid_secret_during_an_authority_outage(
         "a valid secret cannot bypass the exhausted caller budget during an authority outage"
     );
     assert!(
-        h.state
-            .scenes
-            .get(world.key())
-            .unwrap()
-            .clients()
-            .is_empty()
+        h.state.scenes.get(world.key()).is_none(),
+        "a refused client loads nothing"
     );
     sqlx::query("UPDATE social.world_secret_attempts SET window_start=timezone('UTC',now())-interval '61 seconds' WHERE world_name=$1 AND subject=$2")
         .bind(world.key())
@@ -971,4 +993,361 @@ async fn a_shared_secret_world_reads_the_secret_from_the_signed_metadata() {
         }
     );
     assert!(closed(&mut ws).await);
+}
+
+async fn connect(addr: std::net::SocketAddr, world: &WorldName) -> Option<Ws> {
+    let path = format!("/scene-state/ws/{}", world.display());
+    tokio_tungstenite::connect_async(format!("ws://{addr}{path}"))
+        .await
+        .ok()
+        .map(|(ws, _)| ws)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn only_an_admitted_client_loads_a_scene_and_only_one_that_opts_in() {
+    let Some(h) = host(false).await else { return };
+    let world = world_name();
+    seed_world(&h.state.pool, &world, None, AccessType::Unrestricted).await;
+    seed_scene(
+        &h.state,
+        &world,
+        "bafyOptIn",
+        "",
+        None,
+        "0,0",
+        &["0,0"],
+        false,
+    )
+    .await;
+    let addr = serve(h.state.clone()).await;
+
+    let mut silent = connect(addr, &world)
+        .await
+        .expect("the upgrade is answered");
+    assert!(closed(&mut silent).await, "no auth frame, no session");
+    assert!(
+        h.state.scenes.is_empty(),
+        "an unauthenticated socket loads nothing"
+    );
+    let (_ws, _) = join(addr, &world, VISITOR_KEY, "{}")
+        .await
+        .expect("an admitted client loads the scene");
+    assert!(h.state.scenes.get(world.key()).is_some());
+
+    let other = world_name();
+    seed_world(&h.state.pool, &other, None, AccessType::Unrestricted).await;
+    seed_scene(
+        &h.state,
+        &other,
+        "bafyOptOut",
+        "",
+        None,
+        "0,0",
+        &["0,0"],
+        false,
+    )
+    .await;
+    sqlx::query("UPDATE worlds.world_scenes SET entity = (entity::jsonb #- '{metadata,authoritativeMultiplayer}')::json WHERE world_name = $1")
+        .bind(other.key())
+        .execute(&h.state.pool)
+        .await
+        .unwrap();
+    assert!(
+        connect(addr, &other).await.is_none(),
+        "a scene without authoritativeMultiplayer is not autoloaded"
+    );
+    assert!(h.state.scenes.get(other.key()).is_none());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_sweep_unloads_scenes_left_without_clients() {
+    let Some(h) = host_tuned(false, None, |raw| raw.idle_unload_secs = 1).await else {
+        return;
+    };
+    let (busy, idle) = (world_name(), world_name());
+    for (world, id) in [(&busy, "bafyBusy"), (&idle, "bafyIdle")] {
+        seed_world(&h.state.pool, world, None, AccessType::Unrestricted).await;
+        seed_scene(&h.state, world, id, "", None, "0,0", &["0,0"], false).await;
+    }
+    let addr = serve(h.state.clone()).await;
+    let (_ws, _) = join(addr, &busy, VISITOR_KEY, "{}")
+        .await
+        .expect("admitted");
+    h.state.load(&SceneKey::World(idle.clone())).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(1200)).await;
+    assert_eq!(
+        h.state.sweep().await,
+        SweepSummary {
+            unloaded: 1,
+            ..Default::default()
+        }
+    );
+    assert!(
+        h.state.scenes.get(idle.key()).is_none(),
+        "an empty scene is unloaded"
+    );
+    assert!(
+        h.state.scenes.get(busy.key()).is_some(),
+        "a scene with a client stays"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn another_sources_failed_secrets_never_refuse_a_correct_one() {
+    let Some(h) = host(false).await else { return };
+    let world = world_name();
+    let hash = bcrypt::hash("open sesame", 4).unwrap();
+    sqlx::query("INSERT INTO worlds.worlds (name, access_type, access_secret_hash) VALUES ($1, 'shared-secret', $2)")
+        .bind(world.key())
+        .bind(&hash)
+        .execute(&h.state.pool)
+        .await
+        .unwrap();
+    seed_scene(
+        &h.state,
+        &world,
+        "bafySourceSecret",
+        "",
+        None,
+        "0,0",
+        &["0,0"],
+        false,
+    )
+    .await;
+    let addr = serve(h.state.clone()).await;
+    let now = chrono::Utc::now().naive_utc();
+    for source in ["203.0.113.7", "2001:db8::1"] {
+        let other = crate::comms::gatekeeper::admission::world_mint::SecretThrottle {
+            pool: &h.state.pool,
+            max_attempts: h.state.secret_max_attempts,
+            world: world.key(),
+            subject: source,
+        };
+        while other.reserve(now).await.unwrap().is_some() {}
+    }
+    // Same /64 as an exhausted source: the shared source key limits it too.
+    let neighbour = crate::comms::gatekeeper::admission::world_mint::SecretThrottle {
+        pool: &h.state.pool,
+        max_attempts: h.state.secret_max_attempts,
+        world: world.key(),
+        subject: "2001:db8::ffff",
+    };
+    assert!(neighbour.reserve(now).await.unwrap().is_none());
+    assert!(
+        join(addr, &world, VISITOR_KEY, r#"{"secret":"open sesame"}"#)
+            .await
+            .is_some(),
+        "a source with budget left is admitted whatever other sources spent"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_client_admitted_across_an_idle_unload_joins_a_hosted_scene() {
+    let Some(h) = host_tuned(false, None, |raw| raw.idle_unload_secs = 1).await else {
+        return;
+    };
+    let world = world_name();
+    seed_world(&h.state.pool, &world, None, AccessType::Unrestricted).await;
+    seed_scene(
+        &h.state,
+        &world,
+        "bafyIdleRace",
+        "",
+        None,
+        "0,0",
+        &["0,0"],
+        false,
+    )
+    .await;
+    h.state.load(&SceneKey::World(world.clone())).await.unwrap();
+    let before = h.state.scenes.get(world.key()).unwrap();
+    let addr = serve(h.state.clone()).await;
+
+    // Upgraded while hosted; the scene is unloaded before the auth frame lands.
+    let path = format!("/scene-state/ws/{}", world.display());
+    let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://{addr}{path}"))
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(1200)).await;
+    assert_eq!(h.state.unload_idle().await, 1);
+    ws.send(WsMessage::Binary(
+        auth_frame(VISITOR_KEY, &path, "{}").into(),
+    ))
+    .await
+    .unwrap();
+    let first = tokio::time::timeout(Duration::from_secs(5), ws.next())
+        .await
+        .expect("an answer within 5 s");
+    assert!(
+        matches!(first, Some(Ok(WsMessage::Binary(ref b))) if b.first() == Some(&(MessageType::Init as u8))),
+        "{first:?}"
+    );
+    let hosted = h.state.scenes.get(world.key()).expect("hosted again");
+    assert!(
+        !Arc::ptr_eq(&before, &hosted),
+        "the unloaded scene is not reused"
+    );
+    assert_eq!(
+        hosted.clients().len(),
+        1,
+        "the client is in the hosted scene"
+    );
+}
+
+/// A Genesis deployment on `parcels`, with `authoritativeMultiplayer` when `opt_in`.
+async fn seed_genesis(h: &Host, parcels: &[String], opt_in: bool) -> String {
+    let id = format!("bafyG{}", Uuid::new_v4().simple());
+    let code_hash = store(&h.state, b"").await;
+    let mut metadata =
+        serde_json::json!({ "main": "bin/game.js", "scene": { "base": parcels[0] } });
+    if opt_in {
+        metadata["authoritativeMultiplayer"] = true.into();
+    }
+    let dep_id: i32 = sqlx::query_scalar(
+        "INSERT INTO content.deployments (deployer_address, version, entity_type, entity_id, entity_metadata, entity_timestamp, entity_pointers, local_timestamp, auth_chain) \
+         VALUES ('0x0', 'v3', 'scene', $1, $2::json, timezone('UTC', now()), $3, timezone('UTC', now()), '[]'::json) RETURNING id",
+    )
+    .bind(&id)
+    .bind(metadata)
+    .bind(parcels.to_vec())
+    .fetch_one(&h.state.pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO content.content_files (deployment, content_hash, key) VALUES ($1, $2, 'bin/game.js')")
+        .bind(dep_id)
+        .bind(&code_hash)
+        .execute(&h.state.pool)
+        .await
+        .unwrap();
+    for p in parcels {
+        sqlx::query("INSERT INTO content.active_pointers (pointer, entity_id) VALUES ($1, $2)")
+            .bind(p)
+            .bind(&id)
+            .execute(&h.state.pool)
+            .await
+            .unwrap();
+    }
+    id
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_genesis_parcel_autoloads_its_scene_only_when_it_opts_in() {
+    let Some(h) = host(false).await else { return };
+    let x = 40_000 + (Uuid::new_v4().as_u128() % 10_000) as i32;
+    let (on, off) = (
+        vec![format!("{x},3"), format!("{x},4")],
+        vec![format!("{x},5")],
+    );
+    let id = seed_genesis(&h, &on, true).await;
+    seed_genesis(&h, &off, false).await;
+    let addr = serve(h.state.clone()).await;
+
+    let _first = join_name(addr, &on[1], VISITOR_KEY, "{}")
+        .await
+        .expect("an opted-in Genesis scene autoloads by parcel");
+    let _second = join_name(addr, &on[0], VISITOR_KEY, "{}")
+        .await
+        .expect("another parcel of it joins the same host");
+    assert_eq!(h.state.scenes.len(), 1);
+    assert_eq!(h.state.scenes.get(&id).unwrap().clients().len(), 2);
+
+    let path = format!("/scene-state/ws/{}", off[0]);
+    let refused = tokio_tungstenite::connect_async(format!("ws://{addr}{path}")).await;
+    assert!(
+        matches!(&refused, Err(tokio_tungstenite::tungstenite::Error::Http(r)) if r.status() == 404),
+        "a Genesis scene without the flag is not autoloaded"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_full_host_answers_503_before_the_upgrade() {
+    let Some(h) = host_tuned(false, None, |raw| raw.max_scenes = 1).await else {
+        return;
+    };
+    let (first, second) = (world_name(), world_name());
+    for (world, id) in [(&first, "bafyFull1"), (&second, "bafyFull2")] {
+        seed_world(&h.state.pool, world, None, AccessType::Unrestricted).await;
+        seed_scene(&h.state, world, id, "", None, "0,0", &["0,0"], false).await;
+    }
+    let addr = serve(h.state.clone()).await;
+    let (_ws, _) = join(addr, &first, VISITOR_KEY, "{}")
+        .await
+        .expect("the first scene fits");
+    let path = format!("/scene-state/ws/{}", second.display());
+    let refused = tokio_tungstenite::connect_async(format!("ws://{addr}{path}")).await;
+    assert!(
+        matches!(&refused, Err(tokio_tungstenite::tungstenite::Error::Http(r)) if r.status() == 503),
+        "{refused:?}"
+    );
+    assert!(h.state.scenes.get(second.key()).is_none());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_load_in_progress_does_not_hold_up_joins_to_other_scenes() {
+    let Some(h) = host(false).await else { return };
+    let (slow, hosted) = (world_name(), world_name());
+    for (world, id) in [(&slow, "bafySlowLoad"), (&hosted, "bafyHostedJoin")] {
+        seed_world(&h.state.pool, world, None, AccessType::Unrestricted).await;
+        seed_scene(&h.state, world, id, "", None, "0,0", &["0,0"], false).await;
+    }
+    h.state
+        .load(&SceneKey::World(hosted.clone()))
+        .await
+        .unwrap();
+    let addr = serve(h.state.clone()).await;
+
+    // Hold the slow scene's load lock, as a long load would.
+    let held = h
+        .state
+        .load_lock(&SceneKey::World(slow.clone()))
+        .lock_owned()
+        .await;
+    let waiting = {
+        let slow = slow.clone();
+        tokio::spawn(async move { join(addr, &slow, VISITOR_KEY, "{}").await.is_some() })
+    };
+    let (_ws, _) = tokio::time::timeout(
+        Duration::from_secs(3),
+        join(addr, &hosted, VISITOR_KEY, "{}"),
+    )
+    .await
+    .expect("a hosted scene's join does not wait on another key's load")
+    .expect("admitted");
+    assert!(
+        !waiting.is_finished(),
+        "the slow key's join waits for its load"
+    );
+    drop(held);
+    assert!(
+        waiting.await.unwrap(),
+        "the slow key's join completes after its load"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_reload_at_the_cap_keeps_its_slot() {
+    let Some(h) = host_tuned(false, None, |raw| raw.max_scenes = 1).await else {
+        return;
+    };
+    let (first, second) = (world_name(), world_name());
+    for (world, id) in [(&first, "bafyCapReload"), (&second, "bafyCapOther")] {
+        seed_world(&h.state.pool, world, None, AccessType::Unrestricted).await;
+        seed_scene(&h.state, world, id, "", None, "0,0", &["0,0"], false).await;
+    }
+    let (first_key, second_key) = (SceneKey::World(first.clone()), SceneKey::World(second));
+    h.state.load(&first_key).await.unwrap();
+
+    // Mid-reload: the slot is reserved and the old scene is already down.
+    let reload = h
+        .state
+        .reserve_slot(&first_key)
+        .expect("a reload at the cap is allowed");
+    h.state.remove_hosted(&first_key.room_key());
+    assert!(h.state.scenes.is_empty());
+    assert!(
+        h.state.reserve_slot(&second_key).is_err(),
+        "another scene cannot take the reloading scene's slot"
+    );
+    drop(reload);
+    assert!(h.state.reserve_slot(&second_key).is_ok());
 }

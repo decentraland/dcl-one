@@ -33,6 +33,7 @@ fn controlled(
         wallet: wallet.to_string(),
         session: session.to_string(),
         epoch,
+        origin: 2,
         realm: realm.to_string(),
         position,
     }
@@ -48,13 +49,15 @@ fn control_owner(session: &str, closed: bool) -> ControlOwner {
 impl World {
     fn with(options: ClusterOptions) -> Self {
         let feed = Arc::new(RecordingClusterFeed::default());
-        World {
+        let mut world = World {
             grids: RealmSpatialGrids::new(SPATIAL_GRID_CELL_SIZE, CAP),
             board: SnapshotBoard::new(CAP, 4),
             identity: IdentityBoard::new(CAP),
             feed: feed.clone(),
             tracker: ClusterTracker::new(options, CAP, feed),
-        }
+        };
+        world.tracker.bind_identity(&mut world.identity);
+        world
     }
 
     /// Debounce off unless a test is about the debounce: every other scenario asserts the
@@ -192,30 +195,38 @@ fn native_position_wins_for_the_exact_control_session_without_double_counting() 
 }
 
 #[test]
-fn newer_control_owner_and_its_tombstone_suppress_a_stale_native_session() {
+fn native_reservation_survives_unusable_position_and_different_legacy_session() {
     let mut w = World::new();
-    w.place_session(0, "0xa", "0xold", "main", v3(1.0, 1.0), false);
+    w.identity
+        .set_with_session(0, "0xa".into(), "0xnative".into());
     w.feed.set_control_snapshot(ControlSnapshot {
-        members: vec![controlled(0, "0xa", "0xnew", 10, "main", v3(2.0, 2.0))],
-        owners: HashMap::from([("0xa".into(), control_owner("0xnew", false))]),
+        members: vec![controlled(0, "0xa", "0xlegacy", 9, "main", v3(1.0, 1.0))],
+        owners: HashMap::from([("0xa".into(), control_owner("0xlegacy", false))]),
     });
     w.pass();
-    assert_eq!(w.tracker.board().clusters[0].count, 1);
-    assert!(w.tracker.board().peers[0].peer as usize >= CAP);
-    assert!(w.feed.current("0xa", "0xnew").is_some());
-    assert!(w.feed.current("0xa", "0xold").is_none());
-
-    w.feed.set_control_snapshot(ControlSnapshot {
-        members: Vec::new(),
-        owners: HashMap::from([("0xa".into(), control_owner("0xnew", true))]),
-    });
-    w.pass();
+    assert!(w.feed.current("0xa", "0xlegacy").is_none());
     assert!(w.tracker.board().clusters.is_empty());
-    assert!(w.feed.current("0xa", "0xold").is_none());
+}
 
-    w.place_session(0, "0xa", "0xnew", "main", v3(1.0, 1.0), false);
-    w.pass();
-    assert!(w.tracker.board().clusters.is_empty());
+#[test]
+fn native_reservation_outweighs_legacy_owner_and_terminal_tombstone() {
+    let mut w = World::new();
+    w.place_session(0, "0xa", "0xnative", "main", v3(1.0, 1.0), false);
+    for closed in [false, true] {
+        w.feed.set_control_snapshot(ControlSnapshot {
+            members: if closed {
+                Vec::new()
+            } else {
+                vec![controlled(0, "0xa", "0xlegacy", 10, "main", v3(2.0, 2.0))]
+            },
+            owners: HashMap::from([("0xa".into(), control_owner("0xlegacy", closed))]),
+        });
+        w.pass();
+        assert_eq!(w.tracker.board().clusters[0].count, 1);
+        assert_eq!(w.tracker.board().peers[0].peer, 0);
+        assert!(w.feed.current("0xa", "0xnative").is_some());
+        assert!(w.feed.current("0xa", "0xlegacy").is_none());
+    }
 }
 
 #[test]
@@ -731,6 +742,7 @@ fn full_enet_house() -> (
     let mut board = SnapshotBoard::new(cap, 4);
     let mut identity = IdentityBoard::new(cap);
     let mut tracker = ClusterTracker::new(options, cap, feed);
+    tracker.bind_identity(&mut identity);
 
     let side = (FULL_HOUSE as f32 / REALMS as f32).sqrt().ceil();
     for peer in 0..FULL_HOUSE {

@@ -78,12 +78,9 @@ use scene_runner::{
     OutOfWorld, SceneRunnerPlugin,
 };
 use social::SocialPlugin;
-use system_api_types::{
-    launch_options::{
-        help_heading::{DEBUG, SETTINGS, SYSTEM_SCENES},
-        ClientOptions, LaunchOptions,
-    },
-    web_params::DEFAULT_PORTABLES,
+use system_api_types::launch_options::{
+    help_heading::{DEBUG, SETTINGS, SYSTEM_SCENES},
+    ClientOptions, LaunchOptions,
 };
 use system_bridge::{settings::NewCameraEvent, NativeUi, SystemBridgePlugin};
 #[cfg(not(target_arch = "wasm32"))]
@@ -360,11 +357,8 @@ impl DecentralandArguments {
 
     /// `--portables` / `?portables=`, else the default set.
     pub fn startup_scenes(&self) -> Vec<StartupScene> {
-        self.client
-            .portables
-            .as_deref()
-            .unwrap_or(DEFAULT_PORTABLES)
-            .split(';')
+        self.launch
+            .portable_sources()
             .map(|source| StartupScene {
                 source: source.to_owned(),
                 super_user: false,
@@ -754,7 +748,7 @@ impl DecentralandApp {
         app.add_console_command::<SceneThreadsCommand, _>(scene_threads);
         app.add_console_command::<FpsCommand, _>(set_fps);
         app.add_console_command::<SessionGraphicsCommand, _>(session_graphics);
-        debug_panel::register(&mut app);
+        app.add_plugins(debug_panel::MemoryDebugPanelPlugin);
 
         app
     }

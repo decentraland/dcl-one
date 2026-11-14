@@ -12,7 +12,7 @@
 //! RPC, a node that cannot answer for that block, a check past its deadline)
 //! is an `Err`, never a grant; a call the chain reverts is a "no".
 
-mod items;
+pub(crate) mod items;
 
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
@@ -71,11 +71,19 @@ pub(crate) const MAX_ITEMS_ASKED: usize = 200;
 /// the check. Their standard probes are batched, so this matches the item cap.
 pub(crate) const MAX_NFT_CONTRACTS_ASKED: usize = MAX_ITEMS_ASKED;
 
-/// How many items one ownership check asks about, and what more is.
+/// Distinct claimed names asked about per check; more refuses the check. A
+/// profile names one per avatar.
+pub(crate) const MAX_NAMES_ASKED: usize = MAX_ITEMS_ASKED;
+/// Longer names are answered as not held without being asked: no registrable
+/// NAME comes near it, and it bounds the calldata one name sends.
+pub(crate) const MAX_NAME_BYTES: usize = 64;
+
+/// How many items or names one ownership check asks about, and what more is.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct ItemCaps {
     pub items: usize,
     pub nft_contracts: usize,
+    pub names: usize,
     /// Past a cap the check is undecided instead of [`ValidatorError::TooManyItems`].
     pub undecided_past_cap: bool,
 }
@@ -84,6 +92,7 @@ pub(crate) struct ItemCaps {
 pub(crate) const LOCAL_ITEM_CAPS: ItemCaps = ItemCaps {
     items: MAX_ITEMS_ASKED,
     nft_contracts: MAX_NFT_CONTRACTS_ASKED,
+    names: MAX_NAMES_ASKED,
     undecided_past_cap: false,
 };
 
@@ -92,10 +101,11 @@ pub(crate) const LOCAL_ITEM_CAPS: ItemCaps = ItemCaps {
 pub(crate) const SYNCED_ITEM_CAPS: ItemCaps = ItemCaps {
     items: 1000,
     nft_contracts: 1000,
+    names: 1000,
     undecided_past_cap: true,
 };
-/// `eth_call`s per JSON-RPC batch request.
-const CALLS_PER_BATCH: usize = 100;
+/// `eth_call`s per JSON-RPC batch request, and sub-calls per Checker `multicall`.
+pub(crate) const CALLS_PER_BATCH: usize = 100;
 /// Single calls in flight at once when an endpoint answers no batch.
 const CALLS_IN_FLIGHT: usize = 8;
 /// Third-party NFT standards kept before the memo starts over.
@@ -411,8 +421,22 @@ impl Chain {
         out
     }
 
-    /// The Checker's `multicall` over `calls` at `block`; all false when it reverts.
+    /// The Checker's `multicall` over `calls` at `block`, [`CALLS_PER_BATCH`] calls per
+    /// `eth_call`; a batch that reverts answers all false.
     async fn multicall(
+        &self,
+        checker: Address,
+        calls: Vec<Vec<u8>>,
+        block: u64,
+    ) -> Result<Vec<bool>, ValidatorError> {
+        let mut out = Vec::with_capacity(calls.len());
+        for chunk in calls.chunks(CALLS_PER_BATCH) {
+            out.extend(self.multicall_batch(checker, chunk.to_vec(), block).await?);
+        }
+        Ok(out)
+    }
+
+    async fn multicall_batch(
         &self,
         checker: Address,
         calls: Vec<Vec<u8>>,
@@ -687,11 +711,64 @@ impl OnChainAccess {
         .await
     }
 
-    /// Per name, whether `address` holds it; all of them at one block.
+    /// Per name, whether `address` holds it; all of them at one block. More than
+    /// [`MAX_NAMES_ASKED`] distinct names is [`ValidatorError::TooManyItems`].
     pub async fn names(
         &self,
         address: &str,
         names: &[String],
+        timestamp_ms: i64,
+    ) -> Result<Vec<bool>, ValidatorError> {
+        self.names_capped(address, names, timestamp_ms, LOCAL_ITEM_CAPS)
+            .await
+    }
+
+    /// [`Self::names`] under `caps`; each distinct name is asked once.
+    pub(crate) async fn names_capped(
+        &self,
+        address: &str,
+        names: &[String],
+        timestamp_ms: i64,
+        caps: ItemCaps,
+    ) -> Result<Vec<bool>, ValidatorError> {
+        if names.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut distinct: Vec<&String> = Vec::new();
+        let mut seen = HashSet::new();
+        for name in names {
+            if seen.insert(name) {
+                distinct.push(name);
+            }
+        }
+        if distinct.len() > caps.names {
+            let message = format!(
+                "{} distinct names, at most {} are checked",
+                distinct.len(),
+                caps.names
+            );
+            return Err(if caps.undecided_past_cap {
+                ValidatorError::BlockchainQuery(message)
+            } else {
+                ValidatorError::TooManyItems(message)
+            });
+        }
+        let askable: Vec<&String> = distinct
+            .into_iter()
+            .filter(|n| n.len() <= MAX_NAME_BYTES)
+            .collect();
+        let owned = self.distinct_names(address, &askable, timestamp_ms).await?;
+        let by_name: HashMap<&String, bool> = askable.into_iter().zip(owned).collect();
+        Ok(names
+            .iter()
+            .map(|n| by_name.get(n).copied().unwrap_or(false))
+            .collect())
+    }
+
+    async fn distinct_names(
+        &self,
+        address: &str,
+        names: &[&String],
         timestamp_ms: i64,
     ) -> Result<Vec<bool>, ValidatorError> {
         if names.is_empty() {
@@ -708,7 +785,7 @@ impl OnChainAccess {
                     Checker::checkNameCall {
                         _sender: sender,
                         _registrar: l1.contracts.registrar.0,
-                        _name: name.clone(),
+                        _name: (*name).clone(),
                     }
                     .abi_encode()
                 })

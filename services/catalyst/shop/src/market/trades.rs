@@ -1085,9 +1085,10 @@ pub async fn list_trades(
     let limit = first.unwrap_or(100).clamp(0, 1000);
     let offset = skip.unwrap_or(0).max(0);
     let counted = counted_sql("", "$3");
+    let served = super::catalog::served_trade_sql("t");
     let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
         "SELECT {TRADE_COLUMNS}, COUNT(*) OVER()::int8 AS total \
-         FROM shop.trades WHERE {counted} ORDER BY created_at DESC LIMIT $1 OFFSET $2"
+         FROM shop.trades t WHERE {counted} AND {served} ORDER BY created_at DESC LIMIT $1 OFFSET $2"
     )))
     .bind(limit)
     .bind(offset)
@@ -1099,8 +1100,9 @@ pub async fn list_trades(
         // An empty page past the end (or a zero-row page) says nothing about the total.
         None if offset > 0 || limit == 0 => {
             let counted = counted_sql("", "$1");
+            let served = super::catalog::served_trade_sql("t");
             sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
-                "SELECT COUNT(*) FROM shop.trades WHERE {counted}"
+                "SELECT COUNT(*) FROM shop.trades t WHERE {counted} AND {served}"
             )))
             .bind(since)
             .fetch_one(pool)
@@ -1158,13 +1160,15 @@ pub async fn trades_of_address(
     let heads = sqlx::query(sqlx::AssertSqlSafe(format!(
         "SELECT {TRADE_COLUMNS} FROM shop.trades \
          WHERE id IN ( \
-            (SELECT id FROM shop.trades WHERE signer = $1 AND {signer_counted} ORDER BY created_at DESC LIMIT $2) \
+            (SELECT s.id FROM shop.trades s WHERE s.signer = $1 AND {signer_counted} AND {signer_served} ORDER BY s.created_at DESC LIMIT $2) \
             UNION \
             (SELECT ta.trade_id FROM shop.trade_assets ta JOIN shop.trades t ON t.id = ta.trade_id \
-             WHERE ta.beneficiary = $1 AND {beneficiary_counted} ORDER BY ta.created_at DESC LIMIT $2)) \
+             WHERE ta.beneficiary = $1 AND {beneficiary_counted} AND {beneficiary_served} ORDER BY ta.created_at DESC LIMIT $2)) \
          ORDER BY created_at DESC LIMIT $2",
-        signer_counted = counted_sql("", "$3"),
+        signer_counted = counted_sql("s.", "$3"),
         beneficiary_counted = counted_sql("t.", "$3"),
+        signer_served = super::catalog::served_trade_sql("s"),
+        beneficiary_served = super::catalog::served_trade_sql("t"),
     )))
     .bind(&address)
     .bind(limit)
@@ -1226,15 +1230,31 @@ pub async fn trades_of_address(
         .collect())
 }
 
-/// The trade `id` with its assets, when it counts at `since` ([`counted_sql`]).
+/// Which stored trades a lookup by id may answer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TradeScope {
+    /// Only the trades this node serves ([`super::catalog::served_trade_sql`]):
+    /// what it lists or prices.
+    Served,
+    /// Any stored trade: cancelling or answering one must keep working.
+    Any,
+}
+
+/// The trade `id` with its assets, when it counts at `since` ([`counted_sql`])
+/// and is in `scope`.
 pub async fn get_trade_by_id(
     pool: &PgPool,
     id: &str,
     since: Option<NaiveDateTime>,
+    scope: TradeScope,
 ) -> Result<Option<Trade>, sqlx::Error> {
     let counted = counted_sql("", "$2");
+    let served = match scope {
+        TradeScope::Served => super::catalog::served_trade_sql("t"),
+        TradeScope::Any => "TRUE".to_string(),
+    };
     let Some(head) = sqlx::query(sqlx::AssertSqlSafe(format!(
-        "SELECT {TRADE_COLUMNS} FROM shop.trades WHERE id = $1::uuid AND {counted}"
+        "SELECT {TRADE_COLUMNS} FROM shop.trades t WHERE id = $1::uuid AND {counted} AND {served}"
     )))
     .bind(id)
     .bind(since)
@@ -1343,7 +1363,7 @@ pub async fn get_trade(State(state): State<SharedState>, Path(id): Path<String>)
         return envelope;
     }
     let since = mirrored_since(&state.settings, Utc::now().naive_utc());
-    match get_trade_by_id(&state.pool, &id, since).await {
+    match get_trade_by_id(&state.pool, &id, since, TradeScope::Served).await {
         Ok(Some(trade)) => Json(json!({ "ok": true, "data": trade })).into_response(),
         Ok(None) => (
             axum::http::StatusCode::NOT_FOUND,
