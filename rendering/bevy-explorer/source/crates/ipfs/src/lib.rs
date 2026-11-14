@@ -1,5 +1,6 @@
 mod batch_sizes;
 pub mod bevy_variants;
+pub mod cache_heal;
 pub mod content_hash;
 mod debug_panel;
 mod download;
@@ -686,6 +687,7 @@ impl Plugin for IpfsIoPlugin {
             .init_asset::<SceneJsFile>()
             .init_asset_loader::<EntityDefinitionLoader>()
             .init_asset_loader::<SceneJsLoader>();
+        cache_heal::finish(app);
         bevy_variants::finish(app);
 
         if let Some(realm) = &self.starting_realm {
@@ -1069,6 +1071,8 @@ pub struct IpfsIo {
     // downloads under way, by url (`share_download`)
     in_flight: InFlightDownloads,
     pub(crate) bevy_variants: bevy_variants::BevyVariants,
+    // cached entries checked after a failed load (`cache_heal`)
+    pub(crate) cache_heals: cache_heal::CacheHeals,
     #[cfg(feature = "ipfs_debug")]
     debug_overlay_sender: tokio::sync::mpsc::UnboundedSender<IpfsDebug>,
 }
@@ -1112,6 +1116,7 @@ impl IpfsIo {
                 .unwrap(),
             in_flight: Default::default(),
             bevy_variants: Default::default(),
+            cache_heals: Default::default(),
             #[cfg(feature = "ipfs_debug")]
             debug_overlay_sender,
         }

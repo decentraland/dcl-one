@@ -17,24 +17,71 @@ const MAX_LINKS: usize = 174;
 const RAW: u8 = 0x55;
 const DAG_PB: u8 = 0x70;
 
-pub fn matches_content_hash(hash: &str, bytes: &[u8]) -> bool {
+/// The hash schemes, told apart by the prefix of the hash.
+#[derive(Clone, Copy)]
+enum Scheme {
+    /// `Qm…`: base58 sha-256 CIDv0.
+    Sha256V0,
+    /// `bafkrei…`: base32 CIDv1 of the raw bytes.
+    RawCid,
+    /// Other `baf…`: base32 CIDv1 of the unixfs file node.
+    FileCid,
+}
+
+fn scheme(hash: &str) -> Option<Scheme> {
     if hash.starts_with("Qm") {
-        let mut multihash = vec![0x12, 0x20];
-        multihash.extend(sha256(bytes));
-        hash == base58(&multihash)
+        Some(Scheme::Sha256V0)
     } else if hash.starts_with("bafkrei") {
-        hash == format!("b{}", base32(&cid(RAW, bytes)))
+        Some(Scheme::RawCid)
     } else if hash.starts_with("baf") {
-        hash == format!("b{}", base32(&file_cid(bytes)))
+        Some(Scheme::FileCid)
     } else {
-        false
+        None
     }
+}
+
+/// The canonical spelling of the hash `bytes` have under `scheme`.
+fn hash_of(scheme: Scheme, bytes: &[u8]) -> String {
+    match scheme {
+        Scheme::Sha256V0 => {
+            let mut multihash = vec![0x12, 0x20];
+            multihash.extend(sha256(bytes));
+            base58(&multihash)
+        }
+        Scheme::RawCid => format!("b{}", base32(&cid(RAW, bytes))),
+        Scheme::FileCid => format!("b{}", base32(&file_cid(bytes))),
+    }
+}
+
+pub fn matches_content_hash(hash: &str, bytes: &[u8]) -> bool {
+    scheme(hash).is_some_and(|scheme| hash == hash_of(scheme, bytes))
+}
+
+/// Whether `bytes` match `hash` in any letter case: a case-insensitive file system opens the file
+/// of a hash under any spelling of it.
+pub(crate) fn matches_content_hash_ignoring_case(hash: &str, bytes: &[u8]) -> bool {
+    scheme(hash).is_some_and(|scheme| hash.eq_ignore_ascii_case(&hash_of(scheme, bytes)))
+}
+
+/// Whether `name` has a shape the cache files content under: one ascii alphanumeric word with a
+/// known prefix, in lower case for the base32 hashes.
+pub(crate) fn is_hash_name(name: &str) -> bool {
+    scheme(name).is_some_and(|scheme| {
+        name.chars().all(|c| c.is_ascii_alphanumeric())
+            && (matches!(scheme, Scheme::Sha256V0) || !name.bytes().any(|b| b.is_ascii_uppercase()))
+    })
 }
 
 /// The raw-leaf CIDv1 (`bafkrei…`) of `bytes`, for fixtures that need a matching hash.
 #[cfg(test)]
 pub(crate) fn raw_cid(bytes: &[u8]) -> String {
     format!("b{}", base32(&cid(RAW, bytes)))
+}
+
+/// The sha-256 CIDv0 (`Qm…`) of `bytes`, for fixtures that need a matching hash.
+#[cfg(test)]
+pub(crate) fn sha256_cid_v0(bytes: &[u8]) -> String {
+    hash_of(Scheme::Sha256V0, bytes)
 }
 
 /// A cache name for bytes known only by the url they were fetched from: a digest of the url,

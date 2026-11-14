@@ -4,7 +4,7 @@
 //! The worker only answers from the cache; the engine fills it from what it downloads. An entry
 //! under the shared key answers for every content server, so it is only written once the bytes
 //! are checked against the hash (`content_hash`), and under that hash; a url's response goes
-//! under the url.
+//! under the url. An entry whose bytes fail to load is dropped under both keys (`cache_heal`).
 
 // stand-in origin for shared entries: `.invalid` is reserved, so no server's own entries land here
 const SHARED_ORIGIN: &str = "https://shared.invalid";
@@ -27,6 +27,13 @@ fn keys(url: &str) -> Option<[String; 2]> {
             url.path()
         ),
     ])
+}
+
+// The hash a key from `keys` is filed under, if it is the shared key.
+pub(crate) fn shared_hash(key: &str) -> Option<&str> {
+    key.strip_prefix(SHARED_ORIGIN)?
+        .strip_prefix('/')
+        .filter(|name| !name.is_empty())
 }
 
 // Whether a request for `url` is one the worker would answer from the shared entry for `hash`.
@@ -145,6 +152,18 @@ mod io {
         Ok(())
     }
 
+    /// Drops both entries for `url`, the shared one and the url's own, if there are any. Every
+    /// entry is tried even when one delete fails; the first error is returned.
+    pub async fn discard(cache: &Cache, url: &str) -> Result<(), JsValue> {
+        let mut result = Ok(());
+        for key in keys(url).ok_or("not a url")? {
+            if let Err(error) = JsFuture::from(cache.delete_with_str(&key)).await {
+                result = result.and(Err(error));
+            }
+        }
+        result
+    }
+
     /// Stores `data`, the bytes `url` answered with, under the shared key for `hash`, if
     /// `matches_hash`: whether they are what `hash` names. The url's own entry, if an older
     /// worker left one, goes: it is dead weight beside the shared one.
@@ -176,6 +195,15 @@ mod tests {
         assert_eq!(catalyst, "https://shared.invalid/bafkreihash");
         assert_eq!(worlds, catalyst);
         assert_eq!(own, "https://worlds.example/contents/bafkreihash?v=1");
+    }
+
+    #[test]
+    fn the_shared_hash_is_the_shared_keys_name_only() {
+        let [shared, own] = keys("https://peer.example/contents/bafkreihash?v=1").unwrap();
+        assert_eq!(shared_hash(&shared), Some("bafkreihash"));
+        assert_eq!(shared_hash(&own), None);
+        assert_eq!(shared_hash("https://shared.invalid/"), None);
+        assert_eq!(shared_hash("https://shared.invalidx/a"), None);
     }
 
     #[test]

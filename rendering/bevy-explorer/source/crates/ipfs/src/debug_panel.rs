@@ -18,6 +18,8 @@ pub(super) fn register(app: &mut App, preview: bool) {
                 ("Cached reads", "cached"),
                 ("Non-IPFS reads", "local"),
                 ("Failed reads", "failed"),
+                ("Failed loads checked against the cache", "cacheChecks"),
+                ("Cached entries dropped for bad bytes", "cacheDrops"),
                 #[cfg(not(target_arch = "wasm32"))]
                 ("IPFS connection failures (native)", "connectFailed"),
                 ("Available request slots", "available"),
@@ -228,6 +230,7 @@ fn web_state(mut input: ConsoleCommand<WebState>, ipfs: Res<IpfsResource>, confi
         let connect_failed = Some(stats.connect_failed);
         #[cfg(target_arch = "wasm32")]
         let connect_failed: Option<u64> = None;
+        let (cache_checks, cache_drops) = ipfs.cache_heals.counts();
         input.reply_ok(
             json!({
                 "inFlight": IPFS_IN_FLIGHT.load(Ordering::Relaxed),
@@ -235,6 +238,8 @@ fn web_state(mut input: ConsoleCommand<WebState>, ipfs: Res<IpfsResource>, confi
                 "cached": IPFS_CACHED.load(Ordering::Relaxed),
                 "local": IPFS_NON_IPFS.load(Ordering::Relaxed),
                 "failed": IPFS_FAILED.load(Ordering::Relaxed),
+                "cacheChecks": cache_checks,
+                "cacheDrops": cache_drops,
                 "connectFailed": connect_failed,
                 "available": ipfs.request_slots.available_permits(),
                 "slots": config.max_concurrent_remotes,

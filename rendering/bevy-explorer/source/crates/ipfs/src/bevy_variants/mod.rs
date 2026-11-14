@@ -847,7 +847,11 @@ pub(crate) fn finish(app: &mut App) {
         .world()
         .contains_resource::<Events<AssetLoadFailedEvent<Image>>>()
     {
-        app.add_systems(Update, fall_back_from_failed_variants);
+        // after the cache check, which skips a variant's failure only while it is marked served
+        app.add_systems(
+            Update,
+            fall_back_from_failed_variants.after(crate::cache_heal::drop_failed_cached_entries),
+        );
     }
 }
 
