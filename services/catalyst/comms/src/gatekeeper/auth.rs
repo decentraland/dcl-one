@@ -31,7 +31,8 @@ use crate::auth::signed_fetch::{
 use crate::auth::{AuthChain, AuthError, AuthLinkType};
 use crate::shared::signed_fetch::{
     self, AUTH_METADATA_HEADER, AUTH_TIMESTAMP_HEADER, FIVE_MINUTES,
-    SignedFetchError as ChainError, SignedPath, candidate_paths, check_symmetric_skew, header_str,
+    SignedFetchError as ChainError, SignedPath, candidate_paths, check_timestamp_window,
+    header_str,
 };
 use crate::{Address, AuthorityNotEstablished};
 
@@ -245,7 +246,7 @@ async fn verify_with_keys(
     let chain = signed_fetch::extract_auth_chain(headers).map_err(map_chain_error)?;
     let ts = timestamp_or_zero(header_str(headers, AUTH_TIMESTAMP_HEADER));
     let now = chrono::Utc::now().timestamp();
-    check_symmetric_skew(ts, now, tolerance_secs).map_err(map_chain_error)?;
+    check_timestamp_window(ts, now, tolerance_secs).map_err(map_chain_error)?;
 
     // Upstream's `verifyMetadata`: unparseable or non-object refused, `null`
     // reads as an empty object.
@@ -373,7 +374,7 @@ pub async fn require_signer(
     let chain = signed_fetch::extract_auth_chain(headers).map_err(map_chain_error)?;
     let ts = timestamp_or_zero(header_str(headers, AUTH_TIMESTAMP_HEADER));
     let now = chrono::Utc::now().timestamp();
-    check_symmetric_skew(ts, now, FIVE_MINUTES).map_err(map_chain_error)?;
+    check_timestamp_window(ts, now, FIVE_MINUTES).map_err(map_chain_error)?;
     let request = SignedRequest {
         method,
         paths: &candidate_paths(headers, path),

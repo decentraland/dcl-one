@@ -18,7 +18,7 @@ use crate::auth::{AuthChain, AuthError, MAX_AUTH_CHAIN_LINKS};
 use crate::shared::identity::Address;
 use crate::shared::signed_fetch::{
     AUTH_CHAIN_HEADER_PREFIX, AUTH_METADATA_HEADER, AUTH_TIMESTAMP_HEADER, SignedFetchError,
-    SignedPath, build_legacy_payload, build_payload_v6, candidate_paths, check_symmetric_skew,
+    SignedPath, build_legacy_payload, build_payload_v6, candidate_paths, check_timestamp_window,
     header_str, is_refused_signer, map_auth_error, parse_metadata,
 };
 use crate::worlds_envelope::ApiError;
@@ -270,7 +270,7 @@ pub async fn require_verified(
         .to_string();
     let now_ms = chrono::Utc::now().timestamp_millis();
     let now = now_ms.div_euclid(1000);
-    check_symmetric_skew(&ts, now, SIGNED_FETCH_EXPIRATION_SECS).map_err(|cause| {
+    check_timestamp_window(&ts, now, SIGNED_FETCH_EXPIRATION_SECS).map_err(|cause| {
         let message = match (&cause, ts.parse::<i64>()) {
             (SignedFetchError::Expired { .. }, Ok(signed)) if signed > now_ms => format!(
                 "Signature timestamp is too far in the future: signature timestamp: {signed}, local timestamp: {now_ms}"

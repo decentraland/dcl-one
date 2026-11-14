@@ -2307,6 +2307,41 @@ async fn deploys_the_node_cannot_decide_are_given_back() {
     assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "a 400 is kept");
 }
 
+/// An undecided deploy asking more than one access batch keeps its quota
+/// charge: the request itself can drive the check past its deadline. One that
+/// fits the batch exactly is given back.
+#[tokio::test]
+async fn an_undecided_oversized_deploy_keeps_its_quota_charge() {
+    let settings = Settings {
+        post_entities_daily_quota_max: 1,
+        ..Settings::for_tests()
+    };
+    let node = deploying_node("quota-oversized", settings).await;
+    let router = node.router();
+    let signer = PrivateKeySigner::random();
+    let parcels: Vec<String> = (0..101).map(|x| format!("{x},0")).collect();
+    let parcels: Vec<&str> = parcels.iter().map(String::as_str).collect();
+    let (file, id, chain) = signed_entity(&signer, scene(&parcels, &[])).await;
+    let mut req = deploy_request("/content/entities", &id, &chain, &[(&id, &file)]);
+    req.headers_mut()
+        .insert("x-real-ip", HeaderValue::from_static("203.0.113.15"));
+    let (status, _, body) = call(&router, req).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body:?}");
+    assert_eq!(node.state.deploy_quota.counted_for("203.0.113.15"), 1);
+    let (status, _, _) = call(&router, form_request("203.0.113.15", &entity_form())).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+
+    let parcels: Vec<String> = (0..100).map(|x| format!("{x},1")).collect();
+    let parcels: Vec<&str> = parcels.iter().map(String::as_str).collect();
+    let (file, id, chain) = signed_entity(&signer, scene(&parcels, &[])).await;
+    let mut req = deploy_request("/content/entities", &id, &chain, &[(&id, &file)]);
+    req.headers_mut()
+        .insert("x-real-ip", HeaderValue::from_static("203.0.113.16"));
+    let (status, _, body) = call(&router, req).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body:?}");
+    assert_eq!(node.state.deploy_quota.counted_for("203.0.113.16"), 0);
+}
+
 #[tokio::test]
 async fn a_request_without_a_client_address_skips_the_quota() {
     let settings = Settings {
@@ -2406,13 +2441,26 @@ async fn a_cancelled_request_returns_its_reservation_and_source_share() {
 /// A database that drops its first `fail_first` connections (a lookup that
 /// fails at once and is passed over) and holds every later one unanswered.
 async fn stalling_pool(fail_first: usize) -> (PgPool, tokio::task::JoinHandle<()>) {
+    let (pool, server, _) = counted_stalling_pool(fail_first).await;
+    (pool, server)
+}
+
+/// [`stalling_pool`] and how many connections it accepted.
+async fn counted_stalling_pool(
+    fail_first: usize,
+) -> (
+    PgPool,
+    tokio::task::JoinHandle<()>,
+    Arc<std::sync::atomic::AtomicUsize>,
+) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
+    let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let accepted_count = Arc::clone(&count);
     let server = tokio::spawn(async move {
-        let mut accepted = 0;
         let mut held = Vec::new();
         while let Ok((socket, _)) = listener.accept().await {
-            accepted += 1;
+            let accepted = accepted_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
             if accepted > fail_first {
                 held.push(socket);
             }
@@ -2422,7 +2470,7 @@ async fn stalling_pool(fail_first: usize) -> (PgPool, tokio::task::JoinHandle<()
         .acquire_timeout(std::time::Duration::from_secs(60))
         .connect_lazy(&format!("postgres://nobody@{addr}/nowhere"))
         .unwrap();
-    (pool, server)
+    (pool, server, count)
 }
 
 async fn stalled_deploying_node(
@@ -2479,11 +2527,11 @@ async fn a_deploy_skips_the_request_timeout_and_answers_503_at_its_processing_de
     server.abort();
 }
 
-/// A deploy stalled after its pointer claim (the newer-entity lookup on a
-/// database that never answers) holds its upload budget, its source's share
-/// and its pointer until its processing deadline, then lets all three go.
+/// A deploy stalled before validation (the newer-entity lookup on a database
+/// that never answers) holds its upload budget and its source's share until
+/// its processing deadline, then lets both go; it never holds its pointer.
 #[tokio::test]
-async fn a_deploy_past_its_processing_deadline_releases_its_budget_share_and_claim() {
+async fn a_deploy_stalled_before_validation_holds_no_pointer_and_releases_its_budget_and_share() {
     let cap = super::create_entity::MAX_DEPLOYMENT_BYTES as u64;
     let settings = Settings {
         max_in_memory_deployment_bytes: cap,
@@ -2492,7 +2540,10 @@ async fn a_deploy_past_its_processing_deadline_releases_its_budget_share_and_cla
         ..Settings::for_tests()
     };
     // The replay lookup's connection fails at once; the next one stalls.
-    let (node, server) = stalled_deploying_node("processing-stall", 1, settings).await;
+    let (pool, server, accepted) = counted_stalling_pool(1).await;
+    let node = TestNode::with_pool_settings("processing-stall", pool, settings).await;
+    attach(&node.state, true, None, None);
+    node.state.sync.set_state(SyncState::Syncing);
     let router = node.router();
     let parcel = "71,-71";
     let (bytes, id, chain) = signed_entity(&key(OWNER_KEY), scene(&[parcel], &[])).await;
@@ -2505,16 +2556,24 @@ async fn a_deploy_past_its_processing_deadline_releases_its_budget_share_and_cla
     };
 
     let deployer = node.state.deployer().unwrap().clone();
+    let (budget, sources) = (&node.state.upload_budget, &node.state.source_uploads);
     let mut waited = 0;
-    while !deployer.holds_pointer("scene", parcel) {
-        assert!(waited < 150, "the deploy never claimed its pointer");
+    // The second connection is the newer-entity lookup, which stalls.
+    while accepted.load(std::sync::atomic::Ordering::SeqCst) < 2 {
+        assert!(
+            waited < 150,
+            "the deploy never reached its newer-entity lookup"
+        );
         waited += 1;
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
-    let (budget, sources) = (&node.state.upload_budget, &node.state.source_uploads);
     assert!(
         budget.try_reserve(cap).is_none(),
         "the deploy holds its reservation"
+    );
+    assert!(
+        !deployer.holds_pointer("scene", parcel),
+        "an unvalidated deploy holds no pointer"
     );
     assert!(
         sources.try_acquire("203.0.113.41", 1).is_err(),

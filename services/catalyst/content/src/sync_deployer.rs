@@ -183,11 +183,13 @@ fn parse_entity_for_deploy(
         .get("timestamp")
         .and_then(|t| t.as_f64())
         .unwrap_or(0.0);
-    let entity_type = entity
+    // Stored as the validator reads it (`Scenes` is a scene), so the type-keyed SQL matches.
+    let raw_type = entity
         .get("type")
         .and_then(|t| t.as_str())
-        .unwrap_or("unknown")
-        .to_string();
+        .unwrap_or("unknown");
+    let entity_type = crate::validator::entity_parser::parse_entity_type(raw_type)
+        .map_or_else(|| raw_type.to_string(), |t| t.as_str().to_string());
     let version = entity
         .get("version")
         .and_then(|v| v.as_str())
