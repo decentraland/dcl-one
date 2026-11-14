@@ -30,7 +30,7 @@ use collectibles::{
 };
 use common::{
     sets::SceneSets,
-    structs::{server_mode, CurrentRealm, PrimaryUser},
+    structs::{server_mode, CurrentRealm, NoRenderApp, PrimaryUser},
     util::{TaskCompat, TaskExt},
 };
 use comms::profile::UserProfile;
@@ -45,7 +45,13 @@ pub struct SmartWearablesPlugin;
 
 impl Plugin for SmartWearablesPlugin {
     fn build(&self, app: &mut App) {
+        // the portables listing reads this everywhere, so it exists even where it stays empty
         app.init_resource::<SmartWearables>();
+        // a headless app loads no wearables (no wearable collectibles, no smart-wearable scene
+        // loader), so it has none to run
+        if app.world().contains_resource::<NoRenderApp>() {
+            return;
+        }
         // `reconcile` writes `PortableScenes`, which the scene lifecycle reads in `Init`
         app.add_systems(
             Update,
