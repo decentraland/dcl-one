@@ -13,7 +13,7 @@ conformance capture corpus and internal docs stay in the private repository.
 | `services/catalyst/` | Rust workspace: the `catalyst` binary (APIs, content, comms, worlds, shop, social) |
 | `apps/sites/` | Web sites |
 | `apps/dcl-scene-cli/` | The scene SDK toolchain (`dcl-scene-cli`) |
-| `apps/creator-hub/` | Creator Hub desktop: npm workspace with the Electron app, `@dcl/inspector` and `@dcl/asset-packs` ([ADR](docs/adr/2026-11-09-creator-hub-in-dcl-one.md)) |
+| `apps/creator-hub/` | Creator Hub desktop: pnpm workspace with the Electron app, `@dcl/inspector` and `@dcl/asset-packs` ([ADR](docs/adr/2026-11-09-creator-hub-in-dcl-one.md)) |
 | `rendering/bevy-explorer/` | Explorer source and Play pins |
 | `apps/bevy-explorer/` | Explorer builds and images |
 | `library/` | Shared crates, API types, the protocol (`library/protocol`), the SDK (`library/js-sdk-toolchain`) |

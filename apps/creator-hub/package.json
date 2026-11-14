@@ -21,11 +21,7 @@
     "typescript": "5.5.3",
     "vitest": "1.6.0"
   },
-  "overrides": {
-    "@babylonjs/serializers": "8.7.0",
-    "ws": "^8.18.0",
-    "yauzl": "^3.3.1"
-  },
+  "packageManager": "pnpm@11.27.0+sha512.ad12821463bb143295f1fa3ecde77a6b9b97a7990386da800ff57bffc3964dc64b7b1c7559d5dbe5c337aea659ed9c8937d4370bd198ca2009bc6fa0249808e7",
   "private": true,
   "repository": {
     "type": "git",
@@ -33,18 +29,15 @@
     "directory": "apps/creator-hub"
   },
   "scripts": {
-    "format": "npx prettier --check \"**/*.{js,ts,tsx,json}\" --log-level=error --ignore-path .gitignore --ignore-path .prettierignore",
-    "format:fix": "npx prettier --write \"**/*.{js,ts,tsx,json}\" --log-level=error --ignore-path .gitignore --ignore-path .prettierignore",
+    "format": "prettier --check \"**/*.{js,ts,tsx,json}\" --log-level=error --ignore-path .gitignore --ignore-path .prettierignore",
+    "format:fix": "prettier --write \"**/*.{js,ts,tsx,json}\" --log-level=error --ignore-path .gitignore --ignore-path .prettierignore",
     "lint": "eslint . --ext js,cjs,ts,tsx --ignore-path .gitignore",
-    "lint:fix": "npm run lint -- --fix",
+    "lint:fix": "pnpm run lint --fix",
     "syncpack:fix": "syncpack fix-mismatches --config .syncpackrc.json --source \"packages/*/package.json\" --source \"package.json\"",
     "syncpack:format": "syncpack format --config .syncpackrc.json --source \"packages/*/package.json\" --source \"package.json\"",
     "syncpack:list-mismatches": "syncpack list-mismatches --config .syncpackrc.json --source \"packages/*/package.json\" --source \"package.json\"",
-    "test": "npm run test --workspaces",
-    "typecheck": "npm run typecheck --workspaces"
+    "test": "pnpm -r --workspace-concurrency=1 run test",
+    "typecheck": "pnpm -r --workspace-concurrency=1 run typecheck"
   },
-  "type": "module",
-  "workspaces": [
-    "packages/*"
-  ]
+  "type": "module"
 }

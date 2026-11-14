@@ -30,15 +30,15 @@ You own `packages/creator-hub`. `docs/DESIGN.md` and the `theme.css` token block
 Don't report success until all of these pass. Paste the tail of each output:
 
 ```bash
-(cd packages/creator-hub && npm run typecheck && VITEST_MAX_THREADS=2 VITEST_MIN_THREADS=1 npm run test:unit)
-npx eslint <every touched .ts/.tsx>    # same rules as make lint, scoped to your files
+(cd packages/creator-hub && pnpm run typecheck && VITEST_MAX_THREADS=2 VITEST_MIN_THREADS=1 pnpm run test:unit)
+pnpm exec eslint <every touched .ts/.tsx>    # same rules as make lint, scoped to your files
 ```
 
 If `atScale.spec.tsx` times out in the full run, rerun it alone before you call it a regression.
 
-For any behavior or UI change, launch the app (`npm run start` in `packages/creator-hub`, or the `run` skill) and exercise the change. Screenshot each surface you'll touch before you edit it, and again after; include the pairs in your reply, compared against the Figma frame for UI work. They go in the PR's Screenshots section, never into the repo, and carry fixture data only: never a signed-in profile's wallet, email, or scene names.
+For any behavior or UI change, launch the app (`pnpm run start` in `packages/creator-hub`, or the `run` skill) and exercise the change. Screenshot each surface you'll touch before you edit it, and again after; include the pairs in your reply, compared against the Figma frame for UI work. They go in the PR's Screenshots section, never into the repo, and carry fixture data only: never a signed-in profile's wallet, email, or scene names.
 
-Running alone: before you commit, also run the repo gate from the root (`make format`, `npm run lint`). Then commit only your paths (`git add -- <paths>`, never `-A`), push, and open the PR. Under the architect: **don't commit**. List your changed paths in the handoff, and the architect commits each layer in turn. Two specialists committing in one working tree would sweep up each other's files with anything broader than explicit paths. No AI attribution in commits or PRs.
+Running alone: before you commit, also run the repo gate from the root (`make format`, `pnpm run lint`). Then commit only your paths (`git add -- <paths>`, never `-A`), push, and open the PR. Under the architect: **don't commit**. List your changed paths in the handoff, and the architect commits each layer in turn. Two specialists committing in one working tree would sweep up each other's files with anything broader than explicit paths. No AI attribution in commits or PRs.
 
 ## Handoff block
 

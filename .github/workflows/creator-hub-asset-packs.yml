@@ -81,7 +81,7 @@ jobs:
 
       - name: install
         if: steps.setup.outputs.node-modules-cache-hit != 'true'
-        run: npm i --silent && make install-asset-packs
+        run: make install-asset-packs
         env:
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
 
@@ -116,7 +116,7 @@ jobs:
 
       - name: install
         if: steps.setup.outputs.node-modules-cache-hit != 'true'
-        run: npm i --silent && make install-asset-packs
+        run: make install-asset-packs
         env:
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
 
@@ -184,7 +184,7 @@ jobs:
 
       - name: install
         if: steps.setup.outputs.node-modules-cache-hit != 'true'
-        run: npm i --silent && make install-asset-packs
+        run: make install-asset-packs
         env:
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
 
@@ -227,9 +227,9 @@ jobs:
           body: |
             # Test @dcl/asset-packs package
 
-            - Install via NPM:
-              ```bash
-              npm install "${{ secrets.SDK_TEAM_S3_BASE_URL }}/${{ needs.publish.outputs.s3_bucket_key }}"
+            - Package (add this link with the project's package manager):
+              ```
+              ${{ secrets.SDK_TEAM_S3_BASE_URL }}/${{ needs.publish.outputs.s3_bucket_key }}
               ```
 
             > **Note:** If new assets are added in this PR, they won't be available on the CDN until the PR is merged. This package can be used to test changes to the library code or `catalog.json`, but won't work for testing newly added items.

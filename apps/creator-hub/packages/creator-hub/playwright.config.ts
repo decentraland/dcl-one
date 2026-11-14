@@ -10,7 +10,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 loadDotenv({ path: join(__dirname, '.env.e2e') });
 
 /**
- * The suite drives the **packaged** app (`npm run compile` → `electron-builder --dir`),
+ * The suite drives the **packaged** app (`pnpm run compile` → `electron-builder --dir`),
  * not `electron .`. That is what lets every `process.env.E2E` branch stay out of
  * production source: `APP_UNPACKED_PATH` resolves correctly only when
  * `Contents/Resources/app.asar.unpacked` actually exists, which packaging provides.

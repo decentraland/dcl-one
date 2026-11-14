@@ -16,8 +16,8 @@ const logLevel = 'warn';
 function setupTypeChecker() {
   const processes = ['main', 'preload', 'renderer'].map(pkg => {
     const tsc = spawn(
-      'npx',
-      ['tsc', '-w', '--preserveWatchOutput', '--noEmit', '-p', `${pkg}/tsconfig.json`],
+      'pnpm',
+      ['exec', 'tsc', '-w', '--preserveWatchOutput', '--noEmit', '-p', `${pkg}/tsconfig.json`],
       {
         stdio: 'inherit',
         shell: true,

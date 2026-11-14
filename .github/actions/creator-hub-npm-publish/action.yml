@@ -217,14 +217,14 @@ runs:
           else
             echo "  🌐 URL: ${{ steps.publish.outputs.npm-url }}"
             echo ""
-            echo "Install commands:"
-            echo "  npm install $PACKAGE_NAME@${{ inputs.initial-tag }}"
+            echo "Published as:"
+            echo "  $PACKAGE_NAME@${{ inputs.initial-tag }}"
             if [ -n "${{ inputs.additional-tags }}" ]; then
               IFS=',' read -ra TAGS <<< "${{ inputs.additional-tags }}"
               for tag in "${TAGS[@]}"; do
                 tag=$(echo "$tag" | xargs)
                 if [ -n "$tag" ]; then
-                  echo "  npm install $PACKAGE_NAME@$tag"
+                  echo "  $PACKAGE_NAME@$tag"
                 fi
               done
             fi

@@ -1,6 +1,9 @@
 const { execSync } = require('child_process');
 const path = require('path');
 
+// electron-builder picks how it lists the app's dependencies from this; "traversal" follows Node's own lookup.
+process.env.npm_config_user_agent = 'traversal';
+
 // On PRs (dry-run) skip the slow .dmg build and ship only the unsigned .zip; electron-builder
 // already skips code signing on PRs, so this keeps a downloadable per-PR build for a fraction
 // of the time. Release builds (not dry-run) still produce the signed, notarized dmg + zip.

@@ -30,7 +30,7 @@ const AGENT_SOURCES = [resolve(AGENT_DIR, 'src'), resolve(__dirname, '../agents/
 const sdkCommands = resolve(AGENT_DIR, 'node_modules/.bin/sdk-commands');
 if (!fs.existsSync(sdkCommands)) {
   throw new Error(
-    `Agent has no sdk-commands: ${sdkCommands} is missing. Run \`npm install\` in agents/bevy first.`,
+    `Agent has no sdk-commands: ${sdkCommands} is missing. Run \`pnpm install\` in agents/bevy first.`,
   );
 }
 

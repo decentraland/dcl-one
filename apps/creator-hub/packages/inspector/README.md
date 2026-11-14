@@ -54,7 +54,7 @@ gh repo clone decentraland/dcl-one && cd dcl-one/apps/creator-hub
 git lfs pull --include 'apps/creator-hub/packages/asset-packs/packs/**'
 make init
 cd packages/inspector
-npm start
+pnpm start
 
 # Method 2: From node_modules
 npm install @dcl/inspector
@@ -76,7 +76,7 @@ To develop the Inspector with local asset-packs integration:
 1. **Start the asset-packs dev environment:**
    ```bash
    cd packages/asset-packs
-   npm run start  # Starts SDK7 server on port 8001
+   pnpm run start  # Starts SDK7 server on port 8001
    ```
 
 2. **In another terminal, start the docker content server:**
@@ -88,13 +88,13 @@ To develop the Inspector with local asset-packs integration:
 3. **In another terminal, upload assets to local content server:**
    ```bash
    cd packages/asset-packs
-   npm run upload  # Uploads to http://localhost:9000
+   pnpm run upload  # Uploads to http://localhost:9000
    ```
 
 4. **Start the Inspector dev server:**
    ```bash
    cd packages/inspector
-   npm start  # Starts on port 8000
+   pnpm start  # Starts on port 8000
    ```
 
 5. **Configure the Inspector to use local asset-packs:**
@@ -117,7 +117,7 @@ When you add a **new** asset locally it won't appear in the Asset Packs tab auto
 
 #### Option 1 — Docker (full local stack, recommended)
 
-Follow the asset-packs [Local Development](../asset-packs/README.md#local-development) setup (docker-compose + `npm run upload`). The upload script also publishes `catalog.json` as `asset-packs/latest/catalog.json` to MinIO, mirroring CI. Then open the inspector with:
+Follow the asset-packs [Local Development](../asset-packs/README.md#local-development) setup (docker-compose + `pnpm run upload`). The upload script also publishes `catalog.json` as `asset-packs/latest/catalog.json` to MinIO, mirroring CI. Then open the inspector with:
 
 ```
 http://localhost:8000/?contentUrl=http://localhost:9000/asset-packs

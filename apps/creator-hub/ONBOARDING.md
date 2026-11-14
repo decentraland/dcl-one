@@ -1,6 +1,6 @@
 # Creator Hub — Onboarding
 
-Creator Hub is Decentraland's desktop app (Electron) for building SDK7 scenes. It's an npm-workspaces monorepo:
+Creator Hub is Decentraland's desktop app (Electron) for building SDK7 scenes. It's a pnpm-workspace monorepo:
 
 - **`@dcl/asset-packs`** — curated 3D assets + Smart Items.
 - **`@dcl/inspector`** — the web-based 3D scene editor (Babylon.js + Redux/Redux-Saga), embedded as an iframe.
@@ -13,7 +13,7 @@ Deps flow `asset-packs → inspector → creator-hub` (each linked via `file:`).
 ```bash
 make init          # clean, install, protoc, build all
 make build         # build all packages (asset-packs → inspector → creator-hub)
-cd packages/creator-hub && npm run start   # run the app in watch mode
+cd packages/creator-hub && pnpm run start   # run the app in watch mode
 make test          # unit tests (vitest)   ·  make typecheck  ·  make lint
 ```
 
@@ -57,7 +57,7 @@ Each turn's mutations are counted, so a one-click **"Undo AI changes"** reverts 
 
 ### How to test it
 
-- **Unit:** `npm run test:unit` (main/preload/renderer/shared) and, in `packages/inspector`, `npm run test`. The load-bearing suites are `main/tests/{ai,scene-mcp,explorer-gateway}.test.ts` and `inspector` `scene.spec.ts`.
+- **Unit:** `pnpm run test:unit` (main/preload/renderer/shared) and, in `packages/inspector`, `pnpm run test`. The load-bearing suites are `main/tests/{ai,scene-mcp,explorer-gateway}.test.ts` and `inspector` `scene.spec.ts`.
 - **Live (needs a real GPU window):** the viewport, mutations, metrics, and the gateway only work with real WebGL, which Playwright's `_electron.launch` does **not** give you. Launch a raw `electron .` with `--remote-debugging-port` and attach via `chromium.connectOverCDP`. Enable the flag (temp-patch `overrides.ts` or DEV localStorage), and open a scene that **already has `node_modules`** — the unpackaged `electron .` can't npm-install on open.
 
 ### Gotchas

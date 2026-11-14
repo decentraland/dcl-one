@@ -18,14 +18,14 @@
         "mutates": true,
         "timeout_seconds": 2400
       },
-      { "id": "lint", "command": ["npm", "run", "lint"], "timeout_seconds": 900 },
-      { "id": "format", "command": ["npm", "run", "format"], "timeout_seconds": 900 },
+      { "id": "lint", "command": ["pnpm", "run", "lint"], "timeout_seconds": 900 },
+      { "id": "format", "command": ["pnpm", "run", "format"], "timeout_seconds": 900 },
       {
         "id": "typecheck",
-        "command": ["npm", "run", "typecheck", "--if-present"],
+        "command": ["pnpm", "run", "typecheck"],
         "timeout_seconds": 1800
       },
-      { "id": "tests", "command": ["npm", "run", "test"], "timeout_seconds": 1800 }
+      { "id": "tests", "command": ["pnpm", "run", "test"], "timeout_seconds": 1800 }
     ],
     "not_applicable": [
       {
@@ -40,9 +40,11 @@
       ".cursorrules",
       "Makefile",
       "package.json",
-      "package-lock.json",
+      "pnpm-lock.yaml",
+      "pnpm-workspace.yaml",
       "**/package.json",
-      "**/package-lock.json",
+      "**/pnpm-lock.yaml",
+      "**/pnpm-workspace.yaml",
       ".eslintrc.json",
       "**/.eslintrc.json",
       ".prettierrc",

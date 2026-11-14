@@ -1,24 +1,22 @@
 /**
- * Ensures the packaged app ships a loadable oxc-parser native binding for the arch being built,
- * plus the wasm fallback.
+ * Ensures the packaged app ships a loadable oxc-parser native binding for the arch being built.
  *
  * Why: oxc-parser is a napi-rs package whose native code lives in per-platform OPTIONAL
- * dependencies (@oxc-parser/binding-darwin-x64, -arm64, ...), each gated by os/cpu. npm installs
- * only the one matching the build host, so a `macos-latest` (arm64) runner never installs the
+ * dependencies (@oxc-parser/binding-darwin-x64, -arm64, ...), each gated by os/cpu. The install
+ * brings only the one matching the build host, so a `macos-latest` (arm64) runner never installs the
  * Intel binding. electron-builder then packs BOTH the arm64 and x64 dmgs from that single
  * node_modules, and the Intel dmg shipped with no binding at all — the main process crashed on
  * launch with "Failed to load native binding" (oxc-parser/bindings.js), once #1524 wired native
  * oxc-parser into the main process.
  *
  * beforePack runs once per target arch, so we fetch the matching darwin binding straight from its
- * npm tarball into node_modules. (`npm install --force` would reconcile/prune the whole workspace
- * tree right before packaging; `npm pack` touches only its own temp cwd.) We also drop in
- * @oxc-parser/binding-wasm32-wasi, the cpu:wasm32 fallback npm likewise skips — bindings.js
- * auto-falls-back to it, so any future missing native binding degrades to the (slower) wasm parser
- * instead of a hard crash.
+ * npm tarball into node_modules. (An install would reconcile the whole workspace tree right
+ * before packaging; `npm pack` touches only its own temp cwd.) The cpu:wasm32 fallback is left
+ * out: it needs @napi-rs/wasm-runtime, which is not installed, so it could not load, and
+ * electron-builder fails on a package whose own dependency is missing.
  *
- * Only needed on macOS: the Windows/Linux artifacts build on their own native runners, where npm
- * installs the correct binding on its own.
+ * Only needed on macOS: the Windows/Linux artifacts build on their own native runners, where the
+ * install brings the correct binding on its own.
  *
  * Runs as part of the electron-builder `beforePack` hook, once per target arch.
  */
@@ -86,17 +84,6 @@ export default async function provisionOxcBindings(context) {
     ensurePackage(`@oxc-parser/${nativePkg}@${version}`, path.join(oxcDir, nativePkg), nativeFile)
   ) {
     console.log(`provision-oxc-bindings: added @oxc-parser/${nativePkg}@${version}`);
-  }
-
-  const wasmPkg = 'binding-wasm32-wasi';
-  if (
-    ensurePackage(
-      `@oxc-parser/${wasmPkg}@${version}`,
-      path.join(oxcDir, wasmPkg),
-      'parser.wasm32-wasi.wasm',
-    )
-  ) {
-    console.log(`provision-oxc-bindings: added @oxc-parser/${wasmPkg}@${version} (fallback)`);
   }
 
   // The native binding for this arch MUST be present or the packaged app crashes on launch.
