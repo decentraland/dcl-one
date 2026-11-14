@@ -576,11 +576,13 @@ pub async fn serve(
     // local writes among them sit behind DATA_WRITES_ENABLED
     // (`shop::market::DataWrites`, the social switch's twin).
     let self_hosts = content::own_hosts(&config);
+    let market_settings = crate::index::market_settings(&config, &self_hosts)?;
+    shop::market::catalog::install_served_chains(&market_settings.market.indexes);
     let market = Arc::new(
         shop::market::MarketplaceState::new(
             pool.clone(),
             http_client.clone(),
-            crate::index::market_settings(&config, &self_hosts)?,
+            market_settings,
         )
         .with_eip1654(eip1654.clone())
         .with_read_through(read_through.clone())
@@ -707,6 +709,7 @@ pub async fn serve(
     let economy_settings = shop::evm::Settings {
         min_sale_value_in_wei: config.economy.min_sale_value_in_wei.clone(),
         max_transactions_per_day: config.economy.max_transactions_per_day,
+        max_relayed_transactions_per_day: config.economy.max_relayed_transactions_per_day,
         contract_addresses_url: Config::non_empty(&config.economy.contract_addresses_url),
         contract_addresses_chain_key: config.economy.contract_addresses_chain_key.clone(),
         collections_chain_id: config.economy.collections_chain_id,

@@ -890,7 +890,7 @@ pub async fn mana_usd_rate(state: &MarketplaceState) -> Result<ManaUsdRate, Resp
         });
     }
     let v = cached(state, Ttl::S60, "economy:mana_usd".into(), || async {
-        let row: Option<(String, chrono::NaiveDateTime)> = sqlx::query_as("SELECT mana_usd::text, taken_at FROM economy.price_snapshots ORDER BY taken_at DESC LIMIT 1")
+        let row: Option<(String, chrono::NaiveDateTime)> = sqlx::query_as("SELECT mana_usd::text, LEAST(taken_at, COALESCE(source_updated_at, taken_at)) FROM economy.price_snapshots ORDER BY taken_at DESC LIMIT 1")
             .fetch_optional(&state.pool)
             .await
             .map_err(|e| e.to_string())?;
