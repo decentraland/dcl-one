@@ -158,6 +158,21 @@ test.describe('UI Designer left panel', () => {
     await page.keyboard.press('Escape');
   });
 
+  test('rename a node by double-clicking its row', async () => {
+    await UIDesigner.renameNodeByDoubleClick('Container2', 'Title');
+
+    await expect(UIDesigner.nodeLabels()).resolves.toEqual(['Container', 'Container1', 'Title']);
+  });
+
+  test('duplicate and delete a GUI from its GUI Options menu', async () => {
+    await UIDesigner.rootMenuAction(ROOT, 'Duplicate');
+    await UIDesigner.rootRow(`${ROOT}1`).waitFor({ state: 'attached', timeout: 10_000 });
+    await expect(UIDesigner.rootNames()).resolves.toEqual([ROOT, `${ROOT}1`]);
+
+    await UIDesigner.removeRoot(`${ROOT}1`);
+    await expect(UIDesigner.rootNames()).resolves.toEqual([ROOT]);
+  });
+
   test('return to the empty state when the last GUI is deleted', async () => {
     await UIDesigner.removeRoot(ROOT);
 

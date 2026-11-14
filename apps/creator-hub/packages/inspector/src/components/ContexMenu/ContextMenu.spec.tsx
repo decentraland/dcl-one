@@ -78,3 +78,38 @@ describe('when a context menu opens', () => {
     });
   });
 });
+
+describe('when a menu takes the compact size', () => {
+  afterEach(() => {
+    act(() => contextMenu.hideAll());
+    cleanup();
+  });
+
+  it('should mark only that menu compact', () => {
+    render(
+      <>
+        <div onContextMenu={event => contextMenu.show({ id: 'compact', event })}>Row</div>
+        <ContextMenu
+          id="compact"
+          label="Node Options"
+          size="compact"
+        >
+          <Item>Rename</Item>
+        </ContextMenu>
+      </>,
+    );
+    fireEvent.contextMenu(screen.getByText('Row'));
+
+    expect(screen.getByRole('menu', { name: 'Node Options' }).className).toContain(
+      'contexify--compact',
+    );
+  });
+
+  it('should keep the default size otherwise', () => {
+    renderAndOpenMenu();
+
+    expect(screen.getByRole('menu', { name: 'Entity Options' }).className).not.toContain(
+      'contexify--compact',
+    );
+  });
+});

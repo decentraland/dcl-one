@@ -1,10 +1,13 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { contextMenu } from 'react-contexify';
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 
 import { CodeRootsList } from './CodeRootsList';
 
 const mocks = vi.hoisted(() => ({
   removeRoot: vi.fn(),
+  duplicateRoot: vi.fn(),
+  menuOpen: false,
   toggleTopLevel: vi.fn(),
   selectRootFile: vi.fn(),
   renameRoot: vi.fn(),
@@ -14,6 +17,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('../code/store', () => ({
   removeRoot: mocks.removeRoot,
+  duplicateRoot: mocks.duplicateRoot,
   renameRoot: mocks.renameRoot,
   selectRootFile: mocks.selectRootFile,
   toggleTopLevel: mocks.toggleTopLevel,
@@ -25,6 +29,7 @@ vi.mock('../code/store', () => ({
   }),
 }));
 
+vi.mock('../../../hooks/useHotkey', () => ({ isMenuOpen: () => mocks.menuOpen }));
 vi.mock('react-dnd', () => ({ useDrag: () => [{ isDragging: false }, () => {}] }));
 vi.mock('../../../redux/hooks', () => ({
   useAppDispatch: () => vi.fn(),
@@ -50,6 +55,9 @@ const rowFor = (name: string) =>
 
 beforeEach(() => {
   mocks.removeRoot.mockClear();
+  mocks.duplicateRoot.mockClear();
+  mocks.renameRoot.mockClear();
+  mocks.menuOpen = false;
   mocks.toggleTopLevel.mockClear();
   mocks.roots = [root('MainUI'), root('Hud'), root('Card', false)];
   mocks.filename = 'src/ui/MainUI.tsx';
@@ -99,11 +107,10 @@ describe('when a root is a nested-only component', () => {
 });
 
 describe('when using a row action', () => {
-  it('should delete the root from the trash button', () => {
+  it('should offer no delete button on the row, since delete lives in the menu and on the key', () => {
     render(<CodeRootsList />);
-    fireEvent.click(screen.getByLabelText('Delete Hud'));
 
-    expect(mocks.removeRoot).toHaveBeenCalledWith('src/ui/Hud.tsx');
+    expect(screen.queryByLabelText('Delete Hud')).toBeNull();
   });
 
   it('should toggle top-level from the eye button', () => {
@@ -115,8 +122,134 @@ describe('when using a row action', () => {
 
   it('should not select the root when a row action is used', () => {
     render(<CodeRootsList />);
-    fireEvent.click(screen.getByLabelText('Delete Hud'));
+    fireEvent.click(screen.getByLabelText('Toggle top-level for Card'));
 
     expect(mocks.selectRootFile).not.toHaveBeenCalled();
+  });
+});
+
+describe('when a GUI row is right-clicked', () => {
+  const openMenu = (name: string) => {
+    render(<CodeRootsList />);
+    fireEvent.contextMenu(rowFor(name));
+    return screen.getByRole('menu', { hidden: true });
+  };
+  const item = (menu: HTMLElement, label: string) =>
+    [...menu.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+      i => i.textContent?.trim() === label,
+    )!;
+
+  afterEach(() => {
+    act(() => contextMenu.hideAll());
+    cleanup();
+  });
+
+  it('should open the GUI Options menu with Rename, Duplicate and Delete', () => {
+    const menu = openMenu('Hud');
+
+    expect(menu.getAttribute('aria-label')).toBe('GUI Options');
+    expect(
+      [...menu.querySelectorAll('[role="menuitem"]')]
+        .filter(i => !(i as HTMLElement).hidden)
+        .map(i => i.textContent?.trim()),
+    ).toEqual(['Rename', 'Duplicate', 'Delete']);
+  });
+
+  it('should duplicate that GUI from Duplicate', () => {
+    fireEvent.click(item(openMenu('Hud'), 'Duplicate'));
+
+    expect(mocks.duplicateRoot).toHaveBeenCalledWith('src/ui/Hud.tsx');
+  });
+
+  it('should delete that GUI from Delete', () => {
+    fireEvent.click(item(openMenu('Hud'), 'Delete'));
+
+    expect(mocks.removeRoot).toHaveBeenCalledWith('src/ui/Hud.tsx');
+  });
+
+  it('should open the rename field from Rename', () => {
+    fireEvent.click(item(openMenu('Hud'), 'Rename'));
+
+    expect(screen.getByLabelText('Rename Hud')).toBeTruthy();
+  });
+});
+
+describe('when a key is pressed on a focused GUI row', () => {
+  afterEach(cleanup);
+
+  it('should delete that GUI on Delete', () => {
+    render(<CodeRootsList />);
+    fireEvent.keyDown(rowFor('Hud'), { key: 'Delete' });
+
+    expect(mocks.removeRoot).toHaveBeenCalledWith('src/ui/Hud.tsx');
+  });
+
+  it('should delete that GUI on Backspace', () => {
+    render(<CodeRootsList />);
+    fireEvent.keyDown(rowFor('Hud'), { key: 'Backspace' });
+
+    expect(mocks.removeRoot).toHaveBeenCalledWith('src/ui/Hud.tsx');
+  });
+
+  it('should duplicate that GUI on Cmd/Ctrl + D, and keep the browser from bookmarking', () => {
+    render(<CodeRootsList />);
+    const event = new KeyboardEvent('keydown', {
+      key: 'd',
+      metaKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    rowFor('Hud').dispatchEvent(event);
+
+    expect(mocks.duplicateRoot).toHaveBeenCalledWith('src/ui/Hud.tsx');
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  it('should keep the key from reaching the node shortcuts', () => {
+    const onDocumentKey = vi.fn();
+    document.addEventListener('keydown', onDocumentKey);
+    render(<CodeRootsList />);
+    fireEvent.keyDown(rowFor('Hud'), { key: 'Delete' });
+    document.removeEventListener('keydown', onDocumentKey);
+
+    expect(onDocumentKey).not.toHaveBeenCalled();
+  });
+
+  describe('and a menu is open', () => {
+    it('should do nothing', () => {
+      mocks.menuOpen = true;
+      render(<CodeRootsList />);
+      fireEvent.keyDown(rowFor('Hud'), { key: 'Delete' });
+      fireEvent.keyDown(rowFor('Hud'), { key: 'd', ctrlKey: true });
+
+      expect(mocks.removeRoot).not.toHaveBeenCalled();
+      expect(mocks.duplicateRoot).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('and the row is being renamed', () => {
+    it('should leave Delete and Backspace to the name field', () => {
+      render(<CodeRootsList />);
+      fireEvent.doubleClick(rowFor('Hud').querySelector('.ui-designer-code-root-name')!);
+      fireEvent.keyDown(screen.getByLabelText('Rename Hud'), { key: 'Backspace' });
+
+      expect(mocks.removeRoot).not.toHaveBeenCalled();
+    });
+  });
+});
+
+describe('when a GUI is renamed', () => {
+  afterEach(cleanup);
+
+  it('should use the rail rename field and return focus to the row on Escape', () => {
+    render(<CodeRootsList />);
+    fireEvent.doubleClick(rowFor('Hud').querySelector('.ui-designer-code-root-name')!);
+    const field = screen.getByLabelText('Rename Hud');
+
+    expect(field.className).toMatch(/field/);
+    fireEvent.keyDown(field, { key: 'Escape' });
+
+    expect(screen.queryByLabelText('Rename Hud')).toBeNull();
+    expect(document.activeElement).toBe(rowFor('Hud'));
   });
 });

@@ -5,6 +5,8 @@ import { contextMenu } from 'react-contexify';
 export type Props = React.PropsWithChildren<{
   id: string;
   label: string;
+  /** `compact` is the UI Editor hierarchy menu (150 wide, 35px rows, 15px glyphs); every other menu keeps the default. */
+  size?: 'default' | 'compact';
 }>;
 
 function exposeToAssistiveTech(menu: Element) {
@@ -19,7 +21,7 @@ function exposeToAssistiveTech(menu: Element) {
   });
 }
 
-export function ContextMenu({ id, label, children }: Props) {
+export function ContextMenu({ id, label, size = 'default', children }: Props) {
   const [isVisible, setIsVisible] = useState(false);
   const triggerRef = useRef<Element | null>(null);
 
@@ -64,6 +66,7 @@ export function ContextMenu({ id, label, children }: Props) {
     <Menu
       id={id}
       aria-label={label}
+      className={size === 'compact' ? 'contexify--compact' : undefined}
       data-context-menu-id={id}
       onVisibilityChange={trackVisibility}
       animation={{ enter: 'fade', exit: false }}
