@@ -18,6 +18,7 @@ use serde_json::{Map, Value};
 
 use super::error::ValidationResponse;
 use super::types::*;
+use crate::auth::is_eth_address;
 
 type Check = Result<(), String>;
 type Obj = Map<String, Value>;
@@ -209,10 +210,6 @@ fn pattern(v: &Value, p: &str, matches: fn(&str) -> bool) -> Check {
         return Err(format!("{p} must match the expected pattern"));
     }
     Ok(())
-}
-
-fn is_eth_address(s: &str) -> bool {
-    s.len() == 42 && s.starts_with("0x") && s[2..].bytes().all(|b| b.is_ascii_hexdigit())
 }
 
 /// `^(ba)[a-zA-Z0-9]{57}$`
