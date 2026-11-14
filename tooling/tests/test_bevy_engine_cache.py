@@ -19,6 +19,16 @@ SHA = 'a' * 40
 
 
 class EngineCacheTests(unittest.TestCase):
+    def test_hashing_changes_invalidate_web_artifacts_but_reuse_the_engine(self):
+        path = 'library/hashing/src/index.ts'
+        self.write(path, 'first hashing implementation')
+        subprocess.run(['git', 'add', path], cwd=self.root, check=True)
+        web_before = artifact.inputs(self.root)
+        engine_before = artifact.engine_inputs(self.root)
+        self.write(path, 'second hashing implementation')
+        self.assertNotEqual(artifact.inputs(self.root), web_before)
+        self.assertEqual(artifact.engine_inputs(self.root), engine_before)
+
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
@@ -212,7 +222,11 @@ class EngineCacheTests(unittest.TestCase):
         self.assertIn(('node', './react-web/scripts/shared-inputs.mjs', '--check'), calls)
         self.assertIn(('npm', 'run', 'test', '--prefix', 'react-web'), calls)
         self.assertIn(('npm', 'run', 'build', '--prefix', 'react-web'), calls)
-        self.assertIn(('npm', 'run', 'bundle', '--prefix', 'react-web/bridge-scene'), calls)
+        self.assertIn(('corepack', 'pnpm@11.27.0', '--dir', 'react-web/bridge-scene', 'run', 'bundle'), calls)
+        self.assertIn(('corepack', 'pnpm@11.27.0', '--dir', 'react-web/bridge-scene',
+                       'install', '--frozen-lockfile', '--ignore-scripts'), calls)
+        self.assertIn(('node', str(self.root / 'tooling/check-local-hashing.mjs'),
+                       str(self.source / 'react-web/bridge-scene')), calls)
         self.assertTrue(any(c[0] == 'node' for c in calls))
         meta = artifact.verify(app / 'dist/web', self.root, allow_unoptimized=False)
         self.assertEqual(meta['engine']['revision'], SHA)

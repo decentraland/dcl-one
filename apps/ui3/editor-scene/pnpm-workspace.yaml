@@ -1,4 +1,10 @@
 nodeLinker: hoisted
+minimumReleaseAge: 1440
+packages:
+  - .
+  - ../../../library/hashing
+overrides:
+  '@dcl/hashing': workspace:*
 allowBuilds:
   "@dcl/sdk-commands": false
   esbuild: false
