@@ -1951,8 +1951,9 @@ pub fn handle_eth_async(
             continue;
         }
 
-        // A guest account has no wallet to approve with, so don't ask the user to allow it.
-        if wallet.is_guest_account() {
+        // Neither persistent nor session guests have a wallet that can approve signing.
+        // A disconnected wallet retains its existing permission/connection checks below.
+        if wallet.is_guest_account() || (wallet.address().is_some() && wallet.is_guest()) {
             response.send(Err("guest accounts cannot sign transactions".to_owned()));
             continue;
         }

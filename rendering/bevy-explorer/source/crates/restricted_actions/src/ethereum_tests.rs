@@ -111,6 +111,30 @@ fn personal_sign_rejects_guests_before_requesting_permission() {
 }
 
 #[test]
+fn session_guest_signing_denies_without_prompt_even_after_recent_activity() {
+    let (mut app, scene) = app();
+    app.world_mut().resource_mut::<Wallet>().finalize_as_guest();
+    let wallet = app.world().resource::<Wallet>();
+    assert!(wallet.address().is_some());
+    assert!(wallet.is_guest());
+    assert!(!wallet.is_guest_account());
+    // app() supplies a recent action and the default Web3 Ask policy.
+    let mut receiver = request(&mut app, scene, "personal_sign");
+    app.update();
+    assert!(
+        app.world()
+            .resource::<PermissionManager>()
+            .pending
+            .is_empty(),
+        "a session guest cannot approve signing, so it must not wait for Web3 permission"
+    );
+    assert_eq!(
+        receiver.try_recv().unwrap(),
+        Err("guest accounts cannot sign transactions".into())
+    );
+}
+
+#[test]
 fn personal_sign_requires_recent_user_activity() {
     let (mut app, scene) = app();
     app.world_mut()
