@@ -51,7 +51,7 @@ describe("when editing a hangout through its route", () => {
     const loaderData = { sid: "test", mode: "edit", eventId: "existing-event", communityId: "", categories: [], categoriesError: false, assignment: { variant: "wizard" } };
     router = createMemoryRouter([
       { id: "hangout", path: "/landings/submit-hangout", Component: SubmitHangoutRoute as never, loader: () => loaderData },
-      { path: "/whats-on", element: <h1>What's On</h1> },
+      { path: "/events", element: <h1>What's On</h1> },
     ], { initialEntries: ["/landings/submit-hangout?mode=edit&id=existing-event&step=details"], hydrationData: { loaderData: { hangout: loaderData } } });
     render(<RouterProvider router={router} />);
   });
@@ -126,7 +126,7 @@ describe("when editing a hangout through its route", () => {
     it("should delete the event through the authenticated data helper and navigate back", async () => {
       await user.click(screen.getByRole("button", { name: "Delete hangout" }));
       expect(authoring.deleteHangout).toHaveBeenCalledWith(identity, event.id);
-      await waitFor(() => expect(router.state.location.pathname).toBe("/whats-on"));
+      await waitFor(() => expect(router.state.location.pathname).toBe("/events"));
     });
     it("should keep the editor open and show a failed delete", async () => {
       vi.mocked(authoring.deleteHangout).mockRejectedValueOnce(new Error("Delete denied"));

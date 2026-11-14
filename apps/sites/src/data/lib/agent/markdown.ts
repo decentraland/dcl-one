@@ -323,8 +323,6 @@ type AgentWhatsOnData = {
   tab?: "my";
   live?: Event[];
   upcoming?: Event[];
-  filter?: string;
-  search?: string;
 };
 
 function eventLine(e: Event): string {
@@ -336,7 +334,7 @@ function eventLine(e: Event): string {
     (e.total_attendees ?? 0) > 0 ? `${e.total_attendees} attending` : null,
   ]);
   const title = clean(e.name || "Untitled event");
-  return `- [${title}](/whats-on/${encodeURIComponent(e.id)})${meta ? ` \u{2014} ${meta}` : ""}`;
+  return `- [${title}](/events?id=${encodeURIComponent(e.id)})${meta ? ` \u{2014} ${meta}` : ""}`;
 }
 
 export function whatsOnToMarkdown(data: AgentWhatsOnData): string {
@@ -344,20 +342,15 @@ export function whatsOnToMarkdown(data: AgentWhatsOnData): string {
     return joinBlocks([
       heading(1, "My Hangouts"),
       "Open My Hangouts in a browser and sign in to load your private hangout catalogue and manage authorized approvals.",
-      "[Open My Hangouts](/whats-on?tab=my)",
-      "[Browse public hangouts](/whats-on)",
+      "[Open My Hangouts](/events?tab=my)",
+      "[Browse public hangouts](/events)",
     ]);
   }
   const live = data.live ?? [];
   const upcoming = data.upcoming ?? [];
-  const note = inlineParts([
-    data.filter ? `filter: ${data.filter}` : null,
-    data.search ? `search: "${data.search}"` : null,
-  ]);
-
   const blocks: string[] = [
     heading(1, "What's On in Decentraland"),
-    `${live.length} live now, ${upcoming.length} upcoming.${note ? ` (${note})` : ""}`,
+    `${live.length} live now, ${upcoming.length} upcoming.`,
   ];
   if (live.length) blocks.push(heading(2, "Live now"), live.map(eventLine).join("\n"));
   if (upcoming.length) blocks.push(heading(2, "Upcoming"), upcoming.map(eventLine).join("\n"));

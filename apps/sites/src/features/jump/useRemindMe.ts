@@ -42,6 +42,8 @@ export function useRemindMe(identity: AuthIdentity | null, eventId: string, onSi
     // Not awaited: a slow re-read must not keep the toggle disabled after the write settled.
     onSettled: (_data, _error, { identity, eventId }) => {
       void client.invalidateQueries({ queryKey: attendanceKeys.attending(identity.signer, eventId) });
+      // The Events page reads the member's whole attending list; it changed too.
+      void client.invalidateQueries({ queryKey: attendanceKeys.list(identity.signer) });
     },
   });
 

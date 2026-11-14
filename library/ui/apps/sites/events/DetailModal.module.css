@@ -1,0 +1,221 @@
+/* Source's detail hero: the cover under a dark fade, the title and actions over its bottom. */
+.hero {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  min-height: 450px;
+  overflow: hidden;
+  background: var(--dcl-gradient-amethyst);
+}
+
+.heroImage {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.heroShade {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    180deg,
+    transparent 20%,
+    var(--dcl-transparencies-black-60) 60%,
+    var(--dcl-neutrals-charcoal) 100%
+  );
+}
+
+.close {
+  position: absolute;
+  top: var(--dcl-space-16);
+  right: var(--dcl-space-16);
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--dcl-radius-full);
+  background: var(--dcl-transparencies-black-60);
+  color: var(--dcl-neutrals-white);
+  cursor: pointer;
+}
+
+.close:focus-visible,
+.iconButton:focus-visible,
+.location:focus-visible {
+  outline: 2px solid var(--dcl-neutrals-snow);
+  outline-offset: 2px;
+}
+
+.heroContent {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--dcl-space-12);
+  width: 100%;
+  padding: var(--dcl-space-32);
+}
+
+@media (max-width: 767px) {
+  .heroContent {
+    padding: var(--dcl-space-16);
+  }
+}
+
+.kicker {
+  display: flex;
+  min-height: var(--dcl-space-24);
+}
+
+.when {
+  composes: text626f64792f736d2d7374726f6e67 from '../../../foundations/typography/text-styles.module.css';
+  letter-spacing: 0.5px;
+}
+
+.title {
+  composes: text68656164696e672f31 from '../../../foundations/typography/text-styles.module.css';
+  margin: 0;
+  font-size: clamp(var(--dcl-font-size-heading-2), 3vw, 36px);
+  overflow-wrap: anywhere;
+}
+
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--dcl-space-16);
+}
+
+.location {
+  composes: text626f64792f736d2d7374726f6e67 from '../../../foundations/typography/text-styles.module.css';
+  display: inline-flex;
+  align-items: center;
+  gap: var(--dcl-space-4);
+  color: var(--dcl-text-primary);
+  text-decoration: none;
+}
+
+a.location:hover {
+  text-decoration: underline;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--dcl-space-12);
+}
+
+.iconButton {
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--dcl-radius-md);
+  background: var(--dcl-transparencies-white-10);
+  color: var(--dcl-text-primary);
+  cursor: pointer;
+}
+
+.iconButton:hover {
+  background: var(--dcl-transparencies-white-20);
+}
+
+.copyNotice {
+  composes: text626f64792f736d from '../../../foundations/typography/text-styles.module.css';
+  overflow-wrap: anywhere;
+}
+
+/* Source's detail body: the page's purple glow under the hero. */
+.body {
+  background: radial-gradient(
+    80% 120% at 50% 40%,
+    var(--dcl-brand-purple) 0%,
+    var(--dcl-neutrals-charcoal) 100%
+  );
+  display: flex;
+  flex-direction: column;
+  gap: var(--dcl-space-8);
+  padding: var(--dcl-space-24) var(--dcl-space-32) var(--dcl-space-32);
+}
+
+@media (max-width: 767px) {
+  .body {
+    padding: var(--dcl-space-16);
+  }
+}
+
+.label {
+  composes: text6c6162656c2f736d2d63617073 from '../../../foundations/typography/text-styles.module.css';
+  margin: 0;
+  color: var(--dcl-text-secondary);
+}
+
+.description {
+  composes: text626f64792f6d64 from '../../../foundations/typography/text-styles.module.css';
+  margin: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-line;
+}
+
+.schedule {
+  composes: text626f64792f6d642d7374726f6e67 from '../../../foundations/typography/text-styles.module.css';
+  margin: 0;
+}
+
+.recurrence,
+.metaText {
+  composes: text626f64792f736d from '../../../foundations/typography/text-styles.module.css';
+  display: flex;
+  align-items: center;
+  gap: var(--dcl-space-8);
+  margin: 0;
+  color: var(--dcl-text-secondary);
+}
+
+.divider {
+  width: 100%;
+  margin: var(--dcl-space-16) 0;
+  border: 0;
+  border-top: 1px solid var(--dcl-border-subtle);
+}
+
+.bottomJump {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: var(--dcl-space-16);
+}
+
+.visuallyHidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* Phones stack the cover above the title and actions, as source. */
+@media (max-width: 767px) {
+  .hero {
+    display: block;
+    min-height: 0;
+    background: var(--dcl-neutrals-charcoal);
+  }
+
+  .heroImage {
+    position: static;
+    display: block;
+    height: 220px;
+  }
+
+  .heroShade {
+    display: none;
+  }
+}

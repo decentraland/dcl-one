@@ -1,0 +1,97 @@
+.layer {
+  position: relative;
+}
+
+.track {
+  display: flex;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  scroll-behavior: smooth;
+  scrollbar-width: none;
+}
+
+.track::-webkit-scrollbar {
+  display: none;
+}
+
+.chevron {
+  position: absolute;
+  top: 50%;
+  z-index: 2;
+  display: none;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--dcl-radius-full);
+  background: var(--dcl-transparencies-black-60);
+  color: var(--dcl-neutrals-white);
+  cursor: pointer;
+  transform: translateY(-50%);
+}
+
+.chevron:hover {
+  background: var(--dcl-neutrals-shadow);
+}
+
+.chevron:focus-visible {
+  outline: 2px solid var(--dcl-neutrals-snow);
+  outline-offset: 2px;
+}
+
+.previous {
+  left: var(--dcl-space-8);
+}
+
+.next {
+  right: var(--dcl-space-8);
+}
+
+@media (min-width: 768px) {
+  .chevron {
+    display: grid;
+  }
+}
+
+.dots {
+  display: flex;
+  justify-content: center;
+  gap: var(--dcl-space-8);
+  margin-top: var(--dcl-space-16);
+}
+
+/* A 24px target around the 8px dot. */
+.dot {
+  position: relative;
+  width: var(--dcl-space-24);
+  height: var(--dcl-space-24);
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+
+.dot::before {
+  content: '';
+  position: absolute;
+  inset: var(--dcl-space-8);
+  border-radius: var(--dcl-radius-full);
+  background: var(--dcl-transparencies-white-40);
+}
+
+.dot[aria-current='true']::before {
+  background: var(--dcl-neutrals-white);
+}
+
+.dot:focus-visible {
+  outline: 2px solid var(--dcl-neutrals-snow);
+  outline-offset: 0;
+  border-radius: var(--dcl-radius-full);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .track {
+    scroll-behavior: auto;
+  }
+}

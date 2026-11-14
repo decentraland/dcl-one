@@ -19,7 +19,7 @@ export function sitesNavigationLinks(docsHref: string) {
       caret: true,
       menu: [
         { label: 'Jump in', href: '/play/' },
-        { label: "What's on", href: '/whats-on' }
+        { label: 'Events', href: '/events' }
       ]
     },
     social: { id: 'social', label: 'Social', href: '/social/' },
@@ -35,6 +35,6 @@ export function sitesNavigationLinks(docsHref: string) {
         { label: 'Blog', href: '/blog' }
       ]
     },
-    events: { id: 'events', label: 'Events', href: '/whats-on' }
+    events: { id: 'events', label: 'Events', href: '/events' }
   } satisfies Record<SitesNavigationId, SitesNavigationLink>
 }

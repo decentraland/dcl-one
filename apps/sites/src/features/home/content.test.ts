@@ -43,13 +43,13 @@ describe("homeAgentContent", () => {
     expect(markdown).toContain("Decentraland now on mobile.");
     expect(markdown).toContain("## Rituals");
     expect(markdown).toContain(
-      "[Career Mondays](/whats-on/0795dec0-4862-4f19-a4d5-d0f3c3c3b559)",
+      "[Career Mondays](/events?id=0795dec0-4862-4f19-a4d5-d0f3c3c3b559)",
     );
     expect(markdown).toContain(
-      "[Takeover Tuesdays](/whats-on/efc2bf0f-bf0d-447a-82a2-fe7a5650ca19)",
+      "[Takeover Tuesdays](/events?id=efc2bf0f-bf0d-447a-82a2-fe7a5650ca19)",
     );
     expect(markdown).toContain(
-      "[Watch Party Wednesdays](/whats-on/e22333e4-4277-4b59-b99b-ba3174e1dd29)",
+      "[Watch Party Wednesdays](/events?id=e22333e4-4277-4b59-b99b-ba3174e1dd29)",
     );
   });
 });

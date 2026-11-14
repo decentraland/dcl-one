@@ -61,7 +61,7 @@ function toRails(content: HomeContent): LdHomeRail[] {
         ? eventItems(rail).map((ev) => ({
             id: ev.id,
             title: ev.title,
-            href: `/whats-on/${encodeURIComponent(ev.id)}`,
+            href: `/events?id=${encodeURIComponent(ev.id)}`,
             category: ev.category,
             live: ev.live,
             when: ev.when,

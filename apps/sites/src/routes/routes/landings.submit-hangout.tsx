@@ -126,7 +126,7 @@ export default function SubmitHangoutRoute({ loaderData }: Route.ComponentProps)
     setDeleteError(null);
     try {
       await deleteHangout(identity, original.id);
-      navigate("/whats-on");
+      navigate("/events");
     } catch (err) {
       setDeleteError(err instanceof Error ? err.message : "Could not delete this hangout.");
     } finally {
@@ -137,7 +137,7 @@ export default function SubmitHangoutRoute({ loaderData }: Route.ComponentProps)
   return (
     <SitesChromeMaybe active="whatson">
     <LdSubmitHangoutView>
-      {waiting ? <p role="status">Loading your hangout…</p> : error ? <div><p role="alert">{error}</p><Link to="/whats-on?tab=my">Back to My Hangouts</Link><button type="button" onClick={() => { setLoaded(null); setOptionsRead(null); setOptionsAttempt((previous) => previous + 1); }}>Check access again</button></div> : <SubmitHangout
+      {waiting ? <p role="status">Loading your hangout…</p> : error ? <div><p role="alert">{error}</p><Link to="/events?tab=my">Back to My Hangouts</Link><button type="button" onClick={() => { setLoaded(null); setOptionsRead(null); setOptionsAttempt((previous) => previous + 1); }}>Check access again</button></div> : <SubmitHangout
         key={`${auth.address ?? "signed-out"}:${d.eventId ?? "new"}`}
         trackCtx={{
           sid: d.sid,
