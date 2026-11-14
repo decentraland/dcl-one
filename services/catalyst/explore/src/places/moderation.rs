@@ -846,11 +846,10 @@ mod tests {
     /// drops only aged terminal rows.
     #[tokio::test]
     async fn notices_are_captured_durably_and_delivered_by_the_worker() {
-        use crate::moderation_hooks::{Endpoints, TEST_LOCK, cleanup, run_once};
+        use crate::moderation_hooks::{Endpoints, cleanup, run_once};
         use chrono::NaiveDateTime;
         use std::sync::Arc;
         use std::sync::atomic::{AtomicUsize, Ordering};
-        let _guard = TEST_LOCK.lock().await;
         let to = |endpoint: Option<&str>| Endpoints {
             events: None,
             places: endpoint.map(str::to_owned),
@@ -860,7 +859,8 @@ mod tests {
             jump_in_site_url: "https://decentraland.org/jump".into(),
             asset_base: "https://example.org/events".into(),
         };
-        let Some(pool) = crate::db::scratch::pool(4).await else {
+        // Rewrites the activation singleton: its own database.
+        let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
             return;
         };
         let calls = Arc::new(AtomicUsize::new(0));

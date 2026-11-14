@@ -347,8 +347,11 @@ pub(crate) fn spawn(
     );
 }
 
-/// Held by every test that queues or drains the shared outbox or owns its
-/// activation singleton.
+/// Held by every test that drains the shared outbox or needs it to hold only
+/// its own rows. A test that deletes or rewrites the activation singleton runs
+/// on `scratch::isolated_pool` instead: a capture on the shared database reads
+/// the singleton in a statement after its insert, so a concurrent deletion
+/// there fails an unrelated capture.
 #[cfg(test)]
 pub(crate) static TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
@@ -396,8 +399,7 @@ mod tests {
 
     #[tokio::test]
     async fn the_earlier_layouts_pending_rows_are_adopted_on_every_pass_with_their_activation() {
-        let _guard = TEST_LOCK.lock().await;
-        let Some(pool) = crate::db::scratch::pool(4).await else {
+        let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
             return;
         };
         let prefix = Uuid::new_v4().to_string();
@@ -531,8 +533,7 @@ mod tests {
 
     #[tokio::test]
     async fn adoption_moves_the_cutoff_back_over_a_capture_that_came_first() {
-        let _guard = TEST_LOCK.lock().await;
-        let Some(pool) = crate::db::scratch::pool(4).await else {
+        let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
             return;
         };
         let prefix = Uuid::new_v4().to_string();

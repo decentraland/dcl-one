@@ -789,8 +789,7 @@ mod tests {
 
     #[tokio::test]
     async fn concurrent_first_captures_and_backward_clock_samples_never_precede_activation() {
-        let _guard = TEST_LOCK.lock().await;
-        let Some(pool) = crate::db::scratch::pool(6).await else {
+        let Some(pool) = crate::db::scratch::isolated_pool(6).await else {
             return;
         };
         sqlx::query("DELETE FROM explore.moderation_hook_activation")
@@ -902,8 +901,7 @@ mod tests {
 
     #[tokio::test]
     async fn capture_activates_with_the_database_clock_before_the_first_worker_tick() {
-        let _guard = TEST_LOCK.lock().await;
-        let Some(pool) = crate::db::scratch::pool(6).await else {
+        let Some(pool) = crate::db::scratch::isolated_pool(6).await else {
             return;
         };
         sqlx::query("DELETE FROM explore.moderation_hook_activation")
@@ -1244,13 +1242,12 @@ mod tests {
     #[tokio::test]
     async fn disabled_delivery_cleans_expired_history_in_bounded_unlocked_batches_and_retains_retries()
      {
-        let _guard = TEST_LOCK.lock().await;
-        let Some(pool) = crate::db::scratch::pool(6).await else {
+        let Some(pool) = crate::db::scratch::isolated_pool(6).await else {
             return;
         };
         let now = Utc::now().naive_utc();
         let prefix = Uuid::new_v4().to_string();
-        // This integration test owns the activation singleton while holding TEST_LOCK.
+        // This integration test owns the activation singleton of its own database.
         sqlx::query("DELETE FROM explore.moderation_hook_activation")
             .execute(&pool)
             .await
