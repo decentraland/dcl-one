@@ -2,11 +2,13 @@
 import importlib.util
 import errno
 import io
+import os
 import sys
 import tempfile
 from types import SimpleNamespace
 from pathlib import Path
 import re
+import subprocess
 import unittest
 from unittest.mock import patch
 
@@ -141,6 +143,25 @@ class CiLocalTest(unittest.TestCase):
             with self.subTest(event=event):
                 self.assertTrue(ci.triggered('bevy-explorer-ci.yml', changed, event=event))
         self.assertIn('gateway configuration', [step.name for step in ci.pre_commit_steps(changed)])
+
+    def test_node_cargo_check_links_the_nix_catalyst_v8(self):
+        step = next(s for s in ci.pre_commit_steps({'services/catalyst/Cargo.toml'}) if s.name == 'cargo check (node)')
+        for archive, expected in (('/nix/store/v8', '/nix/store/v8\n'), ('', 'unset\n')):
+            with self.subTest(archive=archive):
+                env = {**os.environ, 'CATALYST_RUSTY_V8_ARCHIVE': archive}
+                env.pop('RUSTY_V8_ARCHIVE', None)
+                probe = step.command.split('cargo check', 1)[0].replace('cd services/catalyst &&', '')
+                out = subprocess.run(['bash', '-c', f'set -e; {probe} echo "${{RUSTY_V8_ARCHIVE-unset}}"'],
+                                     env=env, capture_output=True, text=True, check=True).stdout
+                self.assertEqual(out, expected)
+
+    def test_node_cargo_check_stops_when_the_catalyst_directory_is_missing(self):
+        step = next(s for s in ci.pre_commit_steps({'services/catalyst/Cargo.toml'}) if s.name == 'cargo check (node)')
+        command = step.command.replace('cargo check', 'echo ran', 1)
+        with tempfile.TemporaryDirectory() as empty:
+            result = subprocess.run(['bash', '-c', f'set -e; {command}'], cwd=empty, capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn('ran', result.stdout)
 
 
 class WindowsHookQueueTest(unittest.TestCase):

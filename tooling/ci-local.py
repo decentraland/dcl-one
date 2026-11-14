@@ -122,6 +122,8 @@ def web_steps(changed_ui3=True):
 
 STRUCTURE = [Step('ownership catalogue', 'python3 tooling/owners.py --check', tools=('python3',)),
              Step('module layers', 'bash services/catalyst/scripts/check-module-dag.sh', tools=('bash', 'rg'))]
+# The nix shell's prebuilt V8 for catalyst's pin (flake.nix); left unset outside it.
+CATALYST_V8 = '{ [ -z "${CATALYST_RUSTY_V8_ARCHIVE:-}" ] || export RUSTY_V8_ARCHIVE="$CATALYST_RUSTY_V8_ARCHIVE"; }'
 TOOLING_TESTS = Step('tooling tests', 'python3 -m unittest discover -s tooling/tests', tools=('python3',))
 
 
@@ -133,7 +135,7 @@ def pre_commit_steps(changed):
         steps.append(Step('gateway configuration', 'python3 -m unittest discover -s infra/gateway/tests',
                           tools=('python3',)))
     if touches(changed, 'services/catalyst/*', 'schemas/*', 'apps/dcl-scene-cli/*', 'library/*', '.cargo/*'):
-        steps.append(Step('cargo check (node)', f'cd services/catalyst && cargo check --locked {NODE_CRATES} --all-targets',
+        steps.append(Step('cargo check (node)', f'cd services/catalyst && {CATALYST_V8} && cargo check --locked {NODE_CRATES} --all-targets',
                           tools=('cargo',)))
     if touches(changed, 'apps/dcl-scene-cli/*', 'library/*', '.cargo/*'):
         steps.append(Step('cargo check (sdk)', 'cd services/catalyst && cargo check --locked -p dcl-scene-cli --all-targets',

@@ -5,6 +5,8 @@
 # end-to-end suite seeds the development database and reads through the API.
 set -euo pipefail
 export FOUNDATION_DEV_PROFILE=offline
+# The nix shell's prebuilt V8 for catalyst's pin (flake.nix).
+[ -z "${CATALYST_RUSTY_V8_ARCHIVE:-}" ] || export RUSTY_V8_ARCHIVE="$CATALYST_RUSTY_V8_ARCHIVE"
 suites=("$@")
 [ $# -eq 0 ] && suites=(rust e2e)
 for suite in "${suites[@]}"; do
