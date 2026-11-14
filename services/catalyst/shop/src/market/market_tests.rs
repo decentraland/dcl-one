@@ -1796,6 +1796,34 @@ async fn favorites_lists_and_picks_keep_the_old_authorization_and_counting_rules
     cleanup_mirror(&pool, &[contract_of(&t, 1)]).await;
 }
 
+async fn seed_item_row(pool: &PgPool, contract: &str, item_id: &str, creator: &str) {
+    sqlx::query(
+        "INSERT INTO shop.items (network, contract_address, item_id, chain_id, item_type, urn, creator, rarity, \
+             total_supply, max_supply, available, price, image, name, category, created_at, updated_at, reviewed_at, mirrored_at) \
+         VALUES ('matic', lower($1), $2::numeric, 137, 'wearable_v2', $3, lower($4), 'common', 0, 10, 10, 0, '', 'Item', 'hat', 0, 0, 0, now())",
+    )
+    .bind(contract)
+    .bind(item_id)
+    .bind(format!("urn:decentraland:matic:collections-v2:{contract}:{item_id}"))
+    .bind(creator)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// The `public_item_order` ids the shared `unified_trades` view serves now.
+async fn open_item_order_ids(pool: &PgPool) -> Vec<String> {
+    sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "WITH {} SELECT id::text FROM unified_trades WHERE type = 'public_item_order'",
+        super::catalog::unified_trades_cte("$1", "$2")
+    )))
+    .bind(chrono::Utc::now().naive_utc())
+    .bind(None::<chrono::NaiveDateTime>)
+    .fetch_all(pool)
+    .await
+    .unwrap()
+}
+
 fn item_order_json(signer: &str, contract: &str) -> String {
     format!(
         r#"{{ "signer": "{signer}", "signature": "0x00", "type": "public_item_order", "network": "MATIC", "chainId": 137,
@@ -1828,15 +1856,44 @@ async fn a_signed_item_order_is_stored_once_and_only_behind_the_write_switch() {
     ));
     listings::test_support::sign(&mut trade, &marketplace);
     let signer = trade.signer.clone();
+    // A primary sale is the creator's: an unmirrored item, or another
+    // creator's, is refused before the insert.
+    assert!(matches!(
+        listings::create_trade(&pool, None, &trade, &signer, 1_000)
+            .await
+            .unwrap_err(),
+        listings::TradeCreationError::ItemUnknown
+    ));
+    seed_item_row(&pool, &contract, "1", WALLET_A).await;
+    assert!(matches!(
+        listings::create_trade(&pool, None, &trade, &signer, 1_000)
+            .await
+            .unwrap_err(),
+        listings::TradeCreationError::NotTheCreator
+    ));
+    // The rows a reader serves leave out an item order its creator did not sign.
+    let foreign = listings::insert_trade(&pool, &trade, "MATIC", marketplace.address)
+        .await
+        .unwrap();
+    assert!(!open_item_order_ids(&pool).await.contains(&foreign));
+    delete_trade(&pool, &foreign).await;
+    sqlx::query("UPDATE shop.items SET creator = lower($2) WHERE contract_address = $1")
+        .bind(&contract)
+        .bind(&signer)
+        .execute(&pool)
+        .await
+        .unwrap();
     let id = listings::create_trade(&pool, None, &trade, &signer, 1_000)
         .await
         .unwrap();
+    assert!(open_item_order_ids(&pool).await.contains(&id));
     assert!(matches!(
         listings::create_trade(&pool, None, &trade, &signer, 1_000)
             .await
             .unwrap_err(),
         listings::TradeCreationError::Duplicate
     ));
+    seed_item_row(&pool, &contract_of(&t, 8), "1", &sf::address()).await;
     let (kind, stored_signer, contract_col, assets): (String, String, String, i64) = sqlx::query_as(
         "SELECT t.type::text, t.signer, t.contract, (SELECT count(*) FROM shop.trade_assets a WHERE a.trade_id = t.id) FROM shop.trades t WHERE t.id = $1::uuid",
     )
@@ -1976,6 +2033,7 @@ async fn a_signed_item_order_is_stored_once_and_only_behind_the_write_switch() {
     for id in [id, created] {
         delete_trade(&pool, &id).await;
     }
+    cleanup_mirror(&pool, &[contract, contract_of(&t, 8)]).await;
 }
 
 fn item_bid_json(signer: &str, contract: &str, item_id: &str) -> String {

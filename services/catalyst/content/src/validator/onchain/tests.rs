@@ -146,6 +146,79 @@ async fn land_is_granted_per_parcel_at_the_deploy_block_or_five_minutes_before()
     );
 }
 
+/// A large parcel list goes out as several Checker multicalls of at most
+/// `CALLS_PER_BATCH` parcels, answered in order.
+#[tokio::test]
+async fn land_parcels_are_asked_in_bounded_multicalls() {
+    let at = at_deployment(TS);
+    let chain = fake_chain::serve(move |q, _| match q {
+        Query::Land { sender, .. } => Reply::Yes(*sender == addr(OWNER)),
+        other => panic!("{other:?}"),
+    })
+    .await;
+    let a = access(Some(&chain.url), None);
+    a.l1().unwrap().chain.blocks_for(TS).await.unwrap();
+    chain.clear();
+    let parcels: Vec<(i32, i32)> = (0..250).map(|x| (x, 0)).collect();
+    let granted = a.land(OWNER, &parcels, TS).await.unwrap();
+    assert_eq!(granted, vec![true; 250], "every parcel answered");
+    assert_eq!(
+        chain.calls(),
+        vec![format!("eth_call@{at}"); 3],
+        "250 parcels in three multicalls"
+    );
+}
+
+/// Repeated names are asked once; more distinct names than the cap refuse the
+/// check without asking, and a synced check past its own cap is undecided.
+#[tokio::test]
+async fn names_are_deduplicated_and_capped() {
+    let chain = fake_chain::serve(move |q, _| match q {
+        Query::Name { .. } => Reply::Yes(true),
+        other => panic!("{other:?}"),
+    })
+    .await;
+    let a = access(Some(&chain.url), None);
+    a.l1().unwrap().chain.blocks_for(TS).await.unwrap();
+    chain.clear();
+    let repeated = vec!["alice".to_string(); 500];
+    assert_eq!(
+        a.names(OWNER, &repeated, TS).await.unwrap(),
+        vec![true; 500]
+    );
+    assert_eq!(chain.calls().len(), 1, "one distinct name, one multicall");
+
+    chain.clear();
+    let many: Vec<String> = (0..=MAX_NAMES_ASKED).map(|i| format!("n{i}")).collect();
+    let err = a.names(OWNER, &many, TS).await.unwrap_err();
+    assert!(matches!(err, ValidatorError::TooManyItems(_)), "{err}");
+    let err = a
+        .names_capped(
+            OWNER,
+            &many,
+            TS,
+            ItemCaps {
+                names: 10,
+                ..SYNCED_ITEM_CAPS
+            },
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(err, ValidatorError::BlockchainQuery(_)), "{err}");
+    assert!(chain.calls().is_empty(), "nothing asked past a cap");
+
+    let long = "x".repeat(MAX_NAME_BYTES + 1);
+    assert_eq!(
+        a.names(OWNER, &[long.clone(), long], TS).await.unwrap(),
+        vec![false, false]
+    );
+    assert!(chain.calls().is_empty(), "an overlong name is not asked");
+
+    let mixed = vec!["alice".to_string(), "y".repeat(MAX_NAME_BYTES + 1)];
+    assert_eq!(a.names(OWNER, &mixed, TS).await.unwrap(), vec![true, false]);
+    assert_eq!(chain.calls().len(), 1, "only the short name is asked");
+}
+
 #[tokio::test]
 async fn names_are_asked_of_the_registrar() {
     let chain = fake_chain::serve(|q, _| match q {

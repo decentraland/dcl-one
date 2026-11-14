@@ -119,6 +119,10 @@ pub struct ListingRow {
     pub token_id: Option<String>,
     pub trade_id: Option<String>,
     pub price_wei: String,
+    /// The listing's owner, who is paid when it fills.
+    pub seller: String,
+    /// A v3 listing's beneficiary, paid instead of the seller when set.
+    pub payee: Option<String>,
 }
 
 /// The catalogue, the order book, the trade book and the MANA spot, as the
@@ -261,6 +265,8 @@ impl Market for LocalMarket {
                 token_id: o.token_id,
                 trade_id: o.trade_id,
                 price_wei: o.price,
+                seller: o.owner,
+                payee: o.payee,
             })
             .collect())
     }
@@ -271,9 +277,14 @@ impl Market for LocalMarket {
         }
         // A named trade resolves whatever its copy's age: the chain checks
         // the purchase against the signature, its expiry and cancellations.
-        let Some(trade) = crate::market::trades::get_trade_by_id(&self.pool, trade_id, None)
-            .await
-            .map_err(|e| ApiError::Internal(format!("trades read failed: {e}")))?
+        let Some(trade) = crate::market::trades::get_trade_by_id(
+            &self.pool,
+            trade_id,
+            None,
+            crate::market::trades::TradeScope::Served,
+        )
+        .await
+        .map_err(|e| ApiError::Internal(format!("trades read failed: {e}")))?
         else {
             return Ok(TradeLookup::NotFound);
         };
@@ -493,11 +504,13 @@ impl Pricing {
 
     /// The charge bases of many pairs: one catalogue batch and one order-book
     /// read. Element `i` answers `pairs[i]`; a batch-level failure is the outer error.
+    /// `buyer`'s own listings are never picked.
     pub async fn fetch_charge_bases_batch(
         &self,
         pairs: &[(String, String)],
         mode: &str,
         max_pages: usize,
+        buyer: Option<&str>,
     ) -> Result<Vec<Result<ChargeBasis, ApiError>>, ApiError> {
         let infos = self.fetch_items_batch(pairs).await?;
         let wants_listing = mode == "secondary" || mode == "auto";
@@ -511,7 +524,7 @@ impl Pricing {
             })
             .collect();
         let listings = if wants_listing && !listing_pairs.is_empty() {
-            self.fetch_open_listings_batch(&listing_pairs, max_pages, true)
+            self.fetch_open_listings_batch(&listing_pairs, max_pages, true, buyer)
                 .await?
         } else {
             HashMap::new()
@@ -545,9 +558,10 @@ impl Pricing {
         pairs: &[(String, String)],
         mode: &str,
         max_pages: usize,
+        buyer: Option<&str>,
     ) -> Result<Vec<Result<PricedItem, ApiError>>, ApiError> {
         let bases = self
-            .fetch_charge_bases_batch(pairs, mode, max_pages)
+            .fetch_charge_bases_batch(pairs, mode, max_pages, buyer)
             .await?;
         let weis: Vec<String> = bases
             .iter()
@@ -584,10 +598,11 @@ impl Pricing {
         &self,
         collection: &str,
         item_id: &str,
+        buyer: &str,
     ) -> Result<Option<OpenOrder>, ApiError> {
         let pairs = [(collection.to_ascii_lowercase(), item_id.to_string())];
         let listings = self
-            .fetch_open_listings_batch(&pairs, ORDER_SCAN_MAX_PAGES, false)
+            .fetch_open_listings_batch(&pairs, ORDER_SCAN_MAX_PAGES, false, Some(buyer))
             .await?;
         Ok(listings
             .get(&pairs[0])
@@ -610,6 +625,7 @@ impl Pricing {
         pairs: &[(String, String)],
         max_pages: usize,
         include_trades: bool,
+        buyer: Option<&str>,
     ) -> Result<HashMap<(String, String), Option<OpenListing>>, ApiError> {
         let mut out: HashMap<(String, String), Option<OpenListing>> = HashMap::new();
         let mut asked: Vec<(String, String)> = Vec::new();
@@ -629,7 +645,7 @@ impl Pricing {
             .await?;
         let now_ms = chrono::Utc::now().timestamp_millis();
         for (key, slot) in out.iter_mut() {
-            *slot = select_listing_for_pair(&orders, &key.0, &key.1, now_ms, include_trades);
+            *slot = select_listing_for_pair(&orders, &key.0, &key.1, now_ms, include_trades, buyer);
         }
         Ok(out)
     }
@@ -761,9 +777,19 @@ pub fn select_cheapest_listing(
     item_id: &str,
     now_ms: i64,
     include_trades: bool,
+    buyer: Option<&str>,
 ) -> Option<OpenListing> {
     let mut best: Option<(u128, OpenListing)> = None;
     for o in orders {
+        // Credits never pay a wallet for its own listing, as seller or payee.
+        if buyer.is_some_and(|b| {
+            o.seller.eq_ignore_ascii_case(b)
+                || o.payee
+                    .as_deref()
+                    .is_some_and(|p| p.eq_ignore_ascii_case(b))
+        }) {
+            continue;
+        }
         let is_v2 = o
             .marketplace_address
             .eq_ignore_ascii_case(MARKETPLACE_V2_POLYGON);
@@ -831,13 +857,14 @@ fn select_listing_for_pair(
     item_id: &str,
     now_ms: i64,
     include_trades: bool,
+    buyer: Option<&str>,
 ) -> Option<OpenListing> {
     let mine: Vec<ListingRow> = orders
         .iter()
         .filter(|o| o.contract_address.eq_ignore_ascii_case(collection))
         .cloned()
         .collect();
-    select_cheapest_listing(&mine, item_id, now_ms, include_trades)
+    select_cheapest_listing(&mine, item_id, now_ms, include_trades, buyer)
 }
 
 fn is_decimal_item_id(item_id: &str) -> bool {
@@ -982,6 +1009,8 @@ mod tests {
     const ITEM_TOKEN_ID: &str =
         "421249166674228746791672110734681729275580381602196445017243910144";
 
+    const SELLER: &str = "0x5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e";
+
     fn row(contract: &str, mkt: &str, price: &str, trade: Option<&str>) -> ListingRow {
         ListingRow {
             contract_address: contract.into(),
@@ -991,6 +1020,8 @@ mod tests {
             token_id: Some(ITEM_TOKEN_ID.into()),
             trade_id: trade.map(str::to_string),
             price_wei: price.into(),
+            seller: SELLER.into(),
+            payee: None,
         }
     }
 
@@ -1013,7 +1044,7 @@ mod tests {
                 Some("t-1"),
             ),
         ];
-        let picked = select_listing_for_pair(&rows, c, "4", 0, true).unwrap();
+        let picked = select_listing_for_pair(&rows, c, "4", 0, true, None).unwrap();
         assert_eq!(picked.price_wei, "1000000000000000000");
         assert_eq!(
             picked.venue,
@@ -1023,14 +1054,34 @@ mod tests {
         );
         let mut expired = rows.clone();
         expired[2].expires_at_ms = 1;
-        let picked = select_listing_for_pair(&expired, c, "4", 1_700_000_000_000, false).unwrap();
+        let picked =
+            select_listing_for_pair(&expired, c, "4", 1_700_000_000_000, false, None).unwrap();
         assert_eq!(
             picked.price_wei, "2000000000000000000",
             "an expired order and (without trades) the trade are skipped"
         );
         assert!(
-            select_listing_for_pair(&rows, c, "5", 0, true).is_none(),
+            select_listing_for_pair(&rows, c, "5", 0, true, None).is_none(),
             "another item's token never matches"
+        );
+        let mut own = rows.clone();
+        own[2].seller = "0xB0B0B0B0B0B0B0B0B0B0B0B0B0B0B0B0B0B0B0B0".into();
+        let picked = select_listing_for_pair(
+            &own,
+            c,
+            "4",
+            0,
+            false,
+            Some("0xb0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"),
+        )
+        .unwrap();
+        assert_eq!(
+            picked.price_wei, "2000000000000000000",
+            "the buyer's own cheaper listing is skipped for the next one"
+        );
+        assert!(
+            select_listing_for_pair(&own[2..3], c, "4", 0, false, Some(&own[2].seller)).is_none(),
+            "only the buyer's own listing: none to fill from"
         );
     }
 

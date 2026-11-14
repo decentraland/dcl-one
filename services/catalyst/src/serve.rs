@@ -380,6 +380,17 @@ pub async fn serve(
             "EVENTS_MIRROR_ADOPT adopts the mirrored events once the mirror is off: unset EVENTS_MIRROR_UPSTREAM first"
         );
     }
+    if config
+        .node
+        .public_url
+        .as_deref()
+        .is_none_or(|u| u.trim().is_empty())
+    {
+        tracing::warn!(
+            own_url = %config.node.own_url(),
+            "PUBLIC_URL is unset: place report upload URLs and asset links use the bind address"
+        );
+    }
     let explore_settings = explore::Settings {
         content_public_url: content.settings.content_public_url.clone(),
         asset_rewrite_domain: explore::Settings::asset_rewrite_domain_for(
@@ -441,6 +452,8 @@ pub async fn serve(
             .trim_end_matches('/')
             .to_string(),
         events_asset_base_url: explore::Settings::events_asset_base_for(&config.node.own_url()),
+        public_url: config.node.own_url().trim_end_matches('/').to_string(),
+        trusted_proxy_cidrs: config.node.http_trusted_proxy_cidrs.clone(),
         realm_name: config
             .node
             .realm_name
@@ -563,11 +576,13 @@ pub async fn serve(
     // local writes among them sit behind DATA_WRITES_ENABLED
     // (`shop::market::DataWrites`, the social switch's twin).
     let self_hosts = content::own_hosts(&config);
+    let market_settings = crate::index::market_settings(&config, &self_hosts)?;
+    shop::market::catalog::install_served_chains(&market_settings.market.indexes);
     let market = Arc::new(
         shop::market::MarketplaceState::new(
             pool.clone(),
             http_client.clone(),
-            crate::index::market_settings(&config, &self_hosts)?,
+            market_settings,
         )
         .with_eip1654(eip1654.clone())
         .with_read_through(read_through.clone())
@@ -694,6 +709,7 @@ pub async fn serve(
     let economy_settings = shop::evm::Settings {
         min_sale_value_in_wei: config.economy.min_sale_value_in_wei.clone(),
         max_transactions_per_day: config.economy.max_transactions_per_day,
+        max_relayed_transactions_per_day: config.economy.max_relayed_transactions_per_day,
         contract_addresses_url: Config::non_empty(&config.economy.contract_addresses_url),
         contract_addresses_chain_key: config.economy.contract_addresses_chain_key.clone(),
         collections_chain_id: config.economy.collections_chain_id,
@@ -1508,8 +1524,8 @@ pub async fn serve(
         .nest("/camera-reel-service", camera_reel::router(camera_reel));
     // The operator plane under the old gateway's prefixes: credits under
     // /credits only (its /users, /cart and /checkout would collide at the root; the
-    // handlers verify a signed fetch over the public path and the route-local
-    // one), the relay under /rpc (rpc.<domain>/x -> /rpc/x),
+    // handlers verify a signed fetch over the request path or a matching
+    // x-original-path), the relay under /rpc (rpc.<domain>/x -> /rpc/x),
     // the imposter zips under /bvimposters (the prefix baked into the explorer
     // wasm), the console API at the root (/admin/auth, /admin/api/*).
     let app = app
@@ -1530,6 +1546,9 @@ pub async fn serve(
     // its body is drained, not reset: nginx writes a buffered upload after
     // the answer, and a reset fails that write, answers 502 and counts the
     // process down. Up to the largest body a route admits (a deployment).
+    // Forwarding headers name the client only from a loopback or listed proxy.
+    let app =
+        shared::client_ip::pin_client_headers(app, config.node.http_trusted_proxy_cidrs.clone());
     let app = shared::drain::drain_unread(
         app,
         content::create_entity::MAX_DEPLOYMENT_BYTES
@@ -1657,6 +1676,11 @@ fn credits_settings(config: &Config) -> anyhow::Result<shop::credits::Settings> 
         usage_rpc_url: non_empty(&config.economy.rpc_endpoint_polygon),
         usage_chain_id: config.economy.collections_chain_id as i64,
         usage_start_block: config.shop.credits_usage_start_block,
+        topup_start_block: config.shop.credits_topup_start_block,
+        topups_enabled: Config::non_empty(&config.economy.catalyrst_economy_admin_token).is_some()
+            && config.economy.meta_tx_broadcast_enabled
+            && Config::non_empty(&config.economy.relayer_private_key).is_some(),
+        topup_min_confirmations: config.shop.credits_topup_min_confirmations,
         usage_interval_secs: config.shop.credits_usage_index_interval_secs,
         usage_requests_per_pass: config.shop.credits_usage_index_requests_per_pass,
         usage_replay_from_block: config.shop.credits_usage_replay_from_block,
@@ -2010,6 +2034,7 @@ async fn worlds_states(
                 max_scenes: config.worlds.scene_host_max_scenes,
                 autoload: config.worlds.scene_host_autoload,
                 sweep_interval_secs: config.worlds.scene_host_sweep_interval_secs,
+                idle_unload_secs: config.worlds.scene_host_idle_unload_secs,
             },
             http_client,
         )

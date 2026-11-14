@@ -63,8 +63,48 @@
               }
             }
           },
+          "400": {
+            "description": "not valid post text, or a missing signed fetch",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "the signed fetch does not verify",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "the signer owns or moderates no active community",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
           "413": {
             "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "upload rate or unposted-body budget exceeded",
             "content": {
               "application/json": {
                 "schema": {
@@ -83,7 +123,8 @@
               }
             }
           }
-        }
+        },
+        "description": "Signed fetch (ADR-44) by a wallet that owns or moderates an active community. Stores a post body (at most 4000 bytes, valid post text) bound to its uploader."
       }
     },
     "/federation/communities/content/gc": {
@@ -162,7 +203,7 @@
             }
           },
           "404": {
-            "description": "",
+            "description": "no such published body",
             "content": {
               "application/json": {
                 "schema": {
@@ -181,7 +222,8 @@
               }
             }
           }
-        }
+        },
+        "description": "The body of a post written while its community was public, uploaded by that post's signer."
       }
     },
     "/federation/communities/snapshot": {
