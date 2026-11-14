@@ -19,6 +19,7 @@ const SelectedOption: React.FC<Props> = props => {
       ) : (
         <Option
           {...selectedValue}
+          label={(selectedValue as OptionProp).selectedLabel ?? (selectedValue as OptionProp).label}
           className="SelectedOption"
           minWidth={minWidth}
         />

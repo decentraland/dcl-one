@@ -93,7 +93,7 @@ const LAYOUT_FIELDS: (FieldConfig & { container?: true })[] = [
     info: 'How this node lays its children out — or Absolute, which lifts the node out of its own parent’s flow. Wrap lets children spill onto more than one line.',
   },
   {
-    label: 'Size',
+    label: 'Resize',
     componentId: TRANSFORM,
     path: '',
     kind: 'resize' as const,

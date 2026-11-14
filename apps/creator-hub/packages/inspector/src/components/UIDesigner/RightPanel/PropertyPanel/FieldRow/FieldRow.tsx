@@ -169,6 +169,26 @@ export const FieldRow = React.memo(function FieldRow({
             type="number"
             value={String(numeric)}
             disabled={unit === YGU_AUTO}
+            rightContent={
+              <span className="ui-designer-unit-control">
+                <Dropdown
+                  options={UNIT_OPTIONS}
+                  value={unit}
+                  aria-label={`${field.label} unit`}
+                  onChange={e => {
+                    const nextUnit = Number(e.target.value);
+                    const parent = measureParentBox(entity);
+                    const dim = parent ? parent[axisForPath(field.path)] : 0;
+                    const nextValue = convertLength(numeric, unit, nextUnit, dim);
+                    onPatch(
+                      field.writeAll
+                        ? expandWriteAll(field.writeAll, nextValue, { unit: nextUnit })
+                        : { [field.path]: nextValue, [unitKey]: nextUnit },
+                    );
+                  }}
+                />
+              </span>
+            }
             onChange={e =>
               onPatch(
                 field.writeAll
@@ -176,22 +196,6 @@ export const FieldRow = React.memo(function FieldRow({
                   : { [field.path]: clampNumber(e.target.value), [unitKey]: unit },
               )
             }
-          />
-          <Dropdown
-            options={UNIT_OPTIONS}
-            value={unit}
-            aria-label="Unit"
-            onChange={e => {
-              const nextUnit = Number(e.target.value);
-              const parent = measureParentBox(entity);
-              const dim = parent ? parent[axisForPath(field.path)] : 0;
-              const nextValue = convertLength(numeric, unit, nextUnit, dim);
-              onPatch(
-                field.writeAll
-                  ? expandWriteAll(field.writeAll, nextValue, { unit: nextUnit })
-                  : { [field.path]: nextValue, [unitKey]: nextUnit },
-              );
-            }}
           />
         </div>,
       );
