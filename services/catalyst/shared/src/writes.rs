@@ -588,7 +588,8 @@ mod tests {
         ("worlds/src/core/deploy.rs", "worlds"),
         ("worlds/src/core/partial.rs", "worlds"),
         ("worlds/src/core/settings.rs", "worlds"),
-        ("worlds/src/mirror.rs", "worlds"),
+        ("worlds/src/mirror_reconcile.rs", "worlds"),
+        ("worlds/src/mirror_upstream.rs", "worlds"),
     ];
 
     /// The workspace files that call a Storage writer outside their inline
