@@ -23,6 +23,7 @@ use http::{
 };
 use serde::{Deserialize, Serialize};
 
+use super::plain::Plain;
 use fetch_response_body_resource::FetchResponseBodyResource;
 use request_budget::SceneRequestBudget;
 
@@ -72,7 +73,8 @@ impl NetPermissions for NP {
 }
 
 // DoS caps for the multi-tenant authoritative server, enforced only in is_server mode.
-const SERVER_MAX_BODY_BYTES: u64 = 10 * 1024 * 1024;
+// SERVER_MAX_BODY_BYTES bounds request bodies too.
+pub(super) const SERVER_MAX_BODY_BYTES: u64 = 10 * 1024 * 1024;
 const SERVER_MAX_ASSET_BYTES: u64 = 64 * 1024 * 1024;
 
 /// Counts Fetch calls waiting for permission, queued for a slot, or transferring.
@@ -118,7 +120,7 @@ pub fn op_fetch<FP>(
     state: &mut OpState,
     #[string] method: String,
     #[string] url: String,
-    #[serde] headers: Vec<(String, String)>,
+    #[from_v8] headers: Plain<Vec<(String, String)>>,
     #[smi] client_rid: Option<u32>,
     has_body: bool,
     #[buffer] data: Option<JsBuffer>,
@@ -188,17 +190,13 @@ where
     let method = Method::from_bytes(method.as_bytes())?;
     let mut request = client.request(method.clone(), &url);
 
-    if let Some(body) = &request_body {
-        let (size, upper) = body.0.size_hint();
-        if size > 0 && upper == Some(size) {
-            request = request.header(CONTENT_LENGTH, HeaderValue::from(size));
-        }
-    } else if !has_body && matches!(method, Method::POST | Method::PUT) {
+    // a streamed body is buffered before sending, so reqwest sets its Content-Length
+    if !has_body && matches!(method, Method::POST | Method::PUT) {
         request = request.header(CONTENT_LENGTH, HeaderValue::from(0));
     }
 
     let mut range_request = false;
-    for (key, value) in headers {
+    for (key, value) in headers.0 {
         let name =
             HeaderName::from_bytes(key.as_bytes()).map_err(|err| type_error(err.to_string()))?;
         let v =
@@ -377,11 +375,27 @@ async fn send_request(
     // allowance. Link-local and metadata remain forbidden in every mode.
     common::util::assert_public_url(&url, allow_private).await?;
 
+    // the stream's bytes stay charged to the scene's stream budget until they are sent
+    let upload = request_body.as_ref().map(|body| body.0.clone());
     let request = if let Some(body) = request_body {
         let mut buf = Vec::new();
-        body.into_async_read().read_to_end(&mut buf).await?;
+        if is_server {
+            body.into_async_read()
+                .take(SERVER_MAX_BODY_BYTES + 1)
+                .read_to_end(&mut buf)
+                .await?;
+            if buf.len() as u64 > SERVER_MAX_BODY_BYTES {
+                anyhow::bail!("request body exceeds {SERVER_MAX_BODY_BYTES} bytes ({url})");
+            }
+        } else {
+            // bounded by the stream resource's own byte cap
+            body.into_async_read().read_to_end(&mut buf).await?;
+        }
         request.body(buf)
     } else if let Some(body) = body_bytes {
+        if is_server && body.len() as u64 > SERVER_MAX_BODY_BYTES {
+            anyhow::bail!("request body exceeds {SERVER_MAX_BODY_BYTES} bytes ({url})");
+        }
         request.body(body)
     } else {
         request
@@ -390,6 +404,7 @@ async fn send_request(
         .send()
         .await
         .map_err(|err| type_error(err.to_string()))?;
+    drop(upload);
 
     let status = res.status();
     let mut headers = Vec::new();
@@ -616,9 +631,10 @@ fn reject_non_public_proxy(proxy_url: &str, allow_private: bool) -> Result<(), A
 #[serde]
 pub fn op_fetch_custom_client(
     state: &mut OpState,
-    #[serde] args: CreateHttpClientOptions,
+    #[from_v8] args: Plain<CreateHttpClientOptions>,
 ) -> Result<ResourceId, AnyError> {
     debug!("op_fetch_custom_client");
+    let args = args.0;
 
     // A custom client is scene-supplied transport configuration, and on the shared
     // authoritative server none of it may be honoured:

@@ -98,7 +98,7 @@ pub struct NewLogin {
     result: Option<RpcResultReceiver<Result<(), String>>>,
 }
 
-pub fn new_login(state: &mut impl State) -> &mut NewLogin {
+pub fn new_login(state: &mut impl State) -> Result<&mut NewLogin, anyhow::Error> {
     if !state.has::<NewLogin>() {
         state.put(NewLogin::default());
     }
@@ -108,17 +108,20 @@ pub fn new_login(state: &mut impl State) -> &mut NewLogin {
     if login.code.is_none() && login.result.is_none() {
         let (sc, code) = RpcResultSender::channel();
         let (sx, result) = RpcResultSender::channel();
-        state
+        let sent = state
             .borrow_mut::<SuperUserScene>()
-            .send(SystemApi::LoginNew(false, sc, sx))
-            .unwrap();
+            .send(SystemApi::LoginNew(false, sc, sx));
+        if sent.is_err() {
+            state.put(login);
+            anyhow::bail!("the engine is not accepting login requests");
+        }
 
         login.code = Some(code);
         login.result = Some(result);
     }
 
     state.put(login);
-    state.borrow_mut()
+    Ok(state.borrow_mut())
 }
 
 pub async fn op_login_new_code(
@@ -128,9 +131,10 @@ pub async fn op_login_new_code(
 
     let rx = {
         let mut state = state.borrow_mut();
-        let login = new_login(&mut *state);
-        login.code.take().unwrap()
-    };
+        let login = new_login(&mut *state)?;
+        login.code.take()
+    }
+    .ok_or_else(|| anyhow::anyhow!("this login's code was already requested"))?;
 
     rx.await
         .map_err(|e| anyhow::anyhow!(e))?
@@ -143,9 +147,10 @@ pub async fn op_login_new_success(state: Rc<RefCell<impl State>>) -> Result<(), 
 
     let rx = {
         let mut state = state.borrow_mut();
-        let login = new_login(&mut *state);
-        login.result.take().unwrap()
-    };
+        let login = new_login(&mut *state)?;
+        login.result.take()
+    }
+    .ok_or_else(|| anyhow::anyhow!("this login's result was already requested"))?;
 
     rx.await
         .map_err(|e| anyhow::anyhow!(e))?

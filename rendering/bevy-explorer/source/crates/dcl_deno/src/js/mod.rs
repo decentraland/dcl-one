@@ -39,10 +39,13 @@ use self::{
 };
 
 pub mod fetch;
+mod hardened_ops;
 #[cfg(feature = "inspect")]
 pub mod inspector;
 pub mod local_storage;
 pub mod op_wrappers;
+mod plain;
+mod stream_resource;
 pub mod websocket;
 
 pub fn create_runtime(
@@ -106,18 +109,25 @@ pub fn create_runtime(
         ops.extend(set);
     }
 
-    let override_sets: [Vec<deno_core::OpDecl>; 3] = [
+    let override_sets: [Vec<deno_core::OpDecl>; 5] = [
         fetch::override_ops(),
         websocket::override_ops(),
         local_storage::override_ops(),
+        hardened_ops::override_ops(),
+        stream_resource::override_ops(),
     ];
 
+    let mut overrides = HashMap::new();
     for set in override_sets {
         for op in set {
             // explicitly record the ones we added so we can remove deno_fetch imposters
             op_map.insert(op.name, op);
+            overrides.insert(op.name, op);
         }
     }
+    // the middleware keeps the original's name and async-ness, so check each override fits
+    let pending_overrides = Rc::new(RefCell::new(overrides));
+    let override_problems = Rc::new(RefCell::new(Vec::new()));
 
     let mut esm_files = include_js_files!(
         BevyExplorer
@@ -136,13 +146,26 @@ pub fn create_runtime(
         ops: ops.into(),
         esm_files: esm_files.into(),
         esm_entry_point: Some("ext:BevyExplorer/init.js"),
-        middleware_fn: Some(Box::new(move |op: OpDecl| -> OpDecl {
-            if let Some(custom_op) = op_map.get(&op.name) {
-                debug!("replace: {}", op.name);
-                op.with_implementation_from(custom_op)
-            } else {
-                debug!("default: {}", op.name);
-                op
+        middleware_fn: Some(Box::new({
+            let pending_overrides = pending_overrides.clone();
+            let override_problems = override_problems.clone();
+            move |op: OpDecl| -> OpDecl {
+                if let Some(custom_op) = pending_overrides.borrow_mut().remove(op.name) {
+                    // `arg_count` also counts state and scope parameters, so only async-ness compares
+                    if custom_op.is_async != op.is_async {
+                        override_problems.borrow_mut().push(format!(
+                            "override {} differs from the original in async-ness",
+                            op.name
+                        ));
+                    }
+                }
+                if let Some(custom_op) = op_map.get(&op.name) {
+                    debug!("replace: {}", op.name);
+                    op.with_implementation_from(custom_op)
+                } else {
+                    debug!("default: {}", op.name);
+                    op
+                }
             }
         })),
         ..Default::default()
@@ -154,6 +177,15 @@ pub fn create_runtime(
     // callback below terminates just that isolate instead of aborting the process.
     const MAX_SCENE_HEAP_BYTES: usize = 512 * 1024 * 1024;
 
+    // deno's default exits the process when an op asks for a feature that is not enabled.
+    // The op then proceeds, so every op that checks one is overridden; the op sweep asserts
+    // this never fires.
+    let mut feature_checker = deno_core::FeatureChecker::default();
+    feature_checker.set_exit_cb(Box::new(|feature, api_name| {
+        DISABLED_FEATURE_CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        error!("scene called `{api_name}`, which needs the disabled feature `{feature}`");
+    }));
+
     // create runtime
     #[allow(unused_mut)]
     let mut runtime = JsRuntime::new(RuntimeOptions {
@@ -164,8 +196,26 @@ pub fn create_runtime(
         create_params: Some(
             deno_core::v8::CreateParams::default().heap_limits(0, MAX_SCENE_HEAP_BYTES),
         ),
+        feature_checker: Some(std::sync::Arc::new(feature_checker)),
         ..Default::default()
     });
+
+    {
+        let mut problems = override_problems.take();
+        problems.extend(
+            pending_overrides
+                .borrow()
+                .keys()
+                .map(|name| format!("override {name} replaces no registered op")),
+        );
+        for problem in &problems {
+            error!("{problem}");
+        }
+        runtime
+            .op_state()
+            .borrow_mut()
+            .put(OpOverrideProblems(problems));
+    }
 
     // Deno extension permission objects. These must be in the op state from the moment the
     // runtime exists: the ops that consult them look the type up unconditionally, and a
@@ -231,6 +281,14 @@ pub fn create_runtime(
         (runtime, None)
     }
 }
+
+/// Overrides that did not replace an op exactly, logged at runtime creation.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) struct OpOverrideProblems(pub Vec<String>);
+
+/// Calls that reached an op gated on a disabled deno feature.
+pub(crate) static DISABLED_FEATURE_CALLS: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
 
 pub struct StorageRoot(pub String);
 
@@ -664,6 +722,9 @@ fn op_error(state: Rc<RefCell<OpState>>, #[string] message: String) {
 mod tests {
     mod system_scene_network {
         include!("system_scene_network_tests.rs");
+    }
+    mod invalid_op_input {
+        include!("invalid_op_input_tests.rs");
     }
     use std::sync::Arc;
 
