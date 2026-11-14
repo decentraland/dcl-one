@@ -30,6 +30,8 @@ CREATE TABLE economy.transactions (
     chain_id integer NOT NULL,
     contract_address varchar(42) NOT NULL,
     created_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    -- A relayed call that is no sale or credits spend: counts toward MAX_RELAYED_TRANSACTIONS_PER_DAY.
+    free_call boolean NOT NULL DEFAULT false,
     CONSTRAINT transactions_user_lowercase CHECK (user_address = lower(user_address)),
     CONSTRAINT transactions_contract_lowercase CHECK (contract_address = lower(contract_address)),
     CONSTRAINT transactions_reserved_or_relayed CHECK (tx_hash IS NOT NULL OR session_id IS NOT NULL)
@@ -38,6 +40,9 @@ CREATE TABLE economy.transactions (
 -- The per-day quota count (WHERE user_address = $1 AND created_at >= $now - interval '1 day')
 -- and GET /v1/transactions/{address}.
 CREATE INDEX transactions_user_created_idx ON economy.transactions (user_address, created_at);
+-- The relayer's daily budget for free calls across addresses
+-- (WHERE free_call AND created_at >= $now - interval '1 day').
+CREATE INDEX transactions_free_created_idx ON economy.transactions (created_at) WHERE free_call;
 
 -- The MANA spot archive: one row per poll (the mana-price-poll job): CoinGecko,
 -- or the first fallback exchange that answered (source names it).

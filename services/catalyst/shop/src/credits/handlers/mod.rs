@@ -2,10 +2,9 @@
 //! binds the wallet through signed fetch (`x-identity-*` headers over
 //! `method:path:timestamp:metadata`, the shared verifier's 5 minute window,
 //! 6.x then the legacy payload as the old crypto crate accepted): the
-//! signature is checked over the public path first (the request's own path,
-//! `/credits/users` under the gateway prefix) and the route-local path
-//! second (`/users`, what the old service behind nginx's prefix strip saw),
-//! so both the explorer's and the old proxy's signatures verify. No handler
+//! signature is checked over the request's own path (`/credits/users` under
+//! the gateway prefix) and the proxy's `x-original-path` when it ends with the
+//! route (`/users` on a prefix-stripping host), as every other surface does. No handler
 //! reads `x-identity-metadata`: every address comes from the recovered
 //! signature alone. Any auth-chain refusal answers the ADR-44 400.
 
@@ -29,7 +28,7 @@ use sha2::{Digest, Sha256};
 
 use super::SharedState;
 use super::errors::ApiError;
-use crate::shared::signed_fetch::{PayloadPolicy, SignedFetchError, Signer, require_signer};
+use crate::shared::signed_fetch::{PayloadPolicy, SignedPath, Signer, require_signer_at};
 
 pub async fn signer_from(
     state: &SharedState,
@@ -38,29 +37,12 @@ pub async fn signer_from(
     route_path: &str,
     original: &OriginalUri,
 ) -> Result<Signer, ApiError> {
-    let validator = state.eip1654.as_deref();
-    let public = original.path();
-    if public != route_path {
-        match require_signer(
-            headers,
-            method,
-            public,
-            PayloadPolicy::V6ThenLegacy,
-            validator,
-        )
-        .await
-        {
-            Ok(signer) => return Ok(signer),
-            Err(SignedFetchError::InvalidSignature(_)) => {}
-            Err(e) => return Err(e.into()),
-        }
-    }
-    require_signer(
+    require_signer_at(
         headers,
         method,
-        route_path,
+        &SignedPath::at(&original.0, route_path),
         PayloadPolicy::V6ThenLegacy,
-        validator,
+        state.eip1654.as_deref(),
     )
     .await
     .map_err(Into::into)

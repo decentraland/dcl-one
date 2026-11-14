@@ -3628,3 +3628,112 @@ async fn retention_deletes_only_events_past_thirty_days() {
     );
     s.done().await;
 }
+
+#[test]
+fn thumbnails_decode_only_the_declared_format_within_the_size_limits() {
+    use crate::handlers::images::{MAX_IMAGE_DIMENSION, thumbnail_of};
+    let ok = png(32, 18, 1);
+    assert!(thumbnail_of(&ok, image::ImageFormat::Png).is_ok());
+    let err = thumbnail_of(&ok, image::ImageFormat::Jpeg).unwrap_err();
+    assert!(
+        matches!(err, ApiError::BadRequest(_)),
+        "a PNG declared as JPEG"
+    );
+    let wide = png(MAX_IMAGE_DIMENSION + 1, 1, 1);
+    let err = thumbnail_of(&wide, image::ImageFormat::Png).unwrap_err();
+    assert!(
+        matches!(err, ApiError::BadRequest(_)),
+        "over the dimension limit"
+    );
+    assert!(thumbnail_of(&png(MAX_IMAGE_DIMENSION, 1, 1), image::ImageFormat::Png).is_ok());
+}
+
+#[tokio::test]
+async fn a_full_account_is_refused_before_the_image_is_decoded() {
+    let mut settings = Settings::new(API_URL);
+    settings.writes_enabled = true;
+    settings.max_images_per_user = 1;
+    let Some(mut s) = scratch(settings).await else {
+        return;
+    };
+    let w = wallet();
+    let owner = s.owner(&w.address);
+    let path = format!("{PREFIX}/api/images-json");
+    let upload = |image: Vec<u8>| {
+        use base64::Engine as _;
+        json!({
+            "image": base64::engine::general_purpose::STANDARD.encode(image),
+            "content_type": "image/png",
+            "metadata": metadata_json(&owner, ""),
+        })
+        .to_string()
+        .into_bytes()
+    };
+    let headers = signed_headers(&w, "post", &path, true).await;
+    let (status, _, resp) = send(
+        s.app(),
+        "POST",
+        &path,
+        headers,
+        Some((upload(b"not an image".to_vec()), "application/json")),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "{}",
+        String::from_utf8_lossy(&resp)
+    );
+    let headers = signed_headers(&w, "post", &path, true).await;
+    let (status, _, _) = send(
+        s.app(),
+        "POST",
+        &path,
+        headers,
+        Some((upload(png(16, 9, 5)), "application/json")),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let headers = signed_headers(&w, "post", &path, true).await;
+    let (status, _, resp) = send(
+        s.app(),
+        "POST",
+        &path,
+        headers,
+        Some((upload(b"not an image".to_vec()), "application/json")),
+    )
+    .await;
+    assert_eq!(
+        (status, json_of(&resp)["reason"].clone()),
+        (StatusCode::FORBIDDEN, json!("maxLimitReached")),
+        "the quota answers before the decoder runs"
+    );
+    s.done().await;
+}
+
+#[tokio::test]
+async fn a_dropped_upload_keeps_its_decode_permit_until_the_decode_ends() {
+    static PERMITS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
+    let (release, wait) = std::sync::mpsc::channel::<()>();
+    let task = tokio::spawn(crate::handlers::images::decode_with(&PERMITS, move || {
+        let _ = wait.recv();
+    }));
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while PERMITS.available_permits() != 0 {
+        assert!(Instant::now() < deadline, "the decode never started");
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    task.abort();
+    let _ = task.await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert_eq!(
+        PERMITS.available_permits(),
+        0,
+        "the running decode still holds its permit"
+    );
+    release.send(()).unwrap();
+    while PERMITS.available_permits() != 1 {
+        assert!(Instant::now() < deadline, "the permit came back");
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+}

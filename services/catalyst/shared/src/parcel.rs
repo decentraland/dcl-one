@@ -12,6 +12,9 @@ const WORLD_RANGES: [(i64, i64, i64, i64); 4] = [
     (151, 59, 163, 143),
 ];
 
+/// `(x_min, y_min, x_max, y_max)` of the smallest box holding every range.
+pub const WORLD_BOUNDS: (i64, i64, i64, i64) = (-150, -150, 163, 158);
+
 pub fn is_inside_world_limits(x: impl Into<i64>, y: impl Into<i64>) -> bool {
     let (x, y) = (x.into(), y.into());
     WORLD_RANGES.iter().any(|&(x_min, y_min, x_max, y_max)| {
@@ -73,5 +76,17 @@ mod tests {
         }
         assert!(!is_inside_world_limits(i64::MAX, 0));
         assert!(is_inside_world_limits(160_i32, 155_i32));
+    }
+
+    #[test]
+    fn world_bounds_hold_every_range() {
+        let (x0, y0, x1, y1) = WORLD_BOUNDS;
+        for &(a, b, c, d) in &WORLD_RANGES {
+            assert!(a >= x0 && b >= y0 && c <= x1 && d <= y1);
+        }
+        assert!(WORLD_RANGES.iter().any(|r| r.0 == x0));
+        assert!(WORLD_RANGES.iter().any(|r| r.1 == y0));
+        assert!(WORLD_RANGES.iter().any(|r| r.2 == x1));
+        assert!(WORLD_RANGES.iter().any(|r| r.3 == y1));
     }
 }
