@@ -470,7 +470,7 @@ async fn expectation(
                 .trade_id
                 .as_deref()
                 .ok_or_else(|| bad("listing.tradeId is required".into()))?;
-            let trade = facts::load_trade(&state.pool, id)
+            let trade = facts::load_trade(&state.pool, id, crate::market::trades::TradeScope::Any)
                 .await
                 .map_err(|e| bad(e.to_string()))?
                 .ok_or_else(|| bad(format!("trade {id} is not known to this node")))?;

@@ -325,8 +325,9 @@ fn setup(
             HeadSync::default(),
             PointAtSync::default(),
             GroundCollider::default(),
-            // movePlayerTo-with-duration / walkTo park their response here; without it
-            // (inserted by the omitted user_input plugin) the scene promise never settles
+            // movePlayerTo-with-duration / walkTo park their response here; without it the
+            // scene promise never settles. A client's AvatarMovementPlugin inserts it too; a
+            // server runs without that plugin, so this is its only source
             ActivePlayerComponent::<AvatarMovement>::from_config(&config),
         ))
         .id();

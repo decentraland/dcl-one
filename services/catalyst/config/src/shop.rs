@@ -220,6 +220,14 @@ pub struct EconomyConfig {
     #[arg(long, env = "MAX_TRANSACTIONS_PER_DAY", default_value_t = 10)]
     pub max_transactions_per_day: i64,
 
+    /// Free meta-transactions (no sale, no credits spend) the relayer pays for per day across every address; 0 is no limit. Sales are never held back by it.
+    #[arg(
+        long,
+        env = "MAX_RELAYED_TRANSACTIONS_PER_DAY",
+        default_value_t = 20_000
+    )]
+    pub max_relayed_transactions_per_day: i64,
+
     /// The dApps' contract-addresses JSON (public https); unset, only the collections mirror admits.
     #[arg(long, env = "CONTRACT_ADDRESSES_URL")]
     pub contract_addresses_url: Option<String>,
@@ -476,6 +484,15 @@ pub struct ShopConfig {
         default_value = "https://decentraland.org/shop"
     )]
     pub shop_base_url: String,
+
+    /// Credits' feature service; empty uses explicit node overrides only.
+    #[arg(long, env = "CREDITS_FEATURE_FLAGS_URL", default_value = "")]
+    pub credits_feature_flags_url: String,
+    /// Credits' own Referer context, normalized with https when no scheme is supplied.
+    #[arg(long, env = "CREDITS_SERVER_URL", default_value = "")]
+    pub credits_server_url: String,
+    #[arg(long, env = "CREDITS_FEATURE_FLAGS_REFRESH_SECS", default_value_t = 60)]
+    pub credits_feature_flags_refresh_secs: u64,
 
     /// The feature-flags service the Shop reads decentraland.org's `dapps` rollout flags from (as sites'
     /// `FEATURE_FLAGS_URL`); empty reads only this node's local overrides (`explore_api.feature_flags_local`).
