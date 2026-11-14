@@ -10,7 +10,8 @@
 //! `auth::hash_bytes_v1` hash (the old per-service disk tree is gone; the
 //! wire's `url`/`thumbnailUrl` render from the stored hashes under
 //! `api_url`), signed fetch through the shared verifier under the
-//! camera-reel profile (`shared::signed_fetch::VerificationProfile::camera_reel`:
+//! camera-reel profiles (`shared::signed_fetch::VerificationProfile::camera_reel_read`
+//! and `camera_reel_write`:
 //! upstream's dcl-crypto-middleware-rs rules, a signature at most 60 s old
 //! and never too new, `x-identity-metadata` required but unread, the 6.x
 //! payload then the unguarded legacy one) with the process's EIP-1654
@@ -86,7 +87,8 @@
 //!   text/plain `Unathorized`);
 //! - a write (an upload, a delete, a visibility change) whose metadata
 //!   names the scene signer `decentraland-kernel-scene`, under any spelling,
-//!   is refused with the same 401 (upstream never checks it); reads serve a
+//!   or whose lowercased metadata bytes contain it (parseable or not), is
+//!   refused with the same 401 (upstream never checks it); reads serve a
 //!   scene's request as its signer, as upstream does;
 //! - an EIP-1654 (contract wallet) chain verifies through the process's
 //!   validator (upstream verifies with `WithoutTransport`, which refuses
@@ -145,9 +147,7 @@ use sqlx::PgPool;
 
 use crate::auth::eip1654::Eip1654Validator;
 use crate::content::Denylist;
-use crate::shared::signed_fetch::{
-    self, SceneSignerRule, SignedFetchError, Signer, VerificationProfile,
-};
+use crate::shared::signed_fetch::{self, SignedFetchError, Signer, VerificationProfile};
 use crate::storage::Storage;
 
 use http::ApiError;
@@ -249,16 +249,10 @@ impl State {
         headers: &HeaderMap,
         method: &str,
         path: &SignedPath,
-        scene_signer: SceneSignerRule,
+        profile: VerificationProfile,
     ) -> Result<Signer, SignedFetchError> {
-        signed_fetch::require_signer_with(
-            headers,
-            method,
-            path,
-            &VerificationProfile::camera_reel(scene_signer),
-            self.eip1654.as_deref(),
-        )
-        .await
+        signed_fetch::require_signer_with(headers, method, path, &profile, self.eip1654.as_deref())
+            .await
     }
 
     /// The verified signer of a write; every refusal is 401, a request a
@@ -269,12 +263,17 @@ impl State {
         method: &str,
         path: &SignedPath,
     ) -> Result<Signer, ApiError> {
-        self.verify(headers, method, path, SceneSignerRule::Refused)
-            .await
-            .map_err(|e| {
-                tracing::debug!(error = %e, "auth chain verification failed");
-                ApiError::Unauthorized
-            })
+        self.verify(
+            headers,
+            method,
+            path,
+            VerificationProfile::camera_reel_write(),
+        )
+        .await
+        .map_err(|e| {
+            tracing::debug!(error = %e, "auth chain verification failed");
+            ApiError::Unauthorized
+        })
     }
 
     /// The signer of a read that widens for its owner: no chain, or one that
@@ -288,7 +287,12 @@ impl State {
     ) -> Option<Signer> {
         headers.get(format!("{}0", signed_fetch::AUTH_CHAIN_HEADER_PREFIX))?;
         match self
-            .verify(headers, method, path, SceneSignerRule::Allowed)
+            .verify(
+                headers,
+                method,
+                path,
+                VerificationProfile::camera_reel_read(),
+            )
             .await
         {
             Ok(signer) => Some(signer),

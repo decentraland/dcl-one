@@ -33,7 +33,8 @@
 //! All of the above is the posture of [`PayloadPolicy`] callers, the profile
 //! [`VerificationProfile::node`]. A surface whose upstream verified with
 //! another middleware states its rules as a [`VerificationProfile`] instead
-//! ([`VerificationProfile::camera_reel`]) and calls [`require_signer_with`];
+//! ([`VerificationProfile::camera_reel_read`],
+//! [`VerificationProfile::camera_reel_write`]) and calls [`require_signer_with`];
 //! the chain shape, the path rule, the payload builders and the signature
 //! steps stay this module's.
 
@@ -225,7 +226,7 @@ pub enum PayloadPolicy {
 
 /// How fresh the `x-identity-timestamp` must be.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TimestampWindow {
+enum TimestampWindow {
     /// Within this many seconds of now either way; an absent or empty header
     /// reads as 0 and expires ([`check_symmetric_skew`]).
     Symmetric { secs: i64 },
@@ -236,7 +237,7 @@ pub enum TimestampWindow {
 
 /// What the `x-identity-metadata` header must be.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MetadataHeader {
+enum MetadataHeader {
     /// Absent reads as `{}`; present, it must be a JSON object (or `null`).
     OptionalJsonObject,
     /// Present, any string: the bytes are signed, never required to parse.
@@ -246,13 +247,18 @@ pub enum MetadataHeader {
 /// What a request a scene runtime signed (`{"signer":
 /// "decentraland-kernel-scene"}`) gets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SceneSignerRule {
+enum SceneSignerRule {
     /// Upstream gatsby's gate ([`is_refused_signer`]): the scene signer and
     /// any non-canonical spelling of the `signer` key or value are refused,
     /// and so is metadata that is not an object.
     Gated,
-    /// The scene signer under any spelling is refused ([`names_scene_signer`]);
-    /// other metadata, including unparseable metadata, passes.
+    /// The scene signer under any spelling is refused: metadata whose
+    /// object names it ([`names_scene_signer`]), and any metadata whose
+    /// lowercased bytes contain it. The second test is the one that holds
+    /// against a replay: the legacy payload folds case, so a scene-signed
+    /// header replayed with a literal uppercased (`false` -> `FALSE`) no
+    /// longer parses yet still verifies, and serde keeps the last of
+    /// duplicate `signer` keys; neither hides the signer from the bytes.
     Refused,
     /// Served as the chain's signer.
     Allowed,
@@ -260,7 +266,7 @@ pub enum SceneSignerRule {
 
 /// Whether the pre-6.0.0 folded payload is tried once the 6.x ones failed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LegacyFallback {
+enum LegacyFallback {
     Refused,
     /// Only when the metadata is an object spelling its `signer` key and
     /// value canonically ([`field_is_canonical`]).
@@ -271,13 +277,14 @@ pub enum LegacyFallback {
 }
 
 /// A surface's signed-fetch rules: the stages [`require_signer_with`] runs
-/// over the shared chain shape, path rule and signature steps.
+/// over the shared chain shape, path rule and signature steps. Only the
+/// constructors below build one, so only their combinations exist.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct VerificationProfile {
-    pub window: TimestampWindow,
-    pub metadata: MetadataHeader,
-    pub scene_signer: SceneSignerRule,
-    pub legacy: LegacyFallback,
+    window: TimestampWindow,
+    metadata: MetadataHeader,
+    scene_signer: SceneSignerRule,
+    legacy: LegacyFallback,
 }
 
 impl VerificationProfile {
@@ -298,12 +305,21 @@ impl VerificationProfile {
     }
 
     /// camera-reel-service's dcl-crypto-middleware-rs 0.3.0
-    /// (`VerificationOptions::default().accept_legacy_payload(&[])`): a
-    /// signature at most 60 s old and never too new, the metadata header
-    /// required but unread, the legacy payload unguarded. The scene signer
-    /// is `scene_signer`: upstream never checks it; the camera reel allows
-    /// it on reads and refuses it on writes.
-    pub const fn camera_reel(scene_signer: SceneSignerRule) -> Self {
+    /// (`VerificationOptions::default().accept_legacy_payload(&[])`) for its
+    /// reads: a signature at most 60 s old and never too new, the metadata
+    /// header required but unread, the legacy payload unguarded, and a
+    /// scene's request served as its signer, as upstream serves it.
+    pub const fn camera_reel_read() -> Self {
+        Self::camera_reel(SceneSignerRule::Allowed)
+    }
+
+    /// [`Self::camera_reel_read`] for the writes, with the scene signer
+    /// refused (upstream never checks it).
+    pub const fn camera_reel_write() -> Self {
+        Self::camera_reel(SceneSignerRule::Refused)
+    }
+
+    const fn camera_reel(scene_signer: SceneSignerRule) -> Self {
         Self {
             window: TimestampWindow::PastOnly {
                 max_age_ms: SIXTY_SECONDS_MS,
@@ -388,7 +404,10 @@ pub async fn require_signer_with(
     };
     let scene = match profile.scene_signer {
         SceneSignerRule::Gated => metadata.as_ref().is_none_or(is_refused_signer),
-        SceneSignerRule::Refused => metadata.as_ref().is_some_and(names_scene_signer),
+        SceneSignerRule::Refused => {
+            metadata.as_ref().is_some_and(names_scene_signer)
+                || metadata_raw.to_lowercase().contains(SCENE_SIGNER)
+        }
         SceneSignerRule::Allowed => false,
     };
     if scene {
@@ -955,6 +974,45 @@ mod tests {
                     "{metadata} v6={v6}"
                 );
             }
+        }
+    }
+
+    #[tokio::test]
+    async fn a_replayed_scene_signature_stays_refused_on_writes_whatever_the_metadata_parses_to() {
+        // A legacy-signed scene request whose replay uppercases a literal: the
+        // metadata no longer parses, the folded payload still verifies.
+        let signed = r#"{"signer":"decentraland-kernel-scene","isGuest":false}"#;
+        let mut headers = signed_headers("patch", PATH, signed, false).await;
+        headers.insert(
+            AUTH_METADATA_HEADER,
+            HeaderValue::from_static(r#"{"signer":"decentraland-kernel-scene","isGuest":FALSE}"#),
+        );
+        assert!(
+            camera_reel(&headers, "patch", SceneSignerRule::Allowed)
+                .await
+                .is_ok(),
+            "the replay verifies"
+        );
+        assert!(matches!(
+            camera_reel(&headers, "patch", SceneSignerRule::Refused).await,
+            Err(SignedFetchError::MalformedChain { .. })
+        ));
+
+        // serde keeps the last of duplicate keys.
+        for v6 in [true, false] {
+            let headers = signed_headers(
+                "patch",
+                PATH,
+                r#"{"signer":"decentraland-kernel-scene","signer":"dcl:explorer"}"#,
+                v6,
+            )
+            .await;
+            assert!(
+                camera_reel(&headers, "patch", SceneSignerRule::Refused)
+                    .await
+                    .is_err(),
+                "duplicate signer keys, v6={v6}"
+            );
         }
     }
 

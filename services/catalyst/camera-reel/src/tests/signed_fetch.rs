@@ -11,16 +11,42 @@ use super::{
     wallet,
 };
 use crate::Settings;
-use crate::auth::{AuthLink, AuthLinkType};
-use crate::shared::signed_fetch::{
-    AUTH_CHAIN_HEADER_PREFIX, AUTH_METADATA_HEADER, AUTH_TIMESTAMP_HEADER, build_payload_v6,
-};
-use alloy::signers::Signer as _;
+use crate::shared::signed_fetch::AUTH_METADATA_HEADER;
+use crate::shared::signed_fetch::test_support::signed_headers_by;
 
 const SCENE: &str = r#"{"signer":"decentraland-kernel-scene","sceneId":"bafkscene"}"#;
 
-/// Headers `w` signs (6.x payload) for `method path` `offset_ms` from now,
-/// carrying `metadata` (`None`: no metadata header, signed as `{}`).
+/// Headers `w` signs for `method path` `offset_ms` from now, in the 6.x
+/// (`v6`) or the legacy payload, carrying `metadata` (`None`: no metadata
+/// header, signed as `{}`).
+async fn signed_as(
+    w: &Wallet,
+    method: &str,
+    path: &str,
+    metadata: Option<&str>,
+    offset_ms: i64,
+    v6: bool,
+) -> Vec<(String, String)> {
+    let timestamp = (chrono::Utc::now().timestamp_millis() + offset_ms).to_string();
+    let mut headers = signed_headers_by(
+        &w.signer,
+        method,
+        path,
+        metadata.unwrap_or("{}"),
+        v6,
+        &timestamp,
+    )
+    .await;
+    if metadata.is_none() {
+        headers.remove(AUTH_METADATA_HEADER);
+    }
+    headers
+        .iter()
+        .map(|(name, value)| (name.to_string(), value.to_str().unwrap().to_string()))
+        .collect()
+}
+
+/// [`signed_as`] in the 6.x payload.
 async fn signed(
     w: &Wallet,
     method: &str,
@@ -28,37 +54,17 @@ async fn signed(
     metadata: Option<&str>,
     offset_ms: i64,
 ) -> Vec<(String, String)> {
-    let timestamp = (chrono::Utc::now().timestamp_millis() + offset_ms).to_string();
-    let payload = build_payload_v6(method, path, &timestamp, metadata.unwrap_or("{}"));
-    let signature = w
-        .signer
-        .sign_message(payload.as_bytes())
-        .await
-        .unwrap()
-        .to_string();
-    let chain = [
-        AuthLink {
-            link_type: AuthLinkType::SIGNER,
-            payload: w.address.clone(),
-            signature: None,
-        },
-        AuthLink {
-            link_type: AuthLinkType::EcdsaSignedEntity,
-            payload,
-            signature: Some(signature),
-        },
-    ];
-    let mut out = vec![(AUTH_TIMESTAMP_HEADER.to_string(), timestamp)];
-    if let Some(metadata) = metadata {
-        out.push((AUTH_METADATA_HEADER.to_string(), metadata.to_string()));
+    signed_as(w, method, path, metadata, offset_ms, true).await
+}
+
+/// `headers` with the metadata header replaced, as a replay would send it.
+fn with_metadata(mut headers: Vec<(String, String)>, metadata: &str) -> Vec<(String, String)> {
+    for (name, value) in &mut headers {
+        if name == AUTH_METADATA_HEADER {
+            *value = metadata.to_string();
+        }
     }
-    for (i, link) in chain.iter().enumerate() {
-        out.push((
-            format!("{AUTH_CHAIN_HEADER_PREFIX}{i}"),
-            serde_json::to_string(link).unwrap(),
-        ));
-    }
-    out
+    headers
 }
 
 fn unauthorized() -> (StatusCode, Value) {
@@ -170,7 +176,32 @@ async fn a_scene_signed_write_is_refused_on_every_write_route() {
     assert_eq!((status, json_of(&resp)), unauthorized(), "delete");
     assert_eq!(s.count(&owner).await, 1, "the row stays");
 
-    // Metadata that does not parse is not a scene's: the write goes through.
+    // A legacy-signed scene request replayed with a literal uppercased: the
+    // metadata no longer parses but the folded payload still verifies.
+    let replayed = with_metadata(
+        signed_as(
+            &w,
+            "patch",
+            &vis,
+            Some(r#"{"signer":"decentraland-kernel-scene","isGuest":false}"#),
+            0,
+            false,
+        )
+        .await,
+        r#"{"signer":"decentraland-kernel-scene","isGuest":FALSE}"#,
+    );
+    let (status, _, resp) = send(
+        s.app(),
+        "PATCH",
+        &vis,
+        replayed,
+        Some((flip.clone(), "application/json")),
+    )
+    .await;
+    assert_eq!((status, json_of(&resp)), unauthorized(), "replayed legacy");
+    assert_eq!(s.is_public(private.id).await, Some(false));
+
+    // Metadata that does not parse and names no scene is the user's.
     let headers = signed(&w, "patch", &vis, Some("not json"), 0).await;
     let (status, _, _) = send(
         s.app(),
@@ -265,5 +296,48 @@ async fn the_timestamp_window_and_the_metadata_header_are_upstreams() {
     .await;
     assert_eq!(status, StatusCode::OK, "a future signature writes");
     assert_eq!(s.is_public(private.id).await, Some(true));
+    s.done().await;
+}
+
+#[tokio::test]
+async fn a_legacy_signature_over_mixed_case_metadata_and_an_empty_metadata_header_verify() {
+    let mut settings = Settings::new(API_URL);
+    settings.writes_enabled = true;
+    let Some(mut s) = scratch(settings).await else {
+        return;
+    };
+    let w = wallet();
+    let owner = s.owner(&w.address);
+    let t = tag();
+    let private = image(&owner, &format!("h-{t}"), &format!("t-{t}"), false, "");
+    s.db().insert_image(&private).await.unwrap();
+    let vis = format!("{PREFIX}/api/images/{}/visibility", private.id);
+    let images = format!("{PREFIX}/api/users/{owner}/images");
+
+    for (metadata, v6, public) in [
+        (r#"{"realmName":"Main"}"#, false, true),
+        ("", true, false),
+        ("", false, true),
+    ] {
+        let headers = signed_as(&w, "get", &images, Some(metadata), 0, v6).await;
+        let (_, _, resp) = send(s.app(), "GET", &images, headers, None).await;
+        assert_eq!(
+            json_of(&resp)["currentImages"],
+            1,
+            "{metadata:?} v6={v6} reads as the owner"
+        );
+        let headers = signed_as(&w, "patch", &vis, Some(metadata), 0, v6).await;
+        let body = json!({ "is_public": public }).to_string().into_bytes();
+        let (status, _, _) = send(
+            s.app(),
+            "PATCH",
+            &vis,
+            headers,
+            Some((body, "application/json")),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{metadata:?} v6={v6}");
+        assert_eq!(s.is_public(private.id).await, Some(public));
+    }
     s.done().await;
 }
