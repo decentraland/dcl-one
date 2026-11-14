@@ -136,6 +136,7 @@ particle_system = { path = "crates/particle_system" }
 livestream_manager = { path = "crates/livestream_manager" }
 media = { path = "crates/media" }
 perf_output = { path = "crates/perf_output" }
+scene_host_sandbox = { path = "crates/scene_host_sandbox" }
 
 bevy = { version = "0.16.1", default-features = false, features = [
   "animation",
@@ -219,6 +220,8 @@ alloy-rpc-client = { version = "2.4.2", default-features = false }
 
 itertools = "0.14"
 libc = "0.2"
+landlock = "0.4.7"
+seccompiler = "0.5.0"
 tokio = { version = "1.44", features = ["sync", "macros", "rt"] }
 tokio-util = "*"
 bytes = "1"

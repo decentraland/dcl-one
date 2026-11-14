@@ -1,0 +1,24 @@
+# A crate of its own for a build reason: the sandbox is Linux-only code whose tests have to run in a
+# plain Linux container, so it depends on nothing from Bevy or the engine.
+[package]
+name = "scene_host_sandbox"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+landlock = { workspace = true }
+libc = { workspace = true }
+seccompiler = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+
+# The sandbox applies only to a process with a single thread, and libtest runs every test on a
+# thread of its own, so this binary has its own main.
+[[test]]
+name = "sandbox"
+harness = false
