@@ -426,3 +426,32 @@ fn waiting_primitives_are_attached_when_the_player_goes_behind_the_backdrop() {
     assert_eq!(attached(&app, &boxes), 50);
     assert_eq!(marked::<PendingPrimitive>(&app, &boxes), 0);
 }
+
+// guard: once the waiting have spent the slice, arrivals still join them and changes still apply
+#[test]
+fn once_the_slice_is_spent_arrivals_wait_and_changes_apply() {
+    let (mut app, root) = test_app();
+    let shown = spawn_boxes(&mut app, root, 1);
+    app.update();
+    preset_charges(&mut app, Duration::from_millis(10));
+    let waiting = spawn_boxes(&mut app, root, 3);
+    app.update();
+    assert_eq!(marked::<PendingPrimitive>(&app, &waiting), 2);
+
+    let arrivals = spawn_boxes(&mut app, root, 2);
+    app.world_mut()
+        .entity_mut(shown[0])
+        .insert(MeshDefinition::Sphere);
+    preset_charges(&mut app, Duration::from_millis(10));
+    app.update();
+
+    // one waiting box goes as the frame's first and the next one spends the slice
+    assert_eq!(marked::<PendingPrimitive>(&app, &waiting), 1);
+    assert_eq!(marked::<PendingPrimitive>(&app, &arrivals), 2);
+    let sphere = app
+        .world()
+        .resource::<MeshPrimitiveDefaults>()
+        .sphere
+        .clone();
+    assert_eq!(app.world().get::<Mesh3d>(shown[0]).unwrap().0, sphere);
+}
