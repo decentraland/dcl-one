@@ -17,12 +17,14 @@ the SDK belongs beside it.
 ## Decision
 
 `library/js-sdk-toolchain` is a first-party snapshot of `decentraland/js-sdk-toolchain` `main`
-(`afd7f79`, 2026-10-23), keeping its Apache-2.0 `LICENSE`, its npm layout (six packages under
-`packages/@dcl`, per-package lockfiles, `file:` links between them) and its build (`make install
+(`afd7f79`, 2026-10-23), keeping its Apache-2.0 `LICENSE`, its layout (six packages under
+`packages/@dcl`, `file:` links between them) and its build (`make install
 build test prepare`). Its `.github`, agent files and editor configuration were left behind.
+It installs with pnpm as one workspace with a single lockfile
+([decision](2026-11-13-pnpm-default-package-manager.md)).
 
 - `@dcl/protocol` is `file:../protocol` (root) and `file:../../../../protocol` (`sdk-commands`):
-  npm links `library/protocol`, so the generated components, scene APIs and `out-ts` types come
+  the install links `library/protocol`, so the generated components, scene APIs and `out-ts` types come
   from the one proto source. `make install` builds the protocol package first; `update-protocol`
   is gone, since there is nothing to bump.
 - `make prepare` pins `@dcl/protocol` in the packed manifests to `PROTOCOL_VERSION`, which the
@@ -55,7 +57,7 @@ build test prepare`). Its `.github`, agent files and editor configuration were l
   follows ships the protocol at that commit.
 - `@dcl/sdk@next` describes the Explorer dcl-one ships once publishing moves here; the bridge and
   movement scenes stop needing the `experimental-bevy` dist-tag.
-- `library/` holds a second npm project that is not a `dcl-*` crate (as `catalyst-api/` and
+- `library/` holds a second JavaScript project that is not a `dcl-*` crate (as `catalyst-api/` and
   `protocol/` already are); its lockfiles and `node_modules` stay its own.
 
 ## Follow-ups
