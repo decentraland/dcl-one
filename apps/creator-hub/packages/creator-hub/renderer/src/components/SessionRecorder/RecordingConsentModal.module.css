@@ -1,0 +1,10 @@
+.consentList {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 0;
+  padding-left: 20px;
+  color: #cfcdd4;
+  font-size: 0.875rem;
+  line-height: 1.45;
+}
