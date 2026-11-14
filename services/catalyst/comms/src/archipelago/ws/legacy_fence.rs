@@ -61,7 +61,7 @@ impl LegacyFence {
         let snapshot = match state.control_v4.snapshot(&self.owner, &realm()).await {
             Ok(snapshot) => snapshot,
             Err(V4Error::AuthorityConflict) => {
-                let _ = send_packet(socket, kicked_packet(), Some(link), &state.feed).await;
+                let _ = send_packet(socket, kicked_packet(), Some(link)).await;
                 return false;
             }
             Err(_) => {
@@ -74,18 +74,18 @@ impl LegacyFence {
         if snapshot.assignment_revision <= self.last_revision && !link.needs_assignment() {
             return true;
         }
-        let Some(assignment) = snapshot.assignment else {
+        let Some(mut assignment) = snapshot.assignment else {
             link.assignment_cleared();
             return !self.delivered;
         };
-        let Some(stamp) = assignment.pulse_admission.as_ref() else {
+        let Some(stamp) = assignment.pulse_admission.take() else {
             link.assignment_cleared();
             state
                 .gatekeeper
                 .announce_session(&self.owner.address, &self.owner.session);
             return true;
         };
-        let valid = state.gatekeeper.verify_island_stamp(stamp).await;
+        let valid = state.gatekeeper.verify_island_stamp(&stamp).await;
         if !valid
             || stamp.wallet != self.owner.address
             || stamp.session != self.owner.session
@@ -108,7 +108,6 @@ impl LegacyFence {
             assignment_revision: snapshot.assignment_revision,
             fencing_token: snapshot.fencing_token,
         };
-        let stamp = stamp.clone();
         if !super::io::send_outgoing(
             socket,
             super::io::Outgoing::ConfiguredAssignment {

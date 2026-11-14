@@ -488,8 +488,7 @@ impl WebSocket {
                         self.queue.terminal(Terminal::Abort);
                         return None;
                     }
-                    let feed = self.state.feed.clone();
-                    if !send(self, Message::Ping(bytes::Bytes::new()), None, &feed).await {
+                    if !send(self, Message::Ping(bytes::Bytes::new()), None).await {
                         return None;
                     }
                 }
@@ -559,7 +558,6 @@ pub(super) async fn send(
     socket: &mut WebSocket,
     message: Message,
     owner: Option<&PeerLink>,
-    _: &FeedCache,
 ) -> bool {
     send_outgoing(socket, Outgoing::Packet(message), owner).await
 }

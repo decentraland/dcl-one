@@ -674,18 +674,16 @@ mod tests {
                 .await
                 .unwrap()
         );
-        let active: bool =
-            sqlx::query_scalar("SELECT active FROM social.scene_stream_access WHERE id=$1")
-                .bind(id)
-                .fetch_one(&pool)
-                .await
-                .unwrap();
-        assert!(active);
-        sqlx::query("UPDATE social.scene_stream_access SET streaming=false WHERE id=$1")
-            .bind(id)
-            .execute(&pool)
-            .await
-            .unwrap();
+        let unchanged: (bool, bool, bool) = sqlx::query_as(
+            "SELECT active,streaming,EXISTS(SELECT 1 FROM social.scene_stream_cleanup WHERE access_id=$1) FROM social.scene_stream_access WHERE id=$1",
+        )
+        .bind(id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(unchanged, (true, true, false));
+        // Revoke intentionally permits a running stream; IdleReplacement is the
+        // only non-forced command exposed by the lifecycle API.
         // A start/end webhook after metadata capture invalidates that snapshot.
         assert!(
             !enqueue_prepared(&pool, id, CleanupCommand::Revoke, 1, Some(&event), None)
@@ -723,6 +721,31 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
+        // The same idle command succeeds once the stream has stopped and commits
+        // its cleanup intent together with deactivation, without a notification.
+        let idle = Uuid::new_v4();
+        sqlx::query("INSERT INTO social.scene_stream_access(id,place_id,streaming_url,streaming_key,generated_by,streaming) VALUES($1,$2,'rtmp://example.org','idle-key','test',false)")
+            .bind(idle).bind(format!("idle-test-{idle}")).execute(&pool).await.unwrap();
+        assert!(
+            enqueue_prepared(&pool, idle, CleanupCommand::IdleReplacement, 0, None, None)
+                .await
+                .unwrap()
+        );
+        let idle_facts: (bool, bool, Option<String>) = sqlx::query_as(
+            "SELECT a.active,a.streaming,c.notification_kind FROM social.scene_stream_access a JOIN social.scene_stream_cleanup c ON a.id=c.access_id WHERE a.id=$1",
+        ).bind(idle).fetch_one(&pool).await.unwrap();
+        assert_eq!(idle_facts, (false, false, None));
+        sqlx::query("DELETE FROM social.scene_stream_cleanup WHERE access_id=$1")
+            .bind(idle)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM social.scene_stream_access WHERE id=$1")
+            .bind(idle)
+            .execute(&pool)
+            .await
+            .unwrap();
+
         // The accepted four-day credential deadline also revokes a running stream.
         let running = Uuid::new_v4();
         sqlx::query("INSERT INTO social.scene_stream_access(id,place_id,streaming_url,streaming_key,generated_by,streaming,expiration_time) VALUES($1,$2,'rtmp://example.org','test-key','test',true,timezone('UTC',now())+interval '4 days')")

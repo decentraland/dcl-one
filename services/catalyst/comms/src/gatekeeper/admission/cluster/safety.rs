@@ -9,6 +9,9 @@ use crate::protocol::pulse::decentraland::pulse::PendingTakeover;
 const CAPACITY: i64 = 10_000;
 const CAPACITY_LOCK: i64 = 4_638_100_557_221;
 // LiveKit verifier leeway plus NumericDate precision and scheduling margin.
+// Keep token expiry and quarantine coverage aligned with these margins:
+// durable_tests::durable_unknown_never_enters_quarantine_final_and_restart_waits_all_issuer_tokens
+// and subscriber::tests::subscriber_caps_programmatic_token_ttl_to_its_quarantine_budget.
 pub(super) const LIVEKIT_TOKEN_LEEWAY: std::time::Duration = std::time::Duration::from_secs(60);
 pub(super) const TOKEN_EXPIRY_SAFETY: std::time::Duration = std::time::Duration::from_secs(2);
 const FULL_MAX_ISSUER_WAIT_SECONDS: u64 = super::MAX_ISLAND_TOKEN_TTL_SECONDS
