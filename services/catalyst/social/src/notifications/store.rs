@@ -106,6 +106,25 @@ fn list_sql(with_from: bool, only_unread: bool, touch: bool) -> String {
     )
 }
 
+/// The subquery, for `EXISTS`, of an opt-out row `o` of `address` from the
+/// community whose id is the uuid expression `community`. Stored ids are
+/// compared as uuids: `create_opt_out` keeps the canonical spelling, so a
+/// producer's or a legacy row's other spelling of the same id still matches;
+/// a stored id that is not a uuid matches no community.
+pub(super) fn community_opt_out(address: &str, community: &str) -> String {
+    format!(
+        "SELECT 1 FROM social.subscription_opt_outs o \
+         WHERE o.address = {address} AND o.scope = 'community' \
+           AND {} = {community}",
+        uuid_or_null("o.scope_id")
+    )
+}
+
+/// The uuid the text expression `text` spells, else NULL.
+pub(super) fn uuid_or_null(text: &str) -> String {
+    format!("CASE WHEN pg_input_is_valid({text}, 'uuid') THEN ({text})::uuid END")
+}
+
 /// The `details` flag at `path` (a `->` chain on `s.details`) when it is a JSON
 /// boolean, else `default`: a malformed flag never fails the statement.
 pub(crate) fn details_flag(path: &str, default: bool) -> String {

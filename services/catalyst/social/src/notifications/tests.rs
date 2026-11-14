@@ -2027,6 +2027,48 @@ mod ingest {
         assert!(row(&state, id_of(kind, &to, "r2")).await.is_none());
     }
 
+    #[tokio::test]
+    async fn a_community_opt_out_drops_the_row_however_the_producer_spells_the_uuid() {
+        let Some(state) = producers().await else {
+            return;
+        };
+        let to = fresh_address();
+        let kind = "reward_assignment";
+        let community = Uuid::new_v4();
+        // Stored in the canonical spelling, whatever the wallet sent.
+        state
+            .store
+            .create_opt_out(&to, "community", &community.simple().to_string())
+            .await
+            .unwrap();
+        let other = Uuid::new_v4().to_string();
+        let cases = [
+            ("canonical", community.to_string(), false),
+            ("upper", community.to_string().to_uppercase(), false),
+            ("simple", community.simple().to_string(), false),
+            ("braced", community.braced().to_string(), false),
+            ("other", other, true),
+        ];
+        for (key, scope_id, kept) in cases {
+            let mut scoped = entry(kind, &to, key, 1_700_000_000_000);
+            scoped["optOutScope"] = json!({ "scope": "community", "scopeId": scope_id });
+            let (status, _) = send(
+                app(state.clone()),
+                "POST",
+                PATH,
+                bearer("rew"),
+                Some(json!([scoped])),
+            )
+            .await;
+            assert_eq!(status, StatusCode::NO_CONTENT);
+            assert_eq!(
+                row(&state, id_of(kind, &to, key)).await.is_some(),
+                kept,
+                "{key}: {scope_id}"
+            );
+        }
+    }
+
     /// Broadcasts show in every inbox, so these tests use a private database.
     async fn private_state(tag: &str) -> Option<SharedState> {
         let pool = crate::notifications::store::test_support::private_pool(tag).await?;

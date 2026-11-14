@@ -21,7 +21,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use super::errors::{ApiError, NotificationsError, parse_json};
-use super::store::{DELIVERY_ROWS_SQL, ms_to_naive};
+use super::store::{DELIVERY_ROWS_SQL, community_opt_out, ms_to_naive, uuid_or_null};
 use super::types::is_known_type;
 use crate::auth::admin_bearer::{bearer_token, timing_safe_eq};
 use crate::identity::Address;
@@ -317,6 +317,7 @@ async fn upsert_addressed(
                 SELECT 1 FROM social.subscription_opt_outs o
                 WHERE o.address = n.address AND o.scope = n.scope AND o.scope_id = n.scope_id
             )
+            AND NOT (n.scope = 'community' AND EXISTS ({community_opt_out}))
         ),
         ups AS (
             INSERT INTO social.notifications AS t (id, address, type, metadata, occurred_at)
@@ -329,7 +330,8 @@ async fn upsert_addressed(
         ins AS (SELECT id, address, type FROM ups WHERE inserted)
         {delivery}
         "#,
-        delivery = *DELIVERY_ROWS_SQL
+        delivery = *DELIVERY_ROWS_SQL,
+        community_opt_out = community_opt_out("n.address", &uuid_or_null("n.scope_id")),
     );
     let ids: Vec<Uuid> = addressed.iter().map(Ingested::id).collect();
     let addresses: Vec<&str> = addressed
