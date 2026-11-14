@@ -10,15 +10,15 @@ on:
         required: false
     inputs:
       asset_packs_s3_bucket_key:
-        description: 'S3 bucket key for the asset-packs package'
+        description: "S3 bucket key for the asset-packs package"
         required: true
         type: string
       asset_packs_version:
-        description: 'Version of the asset-packs package'
+        description: "Version of the asset-packs package"
         required: true
         type: string
       asset_packs_changed:
-        description: 'Whether the version of the asset-packs package has changed'
+        description: "Whether the version of the asset-packs package has changed"
         required: true
         type: boolean
     outputs:
@@ -34,7 +34,7 @@ on:
 
 defaults:
   run:
-    shell: 'bash'
+    shell: "bash"
     working-directory: apps/creator-hub
 
 jobs:
@@ -130,13 +130,13 @@ jobs:
       - uses: ./.github/actions/creator-hub-setup
         id: setup
         with:
-          cache-protoc: 'true'
+          cache-protoc: "true"
 
       - name: install
         if: steps.setup.outputs.node-modules-cache-hit != 'true'
         run: npm i --silent && make install-inspector
         env:
-          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
 
       - name: install asset-packs
         working-directory: apps/creator-hub/packages/inspector
@@ -199,11 +199,11 @@ jobs:
           file-path: apps/creator-hub/packages/inspector/${{ steps.npm-pack.outputs.pack-filename }}
           bucket: ${{ secrets.SDK_TEAM_S3_BUCKET }}
           region: ${{ secrets.SDK_TEAM_AWS_REGION }}
-          prefix: 'creator-hub/branch/${{ github.head_ref || github.ref }}/@dcl/inspector'
+          prefix: "creator-hub/branch/${{ github.head_ref || github.ref }}/@dcl/inspector"
           role-to-assume: ${{ vars.CREATOR_HUB_SDK_BUCKET_ROLE_ARN }}
-          content-type: 'application/gzip'
-          acl: 'public-read'
-          cache-control: 'max-age=0,private'
+          content-type: "application/gzip"
+          acl: "public-read"
+          cache-control: "max-age=0,private"
 
       - name: sanitize branch
         id: sanitize-branch
@@ -243,8 +243,8 @@ jobs:
         id: npm-publish
         with:
           working-directory: apps/creator-hub/packages/inspector
-          initial-tag: 'latest'
-          access: 'public'
+          initial-tag: "latest"
+          access: "public"
 
   notify:
     needs: [version, publish]
@@ -258,7 +258,7 @@ jobs:
         id: fc
         with:
           issue-number: ${{ github.event.pull_request.number }}
-          comment-author: 'github-actions[bot]'
+          comment-author: "github-actions[bot]"
           body-includes: Test @dcl/inspector package
 
       - name: create or update comment
@@ -295,11 +295,11 @@ jobs:
         with:
           previous_version: ${{ needs.version.outputs.previous_version }}
           current_version: ${{ needs.version.outputs.version }}
-          paths: 'apps/creator-hub/packages/inspector'
-          section_names: 'Inspector Changes'
-          release_title: '@dcl/inspector'
+          paths: "apps/creator-hub/packages/inspector"
+          section_names: "Inspector Changes"
+          release_title: "@dcl/inspector"
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          tag_prefix: '@dcl/inspector@'
+          tag_prefix: "@dcl/inspector@"
 
       - name: update release description
         if: ${{ github.ref == 'refs/heads/main' }}
