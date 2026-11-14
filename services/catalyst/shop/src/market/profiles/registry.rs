@@ -36,7 +36,7 @@ struct FullProfile<'a> {
 }
 
 const INVALID_IDS: &str = "The ids property must be an array of non-empty strings";
-/// Largest request body: about 5,800 addresses, the bound on the lookups.
+/// Bounds address lookups by body size; default pointers have a finite namespace.
 const BODY_LIMIT: usize = 256 * 1024;
 /// Entities per ownership pass; a failed pass leaves out this many at most.
 const OWNERSHIP_CHUNK: usize = 128;
@@ -351,6 +351,10 @@ mod tests {
     /// fails (`profile-retriever.ts:50-53`); with no database nothing is found.
     #[tokio::test]
     async fn registry_failed_lookup_answers_what_was_found() {
+        let recorder = crate::comms::metrics::prometheus_builder()
+            .unwrap()
+            .build_recorder();
+        let _recording = metrics::set_default_local_recorder(&recorder);
         for path in ["/profiles", "/profiles/metadata"] {
             assert_eq!(
                 call(
@@ -359,6 +363,24 @@ mod tests {
                 )
                 .await,
                 (StatusCode::OK, json!([]))
+            );
+        }
+        let response = super::super::profiles_metadata(
+            State(state_without_db()),
+            Bytes::from_static(br#"{"ids":["0x00000000000000000000000000000000000000aa"]}"#),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let rendered = recorder.handle().render();
+        for (route, count) in [("registry_profiles", 2), ("lambdas_profiles_metadata", 1)] {
+            assert!(
+                rendered
+                    .lines()
+                    .any(|line| line.starts_with("profiles_lookup_failures_total{")
+                        && line.contains(&format!("route=\"{route}\""))
+                        && line.contains("layer=\"entities\"")
+                        && line.ends_with(&format!(" {count}"))),
+                "{rendered}"
             );
         }
     }
@@ -374,6 +396,26 @@ mod tests {
                 (StatusCode::OK, json!([]))
             );
         }
+    }
+
+    #[tokio::test]
+    async fn registry_short_ids_are_empty_reads_but_invalid_tail_is_rejected() {
+        let ids: Vec<Value> = (0..30_000).map(|i| json!(format!("a{i}"))).collect();
+        let body = json!({"ids": ids}).to_string();
+        assert!(body.len() < BODY_LIMIT);
+        for path in ["/profiles", "/profiles/metadata"] {
+            assert_eq!(call(path, &body).await, (StatusCode::OK, json!([])));
+            for invalid in [json!(""), json!(1), Value::Null] {
+                let mut invalid_ids = ids.clone();
+                invalid_ids.push(invalid);
+                assert_eq!(
+                    call(path, &json!({"ids": invalid_ids}).to_string()).await.0,
+                    StatusCode::BAD_REQUEST
+                );
+            }
+        }
+        let pointers = parse_ids(br#"{"ids":["DEFAULT1","default1","0xABC","0xabc"]}"#).unwrap();
+        assert_eq!(pointers, ["default1", "0xabc"]);
     }
 
     #[test]
@@ -522,6 +564,106 @@ mod tests {
                 ], "snapshots":{"face256":"https://external.example/face","body":"old"}}
             }]}
         })
+    }
+
+    #[tokio::test]
+    async fn registry_failed_ownership_chunk_preserves_successful_neighbours() {
+        let recorder = crate::comms::metrics::prometheus_builder()
+            .unwrap()
+            .build_recorder();
+        let _recording = metrics::set_default_local_recorder(&recorder);
+        let failed = format!("0x{:040x}", OWNERSHIP_CHUNK);
+        let graph = Router::new().route(
+            "/",
+            post(move |Json(body): Json<Value>| {
+                let failed = failed.clone();
+                async move {
+                    if body["variables"]["owner"] == failed {
+                        (
+                            StatusCode::BAD_REQUEST,
+                            Json(json!({"error":"reader unavailable"})),
+                        )
+                    } else {
+                        (StatusCode::OK, Json(json!({"data": {}})))
+                    }
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, graph).await.unwrap() });
+        let state =
+            crate::market::tests::support::state_without_db_settings(crate::market::Settings {
+                marketplace_subgraph_url: Some(format!("http://{address}/")),
+                ..crate::market::Settings::for_tests()
+            });
+        state
+            .test_allow_loopback
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        let entities: Vec<_> = (0..(2 * OWNERSHIP_CHUNK + 1))
+            .map(|i| {
+                let mut entity = entity();
+                entity["id"] = json!(format!("bafkprofile{i}"));
+                entity["pointers"] = json!([format!("0x{i:040x}")]);
+                entity["timestamp"] = json!(i);
+                entity
+            })
+            .collect();
+        for compact in [false, true] {
+            let projected = values(project_profiles(&state, &entities, compact).await);
+            assert_eq!(projected.len(), OWNERSHIP_CHUNK + 1);
+            let actual: Vec<_> = projected
+                .iter()
+                .map(|profile| {
+                    if compact {
+                        profile["pointer"].as_str().unwrap().to_string()
+                    } else {
+                        profile["avatars"][0]["userId"]
+                            .as_str()
+                            .unwrap()
+                            .to_string()
+                    }
+                })
+                .collect();
+            let expected: Vec<_> = (0..OWNERSHIP_CHUNK)
+                .chain([2 * OWNERSHIP_CHUNK])
+                .map(|i| format!("0x{i:040x}"))
+                .collect();
+            assert_eq!(actual, expected);
+            for profile in &projected {
+                let claimed = if compact {
+                    &profile["hasClaimedName"]
+                } else {
+                    &profile["avatars"][0]["hasClaimedName"]
+                };
+                assert_eq!(claimed, &json!(false));
+            }
+        }
+        let rendered = recorder.handle().render();
+        assert!(
+            rendered
+                .lines()
+                .any(|line| line.starts_with("profiles_lookup_failures_total{")
+                    && line.contains("route=\"registry_profiles\"")
+                    && line.contains("layer=\"ownership\"")
+                    && line.ends_with(" 2")),
+            "{rendered}"
+        );
+        assert!(state.profile_cache.is_empty());
+        let pointers: Vec<_> = entities
+            .iter()
+            .map(|entity| entity["pointers"][0].as_str().unwrap().to_string())
+            .collect();
+        assert!(
+            super::super::process_and_cache_profiles(&state, &pointers, &entities)
+                .await
+                .is_err()
+        );
+        assert!(
+            state.profile_cache.is_empty(),
+            "a failed later chunk must not cache any partial result"
+        );
+        server.abort();
     }
 
     #[tokio::test]
@@ -693,6 +835,51 @@ mod tests {
                     body[0]["thumbnailUrl"],
                     format!("http://localhost/profile-images/entities/{entity_id}/face.png")
                 );
+            }
+        }
+        let bounded_app = crate::market::router(state.clone())
+            .nest("/asset-bundle-registry", router(state.clone()));
+        for path in [
+            "/asset-bundle-registry/profiles",
+            "/asset-bundle-registry/profiles/metadata",
+            "/lambdas/profiles/metadata",
+        ] {
+            for before_known in [999, 1000] {
+                let mut ids: Vec<String> = (0..before_known)
+                    .flat_map(|i| {
+                        [
+                            format!("0x{tag}{:08x}", i + 1),
+                            format!("0X{tag}{:08X}", i + 1),
+                        ]
+                    })
+                    .collect();
+                ids.push(pointer.clone());
+                let response = bounded_app
+                    .clone()
+                    .oneshot(
+                        Request::post(path)
+                            .header("content-type", "application/json")
+                            .body(Body::from(json!({"ids": ids}).to_string()))
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+                assert_eq!(response.status(), StatusCode::OK);
+                let body: Vec<Value> = serde_json::from_slice(
+                    &to_bytes(response.into_body(), 1024 * 1024).await.unwrap(),
+                )
+                .unwrap();
+                assert_eq!(
+                    body.len(),
+                    1,
+                    "{path}: valid pointer beyond first chunk is retained"
+                );
+                let actual = if path.ends_with("/metadata") {
+                    &body[0]["pointer"]
+                } else {
+                    &body[0]["avatars"][0]["userId"]
+                };
+                assert_eq!(actual, &json!(pointer));
             }
         }
         let unavailable = std::sync::Arc::new(MarketplaceState::new(

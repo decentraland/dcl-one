@@ -818,6 +818,16 @@ async fn profiles_metadata_validates_ids_as_asset_bundle_registry() {
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(resp, json!({ "error": "Bad request", "message": msg }));
     }
+    let mut ids: Vec<Value> = (0..30_000).map(|i| json!(format!("a{i}"))).collect();
+    ids.push(Value::Null);
+    assert!(json!({"ids": ids}).to_string().len() < 256 * 1024);
+    let (status, _) = post_json(
+        router(state.clone()),
+        "/lambdas/profiles/metadata",
+        json!({"ids": ids}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
     let (status, resp) = post_json(
         router(state.clone()),
         "/lambdas/profiles/metadata",

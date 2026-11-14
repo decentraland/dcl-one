@@ -1,4 +1,4 @@
-//! Registry gateway without a response cache. Profiles are served by Catalyst
+//! Registry gateway with uncached source responses. Profiles are served by Catalyst
 //! itself (`shop::market::profiles::registry`); the read routes below go to the
 //! backend named by `EXPLORER_REGISTRY_SOURCE_URL`:
 //!
@@ -11,7 +11,7 @@
 //!   with 503.
 //!
 //! `GET /denylist` merges the source's list with this node's
-//! `content.denylist` rows ([`denylist`]).
+//! `content.denylist` rows ([`denylist`]), cached briefly in [`LocalDenylist`].
 //!
 //! The boot reads check the Registry's request rule first, with every source
 //! ([`pointers_rule`]): a body without a non-empty `pointers` answers the
@@ -54,7 +54,7 @@ use super::{Settings, Shared};
 /// far smaller; this bounds the worst case at `IN_FLIGHT * BODY_CAP` (512 MiB).
 const BODY_CAP: usize = 8 << 20;
 /// Backend requests in flight at once, so the buffered responses stay bounded
-/// at `IN_FLIGHT * BODY_CAP`. Nothing is cached: every read is a backend call.
+/// at `IN_FLIGHT * BODY_CAP`. Every configured-source read is a backend call.
 const IN_FLIGHT: usize = 64;
 /// How long a read waits for a free slot before it is refused with 503: a
 /// boot burst queues briefly instead of failing at once.
@@ -431,27 +431,37 @@ async fn read(
 const LOCAL_DENYLIST_TTL: Duration = Duration::from_secs(5);
 
 /// This node's `content.denylist` rows for `GET /denylist`, read at most once
-/// per [`LOCAL_DENYLIST_TTL`] and by one request at a time: the route is
-/// public and the table may hold up to `MAX_ENTRIES` rows.
+/// per [`LOCAL_DENYLIST_TTL`] and by one request at a time, including failures.
+/// The existing shared API state owns this cache; source responses, credentials
+/// and request headers never enter it.
 #[derive(Default)]
-pub struct LocalDenylist(
-    tokio::sync::Mutex<Option<(std::time::Instant, Arc<Vec<crate::content::denylist::Row>>)>>,
-);
+pub struct LocalDenylist {
+    cached: tokio::sync::Mutex<Option<(std::time::Instant, LocalRows)>>,
+    #[cfg(test)]
+    loads: std::sync::atomic::AtomicUsize,
+}
+
+type LocalRows = Result<Arc<Vec<crate::content::denylist::Row>>, ()>;
 
 impl LocalDenylist {
-    async fn rows(
-        &self,
-        pool: &sqlx::PgPool,
-    ) -> sqlx::Result<Arc<Vec<crate::content::denylist::Row>>> {
-        let mut slot = self.0.lock().await;
+    async fn rows(&self, pool: &sqlx::PgPool) -> LocalRows {
+        let mut slot = self.cached.lock().await;
         if let Some((at, rows)) = slot.as_ref()
             && at.elapsed() < LOCAL_DENYLIST_TTL
         {
-            return Ok(rows.clone());
+            return rows.clone();
         }
-        let rows = Arc::new(crate::content::denylist::rows(pool).await?);
+        #[cfg(test)]
+        self.loads
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let rows = crate::content::denylist::rows(pool)
+            .await
+            .map(Arc::new)
+            .map_err(|error| {
+                tracing::warn!(%error, "content.denylist read failed");
+            });
         *slot = Some((std::time::Instant::now(), rows.clone()));
-        Ok(rows)
+        rows
     }
 }
 
@@ -505,8 +515,7 @@ async fn denylist(
     };
     let local = match state.registry_denylist.rows(&state.content.pool).await {
         Ok(rows) => rows,
-        Err(error) => {
-            tracing::warn!(%error, "content.denylist read failed");
+        Err(()) => {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({"error":"Internal Server Error"})),
@@ -738,6 +747,220 @@ mod tests {
     use axum::http::{Request, StatusCode};
     use serde_json::Value;
     use tower::ServiceExt;
+
+    use std::sync::Arc;
+    use std::sync::atomic::Ordering;
+
+    use axum::http::{HeaderMap, Method, Uri};
+    use axum::response::IntoResponse;
+    use serde_json::json;
+
+    async fn denylist_app(source: String) -> (axum::Router, super::Shared) {
+        let mut settings = super::super::Settings::for_tests(super::super::Sources::defaults());
+        settings.sources.registry = source;
+        let state = super::super::tests::node_without_db_state(settings).await;
+        state.content.pool.close().await;
+        (super::routes(state.clone()), state)
+    }
+
+    async fn cached_rows(state: &super::Shared, rows: Vec<crate::content::denylist::Row>) {
+        *state.registry_denylist.cached.lock().await =
+            Some((std::time::Instant::now(), Ok(Arc::new(rows))));
+    }
+
+    async fn expire(cache: &super::LocalDenylist) {
+        cache.cached.lock().await.as_mut().unwrap().0 =
+            std::time::Instant::now() - super::LOCAL_DENYLIST_TTL;
+    }
+
+    async fn denylist_request(
+        app: &axum::Router,
+        method: &str,
+        uri: &str,
+        origin: bool,
+    ) -> (StatusCode, HeaderMap, Vec<u8>) {
+        let mut request = Request::builder()
+            .method(method)
+            .uri(uri)
+            .header("authorization", "Bearer test-only")
+            .header("if-none-match", "\"old\"");
+        if origin {
+            request = request.header("origin", "https://client.example.org");
+        }
+        let response = app
+            .clone()
+            .oneshot(request.body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let status = response.status();
+        let headers = response.headers().clone();
+        let bytes = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap()
+            .to_vec();
+        (status, headers, bytes)
+    }
+
+    /// Failure caching also bounds anonymous polls during a database outage;
+    /// expiry retries the database and never serves expired successful rows.
+    #[tokio::test]
+    async fn denylist_handler_coalesces_database_failures_and_retries_after_expiry() {
+        let (app, state) = denylist_app(String::new()).await;
+        let cache = &state.registry_denylist;
+        let mut tasks = tokio::task::JoinSet::new();
+        for _ in 0..32 {
+            let app = app.clone();
+            tasks.spawn(async move { denylist_request(&app, "GET", "/denylist", false).await });
+        }
+        while let Some(response) = tasks.join_next().await {
+            let (status, _, bytes) = response.unwrap();
+            assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+            assert_eq!(
+                serde_json::from_slice::<Value>(&bytes).unwrap(),
+                json!({"error":"Internal Server Error"})
+            );
+        }
+        assert_eq!(cache.loads.load(Ordering::Relaxed), 1);
+        expire(cache).await;
+        assert_eq!(
+            denylist_request(&app, "GET", "/denylist", false).await.0,
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
+        assert_eq!(cache.loads.load(Ordering::Relaxed), 2);
+    }
+
+    #[tokio::test]
+    async fn denylist_handler_cached_local_rows_expire_and_do_not_share_headers_or_state() {
+        let (app, state) = denylist_app(String::new()).await;
+        let cache = &state.registry_denylist;
+        cached_rows(
+            &state,
+            vec![crate::content::denylist::Row {
+                id: "QmCase".into(),
+                added_by: "0xoperator".into(),
+                added_at_ms: 2000,
+            }],
+        )
+        .await;
+        for origin in [true, false, true] {
+            let (status, headers, bytes) = denylist_request(&app, "GET", "/denylist", origin).await;
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(headers.contains_key("access-control-allow-origin"), origin);
+            assert_eq!(
+                serde_json::from_slice::<Value>(&bytes).unwrap(),
+                json!([{
+                    "entity_id":"QmCase", "reason":null, "created_by":"0xoperator",
+                    "created_at":"2000", "updated_at":"2000"
+                }])
+            );
+        }
+        assert_eq!(cache.loads.load(Ordering::Relaxed), 0);
+        let shared_router = super::routes(state.clone());
+        assert_eq!(
+            denylist_request(&shared_router, "GET", "/denylist", false)
+                .await
+                .0,
+            StatusCode::OK
+        );
+        let (other, _) = denylist_app(String::new()).await;
+        assert_eq!(
+            denylist_request(&other, "GET", "/denylist", false).await.0,
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
+        expire(cache).await;
+        assert_eq!(
+            denylist_request(&app, "GET", "/denylist", false).await.0,
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
+        assert_eq!(cache.loads.load(Ordering::Relaxed), 1);
+    }
+
+    #[tokio::test]
+    async fn denylist_handler_head_and_case_sensitive_merge_never_cache_the_source() {
+        use std::future::IntoFuture;
+        async fn source(method: Method, uri: Uri, headers: HeaderMap) -> axum::response::Response {
+            assert_eq!(method, Method::GET);
+            assert!(!headers.contains_key("if-none-match"));
+            assert!(!headers.contains_key("authorization"));
+            let stamp = if uri.query() == Some("new") {
+                "3001"
+            } else {
+                "3000"
+            };
+            axum::Json(json!([
+                {"entity_id":"qmcase","created_at":"1000"},
+                {"entity_id":"shared","created_at":stamp}
+            ]))
+            .into_response()
+        }
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server =
+            tokio::spawn(axum::serve(listener, axum::Router::new().fallback(source)).into_future());
+        let (app, state) = denylist_app(format!("http://{addr}")).await;
+        cached_rows(
+            &state,
+            vec![
+                crate::content::denylist::Row {
+                    id: "QmCase".into(),
+                    added_by: "0xop".into(),
+                    added_at_ms: 2000,
+                },
+                crate::content::denylist::Row {
+                    id: "shared".into(),
+                    added_by: "0xop".into(),
+                    added_at_ms: 4000,
+                },
+            ],
+        )
+        .await;
+        let (status, _, bytes) = denylist_request(&app, "HEAD", "/denylist", false).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(bytes.is_empty());
+        for (query, stamp) in [("", "3000"), ("?new", "3001")] {
+            let (status, _, bytes) =
+                denylist_request(&app, "GET", &format!("/denylist{query}"), false).await;
+            assert_eq!(status, StatusCode::OK);
+            let rows: Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(
+                rows.as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|row| row["entity_id"].as_str().unwrap())
+                    .collect::<Vec<_>>(),
+                ["shared", "QmCase", "qmcase"]
+            );
+            assert_eq!(rows[0]["created_at"], stamp);
+            assert!(
+                rows[0].get("created_by").is_none(),
+                "the exact source duplicate wins"
+            );
+        }
+        assert_eq!(state.registry_denylist.loads.load(Ordering::Relaxed), 0);
+        let (refused, refused_state) =
+            denylist_app("https://user:secret@registry.example.org".into()).await;
+        cached_rows(&refused_state, vec![]).await;
+        assert_eq!(
+            denylist_request(&refused, "GET", "/denylist", false)
+                .await
+                .0,
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        server.abort();
+        let _ = server.await;
+        // A fresh source has no pooled connection to the earlier mock server.
+        let closed = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let closed_addr = closed.local_addr().unwrap();
+        drop(closed);
+        let (unreachable, unreachable_state) = denylist_app(format!("http://{closed_addr}")).await;
+        cached_rows(&unreachable_state, vec![]).await;
+        assert_eq!(
+            denylist_request(&unreachable, "GET", "/denylist", false)
+                .await
+                .0,
+            StatusCode::BAD_GATEWAY
+        );
+    }
 
     /// The source's entries stay byte for byte; an operator row the source
     /// does not name joins in the Registry's key order; an id both name

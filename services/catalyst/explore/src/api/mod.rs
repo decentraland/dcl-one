@@ -1,6 +1,6 @@
 //! The explorer-api surface unity-explorer hits at boot, served in-process:
 //! the realm-provider about doc over this node's own sync status
-//! ([`realm_provider`]), the uncached asset-bundle registry gateway
+//! ([`realm_provider`]), the asset-bundle Registry gateway
 //! ([`registry`]), and four mirrors with a local overlay and a
 //! persisted pass marker: dcl-lists ([`lists`]), the config denylist
 //! ([`denylist`]), the feature flags ([`feature_flags`]) and the
@@ -67,7 +67,7 @@ pub struct Sources {
     pub denylist: String,
     /// The feature-flags document itself (`.../explorer.json`).
     pub feature_flags: String,
-    /// Registry reads without a cache (see [`registry`]): a loopback URL is the
+    /// Uncached Registry source reads (see [`registry`]): a loopback URL is the
     /// local abgen runtime, any other a public Registry; empty serves `200 []`
     /// to the boot reads.
     pub registry: String,

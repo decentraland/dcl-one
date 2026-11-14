@@ -78,9 +78,9 @@ pub(super) fn count_lookup_failure(route: &'static str, layer: &'static str) {
 }
 
 /// A pointer that can name a profile: an address (`0x` and 40 hex digits,
-/// lowercased by the caller) or a curated `default<n>` look. The uncapped
-/// routes look up only these, so the body limit bounds a request at about
-/// 5,800 lookups, and an id that cannot be a profile costs nothing.
+/// lowercased by the caller) or `default` followed by one to three digits.
+/// The body bounds address lookups; the default namespace has 1,110 distinct
+/// spellings. Other nonempty strings remain valid input but are not looked up.
 pub(super) fn is_profile_pointer(pointer: &str) -> bool {
     let address = pointer
         .strip_prefix("0x")
@@ -950,6 +950,8 @@ mod tests {
             "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd",
             "default1",
             "default160",
+            "default000",
+            "default999",
         ] {
             assert!(is_profile_pointer(pointer), "{pointer}");
         }
@@ -1040,6 +1042,127 @@ mod tests {
         let resp = super::super::lambdas_catalog::outfits(State(with), Path(address.clone())).await;
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
         assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+        let _ = std::fs::remove_dir_all(tmp);
+    }
+
+    /// Actual upstream reads filter invalid pointers, retain every valid pointer,
+    /// cap each fill and reuse negative results on repeated HTTP requests.
+    #[tokio::test]
+    async fn registry_profile_routes_bound_actual_read_through_requests() {
+        use axum::body::{Body, to_bytes};
+        use axum::http::Request;
+        use axum::routing::post;
+        use tower::ServiceExt;
+
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
+            return;
+        };
+        let requests = Arc::new(std::sync::Mutex::new(Vec::<Vec<String>>::new()));
+        let observed = requests.clone();
+        let peer = axum::Router::new().route(
+            "/content/entities/active",
+            post(move |Json(body): Json<Value>| {
+                let observed = observed.clone();
+                async move {
+                    let pointers = serde_json::from_value(body["pointers"].clone()).unwrap();
+                    observed.lock().unwrap().push(pointers);
+                    Json(json!([]))
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, peer).await.unwrap() });
+        let tmp = std::env::temp_dir().join(format!(
+            "catalyst-profile-budget-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let storage = Arc::new(crate::storage::Storage::from_config(&tmp).await.unwrap());
+        let read_through = Arc::new(crate::content::read_through::ReadThrough::new(
+            pool.clone(),
+            storage,
+            reqwest::Client::new(),
+            vec![format!("http://{address}/content")],
+            None,
+            crate::content::read_through::Fills::new(1, Duration::from_secs(30)),
+            crate::content::sync_deployer::SyncValidation::AuthChainOnly,
+        ));
+        let state = Arc::new(
+            MarketplaceState::new(
+                pool,
+                crate::http::Outbound::for_tests(),
+                super::super::Settings::for_tests(),
+            )
+            .with_read_through(Some(read_through)),
+        );
+        let app = super::super::router(state.clone())
+            .nest("/asset-bundle-registry", registry::router(state));
+        let pointer_tag = uuid::Uuid::new_v4().simple().to_string();
+        for (route_index, route) in [
+            "/asset-bundle-registry/profiles",
+            "/asset-bundle-registry/profiles/metadata",
+            "/lambdas/profiles/metadata",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            requests.lock().unwrap().clear();
+            let short_ids: Vec<_> = (0..30_000).map(|i| format!("a{i}")).collect();
+            let valid_ids: Vec<_> = (0..1001)
+                .map(|i| format!("0x{pointer_tag}{route_index:04x}{i:04x}"))
+                .chain([format!("default{}", route_index + 1)])
+                .collect();
+            for ids in [&short_ids, &valid_ids] {
+                let mut request_ids = ids.clone();
+                if ids.len() == valid_ids.len() {
+                    request_ids.push(valid_ids[0].to_uppercase());
+                    request_ids.push("not-a-profile".into());
+                }
+                let body = json!({"ids": request_ids}).to_string();
+                assert!(body.len() < 256 * 1024);
+                for _ in 0..2 {
+                    let response = app
+                        .clone()
+                        .oneshot(
+                            Request::post(route)
+                                .header("content-type", "application/json")
+                                .body(Body::from(body.clone()))
+                                .unwrap(),
+                        )
+                        .await
+                        .unwrap();
+                    assert_eq!(response.status(), StatusCode::OK);
+                    assert_eq!(
+                        to_bytes(response.into_body(), 1024).await.unwrap().as_ref(),
+                        b"[]"
+                    );
+                }
+                let calls = requests.lock().unwrap();
+                if ids.len() == short_ids.len() {
+                    assert!(
+                        calls.is_empty(),
+                        "{route}: invalid pointers must not reach upstream"
+                    );
+                } else {
+                    assert_eq!(
+                        calls.len(),
+                        2,
+                        "{route}: two bounded fills; repeat uses negative cache"
+                    );
+                    assert!(calls.iter().all(|call| call.len() <= PROFILE_LOOKUP_CHUNK));
+                    let mut actual: Vec<_> = calls.iter().flatten().cloned().collect();
+                    actual.sort();
+                    let mut expected = valid_ids.clone();
+                    expected.sort();
+                    assert_eq!(
+                        actual, expected,
+                        "{route}: every valid pointer is queried once"
+                    );
+                }
+            }
+        }
+        server.abort();
         let _ = std::fs::remove_dir_all(tmp);
     }
 

@@ -2666,10 +2666,12 @@ async fn registry_denylist_handler_answers_source_failures_and_local_read_errors
         match (method, uri.query()) {
             (_, Some("case=busy")) => (
                 StatusCode::SERVICE_UNAVAILABLE,
+                [("retry-after", "3")],
                 Json(json!({"ok":false,"message":"busy"})),
             )
                 .into_response(),
             (_, Some("case=object")) => Json(json!({"not":"an array"})).into_response(),
+            (_, Some("case=malformed")) => "{".into_response(),
             // Only a GET gets this distinct status, so HEAD must arrive as GET.
             (Method::GET, Some("case=method")) => StatusCode::CONFLICT.into_response(),
             (_, Some("case=method")) => StatusCode::IM_A_TEAPOT.into_response(),
@@ -2683,15 +2685,19 @@ async fn registry_denylist_handler_answers_source_failures_and_local_read_errors
     let app = router(node.state.clone());
     let path = "/asset-bundle-registry/denylist";
 
-    let (status, _, body) = call(&app, "GET", &format!("{path}?case=busy"), None).await;
+    let (status, headers, body) = call(&app, "GET", &format!("{path}?case=busy"), None).await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(headers["retry-after"], "3");
     assert_eq!(
         serde_json::from_slice::<Value>(&body).unwrap(),
         json!({"ok":false,"message":"busy"})
     );
     let (status, _, _) = call(&app, "GET", &format!("{path}?case=object"), None).await;
     assert_eq!(status, StatusCode::BAD_GATEWAY);
-    let (status, _, _) = call(&app, "HEAD", &format!("{path}?case=method"), None).await;
+    let (status, _, _) = call(&app, "GET", &format!("{path}?case=malformed"), None).await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY);
+    let (status, _, body) = call(&app, "HEAD", &format!("{path}?case=method"), None).await;
+    assert!(body.is_empty());
     assert_eq!(
         status,
         StatusCode::CONFLICT,
@@ -2716,4 +2722,53 @@ async fn registry_denylist_handler_answers_source_failures_and_local_read_errors
         StatusCode::INTERNAL_SERVER_ERROR,
         "without a source the local rows are the answer, so their read failing is a 500"
     );
+}
+
+#[tokio::test]
+async fn registry_denylist_reads_local_rows_without_a_source_and_reuses_them() {
+    let Some(db) = scratch_database().await else {
+        return;
+    };
+    let mut settings = Settings::for_tests(Sources::defaults());
+    settings.sources.registry.clear();
+    let node = node_with_db(settings, db.pool.clone()).await;
+    for id in ["QmCase", "0,0", "profile-pointer"] {
+        crate::content::denylist::add(&db.pool, id, "0xoperator")
+            .await
+            .unwrap();
+    }
+    let app = router(node.state);
+    let path = "/asset-bundle-registry/denylist";
+    let (status, _, first) = call(&app, "GET", path, None).await;
+    assert_eq!(status, StatusCode::OK);
+    let rows: Value = serde_json::from_slice(&first).unwrap();
+    let ids: BTreeSet<_> = rows
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| row["entity_id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, BTreeSet::from(["QmCase", "0,0", "profile-pointer"]));
+    for row in rows.as_array().unwrap() {
+        assert_eq!(row["created_by"], "0xoperator");
+        assert!(row["reason"].is_null());
+        assert_eq!(row["created_at"], row["updated_at"]);
+    }
+    // Closing the pool makes another SELECT fail, so every concurrent success
+    // must come from this router's previously loaded local rows.
+    db.pool.close().await;
+    let mut requests = tokio::task::JoinSet::new();
+    for _ in 0..16 {
+        let app = app.clone();
+        requests.spawn(async move { call(&app, "GET", path, None).await });
+    }
+    while let Some(response) = requests.join_next().await {
+        let (status, _, body) = response.unwrap();
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, first);
+    }
+    let (status, _, body) = call(&app, "HEAD", path, None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body.is_empty());
+    db.teardown().await;
 }
