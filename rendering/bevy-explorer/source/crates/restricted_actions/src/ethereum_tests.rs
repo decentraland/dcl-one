@@ -313,23 +313,43 @@ fn legacy_signing_wallet_payload_matches_displayed_utf8_text_and_engine_account(
 }
 
 #[test]
+#[cfg(not(target_arch = "wasm32"))]
 fn granting_permission_rechecks_wallet_when_user_becomes_guest() {
     let (mut app, scene) = app();
+    let root = wallet::local_guest::new_root_key();
+    let now_millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis()
+        .try_into()
+        .unwrap();
+    let (ephemeral, delegates) = wallet::local_guest::sign_identity(&root, now_millis).unwrap();
     app.world_mut().resource_mut::<Wallet>().finalize_remote(
-        Address::ZERO,
-        Address::ZERO,
-        vec![],
+        root.address(),
+        ephemeral.address(),
+        delegates,
         false,
     );
+    let wallet = app.world().resource::<Wallet>();
+    assert_eq!(wallet.address(), Some(root.address()));
+    assert!(!wallet.is_guest());
+    assert!(!wallet.is_guest_account());
     let mut receiver = request(&mut app, scene, "legacy_sign");
     app.update();
+    assert!(matches!(
+        receiver.try_recv(),
+        Err(tokio::sync::oneshot::error::TryRecvError::Empty)
+    ));
     let prompt = app
         .world_mut()
         .resource_mut::<PermissionManager>()
         .pending
         .pop_front()
         .unwrap();
+    assert_eq!(prompt.ty, PermissionType::Web3);
+    assert_eq!(prompt.scene, scene);
     app.world_mut().resource_mut::<Wallet>().finalize_as_guest();
+    assert!(app.world().resource::<Wallet>().is_guest());
     prompt.sender.send(true);
     app.update();
     assert_eq!(
