@@ -203,6 +203,9 @@ web and on the standalone, with no Playwright
 
 State, in every build:
 
+- `/legacy_social`: `subscribedScenes`, `queuedEvents`, `resyncScenes` and `trackedPeers`.
+  Each scene's legacy avatar queue holds at most 1024 events. Overflow schedules a current-state
+  recovery on the next pull. The Legacy avatar events debug section reads these counts.
 - `/world_state`: JSON with `inWorld` and its parts (signed in, world hold, realm connected, out
   of world), the position, and `arrivals`, the player's returns to the world. Every teleport and
   realm change takes the player out of world first, so a test reads `arrivals` before one and

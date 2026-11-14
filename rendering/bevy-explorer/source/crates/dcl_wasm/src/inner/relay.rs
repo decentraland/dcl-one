@@ -14,7 +14,7 @@ use std::{cell::RefCell, collections::VecDeque};
 use serde::Deserialize;
 
 use common::{
-    rpc::{rmp_encode, IpcMessage, ResponseContext, RpcCall, RpcResultSender, ENGINE_IPC_CONTEXT},
+    rpc::{rmp_encode, IpcMessage, ResponseContext, ENGINE_IPC_CONTEXT},
     structs::GlobalCrdtStateUpdate,
 };
 use dcl_js::KillFlag;
@@ -27,7 +27,10 @@ use super::{
     relay_proto::{RelayInit, ToEngine, ToScene},
     SceneInitializationData, SCENE_QUEUE,
 };
-use crate::tick_limits::tick_limit_broken;
+use crate::{
+    immediate_rpc::{ImmediateDispatch, ImmediateRpcWindow},
+    tick_limits::tick_limit_broken,
+};
 
 // swapped for the copy module's and B's exports in a relay worker (see relay_imports.js)
 #[wasm_bindgen(module = "/src/relay_imports.js")]
@@ -71,11 +74,9 @@ struct Relay {
     runtime: tokio::runtime::Runtime,
     // scene ticks the engine is ready for: its first, then one per engine tick delivered
     tick_credits: u32,
-    // a scene tick that arrived before the engine's; nothing more is pulled until it goes
-    held_tick: Option<SceneResponse>,
-    // the reply channel of an immediate call the engine hasn't answered; nothing more is pulled
-    // until it closes
-    awaiting_reply: Option<u64>,
+    // one response waiting for renderer capacity or tick credit; ingress pauses until sent
+    held_response: Option<SceneResponse>,
+    immediate: ImmediateRpcWindow,
     // engine requests the scene hasn't answered: snapshots, and the slot count of each
     // allocation in order; a reply without one ends the scene
     snapshot_requests: u32,
@@ -99,29 +100,53 @@ impl Relay {
         count(|s| s.rejected += 1.0);
         if !self.ended {
             self.ended = true;
-            let _ = self.renderer_sender.try_send(SceneResponse::Error(format!(
+            self.immediate.clear();
+            // Ending discards unfinished scene work, but its terminal error must survive
+            // renderer backpressure before the worker tears this relay down.
+            self.held_response = None;
+            self.forward(SceneResponse::Error(format!(
                 "scene ended by the relay: {reason}"
             )));
         }
     }
 
     fn forward(&mut self, response: SceneResponse) -> bool {
-        let sent = self.renderer_sender.try_send(response).is_ok();
-        if !sent {
-            count(|s| s.failures += 1.0);
+        match crate::immediate_rpc::forward_renderer_response(
+            &self.renderer_sender,
+            response,
+            &mut self.tick_credits,
+            &mut self.held_response,
+        ) {
+            Ok(forwarded) => forwarded,
+            Err(_) => {
+                // A disconnected renderer cannot receive a terminal error either.
+                count(|s| s.failures += 1.0);
+                self.ended = true;
+                self.immediate.clear();
+                self.held_response = None;
+                false
+            }
         }
-        sent
     }
 
-    // forward a scene tick if the engine is ready for it, else hold it. false if held.
-    fn forward_tick(&mut self, response: SceneResponse) -> bool {
-        if self.tick_credits == 0 {
-            self.held_tick = Some(response);
-            return false;
+    fn forward_immediate(&mut self) -> bool {
+        loop {
+            match self.immediate.forward_next(
+                &self.renderer_sender,
+                ipc_channel_open,
+                ipc_channel_exists,
+            ) {
+                Ok(ImmediateDispatch::Forwarded) => continue,
+                Ok(ImmediateDispatch::Idle) => return true,
+                // Stop ingress until the renderer drains; a following tick must not overtake
+                // an accepted request held by downstream backpressure.
+                Ok(ImmediateDispatch::Blocked) => return false,
+                Err(reason) => {
+                    self.end(reason);
+                    return false;
+                }
+            }
         }
-        self.tick_credits -= 1;
-        self.forward(response);
-        true
     }
 }
 
@@ -156,12 +181,28 @@ fn with_relay<R>(f: impl FnOnce(&mut Relay) -> R) -> Option<R> {
         .flatten()
 }
 
-fn ipc_channel_open(id: u64) -> bool {
+fn ipc_channel_exists(id: u64) -> bool {
     ENGINE_IPC_CONTEXT
         .try_with(|ctx| {
             ctx.try_borrow().ok().and_then(|ctx| {
                 ctx.as_ref()
                     .map(|ctx| ctx.ipc_channel_registry.contains_key(&id))
+            })
+        })
+        .ok()
+        .flatten()
+        .unwrap_or(false)
+}
+
+fn ipc_channel_open(id: u64) -> bool {
+    ENGINE_IPC_CONTEXT
+        .try_with(|ctx| {
+            ctx.try_borrow().ok().and_then(|ctx| {
+                ctx.as_ref().map(|ctx| {
+                    ctx.ipc_channel_registry
+                        .get(&id)
+                        .is_some_and(|token| !token.is_cancelled())
+                })
             })
         })
         .ok()
@@ -289,8 +330,8 @@ pub fn relay_init() -> u32 {
         super_user,
         runtime,
         tick_credits: 1,
-        held_tick: None,
-        awaiting_reply: None,
+        held_response: None,
+        immediate: ImmediateRpcWindow::default(),
         snapshot_requests: 0,
         allocation_requests: VecDeque::new(),
         ended: false,
@@ -325,7 +366,8 @@ pub fn relay_scene_id() -> u64 {
 
 #[wasm_bindgen]
 pub fn relay_killed() -> u32 {
-    with_relay(|relay| relay.ended || relay.kill_flag.killed()).unwrap_or(true) as u32
+    with_relay(|relay| (relay.ended && relay.held_response.is_none()) || relay.kill_flag.killed())
+        .unwrap_or(true) as u32
 }
 
 /// The scene runtime threw under a relay call (the worker caught it before it reached A).
@@ -339,6 +381,9 @@ pub fn relay_fail() {
 pub fn relay_pump() -> u32 {
     with_relay(|relay| {
         if relay.ended {
+            if let Some(held) = relay.held_response.take() {
+                relay.forward(held);
+            }
             return 0;
         }
         let _runtime = relay.runtime.enter();
@@ -397,16 +442,18 @@ pub fn relay_pump() -> u32 {
         }
 
         // scene -> engine, pulled only as fast as the engine ticks the scene
-        if let Some(held) = relay.held_tick.take() {
-            if !relay.forward_tick(held) {
+        if let Some(held) = relay.held_response.take() {
+            if !relay.forward(held) {
                 return moved;
             }
         }
-        if let Some(id) = relay.awaiting_reply {
-            if ipc_channel_open(id) {
-                return moved;
-            }
-            relay.awaiting_reply = None;
+        if !relay.forward_immediate() {
+            return moved;
+        }
+        // File reads retain their existing barrier. The parallel query window never
+        // stops ingress, so cancellations behind a full query window are still handled.
+        if relay.immediate.file_pending(ipc_channel_exists) {
+            return moved;
         }
         relay_b_pump();
         for _ in 0..MAX_MESSAGES_PER_PUMP {
@@ -428,32 +475,30 @@ pub fn relay_pump() -> u32 {
                         relay.end(reason);
                         break;
                     }
-                    if !relay.forward_tick(response) {
+                    if let Err(reason) = relay.immediate.tick(calls.len()) {
+                        relay.end(reason);
+                        break;
+                    }
+                    if !relay.forward(response) {
                         break;
                     }
                 }
-                // immediate calls go one at a time: nothing more is pulled until the engine
-                // answers (or drops) this one. readFile is the only one.
-                Ok(ToEngine::Response(
-                    response @ SceneResponse::ImmediateRpcCall(RpcCall::ReadFile { .. }),
-                )) => {
-                    let SceneResponse::ImmediateRpcCall(RpcCall::ReadFile {
-                        response: RpcResultSender::Remote { id, .. },
-                        ..
-                    }) = &response
-                    else {
-                        relay.end("immediate call without a reply channel");
+                Ok(ToEngine::Response(SceneResponse::ImmediateRpcCall(call))) => {
+                    if let Err(reason) = relay.immediate.admit(
+                        call,
+                        bytes.len(),
+                        ipc_channel_open,
+                        ipc_channel_exists,
+                    ) {
+                        relay.end(reason);
                         break;
-                    };
-                    let id = *id;
-                    if relay.forward(response) {
-                        relay.awaiting_reply = Some(id);
                     }
-                    break;
-                }
-                Ok(ToEngine::Response(SceneResponse::ImmediateRpcCall(_))) => {
-                    relay.end("unexpected immediate call");
-                    break;
+                    if !relay.forward_immediate() {
+                        break;
+                    }
+                    if relay.immediate.file_pending(ipc_channel_exists) {
+                        break;
+                    }
                 }
                 Ok(ToEngine::Response(response @ SceneResponse::CrdtSnapshot(..))) => {
                     if relay.snapshot_requests == 0 {
@@ -461,7 +506,9 @@ pub fn relay_pump() -> u32 {
                         break;
                     }
                     relay.snapshot_requests -= 1;
-                    relay.forward(response);
+                    if !relay.forward(response) {
+                        break;
+                    }
                 }
                 Ok(ToEngine::Response(SceneResponse::EntityAllocated(results))) => {
                     // one result per requested slot
@@ -469,7 +516,9 @@ pub fn relay_pump() -> u32 {
                         relay.end("unrequested allocation");
                         break;
                     }
-                    relay.forward(SceneResponse::EntityAllocated(results));
+                    if !relay.forward(SceneResponse::EntityAllocated(results)) {
+                        break;
+                    }
                 }
                 // the scene's last word: forwarded once, then the scene is over
                 Ok(ToEngine::Response(SceneResponse::Error(mut message))) => {
@@ -480,15 +529,18 @@ pub fn relay_pump() -> u32 {
                         }
                         message.truncate(end);
                     }
-                    relay.forward(SceneResponse::Error(message));
                     relay.ended = true;
+                    relay.immediate.clear();
+                    relay.forward(SceneResponse::Error(message));
                     break;
                 }
                 Ok(ToEngine::Response(SceneResponse::CompareSnapshot(_))) if !relay.testing => (),
                 // no inspector on web
                 Ok(ToEngine::Response(SceneResponse::WaitingForInspector)) => (),
                 Ok(ToEngine::Response(response)) => {
-                    relay.forward(response);
+                    if !relay.forward(response) {
+                        break;
+                    }
                 }
                 Ok(ToEngine::SystemApi(api)) => match relay.super_user.as_ref() {
                     // only the scene the engine made super-user may reach the system api
@@ -549,5 +601,13 @@ pub fn relay_drop() {
         .ok()
         .flatten();
     drop(relay);
-    let _ = ENGINE_IPC_CONTEXT.try_with(|ctx| ctx.try_borrow_mut().map(|mut ctx| ctx.take()));
+    let _ = ENGINE_IPC_CONTEXT.try_with(|ctx| {
+        ctx.try_borrow_mut().map(|mut ctx| {
+            if let Some(context) = ctx.take() {
+                for token in context.ipc_channel_registry.values() {
+                    token.cancel();
+                }
+            }
+        })
+    });
 }

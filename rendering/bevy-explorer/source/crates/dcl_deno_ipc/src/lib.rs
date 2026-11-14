@@ -347,6 +347,14 @@ async fn next_global_update(
     futures_util::future::select_all(recvs).await.0
 }
 
+async fn forward_scene_response(
+    sender: &TaggedSceneResponseSender,
+    id: SceneId,
+    response: SceneResponse,
+) -> bool {
+    sender.send((id, response)).await.is_ok()
+}
+
 pub async fn renderer_ipc_in(mut stream: RecvHalf) {
     while let Ok(len) = stream.read_u64_le().await {
         let mut buffer = vec![0u8; len as usize];
@@ -354,23 +362,18 @@ pub async fn renderer_ipc_in(mut stream: RecvHalf) {
         let msg: SceneToEngine = rmp_serde::from_slice(&buffer).unwrap();
 
         match msg {
-            SceneToEngine::SceneResponse(id, scene_response) => RENDERER_SENDER.with(|sender| {
-                let mut sender = sender.borrow_mut();
-                let sender = sender.as_mut().unwrap();
-                // HEADLESS-ONLY: EXIT_ON_SIDECAR_LOSS marks the orchestrated headless server,
-                // where every scene shares one engine. There, a panic in this IPC task ends
-                // the loop and trips the process exit above — killing the whole engine and
-                // every co-tenant scene. So shed the response instead of panicking: a scene
-                // that outruns the bevy-side drain only stalls itself. Desktop and tests
-                // (flag unset) keep the original panic-on-failure behavior unchanged.
-                if EXIT_ON_SIDECAR_LOSS.load(Ordering::SeqCst) {
-                    if let Err(e) = sender.try_send((id, scene_response)) {
-                        warn!("dropping scene response: renderer channel unavailable ({e})");
-                    }
-                } else {
-                    sender.try_send((id, scene_response)).unwrap();
+            SceneToEngine::SceneResponse(id, scene_response) => {
+                let sender = RENDERER_SENDER.with(|sender| sender.borrow().clone());
+                let Some(sender) = sender else {
+                    break;
+                };
+                // The main frame loop drains this bounded queue without waiting for RPC
+                // replies. Backpressure delays inbound control only until that drain;
+                // KillScene remains on the independent engine-to-sidecar stream.
+                if !forward_scene_response(&sender, id, scene_response).await {
+                    break;
                 }
-            }),
+            }
             SceneToEngine::IpcMessage(id, ipc_message) => {
                 let IpcMessage::Closed = ipc_message else {
                     warn!("ignoring unexpected ipc data message for channel {id}");
@@ -457,4 +460,60 @@ pub async fn write_msg<T: Serialize>(stream: &mut SendHalf, value: &T) {
         .await
         .unwrap();
     stream.write_all(&bytes).await.unwrap();
+}
+
+#[cfg(test)]
+mod response_backpressure_tests {
+    use super::*;
+    use common::rpc::{RpcCall, RpcResultSender};
+    use std::time::Duration;
+
+    #[test]
+    fn full_renderer_queue_waits_for_drain_without_losing_the_request() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap();
+        let (response, mut reply) = RpcResultSender::channel();
+        let delivered = runtime.block_on(async {
+            let (sender, mut receiver) = tokio::sync::mpsc::channel(1);
+            sender.try_send((SceneId::DUMMY, SceneResponse::WaitingForInspector)).unwrap();
+            let pending = forward_scene_response(&sender, SceneId::DUMMY,
+                SceneResponse::ImmediateRpcCall(RpcCall::GetUserAccount { response }));
+            tokio::pin!(pending);
+            tokio::select! { biased; _ = &mut pending => panic!("full queue must wait"), _ = tokio::task::yield_now() => () }
+            assert!(matches!(receiver.recv().await.unwrap().1, SceneResponse::WaitingForInspector));
+            assert!(tokio::time::timeout(Duration::from_secs(1), pending).await.unwrap());
+            receiver.recv().await.unwrap().1
+        });
+        let SceneResponse::ImmediateRpcCall(RpcCall::GetUserAccount { response }) = delivered
+        else {
+            panic!("request was lost")
+        };
+        response.send(Some("0xabc".into()));
+        assert_eq!(reply.try_recv().unwrap(), Some("0xabc".into()));
+    }
+
+    #[test]
+    fn closed_renderer_queue_ends_forwarding_and_releases_the_request() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap();
+        let (response, mut reply) = RpcResultSender::channel();
+        runtime.block_on(async {
+            let (sender, receiver) = tokio::sync::mpsc::channel(1);
+            sender.try_send((SceneId::DUMMY, SceneResponse::WaitingForInspector)).unwrap();
+            let pending = forward_scene_response(&sender, SceneId::DUMMY,
+                SceneResponse::ImmediateRpcCall(RpcCall::GetUserAccount { response }));
+            tokio::pin!(pending);
+            tokio::select! { biased; _ = &mut pending => panic!("full queue must wait"), _ = tokio::task::yield_now() => () }
+            drop(receiver);
+            assert!(!tokio::time::timeout(Duration::from_secs(1), pending).await.unwrap());
+        });
+        assert!(matches!(
+            reply.try_recv(),
+            Err(tokio::sync::oneshot::error::TryRecvError::Closed)
+        ));
+    }
 }

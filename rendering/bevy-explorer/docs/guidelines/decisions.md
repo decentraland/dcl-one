@@ -7,6 +7,13 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 
 ## Deliberate divergences from Unity
 
+- **Legacy Ethereum response envelopes follow Protocol.** `getUserAccount` returns
+  `{address}` (or `{}` without a connected wallet), and `convertMessageToObject` returns
+  `{dict}`. These are the shapes declared in `ethereum_controller.proto`. The Unity client
+  at [`c78b1f0`](https://github.com/decentraland/unity-explorer/blob/c78b1f0c59545b0d3b1ff43e109fa63997267850/Explorer/Assets/StreamingAssets/Js/Modules/EthereumController.js)
+  returns the bare address and dictionary. Dictionary keys are own properties, including
+  `__proto__`, as a protobuf map requires. Signing uses the existing engine Web3 permission
+  and wallet approval path; a hosted scene has no connected user wallet.
 - **Toon MASK wearables.** Unity alpha-blends after the cutoff, so thin masked lines look
   fine there and fat and black here. Bevy stays glTF-spec-correct (MASK is binary). We don't
   match.
@@ -486,6 +493,32 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   the frame also counts the render world's CPU time up to the submission, which on a CPU-bound
   frame is most of the sample (measurements (evidence supplied for the task)).
   See [GPU time](benchmark.md#gpu-time).
+- **Legacy permission queries report current runtime policy without granting it.** Native
+  queries use the same trusted scene, realm, portable and presence rules as per-use checks;
+  an `Ask` policy reports false and never opens a prompt. Web Fetch and WebSocket report
+  availability for an assigned scene because those browser paths are ungated. Media hostname
+  grants report false because the engine has no such grant store. Actions still pass their
+  existing permission and wallet checks. Scene metadata does not create grants.
+- **Legacy parcel metadata has no asset-bundle URL.** `ParcelIdentity.getParcel` returns the
+  assigned scene's actual identifier, metadata, content mappings and content URL. Its
+  `baseUrlBundles` string is empty: the engine's bundle service serves Bevy artifacts and
+  cannot satisfy the legacy bundle format.
+- **Legacy avatar pulls recover current state after queue overflow.** Each scene owns at most
+  1024 queued events. Overflow causes the next pull to remove previously delivered identities
+  and bootstrap current peers; intermediate positions and transient expressions are not
+  replayed. Public speaking state is sampled from current participants, scoped by both room
+  hash and native context, with private calls excluded. Position indices count received native
+  updates, and expression timestamps record native delivery time.
 - **Bevy stays on the 0.16 fork for now.** Security-relevant dependencies (V8 and deno,
   libwebrtc, ffmpeg, wgpu) get bumped inside it. Whether to ever move the bevy version is an
   open discussion, not a decision.
+- **Legacy reads and signing can resolve during scene startup.** Account, permission and
+  entity-definition reads, signing, and avatar subscription/pulls use the immediate RPC
+  transport, keeping the existing trusted scene identity and action handlers. They do not
+  require a CRDT flush from the caller. Immediate and queued requests share the 1000-call
+  budget between renderer flushes; immediate payloads also share an 80 MiB budget. The web
+  relay independently enforces these limits and retains at most 32 query tasks plus the
+  existing file-read barrier. Retained payloads remain charged until the engine releases
+  their reply channels, even when callers cancel. A pending wallet approval therefore does
+  not block unrelated reads. A full renderer queue retains accepted web requests for retry;
+  native IPC waits for bounded queue capacity. File reads retain their existing ordering.

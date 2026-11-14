@@ -19,6 +19,52 @@ use dcl_types::{
 
 use super::State;
 
+/// Dispatch the response-bearing calls that a scene may await before its next CRDT flush.
+/// The engine still stamps the caller and applies the existing action permissions.
+pub fn send_immediate_rpc(state: &mut impl State, call: RpcCall) -> Result<(), anyhow::Error> {
+    // Upper bounds for the named MessagePack fields, without serializing live sender IDs.
+    let payload = match &call {
+        RpcCall::ReadFile { filename, .. } => filename.len(),
+        RpcCall::GetPermissions { permissions, .. } => permissions.len().saturating_mul(5),
+        RpcCall::EntityDefinition { urn, .. } => urn.len(),
+        RpcCall::SendAsync { body, .. } => body
+            .params
+            .iter()
+            .fold(body.method.len().saturating_add(5), |bytes, value| {
+                bytes.saturating_add(json_request_bytes(value))
+            }),
+        RpcCall::GetUserAccount { .. }
+        | RpcCall::SubscribeLegacyAvatarEvents { .. }
+        | RpcCall::PullLegacyAvatarEvents { .. } => 0,
+        _ => anyhow::bail!("unsupported immediate scene RPC"),
+    };
+    state
+        .borrow_mut::<RpcCalls>()
+        .admit_immediate(payload.saturating_add(128))?;
+    state
+        .borrow_mut::<SceneResponseSender>()
+        .try_send(SceneResponse::ImmediateRpcCall(call))
+        .map_err(|error| anyhow!("scene RPC queue unavailable: {error}"))
+}
+
+fn json_request_bytes(value: &serde_json::Value) -> usize {
+    use serde_json::Value;
+    match value {
+        Value::Null | Value::Bool(_) => 1,
+        Value::Number(_) => 9,
+        Value::String(value) => value.len().saturating_add(5),
+        Value::Array(values) => values.iter().fold(5usize, |bytes, value| {
+            bytes.saturating_add(json_request_bytes(value))
+        }),
+        Value::Object(values) => values.iter().fold(5usize, |bytes, (key, value)| {
+            bytes
+                .saturating_add(key.len())
+                .saturating_add(5)
+                .saturating_add(json_request_bytes(value))
+        }),
+    }
+}
+
 pub async fn op_read_file(
     op_state: Rc<RefCell<impl State>>,
     filename: String,
@@ -27,14 +73,13 @@ pub async fn op_read_file(
 
     let (sx, rx) = RpcResultSender::channel();
 
-    op_state
-        .borrow_mut()
-        .borrow_mut::<SceneResponseSender>()
-        .try_send(SceneResponse::ImmediateRpcCall(RpcCall::ReadFile {
+    send_immediate_rpc(
+        &mut *op_state.borrow_mut(),
+        RpcCall::ReadFile {
             filename,
             response: sx,
-        }))
-        .unwrap();
+        },
+    )?;
 
     let res = rx.await;
 
@@ -59,6 +104,25 @@ pub struct ContentFileEntry {
     pub hash: String,
 }
 
+pub fn op_scene_id(state: &impl State) -> String {
+    state.borrow::<CrdtContext>().hash.clone()
+}
+
+pub async fn op_get_permissions(
+    state: Rc<RefCell<impl State>>,
+    permissions: Vec<i32>,
+) -> Result<Vec<bool>, anyhow::Error> {
+    let (response, receiver) = RpcResultSender::channel();
+    send_immediate_rpc(
+        &mut *state.borrow_mut(),
+        RpcCall::GetPermissions {
+            permissions,
+            response,
+        },
+    )?;
+    receiver.await.map_err(|error| anyhow!(error))
+}
+
 pub async fn op_scene_information(
     op_state: Rc<RefCell<impl State>>,
 ) -> Result<SceneInfoResponse, anyhow::Error> {
@@ -73,13 +137,13 @@ pub async fn scene_information(
 
     let (sx, rx) = RpcResultSender::channel();
 
-    op_state
-        .borrow_mut()
-        .borrow_mut::<RpcCalls>()
-        .push(RpcCall::EntityDefinition {
+    send_immediate_rpc(
+        &mut *op_state.borrow_mut(),
+        RpcCall::EntityDefinition {
             urn: urn.clone(),
             response: sx,
-        })?;
+        },
+    )?;
 
     let entity_definition = rx.await?;
 

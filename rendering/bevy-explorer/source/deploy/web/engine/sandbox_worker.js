@@ -567,12 +567,16 @@ async function relayStart(compiledModule, sharedMemory, sceneModule) {
   enter(() => relay.__wbindgen_start());
   postToEngine({ type: "INIT_COMPLETE" });
 
-  // B failed under a relay call: end the scene
+  // B failed under a relay call: let A deliver its terminal error before teardown.
+  let failureReported = false;
   const checkFailure = () => {
     if (failure === undefined) return false;
-    relayLog.error(`[Relay] scene ${sceneId}: scene runtime failed; ending the scene`, failure);
-    enter(() => relay.relay_fail());
-    return true;
+    if (!failureReported) {
+      failureReported = true;
+      relayLog.error(`[Relay] scene ${sceneId}: scene runtime failed; ending the scene`, failure);
+      enter(() => relay.relay_fail());
+    }
+    return enter(() => relay.relay_killed());
   };
   const logStats = () => {
     const stat = (i) => relay.relay_stat(i);

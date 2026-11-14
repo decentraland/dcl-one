@@ -70,6 +70,17 @@ scenario('the debug panel shows live plugin data and can play an avatar emote', 
     await until(() => explorer.hud.get(panel), (read) => read.text.includes(new URL(world.realm).origin), {
       timeoutMs: 10_000, what: 'the panel to display the current realm'
     })
+    await expand('Legacy avatar events')
+    await until(async () => ({ state: await explorer.legacySocial(), read: await explorer.hud.get(panel) }), ({ state, read }) => {
+      assert.ok(Object.values(state).every(value => Number.isInteger(value) && value >= 0))
+      assert.ok(state.queuedEvents <= state.subscribedScenes * 1024)
+      assert.ok(state.resyncScenes <= state.subscribedScenes)
+      const text = read.text.replace(/\s+/g, ' ')
+      return [
+        ['Subscribed scenes', state.subscribedScenes], ['Queued events', state.queuedEvents],
+        ['Scenes awaiting resync', state.resyncScenes], ['Tracked peers', state.trackedPeers]
+      ].every(([label, value]) => new RegExp(`${label} ${value}(?:\\s|$)`).test(text))
+    }, { timeoutMs: 10_000, what: 'the panel to display the engine legacy avatar queue counts' })
     await explorer.run('/session_graphics fps 47')
     await expand('Performance')
     await waitTarget(47)

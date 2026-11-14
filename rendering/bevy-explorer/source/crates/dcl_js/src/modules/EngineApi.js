@@ -10,6 +10,11 @@ module.exports.crdtSendToRenderer = async function(messages) {
     };
 }
 
+module.exports.crdtGetMessageFromRenderer = async function() {
+    // An empty send requests the next renderer batch without changing scene state.
+    return module.exports.crdtSendToRenderer({ data: new Uint8Array() });
+}
+
 module.exports.crdtGetState = async function() {
     const data = (await op_crdt_recv_from_renderer()).map((item) => new Uint8Array(item))
 

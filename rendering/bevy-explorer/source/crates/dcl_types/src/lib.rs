@@ -62,23 +62,38 @@ pub enum RendererResponse {
 /// frame (and unbounded engine-side work for side-effectful calls) — none of it requiring
 /// scene-side retention. A well-behaved scene issues a handful per tick.
 pub const MAX_RPC_CALLS_PER_TICK: usize = 1000;
+/// Aggregate immediate request payload admitted between renderer flushes. Individual
+/// frames must not multiply the payload a scene could previously put in one RPC batch.
+pub const MAX_IMMEDIATE_RPC_BYTES_PER_FLUSH: usize = 80 * 1024 * 1024;
 
 /// Per-tick queue of scene-issued RpcCalls. `push` is bounded: the queue is drained (via
-/// `std::mem::take`) each tick at the flush, so its current length is exactly this tick's
-/// count, and no separate budget/reset is needed.
+/// `std::mem::take`) at the renderer flush. Immediate admissions share the same budget;
+/// their counter is local bookkeeping and is not part of the serialized call list.
 #[derive(Debug, Default, Serialize, Deserialize)]
 #[serde(transparent)]
-pub struct RpcCalls(Vec<RpcCall>);
+pub struct RpcCalls(Vec<RpcCall>, #[serde(skip)] usize, #[serde(skip)] usize);
 
 impl RpcCalls {
     /// Enqueue a call for the next flush. Over the per-tick ceiling it returns an error the op
     /// propagates to its caller (`push(..)?`), so a scene spamming RPCs sees its own call fail
     /// rather than growing an unbounded outbound frame.
     pub fn push(&mut self, call: RpcCall) -> Result<(), anyhow::Error> {
-        if self.0.len() >= MAX_RPC_CALLS_PER_TICK {
+        if self.0.len() + self.1 >= MAX_RPC_CALLS_PER_TICK {
             anyhow::bail!("exceeded the per-tick RPC call limit ({MAX_RPC_CALLS_PER_TICK})");
         }
         self.0.push(call);
+        Ok(())
+    }
+
+    pub fn admit_immediate(&mut self, bytes: usize) -> Result<(), anyhow::Error> {
+        if self.0.len() + self.1 >= MAX_RPC_CALLS_PER_TICK {
+            anyhow::bail!("exceeded the per-tick RPC call limit ({MAX_RPC_CALLS_PER_TICK})");
+        }
+        if bytes > MAX_IMMEDIATE_RPC_BYTES_PER_FLUSH.saturating_sub(self.2) {
+            anyhow::bail!("exceeded the immediate RPC payload limit");
+        }
+        self.1 += 1;
+        self.2 += bytes;
         Ok(())
     }
 }
@@ -182,6 +197,38 @@ mod rpc_calls_tests {
         RpcCall::MoveCamera {
             facing: Quat::IDENTITY,
         }
+    }
+
+    #[test]
+    fn immediate_and_queued_calls_share_one_budget_until_renderer_flush() {
+        let mut calls = RpcCalls::default();
+        for _ in 0..MAX_RPC_CALLS_PER_TICK / 2 {
+            calls.admit_immediate(1).unwrap();
+        }
+        for _ in 0..MAX_RPC_CALLS_PER_TICK / 2 {
+            calls.push(a_call()).unwrap();
+        }
+        assert!(calls.admit_immediate(1).is_err());
+        assert!(calls.push(a_call()).is_err());
+        // Local admission state never changes the existing wire shape.
+        assert_eq!(
+            common::rpc::rmp_encode(&calls).unwrap(),
+            common::rpc::rmp_encode(&calls.0).unwrap()
+        );
+        let _sent = std::mem::take(&mut calls);
+        calls.admit_immediate(1).unwrap();
+        calls.push(a_call()).unwrap();
+    }
+
+    #[test]
+    fn immediate_payload_limit_counts_all_frames_until_renderer_flush() {
+        let mut calls = RpcCalls::default();
+        calls
+            .admit_immediate(MAX_IMMEDIATE_RPC_BYTES_PER_FLUSH)
+            .unwrap();
+        assert!(calls.admit_immediate(1).is_err());
+        let _sent = std::mem::take(&mut calls);
+        calls.admit_immediate(1).unwrap();
     }
 
     // push accepts up to the per-tick ceiling then rejects, without enqueuing the rejected call;

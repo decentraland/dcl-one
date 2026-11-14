@@ -163,7 +163,11 @@ pub struct RPCSendableMessage {
 
 impl RPCSendableMessage {
     /// The methods a scene may ask the user's wallet to sign (`RpcCall::SendAsync`).
-    pub const SIGNING_METHODS: &[&str] = &["eth_sendTransaction", "eth_signTypedData_v4"];
+    pub const SIGNING_METHODS: &[&str] = &[
+        "eth_sendTransaction",
+        "eth_signTypedData_v4",
+        "personal_sign",
+    ];
 }
 
 pub type RpcEventSender = RpcStreamSender<String>;
@@ -381,6 +385,19 @@ pub enum RpcCall {
     },
     ActiveVideoStreams {
         response: RpcResultSender<VideoTracksActiveStreamsResponse>,
+    },
+    GetUserAccount {
+        response: RpcResultSender<Option<String>>,
+    },
+    GetPermissions {
+        permissions: Vec<i32>,
+        response: RpcResultSender<Vec<bool>>,
+    },
+    SubscribeLegacyAvatarEvents {
+        sender: RpcEventSender,
+    },
+    PullLegacyAvatarEvents {
+        response: RpcResultSender<Vec<String>>,
     },
 }
 

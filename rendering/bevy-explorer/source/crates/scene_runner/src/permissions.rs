@@ -123,6 +123,27 @@ impl<T: Send + Sync + 'static> Permission<'_, '_, T> {
         })
     }
 
+    /// Read the existing policy without changing it or opening a permission prompt.
+    pub fn is_allowed(&self, ty: PermissionType, scene: Entity, allow_out_of_scene: bool) -> bool {
+        let Some((in_scene, hash, _, is_portable)) = self.get_scene_info(scene) else {
+            return false;
+        };
+        self.is_system_scene(hash)
+            || resolve(
+                self.autopilot.is_some(),
+                &self.config,
+                ty,
+                &self.realm.about_url,
+                hash,
+                is_portable,
+                !allow_out_of_scene && !in_scene,
+            ) == PermissionValue::Allow
+    }
+
+    pub fn scene_exists(&self, scene: Entity) -> bool {
+        self.scenes.contains(scene)
+    }
+
     pub fn check(
         &mut self,
         ty: PermissionType,

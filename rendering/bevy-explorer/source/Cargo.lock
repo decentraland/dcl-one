@@ -10708,6 +10708,7 @@ version = "0.1.0"
 dependencies = [
  "alloy-core",
  "anyhow",
+ "avatar",
  "bevy",
  "bevy_console",
  "bevy_dui",

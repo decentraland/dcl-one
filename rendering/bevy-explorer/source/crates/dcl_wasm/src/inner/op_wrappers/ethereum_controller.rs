@@ -9,3 +9,8 @@ pub async fn op_send_async(
 ) -> Result<JsValue, WasmError> {
     serde_result!(dcl_js::ethereum_controller::op_send_async(state.rc(), method, params).await)
 }
+
+#[wasm_bindgen]
+pub async fn op_get_user_account(state: &WorkerContext) -> Result<JsValue, WasmError> {
+    serde_result!(dcl_js::ethereum_controller::op_get_user_account(state.rc()).await)
+}

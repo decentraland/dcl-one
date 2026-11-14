@@ -1,5 +1,7 @@
 pub mod agent_commands;
 pub mod explorer_ui;
+mod legacy_permissions;
+mod legacy_social;
 pub mod portables;
 pub mod smart_wearables;
 pub mod teleport;
@@ -76,6 +78,7 @@ pub struct RestrictedActionsPlugin;
 
 impl Plugin for RestrictedActionsPlugin {
     fn build(&self, app: &mut App) {
+        app.add_plugins(legacy_social::LegacySocialPlugin);
         app.add_event::<RpcCallEvent>();
         app.add_event::<ReturnedToWorld>();
         app.add_systems(
@@ -109,8 +112,10 @@ impl Plugin for RestrictedActionsPlugin {
                 (
                     show_nft_dialog,
                     handle_eth_async,
+                    get_user_account,
                     handle_texture_size,
                     handle_generic_perm,
+                    legacy_permissions::get_permissions,
                     handle_spawned_command,
                     handle_copy_to_clipboard,
                     handle_sign_request,
@@ -1900,6 +1905,19 @@ fn show_nft_dialog(
     }
 }
 
+fn get_user_account(mut events: EventReader<RpcCallEvent>, wallet: Res<Wallet>) {
+    for event in events.read() {
+        if let RpcCall::GetUserAccount { response } = &event.call {
+            // A hosted scene has no connected user's wallet, even when the server has a key.
+            response.send(if server_mode() {
+                None
+            } else {
+                wallet.address().map(|address| format!("{address:#x}"))
+            });
+        }
+    }
+}
+
 #[allow(clippy::type_complexity)]
 pub fn handle_eth_async(
     mut events: EventReader<RpcCallEvent>,
@@ -3266,3 +3284,6 @@ mod signed_fetch_body_tests {
         assert_eq!(signed_fetch_tld("custom.example"), "org");
     }
 }
+
+#[cfg(test)]
+mod ethereum_tests;
