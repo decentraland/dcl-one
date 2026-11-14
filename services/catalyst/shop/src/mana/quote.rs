@@ -95,18 +95,26 @@ pub async fn mana_usd_rates(pool: &sqlx::PgPool) -> Result<QuoteRates, sqlx::Err
     })
 }
 
-/// The newest price snapshot within its freshness budget.
-async fn mana_usd_spot(pool: &sqlx::PgPool) -> Result<Option<ManaUsdRate>, sqlx::Error> {
+/// The newest price snapshot's exact MANA/USD text (trimmed) and when it
+/// was quoted in unix seconds: the provider's quote time, or the poll's when
+/// that is earlier (`PriceSnapshot::age_at`). No freshness budget is
+/// applied; each reader applies its own. `price_snapshots_newest_idx`.
+pub(crate) async fn newest_spot(pool: &sqlx::PgPool) -> Result<Option<(String, i64)>, sqlx::Error> {
     let row: Option<(String, chrono::NaiveDateTime)> = sqlx::query_as(
         "SELECT mana_usd::text, LEAST(taken_at, COALESCE(source_updated_at, taken_at)) FROM economy.price_snapshots ORDER BY taken_at DESC LIMIT 1",
     )
     .fetch_optional(pool)
     .await?;
+    Ok(row.map(|(rate, quoted_at)| (rate.trim().to_string(), quoted_at.and_utc().timestamp())))
+}
+
+/// The newest price snapshot within its freshness budget.
+async fn mana_usd_spot(pool: &sqlx::PgPool) -> Result<Option<ManaUsdRate>, sqlx::Error> {
     let budget = crate::price::store::SNAPSHOT_MAX_AGE.as_secs() as i64;
-    Ok(row.and_then(|(rate, taken_at)| {
-        let fresh = Utc::now().timestamp() - taken_at.and_utc().timestamp() <= budget;
+    Ok(newest_spot(pool).await?.and_then(|(rate, quoted_at)| {
+        let fresh = Utc::now().timestamp() - quoted_at <= budget;
         fresh
-            .then(|| ManaUsdRate::parse_usd_per_mana(rate.trim()))
+            .then(|| ManaUsdRate::parse_usd_per_mana(&rate))
             .flatten()
     }))
 }

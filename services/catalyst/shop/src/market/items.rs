@@ -869,12 +869,11 @@ pub async fn mana_usd_rate(state: &MarketplaceState) -> Result<ManaUsdRate, Resp
         });
     }
     let v = cached(state, Ttl::S60, "economy:mana_usd".into(), || async {
-        let row: Option<(String, chrono::NaiveDateTime)> = sqlx::query_as("SELECT mana_usd::text, LEAST(taken_at, COALESCE(source_updated_at, taken_at)) FROM economy.price_snapshots ORDER BY taken_at DESC LIMIT 1")
-            .fetch_optional(&state.pool)
+        let row = crate::mana::quote::newest_spot(&state.pool)
             .await
             .map_err(|e| e.to_string())?;
         Ok(match row {
-            Some((rate, taken_at)) => json!({ "rate": rate.trim(), "taken_at": taken_at.and_utc().timestamp() }),
+            Some((rate, taken_at)) => json!({ "rate": rate, "taken_at": taken_at }),
             None => json!({}),
         })
     })

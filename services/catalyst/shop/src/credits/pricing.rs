@@ -348,26 +348,32 @@ impl Market for LocalMarket {
                     "no MANA price snapshot on this node yet (mana-price-poll)",
                 )
             })?;
-        let usd = snapshot
-            .mana_usd
-            .filter(|v| v.is_finite() && *v > 0.0)
-            .ok_or_else(|| ApiError::Internal("price snapshot missing numeric 'usd'".into()))?;
-        let last_updated_at = snapshot
-            .source_updated_at
-            .unwrap_or(snapshot.taken_at)
-            .timestamp();
-        let now = chrono::Utc::now().timestamp();
-        if is_stale(last_updated_at, now, self.max_staleness_secs) {
-            return Err(ApiError::service_unavailable(format!(
-                "MANA/USD oracle is stale (age {}s exceeds {}s)",
-                now - last_updated_at,
-                self.max_staleness_secs
-            )));
-        }
-        serde_json::Number::from_f64(usd)
-            .map(|n| n.to_string())
-            .ok_or_else(|| ApiError::Internal("price snapshot 'usd' is not a finite number".into()))
+        snapshot_usd(&snapshot, chrono::Utc::now(), self.max_staleness_secs)
     }
+}
+
+/// A price snapshot's MANA/USD as a decimal string, refused once it is
+/// older than `max_staleness_secs`. Its age is the price module's
+/// (`PriceSnapshot::age_at`): from the provider's quote, or from the poll
+/// when that is earlier, as every other spot reader measures it.
+fn snapshot_usd(
+    snapshot: &crate::price::store::PriceSnapshot,
+    now: chrono::DateTime<chrono::Utc>,
+    max_staleness_secs: i64,
+) -> Result<String, ApiError> {
+    let usd = snapshot
+        .mana_usd
+        .filter(|v| v.is_finite() && *v > 0.0)
+        .ok_or_else(|| ApiError::Internal("price snapshot missing numeric 'usd'".into()))?;
+    let age = i64::try_from(snapshot.age_at(now).as_secs()).unwrap_or(i64::MAX);
+    if is_stale(0, age, max_staleness_secs) {
+        return Err(ApiError::service_unavailable(format!(
+            "MANA/USD oracle is stale (age {age}s exceeds {max_staleness_secs}s)"
+        )));
+    }
+    serde_json::Number::from_f64(usd)
+        .map(|n| n.to_string())
+        .ok_or_else(|| ApiError::Internal("price snapshot 'usd' is not a finite number".into()))
 }
 
 fn check_category(item: ItemInfo) -> Result<ItemInfo, ApiError> {
@@ -926,6 +932,41 @@ mod ts_peg_export {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_snapshot_ages_from_its_earlier_timestamp() {
+        let now = chrono::Utc::now();
+        let snapshot =
+            |taken_ago: i64, quoted_ago: Option<i64>| crate::price::store::PriceSnapshot {
+                mana_usd: Some(0.25),
+                mana_eth: None,
+                mana_btc: None,
+                market_cap_usd: None,
+                volume_24h_usd: None,
+                price_change_24h_pct: None,
+                source_updated_at: quoted_ago.map(|s| now - chrono::Duration::seconds(s)),
+                taken_at: now - chrono::Duration::seconds(taken_ago),
+            };
+        assert_eq!(
+            snapshot_usd(&snapshot(100, None), now, 900).unwrap(),
+            "0.25"
+        );
+        assert_eq!(
+            snapshot_usd(&snapshot(100, Some(800)), now, 900).unwrap(),
+            "0.25"
+        );
+        assert!(snapshot_usd(&snapshot(100, Some(901)), now, 900).is_err());
+        assert!(snapshot_usd(&snapshot(901, None), now, 900).is_err());
+        // A provider quote time ahead of the poll does not make the rate
+        // fresher than the poll that took it.
+        let skewed = snapshot(1000, Some(0));
+        assert_eq!(skewed.age_at(now).as_secs(), 1000);
+        let err = snapshot_usd(&skewed, now, 900).unwrap_err();
+        assert!(
+            format!("{err:?}").contains("age 1000s exceeds 900s"),
+            "{err:?}"
+        );
+    }
 
     fn info(price_wei: &str, store_mintable: bool) -> ItemInfo {
         ItemInfo {
