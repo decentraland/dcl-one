@@ -62,7 +62,7 @@ No token-value PR is open; every block describes `main`. When one opens, list it
 | Viewport | Editor | Viewport | [#viewport-viewport](#viewport-viewport) |
 | Toolbar | Editor | Toolbar, RuntimeControls, AudioToggle | [#toolbar-viewport-toolbar](#toolbar-viewport-toolbar) |
 
-Feature files: [Manage (LANDs in Creator Hub)](#manage-lands-in-creator-hub), from `albOLmqF5fUwmRJ7CjBulU`.
+Feature files: [Manage (LANDs in Creator Hub)](#manage-lands-in-creator-hub), from the LANDs feature file.
 
 ---
 
@@ -70,7 +70,7 @@ Feature files: [Manage (LANDs in Creator Hub)](#manage-lands-in-creator-hub), fr
 
 Both UIs are specified in one Figma file, **📗️ Design System | Creator Tools**. Node `20420:50646` is its COVER page. Tokens live on the pages under **Tokens** (Colors, Icons, Typography, Tags / Labels); components and screens live on the section pages, so start from the frame URL for the surface you're changing. A page whose name contains `🟡 Outdated` is superseded: don't pull from it.
 
-Feature files extend it. **🧰 Integrate LANDs to CH | Creator Tools | 09/26** (file key `albOLmqF5fUwmRJ7CjBulU`, page `💻 High-fi 🟡` `5660:3959`) specifies Manage's LAND surfaces; see [Manage (LANDs in Creator Hub)](#manage-lands-in-creator-hub). The Creator Hub Analytics detail page is drawn in another (file key `DhBtPn56J6ZlPLrTUDufqp`); its frames are listed under [Analytics detail](#analytics-detail). The Creator Fund flow is drawn in the same file; see [Creator Fund (Creator Hub)](#creator-fund-creator-hub).
+Feature files extend it. **🧰 Integrate LANDs to CH | Creator Tools | 09/26** (page `💻 High-fi 🟡` `5660:3959`) specifies Manage's LAND surfaces; see [Manage (LANDs in Creator Hub)](#manage-lands-in-creator-hub). The Creator Hub Analytics detail page is drawn in another, **🧰 Creator Fund | Creator Tools | 10-26**; its frames are listed under [Analytics detail](#analytics-detail). The Creator Fund flow is drawn in the same file; see [Creator Fund (Creator Hub)](#creator-fund-creator-hub). The UI Editor (the inspector's 2D mode) is drawn in **🧰 UI Editor | Creators Tools | 08/26** (pages `🚀 UI Designs Specs 🟢` `3401:5437` and `💻 High-fi 🟢` `1441:515`), which governs every UI Editor section where it differs from the Design System file; see [UI Editor (page lead)](#ui-editor-page-lead).
 
 Read `.ai/skills/figma/SKILL.md` before pulling a frame. It covers the Figma MCP, the Claude-in-Chrome fallback, and syncing palette changes back into this file.
 
@@ -872,7 +872,7 @@ No interaction states drawn on the bar itself; the tabs it embeds are the `tab-b
 | Create | ✱ press / focus / disabled | not drawn on this page or on the Buttons page | — | — | — | — | — | — | — | — |
 | Sign in | ✱ hover / press / focus / disabled | not drawn on this page; take them from Buttons (Inputs page) when it is extracted | — | — | — | — | — | — | — | — |
 
-**Creator Hub navbar.** The app follows the navbar instances on the LAND board (`5690:7364`, `5660:4203` in `albOLmqF5fUwmRJ7CjBulU`) on every page (user decision). The navbar below, with its fluid spacing, the icon-only CREATE and the EARN dot, is signed off against those boards (user decision). The board's instances drop the DS set's 37px divider, put 20 between the Create button and the avatar, and draw 44-tall tabs where the `tab-bar` set draws 40. The rules apply to `.Navbar` only; the editor header keeps its own.
+**Creator Hub navbar.** The app follows the navbar instances on the LAND board (`5690:7364`, `5660:4203` in the LANDs file) on every page (user decision). The navbar below, with its fluid spacing, the icon-only CREATE and the EARN dot, is signed off against those boards (user decision). The board's instances drop the DS set's 37px divider, put 20 between the Create button and the avatar, and draw 44-tall tabs where the `tab-bar` set draws 40. The rules apply to `.Navbar` only; the editor header keeps its own.
 
 | Part | Board value | Code |
 | --- | --- | --- |
@@ -1114,7 +1114,7 @@ Component `20506:31427`, 1 variant and no component set: the page has only this 
 | Background | raster `image.png` — a near-black field with a violet glow bottom-left and a dark-blue glow left (no gradient stops: it is a bitmap, not a Figma gradient) | solid `rgba(0,0,0,0.2)` (Transparencies/Black 20), inset 0 | 1720 × 1080, no radius | the app canvas behind cards and pages | text is specified against the solid page colours above; the raster's darkest region reads as `#0a0712`-ish and its glow as `#1d1033`-ish (canvas measurement, ±8 per channel) — treat `#16141a` as the design surface and keep Snow / Silver text ≥ 4.5:1 there | `--palette-blackTransparent-soft` for the overlay; no background token | `--page-shade` over the blended raster, not the 20% layer (below) |
 | ✱ Page board | `#302C37`, 64px radius, padding 100 | — | 1920 × Hug | Figma presentation frame on every Surfaces page, not a product surface | — | — | — |
 
-**Creator Hub page background.** The LAND board's frames (`5690:7364`, `5660:4203` in `albOLmqF5fUwmRJ7CjBulU`) are 1920 × 1080 with an `image.png` fill and a `#000000` 20% layer over it. That `image.png` is darker at the top than the app's `background.png`, so the 20% layer alone matches only the bottom fifth. Measured at 1:1 against the app, the board is the app's image under a vertical black wash: ≈52% at the top, 51% at 25% of the height, ≈46% at 37%, 20% at the bottom (validated on four board frames, rows within ±0.02 after the 25% stop). The app paints that wash as a gradient token rather than shipping the board's image (user decision), on every page, Sign In and the editor included (user decision).
+**Creator Hub page background.** The LAND board's frames (`5690:7364`, `5660:4203` in the LANDs file) are 1920 × 1080 with an `image.png` fill and a `#000000` 20% layer over it. That `image.png` is darker at the top than the app's `background.png`, so the 20% layer alone matches only the bottom fifth. Measured at 1:1 against the app, the board is the app's image under a vertical black wash: ≈52% at the top, 51% at 25% of the height, ≈46% at 37%, 20% at the bottom (validated on four board frames, rows within ±0.02 after the 25% stop). The app paints that wash as a gradient token rather than shipping the board's image (user decision), on every page, Sign In and the editor included (user decision).
 
 | Part | Rule |
 | --- | --- |
@@ -2288,150 +2288,425 @@ The names are inverted: `Selected` is the unfilled look and `Default` the Blue D
 
 ### UI Editor (page lead)
 
-Page `21028:15887`, two boards. **Panels** `21028:34519` holds the screens: `LeftPanel2D` `21028:34521` (Fixed 312 × Hug 712, vertical, Charcoal, padding-bottom 100), `RightPanel2D` `21028:34544` (Hug 4068 × 1742, 24px radius, padding 20, gap 20: eleven right-panel states laid side by side) and `BottomPanel2D` `21221:41852`. **Components** `21028:30543` holds eight sub-boards, each 24px radius, fill Black 40, 1px White 20: `Components` `21028:15991` (956 × 958), `UI Editor Buttons` `21028:16485` (710 × 407), `Icons` `21028:16123` (1477 × 448), `PropertiesSections` `21028:30544` (2648 × 781), `PropertiesSubsections` `21028:30545`, `Variables&EventsMenus` `21032:43793`, `ColourPanel` `21032:44145` (621 × 513) and `InputActions` `21301:5375` (1662 × 336). Every control below maps to the inspector's UI Designer (`components/UIDesigner`; see [`UIDesigner.md`](UIDesigner.md)) — mapped by directory, not line by line. Existing specs reused, never duplicated: `ToolbarButton`, `IconContainedToggle`, `Menu`, `Menu-Entry`, `Close-Button`, `Switch`, `Checkbox` (`Tertiary`), `Tooltip`. Body copy and field labels are content, not spec.
+The UI Editor Figma file is the source of truth for every UI Editor section below; a section that covers something this file doesn't draw names the file that does. Read November 12, 2026. Every control maps to the inspector's UI Designer (`components/UIDesigner`; see [`UIDesigner.md`](UIDesigner.md)), mapped by directory, not line by line. Existing specs reused, never duplicated: `ToolbarButton`, `IconContainedToggle`, `Menu`, `Menu-Entry`, `Close-Button`, `Switch`, `Checkbox` (`Tertiary`), `Tooltip`, `DefaultModal`. Body copy and field labels inside fixtures are content, not spec; product copy (empty states, notes, modals, hints) is used exactly as drawn (user decision).
 
-The `AddCTA` chip (a 20 × 20 `+` button, glyph inset 20%) has a 6px radius in the right panel (Border, Devices, Interactions, MinMaxSize, AddAction, AddLogicInputs) and 5px in `HierarchySections`.
+**"UI Designs Specs" page `3401:5437`** holds the component frames, each a labelled state grid (row label column 352 wide, state columns 377–378 wide, 1px Onix cell borders, Charcoal fill, 24px radius, 1px White 10):
+
+| Frame | Node | Size | Covers |
+| --- | --- | --- | --- |
+| `<PositionConstraints>` | `3486:43963` | 877 × 2160 | the 25 constraint glyphs |
+| `<Gui&NodesIcons>` | `3558:66300` | 877 × 816 | `NodeType/*` and GUI-root glyphs |
+| `Properties&Logic` | `3520:109757` | 5498 × 2126 | right-panel section assemblies |
+| `<Properties&LogicComponents>` | `3500:203614` | 2707 × 3037 | right-panel controls |
+| `<AssetsPanelButtons>` | `3527:166383` | 2707 × 589 | bottom-panel node and prefab tiles (grid `3527:166569`) |
+| `<InputActionEntries>` | `3818:136834` | 2462 × 511 | MobileHUD input-action cards |
+| `<Variables&EventsMenu>` | `3527:163776` | 2707 × 923 | variable and event menus |
+| `<HierarchyPanelComponents>` | `3511:101478` | 2202 × 2811 | left-rail search, tabs, rows |
+
+**"High-fi" page `1441:515`** holds the screen boards, each a 1920 × 1080 `Editor` frame with a 360-wide `Note` card (24px radius, a Shadow "NOTES" header, Snow body; an annotation, never UI) laid over it:
+
+| Row (label node) | Board | Node | Board note |
+| --- | --- | --- | --- |
+| Properties Panel (`3421:29741`) | No GUI | `1555:4037` | `3470:13253` |
+|  | No Node | `3421:36758` | `3470:13276` |
+|  | Add Node Menu | `3522:122110` | `3522:122118` |
+|  | GUI & Nodes menu | `3522:122468` | `3522:122481` |
+|  | Editing Node | `3419:24629` | `3520:110578` |
+|  | Colour Picker | `3470:12538` | `3527:163592` |
+| Logic Panel (`3421:29744`) | Default | `3413:15894` | — |
+|  | GUI Logic exist | `3416:18295` | — |
+| Mobile GUI (`3812:8333`) | GUI created | `3818:132563` | `3818:132570` |
+|  | Tooltip | `3812:8369` | — |
+|  | Hide and sort inputs | `3812:8399` | `3812:8418` |
+|  | Custom Icon Assigned | `3812:8419` | `3812:8441` |
+| Modals (`3810:138330`) · Delete confirmation (`3609:52909`) | Delete Desktop Variant | `3609:52294` | `3609:52301` |
+|  | Delete Mobile Variant | `3613:53081` | `3613:53090` |
+| Modals · Update SDK (`3624:53841`) | Update SDK | `3622:53710` | `3627:54231` |
+
+A loose `Menu` instance `3522:123080` (`AddNewAction`, 150 × 125) sits beside the GUI & Nodes menu board.
+
+**Charcoal.** Figma's panel fill is Charcoal `#25212A`; code paints `--ui-designer-panel-bg` (`--panel-2` → `--base-19` `#242129`), a documented ✱ deviation of 1/255.
+
+**AddCTA.** The 20 × 20 `+` chip (glyph inset 20%) has a 6px radius in the right panel (Border, Devices, Interactions, MinMaxSize, AddAction, AddLogicInputs) and 5px in `HierarchySections`; the No Node board's NODES `+` is a 6px `rounded-button-contained` (✱ Figma inconsistency; 5px is the hierarchy value).
+
+### Editor layout and panel surfaces (UI Editor — Screens)
+
+Board `Editor` (every High-fi board; measured on Default `3413:15894`, No GUI `1555:4037`), 1920 × 1080. Read November 12, 2026. Code: inspector `UIDesigner.tsx`, `UIDesigner.css` (the 2D layout), `LeftPanel/`, `Canvas/`, `RightPanel/`, `Palette/`; Creator Hub `EditorPage` (the 50-tall header, see [Editor Toolbar (TitleBar)](#editor-toolbar-titlebar)).
+
+The page is Black; every region sits on it with **2px gaps**, so the gaps read as Black seams. Vertical stack: `Editor Toolbar` 50 → 2 → `WorkSpace&SidePanels` 756 → 2 → `BottomPanel2D` 270. The workspace is a row: left rail 312 → 2 → viewport (flex) → 2 → right panel.
+
+| Region | Node (Default board) | Fill | Border | Size | Token |
+| --- | --- | --- | --- | --- | --- |
+| Page | `3413:15894` | Black `#000000` | — | 1920 × 1080, gap 2 | no token (literal `#000`) |
+| Editor Toolbar | `3660:13188` | Black | — | 1920 × 50 | see Editor Toolbar (TitleBar) |
+| Left rail `LeftPanel2D` | `3488:55157` | Charcoal `#25212A` | none | 312 wide, full height, padding-bottom 100 | `--ui-designer-panel-bg` (✱ 1/255) |
+| Viewport | `3413:15898` | Onix Dark 1 `#2D2A33` | none | flex; 1254 when the right panel is 350, 1256 when it is 348 | `--palette-neutral-onyxDark1` |
+| Right panel `RightPanel2D` | `3413:15899` | Charcoal | none | 350 wide (Default, No GUI, No Node); 348 on Editing Node, GUI & Nodes menu, Colour Picker, the Delete boards and the Mobile GUI boards (✱ Figma inconsistency; 350 is the source), gap 12, padding-bottom 100 | `--ui-designer-panel-bg` |
+| Bottom panel `BottomPanel2D` | `3527:167833` | Charcoal | none | 1920 × 270; the Mobile GUI boards draw 320 under a 706 workspace (✱) | `--ui-designer-panel-bg` |
+| Tab bars (left rail, right panel) | `TabBar` | Shadow `#161518` | 1px White 10 bottom, **inside** the 36 | 36 tall including the border (`padding-bottom: 1px`) | `--base-20`, `--palette-whiteTransparent-subtle` |
+| Viewport toolbar | `Toolbar` | Shadow | 1px Onix `#35333B` bottom, inside the 36 | 36 tall including the border | `--base-20`, `--palette-neutral-onyx` |
+| Section headers (GUIS, NODES, right-panel sections) | `HierarchySections`, `Section` | none | 1px White 10 top **and** bottom | 28 tall including both rules | `--palette-whiteTransparent-subtle` |
+| Canvas GUI root frame | `3469:11386` | Onix `#35333B` | 1px Blue Light 1 `#63B4F6` | 968 × 544, centred in the canvas area | `--ui-designer-control-bg`, `--palette-info-light` |
+
+The rules are 1.36:1 on Charcoal and Shadow — decorative separators; the 2px Black seams and the fill steps (Charcoal vs Onix Dark 1 1.13:1) carry the regions, so each region is also a landmark: rail and right panel `<aside>` / `role="complementary"` with a name, viewport `role="region"` ✱. The GUI root frame's Blue Light 1 border is 5.56:1 on Onix.
+
+### Empty states (UI Editor — Screens)
+
+Boards No GUI `1555:4037` (canvas `EmptyState` `I3413:15395;21032:43762;3523:138896`) and No Node `3421:36758` (`EmptyState` `I3421:36762;21032:43762;3523:138913`, component `3523:138913`); right-panel empty `RightPanel2D` `3961:10285` (`property1 = Empty`). Read November 12, 2026. Code: inspector `EmptyState/EmptyState.tsx` (`EmptyState`, `EmptyStateChip`), `EmptyState/GuiIcon.tsx`, `Canvas/Canvas.tsx` (canvas empty state, `EmptyRootDropZone`), `RightPanel/PropertyPanel/PropertyPanel.tsx` (no-selection state), `LeftPanel/LeftPanel.tsx` (the `+` ripple), `UIDesigner.css`.
+
+Both canvas empty states are a column centred in the canvas, 500 tall, gap 20, centred text. The bottom panel is `Blocked` in both (see BottomPanel2D); the right panel shows the no-selection state in both.
+
+| Part | No GUI (`1555:4037`) | No Node (`3421:36758`) | Token | Contrast (on Onix Dark 1) | A11y |
+| --- | --- | --- | --- | --- | --- |
+| Column | 468 wide | 614 wide | — | — | — |
+| Glyph `GUIEmptyImg` | 91 × 50, Cloudy Sky `#716B7C` | 50 × 50, Cloudy Sky | `--palette-neutral-gray2` (`--ui-designer-glyph`) | 2.75:1, decorative | `aria-hidden="true"`; no library icon (code `GuiIcon.tsx`) |
+| Title | "Start building your UI" | "This GUI is empty" | Inter 600 24 (`H2 Semi`) Snow `#FCFCFC` → `--palette-neutral-softWhite` | 13.73:1 | `<h2>` ✱ |
+| Body | "Click the [GUIs +] button in the left panel to add UI elements. Then, select elements such as **text, buttons, and images** from the [Nodes] section to design what players will see in your scene." | "Click the [Nodes +] button in the left panel to add your first UI element." | Inter 400 14 (`H7 Regular`) Gray `#CFCDD4` → `--palette-neutral-gray4`; bold runs Inter 600 | 8.95:1 | `<p>` |
+| Chips (`[…]` above) | "GUIs +", "Nodes": Inter 600 14 **Gray**, a 54 × 18 box, 1px White 20, 6px radius | "Nodes +": Inter 600 14 **Snow**, a 64 × 24 box, 1px White 20, 6px radius | `--palette-whiteTransparent-soft` | chip outline 1.92:1, decorative (the text carries it) | `EmptyStateChip`, plain text, not a button |
+| Button `Button-Contained-Text-Icon` | "NEW GUI" (drawn "New GUI", uppercase) | "ADD NODE" (drawn "Add Node", uppercase) | White 10 fill, padding 12 / 24, 12px radius, gap 10; `Plus` 18 Snow; Inter 600 14 / 22 uppercase Snow · `--palette-whiteTransparent-subtle` | Snow 10.05:1 on the White 10 fill | `<button>` named "New GUI" / "Add Node" (its visible label; notes `3470:13253`, `3470:13276`); ✱ focus: `--focus-ring` |
+| First-run pulse | on the GUIS `+` (left rail, at 260 / 50 and 277 / 67 in the workspace) | on the NODES `+` (260 / 171, 277 / 188) | two Blue Light 1 `#63B4F6` discs, 65 and 31, concentric on the `+`, 30% opacity, `mix-blend-mode: color-dodge` · `--palette-info-light`; ✱ they scale out and fade over 1.6s ease-out, looping until a GUI (GUIS `+`) or a node (NODES `+`) is added (user decision) | decorative | ✱ under `prefers-reduced-motion`, the static rings with no animation (user decision) |
+
+**Right panel, nothing selected** (`3961:10285`): a column centred both ways, padding 100 / 0, gap 10, centred text. Title "No node selected" Inter 600 16 (`H6 Semi`) Gray (10.03:1 on Charcoal). Body Inter 400 12: "Select a " Silver `#A09BA8`, "node " Gray, "to start editing its properties and logic." Silver (Silver 5.83:1 on Charcoal). Tokens `--palette-neutral-gray4`, `--palette-neutral-gray3`.
+
+**Board notes, as drawn.**
+
+- No GUI (`3470:13253`): "Pressing the [+ New GUI] button from the canvas is equivalent to press the button from the hierarchy panel. It will open a menu to select if to add a new regular GUI or the Mobile HUD. If the user chooses **'GUI'**, while selected can add nodes to it. New GUIs are named: GUI, GUI1, GUI2, etc" · "The pulse animation on the GUIS [+] button appears for the first time use only. Disappears after clicking it or the [+ New GUI] button from the canvas." · "In the assets panel (bottom) the Nodes buttons are dimmed down until a GUI exists."
+- No Node (`3470:13276`): "Pressing the [+ Add Node] button from the canvas is equivalent to press the button from the hierarchy panel: opens the menu." · "New Nodes are named: Container, Container1, Container2, etc" · "The pulse animation on the Nodes [+] button appears for the first time use only. Disappears after clicking it or the [+ Add Node] button from the canvas."
+
+Drift (checked): the code's no-GUI state matches the copy and chips; its empty-GUI state reads "This GUI is empty" / "Drag a widget from the palette here to add your first element." / "+ Add element" (a dashed drop zone) instead of the No Node copy and ADD NODE button; the no-selection body reads "…its properties." without "and logic"; the `+` buttons play a click ripple (`.ui-designer-rail-add-ripple`), not the first-run pulse.
+
+**Decisions**
+
+| Topic | Rule |
+| --- | --- |
+| Copy | Figma's copy is used exactly as drawn (user decision). |
+| Pulse | ✱ The drawn rings (65 and 31, Blue Light 1 at 30%, color-dodge) scale out and fade over 1.6s ease-out, looping until a GUI or a node is added; under `prefers-reduced-motion`, the static rings with no animation (user decision). |
+
+### Canvas drop (UI Editor — Screens)
+
+No board or component in the UI Editor file draws drop feedback on the 2D canvas (✱). Read November 12, 2026. Code: inspector `Canvas/drop.ts` (`applyCanvasDrop`), `Canvas/Canvas.tsx` (`useDrop` with `accept: UI_DESIGNER_DND_TYPE`).
+
+| State | Rule | Token | A11y |
+| --- | --- | --- | --- |
+| Image dropped on the canvas | creates an **Image** node at the drop point, its texture the dropped image (user decision) | — | the new node is selected and announced like a palette add ✱ |
+| ✱ drag over a valid target | not drawn; nearest drawn value: the GUI root frame's 1px Blue Light 1 border | `--palette-info-light` | — |
+
+Drift (checked): the canvas accepts only palette and component drags (`UI_DESIGNER_DND_TYPE`); an image or Local Assets drop does nothing.
+
+**Decisions**
+
+| Topic      | Rule                                                                      |
+| ---------- | ------------------------------------------------------------------------- |
+| Image drop | Dropping an image on the 2D canvas creates an Image node (user decision). |
+
+### Mobile GUI (UI Editor — Screens)
+
+Boards GUI created `3818:132563`, Tooltip `3812:8369`, Hide and sort inputs `3812:8399`, Custom Icon Assigned `3812:8419` (row label `3812:8333` "Mobile GUI"). Read November 12, 2026. Code: inspector `Canvas/MobileHudPreview/`, `Canvas/SafeAreaOverlay/`, `RightPanel/MobileHudPanel/`, `MobileHud/` (config, store, emit), `Palette/Palette.tsx` (blocked while MobileHUD is selected).
+
+What every Mobile GUI board draws (MobileHUD selected in the GUIS list):
+
+| Region | As drawn | Token |
+| --- | --- | --- |
+| Layout | workspace 706 tall, bottom panel 320 (✱ the other boards: 756 / 270) | — |
+| Left rail | GUIS list only; the NODES header and list are hidden | — |
+| Viewport controls | the DisplayMode frame (HUD, SafeArea, Desktop / Mobile) is hidden; only `Zoom` (98 × 26) at bottom 10 / right 10 | `--ui-designer-panel-bg` |
+| Mobile screen | a landscape 873 × 393 frame (drawn 393 × 873 rotated −90°), Onix `#35333B` fill, 1px Blue Light 1 `#63B4F6` border, **square corners, no bezel, no notch**; a 12 × 12 White `+` at its centre | `--ui-designer-control-bg`, `--palette-info-light` |
+| HUD preview | the default mobile HUD, a fixture of the client's controls: a joystick (93.8 × 92.8 outline, 34.9 centre), a cluster of round `Btn-HUD-Controls` (43.65; the main one 85.1) and a column of four 43.6 buttons labelled 1–4, gap 3.27; labels SF Pro Rounded Medium 22.56 in `--iconhud` `#DFD0FF` at 80%; each button a radial `#251A3B` → `#161518` disc with a 0.545 angular `#DFD0FF` stroke | no token (literal; client chrome) |
+| Right panel | MobileHUD editor: header (Mobile glyph 18, title, 12 `HelpCTA`), three `Toggle` rows, then InputActions: "Choose one action as Main. Drag them to reorder." and eight InputAction cards (see InputAction); an 8 × 860 scrollbar | see InputAction |
+| Bottom panel | `Blocked`, NODES six tiles and PREFABS one "GUI" tile (see BottomPanel2D) | — |
+
+Per board:
+
+- **GUI created** (`3818:132563`): the state above. Note (`3818:132570`): "MobileHUD doesn't allows any Node addition, that's why nodes and prefabs appear blocked while selected. It can't be renamed, deleted, or hidden. It's created along with the first GUI and remains there ready to be customised." · "While the MobileHUD GUI is selected, the viewport shows a preview of the default mobile HUD. Options to customise it appear in the right panel." · "Toggles to hide the mobile joystick, crosshair an inputs are off by default." · "In the editor viewport, the display mode buttons and toggles to preview the safe area and HUD are hidden since they don't work in this mode."
+- **Tooltip** (`3812:8369`): the header's `HelpCTA` opens `Tooltip` `3818:121337`: 313 wide, Onix fill, 12px radius, padding 16 / 20; a 26 × 26 `Peak` (5px radius, rotated 45°) on top, centred; drop shadow `0 2px 3px` Black 25%. Text Inter 400 12 Snow, 273 wide: "On the mobile client, players interact with your scene through a set of native on-screen controls. This component lets your scene reshape that HUD. Read more here." — "here" is a Primary `#FF2D55` underlined link to the SDK touch-screen controls docs, the full stop Primary too. Snow on Onix 12.13:1; **the Primary link 3.41:1 on Onix fails 4.5:1**. Tokens `--ui-designer-control-bg`, `--palette-neutral-softWhite`, `--primary-main`. A11y: the ⓘ is a `<button aria-describedby>`; the tooltip stays open on focus and hover so the link is reachable ✱. The mobile boards hide the title's Mobile glyph (title at left 10).
+- **Hide and sort inputs** (`3812:8399`): a dragged card shows the Sorting indicator in the list (see InputAction) and the HUD cluster reflows. Note (`3812:8418`): "Input can be hidden one by one. Remaining options will always reflow taking the place they set free. The header toggle hides the inputs list completely." · "Inputs can be reorganised by clicking and dragging them into the viewport or the panel. One affects the other. Inputs are ordered by importance criteria, being the most important at the top in the panel. In this example, the **AI_JUMP** input, marked as Main, was moved down in the list, that's why the blue line appears under its container. Otherwise the line appears at the top. Independently of the position of the inputs, the one marked as **'Main'** becomes the central button in the HUD; every other button keeps its normal order."
+- **Custom Icon Assigned** (`3812:8419`): the card's "Custom Icon" dropdown is open (`Menu` 308 × 178: a `Search-Bar` and three 32-tall `Menu-Entry` rows); the edited button in the viewport shows the custom icon and a **1px Blue Light 1 square outline** around its box (`--palette-info-light`, 5.56:1 on Onix). Note (`3812:8441`): "While editing an input highlight it in the viewport too."
+
+**Device chrome** ✱: the device bezel and notch frame the whole Mobile preview stage once; UI roots inside it render with their own corners (user decision). The Mobile GUI boards draw the screen with no chrome at all; the code draws a bezel (`#202127`), a 12px radius and a landscape notch on the stage in Mobile device mode (`.ui-designer-device-frame`, `Canvas.css`).
+
+Drift (checked): the panel hint reads "Choose one action as Main." without "Drag them to reorder."; the cards can't be reordered by drag; the edited button's highlight exists (`is-highlighted`, `MobileHudPreview.tsx`).
+
+**Decisions**
+
+| Topic | Rule |
+| --- | --- |
+| Copy | Figma's copy is used exactly as drawn (user decision). |
+| Device chrome | ✱ The device bezel and notch frame the whole Mobile preview stage once; UI roots inside it render with their own corners (user decision). |
+
+### Delete variant confirmation and Update SDK (UI Editor — Modals)
+
+Boards Delete Desktop Variant `3609:52294` (modal `3609:52959` → `DefaultModalButtonsHorizontal` `3613:53054`), Delete Mobile Variant `3613:53081` (modal `3613:53088` → `3613:53089`, component `3961:9181`), Update SDK `3622:53710` (modal `3627:54202` → `3645:5997`). Read November 12, 2026. Code: inspector `RightPanel/PropertyPanel/PropertyPanel.tsx` (the variant confirmation, `.ui-designer-variant-remove-modal`, on `components/Modal`), `SdkUpgradeNotice/SdkUpgradeNotice.tsx`.
+
+All three are the shared [DefaultModal (Modals)](#defaultmodal-modals) shell, unchanged: `#181225` fill, 1px White 10, 24px radius, padding 100, gap 100, the Mythic glow, a 500-wide `Content` column (gap 50), title Inter 600 24 Snow, body Inter 400 16 Gray, 46-tall `Button-Contained-Text` CTAs (12px radius, padding 12 / 24, Inter 600 16 / 22 uppercase Snow) and the 36 White 10 close pill at right 19 / top 19. Overlay: Black 70 `rgba(0,0,0,0.7)`.
+
+| Modal | Title | Body | CTAs (left → right / top → bottom) | Overlay | Behaviour (board note) |
+| --- | --- | --- | --- | --- | --- |
+| Delete Desktop Variant | "Delete Desktop Variant" | "Deleting the Desktop layout will delete its device specific settings. Your Mobile layout will remain unchanged." | row, gap 20, two 240-wide: "CANCEL" (White 10) · "DELETE DESKTOP" (Primary) | full 1920 × 1080 | "The modal closes when pressing the black overlay. It's equivalent to press [Cancel], the close button or [Esc]." (`3609:52301`) |
+| Delete Mobile Variant | "Delete Mobile Variant" | "Deleting the Mobile layout will delete its device specific settings. Your Desktop layout will remain unchanged." | "CANCEL" · "DELETE MOBILE" | full 1920 × 1080 | as Delete Desktop (`3613:53090`) |
+| Update SDK | "UI Editor Unavailable" | "Update your SDK to **version 7.26.0** or later to use the UI Editor." (the version Inter 600) | column, gap 20, each 500 wide: "UPDATE SDK" (Primary) above "MAYBE LATER" (White 10; ✱ drawn "MAY BE LATER", a Figma typo; user decision) | 1920 × 1028, from y 52: the Creator Hub header stays uncovered | "[May be later] takes the user back to the 3D tab. The modal can't be closed by pressing [Esc] or clicking the overlay." (`3627:54231`) |
+
+| Part | Token | Contrast | A11y |
+| --- | --- | --- | --- |
+| Overlay Black 70 | no token (literal; `--modal-overlay-bg-color` → `--scrim` is Black 60) | — | click closes the Delete modals only |
+| Title / body | `--palette-neutral-softWhite`, `--palette-neutral-gray4` | 17.77:1, 11.58:1 on `#181225` | `role="dialog" aria-modal="true" aria-labelledby` / `aria-describedby`; Update SDK: `role="alertdialog"` ✱ |
+| Primary CTA | `--primary-main` | **Snow on Primary 3.55:1 — fails 4.5:1** (16 / 600) | Delete modals: initial focus on Cancel ✱ |
+| Secondary CTA, close | `--palette-whiteTransparent-subtle` | Snow 13.51:1 over White 10 | close `<button aria-label="Close">` |
+
+✱ Update SDK: `Esc` and a click on the overlay don't dismiss it; the drawn close (×) and "Maybe later" do, both returning to the 3D tab (user decision: the board note's meaning).
+
+Drift (checked): the variant modal's copy and CTAs match; the SDK notice is a full-cover card, not this modal, and its secondary button reads "Maybe later", the decided copy (Figma's "MAY BE LATER" is a typo).
+
+**Decisions**
+
+| Topic | Rule |
+| --- | --- |
+| Copy | As drawn, except "MAY BE LATER", which is a typo: the button reads "Maybe later" ✱ (user decision). |
 
 ### LeftPanel2D (UI Editor — Panels)
 
-Component `21028:34521`, 1 variant: the 2D rail. Size 312 × 712. Read October 27, 2026. Code: main · inspector `LeftPanel/LeftPanel.tsx`, `NodeTree.tsx`, `CodeRootsList.tsx` · Creator Hub none. The rail's search field is not mapped in code yet; the 2D rail assembly takes it (Open items).
+Instance `3488:55157` on the Default board `3413:15894`, 1 variant: the 2D rail. Also drawn on the Add Node board `3522:122110` (`3522:122113`) and the GUI & Nodes menu board `3522:122468` (`3527:163609`). Size Fixed 312 × Fill (756 on the boards). Read November 12, 2026. Code: inspector `UIDesigner/LeftPanel/LeftPanel.tsx` (rail, search, section headers), `CodeRootsList.tsx` (GUIS list), `NodeTree.tsx` (NODES list), `WidgetPicker/WidgetPicker.tsx` (Add Node menu); the 2D | 3D bar is `ModeSwitcher/ModeSwitcher.tsx`. Drift: the code's rail headers are 11px / 400 White 50 with no rules and the lists sit in resizable panels (`PanelGroup`); Figma draws fixed sections with no resize handle.
 
-| Part | Fill | Border | Radius | Text | Padding / gap / size | Inspector token |
+Column, items centred, no gap, padding-bottom 100, clips its content; fill Charcoal `#25212A`. Top to bottom: TabBar, SearchBar, HierarchySections "GUIS", the GUIS list, HierarchySections "NODES", the NODES list.
+
+| Part | Fill | Border | Radius | Text | Padding / gap / size | Token |
 | --- | --- | --- | --- | --- | --- | --- |
-| Panel | Charcoal `#25212A` | none | 0 | — | Fixed 312 wide, vertical, items centred, padding-bottom 100, no gap between sections | `--ui-designer-panel-bg` `#242129` (✱ deviation 1/255) |
-| TabBar | Shadow `#161518` | 1px White 10 bottom | 0 | Inter 600 12 uppercase; active Gray, inactive Silver | h 36, padding-bottom 1; tab padding 10 / 4; active 2px Gray bottom | see TabBar |
-| Search-Bar | none | none | container 6 | placeholder "Search" Inter 400 12, White 40 | h 32, outer padding 4; container padding 6 / 40 / 6 / 6, gap 6; Search glyph 12 × 12 | `--palette-whiteTransparent-blurry` |
-| HierarchySections ×2 (GUIS, NODES) | none | 1px White 10 top and bottom | 0 | Inter 600 12 uppercase Gray | h 28, padding 4 / 10 | see HierarchySections |
-| GUIS list | none | none | 0 | Inter 400 12 Gray | padding 2 / 0; rows h 30, padding 0 / 10, gap 10; glyph 14 × 14 | see GUI |
-| NODES list | none | none | 0 | Inter 400 12 Gray; Snow selected; White 40 hidden | padding 2 / 0; rows h 30; padding-left 10 (root), 40 (level 1), 70 (level 2); padding-right 10 | see NodeTypeHierarchy |
+| Panel | Charcoal `#25212A` | none | 0 | — | Fixed 312 wide, column, padding-bottom 100, no gap | `--ui-designer-panel-bg` `#242129` (✱ deviation 1/255) |
+| TabBar | Shadow | 1px White 10 bottom | 0 | "2D" / "3D", Inter 600 12 uppercase | 312 × 36; the 2D tab selected | see TabBar |
+| SearchBar | none at rest | see SearchBar | 6 | placeholder "Search" | 312 × 32, padding 4 | see SearchBar |
+| HierarchySections ×2 | none at rest | 1px White 10 top and bottom | 0 | "GUIS", "NODES" (typed "Nodes", uppercase by style), Inter 600 12 uppercase Gray | 312 × 28, padding 4 / 10 | see HierarchySections |
+| GUIS list | none | none | 0 | Inter 400 12 Gray | padding 2 / 0; rows 30 tall | see GUI |
+| NODES list | none | none | 0 | Inter 400 12; Gray, Snow selected, White 40 hidden | padding 2 / 0; rows 30 tall; padding-left 10 (root), 40 (level 1), 70 (level 2); padding-right 10 | see NodeTypeHierarchy |
 
-The board's rows are fixture data: GUIS is HUD (Default), PopUp (Hover), Modal (Default), Settings (Selected); NODES draws a root Image, hidden level-1 rows (White 40, lock + eye-off), a selected Container (Blue Dark 3, Snow, lock and eye shown), level-2 children, and a hidden Container whose children carry the inherited dots.
+The board rows are fixture data. GUIS: a "MobileHUD" row first (a NodeTypeHierarchy row with the 16px `NodeType/Mobile` glyph in Gray, no caret, no actions), then "HUD" (Default), "PopUp" (Hover, White 5), "Modal" (Default), "Settings" (Selected, White 10). NODES: a root "Image" with a caret; hidden level-1 leaves "Title" and "Image" (White 40, closed lock + eye-off at rest); a selected level-1 "Container" (Blue Dark 3, Snow, lock + eye shown: the SelectedHover variant); its level-2 children "Image" and "Input"; level-1 "SecondaryButton", "SecondaryButton", "PrimaryButton"; a hidden level-1 "Container" whose level-2 children "Image" and "Input" carry the inherited dots. The Default board's root "Image" row draws the `NodeType/Mobile` glyph (a fixture slip; an Image node takes `NodeType/Image`).
+
+### SearchBar (UI Editor — Hierarchy)
+
+Two sets on HierarchyPanelComponents `3511:101478`. **Rail search** `3511:102584`, 5 states: Default `3511:102592`, Hover `3511:102594`, Selected `3511:102596`, Editing `3511:102598`, Clear Button Hover `3511:102600`; 312 × 32 (an outer frame with padding 4 around a 304 × 24 field). **Nodes-menu search** (`<NodesMenuSearchBar>`) `3901:41271`, the same 5 states: `3901:41471`, `3901:41478`, `3901:41489`, `3901:41500`, `3901:41515`; 198 × 30, no outer frame. Read November 12, 2026. Code: inspector `UIDesigner/LeftPanel/LeftPanel.tsx` (`.ui-designer-rail-search`, a shared `TextField` with `leftIcon` / `rightIcon`, placeholder "Search", clear button "Clear search"); `WidgetPicker/WidgetPicker.tsx` (`.ui-designer-widget-picker-search`). Drift: the menu search's placeholder in code is "Search widgets…"; Figma's is "Search node type".
+
+Shared: row, items centred, gap 6, clips; the `Search` glyph, then the text (Inter 400 12, one line), then, once there is text, an invisible spacer and the clear button. **The glyph and text never move between states.** Figma's border is an inside stroke that takes no layout space, and the right padding of 40 (10 when the clear button shows) reserves the clear button's room, so text and glyph sit on the same pixels in all five states. Code draws the border so it takes no space (an inset `box-shadow`, or a transparent 1px border at rest with the padding reduced by 1px), never a border that pushes the content.
+
+| Variant | State | Fill | Border | Radius | Glyph | Text | Padding / size | Token | Contrast (rail: on `#242129`; menu: on Onix `#35333B`) | A11y |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Rail | Default | none | none | 6 | `Search` 12 × 12, Snow | placeholder "Search", White 40 | field 304 × 24, padding 6 / 40 / 6 / 6, gap 6; outer padding 4 | `--palette-neutral-softWhite`, `--palette-whiteTransparent-blurry`, `--ui-designer-radius-field` | glyph 15.45:1; **placeholder 3.74:1, below 4.5:1**; the field has no visible edge at rest (the glyph marks it) | `<input type="search">` named "Search GUIs and nodes"; the glyph is `aria-hidden` |
+| Rail | Hover | none | 1px White 60 | 6 | `Search` 12, White 60 | placeholder White 40 | as Default | `--palette-whiteTransparent-backdrop` | border 6.55:1; glyph 6.55:1; placeholder as Default | — |
+| Rail | Selected (focused, empty) | none | 1px Snow | 6 | `Search` 12, Snow | a 1px Snow caret before the placeholder, then "Search" in White 20 | as Default | `--palette-neutral-softWhite`, `--palette-whiteTransparent-soft` | border 15.45:1 (this is the focus indicator); **placeholder 1.91:1** | the Snow border is the `:focus-visible` look; no extra ring ✱ |
+| Rail | Editing | none | 1px Snow | 6 | `Search` 12, Snow | typed text Snow (drawn "PopUp"), a 1px Snow caret after it | padding-right 10; clear button 12 × 12, fully round (100), White 5, a Snow `Close` glyph inset 16.67% (8 × 8) | `--palette-whiteTransparent-faint`, `--r-pill` | text 15.45:1; Close 13.37:1 on its White 5 chip; chip vs panel 1.16:1 | clear button named "Clear search", Escape clears ✱ |
+| Rail | Clear Button Hover | none | 1px Snow | 6 | as Editing | as Editing | clear button White 10 | `--palette-whiteTransparent-subtle` | Close 11.40:1 on the chip | — |
+| Menu | Default | none | 1px White 40 | 8 | `Search` 16 × 16, Snow | placeholder "Search node type", White 40 | 198 × 30, padding 7 / 40 / 7 / 6, gap 6 | `--palette-whiteTransparent-blurry`; radius no token (literal 8px) | glyph 12.13:1; border 3.39:1; **placeholder 3.39:1** | `<input type="search">` named "Search node type" ✱ |
+| Menu | Hover | none | 1px Snow | 8 | `Search` 16, Snow | placeholder White 40 | as Default | `--palette-neutral-softWhite` | border 12.13:1 | — |
+| Menu | Selected (focused, empty) | none | 1px Snow | 8 | `Search` 16, Snow | Snow caret, placeholder White 20 | as Default | `--palette-whiteTransparent-soft` | **placeholder 1.88:1** | the menu opens with focus here ✱ |
+| Menu | Editing | none | 1px Snow | 8 | `Search` 16, Snow | typed text Snow (drawn "Text"), caret after | padding-right 10; clear button 16 × 16, round, White 5, `Close` inset 16.67% (10.67) | `--palette-whiteTransparent-faint` | text 12.13:1; Close 10.42:1 on its chip | "Clear search" |
+| Menu | Clear Button Hover | none | 1px Snow | 8 | as Editing | as Editing | clear button White 10 | `--palette-whiteTransparent-subtle` | Close 8.91:1 | — |
+| both | ✱ keyboard focus on the clear button | as its hover | — | round | — | — | — | — | — | the clear button's hover fill plus the UI Designer icon-button ring |
+
+Hover in the rail search turns the glyph White 60 while Selected and Editing return it to Snow; the menu search keeps the glyph Snow in every state. Library icons: `Search` (`fontSize="inherit"` at 12, `fontSize="small"` at 16), `Close`.
+
+**Decisions**
+
+| Topic | Rule |
+| --- | --- |
+| Contrast | ✱ The White 40 placeholders are kept as drawn: 3.74:1 in the rail, 3.39:1 in the Nodes menu, a known contrast miss for design to revisit (Open items) (user decision). |
+| Focus | ✱ Keyboard focus on the field is the drawn Selected look, a 1px inset Snow border that matches the tree rows' `--focus-ring`; the clear button takes the same ring on `:focus-visible` (user decision). |
 
 ### RightPanel2D (UI Editor — Panels)
 
-Set `21028:34544`, 11 variants (`Property 1`: Container `21028:34554`, Image&Container `21028:34545`, Text `21028:34576`, Button `21028:34592`, Input `21028:34608`, Dropdown `21028:34624`, GUILogic `21028:34641`, NodeLogic1 `21143:4292`, NodeLogic2 `21151:7668`, Empty `21036:47478`, MobileHUD `21281:45188`). Size 4068 × 1742; each variant 348 wide. Read October 27, 2026. Code: main · inspector `RightPanel/RightPanel.tsx`, `RightPanel/PropertyPanel/*`, `RightPanel/LogicPanel/*`, `MobileHud/` · Creator Hub none.
+Set `21028:34544` as instanced on the Properties Panel board `3493:163149` (frame `3493:163436`) and the Logic Panel board `3520:102838`; the UI Editor file also holds the Empty `3961:10285` and MobileHUD `3961:10286` variants as local components. Variants: Container `3493:163451` (Default) and `3493:163458` (caption "Interaction States, Variants, Flow, Wrap, & Max-Min size are active"); Image `3493:163461` (Default), `3493:163462` and `3493:163463` (both captioned "Scale, Avatar Fill, & Border are active": `3493:163462` draws Scale on, Avatar fill and Border on; `3493:163463` draws Fill None with Scale and Border off); Label `3493:163465`, Button `3493:163467`, Input `3493:163469`, Dropdown `3493:163471` (the board captions these four "Fill none"); the Logic shells GUI `3520:102883` / `3520:102884` and Node/Prefab `3520:102886` (their content is in the Logic sections); Empty `3961:10285` (on the No Node board `3421:36758` as `3421:36763`); MobileHUD `3961:10286` (on board `3812:8369` as `3812:8396`). Each 348 wide (the Empty instance on the No Node board is 350 wide and fills the 756 board height). Read November 12, 2026. Code: inspector `RightPanel/RightPanel.tsx`, `RightPanel/PropertyPanel/PropertyPanel.tsx` with `field-configs.groups.ts`, `RightPanel/LogicPanel/*`, `RightPanel/MobileHudPanel/MobileHudPanel.tsx`, `EmptyState/EmptyState.tsx` · Creator Hub none.
 
-Shared by every variant:
+The board's note `3683:30109` reads "’Ignore Layout Flow’ appears only if parent container supports a flow. Otherwise, hide it." Which groups each node type shows is in Properties (UI Editor — PropertiesSections).
 
-- **Panel:** Charcoal `#25212A` (`--ui-designer-panel-bg`, the 1/255 deviation), Fixed 348 wide, vertical, gap 12 between the TabBar, Header and Properties groups, items centred, padding-bottom 100 (MobileHUD: 20). The 24px radius belongs to the board, not the panel.
-- **TabBar:** Shadow `#161518`, 1px White 10 bottom rule, h 36, padding-bottom 1; two flex-1 tabs, padding 10 / 4, Inter 600 12 uppercase centred. On the Properties tab the selected label is Gray `#CFCDD4` with a 2px Gray underline and "Logic" is Silver; on the Logic tab (GUILogic, NodeLogic1, NodeLogic2) the selected label is Snow `#FCFCFC` with a 2px Snow underline and "PROPERTIES" is Silver.
-- **Header:** 348 wide, padding-top 6, gap 10; the header row (`NodeTypeHierarchy` PropertiesHeader) is 16 tall with padding 0 / 16 / 0 / 10, gap 8, an 18 × 18 node glyph, the name in `H7 Semi` (Inter 600 14) Gray and a 16 × 16 VisibilityToggle (radius 4, eye 14 × 14).
-- **Toggles:** a column with padding 6 / 0, gap 6; each row h 15, padding 0 / 11, gap 10: a 14 × 14 Checkbox, the label Inter 400 12 Gray, a 12 × 12 `HelpCTA`.
-- **Sections:** `PropertiesSections` rows (h 28, 1px White 10 top and bottom, padding 2 / 10, gap 10, 12 × 12 chevron) over 292-wide `Properties` columns; `Fill` is 290 wide.
-- **Fields:** `Input` cells on Onix `#35333B`, h 26, radius 6, padding 6 / 24 / 6 / 8, value Inter 400 14 Gray, label Inter 400 12 Gray; an `AddVariant` 18 × 18 at right 4 / top 4 on editable cells.
+Shared by every node variant:
 
-| Variant | Part | Fill | Border | Radius | Text | Padding / gap / size | Inspector token |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| Container (348 × 1573) | Dropdown block ("Scene Inset") | Onix `#35333B` | none | 6 | label Inter 400 12 Gray; value "Secure Area" Inter 400 14 Gray | padding 0 / 10, gap 6; input h 26, padding 6 / 8, gap 8, arrow 10 | `--ui-designer-control-bg` |
-| Container | Fill (Paint) | — | — | — | label "Fill" Gray 12 | 290 wide, vertical, gap 6, padding 0 / 10 | see Fill |
-| Container | Fill ToggleTabs | Charcoal slot | 1px Onix | 6 | — | 130 × 20, gap 8, five flex-1 cells; selected cell Blue Dark 2 `#244B7D`, no border; others 1px Onix; glyph 18 × 18 | `--ui-designer-control-active-bg`, `--palette-neutral-onyx` |
-| Container | colour pair ("FFFFFF" / "100%") | Onix | none | 6 on the outer ends | Inter 400 14 Gray | two cells joined at 1px: left min-width 128, padding 0 / 24 / 0 / 8 with a `MarginsIcons` 16; right 75 wide with an `AddVariant` | `--ui-designer-control-bg` |
-| Container | Border / Devices / Interactions headers | none | none | AddCTA 6 | label Gray 12 ("Border", "Device Variants", "Interaction States") | 292 wide, gap 10, padding 0 / 14 / 0 / 10; each after a 1px `Div` | `--palette-neutral-gray4` |
-| Container | Constraints | Onix dropdowns | none | 6 | "Top", "Left" Inter 400 14 Gray | `ConstraintsIcons` 60 × 60; two `Input` Dropdown cells h 26, padding 6 / 8, gap 8; stack gap 6; row h 60, gap 10, padding-right 70 | `--ui-designer-control-bg` |
-| Container | Position / Z-Index | Onix | none | 6 | "100", "1" Inter 400 14 Gray | X / Y cells h 26 with a 16 glyph and an `AddVariant`, gap 6; Z-Index one cell, no glyph | `--ui-designer-control-bg` |
-| Image&Container (348 × 1186) | header "Image"; no Text section | — | — | — | — | — | — |
-| Image&Container | Interaction States chips (Default active, Hover, Pressed, Selected) | active Blue Dark 3 `#243852`; others none | none | 6 | Inter 400 12; Snow active, Silver otherwise | h 20, padding 2 / 6, gap 2 | `--palette-system-blueDark3` (✱ code Blue Dark 2, see Interactions) |
-| Image&Container | Device Variants chips (Desktop active, Mobile) | active Blue Dark 3; other none | none | 6 | as above | as above | `--palette-system-blueDark3` |
-| Image&Container | Fill source ("Search") / Scale Type ("Cropped") | Onix | none | 6 | placeholder White 40; value Gray 14 | h 26 | `--ui-designer-control-bg` |
-| Text (348 × 1504) | Text Input | Onix | none | 6 | Inter 400 14 Gray | h 100 (multiline), padding 6 / 26 / 6 / 8 | `--ui-designer-control-bg` |
-| Text | Typography (font select), Size (14) | Onix | none | 6 | Inter 400 14 Gray | h 26; font select flex 1, padding 0 / 8; Size 80 wide, padding 0 / 24 / 0 / 8 | `--ui-designer-control-bg` |
-| Text | Colour (hex + opacity) | Onix | none | 6 on the outer ends | Inter 400 14 Gray | joined pair, h 26; opacity cell 75 wide | `--ui-designer-control-bg` |
-| Text | Alignment | Charcoal slot, 1px Onix | as slot | 6 | — | slot 142 wide; active cell Blue Dark 2 | see ToggleTabs |
-| Text | Wrap / Truncate / Disabled | — | — | — | Inter 400 12 Gray | checkbox rows as Toggles | — |
-| Button (348 × 1504) | as Text | — | — | — | header "Button"; Text Input value "Label" | as Text (fixture copy differs only) | — |
-| Input (348 × 1549) | as Text, plus an "Input" section | — | 1px White 10 top and bottom on its header | — | section header Inter 600 12 Gray | header h 28, padding 2 / 10; Resize width 200 | — |
-| Input | Placeholder / Value fields | Onix | none | 6 | label Inter 400 12 Gray; value Inter 400 14 Gray | h 50, padding 6 / 26 / 6 / 8, gap 8 | `--ui-designer-control-bg` |
-| Dropdown (348 × 1702) | Options field | Onix | none | 6 | "Option 1" Inter 400 14 Gray | h 100, padding 12 / 24 / 6 / 8, gap 8 | `--ui-designer-control-bg` |
-| Dropdown | value chip ("customValue") | White 10 `rgba(255,255,255,0.1)` | none | 100 | Inter 400 12 Snow | h 22, padding 6 / 4 / 6 / 8, gap 2 | `--palette-whiteTransparent-subtle` |
-| Dropdown | Selected Index, Empty Label, Accept Empty | Onix | none | 6 | label Gray 12, value Gray 14 | h 26, padding 6 / 24 / 6 / 8 | `--ui-designer-control-bg` |
-| Dropdown | Dropdown Events ("On Change") | `EventTag` pills | none | 100 | label Inter 400 12 Gray, 80 wide | h 22 | see EventTag |
-| GUILogic (348 × 626) | header "GUIName" | none | none | — | `H7 Semi` Gray; GuiRoot glyph 18 | row h 16, gap 8, padding 0 / 16 / 0 / 10 | `--palette-neutral-gray4` |
-| GUILogic | section headers (Variables, Inputs, Events) | none | 1px White 10 top and bottom | 0 | Inter 600 12 Gray | h 28, padding 2 / 10, gap 10; arrow-down 12 | `--palette-whiteTransparent-subtle` |
-| GUILogic | description | none | none | — | Inter 400 12 Silver; the `{{` run Gray | padding 0 / 10, gap 12 | `--palette-neutral-gray3` |
-| GUILogic | empty lines ("No variables yet." …) | none | none | — | Inter 400 12 Cloudy Sky `#716B7C` | 95 × 15 | `--ui-designer-glyph` |
-| GUILogic | Name / Value / type cells, AddCTA | Onix | none | 6 (row 8) | placeholder Cloudy Sky; "string" Gray | as AddLogicInputs; AddCTA at 20% opacity until a name is typed | `--ui-designer-control-bg` |
-| NodeLogic1 (348 × 413) | header "PrefabName" | none | none | — | `H7 Semi` Gray; prefab glyph 18 | row h 16, gap 8, padding 0 / 16 / 0 / 10 | `--palette-neutral-gray4` |
-| NodeLogic1 | description | none | none | — | "Set the values for this component's inputs." Inter 400 12 Silver; the second sentence Inter 400 **10** Silver | gap 6, 328 wide; slot column gap 18, padding 0 / 10 | `--palette-neutral-gray3`; 10px: `--type-caption-size` |
-| NodeLogic1 | LogicInputs row | none | none | 8 | "InputName" Inter 400 12 Gray, flex 1 | h 26, gap 6, 328 wide; value cell 146 wide | — |
-| NodeLogic1 | value input, rest / bound | Onix | none / 1px White 60 `rgba(255,255,255,0.6)` | 6 | Inter 400 12 Gray | h 26; rest padding 6 / 24 / 6 / 8; bound padding 7 / 25 / 7 / 9 (border-box) with an `AddVariant` at right 3 / top 3 | `--ui-designer-control-bg`, `--palette-whiteTransparent-backdrop` |
-| NodeLogic1 | DeleteCTA slot | none | — | — | — | 20 × 20, glyph 16; opacity 0 on an unbound row, shown on a bound row | — |
-| NodeLogic1 | hint + "Open PrefabName" button (below the inputs) | none | 1px White 40 `rgba(255,255,255,0.4)` | 6 | hint Inter 400 10 Silver; button Inter 400 12 Snow | button 328 × 26, padding 12 / 24 | `--palette-whiteTransparent-blurry` |
-| NodeLogic2 (348 × 365) | the alternative layout, not followed (see Decisions): as NodeLogic1, with a `HelpCTA` 12 (Cloudy Sky) after the header name, the "Open PrefabName" button directly under the header (`CTA` row, padding 0 / 10), and no hint or bottom `Div` | — | — | — | — | header padding 6 / 0, column gap 6 | `--palette-neutral-gray2` (HelpCTA) |
-| Empty (348 × 215) | panel | Charcoal `#25212A` | none | — | — | column, gap 10, centred both axes, padding 100 / 0, text centred | `--ui-designer-panel-bg` |
-| Empty | title "No node selected" | — | — | — | `H6 Semi` Inter 600 16 / 100% Gray `#CFCDD4` | full width | `--palette-neutral-gray4` |
-| Empty | body | — | — | — | Inter 400 12, one paragraph: "Select a " Silver, "node " Gray (regular weight), "to start editing its properties and logic." Silver; no icon drawn | full width | `--palette-neutral-gray3` / `--palette-neutral-gray4` |
-| MobileHUD (348 × 1003) | header "MobileHUD" | none | none | — | `H7 Semi` Inter 600 14 Gray | column, gap 10, padding 12 / 0 / 6; header row h 16, gap 8, padding 0 / 16 / 0 / 10 | `--palette-neutral-gray4` |
-| MobileHUD | Toggles (Hide Joystick, Hide Crosshair, Hide Input Actions) | none | none | — | Inter 400 12 Gray | column gap 6, padding 6 / 0; rows h 15, gap 10, padding 0 / 11; Checkbox 14 | — |
-| MobileHUD | InputActions section | none | 1px White 10 top | — | title "Input Actions" Inter 600 12 Gray; hint "Choose one action as Main. Drag them to reorder." Inter 400 12 Silver (328 wide) | column, gap 4, padding 10 | `--palette-whiteTransparent-subtle` |
-| MobileHUD | drop slot `Div` | `#D9D9D9` at opacity 0 | none | — | — | h 6, full width (the drop-indicator slot) | — |
-| MobileHUD | InputAction cards ×8 | see InputAction | — | 6 | — | — | — |
-| MobileHUD | scrollbar | handle Black 40 `rgba(0,0,0,0.4)` | handle 1px White 60 | 100 | — | 8 × 860 at right 2 / top 0, padding 4 / 0 / 500 | `--palette-blackTransparent-blurry`, `--palette-whiteTransparent-backdrop` |
+- **Panel:** Charcoal `#25212A`, Fixed 348 wide, vertical, gap 12 between TabBar, Header and the property groups, padding-bottom 100 (MobileHUD 20). The first group stacks at gap 6, the others at gap 12.
+- **TabBar** (`TabBar` `3676:6002`, Buttons board row `3520:102810`): Shadow `#161518`, 1px White 10 bottom rule, h 36, padding-bottom 1; two flex-1 `TabHorizontal` tabs, padding 0 / 4, Inter 600 12 uppercase centred; copy "PROPERTIES" and "Logic" (shown uppercase).
+- **Header:** 348 wide, vertical, padding-top 6, gap 10. Header row (`NodeTypeHierarchy`): h 16, padding 0 / 16 / 0 / 10, gap 8; node glyph 18 × 18; name `H7 Semi` Inter 600 14 Gray, flex 1; a 16 × 16 `VisibilityToggle` (radius 4, eye 14 × 14, Gray).
+- **Toggles:** a column, padding 6 / 0, gap 6; each `Toggle` row h 15, padding 0 / 11, gap 10: a 14 × 14 Checkbox (1px White 40 outline, 4px radius; checked adds a Gray tick), the label Inter 400 12 Gray, a 12 × 12 `HelpCTA`. Copy: "Visibility is Active" (drawn checked) and "Ignore Layout Flow" (drawn unchecked; not on Container).
+- **Container header dropdown:** label "Scene Inset" (`Subtitle`, 93 wide) over a `Dropdown` input with "Secure Area"; block padding 0 / 10, gap 6.
+- **Groups:** a `Div` hairline (348 wide, 1px White 10) above each of the Interaction States and Device Variants rows, then `PropertiesSections` headers (28 tall) over 328-wide content columns with padding 0 / 10.
 
-Contrast on `#242129`: Gray 10.07:1, Silver 5.85:1, Snow 15.45:1, Cloudy Sky 3.09:1 (the empty lines miss 4.5:1); Gray on Onix 7.90:1; Cloudy Sky placeholder on Onix 2.43:1.
+| Variant | State / part | Fill | Border | Radius | Text | Padding / gap / size | Token | Contrast (on `#242129` unless noted) |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| all | panel | Charcoal `#25212A` | none | 0 | — | 348 wide, gap 12, padding-bottom 100 | `--ui-designer-panel-bg` (`#242129`, ✱ 1/255) | — |
+| all | TabBar, Properties active (Default) | Shadow | 2px Gray `#CFCDD4` under "PROPERTIES" | 0 | "PROPERTIES" Gray; "Logic" Silver `#A09BA8` | h 36, tabs flex 1 | `--base-20`, `--palette-neutral-gray4`, `--palette-neutral-gray3` | Gray 11.55:1 on Shadow; Silver 6.71:1 |
+| all | TabBar, Logic hovered | Logic tab White 10 `rgba(255,255,255,0.1)` | as Default | 0 | as Default | — | `--palette-whiteTransparent-subtle` | Silver 5.12:1 on the hover fill |
+| GUI / Node logic | TabBar, Logic active | Shadow | 2px Snow `#FCFCFC` under "Logic" | 0 | "Logic" Snow; "PROPERTIES" White 40 `rgba(255,255,255,0.4)` | — | `--palette-neutral-softWhite`, `--palette-whiteTransparent-blurry` | Snow 17.73:1; **White 40 3.84:1 misses 4.5:1** |
+| GUI / Node logic | TabBar, Logic active + hovered | Logic tab White 10 | 2px Snow under "Logic" | 0 | as above | — | as above | Snow 13.53:1 on the hover fill |
+| all | ✱ TabBar focus / Properties-tab hover while Logic is active | not drawn: nearest is the White 10 hover fill; focus takes the accent ring (see UI Editor Buttons) | — | — | — | — | `--ui-designer-control-accent` | — |
+| all | Header name | none | none | — | `H7 Semi` Inter 600 14 Gray | row h 16, gap 8 | `--palette-neutral-gray4` | 10.07:1 |
+| Container | node glyph `NodeType/Container` | — | — | — | glyph Gray | 18 × 18 | `--palette-neutral-gray4` | 10.07:1 |
+| Image, Label, Button, Input, Dropdown | node glyph `NodeType/<type>` | — | — | — | glyph White `#FFFFFF` (instance colour; differs from Container's Gray) | 18 × 18 | no token (literal `#FFFFFF`) | 15.85:1 |
+| Container | "Scene Inset" dropdown | Onix `#35333B` | none | 6 | label Inter 400 12 Gray; "Secure Area" Inter 400 14 Gray; arrow 10 Silver | input h 26, padding 6 / 8, gap 8 | `--ui-designer-control-bg` | Gray 7.90:1 on Onix |
+| Container `3493:163458`, Image `3493:163462` | rows switched on | see Interactions, Devices, MinMaxSize, Fill, Border | — | — | — | — | — | — |
+| GUI logic `3520:102883` | shell | Charcoal | — | 0 | TabBar Logic active; Header row only (h 16, at y 48: gap 12 under the TabBar) | — | — | — |
+| Node/Prefab logic `3520:102886` | shell | Charcoal | — | 0 | TabBar Logic active; a `Properties` group directly under the TabBar whose header row sits 12 from its top | — | — | — |
+| Empty `3961:10285` | panel | Charcoal | none | 0 | no TabBar, no icon | vertical, gap 10, items and text centred, padding 100 / 0; component h 215, the board instance fills the panel height | `--ui-designer-panel-bg` | — |
+| Empty | title | — | — | — | "No node selected" Inter 600 16 Gray | full width | `--palette-neutral-gray4` | 10.07:1 |
+| Empty | body | — | — | — | Inter 400 12, one paragraph: "Select a " Silver, "node " Gray (regular weight), "to start editing its properties and logic." Silver | full width | `--palette-neutral-gray3` / `--palette-neutral-gray4` | Silver 5.85:1, Gray 10.07:1 |
+| MobileHUD `3961:10286` | panel | Charcoal | none | 0 | no TabBar | vertical, items centred, padding-bottom 20 | `--ui-designer-panel-bg` | — |
+| MobileHUD | header | none | none | — | "MobileHUD" Inter 600 14 Gray, then a `HelpCTA` 12; no node glyph | column gap 10, padding 12 / 0 / 6; row h 16, gap 8, padding 0 / 16 / 0 / 10 | `--palette-neutral-gray4` | 10.07:1 |
+| MobileHUD | Toggles ("Hide Joystick", "Hide Crosshair", "Hide Input Actions") | none | Checkbox 1px White 40 | 4 | Inter 400 12 Gray; drawn unchecked, no HelpCTA | column gap 6, padding 6 / 0; rows h 15, gap 10, padding 0 / 11 | `--palette-whiteTransparent-blurry` | checkbox ring 3.74:1 |
+| MobileHUD | InputActions block | none | 1px White 10 top | 0 | "Input Actions" Inter 600 12 Gray (20 tall); "Choose one action as Main. Drag them to reorder." Inter 400 12 Silver, 328 wide | column, gap 4, padding 10 | `--palette-whiteTransparent-subtle` | Silver 5.85:1 |
+| MobileHUD | drop slot `Div` | `#D9D9D9` at opacity 0 | none | — | — | h 6, full width (the drop-indicator slot) | no token (literal) | — |
+| MobileHUD | InputAction cards | Onix Dark 1 `#2D2A33` | none | 6 | see InputAction | column gap 2, padding 4 / 10 / 12 | `--palette-neutral-onyxDark1` | — |
+| MobileHUD | scrollbar | handle Black 40 | handle 1px White 60 | 100 | — | 8 × 860 at right 2 / top 0, padding 4 / 0 / 500 | `--palette-blackTransparent-blurry`, `--palette-whiteTransparent-backdrop` | — |
 
-The Dropdown variant's render draws the Position and Layout groups once each; the second pair in its layer tree is hidden layers, and the code follows the render (a Figma-side defect, see Open items).
+A11y: the TabBar is `role="tablist"` with `role="tab" aria-selected` tabs and arrow-key movement ✱; each section header is a `<button aria-expanded>` ✱; the Empty state is plain text, the panel a `role="region"` named "Properties" ✱.
+
+Code (checked): the Empty state renders an `IoOptionsOutline` icon and the body "Select a **node** to start editing its properties." (drift: Figma draws no icon, the body ends "its properties and logic.", and "node" is regular weight).
 
 **Decisions** (user decisions; the record for this panel, so grep here before asking again):
 
 | Topic | Rule |
 | --- | --- |
+| Copy | Figma's copy is used exactly as drawn (user decision). |
 | Logic tab layout | NodeLogic1 (`21143:4292`): the input rows, then a divider, the hint "Open the component to add or edit its inputs, variables, and events.", and the "Open PrefabName" button at the end. NodeLogic2 (`21151:7668`, the button under the header) is not followed. |
+
+### Logic panel (UI Editor — Panels)
+
+Board: the Specs page's "Logic Panel" group `3520:102838` (columns: `<GUI>` "Default" `3520:102883`, `<GUI>` "Logic added on each field" `3520:102884`, `<Node> / Prefab` "Hovering second value" `3520:102886`) and the High-fi "Logic Panel" boards under the title `3421:29744`: Default `3413:15894` (right panel `3413:15899`, the empty GUI logic tab) and "GUI Logic exist" `3416:18295` (right panel `3416:18300`). Components: `RightPanel2D` GUI logic variant `3961:10282` and NodeLogic1 variant `3961:10283`. Panel 348 wide (350 on the High-fi boards), Charcoal, padding-bottom 100. Read November 12, 2026. Code: main · inspector `RightPanel/LogicPanel/CodeVariablesPanel.tsx` (Variables), `CodePropsPanel.tsx` (Inputs), `CodeCallbacksPanel.tsx` (Events), `ComponentRefPanel.tsx` (node logic), `RightPanel/RightPanel.tsx` (tabs) · Creator Hub none.
+
+The Logic tab shows one of two screens: **GUI logic** when a GUI root is selected (its Variables, Inputs and Events), **node logic** when a prefab / component instance is selected (values for the inputs the component declares). Field rows are specified in `AddLogicInputs` and `LogicInputs`; this section fixes the screen assembly and its copy.
+
+**Shared chrome**
+
+| Part | Fill | Border | Text | Padding / gap / size | Token | Contrast |
+| --- | --- | --- | --- | --- | --- | --- |
+| Panel | Charcoal `#25212A` | none | — | column, items centred, gap 12 (GUI) / Properties block padding 12 / 0, gap 12 (node); padding-bottom 100 | `--ui-designer-panel-bg` (`#242129`, ✱ 1/255) | — |
+| TabBar | Shadow `#161518` | 1px White 10 bottom | Inter 600 12 uppercase, centred: "PROPERTIES" White 40 `rgba(255,255,255,0.4)`; "Logic" Snow `#FCFCFC` with a 2px Snow bottom border | h 36, padding-bottom 1; two flex-1 tabs, padding 0 / 4 | `--base-20`, `--palette-whiteTransparent-subtle`; inactive `--palette-whiteTransparent-blurry`; active `--ui-designer-text` | Snow 17.73:1; **inactive White 40 on Shadow 3.84:1, below 4.5:1** |
+| Header row (`NodeTypeHierarchy`) | none | none | name `H7 Semi` (Inter 600 14) Gray `#CFCDD4`: "GUIName" / "PrefabName" | h 16, padding 0 / 16 / 0 / 10, gap 8; glyph 18 × 18 (`NodeType/GUIRoot` or `NodeType/Prefab`, Gray); no VisibilityToggle on the Logic tab | `--ui-designer-text-value` | 10.07:1 |
+
+Icons: GUIRoot → library `GUIRoot`; Prefab → `Prefab`; section chevron → `ArrowDown`.
+
+**GUI logic** (`3961:10282`; filled state `3520:102884`)
+
+Three sections, each a `PropertiesSections` header followed by a value block, a 1px White 10 divider and an `AddLogicInputs` row. Block gap 12 throughout.
+
+| Part | Fill | Border | Text (as drawn) | Padding / gap / size | Token | Contrast (on `#242129`) |
+| --- | --- | --- | --- | --- | --- | --- |
+| Section header ("Variables", "Inputs", "Events") | none | 1px White 10 top and bottom | Inter 600 12 Gray | h 28, padding 2 / 10, gap 10; chevron 12 × 12 White 40 | `--palette-whiteTransparent-subtle`; chevron `--palette-whiteTransparent-blurry` | label 10.07:1; chevron 3.74:1 |
+| Variables description | none | none | "GUI's data - NewGUI.tsx" with one space ✱ (the drawing has two spaces after "GUI's", a Figma typo; user decision), Inter 400 12 Silver `#A09BA8`; the file name is the root's file | value block padding 0 / 10, gap 12 | `--ui-designer-text-muted` | 5.85:1 |
+| Inputs description | none | none | "Values that can be provided to this component when you use it in another GUI" Inter 400 12 Silver, full width | as above | `--ui-designer-text-muted` | 5.85:1 |
+| Events description | none | none | "Use {{variable}} to reference a variable. Type {{ for suggestions": Inter 400 12 Silver, the second "{{" run Gray `#CFCDD4` | as above | `--ui-designer-text-muted`, `--ui-designer-text-value` | 5.85:1 / 10.07:1 |
+| Empty lines | none | none | "No variables yet.", "No inputs yet.", "No events yet." Inter 400 12 Cloudy Sky `#716B7C` | h 15, full width | `--ui-designer-glyph` | **3.09:1, below 4.5:1** |
+| Rows (filled) | — | — | Variables: "Title" + "string" + "Value"; a boolean variable "Title" + "bool..." + a checkbox; Inputs: "UserName" + "string"; Events: "onMouseDown" + the `{{ }}` code field | rows stack with gap 10 (Variables) | see LogicInputs | — |
+| Divider | White 10 | — | — | 1px, 328 wide (inside the 10 / 10 padding) | `--palette-whiteTransparent-subtle` | — |
+| Add row | — | — | — | `AddLogicInputs` Variants / Inputs / Events, full width | see AddLogicInputs | — |
+
+**Node logic** (NodeLogic1 `3961:10283`, instance `3520:102886`)
+
+| Part | Fill | Border | Text (as drawn) | Padding / gap / size | Token | Contrast (on `#242129`) |
+| --- | --- | --- | --- | --- | --- | --- |
+| Divider under the header | White 10 | — | — | 1px, full 348 width | `--palette-whiteTransparent-subtle` | — |
+| Slot | none | none | — | column, padding 0 / 10, gap 18 | — | — |
+| Description | none | none | "Set the values for this component's inputs." Inter 400 12 Silver; then "Inputs are defined in the GUI root. Here, you can connect each input to a value, variable, or event." Inter 400 **10** Silver | column, gap 6, 328 wide | `--ui-designer-text-muted`; 10px `--type-caption-size` | 5.85:1 |
+| Input rows | — | — | "InputName" + value cell; rest value "Value" Gray; hovered row (column label "Hovering second value") value "(value?:unknown)..." Gray, single line, ellipsis | rows gap 6, 328 × 26; see LogicInputs (node row) | see LogicInputs | — |
+| Divider | White 10 | — | — | 1px, 328 wide | `--palette-whiteTransparent-subtle` | — |
+| Hint | none | none | "Open the component to add or edit its inputs, variables, and events." Inter 400 10 Silver | 328 wide | `--ui-designer-text-muted`, `--type-caption-size` | 5.85:1 |
+| "Open …" button, rest | none | 1px White 40 | "Open PrefabName" (the component's name) Inter 400 12 Snow, centred, no wrap | 328 × 26, radius 6, padding 12 / 24 | `--palette-whiteTransparent-blurry`, `--ui-designer-text`, `--ui-designer-radius-field` | text 15.45:1; border 3.74:1 |
+| "Open …" button, hover | none | 1px Snow `#FCFCFC` | as rest | as rest | `--ui-designer-text` | border 15.45:1 |
+| "Open …" button, focus ✱ | — | not drawn: use the hover border (Snow) as the visible focus ring | — | — | `--focus-ring-color` | — |
+
+The hover values come from the `<OpenGUI>` row of Properties&LogicComponents (`3568:120023`: Default `3568:120051`, Hover `3568:120055`, label "Open GUI"). A11y: the button is a `<button>` named by its text; the description is plain text.
+
+Code (checked): the Variables description renders "GUI's data · NewGUI.tsx" (`CodeVariablesPanel.tsx`), the Inputs description "Values this component receives when nested. Bind a field to props.name." (`CodePropsPanel.tsx`), the Events description with `{{ variable }}` in `<code>` (`CodeCallbacksPanel.tsx`), and the node screen "Values passed to this instance. Type a literal or … a variable or event from this file." plus "No inputs declared. Open {name} and add inputs (Logic tab) to configure it here." in an "Inputs" container with no hint line (`ComponentRefPanel.tsx`) — drift: Figma's copy is used exactly as drawn (user decision).
+
+**Decisions**
+
+| Topic | Rule |
+| --- | --- |
+| Copy | Figma's copy is used exactly as drawn (user decision). |
+| Node logic layout | Input rows, a divider, the hint, then the "Open …" button at the end (NodeLogic1 `3961:10283`); matches RightPanel2D's "Logic tab layout" decision. |
 
 ### BottomPanel2D (UI Editor — Panels)
 
-Set `21221:41852`, 2 variants (`Blocked` `21221:41853`, `Default` `21138:18798`). Size 1960 × 635 (dashed `#8A38F5` chrome); variants 1920 × 320 and 1920 × 225. Read October 27, 2026. Code: main · inspector `RightPanel/LogicPanel/` (`CodeCallbacksPanel.css`, `CodeVariablesPanel.css`) — the code has no bottom dock today (absence is not removal) · Creator Hub none.
+Instances: Default board `3527:167833` (Default), No GUI `3527:167587` and No Node `3527:167659` (Blocked, nodes only), GUI created `3818:132569` (Blocked, nodes and prefabs). Tile states: grid `3527:166569` in `<AssetsPanelButtons>` — `<NodeButton>` Default `3527:167193`, Hover `3527:167207`, Blocked `3527:167221`; `<PrefabsButton>` Default `3702:14062`, Hover `3702:14068`, Blocked `3925:59968`. Size 1920 × 270 (320 on the Mobile GUI boards ✱). Read November 12, 2026. Code: inspector `Palette/Palette.tsx` (`PaletteCard`, `.ui-designer-palette-card`, `UIDesigner.css`).
 
-The logic / code panel docked under the canvas. Default lists NODES (Full Screen, Container, Image, Label, Button, Input, Dropdown) and PREFABS (PopUp, SecondaryButton, PrimaryButton, Close, Dropdown, ProfileEntry), with a 314-wide 1px divider between the two lists; Blocked lists six NODES (no Full Screen) and no PREFABS.
+The assets panel docked under the canvas: a column, Charcoal, padding 10 / 10 / 100 / 10, gap 10: the "NODES" label, a row of node tiles (gap 5), a 314-wide 1px rule, the "PREFABS" label, a row of prefab tiles (gap 5). Default lists NODES Full Screen, Container, Image, Label, Button, Input, Dropdown; Blocked lists six (no Full Screen). No GUI and No Node draw no PREFABS section; the Mobile GUI boards draw PREFABS with one "GUI" tile. Prefab names on the Default board are fixture data.
 
-| Variant | Part | Frame | Fill | Border | Radius | Text | Glyph | Contrast (on Charcoal) | A11y |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Default | panel | Fixed 1920 × Hug 320, vertical, padding 10 / 10 / 100 / 10, gap 10 | Charcoal `#25212A` | none | 0 | section labels "NODES", "PREFABS" Inter 400 12 (`H8 Regular`) Silver `#A09BA8` | — | Silver section labels 5.83:1; Gray names 10.03:1 | `role="region"` named by its heading ✱ |
-| Default | node tile | 80 × 70, padding 20 / 10, gap 10; tiles gap 5 | none | 1px White 10 | 10 | Inter 400 12 Gray `#CFCDD4`, centred, ellipsis, no wrap | `NodeType` 20 × 20 | Gray 10.03:1 | — |
-| Default | prefab tile | as node tile | none | none | 10 | Gray 12 | `NodeType` Prefab 20 | 10.03:1 | — |
-| Default | scrollbar | 10 wide, at right 10 / top 10 | handle Black 40 `rgba(0,0,0,0.4)` | 1px White 60 `rgba(255,255,255,0.6)` | 100 | — | — | — | — |
-| Blocked | panel | Fixed 1920 × Fixed 225, same padding and gap | Charcoal | none | 0 | the section label "NODES" is Silver `Inter` 400 12 (5.83:1) | — | the dimmed content: White 20 on Charcoal 1.91:1 | `aria-disabled="true"` on the controls, with the reason ✱ |
-| Blocked | node tile | as Default | none | 1px White 10 | 10 | White 20 `rgba(255,255,255,0.2)` | 20 | 1.91:1 (disabled exemption) | — |
+| Part | State | Fill | Border | Radius | Text | Glyph | Padding / gap / size | Token | Contrast (on Charcoal) | A11y |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Section labels "NODES", "PREFABS" | — | none | none | — | Inter 400 12 (`H8 Regular`) Silver `#A09BA8`, uppercase as written | — | — | `--palette-neutral-gray3` | 5.83:1 | `<h3>` naming each tile group ✱ |
+| Node tile | Default | none | 1px White 10 | 10 | Inter 400 12 Gray `#CFCDD4`, centred, one line, ellipsis ("Full Screen" is drawn at 11 on the Default board ✱) | `NodeType/*` 20, Gray | 80 × 70, padding 20 / 10, gap 10 | `--palette-whiteTransparent-subtle`, `--palette-neutral-gray4` | label 10.03:1; border 1.36:1 (the label carries it) | `<button>` named by its label, draggable |
+| Node tile | Hover | White 10 | 1px White 60 | 10 | Snow `#FCFCFC` | Snow | as Default | `--palette-whiteTransparent-subtle` (fill), `--palette-whiteTransparent-backdrop` (border), `--palette-neutral-softWhite` | label 11.35:1 on the White 10 fill; border 6.54:1 | hover is not the only cue ✱ |
+| Node tile | Blocked | none | 1px White 10 | 10 | White 20 `rgba(255,255,255,0.2)` | White 20 | as Default | `--palette-whiteTransparent-soft` | 1.91:1 (disabled, exempt) | `aria-disabled="true"` with the reason as its description ✱ |
+| Prefab tile | Default | none | none | 10 | Gray | `NodeType/Prefab` 20, Gray | as node tile | `--palette-neutral-gray4` | 10.03:1 | as node tile |
+| Prefab tile | Hover | White 10 | none | 10 | Snow | Snow | as node tile | `--palette-whiteTransparent-subtle` | 11.35:1 | — |
+| Prefab tile | Blocked | none | none | 10 | White 20 | White 20 | as node tile | `--palette-whiteTransparent-soft` | 1.91:1 (exempt) | `aria-disabled="true"` |
+| Rule | — | — | 1px, 314 wide (asset `Div`; its colour is not readable from the export: ✱ White 10 (user decision)) | — | — | — | — | `--palette-whiteTransparent-subtle` | decorative | — |
+| Scrollbar | — | handle Black 40 | 1px White 60 | 100 | — | — | 10 wide, at right 10 / top 10, padding-bottom 300 | `--palette-blackTransparent-blurry`, `--palette-whiteTransparent-backdrop` | border 6.54:1 | — |
+| any tile | ✱ focus | not drawn: the 1px inset Snow `--focus-ring` on `:focus-visible` (user decision) | — | — | — | — | — | `--focus-ring` | — | `:focus-visible` ring |
+| any tile | ✱ pressed | the tile's Hover look: White 10 fill, 1px White 60, Snow glyph and label (user decision) | — | — | — | — | — | `--palette-whiteTransparent-subtle`, `--palette-whiteTransparent-backdrop`, `--palette-neutral-softWhite` | — | — |
 
-Tokens: Charcoal `--ui-designer-panel-bg` (✱ deviation 1/255); tile border `--palette-whiteTransparent-subtle`; blocked label `--palette-whiteTransparent-soft`; scrollbar `--palette-blackTransparent-blurry` with `--palette-whiteTransparent-backdrop`.
+Icons: `FullScreen`, `Container`, `Image`, `Label`, `Button`, `Input`, `Dropdown`, `Prefab` in `Icons/figma/svg`.
+
+Blocked applies while no GUI exists (No GUI note: "In the assets panel (bottom) the Nodes buttons are dimmed down until a GUI exists.") and while MobileHUD is selected (GUI created note).
+
+Drift (checked): the palette has no section labels, no PREFABS row and no rule; its cards are blocked in both cases, with the titles "Create a GUI first to add elements" and "Not available while the MobileHUD is selected".
+
+**Decisions**
+
+| Topic | Rule |
+| --- | --- |
+| Focus | ✱ Keyboard focus on a node tile is the 1px inset Snow `--focus-ring` on `:focus-visible` (user decision). |
 
 ### Tooltip (UI Editor — Panels)
 
-Component `21151:7716` (`Property 1` = Top; Figma defines this one variant only, so the other directions are genuinely undrawn), values not re-read 2026-10-27. Hug 340 × Hug 87.77, vertical; `Container` `21551:3941` Hug 340 × Hug 77, 12px radius, padding 16 / 20, gap 10, Onix `#35333B` with Snow text; `Peak` `21551:3943` 26 × 26, 5px radius, rotated −45°, Onix; shadow `0 2px 6px #000 25%`. This is a wider, shadowed copy of the shared Tooltip (Tooltips) — **a second tooltip spec: confirm with design whether the UI Editor tooltip replaces it** ✱. Snow on Onix 12.13:1. Code: main · help tooltips in `PropertyPanel`; the inspector has no shared tooltip component listed in this doc.
+Component `3818:121337` on board `3812:8369` (Mobile GUI section, "Tooltip"). Hug 313 × 102.77; one drawing, peak up (the tooltip opens below its trigger). Read November 12, 2026. Code: main · inspector `ui/InfoTooltip/InfoTooltip.tsx` (used by `MobileHudPanel.tsx`; trigger styling in `UIDesigner/controls.css` `.InfoTooltipTrigger`) · Creator Hub none.
+
+Placement: the board anchors it to the MobileHUD header's `HelpCTA` (12 × 12): the tooltip's top edge sits 2px below the glyph and the peak is centred on it. The other directions are not drawn ✱ (nearest: the shared Tooltip (Tooltips) Bottom / Right / Left variants).
+
+| Part | Fill | Border | Radius | Text | Padding / gap / size | Shadow | Token | Contrast | A11y |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Tooltip | — | — | — | — | column, items centred | `drop-shadow(0 2px 3px rgba(0,0,0,0.25))` on the whole | `--shadow-tooltip` | — | `role="tooltip"`, linked from the trigger with `aria-describedby`; opens on hover and on keyboard focus ✱ |
+| Peak `3818:121338` | Onix `#35333B` | none | 5 | — | 26 × 26 rotated 45° (36.77 box), margin-bottom −26 so ~11px shows above the container | (shared) | `--palette-neutral-onyx` | — | — |
+| Container `3818:121339` | Onix | none | 12 | Inter 400 12 Snow `#FCFCFC`, left-aligned, 273 wide: "On the mobile client, players interact with your scene through a set of native on-screen controls. This component lets your scene reshape that HUD. Read more here." | Hug 313 × 92, padding 16 / 20 | (shared) | `--palette-neutral-onyx`, `--ui-designer-text`, `--ui-designer-radius-menu` | Snow on Onix 12.13:1 | — |
+| Link "here" (and the trailing ".") | — | — | — | Primary `#FF2D55`, underlined (from-font); opens the touch-screen-controls page of docs.decentraland.org in a new tab | — | — | `--primary-main` | **Primary on Onix 3.41:1, below 4.5:1** (the underline keeps it distinguishable) | `<a target="_blank" rel="noopener">`; focusable inside the tooltip ✱ |
+
+Compared with the shared Tooltip (Tooltips): same fill, radius, padding, peak and shadow; this one sets 12px left-aligned body text at 273 wide (the shared one is `H7 Regular` 14 centred, max-width 300) and carries a Primary link.
 
 ### MinMaxSize (UI Editor — PropertiesSubsections)
 
-Set `21028:16810`, 2 variants (`Off` `21028:16816`, `On` `21028:16811`). Size 332 × 143; `On` is Fixed 292 × Hug 47. Read October 27, 2026. Code: main · inspector `PropertyPanel/LengthVecField`, `BoxModelField` · Creator Hub none.
+Two rows, "Min Size" and "Max Size", in the Layout group: `Off` as drawn in Container `3493:163451` (`I3493:163451;21067:24247;21028:16585` / `…;21028:16586`) and `On` in Container `3493:163458` and Image `3493:163462`. Read November 12, 2026. Code: inspector `PropertyPanel/LengthVecField`, `field-configs.groups.ts` (Min Size, Max Size) · Creator Hub none.
 
-| Variant | Part | Fill | Radius | Text | Glyph | Padding / gap / size | Inspector token |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| Off | header | none | 0 | "Min Size" Inter 400 12, Gray `#CFCDD4` | `HelpCTA` 12; `AddCTA` 20 × 20 (radius 6), plus inset 20% | 292 wide, padding 0 / 14 / 0 / 10, gap 10 | `--palette-neutral-gray4` |
-| On | header | none | 0 | as Off | `HelpCTA` 12; `DeleteCTA` in a 26 × 16 box at right 0 | vertical, 292 wide, padding 0 / 10, gap 6; header gap 10 | — |
-| On | Width / Height cells | Onix `#35333B` | 6 | value "20" Inter 400 14, Gray | size glyph 16 × 16; `AddVariant` 18 at right 4 / top 4 | h 26, flex 1 each, padding 6 / 24 / 6 / 8, gap 8; pair gap 6 | `--ui-designer-control-bg` |
+| Variant | Part | Fill | Border | Radius | Text | Glyph | Padding / gap / size | Token | Contrast |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Off | header row | none | none | 0 | "Min Size" / "Max Size" Inter 400 12 Gray | `HelpCTA` 12 (gap 6); `AddCTA` 20 × 20, radius 6, Silver plus inset 20% | row, gap 10, padding 0 / 10 | `--palette-neutral-gray4` | label 10.07:1; plus 5.85:1 |
+| Off | hover / plus hover | see PropertiesSections (Property-row states) | — | — | — | — | — | — | — |
+| On | block | none | none | 0 | label as Off, with `HelpCTA` 12 | no `AddCTA`, no `DeleteCTA` drawn | column, gap 6, padding 0 / 10 | — | — |
+| On | Width / Height cells | Onix `#35333B` | none | 6 | value Inter 400 14 Gray ("20" / "20" Min, "100" / "100" or "200" / "200" Max) | "W" / "H" Inter 400 12 uppercase Cloudy Sky in a 16 box | h 26, flex 1 each, padding 6 / 24 / 6 / 8, gap 8; pair gap 6 | `--ui-designer-control-bg`, `--ui-designer-glyph` | value 7.90:1; **W / H letters 2.43:1** |
+| On | ✱ remove | a `DeleteCTA` (as on the other variant rows) at the right of the variant's header row, shown on hover (user decision) | — | — | — | — | — | — | — |
+
+Field states are Input's (UI Editor — Components).
 
 ### Interactions (UI Editor — PropertiesSubsections)
 
-Set `21028:16819`, 2 variants (`Off` `21028:16827`, `On` `21028:16820`). Size 332 × 143; `On` is Fixed 292 × Hug 45. Read October 27, 2026. Code: main · inspector the `useInteraction({ base, hover, press, active })` construct (`code/interaction-convention.ts`) through `PropertyPanel` · Creator Hub none.
+`Off` component `3961:9814`; `On` as drawn in Container `3493:163458` and Image `3493:163462` (`…;21028:16542`). Row `Off` 292 wide in the component, Fill in the panel. Read November 12, 2026. Code: inspector the `useInteraction({ base, hover, press, active })` construct (`code/interaction-convention.ts`) through `PropertyPanel.tsx` (label "Interaction States") · Creator Hub none.
 
-| Variant | Part | Fill | Radius | Text | Glyph | Padding / gap / size | Inspector token |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| Off | header | none | 0 | "Interaction States" Inter 400 12, Gray `#CFCDD4` | `HelpCTA` 12; `AddCTA` 20 × 20 (radius 6), plus inset 20% | 292 wide, padding 0 / 14 / 0 / 10, gap 10 | `--palette-neutral-gray4` |
-| On | header | none | 0 | as Off | `HelpCTA` 12; `DeleteCTA` in a 26 × 16 box at right 0 | vertical, 292 wide, padding 0 / 10, gap 4; header gap 10 | — |
-| On | active chip ("Default") | Blue Dark 3 `#243852` | 6 | Inter 400 12, Snow `#FCFCFC`, centred | none | h 20, padding 2 / 6, gap 2 | `--palette-system-blueDark3` |
-| On | inactive chips ("Hover", "Pressed", "Selected") | none | 6 | Inter 400 12, Silver `#A09BA8`, centred | none | h 20, padding 2 / 6, gap 2; row gap 6, row h 26 | `--ui-designer-text-muted` |
-| On | ✱ active chip in code (user decision, see UI Editor Buttons) | code paints the active chip Blue Dark 2 and Blue Dark 3 on hover | — | — | — | — | `--ui-designer-control-active-bg`, `--palette-system-blueDark3` |
+| Variant | Part | Fill | Radius | Text | Glyph | Padding / gap / size | Token | Contrast |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Off | header | none | 0 | "Interaction States" Inter 400 12 Gray | `HelpCTA` 12 (gap 6); `AddCTA` 20 × 20, radius 6, Silver plus inset 20% | row, gap 10, padding 0 / 14 / 0 / 10 | `--palette-neutral-gray4` | 10.07:1 |
+| On | block | none | 0 | label as Off, with `HelpCTA` 12 | no `AddCTA`, no `DeleteCTA` drawn | column, gap 4, padding 0 / 10; chip row h 26, gap 6 | — | — |
+| On | active chip ("Default") | Blue Dark 3 `#243852` | 6 | Inter 400 12 Snow, centred | none | `ToggleLabel`: h 20, padding 2 / 6, gap 2 | `--palette-system-blueDark3` | Snow 11.61:1 |
+| On | inactive chips ("Hover", "Pressed", "Selected") | none | 6 | Inter 400 12 Silver, centred | none | as above | `--palette-neutral-gray3` | 5.85:1 |
+| On | ✱ chip hover | White 10 fill, as the Design System's button-states set draws Hover (`rounded-button-contained` `20705:12367`; user decision) | — | — | — | — | `--palette-whiteTransparent-subtle` | — |
+| On | ✱ chip focus | the 1px inset Snow `--focus-ring` on `:focus-visible` (user decision) | — | — | — | — | `--focus-ring` | — |
+| On | ✱ active chip in code (user decision, see UI Editor Buttons) | code paints the active chip Blue Dark 2 and Blue Dark 3 on hover | — | — | — | — | `--palette-system-blueDark2`, `--palette-system-blueDark3` | — |
+
+A11y: the chips are a `role="tablist"` ✱ with `aria-selected` on the active state.
 
 ### Devices (UI Editor — PropertiesSubsections)
 
-Set `21028:16830`, 2 variants (`Off` `21028:16836`, `On` `21028:16831`). Size 332 × 143; `Off` is Fixed 292 × Hug 20, `On` Fixed 292 × Hug 45. Read October 27, 2026. Code: main · the device-variant section of `PropertyPanel` (platform variants are a recognised construct — see CLAUDE.md) · Creator Hub none.
+`Off` component `3961:9825`; `On` as drawn in Container `3493:163458` (`…;21028:16544`); Input, Button and Dropdown draw `Off`, Image and Label draw no Device Variants row. Read November 12, 2026. Code: the device-variant section of `PropertyPanel.tsx` (label "Device Variants"; platform variants are a recognised construct, see CLAUDE.md) · Creator Hub none.
 
-Figma draws the Desktop / Mobile pair as `ToggleLabel` chips (20 tall, 6px radius, Blue Dark 3 when selected), not as the 16 × 16 `ViewModeToggle` set. The `PropertyPanel` Device Variants row follows this set as drawn; `ViewModeToggle` governs only the canvas's own device pair and the HUD / safe-area toggles.
+Figma draws the Desktop / Mobile pair as `ToggleLabel` chips (20 tall, 6px radius, Blue Dark 3 when selected), not as the `ViewModeToggle` set. Removing a variant opens the "Delete Mobile Variant" / "Delete Desktop Variant" confirmation (High-fi boards `3613:53081`, `3609:52294`; body "Deleting the Mobile layout will delete its device specific settings. Your Desktop layout will remain unchanged.").
 
-| Variant | Part | Fill | Radius | Text | Glyph | Padding / gap / size | Inspector token |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| Off | header | none | 0 | "Device Variants" Inter 400 12, Gray `#CFCDD4` | `HelpCTA` 12 (gap 6); `AddCTA` 20 × 20, radius 6, plus 12 × 12 | row, gap 10, centred, padding 0 / 14 / 0 / 10 | `--palette-neutral-gray4` |
-| On | header | none | 0 | as Off | `DeleteCTA` slot 26 × 16 at right 0 | column, gap 4, padding 0 / 10; chip row h 26, gap 6 | — |
-| On | Desktop chip (selected) | Blue Dark 3 `#243852` | 6 | "Desktop" Inter 400 12, centred, Snow `#FCFCFC` | icon 16 | row, gap 2, h 20, padding 2 / 6 | `--palette-system-blueDark3` |
-| On | Mobile chip | none | 6 | "Mobile" Inter 400 12, Silver `#A09BA8` | icon 16 | as Desktop | `--palette-neutral-gray3` |
+| Variant | Part | Fill | Radius | Text | Glyph | Padding / gap / size | Token | Contrast |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Off | header | none | 0 | "Device Variants" Inter 400 12 Gray | `HelpCTA` 12 (gap 6); `AddCTA` 20 × 20, radius 6, Silver plus | row, gap 10, padding 0 / 14 / 0 / 10 | `--palette-neutral-gray4` | 10.07:1 |
+| On | block | none | 0 | label as Off | no `AddCTA`, no `DeleteCTA` drawn | column, gap 4, padding 0 / 10; chip row h 26, gap 6 | — | — |
+| On | Desktop chip (selected) | Blue Dark 3 `#243852` | 6 | "Desktop" Inter 400 12 Snow | `Desktop` (small) 16, Snow | row, gap 2, h 20, padding 2 / 6 | `--palette-system-blueDark3` | Snow 11.61:1 |
+| On | Mobile chip | none | 6 | "Mobile" Inter 400 12 Silver | `Mobile` (small) 16, drawn White `#FFFFFF` (the label is Silver) | as Desktop | `--palette-neutral-gray3` | label 5.85:1 |
+| On | ✱ chip hover | White 10 fill, as the Design System's button-states set draws Hover (`20705:12367`; user decision) | — | — | — | — | `--palette-whiteTransparent-subtle` | — |
+| On | ✱ chip focus | the 1px inset Snow `--focus-ring` on `:focus-visible` (user decision) | — | — | — | — | `--focus-ring` | — |
 
 **Decisions** (user decisions; the record for this set, so grep here before asking again):
 
@@ -2441,386 +2716,616 @@ Figma draws the Desktop / Mobile pair as `ToggleLabel` chips (20 tall, 6px radiu
 
 ### Fill (UI Editor — PropertiesSubsections)
 
-Set `21028:16839`, 4 variants (`Property 1` = Paint `21028:16840`, Image `21028:16857`, Avatar `21028:16877`, None `21028:16890`). Size 332 × 307. Read October 27, 2026. Code: main · inspector `PropertyPanel/FillField` (Colour / Image / Avatar) · Creator Hub none.
+`Paint` component `3961:9844`; Paint as drawn in Container `3493:163451` (`…;21067:26765`, "FFFFFF") and `3493:163458` ("BE00E4"), Image in Image `3493:163461`, Avatar in Image `3493:163462`, None in Image `3493:163463`; the FillButton row of the Buttons board (`3506:45703`) draws the mode cell's states. Read November 12, 2026. Code: inspector `PropertyPanel/FillField` (Colour / Image / Avatar) · Creator Hub none.
 
-Fill 290, padding L / R 10: Paint vertical Hug 52 gap 6; Image vertical Hug 111 gap 12 (adds scale type and image source); Avatar Hug 52 gap 6 (user id); None horizontal Hug 20 gap 10. **No video variant — the react-ecs authoring type has none** (see CLAUDE.md). Figma's mode control draws five cells, Video among them, in all four variants; the code offers Colour, Image and Avatar.
+The mode control draws five cells, Video among them, in every variant; the code offers Colour, Image and Avatar (**no video variant — the react-ecs authoring type has none**, see CLAUDE.md). Figma draws no Tiled scale type and no Tiles count; the Tiled row below is ✱ in full.
 
-| Part | Fill | Border | Radius | Text | Glyph | Padding / gap / size | Inspector token |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| Row | none | none | 0 | label "Fill" Inter 400 12 Gray `#CFCDD4` | `HelpCTA` 12 | 290 wide, padding 0 / 10 | `--palette-neutral-gray4` |
-| Mode control (ToggleTabs slot) | Charcoal `#25212A` | 1px Onix `#35333B` | 6 | — | cell glyph 18 × 18 | 130 × 20, gap 8, five flex-1 cells (Paint, Image, Video, Avatar, None) | `--ui-designer-panel-bg` (✱ deviation 1/255), `--palette-neutral-onyx` |
-| Mode cell, selected | Blue Dark 2 `#244B7D` | none | 0 (the slot clips the ends) | — | 18 | flex 1 | `--ui-designer-control-active-bg` (drift → Blue Dark 2) |
-| Mode cell, unselected | none | 1px Onix | 0 | — | 18 | flex 1 | `--palette-neutral-onyx` |
-| Paint: colour pair | Onix | none | 6 on the outer ends (joined at 1px) | "FFFFFF" and "100%" Inter 400 14 Gray | `MarginsIcons` 16 (left); `AddVariant` 18 at right 4 / top 4 (right) | h 26; left min-width 128, padding 0 / 24 / 0 / 8; right 75 wide, padding 0 / 24 / 0 / 8 | `--ui-designer-control-bg` |
-| Image: texture input | Onix | none | 6 | "Search" Inter 400 14, White 40 `rgba(255,255,255,0.4)` | icon 10 × 10; two round 26 × 26 buttons (radius 100, glyph inset 20%: link, local assets) | h 26, padding 6 / 8, gap 8; 6 between input and buttons | `--ui-designer-control-bg`, `--palette-whiteTransparent-blurry` |
-| Image: scale type | Onix | none | 6 | label "Scale Type" Gray 12 (93 wide); value "Cropped" Inter 400 14 Gray | arrow 10 | h 26, padding 6 / 8 | `--ui-designer-control-bg` |
-| Avatar: user id | Onix | none | 6 | "User ID" Inter 400 14, White 40 | none | h 26, padding 6 / 8 | `--ui-designer-control-bg` |
-| None | none | none | — | label "Fill" | the mode control only, "None" selected | h 20 | — |
+| Variant | Part | Fill | Border | Radius | Text | Glyph | Padding / gap / size | Token | Contrast |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| all | header row | none | none | 0 | "Fill" Inter 400 12 Gray, `HelpCTA` 12 | — | h 20, label flex 1, mode control at the right | `--palette-neutral-gray4` | 10.07:1 |
+| all | mode control (`ToggleTabs` slot) | Charcoal | 1px Onix | 6 (clips the cells) | — | — | 130 × 20, five cells 26 × 20 (Paint, Image, Video, Avatar, None) | `--ui-designer-panel-bg`, `--palette-neutral-onyx` | Onix vs panel 1.27:1 |
+| all | mode cell, selected | Blue Dark 2 `#244B7D` | none | 0 | — | 18 × 18, drawn White `#FFFFFF` in the panels, Snow on the FillButton board | 26 × 20 | `--palette-system-blueDark2` | glyph 8.61:1 (Snow) |
+| all | mode cell, unselected | none | 1px Onix | 0 | — | 18 × 18, drawn White in the panels, Silver on the FillButton board | 26 × 20 | `--palette-neutral-onyx` | Silver 5.85:1 |
+| all | mode cell hover / selected hover | see ToggleTab (White 10 / Blue Dark 3) | — | — | — | — | — | — | — |
+| Paint | block | — | — | — | — | — | column, gap 6, padding 0 / 10 | — | — |
+| Paint | colour pair | Onix (two cells joined by a 1px gap) | none | 6 on the outer ends | hex ("FFFFFF") and "100%" Inter 400 14 Gray | swatch 16 (radius 4, 1px White 20, the colour); `AddVariant` 18 at right 4 / top 4 on the opacity cell | h 26; left flex 1, min-width 128, padding 6 / 24 / 6 / 8, gap 8; right 75 wide, padding 6 / 24 / 6 / 8 | `--ui-designer-control-bg`, swatch border `--palette-whiteTransparent-soft` | 7.90:1 |
+| Image | block | — | — | — | — | — | column, gap 12, padding 0 / 10; header + source stack at gap 6 | — | — |
+| Image | texture source | Onix | none | 6 | placeholder "Search" Inter 400 14 White 40 | `Search` 10 × 10, White 40 | h 26, flex 1, min-width 128, padding 6 / 8, gap 8; 6 to the buttons | `--ui-designer-control-bg`, `--palette-whiteTransparent-blurry` | **placeholder 3.39:1 misses 4.5:1** |
+| Image | link / local-assets buttons | none | none | 100 (fully round) | — | `Link`, `LocalAssets` Silver, inset 20% | 26 × 26 each, gap 6 | `--palette-neutral-gray3` | 5.85:1 |
+| Image | scale type | Onix | none | 6 | label "Scale Type" Inter 400 12 Gray (93 wide) + `HelpCTA`; value "Cropped" Inter 400 14 Gray | `ArrowDown` 10 Silver | column gap 6; field h 26, padding 6 / 8, gap 8 | `--ui-designer-control-bg` | 7.90:1 |
+| Image | ✱ Tiles X / Y (Scale Type = Tiled; user decision) | not drawn: nearest is the MinMaxSize `On` pair: two flex-1 Onix cells, gap 6, h 26, padding 6 / 24 / 6 / 8, an "X" / "Y" Cloudy Sky letter glyph, integer value Inter 400 14 Gray | none | 6 | ✱ label copy not drawn | — | under Scale Type, column gap 6 | `--ui-designer-control-bg` | 7.90:1 |
+| Avatar | block | — | — | — | — | — | column, gap 6, padding 0 / 10 | — | — |
+| Avatar | user id | Onix | none | 6 | placeholder "User ID" Inter 400 14 White 40 | none | h 26, min-width 128, padding 6 / 8 | `--ui-designer-control-bg`, `--palette-whiteTransparent-blurry` | **3.39:1 misses 4.5:1** |
+| None | row | none | none | — | label "Fill" | the mode control only, "None" selected | row, gap 10, padding 0 / 10, h 20 | — | — |
+
+**Decisions** (user decisions; the record for this set, so grep here before asking again):
+
+| Topic | Rule |
+| --- | --- |
+| Tiled fill | Tiled takes a Tiles X / Y count (user decision). Figma draws neither the option nor the fields; the ✱ row above is the nearest drawn pattern. |
 
 ### Border (UI Editor — PropertiesSubsections)
 
-Set `21028:16901`, 2 variants (`Off` `21028:16902`: Fixed 292 × Hug 20, horizontal, padding R 14 L 10, gap 10 — a header with a `+`; `On` `21028:16905`: vertical, Fixed 290 × Hug 104, padding L / R 10, gap 10 — colour field + weight). Size 332 × 204. Read October 27, 2026. Code: main · inspector `PropertyPanel/BoxModelField`, `FillField` (colour row) · Creator Hub none.
+`Off` component `3961:9904`; `On` as drawn in Container `3493:163458` and Image `3493:163462` (`…;21028:16620`). Read November 12, 2026. Code: inspector `PropertyPanel/BoxModelField`, `FillField` (colour row), `field-configs.groups.ts` (Border, Weight) · Creator Hub none.
 
-| Variant | Part | Fill | Radius | Text | Glyph | Padding / gap / size | Inspector token |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| Off | header | none | 0 | "Border" Inter 400 12, Gray `#CFCDD4` | `HelpCTA` 12; `AddCTA` 20 × 20 (radius 6), plus inset 20% | 292 wide, padding 0 / 14 / 0 / 10, gap 10 | `--palette-neutral-gray4` |
-| On | colour pair | Onix `#35333B` (two cells joined at 1px) | 6 on the outer ends | "000000" and "100%" Inter 400 14, Gray | `MarginsIcons` 16; `AddVariant` 18 at right 4 / top 4 on the right cell | 290 wide, padding 0 / 10, gap 10 between blocks, 6 inside; cells h 26; left min-width 128, padding 0 / 24 / 0 / 8; right 75 wide | `--ui-designer-control-bg` |
-| On | weight | Onix | 6 | label "Weight" Gray 12; value "1" Inter 400 14 Gray | `AddVariant` 18 at right 4 / top 4 | h 26, padding 6 / 24 / 6 / 8, gap 8 | `--ui-designer-control-bg` |
+| Variant | Part | Fill | Radius | Text | Glyph | Padding / gap / size | Token | Contrast |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Off | header | none | 0 | "Border" Inter 400 12 Gray | `HelpCTA` 12 (gap 6); `AddCTA` 20 × 20, radius 6, Silver plus inset 20% | row, gap 10, padding 0 / 14 / 0 / 10 | `--palette-neutral-gray4` | 10.07:1 |
+| On | block | none | 0 | — | no `DeleteCTA` drawn | column, gap 10, padding 0 / 10; each sub-block column gap 6 | — | — |
+| On | colour | Onix `#35333B`, two cells joined by a 1px gap | 6 on the outer ends | label "Border" + `HelpCTA`; "000000" and "100%" Inter 400 14 Gray | swatch 16 (Black, radius 4, 1px White 20); `AddVariant` 18 at right 4 / top 4 on the opacity cell | h 26; left flex 1, min-width 128, padding 6 / 24 / 6 / 8, gap 8; right 75 wide, padding 6 / 24 / 6 / 8 | `--ui-designer-control-bg` | 7.90:1 |
+| On | weight | Onix | 6 | label "Weight" + `HelpCTA`; value "1" Inter 400 14 Gray | none | full width, h 26, padding 6 / 24 / 6 / 8, gap 8 | `--ui-designer-control-bg` | 7.90:1 |
 
 ### EventHandler (UI Editor — PropertiesSubsections)
 
-Set `21028:16916`, 4 variants (`Default` `21028:16917`, `DefaultHover` `21028:16922`, `Defined` `21028:16927`, `DefinedHover` `21028:16930`). Size 332 × 200. Read October 27, 2026. Code: main · inspector `PropertyPanel/CallbackField`, `edit-event.ts` · Creator Hub none.
+Rows `<MouseEventInput>` `3508:77476` (Default `3508:77480`, Hover `3508:77482`, Selected `3527:163753` with the `EventsMenu` `3527:163760` open) and `<MouseEvent>` `3508:77509` (Default `3508:77517`, Hover `3508:77519`) in Properties&LogicComponents `3500:207169`. The rows draw no Selected Hover or Blocked state. Fixed 348 × 22 in the board (Fill in the panel), horizontal, padding 0 / 10, gap 6. Read November 12, 2026. Code: main · inspector `PropertyPanel/CallbackField/CallbackField.tsx`, `edit-event.ts` · Creator Hub none.
 
-Fixed 292 × Hug 22, horizontal, padding L / R 10, gap 6; "Title" (`Inter` 400 12 / 100%, Gray `#CFCDD4`, 80 wide, 10.07:1 on panel) + a field or an `EventTag` chip. The field is an `Input` instance, flex 1 × Fixed 22, 100px radius, padding 6 / 4 / 6 / 8, gap 8, no border in any state; its placeholder "Bind an event handler" is `Inter` 400 12 Cloudy Sky `#716B7C`. In the Defined variants the tag is flex 1 (DefinedHover: fixed 186).
+Title "Mouse Down" (`Inter` 400 12, Gray `#CFCDD4`, 80 wide, h 10) + an empty bind field or an `EventTag`. The field is an `Input` instance, flex 1 × 22, radius 100, padding 6 / 4 / 6 / 8, no border in any state; placeholder "Bind an event handler" `Inter` 400 12 Cloudy Sky `#716B7C`.
 
-| Variant | Fill | Content | Contrast | A11y | Inspector token |
-| --- | --- | --- | --- | --- | --- |
-| Default | field Onix `#35333B` | empty bind field | placeholder 2.43:1 on Onix — **fails 4.5:1**; field vs panel 1.27:1 | `<input aria-label="<event> handler">` | `--ui-designer-control-bg` |
-| DefaultHover | field White 10 | same, plus an `AddVariant` 18 × 18 at the field's right | placeholder 2.28:1 on the fill; field vs panel 1.36:1 | hover changes the fill (no border) and shows the `AddVariant` | `--palette-whiteTransparent-subtle` |
-| Defined | none (chip is White 10) | `EventTag` Default | as `EventTag` | chip removal returns to Default | — |
-| DefinedHover | none | `EventTag` Hover (close button White 10, glyph Snow) | as `EventTag` | — | — |
+| Variant | State | Fill | Content | Token | Contrast | A11y |
+| --- | --- | --- | --- | --- | --- | --- |
+| Empty (MouseEventInput) | Default | field Onix `#35333B` | placeholder only, no gap | `--ui-designer-control-bg`, `--shape-borderRadiusPill` | title 10.07:1; **placeholder 2.43:1 on Onix**; field vs panel 1.27:1 | `<button aria-haspopup="menu">` named "<title> handler" |
+| Empty | Hover | field White 10 `rgba(255,255,255,0.1)` | placeholder + `AddVariant` 18 × 18 (`VariableSmall`, Silver) at the field's right, gap 8 | `--palette-whiteTransparent-subtle` | **placeholder 2.28:1**; glyph 4.31:1; field vs panel 1.36:1 | — |
+| Empty | Selected | as Hover | the `EventsMenu` (NewVariable: "No events yet" / "Add New Event") opens below, gap 10, right-aligned 16 from the panel's right edge | see EventsMenu | — | `aria-expanded="true"`; focus moves into the menu |
+| Empty | Focus ✱ | not drawn: use the Hover fill plus the Snow focus ring | — | `--focus-ring-color` | — | — |
+| Bound (MouseEvent) | Default | none (the chip is White 10) | `EventTag` flex 1, "onMouseDown" | see EventTag | as EventTag | removing the tag returns to Empty |
+| Bound | Hover | none | `EventTag` with its `Close-Button` in hover | see EventTag | as EventTag | — |
+
+Icons: `AddVariant` glyph → library `Variable.small`.
 
 ### EventTag (UI Editor — PropertiesSubsections)
 
-Set `21028:16933`, 2 variants (`Default` `21028:16937`, `Hover` `21028:16934`). Size 226 × 106. Read October 27, 2026 (through the EventHandler instances). Code: main · inspector `PropertyPanel/CallbackField` · Creator Hub none.
+Component `3676:7479` (one variant, `Property 1` = Default); the hover look is drawn on the `<MouseEvent>` Hover instance `3508:77519`. Fixed 186 × 22 (flex 1 inside EventHandler). Read November 12, 2026. Code: main · inspector `PropertyPanel/CallbackField/CallbackField.tsx` · Creator Hub none.
 
-Fixed 186 × 22 pill, 100px radius, padding 6 / 4 / 6 / 8, gap 8, fill White 10 in both; a handler name (`Inter` 400 12 / 100%, Snow, 150 × 15) and a `Close-Button` (Search Bar) 16 × 16, 100px radius, glyph 8 × 8. Hover recolours the `Close-Button`: fill White 5 → White 10, glyph Silver → Snow. The `Close-Button` base `20768:59566` is 24 × 24 and is resized per use: 16 in the tag, 18 in the AI TitleBar, 12 in the AI Selection chip.
+Pill, radius 100, padding 6 / 4 / 6 / 8, gap 8, fill White 10 in both states; the handler name `Inter` 400 12 Snow, flex 1; a `Close-Button` 16 × 16, radius 100, its `Close` glyph inset 16.67% (10.67 × 10.67). The `Close-Button` set is Default `3523:123161` (White 5, glyph Silver) / Hover `3523:123162` (White 10, glyph Snow), base 24 × 24, resized per use.
 
-| Variant | Fill | Contrast (on `#242129`) | A11y | Inspector token |
-| --- | --- | --- | --- | --- |
-| Default | White 10; close button White 5 | Snow text 11.40:1 on the chip; Silver `×` 3.70:1; chip vs panel 1.36:1 | `<span>` with a `<button aria-label="Remove <handler>">` | `--palette-whiteTransparent-subtle`; close `--palette-whiteTransparent-faint` |
-| Hover | White 10; close button White 10 | Snow `×` 8.36:1 on the lifted button | 22px chip, 16px `×` hit box below 24px ✱ | `--palette-whiteTransparent-subtle` |
+| State | Chip fill | Close-Button | Token | Contrast (chip on `#242129`) | A11y |
+| --- | --- | --- | --- | --- | --- |
+| Default | White 10 | White 5 `rgba(255,255,255,0.05)`, glyph Silver `#A09BA8` | `--palette-whiteTransparent-subtle`; close `--palette-whiteTransparent-faint`, `--ui-designer-text-muted` | text 11.40:1; glyph 3.70:1; chip vs panel 1.36:1 | `<span>` + `<button aria-label="Remove <handler>">` |
+| Hover (on the close button) | White 10 | White 10, glyph Snow | `--palette-whiteTransparent-subtle`, `--ui-designer-text` | glyph 8.36:1 | 16px hit box, below 24px ✱ |
+| Focus ✱ | — | not drawn: Hover look plus the Snow focus ring on the button | `--focus-ring-color` | — | — |
+
+Icons: `Close` → library `Close`.
 
 ### AddLogicInputs (UI Editor — PropertiesSubsections)
 
-Set `21028:16940`, 3 variants (`Variants` `21028:16941`, `Inputs` `21028:16946`, `Events` `21028:16950`). Size 332 × 158; each row Fixed 292 × 26 (Variants Hug 26). Read October 27, 2026. Code: main · inspector `LogicPanel/CodeVariablesPanel.tsx`, `VariablePicker/` · Creator Hub none.
+Set (`Property 1`): Variants `3841:165487`, Inputs `3841:165488`, Events `3841:165489`; each Fixed 292 wide (Fill in the panel), h 26, radius 8, padding 0 / 10, gap 6. States drawn on Inputs | Logic `3511:100657`, rows `<VariableInput>` `3511:100755`, `<InputInput>` `3511:101015`, `<Eventsput>` `3511:101198`; columns Default, Hover, Add Unlocked, Error. Read November 12, 2026. Code: main · inspector `LogicPanel/CodeVariablesPanel.tsx`, `CodePropsPanel.tsx`, `CodeCallbacksPanel.tsx` · Creator Hub none.
 
-`Variants` shows Name + type + Value, `Inputs` Name + type, `Events` Name only. The `AddCTA` is drawn at 20% opacity in every variant: the add stays disabled until a name is typed.
+Variants show Name + type + Value, Inputs Name + type, Events Name only, each ending in an `AddCTA`.
 
-| Part | Fill | Radius | Text | Glyph | Padding / gap / size | Inspector token | Contrast |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| Row | none | 8 | — | — | 292 wide, padding 0 / 10, gap 6 | — | — |
-| Name field | Onix `#35333B` | 6 | placeholder "Name" Inter 400 12, Cloudy Sky `#716B7C` | none | flex 1 × 26, padding 6 / 24 / 6 / 8, gap 8 | `--ui-designer-control-bg` | 2.43:1 (fails 4.5:1) |
-| Type dropdown (Variants, Inputs) | Onix | 6 | "string" Inter 400 12 Gray `#CFCDD4` | arrow 10 × 10 | 70 × 26, padding 6 / 8, gap 8 | `--ui-designer-control-bg` | 7.90:1 |
-| Value field (Variants) | Onix | 6 | placeholder "Value" Cloudy Sky | none | 70 × 26, padding 6 / 24 / 6 / 8 | `--ui-designer-control-bg` | 2.43:1 |
-| AddCTA | none | 6 | — | plus, inset 20% | 20 × 20, opacity 20% | — | disabled exemption |
+| Part | State | Fill | Border | Radius | Text | Padding / gap / size | Token | Contrast |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Name field | Default | Onix `#35333B` | none | 6 | placeholder "Name" Inter 400 12 Cloudy Sky `#716B7C` | flex 1 × 26, padding 6 / 24 / 6 / 8, gap 8 | `--ui-designer-control-bg`, `--ui-designer-glyph` | **2.43:1** |
+| Name field | Hover | Onix | 1px White 60 `rgba(255,255,255,0.6)` | 6 | as Default | padding 7 / 9 (border-box) | `--palette-whiteTransparent-backdrop` | border 5.58:1 on Onix |
+| Name field | Filled | Onix | none | 6 | typed value Inter 400 **14** Gray `#CFCDD4` ("Variant", "Title") | padding 6 / 4 / 6 / 8 | `--ui-designer-text-value` | 7.90:1 |
+| Focused field | Focus (typing) | Onix | 1px Snow `#FCFCFC` | 6 | typed value Inter 400 14 Gray with a 1px Snow caret ("12", "Title") | padding 6 / 8 | `--focus-ring-color` | border 12.13:1 |
+| Type dropdown (Variants, Inputs) | all | Onix | none | 6 | "string" Inter 400 12 Gray | 70 × 26, padding 6 / 8, gap 8; `arrow-down` 10 × 10 Silver | `--ui-designer-control-bg` | 7.90:1 |
+| Value field (Variants) | Default | Onix | none | 6 | placeholder "Value" Cloudy Sky | 70 × 26, padding 6 / 24 / 6 / 8 | `--ui-designer-control-bg` | **2.43:1** |
+| AddCTA | Locked (Default, Hover, Error) | none | none | 6 | — | 20 × 20 at opacity 20%; `plus` Silver inset 20% | `--ui-designer-text-muted` | disabled exemption |
+| AddCTA | Unlocked (a valid name typed) | none | none | 6 | — | drawn 26 × 20 at full opacity; its `plus` is inset 20% and so stretched to 15.6 × 12, as drawn (user decision: Figma wins) | `--ui-designer-text-muted` | Silver on panel 5.85:1 |
+| LogicError | Error | none | none | — | see LogicError ("Spaces and special characters are not allowed") | under the row, gap 6 | `--primary-main` | see LogicError |
+
+Error state: the name holds a disallowed character ("Variant@", "Titl!"), the field keeps no error border, the `AddCTA` returns to 20%, and `LogicError` shows under the row. A11y: the `AddCTA` is `<button aria-label="Add variable|input|event" disabled>` until the name is valid; the error line is tied to the Name field with `aria-describedby` and the field gets `aria-invalid="true"` ✱. Icons: `plus` → library `Plus`; `arrow-down` → `ArrowDown`.
 
 ### LogicInputs (UI Editor — PropertiesSubsections)
 
-Set `21032:44190`, 4 variants (`Property 1`: Empty `21032:44189`, Variables `21032:44191`, Inputs `21032:44335`, Events `21032:44353`). Size 332 × 241. Read October 27, 2026. Code: main · inspector `LogicPanel/CodeVariablesPanel.tsx`, `CodePropsPanel.tsx` · Creator Hub none.
+Rows on Inputs | Logic `3511:100657`: `<Variable>` `3511:100892` (Default `3511:100954`, Hover `3511:100997`), `<Input>` `3511:101346` (Default `3511:101350`, Hover `3511:101402`), `<Event>` `3511:101417` (Default `3511:101421`, Hover `3511:101423`); Add Unlocked and Error don't apply. The empty line is the `Empty` variant (`3961:9917`, h 15). The node-logic row is drawn in NodeLogic1 `3961:10283` (`3961:10342` rest, `3961:10343` hover). Read November 12, 2026. Code: main · inspector `LogicPanel/CodeVariablesPanel.tsx`, `CodePropsPanel.tsx`, `CodeCallbacksPanel.tsx`, `ComponentRefPanel.tsx` · Creator Hub none.
 
-| Variant | Part | Fill | Radius | Text | Glyph | Padding / gap / size | Inspector token | Contrast |
+| Variant | Part | Fill | Border | Radius | Text | Padding / gap / size | Token | Contrast |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Empty | text | none | 0 | "No variables yet." Inter 400 12, Cloudy Sky `#716B7C` | — | 95 × 15 | `--ui-designer-glyph` | 3.09:1 (below 4.5:1) |
-| Variables | row | none | 8 | "Name" Inter 400 12, Gray `#CFCDD4`, flex 1 | `DeleteCTA` in a 20 × 20 box (16 glyph) | Fill 290 × Hug 26, gap 6; inputs group 146 wide, gap 6 | `--palette-neutral-gray4` | 10.07:1 |
-| Variables | type dropdown | Onix `#35333B` | 6 | "string" Inter 400 12 Gray | arrow 10 × 10 | 70 × 26, padding 6 / 8, gap 8 | `--ui-designer-control-bg` | 7.90:1 |
-| Variables | value input | Onix | 6 | "Value" Inter 400 12 Gray | — | 70 × 26, padding 6 / 24 / 6 / 8, gap 8 | `--ui-designer-control-bg` | — |
-| Inputs | row | none | 8 | "Name" Gray | `DeleteCTA` 20 | type dropdown 70 ("string") + delete; Fill 290 × Hug 26, gap 6 | — | — |
-| Events | row | none | 8 | "Name" Gray, flex 1 | `DeleteCTA` 20 | vertical, Fill 290 × Hug 72, gap 2; name row gap 10 | — | — |
-| Events | code field | Onix | 6 | placeholder "e.g. {{counter}}" Inter 400 12, Cloudy Sky | — | h 50, min-width 128, padding 6 / 24 / 6 / 8, gap 8 | `--ui-designer-control-bg` | 2.43:1 |
+| Empty | line | none | none | — | "No variables yet." / "No inputs yet." / "No events yet." Inter 400 12 Cloudy Sky `#716B7C` | h 15, full width | `--ui-designer-glyph` | **3.09:1 on `#242129`** |
+| Variable | row | none | none | 8 | name ("Title") Inter 400 12 Gray `#CFCDD4`, flex 1 | full width × 26, gap 6; value group 146 wide, gap 6 | `--ui-designer-text-value` | 10.07:1 |
+| Variable | type dropdown | Onix `#35333B` | none | 6 | "string" Inter 400 12 Gray | 70 × 26, padding 6 / 8, gap 8; arrow 10 Silver | `--ui-designer-control-bg` | 7.90:1 |
+| Variable | value field | Onix | none | 6 | value "Value" Inter 400 12 Gray | 70 × 26, padding 6 / 24 / 6 / 8 | `--ui-designer-control-bg` | 7.90:1 |
+| Variable (boolean) | value | none | 1px White 40 | 5 | type reads "bool..." (truncated) | `CheckboxOutline` 20 × 20 in place of the value field | `--ui-designer-checkbox-border` | border 3.74:1 on panel |
+| Input | row | none | none | 8 | name ("Title", "UserName") Gray, flex 1 | type dropdown 70 ("string") + DeleteCTA; gap 6 | — | — |
+| Event | row | none | none | 8 | name ("Name", "onMouseDown") Gray, flex 1 | column, gap 2; name row gap 10 with the DeleteCTA | — | — |
+| Event | code field | Onix | none | 6 | placeholder "e.g. {{counter}}" Inter 400 12 Cloudy Sky | h 50, full width, min-width 128, padding 6 / 24 / 6 / 8, gap 8 | `--ui-designer-control-bg` | **2.43:1** |
+| Node input | row | none | none | 8 | "InputName" Gray, flex 1 | 328 × 26, gap 6; value cell 146 wide | — | 10.07:1 |
+| Node input | value field, rest | Onix | none | 6 | "Value" Inter 400 12 Gray | 146 × 26, padding 6 / 24 / 6 / 8 | `--ui-designer-control-bg` | 7.90:1 |
+| Node input | value field, hover | Onix | 1px White 60 | 6 | "(value?:unknown)..." Gray, ellipsis | padding 7 / 25 / 7 / 9 (border-box); `AddVariant` 18 × 18 (`VariableSmall`, Silver) at right 3 / top 3 | `--palette-whiteTransparent-backdrop` | border 5.58:1 on Onix; glyph 4.59:1 |
+| all | DeleteCTA, Default | — | — | — | — | 20 × 20 box, `Delete` glyph 12 in a 16 frame; opacity 0 | — | — |
+| all | DeleteCTA, Hover | — | — | — | — | opacity 1, glyph Silver `#A09BA8` | `--ui-designer-text-muted` | 5.85:1 |
+
+A11y: the delete stays reachable by keyboard while hidden: it shows on row hover and on focus within the row (`:focus-within`) ✱, `<button aria-label="Delete <name>">`. Icons: `Delete` → library `Delete`; `VariableSmall` → `Variable.small`; `arrow-down` → `ArrowDown`.
 
 ### LogicError and Header (UI Editor — PropertiesSubsections)
 
-Not sets. `Header` `21067:22621` is a frame of three instances (`NodeTypeHierarchy` PropertiesHeader, `Toggles`, `Dropdown` `21180:30481`), 348 wide, column, gap 10, padding-top 6. Read October 27, 2026. `LogicError` `21124:5300` (292 × 14), values not re-read 2026-10-27, is an `ErrorOutline` glyph + a one-line message, both `#FF2D55` Primary — **Primary on `#242129` is 4.35:1, below 4.5:1 for 12px text**; the code follows Figma's Primary, an accepted AA miss ✱. Code: main · `LogicPanel` error text; `PropertyPanel` header · Creator Hub none.
+`LogicError` `3511:77784` (292 wide, row, gap 6, padding 0 / 10; drawn on the Error column of Inputs | Logic `3511:100657`) and the properties `Header` (instance `I3493:163451;21067:23997` on the Specs page, 348 × 116, column, gap 10, padding-top 6). Read November 12, 2026. Code: main · `LogicPanel` error text (`ui-designer-callback-invalid` in `CodeCallbacksPanel.tsx`); `PropertyPanel` header · Creator Hub none.
 
-| Part | Layout | Text | Fill / radius | Glyph | Inspector token |
-| --- | --- | --- | --- | --- | --- |
-| Header row (`NodeTypeHierarchy` `21067:22573`) | row, gap 8, h 16, padding 0 / 16 / 0 / 10 | "Image": `H7 Semi` Inter 600 14 / 100% / 0, Gray `#CFCDD4` | none | node glyph 18 × 18; VisibilityToggle 16 × 16, radius 4, eye 14 × 14 | `--palette-neutral-gray4` |
-| Toggles `21071:33460` | column, gap 6, padding 6 / 0 | — | — | — | — |
-| Toggle ×2 ("Visibility is Active", "Ignore Layout Flow") | row, gap 10, h 15, padding 0 / 11, 348 wide | Inter 400 12 Gray | none | Checkbox 14 × 14, `HelpCTA` 12 | `--palette-neutral-gray4` |
-| Dropdown `21180:30481` | column, gap 6, padding 0 / 10 | subtitle "Scene Inset" Inter 400 12 Gray (93 wide, gap 6, `HelpCTA`) | — | — | `--palette-neutral-gray4` |
-| Dropdown input `21180:30483` | row, gap 8, h 26, padding 6 / 8 | "Secure Area" Inter 400 14 Gray | Onix `#35333B`, 6 | arrow-down 10 × 10 | `--ui-designer-control-bg` |
+| Part | Layout | Text | Fill / radius | Glyph | Token | Contrast (on `#242129`) |
+| --- | --- | --- | --- | --- | --- | --- |
+| LogicError | row, gap 6, padding 0 / 10 | "Spaces and special characters are not allowed" Inter 400 **10** Primary `#FF2D55`, no wrap | none | `ErrorOutline` 14 × 14, Primary (no library icon; nearest `Warning`) | `--primary-main`, `--type-caption-size` | **4.35:1, below 4.5:1** — the accepted AA miss for Primary error text ✱ |
+| Header row (`NodeTypeHierarchy`) | row, gap 8, h 16, padding 0 / 16 / 0 / 10 | "Container": `H7 Semi` Inter 600 14 Gray `#CFCDD4` | none | node glyph 18 × 18; VisibilityToggle 16 × 16, radius 4, `Hide` glyph 14 × 14 | `--ui-designer-text-value` | 10.07:1 |
+| Toggles | column, gap 6, padding 6 / 0 | — | — | — | — | — |
+| Toggle ("Visibility is Active") | row, gap 10, h 15, padding 0 / 11, 348 wide | Inter 400 12 Gray | none | `CheckboxOutline` 14 × 14, `HelpCTA` 12 | `--ui-designer-text-value` | 10.07:1 |
+| Dropdown | column, gap 6, padding 0 / 10 | subtitle "Scene Inset" Inter 400 12 Gray (93 wide, gap 6, `HelpCTA`) | — | — | `--ui-designer-text-value` | 10.07:1 |
+| Dropdown input | row, gap 8, h 26, padding 6 / 8 | "Secure Area" Inter 400 14 Gray | Onix `#35333B`, 6 | `arrow-down` 10 × 10 | `--ui-designer-control-bg` | 7.90:1 on Onix |
+
+A11y: the error line is announced with the field (`aria-describedby`, `aria-invalid`) ✱. The 80-tall `Header` instances on the other Specs panels (`I3493:163461;21067:22655` and siblings) carry the header row and toggles without the Dropdown.
 
 ### AddAction (UI Editor — PropertiesSubsections)
 
-Set `21281:45569`, 2 variants (`AddAction` `21281:45570`, `NoMoreActions` `21281:45573`). Size 388 × 128; each 348 × 34 (the right-panel width). Read October 27, 2026. Code: main · inspector `LogicPanel/CodeCallbacksPanel.tsx` · Creator Hub none. A11y: the `+` is `<button aria-label="Add action">`; the empty line is plain text.
+Set `21281:45569`, 2 variants (`AddAction` `21281:45570`, `NoMoreActions` `21281:45573`); each 348 × 34 (the right-panel width). Not drawn on the UI Editor file's Specs or High-fi pages; values read October 27, 2026. Code: main · inspector `LogicPanel/CodeCallbacksPanel.tsx` · Creator Hub none. A11y: the `+` is `<button aria-label="Add action">`; the empty line is plain text.
 
 | Variant | Fill | Border | Text | Glyph | Padding / gap | Inspector token | Contrast (on `#242129`) |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| AddAction | none | 1px White 10 top and bottom | "Add Action" Inter 600 12, uppercase, Gray `#CFCDD4`, flex 1 | `AddCTA` 20 × 20 (radius 6), plus inset 20% | h 34, padding 0 / 14 / 0 / 10, gap 10, centred | `--palette-neutral-gray4`, `--palette-whiteTransparent-subtle` | 10.07:1 |
+| AddAction | none | 1px White 10 top and bottom | "Add Action" Inter 600 12, uppercase, Gray `#CFCDD4`, flex 1 | `AddCTA` 20 × 20 (radius 6), `Plus` inset 20% | h 34, padding 0 / 14 / 0 / 10, gap 10, centred | `--palette-neutral-gray4`, `--palette-whiteTransparent-subtle` | 10.07:1 |
 | NoMoreActions | none | 1px White 10 top only | "No more actions to add" Inter 400 12 (`H8 Regular`), Gray, centred | none | h 34, padding 0 / 14 / 0 / 10, aligned to the bottom | `--palette-neutral-gray4` | 10.07:1 |
 
 ### ColourPanel, HUE and Slider (UI Editor — ColourPanel)
 
-`ColourPanel` `21032:44156` (component, 193 × 296) assembles `HUE` `21032:44154` (170 × 170) and the `Slider` set `21032:44146`, 2 variants (`Property 1` = Colour `21032:44147` / Transparency `21032:44150`; 214 × 111). Read October 27, 2026 (HUE and Slider inside ColourPanel). Code: main · inspector the colour popover of `PropertyPanel/FillField` · Creator Hub none.
+`ColourPanel` instance `3527:152349` on the Colour Picker board `3470:12538` (193 × 296), assembling `HUE` `I3527:152349;21032:44157` and the `Slider` set (`Property 1` = Colour `3423:10412` / Transparency `3423:10413`, 170 × 20). On the board the panel opens beside the Fill colour field, to the left of the right panel (its right edge 4px over the panel's left edge). Read November 12, 2026. Code: main · inspector `ui/RgbaColorField/RgbaColorField.tsx` (a `react-colorful` `RgbaColorPicker` in a portal popover, positioned by `ui/usePopoverPosition.ts`), opened from `PropertyPanel/FillField/FillField.tsx` · Creator Hub none.
 
-Slider: Fixed 170 × 20, 100px radius; Colour is the rainbow track, Transparency the checkered alpha ramp tinted to the current colour (canvas); the thumb is a white-ringed disc. `HUE` is the 6px-radius saturation / value square (linear gradient white → black over the hue). A11y: sliders are `role="slider"` with `aria-valuemin/max/now` and arrow-key steps ✱; the square is a 2D slider with a hex field as the keyboard path. Onix vs panel 1.27:1 — the 1px White 10 border and the shadow carry the popover edge.
+| Part | Fill | Border | Radius | Text | Glyph | Padding / gap / size | Shadow | Token | Contrast |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| ColourPanel | Onix `#35333B` | 1px White 10 `rgba(255,255,255,0.1)` | 12 | — | — | Fixed 193 × 296, column, padding 12 / 11, gap 12 | `0 4px 10px rgba(0,0,0,0.25)` | `--palette-neutral-onyx`, `--palette-whiteTransparent-subtle`, `--ui-designer-radius-menu`, `--shadow-popover` | panel vs `#242129` 1.27:1 — the border and shadow carry the edge |
+| HUE | white → black (top to bottom), under a 10px-blurred overlay `linear-gradient(223.39deg, rgb(242,0,255) 6.58%, rgba(198,64,205,0) 64.26%)` | none | 6 | — | — | full width, flex 1 (fills the free height) | none | no token (canvas gradient) | — |
+| Slider, Colour | track: white under a hue ramp `#FF0000` 0 → `#FFF701` 17.3% → `#18FF01` 34.1% → `#01FFFF` 50.5% → `#0D00FF` 66.8% → `#FF00EA` 84.1% → `#FF0000` 100% | none | 100 | — | handle: a 22px disc filled with the picked hue (`#F200FF` drawn), 2px white ring, shadow `0 4px 2px rgba(0,0,0,0.25)` | 170 × 20 | handle only | no token (literal ramp); radius `--shape-borderRadiusPill` | — |
+| Slider, Transparency | a checker image under `linear-gradient(to right, <colour> at 0 alpha, <colour>)` (drawn `#C640CD`) | none | 100 | — | the same handle, filled with the colour, at right −2 | 170 × 20 | handle only | no token | — |
+| Hex row | Pale Black `#43404A`, two cells joined at 1px | none | 6 on the pair | "C640CD" and "100%": Inter 400 14 Gray `#CFCDD4` | swatch 16 × 16 in the colour, radius 4, 1px White 20 | h 26; left flex 1, padding 6 / 8, gap 8; right padding 6 / 4 / 6 / 8 | none | `--gray-0`, `--ui-designer-text-value`; swatch border `--palette-whiteTransparent-soft` | Gray on Pale Black 6.44:1 |
 
-| Part | Fill | Border | Radius | Text | Glyph | Padding / gap / size | Shadow | Inspector token |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| ColourPanel | Onix `#35333B` | 1px White 10 `rgba(255,255,255,0.1)` | 12 | — | — | Fixed 193 × 296, vertical, padding 12 / 11, gap 12 | `0 4px 10px rgba(0,0,0,0.25)` | `--palette-neutral-onyx`; shadow `--shadow-popover` |
-| HUE | white → black (top to bottom) under a 223.56° `rgb(242,0,255)` → transparent overlay | none | 6 | — | — | flex 1 (fills the free height) | none | canvas gradient |
-| Slider, Colour | rainbow track | none | 100 | — | handle | 170 × 20 | none | — |
-| Slider, Transparency | a checker under a gradient from the colour at 0 alpha to the colour | none | 100 | — | handle 24 × 24 at right −2 | 170 × 20 | none | — |
-| Hex row | Pale Black `#43404A`, two cells joined at 1px | none | 6 on the pair | "C640CD" and "100%": Inter 400 14 Gray `#CFCDD4` (placeholder values) | swatch 16 × 16 `#C640CD`, radius 4, 1px White 20 | h 26; left flex 1, padding 0 / 8, gap 8; right padding 0 / 4 / 0 / 8 | none | `--gray-0` (legacy) |
+The drawn colour `#C640CD` (Brand Lavender) is fixture content, not a token. A11y: each slider is `role="slider"` with `aria-valuemin/max/now` and arrow-key steps ✱; the square is a 2D slider with the hex field as its keyboard path; Escape closes the popover and returns focus to the swatch that opened it ✱.
 
 ### EventsMenu (UI Editor — Variables&EventsMenus)
 
-Set `21032:43794`, 3 variants (`Property 1`): NewVariable `21032:43795` (Hug 202 × 90; it holds the empty events list), NewAction `21032:43801` (Hug 202 × 139), AddNewAction `21032:43809` (Hug 202 × 211). Size 676 × 277. Read October 27, 2026. Code: main · inspector `LogicPanel/CodeCallbacksPanel.tsx` · Creator Hub none.
+Set: NewVariable `3913:41818` (menu `3913:41821`), NewAction `3913:41819` (`3913:41826`), AddNewAction `3913:41820` (`3913:41833`). Drawn on Variables & Events menu `3527:163776`, row `<EventMenu>` `3527:165673` (columns Empty `3527:165965`, Populated `3527:166006`, Create New `3527:166032`, Created & Ready to add `3527:166063`), and open under the EventHandler at `3527:163760`. Menu 200 wide (Hug 92 / 153 / 221 tall). Read November 12, 2026. Code: main · inspector `PropertyPanel/CallbackField/CallbackField.tsx` ("Add New Event", "Description"), `LogicPanel/CodeCallbacksPanel.tsx` · Creator Hub none.
 
-Same anatomy as `VariableMenu`, shorter (no extra row): the shared `Menu` container with `Menu-Entry` rows. A11y for both: `role="menu"`, the name field is auto-focused, Escape closes and returns focus to the opener.
+The set's variant frame wraps the menu in a 1px White 10 outline with 1px padding; that is board chrome and is not part of the menu ✱.
 
-| Part | Fill | Border | Radius | Text | Glyph | Padding / gap / size | Shadow | Inspector token |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Menu | Onix `#35333B` | 1px White 10 `rgba(255,255,255,0.1)` | 12 | — | — | 200 wide, padding 10 / 0 (AddNewAction 10 / 0 / 20), gap 10; slots padding 0 / 10 | `0 4px 8px rgba(0,0,0,0.4)` | `--palette-neutral-onyx`, `--menu-shadow` |
-| Menu-Entry | none | none | 8 | Inter 400 12, Snow `#FCFCFC`, capitalised | 16 × 16 (variable, check, info) | padding 4 / 10, gap 10 | none | — |
-| Empty entry "No events yet" | none | none | 8 | Inter 400 12, Silver `#A09BA8` | none | padding 4 / 10 | — | Silver on Onix 4.59:1 |
-| Div | White 10 | none | 0 | — | — | h 1 | — | `--palette-whiteTransparent-subtle` |
-| Description field (AddNewAction) | none | 1.5px Snow `#FCFCFC` | 7 | label "Description" Inter 400 12 Snow; typed "Text" Inter 400 16 (`H6 Regular`) Snow with a 1px Snow caret | — | h 50; container padding 6 / 8, gap 10; slot padding 0 / 20, gap 10 | — | — |
-| Add button (AddNewAction) | Primary `#FF2D55` at 20% opacity (disabled until a name is typed) | none | 7 | "Add" Inter 600 12, uppercase, Snow, line-height 22 | — | 60 × 26, padding 12 / 24 | — | `--primary-main` |
+| Variant (column) | Content (as drawn) | Add button |
+| --- | --- | --- |
+| NewVariable (Empty) | "No events yet" (Silver), divider, "Add New Event" with a `VariableBig` glyph | — |
+| NewAction (Populated) | "onMouseDown" (`Checkmark`, the bound handler), "onMouseEnter", "onMouseLeave" (`Info` glyphs), divider, "Add New Event" | — |
+| AddNewAction (Create New) | the three entries, divider, the "Description" field focused and empty (caret only) and the Add button | Primary at opacity 20% (disabled until a name is typed) |
+| Created & Ready to add | the entries, divider, the field holding "onMouseUp" | Primary at full opacity |
+
+| Part | Fill | Border | Radius | Text | Glyph | Padding / gap / size | Shadow | Token | Contrast (on Onix) |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Menu | Onix `#35333B` | 1px White 10 | 12 | — | — | 200 wide, column, gap 10, padding 10 / 0 (AddNewAction 10 / 0 / 20); entry slots padding 0 / 10 | `0 4px 8px rgba(0,0,0,0.4)` | `--palette-neutral-onyx`, `--ui-designer-radius-menu`, `--menu-shadow` | menu vs panel 1.27:1 (border and shadow carry the edge) |
+| Menu-Entry | none | none | 8 | Inter 400 12 Snow `#FCFCFC` | 16 × 16: `Checkmark` White, `Info` Silver, `VariableBig` White | padding 4 / 10, gap 10 (drawn 28 tall in this set) | none | `--ui-designer-text` | 12.13:1; Info glyph 4.59:1 |
+| Empty entry "No events yet" | none | none | 8 | Inter 400 12 Silver `#A09BA8` | none | padding 4 / 10 | — | `--ui-designer-text-muted` | 4.59:1 |
+| Menu-Entry hover / keyboard active ✱ | not drawn here: the shared Menu-Entry (Menu) Hover, Pale Black `#43404A`, plus the 1px inset Snow focus ring when keyboard-active | — | 8 | — | — | — | — | `--gray-0`, `--focus-ring` | label 9.88:1 on Pale Black |
+| Divider | White 10 | none | 0 | — | — | h 1, full width | — | `--palette-whiteTransparent-subtle` | — |
+| Text-Input (AddNewAction) | none | 1.5px Snow | 7 | label "Description" Inter 400 12 Snow; typed value Inter 400 12 Snow; 1px Snow caret | — | h 50 (label, gap 10, field); field padding 6 / 8, gap 10; slot padding 0 / 20, gap 10 | — | `--ui-designer-text` | 12.13:1 |
+| Add button | Primary `#FF2D55` (opacity 20% when disabled) | none | 7 | "Add" Inter 600 12 uppercase Snow, line-height 22 | — | 60 × 26, padding 12 / 24 | — | `--primary-main` | **Snow on Primary 3.55:1, below 4.5:1**; disabled exempt |
+
+A11y (both menus): `role="menu"` with `menuitem` rows; the Description field is auto-focused in AddNewAction; Enter adds when enabled; Escape closes and returns focus to the opener ✱. Icons: `Checkmark` → library `Checkmark`; `Info` → `Info`; `VariableBig` → `Variable`.
 
 ### VariableMenu (UI Editor — Variables&EventsMenus)
 
-Set `21032:43818`, 3 variants (`Property 1`): NewVariable `21032:43819` (Hug 202 × Hug 90), NewAction `21032:43825` (Hug 202 × Hug 163), AddNewAction `21032:43834` (Hug 202 × Hug 235). Size 676 × 306. Read October 27, 2026. Code: main · inspector `LogicPanel/VariablePicker/` · Creator Hub none.
+Set: NewVariable `21032:43824`, NewAction `21032:43833`, AddNewAction `21032:43843`. Drawn on Variables & Events menu `3527:163776`, row `<VariableMenu>` `3527:166127` (columns Empty `3527:166240`, Populated `3527:166286`, Create New `3527:166135`, Created & Ready to add `3527:166317`). Menu 200 wide (Hug 88 / 161 / 233 tall). Read November 12, 2026. Code: main · inspector `LogicPanel/VariablePicker/VariablePicker.tsx`, `PropertyPanel/BindAffordance.tsx` · Creator Hub none.
 
-A popover of `Menu-Entry` rows with a name field and a confirm action, at EventsMenu's values (Onix, 1px White 10, radius 12, `--menu-shadow`, 200 wide, entries padding 4 / 10 at radius 8, Inter 400 12 Snow, a 1px White 10 `Div`). Reuse `Menu` / `Menu-Entry` for the rows; spec only the three compositions.
+Same container, entries, divider, Description field and Add button as `EventsMenu` (values in that table); entries are drawn 24 tall here. Spec only the compositions:
 
-| Variant | Content | Add button |
+| Variant (column) | Content (as drawn) | Add button |
 | --- | --- | --- |
-| NewVariable | "No variables yet" (Silver), `Div`, "Add New Variable" with a variable glyph | — |
-| NewAction | playerName (checkmark), score, health, time (info glyphs), `Div`, "Add New Variable" | — |
-| AddNewAction | the four entries, `Div`, the Description field (1.5px Snow border, radius 7, 16px "Text") and the Add button | Primary `#FF2D55` at full opacity, 60 × 26, radius 7, "Add" Inter 600 12 uppercase Snow, line-height 22 (`--primary-main`) |
+| NewVariable (Empty) | "No variables yet" (Silver), divider, "Add New Variable" with a `VariableBig` glyph | — |
+| NewAction (Populated) | "playerName" (`Checkmark`, the bound variable), "score", "health", "time" (`Info` glyphs), divider, "Add New Variable" | — |
+| AddNewAction (Create New) | the four entries, divider, the "Description" field focused and empty (caret only), the Add button | Primary at opacity 20% (disabled) |
+| Created & Ready to add | the four entries, divider, the field holding "lives" | Primary at full opacity, 60 × 26, radius 7, "Add" Inter 600 12 uppercase Snow, line-height 22 (`--primary-main`) |
+
+Code (checked): `VariablePicker.tsx` shows "No compatible variables." for its empty state — drift: Figma's copy "No variables yet" is used exactly as drawn (user decision).
 
 ### Subtitle (UI Editor — Components)
 
-Component `21028:15992`, values not re-read 2026-10-27. Code: main · inspector `BindableField` label row · Creator Hub none.
+The field label, instanced in every field (e.g. `I3493:163451;21067:24081;21028:16548`), and the checkbox row built from it (`Toggle`, `Checkbox`). Read November 12, 2026. Code: inspector `PropertyPanel/BindableField` label row, `FieldRow` · Creator Hub none.
 
-`Text` `21028:15993` (Fill 93 × Hug 15, gap 6: a `Checkbox` Secondary On instance 14 × 14 drawn with a Gray tick override; code follows the `Checkbox` set's `Tertiary` (Snow tick), the label "Text" `Inter` 400 12 / 100% Gray `#CFCDD4` (25 × 15, 10.07:1 on panel), and a `HelpCTA` Hover = No instance 12 × 12) and `DeleteCTA` `21028:15998` (26 × 16). `DeleteCTA` and `HelpCTA` states are in their own sections under UI Editor Buttons.
+| Part | Text | Glyph | Padding / gap / size | Token | Contrast |
+| --- | --- | --- | --- | --- | --- |
+| Label | Inter 400 12 / 100% Gray `#CFCDD4`, no wrap | — | `Text` row gap 6; fixed 93 wide where a field sits beside it, else flex 1 | `--palette-neutral-gray4` | 10.07:1 |
+| Help | — | `HelpCTA` 12, after the label | gap 6 | see HelpCTA | 3.09:1 |
+| Checkbox row (panel fields: "Scroll Overflow", "Clip Content", "Wrap", "Truncate", "Disabled", "Accept Empty") | label as above | Checkbox 14 × 14, 1px White 40, 4px radius; checked adds a Gray tick | `Text` gap 6, row padding 0 / 10 | `--palette-whiteTransparent-blurry` (ring), `--palette-neutral-gray4` (tick) | ring 3.74:1 |
+| Checkbox row (header `Toggle`) | label as above | Checkbox 14, label, `HelpCTA` 12 | h 15, gap 10, padding 0 / 11 | as above | — |
+
+The Checkbox's Hover state (Buttons board row `3500:207170`) adds a 22.4 × 22.4 White 10 circle behind the box (inset −30%). Undrawn ✱: focus (accent ring), disabled (White 20).
 
 ### ToggleTabs (UI Editor — Components)
 
-Component `21028:16000`, one definition with two `Slot` instances (`21028:16001`, `21028:16002`, each with a `Slot` = Default property). Size 292 × 27. Read October 27, 2026. Code: main · inspector `PropertyPanel/FlowField`, `ResizeField` (segmented groups) · Creator Hub none.
+The segmented frame, instanced as Flow (`I3493:163451;21067:24247;21028:16578`), Text Alignment (`I3493:163465;21028:34581;21028:16660`) and the Fill mode control (`…;21028:16851`). Read November 12, 2026. Code: inspector `PropertyPanel/FlowField`, `TextAlignField`, `FillField` (segmented groups) · Creator Hub none.
 
-An empty segmented-control frame that the `ToggleTab` buttons drop into. Border Onix vs Charcoal 1.27:1; the frame is a container, the child cell carries the state. The code draws joined cells with no wrapper border (✱ "Segmented seams", see UI Editor Buttons).
-
-| Part | Layout | Fill | Border | Radius | Inspector token |
+| Part | Layout | Fill | Border | Radius | Token |
 | --- | --- | --- | --- | --- | --- |
-| Frame | row, gap 8, centred, h 27, clips | none | none | 6 | `--ui-designer-radius-field` |
-| Slot / Slot2 | flex 1 (142 each in 292), full height | Charcoal `#25212A` | 1px Onix `#35333B` | 6 | `--ui-designer-panel-bg` (✱ deviation 1/255); border `--palette-neutral-onyx` |
+| Frame | row, gap 8, centred, clips | none | none | 6 | `--ui-designer-radius-field` |
+| `Slot` | flex 1, full height, clips its cells | Charcoal `#25212A` | 1px Onix `#35333B` | 6 | `--ui-designer-panel-bg` (✱ 1/255); `--palette-neutral-onyx` |
+| `Slot2` (Flow) | hugs one `WrapToggle` 26 × 26 | Charcoal | none | 6 | — |
+| `Slot2` (Text Alignment) | 142 wide, three cells | Charcoal | 1px Onix | 6 | — |
+| Cells | flex 1 each; unselected cells 1px Onix and 27 tall (the 1px overlap is the seam), the selected cell Blue Dark 2 with no border | see ToggleTab | — | 0 inside a slot | — |
+
+| Instance | Size | Cells |
+| --- | --- | --- |
+| Flow | h 26, 328 wide | `Slot` five `LayoutIcons` cells (Free first, selected in Default; the fourth selected in `3493:163458`), `Slot2` the `WrapToggle` |
+| Text Alignment | h 26, 328 wide | `Slot` 178 wide, three vertical-align cells 59.33 wide (top selected); `Slot2` 142 wide, three horizontal-align cells 47.33 wide (left selected) |
+| Fill mode | 130 × 20 | `Slot` five cells 26 × 20 |
+
+Glyph colours differ between the panels and the Buttons board: the panels draw unselected cells' glyphs White `#FFFFFF` or Silver per instance, the board Silver; the board is the state spec (see ToggleTab). Border Onix vs Charcoal 1.27:1; the selected fill carries the state.
 
 ### Input (UI Editor — Components)
 
-Set `21028:16003`, 5 variants (`Property 1`): Single `21028:16016`, SingleBlocked `21028:16019`, Dropdown `21028:16012`, Icon `21028:16004`, IconBlocked `21028:16008`. Size 168 × 250. Read October 27, 2026. Code: main · inspector `RightPanel/PropertyPanel` fields (`FieldRow`, `LengthVecField`, `BoxModelField`) over `--ui-designer-control-bg`, `--ui-designer-radius-field`, `--ui-designer-text-value` · Creator Hub none.
+Board Inputs | Properties `3505:250836`, rows `<Input>` `3505:250877` (`PosX` 160 × 26), `<ColourInput>` `3506:45800` (337 wide), `<Dropdown>` `3505:250896` (`Width`, 338 × 26), `<TextInput>` `3506:46245` (338 × 50); columns Default, Hover, Selected, Editing, Blocked. A 16 × 16 `Fill/None` glyph (Cloudy Sky) marks a cell Figma leaves undrawn. Read November 12, 2026. Code: inspector `RightPanel/PropertyPanel` fields (`FieldRow`, `BindableField`, `LengthVecField`, `BoxModelField`, `ResizeField`) over `--ui-designer-control-bg`, `--ui-designer-radius-field`, `--ui-designer-text-value` · Creator Hub none.
 
-All Fixed 128 × 26, horizontal, gap 8, 6px radius, fill Onix `#35333B`, padding T / B 6. Padding L / R: Single 8 / 24, SingleBlocked 8 / 4, Dropdown 8 / 8, Icon 8 / 24, IconBlocked 8 / 8. The value reads "100" (`Inter` 400 14 / 100%, Gray `#CFCDD4`, in Dropdown too), with a 16 × 16 `MarginsIcons` glyph (Icon, IconBlocked, Dropdown) or a 10 × 10 chevron (Dropdown). The editable variants (Single, Icon) carry an `AddVariant` instance (18 × 18, at right 4 / top 4) as the bind affordance; the Blocked variants carry none, and their values are White 20.
+Shared: Onix `#35333B`, 6px radius, h 26, value Inter 400 14 / 100% Gray `#CFCDD4`. Hover adds 1px White 60 `rgba(255,255,255,0.6)` (padding grows by 1 to keep the content still); Selected and Editing add 1px Snow `#FCFCFC`. Selected draws the caret as a 1px Snow rule after the value; Editing also highlights the value White 20 `rgba(255,255,255,0.2)`. The `AddVariant` (18 × 18, Silver) appears only on Hover, at right 3 / top 3 (right 4 / top 4 on the opacity cell); the 24px right padding is reserved for it at rest.
 
-| Variant | State | Fill | Contrast (on Onix) | A11y |
-| --- | --- | --- | --- | --- |
-| Single / Icon | editable | Onix | value Gray 7.90:1; Onix vs panel 1.27:1 | `<input inputmode="numeric" aria-label="<field>">`; the unit glyph is `aria-hidden` |
-| SingleBlocked / IconBlocked | blocked (value is bound or inherited) | Onix | value White 20 (`#FFFFFF` 20%) 1.88:1 on Onix — below 3:1; the code follows Figma's White 20, an accepted AA miss ✱, and the bound-value tooltip ✱ carries the value | `aria-disabled` + a bound-value tooltip ✱; `Blocked` is a state, not a mode |
-| Dropdown | opens a list | Onix | chevron Silver 4.59:1 | `role="combobox"` |
-| any | ✱ focus / hover / error | — | ring `--ui-designer-control-accent` | not drawn |
+| Row | State | Fill | Border | Padding / gap | Text | Glyph | Token | Contrast |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Input (`PosX`) | Default `3505:250881` | Onix | none | 6 / 24 / 6 / 8, gap 8 | "100" Gray | "X" Inter 400 12 uppercase Cloudy Sky, centred in a 16 box | `--ui-designer-control-bg`, `--ui-designer-text-value`, `--ui-designer-glyph` | value 7.90:1; **X / Y letters 2.43:1 miss 4.5:1** |
+| Input | Hover `3505:250883` | Onix | 1px White 60 | 7 / 25 / 7 / 9 | as Default | X; `AddVariant` at right 3 / top 3 | `--palette-whiteTransparent-backdrop` | border 6.55:1 on panel, 5.58:1 on Onix |
+| Input | Selected `3505:250885` | Onix | 1px Snow | 6 / 8 | as Default, caret after it | X; no `AddVariant` | `--palette-neutral-softWhite` | border 15.45:1 |
+| Input | Editing `3505:250891` | Onix | 1px Snow | 6 / 8 | value on a White 20 highlight, caret after it | X | `--palette-whiteTransparent-soft` | **Gray on the highlight 4.20:1 misses 4.5:1** |
+| Input | Blocked `3605:24538` | Onix | none | 6 / 8 | "100" White 20 | X Cloudy Sky; no `AddVariant` | `--palette-whiteTransparent-soft` | 1.88:1 (disabled exemption) |
+| ColourInput | Default `3506:45827` | Onix, two cells joined by a 1px gap, the wrapper clips at radius 6 | none | left flex 1, min-width 128, 6 / 24 / 6 / 8, gap 8; right "Transparency" 75 wide, 6 / 24 / 6 / 8 | "BE00E4" and "100%" Gray | swatch 16: radius 4, 1px White 20, the colour | `--ui-designer-control-bg` | 7.90:1 |
+| ColourInput | Hover `3506:45856` | as Default | 1px White 60 around the pair (28 tall) | as Default | as Default | `AddVariant` on the opacity cell, right 4 / top 4 | `--palette-whiteTransparent-backdrop` | 6.55:1 |
+| ColourInput | Selected `3506:45873` | as Default | 1px Snow around the pair | left cell 6 / 8 | caret after the hex | swatch | `--palette-neutral-softWhite` | 15.45:1 |
+| ColourInput | Editing `3506:45901` | as Default | 1px Snow | left cell 6 / 8 | hex on a White 20 highlight | swatch | `--palette-whiteTransparent-soft` | **4.20:1** |
+| ColourInput | ✱ Blocked | not drawn on the Inputs board (`3702:14094`): the whole field at 20% opacity, as the Design System's button-states set draws Blocked (`rounded-button-contained` `21026:15734`; user decision) | — | — | — | — | — | — |
+| Dropdown (`Width`) | Default `3505:250900` | Onix | none | 6 / 8, gap 8 | "100" Gray, flex 1 | `ArrowDown` 10 Silver | `--ui-designer-control-bg` | arrow 4.59:1 on Onix |
+| Dropdown | Hover `3505:250902` | Onix | 1px White 60 | 7 / 9 | as Default | `ArrowDown` 10; no `AddVariant` | `--palette-whiteTransparent-backdrop` | 6.55:1 |
+| Dropdown | Selected `3505:250975` | Onix | 1px Snow | 7 / 9 | as Default | `ArrowDown` 10 | `--palette-neutral-softWhite` | 15.45:1 |
+| Dropdown | Editing (open) `3505:250992` | Onix | 1px Snow | 7 / 9 | as Default | `ArrowUp` 10 Cloudy Sky | `--ui-designer-glyph` | **ArrowUp 2.43:1 on Onix misses 3:1** |
+| Dropdown | ✱ Blocked | not drawn (`3702:14098`): the Input Blocked state, value White 20 and no border (user decision) | — | — | — | — | — | — |
+| TextInput | Default `3506:46281` | Onix | none | text inset 7 / 6, 296 wide | "Text" Gray | none | `--ui-designer-control-bg` | 7.90:1 |
+| TextInput | Hover `3506:46286` | Onix | 1px White 60 | as Default | as Default | `AddVariant` at right 3 / top 3 | `--palette-whiteTransparent-backdrop` | 6.55:1 |
+| TextInput | Selected `3506:46294` | Onix | 1px Snow | 6 / 8 | caret after "Text" | none | `--palette-neutral-softWhite` | 15.45:1 |
+| TextInput | Editing `3506:46310` | Onix | 1px Snow | 6 / 8 | "Text" on a White 20 highlight | none | `--palette-whiteTransparent-soft` | **4.20:1** |
+| TextInput | ✱ Blocked | not drawn on the Inputs board (`3702:14102`): the whole field at 20% opacity, as `21026:15734` draws Blocked (user decision) | — | — | — | — | — | — |
+| any | ✱ keyboard focus, error | not drawn: focus is Selected's 1px Snow border; error as LogicError (Logic sections) | — | — | — | — | — | — |
+
+In the panels the fields take these variants: X / Y (Position), Z-Index, W / H (Min / Max Size), Padding (four cells, `MarginsIcons` 16 Cloudy Sky), Spacing (two cells, `Spacing` 16 Cloudy Sky), Opacity, Corner Radius, Size (80 wide) and Weight are Input; the Constraints pair (a 16 `ConstraintsIcons` glyph, Cloudy Sky), "Scene Inset", Alignment ("Upper Left", padding 6 / 10), Typography ("Sans Serif"), Scale Type and Resize W / H are Dropdown; Text Input, Placeholder, Options are TextInput (Text Input on Label and Button h 100, padding 6 / 26 / 6 / 8; Placeholder and Text Input on Input h 50; Options on Dropdown h 100, padding 12 / 24 / 6 / 8). Placeholder text is Cloudy Sky ("Text" in the Input panel's Placeholder field: **2.43:1 on Onix misses 4.5:1**); the Fill placeholders "Search" and "User ID" are White 40.
+
+**Resize W / H** (Dropdown with a glyph): `Width` / `Height` cells, flex 1 each, gap 6, h 26, padding 6 / 8, gap 8: the "W" / "H" letter glyph (Cloudy Sky, 16 box), the value with its mode word ("100", "100 Fill", "100 Hug") in Gray, `ArrowDown` 10 Silver; the `ScaleToggle` 26 × 26 follows on every node type.
+
+**Units** ✱ (user decision; Figma's cells draw only the bare number, so the unit control is the code's): fields keep the px / % behaviour so existing scenes keep working. The unit control sits inside the field at its right edge, after the flex-1 value and before the 24px bind slot that Figma's padding reserves (user decision): its value ("px" or "%") in Inter 400 14, like the cell's value, and its chevron, both in Silver (`--palette-neutral-gray3`, 4.59:1 on Onix) (user decision); it hugs its value, and its open list is at least as wide as its widest option. The cell is otherwise as drawn: Onix, 26 tall, the letter in Cloudy Sky, the value Inter 400 14 Gray, padding as drawn. A `%` typed in source shows and edits as `%`, with "%" in the unit control, until the user switches the unit; switching the unit converts the value to its equivalent in the other unit (100px becomes the equivalent %) (user decision). Position, Min Size and Max Size: each cell shows the unit control after its number and shows its own unit, so source with mixed units (X in px, Y in %) reads as written; once the user changes the unit in either cell, both axes convert to the chosen unit and share it from then on (user decision). **Position** (Container panel `I3493:163451;21067:24081;21028:16554`): the "Position" subtitle (Inter 400 12 Gray + `HelpCTA` 12), then one row, gap 6, h 26, of two flex-1 cells `PosX` / `PosY` (Onix, 6px radius, padding 6 / 24 / 6 / 8, gap 8): the "X" / "Y" letter (Inter 400 12 uppercase Cloudy Sky, 16 box), the value (Inter 400 14 Gray, drawn "100"), then the Silver unit control ✱. **Resize** (`I3493:163451;21067:24247;21028:16579`): the "Resize" subtitle, then `Width` / `Height` cells (flex 1, gap 6) and the `ScaleToggle`; a cell keeps its mode word as drawn ("100 Fill"), and a fixed size shows its unit in the same Silver unit control ✱. The open list of resize modes is not drawn in either file; ✱ it is the code's modes in the code's order, restyled to the drawn Dropdown cells: "Fixed", "Percent", "Hug", "Fill" (`packages/inspector/src/components/UIDesigner/RightPanel/PropertyPanel/resize-modes.ts:18`, labels `:20`–`:25`; "Fill" is offered only for an in-flow node, `:65`–`:71`) (user decision).
+
+A11y: numeric fields are `<input inputmode="decimal" aria-label="<field>">`, the letter glyph `aria-hidden`; Dropdown is `role="combobox"` with `aria-expanded` (the ArrowUp look); Blocked is `aria-disabled="true"` with the bound value in a tooltip ✱; the `AddVariant` on hover is also reachable by keyboard (focus within the field shows it) ✱.
+
+**Decisions**
+
+| Topic | Rule |
+| --- | --- |
+| Units | ✱ Fields keep px / %. The unit control sits inside the field, its value Inter 400 14 like the cell's value, value and chevron Silver; it hugs its value, and its open list is at least as wide as its widest option; a `%` typed in source shows and edits as `%` until the user switches the unit, and switching converts the value to its equivalent (100px becomes the equivalent %); the control sits at the cell's right edge, before the 24px bind slot; in Position, Min Size and Max Size each cell shows its own unit until the user changes one, then both axes convert to the chosen unit and share it (user decision; Figma draws no unit). |
+| Disabled Dropdown | ✱ Takes the Input's Blocked state: value White 20, no border (user decision). |
 
 ### NodeTypeHierarchy (UI Editor — Components)
 
-Set `21028:16022`, 9 variants (`Property 1`): Default `21028:16027`, Hover `21028:16073`, Selected `21028:16094`, SelectedHover `21028:16099`, InvisibleDefault `21028:16031`, InvisibleHover `21028:16038`, InvisibleSelected `21028:16066`, InvisibleSelectedHover `21028:16059`, PropertiesHeader `21028:16023`. Size 265 × 406; each row variant 223 × 30. Read October 27, 2026. Code: main (drift: the rows below are Figma's values and the user's decisions) · inspector `LeftPanel/NodeTree.tsx` (+ `NodeTree.css`) over the shared `components/Tree` · Creator Hub none.
+Library set `21028:16022` (the rows' internals resolve to it), drawn as `<NodeEntries>` on HierarchyPanelComponents `3511:101478` in four sets of rows 223 × 30: **Parent Default** `3511:102342` (Default `3511:102349`, Hover `3511:102350`, Selected `3511:102351`, Selected Hover `3511:102352`), **Parent Invisible & Locked** `3511:102355` (`3511:102362`, `3511:102363`, `3511:102364`, `3511:102365`), **Child Default** `3511:102368` (`3511:102375`–`3511:102378`), **Child Invisible & Locked** `3511:102381` (`3511:102388`–`3511:102391`). The two Invisible sets are titled "(position of this two icons is fixed)" and label their fourth column "Selected Hover (idem selected)". Read November 12, 2026. Code: inspector `UIDesigner/LeftPanel/NodeTree.tsx` (+ `NodeTree.css`) over the shared `components/Tree` (`Tree.tsx`, `Tree.css`, `ActionArea/ActionArea.css`). Drift: the 2D row carries a delete button (`aria-label="Delete <label>"`); the rows below draw lock and eye only.
 
-It draws the UI Designer's 2D node tree; its one board is `LeftPanel2D` `21028:34521`, whose NODES list `21028:34533` is twelve instances of it. The user extended its **state rule** to every inspector tree (decisions below). Shared:
+It draws the UI Designer's 2D node tree; its boards are `LeftPanel2D` `3488:55157` (Default) and `3527:163609` (GUI & Nodes menu), whose NODES lists are twelve instances of it. The user extended its **state rule** to every inspector tree (decisions below). Shared:
 
-- **Row:** Fixed 223 × 30 (a Fill instance on the board's 312 rail), horizontal, gap 10, padding 4 / 10 (3 / 10 on the six hover and selected variants; the height is fixed, so nothing moves).
-- **Order:** the caret `Vector` (10 × 6.09, White 40, pointing down in every variant: no closed caret is drawn), the node glyph `NodeType/*` (16 × 16, in the label's colour), the label `Text` (Inter 400 12 / 100%), then `CTAs` (lock + eye, 16 + 16, gap 8, Gray, absolutely placed 10 from the right edge).
-- **Nesting (board):** padding-left is 10 at the root and grows by 30 per level (40, 70). A leaf draws no caret and keeps no slot for one: its glyph starts where a sibling's caret does.
-- **Inherited state (board):** the children of a hidden, locked Container are drawn InvisibleDefault, with LockLayerToggle `Parent = No` / `Active = On` dots where their lock and eye go. The 2D tree draws them per toggle (user decision): an eye dot only under a hidden ancestor, a lock dot only under a locked one; the other trees don't. Today the code has no inherited lock (locking a node doesn't lock its descendants on the canvas), so a descendant shows only the eye dot, with its lock slot reserved and empty; the lock dot arrives with inherited lock (Open items).
-- **Selected** also carries an extra `Label` instance `21028:16098` (73.5 × 15); nothing else in the set uses it.
-- **Row actions (code):** in the 2D tree, lock, eye and delete, in that order (LockLayerToggle, VisibilityToggle, DeleteCTA; user decision); the 3D trees, the lock and eye. At rest an unpressed action takes no space; in the 2D tree an action area with nothing to show leaves the layout, so a long label runs to the row's 10px padding. A pressed toggle or an inherited dot stays visible at rest, and the row then reserves every action slot, the delete's included, so nothing moves on hover. Hover or keyboard focus inside the row shows them all. A 2D platform-variant row missing a device branch carries "Add Desktop variant" / "Add Mobile variant" buttons in the same area, under the same rule (Figma draws none).
+- **Row:** Fixed 223 × 30 on the sheet (Fill on the 312 rail), horizontal, gap 10, padding 4 / 10 (3 / 10 on Hover, Selected and Selected Hover; the height is fixed, so nothing moves).
+- **Order:** the caret `Vector` (10 × 6.09, White 40, drawn rotated to point down: no closed caret is drawn), the node glyph `NodeType/*` (16 × 16, in the label's colour), the label (Inter 400 12 / 100%, fill width), then `CTAs` (lock + eye, 16 + 16, gap 8, 17 tall, absolutely placed 10 from the right edge).
+- **Nesting (board):** padding-left is 10 at the root and grows by 30 per level (40, 70). A leaf (the Child sets) draws no caret and keeps no slot for one: its glyph starts where a sibling's caret does.
+- **Inherited state:** Child Invisible & Locked draws two 2 × 2 Gray dots (LockLayerToggle `Parent = No` / `Active = On`, 16 × 16 boxes) in the lock and eye slots, in every state including Hover and Selected; the label, glyph and caret are White 40. The 2D tree draws them per toggle (user decision): an eye dot only under a hidden ancestor, a lock dot only under a locked one; the other trees don't. The code has no inherited lock yet (locking a node doesn't lock its descendants on the canvas), so a descendant shows only the eye dot, with its lock slot reserved and empty; the lock dot arrives with inherited lock (Open items).
+- **Selected** also carries an extra `Label` instance (`21028:16098`, 15 tall); nothing else in the set uses it.
+- **Row actions:** lock and eye, in that order (LockLayerToggle, VisibilityToggle), in every tree; never delete (user decision). At rest an unpressed action takes no space; an action area with nothing to show leaves the layout, so a long label runs to the row's 10px padding. A pressed toggle or an inherited dot stays visible at rest, and the row then reserves both slots, so nothing moves on hover ("position of this two icons is fixed"). Hover or keyboard focus inside the row shows them both. A 2D platform-variant row missing a device branch carries "Add Desktop variant" / "Add Mobile variant" buttons in the same area, under the same rule (Figma draws none).
 
-PropertiesHeader is the `PropertyPanel` header (it sits in `Header` `21067:22621`), not a tree row; it is specced with the right panel: 223 × 20, gap 8, padding 0 / 16 / 0 / 10, an 18 × 18 glyph, the label `H7 Semi` (Inter 600 14) Gray and a 16 × 16 VisibilityToggle with a 4px radius.
+The properties header row (`Header` in RightPanel2D, e.g. `3961:10330`) is the `PropertyPanel` header, not a tree row; it is specced with the right panel: Fill × 16, gap 8, padding 0 / 16 / 0 / 10, an 18 × 18 glyph in Gray, the label `H7 Semi` (Inter 600 14) Gray.
 
-Code: the 2D tree is `LeftPanel/NodeTree.tsx` (+ `NodeTree.css`) over the shared `components/Tree` (`Tree.tsx`, `Tree.css`, `ActionArea/ActionArea.css`), which also renders the 3D Hierarchy (`Hierarchy.tsx`, plus `PlayerTree.tsx`'s hand-written rows on the same CSS) and the Local Assets tree (`ProjectAssetExplorer/ProjectView.tsx`). The design gives every tree the shared state rule from `Tree.css`: White 5 hover, Blue Dark 3 selection, Gray labels that turn Snow when selected, Figma's caret, the WAI-ARIA tree semantics and the arrow keys, with the 2D size and spacing in `NodeTree.css` (decisions below). On `main`, `Tree.css` paints hover and selection the same ruby `--selected-item`, draws drop lines in `--border-focused`, and has no tree roles or arrow keys: drift.
+Code: the 2D tree is `LeftPanel/NodeTree.tsx` (+ `NodeTree.css`) over the shared `components/Tree` (`Tree.tsx`, `Tree.css`, `ActionArea/ActionArea.css`), which also renders the 3D Hierarchy (`Hierarchy.tsx`, plus `PlayerTree.tsx`'s hand-written rows on the same CSS) and the Local Assets tree (`ProjectAssetExplorer/ProjectView.tsx`). The design gives every tree the shared state rule from `Tree.css`: White 5 hover, Blue Dark 3 selection, Gray labels that turn Snow when selected, Figma's caret, the WAI-ARIA tree semantics and the arrow keys, with the 2D size and spacing in `NodeTree.css` (decisions below).
 
-| Variant | State | Fill | Label / glyph / caret | Row actions | Contrast (on `#242129`, every tree's surface) | A11y |
-| --- | --- | --- | --- | --- | --- | --- |
-| Default | rest | none | Gray `#CFCDD4` / Gray / White 40 | hidden | label 10.07:1; caret 3.74:1 | `role="treeitem"`, `aria-level`, `aria-selected="false"`, `aria-expanded` on parents only |
-| Hover | pointer over | White 5 `--palette-whiteTransparent-faint` | Gray | lock (open) + eye | fill vs panel 1.16:1; label 8.71:1 | — |
-| Selected | selected | Blue Dark 3 `--palette-system-blueDark3` | Snow `#FCFCFC` | hidden | label 11.61:1; fill vs panel 1.33:1, so the Snow label carries it | `aria-selected="true"` |
-| SelectedHover | selected + pointer over | Blue Dark 3, the same as Selected | Snow | lock + eye | as Selected | the row actions appearing is the hover cue (user decision) |
-| InvisibleDefault | hidden | none | White 40 label, glyph and caret | closed lock + eye-off, shown at rest | ✱ label **3.74:1 on the panel**, below 4.5:1 (see the ✱ row) | the eye is pressed |
-| InvisibleHover | hidden + pointer over | White 5 | White 40 | lock + eye-off | label 3.51:1 | — |
-| InvisibleSelected | hidden + selected | Blue Dark 3 | White 40 | lock + eye-off | ✱ label **3.31:1** | `aria-selected="true"` |
-| InvisibleSelectedHover | hidden + selected + pointer over | Blue Dark 3, pixel-identical to InvisibleSelected | White 40 | lock + eye-off | as InvisibleSelected | Figma defect: no hover cue at all (Open items) |
-| any | ✱ focus (Figma draws none; user decision) | as the state | as the state | — | Snow `--focus-ring` 11.61:1 on Blue Dark 3, 13.37:1 on White 5, 15.45:1 on the panel | 1px inset Snow `--focus-ring` on `:focus-visible`, the same ring as the menu rows; one roving `tabindex="0"` per tree. The row's lock and eye show while focus is inside the row and nothing in it was focused by the mouse (`:focus-within:not(:focus:not(:focus-visible)):not(:has(:focus:not(:focus-visible)))`), so Tab reaches them but a mouse-focused row keeps them hidden, as Figma's Selected does at rest. A plain `:focus-visible` / `:has(:focus-visible)` pair breaks Tab: Tab blurs the row first and the lock hides before it can take focus. In the 3D tree those buttons take a 1px Snow `--focus-ring` at a 1px offset; in the 2D tree, the UI Designer icon-button ring |
-| any | ✱ hidden label (user decision) | — | White 40 as drawn, in **every** tree: the 2D nodes and the 3D Hierarchy's hidden entities and spawn points | — | **accepted AA miss: 3.74:1 on the panel, 3.31:1 when selected** (12px text needs 4.5:1) | the eye's `aria-pressed="true"` and its name say the node is hidden |
-| any | ✱ drop target (Figma draws none; user decision) | none | — | — | `--palette-info-light` 7.09:1 on the panel, 5.33:1 on Blue Dark 3 | inside: a 1px inset `--palette-info-light` outline on the target row only, never its open subtree; before / after: a 2px `--palette-info-light` line. All four trees |
-| InvisibleDefault (board) | inherited hidden: a descendant of a hidden node, 2D tree only | as its own state (none, White 5, Blue Dark 3) | White 40 label, glyph and caret | an inert 2 × 2 Gray dot in the eye slot (LockLayerToggle `Parent = No`, `Active = On`), and one in the lock slot too when an ancestor is locked (once inherited lock ships; until then the lock slot is reserved and empty); the row's own lock, eye and delete return on hover and focus, like every row's actions | label as the ✱ hidden label (3.74:1); dots Gray 10.07:1, decorative | the dots are `aria-hidden`; the row's own toggles keep their names and pressed state |
-| — | inherited locked (not built: the code has no inherited lock yet; Open items): a descendant of a locked node that no hidden node contains, 2D tree only | as its own state | as its own state (a lock doesn't dim the label) | an inert Gray dot in the lock slot only; the row's own actions return on hover and focus | dot Gray 10.07:1, decorative | as inherited hidden |
+| Variant | State | Fill | Label / glyph / caret | Row actions | Contrast (on `#242129`, every tree's surface) | Token | A11y |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Parent Default / Default | rest | none | Gray `#CFCDD4` / Gray / White 40 | hidden | label 10.07:1; caret 3.74:1 | `--palette-neutral-gray4`, `--palette-whiteTransparent-blurry` | `role="treeitem"`, `aria-level`, `aria-selected="false"`, `aria-expanded` on parents only |
+| Parent Default / Hover | pointer over | White 5 | Gray | open lock + eye | fill vs panel 1.16:1; label 8.71:1 | `--palette-whiteTransparent-faint` | — |
+| Parent Default / Selected | selected | Blue Dark 3 `#243852` | Snow `#FCFCFC` | hidden | label 11.61:1; fill vs panel 1.33:1, so the Snow label carries it | `--palette-system-blueDark3`, `--palette-neutral-softWhite` | `aria-selected="true"` |
+| Parent Default / Selected Hover | selected + pointer over | Blue Dark 3, as Selected | Snow | open lock + eye | as Selected | as Selected | the row actions appearing is the hover cue (user decision) |
+| Parent Invisible & Locked / Default | hidden and locked | none | White 40 label, glyph and caret | closed lock + eye-off, shown at rest | ✱ label **3.74:1**, below 4.5:1 (see the ✱ hidden label row) | `--palette-whiteTransparent-blurry` | both toggles pressed |
+| Parent Invisible & Locked / Hover | + pointer over | White 5 | White 40 | closed lock + eye-off, in flow (same position) | label 3.51:1 | `--palette-whiteTransparent-faint` | — |
+| Parent Invisible & Locked / Selected | + selected | Blue Dark 3 | White 40 | closed lock + eye-off | ✱ label **3.31:1** | `--palette-system-blueDark3` | `aria-selected="true"` |
+| Parent Invisible & Locked / Selected Hover | + selected + pointer over | Blue Dark 3, identical to Selected ("idem selected", as drawn) | White 40 | closed lock + eye-off | as Selected | — | no hover cue, by design: both toggles already show |
+| Child Default / Default · Hover · Selected · Selected Hover | a leaf at level 1 or deeper | as Parent Default | as Parent Default, no caret | as Parent Default | as Parent Default | as Parent Default | as Parent Default |
+| Child Invisible & Locked / Default · Hover · Selected · Selected Hover | inherited hidden and locked (a descendant of a hidden, locked node), 2D tree only | none / White 5 / Blue Dark 3 / Blue Dark 3 | White 40 label and glyph | two inert 2 × 2 Gray dots in the lock and eye slots, in every state; in code the eye dot under a hidden ancestor, the lock dot under a locked one (once inherited lock ships; until then the lock slot is reserved and empty); on hover and focus the row keeps the dots only; its own lock and eye don't appear (user decision, as Figma draws) | label as the ✱ hidden label (3.74:1); dots Gray 10.07:1, decorative | `--palette-neutral-gray4` (dots) | the dots are `aria-hidden`; the row's own toggles keep their names and pressed state |
+| — | inherited locked only (not built: no inherited lock in code yet; Open items) | as its own state | as its own state (a lock doesn't dim the label) | an inert Gray dot in the lock slot only, also on hover and focus (user decision, as Figma draws) | dot Gray 10.07:1, decorative | — | as inherited hidden |
+| any | ✱ focus (Figma draws none; user decision) | as the state | as the state | lock + eye show | Snow `--focus-ring` 11.61:1 on Blue Dark 3, 13.37:1 on White 5, 15.45:1 on the panel | `--focus-ring` | 1px inset Snow `--focus-ring` on `:focus-visible`, the same ring as the menu rows; one roving `tabindex="0"` per tree. The row's lock and eye show while focus is inside the row and nothing in it was focused by the mouse (`:focus-within:not(:focus:not(:focus-visible)):not(:has(:focus:not(:focus-visible)))`), so Tab reaches them but a mouse-focused row keeps them hidden, as Figma's Selected does at rest. A plain `:focus-visible` / `:has(:focus-visible)` pair breaks Tab: Tab blurs the row first and the lock hides before it can take focus. In the 3D tree those buttons take a 1px Snow `--focus-ring` at a 1px offset; in the 2D tree, the UI Designer icon-button ring |
+| any | ✱ hidden label (user decision) | — | White 40 as drawn, in **every** tree: the 2D nodes and the 3D Hierarchy's hidden entities and spawn points | — | **accepted AA miss: 3.74:1 on the panel, 3.31:1 when selected** (12px text needs 4.5:1) | `--palette-whiteTransparent-blurry` | the eye's `aria-pressed="true"` and its name say the node is hidden |
+| any | ✱ drop target (Figma draws none; user decision) | none | — | — | `--palette-info-light` 7.09:1 on the panel, 5.33:1 on Blue Dark 3 | `--palette-info-light` | inside: a 1px inset outline on the target row only, never its open subtree; before / after: a 2px line. All four trees |
 
 **Decisions** (user decisions; the record for this component and the inspector's trees, so grep here before asking again):
 
 | Topic | Rule |
 | --- | --- |
 | Standing rule | Always follow Figma: where Figma draws a value or a control, the code follows it; a ✱ is only for states Figma doesn't draw at all (focus, drop, keyboard), and those take Figma's nearest drawn value. |
+| Copy | Figma's copy is used exactly as drawn (user decision). |
 | Reach | Shared states, 2D size. Hover White 5, selected Blue Dark 3, labels Gray at rest and Snow when selected, Figma's caret, the menu rows' focus ring, tree roles and arrow keys live in the shared `Tree`, so the 3D Hierarchy, PlayerTree, Local Assets and the 2D tree look alike. The 30px row, the 30-per-level indent, the 16px glyphs and the lock / eye rule are 2D-only. `--selected-item` keeps its value; `Tree.css` doesn't read it. |
-| Unit order | NodeTypeHierarchy → FoldersHierarchy (Local Assets) → GUI (the 2D GUI list) → the assemblies: the 3D Hierarchy panel against Editor 3D `Entity-List` `21673:49646`, the 2D rail against `LeftPanel2D` `21028:34521`. |
+| Unit order | NodeTypeHierarchy → FoldersHierarchy (Local Assets) → GUI (the 2D GUI list) → the assemblies: the 3D Hierarchy panel against Editor 3D `Entity-List` `21673:49646`, the 2D rail against `LeftPanel2D` `3488:55157`. |
 | 3D rows | NodeTypeHierarchy governs them: the only drawing of the 3D tree, Editor 3D `Entity-List` `21673:49646`, is an instance of a stale set on the Scene Editor 🟡 Outdated page (Open items, Figma-side). The 3D Hierarchy panel assembly settles the 22 vs 24px row height. |
 | Selection fill | Each set as drawn: GUI rows select White 10 (the GUI unit), tree rows Blue Dark 3. No ✱. |
-| Selected + hover | As Figma: Blue Dark 3 stays, and the lock and eye appearing is the cue. |
+| Selected + hover | As Figma: Blue Dark 3 stays, and the lock and eye appearing is the cue. A hidden or locked row's Selected Hover is identical to its Selected ("idem selected"). |
 | Hidden label | White 40 as drawn, in every tree (3D entities and spawn points included): an accepted AA miss, 3.74:1 on the panel, 3.31:1 selected (✱ hidden label). The 3D eye-off glyph keeps its look. |
 | Lock and eye | Independent toggles (the board's "every hidden row is locked" is sample data). Each follows LockLayerToggle and VisibilityToggle as drawn, in the 2D rows, the node-header, GUI-list and MobileHUD eyes, the 3D trees' lock and eye and the spawn-point eye: a Gray `--palette-neutral-gray4` glyph in every state, no fill at rest, White 10 with a 4px radius on hover, and no fill when locked or hidden (the closed lock or eye-off is the indicator). Focus rings keep their look. A pressed toggle stays visible at rest. |
 | Lock and eye names | A stable name plus pressed: "Lock <label>" and "Hide <label>", `aria-pressed="true"` when locked or hidden, in both trees. |
+| Row actions | Tree rows show lock and eye on hover and keyboard focus, never delete. Delete is in the right-click menu (GUI and Node context menu) and on the Delete key (user decision). Code also binds Backspace (`useUINodeHotkeys`). |
 | Drop target | An accent outline in every tree (✱ drop target): inside is a 1px inset outline on the target row only; before / after are accent lines; the colour is `--palette-info-light` = `#63b4f6` (ui2 dark `palette.info.light`, Figma System/Blue Light 1). `--border-focused` keeps its value. |
 | Tree pattern | The full WAI-ARIA tree pattern in all four trees, PlayerTree included: `role="tree"` with `aria-multiselectable`; `treeitem` with `aria-level`, `aria-expanded` and `aria-selected`; a roving tabindex; Up / Down, Right / Left, Home / End and Enter. The arrows move focus, Enter selects, Shift + Up / Down move focus and extend the selection (range-select in every tree). |
 | Tree names | "Hierarchy" (3D), "Nodes" (2D), "Local Assets". |
-| 2D row delete | The 2D row actions are lock, eye, delete (DeleteCTA under the icon-button rule: Silver at rest, Snow (the ✱ for Figma's White) on White 10 with a 4px radius on hover, named "Delete <label>"). They are hidden at rest and shown on hover or keyboard focus. Delete is also in the context menu and on Delete / Backspace (`useUINodeHotkeys`). |
-| Inherited dots | 2D tree only, per toggle as LockLayerToggle draws (`Parent = No` / `Active = On` is the dot, `Active = Off` draws nothing): a descendant of a hidden node renders White 40 with an eye dot, a descendant of a locked node carries a lock dot. Inherited lock on the canvas is its own unit (Open items); until it ships, the lock slot under a hidden ancestor is reserved and empty. |
-| Fixed slots | As Figma's lock + eye pair: a pressed toggle keeps its own slot at rest and on hover, so nothing moves. Only rows with a pressed toggle or an inherited dot reserve the empty slots (the delete's included); every other row keeps the full-width label. |
+| Inherited dots | 2D tree only, per toggle as LockLayerToggle draws (`Parent = No` / `Active = On` is the dot, `Active = Off` draws nothing): a descendant of a hidden node renders White 40 with an eye dot, a descendant of a locked node carries a lock dot. On hover and focus an inherited row shows the dots only, never its own lock and eye (user decision). Inherited lock on the canvas is its own unit (Open items); until it ships, the lock slot under a hidden ancestor is reserved and empty. |
+| Fixed slots | As Figma's lock + eye pair ("position of this two icons is fixed"): a pressed toggle keeps its own slot at rest and on hover, so nothing moves. Only rows with a pressed toggle or an inherited dot reserve the empty slot; every other row keeps the full-width label. |
 | Tree surface | The 3D Hierarchy is `--base-19` (`#242129`, the 1/255 Charcoal ✱ `--ui-designer-panel-bg` uses); Local Assets follows Figma's bottom-panel layout (Black, with Charcoal sub-panels) in the FoldersHierarchy unit. `--tree-bg-color` keeps its value (16 consumers). Every tree's contrast is measured on the panel (`#242129`). |
-| 2D lock and eye spacing | Figma's `CTAs`: a 24px glyph-centre pitch, the last 16px box 10px from the row edge. The 24 × 24 hit-target buttons (lock, eye, delete) abut and the last overhangs the row padding by 4px, so the 16px `::before` boxes land on Figma's gap 8 and padding 10 (`.ui-designer-nodetree .Tree .item .selectable-area .action-area { column-gap: 0; padding-right: 0; margin-right: -4px; }`). The 3D spacing is the 3D Hierarchy panel assembly's (Open items). |
+| 2D lock and eye spacing | Figma's `CTAs`: a 24px glyph-centre pitch, the last 16px box 10px from the row edge. The 24 × 24 hit-target buttons (lock, eye) abut and the last overhangs the row padding by 4px, so the 16px `::before` boxes land on Figma's gap 8 and padding 10 (`.ui-designer-nodetree .Tree .item .selectable-area .action-area { column-gap: 0; padding-right: 0; margin-right: -4px; }`). The 3D spacing is the 3D Hierarchy panel assembly's (Open items). |
 | 2D nesting | As the board: padding-left 10 at the root plus 30 per level, and no caret slot on leaf rows (the glyph starts where a sibling's caret does). |
-| Indent | 30px per level, as Figma, in every rail width. Deep rows lose label room on hover in a narrow rail. At the default 214.5px rail, rest / hover: level-0 parent 148.5 / 70.5px, level-1 parent 118.5 / 40.5px, level-2 parent 88.5 / 10.5px, level-2 leaf 108.5 / 30.5px (the three 24px actions, less the 4px overhang, plus the 10px gap take 78px on hover); at 162px a level-0 parent has 96 / 18px, a level-1 parent 66px / none and a level-2 parent 36px / none. |
-| Status | Code: main (drift on every value). The design covers the four trees with NodeTypeHierarchy's states and tree semantics, the 2D tree's size, nesting and `CTAs` spacing, the 3D Hierarchy's `--base-19` surface, and the lock / eye / delete and MobileHUD action eye. |
+| Indent | 30px per level, as Figma, in every rail width. Deep rows lose label room on hover in a narrow rail. At the default 214.5px rail, rest / hover: level-0 parent 148.5 / 94.5px, level-1 parent 118.5 / 64.5px, level-2 parent 88.5 / 34.5px, level-2 leaf 108.5 / 54.5px (the two 24px actions, less the 4px overhang, plus the 10px gap take 54px on hover); at 162px a level-0 parent has 96 / 42px, a level-1 parent 66 / 12px and a level-2 parent 36px / none. |
+| Status | Code: the design covers the four trees with NodeTypeHierarchy's states and tree semantics, the 2D tree's size, nesting and `CTAs` spacing, the 3D Hierarchy's `--base-19` surface, and the lock / eye and MobileHUD action eye. Drift: the 2D row still carries delete. |
+
+### AddNodeMenu (UI Editor — Hierarchy)
+
+Instance `3522:122426` (a `Menu` wrapping `AddNewAction` `I3522:122426;21032:43843`) on the Add Node board `3522:122110`, placed beside the rail at board x 282 / y 274, next to the NODES `+`. Size 220 × 390. The board's note `3522:122118` reads: "This is the menu that can be opened from the hierarchy panel when pressing [+] or the [+ Add node] button within the workspace." and "Clicking anywhere outside the menu closes it." Read November 12, 2026. Code: inspector `UIDesigner/LeftPanel/WidgetPicker/WidgetPicker.tsx` (+ `WidgetPicker.css`). Drift: code's picker is `--tree-bg-color` with a 1px `--ui-designer-control-border` border, 6px radius, a `0 6px 18px` shadow, max-height 320 with a scroll, placeholder "Search widgets…", accent-21 hover and a "No widgets match." empty line.
+
+Column, padding 10 / 0, gap 10, no scroll (the menu hugs its ten rows). Top to bottom: the `Options` slot (padding 0 / 10) holding the Nodes-menu SearchBar (198 × 30, see SearchBar), a 1px White 10 divider the menu's full width, then the `Options2` slot (padding 0 / 10) holding category rows and entries. Categories and entries, as drawn: **CONTAINERS** — Full Screen, Container, Image; **TEXT** — Label, Button; **INPUT** — Input, Dropdown (category copy is typed "Containers", "Text", "Input" and shown uppercase by style).
+
+| Part | State | Fill | Border | Radius | Text | Padding / gap / size | Token | Contrast (on Onix `#35333B`) | A11y |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Container | open | Onix `#35333B` | 1px White 10 | 12 | — | 220 wide (218 inside the border), padding 10 / 0, gap 10, shadow `0 4px 8px` Black 40 | `--palette-neutral-onyx` (`--ui-designer-control-bg`), `--palette-whiteTransparent-subtle`, `--shape-borderRadiusLarge`, `--menu-shadow` | Onix vs `#242129` 1.27:1, so the border and shadow carry the edge | `role="dialog"` named "Add Node" (notes `3470:13276` and `3522:122118`: the menu opened by "[+] or the [+ Add node] button"; user decision) holding the search and a `role="listbox"` ✱; Escape and an outside click close it and return focus to the `+` |
+| Search | — | see SearchBar (Nodes-menu) | 1px White 40 | 8 | placeholder "Search node type" Inter 400 12 White 40 | 198 × 30 | see SearchBar | see SearchBar | focused on open ✱; typing filters the entries |
+| Divider | — | White 10, 1px tall | — | — | — | full width (218) | `--palette-whiteTransparent-subtle` | 1.36:1, decorative | `role="separator"` |
+| Category row | — | none | none | 8 | Inter 400 12 / 100% uppercase Silver `#A09BA8` | 198 × 24, padding 10 (the 15px line overflows the 4px content box and stays visible), no glyph | `--palette-neutral-gray3` (`--ui-designer-text-muted`) | 4.59:1 | a group label (`role="group"` + `aria-labelledby`); not focusable |
+| Entry | Default | none | none | 8 | label Inter 400 12 / 100% Snow; glyph `NodeType/*` 16 (drawn 16 × 15) in Snow | 198 × 35, padding 10, gap 10 | `--palette-neutral-softWhite` (`--ui-designer-text`) | label and glyph 12.13:1 | `role="option"`; the glyph is `aria-hidden` |
+| Entry | Hover (drawn on "Label") | Pale Black `#43404A` | none | 8 | Snow | as Default | `--gray-0` (`--contexify-activeItem-bgColor`) | label 9.88:1; fill vs Onix 1.23:1 | — |
+| Entry | ✱ keyboard active | Pale Black + 1px inset Snow `--focus-ring` | — | 8 | Snow | — | `--focus-ring` | ring 9.88:1 | arrow keys move from the search into the list (`aria-activedescendant`) |
+| — | ✱ no match | — | — | — | not drawn | — | — | — | the list empties; nothing else is drawn |
+
+Glyph per entry (library names in brackets): Full Screen `NodeType/FullScreen` (`FullScreen`), Container `NodeType/Container` (`Container`), Image `NodeType/Image` (`Image`), Label `NodeType/Label` (`Label`), Button `NodeType/Button` (`Button`), Input `NodeType/Input` (`Input`), Dropdown `NodeType/Dropdown` (`Dropdown`), all `fontSize="small"`. Image and Button draw their glyph in White `#FFFFFF`; the others in Snow. Code renders them `currentColor` = the label's Snow.
+
+**Decisions**
+
+| Topic | Rule |
+| --- | --- |
+| Copy | As drawn: "Search node type", "Containers" / "Text" / "Input", "Full Screen", "Container", "Image", "Label", "Button", "Input", "Dropdown" (user decision). |
+| Size | 220 wide, no scroll: the menu hugs its rows. |
+| Dropping an image | Dropping an image on the 2D canvas creates an Image node (user decision). |
+| Focus | ✱ The keyboard-active entry takes the 1px inset Snow `--focus-ring` on `:focus-visible` over its Pale Black fill (user decision). |
+
+### GUI and Node context menu (UI Editor — Hierarchy)
+
+Board `3522:122468` ("GUI & Nodes menu", title text `3522:122482`) and the menu instance `3522:123080` (a `Menu` wrapping `AddNewAction` `I3522:123080;21032:43843`), placed over the rail's NODES list at board x 202 / y 370 (the pointer). Size 150 × 125. The board's note `3522:122481` reads: "When pressing right click while a GUI or Nodes is selected, the menu to Rename, Duplicate and Delete appears." / "Clicking anywhere outside the menu closes it." / "This options can be executed too without opening the menu." with "Rename: double click on top of the name.", "Duplicate: command+d", "Delete: delete." Read November 12, 2026. Code: inspector `components/Tree/ContextMenu/ContextMenu.tsx` (react-contexify `Item`s "Rename", "Duplicate", "Delete", on the `--contexify-*` tokens) for the NODES tree; the GUIS list (`CodeRootsList.tsx`) has inline rename and delete buttons and no context menu: drift.
+
+One slot (`Options`, padding 0 / 10) of three entries, no divider. The menu follows Menu / Menu-Entry (Menu) except where this board differs: entries are 35 tall (padding 10), not 38.
+
+| Part | State | Fill | Border | Radius | Text / glyph | Padding / gap / size | Token | Contrast (on Onix) | A11y |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Container | open | Onix | 1px White 10 | 12 | — | 150 × 125, padding 10 / 0, shadow `0 4px 8px` Black 40 | `--contexify-menu-bgColor` (Onix), `--palette-whiteTransparent-subtle`, `--contexify-menu-radius` (`--shape-borderRadiusLarge`), `--menu-shadow` | 1.27:1 vs the panel; border and shadow carry the edge | `role="menu"` named "GUI Options" on a GUI row and "Node Options" on a node row (user decision: note `3522:122481` gives no short name, so the names follow the inspector's other menus, "Entity Options" and "Node Options"); Escape and an outside click close it and return focus to the row |
+| Entry | Default | none | none | 8 | label Inter 400 12 Snow; leading glyph 15 × 15 Silver | 130 × 35, padding 10, gap 10 | `--contexify-item-color` (Snow), `--ui-designer-text-muted` (glyph) | label 12.13:1; glyph 4.59:1 | `role="menuitem"`; glyph `aria-hidden` |
+| Entry | ✱ hover / keyboard active | Pale Black | — | 8 (`--contexify-activeItem-radius`) | as Default | — | `--contexify-activeItem-bgColor` (`--gray-0`) + `--focus-ring` when keyboard-active | label 9.88:1 | as Menu-Entry |
+
+Entries, in order, as drawn: "Rename" (glyph `Edit`), "Duplicate" (glyph `Copy`), "Delete" (glyph `Delete`, library `DeleteOutlined`). Library icons at `fontSize="inherit"` in a 15px box. Shortcuts: Rename on double click on the name, Duplicate on Cmd / Ctrl + D, Delete on Delete. The menu opens on right click of a GUI row or a node row; it is the only place the rows offer delete (user decision).
 
 ### GUI (UI Editor — Components)
 
-Set `21085:34793`, 3 variants (`Property 1` = Default `21085:34794` / Hover `21085:34941` / Selected `21085:34947`). Size 265 × 158; each variant 223 × 30. Read October 27, 2026. Code: main · inspector `LeftPanel/CodeRootsList.tsx` row (26 tall, 14px Snow label, Cloudy Sky glyph, accent 15% hover, accent 21% selected): drift; the GUI unit aligns it (Open items) · Creator Hub none.
+Drawn as `<GUIEntries>` on HierarchyPanelComponents `3511:101478`, in two sets of NodeTypeHierarchy rows 312 × 30. **Default** `3511:102330`: Default `3511:102336`, Hover `3511:102337`, Selected `3511:102338`. **Hidden** `3904:41588`: Default `3904:41594`, Hover `3904:41595`, Selected `3904:41639`. The rail boards (`3488:55157`, `3527:163609`) place instances of the library `GUI` set (`21085:34793`, e.g. `3900:32658`–`3900:32661`), which draw a 14px White `NodeType/GUIRoot` and no actions; the `<GUIEntries>` rows are the spec. Read November 12, 2026. Code: inspector `UIDesigner/LeftPanel/CodeRootsList.tsx` (+ `CodeRootsList.css`). Drift: code rows are 26 tall with a 14px Snow label, a Cloudy Sky glyph, accent 15% hover, `--selected-item` selection, and an eye ("Toggle top-level"), rename and delete buttons.
 
-Fixed 223 × 30, horizontal, gap 10, padding L / R 10; a 14 × 14 `NodeType/GUIRoot` glyph in Neutrals/White `#FFFFFF`, then the label, Inter 400 12 / 100% Gray `#CFCDD4`. The `LeftPanel2D` board's GUIS list `21028:34527` is four instances (Default, Hover, Default, Selected), with no MobileHUD row and no row actions. The MobileHUD row in the code's GUI list shows no action icons: it is always visible and can't be deleted or locked (user decision; the code already matches).
+Row 312 × 30, gap 10, padding 4 / 10 (3 / 10 on Hover and Selected; the height is fixed, so nothing moves); a 16 × 16 `NodeType/GUIRoot` glyph in the label's colour, then the label (Inter 400 12 / 100%, fill width), then `CTAs` (gap 8, 17 tall, absolutely placed 10 from the right edge). No caret: GUIs are not nested. Row actions: the eye (VisibilityToggle) only, never lock or delete; the hidden rows keep an invisible lock slot (`LockLayerToggle` drawn at opacity 0) before the eye, so the eye sits at the same x as a node row's eye.
 
-| Variant | Padding T / B | Fill | Inspector token | Contrast (on `#242129`) | A11y |
-| --- | --- | --- | --- | --- | --- |
-| Default | 4 | none | — | Gray 10.07:1 | `role="button"`, `aria-current` (today's rows) |
-| Hover | 3 | `#FFFFFF` 5% | `--palette-whiteTransparent-faint` | Gray 8.71:1 | — |
-| Selected | 3 | White 10, as drawn (user decision: GUI rows select White 10, tree rows Blue Dark 3) | `--palette-whiteTransparent-subtle` | fill vs panel 1.36:1; Gray 7.43:1 | `aria-current="true"` |
+| Set | Variant | Fill | Label / glyph | Actions | Contrast (on `#242129`) | Token | A11y |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Default | Default | none | Gray `#CFCDD4` | none | label 10.07:1 | `--palette-neutral-gray4` | rows in a `role="listbox"` named "GUIs" ✱, each `role="option"` with `aria-selected` |
+| Default | Hover | White 5 | Gray | eye (Visible), 16 × 16 | label 8.71:1; eye 8.71:1 | `--palette-whiteTransparent-faint` | the eye named "Hide <GUI>", `aria-pressed="false"` |
+| Default | Selected | White 10 | Gray | none | fill vs panel 1.36:1; label 7.43:1 | `--palette-whiteTransparent-subtle` | `aria-selected="true"` |
+| Hidden | Default | none | White 40 | eye-off, shown at rest; invisible lock slot | **label 3.74:1** (accepted AA miss, as the hidden tree rows); eye-off Gray 10.07:1 | `--palette-whiteTransparent-blurry` | eye `aria-pressed="true"` |
+| Hidden | Hover | White 5 | White 40 | eye-off | **label 3.51:1** | `--palette-whiteTransparent-faint` | — |
+| Hidden | Selected | White 10 | White 40 | eye-off | **label 3.29:1** | `--palette-whiteTransparent-subtle` | `aria-selected="true"` |
+| any | ✱ Selected + hover | White 10, as Selected | as Selected | the eye shows, as Hover | as Selected | — | as the tree rows' SelectedHover |
+| any | ✱ keyboard focus | as the state | as the state | the eye shows | Snow ring 11.40:1 on White 10 | `--focus-ring` | 1px inset Snow `--focus-ring`, as the tree rows |
+
+The MobileHUD row heads the GUIS list (`NodeType/Mobile` 16 in the label's colour, "MobileHUD"); it shows no actions: it is always visible and can't be deleted or locked (user decision; the code already matches).
+
+**Decisions**
+
+| Topic | Rule |
+| --- | --- |
+| Selection fill | GUI rows select White 10, tree rows Blue Dark 3, each as drawn. |
+| Row actions | The eye only, on hover and keyboard focus, and at rest while hidden (Figma's `<GUIEntries>`). Delete stays in the context menu and on Delete / Backspace, never in the row (user decision). |
+| Copy | Figma's copy is used exactly as drawn (user decision). |
 
 ### TabBar (UI Editor — Components)
 
-Set `21028:16109`, 2 variants (`Property 1` = Hierarchy `21028:16113`, the 2D | 3D pair / Properties `21028:16110`, the PROPERTIES | LOGIC pair). Size 352 × 132. Read October 27, 2026. Code: main · inspector `Toolbar/UIDesignerToolbar.tsx` mode tabs and the `RightPanel` tab strip (`role="tablist"`) · Creator Hub none.
+Two bars, 312 × 36, drawn on two Buttons boards with four columns each (Default, Hover, Selected, Selected Hover). **Hierarchy** (2D | 3D), HierarchyPanelComponents `<TabBar>` row: Default `3520:102725`, Hover `3520:102741`, Selected `3511:102266` (the component `3676:6003`), Selected Hover `3520:102748`. **Properties** (PROPERTIES | LOGIC), Properties&LogicComponents `<TabBar>` row `3520:102810`: Default `3520:102814` (the component `3676:6002`), Hover `3527:167900`, Selected `3527:167907`, Selected Hover `3527:167916`; its Blocked column draws `Fill/None` (no blocked state). In each row the state names the **second-column tab's** perspective for Properties (LOGIC) and the **first** for Hierarchy (2D): Default = that tab not selected, Selected = that tab selected. Read November 12, 2026. Code: inspector `ModeSwitcher/ModeSwitcher.tsx` (`role="tablist"` "Editor mode", tabs "2D" / "3D") and `UIDesigner/RightPanel/RightPanel.tsx` (`.ui-designer-right-rail-tabs`, tabs "Properties" / "Logic").
 
-Fixed 312 × 36, horizontal, fill Shadow `#161518`, 1px White 10 bottom rule, padding-bottom 1; two `TabHorizontal` instances (Tabs), each Fill 156 × Fill 35, vertical, padding T / B 10, R / L 4, label `Inter` 600 12 / 100% uppercase centred (the second label is typed "Logic" and shown uppercase by style). The active tab is the first in both variants. On the Logic tab of `RightPanel2D` the active label is Snow with a Snow underline (see RightPanel2D).
+Bar: Fixed 312 × 36, row, fill Shadow `#161518`, 1px White 10 bottom rule, padding-bottom 1. Two `TabHorizontal` tabs, each Fill × Fill (156 × 35), column, centred, padding 0 / 4; label Inter 600 12 / 100% uppercase, centred. The selected tab carries a 2px bottom border. Copy as drawn: "2D", "3D"; "PROPERTIES", "Logic" (shown uppercase by style).
 
-| Variant | State | Fill | Contrast | A11y | Inspector token |
-| --- | --- | --- | --- | --- | --- |
-| Hierarchy / Properties | active tab (`Active` True) | Shadow, 2px Gray `#CFCDD4` bottom border | Gray label 11.55:1 on Shadow (not Snow); underline 11.55:1; Shadow vs panel 1.15:1 — the underline is the cue | `role="tab" aria-selected`; arrow keys move | `--palette-neutral-gray4` |
-| both | inactive tab | Shadow, no underline | Silver label 6.71:1 | — | `--ui-designer-text-muted` |
-| Logic tab active (`RightPanel2D` GUILogic, NodeLogic1, NodeLogic2) | active tab | Shadow, 2px Snow `#FCFCFC` bottom border | Snow 17.73:1 on Shadow | as above | `--palette-neutral-softWhite` |
-| both | ✱ hover / focus | — | — | not drawn | — |
+Colours depend on which tab is selected, consistently in both bars: **first tab selected** (2D, PROPERTIES): the selected label and underline are Gray, the other label Silver; **second tab selected** (3D, LOGIC): the selected label and underline are Snow, the other label White 40. Hover adds a White 10 fill to the hovered tab and changes nothing else.
+
+| Bar | Column | Tab 1 | Tab 2 | Token | Contrast (on Shadow `#161518`; hover fill composites to `#2D2C2F`) | A11y |
+| --- | --- | --- | --- | --- | --- | --- |
+| Hierarchy | Default (2D not selected) | "2D" White 40, no underline | "3D" Snow, 2px Snow underline | `--palette-whiteTransparent-blurry`, `--palette-neutral-softWhite` | **2D 3.84:1, below 4.5:1**; 3D 17.73:1 | `role="tab"`, `aria-selected`; the underline and label colour carry selection |
+| Hierarchy | Hover (on 2D) | "2D" White 40 on White 10 | as Default | `--palette-whiteTransparent-subtle` | **2D 3.53:1**; fill vs bar 1.31:1 | — |
+| Hierarchy | Selected (2D selected) | "2D" Gray, 2px Gray underline | "3D" Silver | `--palette-neutral-gray4`, `--palette-neutral-gray3` | 2D 11.55:1; 3D 6.71:1 | `aria-selected="true"` on 2D |
+| Hierarchy | Selected Hover (on 2D) | "2D" Gray, Gray underline, on White 10 | "3D" Silver | as Selected + `--palette-whiteTransparent-subtle` | 2D 8.82:1 | — |
+| Properties | Default (LOGIC not selected) | "PROPERTIES" Gray, 2px Gray underline | "LOGIC" Silver | `--palette-neutral-gray4`, `--palette-neutral-gray3` | 11.55:1; 6.71:1 | as Hierarchy |
+| Properties | Hover (on LOGIC) | as Default | "LOGIC" Silver on White 10 | `--palette-whiteTransparent-subtle` | LOGIC 5.12:1 | — |
+| Properties | Selected (LOGIC selected) | "PROPERTIES" White 40 | "LOGIC" Snow, 2px Snow underline | `--palette-whiteTransparent-blurry`, `--palette-neutral-softWhite` | **PROPERTIES 3.84:1**; LOGIC 17.73:1 | `aria-selected="true"` on LOGIC |
+| Properties | Selected Hover (on LOGIC) | "PROPERTIES" White 40 | "LOGIC" Snow, Snow underline, on White 10 | as Selected + `--palette-whiteTransparent-subtle` | LOGIC 13.53:1 | — |
+| both | ✱ keyboard focus | as the state | as the state | `--focus-ring` | Snow ring 17.73:1 on Shadow | 1px inset Snow `--focus-ring` on `:focus-visible`; Left / Right move between the two tabs (roving tabindex) |
+
+**Decisions**
+
+| Topic | Rule |
+| --- | --- |
+| Resting label | ✱ As the frames draw it: Silver when the first tab (2D, PROPERTIES) is selected, White 40 when the second (3D, LOGIC) is (user decision). |
+| Contrast | ✱ The White 40 resting label (3.84:1 on Shadow, 3.53:1 hovered) is kept as drawn: a known contrast miss for design to revisit (Open items) (user decision). |
+| Focus | ✱ Keyboard focus is the 1px inset Snow `--focus-ring` on `:focus-visible`, the tree rows' ring (Figma draws none) (user decision). |
 
 ### PropertiesSections (UI Editor — Components)
 
-Set `21028:16116`, 2 variants (`Hover` Off `21028:16117` / On `21028:16120`). Size 112 × 118. Read October 27, 2026. Code: main · inspector `RightPanel/PropertyPanel/PropertyPanel.tsx` section titles · Creator Hub none.
+Board row `<AddProperty>` `3508:77428`: `Section` instances 340 × 28, Default `3508:77432`, Hover `3508:77434`, Selected (collapsed) `3508:77436`; Selected Hover and Blocked are undrawn (`3527:167941`, `3527:167929`). The second `<AddProperty>` row `3508:77447` draws the property-row header that Interactions, Devices, MinMaxSize and Border share: Default `3508:77451`, Hover `3508:77453`, Selected Hover `3508:77542`. Read November 12, 2026. Code: inspector `RightPanel/PropertyPanel/PropertyPanel.tsx` section titles (`.ui-designer-section-header`, `PropertyPanel.css`) · Creator Hub none.
 
-Fixed 70 × 28, padding 2, gap 10, 1px White 10 top and bottom; a 12 × 12 `arrow-down` chevron in White 40 + "Text" in Inter 600 12 / 100%, Gray `#CFCDD4`, not uppercase.
+Section: full width, h 28, row, gap 10, padding 2 / 10, 1px White 10 top and bottom; a 12 × 12 arrow, then the title in Inter 600 12 / 100% Gray `#CFCDD4`, flex 1, not uppercase ("Layout" on the board; in the panels "Position", "Layout", "Text", "Input", "Dropdown" (✱ drawn "Text Input"; user decision), "Style", "Dropdown Events", "Mouse Events").
 
-| Variant | Fill | Contrast | A11y | Inspector token |
-| --- | --- | --- | --- | --- |
-| Hover = Off | none | Gray on panel 10.07:1 | `<button aria-expanded>` per section | `--palette-neutral-gray4` |
-| Hover = On | `#FFFFFF` 5% | fill vs panel 1.16:1; Gray 8.71:1 | ✱ focus ring as `HierarchySections` | `--palette-whiteTransparent-faint` |
+| Row | State | Fill | Glyph | Token | Contrast | A11y |
+| --- | --- | --- | --- | --- | --- | --- |
+| Section | Default (open) | none | `ArrowDown` 12, White 40 | `--palette-whiteTransparent-subtle` (rules), `--palette-whiteTransparent-blurry` (arrow) | title 10.07:1; arrow 3.74:1 | `<button aria-expanded="true">` ✱ |
+| Section | Hover | White 5 `rgba(255,255,255,0.05)` | `ArrowDown` 12, White 40 | `--palette-whiteTransparent-faint` | fill vs panel 1.16:1; title 8.71:1 | — |
+| Section | Selected (collapsed) | none | `ArrowRight` 12, White 20 | `--palette-whiteTransparent-soft` | **arrow 1.91:1 misses 3:1** | `aria-expanded="false"` |
+| Section | ✱ collapsed + hover, focus | collapsed + hover: White 5 fill with the collapsed White 20 `ArrowRight`, mirroring AccordionEntry's collapsed + hover (`20932:3943`) (user decision); focus is the 1px inset Snow `--focus-ring` (user decision) | — | `--ui-designer-control-accent` | — | — |
+| Property row | Default | none; label "Property Name" Inter 400 12 Gray + `HelpCTA` 12; `AddCTA` 20 × 20, radius 6, no fill, Silver plus | `Plus` 12 inset 20%, Silver | `--palette-neutral-gray4`, `--palette-neutral-gray3` | label 10.07:1; plus 5.85:1 | the `+` is `<button aria-label="Add <property>">` ✱ |
+| Property row | Hover | the whole row White 10 (no radius); `AddCTA` no fill | Silver plus | `--palette-whiteTransparent-subtle` | label 7.43:1; plus 4.31:1 | — |
+| Property row | Selected Hover (plus hovered) | row White 10; `AddCTA` White 10 on top | Silver plus | `--palette-whiteTransparent-subtle` | plus ≥ 4.31:1 | — |
+
+Property row: h 26, row, gap 10, padding 0 / 14 / 0 / 10, clips.
 
 ### HierarchySections (UI Editor — Components)
 
-Set `21078:34715`, 3 variants (`HoverContainer` × `HoverPlus`: Off / Off `21028:16106`, On / Off `21078:34716`, On / On `21083:34730`). Size 352 × 164. Read October 27, 2026. Code: main · inspector `LeftPanel/LeftPanel.tsx` `.ui-designer-rail-header` with the `.ui-designer-rail-add` buttons ("New GUI", "Add widget"; `UIDesigner.css`): 32 tall, 11px / 400 White 50, no rules; the 2D rail assembly aligns it (Open items) · Creator Hub none.
+Set of 3 variants (`HoverContainer` × `HoverPlus`): Off / Off `3896:17333`, On / Off `3896:17334`, On / On `3896:17335`; drawn on HierarchyPanelComponents' Buttons board as `<GUIS>` (`3520:102641`, `3520:102643`, `3520:102647`) and `<NODES>` (`3520:102680`, `3520:102682`, `3520:102686`), each 312 × 28. The Buttons board's Selected column draws `Fill/None` for both: there is no selected state. Read November 12, 2026. Code: inspector `UIDesigner/LeftPanel/LeftPanel.tsx` `.ui-designer-rail-header` with `.ui-designer-rail-add` buttons named "New GUI" and "Add widget" (`UIDesigner.css`). Drift: code draws 11px / 400 White 50 labels with no rules, and only the 20px chip is a button.
 
-Fixed 312 × 28, horizontal, space-between, padding 4 / 10, 1px White 10 top and bottom; label "GUIS" in Inter 600 12 / 100% uppercase Gray `#CFCDD4`, and a `+` chip (`AddCTA`: 20 × 20, the glyph box inset 20% to 12 × 12, the visible plus 9 × 9). The `LeftPanel2D` board heads its two lists with it (`21028:34526` GUIS, `21028:34532` NODES).
+Row, space-between, padding 4 / 10, 1px White 10 top and bottom; the label (Inter 600 12 / 100% uppercase Gray `#CFCDD4`, fill width) and the `AddCTA` chip (20 × 20, 5px radius, the `plus` glyph box inset 20% to 12 × 12, the visible plus 9 × 9, Silver `#A09BA8`). Copy "GUIS" and "NODES" (the board's NODES row types "Nodes" and shows it uppercase).
 
-| Variant | State | Fill | Border | Contrast (on `#242129`) | A11y |
-| --- | --- | --- | --- | --- | --- |
-| Off / Off (`21028:16106`) | default | none | White 10 top + bottom | Gray label 10.07:1 (read in On / On) | section header, `<button aria-expanded>` ✱ |
-| On / Off (`21078:34716`) | row hover | `#FFFFFF` 5% | same | fill vs panel 1.16:1; Gray on it 8.71:1 | hover is a tint, not the only cue ✱ |
-| On / On (`21083:34730`) | row hover + plus hover | `#FFFFFF` 5%; `AddCTA` chip 20 × 20, 5px radius, White 10 fill, `+` 9 × 9 with a 1px Silver stroke | same | Silver `+` on the chip 4.31:1 | `+` named "Add GUI" ✱, ≥ 24px hit target needs a larger box than the 28px row's glyph |
-| any | ✱ focus / press / disabled | — | — | the `+` takes the icon-button rule's ring (`--ui-designer-control-accent`, offset 1px); the header itself is not focusable | not drawn |
+**The whole 28px row is the button**: one `<button>` the full width and height of the header, label and chip inside it; clicking anywhere on the row does what the `+` does (GUIS: create a GUI; NODES: open the Add Node menu).
+
+| Variant | State | Fill (row) | Chip | Border | Contrast (on `#242129`) | Token | A11y |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Off / Off | Default | none | none | 1px White 10 top + bottom | label Gray 10.07:1; plus Silver 5.85:1 | `--palette-neutral-gray4`, `--palette-neutral-gray3`, `--palette-whiteTransparent-subtle` | `<button>` named "New GUI" (GUIS; note `3470:13253`: the GUIS [+] button is equivalent to "[+ New GUI]") and "Add Node" (NODES; note `3470:13276`: the Nodes [+] button is equivalent to "[+ Add Node]") (user decision); the chip glyph is `aria-hidden` |
+| On / Off | Hover (pointer on the row, not on the chip) | White 5 | none | same | row vs panel 1.16:1; label 8.71:1; plus 5.06:1 | `--palette-whiteTransparent-faint` | hover is a tint; the label and `+` carry the control |
+| On / On | Hover on the `+` chip | White 5 | White 10, 5px radius | same | plus Silver 3.70:1 on the chip (≥ 3:1); chip vs row 1.37:1 | `--palette-whiteTransparent-subtle`; chip radius no token (literal 5px) | — |
+| — | Selected | not drawn (`Fill/None`) | — | — | — | — | the header has no selected state |
+| any | ✱ keyboard focus | as Hover (On / Off) | none | same | Snow ring 13.37:1 on the White 5 row | `--focus-ring` | 1px inset Snow `--focus-ring` on `:focus-visible` across the whole row, as the tree rows |
+| NODES | no GUI exists | hidden | — | — | the No GUI board hides the NODES header and its list (`I1724:52507;21028:34532`, `I1724:52507;21028:34533`, both `hidden`) | — | not rendered |
+
+Library icon: `Plus` (`fontSize="inherit"` in a 12px box inside the 20px chip).
+
+**Decisions**
+
+| Topic | Rule |
+| --- | --- |
+| Focus | ✱ Keyboard focus is the 1px inset Snow `--focus-ring` on `:focus-visible`, the tree rows' ring (Figma draws none) (user decision). |
 
 ### Icons — layout and box model (UI Editor — Icons)
 
-Seven icon sets on the Icons board, values not re-read 2026-10-27. Code: main.
+The UI Editor file draws no Icons board for the property-panel sets; they appear only inside the right panel's inputs. Read November 12, 2026 from Properties&LogicComponents `<Inputs> | Properties` `3505:250836`. Code: inspector `PropertyPanel/icons/`, `Canvas/toolbar-icons.tsx`, `RightPanel/PropertyPanel/alignment-presets.ts`.
 
-| Set | Id | Variants | Glyph colour |
-| --- | --- | --- | --- |
-| LayoutIcons | `21028:16226` | 5 (`Free`, `ColumnDown`, `ColumnUp`, `RowRight`, `RowLeft`) | White |
-| MarginsIcons | `21028:16135` | 4 (`Bottom`, `Top`, `Right`, `Left`) | White |
-| PaddingIcons | `21028:16201` | 4 (`Bottom`, `Top`, `Right`, `Left`) | White |
-| Spacing | `21028:16192` | 2 (`Vertical`, `Horizontal`) | White |
-| TextAlign | `21028:16163` | 6 (`Middle`, `Bottom`, `Top`, `Left`, `Center`, `Right`) | White |
-| Position | `21028:16219` | 2 (`Y`, `X`) | Cloudy Sky `#716B7C` |
-| Size | `21028:16214` | 2 (`Height`, `Width`) | Cloudy Sky |
+| Set | Read in this file | Cell | Glyph | Colour | Token | Contrast |
+| --- | --- | --- | --- | --- | --- | --- |
+| Position | component `3418:839` (`X`), in the PosX inputs (`I3505:250881;21028:16005`) | 16 × 16, clips | the letter "X" (Inter 400 12 uppercase, centred at 8 / 8, cap-trimmed), not a vector | Cloudy Sky `#716B7C` in every input state (Default, Hover, Selected, Editing, Blocked) | `--palette-neutral-gray2` (`--ui-designer-glyph`) | **2.43:1 on Onix, below 3:1** (and below 4.5:1 as the 12px letter it is) |
+| AspectRatio/Colour | `3506:45888`, in the ColourInput | 16 × 16 | a full-cell swatch, 4px radius, 1px White 20 border, filled with the value's colour (drawn `#BE00E4`) | the value | border `--palette-whiteTransparent-soft` | — |
+| LayoutIcons, MarginsIcons, PaddingIcons, Spacing, TextAlign, Size, ConstraintsIcons | not drawn as sets in this file | 16 × 16 | — | — | — | not re-read |
 
-Each set is its own `###`-sized unit in Figma; they share one spec: 16 × 16 cells, filled vector glyphs, `fill="currentColor"`, no states. White on `#242129` 15.45:1; Cloudy Sky 3.09:1. Not sets: `AspectRatio/Colour` `21028:16224` (one `Rectangle` 16 × 16, 4px radius, 1px White 20, Lavender `#C640CD`) and `LayoutIcons/ViewMode/Align` `21028:16435` (three frames of nine align glyphs; Snow, White 40, White 0). Code: `PropertyPanel/icons/`, `Canvas/toolbar-icons.tsx`, `RightPanel/PropertyPanel/alignment-presets.ts` — the Figma names above are not the repo's file names. The icon cells carry no `aria-label`; the control around each names it.
+The icon cells carry no `aria-label`; the control around each names it.
+
+### NodeType icons (UI Editor — Icons)
+
+Set "GUI & Nodes Icons" `3558:66300` (frame `3558:66302`), 8 glyphs, each a 16 × 16 component drawn in White `#FFFFFF` (instances recolour it): `NodeType/GUIRoot` `3900:10007`, `NodeType/Container` `3523:125315`, `NodeType/Image` `3523:123225`, `NodeType/Label` `3523:123302`, `NodeType/Input` `3523:123304`, `NodeType/Dropdown` `3523:123491`, `NodeType/Button` `3523:123306`, `NodeType/Prefab` `3558:66593` (16 × 16.04). Two more NodeType glyphs are used on the boards but sit outside the set: `NodeType/Mobile` (the MobileHUD row) and `NodeType/FullScreen` (the Add Node menu and the bottom-panel cards). Read November 12, 2026. Code: the library `packages/inspector/src/components/Icons/figma` (`svg/` names below); today's UI Designer rows draw `shared/widget-icons` (`GuiGridIcon`, `MobileHudIcon`, …): drift.
+
+| Figma glyph | Library icon (`svg/`) | Tree / GUI row | Add Node menu | Bottom-panel cards | Panel header |
+| --- | --- | --- | --- | --- | --- |
+| `NodeType/GUIRoot` | `GUIRoot` (`GUIRoot.svg`) | 16 | — | — | 18 |
+| `NodeType/Container` | `Container` (`Container.svg`) | 16 | 16 | 20 | 18 |
+| `NodeType/Image` | `Image` (`Image.svg`; not `ImageAlt`, which is `Fill/Image`) | 16 | 16 | 20 | 18 |
+| `NodeType/Label` | `Label` (`Label.svg`) | 16 | 16 | 20 | 18 |
+| `NodeType/Input` | `Input` (`Input.svg`) | 16 | 16 | 20 | 18 |
+| `NodeType/Dropdown` | `Dropdown` (`Dropdown.svg`) | 16 | 16 | 20 | 18 |
+| `NodeType/Button` | `Button` (`Button.svg`) | 16 | 16 | 20 | 18 |
+| `NodeType/Prefab` | `Prefab` (`Prefab.svg`) | 16 | — | 20 (PREFABS) | 18 |
+| `NodeType/Mobile` (outside the set) | `Mobile`, small drawing (`Mobile.small.svg`) | 16 (MobileHUD row) | — | — | 18 |
+| `NodeType/FullScreen` (outside the set) | `FullScreen` (`FullScreen.svg`) | 16 | 16 | 20 | 18 |
+
+Sizes per place: tree and GUI rows 16 (`fontSize="small"`), the Add Node menu 16 (drawn in a 16 × 15 box), the bottom-panel node cards 20 (`fontSize="inherit"` in a 20px box), the properties-panel header 18 (`fontSize="inherit"` in 18).
+
+**Colour: the label's.** A glyph always takes the colour of the text beside it (`currentColor`), as every instance draws:
+
+| Place | State | Glyph colour | Token | Contrast |
+| --- | --- | --- | --- | --- |
+| Tree and GUI rows | rest / hover | Gray `#CFCDD4` | `--palette-neutral-gray4` | 10.07:1 on the panel, 8.71:1 on White 5 |
+| Tree rows | selected | Snow `#FCFCFC` | `--palette-neutral-softWhite` | 11.61:1 on Blue Dark 3 |
+| Tree and GUI rows | hidden | White 40 | `--palette-whiteTransparent-blurry` | 3.74:1 on the panel (≥ 3:1 non-text) |
+| Add Node menu | every state | Snow (Image and Button drawn White `#FFFFFF`, 3/255 off Snow) | `--palette-neutral-softWhite` | 12.13:1 on Onix, 9.88:1 on Pale Black |
+| Bottom-panel cards | enabled | Gray | `--palette-neutral-gray4` | see BottomPanel2D |
+| Bottom-panel cards | disabled (No Node board) | White 20 | `--palette-whiteTransparent-soft` | exempt |
+| Panel header | — | Gray | `--palette-neutral-gray4` | 10.07:1 |
+
+The glyphs are decorative (`aria-hidden`); the label names the row. Figma-side: the rail boards' `GUI` instances draw `NodeType/GUIRoot` at 14 in White whatever the label colour, and the Default board's root "Image" row draws `NodeType/Mobile`; the `<GUIEntries>` rows (16, the label's colour) and the node's own glyph are the spec.
 
 ### ConstraintsIcons — 25 (UI Editor — Icons)
 
-Set `21028:16247`, 25 variants (pin edges and scaling: `Scale`, `L`, `R`, `C`, `L+R`, `T`, `B`, `T+B` with `ScaleVertically` / `ScaleHorizontally` suffixes, combinations such as `L+T`, `L+T+B`, `L+C`). Size 1194 × 72; 16 × 16 cells on the Icons board. Values not re-read 2026-10-27. Code: main · inspector `PropertyPanel/AnchorPresetField` and `icons/` · Creator Hub none.
+Board PositionConstraints `3486:43963` ("Position Constraints Variants"), 25 rows `3486:44001` (each 424 × 72: a 352 label cell and a 72 × 72 cell holding a 32 × 32 `ConstraintsIcons` instance, e.g. `3486:44077`). In the right panel the preview is drawn 60 × 60 beside the two Constraints dropdowns (Constraints row: h 60, gap 10, padding-right 70; dropdown column gap 6). Read November 12, 2026. Code: inspector `PropertyPanel/AnchorPresetField` and its `icons/` · Creator Hub none.
 
-The pinned edge is System/Blue `#2196F3`; the rest White, White 40 and White 20, with Rarities/Epic Light `#81E1FF` in the aggregate. A second set `21028:16124` `ConstraintsIcons` has 2 variants (`L+R`, `T+B`, white) — same name, different set. In the right panel the constraints preview is drawn 60 × 60 (see RightPanel2D).
+Rows, in board order, by their label: "Scale Vertically Horizontally", "Constraint Left Scale Vertically", "Constraint Right Scale Vertically", "Constraint Left Right Scale Vertically", "Constraint Center Scale Vertically", "Constraint Top Scale Horizontally" (`3486:44398`), "Constraint Bottom Scale Horizontally" (`3486:44642`; ✱ drawn with the previous row's label, a Figma slip: its glyph pins the bottom edge; user decision), "Constraint Top Bottom Scale Horizontally", "Center Scale Horizontally", "Constraint Left Top", "Constraint Left Bottom", "Constraint Left Top Bottom", "Constraint Left Center", "Constraint Right Top", "Constraint Right Bottom", "Constraint Right Top Bottom", "Constraint Right Center", "Constraint Left Right Top", "Constraint Left Right Bottom", "Constraint Left Right Top Bottom", "Constraint Center Left Right", "Constraint Center Top", "Constraint Center Bottom", "Constraint Center Top Bottom", "Constraint Center Center".
+
+| Part | Colour | Token | Contrast (on `#242129`) |
+| --- | --- | --- | --- |
+| Frame | White 10 fill, 1px White 20 / White 40 strokes | `--palette-whiteTransparent-subtle`, `--palette-whiteTransparent-soft`, `--palette-whiteTransparent-blurry` | outline 3.74:1 (White 40) |
+| Pinned edge / scale arrow | System Blue `#2196F3` | `--info` | 5.07:1 |
+| Unpinned marks, centre cross | White | no token (literal `#FFFFFF`) | 15.85:1 |
+| Small glyph in the Constraints dropdowns | Cloudy Sky, 16 × 16 | `--ui-designer-glyph` | **2.43:1 on Onix** |
+
+No states; the preview is `aria-hidden`, the two dropdowns name the constraint.
 
 ### UI Editor Buttons (Buttons)
 
-Section `21671:45251` on the Buttons page `20705:10837`, 9 sets, 33 variants (4 + 5 + 4 + 4 + 2 + 4 + 6 + 2 + 2): a copy of the `UI Editor Buttons` board `21028:16485` (UI Editor page), identical in every value, and the reference the design review points to. Read October 27, 2026 on both copies. Copy ids: ScaleToggle `21671:45252`, WrapToggle `45277`, ToggleTab `45288`, ViewModeToggle `45297`, AddVariant `45306`, VisibilityToggle `45311`, LockLayerToggle `45320`, HelpCTA `45333`, DeleteCTA `45338`. Several sets are single flattened SVGs per variant (WrapToggle, HelpCTA, the LockLayerToggle `Parent = Yes` cells), so their radius and glyph geometry come from the panel read, not from layers. Code: main (drift: the rows below are Figma's values and the user's decisions) · every icon control in `components/UIDesigner`, the 2D toolbar included, through three shared rules (see "Icon buttons and toggles" in Tokens); the Figma glyphs live in `components/UIDesigner/icons.tsx` (trash, eye, eye-off, lock, unlock, monitor; not on `main`: drift) and in the existing mask assets (aspect lock, wrap, flow Free, bind).
+Board Properties&LogicComponents `3500:203614`, Buttons frame `3500:207169`, columns Default, Hover, Selected, Selected Hover, Blocked; a 16 × 16 Cloudy Sky `Fill/None` glyph marks an undrawn cell. Rows in scope: FlowButton `3505:251001` and TextAlignment `3506:46329` (`ToggleTab` 46 × 26), FillButton `3506:45703` (`ToggleTab` 20 × 20), WrapButton `3506:35491`, ScaleButton `3506:35525`, ViewModeButton `3506:45988`, HelpButton `3502:239737` (12) and a 16 HelpCTA row `3568:110942`, AddButton `3506:56692`. Components in this file: `ToggleTab` `3506:24470`–`24473`, `ScaleToggle` `3506:35609`–`35612`, `WrapToggle` `3506:56829`, `56830`, `56831`, `56833`, `ViewModeToggle` `3897:31500`–`31503`, `HelpCTA` `3502:228802` / `3502:228803`, `AddVariant` `3523:124863`. The board draws no DeleteCTA. Other rows on the board (TabBar, Checkbox, RadioButton, Hide/Show, ZoomOut, ZoomIn, HideButton, MouseEvent rows, OpenGUI) belong to their own sections. Read November 12, 2026. Code: main (drift: the rows below are Figma's values and the user's decisions) · every icon control in `components/UIDesigner` through three shared rules (see "Icon buttons and toggles" in Tokens; `controls.css`); glyphs in `components/UIDesigner/icons.tsx`, the mask assets (aspect lock, wrap, flow Free, bind) and the icon library `components/Icons/figma` (`Plus`, `Minus`, `ArrowDown`, `ArrowRight`, `ArrowUp`, `Desktop`, `Mobile`, `Variable`, `Visibility`, `VisibilityOff`, `Delete`, `PaintOutlined`, `Avatar`, `Video`, `None`, `Link`, `LocalAssets`, `Search`). The wrap, text-align, flow-direction and constraints glyphs have no library icon.
 
-| Kind | Sets (and code) | Rest | Hover | Selected | Selected + hover | Focus | Disabled |
+| Kind | Sets (and code) | Rest | Hover | Selected | Selected + hover | Focus | Disabled (Blocked) |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| Icon button | DeleteCTA; add, copy, clear, the toolbar's save / undo / redo. HelpCTA (Cloudy Sky ring at rest, Snow ring on hover) and AddVariant (the bind link) draw no container | Silver `--ui-designer-text-muted`, no container (5.85:1) | Snow `--ui-designer-text` on White 10 `--palette-whiteTransparent-subtle`, 4px (11.40:1); HelpCTA and AddVariant: Snow glyph, no container | — | — | 2px `--ui-designer-control-accent`, offset 1px (7.09:1) | White 20 `--palette-whiteTransparent-soft` glyph, no fill (exempt) |
-| Tab toggle (one choice out of a set) | ToggleTab; TextAlign, Flow direction, the canvas device pair, the interaction-state tabs, the fill-mode chips, the toolbar gizmos | Silver, no fill, 1px `--palette-neutral-onyx` border (5.85:1) | Silver on White 10, 1px Onyx border (4.31:1) | Snow on `--ui-designer-control-active-bg` Blue Dark 2, border in the fill colour (8.61:1) | Snow on `--palette-system-blueDark3`, border in the fill colour (11.61:1) | accent ring, offset 1px standalone and −2px in a joined group; 3.95:1 on Blue Dark 2, 5.33:1 on Blue Dark 3 | White 20 glyph, no fill, 1px Onyx border (exempt) |
-| Single toggle (on / off) | WrapToggle, ScaleToggle, ViewModeToggle (HUD / safe area); the toolbar Run / Scene Info | Silver, no fill, no border (5.85:1) | Silver on White 10, no border (4.31:1) | Snow on Blue Dark 2, no border (8.61:1) | Snow on Blue Dark 3, no border (11.61:1) | accent ring, offset 1px; 3.95:1 on Blue Dark 2, 5.33:1 on Blue Dark 3 | White 20 glyph, no fill, no border (exempt) |
-| Lock and eye (on / off) | LockLayerToggle, VisibilityToggle; every lock and eye: the 2D tree rows, the node-header and GUI-list eyes, the 3D trees' lock and eye, the spawn-point eye | Gray `--palette-neutral-gray4`, no fill (10.07:1) | Gray on White 10, 4px radius (7.43:1) | the same Gray glyph, no fill; the closed lock or eye-off shape is the state (10.07:1) | Gray on White 10 (7.43:1) | accent ring, offset 1px (7.09:1 on the panel, 5.23:1 on White 10); 1px Snow `--focus-ring` in the 3D trees | not drawn; none in use |
-| MobileHUD input-action eye (on / off) | InputAction's VisibilityToggle instance, 18 × 18; `MobileHudPanel.tsx` | Gray eye, no fill (8.95:1 on the Onix Dark 1 row) | Gray on White 10 | Blue Light 1 `--palette-info-light` eye-off on Blue Dark 3 `--palette-system-blueDark3` (5.33:1) | as selected (HidenHover draws it unchanged) | accent ring, offset 1px (5.33:1 on Blue Dark 3) | not drawn; none in use |
+| Icon button | AddCTA, DeleteCTA; add, copy, clear, the toolbar's save / undo / redo. HelpCTA (Cloudy Sky ring at rest, Snow ring on hover) and AddVariant (the bind link) draw no container | Silver `--ui-designer-text-muted`, no container (5.85:1) | Silver glyph on White 10 `--palette-whiteTransparent-subtle`, radius 6 for AddCTA (4.31:1); HelpCTA: Snow ring, no container | — | — | ✱ 2px `--ui-designer-control-accent`, offset 1px (7.09:1) | AddCTA at 20% opacity, White plus (White 20 effective; exempt) |
+| Tab toggle (one choice out of a set) | ToggleTab; TextAlign, Flow direction, the fill-mode cells, the canvas device pair, the interaction-state chips, the toolbar gizmos | Silver, no fill, 1px `--palette-neutral-onyx` border (5.85:1) | Silver on White 10, 1px Onyx border (4.31:1) | Snow on Blue Dark 2 `--palette-system-blueDark2`, no border (8.61:1) | Snow on Blue Dark 3 `--palette-system-blueDark3`, no border (11.61:1) | ✱ accent ring, offset 1px standalone and −2px in a joined group; 3.95:1 on Blue Dark 2, 5.33:1 on Blue Dark 3 | ✱ not drawn: White 20 glyph, no fill, 1px Onyx border (exempt) |
+| Single toggle (on / off) | WrapToggle, ScaleToggle, ViewModeToggle (HUD / safe area); the toolbar Run / Scene Info | Silver, no fill, no border (5.85:1) | Silver on White 10, no border (4.31:1) | Snow on Blue Dark 2, no border (8.61:1) | Snow on Blue Dark 3, no border (11.61:1) | ✱ accent ring, offset 1px | WrapToggle Blocked: White 20 glyph, no fill (1.91:1, exempt) |
 
-Joined tab toggles (TextAlign, Flow direction, the canvas device pair, the gizmos) overlap by 1px for one-pixel seams, take the outer radii on the first and last cell, and raise the selected or hovered cell over its neighbours; see "Segmented group" in Tokens. A control drawn smaller than 24px is a 24 × 24 transparent button whose Figma-size container is its `::before`; for a tab toggle the container carries the border too. Lock and eye follow LockLayerToggle and VisibilityToggle as drawn: a locked node's lock, a hidden node's eye and the GUI-list eye (`aria-pressed="true"` while the GUI is top-level, drawn as the open eye) keep the Gray glyph with no fill, and only the glyph's shape changes.
+Joined tab toggles (TextAlign, Flow direction, the canvas device pair, the gizmos) overlap by 1px for one-pixel seams, take the outer radii on the first and last cell, and raise the selected or hovered cell over its neighbours; see "Segmented group" in Tokens. A control drawn smaller than 24px is a 24 × 24 transparent button whose Figma-size container is its `::before`; for a tab toggle the container carries the border too.
 
-The Off + hover glyph (Silver, on the White 10 fill) and Help (the Cloudy Sky ring at rest, the Snow ring on hover, no container) follow the sets as drawn; AddVariant draws no container either. ✱ Deviations from the Figma sets, decided by the user (Validate does not flag these):
+✱ Deviations from the Figma sets, decided by the user (Validate does not flag these):
 
 | ✱ | Figma | Code |
 | --- | --- | --- |
 | Tab toggles drawn from borderless sets | ViewModeToggle (the canvas device pair) and ToolbarButton (the gizmos) draw no border | the tab-toggle rule: 1px `--palette-neutral-onyx` at rest, on hover and disabled, a fill-coloured border when selected, as ToggleTab |
-| Segmented seams | `ToggleTabs` slot: a Charcoal frame with a 1px Onix border around unjoined `ToggleTab` cells | cells overlap by 1px (one-pixel seams), outer radii on the first and last cell, no wrapper border |
+| Segmented seams | `ToggleTabs` slot: a Charcoal frame with a 1px Onix border around `ToggleTab` cells | cells overlap by 1px (one-pixel seams), outer radii on the first and last cell, no wrapper border |
 | Interaction-state chip | `Interactions` set: active chip Blue Dark 3 `#243852` | Blue Dark 2, Blue Dark 3 on hover |
 | DeleteCTA hover glyph | `Neutrals/White` `#FFFFFF` | Snow `#FCFCFC` (3/255) |
 | Canvas node-bar Delete hover | — (DeleteCTA) | the red danger hover is dropped |
-| Focus, disabled, pressed | not drawn | accent ring in every state; WrapToggle Blocked for every disabled control (a tab toggle keeps its Onyx border); no pressed state |
-| Hit target | 12–18px boxes | 24 × 24 button, Figma-size `::before` container |
+| Focus, disabled, pressed | not drawn (Blocked drawn only for WrapToggle and AddCTA) | accent ring in every state; WrapToggle Blocked for every disabled control (a tab toggle keeps its Onyx border); no pressed state |
+| Hit target | 12–26px boxes | 24 × 24 button, Figma-size `::before` container |
 
 **Decisions** (user decisions; the record for these sets, so grep here before asking again):
 
 | Topic | Rule |
 | --- | --- |
-| Off + hover glyph and Help | Follow Figma: the Off + hover glyph is Silver on the White 10 fill in AspectLock / ScaleToggle, WrapToggle, ToggleTab and ViewModeToggle (no Snow on hover); Help follows the HelpCTA set (the Cloudy Sky ring at rest, the Snow ring on hover, no White 10 container); the bind link (AddVariant) draws no container. The other rows of the ✱ table (the Onyx border on the canvas device pair, seams, hit target) are not deviations from a drawn value and stand. |
+| Off + hover glyph and Help | Follow Figma: the Off + hover glyph is Silver on the White 10 fill in ScaleToggle, WrapToggle, ToggleTab and ViewModeToggle (no Snow on hover); Help follows the HelpCTA set (the Cloudy Sky ring at rest, the Snow ring on hover, no White 10 container); the bind link (AddVariant) draws no container. The other rows of the ✱ table (the Onyx border on the canvas device pair, seams, hit target) are not deviations from a drawn value and stand. |
 
 ### ScaleToggle (UI Editor Buttons)
 
-Set `21028:16486` (copy `21671:45252`), 4 variants (`Selected` × `Hover`): Off/No `21028:16487`, Off/Yes `21096:37036`, On/No `21028:16492`, On/Yes `21096:37041`. Size 66 × 174; each 26 × 26. Read October 27, 2026 (on the copy). Code: main (drift: the rows below are Figma's values and the user's decisions) · inspector the aspect lock in `LengthVecField` and `ResizeField` (`.ui-designer-vec-lock`, `aria-pressed`) · Creator Hub none.
+Set `3506:35609` (Off / No), `3506:35610` (Off / Yes), `3506:35611` (On / No), `3506:35612` (On / Yes); board row `3506:35525` (instances `3506:35529`, `35531`, `35533`, `35535`; Blocked undrawn `3527:167994`). Each 26 × 26. Read November 12, 2026. Code: main (drift: the rows below are Figma's values and the user's decisions) · inspector the aspect lock in `ResizeField` and `LengthVecField` (`.ui-designer-vec-lock`, `aria-pressed`) · Creator Hub none.
 
-26 × 26, 6px radius; fills none / White 10 / `#244B7D` / `#243852`; a 16 × 16 outline glyph at 5 / 5 (with a 12 × 12 inner square), Silver `#A09BA8` Off and Snow `#FCFCFC` On, plus a hidden `link` layer. The Off glyph (square and corner brackets) is the code's `PropertyPanel/icons/aspect-unlinked.svg`; the On glyph adds a dashed diagonal (0.5px ticks) and replaces `aspect-linked.svg`. The aspect lock is a single toggle: no border, as the set. Code follows this set (user decision, "Follow Figma"; see UI Editor Buttons): the Off + hover glyph stays Silver, as drawn, on the White 10 fill.
+26 × 26, 6px radius; a 1px square inset 19.23% (16 × 16 at 5 / 5) around a 12 × 12 inner mark: Silver `#A09BA8` Off, Snow `#FCFCFC` On, where On adds a 0.5px Snow dashed diagonal. The Off glyph is the code's `PropertyPanel/icons/aspect-unlinked.svg`, the On glyph `aspect-linked.svg`. It sits after the Resize W / H dropdowns on every node type. Single toggle: no border.
 
-| Selected | Hover | Fill | Contrast / A11y | Inspector token |
+| Selected | Hover | Fill | Contrast / A11y | Token |
 | --- | --- | --- | --- | --- |
 | Off | No / Yes | none / White 10 | Silver 5.85:1 / 4.31:1; `aria-pressed="false"`, name "Lock aspect ratio" (pressed: "Unlock aspect ratio") | `--ui-designer-text-muted`; `--palette-whiteTransparent-subtle` |
-| On | No / Yes | Blue Dark 2 / Blue Dark 3 | Snow 8.61:1 / 11.61:1; hover darker than rest | `--ui-designer-control-active-bg`; `--palette-system-blueDark3` |
+| On | No / Yes | Blue Dark 2 `#244B7D` / Blue Dark 3 `#243852` | Snow 8.61:1 / 11.61:1; hover darker than rest | `--palette-system-blueDark2`; `--palette-system-blueDark3` |
+| ✱ Blocked, focus | not drawn: WrapToggle Blocked (White 20 glyph, no fill); accent ring | — | — |
 
 ### WrapToggle (UI Editor Buttons)
 
-Set `21028:16499` (copy `21671:45277`), 5 variants (`Selected` × `Hover` × `Blocked`): Off/No/No `21028:16500`, Off/Yes/No `21096:37082`, On/No/No `21028:16502`, On/Yes/No `21096:37086`, Off/No/Yes `21028:16504`. Size 48 × 198; each 26 × 26. Read October 27, 2026. Code: main (drift: the rows below are Figma's values and the user's decisions) · inspector the wrap toggle in `FlowField` (`aria-pressed`); Blocked is the disabled look of every UI Designer icon control · Creator Hub none.
+Set: Off / No / No `3506:56829`, Off / Yes / No `3506:56830`, On / No / No `3506:56831`, Off / No / Yes (Blocked) `3506:56833`; board row `3506:35491` (instances `3506:35495`, `35497`, `35499`, `35501`, `35520`). Each 26 × 26, one flattened SVG per variant. Read November 12, 2026. Code: main (drift: the rows below are Figma's values and the user's decisions) · inspector the wrap toggle in `FlowField` (`aria-pressed`, `FlowField/icons/wrap.svg`); Blocked is the disabled look of every UI Designer icon control · Creator Hub none.
 
-26 × 26, 6px radius; fills as `ScaleToggle` (none, White 10, Blue Dark 2, Blue Dark 3); Blocked = no fill, glyph White 20. The glyph (12.71 × 11.72) is Silver Off and Snow On, and is the code's `FlowField/icons/wrap.svg`. Each variant is one flattened SVG. Wrap is a single toggle: no border, as the set. Code follows this set (user decision, "Follow Figma"; see UI Editor Buttons): the Off + hover glyph stays Silver, as drawn, on the White 10 fill.
+It sits in the Flow `ToggleTabs`' `Slot2`, after the five direction cells. Single toggle: no border.
 
-| Variant | Fill | A11y | Inspector token |
-| --- | --- | --- | --- |
-| Off / No / No | none | Silver glyph 5.85:1; `aria-pressed="false"`, name "Wrap" | `--ui-designer-text-muted` |
-| Off / Yes / No | White 10 | Silver glyph 4.31:1 on the fill | `--palette-whiteTransparent-subtle` |
-| On / No / No · On / Yes / No | Blue Dark 2 · Blue Dark 3 | `aria-pressed="true"`; Snow 8.61:1 · 11.61:1 | `--ui-designer-control-active-bg` · `--palette-system-blueDark3` |
-| Off / No / Yes | none, glyph White 20 | glyph 1.91:1 on panel (below 3:1, the disabled-state exemption applies); `aria-disabled="true"` with the reason (no flex flow) ✱; Blocked has no hover / selected variant — **✱ proposal: Blocked × Selected is not drawn** | `--palette-whiteTransparent-soft` |
+| Variant | Fill | Glyph | A11y / contrast | Token |
+| --- | --- | --- | --- | --- |
+| Off / No / No | none | Silver | 5.85:1; `aria-pressed="false"`, name "Wrap" | `--ui-designer-text-muted` |
+| Off / Yes / No | White 10, radius 6 | Silver | 4.31:1 | `--palette-whiteTransparent-subtle` |
+| On / No / No | Blue Dark 2, radius 6 | Snow | `aria-pressed="true"`; 8.61:1 | `--palette-system-blueDark2` |
+| On / Yes / No | ✱ not drawn: the board's Selected Hover cell `3506:35501` shows the Off / Yes look; On + hover is Blue Dark 3 with a Snow glyph, as ScaleToggle On / Yes `3506:35612` and ViewModeToggle `3897:31503` draw it (user decision) | — | 11.61:1 | `--palette-system-blueDark3` |
+| Off / No / Yes (Blocked) | none | White 20 | 1.91:1 (disabled exemption); `aria-disabled="true"` with the reason (no flex flow) ✱; **✱ Blocked × Selected is not drawn** | `--palette-whiteTransparent-soft` |
 
 ### ToggleTab (UI Editor Buttons)
 
-Set `21028:16506` (copy `21671:45288`), 4 variants (`Selected` × `Hover`): Off/No `21028:16507`, Off/Yes `21096:37090`, On/No `21028:16509`, On/Yes `21096:37093`. Size 79 × 207; each Fixed 39 × 26. Read October 27, 2026. Code: main (drift: the rows below are Figma's values and the user's decisions) · inspector every segmented cell in `PropertyPanel` (`TextAlignField`, `FlowField`, `FillField` modes, the interaction-state tabs) through the tab-toggle rule, keyed on `aria-checked` / `aria-selected` · Creator Hub none.
+Set `3506:24470` (Off / No), `3506:24471` (Off / Yes), `3506:24472` (On / No), `3506:24473` (On / Yes); component 39 × 26. Board rows FlowButton `3505:251001` (46 × 26: `3505:251014`, `3505:251857`, `3506:35464`, `3506:35473`), TextAlignment `3506:46329` (46 × 26: `3506:46333`, `35`, `37`, `39`) and FillButton `3506:45703` (20 × 20: `3506:45707`, `09`, `11`, `13`); Blocked undrawn in all three. Read November 12, 2026. Code: main (drift: the rows below are Figma's values and the user's decisions) · inspector every segmented cell in `PropertyPanel` (`TextAlignField`, `FlowField`, `FillField` modes, the interaction-state tabs) through the tab-toggle rule, keyed on `aria-checked` / `aria-selected` · Creator Hub none.
 
-The cell has no radius: the `ToggleTabs` slot's 6px radius clips the first and last cell. Off variants have a 1px Onix `#35333B` border; Off + hover adds White 10; On fills Blue Dark 2 (rest) / Blue Dark 3 (hover) with no border. The glyph is a `LayoutIcons` instance (18 × 18, centred at 50% + 0.5px, vector 14 × 14; Free is the code's `FlowField/icons/absolute.svg`): Silver `#A09BA8` Off, Snow `#FCFCFC` On. Code follows this set (user decision, "Follow Figma"; see UI Editor Buttons): the Off + hover glyph stays Silver, as drawn, on the White 10 fill; the Onix Off border is drawn by the Off variants.
+Standalone on the board each cell has a 6px radius; inside a `ToggleTabs` slot the cells have none and the slot clips the ends. The glyph is 18 × 18, centred (at 50% + 0.5px): a `LayoutIcons` direction (Flow), a `TextAlign` glyph (TextAlignment), a `Fill/*` glyph (FillButton, `PaintOutlined` for Paint). Silver Off, Snow On. Code follows this set (user decision, "Follow Figma"; see UI Editor Buttons).
 
-| Selected | Hover | Fill | Border | Radius | Contrast | A11y | Inspector token |
+| Selected | Hover | Fill | Border | Radius (standalone / in a slot) | Contrast | A11y | Token |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| Off | No | none | 1px Onix | 0 | border vs panel 1.27:1; Silver glyph 5.85:1 | `role="radio"` in a `radiogroup` | `--palette-neutral-onyx` |
-| Off | Yes | White 10 | 1px Onix | 0 | Silver glyph 4.31:1 on the fill | — | `--palette-whiteTransparent-subtle` |
-| On | No | `#244B7D` | none | 0 | Snow glyph 8.61:1 | `aria-checked="true"` | `--ui-designer-control-active-bg` |
-| On | Yes | `#243852` | none | 0 | Snow 11.61:1; darker than rest | as `ViewModeToggle` | `--palette-system-blueDark3` |
+| Off | No | none | 1px Onix `#35333B` | 6 / 0 | border vs panel 1.27:1; Silver glyph 5.85:1 | `role="radio"` in a `radiogroup` | `--palette-neutral-onyx` |
+| Off | Yes | White 10 | 1px Onix | 6 / 0 | Silver 4.31:1 on the fill | — | `--palette-whiteTransparent-subtle` |
+| On | No | Blue Dark 2 `#244B7D` | none | 6 / 0 | Snow 8.61:1 | `aria-checked="true"` | `--palette-system-blueDark2` |
+| On | Yes | Blue Dark 3 `#243852` | none | 6 / 0 | Snow 11.61:1; darker than rest | as ViewModeToggle | `--palette-system-blueDark3` |
+| ✱ Blocked, focus | — | not drawn: White 20 glyph, no fill, 1px Onix; accent ring | — | — | exempt | `aria-disabled="true"` | `--palette-whiteTransparent-soft` |
 
 ### ViewModeToggle (UI Editor Buttons)
 
-Set `21028:16511` (copy `21671:45297`), 4 variants (`Selected` × `Hover`): Off/No `21028:16512`, Off/Yes `21096:37105`, On/No `21028:16514`, On/Yes `21096:37108`. Size 79 × 204; each 16 × 16. Read October 27, 2026. Code: main (drift: the rows below are Figma's values and the user's decisions) · inspector the Canvas preview toggles (HUD guides, safe area) and the Desktop / Mobile device pair (`Canvas.tsx`, `.ui-designer-canvas-zoom-btn`, `.ui-designer-device-toggle-btn`) · Creator Hub none. The `PropertyPanel` device-variant chips follow the `Devices` set, not this one.
+Set `3897:31500` (Off / No), `3897:31501` (Off / Yes), `3897:31502` (On / No), `3897:31503` (On / Yes); board row `3506:45988` (instances `3506:46021`, `46026`, `46031`, `46035`; Blocked undrawn). Each 20 × 16. Read November 12, 2026. Code: main (drift: the rows below are Figma's values and the user's decisions) · inspector the Canvas preview toggles (HUD guides, safe area) and the Desktop / Mobile device pair (`Canvas.tsx`, `.ui-designer-canvas-zoom-btn`, `.ui-designer-device-toggle-btn`) · Creator Hub none. The `PropertyPanel` device-variant chips follow the `Devices` set, not this one.
 
-16 × 16, 4px radius; an `Icon` instance 14 × 14 inset 1px (vector 10.66 × 8.98, a monitor). The Viewport draws the same cells at 22 × 22 (HUD, SafeArea) and 26 × 22 (the device pair), with no size variant. The monitor is `DesktopIcon` in `icons.tsx`, and the mobile, HUD and safe-area glyphs have no Figma counterpart yet (`useRestorePersistedMode` is a different control). Code follows this set (user decision, "Follow Figma"; see UI Editor Buttons): the Off + hover glyph stays Silver, as drawn, on the White 10 fill. The canvas device pair is a tab toggle and adds the 1px Onyx border (✱ in UI Editor Buttons), while the HUD and safe-area toggles are single toggles and, like the set, draw none.
+20 × 16, 4px radius; an `Icon` 16 × 16 inset 10% left and right (the monitor, library `Desktop` small): Silver Off, Snow On. Code follows this set (user decision, "Follow Figma"; see UI Editor Buttons): the Off + hover glyph stays Silver on the White 10 fill. The canvas device pair is a tab toggle and adds the 1px Onyx border (✱ in UI Editor Buttons); the HUD and safe-area toggles are single toggles and draw none.
 
-| Selected | Hover | Fill | Contrast (on `#242129`) | A11y | Inspector token |
+| Selected | Hover | Fill | Contrast (on `#242129`) | A11y | Token |
 | --- | --- | --- | --- | --- | --- |
 | Off | No | none | Silver glyph 5.85:1 | `role="radio"` / `aria-pressed` | `--ui-designer-text-muted` |
-| Off | Yes | White 10 | Silver glyph 4.31:1 on the fill (non-text ≥ 3:1) | — | `--palette-whiteTransparent-subtle` |
-| On | No | Blue Dark 2 `#244B7D` | fill vs panel 1.79:1; Snow glyph 8.61:1 | `aria-pressed="true"` | `--ui-designer-control-active-bg` |
-| On | Yes | Blue Dark 3 `#243852` | fill vs panel 1.33:1; Snow 11.61:1 | **hover on a selected toggle is darker than rest** — as `ToolbarButton` | `--palette-system-blueDark3` |
+| Off | Yes | White 10 | Silver 4.31:1 on the fill | — | `--palette-whiteTransparent-subtle` |
+| On | No | Blue Dark 2 `#244B7D` | fill vs panel 1.79:1; Snow 8.61:1 | `aria-pressed="true"` | `--palette-system-blueDark2` |
+| On | Yes | Blue Dark 3 `#243852` | fill vs panel 1.33:1; Snow 11.61:1 | **hover on a selected toggle is darker than rest**, as `ToolbarButton` | `--palette-system-blueDark3` |
 
 **Decisions** (user decisions; the record for this set, so grep here before asking again):
 
@@ -2831,144 +3336,177 @@ Set `21028:16511` (copy `21671:45297`), 4 variants (`Selected` × `Hover`): Off/
 
 ### AddVariant (UI Editor Buttons)
 
-Set `21028:16516` (copy `21671:45306`), 2 variants (`Hover` No `21028:16519` / Yes `21028:16517`). Size 58 × 98; each 18 × 18. Read October 27, 2026. Code: main (drift: the rows below are Figma's values and the user's decisions) · inspector the bind affordance (`BindAffordance.tsx`, `.ui-designer-bindable-link`, the `bind.svg` mask) and `BindIcon.tsx`, whose paths are this glyph exactly; `DiamondPlus.tsx` is a stroked redraw for the menu rows · Creator Hub none.
+Component `3523:124863` (one variant, `Hover` = Yes), 18 × 18; drawn on Input Hover (`I3505:250883;21067:29361`), ColourInput Hover and TextInput Hover (`3506:46288`) on the Inputs board `3505:250836`, and at rest on the opacity cell of the panels' colour pairs. Read November 12, 2026. Code: main (drift: the rows below are Figma's values and the user's decisions) · inspector the bind affordance (`BindAffordance.tsx`, `.ui-designer-bindable-link`, the `bind.svg` mask) and `BindIcon.tsx`; library icon `Variable` (small) · Creator Hub none.
 
-18 × 18 `VariableSmall` diamond-plus glyph (10.32 × 10.32, inset 3.84px); no fill in either; hover changes only the glyph colour. The variant names are inverted in Figma (the layer named `Hover=Yes` is the Silver rest look); code follows the design review: Silver at rest, Snow on hover. Code follows this set (user decision, "Follow Figma"; see UI Editor Buttons): Silver glyph at rest, Snow glyph on hover, and no container in either look.
+The `VariableSmall` diamond-plus glyph fills the 18 box; no fill. Placement: absolute, right 3 / top 3 in a single field, right 4 / top 4 on the opacity cell. The file draws only the Silver look; the Snow hover look is the design-review decision kept below.
 
-| Look | Fill | Contrast | A11y | Inspector token |
+| Look | Fill | Contrast | A11y | Token |
 | --- | --- | --- | --- | --- |
-| rest (Figma `Hover=Yes`) | none | Silver glyph 5.85:1 | `<button aria-label="Bind to variable">`; 18px is below the 24px target ✱ | `--palette-neutral-gray3` |
-| hover (Figma `Hover=No`) | none | Snow glyph 15.45:1 | — | `--palette-neutral-softWhite` |
+| rest (shown while the field is hovered) | none | Silver glyph 4.59:1 on Onix | `<button aria-label="Bind to variable">`; 18px is below the 24px target ✱ | `--palette-neutral-gray3` |
+| ✱ hover on the glyph | none | Snow glyph 12.13:1 on Onix | — | `--palette-neutral-softWhite` |
+
+**Decisions** (user decisions; the record for this set, so grep here before asking again):
+
+| Topic | Rule |
+| --- | --- |
+| Look | Silver glyph at rest, Snow glyph on hover, no container in either look ("Follow Figma"; see UI Editor Buttons). |
 
 ### VisibilityToggle (UI Editor Buttons)
 
-Set `21028:16532` (copy `21671:45311`), 4 variants (`Visible` × `Hover`): No/Yes `21107:37466`, No/No `21028:16535`, Yes/Yes `21107:37461`, Yes/No `21028:16533`. Size 56 × 140; each 16 × 16. Read October 27, 2026. Code: main (drift: the rows below are Figma's values and the user's decisions) · inspector every eye toggle in the UI Designer (`NodeTree.tsx`, `CodeRootsList.tsx`, the `PropertyPanel` header, `MobileHudPanel.tsx`) with `EyeIcon` / `EyeOffIcon` from `icons.tsx`, and the 3D trees' entity and spawn-point eyes · Creator Hub none.
+Set of 4 variants (`Visible` × `Hover`): Yes / No `3817:8345`, Yes / Yes `3817:8346`, No / No `3817:8347`, No / Yes `3817:8348`; drawn on HierarchyPanelComponents' Buttons board as `<HideShowNode>`: Default `3511:102283`, Hover `3511:102285`, Selected (hidden) `3511:102287`, Selected Hover `3511:102289`. Size 16 × 16. Read November 12, 2026. Code: inspector every eye toggle in the UI Designer (`NodeTree.tsx`, `CodeRootsList.tsx`, the `PropertyPanel` header, `MobileHudPanel.tsx`) with `EyeIcon` / `EyeOffIcon` from `UIDesigner/icons.tsx`, and the 3D trees' entity and spawn-point eyes.
 
-16 × 16, 4px radius, Hover = Yes adds White 10; Visible = No swaps the eye for an eye-off glyph; every variant's glyph is Gray `#CFCDD4`. The eye is a 14 × 14 instance inset 1px (eye 13.13 × 8.75); the eye-off is 15 × 15 at rest and 14 × 14 on hover (eye-off 13.13 × 10.49). Figma names the eye `Hide` and the eye-off `Show` (the action). The MobileHUD input-action eye takes InputAction's overrides (see InputAction); every other eye follows this set (user decision; see NodeTypeHierarchy): Gray glyph in every state, White 10 on hover, no fill when hidden; no border.
+16 × 16, 4px radius, clips; Hover adds White 10. `Visible = Yes` draws the open eye (Figma `Hide`, 14 × 14 centred); `Visible = No` draws the eye-off (Figma `Show`, inset 6.25% left / right at rest, 14 × 14 centred on hover). Every glyph is Gray `#CFCDD4`. No border. The MobileHUD input-action eye takes InputAction's overrides (see InputAction); every other eye follows this set (user decision; see NodeTypeHierarchy). Library icons: `Visibility` and `VisibilityOff`, `fontSize="small"` (their small drawings, Figma `hide` / `show`).
 
-| Visible | Hover | Fill | Contrast / A11y | Inspector token |
-| --- | --- | --- | --- | --- |
-| Yes | No / Yes | none / White 10 | `aria-pressed="false"`, name "Hide <node>"; Gray glyph 10.07:1 on panel, 7.43:1 on White 10 | `--palette-neutral-gray4`; `--palette-whiteTransparent-subtle` |
-| No | No / Yes | none / White 10 | `aria-pressed="true"`, name "Hide <node>" (the stable name; see NodeTypeHierarchy); Gray eye-off glyph 10.07:1 on panel, 7.43:1 on White 10 | `--palette-neutral-gray4`; `--palette-whiteTransparent-subtle` |
+| Visible | Hover | Board column | Fill | Glyph | Token | Contrast | A11y |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Yes | No | Default | none | eye, Gray | `--palette-neutral-gray4` | 10.07:1 on the panel | `<button aria-pressed="false">` named "Hide <node>" |
+| Yes | Yes | Hover | White 10, 4px radius | eye, Gray | `--palette-whiteTransparent-subtle` | 7.43:1 on White 10 | — |
+| No | No | Selected | none | eye-off, Gray | `--palette-neutral-gray4` | 10.07:1 | `aria-pressed="true"`, the same name "Hide <node>" |
+| No | Yes | Selected Hover | White 10 | eye-off, Gray | `--palette-whiteTransparent-subtle` | 7.43:1 | — |
+| any | ✱ keyboard focus | — | as Hover | as the state | — | — | the UI Designer icon-button ring (2D), 1px Snow `--focus-ring` at 1px offset (3D) |
 
 ### LockLayerToggle (UI Editor Buttons)
 
-Set `21068:32238` (copy `21671:45320`), 6 variants (`Parent` × `Active` × `Hover`): No/Off/No `21086:34988`, No/On/No `21086:34979`, Yes/Off/No `21068:32241`, Yes/Off/Yes `21107:37482`, Yes/On/Yes `21107:37478`, Yes/On/No `21068:32239`. Size 56 × 204. Read October 27, 2026. Code: main (drift: the rows below are Figma's values and the user's decisions) · inspector lock in `LeftPanel/NodeTree.tsx`, a `<button aria-pressed>` with `LockIcon` / `UnlockIcon` from `icons.tsx` · Creator Hub none.
+Set with `Parent` × `Active` × `Hover`; the `Parent = Yes` variants: Active On / Hover No `3501:217042`, On / Yes `3501:217043`, Off / Yes `3501:217044`, Off / No `3501:217045`. Drawn on HierarchyPanelComponents' Buttons board as `<LockUnlockNode>`: Default (unlocked) `3520:102706`, Hover `3520:102708`, Selected (locked) `3520:102710`, Selected Hover `3520:102712`. The `Parent = No` dots appear inside the Child Invisible & Locked rows (`I3511:102388;21068:32769`, `…;21068:32770`) and on the boards as `LockVisibilityToggleOnChild`. Read November 12, 2026. Code: inspector lock in `UIDesigner/LeftPanel/NodeTree.tsx`, a `<button aria-pressed>` with `LockIcon` / `UnlockIcon` from `UIDesigner/icons.tsx`, and the 3D trees' lock.
 
-`Parent` = No is 14 × 14 (a small dot-sized state), `Parent` = Yes is 16 × 16; Hover = Yes adds a 4px radius White 10 fill; Active toggles the closed / open lock glyph (shape only). Every variant's glyph is Gray `#CFCDD4`, and the set holds no other colour than Gray and White 10. Parent = Yes draws the lock (9.14 × 12); Parent = No / Active = On draws a 2 × 2 dot, and Parent = No / Active = Off draws nothing. No Parent = No / Hover = Yes variant exists. The `LeftPanel2D` board draws `Parent = No` dots on both the lock and the eye of a hidden Container's children; the 2D tree draws the eye dot under a hidden ancestor and, once inherited lock ships (Open items), the lock dot under a locked one (user decision; see NodeTypeHierarchy). Code follows this set in every tree (user decision; see NodeTypeHierarchy): Gray glyph in every state, White 10 on hover, no fill when locked; no border.
+Every variant is 16 × 16 (the `Parent = No` dot included). `Parent = Yes`: Active toggles the padlock (On: closed with a keyhole; Off: open); Hover adds a White 10 fill with a 4px radius, drawn inside the glyph's own frame. `Parent = No` / `Active = On` draws a 2 × 2 dot centred in the box; `Parent = No` / `Active = Off` draws the same dot at opacity 0 (an empty, reserved slot, as the hidden GUI rows use). Every glyph is Gray `#CFCDD4`. No border. Library icons: `Lock` (closed padlock, Figma `Unlock`) and `LockOpen` (open padlock, Figma `Lock`), `fontSize="small"`.
 
-| Parent | Active | Hover | Size | Fill | Contrast / A11y | Inspector token |
-| --- | --- | --- | --- | --- | --- | --- |
-| No | On | No | 14 × 14 | none | Gray 2 × 2 dot 10.07:1; an ancestor is locked or hidden, display only; `aria-hidden` ✱ | `--palette-neutral-gray4` |
-| No | Off | No | 14 × 14 | none | draws nothing | — |
-| Yes | Off | No / Yes | 16 × 16 | none / White 10 | Gray glyph 10.07:1 on panel, 7.43:1 on the White 10 hover fill (the glyph does not change on hover) | `--palette-neutral-gray4`; `--palette-whiteTransparent-subtle` |
-| Yes | On | No / Yes | 16 × 16 | none / White 10 | same Gray glyph; `aria-pressed="true"`, name "Lock <node>" | `--palette-neutral-gray4`; `--palette-whiteTransparent-subtle` |
-| No | any | Yes | — | ✱ not drawn | — | — |
+| Parent | Active | Hover | Board column | Fill | Glyph | Token | Contrast | A11y |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Yes | Off | No | Default | none | open padlock, Gray | `--palette-neutral-gray4` | 10.07:1 on the panel | `<button aria-pressed="false">` named "Lock <node>" |
+| Yes | Off | Yes | Hover | White 10, 4px radius | open padlock, Gray | `--palette-whiteTransparent-subtle` | 7.43:1 on White 10 | — |
+| Yes | On | No | Selected | none | closed padlock, Gray | `--palette-neutral-gray4` | 10.07:1 | `aria-pressed="true"`, the same name |
+| Yes | On | Yes | Selected Hover | White 10 | closed padlock, Gray | `--palette-whiteTransparent-subtle` | 7.43:1 | — |
+| No | On | — | (in rows) | none | 2 × 2 Gray dot | `--palette-neutral-gray4` | 10.07:1, decorative | an ancestor is locked or hidden; display only, `aria-hidden` |
+| No | Off | — | (in rows) | none | nothing (the dot at opacity 0) | — | — | reserves the slot |
+| any | any | ✱ keyboard focus | — | as Hover | as the state | — | — | as VisibilityToggle |
 
 ### HelpCTA (UI Editor Buttons)
 
-Set `21107:37499` (copy `21671:45333`), 2 variants (`Hover` Yes `21107:37500` / No `21107:37498`). Size 52 × 84; each 12 × 12. Read October 27, 2026. Code: main (drift: the rows below are Figma's values and the user's decisions) · inspector the shared `ui/InfoTooltip` trigger beside UI Designer labels and in the MobileHUD header; its `VscQuestion` glyph is kept (the component is shared with the 3D panels) and the colours are scoped under the UI Designer rails · Creator Hub none.
+Set `3502:228802` (`Hover` = No) / `3502:228803` (`Hover` = Yes), 12 × 12; board row HelpButton `3502:239737` (`3502:239795`, `3502:239799`). A 16 × 16 version is drawn in row `3568:110942` (Default `3568:110946`, Hover `3568:110948`, Selected `3568:110968`). Read November 12, 2026. Code: main (drift: the rows below are Figma's values and the user's decisions) · inspector the shared `ui/InfoTooltip` trigger beside UI Designer labels and in the MobileHUD header; its `VscQuestion` glyph is kept (the component is shared with the 3D panels) and the colours are scoped under the UI Designer rails · Creator Hub none. No library icon matches the ring-and-"?" glyph.
 
-12 × 12 circle, 100px radius, 1px border: No = Cloudy Sky `#716B7C`, Yes = Snow `#FCFCFC`; the "?" glyph (3.34 × 5.94) takes the same colour as the border. Code follows this set (user decision, "Follow Figma"; see UI Editor Buttons): the Cloudy Sky ring and glyph at rest, the Snow ring and glyph on hover, and no White 10 container in either state.
+A circle with a 1px ring (radius 100) and a "?" in the ring's colour: Cloudy Sky `#716B7C` at rest, Snow `#FCFCFC` on hover. The 16 version draws the same two colours and Snow when Selected (its tooltip open). Code follows this set (user decision, "Follow Figma"; see UI Editor Buttons).
 
-| Variant | Border | Contrast (on `#242129`) | A11y | Inspector token |
+| Variant | Ring and glyph | Contrast (on `#242129`) | A11y | Token |
 | --- | --- | --- | --- | --- |
-| Hover = No | Cloudy Sky | 3.09:1 — passes 3:1 non-text barely | `<button aria-label="Help: <field>">`, tooltip text via `aria-describedby` | `--palette-neutral-gray2` |
-| Hover = Yes | Snow | 15.45:1 | 12px is far below 24px — hit box must be larger ✱ | `--palette-neutral-softWhite` |
+| Hover = No | Cloudy Sky | 3.09:1, passes 3:1 non-text barely | `<button aria-label="Help: <field>">`, tooltip text via `aria-describedby` | `--palette-neutral-gray2` |
+| Hover = Yes; 16 Selected | Snow | 15.45:1 | 12px is far below 24px: the hit box is larger ✱ | `--palette-neutral-softWhite` |
+| ✱ Blocked, focus | not drawn: accent ring | — | — | `--ui-designer-control-accent` |
 
 ### DeleteCTA (UI Editor Buttons)
 
-Set `21107:37893` (copy `21671:45338`), 2 variants (`Hover` Yes `21107:37894` / No `21107:37892`). Size 56 × 92; each 16 × 16. Read October 27, 2026. Code: main (drift: the rows below are Figma's values and the user's decisions) · inspector every trash / remove / clear in `components/UIDesigner` (the 2D node-tree row's delete in `NodeTree.tsx`, Canvas node bar, CodeRootsList, PropertyPanel rows, CallbackField, the Logic panels) through the icon-button rule; glyph `TrashIcon` in `icons.tsx` · Creator Hub none.
+The UI Editor file draws no DeleteCTA set and no remove control on the `On` subsections (MinMaxSize, Interactions, Devices, Border); its only trash glyphs are the Logic rows' hover affordances (Logic sections). The values below are the Creator Tools set `21107:37893` (2 variants, `Hover` Yes `21107:37894` / No `21107:37892`), each 16 × 16, read October 27, 2026. Code: main (drift: the rows below are Figma's values and the user's decisions) · inspector every trash / remove / clear in `components/UIDesigner` (the 2D node-tree row's delete in `NodeTree.tsx`, Canvas node bar, CodeRootsList, PropertyPanel rows, CallbackField, the Logic panels) through the icon-button rule; glyph `TrashIcon` in `icons.tsx`, library `Delete` · Creator Hub none.
 
 16 × 16 glyph box; Hover = Yes adds a 4px radius White 10 fill.
 
-| Variant | Fill | Contrast | A11y | Inspector token |
+| Variant | Fill | Contrast | A11y | Token |
 | --- | --- | --- | --- | --- |
 | Hover = No | none | glyph Silver `#A09BA8` (a 12 × 12 `Delete` instance inset 2px), 5.85:1 on panel | `<button aria-label="Delete <item>">` | `--ui-designer-text-muted` |
 | Hover = Yes | White 10, 4px radius | glyph White `#FFFFFF` 11.69:1 on the fill; code paints Snow (11.40:1), a 3/255 deviation | 16px is **below the 24px target**: a 24px button with the 16px container as `::before` ✱ | `--palette-whiteTransparent-subtle`; glyph `--ui-designer-text` (✱ deviation) |
 
 ### Properties (UI Editor — PropertiesSections)
 
-Set `21028:16539`, 8 variants (`Property`: Default `21028:16540`, Layout `21028:16566`, Style `21028:16605`, Text `21028:16621`, Input `21028:16664`, Dropdown `21028:16730`, MouseEvents `21028:16781`, Logic `21028:16787`). Size 2448 × 581; each variant 292 wide, on a 21px gutter. Read October 27, 2026 (structure only); the section values are those drawn inside RightPanel2D. Code: main · inspector `RightPanel/PropertyPanel/PropertyPanel.tsx` with `field-configs.groups.ts` (section grouping) and `LogicPanel` · Creator Hub none.
+The property groups inside RightPanel2D, as drawn on the Properties Panel board `3493:163149` (instances `…;21067:24081`, `…;21067:24247`, `…;21088:36545`, `…;21067:24581` and their per-type counterparts). Read November 12, 2026. Code: inspector `RightPanel/PropertyPanel/PropertyPanel.tsx` with `field-configs.groups.ts` (section grouping) and `LogicPanel` · Creator Hub none.
 
-The assembled right panel's section columns: `Layout`, `Style`, `Text`, `Input`, `Dropdown`, `MouseEvents` and `Logic`, plus `Default`; three slot properties (`Input`, `Input2`, `Input3`) = Default. Each section is built from the Components and PropertiesSubsections sets here. No state of its own.
+Each group is a column: the first at gap 6 (it opens with the `Div`-ruled Interaction States and Device Variants rows), the rest at gap 12; a `PropertiesSections` header, then 328-wide content at padding 0 / 10 with blocks stacked at gap 12; within a block the label sits 6 above its field. No state of its own.
+
+| Group (section title as drawn) | Rows, in order (copy as drawn) | Container | Image | Label | Button | Input | Dropdown |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Header | "Visibility is Active"; "Ignore Layout Flow" | first only, plus "Scene Inset" ("Secure Area") | both | both | both | both | both |
+| (top rows) | Interaction States; Device Variants | both | Interaction States | Interaction States | both | both | both |
+| "Position" | "Constraints" ✱ (drawn "Constratints", a Figma typo; user decision: the ConstraintsIcons 60 preview + "Top" / "Left" dropdowns); "Position" X / Y "100"; "Z-Index" "1" | yes | yes | yes | yes | yes | yes |
+| "Layout" | "Flow" (ToggleTabs + Wrap); "Resize" W / H dropdowns (+ ScaleToggle); "Min Size"; "Max Size"; "Alignment" ("Upper Left"); "Padding" (four cells, "0"); "Spacing" (two cells, "0"); "Scroll Overflow"; "Clip Content" | all | Resize + ScaleToggle, Min / Max Size | as Image | as Image | as Image | as Image |
+| "Text" (Label, Button) / "Input" (Input) / "Dropdown" (Dropdown; ✱ drawn "Text Input", a Figma slip; user decision) | Label, Button: "Text Input" ("Label"), "Typography" ("Sans Serif") + "Size" ("14"), "Colour" ("FFFFFF" / "100%"), "Alignment" (vertical 3 + horizontal 3), "Wrap", "Truncate", "Disabled". Input: "Placeholder" ("Text"), "Text Input" ("Value"), then as Label. Dropdown: "Options" ("Option 1", "Option 2", a "customValue" chip), "Selected Index" ("0"), "Accept Empty", "Empty Label" ("Label"), then Typography, Colour, Alignment, "Truncate", "Disabled" | — | — | yes | yes | yes | yes |
+| "Style" | "Opacity" ("100%") + "Corner Radius" ("0"), two 161-wide cells; "Fill"; "Border" | yes | yes | yes | yes | yes | yes |
+| "Dropdown Events" | "On Change" | — | — | — | — | — | yes |
+| "Mouse Events" | "Mouse Down", "Mouse Up", "Mouse Enter", "Mouse Leave", each with a "Bind an event handler" pill (see EventHandler) | yes | yes | yes | yes | yes | yes |
+
+The "customValue" chip in the Options field is an `EventTag`-style pill (White 10, radius 100, h 22, padding 6 / 4 / 6 / 8, gap 2, Snow 12 text, a 16 `Close-Button`) placed at left 18 / top 65 inside the field.
+
+Code (checked): `field-configs.groups.ts` labels the constraint row "Constraints" (✱ user decision; Figma's "Constratints" is a typo) and the size row "Size" (drift: Figma draws "Resize").
 
 ### InputAction (UI Editor — InputActions)
 
-Set `21301:5373`, 4 variants (`InputAction`): Default `21301:5372`, Hover `21301:5371`, Hiden `21301:5370`, HidenHover `21301:5369` (sic — "Hiden"). Size 1462 × 136; each Fixed 348 wide × Hug. Read October 27, 2026. Code: main · inspector `MobileHud/` (the MobileHUD input-action rows, `MobileHudPanel.tsx`) in `components/UIDesigner` · Creator Hub none.
+Frame `<InputActionEntries>` `3818:136834`, state row `3818:137531`, 6 states: Default `3818:137532`, Hover `3818:137533`, Dragging Up `3818:137534` (card `3818:137536`), Dragging Down `3818:137537` (card `3818:137538`), Hidden `3818:137540`, Hidden Hover `3818:137541`. Each card Fixed 328 × 96. Read November 12, 2026. Code: inspector `RightPanel/MobileHudPanel/MobileHudPanel.tsx`, `MobileHudPanel.css`.
 
-Vertical, 6px radius, no border of its own (the `InputActions` section above the cards carries a 1px White 10 top rule), padding 4 / 10 / 12 / 10, gap 2: a drag handle (6 × 9), the action name (Inter 400 14 Gray), a "Main" radio, an 18 × 18 VisibilityToggle instance (Default and Hover: `Visible = Yes`, no fill; Hiden and HidenHover: `Visible = No`, `Hover = Yes` with two overrides, a System/Blue Dark 3 `#243852` fill and a System/Blue Light 1 `#63B4F6` eye-off, 5.33:1) and a "Custom Icon" texture row with link and folder buttons. The name row is 30 tall with padding-right 5 and gap 10; the CTAs sit 20 apart.
+A column, 6px radius, no border, padding 4 / 10 / 12 / 10, gap 2; cards stack 4 apart in the panel, under the hint "Choose one action as Main. Drag them to reorder."
 
-| Variant | State | Fill | Contrast (on `#242129`) | A11y | Inspector token |
+- **Name row** (30 tall, padding-right 5, gap 10): `Drag` handle 6 × 9 Silver; the action name Inter 400 14 Gray (fixture "AI_POINTER"); `CTAs` (gap 20): the "Main" radio (14 × 14 ring, 1px White 40, 100px radius; label "Main" Inter 400 12 Gray, gap 5) and an 18 × 18 `VisibilityToggle` (4px radius, glyph 14).
+- **Texture** (gap 2): "Custom Icon" Inter 400 12 Gray (row 20 tall), then a 26-tall row, gap 6: an `Input/Default` dropdown (White 8 fill, 6px radius, padding 6 / 8, gap 8, min-width 128; value "None" Inter 400 14 White 40; `arrow-down` 10 Silver) and two 26 × 26 round buttons (pill, no fill; `Link` and `LocalAssets` glyphs at inset 20%, Silver).
+- **Sorting indicator** (dragging): a System/Blue `#2196F3` 1.5px line the card's width with an 8px dot at its left end (centred on the line, overhanging 4 left), 4 above the card (Dragging Up) or 4 below it (Dragging Down).
+
+| State | Fill | Eye | Token | Contrast | A11y |
 | --- | --- | --- | --- | --- | --- |
-| Default | rest | Onix Dark 1 `#2D2A33` | fill vs panel 1.13:1; Gray 8.95:1; Silver 5.20:1 | row is a `role="group"` named by the action | `--palette-neutral-onyxDark1` |
-| Hover | pointer over | Pale Black `#43404A` | fill vs panel 1.56:1; Gray 6.44:1; **Silver 3.74:1 — fails 4.5:1 for 12px text** | hover must not be the only cue ✱ | `--gray-0` (legacy) |
-| Hiden | hidden action | Onix Dark 1 | as Default | eye `aria-pressed` | `--palette-neutral-onyxDark1` |
-| any | the eye (user decision: as drawn) | visible: none, White 10 on the eye's hover; hidden: Blue Dark 3 `--palette-system-blueDark3`, in Hiden and HidenHover alike | visible: Gray eye 8.95:1 on Onix Dark 1, 6.44:1 on Pale Black; hidden: Blue Light 1 `--palette-info-light` eye-off 5.33:1 on Blue Dark 3; the fill vs the row 1.18:1, so the glyph swap and colour carry the state | `aria-pressed="true"` when hidden; 18px box in a 24px hit target | — |
-| HidenHover | hidden + hover | Pale Black | as Hover | — | `--gray-0` (legacy) |
-| any | "Main" radio | none; 1px White 40 ring, 100px radius; selected: a Primary `#FF2D55` dot inset 25% | — | label "Main" Inter 400 12 Gray, gap 5 | `--palette-whiteTransparent-blurry`; `--primary-main` |
-| any | texture input ("None") | White 8 `rgba(255,255,255,0.08)`, 6px radius | "None" Inter 400 14 White 40: 3.17:1 on White 8 over Onix Dark 1 (below 4.5:1) | h 26, min-width 128, padding 6 / 8, gap 8, arrow 10; two 26 × 26 round buttons (100px radius, glyph inset 20%) 6 after it | `--palette-whiteTransparent-hint` |
-| any | ✱ focus / disabled / dragging | — | ring `--ui-designer-control-accent` | not drawn | — |
+| Default | Onix Dark 1 `#2D2A33` | `Hide` glyph (an eye) Silver, no fill | `--palette-neutral-onyxDark1`, `--palette-neutral-gray3` | name Gray 8.95:1; Silver glyphs 5.20:1; card vs panel 1.13:1 | card `role="group"` named by the action |
+| Hover | Pale Black `#43404A` | as Default | `--gray-0` (legacy) | Gray 6.44:1; Silver glyphs 3.74:1 (≥ 3:1 non-text) | hover is not the only cue ✱ |
+| Dragging Up / Down | Pale Black, the Sorting line above / below | as Default | `--info` (`#2196F3`) | line 5.06:1 on Charcoal | `aria-grabbed` is deprecated: announce moves through a live region ✱ |
+| Hidden | Onix Dark 1 | `Show` glyph (eye-off) Blue Light 1 `#63B4F6` on a Blue Dark 3 `#243852` fill | `--palette-system-blueDark3`, `--palette-info-light` | eye-off 5.33:1 on Blue Dark 3; fill vs card 1.18:1, so glyph and colour carry the state | eye `aria-pressed="true"`; 18 box in a 24 hit target |
+| Hidden Hover | Pale Black | as Hidden | `--gray-0` | as Hidden | — |
+| any — Main radio | the `Radio` set (`<RadioButton>` row `3818:136674`): Default a 1px White 40 ring (`3818:136678`); Hover a White 60 ring and a White 10 halo inset −30% (`3818:136680`); Selected the White 40 ring with a Primary dot inset 25% (`3818:136682`); Selected Hover adds the halo (`3818:136684`) | — | `--palette-whiteTransparent-blurry`, `--primary-main` | ring 3.56:1 on Onix Dark 1 | native radio, label "Main" |
+| any — "None" value | White 8 over the card | — | `--palette-whiteTransparent-hint` | **White 40 on White 8: 3.17:1 over Onix Dark 1, 2.71:1 over Pale Black — fails 4.5:1** | — |
+| any | ✱ focus / disabled | not drawn | ring `--ui-designer-control-accent` | — | — |
+
+Icons: `Visibility` / `VisibilityOff`, `Link`, `LocalAssets`, `ArrowDown`; the 6 × 9 drag handle has no library icon.
+
+Drift (checked): no drag reorder and no Sorting indicator; the hint omits "Drag them to reorder.".
+
+**Decisions**
+
+| Topic | Rule |
+| --- | --- |
+| Eye | As drawn: visible no fill, hidden Blue Dark 3 with a Blue Light 1 eye-off, in Hidden and Hidden Hover alike (user decision). |
 
 ### Viewport (Viewport)
 
-Set `21032:43255`, 2 variants (`Property 1` = 2D `21032:43254` / 3D `21032:43256`). Size 1332 × 2100 (dashed chrome); each variant 1292 × 1020. Read October 27, 2026 (2D; the 3D variant holds a pasted scene screenshot). Code: main · inspector `Canvas/` (2D, `Canvas.tsx`: `.ui-designer-canvas-zoom-btn`, `.ui-designer-device-toggle-btn`) and the Babylon / Bevy viewport · Creator Hub none (it iframes the inspector).
+Instance in the Default board `3413:15898` (the No GUI board's `3413:15395`), 1254 × 756: the 2D `Toolbar` (36) on top, the canvas `Viewport` slot (720) below, `PreviewMode&Zoom` overlaid. Read November 12, 2026. The 3D variant (`Property 1` = 3D `21032:43256`, a pasted scene screenshot) and its camera menu are drawn only in the Design System | Creator Tools file (set `21032:43255`). Code: inspector `Canvas/` (2D, `Canvas.tsx`: `.ui-designer-canvas-zoom-btn`, `.ui-designer-device-toggle-btn`, `toolbar-icons.tsx`) and the Babylon / Bevy viewport · Creator Hub none (it iframes the inspector).
 
-Page `20506:34918`; board `Frame 1` `21221:39035` (title "Viewport" `21221:39108`). Both variants are Fixed 1292 × 1020, vertical, with a nested `Viewport` Default instance; 2D fills Onix Dark 1 `#2D2A33`; 3D (gap 954) holds a pasted scene screenshot — a fixture, never spec. Overlaid are the viewport `Toolbar` (next page) and the bottom-right preview-mode and zoom controls; in 3D a camera menu lists Free, Player and Insert Camera Position (canvas reading). Only the Desktop cell's selected state is drawn: the HUD, SafeArea and Mobile cells have no rest or hover state.
+| Part | Fill | Border | Radius | Text | Glyph | Padding / gap / size | Token | Contrast |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Viewport 2D | Onix Dark 1 `#2D2A33` | none | 0 | — | — | flex × 756; Toolbar 36 then the canvas | `--palette-neutral-onyxDark1` | — |
+| GUI root frame (canvas) | Onix `#35333B` | 1px Blue Light 1 | 0 | — | — | 968 × 544 desktop, centred; Mobile GUI: 873 × 393 (see Mobile GUI) | `--ui-designer-control-bg`, `--palette-info-light` | border 5.56:1 on Onix |
+| PreviewMode&Zoom | none | none | 0 | — | — | absolute at bottom 10 / right 10, gap 4; 214 × 26 | — | — |
+| DisplayMode frame | Charcoal `#25212A` | none | 5 | — | — | h 26, padding 0 / 2, gap 8 | `--ui-designer-panel-bg` (✱ 1/255) | — |
+| HUD, SafeArea toggles | none at rest | none | 4 | — | Snow, inset 6.25% of 22 | 22 × 22, gap 4 (group h 24) | `--palette-neutral-softWhite` | Snow 15.39:1 on Charcoal |
+| Desktop / Mobile pair | Desktop selected Blue Dark 2 `#244B7D`; Mobile none | 0.692px Onix Dark 1 around the pair | 4 | — | Snow, inset 3.85% | cells 26 × 22 | `--ui-designer-control-active-bg` | Snow 8.61:1 on Blue Dark 2 |
+| Zoom frame | Charcoal | none | 5 | "100%" Inter 400 12, uppercase, Snow, centred | `Minus` / `Plus` 10 × 10 Silver | h 26, padding 2; ZoomOut / ZoomIn 22 × 22, radius 4; value cell 50 wide | `--ui-designer-panel-bg`, `--palette-neutral-gray3` | Snow 15.39:1; Silver 5.83:1 |
+| MobileHUD selected | DisplayMode hidden; only Zoom (98 × 26) | — | — | — | — | — | — | — |
 
-| Part | Fill | Border | Radius | Text | Glyph | Padding / gap / size | Inspector token |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| Viewport 2D | Onix Dark 1 `#2D2A33` | none | 0 | — | — | 1292 × 1020, vertical; the 36 Toolbar on top, then the canvas | `--palette-neutral-onyxDark1` |
-| PreviewMode&Zoom | none | none | 0 | — | — | absolute at bottom 10 / right 10, gap 4 | — |
-| DisplayMode frame | Charcoal `#25212A` | none | 5 | — | — | h 26, padding 0 / 2, gap 8 | `--ui-designer-panel-bg` (✱ deviation 1/255) |
-| HUD, SafeArea toggles | none at rest | none | 4 | — | icon inset 6.25% of 22 | 22 × 22, gap 4 (group h 24) | single-toggle rule |
-| Desktop / Mobile pair | Desktop selected Blue Dark 2 `#244B7D`; Mobile none | 0.692px Onix Dark 1 `#2D2A33` around the pair | 4 | — | icon inset 3.85% | cells 26 × 22 | `--ui-designer-control-active-bg` |
-| Zoom frame | Charcoal | none | 5 | "100%" Inter 400 12, uppercase, Snow `#FCFCFC`, centred | minus / plus 10 × 10 | h 26, padding 2; ZoomOut / ZoomIn 22 × 22, radius 4; value cell 50 wide | `--ui-designer-panel-bg` |
+Only the Desktop cell's selected state is drawn; the HUD, SafeArea and Mobile cells are `ViewModeToggle` instances and take its drawn states (set `3897:31500`–`3897:31503`, board row `3506:45988`): Default no fill, Hover White 10, Selected Blue Dark 2 with the selected glyph, Selected Hover Blue Dark 3. Icons: `SafeArea`, `Desktop.small`, `Mobile.small`, `Minus`, `Plus`; the HUD glyph has no library icon (code `toolbar-icons.tsx` `HudGuidesIcon`).
 
 | Variant | Fill | A11y |
 | --- | --- | --- |
 | 2D | Onix Dark 1 `#2D2A33` | canvas `role="application"` with a text alternative via the node tree; zoom keyboard shortcuts documented |
-| 3D | renderer surface | the viewport is the one place where contrast is not enforced — overlay controls carry their own fills |
+| 3D (Creator Tools file) | renderer surface | the viewport is the one place where contrast is not enforced — overlay controls carry their own fills |
 
 ### Toolbar (Viewport Toolbar)
 
-Set `21028:42986`, 2 variants (`Property 1` = 2D `21028:42987` / 3D `21023:11108`). Size 1332 × 132; each variant Fixed 1292 × 36. Read October 27, 2026 (the set; the `<Menus>` values not re-read 2026-10-27). Code: main (drift: the rows below are Figma's values and the user's decisions) · inspector `Toolbar/` (`UIDesignerToolbar.tsx` and the 3D toolbar) · Creator Hub none.
+2D: the `Toolbar` instance in the Default board `I3413:15898;21032:43193` (and every High-fi board), 1254 × 36 — the source for the 2D bar. 3D: set `21028:42986` (`Property 1` = 3D `21023:11108`), the Snap split, camera button, Interact, Mute and the `<Menus>` board `21719:56867`, all drawn only in the Design System | Creator Tools file (page `21023:11034`, board `EditorHeader` `21028:42719`). Read November 12, 2026 (2D; the 3D rows read October 27, 2026). Code: main (drift: the rows below are Figma's values and the user's decisions) · inspector `Toolbar/` (`UIDesignerToolbar.tsx`, `Tools.tsx` and the 3D toolbar) · Creator Hub none.
 
-Page `21023:11034`; board `EditorHeader` `21028:42719` (title "Viewport Toolbar").
-
-- **Frames:** `<Toolbar>`, `<RuntimeControls>`, `<AudioControl>` and `<Menus>`.
-- **Set:** each variant fill Shadow `#161518`, 1px Onix bottom border.
-- **Group names:** the groups are named against their position: `RigthSide` is the left group, `LeftSide` the right one.
-
-- **`RigthSide`** (the left group; 3D `21023:11116` Hug 374, 2D `21028:42995` Hug 166): Top 5, Left 10, gap 6. Its frames have a 6px radius, a 1px Onix border, an Onix fill and a 1px gap between cells. It holds:
-  - undo / redo, 53 × 26 (3D `Back/Forward` `21023:11117`, 2D `Tools` `21028:42996`);
-  - four gizmos, 107 × 26 (3D `Tools` `21023:11120`, 2D `Tools` `21028:42999`; in 2D, rotate is `Disabled`);
-  - **3D only.** `Snap` `21719:56439`: a 46 × 26 split `ToolbarButton` (`Chevron=True`) in a `Tools` frame. The Snap toggle (grid and magnet glyph), a White 20 seam, then a chevron that opens the snap menu;
-  - **3D only.** `CameraSettings` `21023:11130` (Fixed 86 × 26) → `CameraButton` `21023:11131`: Hug 88.12 × 26, 6px radius, a 1.06px border, **Shadow fill**, padding 0 / 8 / 0 / 4, gap 4. It holds an 18 × 18 `Camera` icon (Silver outline), the label "Player" (Inter 400 12px / 100%, Gray `#CFCDD4`) and an 8 × 8 `arrow-down` (White 60);
-  - **3D only.** `Interact` `21023:11128`: 26 × 26;
-  - **3D only.** `Sound` `21723:57310`: Mute, a framed 26 × 26 `ToolbarButton`. Its states are drawn in `<AudioControl>` (`21723:57634`, the AudioToggle set): **On** is a speaker with waves, **Off** a speaker with an ×, both Gray on a Shadow cell. Neither has a selected fill.
-- **3D left-group x positions** (in the 1292 bar): undo / redo 10–63, gizmos 69–176, Snap 182–228, camera 234–320, Interact 326–352, Mute 358–384.
-- **`RuntimeControls`** (3D `21028:33543`, 2D `21028:43015`): `Preview=Off`, Left 618, 55 wide, gap 3, so it sits at the true bar centre (645.5 of 1292).
-- **`LeftSide`** (the right group; 3D `21023:11109`, 2D `21028:42988`): Left 1202, gap 6, padding-right 4. It holds the `Edit` and `Save` frames (26 × 26, 6px radius, a 1px Onix border and fill), a `Div` (a 24px White 10 vertical rule) and a 16 × 16 `Kebab` (three Snow dots) in a 26-tall Shadow `Menu` frame with a 4px radius.
-- **`<Menus>` `21719:56867`** (the open menus, each a 0.71-scaled `Menu`: Fixed 176, Onix, a 0.71px White 10 border, radius 8.52, padding 7.1, drop shadow `0 2.84 5.68` Black 40):
-  - **Snap menu** `21719:56868`:
-    - Position / Rotation / Scale rows (168 × 26, padding 0 / 7.1, Inter 400 12 Gray labels);
-    - each with an `Input` 50 × 20, radius 6, a 1px White 40 border, Onix fill;
-    - a White 10 rule;
-    - an "Align to World" checkbox row.
-  - **Camera menu** `21719:56872`: Free ✓, Player, a rule, an "Invert Camera Rotation" checkbox row. Its trigger is drawn Onix-filled, unlike the bar's `CameraButton`; the bar instance is the source (✱; a Figma-side defect).
+- **Bar:** Shadow `#161518`, 1px Onix bottom border inside the 36.
+- **Group names:** the groups are named against their position: `RigthSide` (sic) is the left group, `LeftSide` the right one.
+- **`RigthSide`** (left 10, vertically centred, gap 6, h 26): `Tools` frames, each Onix fill, 1px Onix border, 6px radius, 1px gap between cells, holding 26 × 26 `ToolbarButton` cells (a Shadow rectangle; glyph 24 at inset 3.85%):
+  - undo / redo (53 × 26);
+  - four gizmos (107 × 26): select (Blue Dark 2 cell, Snow glyph), translate, rotate, scale;
+  - **3D only** (Creator Tools file): `Snap` `21719:56439` (46 × 26 split, the Snap toggle, a White 20 seam, a chevron), `CameraButton` `21023:11131` (Hug 88.12 × 26, 6px radius, 1.06px border, Shadow fill, padding 0 / 8 / 0 / 4, gap 4: an 18 `Camera` icon with a Silver outline, "Player" Inter 400 12 Gray, an 8 × 8 White 60 `arrow-down`), `Interact` `21023:11128` (26 × 26), `Sound` `21723:57310` (Mute, see AudioToggle).
+- **3D left-group x positions** (in a 1292 bar): undo / redo 10–63, gizmos 69–176, Snap 182–228, camera 234–320, Interact 326–352, Mute 358–384.
+- **`RuntimeControls`**: absolute at `left: calc(50% - 0.5px)`, vertically centred: the true bar centre.
+- **`LeftSide`** (the right group; right 0, padding-right 4, gap 6): `Edit` and `Save` (26 × 26 cells in 6px Onix frames, Gray glyphs), a `Div` (a 24px White 10 vertical rule) and a bare 16 × 16 `Kebab` (Snow dots; the UI Editor file draws no frame around it).
+- **`<Menus>` `21719:56867`** (Creator Tools file; each a 0.71-scaled `Menu`: Fixed 176, Onix, 0.71px White 10, radius 8.52, padding 7.1, shadow `0 2.84 5.68` Black 40):
+  - **Snap menu** `21719:56868`: Position / Rotation / Scale rows (168 × 26, padding 0 / 7.1, Inter 400 12 Gray), each an `Input` 50 × 20 (radius 6, 1px White 40, Onix); a White 10 rule; an "Align to World" checkbox row.
+  - **Camera menu** `21719:56872`: Free ✓, Player, a rule, an "Invert Camera Rotation" checkbox row. Its trigger is drawn Onix-filled; the bar's `CameraButton` is the source (✱; Figma-side defect).
   - **⋮ menu** `21722:57105` (named "CameraSettings", sic): one "Enable Autosave" checkbox row.
 
-| Part | Fill | Border | Radius | Text | Glyph | Padding / gap / size | Inspector token |
+| Part | Fill | Border | Radius | Glyph | Padding / gap / size | Token | Contrast (on Shadow) |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| Bar | Shadow `#161518` | 1px Onix `#35333B` bottom | 0 | — | — | h 36, 1292 wide | `--base-20`, `--palette-neutral-onyx` |
-| Left group frames | Onix `#35333B` | 1px Onix | 6 | — | — | left 10, gap 6, h 26, centred vertically | `--ui-designer-control-bg` |
-| Joined cells (Tools, Back/Forward, Edit, Save, Snap, Sound, Play, Pause) | Shadow cell inside an Onix frame | 1px Onix | 6 | — | `ToolbarButton` 26 × 26, icon inset 3.85% (about 24 × 24) | cells 1px apart | `--base-20` |
-| Selected cell (first gizmo, Interact) | Blue Dark 2 `#244B7D` | — | — | — | — | — | `--ui-designer-control-active-bg` |
-| CameraButton | Shadow | 1.06px Onix | 6 | "Player" Inter 400 12 Gray, 40 wide | Camera 18 × 18 (Silver stroke); arrow 8 × 8 | padding 0 / 8 / 0 / 4, gap 4 | `--palette-neutral-gray3` (stroke) |
-| Right group (`LeftSide`): Edit, Save | Onix frame + Shadow cell | 1px Onix | 6 | — | 26 × 26 | right 0, padding-right 4, gap 6 | — |
-| Divider | — | 1px White 10 line, 24 tall | — | — | — | — | `--palette-whiteTransparent-subtle` |
-| Kebab frame | Shadow | none | 4 | — | Kebab 16 × 16 | h 26 | `--base-20` |
+| Bar | Shadow `#161518` | 1px Onix `#35333B` bottom | 0 | — | h 36 including the border | `--base-20`, `--palette-neutral-onyx` | border 1.46:1 (decorative) |
+| Tools frames | Onix | 1px Onix | 6 | — | left 10, gap 6, h 26 | `--ui-designer-control-bg` | — |
+| Cell, enabled | Shadow | — | — | Gray `#CFCDD4` (undo, translate, scale, Edit, Save, Play) | 26 × 26, glyph 24 | `--base-20`, `--palette-neutral-gray4` | 11.55:1 |
+| Cell, selected (select gizmo; 3D Interact) | Blue Dark 2 `#244B7D` | — | — | Snow | — | `--ui-designer-control-active-bg` | Snow 8.61:1 on Blue Dark 2 |
+| Cell, disabled | Shadow | — | — | Onix `#35333B`, as the High-fi boards draw the disabled redo (✱ user decision; the No GUI board's other disabled cells are drawn Pale Black `#43404A`) | — | `--palette-neutral-onyx` | 1.46:1 (disabled, exempt) |
+| Divider | — | 1px White 10, 24 tall | — | — | — | `--palette-whiteTransparent-subtle` | decorative |
+| Kebab | none | none | — | Snow 16 × 16 | — | `--palette-neutral-softWhite` | 17.73:1 |
+
+Icons: `Undo`, `Redo`, `Translation`, `Rotate`, `Scale`, `Edit`, `Save`, `Kebab`, `Snap`, `Camera`, `AudioOn` / `AudioOff`; the select (arrow) glyph has no library icon.
 
 **Design** (user decisions; `main` drifts from every item):
 
@@ -2979,11 +3517,11 @@ Page `21023:11034`; board `EditorHeader` `21028:42719` (title "Viewport Toolbar"
   - **Snap menu:** hangs from the Snap toggle's left edge; bordered Position / Rotation / Scale fields, a full-bleed White 10 rule, an "Align to World" checkbox (`CheckboxField color="tertiary"`, 16px box, 12px Gray label like the rows above). There is no separate Align toggle.
   - **Mute:** framed, a Shadow cell and a Gray glyph in both states; the glyph swap and `aria-pressed` carry the state.
   - **Camera button:** Shadow fill + 1px Onix border, icon stroke `--palette-neutral-gray3`, accessible name "Camera mode". Its menu has the "Invert Camera Rotation" checkbox.
-- **2D:** undo / redo and gizmos; **no snap control** (as `21028:42987` draws it; snapping still works).
+- **2D:** undo / redo and gizmos; **no snap control** (snapping still works).
 - **RuntimeControls:** at the **true bar centre**, as Figma draws them. When the left controls leave no room, they fall back to sit right after the last left control: Mute under Bevy, the Snap chevron under Babylon. The code wraps the left controls in `LeftContent` and the right ones in `RightContent`, equal flexible halves around the run controls. `RightContent` carries `padding-left: 6px`, which cancels the bar's 10 / 4 inset asymmetry; without it the run controls would land 3px right of centre (✱, accepted).
 - **Right side:** Edit ("Edit Scene"), Save, the rule and a ⋮ named "More options".
   - **Save** is hidden while auto-save is on and shown while it is off.
-  - **2D has no Save** (✱): code-as-source writes every edit to its file.
+  - **2D has no Save** (✱, user decision): the UI Editor file draws Save in the 2D bar; the 2D bar keeps none, since code-as-source writes every edit to its file.
   - **2D Edit** switches to 3D and selects the scene root.
 - **⋮ menu** (the Menu-Entry look), in both bars under every renderer (✱: Figma draws only "Enable Autosave"):
   - **3D, always:** "Enable Autosave" (checkable), and Scene Info when the scene has scene info.
@@ -2998,24 +3536,24 @@ Page `21023:11034`; board `EditorHeader` `21028:42719` (title "Viewport Toolbar"
 | Topic | Rule |
 | --- | --- |
 | 3D order | Exactly as drawn: undo / redo · gizmos · Snap · camera · Interact · Mute, with the tab order following. |
-| 2D bar | `21028:42987` as drawn. |
+| 2D bar | The UI Editor file's 2D `Toolbar` as drawn, except Save: ✱ the 2D bar has no Save, against the drawing (user decision). |
 | Run controls | The true bar centre. When there is no room, right after the last left control (Mute under Bevy, Snap under Babylon). |
 | Minimum window | A 1080px minimum Creator Hub window width, so the 3D toolbar never clips (`main` sets no `minWidth`: drift). Measured needs: the 3D toolbar 901 with Save shown; Creator Hub's top nav 1071 signed out, 1059 signed in. |
 | Camera trigger name | "Camera mode" (`aria-label` on the `role="combobox"`). |
 
 | Variant | Fill | Border | Contrast | A11y |
 | --- | --- | --- | --- | --- |
-| 2D (`21028:42987`) | Shadow `#161518`, Fixed 1292 × 36 | 1px Onix bottom | Snow 17.73:1; border 1.46:1 | `role="toolbar"` with arrow-key roving focus (not implemented in either bar yet; Open items) |
-| 3D (`21023:11108`) | Shadow `#161518`, Fixed 1292 × 36 | 1px Onix bottom | identical to 2D: Snow 17.73:1; border 1.46:1 | the camera menu: `aria-haspopup="menu"` |
+| 2D (UI Editor file) | Shadow `#161518`, 36 tall | 1px Onix bottom | Snow 17.73:1; Gray 11.55:1; border 1.46:1 | `role="toolbar"` with arrow-key roving focus (not implemented in either bar yet; Open items) |
+| 3D (`21023:11108`, Creator Tools file) | Shadow, Fixed 1292 × 36 | 1px Onix bottom | identical to 2D | the camera menu: `aria-haspopup="menu"` |
 
 ### RuntimeControls (Viewport Toolbar)
 
-Set `21028:16521`, 2 variants (`Preview` Off `21028:16522` / On `21028:16527`). Size 93 × 109 with dashed chrome; each variant 55 × 26. Read October 27, 2026. Code: main (drift: the rows below are Figma's values and the user's decisions) · inspector `Toolbar/` run controls · Creator Hub none.
+Component `3961:9591` in the UI Editor file (`preview` = Off only), 55 × 26. `Preview=On` (`21028:16527`) and the set `21028:16521` are drawn only in the Design System | Creator Tools file. Read November 12, 2026 (Off; On read October 27, 2026). Code: main (drift: the rows below are Figma's values and the user's decisions) · inspector `Toolbar/` run controls · Creator Hub none.
 
-- **Layout:** a Hug 55 × 26 row, gap 3, of two `ToolbarButton` instances in 26 × 26, 6px-radius frames (layers `Play` and `Pause`); each cell sits at −1 / −1 inside its frame, so the Onix border shows as a 1px ring.
+- **Layout:** a Hug 55 × 26 row, gap 3, of two `ToolbarButton` cells in 26 × 26, 6px-radius Onix frames (layers `Play` and `Pause`); each cell sits at −1 / −1 inside its frame, so the Onix border shows as a 1px ring.
 - **Stop:** in `Preview=On`, the `Play` slot holds a **Stop** (square) glyph.
-- **Labels:** the board labels the rows **"Default"** (Off) and **"Play"** (On, Group 3 `21723:57629`): `Preview=On` is the running scene, with Pause shown selected.
-- **Figma-side:** the `Disabled` property on `Preview=Off`'s Pause doesn't change its look (Open items).
+- **Labels** (Creator Tools board): **"Default"** (Off) and **"Play"** (On, Group 3 `21723:57629`): `Preview=On` is the running scene, with Pause shown selected.
+- **Figma-side:** `Preview=Off` draws Pause's glyph White `#FFFFFF`, the same as an enabled glyph, although Pause is disabled there (Open items).
 
 **Design** (user decision), both bars: one centred group, placed at the true bar centre (see the Toolbar decisions); 2D's Play leaves 2D before it runs the scene (see [`UIDesigner.md`](UIDesigner.md)).
 
@@ -3026,21 +3564,21 @@ Set `21028:16521`, 2 variants (`Preview` Off `21028:16522` / On `21028:16527`). 
 
 | Preview | Play slot | Pause slot | A11y | Inspector token |
 | --- | --- | --- | --- | --- |
-| Off (`21028:16522`) | Play glyph, Gray `#CFCDD4` (11.55:1 on Shadow); Shadow cell in an Onix frame, 1px Onix border, 6px radius; `Active` On, `Selected` Off | Shadow cell in an Onix frame, 1px Onix border; Gray glyph; `Active` Off, `Selected` Off, `Disabled` true | slot 1 `aria-label="Run scene"`; Pause native `disabled` | `--base-20`, `--palette-neutral-onyx`, `--palette-neutral-gray4` |
-| On (`21028:16527`) | **Stop** glyph (Gray); Shadow cell in an Onix frame, 1px Onix border; `Active` On, `Selected` Off | the cell is Blue Dark 2 `#244B7D` with no frame fill and no border; Snow glyph; `Active` On, `Selected` On | slot 1 named for Stop; Pause named "Pause scene", no `aria-pressed`; Snow on Blue Dark 2 8.61:1 | `--ui-designer-control-active-bg` |
+| Off (`3961:9591`) | `Play` glyph Gray `#CFCDD4` (11.55:1 on Shadow); Shadow cell in an Onix frame, 1px Onix border, 6px radius | Shadow cell in an Onix frame; glyph drawn White (✱ disabled not distinguished; the disabled look is Pale Black, as the Toolbar's disabled cells) | slot 1 `aria-label="Run scene"`; Pause native `disabled` | `--base-20`, `--palette-neutral-onyx`, `--palette-neutral-gray4`, `--gray-0` (disabled) |
+| On (`21028:16527`, Creator Tools file) | **Stop** glyph (Gray); Shadow cell in an Onix frame | Blue Dark 2 `#244B7D` cell, no frame fill, no border; Snow glyph | slot 1 named for Stop; Pause named "Pause scene", no `aria-pressed`; Snow on Blue Dark 2 8.61:1 | `--ui-designer-control-active-bg` |
+
+Icons: `Play`, `Pause`, `Stop`.
 
 ### AudioToggle (Viewport Toolbar)
 
-Set `21723:57693`, 2 variants (`Audio` On `21723:57692`, Off `21723:57691`). Size 66 × 127; each 26 × 26. Read October 27, 2026. Code: main (drift: the rows below are Figma's values and the user's decisions) · inspector the 3D toolbar's Mute (`Toolbar/`) · Creator Hub none.
+Set `21723:57693`, 2 variants (`Audio` On `21723:57692`, Off `21723:57691`), each 26 × 26; drawn only in the Design System | Creator Tools file (the UI Editor file's 2D bar has no Mute). Read October 27, 2026. Code: main (drift: the rows below are Figma's values and the user's decisions) · inspector the 3D toolbar's Mute (`Toolbar/`) · Creator Hub none.
 
 The bar's `Sound` frame. The cell sits at −1 / −1 inside its frame, so the Onix border shows as a 1px ring. No hover or focus state is drawn; the code follows the Toolbar's design (Mute framed, a Shadow cell and a Gray glyph in both states; the glyph swap and `aria-pressed` carry the state).
 
 | Audio | Fill | Border | Radius | Glyph | Inspector token | Contrast |
 | --- | --- | --- | --- | --- | --- | --- |
-| On | Shadow `#161518` cell inside an Onix `#35333B` frame | 1px Onix | 6 | speaker with waves, icon inset 3.85%, Gray `#CFCDD4` | `--base-20`, `--palette-neutral-onyx`, `--palette-neutral-gray4` | Gray 11.55:1 on Shadow |
-| Off | same | same | 6 | speaker with an ×, Gray | same | same |
-
----
+| On | Shadow `#161518` cell inside an Onix `#35333B` frame | 1px Onix | 6 | `AudioOn` (speaker with waves), inset 3.85%, Gray `#CFCDD4` | `--base-20`, `--palette-neutral-onyx`, `--palette-neutral-gray4` | Gray 11.55:1 on Shadow |
+| Off | same | same | 6 | `AudioOff` (speaker with an ×), Gray | same | same |
 
 ## Creator Hub (renderer)
 
@@ -3058,7 +3596,7 @@ Creator Hub's own chrome (home, scenes list, editor shell, settings, and modals)
 | Surfaces | `--bg` `#161518`, `--background` `#161518`, `--card` / `--secondary` `#242129`, `--modal` `#181225`, `--darker-gray` `#242129`, `--toast` `#3d3b43`, `--dimmer` `#000000dd` | `#242129` is the Charcoal **✱ deviation** |
 | Text | `--text` `#ffffff`, `--palette-neutral-softWhite` `#fcfcfc` (Snow), `--text-on-secondary` `#ffffffb2`, `--secondary-text` `#676370`, `--dcl-silver` `#a09ba8` | match |
 | Charts | `--chart-reference` `#a99afe` (benchmark lines on the Analytics detail charts) | raw Figma fill, no variable |
-| Creator Fund | `--creator-fund-banner-bg` `#3d185d` (the Home banner's fill, Creator Fund file `DhBtPn56J6ZlPLrTUDufqp` node `9438:1342`) | raw Figma fill, no variable; the name stays as is rather than a ui3 colour noun (user decision) |
+| Creator Fund | `--creator-fund-banner-bg` `#3d185d` (the Home banner's fill, Creator Fund file, node `9438:1342`) | raw Figma fill, no variable; the name stays as is rather than a ui3 colour noun (user decision) |
 | Brand and actions | `--primary` / `--dcl` `#ff2d55`, `--primary-hover` `#ff6280` (the primary hover), `--dcl-hover` `#f70038` and `--dcl-dark` `#9c1c34` (no consumers) | match |
 | Status | `--success` `#34ce77`, `--danger` `#fe9c2a`, `--error` `#fb3b3b` | match |
 | Lines | `--divider` `#67637033`, `--text-area-border` `#676370`, `--clear-divider` `#a09ba8` | match |
@@ -3108,7 +3646,7 @@ The brand pink matches the inspector's `--primary-main`, but it's defined separa
 
 ### Analytics detail
 
-Overview `9455:4972` (Metrics `9455:4974`: tab-bar `9455:4975`, heading `9455:4976`, Panels `9455:4980` and `9455:4989`, Tooltip `9455:4999`) and Retention `9455:5001` (Metrics `9455:5008`: Platforms `9455:5013`, Day 3 Retention `9455:5021`, Day 3 by Cohort `9455:5029`, Day 7 by Cohort `9455:5061` with DayDetail `9455:5093`, Weekly Churn `9455:5102`), Figma file `DhBtPn56J6ZlPLrTUDufqp`. Size 1920 × 2645 (Retention). Read November 2, 2026. Code: Creator Hub `AnalyticsDetailPage` (`MetricsCard`, `StatsRow`, `ChartCard`, `charts/`, `HeroStat`, the four tabs, the tab bar).
+Overview `9455:4972` (Metrics `9455:4974`: tab-bar `9455:4975`, heading `9455:4976`, Panels `9455:4980` and `9455:4989`, Tooltip `9455:4999`) and Retention `9455:5001` (Metrics `9455:5008`: Platforms `9455:5013`, Day 3 Retention `9455:5021`, Day 3 by Cohort `9455:5029`, Day 7 by Cohort `9455:5061` with DayDetail `9455:5093`, Weekly Churn `9455:5102`), in the Creator Fund file. Size 1920 × 2645 (Retention). Read November 2, 2026. Code: Creator Hub `AnalyticsDetailPage` (`MetricsCard`, `StatsRow`, `ChartCard`, `charts/`, `HeroStat`, the four tabs, the tab bar).
 
 | Part | Figma | Creator Hub token | Contrast |
 | --- | --- | --- | --- |
@@ -3192,7 +3730,7 @@ The in-app problem report: `components/Modals/ReportIssue`, opened from the logo
 
 **Rule: follow Figma wherever it's possible (user decision).** Every value and control Figma draws is built as drawn. A difference from a drawn value is code drift, never a decision; the exceptions are corrected typos and what can't be built (data the backend doesn't serve, a platform limit), each listed with its reason. Only what Figma doesn't draw is a question for the user, and no question recommends departing from a drawn value.
 
-The EARN section of Creator Hub: a landing and join flow for creators who haven't joined (Unit A) and the joined page with its Leaderboard and My Places tabs (Unit B) and its Payouts tab (PR6). It's specified in the product-flow file **🧰 Creator Fund | Creator Tools | 10-26** (file key `DhBtPn56J6ZlPLrTUDufqp`), section `9438:888` "Creator Fund · Flow", not in the design-system file. Its screens are composed from design-system parts (Main Navigation, TitleBar, Role tag, Filter + Sort-By, Subtitle-Navigation, Published-Scene-Card, JumpInCTA, Menu, DefaultModal, the Help & Support modal, Text-Input, Checkbox, Tooltip, Scrollbar) plus the local components below. Read November 4, 2026. API: creators-data "Creator Fund v0 plan v2" (snake_case, `/creator-fund/*`); the leaderboard, the banner, payouts, email verification and leaving are not in backend v0. Code: Creator Hub `components/EarnPage` (new), behind the feature flag `creatorhub-creator-fund`; inspector none. Contrast is WCAG against the surface it renders on: page `#16141a`, modal `#181225`. Uppercase labels are uppercased in CSS (`text-transform`), not in the copy, as in `AnalyticsDetailPage`.
+The EARN section of Creator Hub: a landing and join flow for creators who haven't joined (Unit A) and the joined page with its Leaderboard and My Places tabs (Unit B) and its Payouts tab (PR6). It's specified in the product-flow file **🧰 Creator Fund | Creator Tools | 10-26**, section `9438:888` "Creator Fund · Flow", not in the design-system file. Its screens are composed from design-system parts (Main Navigation, TitleBar, Role tag, Filter + Sort-By, Subtitle-Navigation, Published-Scene-Card, JumpInCTA, Menu, DefaultModal, the Help & Support modal, Text-Input, Checkbox, Tooltip, Scrollbar) plus the local components below. Read November 4, 2026. API: creators-data "Creator Fund v0 plan v2" (snake_case, `/creator-fund/*`); the leaderboard, the banner, payouts, email verification and leaving are not in backend v0. Code: Creator Hub `components/EarnPage` (new), behind the feature flag `creatorhub-creator-fund`; inspector none. Contrast is WCAG against the surface it renders on: page `#16141a`, modal `#181225`. Uppercase labels are uppercased in CSS (`text-transform`), not in the copy, as in `AnalyticsDetailPage`.
 
 | Screen | Node | Unit | Status |
 | --- | --- | --- | --- |
@@ -3595,7 +4133,7 @@ Figma's own glyphs, with no MUI icon on EARN (user decision). Each is Figma's SV
 
 ## Manage (LANDs in Creator Hub)
 
-From the feature file `albOLmqF5fUwmRJ7CjBulU`, page `💻 High-fi 🟡` (`5660:3959`), read October 26–27, 2026. Code: Creator Hub `components/ManagePage`, `components/LandDetailPage`, and the LAND modals in `components/Modals` (`DefaultModal`, `TransferLandModal`, `UnpublishSceneModal`, `TxState`). Contrast is against the page `#16141a`, the card (White 5 over the page, `#222025`) or the hovered card (White 10, `#2d2c31`). A ✱ row departs from Figma or covers a state Figma doesn't draw; "user decision" marks the user's call. User-facing strings keep Figma's capitalisation (one grammar fix, "an ENS Domain").
+From the LANDs feature file, page `💻 High-fi 🟡` (`5660:3959`), read October 26–27, 2026. Code: Creator Hub `components/ManagePage`, `components/LandDetailPage`, and the LAND modals in `components/Modals` (`DefaultModal`, `TransferLandModal`, `UnpublishSceneModal`, `TxState`). Contrast is against the page `#16141a`, the card (White 5 over the page, `#222025`) or the hovered card (White 10, `#2d2c31`). A ✱ row departs from Figma or covers a state Figma doesn't draw; "user decision" marks the user's call. User-facing strings keep Figma's capitalisation (one grammar fix, "an ENS Domain").
 
 The app-wide changes this feature brought live with the rest of the renderer: the 98px page margin and type rendering in [Creator Hub (renderer)](#creator-hub-renderer) → Conventions, the navbar in [Main Navigation (Header)](#main-navigation-header), and the page shade in [Background (Background)](#background-background).
 
@@ -4101,10 +4639,13 @@ Code that doesn't follow Figma or these conventions yet. Every row is open: no P
 | Settings (App Settings) | The command box reads `npm i -g @claude`, which is not a real install command for the Claude CLI. |
 | Fill (UI Editor) | The mode control draws a Video cell in all four variants, a mode the react-ecs authoring type can't express (`UiBackgroundProps`). |
 | Fill (UI Editor) | The mode control is 130 × 20 here but the `ToggleTabs` slot is 142 × 27. |
-| RightPanel2D (UI Editor) | "Constratints" typo in the Constraints label (`21028:16548`), repeated in the Text, Button, Dropdown and Image&Container variants. |
+| RightPanel2D (UI Editor) | "Constratints" typo in the Constraints label, in every node-type panel; code shows "Constraints" (✱ user decision). |
+| RightPanel2D (UI Editor) | The Dropdown panel's content section is titled "Text Input"; its intent is "Dropdown", as each node type's section is titled for its type ("Text", "Input") and the next section is "Dropdown Events"; code shows "Dropdown" (✱ user decision). |
+| ConstraintsIcons (UI Editor) | Rows `3486:44398` and `3486:44642` are both labelled "Constraint Top Scale Horizontally"; `3486:44642`'s glyph pins the bottom edge, so it is "Constraint Bottom Scale Horizontally" (✱ user decision). |
+| Update SDK (UI Editor) | The secondary button reads "MAY BE LATER" (and the board note "[May be later]"); the copy is "Maybe later" (✱ user decision). |
 | RightPanel2D (UI Editor) | The Text / Button layer text `{isMouseEvents ? "Mouse Events" : isStyle ? "Style" : ""}` is an unresolved component-property expression. |
 | RightPanel2D (UI Editor) | Hidden duplicate Position / Layout groups in the Dropdown variant (`21028:34624`). |
-| RightPanel2D (UI Editor) | GUILogic description carries two spaces ("GUI's data - NewGUI.tsx"). |
+| RightPanel2D (UI Editor) | The GUILogic description draws two spaces after "GUI's" ("GUI's data - NewGUI.tsx"); code renders one (✱ user decision). |
 | RightPanel2D (UI Editor) | The header row is 16 tall while the `NodeTypeHierarchy` PropertiesHeader variant it instances is 20. |
 | RightPanel2D (UI Editor) | NodeLogic1's bound input compensates its 1px border with +1 padding; the unbound row's DeleteCTA is opacity 0 but still takes 20px. |
 | RightPanel2D / InputAction (UI Editor) | The `TextureInput` fill is a raw White 8 `rgba(255,255,255,.08)` with no variable; the MobileHUD drop slot is a `#D9D9D9` placeholder at opacity 0. |
@@ -4115,21 +4656,22 @@ Code that doesn't follow Figma or these conventions yet. Every row is open: no P
 | LockLayerToggle (UI Editor Buttons) | `Parent = No` / `Active = Off` carries a 2 × 2 vector node though nothing is drawn. |
 | VisibilityToggle (UI Editor Buttons) | The eye-off glyph is 15 × 15 at rest and 14 × 14 on hover. |
 | AddVariant (UI Editor Buttons) | Variant names inverted (`Hover=Yes` is the rest look). |
-| NodeTypeHierarchy (UI Editor) | InvisibleSelectedHover is pixel-identical to InvisibleSelected; Selected carries an unused empty `Label` node; InvisibleHover's CTAs sit inline while every other variant anchors them absolutely. |
+| NodeTypeHierarchy (UI Editor) | Selected carries an unused empty `Label` node; InvisibleHover's CTAs sit inline while every other variant anchors them absolutely. |
 | Input (UI Editor) | The Blocked variants draw no bind link, so a bound field has no drawn way to unbind. |
 | EventHandler (UI Editor) | Placeholder Cloudy Sky on Onix 2.43:1 fails 4.5:1; Defined / DefinedHover differ in tag width (flex vs 186); the `Close-Button` hover is drawn only inside the tag. |
 | LogicInputs, AddLogicInputs (UI Editor) | "No variables yet." (3.09:1) and the Cloudy Sky placeholders on Onix (2.43:1) fail 4.5:1. |
-| AddLogicInputs (UI Editor) | The three variants show different fields with no stated rule; the `AddCTA` is drawn at 20% opacity everywhere with no enabled state. |
+| AddLogicInputs (UI Editor) | The three variants show different fields with no stated rule; the enabled `AddCTA` (Add Unlocked) is drawn 26 × 20, which stretches its plus. |
 | AddAction (UI Editor) | "Add Action" is 600 uppercase Gray while PropertiesSections titles are 600 not uppercase; no hover for the `AddCTA`. |
-| EventsMenu (UI Editor) | Variant "NewVariable" holds events content; the 1.5px Snow Description border reads as a focus ring at rest; typed text is 16px where every other field is 12 / 14; the Add button is drawn only at 20% opacity. |
-| VariableMenu (UI Editor) | Same Description-field border, 16px typed text and "NewVariable" naming as EventsMenu. |
+| EventsMenu (UI Editor) | Variant "NewVariable" holds events content; the 1.5px Snow Description border reads as a focus ring at rest; the Add button is drawn only at 20% opacity. |
+| VariableMenu (UI Editor) | Same Description-field border and "NewVariable" naming as EventsMenu. |
 | ColourPanel (UI Editor) | A lighter shadow (25%, blur 10) than the menus (40%, blur 8); hex cells are Pale Black where every other field is Onix. |
 | Interactions (UI Editor) | Chips have no hover or focus state. |
 | Devices (UI Editor) | The Off variant has no label state for the device pair. |
 | MinMaxSize (UI Editor) | The label reads "Min Size" for both Min and Max uses. |
 | BottomPanel2D (UI Editor) | The "Full Screen" tile label is 11px, every other 12px; NODES tiles are bordered and PREFABS tiles are not; the Default scrollbar track is 510 tall over a 320-tall panel. |
-| LeftPanel2D (UI Editor) | The Search field draws no fill or border (unbounded hit area) and no focus state. |
-| InputAction (UI Editor) | "Hiden" variant names; no focus or drag state; White 40 "None" on White 8 is 3.17:1. |
+| LeftPanel2D (UI Editor) | The Search field draws no fill or border at rest, so its hit area is unbounded until hover (see SearchBar). |
+| InputAction (UI Editor) | No focus state; White 40 "None" on White 8 is 3.17:1. |
+| UI Editor contrast | Known contrast misses kept as drawn (user decision), for design to revisit: the White 40 resting tab label 3.84:1 on Shadow; the White 40 search placeholders 3.74:1 in the rail and 3.39:1 in the Nodes menu; the Cloudy Sky empty-list lines 3.09:1; the Cloudy Sky field placeholders 2.43:1 on Onix; the White 20 collapsed section arrow 1.91:1. |
 | Header (UI Editor) | The Toggle checkboxes are SVG assets, not Checkbox instances. |
 | Right Panel (3D Editor Bottom Panel) | Title typo "Select and asset to preview it here"; Cloudy Sky 12px body is 3.09:1 (fails 4.5:1); the set frame is 340 × 1096 while each variant is 300 × 518. |
 | Collapse/Expand Panel (3D Editor Bottom Panel) | Variant names inverted (`Selected` = no fill); two sizes (32 in the header, 24 in the name row) with no variant for the small one. |

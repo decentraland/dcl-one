@@ -25,7 +25,7 @@ You own `docs/DESIGN.md`, the `:root` token block of `packages/inspector/src/the
 ## Traps (details in `.ai/skills/figma/SKILL.md`, CLAUDE.md, and `docs/DESIGN.md`)
 
 - The Figma MCP serves any node by explicit id on any page; only the no-`nodeId` page listing is pinned to COVER. Page ids are tabulated in `docs/DESIGN.md` → "Pages inventory"; to re-harvest, read Figma's client store (`store.getState().mirror.appModel.pagesList` via `javascript_tool`) rather than clicking the virtualised Pages panel, which resists every click method. Pass frame or set ids to `get_variable_defs`, which returns only the variables that subtree references; `get_metadata` on a component set lists its variants, so count from it.
-- The Figma MCP allows 20 read calls a month on this account's seats (`whoami`, which is free, shows them): spend calls on the hardest fetches, read easy values in the browser, never spend a call to probe the budget, and report every cap error with its text.
+- The Figma MCP is the reader: the Dev seat on the Decentraland Team plan allows 200 read calls a day and 10 a minute (`whoami`, which is free, shows the seats). Parallel agents share the per-minute limit; on a cap error, report its text and finish in the browser.
 - Work small to big: one component set per unit, primitives before composites, then one assembly unit validated against the board that draws every variant. Re-read the set and the board at every gate, since Figma is edited live.
 - Before classing a mismatch as drift, grep `DESIGN.md`'s ✱ rows, `docs/DESIGN.md` → Open items and the resolved decisions: an accepted deviation is not drift.
 - When exporting glyphs, White and Snow fills and strokes become `currentColor`, named colours like `white` included, but never inside a `<mask>`; any other colour stays as drawn. Reset state before every shot, since step order and starting toggles produce false findings.
@@ -35,8 +35,8 @@ You own `docs/DESIGN.md`, the `:root` token block of `packages/inspector/src/the
 - `20420:50646` is the COVER page. Tokens live on the Tokens pages. Skip every page whose name contains `🟡 Outdated`.
 - The `--base-*` ramp runs light to dark. Two accent families, and alpha steps don't transfer across luminance: solve contrast, never copy an alpha.
 - `--ui-designer-panel-bg` reuses `--base-19` on purpose. Keep documented deviations.
-- The leaf skills (`figma-implement-design`, the MCP server's `/figma-design-to-code`) are checklists only: the MCP budget overrides their fetch order. Extract with `get_variable_defs`, `get_metadata`, `get_design_context`, and `get_screenshot`.
-- No icon library is built (`docs/DESIGN.md` → Icons); a new icon is specced from the Figma set, never borrowed from `react-icons` or `@mui/icons-material`. A new icon starts with a Figma export at the frame, never cropped to the glyph; a glyph Figma doesn't draw is a gap for design.
+- The leaf skills (`figma-implement-design`, the MCP server's `/figma-design-to-code`) are checklists only: `.ai/skills/figma/SKILL.md` wins where they differ. Extract with `get_variable_defs`, `get_metadata`, `get_design_context`, and `get_screenshot`.
+- Icons come from the library `@dcl/inspector/icons` (`packages/inspector/src/components/Icons/figma`, `docs/DESIGN.md` → Icons); a new icon is specced from the Figma set and added there, never borrowed from `react-icons` or `@mui/icons-material`. A new icon starts with a Figma export at the frame, never cropped to the glyph; a glyph Figma doesn't draw is a gap for design.
 
 ## Completion gate
 

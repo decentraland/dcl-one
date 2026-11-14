@@ -1,6 +1,6 @@
 # Figma change detection
 
-How to tell which parts of the Design System file changed since `docs/DESIGN.md` mapped them, so a Figma read only happens where something is new. It works without a Figma REST token, so there is no `lastModified` or per-component `updated_at`; the MCP budget is 20 calls a month; and the version-history panel opens for a View seat but has not been seen to load its entries, so there is no file-level gate.
+How to tell which parts of the Design System file changed since `docs/DESIGN.md` mapped them, so a Figma read only happens where something is new. It works without a Figma REST token, so there is no `lastModified` or per-component `updated_at`; and the version-history panel opens for a View seat but has not been seen to load its entries, so there is no file-level gate.
 
 ## Three levels
 
@@ -15,7 +15,7 @@ Run them in order and stop at the first level that reports nothing new for the s
 Level 3 is never free. Two things limit how often it's needed:
 
 - **Sets in the unit in progress** are re-read anyway: Validate compares the running code against the live Figma frames ([`design-loop.md`](design-loop.md)), so value drift there is caught during the unit.
-- **Sets outside the unit in progress** are the only blind spot. Cover them with a periodic re-read, budget permitting, or with a design-side convention (below).
+- **Sets outside the unit in progress** are the only blind spot. Cover them with a periodic re-read, or with a design-side convention (below).
 
 ### Level 1: the page diff
 
