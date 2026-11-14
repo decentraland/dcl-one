@@ -864,6 +864,40 @@ fn meta(realm: &str, scene: &str, device: Option<&str>) -> String {
 }
 
 #[tokio::test]
+async fn the_scene_adapter_records_the_pinned_client_ip_not_a_client_set_header() {
+    let Some(pool) = scratch().await else { return };
+    let state = state_with(pool.clone(), Settings::for_tests());
+    let key = random_key();
+    let me = Address::parse(&address_of(&key)).unwrap();
+    let scene_id = format!("bafkrei{}", tag());
+    let mut headers = signed(
+        &key,
+        "post",
+        "/get-scene-adapter",
+        &meta("main", &scene_id, Some("dev-1")),
+    )
+    .await;
+    headers.insert("cf-connecting-ip", "203.0.113.9".parse().unwrap());
+    headers.insert("x-real-ip", "198.51.100.7".parse().unwrap());
+    handlers::get_scene_adapter(
+        State(state.clone()),
+        at("/get-scene-adapter"),
+        headers,
+        writes_on(),
+        axum::body::Bytes::new(),
+    )
+    .await
+    .expect("a clean wallet gets an adapter");
+    let recorded: Option<String> =
+        sqlx::query_scalar("SELECT ip_address FROM social.player_connections WHERE address = $1")
+            .bind(&me)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(recorded.as_deref(), Some("198.51.100.7"));
+}
+
+#[tokio::test]
 async fn the_scene_adapter_mints_for_a_clean_wallet_and_refuses_platform_and_scene_bans() {
     let Some(pool) = scratch().await else { return };
     let state = state_with(pool.clone(), Settings::for_tests());
