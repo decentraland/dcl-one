@@ -77,8 +77,8 @@ pub mod mirrors;
 pub mod neighbours;
 pub mod nft_index;
 pub mod nft_reads;
-pub mod notice_cursor;
 pub mod nfts;
+pub mod notice_cursor;
 pub mod orders;
 pub mod owners;
 pub mod prices;
@@ -244,6 +244,9 @@ pub struct MarketSettings {
     pub indexes: chain_walk::IndexSettings,
     /// The tip forward's thresholds and pending cap.
     pub tips: tips::TipSettings,
+    /// `HTTP_TRUSTED_PROXY_CIDRS`: peers whose `X-Real-IP` names the client
+    /// (the tip forward's and the trade post's per-address limits).
+    pub trusted_proxy_cidrs: Vec<ipnet::IpNet>,
 }
 
 /// No derived `Debug`: `admin_token` is a bearer. Prints whether one is set,
@@ -283,6 +286,7 @@ impl Default for MarketSettings {
             marketplace_base_url: "https://decentraland.org/marketplace".to_string(),
             indexes: chain_walk::IndexSettings::default(),
             tips: tips::TipSettings::default(),
+            trusted_proxy_cidrs: Vec::new(),
         }
     }
 }
@@ -327,6 +331,7 @@ impl MarketSettings {
             marketplace_base_url: marketplace_base_url.trim_end_matches('/').to_string(),
             indexes: chain_walk::IndexSettings::default(),
             tips: tips::TipSettings::default(),
+            trusted_proxy_cidrs: Vec::new(),
         })
     }
 
@@ -339,6 +344,11 @@ impl MarketSettings {
     /// The tip forward's knobs (`main.rs` fills them from `Config`).
     pub fn with_tips(mut self, tips: tips::TipSettings) -> Self {
         self.tips = tips;
+        self
+    }
+
+    pub fn with_trusted_proxies(mut self, cidrs: Vec<ipnet::IpNet>) -> Self {
+        self.trusted_proxy_cidrs = cidrs;
         self
     }
 }
@@ -734,7 +744,7 @@ impl MarketplaceState {
 /// Refuses to walk an endpoint that serves another chain than `expected`:
 /// the walk would read another network's logs into this one's rows.
 pub(crate) async fn ensure_chain(
-    rpc: &crate::land_authz::indexer::Rpc<'_>,
+    rpc: &crate::chain_index::rpc::Rpc<'_>,
     expected: i64,
 ) -> anyhow::Result<()> {
     let v = rpc.call("eth_chainId", serde_json::json!([])).await?;
@@ -812,7 +822,7 @@ fn spawn_index_jobs(state: &Arc<MarketplaceState>, jobs: &Jobs) {
                         let (state, nft_indexes, ctx) = (&state, &nft_indexes, &ctx);
                         async move {
                             let Some(url) = rpc_url(state, *net) else { return Ok(()) };
-                            let rpc = crate::land_authz::indexer::Rpc::at(&state.http, &url);
+                            let rpc = crate::chain_index::rpc::Rpc::at(&state.http, &url);
                             let progress = |m: String| ctx.progress(m);
                             let outcome = if name == chain_walk::INDEXER_NFT {
                                 if !nft_index::mirror_complete(&state.pool, *net).await {

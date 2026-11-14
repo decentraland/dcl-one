@@ -36,15 +36,15 @@ This project's goals are to:
 Common to every target:
 
 - [rust](https://www.rust-lang.org/tools/install) (stable; the wasm build needs nightly — see below)
-- [protoc](https://github.com/protocolbuffers/protobuf/releases) — `brew install protobuf`
+- [protoc](https://github.com/protocolbuffers/protobuf/releases) — `brew install protobuf`; on windows, the `protoc-<version>-win64.zip` that `apps/bevy-explorer/install-protoc.py` pins, with its `bin` on `PATH` (or `PROTOC` set)
 - node 20+ (24 in CI) for the React HUD and bridge scene
-- optionally [just](https://github.com/casey/just) — `just --list` for the dev entry points used below
+- optionally [just](https://github.com/casey/just) — `just --list` for the dev entry points used below; on windows its recipes need Git for Windows: run `just` from Git Bash (from PowerShell it finds no `sh`)
 
 Platform libraries (needed by the native and headless builds):
 
 - **linux**: `sudo apt-get install --no-install-recommends libasound2-dev libudev-dev ninja-build clang cmake pkg-config libssl-dev libx11-dev libgl1-mesa-dev libxext-dev` plus ffmpeg dev packages (`libavcodec-dev libavformat-dev libavutil-dev libavfilter-dev libavdevice-dev`)
 - **macos**: `brew install ffmpeg@6 pkg-config ninja` and `export PKG_CONFIG_PATH=/opt/homebrew/opt/ffmpeg@6/lib/pkgconfig`
-- **windows**: install [clang/LLVM](https://github.com/llvm/llvm-project/releases/) and set `LIBCLANG_PATH`; unzip [ffmpeg 6.0 shared](https://github.com/GyanD/codexffmpeg/releases/download/6.0/ffmpeg-6.0-full_build-shared.7z), set `FFMPEG_DIR` to its root and add `ffmpeg\bin` to `PATH` (ninja and cmake ship with visual studio)
+- **windows**: install [clang/LLVM](https://github.com/llvm/llvm-project/releases/) and set `LIBCLANG_PATH`; unzip [ffmpeg 6.0 shared](https://github.com/GyanD/codexffmpeg/releases/download/6.0/ffmpeg-6.0-full_build-shared.7z), set `FFMPEG_DIR` to its root and add `ffmpeg\bin` to `PATH` (ninja and cmake ship with visual studio); keep `CARGO_TARGET_DIR` short, free of spaces and on the drive of `CARGO_HOME` ([why](../docs/guidelines/platforms.md#native))
 
 ## Web client
 
@@ -320,7 +320,9 @@ and `DCL_AUTOMATION_PORT` stand in for the flags). Two methods, none of Bevy's o
 (`{"command": "/teleport 10 20", "token"}` answers `{"id"}`) and `dcl/console_result` (`{"id",
 "token"}` answers `{"done": false}` until the command has answered, then `done`, `ok`, `output`).
 Both need the token. The headless client registers `/world_state`, `/chat_history` and
-`/voice_state`; the HUD, input and screen-position commands do not apply there.
+`/voice_state`, and runs the startup portables (`--portables`, the movement scene by default), so
+`/walk_player_to` walks it through the movement scene, as on the desktop client; the HUD, input
+and screen-position commands do not apply there.
 
 **Trusted input on the web: a stable contract.** A DevTools client that drives the page (the runner
 in `local-harness/web-driver`, or a Playwright or Puppeteer script through `exposeBinding` and its

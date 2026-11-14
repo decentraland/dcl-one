@@ -152,7 +152,10 @@ impl Gate {
     }
 }
 
-async fn gate(State(gate): State<Gate>, req: Request, next: Next) -> Response {
+/// The gate as a middleware function, for a router that layers it on its
+/// write routes alone (`MethodRouter::route_layer`) rather than through
+/// [`guard_with`].
+pub async fn gate(State(gate): State<Gate>, req: Request, next: Next) -> Response {
     if gate.covers(req.method(), req.uri().path())
         && let Some(refusal) = gate.refusal()
     {
@@ -578,14 +581,15 @@ mod tests {
         ("explore/src/api/world_manifest.rs", "mirror"),
         ("explore/src/events/posters.rs", "data"),
         ("shop/src/outfits/mod.rs", "data"),
-        ("social/src/communities/fed.rs", "social"),
+        ("social/src/communities/fed_content.rs", "social"),
         ("social/src/communities/thumbnail.rs", "social"),
         ("social/src/messaging.rs", "social"),
         ("social/src/profile_images/cache.rs", "mirror"),
         ("worlds/src/core/deploy.rs", "worlds"),
         ("worlds/src/core/partial.rs", "worlds"),
         ("worlds/src/core/settings.rs", "worlds"),
-        ("worlds/src/mirror.rs", "worlds"),
+        ("worlds/src/mirror_reconcile.rs", "worlds"),
+        ("worlds/src/mirror_upstream.rs", "worlds"),
     ];
 
     /// The workspace files that call a Storage writer outside their inline

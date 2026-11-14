@@ -334,6 +334,235 @@ mod tests {
 
     const AUDIENCE: &str = "island-refresh-test";
 
+    #[tokio::test]
+    async fn selected_u64_domains_refresh_through_real_nats_and_persisted_assignment_documents() {
+        use crate::gatekeeper::admission::cluster::fence::{
+            AssignmentDocument, AssignmentFence, PgAssignmentFence, PulseAdmissionStamp,
+            RealmAssignmentReader,
+        };
+        use crate::gatekeeper::bus::{BrokerBus, NatsBus};
+        use crate::protocol::pulse::decentraland::pulse::PeerClusterSnapshot;
+        use futures::StreamExt;
+        use std::io::BufRead;
+        struct Broker(std::process::Child);
+        impl Drop for Broker {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+        let binary = std::env::var("PULSE_NATS_SERVER_BIN").expect("required NATS executable");
+        let mut broker = Broker(
+            std::process::Command::new(binary)
+                .args(["--addr", "127.0.0.1", "--port", "-1"])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .unwrap(),
+        );
+        let stderr = broker.0.stderr.take().unwrap();
+        let (send, receive) = std::sync::mpsc::sync_channel(1);
+        let reader = std::thread::spawn(move || {
+            for line in std::io::BufReader::new(stderr).lines() {
+                let Ok(line) = line else {
+                    break;
+                };
+                if let Some((_, address)) = line.split_once("Listening for client connections on ")
+                    && let Ok(address) = address.trim().parse::<std::net::SocketAddr>()
+                {
+                    let _ = send.try_send(address.port());
+                }
+            }
+        });
+        let url = format!(
+            "nats://127.0.0.1:{}",
+            receive.recv_timeout(Duration::from_secs(5)).unwrap()
+        );
+        let client = async_nats::connect(url.clone()).await.unwrap();
+        let mut requests = client
+            .subscribe(crate::protocol::bus::cluster::ClusterLookup::SUBJECTS)
+            .await
+            .unwrap();
+        client.flush().await.unwrap();
+        let source = Arc::new(std::sync::Mutex::new(None::<PeerClusterSnapshot>));
+        let current = source.clone();
+        let responder = client.clone();
+        let worker = tokio::spawn(async move {
+            while let Some(request) = requests.next().await {
+                let Ok(lookup) = crate::protocol::bus::cluster::ClusterLookup::decode(
+                    request.subject.as_str(),
+                    &request.payload,
+                ) else {
+                    continue;
+                };
+                let snapshot = current.lock().unwrap().clone();
+                if let Some(snapshot) = snapshot
+                    && snapshot.wallet == lookup.wallet
+                    && snapshot.session == lookup.session
+                    && let Some(reply) = request.reply
+                {
+                    responder
+                        .publish(reply, snapshot.encode_to_vec().into())
+                        .await
+                        .unwrap();
+                }
+            }
+        });
+        let pool = crate::db::scratch::pool(4)
+            .await
+            .expect("required disposable PostgreSQL");
+        let owner = Delegate::new();
+        seed(&pool, &owner.wallet(), &owner.session(), "island-C7", false).await;
+        let state = state_with_lookup_hook(pool.clone(), 0, None).await;
+        let bus = Arc::new(BrokerBus::new(Some(url), "selected-refresh"));
+        bus.connect();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while !bus.is_ready() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        let state = Arc::new(
+            Arc::try_unwrap(state)
+                .ok()
+                .expect("fixture sole state owner")
+                .with_bus(bus),
+        );
+        let app = router(state);
+        let fence = PgAssignmentFence::new(pool.clone(), AUDIENCE.into()).unwrap();
+        let safety = super::super::cluster::safety::SafetyStore::new(pool.clone())
+            .snapshot(&owner.wallet())
+            .await
+            .unwrap();
+        let vectors: serde_json::Value = serde_json::from_str(include_str!(concat!(
+            env!("DCL_ONE_ROOT"),
+            "/services/catalyst/tests/fixtures/pulse_selected_recovery.json"
+        )))
+        .unwrap();
+        for vector in vectors["identity_boundary_vectors"].as_array().unwrap() {
+            let bytes = hex::decode(vector["wire_hex"].as_str().unwrap()).unwrap();
+            let mut snapshot = PeerClusterSnapshot::decode(bytes.as_slice()).unwrap();
+            snapshot.wallet = owner.wallet();
+            snapshot.session = owner.session();
+            snapshot.cluster_id = "C7".into();
+            snapshot.realm = "realm".into();
+            let Some(mut stamp) = PulseAdmissionStamp::from_snapshot(&snapshot, 0) else {
+                assert_eq!(vector["expected_selection_evidence_valid"], false);
+                continue;
+            };
+            stamp.safety_generation = safety.generation;
+            stamp.safety_token_floor = safety.token_floor;
+            let document = AssignmentDocument {
+                pulse_admission: Some(stamp.clone()),
+                island_id: "island-C7".into(),
+                connection_string: "livekit:expired".into(),
+                from_island_id: None,
+                token_expires_at_unix: Some(1),
+                peers: Default::default(),
+            };
+            fence
+                .lock_realm(&owner.wallet(), &owner.session())
+                .await
+                .unwrap()
+                .commit(document)
+                .await
+                .unwrap();
+            let restored = fence
+                .current_realm_assignment(&owner.wallet(), &owner.session())
+                .await
+                .unwrap()
+                .pulse_admission
+                .unwrap();
+            assert_eq!(restored, stamp, "{}", vector["id"]);
+            *source.lock().unwrap() = Some(snapshot.clone());
+            let (status, bytes) = call(&app, owner.headers("{}").await, b"").await;
+            assert_eq!(status, StatusCode::OK, "{}", vector["id"]);
+            let response = IslandRefreshResponse::decode(bytes).unwrap();
+            assert!(response.adapter.starts_with("livekit:"));
+            // A current Pulse reply cannot supply the missing provenance of an old SQL stamp.
+            let assignment: serde_json::Value = sqlx::query_scalar("SELECT assignment_json FROM social.archipelago_v4_assignments WHERE deployment_audience=$1 AND owner_address=$2 AND lane_key='realm'")
+                .bind(AUDIENCE).bind(owner.wallet()).fetch_one(&pool).await.unwrap();
+            let mut old_assignment = assignment.clone();
+            let old_stamp = old_assignment["pulseAdmission"].as_object_mut().unwrap();
+            old_stamp.remove("selectedOrigin");
+            old_stamp.remove("selectedIdentity");
+            sqlx::query("UPDATE social.archipelago_v4_assignments SET assignment_json=$3 WHERE deployment_audience=$1 AND owner_address=$2 AND lane_key='realm'")
+                .bind(AUDIENCE).bind(owner.wallet()).bind(&old_assignment).execute(&pool).await.unwrap();
+            let before: (i64, i64, i64, serde_json::Value) = sqlx::query_as("SELECT owner_epoch,assignment_revision,fencing_token,assignment_json FROM social.archipelago_v4_assignments WHERE deployment_audience=$1 AND owner_address=$2 AND lane_key='realm'")
+                .bind(AUDIENCE).bind(owner.wallet()).fetch_one(&pool).await.unwrap();
+            assert_eq!(
+                fence
+                    .current_realm_assignment(&owner.wallet(), &owner.session())
+                    .await,
+                Err(super::super::cluster::fence::FenceError::Invalid)
+            );
+            let (status, body) = call(&app, owner.headers("{}").await, b"").await;
+            assert_eq!(
+                status,
+                StatusCode::FORBIDDEN,
+                "{} old SQL stamp",
+                vector["id"]
+            );
+            assert!(body.is_empty());
+            let after: (i64, i64, i64, serde_json::Value) = sqlx::query_as("SELECT owner_epoch,assignment_revision,fencing_token,assignment_json FROM social.archipelago_v4_assignments WHERE deployment_audience=$1 AND owner_address=$2 AND lane_key='realm'")
+                .bind(AUDIENCE).bind(owner.wallet()).fetch_one(&pool).await.unwrap();
+            assert_eq!(
+                after, before,
+                "refused refresh preserves old assignment and fences"
+            );
+            sqlx::query("UPDATE social.archipelago_v4_assignments SET assignment_json=$3 WHERE deployment_audience=$1 AND owner_address=$2 AND lane_key='realm'")
+                .bind(AUDIENCE).bind(owner.wallet()).bind(assignment).execute(&pool).await.unwrap();
+            for (field, mut changed) in [
+                ("origin", snapshot.clone()),
+                ("identity", snapshot.clone()),
+                ("cleanup", snapshot.clone()),
+                ("unknown", snapshot.clone()),
+                ("wallet", snapshot.clone()),
+                ("session", snapshot.clone()),
+                ("cluster", snapshot.clone()),
+                ("realm", snapshot.clone()),
+                ("source", snapshot.clone()),
+                ("version", snapshot.clone()),
+                ("pulse-floor", snapshot.clone()),
+            ] {
+                match field {
+                    "origin" => {
+                        changed.selected_origin = if changed.selected_origin == 1 { 2 } else { 1 }
+                    }
+                    "identity" => changed.selected_identity = Some(0),
+                    "cleanup" => changed.assignment_state = 2,
+                    "wallet" => changed.wallet = SESSION_A.into(),
+                    "session" => changed.session = SESSION_A.into(),
+                    "cluster" => changed.cluster_id.push_str("-changed"),
+                    "realm" => changed.realm.push_str("-changed"),
+                    "source" => changed.source_incarnation.push_str("-changed"),
+                    "version" => changed.assignment_version += 1,
+                    "pulse-floor" => changed.token_not_before = Some(1),
+                    _ => {
+                        changed.selected_identity = None;
+                        changed.selected_origin = 0;
+                    }
+                }
+                *source.lock().unwrap() = Some(changed);
+                let (status, body) = call(&app, owner.headers("{}").await, b"").await;
+                assert_ne!(status, StatusCode::OK, "{} {field}", vector["id"]);
+                assert!(body.is_empty());
+            }
+            snapshot.pass += 1;
+            *source.lock().unwrap() = Some(snapshot);
+            assert_eq!(
+                call(&app, owner.headers("{}").await, b"").await.0,
+                StatusCode::OK
+            );
+        }
+        worker.abort();
+        let _ = worker.await;
+        pool.close().await;
+        drop(broker);
+        reader.join().unwrap();
+    }
+
     struct Delegate {
         root: PrivateKeySigner,
         session: PrivateKeySigner,
@@ -406,7 +635,7 @@ mod tests {
         .bind(AUDIENCE)
         .bind(wallet)
         .bind(session)
-        .bind(json!({ "islandId": island, "connectionString": "livekit:expired", "tokenExpiresAtUnix": 1, "pulseAdmission": { "wallet": wallet, "session": session, "clusterId": island.strip_prefix("island-").unwrap_or(island), "realm": "realm", "sourceIncarnation": "refresh-test", "assignmentVersion": 1, "tokenNotBefore": 0, "credentialNotBefore": 0, "safetyGeneration":safety.generation,"safetyTokenFloor":safety.token_floor } }))
+        .bind(json!({ "islandId": island, "connectionString": "livekit:expired", "tokenExpiresAtUnix": 1, "pulseAdmission": { "selectedOrigin": "native", "selectedIdentity": 1, "wallet": wallet, "session": session, "clusterId": island.strip_prefix("island-").unwrap_or(island), "realm": "realm", "sourceIncarnation": "refresh-test", "assignmentVersion": 1, "tokenNotBefore": 0, "credentialNotBefore": 0, "safetyGeneration":safety.generation,"safetyTokenFloor":safety.token_floor } }))
         .bind(lapsed)
         .execute(pool)
         .await
@@ -464,6 +693,9 @@ mod tests {
                 hook(n);
             }
             let snapshot = PeerClusterSnapshot {
+                selected_origin: 1,
+                selected_identity: Some(1),
+                assignment_state: 1,
                 wallet: lookup.wallet,
                 session: lookup.session,
                 cluster_id: "C7".into(),
@@ -550,7 +782,10 @@ mod tests {
         for change in [
             "unchanged",
             "owner",
+            "session",
+            "epoch",
             "revision",
+            "fencing-token",
             "ban",
             "generation",
             "floor",
@@ -593,8 +828,17 @@ mod tests {
                 "owner" => {
                     sqlx::query("UPDATE social.archipelago_v4_assignments SET owner_session=$2, owner_epoch=owner_epoch+1, fencing_token=fencing_token+1 WHERE owner_address=$1").bind(owner.wallet()).bind(SESSION_A).execute(&pool).await.unwrap();
                 }
+                "session" => {
+                    sqlx::query("UPDATE social.archipelago_v4_assignments SET owner_session=$2 WHERE owner_address=$1").bind(owner.wallet()).bind(SESSION_A).execute(&pool).await.unwrap();
+                }
+                "epoch" => {
+                    sqlx::query("UPDATE social.archipelago_v4_assignments SET owner_epoch=owner_epoch+1 WHERE owner_address=$1").bind(owner.wallet()).execute(&pool).await.unwrap();
+                }
                 "revision" => {
-                    sqlx::query("UPDATE social.archipelago_v4_assignments SET assignment_revision=assignment_revision+1, fencing_token=fencing_token+1 WHERE owner_address=$1").bind(owner.wallet()).execute(&pool).await.unwrap();
+                    sqlx::query("UPDATE social.archipelago_v4_assignments SET assignment_revision=assignment_revision+1 WHERE owner_address=$1").bind(owner.wallet()).execute(&pool).await.unwrap();
+                }
+                "fencing-token" => {
+                    sqlx::query("UPDATE social.archipelago_v4_assignments SET fencing_token=fencing_token+1 WHERE owner_address=$1").bind(owner.wallet()).execute(&pool).await.unwrap();
                 }
                 "ban" => {
                     sqlx::query("INSERT INTO social.user_bans (banned_address,banned_by,reason,banned_at) VALUES ($1,'test','test',timezone('UTC',now()))").bind(owner.wallet()).execute(&pool).await.unwrap();
@@ -643,7 +887,10 @@ mod tests {
             vec![
                 ("unchanged", StatusCode::OK),
                 ("owner", StatusCode::FORBIDDEN),
+                ("session", StatusCode::FORBIDDEN),
+                ("epoch", StatusCode::FORBIDDEN),
                 ("revision", StatusCode::FORBIDDEN),
+                ("fencing-token", StatusCode::FORBIDDEN),
                 ("ban", StatusCode::FORBIDDEN),
                 ("generation", StatusCode::FORBIDDEN),
                 ("floor", StatusCode::FORBIDDEN),

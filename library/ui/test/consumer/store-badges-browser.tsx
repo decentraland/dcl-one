@@ -25,6 +25,7 @@ createRoot(document.getElementById('root')!).render(
     <div id="hero">
       <Hero
         title="Home"
+        imageAlt="Decentraland landscape"
         actions={actions}
         mobile={{ title: 'Mobile', subtitle: 'Decentraland', store }}
       />

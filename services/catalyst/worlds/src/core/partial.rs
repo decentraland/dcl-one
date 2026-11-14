@@ -192,6 +192,12 @@ impl Drop for EntityGuard {
 tokio::task_local! {
     /// Tests: the replica a request runs on, each with its own in-process locks.
     pub(super) static REPLICA: &'static str;
+    /// Pauses this request after upsert returns a row, before reservation starts.
+    pub(super) static AFTER_UPSERT: (Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>);
+    /// Pauses after reservation reads the owner, before charging and taking its transaction locks.
+    pub(super) static AFTER_OWNER_LOOKUP: (Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>);
+    /// Signals that this request reached its completing publish.
+    pub(super) static PUBLISH_REACHED: Arc<tokio::sync::Notify>;
 }
 
 async fn lock_entity(entity_id: &str) -> EntityGuard {
@@ -608,7 +614,12 @@ async fn stage_batch(
                 .ok_or_else(expired);
         }
     };
-    if let Err(resp) = reserve(
+    #[cfg(test)]
+    if let Ok((reached, resume)) = AFTER_UPSERT.try_with(Clone::clone) {
+        reached.notify_one();
+        resume.notified().await;
+    }
+    match reserve(
         state,
         &limits,
         entity_id,
@@ -620,11 +631,20 @@ async fn stage_batch(
     )
     .await
     {
-        // An upload this batch created and could not admit must not keep holding a slot.
-        if created {
-            discard_unadmitted(&state.pool, entity_id).await;
+        Ok(Reservation::Reserved) => {}
+        Ok(Reservation::Vanished) => {
+            return replay(state, entity_id, signer)
+                .await
+                .map_err(db_error)?
+                .ok_or_else(|| err_one(NOT_FOUND_MESSAGE));
         }
-        return Err(resp);
+        Err(resp) => {
+            // An upload this batch created and could not admit must not keep holding a slot.
+            if created {
+                discard_unadmitted(&state.pool, entity_id).await;
+            }
+            return Err(resp);
+        }
     }
     if created {
         worlds_metrics::partial_started();
@@ -684,6 +704,8 @@ async fn stage_batch(
         world_name: &validated.world_name,
         scene_parcels: &scene_parcels,
     };
+    #[cfg(test)]
+    let _ = PUBLISH_REACHED.try_with(|reached| reached.notify_one());
     let creation_timestamp = match deploy::publish(
         state,
         headers,
@@ -936,6 +958,11 @@ struct BudgetTotals {
     source_oldest: Option<NaiveDateTime>,
 }
 
+enum Reservation {
+    Reserved,
+    Vanished,
+}
+
 /// Charges the batch's bytes against the per-minute rate, then its receipts against the
 /// scene cap and the account, world, source and node staging budgets, atomically.
 async fn reserve(
@@ -946,7 +973,7 @@ async fn reserve(
     max_scene_bytes: i64,
     world_scene_cap: i64,
     incoming: i64,
-) -> Result<(), Response> {
+) -> Result<Reservation, Response> {
     let owner: Option<(String, String, NaiveDateTime, Option<String>)> = sqlx::query_as(
         "SELECT deployer, world_name, created_at, source FROM worlds.pending_scenes WHERE entity_id = $1",
     )
@@ -955,11 +982,16 @@ async fn reserve(
     .await
     .map_err(db_error)?;
     let Some((deployer, world_name, created_at, source)) = owner else {
-        return Err(err_one(NOT_FOUND_MESSAGE));
+        return Ok(Reservation::Vanished);
     };
     let live = || now_ms() < millis(created_at) + limits.ttl_ms();
     if !live() {
         return Err(expired());
+    }
+    #[cfg(test)]
+    if let Ok((reached, resume)) = AFTER_OWNER_LOOKUP.try_with(Clone::clone) {
+        reached.notify_one();
+        resume.notified().await;
     }
     // Committed on its own: a rejected batch was still received, so repeating it cannot escape the rate.
     let (rate_bytes, rate_retry): (i64, i32) = sqlx::query_as(
@@ -1026,6 +1058,18 @@ async fn reserve(
     lock_key(&mut tx, "worlds-partial-budget")
         .await
         .map_err(db_error)?;
+    // Publish can consume the upload without the budget lock. Keep its parent
+    // through receipt writes; KEY SHARE still permits record_stored's non-key UPDATE.
+    let pending: Option<i32> = sqlx::query_scalar(
+        "SELECT 1 FROM worlds.pending_scenes WHERE entity_id = $1 FOR KEY SHARE",
+    )
+    .bind(entity_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(db_error)?;
+    if pending.is_none() {
+        return Ok(Reservation::Vanished);
+    }
     if !live() {
         return Err(expired());
     }
@@ -1154,7 +1198,7 @@ async fn reserve(
     }
     tx.commit().await.map_err(db_error)?;
     worlds_metrics::partial_reserved_bytes(t.total);
-    Ok(())
+    Ok(Reservation::Reserved)
 }
 
 /// Drops a new upload whose first batch was refused before anything was charged to it.

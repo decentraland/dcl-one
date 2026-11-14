@@ -274,18 +274,17 @@ fn launch_targets(
             carry,
         ));
     }
+    let player = knobs
+        .player
+        .clone()
+        .unwrap_or_else(joinblock::web_explorer_base);
     targets.push(Target::new(
         WHERE_WEB,
         "Web explorer",
-        "Opens the web explorer in this browser — no install",
-        web_join_url(
-            knobs
-                .player
-                .as_deref()
-                .unwrap_or(&joinblock::web_explorer_base()),
-            realm,
-            position,
-        ),
+        joinblock::web_blocked(&player, realm)
+            .as_deref()
+            .unwrap_or("Opens the web explorer in this browser — no install"),
+        web_join_url(&player, realm, position),
         Carry::Nothing,
     ));
     let mut phone = Target::new(

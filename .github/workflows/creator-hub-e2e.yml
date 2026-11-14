@@ -1,0 +1,145 @@
+name: E2E
+on:
+  workflow_call:
+    secrets:
+      E2E_PRIVATE_KEY:
+        required: false
+      E2E_NAME:
+        required: false
+      E2E_LAND:
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: creator-hub-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: 'bash'
+    working-directory: apps/creator-hub
+
+jobs:
+  # Playwright + Chromium against the served bundle (no Electron). Kept separate
+  # from the Electron suite so the two heavy suites get memory-isolated runners.
+  # ubuntu, not macos: nothing here is mac- or Electron-specific, and the Linux
+  # runner has 4 vCPU/16GB against macOS arm64's 3 vCPU/7GB at a tenth the
+  # billed minutes. Only e2e-creator-hub needs darwin, to package the .app.
+  e2e-inspector:
+    # Not ubuntu-latest: Playwright 1.60 had no Chromium build for Ubuntu 26.04. The suite now runs 1.62,
+    # so this can move to ubuntu-latest once a run there is green.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/creator-hub-setup
+        id: setup
+        with:
+          cache-playwright: 'true'
+
+      - name: install
+        if: steps.setup.outputs.node-modules-cache-hit != 'true'
+        run: make install
+
+      # Provides index.html + copied runtime assets; the JS bundle is rebuilt below.
+      - uses: ./.github/actions/creator-hub-download-build
+
+      # chromium only: it is the sole engine the suite launches (playwright.config.ts).
+      - name: install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      # The UI Designer code-mode e2e needs the wasm parser that --production drops, so
+      # e2e rebuilds a dev bundle (~74s) instead of reusing download-build's production
+      # one. Cache that dev bundle so re-runs and PRs that don't touch inspector/asset-packs
+      # source skip the rebuild. The key MUST cover every input that feeds the bundle: a
+      # miss is cheap (rebuild below), but a STALE hit would silently serve wrong code to
+      # e2e. build.js inlines all assets (dataurl), so bundle.js + bundle.css are the
+      # complete output set — no hashed asset files to miss (unlike the past bundle.css bug).
+      - name: Cache inspector dev bundle
+        id: inspector-dev-bundle
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            apps/creator-hub/packages/inspector/public/bundle.js
+            apps/creator-hub/packages/inspector/public/bundle.css
+          # Single line on purpose: newlines inside a ${{ }} expression are brittle.
+          key: inspector-e2e-devbundle-${{ runner.os }}-${{ hashFiles('apps/creator-hub/packages/inspector/src/**', 'apps/creator-hub/packages/inspector/build.js', 'apps/creator-hub/packages/inspector/bevy-agent-realm.js', 'apps/creator-hub/packages/inspector/package.json', 'apps/creator-hub/packages/asset-packs/src/**', 'apps/creator-hub/packages/asset-packs/package.json', 'apps/creator-hub/package-lock.json') }}
+
+      - name: build inspector
+        if: steps.inspector-dev-bundle.outputs.cache-hit != 'true'
+        run: cd packages/inspector && node ./build.js
+
+      - name: start inspector server
+        shell: bash
+        run: |
+          cd packages/inspector
+          npx http-server public -p 8000 --cors -a localhost &
+          sleep 5
+
+      - name: e2e
+        timeout-minutes: 20
+        run: make test-inspector-e2e
+        env:
+          NODE_OPTIONS: "--max-old-space-size=8192"
+          E2E_CONTENT_URL: https://builder-items.decentraland.zone
+
+      # Diagnostics for the flaky "app never becomes visible" failure.
+      - name: upload e2e diagnostics
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: inspector-e2e-diagnostics
+          path: apps/creator-hub/packages/inspector/test-results
+          if-no-files-found: ignore
+          retention-days: 3
+
+  # Cold-launches the real Electron app via Playwright _electron (drives the
+  # app's own Chromium — no browser download); runs the prebuilt dist.
+  e2e-creator-hub:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/creator-hub-setup
+        id: setup
+
+      - name: install
+        if: steps.setup.outputs.node-modules-cache-hit != 'true'
+        run: make install
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+
+      - uses: ./.github/actions/creator-hub-download-build
+        with:
+          include-creator-hub: 'true'
+
+      - name: install playwright chromium
+        run: cd packages/creator-hub && npx playwright install chromium
+
+      - name: e2e
+        run: make test-creator-hub-e2e-ci
+        env:
+          NODE_OPTIONS: "--max-old-space-size=8192"
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+          E2E_CONTENT_URL: https://builder-items.decentraland.zone
+
+      - name: e2e live tier (post-merge and manual dispatch only; reuses the app packaged above)
+        if: github.event_name != 'pull_request'
+        run: make test-creator-hub-e2e-ci-live
+        env:
+          NODE_OPTIONS: "--max-old-space-size=8192"
+          E2E_CONTENT_URL: https://builder-items.decentraland.zone
+          E2E_PRIVATE_KEY: ${{ secrets.E2E_PRIVATE_KEY }}
+          E2E_NAME: ${{ secrets.E2E_NAME }}
+          E2E_LAND: ${{ secrets.E2E_LAND }}
+
+      - name: upload e2e diagnostics
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: creator-hub-e2e-diagnostics
+          path: |
+            apps/creator-hub/packages/creator-hub/test-results
+            apps/creator-hub/packages/creator-hub/playwright-report
+          if-no-files-found: ignore
+          retention-days: 3

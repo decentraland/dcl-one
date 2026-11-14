@@ -242,14 +242,16 @@
     },
     {
       "id": "creator-ui",
-      "description": "Creator editor and native shell",
+      "description": "Creator editor (web) and the Creator Hub desktop workspace (Electron app, inspector, asset packs)",
       "owners": [
         "@decentraland/web-applications"
       ],
       "paths": [
         "/apps/ui3/src/editor/",
         "/apps/ui3/editor-scene/",
-        "/apps/creator-hub/"
+        "/apps/creator-hub/",
+        "/.github/workflows/creator-hub-*.yml",
+        "/.github/actions/creator-hub-*/"
       ]
     },
     {

@@ -1,0 +1,164 @@
+name: Creator Hub / CI
+# The entry point for the Creator Hub workspace (apps/creator-hub): it calls every other
+# creator-hub-*.yml workflow. Reusable workflows can't widen the token, so this grants the
+# most any of them needs and each job narrows it.
+#
+# Pull requests run it whatever they change, so its one required check, `Creator Hub CI`, always
+# reports: `changes` skips every job when nothing Creator Hub changed, and a path filter would
+# leave the check pending forever on the pull requests it filtered out.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/creator-hub/**'
+      - '.github/workflows/creator-hub-*'
+      - '.github/actions/creator-hub-*/**'
+  pull_request:
+
+permissions:
+  contents: write
+  pull-requests: write
+  id-token: write
+
+concurrency:
+  group: creator-hub-ci-${{ github.ref }}
+  # A newer push cancels a branch's run, never main's: main's run may be mid-publish.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      creator-hub: ${{ steps.diff.outputs.creator-hub }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: github.event_name == 'pull_request'
+        with:
+          fetch-depth: 0
+          filter: blob:none
+          sparse-checkout: .github
+      - name: Did this change touch the Creator Hub?
+        id: diff
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" != pull_request ]; then
+            echo "creator-hub=true" >> "$GITHUB_OUTPUT"
+          elif git diff --name-only "$BASE...$HEAD" \
+              | grep -qE '^(apps/creator-hub/|\.github/workflows/creator-hub-|\.github/actions/creator-hub-)'; then
+            echo "creator-hub=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "creator-hub=false" >> "$GITHUB_OUTPUT"
+          fi
+  build:
+    needs: [ changes ]
+    if: needs.changes.outputs.creator-hub == 'true'
+    uses: ./.github/workflows/creator-hub-build.yml
+  lint:
+    needs: [ changes ]
+    if: needs.changes.outputs.creator-hub == 'true'
+    uses: ./.github/workflows/creator-hub-lint.yml
+  typechecking:
+    needs: [ build ]
+    uses: ./.github/workflows/creator-hub-typechecking.yml
+  tests:
+    needs: [ build ]
+    uses: ./.github/workflows/creator-hub-tests.yml
+  e2e:
+    needs: [ build, tests ]
+    uses: ./.github/workflows/creator-hub-e2e.yml
+    secrets:
+      E2E_LAND: ${{ secrets.E2E_LAND }}
+      E2E_NAME: ${{ secrets.E2E_NAME }}
+      E2E_PRIVATE_KEY: ${{ secrets.E2E_PRIVATE_KEY }}
+  drop_pre_release:
+    name: drop pre-release
+    needs: [ lint, typechecking, tests ]
+    uses: ./.github/workflows/creator-hub-drop.yml
+    secrets:
+      CREATOR_HUB_RELEASES_APP_PRIVATE_KEY: ${{ secrets.CREATOR_HUB_RELEASES_APP_PRIVATE_KEY }}
+    with:
+      # dry-run == false only if we are on main branch and the event is a push or workflow_dispatch
+      dry-run: ${{ !((github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref_name == 'main') }}
+      # Before the build only unfinished pre-releases go (no `creator-hub@X.Y.Z` tag here), so this
+      # run can rebuild that version. A finished one, possibly awaiting promote approval, stays.
+      unfinished-only: true
+  asset-packs:
+    needs: [ drop_pre_release ]
+    uses: ./.github/workflows/creator-hub-asset-packs.yml
+    secrets:
+      BUILDER_ITEMS_S3_BUCKET_PRD: ${{ secrets.BUILDER_ITEMS_S3_BUCKET_PRD }}
+      SDK_TEAM_AWS_REGION: ${{ secrets.SDK_TEAM_AWS_REGION }}
+      SDK_TEAM_S3_BASE_URL: ${{ secrets.SDK_TEAM_S3_BASE_URL }}
+      SDK_TEAM_S3_BUCKET: ${{ secrets.SDK_TEAM_S3_BUCKET }}
+  inspector:
+    needs: [ asset-packs ]
+    uses: ./.github/workflows/creator-hub-inspector.yml
+    secrets:
+      SDK_TEAM_AWS_REGION: ${{ secrets.SDK_TEAM_AWS_REGION }}
+      SDK_TEAM_S3_BASE_URL: ${{ secrets.SDK_TEAM_S3_BASE_URL }}
+      SDK_TEAM_S3_BUCKET: ${{ secrets.SDK_TEAM_S3_BUCKET }}
+    with:
+      asset_packs_s3_bucket_key: ${{ needs.asset-packs.outputs.s3_bucket_key }}
+      asset_packs_version: ${{ needs.asset-packs.outputs.version }}
+      asset_packs_changed: ${{ needs.asset-packs.outputs.changed == 'true' }}
+  creator-hub:
+    needs: [ inspector ]
+    uses: ./.github/workflows/creator-hub-desktop.yml
+    secrets:
+      CREATOR_HUB_RELEASES_APP_PRIVATE_KEY: ${{ secrets.CREATOR_HUB_RELEASES_APP_PRIVATE_KEY }}
+      ES_PASSWORD: ${{ secrets.ES_PASSWORD }}
+      ES_TOTP_SECRET: ${{ secrets.ES_TOTP_SECRET }}
+      ES_USERNAME: ${{ secrets.ES_USERNAME }}
+      MACOS_CSC_KEY_PASSWORD: ${{ secrets.MACOS_CSC_KEY_PASSWORD }}
+      MACOS_CSC_LINK: ${{ secrets.MACOS_CSC_LINK }}
+      MACOS_NOTARIZATION_APPLE_ID: ${{ secrets.MACOS_NOTARIZATION_APPLE_ID }}
+      MACOS_NOTARIZATION_PWD: ${{ secrets.MACOS_NOTARIZATION_PWD }}
+      MACOS_NOTARIZATION_TEAM_ID: ${{ secrets.MACOS_NOTARIZATION_TEAM_ID }}
+      SDK_TEAM_AWS_REGION: ${{ secrets.SDK_TEAM_AWS_REGION }}
+      SDK_TEAM_S3_BASE_URL: ${{ secrets.SDK_TEAM_S3_BASE_URL }}
+      SDK_TEAM_S3_BUCKET: ${{ secrets.SDK_TEAM_S3_BUCKET }}
+      SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+      SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+      VITE_ALLOWED_EXTERNAL_ORIGINS: ${{ secrets.VITE_ALLOWED_EXTERNAL_ORIGINS }}
+      VITE_SEGMENT_CREATORS_HUB_API_KEY: ${{ secrets.VITE_SEGMENT_CREATORS_HUB_API_KEY }}
+      VITE_SEGMENT_INSPECTOR_API_KEY: ${{ secrets.VITE_SEGMENT_INSPECTOR_API_KEY }}
+      WINDOWS_CREDENTIAL_ID_SIGNER: ${{ secrets.WINDOWS_CREDENTIAL_ID_SIGNER }}
+    with:
+      # dry-run == false only if we are on main branch and the event is a push or workflow_dispatch
+      dry-run: ${{ !((github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref_name == 'main') }}
+      inspector_s3_bucket_key: ${{ needs.inspector.outputs.s3_bucket_key }}
+      inspector_version: ${{ needs.inspector.outputs.version }}
+      inspector_changed: ${{ needs.inspector.outputs.changed == 'true' }}
+  # Older finished pre-releases go only once the new one is fully published, which is kept. A run
+  # that fails part-way leaves the previous pre-release in place, still promotable.
+  prune_pre_releases:
+    name: prune pre-releases
+    needs: [ creator-hub ]
+    uses: ./.github/workflows/creator-hub-drop.yml
+    secrets:
+      CREATOR_HUB_RELEASES_APP_PRIVATE_KEY: ${{ secrets.CREATOR_HUB_RELEASES_APP_PRIVATE_KEY }}
+    with:
+      dry-run: ${{ !((github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref_name == 'main') }}
+      keep: ${{ needs.creator-hub.outputs.version }}
+  # The one required check. It stands for lint, typecheck, unit tests, both e2e suites and the
+  # macOS and Windows builds (the checks decentraland/creator-hub required), plus the package jobs
+  # those builds wait on: it fails if any of them failed or was cancelled, and passes when they
+  # passed or `changes` skipped them all.
+  result:
+    name: Creator Hub CI
+    if: always()
+    needs: [ changes, build, lint, typechecking, tests, e2e, drop_pre_release, asset-packs, inspector, creator-hub, prune_pre_releases ]
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Check every Creator Hub job
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          echo "$RESULTS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          ! echo "$RESULTS" | jq -e 'to_entries | any(.value.result == "failure" or .value.result == "cancelled")' > /dev/null

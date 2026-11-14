@@ -408,7 +408,8 @@ CREATE TABLE shop.nft_contract (
 -- nftAddress for the three legacy order kinds, whose emitter is the
 -- marketplace); `amount` is the order price or the v1 issued id; `detail`
 -- the legacy order id, the v1 wearable id, the registered subdomain or the
--- Update's data string.
+-- Update's data string; `tx_hash` the transaction of an `order_successful`
+-- (NULL on other kinds and on rows indexed before it was recorded).
 CREATE TABLE shop.nft_event (
     network text NOT NULL,
     block_number bigint NOT NULL,
@@ -423,6 +424,7 @@ CREATE TABLE shop.nft_event (
     amount numeric(78,0),
     expires_at bigint,
     detail text,
+    tx_hash varchar(66),
     PRIMARY KEY (network, block_number, log_index),
     CONSTRAINT nft_event_network_known CHECK (network IN ('ethereum', 'matic')),
     CONSTRAINT nft_event_kind_known CHECK (kind IN (
@@ -16575,6 +16577,10 @@ CREATE TABLE shop.item_notify_requests (
 -- AND status = 'pending' AND id > $after ORDER BY id LIMIT 100; and the
 -- availability watcher's distinct pending items.
 CREATE INDEX item_notify_requests_pending_idx ON shop.item_notify_requests (contract_address, item_id, id) WHERE status = 'pending';
+
+-- The per-mailbox cap on new requests (case and +tag folded):
+-- WHERE regexp_replace(lower(email), '\+[^@]*@', '@') = $1 AND status = 'pending'.
+CREATE INDEX item_notify_requests_pending_email_idx ON shop.item_notify_requests (regexp_replace(lower(email), '\+[^@]*@', '@')) WHERE status = 'pending';
 
 -- The delivery outbox of the waitlist (the SQS hop of shop-server as a
 -- local transactional row): an item's on-sale transition inserts one row

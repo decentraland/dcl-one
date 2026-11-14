@@ -3,6 +3,8 @@
 # The socket binaries (archipelago_*, pulse_*) keep wall-clock budgets, so they run with at
 # most one test thread per core: after the others when the pool would oversubscribe the cores.
 set -euo pipefail
+source "$(dirname "$0")/catalyst-test-resources.sh"
+prepare_catalyst_test_resources
 cd "$(dirname "$0")/../services/catalyst"
 logs="${CARGO_TARGET_DIR:-target}/test-logs"
 mkdir -p "$logs"

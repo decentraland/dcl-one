@@ -6,13 +6,13 @@ use axum::extract::{Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use chrono::SecondsFormat;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::Value;
 
 use super::SharedState;
 use super::queries::{self, WorldScene};
 use crate::content::errors::{AppError, AppResult};
-use crate::core::http::js_parse_int;
+use crate::core::http::{QueryPairs, js_parse_int, query_param};
 use crate::shared::cache::TtlMap;
 
 const MAX_INDEX_LIMIT: i64 = 10_000;
@@ -43,14 +43,6 @@ fn etag_for(body: &[u8]) -> HeaderValue {
     HeaderValue::from_str(&format!("\"{:016x}\"", h.finish())).expect("hex etag")
 }
 
-#[derive(Debug, Deserialize)]
-pub struct IndexQuery {
-    #[serde(default)]
-    pub limit: Option<String>,
-    #[serde(default)]
-    pub offset: Option<String>,
-}
-
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export, export_to = "worlds/"))]
@@ -64,9 +56,9 @@ pub struct IndexSceneSummary {
     #[cfg_attr(feature = "ts", ts(optional))]
     pub thumbnail: Option<String>,
     pub pointers: Vec<String>,
-    /// Absent when the metadata has none.
+    /// Absent when the metadata has no such key; an explicit `null` is kept.
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "ts", ts(optional, type = "string"))]
+    #[cfg_attr(feature = "ts", ts(optional, type = "string | null"))]
     pub runtime_version: Option<Value>,
     /// `entity.timestamp || Date.now()`: the page's build time when missing or 0.
     #[cfg_attr(feature = "ts", ts(type = "number"))]
@@ -93,13 +85,14 @@ pub struct IndexResponse {
 /// `limit`/`offset`. The protocol a downstream worlds mirror reads.
 pub async fn get_index(
     State(state): State<SharedState>,
-    Query(q): Query<IndexQuery>,
+    Query(q): Query<QueryPairs>,
     headers: HeaderMap,
 ) -> AppResult<Response> {
-    // Unparsable values fall back to the defaults, like the old `parseInt`.
+    // `searchParams.get`: the first of a repeated key. Unparsable values fall
+    // back to the defaults, like the old `parseInt`.
     let (limit, offset) = bound_index_params(
-        q.limit.as_deref().and_then(js_parse_int),
-        q.offset.as_deref().and_then(js_parse_int),
+        query_param(&q, "limit").and_then(js_parse_int),
+        query_param(&q, "offset").and_then(js_parse_int),
     );
     let page = match index_memo().get_fresh(&(limit, offset)) {
         Some(hit) => hit,
@@ -140,7 +133,8 @@ pub async fn get_index(
 
 async fn build_index(state: &SharedState, limit: i64, offset: i64) -> AppResult<IndexResponse> {
     let base_url = state.settings.content_server_url();
-    let scenes = queries::list_index_scenes(&state.pool, limit, offset).await?;
+    let banned = state.names.snapshot(&state.pool).await.banned_names();
+    let scenes = queries::list_index_scenes(&state.pool, limit, offset, &banned).await?;
     let now = chrono::Utc::now();
 
     let mut data: Vec<WorldIndexEntry> = Vec::new();
@@ -197,11 +191,11 @@ fn scene_summary(scene: &WorldScene, base_url: &str, now_ms: i64) -> IndexSceneS
     let timestamp = crate::core::store::entity_timestamp_ms(&scene.entity)
         .filter(|&t| t != 0)
         .unwrap_or(now_ms);
+    // `entity.metadata?.runtimeVersion`: absent when the key is, an explicit `null` kept.
     let runtime_version = scene
         .entity
         .get("metadata")
         .and_then(|m| m.get("runtimeVersion"))
-        .filter(|v| !v.is_null())
         .cloned();
     IndexSceneSummary {
         id: scene.entity_id.clone(),
@@ -265,6 +259,21 @@ mod tests {
             body,
             json!({ "id": "s", "title": "", "description": "", "pointers": [], "timestamp": 1234 })
         );
+    }
+
+    /// `runtimeVersion: entity.metadata?.runtimeVersion`: a stored `null` is
+    /// serialized, only a missing key is left out.
+    #[test]
+    fn scene_summary_keeps_an_explicit_null_runtime_version() {
+        let scene = WorldScene {
+            entity_id: "s".into(),
+            entity: json!({ "timestamp": 9, "metadata": { "runtimeVersion": null } }),
+            parcels: vec![],
+            deployer: "0xowner".into(),
+            mirror_source: None,
+        };
+        let body = serde_json::to_value(scene_summary(&scene, "https://x", 1)).unwrap();
+        assert_eq!(body.get("runtimeVersion"), Some(&serde_json::Value::Null));
     }
 
     #[test]

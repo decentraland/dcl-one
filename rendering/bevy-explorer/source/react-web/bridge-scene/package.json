@@ -7,7 +7,7 @@
     "deploy": "sdk-commands deploy",
     "build": "sdk-commands build",
     "export-native": "sdk-commands build --production && sdk-commands export-static --destination ../../assets/bridge-scene --realmName BevyExplorerUI --baseUrl /bridge-scene/ --commsAdapter ws-room:ws-room-service.decentraland.org/rooms/bevy-explorer-ui",
-    "export-static": "rm -rf static && sdk-commands export-static --destination static/ --realmName BevyExplorerUI --baseUrl ${SCENE_BASE_URL:-../} --commsAdapter ws-room:ws-room-service.decentraland.org/rooms/bevy-explorer-ui",
+    "export-static": "node ../scripts/bridge-scene-export.mjs",
     "bundle": "npm run lint && sdk-commands build --production && npm run export-web",
     "lint": "oxlint --deny-warnings src",
     "lint:fix": "oxlint --deny-warnings --fix src",
@@ -15,7 +15,7 @@
     "format:fix": "prettier -w --config .prettierrc \"./src/**/*.{ts,tsx}\"",
     "upgrade-sdk": "npm install @dcl/sdk@experimental-bevy @dcl/js-runtime@experimental-bevy @dcl/react-ecs@experimental-bevy @dcl/sdk-commands@experimental-bevy @dcl/ecs@experimental-bevy --save-exact",
     "server-logs": "sdk-commands sdk-server-logs",
-    "export-web": "npm run export-static && rm -rf ../../deploy/web/bridge-scene && mkdir -p ../../deploy/web/bridge-scene && cp -R static ../../deploy/web/bridge-scene/static"
+    "export-web": "node ../scripts/bridge-scene-export.mjs --web"
   },
   "devDependencies": {
     "@dcl/ecs": "7.28.1-34901226656.commit-44656ea",

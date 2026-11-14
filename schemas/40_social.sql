@@ -1219,7 +1219,9 @@ CREATE TABLE social.profile_images (
 -- role), the post digest (post_delete, post_like, post_unlike), the place
 -- (place) or the request (request_status); `role` the old role-log text;
 -- `action` a place's add|remove or a request's settled status;
--- `content_hash` a post body's sha256 (community_contents).
+-- `content_hash` a post body's sha256 (community_contents);
+-- `public_at_entry` whether the community was public when the entry was
+-- written: the public feeds and bodies publish only those entries.
 CREATE TABLE social.community_signed_actions (
     signature_hash text NOT NULL,
     seq bigint GENERATED ALWAYS AS IDENTITY,
@@ -1234,6 +1236,7 @@ CREATE TABLE social.community_signed_actions (
     signed_at bigint NOT NULL,
     payload jsonb NOT NULL,
     received_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    public_at_entry boolean NOT NULL DEFAULT true,
     CONSTRAINT community_signed_actions_pkey PRIMARY KEY (signature_hash),
     CONSTRAINT community_signed_actions_seq_key UNIQUE (seq),
     CONSTRAINT community_signed_actions_kind_check CHECK (kind IN ('create', 'update', 'delete', 'role', 'post', 'post_delete', 'post_like', 'post_unlike', 'place', 'request_status')),
@@ -1280,6 +1283,24 @@ CREATE TABLE social.community_contents (
     CONSTRAINT community_contents_hash_shape CHECK (content_hash ~ '^[0-9a-f]{64}$'),
     CONSTRAINT community_contents_size_check CHECK (size >= 0 AND size <= 262144)
 );
+
+-- Who uploaded a federation post body: a post takes only a body its own
+-- signer uploaded, and the public read serves a body only for a public
+-- post whose signer uploaded it. `posted_at` is set when that post lands;
+-- unposted rows count toward the upload budgets (the partial index) and
+-- `community-content-gc` drops them after the blob age floor.
+CREATE TABLE social.community_content_uploads (
+    content_hash text NOT NULL,
+    uploader text NOT NULL,
+    size integer NOT NULL,
+    uploaded_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    posted_at timestamp without time zone,
+    CONSTRAINT community_content_uploads_pkey PRIMARY KEY (content_hash, uploader),
+    CONSTRAINT community_content_uploads_uploader_lowercase CHECK (uploader = lower(uploader)),
+    CONSTRAINT community_content_uploads_size_check CHECK (size >= 0 AND size <= 262144)
+);
+CREATE INDEX community_content_uploads_unposted_idx
+    ON social.community_content_uploads (uploader) INCLUDE (content_hash, size) WHERE posted_at IS NULL;
 
 -- The upstream communities mirror (src/social/communities/mirror.rs), the
 -- explore mirrors' pattern: an operator job pages an upstream social API's

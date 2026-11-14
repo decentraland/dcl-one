@@ -1,0 +1,32 @@
+name: Lint
+on: [ workflow_call ]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: creator-hub-lint-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: 'bash'
+    working-directory: apps/creator-hub
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/creator-hub-setup
+        id: setup
+
+      - name: install
+        if: steps.setup.outputs.node-modules-cache-hit != 'true'
+        run: npm ci
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+
+      - run: make lint
+      - run: make format

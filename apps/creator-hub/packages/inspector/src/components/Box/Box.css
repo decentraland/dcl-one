@@ -1,0 +1,14 @@
+.Box {
+  height: calc(100% - 4.8px);
+}
+
+.Box {
+  border-radius: 2.4px;
+}
+
+.Box > .content {
+  background: var(--main-bg-color);
+  width: 100%;
+  height: 100%;
+  position: relative;
+}

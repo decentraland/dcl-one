@@ -3,8 +3,9 @@
 //! presence ([`crate::presence`]) itself and then passes it on to the
 //! [`RoomEventSink`] `serve` installs (`CommsState::with_room_event_sink`).
 //! `serve` installs a [`RoomEventFanout`] of worlds' `CoreState` (the worlds
-//! access log) and, when enabled, social's presence-badge recorder, so one
-//! webhook URL feeds all of them.
+//! access log). A [`RoomEventStore`] (social's presence-badge recorder, when
+//! enabled) also receives the events the gatekeeper's own session ordering
+//! supersedes, so one webhook URL feeds all of them.
 
 use std::sync::Arc;
 
@@ -14,6 +15,17 @@ use std::sync::Arc;
 /// Called on the webhook's path: an implementation must not block.
 pub trait RoomEventSink: Send + Sync {
     fn observe_room_event(&self, event: &crate::protocol::bus::room_events::RoomEvent);
+}
+
+/// A durable consumer of every verified participant event, including one the
+/// gatekeeper supersedes (an old session's late leave): it orders sessions
+/// itself. An error fails the webhook, so LiveKit delivers the event again.
+#[async_trait::async_trait]
+pub trait RoomEventStore: Send + Sync {
+    async fn store_room_event(
+        &self,
+        event: &crate::protocol::bus::room_events::RoomEvent,
+    ) -> anyhow::Result<()>;
 }
 
 /// Hands every event to each sink, in order.

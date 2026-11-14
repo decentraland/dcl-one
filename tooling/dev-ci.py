@@ -22,7 +22,9 @@ ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = 'development.yml'
 # What the macOS Rust job itself runs (the dev stack, the ENet pin check and dev-test.sh's tests)
 # and what changes how it builds (manifests, lockfiles, build scripts, toolchains, cargo config).
-MACOS = ('tooling/dev*', 'tooling/enet-provenance.py', 'tooling/tests/test_dev_regressions.py',
+MACOS = ('tooling/dev*', 'tooling/catalyst-test*.sh', 'tooling/tests/test_catalyst_test_resources.py',
+         'tooling/enet-provenance.py', 'tooling/tests/test_dev_regressions.py',
+         'tooling/archipelago-fixtures.py', 'tooling/tests/test_archipelago_fixtures.py',
          'tooling/tests/test_enet_provenance.py', '**/Cargo.toml', '**/Cargo.lock', '**/build.rs',
          '**/rust-toolchain*', 'services/catalyst/.cargo/**', 'library/vendor/rusty_enet/**')
 # Inputs whose Rust-job behaviour the Linux leg covers: web apps, other Python tooling and Rust/SQL

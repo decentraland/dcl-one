@@ -16,6 +16,16 @@ async function evaluate<T>(expression: string): Promise<T> {
   return response.result.value
 }
 
+async function waitForLinks(selector: string, minimum: number) {
+  await evaluate(`(async () => {
+    const selector = ${JSON.stringify(selector)};
+    for(let n=0;n<100 && document.querySelectorAll(selector).length<${minimum};n++)
+      await new Promise(resolve=>setTimeout(resolve,20));
+    if(document.querySelectorAll(selector).length<${minimum})
+      throw new Error('Fixture links did not render: '+selector);
+  })()`)
+}
+
 beforeAll(async () => {
   try {
     server = await createServer({
@@ -71,8 +81,8 @@ describe('when the home sections offer a mobile store download', () => {
           mobile: true
         })
         await session!.navigate(`${server!.resolvedUrls!.local[0]}?store=${store}`)
+        await waitForLinks('a[target="_blank"]', 2)
         await evaluate(`(async () => {
-          for (let n=0;n<100 && document.querySelectorAll('a[target="_blank"]').length<2;n++) await new Promise(r=>setTimeout(r,20));
           await document.fonts.ready;
           await Promise.all([...document.querySelectorAll('a[target="_blank"] img')].map(image=>image.decode()));
         })()`)
@@ -124,11 +134,18 @@ describe('when the home sections offer a mobile store download', () => {
       mobile: false
     })
     await session!.navigate(server!.resolvedUrls!.local[0]!)
+    await waitForLinks('a', 4)
     const visible = await evaluate<{ stores: number; downloads: number }>(`(async () => {
-      for(let n=0;n<100&&document.querySelectorAll('a').length<4;n++)await new Promise(r=>setTimeout(r,20));
       return {stores:[...document.querySelectorAll('a[target="_blank"]')].filter(a=>a.getClientRects().length).length,
         downloads:[...document.querySelectorAll('a[href^="/download_success"]')].filter(a=>a.getClientRects().length).length};
     })()`)
     expect(visible).toEqual({ stores: 0, downloads: 2 })
   }, 30_000)
+
+  it('should identify fixture links that never render before measuring them', async () => {
+    await session!.navigate(server!.resolvedUrls!.local[0]!)
+    await expect(waitForLinks('[data-missing-store-link]', 1)).rejects.toThrow(
+      'Fixture links did not render: [data-missing-store-link]'
+    )
+  })
 })

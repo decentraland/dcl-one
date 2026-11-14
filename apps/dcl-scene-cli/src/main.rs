@@ -10,9 +10,6 @@ use std::path::PathBuf;
 /// own default, leaving the scene-log poller waiting on a port nobody opened.
 const MIN_MCP_PORT: u16 = 1024;
 
-const NO_INSTALL_NOTE: &str =
-    "--skip-install has no effect (dcl-scene-cli never installs packages)";
-
 const CI_HELP: &str = "Non-interactive (also when CI is set in the environment): no colours, spinners, prompts, QR codes or browser windows";
 
 /// The flag, or `CI` in the environment: either turns the whole run
@@ -381,6 +378,13 @@ enum Command {
             help = "Everything after a standalone -- is forwarded verbatim into the desktop Explorer deep link as query params: --key=value, --key value, and bare --key (becomes key=true)"
         )]
         explorer_params: Vec<String>,
+        #[arg(
+            long,
+            value_name = "URL",
+            env = "DCL_SCENE_CLI_PUBLIC_URL",
+            help = "The address people open when a reverse proxy or a custom domain serves this preview (https://preview.example.com, a path prefix allowed): its join links are printed, and a request for that host is answered as that origin even when the proxy forwards no scheme"
+        )]
+        public_url: Option<String>,
         #[arg(
             long,
             value_name = "WSS_URL|help",
@@ -897,16 +901,24 @@ fn init_tracing(verbose: bool) {
     }
 }
 
-#[tokio::main]
-async fn main() {
+/// Arguments are parsed before the runtime exists, so `--version`, `--help`
+/// and a usage error exit without starting a worker thread per core.
+fn main() {
     let cli = Cli::parse();
     let verbose = cli.verbose || std::env::var_os("RUST_LOG").is_some();
     ux::set_verbose(verbose);
     ux::set_json(cli.json);
     ux::set_ci(ux::ci_env());
     init_tracing(verbose);
-    dcl_scene_cli::shutdown::install();
-    if let Err(e) = run(cli.command).await {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("the tokio runtime starts");
+    let result = runtime.block_on(async {
+        dcl_scene_cli::shutdown::install();
+        run(cli.command).await
+    });
+    if let Err(e) = result {
         ux::report(&e, verbose);
         std::process::exit(1);
     }
@@ -992,9 +1004,7 @@ async fn run(command: Command) -> Result<()> {
             single,
             emit_declaration,
         } => {
-            if skip_install {
-                ux::note(NO_INSTALL_NOTE);
-            }
+            dcl_scene_cli::init::set_restore_node_modules(!skip_install);
             let opts = build::BuildOptions {
                 built_in,
                 dir,
@@ -1085,6 +1095,7 @@ async fn run(command: Command) -> Result<()> {
             error_source_lines_after,
             explorer_params,
             tunnel,
+            public_url,
             tunnel_token,
             tunnel_token_file,
             no_host,
@@ -1096,6 +1107,7 @@ async fn run(command: Command) -> Result<()> {
                 return Ok(());
             }
             ux::set_custom_build_note(!no_build_note);
+            dcl_scene_cli::init::set_restore_node_modules(!skip_install);
             let ci = ci_mode(ci);
             let tunnel_token = if tunnel.is_some() {
                 dcl_scene_cli::tunnel::resolve_token(tunnel_token, tunnel_token_file.as_deref())?
@@ -1113,7 +1125,6 @@ async fn run(command: Command) -> Result<()> {
             let launch_desktop = explorer_alpha && !ci && !no_client;
             let launch_web = web && !no_browser && !ci && !no_client;
             for (given, note) in [
-                (skip_install, NO_INSTALL_NOTE),
                 (
                     no_browser && !talk && !web && !ci,
                     "--no-browser has no effect without --talk or --web (dcl-scene-cli opens a browser only for those)",
@@ -1182,6 +1193,7 @@ async fn run(command: Command) -> Result<()> {
                 explorer_params,
                 data_layer,
                 tunnel,
+                public_url,
                 tunnel_token,
                 no_host,
                 talk: talk.then_some(start::Talk {
@@ -1197,7 +1209,8 @@ async fn run(command: Command) -> Result<()> {
             .await
         }
         Command::Host { dir, preview, room } => {
-            dcl_scene_cli::host::host(&dcl_scene_cli::host::HostOptions { dir, preview, room }).await
+            dcl_scene_cli::host::host(&dcl_scene_cli::host::HostOptions { dir, preview, room })
+                .await
         }
         Command::Deploy {
             dir,

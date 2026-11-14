@@ -105,11 +105,18 @@ npm_preview_field() {
   fi
 }
 
+# The upload's completion marker: written last, only through the CDN broker, and readable before
+# npm serves the version.
 preview_matches_checkout() {
-  local version="$1" revision="$2"
+  local version="$1" revision="$2" marker
   [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+-$RUN_ID\.commit-([0-9a-f]{7,40})$ &&
-     "$revision" == "${BASH_REMATCH[1]}"* ]] &&
-    [ "$(npm_preview_field "$version" gitHead)" = "$revision" ]
+     "$revision" == "${BASH_REMATCH[1]}"* ]] || return 1
+  marker=$(curl -fsS --max-time 15 --retry 2 --retry-connrefused \
+    "https://cdn.decentraland.org/@dcl-regenesislabs/bevy-explorer-web/$version/.deploy-complete.json" \
+    2>/dev/null) || return 1
+  jq -e --arg v "$version" --arg c "$revision" \
+    '.package == "@dcl-regenesislabs/bevy-explorer-web" and .version == $v and .commit == $c' \
+    <<< "$marker" >/dev/null 2>&1
 }
 
 FOOTER="[Run summary]($RUN_URL) · PR head \`${HEAD_SHA:0:7}\`"
