@@ -214,7 +214,7 @@ jobs:
           sudo python3 ../../../apps/bevy-explorer/install-linux-deps.py \
             libasound2-dev libudev-dev ninja-build clang curl pkg-config \
             libavcodec-dev libavformat-dev libavutil-dev libavfilter-dev libavdevice-dev \
-            libssl-dev libx11-dev libgl1-mesa-dev libxext-dev \
+            libssl-dev libx11-dev libgl1-mesa-dev mesa-vulkan-drivers libxext-dev \
             libglib2.0-dev libdrm-dev libgbm-dev libxfixes-dev libxdamage-dev libxrandr-dev libxcomposite-dev
       - name: Install clang for webrtc-sys
         if: runner.os == 'Linux'
@@ -319,6 +319,16 @@ jobs:
           fi
           python3 "$GITHUB_WORKSPACE/tooling/dev-regressions.py" --bevy-artifacts target/native-test-artifacts.jsonl
           cargo test --all --profile ci-test --locked -- --test-threads=1
+      - name: Test environment and shadow shader pipelines
+        if: runner.os == 'Linux'
+        env:
+          WGPU_BACKEND: vulkan
+        run: |
+          set -o pipefail
+          cargo test -p visuals --lib --profile ci-test --locked -- --ignored --test-threads=1 \
+            | tee "$RUNNER_TEMP/explorer-shader-tests.log"
+          grep -Fx 'test environment::tests::scene_environment_pipelines_compile ... ok' "$RUNNER_TEMP/explorer-shader-tests.log"
+          grep -Fx 'test shell_texturing::test::soft_shadow_pipelines_compile ... ok' "$RUNNER_TEMP/explorer-shader-tests.log"
       - name: Use Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
