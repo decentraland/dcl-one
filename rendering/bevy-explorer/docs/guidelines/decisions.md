@@ -517,8 +517,8 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   transport, keeping the existing trusted scene identity and action handlers. They do not
   require a CRDT flush from the caller. Immediate and queued requests share the 1000-call
   budget between renderer flushes; immediate payloads also share an 80 MiB budget. The web
-  relay independently enforces these limits and retains at most 32 query tasks plus the
-  existing file-read barrier. Retained payloads remain charged until the engine releases
-  their reply channels, even when callers cancel. A pending wallet approval therefore does
-  not block unrelated reads. A full renderer queue retains accepted web requests for retry;
+  relay independently enforces these limits and runs at most 32 queries concurrently,
+  alongside the existing file-read barrier. Retained payloads remain charged until the engine
+  releases their reply channels, even when callers cancel. A pending wallet approval therefore
+  does not block unrelated reads. A full renderer queue retains accepted web requests for retry;
   native IPC waits for bounded queue capacity. File reads retain their existing ordering.
