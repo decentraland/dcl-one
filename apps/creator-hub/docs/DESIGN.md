@@ -863,12 +863,14 @@ No interaction states drawn on the bar itself; the tabs it embeds are the `tab-b
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | Logo disc (TextureContainedRoundedButton `21232:42112`) | both | Snow, logo asset 64 in a 44 box (SVG asset) | none | 100px | — | 40 × 40 | `--ui-designer-text`; `--shape-borderRadiusPill` | `LogoButton`; ui2 `neutral.softWhite` | disc vs `#16141a` 17.81:1 | `<button aria-label>`; `LogoButton` matches at 40px, adds a 2px white hover outline and a `--dcl` focus ring Figma does not draw |
 | Tab bar | both | none | none | — | `H4 Semi`, Silver at rest | 8 tabs (HOME, SCENES, TEMPLATES, ANALYTICS, MANAGE, BADGES, LEARN, MORE), gap 40, tab padding 10 / 4 | `--palette-neutral-gray3` / `--ui-designer-text-muted` | `--dcl-silver` · ui2 `neutral.gray3` | Silver on `#16141a` 6.74:1, on `#161518` 6.71:1 | `<nav>`; `Navbar` matches (see Creator Hub navbar below) |
-| Create (label half, `20817:810`) | both | Primary | none | 12px, on the outer row | `H6 Semi Caps` Snow, line-height 22 | 40 tall, padding 0 / 14, gap 6, icon 18 | `--primary-main`; `--ui-designer-text` | `--primary`, `--dcl` | Snow on Primary 3.55:1 — **fails 4.5:1** (16px / 600 is not large text); Primary Dark 1 4.08:1 also fails | `<button>`; `CreateButton` matches geometry and hovers to `--dcl-hover` `#F70038` |
+| Create (label half, `20817:810`) | both | Primary | none | 12px, on the outer row | `H6 Semi Caps` Snow, line-height 22 | 40 tall, padding 0 / 14, gap 6, icon 18 | `--primary-main`; `--ui-designer-text` | `--primary`, `--dcl` | Snow on Primary 3.55:1 — **fails 4.5:1** (16px / 600 is not large text); on the Primary Light 1 hover 2.80:1, also fails | `<button>`; `CreateButton` matches geometry and hover (see Button-Multiple-Options) |
 | Create (menu half, `20817:813`) | both | Primary | 1px White 20 left | 12px, on the outer row | chevron 8.5 × 5 Snow | 40 × 40 | `--palette-whiteTransparent-soft` | `--palette-whiteTransparent-soft` | divider on Primary 1.20:1, decorative; chevron 3.55:1 (≥ 3:1 non-text) | `aria-haspopup="menu"`, `aria-expanded`, `aria-label`; `CreateButton` matches |
 | Divider | both | — | 37px vertical hairline (SVG asset; its stroke colour is not in the node tree) | — | — | 0 × 37 | — | — | — | `aria-hidden`; `Navbar` has none |
 | Account (TextureContainedRoundedButton `21232:42212`) | Signed In=On | Legendary `#A14BF3` under the avatar snapshot | none | 100px | — | 40 × 40 | `--palette-rarity-legendary` | `--palette-rarity-legendary`; ui2 `rarity.legendary` | placeholder disc vs page 4.19:1; the real avatar decides | `<button aria-label>`; `UserMenu` matches at 40px |
 | Account (Button-Contained-Text `20960:6432`) | Signed In=Off | none | 1.5px White 40 | 12px | `H6 Semi Caps` Snow, "sign in" | 40 tall, padding 12 / 24 | `--palette-whiteTransparent-blurry`; `--borderWidth-strong` | `--palette-whiteTransparent-blurry`; the rest missing; `--transparent-gray-light` is .23 | text 17.81:1; border 3.83:1 (≥ 3:1) | `<button>`; `UserMenu` paints 1px `--transparent-gray-light`, padding 7 / 16 — drift |
-| Create, Sign in | ✱ hover / press / focus / disabled | not drawn on this page; take them from Buttons (Inputs page) when it is extracted | — | — | — | — | — | — | — | — |
+| Create | hover | not drawn on this page; the Buttons page draws it in Button-Multiple-Options (`20794:2456`): the hovered half takes Primary Light 1, the other half keeps Primary | — | — | — | — | `--palette-primary-light` | `--primary-hover` | see Button-Multiple-Options | — |
+| Create | ✱ press / focus / disabled | not drawn on this page or on the Buttons page | — | — | — | — | — | — | — | — |
+| Sign in | ✱ hover / press / focus / disabled | not drawn on this page; take them from Buttons (Inputs page) when it is extracted | — | — | — | — | — | — | — | — |
 
 **Creator Hub navbar.** The app follows the navbar instances on the LAND board (`5690:7364`, `5660:4203` in `albOLmqF5fUwmRJ7CjBulU`) on every page (user decision). The navbar below, with its fluid spacing, the icon-only CREATE and the EARN dot, is signed off against those boards (user decision). The board's instances drop the DS set's 37px divider, put 20 between the Create button and the avatar, and draw 44-tall tabs where the `tab-bar` set draws 40. The rules apply to `.Navbar` only; the editor header keeps its own.
 
@@ -1654,20 +1656,21 @@ Set `20762:22781`, 2 variants (Default `20736:43677`, Hover `20762:22782`). Size
 
 ### Button-Multiple-Options (Buttons)
 
-Set `20794:2456`, 3 variants (Default `20745:59084`, HoverLeft `20794:2457`, HoverRight `20794:2470`). Size 505 × 40 (set); button Hug 155 × Fixed 40, 12px radius (the frame clips). Read October 27, 2026. Code: main · inspector none · Creator Hub `CreateButton`, `Button` `ButtonGroup` + `extra-button`.
+Set `20794:2456`, 3 variants (Default `20745:59084`, HoverLeft `20794:2457`, HoverRight `20794:2470`). Size 505 × 40 (set); button Hug 155 × Fixed 40, 12px radius (the frame clips). Read November 12, 2026, in the browser (Dev Mode Inspect panel on each variant and segment), with one MCP `get_metadata` on the set. Code: main · inspector none · Creator Hub `CreateButton`, `Button` `ButtonGroup` + `extra-button`.
 
-- **Left segment:** Hug 115 × Fill 40, padding 0 / 14, gap 6, Primary; icon 18 × 18 and the label Inter 600 16 / 22 uppercase Snow (63 × 22; Figma's text is the placeholder "create").
-- **Right segment:** 40 × 40 Primary with a 1px White 20 left border; chevron 8.5 × 5.
-- **Hover:** the frame fill is Primary Light 1, and only the hovered segment shows it; the other segment keeps its own Primary fill.
+- **Left segment** (`20817:810`): Hug 115 × Fill 40 (87 content + 14 / 14 padding), gap 6, Primary `#FF2D55`; `plus` icon 18 × 18 and the label "create" Inter 600 16 / 22, uppercase, Snow `#FCFCFC` (63 × 22).
+- **Right segment** (`20817:813`): 40 × 40 Primary with a 1px White 20 left border (inside); chevron 8.5 × 5, Snow.
+- **Hover:** the hovered segment's own fill is Primary Light 1 `#FF6280` (HoverLeft's `20817:807`, HoverRight's `20817:834`), and the other segment keeps Primary; the divider stays White 20. The variant frame also carries Primary Light 1 under both segments, so nothing of it shows.
+- **Not drawn:** press, focus, disabled and the icon-only form; the set uses only Primary, Primary Light 1, White 20 and Snow.
 
-Creator Hub `CreateButton` (`StyledLabelButton` 130 × 40, 16 / 600 uppercase, 12px radius, Primary; toggle 40 × 40 with a 1px `rgba(255,255,255,.2)` left border) matches the geometry; each segment hovers to `--primary-hover`.
+Creator Hub `CreateButton` (`StyledLabelButton` Hug × 40, padding 0 / 14, gap 6, 16 / 600 / 22 uppercase, Primary; toggle 40 × 40 with a 1px `--palette-whiteTransparent-soft` left border; 12px radius on the row) renders 154.4 × 40 (label half 114.4) and matches the geometry; each segment hovers to `--primary-hover` `#FF6280` on its own, as HoverLeft and HoverRight draw. The label and the "+" paint Snow, `--palette-neutral-softWhite` `#fcfcfc` (the "+" through `currentColor`). Drift: the "+" is MUI's `AddIcon` (a 10.5px cross with a 1.5px stroke at 18px) where Figma's `plus` draws a larger, heavier cross. ✱ Focus is a 2px `--palette-info-light` ring inset 2px on each segment; the icon-only form at ≤ 1147px is the Creator Hub navbar's rule.
 
 | Variant | State | Left / right fill | Token (inspector · Creator Hub) | Contrast | A11y |
 | --- | --- | --- | --- | --- | --- |
 | Default | default | Primary / Primary | — · `--primary` | label 3.55:1 — **fails 4.5:1**; divider White 20 over Primary 1.20:1, decorative | `<button>` + `<button aria-haspopup="menu" aria-label>` in one frame |
 | HoverLeft | hover left | Primary Light 1 / Primary | — · `--primary-hover` | **label 2.80:1 — fails** | — |
 | HoverRight | hover right | Primary / Primary Light 1 | — · `--primary-hover` | chevron Snow on Primary Light 1 2.80:1 — **fails 3:1 non-text** | — |
-| any | ✱ blocked / focus | — | — | — | not drawn |
+| any | ✱ press / focus / disabled | — | — | — | not drawn |
 
 ### ButtonContainedVertical (24 Caps) (Buttons)
 
@@ -2169,7 +2172,7 @@ Set `21206:31455`, 2 variants (Default `21206:31453`, Input `21206:31454`). Size
 | Variant | State | Fill | Border | Radius | Text | Glyph | Padding / gap / size | Creator Hub token | Contrast (on `#25212A`) | A11y |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | Root (both) | — | none | 1px White 10 `rgba(255,255,255,0.1)` top | 0 | — | — | 310 × 70 | — | — | — |
-| Default | empty | Onix Dark 1 `#2D2A33` | 1px Snow `#FCFCFC` | 10 | "Ask Assistant" Inter 400 12 (`H8 Regular`), Silver `#A09BA8` | send `Button-Contained-Icon` 26 × 26, 100px radius, padding 12, Primary `#FF2D55` | container Fixed 310 × Hug 40, padding 6 / 10, gap 187 | `--ai-input-bg` `#2d2a33`; `--title-bar-button` `#2d2a33`; send ui2 `palette.primary.main` | border 15.39:1; placeholder 5.20:1 on the container; send glyph Snow on Primary 3.55:1 (non-text ≥ 3:1) | `<textarea aria-label="Ask Assistant">`; send `<button aria-label="Send">`, disabled while empty ✱ |
+| Default | empty | Onix Dark 1 `#2D2A33` | 1px Snow `#FCFCFC` | 10 | "Ask Assistant" Inter 400 12 (`H8 Regular`), Silver `#A09BA8` | send `Button-Contained-Icon` 26 × 26, 100px radius, padding 12, Primary `#FF2D55` | container Fixed 310 × Hug 40, padding 6 / 10, gap 187 | `--ai-input-bg` `#2d2a33`; `--title-bar-button` `#2d2a33`; send (`SendButton` 26 × 26, `21206:31456`) ui2 `palette.primary.main`, glyph `--palette-neutral-softWhite` | border 15.39:1; placeholder 5.20:1 on the container; send glyph Snow on Primary 3.55:1 (non-text ≥ 3:1) | `<textarea aria-label="Ask Assistant">`; send `<button aria-label="Send">`, disabled while empty ✱ |
 | Input | typed | same | same | 10 | typed text Inter 400 12 Snow | same | same, padding right 8 | as Default | text 13.73:1; Primary vs container 3.86:1 | `Enter` sends, `Shift+Enter` newline ✱ |
 | any | `Selection` row present | none | none | 12 | "Selection: Player" Inter 400 10, White 60 `rgba(255,255,255,0.6)` | `highlight_alt` 14 × 14; `Close-Button` 12 × 12, White 5, 100px radius | 310 × 30, padding 9, gap 6 | — | chip text 6.54:1; Onix vs panel 1.27:1 | the chip is removable by `Close-Button` named "Remove selection" ✱ |
 | any | ✱ focus / disabled / sending | — | — | — | — | — | — | — | ring `--ui-designer-control-accent` 8.15:1 on Charcoal (the Snow border is a rest state) | not drawn; the page shows no streaming or error state either |
@@ -3074,7 +3077,7 @@ The brand pink matches the inspector's `--primary-main`, but it's defined separa
 
 **Figma alignment of the status, surface, and hover tokens.** `--error`, `--danger`, `--background`, `--bg`, `--primary-hover` and `--purple-banner` carry Figma's System/Red, System/Orange, Neutrals/Shadow, Primary Light 1 and Brand/Purple values.
 
-- `--primary-hover` is the primary hover of every Creator Fund CTA (the landing CTAs and the modal CTAs). The wrapper `components/Button` hovers to `--dcl-dark`, and both `CreateButton` segments and the editor header actions to `--dcl-hover`; the AI `SendButton` doesn't read a hover token yet (drift). Raw ui2 contained-primary `Button`s (`SignInPage`, `UpdateAvailable`, `WarningModal` and others) hover to ui2 `palette.primary.dark` `#F70038`. White text on `#ff6280` measures 2.87:1 (Snow `#fcfcfc` 2.80:1); the value is the user's pick from Figma and a known trade-off, not a pass. The fill itself is 6.36:1 against the page.
+- `--primary-hover` is the primary hover of every Creator Fund CTA (the landing CTAs and the modal CTAs), both `CreateButton` segments, the wrapper `components/Button` in `color="primary"` (`components/Button/styles.css:29`, each `ButtonGroup` segment on its own), the editor header's primary actions (`EditorPage/styles.css:171`) and the AI `SendButton` (`AiChatPanel/component.styled.ts:507`). Figma draws it as Primary Light 1 on Button-Contained-Text Primary-Hover (`20794:2384`) and on the hovered half of Button-Multiple-Options (`20794:2457`, `20794:2470`), the set the editor title bar's Publish uses; ChatInput's send button (`21206:31456`) is a detached `Button-Contained-Icon`, 26 × 26 like `SendButton`, and draws no hover. Raw ui2 contained-primary `Button`s (`SignInPage`, `UpdateAvailable`, `WarningModal` and others) hover to ui2 `palette.primary.dark` `#F70038`. White text on `#ff6280` measures 2.87:1 (Snow `#fcfcfc` 2.80:1); the value is the user's pick from Figma and a known trade-off, not a pass. The fill itself is 6.36:1 against the page.
 - `--bg` and `--purple-banner` have no consumer.
 - `--background` paints `EngagementTab .SocialChart`, which only commented-out code renders, and the `Deploy` error-detail block (the Analytics detail stat blocks moved to the inner panel); `--danger` and `--error` paint text, icons and one border.
 
@@ -3288,7 +3291,7 @@ Frames `9471:7235` (signed in) and `9549:27097` (logged out). The page under the
 
 ### Xlarge CTA (Creator Fund)
 
-`Button-Contained-Text-Icon` `9491:4432` and `Button-Contained-Text` `9491:4433` as the landing overrides them; the design system draws no 56px size. Code: Creator Hub, the raw ui2 `Button` styled to these values (user decision). Every EARN CTA, the 56px hero CTAs and the modal CTAs (a local `ModalCta`), is built on the raw ui2 `Button`, so its primary hover is `--primary-hover` (Figma Primary Light 1). ✱ Modals outside EARN keep `components/Button`, whose hover is `--dcl-dark`; no change is planned.
+`Button-Contained-Text-Icon` `9491:4432` and `Button-Contained-Text` `9491:4433` as the landing overrides them; the design system draws no 56px size. Code: Creator Hub, the raw ui2 `Button` styled to these values (user decision). Every EARN CTA, the 56px hero CTAs and the modal CTAs (a local `ModalCta`), is built on the raw ui2 `Button`, so its primary hover is `--primary-hover` (Figma Primary Light 1). ✱ Modals outside EARN keep `components/Button`, whose primary hover is `--primary-hover` (Primary Light 1, `20794:2384`); no change is planned.
 
 | Variant | State | Fill | Label | Size | Token | Contrast | A11y |
 | --- | --- | --- | --- | --- | --- | --- | --- |

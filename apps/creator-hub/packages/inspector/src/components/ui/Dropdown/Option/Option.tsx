@@ -4,8 +4,17 @@ import cx from 'classnames';
 import type { Props } from './types';
 import './Option.css';
 
-const Option: React.FC<Props> = props => {
+type ListOptionProps = Props & {
+  id?: string;
+  active?: boolean;
+  onMouseEnter?: React.MouseEventHandler<HTMLDivElement>;
+};
+
+const Option: React.FC<ListOptionProps> = props => {
   const {
+    id,
+    active,
+    onMouseEnter,
     className,
     description,
     disabled,
@@ -94,8 +103,18 @@ const Option: React.FC<Props> = props => {
         error: !!error,
         header: !!header,
         selected: !!selected,
+        active: !!active,
       })}
       onClick={e => handleOnClick(e, props)}
+      onMouseEnter={onMouseEnter}
+      {...(id && !header
+        ? {
+            id,
+            role: 'option',
+            'aria-selected': !!selected,
+            'aria-disabled': disabled || undefined,
+          }
+        : {})}
     >
       {header ? (
         <div className="OptionHeader">{header}</div>

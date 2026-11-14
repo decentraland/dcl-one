@@ -31,7 +31,7 @@ const StyledLabelButton = styled(Button)(({ theme }) => ({
     textTransform: 'uppercase',
     borderRadius: 0,
     backgroundColor: theme.palette.primary.main,
-    color: 'var(--text-on-primary)',
+    color: 'var(--palette-neutral-softWhite)',
     boxShadow: 'none',
     [`@media ${ICON_ONLY_QUERY}`]: {
       width: 40,
@@ -41,7 +41,7 @@ const StyledLabelButton = styled(Button)(({ theme }) => ({
     },
   },
   '&&&&&&:hover': {
-    backgroundColor: 'var(--dcl-hover)',
+    backgroundColor: 'var(--primary-hover)',
     boxShadow: 'none',
   },
   '&&&:focus-visible': focusRingInset,
@@ -74,7 +74,7 @@ const StyledToggleButton = styled(Button)(({ theme }) => ({
     boxShadow: 'none',
   },
   '&&&&&&:hover': {
-    backgroundColor: 'var(--dcl-hover)',
+    backgroundColor: 'var(--primary-hover)',
     boxShadow: 'none',
   },
   '&&&:focus-visible': focusRingInset,
