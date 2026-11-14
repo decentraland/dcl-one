@@ -1656,6 +1656,16 @@ pub struct CurrentImposterScene(pub Option<(PointerResult, bool)>);
 #[derive(Resource, Default)]
 pub struct CurrentSceneLoading(pub bool);
 
+/// A scene goes live once its nearest parcel is within this Chebyshev parcel ring of the player's
+/// parcel, whatever the load distance: at a run (11 m/s) that leaves the scene about 1.5 s before
+/// the player reaches its edge. A larger load distance widens the live area; a smaller one does
+/// not shrink it below this ring.
+pub const LIVE_RING: i32 = 1;
+
+/// A live scene is kept until its nearest parcel is past this ring and past the load distance
+/// plus the unload margin.
+pub const LIVE_KEEP_RING: i32 = 2;
+
 #[expect(clippy::type_complexity, clippy::too_many_arguments)]
 pub fn process_scene_lifecycle(
     mut commands: Commands,
@@ -1731,6 +1741,16 @@ pub fn process_scene_lifecycle(
             .map(|(h, u)| ((h, u), false)),
     );
 
+    // the scenes with a parcel within a ring of the player's parcel
+    let focus_parcel = vec3_to_parcel(focus.translation());
+    let ring_scenes = |ring: i32| {
+        let pointers = &pointers;
+        (-ring..=ring)
+            .flat_map(move |x| (-ring..=ring).map(move |y| focus_parcel + IVec2::new(x, y)))
+            .filter_map(move |parcel| pointers.get(parcel).and_then(PointerResult::hash_and_urn))
+    };
+    required_scene_ids.extend(ring_scenes(LIVE_RING).map(|(h, u)| ((h, u), false)));
+
     // add any portables to requirements. Portables are exempt from the
     // current-scene deferral below (see `retain`) so they load immediately
     // instead of queueing behind the spawn-point parcel scene at startup.
@@ -1753,15 +1773,18 @@ pub fn process_scene_lifecycle(
             .map(|(h, u)| ((h, u), false)),
     );
 
-    // record additional optional scenes
+    // record additional optional scenes: a live scene is kept until it is past the load distance
+    // plus the unload margin and past the keep ring, so stepping back and forth across either
+    // edge does not respawn it
     let mut keep_scene_ids = required_scene_ids.keys().cloned().collect::<HashSet<_>>();
     keep_scene_ids.extend(pir.iter().flat_map(|(parcel, dist)| {
-        if *dist >= range.load && *dist <= range.unload {
+        if *dist >= range.load && *dist <= range.load + range.unload {
             pointers.get(parcel).and_then(PointerResult::hash_and_urn)
         } else {
             None
         }
     }));
+    keep_scene_ids.extend(ring_scenes(LIVE_KEEP_RING));
 
     // record which scene entities we should keep
     let keep_entities: HashMap<_, _> = keep_scene_ids

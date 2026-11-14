@@ -32,7 +32,7 @@ impl AppSetting for LoadDistanceSetting {
     }
 
     fn description(&self) -> String {
-        "Scene Load Distance\n\nThe distance at which neighbouring scenes will be spawned. A scene is 16 meters, so for example a value of 64 will load 4 scenes in all directions".to_string()
+        "Scene Load Distance\n\nThe distance at which neighbouring scenes will be spawned. A parcel is 16 meters, so for example a value of 64 will load 4 parcels in all directions. Scenes on the parcels next to yours always load, whatever this value".to_string()
     }
 
     fn save(&self, config: &mut AppConfig) {

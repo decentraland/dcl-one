@@ -83,6 +83,100 @@ fn failed_current_scene_does_not_defer_other_scenes() {
     assert_eq!(spawned_hashes(&world), vec!["neighbour".to_owned()]);
 }
 
+fn spawn_live_neighbour(world: &mut World) -> Entity {
+    // the neighbour (parcel 1,0: x from 16 to 32) is live
+    let neighbour = world
+        .spawn((
+            SceneHash("neighbour".to_owned()),
+            SceneLoading::SceneSpawned,
+        ))
+        .id();
+    world
+        .resource_mut::<LiveScenes>()
+        .scenes
+        .insert("neighbour".to_owned(), neighbour);
+    neighbour
+}
+
+fn move_player(world: &mut World, x: f32) {
+    let mut users = world.query_filtered::<&mut GlobalTransform, With<PrimaryUser>>();
+    *users.single_mut(world).unwrap() = GlobalTransform::from_translation(Vec3::new(x, 0.0, -8.0));
+}
+
+#[test]
+fn live_scene_is_kept_through_the_unload_margin() {
+    let mut world = lifecycle_world();
+    // distances wider than the keep ring, so the margin alone decides
+    world.insert_resource(SceneLoadDistance {
+        load: 40.0,
+        unload: 20.0,
+        load_imposter: 0.0,
+    });
+    let neighbour = spawn_live_neighbour(&mut world);
+
+    // parcel (-2,0), ring 3: 46 m from its nearest edge, past the 40 m load distance, inside
+    // the 20 m margin
+    move_player(&mut world, -30.0);
+    world.run_system_once(process_scene_lifecycle).unwrap();
+    assert!(
+        world.get_entity(neighbour).is_ok(),
+        "a live scene inside the unload margin is kept"
+    );
+    assert!(world
+        .resource::<LiveScenes>()
+        .scenes
+        .contains_key("neighbour"));
+
+    // parcel (-4,0), ring 5: 66 m, past the margin
+    move_player(&mut world, -50.0);
+    world.run_system_once(process_scene_lifecycle).unwrap();
+    assert!(world.get_entity(neighbour).is_err());
+    assert!(!world
+        .resource::<LiveScenes>()
+        .scenes
+        .contains_key("neighbour"));
+}
+
+#[test]
+fn ring_one_goes_live_at_a_zero_load_distance() {
+    let mut world = lifecycle_world();
+    world.insert_resource(SceneLoadDistance {
+        load: 0.0,
+        unload: 0.0,
+        load_imposter: 0.0,
+    });
+    spawn_current_scene(&mut world, SceneLoading::Failed);
+
+    world.run_system_once(process_scene_lifecycle).unwrap();
+
+    assert_eq!(spawned_hashes(&world), vec!["neighbour".to_owned()]);
+}
+
+#[test]
+fn live_scene_is_kept_to_ring_two_at_a_zero_load_distance() {
+    let mut world = lifecycle_world();
+    world.insert_resource(SceneLoadDistance {
+        load: 0.0,
+        unload: 0.0,
+        load_imposter: 0.0,
+    });
+    let neighbour = spawn_live_neighbour(&mut world);
+
+    // parcel (-1,0): the neighbour is in ring 2
+    move_player(&mut world, -8.0);
+    world.run_system_once(process_scene_lifecycle).unwrap();
+    assert!(world.get_entity(neighbour).is_ok());
+
+    // parcel (-2,0): ring 3
+    move_player(&mut world, -24.0);
+    world.run_system_once(process_scene_lifecycle).unwrap();
+    assert!(world.get_entity(neighbour).is_err());
+    assert!(!world
+        .resource::<LiveScenes>()
+        .scenes
+        .contains_key("neighbour"));
+}
+
 #[test]
 fn loading_current_scene_defers_other_scenes() {
     let mut world = lifecycle_world();
