@@ -61,11 +61,14 @@
 //! `GET /api/images/{name}` redirects whether or not the object exists.
 //! With no bucket origin configured, the target is `/api/files/{name}`,
 //! which resolves exact filename aliases and checks the underlying hash's
-//! denylist. With a configured bucket origin, redirects retain the requested
-//! filename without reading the database. Point that origin at `/api/files` or
-//! configure its ingress to resolve filenames; a hash-only origin is insufficient.
-//! An external origin must enforce its own object availability; this process only
-//! controls local bytes. Filename aliases retain the photo's accepted upload MIME
+//! denylist. With a configured bucket origin (an http(s) URL without
+//! credentials, query or fragment; anything else falls back to
+//! `/api/files`), redirects retain the requested filename without reading the
+//! database, and a hash the shared denylist withholds answers 404 instead.
+//! Point that origin at `/api/files` or configure its ingress to resolve
+//! filenames; a hash-only origin is insufficient. An external origin must
+//! enforce its own object availability; this process only controls local
+//! bytes. Filename aliases retain the photo's accepted upload MIME
 //! for both objects; older rows without it and raw hash URLs sniff stored bytes.
 //! The local byte route serves complete GET responses; it
 //! does not implement byte ranges or ETag validators, and its HEAD response is 404.

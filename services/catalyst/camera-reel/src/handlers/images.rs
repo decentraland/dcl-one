@@ -10,7 +10,8 @@ use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use base64::Engine as _;
 use bytes::Bytes;
-use image::{ImageFormat, ImageReader, Limits, guess_format};
+use image::io::{Limits, Reader as ImageReader};
+use image::{ImageFormat, guess_format};
 use uuid::Uuid;
 
 use crate::db::{BlobVerdict, DeletedImage, NewImage};
@@ -152,9 +153,7 @@ pub async fn upload_image(
         .unwrap_or(0)
         >= max_images
     {
-        return Err(ApiError::MaxLimitReached(format!(
-            "you have reached the limit of {max_images} max images"
-        )));
+        return Err(max_limit_reached(max_images));
     }
 
     let metadata: Metadata = serde_json::from_slice(&metadata_bytes).map_err(|e| {
@@ -280,6 +279,12 @@ fn thumbnail_for_format(image_bytes: &[u8], format: ImageFormat) -> Result<Bytes
     Ok(Bytes::from(buffer.into_inner()))
 }
 
+fn max_limit_reached(max_images: u64) -> ApiError {
+    ApiError::MaxLimitReached(format!(
+        "you have reached the limit of {max_images} max images"
+    ))
+}
+
 /// `hash` must be `auth::hash_bytes_v1(&data)`; an existing blob with that
 /// hash is the same bytes, so it is left alone.
 async fn store_blob(storage: &Storage, hash: &str, data: Bytes) -> Result<(), StorageError> {
@@ -313,6 +318,10 @@ async fn finalize_upload(
         _ => return Err(ApiError::BadRequest("unsupported content type".to_string())),
     };
 
+    if image_file_name.is_some_and(|name| name.contains('/') || name.contains('\\')) {
+        return Err(ApiError::BadRequest("invalid file name".to_string()));
+    }
+
     // JSON uploads too are refused at the cap before the decode; the insert stays the gate.
     let max_images = state.settings.max_images_per_user;
     let owned = state
@@ -328,10 +337,6 @@ async fn finalize_upload(
     }
     let bytes = image_bytes.clone();
     let thumbnail = decode_with(&DECODES, move || thumbnail_of(&bytes, declared)).await??;
-
-    if image_file_name.is_some_and(|name| name.contains('/') || name.contains('\\')) {
-        return Err(ApiError::BadRequest("invalid file name".to_string()));
-    }
 
     let new_image = NewImage {
         id: Uuid::new_v4(),
@@ -358,11 +363,7 @@ async fn finalize_upload(
             tracing::error!("failed to store image metadata: {e}");
             ApiError::Internal("failed to store image metadata".to_string())
         })?
-        .ok_or_else(|| {
-            ApiError::MaxLimitReached(format!(
-                "you have reached the limit of {max_images} max images"
-            ))
-        })?;
+        .ok_or_else(|| max_limit_reached(max_images))?;
 
     let stored = async {
         store_blob(&state.storage, &new_image.image_hash, image_bytes)
@@ -725,11 +726,17 @@ pub async fn get_image(
     if image_id.is_empty() || image_id.bytes().any(|b| b.is_ascii_control()) {
         return Err(ApiError::NotFound("image not found".to_string()));
     }
+    // A hash this node withholds (rejected, deleted or denied) is never sent
+    // to an origin that may still hold a copy; the in-memory denylist needs
+    // no database.
+    if state.storage.withholds(&image_id) {
+        return Err(ApiError::NotFound("image not found".to_string()));
+    }
     let bucket_url = state
         .settings
         .bucket_url
         .as_deref()
-        .and_then(|value| reqwest::Url::parse(value).ok())
+        .and_then(|value| url::Url::parse(value).ok())
         .filter(|url| {
             matches!(url.scheme(), "http" | "https")
                 && url.host_str().is_some()
@@ -737,7 +744,6 @@ pub async fn get_image(
                 && url.password().is_none()
                 && url.query().is_none()
                 && url.fragment().is_none()
-                && url.path().trim_end_matches('/') == "/api/files"
         })
         .map(|url| url.to_string().trim_end_matches('/').to_owned());
     let location = match bucket_url {

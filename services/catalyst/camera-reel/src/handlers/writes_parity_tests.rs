@@ -111,7 +111,7 @@ async fn upload_rejects_path_separators_in_the_original_filename() {
 }
 
 #[tokio::test]
-async fn upload_requires_metadata_address_to_match_signer_spelling() {
+async fn upload_requires_metadata_address_to_be_the_signer_in_any_case() {
     let pool = sqlx::postgres::PgPoolOptions::new()
         .acquire_timeout(Duration::from_millis(20))
         .connect_lazy("postgres://unused:unused@127.0.0.1/unused")
@@ -123,7 +123,7 @@ async fn upload_requires_metadata_address_to_match_signer_spelling() {
         png(),
         Some("image/png".into()),
         Some("shot.png"),
-        metadata("0xABC", None),
+        metadata("0xDEF", None),
         false,
     )
     .await
@@ -131,6 +131,20 @@ async fn upload_requires_metadata_address_to_match_signer_spelling() {
     assert!(
         matches!(error, ApiError::BadRequest(ref message) if message == "invalid user address")
     );
+    // The same address in another case passes the check and reaches the
+    // (closed) database.
+    let error = finalize_upload(
+        &state,
+        "0xabc",
+        png(),
+        Some("image/png".into()),
+        Some("shot.png"),
+        metadata("0xABC", None),
+        false,
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(error, ApiError::Internal(_)), "{error:?}");
     tokio::fs::remove_dir_all(dir).await.unwrap();
 }
 
@@ -262,14 +276,14 @@ async fn camera_auth_accepts_current_and_legacy_raw_metadata_without_a_scene_gat
 }
 
 #[tokio::test]
-async fn camera_auth_requires_metadata_and_uses_a_one_minute_one_sided_expiry() {
+async fn camera_auth_requires_metadata_and_bounds_the_timestamp_to_a_minute_either_side() {
     let pool = sqlx::postgres::PgPoolOptions::new()
         .acquire_timeout(Duration::from_millis(20))
         .connect_lazy("postgres://unused:unused@127.0.0.1/unused")
         .unwrap();
     let (state, dir) = state(pool).await;
     let path = crate::SignedPath::local("/api/images");
-    for (offset_ms, accepted) in [(-120_000, false), (86_400_000, true)] {
+    for (offset_ms, accepted) in [(-120_000, false), (30_000, true), (86_400_000, false)] {
         let timestamp = (chrono::Utc::now().timestamp_millis() + offset_ms).to_string();
         let (headers, _) = headers("{}", &timestamp, false, "post", "/api/images").await;
         assert_eq!(

@@ -136,12 +136,12 @@ async fn user_counts_validate_gallery_query_before_touching_the_database() {
 }
 
 #[tokio::test]
-async fn private_gallery_requires_the_canonical_owner_address_in_the_path() {
+async fn private_gallery_matches_the_owner_address_in_the_path_in_any_case() {
     let (state, directory) = closed_state().await;
     let signer = PrivateKeySigner::random();
     let address = format!("{:#x}", signer.address());
     for (requested_address, public_only) in
-        [(address.clone(), false), (address.to_uppercase(), true)]
+        [(address.clone(), false), (address.to_uppercase(), false)]
     {
         let local_path = format!("/api/users/{requested_address}/images");
         let path = signed_path(&local_path.parse().unwrap(), local_path.clone());

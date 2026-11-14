@@ -40,7 +40,7 @@ async fn image_urls_redirect_without_a_database_or_existing_object() {
             assert_eq!(status, StatusCode::TEMPORARY_REDIRECT);
             assert!(body.is_empty());
             let target = match bucket {
-                Some(bucket) => format!("{bucket}/{decoded}"),
+                Some(bucket) => format!("{}/{decoded}", bucket.trim_end_matches('/')),
                 None => format!("{API_URL}/api/files/{decoded}"),
             };
             assert_eq!(headers[header::LOCATION].as_bytes(), target.as_bytes());
@@ -715,7 +715,7 @@ fn configured_api_base_and_filename_are_literal_wire_values() {
 }
 
 #[tokio::test]
-async fn each_photo_alias_retains_its_claimed_mime_even_for_shared_bytes() {
+async fn a_photo_alias_retains_its_mime_and_bytes_of_another_format_are_refused() {
     let mut settings = Settings::new(API_URL);
     settings.writes_enabled = true;
     let Some(mut s) = scratch(settings).await else {
@@ -736,6 +736,12 @@ async fn each_photo_alias_retains_its_claimed_mime_even_for_shared_bytes() {
             Some((form, &mime)),
         )
         .await;
+        if claimed == "image/jpeg" {
+            // The signature must match the declared MIME (ADR camera service compatibility).
+            assert_eq!(status, StatusCode::BAD_REQUEST);
+            assert_eq!(json_of(&body), json!({ "message": "invalid image format" }));
+            continue;
+        }
         assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
         let uploaded = json_of(&body);
         let id = uploaded["image"]["id"].as_str().unwrap().to_owned();
@@ -744,8 +750,8 @@ async fn each_photo_alias_retains_its_claimed_mime_even_for_shared_bytes() {
         s.hash(&row.thumbnail_hash);
         photos.push((id, row.image_hash, row.thumbnail_hash, claimed));
     }
-    assert_eq!(photos[0].1, photos[1].1);
-    assert_eq!(photos[0].2, photos[1].2);
+    assert_eq!(photos.len(), 1);
+    assert_eq!(s.count(&owner).await, 1);
     for (id, _, _, claimed) in &photos {
         let retained: Option<String> =
             sqlx::query_scalar("SELECT image_content_type FROM camera_reel.images WHERE id=$1")
@@ -833,7 +839,14 @@ async fn content_type_migration_preserves_legacy_rows_and_retained_metadata() {
         .execute(s.db().pool())
         .await
         .unwrap();
-    sqlx::raw_sql(MIGRATION)
+    // Reapplied as `catalyst schema migrate` does: a constraint that exists
+    // is skipped, the rest of the step is idempotent as written.
+    let reapplied: String = MIGRATION
+        .lines()
+        .filter(|line| !line.contains("ADD CONSTRAINT"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    sqlx::raw_sql(sqlx::AssertSqlSafe(reapplied))
         .execute(s.db().pool())
         .await
         .unwrap();

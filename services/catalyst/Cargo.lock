@@ -1672,6 +1672,7 @@ dependencies = [
  "tower",
  "tracing",
  "ts-rs",
+ "url",
  "uuid",
 ]
 

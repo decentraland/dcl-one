@@ -31,9 +31,7 @@ use std::time::Duration;
 #[cfg(test)]
 use serde::Serialize;
 use serde_json::{Value, json};
-#[cfg(test)]
-use sqlx::PgExecutor;
-use sqlx::PgPool;
+use sqlx::{PgExecutor, PgPool};
 use uuid::Uuid;
 
 use crate::dto::Metadata;
