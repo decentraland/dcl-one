@@ -27,6 +27,9 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 const KILL_GRACE_PERIOD: std::time::Duration = std::time::Duration::from_secs(5);
 
 fn main() -> Result<()> {
+    // before anything can start a thread; see `init_runtime`
+    dcl_deno::init_runtime();
+
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::try_from_default_env().unwrap_or(EnvFilter::new("info")))
         .init();
@@ -47,9 +50,6 @@ fn main() -> Result<()> {
     let stream = rt.block_on(async move { Stream::connect(name).await.unwrap() });
 
     let (recv_half, send_half) = stream.split();
-
-    // init engine
-    dcl_deno::init_runtime();
 
     // init context
     let (close_sx, close_rx) = tokio::sync::mpsc::unbounded_channel();

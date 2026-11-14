@@ -40,9 +40,12 @@ pub fn terminate_scene(scene_id: SceneId) {
     }
 }
 
-/// must be called from main thread on linux before any isolates are created
+/// Initializes V8 on its protected platform. Call once from the sidecar's main thread before any
+/// scene thread exists: with Linux memory protection keys, every thread that runs an isolate must
+/// descend from the thread that initialized the platform.
 pub fn init_runtime() {
-    let _ = deno_core::v8::Platform::new(1, false);
+    // import assertions off, as `RuntimeOptions::default()` leaves them
+    deno_core::JsRuntime::init_platform(None, false);
 }
 
 #[allow(clippy::too_many_arguments)]
