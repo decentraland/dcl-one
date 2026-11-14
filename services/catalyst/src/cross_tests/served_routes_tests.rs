@@ -308,7 +308,10 @@ impl Rig {
 
     async fn get(&self, module: &str, mount: &str, path: &str) -> (StatusCode, Bytes) {
         let mut response = self.request(module, mount, path).await;
+        // A hash the denylist withholds answers 404 without a redirect; any
+        // other image name redirects to the protected byte route.
         if module == "camera_reel"
+            && response.status() != StatusCode::NOT_FOUND
             && let Some(name) = path
                 .strip_prefix(&format!("{mount}/api/images/"))
                 .filter(|name| !name.contains('/'))

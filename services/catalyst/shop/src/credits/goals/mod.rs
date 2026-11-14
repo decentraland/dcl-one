@@ -174,7 +174,12 @@ pub async fn process_batch(state: &SharedState, limit: i64) -> Result<u64, ApiEr
     let select = |after, horizon| {
         sqlx::query_scalar::<_,i64>("SELECT e.id FROM camera_reel.photo_events e WHERE e.id>$2 AND e.id<=$3 AND e.kind='photo-taken' AND NOT EXISTS(SELECT 1 FROM credits.photo_goal_receipts r WHERE r.photo_id=e.photo_id) ORDER BY e.id LIMIT $1").bind(limit).bind(after).bind(horizon).fetch_all(&state.credits.pool)
     };
-    if horizon == 0 && current_horizon > after {
+    if horizon == 0 && state.goal_scan_retry.swap(false, Ordering::Relaxed) {
+        // Retry the events a previous round failed, even while new photos
+        // keep arriving above the cursor.
+        after = 0;
+        horizon = current_horizon;
+    } else if horizon == 0 && current_horizon > after {
         horizon = current_horizon;
     } else if horizon == 0 {
         let now_ms = chrono::Utc::now().timestamp_millis();
@@ -200,27 +205,21 @@ pub async fn process_batch(state: &SharedState, limit: i64) -> Result<u64, ApiEr
     let round_complete = ids.len() < limit as usize || ids.last().is_some_and(|id| *id >= horizon);
     let mut processed = 0;
     let mut error = None;
-    let mut retry_after = None;
+    // A failed event keeps no receipt and is retried by the next round; the
+    // cursor moves past it so later photos are never starved.
     for id in ids {
         match process_event(state, id, super::store::now()).await {
-            Ok(applied) => {
-                processed += u64::from(applied);
-                after = id;
-                state.goal_scan_after.store(after, Ordering::Relaxed);
-            }
+            Ok(applied) => processed += u64::from(applied),
             Err(e) => {
                 tracing::warn!(event_id=id,error=%e,"photo goal event remains retryable");
-                retry_after = Some(retry_after.map_or(id.saturating_sub(1), |cursor: i64| {
-                    cursor.min(id.saturating_sub(1))
-                }));
+                state.goal_scan_retry.store(true, Ordering::Relaxed);
                 error = Some(e);
             }
         }
+        after = id;
+        state.goal_scan_after.store(after, Ordering::Relaxed);
     }
-    if let Some(cursor) = retry_after {
-        state.goal_scan_after.store(cursor, Ordering::Relaxed);
-    }
-    if round_complete && error.is_none() {
+    if round_complete {
         state.goal_scan_after.store(horizon, Ordering::Relaxed);
         state.goal_scan_horizon.store(0, Ordering::Relaxed);
         state
@@ -251,7 +250,9 @@ async fn process_event(state: &SharedState, id: i64, now: NaiveDateTime) -> Resu
     {
         return Ok(false);
     }
-    let occurred_at: NaiveDateTime = event.get("created_at");
+    let occurred_at: NaiveDateTime = event
+        .get::<chrono::DateTime<chrono::Utc>, _>("created_at")
+        .naive_utc();
     let season = current(&mut tx, occurred_at).await?;
     let mut outcome = if season.is_none() {
         Some("no-season")

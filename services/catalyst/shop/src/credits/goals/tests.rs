@@ -247,6 +247,12 @@ async fn completion_rolls_back_without_signer_and_late_commits_are_not_skipped()
     assert_eq!(process_batch(&signed, 100).await.unwrap(), 1);
     late.commit().await.unwrap();
     assert!(older < newer);
+    // The late commit sits behind the cursor; the next reconcile round, five
+    // minutes after the last one, picks it up.
+    assert_eq!(process_batch(&signed, 100).await.unwrap(), 0);
+    signed
+        .goal_scan_reconcile_at_ms
+        .store(0, std::sync::atomic::Ordering::Relaxed);
     assert_eq!(process_batch(&signed, 100).await.unwrap(), 1);
     assert_eq!(process_batch(&signed, 100).await.unwrap(), 0);
     assert_eq!(
@@ -585,6 +591,13 @@ async fn season_cap_and_expired_grants_use_exact_wei_and_signed_expiry() {
         .await
         .unwrap();
     let id = photo(&db.pool, OWNER).await;
+    // The season and week come from the photo's time, not the processing time.
+    sqlx::query("UPDATE camera_reel.photo_events SET created_at=$2 WHERE id=$1")
+        .bind(id)
+        .bind((now - TimeDelta::days(20)).and_utc())
+        .execute(&db.pool)
+        .await
+        .unwrap();
     process_event(&state, id, now - TimeDelta::days(20))
         .await
         .unwrap();
@@ -1228,23 +1241,27 @@ async fn backlog_diagnostic_failure_does_not_fail_committed_processing_or_retry_
     seed(&db.pool, 1, "1000000000000000000", "1000000000000000000000").await;
     let state = fixture_state(db.pool.clone(), true);
     photo(&db.pool, OWNER).await;
-    // Processing does not need this column; only the optional oldest-age query
-    // fails. Keep the table and payload available to the real consumer.
-    sqlx::query("ALTER TABLE camera_reel.photo_events RENAME COLUMN created_at TO diagnostic_test_created_at")
-        .execute(&db.pool).await.unwrap();
-    let timer = parking_lot::Mutex::new(None);
-    let (processed, sample) = process_pass(&state, &timer).await.unwrap();
-    assert_eq!(processed, 1);
-    assert!(
-        sample.is_none(),
-        "a failed query cannot invent an oldest age"
-    );
+    assert_eq!(process_batch(&state, 100).await.unwrap(), 1);
     assert_eq!(
         count(&db.pool, "SELECT count(*) FROM credits.goal_grants").await,
         1
     );
-    sqlx::query("ALTER TABLE camera_reel.photo_events RENAME COLUMN diagnostic_test_created_at TO created_at")
-        .execute(&db.pool).await.unwrap();
+
+    // With nothing new to process the pass leaves the receipts alone; the
+    // oldest-age query needs them and times out behind this lock.
+    let mut blocker = db.pool.begin().await.unwrap();
+    sqlx::query("LOCK TABLE credits.photo_goal_receipts IN ACCESS EXCLUSIVE MODE")
+        .execute(&mut *blocker)
+        .await
+        .unwrap();
+    let timer = parking_lot::Mutex::new(None);
+    let (processed, sample) = process_pass(&state, &timer).await.unwrap();
+    assert_eq!(processed, 0);
+    assert!(
+        sample.is_none(),
+        "a failed query cannot invent an oldest age"
+    );
+    blocker.rollback().await.unwrap();
 
     photo(&db.pool, OTHER).await;
     let (processed, sample) = process_pass(&state, &timer).await.unwrap();

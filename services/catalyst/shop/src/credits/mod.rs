@@ -642,6 +642,9 @@ pub struct State {
     /// Fixed upper bound for the current round, so arrivals cannot postpone retries.
     pub(crate) goal_scan_horizon: std::sync::atomic::AtomicI64,
     pub(crate) goal_scan_reconcile_at_ms: std::sync::atomic::AtomicI64,
+    /// An event failed since the last round started: the next round starts
+    /// from the beginning without waiting for the reconcile interval.
+    pub(crate) goal_scan_retry: std::sync::atomic::AtomicBool,
 }
 
 pub type SharedState = Arc<State>;
@@ -742,6 +745,7 @@ impl State {
             goal_scan_after: std::sync::atomic::AtomicI64::new(0),
             goal_scan_horizon: std::sync::atomic::AtomicI64::new(0),
             goal_scan_reconcile_at_ms: std::sync::atomic::AtomicI64::new(0),
+            goal_scan_retry: std::sync::atomic::AtomicBool::new(false),
             credits,
             usage,
             pricing,
