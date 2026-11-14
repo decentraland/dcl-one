@@ -18,10 +18,11 @@ use system_bridge::{
     BlockingStatusData, ChatMessage, ChatReactionData, CommunityMemberConnectivityData,
     CommunityVoiceUpdate, ConnectivitySnapshot, DmHistoryEntryData, DmUserStateData,
     FriendConnectivityEvent, FriendData, FriendRequestData, FriendStatusData,
-    FriendshipEventUpdate, HomeScene, HoverEvent, LiveSceneInfo, PermanentPermissionItem,
-    PermissionRequestEvent, PhotoModeState, PortableInfo, ProfileChangedEvent, ProximityEvent,
-    SatelliteView, SceneLoadingUi, SetAvatarData, SetPermanentPermission, SetSinglePermission,
-    SystemApi, VoiceChatAction, VoiceChatState, VoiceMessage, WelcomeState, WorldAccessEvent,
+    FriendshipEventUpdate, HomeScene, HoverEvent, LiveSceneInfo, OutfitThumbnailData, OutfitsData,
+    PermanentPermissionItem, PermissionRequestEvent, PhotoModeState, PortableInfo,
+    ProfileChangedEvent, ProximityEvent, SatelliteView, SceneLoadingUi, SetAvatarData,
+    SetPermanentPermission, SetSinglePermission, SystemApi, VoiceChatAction, VoiceChatState,
+    VoiceMessage, WelcomeState, WorldAccessEvent,
 };
 use tokio::sync::Notify;
 
@@ -241,6 +242,44 @@ pub async fn op_set_avatar(
         .send(SystemApi::SetAvatar(avatar, sx))?;
 
     rx.await?.map_err(|e| anyhow::anyhow!(e))
+}
+
+pub async fn op_deploy_outfits(
+    state: Rc<RefCell<impl State>>,
+    address: String,
+    outfits: OutfitsData,
+) -> Result<(), anyhow::Error> {
+    let (sx, rx) = RpcResultSender::channel();
+    state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::DeployOutfits(address, outfits, sx))?;
+    rx.await?.map_err(|e| anyhow::anyhow!(e))
+}
+
+pub async fn op_get_outfit_thumbnails(
+    state: Rc<RefCell<impl State>>,
+    address: String,
+) -> Result<Vec<OutfitThumbnailData>, anyhow::Error> {
+    let (sx, rx) = RpcResultSender::channel();
+    state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::GetOutfitThumbnails(address, sx))?;
+    rx.await.map_err(|e| anyhow::anyhow!(e))
+}
+
+pub fn op_set_outfit_thumbnail(
+    state: Rc<RefCell<impl State>>,
+    address: String,
+    slot: u32,
+    thumbnail: Option<String>,
+) {
+    // a closed channel means the engine is shutting down
+    let _ = state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::SetOutfitThumbnail(address, slot, thumbnail));
 }
 
 pub async fn op_native_input(state: Rc<RefCell<impl State>>) -> String {

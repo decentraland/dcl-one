@@ -12,10 +12,10 @@ use system_bridge::{
     BlockingStatusData, ChatMessage, ChatReactionData, CommunityMemberConnectivityData,
     CommunityVoiceUpdate, ConnectivitySnapshot, DmHistoryEntryData, DmUserStateData,
     FriendConnectivityEvent, FriendData, FriendRequestData, FriendStatusData,
-    FriendshipEventUpdate, HomeScene, HoverEvent, LiveSceneInfo, PermanentPermissionItem,
-    PermissionRequestEvent, PhotoModeState, PortableInfo, ProfileChangedEvent, ProximityEvent,
-    SatelliteView, SceneLoadingUi, SetAvatarData, VoiceChatAction, VoiceChatState, VoiceMessage,
-    WelcomeState, WorldAccessEvent,
+    FriendshipEventUpdate, HomeScene, HoverEvent, LiveSceneInfo, OutfitThumbnailData, OutfitsData,
+    PermanentPermissionItem, PermissionRequestEvent, PhotoModeState, PortableInfo,
+    ProfileChangedEvent, ProximityEvent, SatelliteView, SceneLoadingUi, SetAvatarData,
+    VoiceChatAction, VoiceChatState, VoiceMessage, WelcomeState, WorldAccessEvent,
 };
 
 // list of op declarations
@@ -36,6 +36,9 @@ pub fn ops(super_user: bool) -> Vec<OpDecl> {
             op_set_setting(),
             op_kernel_fetch_headers(),
             op_set_avatar(),
+            op_deploy_outfits(),
+            op_get_outfit_thumbnails(),
+            op_set_outfit_thumbnail(),
             op_native_input(),
             op_get_bindings(),
             op_set_bindings(),
@@ -960,8 +963,36 @@ pub async fn op_read_block_update_stream(
 }
 
 #[op2(async)]
+pub async fn op_deploy_outfits(
+    state: Rc<RefCell<OpState>>,
+    #[string] address: String,
+    #[serde] outfits: OutfitsData,
+) -> Result<(), anyhow::Error> {
+    dcl_js::system_api::op_deploy_outfits(state, address, outfits).await
+}
+
+#[op2(async)]
 pub async fn op_get_portables_stream(state: Rc<RefCell<OpState>>) -> u32 {
     dcl_js::system_api::op_get_portables_stream(state).await
+}
+
+#[op2(async)]
+#[serde]
+pub async fn op_get_outfit_thumbnails(
+    state: Rc<RefCell<OpState>>,
+    #[string] address: String,
+) -> Result<Vec<OutfitThumbnailData>, anyhow::Error> {
+    dcl_js::system_api::op_get_outfit_thumbnails(state, address).await
+}
+
+#[op2]
+pub fn op_set_outfit_thumbnail(
+    state: Rc<RefCell<OpState>>,
+    #[string] address: String,
+    #[smi] slot: u32,
+    #[string] thumbnail: Option<String>,
+) {
+    dcl_js::system_api::op_set_outfit_thumbnail(state, address, slot, thumbnail)
 }
 
 #[op2(async)]

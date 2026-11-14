@@ -746,6 +746,16 @@
   gap: 28px;
   width: 1308px;
 }
+.outfitError {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  margin: 12px 0 0;
+  color: var(--error-text);
+  font-size: var(--type-16);
+  text-align: center;
+}
 .outfitRow {
   display: flex;
   justify-content: center;

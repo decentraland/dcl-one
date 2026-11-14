@@ -771,6 +771,8 @@ export interface GetOwnedNamesRequest {
 export interface OwnedNamesMessage {
   kind: 'ownedNames'
   names: string[]
+  /** The lookup failed, so `names` is empty but not known to be. */
+  failed?: boolean
 }
 
 /** Mirrors the engine's BaseNotification (metadata varies by type). */
@@ -1916,9 +1918,8 @@ export interface RGBColor {
   b: number
 }
 
-/** A saved avatar look (backpack Outfits tab). The shape mirrors the catalyst `outfits` entity's
- *  per-slot outfit so a saved look can later be deployed unchanged (Phase 2); Phase 1 persists
- *  these locally (localStorage in the bridge scene). */
+/** A saved avatar look (backpack Outfits tab): one slot of the player's catalyst `outfits`
+ *  entity, which the bridge scene has the engine deploy (a guest's last for the session). */
 export interface Outfit {
   bodyShape: string
   eyes: { color: RGBColor }
@@ -1945,6 +1946,14 @@ export interface OutfitsMetadata {
 export interface OutfitsMessage {
   kind: 'outfits'
   metadata: OutfitsMetadata
+}
+
+/** A save or delete of a saved outfit was refused, so the outfits stay as they were (scene → page). */
+export interface OutfitSaveFailedMessage {
+  kind: 'outfitSaveFailed'
+  slot: number
+  action: 'save' | 'delete'
+  message: string
 }
 
 export interface GetOutfitsRequest {
@@ -2233,6 +2242,7 @@ export type SceneToPage =
   | WearablesMessage
   | CatalogPageMessage
   | OutfitsMessage
+  | OutfitSaveFailedMessage
   | OutfitHistoryMessage
   | CommunitiesMessage
   | CommunityBrowseMessage

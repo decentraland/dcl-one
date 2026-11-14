@@ -1,4 +1,5 @@
 pub mod name_color;
+pub mod outfits;
 
 use std::{io::Read, path::PathBuf, sync::Arc};
 
@@ -67,7 +68,15 @@ impl Plugin for UserProfilePlugin {
             )
                 .before(process_transport_updates), // .in_set(TODO)
         );
-        app.add_systems(Update, (pipe_profile_changes_to_scene, process_profile));
+        app.add_systems(
+            Update,
+            (
+                pipe_profile_changes_to_scene,
+                process_profile,
+                outfits::process_outfits,
+            ),
+        );
+        app.init_resource::<outfits::OutfitsState>();
 
         // a server has no real local player: never insert/announce/deploy the fake
         // player's profile or write PLAYER identity into scene crdts
@@ -96,6 +105,8 @@ impl Plugin for UserProfilePlugin {
                     ("Own profile version", "ownVersion"),
                     ("Version other players see", "peerVersion"),
                     ("Own profile deploy pending", "deployPending"),
+                    ("Outfits deploys in flight", "outfitsInFlight"),
+                    ("Last outfits deploy", "lastOutfitsDeploy"),
                 ],
                 actions: &[],
                 inputs: &[],
@@ -344,13 +355,20 @@ fn profile_requests(
     mut input: ConsoleCommand<ProfileRequestsCommand>,
     cache: Res<ProfileCache>,
     current: Res<CurrentUserProfile>,
+    outfits: Res<outfits::OutfitsState>,
 ) {
     if let Some(Ok(_)) = input.take() {
         let counts = &cache.requests;
+        let last_outfits_deploy = outfits.last_deploy.as_ref().map(|result| match result {
+            Ok(()) => "ok".to_owned(),
+            Err(e) => format!("failed: {e}"),
+        });
         let posts = counts.single + counts.aggregated;
         input.reply_ok(serde_json::json!({"posts": posts, "single": counts.single, "aggregated": counts.aggregated,
             "lastBatch": counts.last_batch, "meanBatch": (posts > 0).then(|| counts.addresses as f64 / posts as f64),
-            "unavailable": {"meanBatch": "No profile requests yet", "ownVersion": "Not signed in", "peerVersion": "Not signed in"},
+            "unavailable": {"meanBatch": "No profile requests yet", "ownVersion": "Not signed in", "peerVersion": "Not signed in",
+                "lastOutfitsDeploy": "No outfits deployed yet"},
+            "outfitsInFlight": outfits.deploys_in_flight(), "lastOutfitsDeploy": last_outfits_deploy,
             "compact": counts.compact, "compactSource": compact_source(&lambdas_url()),
             "compactUnsupported": cache.compact_unsupported,
             "inFlight": cache.batches.len() + cache.compact_batches.len(),
@@ -1436,33 +1454,51 @@ async fn deploy_profile(
     wallet: Wallet,
     mut profile: UserProfile,
 ) -> Result<(), anyhow::Error> {
+    profile.content.avatar.snapshots = None;
+    let pointer = profile.content.eth_address.clone();
+    deploy_entity(
+        ipfs,
+        wallet,
+        "profile",
+        pointer,
+        serde_json::json!({
+            "avatars": [
+                profile.content
+            ]
+        }),
+    )
+    .await
+}
+
+/// Signs and deploys a file-less entity of type `ty` on `pointer` to the realm's catalyst.
+pub(crate) async fn deploy_entity(
+    ipfs: Arc<IpfsIo>,
+    wallet: Wallet,
+    ty: &'static str,
+    pointer: String,
+    metadata: serde_json::Value,
+) -> Result<(), anyhow::Error> {
     let unix_time = web_time::SystemTime::now()
         .duration_since(web_time::UNIX_EPOCH)
         .unwrap()
         .as_millis();
 
-    profile.content.avatar.snapshots = None;
-
     let deployment = serde_json::to_string(&Deployment {
         version: "v3",
-        ty: "profile",
-        pointers: vec![profile.content.eth_address.clone()],
+        ty,
+        pointers: vec![pointer],
         timestamp: unix_time,
-        metadata: serde_json::json!({
-            "avatars": [
-                profile.content
-            ]
-        }),
+        metadata,
     })?;
 
     let post = {
         let hash = multihash_codetable::Code::Sha2_256.digest(deployment.as_bytes());
         let cid = cid::Cid::new_v1(0x55, hash).to_string();
-        let profile_chain = wallet.sign_message(cid.clone()).await?;
+        let chain = wallet.sign_message(cid.clone()).await?;
 
         let mut form_data = multipart::client::lazy::Multipart::new();
         form_data.add_text("entityId", cid.clone());
-        for (key, data) in profile_chain.formdata() {
+        for (key, data) in chain.formdata() {
             form_data.add_text(key, data);
         }
         form_data.add_stream(
@@ -1479,7 +1515,7 @@ async fn deploy_profile(
         let url = ipfs
             .entities_endpoint()
             .ok_or_else(|| anyhow!("no entities endpoint"))?;
-        debug!("deploying to {url}");
+        debug!("deploying {ty} to {url}");
 
         ipfs.client()
             .post(url)
@@ -1529,7 +1565,7 @@ async fn send_deployment(
     match (delay, again) {
         (Some(delay), Some(again)) => {
             warn!(
-                "the catalyst refused the profile deployment for now ({}): sending it again in {delay:?}",
+                "the catalyst refused the deployment for now ({}): sending it again in {delay:?}",
                 response.status()
             );
             async_std::task::sleep(delay).await;
