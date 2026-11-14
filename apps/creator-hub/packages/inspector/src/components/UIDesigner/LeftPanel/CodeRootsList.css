@@ -23,7 +23,6 @@
 }
 
 .ui-designer-code-root-row > svg {
-  color: var(--ui-designer-glyph);
   flex-shrink: 0;
 }
 
@@ -80,7 +79,6 @@
 }
 
 .ui-designer-mobile-hud-row svg {
-  color: var(--ui-designer-glyph);
   flex-shrink: 0;
 }
 

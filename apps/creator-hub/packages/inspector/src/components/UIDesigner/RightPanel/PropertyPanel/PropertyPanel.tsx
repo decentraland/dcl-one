@@ -5,13 +5,11 @@ import { useRef } from 'react';
 import { useState } from 'react';
 import { AiOutlinePlus } from 'react-icons/ai';
 import { IoClose } from 'react-icons/io5';
-import { IoCubeOutline } from 'react-icons/io5';
 import { IoOptionsOutline } from 'react-icons/io5';
 import { IoPhoneLandscapeOutline } from 'react-icons/io5';
 import { IoWarningOutline } from 'react-icons/io5';
 import cx from 'classnames';
 import type { Entity } from '@dcl/ecs';
-import { classifyNode } from '../../shared/tree-model';
 import { DesktopIcon, EyeIcon, EyeOffIcon, TrashIcon } from '../../icons';
 import { codeComponentValueForLayer } from '../../code/store';
 import { addPlatformVariant } from '../../code/store';
@@ -20,7 +18,7 @@ import { addInteractionLayer } from '../../code/store';
 import { analytics, Event } from '../../../../lib/logic/analytics';
 import { YGD_NONE } from '../../../../lib/sdk/ui-transform-constants';
 import { YGD_FLEX } from '../../../../lib/sdk/ui-transform-constants';
-import { WIDGET_ICONS } from '../../shared/widget-catalog';
+import { NodeIcon } from '../../shared/widget-catalog';
 import type { UiScreenInset } from '../../code/aggregator';
 import type { UINodeType } from '../../shared/tree-model';
 import { Pill } from '../../../ui/Pill';
@@ -28,6 +26,7 @@ import { Modal } from '../../../Modal';
 import type { InteractionStateKey } from '../../code/interaction-convention';
 import { INTERACTION_STATES } from '../../code/interaction-convention';
 import { EmptyState } from '../../EmptyState';
+import { Prefab } from '../../../Icons/figma';
 import { Dropdown } from '../../../ui';
 import type { DeviceKind } from '../../shared/safe-areas';
 import { Container } from '../../../Container';
@@ -56,7 +55,6 @@ import { setInteractionLayer } from '../../../../redux/ui-designer';
 import { setNodeHidden } from '../../../../redux/ui-designer';
 import { setPlatform } from '../../../../redux/ui-designer';
 import { setRootScreenInset } from '../../code/store';
-import { soleComponentRef } from '../../shared/tree-model';
 import { spliceComponentPatch } from '../../code/store';
 import { useAppDispatch } from '../../../../redux/hooks';
 import { useAppSelector } from '../../../../redux/hooks';
@@ -424,10 +422,11 @@ const PanelHeader: React.FC<{ node: CodeUINode; hidden: boolean; onToggle: () =>
     >
       {node.opaque ? (
         <IoWarningOutline />
-      ) : node.componentRef || soleComponentRef(node) ? (
-        <IoCubeOutline />
       ) : (
-        WIDGET_ICONS[classifyNode(node)]
+        <NodeIcon
+          node={node}
+          fontSize="inherit"
+        />
       )}
     </span>
     <span className="ui-designer-panel-header-name">{nodeLabelText(node)}</span>
@@ -618,7 +617,12 @@ const PropertyPanelComponent: React.FC = () => {
   if (codeNode?.componentRef) {
     return (
       <EmptyState
-        icon={<IoCubeOutline />}
+        icon={
+          <Prefab
+            fontSize="inherit"
+            className="ui-designer-component-ref-glyph"
+          />
+        }
         title={codeNode.componentRef.name ?? 'Component'}
       />
     );
