@@ -339,6 +339,8 @@ jobs:
         env:
           DCL_WEB_DRIVER_REQUIRE_CHROME: '1'
         run: node --test local-harness/web-driver/driver.test.mjs
+      - name: Test scene information
+        run: node --test crates/dcl_js/src/modules/Scene.test.cjs
       - name: Test scene signed fetch
         run: node --test crates/dcl_js/src/modules/SignedFetch.test.cjs
       - name: Test scene topic messaging
