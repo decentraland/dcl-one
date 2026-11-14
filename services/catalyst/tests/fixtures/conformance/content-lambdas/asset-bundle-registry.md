@@ -88,9 +88,9 @@ answers the entity reads `[]` and the other reads `503`.
 | GET | `/entities/status` (signed fetch) | mixed: per deployer | ABR host | `services/catalyst/explore/src/api/registry.rs:79`, forwarded (identity headers to the local runtime only) | GAP (AB-7) |
 | GET | `/queues/status` | AB only | ABR host | `services/catalyst/explore/src/api/registry.rs:83`, forwarded | out of parity scope |
 | GET | `/worlds/:worldName/manifest` | content | ABR host | `services/catalyst/explore/src/api/registry.rs:81`, forwarded | GAP (AB-8) |
-| POST | `/profiles` | content | ABR host | `services/catalyst/shop/src/market/profiles/registry.rs:39`, the node's profiles | DIVERGENT (AB-1, AB-3) |
-| POST | `/profiles/metadata` | content | ABR host | `services/catalyst/shop/src/market/profiles/registry.rs:40`, the node's profiles; `/lambdas/profiles/metadata` serves the same projection (`services/catalyst/shop/src/market/mod.rs:969`) | DIVERGENT (AB-1, AB-3) |
-| GET | `/denylist` | content (moderation list) | ABR host | `services/catalyst/explore/src/api/registry.rs:82`, forwarded; the gateway's root `/denylist` alias points there (`infra/gateway/root-aliases.nix:497-504`) | GAP (AB-9) |
+| POST | `/profiles` | content | ABR host | `services/catalyst/shop/src/market/profiles/registry.rs:45`, the node's profiles | DIVERGENT (AB-2) |
+| POST | `/profiles/metadata` | content | ABR host | `services/catalyst/shop/src/market/profiles/registry.rs:46`, the node's profiles; `/lambdas/profiles/metadata` serves the same projection (`services/catalyst/shop/src/market/mod.rs:969`) | DIVERGENT (AB-1) |
+| GET | `/denylist` | content (moderation list) | ABR host | `services/catalyst/explore/src/api/registry.rs:86`, the Registry source's list merged with the node's `content.denylist` rows; the gateway's root `/denylist` alias points there (`infra/gateway/root-aliases.nix:497-504`) | MATCH (AB-9) |
 | POST | `/denylist/:entityId` (signed fetch, moderators) | ABR admin | ABR host | none; the operator console reaches abgen (`services/catalyst/src/ops/admin/create.rs:546`) and edits `content.denylist` (`services/catalyst/src/ops/admin/content.rs:121`) | MISSING (out of parity scope) |
 | DELETE | `/denylist/:entityId` (signed fetch, moderators) | ABR admin | ABR host | none; console `services/catalyst/src/ops/admin/create.rs:574` | MISSING (out of parity scope) |
 | POST | `/registry` (bearer) | ABR admin | ABR host | none; the console calls the external abgen runtime (`services/catalyst/config/src/ops.rs:124-133`) | MISSING (out of parity scope) |
@@ -101,7 +101,7 @@ and answers its status and body (`services/catalyst/explore/src/api/registry.rs:
 Decentraland's; with the local runtime, its native state; without a source,
 `503 {"message":"Registry service is not configured","ok":false}`.
 
-Counts: 14 endpoints. MATCH 2, GAP 5, DIVERGENT 2, MISSING 4 (the ABR admin routes, outside catalyst
+Counts: 14 endpoints. MATCH 3, GAP 4, DIVERGENT 2, MISSING 4 (the ABR admin routes, outside catalyst
 parity), and `/queues/status` forwarded, outside parity scope. Content-related: 7 (`entities/active`,
 `entities/status/:id`, `entities/status`, `worlds/:worldName/manifest`, `profiles`,
 `profiles/metadata`, `GET /denylist`).
@@ -291,13 +291,13 @@ type `src/types/types.ts:35-41`): from `avatars[0]`:
 | `ids` not an array | 400 | same as above | | `AB-3-ids-not-array.json` | same 400: MATCH | same 400: MATCH |
 | non-string element | 400 | same as above | | `AB-3-non-string-element.json` | same 400: MATCH | same 400: MATCH |
 | empty-string element | 400 | same as above | | `AB-3-empty-string-element.json` | same 400, no trimming: MATCH | same 400 (`services/catalyst/shop/src/market/profiles.rs:820-825`): MATCH |
-| more than 1000 ids | 200 | (1001 unknown ids) `[]` | | `AB-3-1001-ids.json` | more than 1000 ids: `400 {"error":"Bad request","message":"Too many profile ids were specified. Maximum allowed is 1000"}` (`services/catalyst/shop/src/market/profiles/registry.rs:56-70`) | more than 1000 distinct ids: the same 400 (`services/catalyst/shop/src/market/profiles.rs:857-861`) |
+| more than 1000 ids | 200 | (1001 unknown ids) `[]` | | `AB-3-1001-ids.json` | no cap: `200 []` for 1001 unknown ids (test `registry_ids_are_not_capped`): MATCH | no cap: `200 []` (test `profiles_metadata_takes_any_number_of_ids_and_answers_bad_json_with_a_bare_500`): MATCH |
 | body not JSON | 500 | `{"error":"Internal Server Error"}` | | `AB-3-not-json.json` | the same 500 (`services/catalyst/shop/src/market/profiles/registry.rs:51`): MATCH | the same 500 (`services/catalyst/shop/src/market/profiles.rs:847-849`): MATCH |
 | empty body | 500 | `{"error":"Internal Server Error"}` | | `AB-3-empty-body.json` | same 500: MATCH | same 500: MATCH |
 | `Content-Type: text/plain` | 200 | answered as JSON | | `AB-3-text-plain.json` | accepted (reads raw bytes): MATCH | accepted (reads raw bytes): MATCH |
 | body over the limit | not vendored | | | | `413 {"error":"Payload Too Large","message":"The request body exceeds 262144 bytes"}` above 256 KiB (`services/catalyst/shop/src/market/profiles/registry.rs:33`, `:121-130`) | `413` above 256 KiB, about 5,800 addresses (`services/catalyst/shop/src/market/mod.rs:967-970`) |
 | `GET` / `PUT` | 405 | empty, `Allow: POST` | | `AB-1-get.json`, `AB-1-put.json` | axum 405, `Allow: POST` | axum 405 `Allow: POST` (production lamb2 answers `GET` with `404 Profile not found`: `AB-14-peer-get-lambdas-profiles-metadata.json`) |
-| a lookup layer fails | 200 | what was found | | `profile-retriever.ts:50-53`, `:69-72` | `500 {"error":"Internal Server Error"}` (`services/catalyst/shop/src/market/profiles/registry.rs:148-176`) | `500 {"error":"Internal Server Error"}` (database) or `503 {"error":"Service overloaded, retry shortly","message":"ownership readers unavailable"}` (`services/catalyst/shop/src/market/profiles.rs:538-558`) |
+| a lookup layer fails | 200 | what was found | | `profile-retriever.ts:50-53`, `:69-72` | `200` with what was found, logged: a failed entity lookup is `[]`, a failed ownership pass leaves out its chunk of 128 entities, never served unvalidated (`services/catalyst/shop/src/market/profiles/registry.rs:123-162`, `:189-226`): MATCH | `200 []`, logged (`services/catalyst/shop/src/market/profiles.rs:854-882`): MATCH |
 
 **Data dependency:** the node's own profiles (content DB) and the name-ownership reader that sets
 `hasClaimedName`; dcl-one holds both for `/lambdas/profiles`.
@@ -314,8 +314,8 @@ type `src/types/types.ts:35-41`): from `avatars[0]`:
 | key order | `pointer, hasClaimedName, name, nameColor, thumbnailUrl` | the same (struct field order) | MATCH |
 | order | see the table above | request order | compatible |
 | dedup | case-insensitive | case-insensitive | MATCH |
-| validation and errors | see the table above | ABR's rules, envelope and message; a cap of 1000 distinct ids and a 256 KiB body limit | DIVERGENT only above 1000 ids or 256 KiB |
-| lookup failure | logged, `200` with what was found | `500` or `503` | DIVERGENT |
+| validation and errors | see the table above | ABR's rules, envelope and message, no cap on the ids; a 256 KiB body limit | DIVERGENT only above 256 KiB |
+| lookup failure | logged, `200` with what was found | logged, `200` with what was found | MATCH |
 | GET | 405 | 405 | MATCH (ABR) |
 | path | `asset-bundle-registry.<domain>/profiles/metadata` | `/lambdas/profiles/metadata`, and the ABR host from the same processed profiles (`services/catalyst/shop/src/market/profiles/registry.rs`), which builds `thumbnailUrl` from the entity id | MATCH |
 
@@ -325,12 +325,13 @@ type `src/types/types.ts:35-41`): from `avatars[0]`:
 
 | trigger | status | body | upstream | dcl-one | verdict |
 |---|---|---|---|---|---|
-| always | 200 | array ordered by `created_at` descending; each entry `{"entity_id":string,"reason":string\|null,"created_by":string,"created_at":string,"updated_at":string}` (millisecond `bigint`s arrive as strings); `entity_id` and `created_by` lowercased at insert ([`AB-9-denylist.json`](captures/abr/AB-9-denylist.json): 16 entries) | `get-denylist.ts:3-13`, `db.ts:1456-1481`, `src/types/types.ts:140-148` | forwarded (`services/catalyst/explore/src/api/registry.rs:82`): the Registry source's list (Decentraland's on a mirror, the local runtime's own), `503` without a source; the node's `content.denylist` (`id`, `added_by`, `added_at`: `schemas/00_content.sql`) is not served | GAP (AB-9) |
+| always | 200 | array ordered by `created_at` descending; each entry `{"entity_id":string,"reason":string\|null,"created_by":string,"created_at":string,"updated_at":string}` (millisecond `bigint`s arrive as strings); `entity_id` and `created_by` lowercased at insert ([`AB-9-denylist.json`](captures/abr/AB-9-denylist.json): 16 entries) | `get-denylist.ts:3-13`, `db.ts:1456-1481`, `src/types/types.ts:140-148` | the Registry source's list (Decentraland's on a mirror, the local runtime's own) merged with the node's `content.denylist` rows, newest first (`services/catalyst/explore/src/api/registry.rs:439-551`; test `denylist_merges_the_source_and_operator_rows`). An operator row reads `{"entity_id":id,"reason":null,"created_by":added_by,"created_at":ms,"updated_at":ms}` (`content.denylist` has no `reason` or `updated_at`; `services/catalyst/content/src/denylist.rs:83-107`); an id both name, compared case-insensitively, keeps the source's entry. A failed source or one answering anything but a `200` array fails the read with its status; without a source, the local rows | MATCH |
 
 No `Content-Type` is set by the handler; the captured answer is `application/json`.
 
 **Data dependency:** the node's `content.denylist`. Decentraland's moderation list itself is in ABR's
-database; a dcl-one mirror reads it into the content reads' projection (AB-10) but does not store it.
+database; a dcl-one mirror reads it into the content reads' projection (AB-10) and serves it through
+the Registry source on each `GET /denylist`, but does not store it.
 
 ## 12. Admin and build-queue routes (outside catalyst parity)
 
@@ -345,8 +346,8 @@ database; a dcl-one mirror reads it into the content reads' projection (AB-10) b
 In dcl-one the operator console reaches the external abgen runtime for the writes
 (`services/catalyst/config/src/ops.rs:124-133`), and the gateway aliases the root paths `/registry`,
 `/denylist`, `/queues/`, `/flush-cache` to `/asset-bundle-registry$uri`
-(`infra/gateway/root-aliases.nix:488-523`): `GET /queues/status` and `GET /denylist` are forwarded to
-the Registry source there, the writes have no route.
+(`infra/gateway/root-aliases.nix:488-523`): `GET /queues/status` is forwarded to the Registry source
+there, `GET /denylist` is the merged list of section 11, and the writes have no route.
 
 ---
 
@@ -358,14 +359,14 @@ the Registry source there, the writes have no route.
    `services/catalyst/shop/src/market/profiles/registry.rs` (mounted by `services/catalyst/src/serve.rs:2243-2248`), `/lambdas/profiles/metadata`
    through `services/catalyst/shop/src/market/profiles.rs:843-874`. Severity: P1. Item by item:
    1. Closed: `ids: []` answers `200 []` on both paths, as ABR ([`AB-3-empty-array.json`](captures/abr/AB-3-empty-array.json); `services/catalyst/shop/src/market/profiles/registry.rs` test `registry_empty_ids_does_not_require_a_database_or_upstream`).
-   2. Open (owner decision): more than 1000 ids answers `400` on both paths; ABR has no cap (`schemas/profiles.ts:5-7`, [`AB-3-1001-ids.json`](captures/abr/AB-3-1001-ids.json)). The cap is the accepted decision of `docs/adr/2026-11-09-registry-local-catalyst.md` because every id costs an ownership pass (`services/catalyst/shop/src/market/profiles/registry.rs:56-70`); the 256 KiB body limit adds a `413` from about 5,800 addresses. Lifting it changes that ADR.
+   2. Closed: no cap on the ids on either path, as ABR (`schemas/profiles.ts:5-7`, [`AB-3-1001-ids.json`](captures/abr/AB-3-1001-ids.json); tests `registry_ids_are_not_capped`, `profiles_metadata_takes_any_number_of_ids_and_answers_bad_json_with_a_bare_500`). The 256 KiB body limit answers `413` from about 5,800 addresses (`docs/adr/2026-11-09-registry-local-catalyst.md`).
    3. Closed: `{}`, `ids` not an array and a non-string element answer ABR's `400 {"error":"Bad request","message":"The ids property must be an array of non-empty strings"}` on both paths (`services/catalyst/shop/src/market/profiles/registry.rs:95-103`; `services/catalyst/shop/src/market/profiles.rs:41`; test `registry_invalid_ids_preserve_captured_error_envelope` against [`AB-3-missing-ids.json`](captures/abr/AB-3-missing-ids.json)).
    4. Closed: an empty-string element gets the same 400, ids are not trimmed ([`AB-3-empty-string-element.json`](captures/abr/AB-3-empty-string-element.json)).
    5. Closed: a body that is not JSON, or empty, answers `500 {"error":"Internal Server Error"}` on both paths, as ABR (test `registry_invalid_json_matches_current_capture` against [`AB-3-not-json.json`](captures/abr/AB-3-not-json.json)).
    6. Closed: keys serialize in ABR's order `pointer, hasClaimedName, name, nameColor, thumbnailUrl` on both paths (`ProfileMetadata`, `services/catalyst/shop/src/market/profiles.rs:783-792`; `services/catalyst/shop/src/market/profiles/registry.rs:257-263`; test `registry_projection_uses_shared_ownership_and_entity_snapshot_identity`).
    7. Closed for the ABR host, open for `/lambdas/profiles/metadata`: the ABR host builds `thumbnailUrl` from the entity id (`services/catalyst/shop/src/market/profiles/registry.rs:239-246`); the `/lambdas` path reads the processed snapshot, so an avatar without an `avatar` object gives `""`.
    8. Closed: absent `hasClaimedName`/`name` stay absent and a stored `nameColor: null` is sent as `null`, as ABR (test `registry_projection_preserves_omitted_name_color`).
-   9. Open (owner decision): a database or ownership-reader failure answers `500` on the ABR host and `500`/`503` on `/lambdas`; ABR logs and answers `200` with what it found. The ADR keeps the error so unvalidated metadata or an empty answer is never served.
+   9. Closed: a database or ownership-reader failure is logged and answers `200` with what was found, as ABR (`profile-retriever.ts:50-53`, `:69-72`). On the ABR host a failed entity lookup is `[]` and a failed ownership pass leaves out its chunk of 128 entities (`services/catalyst/shop/src/market/profiles/registry.rs:189-226`); on `/lambdas` a failed read is `[]` (`services/catalyst/shop/src/market/profiles.rs:854-882`). Unvalidated metadata is never served (tests `registry_failed_lookup_answers_what_was_found`, `profiles_metadata_answers_a_failed_read_with_what_was_found_on_both_paths`).
    10. Closed: `asset-bundle-registry.<domain>/profiles/metadata` and `/asset-bundle-registry/profiles/metadata` serve the node's profiles; there is no Registry read-through for profiles (`docs/adr/2026-11-09-registry-local-catalyst.md`).
    11. Open: `GET /lambdas/profiles/metadata` answers `405` where production lamb2 answers `404 {"error":"Not Found","message":"Profile not found"}` ([`AB-14-peer-get-lambdas-profiles-metadata.json`](captures/abr/AB-14-peer-get-lambdas-profiles-metadata.json)); `POST` is a dcl-one extension at a lamb2 path (production answers `405 Allow: HEAD, GET`).
    12. Closed for this path: CORS under `/lambdas/` is lamb2's (`*`, requested headers reflected, `max-age: 36000`, no `allow-methods`: `services/catalyst/shop/src/market/lambdas_http.rs:21-66`), which is what production's gateway answers there ([`AB-14-peer-preflight-lambdas-profiles-metadata.json`](captures/abr/AB-14-peer-preflight-lambdas-profiles-metadata.json)). ABR's own host answers `max-age: 86400` and an `allow-methods` list ([`AB-12-preflight.json`](captures/abr/AB-12-preflight.json)); that host is AB-12.
@@ -378,11 +379,10 @@ the Registry source there, the writes have no route.
    follows [`AB-2-one-known.json`](captures/abr/AB-2-one-known.json)). Remaining differences: the
    keys inside each avatar are serialized in sorted order, ABR keeps the stored order; request
    validation and failures are AB-1 items 2 and 9.
-3. **AB-3** profile request validation on the ABR host (both profile routes). Status: MATCH except
-   the cap. The rules of `decentraland/asset-bundle-registry:src/controllers/schemas/profiles.ts:9-29`
+3. **AB-3** profile request validation on the ABR host (both profile routes). Status: MATCH. The rules of `decentraland/asset-bundle-registry:src/controllers/schemas/profiles.ts:9-29`
    and the captured statuses (section 10) hold: empty array `200 []`, the http-commons 400 envelope
    with the one message, `500` for unparseable bodies, `Content-Type` ignored and no trimming, from
-   raw bytes (`services/catalyst/shop/src/market/profiles/registry.rs:48-103`, tests in that file). Open: the 1000-id cap (AB-1 item 2).
+   raw bytes (`services/catalyst/shop/src/market/profiles/registry.rs:54-94`, tests in that file), and no cap on the ids (AB-1 item 2).
 4. **AB-4** `POST /entities/active` content part. Severity: P1.
    1. Closed: the request follows `decentraland/asset-bundle-registry:src/controllers/handlers/get-active-entities.ts:10-21`
       with every Registry source and without one: `pointers` only (`ids` and an absent, falsy or empty
@@ -429,15 +429,15 @@ the Registry source there, the writes have no route.
    counts only converted scenes, which the worlds store does not know; the answer must be mounted from
    `worlds` or the root crate (`docs/module-layers.toml`), reading
    `services/catalyst/worlds/src/core/store.rs` (`world_manifest`). Severity: P1.
-9. **AB-9** `GET /denylist`. The route forwards to the Registry source (`services/catalyst/explore/src/api/registry.rs:82`): on a mirror the
-   answer is Decentraland's moderation list (the list the mirror's content reads already hide, AB-10),
-   with the local runtime its own list, without a source `503`. Expected by section 11: the node's list
-   as `[{entity_id,reason,created_by,created_at,updated_at}]`, timestamps as strings, newest first,
-   from `content.denylist` (`id`, `added_by`, `added_at`; no `reason` or `updated_at` column). Open
-   (owner decision): serving the operator's rows replaces the ADR's forwarding and drops the list the
-   source serves today; merging both lists, and what `reason` and `updated_at` read for an operator
-   row, are not decided. The gateway's root `/denylist` alias points at this route
-   (`infra/gateway/root-aliases.nix:497-504`). Severity: P1.
+9. **AB-9** `GET /denylist`. Status: MATCH. The answer is the Registry source's list (on a mirror
+   Decentraland's moderation list, the one the mirror's content reads already hide, AB-10; with the
+   local runtime its own list) merged with the node's `content.denylist` rows, newest first by
+   `created_at` (`services/catalyst/explore/src/api/registry.rs:439-551`, `docs/adr/2026-11-09-registry-local-catalyst.md`).
+   An operator row reads `reason: null` and `updated_at` equal to `created_at`; an id both lists name
+   keeps the source's entry. A source that fails, or answers anything but a `200` array, fails the read
+   rather than serving a shorter list a content server would adopt; without a source the answer is
+   the local rows. The gateway's root `/denylist` alias points at this route
+   (`infra/gateway/root-aliases.nix:497-504`).
 10. **AB-10** Decentraland's moderation denylist on the content server. Status: MATCH, no work.
     `DENYLIST_URLS` lists remote denylists, `NODE_POSTURE=mirror` sets it to
     `https://asset-bundle-registry.decentraland.org/denylist` (`services/catalyst/config/src/posture.rs:184-190`,

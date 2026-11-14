@@ -541,6 +541,13 @@ enum Failure {
 }
 
 impl Failure {
+    fn log(&self, context: &str) {
+        match self {
+            Failure::Db => tracing::warn!("{context}: profile read failed"),
+            Failure::Reader(e) => tracing::warn!(error = %e, "{context}: ownership reader failed"),
+        }
+    }
+
     fn into_response(self) -> Response {
         match self {
             Failure::Db => lambdas_internal_error(),
@@ -841,9 +848,9 @@ fn unique_pointers(ids: &[String]) -> Vec<String> {
 /// node's processed profiles (the same ownership filtering and claimed-name
 /// check as `profiles`, so the compact and full answers agree). `ids` must be
 /// an array of non-empty strings; a body that is not JSON is the bare 500
-/// `request.json()` throws into. Unlike the registry, which reads precomputed
-/// rows, every id here costs an ownership pass, so the distinct ids are
-/// capped at `PROFILE_IDS_MAX` as on `/lambdas/profiles`.
+/// `request.json()` throws into. As the registry, the ids are not capped
+/// (the route's 256 KiB body limit bounds them) and a failed read answers
+/// `200` with what was found, here nothing: never unvalidated metadata.
 pub async fn profiles_metadata(
     State(state): State<SharedState>,
     body: axum::body::Bytes,
@@ -859,10 +866,6 @@ pub async fn profiles_metadata(
         return bad_request(METADATA_IDS_MSG);
     };
     let pointers = unique_pointers(&ids);
-    if pointers.len() > PROFILE_IDS_MAX {
-        return early_profiles_response(ProfileIdsCheck::TooMany)
-            .expect("TooMany is an early response");
-    }
     match processed_profiles(&state, &pointers).await {
         Ok(found) => {
             let compact: Vec<ProfileMetadata> = found
@@ -871,7 +874,10 @@ pub async fn profiles_metadata(
                 .collect();
             Json(compact).into_response()
         }
-        Err(f) => f.into_response(),
+        Err(failure) => {
+            failure.log("profiles/metadata: answering what was found");
+            Json(json!([])).into_response()
+        }
     }
 }
 

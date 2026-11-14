@@ -5,6 +5,11 @@
 //! numeric `timestamp` for `/profiles` (`captures/abr/AB-2-one-known.json`),
 //! `{pointer, hasClaimedName, name, nameColor, thumbnailUrl}` for
 //! `/profiles/metadata` (`captures/abr/AB-1-one-known.json`).
+//!
+//! As the Registry, the number of ids is not capped (the body limit bounds
+//! it, `captures/abr/AB-3-1001-ids.json`) and a failed lookup layer answers
+//! `200` with what was found (`profile-retriever.ts:50-53`, `:69-72`): a failed
+//! entity lookup is `[]`, a failed ownership pass leaves out its chunk only.
 
 use axum::body::Bytes;
 use axum::extract::rejection::BytesRejection;
@@ -17,8 +22,7 @@ use serde_json::value::RawValue;
 use serde_json::{Value, json};
 
 use super::{
-    MarketplaceState, PROFILE_IDS_MAX, SharedState, active_entities, process_profiles_positional,
-    profile_metadata,
+    MarketplaceState, SharedState, active_entities, process_profiles_positional, profile_metadata,
 };
 
 /// One `/profiles` element in the Registry's key order.
@@ -29,8 +33,10 @@ struct FullProfile<'a> {
 }
 
 const INVALID_IDS: &str = "The ids property must be an array of non-empty strings";
-/// Largest request body: 1000 ids of a few dozen bytes each fit well within it.
+/// Largest request body, about 5,800 addresses: the only bound on the ids.
 const BODY_LIMIT: usize = 256 * 1024;
+/// Entities per ownership pass; a failed pass leaves out this many at most.
+const OWNERSHIP_CHUNK: usize = 128;
 
 /// Mount under `/asset-bundle-registry`, using the existing market state,
 /// with the Registry's CORS like the gateway half of that prefix.
@@ -53,21 +59,6 @@ fn parse_ids(body: &[u8]) -> Result<Vec<String>, Box<Response>> {
         .get("ids")
         .and_then(Value::as_array)
         .ok_or_else(invalid_ids)?;
-    // Each id costs an ownership pass and nothing is cached: the Lambdas cap.
-    if ids.len() > PROFILE_IDS_MAX {
-        return Err(Box::new(
-            (
-                StatusCode::BAD_REQUEST,
-                Json(json!({
-                    "error": "Bad request",
-                    "message": format!(
-                        "Too many profile ids were specified. Maximum allowed is {PROFILE_IDS_MAX}"
-                    ),
-                })),
-            )
-                .into_response(),
-        ));
-    }
     let mut seen = std::collections::HashSet::new();
     let mut pointers = Vec::with_capacity(ids.len());
     for id in ids {
@@ -148,8 +139,8 @@ async fn respond(
     let entities = match active_entities(&state, &pointers).await {
         Ok(entities) => entities,
         Err(()) => {
-            tracing::warn!("Registry profile lookup failed");
-            return internal_error();
+            tracing::warn!("Registry profile lookup failed; answering what was found");
+            return Json(json!([])).into_response();
         }
     };
     // Content pointers may resolve scenes or incomplete profile documents.
@@ -167,12 +158,7 @@ async fn respond(
         })
         .collect();
     sort_by_request(&mut entities, &pointers);
-    match project_profiles(&state, &entities, compact).await {
-        Ok(profiles) => Json(profiles).into_response(),
-        // Never unvalidated metadata, and never an empty answer that reads
-        // as "no profiles": a failed ownership pass is an error.
-        Err(()) => internal_error(),
-    }
+    Json(project_profiles(&state, &entities, compact).await).into_response()
 }
 
 /// Request order: an entity sits at its first requested (lowercased) pointer.
@@ -197,32 +183,46 @@ fn sort_by_request(entities: &mut [Value], pointers: &[String]) {
 
 /// The processed profiles in `entities` order, each serialized in the
 /// Registry's key order. A malformed entity (no id, pointer, avatar or
-/// timestamp) is left out with a warning; only a failed ownership pass fails
-/// the batch.
+/// timestamp) is left out with a warning. The ownership pass runs per
+/// [`OWNERSHIP_CHUNK`] entities; a chunk whose pass fails is left out with a
+/// warning, never served unvalidated.
 async fn project_profiles(
     state: &MarketplaceState,
     entities: &[Value],
     compact: bool,
-) -> Result<Vec<Box<RawValue>>, ()> {
-    let processed = process_profiles_positional(state, entities)
-        .await
-        .map_err(|error| tracing::warn!(%error, "Registry ownership reader failed"))?;
-    Ok(entities
-        .iter()
-        .zip(processed)
-        .filter_map(|(entity, profile)| profile.map(|profile| (entity, profile)))
-        .filter_map(|(entity, profile)| {
-            let projected = project(state, entity, profile, compact);
-            if projected.is_none() {
-                let id = entity.get("id").and_then(Value::as_str).unwrap_or("");
+) -> Vec<Box<RawValue>> {
+    let mut out = Vec::with_capacity(entities.len());
+    for chunk in entities.chunks(OWNERSHIP_CHUNK) {
+        let processed = match process_profiles_positional(state, chunk).await {
+            Ok(processed) => processed,
+            Err(error) => {
                 tracing::warn!(
-                    entity = id,
-                    "Registry profile entity is malformed; left out"
+                    %error,
+                    left_out = chunk.len(),
+                    "Registry ownership reader failed; answering what was found"
                 );
+                continue;
             }
-            projected
-        })
-        .collect())
+        };
+        out.extend(
+            chunk
+                .iter()
+                .zip(processed)
+                .filter_map(|(entity, profile)| profile.map(|profile| (entity, profile)))
+                .filter_map(|(entity, profile)| {
+                    let projected = project(state, entity, profile, compact);
+                    if projected.is_none() {
+                        let id = entity.get("id").and_then(Value::as_str).unwrap_or("");
+                        tracing::warn!(
+                            entity = id,
+                            "Registry profile entity is malformed; left out"
+                        );
+                    }
+                    projected
+                }),
+        );
+    }
+    out
 }
 
 fn project(
@@ -334,40 +334,29 @@ mod tests {
         }
     }
 
+    /// The Registry answers `200` with what it found when a lookup layer
+    /// fails (`profile-retriever.ts:50-53`); with no database nothing is found.
     #[tokio::test]
-    async fn registry_failed_lookup_is_an_error_not_an_empty_answer() {
+    async fn registry_failed_lookup_answers_what_was_found() {
         for path in ["/profiles", "/profiles/metadata"] {
             assert_eq!(
                 call(path, r#"{"ids":["0xmissing"]}"#).await,
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    json!({"error":"Internal Server Error"})
-                )
+                (StatusCode::OK, json!([]))
             );
         }
     }
 
+    /// No cap on the ids, as the Registry (`captures/abr/AB-3-1001-ids.json`:
+    /// 1001 unknown ids answer `200 []`); only the body limit bounds them.
     #[tokio::test]
-    async fn registry_ids_are_capped_like_lambdas() {
-        let ids: Vec<String> = (0..=PROFILE_IDS_MAX)
-            .map(|i| format!("0x{i:040x}"))
-            .collect();
+    async fn registry_ids_are_not_capped() {
+        let ids: Vec<String> = (0..1001).map(|i| format!("0x{i:040x}")).collect();
         for path in ["/profiles", "/profiles/metadata"] {
             assert_eq!(
                 call(path, &json!({"ids": ids}).to_string()).await,
-                (
-                    StatusCode::BAD_REQUEST,
-                    json!({
-                        "error": "Bad request",
-                        "message": "Too many profile ids were specified. Maximum allowed is 1000",
-                    })
-                )
+                (StatusCode::OK, json!([]))
             );
         }
-        // At the cap the request is admitted (and fails later on the missing DB).
-        let ids = &ids[..PROFILE_IDS_MAX];
-        let (status, _) = call("/profiles", &json!({"ids": ids}).to_string()).await;
-        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
     }
 
     #[test]
@@ -390,11 +379,7 @@ mod tests {
         let state = state_with_empty_readers(None).await;
         let mut broken = entity();
         broken.as_object_mut().unwrap().remove("timestamp");
-        let full = values(
-            project_profiles(&state, &[broken, entity()], false)
-                .await
-                .unwrap_or_else(|_| panic!("profile processing failed")),
-        );
+        let full = values(project_profiles(&state, &[broken, entity()], false).await);
         assert_eq!(full.len(), 1);
         assert_eq!(full[0]["timestamp"], 1700000000000_u64);
     }
@@ -531,12 +516,8 @@ mod tests {
             "face128": "bafkold", "face": "bafkold2",
         });
         let entities = [entity];
-        let full_raw = project_profiles(&state, &entities, false)
-            .await
-            .unwrap_or_else(|_| panic!("profile processing failed"));
-        let compact_raw = project_profiles(&state, &entities, true)
-            .await
-            .unwrap_or_else(|_| panic!("profile processing failed"));
+        let full_raw = project_profiles(&state, &entities, false).await;
+        let compact_raw = project_profiles(&state, &entities, true).await;
         // The Registry's key order (AB-2 and AB-1 captures).
         assert!(
             full_raw[0]
@@ -594,11 +575,7 @@ mod tests {
             .as_object_mut()
             .unwrap()
             .remove("nameColor");
-        let compact = values(
-            project_profiles(&state, &[entity], true)
-                .await
-                .unwrap_or_else(|_| panic!("profile processing failed")),
-        );
+        let compact = values(project_profiles(&state, &[entity], true).await);
         assert!(compact[0].get("nameColor").is_none());
     }
 
@@ -723,10 +700,12 @@ mod tests {
                 )
                 .await
                 .unwrap();
-            assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+            // The Registry's 200 with what was found: the chunk whose
+            // ownership pass failed is left out, never served unvalidated.
+            assert_eq!(response.status(), StatusCode::OK);
             assert_eq!(
                 to_bytes(response.into_body(), 1024).await.unwrap().as_ref(),
-                br#"{"error":"Internal Server Error"}"#,
+                b"[]",
                 "unvalidated metadata must never be returned when an ownership reader fails"
             );
         }

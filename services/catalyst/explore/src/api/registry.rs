@@ -7,7 +7,11 @@
 //! - any other URL is a public Registry upstream behind the usual source SSRF
 //!   guard; it receives only the request itself;
 //! - empty answers the boot reads (`/entities/active`, `/entities/versions`)
-//!   with `200 []` and the other reads with 503.
+//!   with `200 []`, `/denylist` with the node's own rows, and the other reads
+//!   with 503.
+//!
+//! `GET /denylist` merges the source's list with this node's
+//! `content.denylist` rows ([`denylist`]).
 //!
 //! The boot reads check the Registry's request rule first, with every source
 //! ([`pointers_rule`]): a body without a non-empty `pointers` answers the
@@ -79,7 +83,7 @@ pub fn routes(state: Shared) -> Router {
         .route("/entities/status", get(read))
         .route("/entities/status/{id}", get(read))
         .route("/worlds/{world_name}/manifest", get(read))
-        .route("/denylist", get(read))
+        .route("/denylist", get(denylist))
         .route("/queues/status", get(read))
         .route("/status", get(status))
         .route("/health", get(health))
@@ -422,6 +426,131 @@ async fn read(
     }
 }
 
+/// `GET /denylist`: the source's moderation list plus this node's
+/// `content.denylist` rows, newest first. An id both name keeps the source's
+/// entry. An operator row reads as the Registry's shape with `reason: null`
+/// and `updated_at` equal to `created_at` (`content.denylist` has neither).
+///
+/// A source that fails, or answers anything but a `200` JSON array, fails the
+/// read rather than serving the local half alone: a content server polling
+/// this list keeps its last good copy on an error, but would lift the
+/// source's ids on a shorter `200`. Without a source the answer is the local
+/// rows.
+async fn denylist(
+    State(state): State<Shared>,
+    OriginalUri(original_uri): OriginalUri,
+    method: Method,
+    uri: Uri,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    let source = if state.settings.sources.registry.is_empty() {
+        Vec::new()
+    } else {
+        match forward(
+            &state,
+            &original_uri,
+            method,
+            &uri,
+            &headers,
+            body,
+            Conditional::Strip,
+        )
+        .await
+        {
+            Ok((status, _, bytes)) if status == StatusCode::OK => {
+                match serde_json::from_slice::<Vec<Box<RawValue>>>(&bytes) {
+                    Ok(entries) => entries,
+                    Err(error) => {
+                        tracing::warn!(%error, "Registry denylist is not a JSON array");
+                        return message(StatusCode::BAD_GATEWAY, "Registry service unavailable");
+                    }
+                }
+            }
+            Ok(answer) => return answer.into_response(),
+            Err(response) => return response,
+        }
+    };
+    let local = match crate::content::denylist::rows(&state.content.pool).await {
+        Ok(rows) => rows,
+        Err(error) => {
+            tracing::warn!(%error, "content.denylist read failed");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error":"Internal Server Error"})),
+            )
+                .into_response();
+        }
+    };
+    (
+        [(header::CONTENT_TYPE, "application/json")],
+        merge_denylists(source, &local),
+    )
+        .into_response()
+}
+
+/// One Registry denylist entry in its key order.
+#[derive(serde::Serialize)]
+struct DenylistEntry<'a> {
+    entity_id: &'a str,
+    reason: Option<&'a str>,
+    created_by: &'a str,
+    created_at: &'a str,
+    updated_at: &'a str,
+}
+
+/// The merged list as JSON bytes: source entries kept as received, local
+/// rows whose id (compared case-insensitively, as the Registry lowercases at
+/// insert) the source does not name, all ordered by `created_at` descending.
+/// The sort is stable, so equal timestamps keep source entries first.
+fn merge_denylists(source: Vec<Box<RawValue>>, local: &[crate::content::denylist::Row]) -> Vec<u8> {
+    #[derive(serde::Deserialize)]
+    struct Fields {
+        #[serde(default)]
+        entity_id: Option<String>,
+        #[serde(default)]
+        created_at: Option<Value>,
+    }
+    /// Milliseconds from a string or numeric `created_at`; 0 when absent.
+    fn millis(value: Option<&Value>) -> i128 {
+        match value {
+            Some(Value::String(text)) => text.parse().unwrap_or(0),
+            Some(Value::Number(number)) => number.as_i64().map_or(0, i128::from),
+            _ => 0,
+        }
+    }
+    let mut named = std::collections::HashSet::new();
+    let mut entries: Vec<(i128, Box<RawValue>)> = source
+        .into_iter()
+        .map(|raw| {
+            let fields = serde_json::from_str::<Fields>(raw.get()).ok();
+            let fields = fields.as_ref();
+            if let Some(id) = fields.and_then(|f| f.entity_id.as_deref()) {
+                named.insert(id.to_lowercase());
+            }
+            (millis(fields.and_then(|f| f.created_at.as_ref())), raw)
+        })
+        .collect();
+    for row in local {
+        if named.contains(&row.id.to_lowercase()) {
+            continue;
+        }
+        let at = row.added_at_ms.to_string();
+        let raw = serde_json::value::to_raw_value(&DenylistEntry {
+            entity_id: &row.id,
+            reason: None,
+            created_by: &row.added_by,
+            created_at: &at,
+            updated_at: &at,
+        })
+        .expect("a denylist entry serializes");
+        entries.push((i128::from(row.added_at_ms), raw));
+    }
+    entries.sort_by_key(|entry| std::cmp::Reverse(entry.0));
+    let raws: Vec<Box<RawValue>> = entries.into_iter().map(|(_, raw)| raw).collect();
+    serde_json::to_vec(&raws).expect("raw JSON values serialize")
+}
+
 /// Whether the client's `If-None-Match` and `If-Modified-Since` reach the
 /// backend.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -577,6 +706,41 @@ mod tests {
     use axum::http::{Request, StatusCode};
     use serde_json::Value;
     use tower::ServiceExt;
+
+    /// The source's entries stay byte for byte; an operator row the source
+    /// does not name joins in the Registry's key order; an id both name keeps
+    /// the source's entry; the whole list is newest first.
+    #[test]
+    fn denylist_merges_the_source_and_operator_rows() {
+        use crate::content::denylist::Row;
+        let source: Vec<Box<serde_json::value::RawValue>> = serde_json::from_str(
+            r#"[{"entity_id":"bafkreinew","reason":"spam","created_by":"0xmod","created_at":"3000","updated_at":"3100"},
+                {"entity_id":"bafkreishared","reason":null,"created_by":"0xmod","created_at":"1000","updated_at":"1000"}]"#,
+        )
+        .unwrap();
+        let local = [
+            Row {
+                id: "bafkreiLOCAL".into(),
+                added_by: "0xop".into(),
+                added_at_ms: 2000,
+            },
+            Row {
+                id: "BAFKREISHARED".into(),
+                added_by: "0xop".into(),
+                added_at_ms: 4000,
+            },
+        ];
+        let merged = super::merge_denylists(source, &local);
+        assert_eq!(
+            std::str::from_utf8(&merged).unwrap(),
+            concat!(
+                r#"[{"entity_id":"bafkreinew","reason":"spam","created_by":"0xmod","created_at":"3000","updated_at":"3100"},"#,
+                r#"{"entity_id":"bafkreiLOCAL","reason":null,"created_by":"0xop","created_at":"2000","updated_at":"2000"},"#,
+                r#"{"entity_id":"bafkreishared","reason":null,"created_by":"0xmod","created_at":"1000","updated_at":"1000"}]"#,
+            )
+        );
+        assert_eq!(super::merge_denylists(Vec::new(), &[]), b"[]");
+    }
 
     /// `pointers_rule` against the Registry's handler as JavaScript reads it:
     /// `body.pointers` throws on `null`, and `!pointers || pointers?.length
