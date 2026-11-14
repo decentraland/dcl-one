@@ -8,6 +8,7 @@ import { useEffect } from 'react'
 import type { EngineRpc } from '@explorer-core/engine/engineRpc'
 import { bridgeChannelName } from '@explorer-core/engine/protocol'
 import { engineLaunch, PAGE_DIR, seedBridgeSession } from '@hud-host'
+import { trackAudioContexts } from '../../lib/audioUnlock'
 import { inShell, shellRequest } from '@explorer-core/lib/shell'
 import type { LaunchOptions } from '@explorer-core/lib/webParams'
 
@@ -34,6 +35,11 @@ function injectEngine(): void {
   // The host's own bridge session (/play's editor embed), if it has one.
   seedBridgeSession()
   bridgeChannelName()
+
+  // Before any module that creates an AudioContext loads: the engine's is born while the sign-in
+  // screen is up, and the first gesture — the sign-in or jump-in click — is what resumes it
+  // (lib/audioUnlock.ts). Above the guard too: it costs nothing when the engine was pre-booted.
+  trackAudioContexts()
 
   // Once per page — the engine is a singleton (StrictMode remounts and HMR must not double-boot).
   if (injected || window.__bevyBootConfig != null) return
