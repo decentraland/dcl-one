@@ -214,9 +214,78 @@ const ITEM_FACTS_SQL: &str = "SELECT \
      (SELECT last_complete_pass_at IS NOT NULL FROM shop.mirror_state WHERE mirror = 'collections' AND network = $1) AS collections_ready, \
      (SELECT last_complete_pass_at IS NOT NULL FROM shop.mirror_state WHERE mirror = 'items' AND network = $1) AS items_ready, \
      EXISTS (SELECT 1 FROM shop.collections WHERE network = $1 AND contract_address = $2) AS is_collection, \
-     i.item_type, i.creator \
+     i.item_type, i.creator, i.available::text AS available \
      FROM (SELECT 1) AS one \
      LEFT JOIN shop.items i ON i.network = $1 AND i.contract_address = $2 AND i.item_id = $3::numeric";
+
+/// What the collections and items mirrors of `network` say about
+/// `(collection, item_id)`, with the item's remaining supply when the record
+/// is found. Each answer is `Unknown` until its mirror's first complete pass.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MirrorFacts {
+    pub contract: Lookup<ContractRole>,
+    pub item: Lookup<ItemRecord>,
+    pub available: Option<i64>,
+}
+
+/// The mirrors' answer alone, without the static registry. Both payment
+/// paths read contract roles and item records through this one statement,
+/// so the credits guards and the MANA resolver cannot judge the same item
+/// on different facts.
+pub async fn mirror_facts(
+    pool: &PgPool,
+    chain_id: ChainId,
+    network: &str,
+    collection: EvmAddress,
+    item_id: U256,
+) -> Result<MirrorFacts, sqlx::Error> {
+    let row = sqlx::query(ITEM_FACTS_SQL)
+        .bind(network)
+        .bind(collection.to_string())
+        .bind(item_id.to_string())
+        .fetch_one(pool)
+        .await?;
+    let collections_ready: Option<bool> = row.get("collections_ready");
+    let items_ready: Option<bool> = row.get("items_ready");
+    let is_collection: bool = row.get("is_collection");
+    let item_type: Option<String> = row.get("item_type");
+    let creator: Option<String> = row.get("creator");
+    let available: Option<String> = row.get("available");
+    let contract = match collections_ready {
+        Some(true) => {
+            if is_collection {
+                Lookup::Found(ContractRole::Collection)
+            } else {
+                Lookup::Absent
+            }
+        }
+        _ => Lookup::Unknown,
+    };
+    let (item, available) = match (items_ready, item_type) {
+        (Some(true), Some(item_type)) => {
+            match creator.as_deref().and_then(|c| EvmAddress::parse(c).ok()) {
+                Some(creator) => (
+                    Lookup::Found(ItemRecord {
+                        chain_id,
+                        collection,
+                        item_id,
+                        kind: item_kind(&item_type),
+                        creator,
+                    }),
+                    available.and_then(|a| a.parse::<i64>().ok()),
+                ),
+                None => (Lookup::Unknown, None),
+            }
+        }
+        (Some(true), None) => (Lookup::Absent, None),
+        _ => (Lookup::Unknown, None),
+    };
+    Ok(MirrorFacts {
+        contract,
+        item,
+        available,
+    })
+}
 
 /// The contract's role and the item record of `(collection, item_id)` on
 /// `chain_id`, from the static registry and the two mirrors.
@@ -238,44 +307,11 @@ pub async fn item_facts(
             item: Lookup::Absent,
         });
     };
-    let row = sqlx::query(ITEM_FACTS_SQL)
-        .bind(network)
-        .bind(collection.to_string())
-        .bind(item_id.to_string())
-        .fetch_one(pool)
-        .await?;
-    let collections_ready: Option<bool> = row.get("collections_ready");
-    let items_ready: Option<bool> = row.get("items_ready");
-    let is_collection: bool = row.get("is_collection");
-    let item_type: Option<String> = row.get("item_type");
-    let creator: Option<String> = row.get("creator");
-    let contract = match collections_ready {
-        Some(true) => {
-            if is_collection {
-                Lookup::Found(ContractRole::Collection)
-            } else {
-                Lookup::Absent
-            }
-        }
-        _ => Lookup::Unknown,
-    };
-    let item = match (items_ready, item_type) {
-        (Some(true), Some(item_type)) => {
-            match creator.as_deref().and_then(|c| EvmAddress::parse(c).ok()) {
-                Some(creator) => Lookup::Found(ItemRecord {
-                    chain_id,
-                    collection,
-                    item_id,
-                    kind: item_kind(&item_type),
-                    creator,
-                }),
-                None => Lookup::Unknown,
-            }
-        }
-        (Some(true), None) => Lookup::Absent,
-        _ => Lookup::Unknown,
-    };
-    Ok(ItemFacts { contract, item })
+    let facts = mirror_facts(pool, chain_id, network, collection, item_id).await?;
+    Ok(ItemFacts {
+        contract: facts.contract,
+        item: facts.item,
+    })
 }
 
 /// The registry's answer alone (an existing token, a legacy order).
