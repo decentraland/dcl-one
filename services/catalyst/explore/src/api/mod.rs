@@ -492,6 +492,8 @@ pub struct State {
     /// The onboarding checkpoints (process state), shared with the Segment
     /// webhooks that forward them (`social::segment_webhooks`).
     pub onboarding: Arc<onboarding::OnboardingState>,
+    /// `GET /asset-bundle-registry/denylist`'s read of `content.denylist`.
+    pub registry_denylist: registry::LocalDenylist,
     /// The ONE EIP-1654 validator, attached after construction (`attach_eip1654`).
     pub eip1654: std::sync::OnceLock<Arc<dyn crate::auth::eip1654::Eip1654Validator>>,
 }
@@ -533,6 +535,7 @@ impl State {
             auth_api: auth_api::AuthApiState::default(),
             runtime_config: runtime_config::RuntimeConfigState::default(),
             onboarding: Arc::default(),
+            registry_denylist: Default::default(),
             eip1654: std::sync::OnceLock::new(),
         });
         state

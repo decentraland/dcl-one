@@ -63,6 +63,34 @@ fn is_default_pointer(address: &str) -> bool {
     address.starts_with("default")
 }
 
+/// Distinct pointers looked up in one entity read by the uncapped profile
+/// routes (`/profiles/metadata` here and on the Registry host): bounds the
+/// one `POST /entities/active` a read-through node sends upstream.
+pub(super) const PROFILE_LOOKUP_CHUNK: usize = 1000;
+
+/// Counts profile answers that left something out because a lookup layer
+/// failed, by `route` and `layer` (`entities`, `ownership`): those answers
+/// are `200`s, as the Registry's, so 5xx alerting does not see them.
+pub(super) const PROFILE_LOOKUP_FAILURES: &str = "profiles_lookup_failures_total";
+
+pub(super) fn count_lookup_failure(route: &'static str, layer: &'static str) {
+    metrics::counter!(PROFILE_LOOKUP_FAILURES, "route" => route, "layer" => layer).increment(1);
+}
+
+/// A pointer that can name a profile: an address (`0x` and 40 hex digits,
+/// lowercased by the caller) or a curated `default<n>` look. The uncapped
+/// routes look up only these, so the body limit bounds a request at about
+/// 5,800 lookups, and an id that cannot be a profile costs nothing.
+pub(super) fn is_profile_pointer(pointer: &str) -> bool {
+    let address = pointer
+        .strip_prefix("0x")
+        .is_some_and(|hex| hex.len() == 40 && hex.bytes().all(|b| b.is_ascii_hexdigit()));
+    let default = pointer
+        .strip_prefix("default")
+        .is_some_and(|n| (1..=3).contains(&n.len()) && n.bytes().all(|b| b.is_ascii_digit()));
+    address || default
+}
+
 /// `splitUrnAndTokenId`: a seven-part non-third-party URN ends in its token id.
 pub(crate) fn split_urn_and_token_id(urn: &str) -> (&str, Option<&str>) {
     let segment_count = urn.split(':').count();
@@ -541,6 +569,13 @@ enum Failure {
 }
 
 impl Failure {
+    fn layer(&self) -> &'static str {
+        match self {
+            Failure::Db => "entities",
+            Failure::Reader(_) => "ownership",
+        }
+    }
+
     fn log(&self, context: &str) {
         match self {
             Failure::Db => tracing::warn!("{context}: profile read failed"),
@@ -848,9 +883,10 @@ fn unique_pointers(ids: &[String]) -> Vec<String> {
 /// node's processed profiles (the same ownership filtering and claimed-name
 /// check as `profiles`, so the compact and full answers agree). `ids` must be
 /// an array of non-empty strings; a body that is not JSON is the bare 500
-/// `request.json()` throws into. As the registry, the ids are not capped
-/// (the route's 256 KiB body limit bounds them) and a failed read answers
-/// `200` with what was found, here nothing: never unvalidated metadata.
+/// `request.json()` throws into. As the registry, the ids are not capped and
+/// a failed read answers `200` with what was found: only ids that can name a
+/// profile ([`is_profile_pointer`]) are looked up, [`PROFILE_LOOKUP_CHUNK`] at
+/// a time, and a chunk whose read fails is left out, never served unvalidated.
 pub async fn profiles_metadata(
     State(state): State<SharedState>,
     body: axum::body::Bytes,
@@ -865,20 +901,25 @@ pub async fn profiles_metadata(
     else {
         return bad_request(METADATA_IDS_MSG);
     };
-    let pointers = unique_pointers(&ids);
-    match processed_profiles(&state, &pointers).await {
-        Ok(found) => {
-            let compact: Vec<ProfileMetadata> = found
-                .iter()
-                .filter_map(|(pointer, profile)| profile_metadata(pointer, profile, None))
-                .collect();
-            Json(compact).into_response()
-        }
-        Err(failure) => {
-            failure.log("profiles/metadata: answering what was found");
-            Json(json!([])).into_response()
+    let pointers: Vec<String> = unique_pointers(&ids)
+        .into_iter()
+        .filter(|pointer| is_profile_pointer(pointer))
+        .collect();
+    let mut compact: Vec<ProfileMetadata> = Vec::new();
+    for chunk in pointers.chunks(PROFILE_LOOKUP_CHUNK) {
+        match processed_profiles(&state, chunk).await {
+            Ok(found) => compact.extend(
+                found
+                    .iter()
+                    .filter_map(|(pointer, profile)| profile_metadata(pointer, profile, None)),
+            ),
+            Err(failure) => {
+                failure.log("profiles/metadata: answering what was found");
+                count_lookup_failure("lambdas_profiles_metadata", failure.layer());
+            }
         }
     }
+    Json(compact).into_response()
 }
 
 pub async fn profile_by_id(State(state): State<SharedState>, Path(id): Path<String>) -> Response {
@@ -900,6 +941,33 @@ pub async fn profile_alias(State(state): State<SharedState>, Path(id): Path<Stri
 
 #[cfg(test)]
 mod tests {
+    /// Only an address or a curated `default<n>` look is looked up by the
+    /// uncapped routes: anything else cannot name a profile.
+    #[test]
+    fn profile_pointers_are_addresses_or_default_looks() {
+        for pointer in [
+            "0x0000000000000000000000000000000000000000",
+            "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd",
+            "default1",
+            "default160",
+        ] {
+            assert!(is_profile_pointer(pointer), "{pointer}");
+        }
+        for pointer in [
+            "a0",
+            "0x",
+            "0xabc",
+            "0x00000000000000000000000000000000000000000",
+            "0xgggggggggggggggggggggggggggggggggggggggg",
+            "default",
+            "default1000",
+            "defaultx",
+            "bafkreiexample",
+        ] {
+            assert!(!is_profile_pointer(pointer), "{pointer}");
+        }
+    }
+
     use super::*;
     use std::sync::Arc;
 

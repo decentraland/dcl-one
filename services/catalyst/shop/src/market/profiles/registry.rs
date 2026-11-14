@@ -8,8 +8,10 @@
 //!
 //! As the Registry, the number of ids is not capped (the body limit bounds
 //! it, `captures/abr/AB-3-1001-ids.json`) and a failed lookup layer answers
-//! `200` with what was found (`profile-retriever.ts:50-53`, `:69-72`): a failed
-//! entity lookup is `[]`, a failed ownership pass leaves out its chunk only.
+//! `200` with what was found (`profile-retriever.ts:50-53`, `:69-72`): only ids
+//! that can name a profile are looked up, 1000 per entity read, and a failed
+//! read or ownership pass leaves out its chunk only, counted in
+//! `profiles_lookup_failures_total`.
 
 use axum::body::Bytes;
 use axum::extract::rejection::BytesRejection;
@@ -22,7 +24,8 @@ use serde_json::value::RawValue;
 use serde_json::{Value, json};
 
 use super::{
-    MarketplaceState, SharedState, active_entities, process_profiles_positional, profile_metadata,
+    MarketplaceState, PROFILE_LOOKUP_CHUNK, SharedState, active_entities, count_lookup_failure,
+    is_profile_pointer, process_profiles_positional, profile_metadata,
 };
 
 /// One `/profiles` element in the Registry's key order.
@@ -33,7 +36,7 @@ struct FullProfile<'a> {
 }
 
 const INVALID_IDS: &str = "The ids property must be an array of non-empty strings";
-/// Largest request body, about 5,800 addresses: the only bound on the ids.
+/// Largest request body: about 5,800 addresses, the bound on the lookups.
 const BODY_LIMIT: usize = 256 * 1024;
 /// Entities per ownership pass; a failed pass leaves out this many at most.
 const OWNERSHIP_CHUNK: usize = 128;
@@ -133,16 +136,25 @@ async fn respond(
         Ok(pointers) => pointers,
         Err(response) => return *response,
     };
-    if pointers.is_empty() {
-        return Json(json!([])).into_response();
-    }
-    let entities = match active_entities(&state, &pointers).await {
-        Ok(entities) => entities,
-        Err(()) => {
-            tracing::warn!("Registry profile lookup failed; answering what was found");
-            return Json(json!([])).into_response();
+    // Only an id that can name a profile is looked up, a chunk at a time, so
+    // the body limit bounds the lookups and one upstream read stays small.
+    let pointers: Vec<String> = pointers
+        .into_iter()
+        .filter(|pointer| is_profile_pointer(pointer))
+        .collect();
+    let mut entities = Vec::new();
+    for chunk in pointers.chunks(PROFILE_LOOKUP_CHUNK) {
+        match active_entities(&state, chunk).await {
+            Ok(found) => entities.extend(found),
+            Err(()) => {
+                tracing::warn!(
+                    left_out = chunk.len(),
+                    "Registry profile lookup failed; answering what was found"
+                );
+                count_lookup_failure("registry_profiles", "entities");
+            }
         }
-    };
+    }
     // Content pointers may resolve scenes or incomplete profile documents.
     // Registry's profile store only admits profiles with usable avatars.
     let mut entities: Vec<_> = entities
@@ -201,6 +213,7 @@ async fn project_profiles(
                     left_out = chunk.len(),
                     "Registry ownership reader failed; answering what was found"
                 );
+                count_lookup_failure("registry_profiles", "ownership");
                 continue;
             }
         };
@@ -340,7 +353,11 @@ mod tests {
     async fn registry_failed_lookup_answers_what_was_found() {
         for path in ["/profiles", "/profiles/metadata"] {
             assert_eq!(
-                call(path, r#"{"ids":["0xmissing"]}"#).await,
+                call(
+                    path,
+                    r#"{"ids":["0x00000000000000000000000000000000000000aa"]}"#
+                )
+                .await,
                 (StatusCode::OK, json!([]))
             );
         }

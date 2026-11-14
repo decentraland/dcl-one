@@ -10,16 +10,22 @@ a response cache. No Registry profile or entity response cache is added.
 
 `POST /profiles` and `POST /profiles/metadata` share the marketplace state, content
 denylist, ownership readers and profile transformations used by Lambdas. They
-accept an empty `ids` array and, as the Registry, any number of ids: the only
-bound is the 256 KiB request body (about 5,800 addresses), over which the answer
-is a 413 in the Registry's JSON error envelope.
+accept an empty `ids` array and, as the Registry, any number of ids; a request
+body over 256 KiB is a 413 in the Registry's JSON error envelope. The Registry
+reads precomputed rows, while each id here costs an entity read (on a read-through
+node, an upstream `POST /entities/active` and a negative-cache entry) and an
+ownership pass. So only ids that can name a profile, an address (`0x` and 40 hex
+digits) or a curated `default<n>` look, are looked up, which bounds a request at
+about 5,800 lookups; the entity reads go 1000 pointers at a time.
 They resolve case-insensitive pointers once and project the
 processed results into Registry response shapes, in request order.
 Non-profile entities and profiles without a usable avatar are omitted; an entity
 missing its id, pointer or timestamp is logged and omitted. As the Registry, a
 failed lookup layer is logged and answers 200 with what was found: a failed entity
-lookup answers `[]`, and the ownership pass runs per 128 entities, so a failed pass
-leaves out its chunk only. Unvalidated metadata is never served. Full profiles carry the entity
+read leaves out its 1000 pointers, and the ownership pass runs per 128 entities, so a
+failed pass leaves out its chunk only. Unvalidated metadata is never served. Since
+these answers are 200s, each failure also counts in
+`profiles_lookup_failures_total{route,layer}` for alerting. Full profiles carry the entity
 timestamp as a JSON number and both answers keep the Registry's key order, as the
 2026-11-05 captures `AB-1-one-known.json` and `AB-2-one-known.json` show. Snapshots and compact thumbnails point to the configured local
 profile-images service; each full-profile avatar carries exactly the `face256` and
@@ -58,13 +64,19 @@ fragment, and startup refuses any other value, naming the variable.
   with `200 []`, `/denylist` with the node's own rows, and the other reads with 503.
 
 `GET /denylist` merges the source's list with the node's `content.denylist` rows,
-newest first by `created_at`. An id both lists name (compared case-insensitively,
-as the Registry lowercases at insert) keeps the source's entry; an operator row
-reads `{entity_id, reason: null, created_by, created_at, updated_at}` with
-`updated_at` equal to `created_at`, in milliseconds as strings. A source that fails
-or answers anything but a 200 JSON array fails the read with its status, rather
-than a shorter list: a content server polling the list keeps its last good copy on
-an error, and would lift the source's ids on a 200.
+newest first by `created_at`. A local row whose id the source names exactly is left
+out; ids compare exactly because a CIDv0 is case-sensitive, so an operator's
+correct-case id stays even when the Registry holds a lowercased copy. An operator
+row reads `{entity_id, reason: null, created_by, created_at, updated_at}` with
+`updated_at` equal to `created_at`, in milliseconds as strings. `created_by` is the
+console wallet that added the row, and `entity_id` may be a pointer or a content
+hash as well as an entity id: publishing both is intended, as the Registry
+publishes its moderators' wallets. The local rows are read at most once every 5
+seconds and by one request at a time, since the route is public. The source is
+always asked with `GET`, so `HEAD` answers as `GET` does. A source that fails or
+answers anything but a 200 JSON array fails the read with its status, rather than
+a shorter list: a content server polling the list keeps its last good copy on an
+error, and would lift the source's ids on a 200.
 
 Whatever the source, `/entities/active` and `/entities/versions` first apply the
 Registry's request rule: a body without a non-empty `pointers` (`ids` is not read)

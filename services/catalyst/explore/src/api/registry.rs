@@ -33,7 +33,7 @@
 //! `/health/startup`) and holds the prefix's fallback, so a path neither half
 //! routes still gets the Registry's CORS and its `404 Not found`.
 
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
 use axum::extract::{DefaultBodyLimit, OriginalUri, Request, State};
@@ -426,20 +426,52 @@ async fn read(
     }
 }
 
-/// `GET /denylist`: the source's moderation list plus this node's
-/// `content.denylist` rows, newest first. An id both name keeps the source's
-/// entry. An operator row reads as the Registry's shape with `reason: null`
-/// and `updated_at` equal to `created_at` (`content.denylist` has neither).
+/// How long [`LocalDenylist`] serves one read of `content.denylist`: the
+/// freshness budget for a console edit to reach `GET /denylist`.
+const LOCAL_DENYLIST_TTL: Duration = Duration::from_secs(5);
+
+/// This node's `content.denylist` rows for `GET /denylist`, read at most once
+/// per [`LOCAL_DENYLIST_TTL`] and by one request at a time: the route is
+/// public and the table may hold up to `MAX_ENTRIES` rows.
+#[derive(Default)]
+pub struct LocalDenylist(
+    tokio::sync::Mutex<Option<(std::time::Instant, Arc<Vec<crate::content::denylist::Row>>)>>,
+);
+
+impl LocalDenylist {
+    async fn rows(
+        &self,
+        pool: &sqlx::PgPool,
+    ) -> sqlx::Result<Arc<Vec<crate::content::denylist::Row>>> {
+        let mut slot = self.0.lock().await;
+        if let Some((at, rows)) = slot.as_ref()
+            && at.elapsed() < LOCAL_DENYLIST_TTL
+        {
+            return Ok(rows.clone());
+        }
+        let rows = Arc::new(crate::content::denylist::rows(pool).await?);
+        *slot = Some((std::time::Instant::now(), rows.clone()));
+        Ok(rows)
+    }
+}
+
+/// `GET /denylist` (and `HEAD`): the source's moderation list plus this
+/// node's `content.denylist` rows, newest first. A local row whose id the
+/// source names exactly is left out (ids compare exactly: CIDv0 is
+/// case-sensitive). An operator row reads as the Registry's shape with
+/// `reason: null` and `updated_at` equal to `created_at` (`content.denylist`
+/// has neither); `created_by` is the console wallet, as the Registry
+/// publishes its moderators'.
 ///
-/// A source that fails, or answers anything but a `200` JSON array, fails the
-/// read rather than serving the local half alone: a content server polling
-/// this list keeps its last good copy on an error, but would lift the
-/// source's ids on a shorter `200`. Without a source the answer is the local
-/// rows.
+/// The source is always asked with `GET`, so a `HEAD` gets a body to check
+/// (axum drops it from the answer). A source that fails, or answers anything
+/// but a `200` JSON array, fails the read rather than serving the local half
+/// alone: a content server polling this list keeps its last good copy on an
+/// error, but would lift the source's ids on a shorter `200`. Without a
+/// source the answer is the local rows.
 async fn denylist(
     State(state): State<Shared>,
     OriginalUri(original_uri): OriginalUri,
-    method: Method,
     uri: Uri,
     headers: HeaderMap,
     body: Bytes,
@@ -450,7 +482,7 @@ async fn denylist(
         match forward(
             &state,
             &original_uri,
-            method,
+            Method::GET,
             &uri,
             &headers,
             body,
@@ -471,7 +503,7 @@ async fn denylist(
             Err(response) => return response,
         }
     };
-    let local = match crate::content::denylist::rows(&state.content.pool).await {
+    let local = match state.registry_denylist.rows(&state.content.pool).await {
         Ok(rows) => rows,
         Err(error) => {
             tracing::warn!(%error, "content.denylist read failed");
@@ -500,9 +532,9 @@ struct DenylistEntry<'a> {
 }
 
 /// The merged list as JSON bytes: source entries kept as received, local
-/// rows whose id (compared case-insensitively, as the Registry lowercases at
-/// insert) the source does not name, all ordered by `created_at` descending.
-/// The sort is stable, so equal timestamps keep source entries first.
+/// rows whose id the source does not name exactly, all ordered by
+/// `created_at` descending. The sort is stable, so equal timestamps keep
+/// source entries first.
 fn merge_denylists(source: Vec<Box<RawValue>>, local: &[crate::content::denylist::Row]) -> Vec<u8> {
     #[derive(serde::Deserialize)]
     struct Fields {
@@ -524,15 +556,15 @@ fn merge_denylists(source: Vec<Box<RawValue>>, local: &[crate::content::denylist
         .into_iter()
         .map(|raw| {
             let fields = serde_json::from_str::<Fields>(raw.get()).ok();
-            let fields = fields.as_ref();
-            if let Some(id) = fields.and_then(|f| f.entity_id.as_deref()) {
-                named.insert(id.to_lowercase());
+            let at = millis(fields.as_ref().and_then(|f| f.created_at.as_ref()));
+            if let Some(id) = fields.and_then(|f| f.entity_id) {
+                named.insert(id);
             }
-            (millis(fields.and_then(|f| f.created_at.as_ref())), raw)
+            (at, raw)
         })
         .collect();
     for row in local {
-        if named.contains(&row.id.to_lowercase()) {
+        if named.contains(&row.id) {
             continue;
         }
         let at = row.added_at_ms.to_string();
@@ -708,14 +740,16 @@ mod tests {
     use tower::ServiceExt;
 
     /// The source's entries stay byte for byte; an operator row the source
-    /// does not name joins in the Registry's key order; an id both name keeps
-    /// the source's entry; the whole list is newest first.
+    /// does not name joins in the Registry's key order; an id both name
+    /// exactly keeps the source's entry, while a different case (a CIDv0 the
+    /// Registry lowercased) is a different id; the whole list is newest first.
     #[test]
     fn denylist_merges_the_source_and_operator_rows() {
         use crate::content::denylist::Row;
         let source: Vec<Box<serde_json::value::RawValue>> = serde_json::from_str(
             r#"[{"entity_id":"bafkreinew","reason":"spam","created_by":"0xmod","created_at":"3000","updated_at":"3100"},
-                {"entity_id":"bafkreishared","reason":null,"created_by":"0xmod","created_at":"1000","updated_at":"1000"}]"#,
+                {"entity_id":"bafkreishared","reason":null,"created_by":"0xmod","created_at":"1000","updated_at":"1000"},
+                {"entity_id":"qmcase","reason":null,"created_by":"0xmod","created_at":"600","updated_at":"600"}]"#,
         )
         .unwrap();
         let local = [
@@ -725,9 +759,14 @@ mod tests {
                 added_at_ms: 2000,
             },
             Row {
-                id: "BAFKREISHARED".into(),
+                id: "bafkreishared".into(),
                 added_by: "0xop".into(),
                 added_at_ms: 4000,
+            },
+            Row {
+                id: "QmCase".into(),
+                added_by: "0xop".into(),
+                added_at_ms: 500,
             },
         ];
         let merged = super::merge_denylists(source, &local);
@@ -736,7 +775,9 @@ mod tests {
             concat!(
                 r#"[{"entity_id":"bafkreinew","reason":"spam","created_by":"0xmod","created_at":"3000","updated_at":"3100"},"#,
                 r#"{"entity_id":"bafkreiLOCAL","reason":null,"created_by":"0xop","created_at":"2000","updated_at":"2000"},"#,
-                r#"{"entity_id":"bafkreishared","reason":null,"created_by":"0xmod","created_at":"1000","updated_at":"1000"}]"#,
+                r#"{"entity_id":"bafkreishared","reason":null,"created_by":"0xmod","created_at":"1000","updated_at":"1000"},"#,
+                r#"{"entity_id":"qmcase","reason":null,"created_by":"0xmod","created_at":"600","updated_at":"600"},"#,
+                r#"{"entity_id":"QmCase","reason":null,"created_by":"0xop","created_at":"500","updated_at":"500"}]"#,
             )
         );
         assert_eq!(super::merge_denylists(Vec::new(), &[]), b"[]");

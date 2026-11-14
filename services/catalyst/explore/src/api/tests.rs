@@ -384,6 +384,7 @@ async fn node_without_db(settings: Settings) -> Node {
         auth_api: auth_api::AuthApiState::default(),
         runtime_config: runtime_config::RuntimeConfigState::default(),
         onboarding: Arc::default(),
+        registry_denylist: Default::default(),
         eip1654: std::sync::OnceLock::new(),
     });
     Node { state, _tmp: tmp }
@@ -2652,4 +2653,67 @@ async fn registry_boot_reads_cap_the_request_body() {
     // Only the in-limit reads with a source reached the backend.
     assert_eq!(mock.hits("entities/active"), 1);
     assert_eq!(mock.hits("entities/versions"), 1);
+}
+
+/// `GET /denylist` at the handler: a source's non-200 answer passes through,
+/// a 200 that is not an array is a 502, `HEAD` asks the source with `GET`,
+/// and the local half's failed read (no database here) is a 500, with or
+/// without a source.
+#[tokio::test]
+async fn registry_denylist_handler_answers_source_failures_and_local_read_errors() {
+    use axum::http::{Method, Uri};
+    async fn source(method: Method, uri: Uri) -> Response {
+        match (method, uri.query()) {
+            (_, Some("case=busy")) => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(json!({"ok":false,"message":"busy"})),
+            )
+                .into_response(),
+            (_, Some("case=object")) => Json(json!({"not":"an array"})).into_response(),
+            // Only a GET gets this distinct status, so HEAD must arrive as GET.
+            (Method::GET, Some("case=method")) => StatusCode::CONFLICT.into_response(),
+            (_, Some("case=method")) => StatusCode::IM_A_TEAPOT.into_response(),
+            _ => Json(json!([])).into_response(),
+        }
+    }
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(axum::serve(listener, Router::new().fallback(source)).into_future());
+    let node = node_without_db(Settings::for_tests(sources_at(addr))).await;
+    let app = router(node.state.clone());
+    let path = "/asset-bundle-registry/denylist";
+
+    let (status, _, body) = call(&app, "GET", &format!("{path}?case=busy"), None).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(
+        serde_json::from_slice::<Value>(&body).unwrap(),
+        json!({"ok":false,"message":"busy"})
+    );
+    let (status, _, _) = call(&app, "GET", &format!("{path}?case=object"), None).await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY);
+    let (status, _, _) = call(&app, "HEAD", &format!("{path}?case=method"), None).await;
+    assert_eq!(
+        status,
+        StatusCode::CONFLICT,
+        "HEAD reaches the source as GET"
+    );
+    // The source's array is good; the local read has no database.
+    let (status, _, body) = call(&app, "GET", path, None).await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(
+        serde_json::from_slice::<Value>(&body).unwrap(),
+        json!({"error":"Internal Server Error"})
+    );
+
+    let empty = Sources {
+        registry: String::new(),
+        ..sources_at(addr)
+    };
+    let node = node_without_db(Settings::for_tests(empty)).await;
+    let (status, _, _) = call(&router(node.state.clone()), "GET", path, None).await;
+    assert_eq!(
+        status,
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "without a source the local rows are the answer, so their read failing is a 500"
+    );
 }
