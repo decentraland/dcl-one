@@ -19,6 +19,7 @@ use serde_json::{Map, Value};
 use super::error::ValidationResponse;
 use super::types::*;
 use crate::entity::is_ipfs_v2;
+use crate::shared::js::is_js_whitespace;
 
 type Check = Result<(), String>;
 type Obj = Map<String, Value>;
@@ -227,23 +228,10 @@ fn is_link_url(s: &str) -> bool {
     let mut chars = rest.chars();
     let first_ok = chars
         .next()
-        .is_some_and(|c| !is_js_space(c) && !"/$.?#".contains(c));
-    first_ok && chars.next().is_some_and(|c| !is_js_line_terminator(c)) && !chars.any(is_js_space)
-}
-
-/// JS `\s`.
-fn is_js_space(c: char) -> bool {
-    matches!(
-        c,
-        '\t' | '\n' | '\u{b}' | '\u{c}' | '\r' | ' ' | '\u{a0}' | '\u{1680}' | '\u{2000}'
-            ..='\u{200a}'
-                | '\u{2028}'
-                | '\u{2029}'
-                | '\u{202f}'
-                | '\u{205f}'
-                | '\u{3000}'
-                | '\u{feff}'
-    )
+        .is_some_and(|c| !is_js_whitespace(c) && !"/$.?#".contains(c));
+    first_ok
+        && chars.next().is_some_and(|c| !is_js_line_terminator(c))
+        && !chars.any(is_js_whitespace)
 }
 
 /// What JS `.` does not match.

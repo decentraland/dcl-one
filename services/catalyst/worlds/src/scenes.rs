@@ -3,6 +3,7 @@
 //! `{coordinates}` in the body), paged like @dcl/http-commons and answering
 //! in the worlds error envelope.
 
+use crate::shared::js::number_from_str;
 use axum::Json;
 use axum::extract::{Path, Query, Request, State};
 use axum::http::{HeaderValue, StatusCode, header};
@@ -264,7 +265,8 @@ fn bounding_box(q: &QueryPairs) -> Result<Option<(f64, f64, f64, f64)>, ApiError
         .iter()
         .filter_map(|k| query_param(q, k))
         .filter(|v| !v.is_empty())
-        .filter_map(js_number)
+        .map(number_from_str)
+        .filter(|v| !v.is_nan())
         .collect();
     match values.as_slice() {
         [] => Ok(None),
@@ -273,39 +275,6 @@ fn bounding_box(q: &QueryPairs) -> Result<Option<(f64, f64, f64, f64)>, ApiError
             "Bounding box requires all of x1, x2, y1, y2 to be provided.",
         )),
     }
-}
-
-/// JS `Number(v)`: decimal, `0x`/`0o`/`0b` integers and `Infinity`; `None` for `NaN`.
-fn js_number(v: &str) -> Option<f64> {
-    let t = v.trim();
-    if t.is_empty() {
-        return Some(0.0);
-    }
-    for (prefix, radix) in [("0x", 16), ("0o", 8), ("0b", 2)] {
-        if let Some(digits) = t
-            .get(..2)
-            .filter(|p| p.eq_ignore_ascii_case(prefix))
-            .map(|_| &t[2..])
-        {
-            if digits.is_empty() || !digits.chars().all(|c| c.is_digit(radix)) {
-                return None;
-            }
-            return Some(digits.chars().fold(0.0, |n, c| {
-                n * radix as f64 + c.to_digit(radix).unwrap_or(0) as f64
-            }));
-        }
-    }
-    match t {
-        "Infinity" | "+Infinity" => return Some(f64::INFINITY),
-        "-Infinity" => return Some(f64::NEG_INFINITY),
-        _ => {}
-    }
-    if t.chars()
-        .any(|c| c.is_ascii_alphabetic() && c != 'e' && c != 'E')
-    {
-        return None;
-    }
-    t.parse::<f64>().ok().filter(|n| n.is_finite())
 }
 
 fn filters(q: &QueryPairs, coordinates: Vec<String>) -> Result<SceneFilters, ApiError> {
@@ -377,27 +346,6 @@ mod tests {
     }
 
     #[test]
-    fn query_numbers_follow_js_number() {
-        for (raw, expected) in [
-            ("12", Some(12.0)),
-            (" -3 ", Some(-3.0)),
-            ("1e2", Some(100.0)),
-            ("0x10", Some(16.0)),
-            ("0B101", Some(5.0)),
-            ("0o17", Some(15.0)),
-            ("Infinity", Some(f64::INFINITY)),
-            ("-Infinity", Some(f64::NEG_INFINITY)),
-            ("-0x10", None),
-            ("0x", None),
-            ("0xg", None),
-            ("inf", None),
-            ("abc", None),
-        ] {
-            assert_eq!(js_number(raw), expected, "{raw}");
-        }
-    }
-
-    #[test]
     fn the_bounding_box_needs_all_four_numeric_values() {
         assert_eq!(bounding_box(&pairs(&[])).unwrap(), None);
         assert_eq!(
@@ -415,9 +363,22 @@ mod tests {
             bounding_box(&pairs(&[("x1", ""), ("y1", "abc")])).unwrap(),
             None
         );
+        // `Number` trims JavaScript whitespace only and overflows to Infinity.
+        assert_eq!(
+            bounding_box(&pairs(&[
+                ("x1", "1e400"),
+                ("x2", "\u{FEFF}5"),
+                ("y1", "0"),
+                ("y2", "2")
+            ]))
+            .unwrap(),
+            Some((f64::INFINITY, 5.0, 0.0, 2.0))
+        );
         for partial in [
             pairs(&[("x1", "1")]),
             pairs(&[("x1", "abc"), ("x2", "1"), ("y1", "1"), ("y2", "1")]),
+            pairs(&[("x1", "\u{85}1"), ("x2", "1"), ("y1", "1"), ("y2", "1")]),
+            pairs(&[("x1", "0x+5"), ("x2", "1"), ("y1", "1"), ("y2", "1")]),
         ] {
             assert_eq!(
                 bounding_box(&partial).unwrap_err().public_message(),
