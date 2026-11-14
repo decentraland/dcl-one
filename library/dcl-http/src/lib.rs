@@ -375,7 +375,7 @@ fn is_blocked_ip(ip: IpAddr) -> bool {
 
 /// The IPv4 address an IPv6 one reaches: IPv4-mapped `::ffff:a.b.c.d`,
 /// IPv4-compatible `::a.b.c.d`, NAT64 `64:ff9b::a.b.c.d` and 6to4 `2002:aabb:ccdd::/48`.
-fn embedded_ipv4(v6: std::net::Ipv6Addr) -> Option<std::net::Ipv4Addr> {
+pub fn embedded_ipv4(v6: std::net::Ipv6Addr) -> Option<std::net::Ipv4Addr> {
     if let Some(mapped) = v6.to_ipv4_mapped() {
         return Some(mapped);
     }
