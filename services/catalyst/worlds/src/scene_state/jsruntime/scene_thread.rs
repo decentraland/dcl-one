@@ -370,15 +370,18 @@ pub(super) fn run_scene_thread(
                         } else {
                             let kept = encode_batch(&msgs);
                             budget.release(index, reserved.saturating_sub(kept.len()), 0);
-                            // Unread early frames must not pin the scene-wide budget.
+                            // Unread early frames go to the held share, not the readable budget.
                             let shared = early.is_none();
                             if shared {
                                 c.inbound_shared_bytes += kept.len();
+                                c.inbound_bytes += kept.len();
+                                c.inbound.push_back((kept, true));
+                            } else if budget.hold(kept.len()) {
+                                c.inbound_bytes += kept.len();
+                                c.inbound.push_back((kept, false));
                             } else {
-                                budget.unshare(kept.len());
+                                budget.release(index, kept.len(), 1);
                             }
-                            c.inbound_bytes += kept.len();
-                            c.inbound.push_back((kept, shared));
                         }
                         if let Some((max_bytes, max_frames)) = early {
                             while c.inbound_bytes > max_bytes || c.inbound.len() > max_frames {

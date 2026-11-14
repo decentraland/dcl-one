@@ -210,7 +210,8 @@ pub struct RawSettings {
     pub crdt_max_bytes: usize,
     /// `CLIENT_INBOUND_MAX_BYTES` (8 MiB): unread client bytes queued toward the scene, per client.
     pub client_inbound_max_bytes: usize,
-    /// `SCENE_INBOUND_MAX_BYTES` (32 MiB): unread client bytes queued toward one scene.
+    /// `SCENE_INBOUND_MAX_BYTES` (32 MiB): unread client bytes queued toward
+    /// one scene, a quarter of it for frames held before the observer registers.
     pub scene_inbound_max_bytes: usize,
     /// `CLIENT_OUTBOUND_MAX_BYTES` (8 MiB): scene bytes queued to one client.
     pub client_outbound_max_bytes: usize,
@@ -480,9 +481,12 @@ impl Settings {
                 "CLIENT_INBOUND_MAX_BYTES is below WS_MAX_FRAME_BYTES"
             ));
         }
-        if raw.scene_inbound_max_bytes < raw.client_inbound_max_bytes {
+        // A quarter of the scene bound is for frames held before registration.
+        let readable = raw.scene_inbound_max_bytes
+            - runtime::InboundBudget::held_share(raw.scene_inbound_max_bytes);
+        if readable < raw.client_inbound_max_bytes {
             return Err(anyhow!(
-                "SCENE_INBOUND_MAX_BYTES is below CLIENT_INBOUND_MAX_BYTES"
+                "three quarters of SCENE_INBOUND_MAX_BYTES are below CLIENT_INBOUND_MAX_BYTES"
             ));
         }
         if admin_token.is_none() {
@@ -796,6 +800,9 @@ impl SceneHostState {
 
     /// Unloads every scene an OOM parked; [`Self::note_removed`] records it.
     pub fn retire_parked(&self) -> usize {
+        if jsruntime::parked_isolates() == 0 {
+            return 0;
+        }
         let mut retired = 0;
         for scene in self.scenes.all() {
             if scene.runtime.parked()
@@ -1131,7 +1138,7 @@ mod key_tests {
             |r| r.client_inbound_max_bytes = r.ws_max_frame_bytes - 1
         ));
         assert!(!ok(
-            |r| r.scene_inbound_max_bytes = r.client_inbound_max_bytes - 1
+            |r| r.scene_inbound_max_bytes = r.client_inbound_max_bytes
         ));
     }
 

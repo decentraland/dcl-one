@@ -296,7 +296,8 @@ pub struct RuntimeLimits {
     /// scene may hand `crdtSendToRenderer` or `updateCRDTState`.
     pub crdt_max_bytes: usize,
     /// Client frames queued toward the scene and not yet read, per client
-    /// and per scene.
+    /// and per scene. The scene bound covers everything: a quarter of it is
+    /// reserved for frames held before the scene registers its observer.
     pub client_inbound_max_bytes: usize,
     pub scene_inbound_max_bytes: usize,
     /// Bytes the scene may queue to one client between flushes; also the
@@ -343,7 +344,10 @@ pub struct InboundOverBudget;
 pub struct InboundBudget {
     client_max_bytes: usize,
     client_max_frames: usize,
+    /// Frames readable by the scene; `held_max_bytes` is the rest of
+    /// `SCENE_INBOUND_MAX_BYTES`, so the two never exceed it together.
     scene_max_bytes: usize,
+    held_max_bytes: usize,
     state: Mutex<InboundUsage>,
 }
 
@@ -351,16 +355,31 @@ pub struct InboundBudget {
 struct InboundUsage {
     per_client: std::collections::HashMap<u32, (usize, usize)>,
     total: usize,
+    held: usize,
+    /// Consecutive frames per client dropped because the scene was full.
+    drops: std::collections::HashMap<u32, u32>,
 }
+
+/// Dropped frames leave the sender out of sync; after this many in a row it
+/// is closed so it reconnects and resyncs from the snapshot.
+pub const SCENE_FULL_DROPS_BEFORE_CLOSE: u32 = 8;
 
 impl InboundBudget {
     pub fn new(limits: &RuntimeLimits) -> Self {
+        let held_max_bytes = Self::held_share(limits.scene_inbound_max_bytes);
         Self {
             client_max_bytes: limits.client_inbound_max_bytes,
             client_max_frames: limits.client_inbound_max.max(1),
-            scene_max_bytes: limits.scene_inbound_max_bytes,
+            scene_max_bytes: limits.scene_inbound_max_bytes - held_max_bytes,
+            held_max_bytes,
             state: Mutex::new(InboundUsage::default()),
         }
+    }
+
+    /// The part of the scene bound reserved for frames held before the
+    /// observer registers.
+    pub fn held_share(scene_inbound_max_bytes: usize) -> usize {
+        scene_inbound_max_bytes / 4
     }
 
     /// Charges one frame of `bytes` to `index` and to the scene; nothing is
@@ -372,11 +391,23 @@ impl InboundBudget {
             return Err(InboundRefusal::Client);
         }
         if s.total.saturating_add(bytes) > self.scene_max_bytes {
-            return Err(InboundRefusal::Scene);
+            let drops = s.drops.entry(index).or_default();
+            *drops += 1;
+            return Err(if *drops >= SCENE_FULL_DROPS_BEFORE_CLOSE {
+                InboundRefusal::Desynced
+            } else {
+                InboundRefusal::Scene
+            });
         }
+        s.drops.remove(&index);
         s.per_client.insert(index, (used + bytes, frames + 1));
         s.total += bytes;
         Ok(())
+    }
+
+    /// Forgets the drop count of `index`, for a new client given that slot.
+    pub fn forget_drops(&self, index: u32) {
+        self.state.lock().drops.remove(&index);
     }
 
     /// Returns `bytes` and `frames` previously reserved for `index`.
@@ -384,18 +415,25 @@ impl InboundBudget {
         self.release_parts(index, bytes, frames, bytes);
     }
 
-    /// Takes `bytes` off the scene total only; the client keeps the charge.
-    /// For frames held for a scene that cannot read them yet.
-    pub fn unshare(&self, bytes: usize) {
+    /// Moves `bytes` from the scene total to the held share, for frames kept
+    /// for a scene that cannot read them yet; `false` (nothing moved) when
+    /// the held share is full.
+    pub fn hold(&self, bytes: usize) -> bool {
         let mut s = self.state.lock();
+        if s.held.saturating_add(bytes) > self.held_max_bytes {
+            return false;
+        }
         s.total = s.total.saturating_sub(bytes);
+        s.held += bytes;
+        true
     }
 
     /// [`Self::release`] of frames of which only `shared` bytes still count
-    /// toward the scene total.
+    /// toward the scene total; the rest were held.
     pub fn release_parts(&self, index: u32, bytes: usize, frames: usize, shared: usize) {
         let mut s = self.state.lock();
         s.total = s.total.saturating_sub(shared);
+        s.held = s.held.saturating_sub(bytes.saturating_sub(shared));
         if let Some((used, queued)) = s.per_client.get_mut(&index) {
             *used = used.saturating_sub(bytes);
             *queued = queued.saturating_sub(frames);
@@ -407,6 +445,11 @@ impl InboundBudget {
 
     pub fn total(&self) -> usize {
         self.state.lock().total
+    }
+
+    /// Bytes held for a scene that has not registered its observer.
+    pub fn held(&self) -> usize {
+        self.state.lock().held
     }
 
     /// Bytes and frames charged to `index`.
@@ -427,9 +470,10 @@ pub enum InboundRefusal {
     Client,
     /// The scene-wide budget: the frame is dropped, no one is closed.
     Scene,
+    /// The scene-wide budget, for the sender's
+    /// [`SCENE_FULL_DROPS_BEFORE_CLOSE`]th frame in a row: it is closed.
+    Desynced,
 }
-
-static SCENE_BUDGET_DROPS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 pub struct InitState {
     pub start: u32,
@@ -539,6 +583,7 @@ impl SceneRuntime for RelayRuntime {
 
     #[cfg(test)]
     fn mark_parked_for_tests(&self) {
+        jsruntime::record_park_for_tests(&self.scene_hash);
         self.parked_for_tests
             .store(true, std::sync::atomic::Ordering::SeqCst);
     }
@@ -665,6 +710,7 @@ impl SceneRuntime for JsRuntime {
 
     #[cfg(test)]
     fn mark_parked_for_tests(&self) {
+        jsruntime::record_park_for_tests(&self.handle.scene_hash);
         self.handle
             .shared
             .parked
@@ -686,6 +732,7 @@ impl SceneRuntime for JsRuntime {
             .outbound_meters
             .insert(client_index, std::sync::Arc::clone(&meter));
         self.handle.shared.outbound.insert(client_index, outbound);
+        self.handle.shared.inbound.forget_drops(client_index);
         let cfg = *self.handle.shared.config.lock();
         let (start, size) = match cfg.try_range_for_client(client_index) {
             Some(range) => range,
@@ -723,14 +770,26 @@ impl SceneRuntime for JsRuntime {
         match budget.reserve(client_index, body.len()) {
             Ok(()) => {}
             Err(InboundRefusal::Client) => return Err(InboundOverBudget),
-            Err(InboundRefusal::Scene) => {
-                let drops = SCENE_BUDGET_DROPS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            Err(refusal) => {
+                let drops = self
+                    .handle
+                    .shared
+                    .inbound_drops
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 if drops.is_multiple_of(1000) {
                     tracing::warn!(
                         scene = %self.handle.scene_hash,
                         drops = drops + 1,
                         "scene inbound budget full; client frame dropped"
                     );
+                }
+                if refusal == InboundRefusal::Desynced {
+                    tracing::info!(
+                        scene = %self.handle.scene_hash,
+                        index = client_index,
+                        "client frames dropped repeatedly; closing it to resync"
+                    );
+                    return Err(InboundOverBudget);
                 }
                 return Ok(vec![]);
             }
@@ -1207,7 +1266,8 @@ mod tests {
     fn a_full_scene_budget_drops_frames_without_closing_the_sender() {
         let limits = RuntimeLimits {
             client_inbound_max_bytes: 100,
-            scene_inbound_max_bytes: 150,
+            // 150 readable, 50 for held frames.
+            scene_inbound_max_bytes: 200,
             ..RuntimeLimits::default()
         };
         let rt = js_runtime(NEVER_READS, limits);
@@ -1248,5 +1308,67 @@ mod tests {
             ),
             "the newest frames within 1/32 of the client budget stay queued, off the scene total"
         );
+    }
+
+    #[test]
+    fn a_sender_dropped_repeatedly_is_closed_to_resync() {
+        let limits = RuntimeLimits {
+            client_inbound_max_bytes: 100,
+            scene_inbound_max_bytes: 200,
+            ..RuntimeLimits::default()
+        };
+        let rt = js_runtime(NEVER_READS, limits);
+        let (a, b) = (js_open(&rt), js_open(&rt));
+        assert!(rt.on_client_crdt(a, &put_frame(1100, 66)).is_ok());
+        assert!(rt.on_client_crdt(b, &put_frame(1600, 26)).is_ok());
+        let dropped = put_frame(1601, 0);
+        for _ in 1..SCENE_FULL_DROPS_BEFORE_CLOSE {
+            assert_eq!(
+                rt.on_client_crdt(b, &dropped),
+                Ok(vec![]),
+                "dropped, still connected"
+            );
+        }
+        assert_eq!(
+            rt.on_client_crdt(b, &dropped),
+            Err(InboundOverBudget),
+            "after a run of drops the sender is closed so it resyncs"
+        );
+        assert_eq!(
+            rt.handle
+                .shared
+                .inbound_drops
+                .load(std::sync::atomic::Ordering::Relaxed),
+            u64::from(SCENE_FULL_DROPS_BEFORE_CLOSE)
+        );
+    }
+
+    #[test]
+    fn held_frames_stay_within_their_share_of_the_scene_bound() {
+        let limits = RuntimeLimits {
+            // 100 bytes held per client before registration.
+            client_inbound_max_bytes: 3200,
+            // 300 readable, 100 held across the scene.
+            scene_inbound_max_bytes: 400,
+            ..RuntimeLimits::default()
+        };
+        let rt = js_runtime("module.exports.onUpdate = function (dt) {};", limits);
+        let (a, b) = (js_open(&rt), js_open(&rt));
+        let budget = &rt.handle.shared.inbound;
+        for i in 0..2 {
+            assert!(rt.on_client_crdt(a, &put_frame(1100 + i, 26)).is_ok());
+        }
+        assert!(
+            crate::shared::test_wait::until_blocking(|| budget.held() == 100),
+            "a's frames are held"
+        );
+        assert!(rt.on_client_crdt(b, &put_frame(1600, 26)).is_ok());
+        assert!(
+            crate::shared::test_wait::until_blocking(
+                || budget.total() == 0 && budget.client_usage(b) == (0, 0)
+            ),
+            "with the held share full, b's early frame is not kept"
+        );
+        assert_eq!((budget.held(), budget.client_usage(a).0), (100, 100));
     }
 }
