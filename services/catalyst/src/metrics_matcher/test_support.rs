@@ -3,7 +3,7 @@ use super::*;
 use crate::comms::stats::{self, content, http};
 use serde_json::{Value, json};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 #[derive(Default)]
 struct Hooks(std::sync::Mutex<Vec<http::Observation>>);
@@ -70,6 +70,246 @@ fn distribution(mut samples: Vec<u128>) -> Value {
     samples.sort_unstable();
     let n = samples.len();
     json!({"n":n,"p50_ns":samples[n/2],"p95_ns":samples[n*95/100],"p99_ns":samples[n*99/100],"max_ns":samples[n-1]})
+}
+
+const FINITE_PATTERN: &str = "/scrape/:name((?=[a-z0-9]{16,64}$)[a-z]+[0-9]+)";
+
+fn finite_input(index: usize) -> (String, bool) {
+    let matched = index.is_multiple_of(2);
+    let suffix = if matched { "" } else { "-" };
+    (
+        format!("/scrape/tenant{}{:04}{suffix}", "a".repeat(32), index),
+        matched,
+    )
+}
+
+#[derive(Default)]
+struct NativeCounters {
+    entered: AtomicUsize,
+    active: AtomicUsize,
+    peak: AtomicUsize,
+    completed: AtomicUsize,
+    finalized: AtomicBool,
+    finalized_signal: tokio::sync::Notify,
+    entered_first: tokio::sync::Notify,
+}
+
+pub(super) struct NativeProbe {
+    counters: Arc<NativeCounters>,
+    release: std::sync::Mutex<Option<std::sync::mpsc::Receiver<()>>>,
+    admission: Arc<Semaphore>,
+    require_retained_teardown: bool,
+}
+
+impl NativeProbe {
+    pub(super) fn enter(&self) -> NativeOperation<'_> {
+        let active = self.counters.active.fetch_add(1, Ordering::SeqCst) + 1;
+        self.counters.peak.fetch_max(active, Ordering::SeqCst);
+        self.counters.entered.fetch_add(1, Ordering::SeqCst);
+        // Take the receiver before waiting so subsequent operations cannot block.
+        let release = self.release.lock().unwrap().take();
+        if let Some(release) = release {
+            self.counters.entered_first.notify_one();
+            release.recv_timeout(Duration::from_secs(10)).unwrap();
+        }
+        NativeOperation(&self.counters)
+    }
+}
+
+impl Drop for NativeProbe {
+    fn drop(&mut self) {
+        if self.require_retained_teardown {
+            assert_eq!(
+                self.admission.available_permits(),
+                0,
+                "final native teardown must precede submitted admission release"
+            );
+        }
+        self.counters.finalized.store(true, Ordering::SeqCst);
+        self.counters.finalized_signal.notify_one();
+    }
+}
+
+pub(super) struct NativeOperation<'a>(&'a NativeCounters);
+impl Drop for NativeOperation<'_> {
+    fn drop(&mut self) {
+        self.0.completed.fetch_add(1, Ordering::SeqCst);
+        self.0.active.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+fn probed_adapter(
+    retained_teardown: bool,
+) -> (
+    Arc<Adapter>,
+    Arc<NativeCounters>,
+    std::sync::mpsc::Sender<()>,
+) {
+    let admission = Arc::new(Semaphore::new(1));
+    let counters = Arc::new(NativeCounters::default());
+    let (release, wait) = std::sync::mpsc::channel();
+    let mut compiled = Compiled::new(FINITE_PATTERN).unwrap();
+    compiled.probe = Some(NativeProbe {
+        counters: counters.clone(),
+        release: std::sync::Mutex::new(Some(wait)),
+        admission: admission.clone(),
+        require_retained_teardown: retained_teardown,
+    });
+    (
+        Arc::new(Adapter {
+            compiled: Arc::new(compiled),
+            admission,
+        }),
+        counters,
+        release,
+    )
+}
+
+async fn unrelated_http(client: &reqwest::Client, address: std::net::SocketAddr) {
+    assert_eq!(
+        client
+            .get(format!("http://{address}/unrelated"))
+            .send()
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap(),
+        "shared"
+    );
+}
+
+async fn native_contention() -> Value {
+    tokio::time::timeout(Duration::from_secs(30), async {
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        let mut rows = Vec::new();
+        for cancellation in ["blocking_pool_queued", "native_locked_before_evaluation"] {
+            let start = Instant::now();
+            let (adapter, counters, release) = probed_adapter(false);
+            let (pool_release, pool_wait) = std::sync::mpsc::channel();
+            let (pool_started, pool_start) = tokio::sync::oneshot::channel();
+            let busy = tokio::task::spawn_blocking(move || {
+                pool_started.send(()).unwrap();
+                pool_wait.recv_timeout(Duration::from_secs(10)).unwrap();
+            });
+            pool_start.await.unwrap();
+            let pool_start = Instant::now();
+            let first_adapter = adapter.clone();
+            let mut first = Some(tokio::spawn(async move { first_adapter.matches(&finite_input(0).0).await }));
+            while adapter.admission.available_permits() != 0 { tokio::task::yield_now().await; }
+            assert_eq!(counters.entered.load(Ordering::SeqCst), 0);
+            if cancellation == "blocking_pool_queued" {
+                let first = first.take().unwrap();
+                first.abort();
+                assert!(first.await.unwrap_err().is_cancelled());
+                // No other matcher can reacquire and hide a premature release.
+                assert_eq!(adapter.admission.available_permits(), 0);
+            }
+            let (state, _) = state(PreparedStats {
+                settings: Settings { metrics_path: FINITE_PATTERN.into(), metrics_bearer_token: Some("fixture".into()), ..Default::default() },
+                matcher: adapter.clone(),
+            });
+            let app = http::mount_services(
+                axum::Router::new().fallback(|| async { "shared" }), state.clone(),
+                http::standalone(state), axum::Router::new(),
+            );
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let (stop, stopped) = tokio::sync::oneshot::channel();
+            let server = tokio::spawn(async move {
+                axum::serve(listener, app).with_graceful_shutdown(async { let _ = stopped.await; }).await.unwrap();
+            });
+            let mut requests = Vec::new();
+            for index in 0..32 {
+                let client = client.clone();
+                requests.push(tokio::spawn(async move {
+                    let start = Instant::now();
+                    let (path, matched) = finite_input(index);
+                    let response = client.get(format!("http://{address}/archipelago-ea-stats{path}"))
+                        .bearer_auth("fixture").send().await.unwrap();
+                    assert_eq!(response.status().as_u16(), if matched { 200 } else { 404 });
+                    let body = response.text().await.unwrap();
+                    if matched { assert_eq!(body, "actual_fixture 1\n"); }
+                    start.elapsed().as_nanos()
+                }));
+            }
+            unrelated_http(&client, address).await;
+            assert!(requests.iter().all(|request| !request.is_finished()));
+            assert_eq!(adapter.admission.available_permits(), 0);
+            assert_eq!(counters.entered.load(Ordering::SeqCst), 0);
+            let pool_blocked_ns = pool_start.elapsed().as_nanos();
+            pool_release.send(()).unwrap();
+            busy.await.unwrap();
+            counters.entered_first.notified().await;
+            let held = Instant::now();
+            if let Some(first) = first {
+                first.abort();
+                assert!(first.await.unwrap_err().is_cancelled());
+            }
+            assert_eq!(adapter.admission.available_permits(), 0);
+            assert_eq!(counters.entered.load(Ordering::SeqCst), 1);
+            assert_eq!(counters.active.load(Ordering::SeqCst), 1);
+            unrelated_http(&client, address).await;
+            assert!(requests.iter().all(|request| !request.is_finished()));
+            let native_probe_held_ns = held.elapsed().as_nanos();
+            release.send(()).unwrap();
+            let mut times = Vec::new();
+            for request in requests { times.push(request.await.unwrap()); }
+            assert_eq!(counters.completed.load(Ordering::SeqCst), 33);
+            assert_eq!(counters.peak.load(Ordering::SeqCst), 1);
+            stop.send(()).unwrap();
+            server.await.unwrap();
+            drop(adapter);
+            // Graceful shutdown can precede the last connection's service drop.
+            counters.finalized_signal.notified().await;
+            assert!(counters.finalized.load(Ordering::SeqCst));
+            rows.push(json!({"cancellation":cancellation,"native_completed":33,"peak_native_locked":1,
+                "controlled_pool_blocked_ns":pool_blocked_ns,"controlled_native_locked_ns":native_probe_held_ns,
+                "http":distribution(times),"elapsed_ns":start.elapsed().as_nanos(),"unrelated_http_completed":2,
+                "resident_bytes":resident_bytes()}));
+        }
+        let (adapter, counters, release) = probed_adapter(true);
+        let admission = adapter.admission.clone();
+        let caller = adapter.clone();
+        let first = tokio::spawn(async move { caller.matches(&finite_input(0).0).await });
+        counters.entered_first.notified().await;
+        first.abort();
+        assert!(first.await.unwrap_err().is_cancelled());
+        // Only the submitted real adapter closure now owns the compiled isolate.
+        drop(adapter);
+        assert!(!counters.finalized.load(Ordering::SeqCst));
+        assert_eq!(admission.available_permits(), 0);
+        release.send(()).unwrap();
+        // This runtime has one blocking thread: the marker follows full teardown.
+        tokio::task::spawn_blocking(|| ()).await.unwrap();
+        assert!(counters.finalized.load(Ordering::SeqCst));
+        assert_eq!(counters.completed.load(Ordering::SeqCst), 1);
+        assert_eq!(admission.available_permits(), 1);
+        json!({"workload":"native-adapter-contention","cancellations":rows,
+            "detached_last_owner_native_teardown":true})
+    }).await.unwrap()
+}
+
+async fn finite_workload() -> Value {
+    let compiled = Compiled::new(FINITE_PATTERN).unwrap();
+    let mut matched = Vec::new();
+    let mut near_miss = Vec::new();
+    for index in 0..32 {
+        let (path, expected) = finite_input(index);
+        let start = Instant::now();
+        let actual = compiled.matches(&path).unwrap();
+        let elapsed = start.elapsed().as_nanos();
+        assert_eq!(actual, expected);
+        if expected {
+            matched.push(elapsed);
+        } else {
+            near_miss.push(elapsed);
+        }
+    }
+    drop(compiled);
+    json!({"workload":"finite-lookahead-near-miss","pattern":FINITE_PATTERN,"distinct_inputs":32,
+        "native_completed":32,"matched":distribution(matched),"near_miss":distribution(near_miss),
+        "resident_bytes":resident_bytes()})
 }
 
 /// Run finite adapter, HTTP and performance checks, returning handle-free data.
@@ -166,8 +406,21 @@ pub unsafe fn run() -> Value {
         // Runtime::drop waits for submitted blocking work; no shutdown timeout.
         drop(runtime);
     }
+    let mut native = Vec::new();
+    for workers in [1, 2, configured] {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(workers)
+            .max_blocking_threads(1)
+            .enable_all()
+            .build()
+            .unwrap();
+        let finite = runtime.block_on(finite_workload());
+        let contention = runtime.block_on(native_contention());
+        drop(runtime);
+        native.push(json!({"workers":workers,"finite":finite,"contention":contention}));
+    }
     json!({"engine":v8::V8::get_version(),"compile_ns":compile_ns,"resident_before":before,
-        "resident_after_compile":after_compile,"resident_after":resident_bytes(),"cases":rows,"measurements":measurements})
+        "resident_after_compile":after_compile,"resident_after":resident_bytes(),"cases":rows,"measurements":measurements,"native_workloads":native})
 }
 
 async fn http_and_costs(workers: usize) -> Value {

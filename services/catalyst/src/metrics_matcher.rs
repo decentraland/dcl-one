@@ -88,6 +88,9 @@ struct Compiled {
     context: v8::Global<v8::Context>,
     regex: v8::Global<v8::RegExp>,
     isolate: v8::SharedIsolate,
+    // The test probe drops after native state, while submitted work owns admission.
+    #[cfg(feature = "test-support")]
+    probe: Option<test_support::NativeProbe>,
 }
 
 impl Compiled {
@@ -148,11 +151,15 @@ impl Compiled {
             context,
             regex,
             isolate,
+            #[cfg(feature = "test-support")]
+            probe: None,
         })
     }
 
     fn matches(&self, subject: &str) -> Result<bool, MatcherError> {
         let mut lock = self.isolate.lock();
+        #[cfg(feature = "test-support")]
+        let _operation = self.probe.as_ref().map(|probe| probe.enter());
         v8::scope!(let scope, &mut *lock);
         let context = v8::Local::new(scope, &self.context);
         let context_scope = &mut v8::ContextScope::new(scope, context);
