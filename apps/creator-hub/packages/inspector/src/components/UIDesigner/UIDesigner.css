@@ -182,148 +182,68 @@
 .ui-designer-rail-section {
   display: flex;
   flex-direction: column;
-  height: 100%;
   min-height: 0;
 }
 
-/* The two sections are sized by a vertical react-resizable-panels group (the
-   draggable divider); each fills its Panel and scrolls internally. Scrolling
-   belongs to the list inside, not the section: a scroll container clips on BOTH
-   axes (a `visible` axis computes to `auto` alongside a scrolling one), which
-   would cut the "+" wave off. */
-.ui-designer-rail-panels {
-  flex: 1 1 auto;
-  min-height: 0;
+.ui-designer-rail-section-guis {
+  flex: 0 0 auto;
+}
+
+.ui-designer-rail-section-nodes {
+  flex: 1 1 0;
 }
 
 .ui-designer-rail-header {
-  flex-shrink: 0;
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: rgba(255, 255, 255, 0.5);
-  padding: 8px 12px 4px;
-}
-
-.ui-designer-rail-handle {
-  flex-shrink: 0;
-  height: 3px;
-  background-color: var(--ui-designer-hairline);
-  transition: background-color 0.2s ease;
-}
-
-.ui-designer-rail-handle:hover,
-.ui-designer-rail-handle[data-resize-handle-active] {
-  background-color: var(--ui-designer-control-border-strong);
-}
-
-.ui-designer-rail-header-row {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
   justify-content: space-between;
-}
-
-.ui-designer-rail-add {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  padding: 0;
-  border: 1px solid var(--ui-designer-control-border);
-  border-radius: 4px;
-  touch-action: manipulation;
-}
-
-/* Press feedback on the two "+" buttons: one ripple per click, expanding out of
-   the button and fading. Purely a confirmation that the click landed — the GUI or
-   node it creates is the real feedback — so it never loops.
-
-   Scale is capped at 2: the ripple is 22px (the 20px button plus `inset: -1px`)
-   and the button sits 12px from the rail's edge, which `overflow: hidden` clips.
-   (22*2 - 20)/2 = 12px is exactly as far as it can travel without being cut.
-   Only transform/opacity animate. */
-.ui-designer-rail-add-ripple {
-  position: absolute;
-  inset: -1px;
-  border-radius: 50%;
-  background: var(--ui-designer-control-accent-21);
-  pointer-events: none;
-  animation: ui-designer-add-ripple 0.5s ease-out forwards;
-}
-
-@keyframes ui-designer-add-ripple {
-  from {
-    transform: scale(1);
-    opacity: 1;
-  }
-
-  to {
-    transform: scale(2);
-    opacity: 0;
-  }
-}
-
-/* Decorative only: the created GUI/node is the feedback that matters, so under
-   reduced motion the ripple simply doesn't play. */
-@media (prefers-reduced-motion: reduce) {
-  .ui-designer-rail-add-ripple {
-    display: none;
-  }
-}
-
-.ui-designer-rail-add svg {
-  position: relative;
-  width: 14px;
-  height: 14px;
-}
-
-.ui-designer-right-rail-tabs {
-  display: flex;
-  flex: 0 0 auto;
-  background: var(--tree-bg-color);
-  border-bottom: 1px solid var(--ui-designer-hairline);
-}
-
-/* The Figma's tab bar is a 36px band on Neutrals/Shadow (= --base-20) with the
-   active tab underlined edge to edge and its label brighter + heavier than the
-   resting one. The underline is the tab's own bottom border, so it spans exactly
-   the tab it belongs to at any rail width.
-
-   The resting label holds at 50% white rather than the design's White 40: at 40%
-   over this band it composites to 3.75:1, under the 4.5:1 a tab label needs. */
-.ui-designer-right-rail-tab {
-  flex: 1 1 0;
   box-sizing: border-box;
-  min-height: 36px;
-  padding: 9px 12px;
-  background: transparent;
+  width: 100%;
+  height: 28px;
+  margin: 0;
+  padding: 3px 10px;
+  appearance: none;
+  background: none;
   border: none;
-  border-bottom: 2px solid transparent;
-  color: rgba(255, 255, 255, 0.5);
+  border-top: 1px solid var(--palette-whiteTransparent-subtle);
+  border-bottom: 1px solid var(--palette-whiteTransparent-subtle);
+  color: var(--palette-neutral-gray4);
   font-family: var(--font-family);
-  font-size: 11px;
-  font-weight: 500;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: normal;
+  letter-spacing: 0;
+  text-align: left;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
   cursor: pointer;
   touch-action: manipulation;
 }
 
-.ui-designer-right-rail-tab:hover {
-  color: rgba(255, 255, 255, 0.8);
+.ui-designer-rail-header:hover {
+  background-color: var(--palette-whiteTransparent-faint);
 }
 
-.ui-designer-right-rail-tab.active {
-  color: var(--ui-designer-text);
-  border-bottom-color: var(--ui-designer-text);
-  font-weight: 600;
+.ui-designer-rail-header:focus-visible {
+  outline: none;
+  background-color: var(--palette-whiteTransparent-faint);
+  box-shadow: inset 0 0 0 1px var(--focus-ring);
 }
 
-.ui-designer-right-rail-tab:focus-visible {
-  outline: 2px solid var(--ui-designer-control-accent);
-  outline-offset: -2px;
+.ui-designer-rail-add {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+  color: var(--palette-neutral-gray3);
+  font-size: 12px;
+}
+
+.ui-designer-rail-add:hover {
+  background-color: var(--palette-whiteTransparent-subtle);
 }
 
 .ui-designer-right-rail-tabpanel {
@@ -361,27 +281,114 @@
   color: var(--ui-designer-text);
 }
 
-/* Node-tree search — always visible, matching the 3D asset panels. */
-/* The rail's one search box, above both sections — it filters GUIs and Nodes
-   together, so it belongs to the rail rather than to either list. */
 .ui-designer-rail-search {
   display: flex;
   flex-shrink: 0;
-  padding: var(--uid-space-2);
-  border-bottom: 1px solid var(--ui-designer-hairline);
+  box-sizing: border-box;
+  height: 32px;
+  padding: 4px;
 }
 
-.ui-designer-rail-search .LeftIcon {
-  color: var(--base-09);
+.ui-designer-left-rail .ui-designer-rail-search .Text.Field .InputContainer,
+.ui-designer-left-rail .ui-designer-rail-search .Text.Field .InputContainer:has(.LeftContent) {
+  box-sizing: border-box;
+  height: 24px;
+  gap: 6px;
+  padding: 6px 40px 6px 6px;
+  background: none;
+  border: none;
+  border-radius: var(--ui-designer-radius-field);
+  box-shadow: none;
+}
+
+.ui-designer-left-rail .ui-designer-rail-search .Text.Field .InputContainer:has(.RightContent) {
+  padding: 6px 10px 6px 6px;
+}
+
+.ui-designer-left-rail .ui-designer-rail-search .Text.Field .InputContainer.hovered:not(.focused) {
+  box-shadow: inset 0 0 0 1px var(--palette-whiteTransparent-backdrop);
+}
+
+.ui-designer-left-rail .ui-designer-rail-search .Text.Field .InputContainer.focused {
+  box-shadow: inset 0 0 0 1px var(--palette-neutral-softWhite);
+}
+
+.ui-designer-rail-search .Text.Field .InputContainer .LeftContent {
+  min-width: 0;
+  font-size: 12px;
+  color: var(--palette-neutral-softWhite);
+}
+
+.ui-designer-rail-search .Text.Field .InputContainer.hovered:not(.focused) .LeftContent {
+  color: var(--palette-whiteTransparent-backdrop);
+}
+
+.ui-designer-left-rail .ui-designer-rail-search .Text.Field .InputContainer .input {
+  padding: 0;
+  color: var(--palette-neutral-softWhite);
+  caret-color: var(--palette-neutral-softWhite);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.ui-designer-left-rail .ui-designer-rail-search .Text.Field .InputContainer .input::placeholder {
+  color: var(--palette-whiteTransparent-blurry);
+}
+
+.ui-designer-left-rail
+  .ui-designer-rail-search
+  .Text.Field
+  .InputContainer.focused
+  .input::placeholder {
+  color: var(--palette-whiteTransparent-soft);
+}
+
+.ui-designer-rail-search .Text.Field .InputContainer .RightContent {
+  min-width: 0;
 }
 
 .ui-designer-rail-search .ClearSearch {
+  position: relative;
+  touch-action: manipulation;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 2px;
+  width: 24px;
+  height: 24px;
+  margin-right: -6px;
+  padding: 0;
+  appearance: none;
+  background: none;
   border: none;
-  border-radius: 4px;
+  color: var(--palette-neutral-softWhite);
+  font-size: 8px;
+  cursor: pointer;
+}
+
+.ui-designer-rail-search .ClearSearch::before {
+  content: "";
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  border-radius: var(--r-pill);
+  background-color: var(--palette-whiteTransparent-faint);
+}
+
+.ui-designer-rail-search .ClearSearch:hover::before {
+  background-color: var(--palette-whiteTransparent-subtle);
+}
+
+.ui-designer-rail-search .ClearSearch:focus-visible {
+  outline: none;
+}
+
+.ui-designer-rail-search .ClearSearch:focus-visible::before {
+  background-color: var(--palette-whiteTransparent-subtle);
+  box-shadow: inset 0 0 0 1px var(--focus-ring);
+}
+
+.ui-designer-rail-search .ClearSearch svg {
+  position: relative;
 }
 
 /* Note shown while a nested component instance is selected: its Variables and

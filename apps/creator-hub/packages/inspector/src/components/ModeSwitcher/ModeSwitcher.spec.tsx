@@ -128,3 +128,13 @@ describe('when a mode is picked', () => {
     expect(mocks.setUiDesignerMode).toHaveBeenCalledWith(false);
   });
 });
+
+describe('the tab bar', () => {
+  it('should use the shared tab-bar classes the right rail uses too', () => {
+    render(<ModeSwitcher />);
+
+    expect(screen.getByRole('tablist').classList).toContain('TabBar');
+    expect(tabs().twoD.classList).toContain('TabBar-tab');
+    expect(tabs().threeD.classList).toContain('TabBar-tab');
+  });
+});
