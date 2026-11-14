@@ -7,6 +7,7 @@ use std::collections::BTreeMap;
 use serde_json::{Value, json};
 
 use crate::auth::{canonicalize_pointer, is_canonical_pointer, parse_pointer};
+use crate::content::validator::navmap_thumbnail_error;
 
 pub(super) const MAX_ENTITY_FILE_SIZE_BYTES: usize = 5 * 1024 * 1024;
 
@@ -225,66 +226,19 @@ pub(super) fn missing_skybox_textures(entity: &Value) -> Vec<String> {
         .collect()
 }
 
-fn has_uri_scheme(path: &str) -> bool {
-    let mut chars = path.chars();
-    match chars.next() {
-        Some(c) if c.is_ascii_alphabetic() => {}
-        _ => return false,
-    }
-    for c in chars {
-        match c {
-            ':' => return true,
-            c if c.is_ascii_alphanumeric() || matches!(c, '+' | '.' | '-') => {}
-            _ => return false,
-        }
-    }
-    false
-}
-
-fn is_relative_thumbnail_path(path: &str) -> bool {
-    if has_uri_scheme(path) || path.starts_with('/') {
-        return false;
-    }
-    let js_ws = |c: char| c.is_whitespace() || c == '\u{FEFF}';
-    if path.starts_with(js_ws) || path.ends_with(js_ws) {
-        return false;
-    }
-    if path.chars().any(|c| c.is_control()) {
-        return false;
-    }
-    !path.contains(['<', '>', '"'])
-}
-
 pub(super) fn validate_navmap_thumbnail(entity: &Value, errors: &mut Vec<String>) {
-    let thumb = match entity
-        .get("metadata")
-        .and_then(|m| m.get("display"))
-        .and_then(|d| d.get("navmapThumbnail"))
-    {
-        None | Some(Value::Null) => return,
-        Some(Value::String(s)) if s.is_empty() => return,
-        Some(Value::Bool(false)) => return,
-        Some(Value::Number(n)) if n.as_f64() == Some(0.0) => return,
-        Some(Value::String(s)) => s.as_str(),
-        Some(other) => {
-            errors.push(format!("Scene thumbnail '{other}' must be a relative path to a file included in the deployment."));
-            return;
-        }
-    };
-    if !is_relative_thumbnail_path(thumb) {
-        errors.push(format!("Scene thumbnail '{thumb}' must be a relative path to a file included in the deployment."));
+    let Some(metadata) = entity.get("metadata") else {
         return;
-    }
-    if !content_has_file(entity, thumb) {
-        errors.push(format!(
-            "Scene thumbnail '{thumb}' must be a file included in the deployment."
-        ));
+    };
+    if let Some(message) = navmap_thumbnail_error(metadata, |file| content_has_file(entity, file)) {
+        errors.push(message);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::content::validator::is_relative_thumbnail_path;
 
     #[test]
     fn canon_pointer_set_normalizes_and_sorts() {
