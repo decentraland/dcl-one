@@ -11,6 +11,7 @@ import { countLaunch } from '@explorer-core/lib/launchCount'
 import { isNativeHud } from './lib/bootMode'
 import { inShell } from '@explorer-core/lib/shell'
 import { loadPrefs } from '@explorer-core/lib/prefs'
+import { loadFeatureFlags } from '@explorer-core/lib/featureFlags'
 import { bootAnalytics, dropAttributionParams, listenForGoogleTag } from '@explorer-core/lib/analytics'
 import { AUTH_RETURN_PARAM } from '@explorer-core/features/auth/sso'
 import './styles/global.css'
@@ -68,6 +69,8 @@ export async function mountPlayApp(container: HTMLElement): Promise<() => void> 
   await loadPrefs()
   countLaunch()
   bootAnalytics()
+  // the rollout flags read beside the first render, never ahead of it (lib/featureFlags)
+  void loadFeatureFlags()
   if (inShell) listenForGoogleTag()
   // Clear the auth-return marker after sso.ts has read it, before URL synchronization.
   dropAttributionParams([AUTH_RETURN_PARAM])
