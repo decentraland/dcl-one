@@ -427,7 +427,10 @@ describe('Explorer', () => {
 
   test("profileDeployWindow waits out the catalyst's window after the own profile changed, and only then", async () => {
     let version = 3
-    const fake = new FakeConsole({ get_user_data: () => `tester (0x${'a'.repeat(40)}): v${version}, web3=true` })
+    const fake = new FakeConsole({
+      get_user_data: () => `tester (0x${'a'.repeat(40)}): v${version}, web3=true`,
+      profile_requests: () => JSON.stringify({ ownVersion: version, peerVersion: version, deployPending: false })
+    })
     const explorer = new Explorer(fake, { profileDeployWindowMs: 300 })
     let started = Date.now()
     await explorer.profileDeployWindow()
@@ -442,7 +445,10 @@ describe('Explorer', () => {
   })
 
   test('profileDeployWindow counts a deployment it was told of, such as a first login', async () => {
-    const fake = new FakeConsole({ get_user_data: () => `tester (0x${'a'.repeat(40)}): v1, web3=true` })
+    const fake = new FakeConsole({
+      get_user_data: () => `tester (0x${'a'.repeat(40)}): v1, web3=true`,
+      profile_requests: JSON.stringify({ ownVersion: 1, peerVersion: 1, deployPending: false })
+    })
     const explorer = new Explorer(fake, { profileDeployWindowMs: 300 })
     explorer.profileDeployed()
     const started = Date.now()

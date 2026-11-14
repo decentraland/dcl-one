@@ -31,6 +31,7 @@ scenario('the debug panel shows live plugin data and can play an avatar emote', 
     await explorer.hud.click(button(title))
   }
   const before = await explorer.json<{ overrideFps: number | null }>('/performance_state')
+  const cloudBefore = await explorer.json<{ enabled: boolean }>('/cloud_motion')
   const developmentBuild = await explorer.json<boolean>('/debug_panel --dev-build')
   const sidebarSettings = button('Sidebar settings')
   const nativeHud = explorer.console.kind === 'native'
@@ -90,6 +91,18 @@ scenario('the debug panel shows live plugin data and can play an avatar emote', 
     await explorer.hud.click(button('Use configured FPS'))
     await explorer.hud.wait(button('Limit to 30 FPS'))
     assert.equal((await explorer.json<{ overrideFps: number | null }>('/performance_state')).overrideFps, null)
+    await expand('Skybox')
+    const cloudToggle = { role: 'switch', name: 'Cloud motion' } as const
+    const waitCloudMotion = (enabled: boolean) => until(async () => ({
+      control: await explorer.hud.get(cloudToggle),
+      state: await explorer.json<{ enabled: boolean }>('/cloud_motion')
+    }), ({ control, state }) => control.checked === enabled && state.enabled === enabled,
+    { timeoutMs: 10_000, what: 'the cloud motion switch and renderer to agree on ' + enabled })
+    await waitCloudMotion(cloudBefore.enabled)
+    await explorer.hud.click(cloudToggle)
+    await waitCloudMotion(!cloudBefore.enabled)
+    await explorer.hud.click(cloudToggle)
+    await waitCloudMotion(cloudBefore.enabled)
     await expand('Avatar')
     // a scene's movement animation outranks a triggered emote while it is not idle (the scene
     // under the player can drive one): the wave goes out once the avatar would take it
@@ -100,6 +113,8 @@ scenario('the debug panel shows live plugin data and can play an avatar emote', 
       emote?.source === 'triggeredEmote' && !emote.finished && /(?:^|:)wave$/i.test(emote.urn),
       { timeoutMs: 20_000, intervalMs: 100, what: 'the debug action to play the wave emote' })
   } finally {
+    const restoredClouds = await explorer.json<{ enabled: boolean }>(`/cloud_motion ${cloudBefore.enabled}`)
+    assert.equal(restoredClouds.enabled, cloudBefore.enabled)
     await explorer.run(before.overrideFps == null ? '/session_graphics fps' : '/session_graphics fps ' + before.overrideFps)
     if (await explorer.hud.isVisible(panel)) await explorer.escape()
     await explorer.hud.waitHidden(panel)
