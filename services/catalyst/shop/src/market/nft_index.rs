@@ -26,6 +26,7 @@
 //! main range and refolded whole when it completes. A network publishes only
 //! with no backfill owed.
 
+use crate::market::chain_walk::{topic_address, topic_u256};
 use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 
@@ -147,17 +148,6 @@ pub struct DecodeError {
     pub index: i32,
     pub what: &'static str,
     pub why: String,
-}
-
-pub(crate) fn topic_address(topic: &str) -> Option<String> {
-    let hex = topic.strip_prefix("0x")?;
-    (hex.len() == 64).then(|| format!("0x{}", &hex[24..]).to_ascii_lowercase())
-}
-
-pub(crate) fn topic_u256(topic: &str) -> Option<String> {
-    U256::from_str_radix(topic.strip_prefix("0x")?, 16)
-        .ok()
-        .map(|v| v.to_string())
 }
 
 /// A legacy order's `expiresAt`: the 2018 Ethereum contract took seconds

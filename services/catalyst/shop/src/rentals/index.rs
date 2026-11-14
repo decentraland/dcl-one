@@ -21,11 +21,14 @@
 //! (`chain_walk::is_ready`); before that a listing is `open` as posted, and
 //! the rent quote (`shop::mana`) checks the nonces on chain instead.
 
+use crate::market::chain_walk::{topic_address, topic_u256};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use alloy_primitives::{Address, U256};
+use alloy_primitives::Address;
+#[cfg(any(test, feature = "test-support"))]
+use alloy_primitives::U256;
 use alloy_sol_types::{SolType, sol_data};
 use chrono::{DateTime, NaiveDateTime, Utc};
 use serde_json::{Value, json};
@@ -104,17 +107,6 @@ pub struct DecodeError {
     pub index: i32,
     pub what: &'static str,
     pub why: String,
-}
-
-fn topic_address(topic: &str) -> Option<String> {
-    let hex = topic.strip_prefix("0x")?;
-    (hex.len() == 64).then(|| format!("0x{}", &hex[24..]).to_ascii_lowercase())
-}
-
-fn topic_u256(topic: &str) -> Option<String> {
-    U256::from_str_radix(topic.strip_prefix("0x")?, 16)
-        .ok()
-        .map(|v| v.to_string())
 }
 
 fn lower(a: Address) -> String {

@@ -22,6 +22,7 @@
 //! the unavailable envelope and the feeds keep the expiry and local
 //! cancellation rule.
 
+use crate::market::chain_walk::{topic_address, topic_u256};
 use std::collections::HashMap;
 use std::str::FromStr;
 
@@ -40,6 +41,7 @@ use super::chain_walk::{self, ChainIndex, ChainNet, INDEXER_TRADE_EVENTS, LogGro
 use super::listings::{
     self, OffChainMarketplace, TradeAssetInput, TradeChecksInput, TradeCreation,
 };
+use super::wire::format_ether;
 use super::{MarketplaceState, SharedState, Source, unavailable};
 use crate::land_authz::indexer::RpcLog;
 
@@ -209,17 +211,6 @@ pub struct TradeEvent {
     pub signer: Option<String>,
     pub assets: Option<Value>,
     pub tx_hash: String,
-}
-
-fn topic_address(topic: &str) -> Option<String> {
-    let hex = topic.strip_prefix("0x")?;
-    (hex.len() == 64).then(|| format!("0x{}", &hex[24..]).to_ascii_lowercase())
-}
-
-fn topic_u256(topic: &str) -> Option<String> {
-    U256::from_str_radix(topic.strip_prefix("0x")?, 16)
-        .ok()
-        .map(|v| v.to_string())
 }
 
 fn assets_json(assets: &[AssetTuple]) -> Value {
@@ -741,25 +732,6 @@ fn insert_opt(map: &mut serde_json::Map<String, Value>, key: &str, v: &Option<St
     if let Some(val) = v {
         map.insert(key.into(), json!(val));
     }
-}
-
-/// `format_ether` (catalyrst-market logic/numeric.rs, ethers v6): wei as a
-/// decimal MANA amount, the fraction trimmed to at least one digit.
-fn format_ether(wei: &str) -> String {
-    let trimmed = wei.trim();
-    let digits = if trimmed.is_empty() || !trimmed.chars().all(|c| c.is_ascii_digit()) {
-        "0".to_string()
-    } else {
-        trimmed.trim_start_matches('0').to_string()
-    };
-    let padded = format!("{digits:0>19}");
-    let split = padded.len() - 18;
-    let fraction = padded[split..].trim_end_matches('0');
-    format!(
-        "{}.{}",
-        &padded[..split],
-        if fraction.is_empty() { "0" } else { fraction }
-    )
 }
 
 pub(crate) fn bid_accepted_event(trade: &StoredTrade, asset: &AssetMeta, base: &str) -> Value {
@@ -1486,6 +1458,16 @@ pub(crate) mod tests {
         assert_eq!(format_ether("200000000000000000000"), "200.0");
         assert_eq!(format_ether("1"), "0.000000000000000001");
         assert_eq!(format_ether(""), "0.0");
+        for input in ["", "  ", "000000", "bad", "-1", "1.0", "é"] {
+            assert_eq!(format_ether(input), "0.0", "{input:?}");
+        }
+        assert_eq!(format_ether("  001000000000000000000 "), "1.0");
+        assert_eq!(format_ether("1000000000000000001"), "1.000000000000000001");
+        let oversized = "9".repeat(100);
+        assert_eq!(
+            format_ether(&oversized),
+            format!("{}.{}", "9".repeat(82), "9".repeat(18))
+        );
     }
 
     #[test]

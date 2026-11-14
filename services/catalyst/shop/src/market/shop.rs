@@ -40,7 +40,10 @@ use sqlx::postgres::PgRow;
 use super::catalog::{Builder, ITEM_ID_SHIFT, MAX_NUMERIC_NUMBER, escape_like, unified_trades_cte};
 use super::items::{USD_WEI_PER_CREDIT, mana_usd_rate, rate_to_numeric_string, recent_sales};
 use super::readers::{self, Ttl, cached};
-use super::wire::{ApiError, ChainId, DataTotal, Network, Params, network_and_chain, where_from};
+use super::wire::{
+    ApiError, ChainId, DataTotal, Network, Params, body_shapes_for_genders, emote_play_mode_clause,
+    network_and_chain, where_from,
+};
 use super::{MarketplaceState, SharedState};
 
 pub const SHOP_DEFAULT_PAGE_SIZE: i64 = 48;
@@ -331,24 +334,6 @@ fn parse_wearable_genders(p: &Params) -> Vec<String> {
         .collect()
 }
 
-/// `unisex` asks for both shapes, the same request as male + female.
-pub fn body_shapes_for_genders(genders: &[String]) -> Option<Vec<String>> {
-    if genders.is_empty() {
-        return None;
-    }
-    let has_unisex = genders.iter().any(|g| g == "unisex");
-    let has_male = has_unisex || genders.iter().any(|g| g == "male");
-    let has_female = has_unisex || genders.iter().any(|g| g == "female");
-    let mut out = Vec::new();
-    if has_male {
-        out.push("BaseMale".to_string());
-    }
-    if has_female {
-        out.push("BaseFemale".to_string());
-    }
-    if out.is_empty() { None } else { Some(out) }
-}
-
 /// The collections the unified feed is restricted to, or `None` when the
 /// caller named none. A blank value reads as absent; a present non-address
 /// yields an empty set.
@@ -438,9 +423,7 @@ pub fn parse_shop_filters(pairs: &[(String, String)]) -> ShopCatalogFilters {
         include_social_emotes: p.get_string("includeSocialEmotes", None).as_deref()
             != Some("false"),
         listing_type: parse_listing_type(&p),
-        emote_loop: super::items::emote_play_mode_clause(
-            &p.get_list("emotePlayMode", &["loop", "simple"]),
-        ),
+        emote_loop: emote_play_mode_clause(&p.get_list("emotePlayMode", &["loop", "simple"])),
         emote_has_sound: p.get_boolean("emoteHasSound"),
         emote_has_geometry: p.get_boolean("emoteHasGeometry"),
     }

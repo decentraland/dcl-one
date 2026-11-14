@@ -23,7 +23,8 @@ use sqlx::{PgConnection, PgPool};
 
 use super::MarketplaceState;
 use super::chain_walk::{self, ChainIndex, ChainNet, INDEXER_SALES, LogGroup};
-use super::nft_index::{self, DecodeError, topic_address, topic_u256};
+use super::chain_walk::{topic_address, topic_u256};
+use super::nft_index::{self, DecodeError};
 use crate::jobs::{Jobs, PeriodicCfg};
 use crate::land_authz::indexer::{Rpc, RpcLog};
 
