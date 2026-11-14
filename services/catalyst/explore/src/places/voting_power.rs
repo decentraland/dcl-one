@@ -104,7 +104,9 @@ pub fn score_from_response(body: &Value) -> i32 {
     )
 }
 
-/// validator.js `isEthereumAddress`: `^(0x)[0-9a-fA-F]{40}$`.
+/// A `0x` address with 40 hex digits of any case. validator.js
+/// `isEthereumAddress` (`/^(0x)[0-9a-f]{40}$/i`) also takes a `0X` prefix,
+/// which no signer address the callers pass is spelled with.
 fn is_ethereum_address(s: &str) -> bool {
     s.len() == 42 && s.starts_with("0x") && s[2..].bytes().all(|b| b.is_ascii_hexdigit())
 }
