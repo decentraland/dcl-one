@@ -185,10 +185,7 @@ pub fn validate(body: &Json, producer: Producer, now_ms: i64) -> Result<Vec<Inge
         let address = match obj.get("address") {
             None => None,
             Some(Json::String(s)) => {
-                let valid = s.len() == 42
-                    && s.starts_with("0x")
-                    && s[2..].bytes().all(|b| b.is_ascii_hexdigit());
-                if !valid {
+                if !crate::auth::is_eth_address(s) {
                     return Err(format!(
                         "\"{at}.address\" with value \"{s}\" fails to match the required pattern: {ADDRESS_PATTERN}"
                     ));

@@ -49,9 +49,7 @@ struct TransferRow {
 }
 
 fn is_recipient(address: &str, registries: &Registries) -> bool {
-    address.len() == 42
-        && address.starts_with("0x")
-        && address[2..].bytes().all(|b| b.is_ascii_hexdigit())
+    crate::auth::is_eth_address(address)
         && address != crate::shared::identity::ZERO_ADDRESS
         && address != registries.land_registry
         && address != registries.estate_registry
