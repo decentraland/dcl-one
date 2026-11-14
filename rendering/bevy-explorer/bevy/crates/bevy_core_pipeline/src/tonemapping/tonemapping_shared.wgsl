@@ -300,7 +300,9 @@ fn sectional_color_grading(
         levels.x = 1.0;
     } else if (level < midtone_range.x + LEVEL_MARGIN) {
         levels.y = ((level - midtone_range.x) * LEVEL_MARGIN_DIV) + 0.5;
-        levels.z = 1.0 - levels.y;
+        // the rest is shadows, as in Blender. With it given to the highlights the shadows
+        // section ended at a hard step, and a gain there darkened the brighter side of it
+        levels.x = 1.0 - levels.y;
     } else if (level < midtone_range.y - LEVEL_MARGIN) {
         levels.y = 1.0;
     } else if (level < midtone_range.y + LEVEL_MARGIN) {

@@ -151,10 +151,13 @@ Other named sets: `RealmLifecycle` for systems that react to a realm change, `Te
 ## Render world
 
 The render app is bevy's. We add a few `RenderSet::Prepare*` systems for custom materials and
-uniforms, and two render-graph nodes in `Core3d`, in this order between `DepthOfField` and
-`Tonemapping`: the hover glow (`crates/scene_material/src/highlight`, whose mask phase also adds
-queue and sort systems in `RenderSet::QueueMeshes` and `RenderSet::PhaseSort`) and the stars pass
-(`crates/visuals/src/stars.rs`). Render-world ordering follows bevy's conventions, not ours.
+uniforms, and three render-graph nodes in `Core3d`: the hover glow between `DepthOfField` and
+`Tonemapping` (`crates/scene_material/src/highlight`, whose mask phase also adds queue and sort
+systems in `RenderSet::QueueMeshes` and `RenderSet::PhaseSort`), and two stars passes
+(`crates/visuals/src/stars.rs`), of which a view draws one: the early pass between
+`MainTransmissivePass` and `MainTransparentPass` for views without depth of field (every MSAA
+view), and the pass between `DepthOfField` and `Tonemapping` for views with it. Render-world
+ordering follows bevy's conventions, not ours.
 
 ## Headless
 

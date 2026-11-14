@@ -23,7 +23,7 @@ const PRESET_VALUES: Record<string, [number | string, number | string, number | 
   'Shadow settings': ['Low', 'High', 'High'],
   'Light Count': [4, 8, 32],
   'Shadow Caster Count': [0, 4, 8],
-  Fog: ['Atmospheric', 'Atmospheric', 'Atmospheric'],
+  Fog: ['On', 'On', 'On'],
   Bloom: ['Low', 'Low', 'Low'],
   'Depth of Field': ['High', 'High', 'High'],
   'Sky Reflections': ['High', 'High', 'High'],

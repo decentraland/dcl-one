@@ -21,6 +21,7 @@ bevy_console = { workspace = true }
 
 clap = { workspace = true }
 chrono = { workspace = true }
+half = { workspace = true }
 noise = "0.9"
 web-time = { workspace = true }
 
