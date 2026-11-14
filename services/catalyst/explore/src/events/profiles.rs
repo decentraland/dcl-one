@@ -268,15 +268,39 @@ fn snapshot_url(
             .and_then(Value::as_str)
             .filter(|value| !value.is_empty())
     })?;
-    if value.contains("://") {
-        return Some(value.to_owned());
-    }
     // `events_asset_base` is `<PUBLIC_URL>/events` (`Settings::events_asset_base_for`).
     let own = events_asset_base
         .trim_end_matches('/')
         .strip_suffix("/events")
         .unwrap_or(events_asset_base);
+    if value.contains("://") && trusted_snapshot_host(value, own) {
+        return Some(value.to_owned());
+    }
+    // Any other host renders from this node instead of being redirected to.
     Some(format!("{own}/profile-images/entities/{entity_id}/{file}"))
+}
+
+/// An absolute snapshot is redirected to only on this node or a Decentraland
+/// host, so the route never forwards to an arbitrary site.
+fn trusted_snapshot_host(value: &str, own: &str) -> bool {
+    let Ok(url) = url::Url::parse(value) else {
+        return false;
+    };
+    let Some(host) = url.host_str().map(str::to_ascii_lowercase) else {
+        return false;
+    };
+    let own_host = url::Url::parse(own)
+        .ok()
+        .and_then(|u| u.host_str().map(str::to_ascii_lowercase));
+    matches!(url.scheme(), "http" | "https")
+        && (own_host.as_deref() == Some(host.as_str())
+            || [
+                "decentraland.org",
+                "decentraland.zone",
+                "decentraland.today",
+            ]
+            .iter()
+            .any(|d| host == *d || host.ends_with(&format!(".{d}"))))
 }
 
 /// gatsby `redirectTo`: a non-URL falls back to the default avatar; the
@@ -2342,7 +2366,11 @@ mod tests {
             format!("http://localhost/profile-images/entities/{entity_id}/face.png")
         );
         let (_, headers, _) = get(&app, &format!("/api/profile/{known}/body.png")).await;
-        assert_eq!(headers["location"], "https://cdn.example/body.png");
+        assert_eq!(
+            headers["location"],
+            format!("http://localhost/profile-images/entities/{entity_id}/body.png"),
+            "a foreign snapshot host is rendered here, not redirected to"
+        );
         assert!(
             avatar_redirect(Some("javascript:alert(1)")).headers()["location"] == DEFAULT_AVATAR
         );
@@ -2423,8 +2451,41 @@ mod tests {
                 Snapshot::Body,
                 "https://node.example/events"
             ),
-            Some("https://cdn.example/body.png".into())
+            Some("https://node.example/profile-images/entities/bafyid/body.png".into()),
+            "a foreign host is not redirected to"
         );
+        for held in [
+            "https://profile-images.decentraland.org/entities/bafyid/body.png",
+            "https://node.example/content/contents/bafbody",
+        ] {
+            let metadata = json!({"avatars":[{"avatar":{"snapshots":{"body":held}}}]});
+            assert_eq!(
+                snapshot_url(
+                    &metadata,
+                    "bafyid",
+                    Snapshot::Body,
+                    "https://node.example/events"
+                ),
+                Some(held.into())
+            );
+        }
+        for foreign in [
+            "https://decentraland.org.evil.example/x.png",
+            "https://evil.example/?decentraland.org",
+            "ftp://decentraland.org/x.png",
+        ] {
+            let metadata = json!({"avatars":[{"avatar":{"snapshots":{"body":foreign}}}]});
+            assert_eq!(
+                snapshot_url(
+                    &metadata,
+                    "bafyid",
+                    Snapshot::Body,
+                    "https://node.example/events"
+                ),
+                Some("https://node.example/profile-images/entities/bafyid/body.png".into()),
+                "{foreign}"
+            );
+        }
         assert_eq!(
             snapshot_url(
                 &json!({"avatars":[]}),

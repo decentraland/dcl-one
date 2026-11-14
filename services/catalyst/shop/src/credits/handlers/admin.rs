@@ -97,7 +97,18 @@ async fn grant_credits(
     let address = normalize_address(&b.address)?;
     let amount = validate_positive_amount(&b.amount)?;
     let reason = validated_reason(&b.reason)?;
-    let idempotency_key = validate_idempotency_key(&b.idempotency_key)?;
+    let mut idempotency_key = validate_idempotency_key(&b.idempotency_key)?;
+    // A recovered MANA top-up takes the claim's own key and is paid for, like the claim.
+    let topup = match idempotency_key
+        .as_deref()
+        .and_then(super::topup::recovered_topup_key)
+    {
+        Some(key) => {
+            idempotency_key = Some(key?);
+            true
+        }
+        None => false,
+    };
     let actor = admin.audit_actor_description();
     let detail = json!({ "address": address, "amount": amount, "reason": reason, "idempotencyKey": idempotency_key });
     let outcome = state
@@ -105,7 +116,7 @@ async fn grant_credits(
         .admin_grant_credits(GrantRequest {
             address: &address,
             amount: &amount,
-            kind: "grant",
+            kind: if topup { "purchase" } else { "grant" },
             reason: reason.as_deref(),
             actor: Some(&actor),
             idempotency_key: idempotency_key.as_deref(),

@@ -152,6 +152,10 @@ fn lower(a: Address) -> String {
 }
 
 /// Inserts the row, or returns the one the hash already has. `(claimed, row)`.
+/// A row the tracker found was sent by another wallet than its reporter is
+/// claimed again, and re-checked, by a reporter proven to have sent it
+/// (`proven_sender`).
+#[allow(clippy::too_many_arguments)]
 pub async fn record(
     pool: &PgPool,
     chain_id: u64,
@@ -160,12 +164,25 @@ pub async fn record(
     actor: Address,
     e: &Expectation,
     now: NaiveDateTime,
+    proven_sender: bool,
 ) -> Result<(bool, ExecutionRow), sqlx::Error> {
     let inserted = sqlx::query(sqlx::AssertSqlSafe(format!(
         "INSERT INTO shop.executions (chain_id, tx_hash, kind, actor, venue, contract_address, token_id, reference, expected_price, mana_token, expected_seller, expected_owner, \
                                       status, next_check_at, created_at, updated_at) \
          VALUES ($1, $2, $3, $4, $5, $6, $7::numeric, $8, $9::numeric, $10, $11, $12, 'submitted', $13, $13, $13) \
-         ON CONFLICT (chain_id, tx_hash) DO NOTHING RETURNING {COLUMNS}"
+         ON CONFLICT (chain_id, tx_hash) DO UPDATE SET \
+             kind = EXCLUDED.kind, actor = EXCLUDED.actor, venue = EXCLUDED.venue, \
+             contract_address = EXCLUDED.contract_address, token_id = EXCLUDED.token_id, \
+             reference = EXCLUDED.reference, expected_price = EXCLUDED.expected_price, \
+             mana_token = EXCLUDED.mana_token, expected_seller = EXCLUDED.expected_seller, \
+             expected_owner = EXCLUDED.expected_owner, status = 'submitted', block_number = NULL, \
+             confirmed_by = NULL, settlement = NULL, attempts = 0, last_error = NULL, \
+             next_check_at = EXCLUDED.next_check_at, updated_at = EXCLUDED.updated_at \
+         WHERE $14 AND shop.executions.actor <> EXCLUDED.actor \
+           AND shop.executions.status = 'mismatch' \
+           AND (shop.executions.settlement ->> '{sender_mismatch}')::boolean IS TRUE \
+         RETURNING {COLUMNS}",
+        sender_mismatch = super::tracker::SENDER_MISMATCH,
     )))
     .bind(chain_id as i64)
     .bind(tx_hash)
@@ -180,6 +197,7 @@ pub async fn record(
     .bind(e.seller.map(lower))
     .bind(e.owner.map(lower))
     .bind(now)
+    .bind(proven_sender)
     .fetch_optional(pool)
     .await?;
     if let Some(r) = inserted {
@@ -452,7 +470,7 @@ async fn expectation(
                 .trade_id
                 .as_deref()
                 .ok_or_else(|| bad("listing.tradeId is required".into()))?;
-            let trade = facts::load_trade(&state.pool, id)
+            let trade = facts::load_trade(&state.pool, id, crate::market::trades::TradeScope::Any)
                 .await
                 .map_err(|e| bad(e.to_string()))?
                 .ok_or_else(|| bad(format!("trade {id} is not known to this node")))?;
@@ -514,6 +532,89 @@ async fn expectation(
     Ok((kind.to_string(), expectation))
 }
 
+/// What the chain already says about who sent a reported transaction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reporter {
+    /// The reporter sent it, signed its meta-transaction, or is the contract
+    /// wallet a trusted event of its mined receipt names.
+    Proven,
+    /// Not known yet (pending, unreadable, or a contract wallet without that
+    /// proof): the tracker decides once it is mined.
+    Unknown,
+    /// Mined, sent by another key, and the reporter has no code.
+    Foreign,
+}
+
+async fn check_reporter(
+    state: &super::State,
+    chain_id: crate::types::ChainId,
+    tx_hash: &str,
+    kind: &str,
+    actor: Address,
+    e: &Expectation,
+) -> Reporter {
+    let Ok(Some(reader)) = state.reader(chain_id).await else {
+        return Reporter::Unknown;
+    };
+    let Ok(Some((from, input))) = reader.transaction_sender(tx_hash).await else {
+        return Reporter::Unknown;
+    };
+    if super::tracker::sent_by(actor, from, &input) {
+        return Reporter::Proven;
+    }
+    // A pending transaction may deploy the reporter's account (ERC-4337).
+    let Ok(Some(receipt)) = reader.receipt(tx_hash).await else {
+        return Reporter::Unknown;
+    };
+    match reader.has_code(actor).await {
+        Ok(false) => Reporter::Foreign,
+        Ok(true) => {
+            let row = expected_row(chain_id.0, tx_hash, kind, actor, e);
+            if super::tracker::names_actor(&row, &receipt, actor) {
+                Reporter::Proven
+            } else {
+                Reporter::Unknown
+            }
+        }
+        Err(_) => Reporter::Unknown,
+    }
+}
+
+/// The row a report would store, for checking a receipt against it.
+fn expected_row(
+    chain_id: u64,
+    tx_hash: &str,
+    kind: &str,
+    actor: Address,
+    e: &Expectation,
+) -> ExecutionRow {
+    let now = Utc::now().naive_utc();
+    ExecutionRow {
+        id: uuid::Uuid::nil(),
+        chain_id: chain_id as i64,
+        tx_hash: tx_hash.to_string(),
+        kind: kind.to_string(),
+        actor: lower(actor),
+        venue: lower(e.venue),
+        contract_address: e.contract.map(lower),
+        token_id: e.token_id.map(|t| t.to_string()),
+        reference: e.reference.clone(),
+        expected_price: e.price.map(|p| p.to_string()),
+        mana_token: e.mana_token.map(lower),
+        expected_seller: e.seller.map(lower),
+        expected_owner: e.owner.map(lower),
+        status: "submitted".into(),
+        block_number: None,
+        confirmed_by: None,
+        settlement: None,
+        attempts: 0,
+        last_error: None,
+        next_check_at: now,
+        created_at: now,
+        updated_at: now,
+    }
+}
+
 pub async fn post_execution(
     State(state): State<SharedState>,
     OriginalUri(original): OriginalUri,
@@ -548,6 +649,14 @@ pub async fn post_execution(
         Ok(e) => e,
         Err(r) => return r,
     };
+    let reporter = check_reporter(&state, req.chain_id, &tx_hash, &kind, actor, &expectation).await;
+    if reporter == Reporter::Foreign {
+        return error(
+            StatusCode::FORBIDDEN,
+            "Forbidden",
+            "the transaction was not sent by the signing wallet",
+        );
+    }
     match record(
         &state.pool,
         req.chain_id.0,
@@ -556,6 +665,7 @@ pub async fn post_execution(
         actor,
         &expectation,
         Utc::now().naive_utc(),
+        reporter == Reporter::Proven,
     )
     .await
     {
@@ -636,6 +746,273 @@ pub async fn list_executions(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A Polygon JSON-RPC stub: transactions by hash (`from`, `input`), their
+    /// receipts (absent: pending) and per-address code.
+    #[derive(Default)]
+    struct Stub {
+        txs: std::collections::HashMap<String, (Address, Option<Value>)>,
+        code: std::collections::HashSet<Address>,
+    }
+
+    async fn stub_rpc(
+        axum::extract::State(stub): axum::extract::State<std::sync::Arc<Stub>>,
+        axum::Json(req): axum::Json<Value>,
+    ) -> axum::Json<Value> {
+        let p0 = req["params"][0]
+            .as_str()
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        let result = match req["method"].as_str().unwrap() {
+            "eth_chainId" => json!("0x89"),
+            "eth_blockNumber" => json!("0x64"),
+            "eth_getCode" => {
+                let a: Address = p0.parse().unwrap();
+                json!(if stub.code.contains(&a) {
+                    "0x6000"
+                } else {
+                    "0x"
+                })
+            }
+            "eth_getTransactionByHash" => match stub.txs.get(&p0) {
+                Some((from, _)) => json!({ "from": format!("{from:#x}"), "input": "0x" }),
+                None => Value::Null,
+            },
+            "eth_getTransactionReceipt" => stub
+                .txs
+                .get(&p0)
+                .and_then(|(_, r)| r.clone())
+                .unwrap_or(Value::Null),
+            _ => Value::Null,
+        };
+        axum::Json(json!({ "jsonrpc": "2.0", "id": req["id"], "result": result }))
+    }
+
+    fn mined(hash: &str, from: Address, logs: Vec<Value>) -> Value {
+        json!({ "transactionHash": hash, "status": "0x1", "blockNumber": "0x10",
+                "from": format!("{from:#x}"), "to": format!("{:#x}", Address::repeat_byte(0xee)), "logs": logs })
+    }
+
+    fn mana_out(emitter: Address, from: Address) -> Value {
+        json!({ "address": format!("{emitter:#x}"),
+                "topics": [crate::market::nft_index::TOPIC_TRANSFER,
+                           format!("0x{:0>64}", hex::encode(from)), format!("0x{:0>64}", hex::encode(Address::repeat_byte(0x5e)))],
+                "data": format!("0x{:064x}", 5u8) })
+    }
+
+    /// The reporter check and the tracker over one stub chain: an EOA cannot
+    /// claim another key's transaction; a contract wallet can, on a MANA
+    /// transfer of its own emitted by the row's MANA token; anything else waits
+    /// for (and is refused by) the tracker.
+    #[tokio::test]
+    async fn reports_of_another_keys_transaction_through_the_chain() {
+        let Some(market) =
+            crate::market::tests::support::state_with_db(crate::market::Settings::for_tests())
+                .await
+        else {
+            return;
+        };
+        let pool = market.pool.clone();
+        let (owner, eoa, wallet) = (
+            Address::repeat_byte(0x01),
+            Address::repeat_byte(0xe0),
+            Address::repeat_byte(0xc0),
+        );
+        let (mana, other) = (Address::repeat_byte(0xaa), Address::repeat_byte(0x99));
+        let hash = |n: u8| {
+            format!(
+                "0x{}{:02x}",
+                &uuid::Uuid::new_v4().simple().to_string().repeat(2)[..62],
+                n
+            )
+        };
+        let (foreign, safe, forged, pending) = (hash(1), hash(2), hash(3), hash(4));
+        let mut stub = Stub::default();
+        stub.code.insert(wallet);
+        stub.txs.insert(
+            foreign.clone(),
+            (
+                owner,
+                Some(mined(&foreign, owner, vec![mana_out(mana, eoa)])),
+            ),
+        );
+        stub.txs.insert(
+            safe.clone(),
+            (
+                owner,
+                Some(mined(&safe, owner, vec![mana_out(mana, wallet)])),
+            ),
+        );
+        stub.txs.insert(
+            forged.clone(),
+            (
+                owner,
+                Some(mined(&forged, owner, vec![mana_out(other, wallet)])),
+            ),
+        );
+        stub.txs.insert(pending.clone(), (owner, None));
+        let app = axum::Router::new()
+            .route("/", axum::routing::post(stub_rpc))
+            .with_state(std::sync::Arc::new(stub));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let rentals = std::sync::Arc::new(crate::rentals::State::new(
+            pool.clone(),
+            None,
+            crate::rentals::Settings {
+                writes_enabled: false,
+            },
+            None,
+        ));
+        let state = super::super::State::with_venues(
+            pool.clone(),
+            crate::http::Outbound::for_tests(),
+            market,
+            rentals,
+            super::super::Settings::default(),
+            super::super::venues::Book::production(|id| (id == 137).then(|| url.clone())),
+        );
+        let e = Expectation {
+            venue: Address::repeat_byte(0xee),
+            mana_token: Some(mana),
+            ..Default::default()
+        };
+        let check = |h: String, actor: Address| {
+            let (state, e) = (&state, &e);
+            async move {
+                check_reporter(
+                    state,
+                    crate::types::ChainId(137),
+                    &h,
+                    "approve_mana",
+                    actor,
+                    e,
+                )
+                .await
+            }
+        };
+        assert_eq!(
+            check(foreign.clone(), eoa).await,
+            Reporter::Foreign,
+            "the POST answers 403"
+        );
+        assert_eq!(check(safe.clone(), wallet).await, Reporter::Proven);
+        assert_eq!(
+            check(forged.clone(), wallet).await,
+            Reporter::Unknown,
+            "left to the tracker"
+        );
+        assert_eq!(
+            check(pending.clone(), eoa).await,
+            Reporter::Unknown,
+            "a pending transaction may deploy the reporter's account"
+        );
+
+        let now = Utc::now().naive_utc();
+        let mut steps = Vec::new();
+        for (h, actor) in [(&foreign, eoa), (&safe, wallet), (&forged, wallet)] {
+            let (_, row) = record(&pool, 137, h, "approve_mana", actor, &e, now, false)
+                .await
+                .unwrap();
+            let status = super::super::tracker::step(&state, &row, now)
+                .await
+                .unwrap();
+            let stored = get(&pool, row.id).await.unwrap().unwrap();
+            let sender_mismatch = stored
+                .settlement
+                .as_ref()
+                .and_then(|s| s.get(super::super::tracker::SENDER_MISMATCH))
+                .is_some();
+            steps.push((status, sender_mismatch));
+            sqlx::query("DELETE FROM shop.executions WHERE id = $1")
+                .bind(row.id)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        assert_eq!(
+            steps[0],
+            ("mismatch", true),
+            "an EOA actor with a foreign sender"
+        );
+        assert!(
+            !steps[1].1,
+            "the Safe-like wallet's own MANA transfer: {:?}",
+            steps[1]
+        );
+        assert_eq!(
+            steps[2],
+            ("mismatch", true),
+            "a transfer from another contract proves nothing"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_row_another_wallet_sent_is_claimed_by_the_next_reporter() {
+        let Some(pool) = crate::db::scratch::pool(2).await else {
+            return;
+        };
+        let hash = format!("0x{}", uuid::Uuid::new_v4().simple().to_string().repeat(2));
+        let (first, second, third) = (
+            Address::repeat_byte(0xa1),
+            Address::repeat_byte(0xa2),
+            Address::repeat_byte(0xa3),
+        );
+        let e = Expectation {
+            venue: Address::repeat_byte(0x01),
+            ..Default::default()
+        };
+        let now = Utc::now().naive_utc();
+        let (claimed, row) = record(&pool, 137, &hash, "approve_mana", first, &e, now, false)
+            .await
+            .unwrap();
+        assert!(claimed);
+        let (claimed, kept) = record(&pool, 137, &hash, "approve_mana", second, &e, now, true)
+            .await
+            .unwrap();
+        assert!(!claimed, "an unchecked row keeps its reporter");
+        assert_eq!(kept.actor, row.actor);
+
+        sqlx::query(
+            "UPDATE shop.executions SET status = 'mismatch', settlement = $2 WHERE id = $1",
+        )
+        .bind(row.id)
+        .bind(json!({ (crate::mana::tracker::SENDER_MISMATCH): true }))
+        .execute(&pool)
+        .await
+        .unwrap();
+        let (claimed, _) = record(&pool, 137, &hash, "approve_mana", third, &e, now, false)
+            .await
+            .unwrap();
+        assert!(
+            !claimed,
+            "a reporter not proven to have sent it cannot re-claim"
+        );
+        let (claimed, reclaimed) = record(&pool, 137, &hash, "approve_mana", second, &e, now, true)
+            .await
+            .unwrap();
+        assert!(
+            claimed,
+            "the sender's report replaces a foreign reporter's row"
+        );
+        assert_eq!(reclaimed.id, row.id);
+        assert_eq!(reclaimed.actor, format!("{second:#x}"));
+        assert_eq!(reclaimed.status, "submitted");
+        let (claimed, _) = record(&pool, 137, &hash, "approve_mana", third, &e, now, true)
+            .await
+            .unwrap();
+        assert!(
+            !claimed,
+            "a re-claimed row is checked before anyone else claims it"
+        );
+
+        sqlx::query("DELETE FROM shop.executions WHERE id = $1")
+            .bind(row.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
 
     #[test]
     fn the_kinds_and_statuses_are_the_schemas() {

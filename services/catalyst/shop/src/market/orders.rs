@@ -91,6 +91,9 @@ pub struct Order {
     pub issued_id: Option<String>,
     #[serde(rename = "tradeId")]
     pub trade_id: Option<String>,
+    /// Who a v3 listing pays (its received asset's beneficiary); not on the wire.
+    #[serde(skip)]
+    pub payee: Option<String>,
 }
 
 /// The sort keys both legs carry so one comparison orders the merged list.
@@ -203,7 +206,7 @@ pub(crate) fn parse_open_by_items(
 /// Open `public_nft_order` trades with the item they sell (when the mirror
 /// has it) and the filters that apply to the leg; `$1` binds `now`.
 const TRADES_LEG_SQL: &str = "SELECT u.id::text AS id, u.trade_contract AS marketplace_address, u.contract_address_sent AS nft_address, u.token_id, \
-        u.amount_received::text AS price, u.signer AS owner, \
+        u.amount_received::text AS price, u.signer AS owner, u.beneficiary AS payee, \
         (EXTRACT(EPOCH FROM u.created_at) * 1000)::bigint AS created_at, (EXTRACT(EPOCH FROM u.expires_at) * 1000)::bigint AS expires_at, \
         upper(u.network) AS network, mod(u.token_id::numeric, SHIFT::numeric)::text AS issued_id, u.item_id::text AS item_id, i.urn \
  FROM unified_trades u \
@@ -242,6 +245,7 @@ fn trade_row_order(r: &sqlx::postgres::PgRow) -> Order {
         network,
         chain_id,
         issued_id: r.get("issued_id"),
+        payee: r.get("payee"),
     }
 }
 
@@ -470,6 +474,7 @@ pub fn order_from_graph(o: &Value, network: Network) -> Order {
                 .or_else(|| v.as_i64().map(|n| n.to_string()))
         }),
         trade_id: Some(String::new()),
+        payee: None,
     }
 }
 

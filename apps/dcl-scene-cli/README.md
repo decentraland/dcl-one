@@ -222,10 +222,12 @@ to browse larger listings.
 ## Share it
 
 ```
-dcl-preview-tunnel --listen 0.0.0.0:9000 --token SECRET                         # public host
-dcl-scene-cli start --tunnel wss://tunnel.example:9000 --tunnel-token SECRET    # your machine
+HTTP_SERVER_HOST=0.0.0.0 HTTP_SERVER_PORT=9000 TUNNEL_TOKENS=SECRET dcl-preview-tunnel  # public host
+dcl-scene-cli start --tunnel wss://tunnel.example:9000 --tunnel-token SECRET            # your machine
 dcl-scene-cli sync [--dir D] [--node URL] [--project ID] [--sign-key FILE] [--prefer local|remote] [--dry-run]
 ```
+
+The relay is configured by environment (`dcl-preview-tunnel --help`). It refuses to start without `TUNNEL_TOKENS` unless `TUNNEL_ALLOW_ANONYMOUS=true` (a local relay only). A trunk closed with 4401 had a wrong or missing token; 4409 means no free tunnel id or the relay is at `TUNNEL_MAX_AGENTS`.
 
 Prefer `--tunnel-token-file` or `DCL_SCENE_CLI_TUNNEL_TOKEN`. `sync` is a two-way content-hash sync
 with a catalyrst builder project (`.dcl-one/sync.json`).

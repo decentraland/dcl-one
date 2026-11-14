@@ -87,6 +87,11 @@ pub struct CheckoutIdemRow {
     pub status: String,
 }
 
+/// A checkout's `Idempotency-Key` is the wallet's own namespace.
+pub(crate) fn scoped_checkout_key(address: &str, idempotency_key: &str) -> String {
+    format!("{}:{idempotency_key}", address.to_ascii_lowercase())
+}
+
 impl Credits {
     pub async fn get_or_create_cart(&self, address: &str) -> Result<i64, ApiError> {
         let row = sqlx::query(
@@ -310,14 +315,21 @@ impl Credits {
         Ok((outcome, closed))
     }
 
+    /// `address`'s checkout under its `Idempotency-Key`: the wallet-scoped key,
+    /// or an unscoped key stored before keys were scoped, if it is the same wallet's.
     pub async fn find_checkout_by_idempotency_key(
         &self,
+        address: &str,
         idempotency_key: &str,
     ) -> Result<Option<CheckoutIdemRow>, ApiError> {
         let row = sqlx::query(
-            "SELECT id, address, status FROM credits.checkouts WHERE idempotency_key = $1",
+            "SELECT id, address, status FROM credits.checkouts \
+             WHERE idempotency_key IN ($1, $2) AND lower(address) = lower($3) \
+             ORDER BY id LIMIT 1",
         )
+        .bind(scoped_checkout_key(address, idempotency_key))
         .bind(idempotency_key)
+        .bind(address)
         .fetch_optional(&self.pool)
         .await?;
         Ok(row.map(|r| CheckoutIdemRow {
@@ -341,8 +353,29 @@ impl Credits {
         if repriced.is_empty() {
             return Err(ApiError::bad_request("cart is empty"));
         }
+        let bare = idempotency_key;
+        let scoped = scoped_checkout_key(address, idempotency_key);
+        let idempotency_key = scoped.as_str();
 
         let mut tx = self.pool.begin().await?;
+
+        // A node still storing the unscoped key may have taken this checkout.
+        if let Some(prior) = sqlx::query(
+            "SELECT id, status FROM credits.checkouts \
+             WHERE idempotency_key = $1 AND lower(address) = lower($2)",
+        )
+        .bind(bare)
+        .bind(address)
+        .fetch_optional(&mut *tx)
+        .await?
+        {
+            tx.commit().await?;
+            return Ok(CheckoutOutcome {
+                id: prior.get("id"),
+                status: prior.get("status"),
+                replayed: true,
+            });
+        }
 
         let claimed = sqlx::query(
             "INSERT INTO credits.checkouts (idempotency_key, address, status) \
@@ -358,20 +391,13 @@ impl Credits {
         let (checkout_id, cart_id): (i64, Option<i64>) = match claimed {
             Some(r) => (r.get("id"), r.get("cart_id")),
             None => {
+                // The scoped key names this wallet, so the row is its own.
                 let prior = sqlx::query(
-                    "SELECT id, status, (lower(address) = lower($2)) AS addr_match \
-                     FROM credits.checkouts WHERE idempotency_key = $1",
+                    "SELECT id, status FROM credits.checkouts WHERE idempotency_key = $1",
                 )
                 .bind(idempotency_key)
-                .bind(address)
                 .fetch_one(&mut *tx)
                 .await?;
-                let addr_match: bool = prior.get("addr_match");
-                if !addr_match {
-                    return Err(ApiError::conflict(
-                        "Idempotency-Key already used by a different wallet",
-                    ));
-                }
                 tx.commit().await?;
                 return Ok(CheckoutOutcome {
                     id: prior.get("id"),
@@ -931,7 +957,7 @@ impl OutboxWorker {
                     SecondarySource::Fresh => {
                         let order = match self
                             .pricing
-                            .fetch_open_order(&info.contract_address, &row.item_id)
+                            .fetch_open_order(&info.contract_address, &row.item_id, &row.buyer)
                             .await
                         {
                             Ok(Some(order)) => order,

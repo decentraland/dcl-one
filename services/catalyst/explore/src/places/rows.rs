@@ -14,7 +14,9 @@ use super::query::{
     EXCLUDE_FROM_RANKING_SQL, IS_PRIVATE_SQL, SHOW_IN_PLACES_SQL, SINGLE_PLAYER_SQL,
     USER_DISLIKE_SQL, USER_FAVORITE_SQL, USER_LIKE_SQL, textsearch_column_sql,
 };
-use crate::sanitize::{ContentOrigin, sanitize_image_url, sanitize_place_description};
+use crate::sanitize::{
+    ContentOrigin, sanitize_image_url, sanitize_place_description, strip_all_markup_opt,
+};
 
 pub(super) fn place_columns() -> &'static str {
     static SQL: LazyLock<String> = LazyLock::new(|| {
@@ -481,7 +483,7 @@ pub(super) fn row_to_place(
     PlaceRow {
         scene_place: false,
         id: r.get::<String, _>("id"),
-        title: r.try_get::<Option<String>, _>("title").unwrap_or(None),
+        title: strip_all_markup_opt(r.try_get::<Option<String>, _>("title").unwrap_or(None)),
         description: sanitize_place_description(
             r.try_get::<Option<String>, _>("description")
                 .unwrap_or(None)
@@ -496,9 +498,10 @@ pub(super) fn row_to_place(
         owner: r.try_get::<Option<String>, _>("owner").unwrap_or(None),
         positions: r.try_get::<Vec<String>, _>("positions").unwrap_or_default(),
         base_position: r.get::<String, _>("base_position"),
-        contact_name: r
-            .try_get::<Option<String>, _>("contact_name")
-            .unwrap_or(None),
+        contact_name: strip_all_markup_opt(
+            r.try_get::<Option<String>, _>("contact_name")
+                .unwrap_or(None),
+        ),
         contact_email: r
             .try_get::<Option<String>, _>("contact_email")
             .unwrap_or(None),

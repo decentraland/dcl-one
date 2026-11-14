@@ -167,14 +167,15 @@ pub fn extract_auth_chain(headers: &HeaderMap) -> Result<AuthChain, SignedFetchE
     Ok(core::extract_auth_chain(headers, UnsignedLinks::Malformed)?)
 }
 
-/// A millisecond timestamp header is fresh when `(now - signed_at).abs() <=
-/// window_secs`; a non-numeric one is rejected rather than skipping the window.
-pub fn check_symmetric_skew(
+/// A millisecond timestamp header is fresh when it is at most `window_secs`
+/// old and at most `min(window_secs, MAX_FUTURE_SKEW_SECS)` ahead; a
+/// non-numeric one is rejected rather than skipping the window.
+pub fn check_timestamp_window(
     timestamp: &str,
     now: i64,
     window_secs: i64,
 ) -> Result<(), SignedFetchError> {
-    Ok(core::check_symmetric_skew(timestamp, now, window_secs)?)
+    Ok(core::check_timestamp_window(timestamp, now, window_secs)?)
 }
 
 /// Unparseable or non-object metadata is refused before anything is verified;
@@ -226,9 +227,10 @@ pub enum PayloadPolicy {
 /// How fresh the `x-identity-timestamp` must be.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TimestampWindow {
-    /// Within this many seconds of now either way; an absent or empty header
-    /// reads as 0 and expires ([`check_symmetric_skew`]).
-    Symmetric { secs: i64 },
+    /// At most this many seconds old and at most `min(secs,
+    /// MAX_FUTURE_SKEW_SECS)` ahead; an absent or empty header reads as 0 and
+    /// expires ([`check_timestamp_window`]).
+    AroundNow { secs: i64 },
     /// Required, an unsigned integer, and no more than this many milliseconds
     /// old; any future timestamp is fresh ([`crate::auth::signed_fetch::check_past_window`]).
     PastOnly { max_age_ms: u64 },
@@ -287,7 +289,7 @@ impl VerificationProfile {
     /// guard. What [`require_signer_at`] runs.
     pub const fn node(policy: PayloadPolicy) -> Self {
         Self {
-            window: TimestampWindow::Symmetric { secs: FIVE_MINUTES },
+            window: TimestampWindow::AroundNow { secs: FIVE_MINUTES },
             metadata: MetadataHeader::OptionalJsonObject,
             scene_signer: SceneSignerRule::Gated,
             legacy: match policy {
@@ -359,9 +361,9 @@ pub async fn require_signer_with(
     let now_ms = chrono::Utc::now().timestamp_millis();
     let now = now_ms.div_euclid(1000);
     let ts = match profile.window {
-        TimestampWindow::Symmetric { secs } => {
+        TimestampWindow::AroundNow { secs } => {
             let ts = core::timestamp_or_zero(header_str(headers, AUTH_TIMESTAMP_HEADER));
-            check_symmetric_skew(ts, now, secs)?;
+            check_timestamp_window(ts, now, secs)?;
             ts
         }
         TimestampWindow::PastOnly { max_age_ms } => {
@@ -967,7 +969,7 @@ mod tests {
             assert_eq!(
                 VerificationProfile::node(policy),
                 VerificationProfile {
-                    window: TimestampWindow::Symmetric { secs: FIVE_MINUTES },
+                    window: TimestampWindow::AroundNow { secs: FIVE_MINUTES },
                     metadata: MetadataHeader::OptionalJsonObject,
                     scene_signer: SceneSignerRule::Gated,
                     legacy,
