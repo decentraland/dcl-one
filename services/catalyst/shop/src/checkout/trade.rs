@@ -312,7 +312,7 @@ fn parse_bytes32_padded(label: &str, raw: Option<&str>) -> Result<B256, ApiError
 }
 
 fn parse_u256_dec(label: &str, raw: &str) -> Result<U256, ApiError> {
-    U256::from_str_radix(raw.trim(), 10)
+    crate::types::parse_decimal(raw.trim())
         .map_err(|e| err(format!("trade {label}: not a decimal integer {raw:?}: {e}")))
 }
 
@@ -613,6 +613,21 @@ pub fn transferred_token_id_from_logs(
 mod tests {
     use super::*;
     use alloy_sol_types::SolCall;
+
+    #[test]
+    fn signed_trade_numbers_are_plain_decimal_uint256() {
+        assert_eq!(
+            parse_u256_dec("sent.itemId", " 12 ").unwrap(),
+            U256::from(12u64)
+        );
+        for bad in ["", " ", "1_000", "0x10", &"1".repeat(79)] {
+            let err = parse_u256_dec("sent.itemId", bad).expect_err(bad);
+            assert!(
+                matches!(&err, ApiError::InvalidTransaction(m) if m.starts_with("trade sent.itemId: not a decimal integer")),
+                "{bad:?}: {err:?}"
+            );
+        }
+    }
 
     fn fixture_json() -> serde_json::Value {
         serde_json::json!({
