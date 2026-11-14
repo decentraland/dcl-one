@@ -68,6 +68,14 @@ pub fn is_hex_address(text: &str) -> bool {
         .is_some_and(|hex| hex.len() == 40 && hex.bytes().all(|b| b.is_ascii_hexdigit()))
 }
 
+/// A transaction hash as stored: `raw` trimmed, then `0x` plus 64 hex digits,
+/// lowercased; `None` for anything else.
+pub fn normalize_tx_hash(raw: &str) -> Option<String> {
+    let text = raw.trim();
+    let hex = text.strip_prefix("0x")?;
+    (hex.len() == 64 && hex.bytes().all(|b| b.is_ascii_hexdigit())).then(|| text.to_lowercase())
+}
+
 /// An EVM address, compared by its bytes and always printed lowercase.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct EvmAddress(Address);
@@ -1013,6 +1021,21 @@ mod tests {
         ] {
             assert_eq!(TradeAssetType::from_code(code as u64), kind);
         }
+    }
+
+    #[test]
+    fn tx_hashes_are_trimmed_checked_and_lowercased() {
+        let hash = format!("0x{}", "Ab".repeat(32));
+        assert_eq!(
+            normalize_tx_hash(&format!(" {hash}\n")),
+            Some(hash.to_lowercase())
+        );
+        assert_eq!(normalize_tx_hash(&hash.replacen("0x", "0X", 1)), None);
+        assert_eq!(normalize_tx_hash(&hash[..65]), None);
+        assert_eq!(normalize_tx_hash(&format!("{hash}0")), None);
+        assert_eq!(normalize_tx_hash(&format!("0x{}g", "a".repeat(63))), None);
+        assert_eq!(normalize_tx_hash(&"a".repeat(66)), None);
+        assert_eq!(normalize_tx_hash(""), None);
     }
 
     #[test]
