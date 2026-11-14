@@ -2,9 +2,12 @@ import { EventEmitter } from 'events';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
+  userId: null as string | null,
+  settings: {} as Record<string, unknown>,
+  userData: '',
   crossSpawn: vi.fn(),
   treeKill: vi.fn(),
   ensureSceneMcpServer: vi.fn(),
@@ -17,12 +20,19 @@ vi.mock('electron-log/main', () => ({ default: { info: vi.fn(), warn: vi.fn() } 
 vi.mock('../src/modules/analytics', () => ({
   track: vi.fn(),
   getProjectId: vi.fn(async () => 'test-project-id'),
+  getUserId: () => mocks.userId,
+}));
+vi.mock('../src/modules/config', () => ({
+  getConfigStorage: async () => ({ get: async () => mocks.settings }),
 }));
 vi.mock('../src/modules/node-runtime', () => ({
   resolveNodeRuntime: () => ({ binDir: '/bundle/bin' }),
   getChildEnv: () => ({ PATH: '/bundle/bin' }),
 }));
-vi.mock('../src/modules/electron', () => ({ getUserDataPath: () => os.tmpdir() }));
+vi.mock('../src/modules/electron', () => ({
+  getUserDataPath: () => mocks.userData || os.tmpdir(),
+  getAppVersion: async () => '9.9.9-test',
+}));
 vi.mock('../src/modules/skills', () => ({ ensureSkillsLinked: vi.fn(async () => {}) }));
 vi.mock('../src/modules/scene-mcp', () => ({
   clearPendingAsks: vi.fn(),
@@ -34,7 +44,10 @@ vi.mock('../src/modules/scene-mcp', () => ({
 }));
 
 import log from 'electron-log/main';
-import type { AiEvent } from '/shared/types/ai';
+import type { AiEvent, AiSendParams } from '/shared/types/ai';
+import { AI_SHARING_CONSENT_VERSION, type AiTurnRecord } from '/shared/types/ai-sharing';
+import { track } from '../src/modules/analytics';
+import { setConversationShared, setSignedInWallet } from '../src/modules/ai-sharing';
 import { aiBusy, aiSend, aiStop } from '../src/modules/ai';
 
 type FakeChild = EventEmitter & {
@@ -330,6 +343,213 @@ describe('when running AI turns', () => {
 
     it('should end the turn as a failure', () => {
       expect(events).toContainEqual(expect.objectContaining({ kind: 'done', ok: false }));
+    });
+  });
+
+  describe('and the user stops a turn', () => {
+    let events: AiEvent[];
+
+    beforeEach(async () => {
+      events = [];
+      await send(projectDir, e => events.push(e));
+      aiStop();
+    });
+
+    it('should end it with a cancelled done event', () => {
+      expect(events).toContainEqual(
+        expect.objectContaining({ kind: 'done', ok: false, cancelled: true }),
+      );
+    });
+
+    it('should report it to analytics as cancelled', async () => {
+      await vi.waitFor(() =>
+        expect(track).toHaveBeenCalledWith(
+          'AI Turn Completed',
+          expect.objectContaining({ ok: false, cancelled: true }),
+        ),
+      );
+    });
+
+    it('should not end the turn a second time when the CLI then exits', () => {
+      exitAndClose(child, null, 'SIGKILL');
+
+      expect(events.filter(e => e.kind === 'done')).toHaveLength(1);
+    });
+  });
+
+  describe('and the CLI reports its model and token usage', () => {
+    beforeEach(async () => {
+      await send(projectDir);
+      writeLines(
+        child,
+        { type: 'system', subtype: 'init', model: 'claude-sonnet-example', session_id: 'cli-1' },
+        assistantText('Done.'),
+        { type: 'result', usage: { input_tokens: 10, output_tokens: 3 }, session_id: 'cli-1' },
+      );
+      exitAndClose(child, 0);
+    });
+
+    it('should pass them to analytics', async () => {
+      await vi.waitFor(() =>
+        expect(track).toHaveBeenCalledWith(
+          'AI Turn Completed',
+          expect.objectContaining({
+            actual_model: 'claude-sonnet-example',
+            input_tokens: 10,
+            output_tokens: 3,
+            cancelled: false,
+          }),
+        ),
+      );
+    });
+  });
+
+  describe('and sharing is involved', () => {
+    const ADDRESS = '0x1234567890abcdef1234567890abcdef12345678';
+    const grant = { consent: 'granted', version: AI_SHARING_CONSENT_VERSION, decidedAt: 'x' };
+    const settle = () => new Promise(r => setTimeout(r, 0));
+    const shared: AiSendParams = {
+      provider: 'claude',
+      text: 'add a door, key sk-ant-api03-exampleexampleexample00',
+      sessionId: 's1',
+      share: { wallet: ADDRESS, turnIndex: 0, selectedEntityCount: 1, mentionedAssetCount: 0 },
+    };
+    const outboxDir = () => path.join(mocks.userData, 'ai-sharing', 'outbox');
+    const queued = (): AiTurnRecord[] =>
+      fs.existsSync(outboxDir())
+        ? fs
+            .readdirSync(outboxDir())
+            .filter(f => f.endsWith('.json'))
+            .map(f => JSON.parse(fs.readFileSync(path.join(outboxDir(), f), 'utf8')))
+        : [];
+    const runTurn = async (params: AiSendParams) => {
+      await aiSend(params, projectDir, () => {});
+      writeLines(child, assistantText('Added it.'));
+      exitAndClose(child, 0);
+      await new Promise(r => setTimeout(r, 0));
+    };
+
+    // One folder for the whole block: main resolves the outbox path once and keeps it.
+    beforeAll(() => {
+      mocks.userData = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-sharing-userdata-'));
+    });
+
+    afterAll(() => {
+      fs.rmSync(mocks.userData, { recursive: true, force: true });
+      mocks.userData = '';
+    });
+
+    beforeEach(() => {
+      setSignedInWallet(ADDRESS);
+      mocks.settings = { aiDataSharing: { [ADDRESS]: grant } };
+    });
+
+    afterEach(() => {
+      fs.rmSync(outboxDir(), { recursive: true, force: true });
+      setSignedInWallet(null);
+      mocks.settings = {};
+    });
+
+    it('should queue one redacted record when the user consented and is signed in', async () => {
+      await runTurn(shared);
+
+      const records = queued();
+      expect(records).toHaveLength(1);
+      expect(records[0]).toMatchObject({
+        address: ADDRESS,
+        outcome: 'ok',
+        prompt: { text: 'add a door, key <api_key>' },
+        response: { text: 'Added it.' },
+        app: { version: '9.9.9-test' },
+      });
+    });
+
+    it('should record nothing when the renderer did not ask to share', async () => {
+      await runTurn({ ...shared, share: undefined });
+
+      expect(queued()).toEqual([]);
+    });
+
+    it('should record nothing without saved consent, even if the renderer asks', async () => {
+      mocks.settings = {};
+      await runTurn(shared);
+
+      expect(queued()).toEqual([]);
+    });
+
+    it('should record nothing for consent given to an older version of the text', async () => {
+      mocks.settings = {
+        aiDataSharing: { [ADDRESS]: { ...grant, version: AI_SHARING_CONSENT_VERSION - 1 } },
+      };
+      await runTurn(shared);
+
+      expect(queued()).toEqual([]);
+    });
+
+    it('should record nothing for a wallet that never agreed, though another did here', async () => {
+      const other = '0x000000000000000000000000000000000000beef';
+      setSignedInWallet(other);
+      await runTurn({ ...shared, share: { ...shared.share!, wallet: other } });
+
+      expect(queued()).toEqual([]);
+    });
+
+    it('should record nothing when the creator withdraws while the turn runs', async () => {
+      await aiSend(shared, projectDir, () => {});
+      mocks.settings = { aiDataSharing: { [ADDRESS]: { ...grant, consent: 'denied' } } };
+      writeLines(child, assistantText('Added it.'));
+      exitAndClose(child, 0);
+      await settle();
+
+      expect(queued()).toEqual([]);
+    });
+
+    it('should record nothing when the wallet changes while the turn runs', async () => {
+      await aiSend(shared, projectDir, () => {});
+      setSignedInWallet('0x000000000000000000000000000000000000beef');
+      writeLines(child, assistantText('Added it.'));
+      exitAndClose(child, 0);
+      await settle();
+
+      expect(queued()).toEqual([]);
+    });
+
+    it('should record nothing when the conversation is excluded while the turn runs', async () => {
+      await aiSend(shared, projectDir, () => {});
+      setConversationShared('s1', false);
+      writeLines(child, assistantText('Added it.'));
+      exitAndClose(child, 0);
+      await settle();
+      setConversationShared('s1', true);
+
+      expect(queued()).toEqual([]);
+    });
+
+    it('should record nothing when the renderer asks for a wallet that is not signed in', async () => {
+      setSignedInWallet('0x000000000000000000000000000000000000beef');
+      await runTurn(shared);
+
+      expect(queued()).toEqual([]);
+    });
+
+    it('should record nothing when signed out', async () => {
+      setSignedInWallet(null);
+      await runTurn(shared);
+
+      expect(queued()).toEqual([]);
+    });
+
+    it('should record a stopped turn as cancelled', async () => {
+      const events: AiEvent[] = [];
+      await aiSend(shared, projectDir, e => events.push(e));
+      aiStop();
+      await settle();
+
+      expect(events).toContainEqual(expect.objectContaining({ kind: 'done', cancelled: true }));
+
+      expect(queued()).toEqual([
+        expect.objectContaining({ outcome: 'cancelled', errorKind: null }),
+      ]);
     });
   });
 });

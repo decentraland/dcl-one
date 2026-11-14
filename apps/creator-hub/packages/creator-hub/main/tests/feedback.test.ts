@@ -201,10 +201,10 @@ describe('send', () => {
       [
         'a URL token',
         'GET https://example.com/a?token=s3cr3t&page=2',
-        'GET https://example.com/a?token=<redacted>&page=2',
+        'GET https://example.com/a?token=<credential>&page=2',
       ],
-      ['an API key', 'key sk-example1234567890', 'key sk-<redacted>'],
-      ['a bearer token', 'Authorization: Bearer abc.def.ghi', 'Authorization: Bearer <redacted>'],
+      ['an API key', 'key sk-proj-exampleexampleexample1234', 'key <api_key>'],
+      ['a bearer token', 'Authorization: Bearer abc.def.ghi', 'Authorization: Bearer <credential>'],
     ])('and the log contains %s', (_, line, expected) => {
       beforeEach(() => {
         fs.writeFileSync(mocks.logPath, line);

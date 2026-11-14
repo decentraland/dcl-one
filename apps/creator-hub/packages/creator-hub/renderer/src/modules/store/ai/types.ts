@@ -25,6 +25,8 @@ export interface AiMessage {
   mutations?: number;
   // Set once the user reverts this turn's scene changes, so the button hides.
   reverted?: boolean;
+  // The user stopped this turn before it finished.
+  cancelled?: boolean;
   // Files the user attached to this prompt (user messages only), shown as chips under the
   // bubble. Name + kind only — the bytes/paths aren't kept in the transcript.
   attachments?: AiAttachmentMeta[];
@@ -36,6 +38,8 @@ export interface AiSessionMeta {
   id: string;
   title: string;
   updatedAt: number; // epoch ms; the list is sorted newest first
+  // The creator turned conversation sharing off for this conversation only.
+  shareExcluded?: boolean;
 }
 
 export interface AiState {

@@ -1,6 +1,6 @@
 import { createSlice, type PayloadAction } from '@reduxjs/toolkit';
 
-import { ai } from '#preload';
+import { ai, aiSharing } from '#preload';
 import type {
   AiAssetMention,
   AiAttachment,
@@ -10,6 +10,7 @@ import type {
 } from '/shared/types/ai';
 import { assetMentionKey } from '/shared/types/ai';
 import type { AiRevertResult } from '/shared/types/ipc';
+import type { AppState } from '/@/modules/store';
 
 import { createAsyncThunk } from '/@/modules/store/thunk';
 import {
@@ -113,6 +114,15 @@ export const send = createAsyncThunk<void, { text: string; attachments?: AiAttac
     const context = editorContext(selection, assetMentions);
     dispatch(actions.clearAssetMentions());
     const apiKeyFromEnv = state.workspace.settings?.useApiKeyFromEnv ?? false;
+    const shareWallet = await shareThisTurn(getState());
+    const share = shareWallet
+      ? {
+          wallet: shareWallet,
+          turnIndex: state.ai.messages.filter(m => m.role === 'user').length,
+          selectedEntityCount: selection.length,
+          mentionedAssetCount: assetMentions.length,
+        }
+      : undefined;
     await ai.send(path, {
       provider,
       model,
@@ -121,9 +131,22 @@ export const send = createAsyncThunk<void, { text: string; attachments?: AiAttac
       attachments: files,
       apiKeyFromEnv,
       sessionId,
+      share,
     });
   },
 );
+
+// The wallet to share this turn for, or null. Loaded on use: the sharing slice imports the app
+// config module, which initialises from the preload `env` when imported, and this slice's tests
+// stub that preload. If it can't load, the turn is simply not shared.
+async function shareThisTurn(state: AppState): Promise<string | null> {
+  try {
+    const { currentWallet, shouldShareTurn } = await import('/@/modules/store/aiSharing/slice');
+    return shouldShareTurn(state) ? currentWallet() : null;
+  } catch {
+    return null;
+  }
+}
 
 // One line naming what the user has selected, or undefined when nothing is. Kept terse —
 // the assistant can call get_selection / scene_state for the full picture. Exported for tests.
@@ -162,8 +185,9 @@ function editorContext(
   return lines.length > 0 ? lines.join('\n') : undefined;
 }
 
-// Kill the in-flight turn. Main suppresses the `done` event on an intentional stop, so
-// the reducer finalizes the current bubble itself.
+// Kill the in-flight turn. Main ends it with a `done` event marked `cancelled`; `stopped` also
+// finalizes the bubble here, so the UI settles even if that event is missed (the editor was
+// left mid-turn).
 export const stop = createAsyncThunk('ai/stop', async (_: void, { dispatch }) => {
   await ai.stop();
   dispatch(actions.stopped());
@@ -276,6 +300,27 @@ export const deleteSession = createAsyncThunk<void, string>(
   },
 );
 
+// The sharing chip's per-conversation switch. Saved with the scene's session index, so the
+// choice holds when the conversation is reopened.
+export const setConversationShared = createAsyncThunk<void, boolean>(
+  'ai/setConversationShared',
+  (shared, { getState, dispatch }) => {
+    const { ai: aiState, editor } = getState();
+    const current = aiState.currentSessionId;
+    if (current === '') return;
+    const sessions = aiState.sessions.map(s =>
+      s.id === current ? { ...s, shareExcluded: shared ? undefined : true } : s,
+    );
+    dispatch(actions.setSessions({ sessions, currentSessionId: current }));
+    const path = editor.project?.path;
+    if (path !== undefined && path !== '') {
+      writeSessionIndex(path, { current, sessions: savedSessions(sessions) });
+    }
+    // Main drops the conversation's queued turns and any turn still running in it.
+    void aiSharing.setConversationShared(current, shared);
+  },
+);
+
 // Dismiss the "runs on your own account" billing hint for the open scene (#1505), and
 // remember it per-project so it stays gone across restarts.
 export const dismissBilling = createAsyncThunk(
@@ -298,10 +343,12 @@ export const persistConversation = createAsyncThunk(
     const current = aiState.currentSessionId;
     if (path === undefined || path === '' || current === '') return;
     writeSessionMessages(path, current, aiState.messages);
+    const existing = aiState.sessions.find(s => s.id === current);
     const meta: AiSessionMeta = {
       id: current,
-      title: aiState.sessions.find(s => s.id === current)?.title || sessionTitle(aiState.messages),
+      title: existing?.title || sessionTitle(aiState.messages),
       updatedAt: Date.now(),
+      ...(existing?.shareExcluded === true ? { shareExcluded: true } : {}),
     };
     const sessions = [meta, ...savedSessions(aiState.sessions).filter(s => s.id !== current)];
     writeSessionIndex(path, { current, sessions });
@@ -443,6 +490,7 @@ const slice = createSlice({
           if (msg !== undefined) {
             msg.done = true;
             msg.mutations = payload.mutations;
+            if (payload.cancelled === true) msg.cancelled = true;
           }
           state.busy = false;
           break;
@@ -454,7 +502,8 @@ const slice = createSlice({
         }
       }
     },
-    // Finalize on an intentional stop (no `done` event follows a kill).
+    // Finalize on an intentional stop. Main also sends `done` (cancelled), which may arrive
+    // before or after this; both paths leave the same state.
     stopped: state => {
       state.busy = false;
       // A pending prompt can't be answered once the turn is dead (main already resolved its
@@ -614,6 +663,7 @@ export const actions = {
   loadConversation,
   persistConversation,
   dismissBilling,
+  setConversationShared,
   switchSession,
   deleteSession,
 };

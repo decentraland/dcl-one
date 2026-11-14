@@ -18,6 +18,7 @@ import * as mobileDebug from './mobile-debug-server';
 import * as oxc from './oxc';
 import * as metrics from './metrics';
 import * as ai from './ai';
+import * as aiSharing from './ai-sharing';
 import * as aiCli from './ai-cli';
 import * as aiWindow from './ai-window';
 import * as consoleWindow from './console-window';
@@ -170,6 +171,16 @@ export function initIpc({ beforeQuitCleanup }: InitIpcOptions) {
     );
   });
   handle('ai.stop', async () => ai.aiStop());
+  handle('aiSharing.peek', async (_event, address, limit) =>
+    aiSharing.getOutbox().peek(address, Math.min(Math.max(1, limit), 50)),
+  );
+  handle('aiSharing.ack', async (_event, ids) => aiSharing.getOutbox().ack(ids));
+  handle('aiSharing.list', async (_event, address) => aiSharing.getOutbox().list(address));
+  handle('aiSharing.purge', async (_event, address) => aiSharing.getOutbox().purge(address));
+  handle('aiSharing.setWallet', async (_event, address) => aiSharing.setSignedInWallet(address));
+  handle('aiSharing.setConversationShared', async (_event, conversationId, shared) =>
+    aiSharing.setConversationShared(conversationId, shared),
+  );
   handle('ai.reset', async (_event, path) => ai.aiReset(path));
   handle('ai.deleteSession', async (_event, path, sessionId) =>
     ai.aiDeleteSession(path, sessionId),
