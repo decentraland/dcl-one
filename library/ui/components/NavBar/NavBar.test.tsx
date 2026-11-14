@@ -1098,3 +1098,103 @@ it('should focus the notification opener before a pointer activation callback', 
   fireEvent.click(bell)
   expect(opener).toBe(bell)
 })
+
+describe('when the mobile menu owns a pending upward exit', () => {
+  let complete: () => void
+  let fail: (reason: Error) => void
+  let panel: HTMLElement
+  let user: UserEvent
+  let unmount: () => void
+  let animations: ReturnType<typeof vi.fn>
+  beforeEach(async () => {
+    user = userEvent.setup()
+    const pending = new Promise<void>((resolve, reject) => {
+      complete = resolve
+      fail = reject
+    })
+    const view = render(<NavBar sections={sections} signIn={{ onSelect: () => {} }} />)
+    unmount = view.unmount
+    await user.click(screen.getByRole('button', { name: 'Open menu' }))
+    panel = screen.getByTestId('navbar-panel')
+    animations = vi.fn(() => [{ finished: pending }])
+    Object.defineProperty(panel, 'getAnimations', { configurable: true, value: animations })
+  })
+
+  it('should retain modal ownership, body lock and header focus until its own completion', async () => {
+    await user.click(screen.getByRole('button', { name: 'Close menu' }))
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    expect(panel).toHaveAttribute('inert')
+    expect(document.body.style.overflow).toBe('hidden')
+    expect(screen.getByRole('button', { name: 'Close menu' })).toHaveFocus()
+    await act(async () => complete())
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(document.body.style.overflow).not.toBe('hidden')
+    expect(screen.getByRole('button', { name: 'Open menu' })).toHaveFocus()
+  })
+
+  it('should not replace the starting clip or resubscribe completion on repeated Escape', async () => {
+    panel.style.clipPath = 'inset(0px 0px 20% 0px)'
+    await user.click(screen.getByRole('button', { name: 'Close menu' }))
+    const initial = panel.style.getPropertyValue('--drawer-exit-from')
+    panel.style.clipPath = 'inset(0px 0px 70% 0px)'
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Close menu' }), { key: 'Escape' })
+    expect(panel.style.getPropertyValue('--drawer-exit-from')).toBe(initial)
+    expect(animations).toHaveBeenCalledOnce()
+    await act(async () => complete())
+  })
+
+  it('should discard a stale completion after reopening', async () => {
+    await user.click(screen.getByRole('button', { name: 'Close menu' }))
+    await user.click(screen.getByRole('button', { name: 'Close menu' }))
+    await act(async () => complete())
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    expect(panel).not.toHaveAttribute('inert')
+    expect(document.body.style.overflow).toBe('hidden')
+  })
+
+  it('should release the body and ignore a late completion after unmount', async () => {
+    await user.click(screen.getByRole('button', { name: 'Close menu' }))
+    unmount()
+    await act(async () => complete())
+    expect(document.body.style.overflow).not.toBe('hidden')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('should return focus to desktop navigation if CSS cancellation wins the resize event', async () => {
+    await user.click(screen.getByRole('button', { name: 'Close menu' }))
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn((query: string) => ({ matches: query.includes('min-width') }))
+    )
+    try {
+      await act(async () => fail(new Error('Desktop CSS cancelled the exit')))
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+      expect(screen.getByRole('link', { name: 'Decentraland home' })).toHaveFocus()
+      expect(document.body.style.overflow).not.toBe('hidden')
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('should recover ownership after the current animation is cancelled', async () => {
+    await user.click(screen.getByRole('button', { name: 'Close menu' }))
+    await act(async () => fail(new Error('Animation cancelled')))
+    expect(document.body.style.overflow).not.toBe('hidden')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('should release immediately for navigation while discarding the pending exit', async () => {
+    await user.click(screen.getByRole('button', { name: 'Close menu' }))
+    fireEvent.click(screen.getByRole('link', { name: 'Decentraland home' }))
+    await act(async () => complete())
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(document.body.style.overflow).not.toBe('hidden')
+  })
+
+  it('should release immediately if the environment provides no active animation', async () => {
+    Object.defineProperty(panel, 'getAnimations', { value: () => [] })
+    await user.click(screen.getByRole('button', { name: 'Close menu' }))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(document.body.style.overflow).not.toBe('hidden')
+  })
+})
