@@ -274,6 +274,11 @@ pub fn is_email(s: &str) -> bool {
         && !local.contains("..")
 }
 
+/// Pending notify requests one wallet may hold.
+pub const MAX_PENDING_PER_WALLET: i64 = 50;
+/// Pending notify requests one email address may receive, across wallets.
+pub const MAX_PENDING_PER_EMAIL: i64 = 20;
+
 pub fn validate_create(req: &CreateNotifyRequest) -> Result<(), String> {
     if !crate::market::is_valid_eth_address(&req.contract_address) {
         return Err("contractAddress must be a 0x-prefixed 40-hex-char address".into());
@@ -311,16 +316,24 @@ async fn create(
         .map_err(|e| ApiError::bad_request(format!("invalid request body: {e}")))?;
     validate_create(&req).map_err(ApiError::bad_request)?;
     let contract = req.contract_address.to_ascii_lowercase();
-    state
+    let stored = state
         .store
-        .upsert(
+        .upsert_capped(
             &address,
             &req.email,
             &contract,
             &req.item_id,
             req.chain_id as i32,
+            MAX_PENDING_PER_WALLET,
+            MAX_PENDING_PER_EMAIL,
         )
         .await?;
+    if !stored {
+        return Err(ApiError::Status(
+            StatusCode::TOO_MANY_REQUESTS,
+            "too many pending notify requests for this wallet or email".into(),
+        ));
+    }
     tracing::info!(address = %address, contract = %contract, item_id = %req.item_id, "notify request upserted");
     Ok((StatusCode::CREATED, Json(json!({ "ok": true }))).into_response())
 }

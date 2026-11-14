@@ -470,7 +470,8 @@ async fn the_poller_appends_publishes_and_the_route_serves_the_newest_row() {
     };
     cleanup().await;
 
-    let answer = Arc::new(Mutex::new(quote(MARKER_A, 1_700_000_000)));
+    let t0 = chrono::Utc::now().timestamp() - 600;
+    let answer = Arc::new(Mutex::new(quote(MARKER_A, t0)));
     let base = stub_coingecko(answer.clone()).await;
     let http = crate::http::Outbound::for_tests();
     let live = Prices::new(pool.clone(), true);
@@ -481,10 +482,7 @@ async fn the_poller_appends_publishes_and_the_route_serves_the_newest_row() {
         .unwrap();
     let published = live.live().expect("the pass publishes");
     assert_eq!(published.mana_usd, Some(MARKER_A));
-    assert_eq!(
-        published.source_updated_at.unwrap().timestamp(),
-        1_700_000_000
-    );
+    assert_eq!(published.source_updated_at.unwrap().timestamp(), t0);
     let row = db_only.latest_snapshot().await.unwrap().unwrap();
     assert_eq!(
         row, *published,
@@ -497,7 +495,7 @@ async fn the_poller_appends_publishes_and_the_route_serves_the_newest_row() {
         cold.latest().await.unwrap().unwrap().mana_usd,
         Some(MARKER_A)
     );
-    *answer.lock().unwrap() = quote(MARKER_B, 1_700_000_300);
+    *answer.lock().unwrap() = quote(MARKER_B, t0 + 300);
     poller::run_pass(&http, &poller::Sources::coingecko_only(&base), &live)
         .await
         .unwrap();
@@ -518,6 +516,25 @@ async fn the_poller_appends_publishes_and_the_route_serves_the_newest_row() {
         ..(*published).clone()
     });
     assert_eq!(cold.latest().await.unwrap().unwrap().mana_usd, Some(0.6));
+
+    // A frozen provider quote, and a jump against the fresh previous
+    // snapshot, are refused before the insert.
+    *answer.lock().unwrap() = quote(MARKER_A, 1_700_000_000);
+    let err = poller::run_pass(&http, &poller::Sources::coingecko_only(&base), &live)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("older than"), "{err}");
+    *answer.lock().unwrap() = quote(MARKER_B * 2.0, t0 + 400);
+    let err = poller::run_pass(&http, &poller::Sources::coingecko_only(&base), &live)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("moved more than"), "{err}");
+    assert_eq!(
+        db_only.latest().await.unwrap().unwrap().mana_usd,
+        Some(MARKER_B)
+    );
 
     // A partial quote is refused before the insert.
     *answer.lock().unwrap() = json!({ "decentraland": { "usd": 0.1 } });
@@ -557,7 +574,7 @@ async fn the_poller_appends_publishes_and_the_route_serves_the_newest_row() {
         mana.get("eth_market_cap").is_none(),
         "market data is usd only"
     );
-    assert_eq!(mana["last_updated_at"], json!(1_700_000_300));
+    assert_eq!(mana["last_updated_at"], json!(t0 + 300));
     assert!(body.get("matic-network").is_none(), "only MANA is archived");
     let (_, _, body) = send(
         app.clone(),
@@ -791,6 +808,65 @@ async fn a_refused_coingecko_falls_back_to_the_exchanges_in_order() {
     assert!(
         err.contains("coingecko fetch failed") && err.contains("kraken fetch failed"),
         "{err}"
+    );
+    cleanup().await;
+}
+
+const MARKER_STEADY: f64 = 0.27272727;
+const MARKER_JUMP: f64 = 0.54545454;
+
+/// A jump against a fresh snapshot is published only when another source agrees.
+#[tokio::test]
+async fn an_outlier_needs_a_second_source() {
+    let Some(pool) = crate::db::scratch::pool(4).await else {
+        return;
+    };
+    let _serial = SNAPSHOTS.lock().await;
+    let cleanup = || async {
+        sqlx::query(
+            "DELETE FROM economy.price_snapshots WHERE mana_usd IN ($1::numeric, $2::numeric)",
+        )
+        .bind(MARKER_STEADY.to_string())
+        .bind(MARKER_JUMP.to_string())
+        .execute(&pool)
+        .await
+        .unwrap();
+    };
+    cleanup().await;
+    let now = chrono::Utc::now().timestamp();
+    let answer = Arc::new(Mutex::new(quote(MARKER_STEADY, now - 60)));
+    let coingecko = stub_coingecko(answer.clone()).await;
+    let ticker = |usd: f64| {
+        stub_upstreams(vec![(
+            "/api/v3/ticker/price",
+            json!([{ "symbol": "MANAUSDT", "price": usd.to_string() }]),
+        )])
+    };
+    let http = crate::http::Outbound::for_tests();
+    let live = Prices::new(pool.clone(), true);
+    let sources = |fallback: String| poller::Sources {
+        coingecko: coingecko.clone(),
+        fallbacks: vec![(poller::Exchange::Binance, fallback)],
+    };
+    let agreeing = ticker(MARKER_JUMP * 1.01).await;
+    poller::run_pass(&http, &sources(agreeing.clone()), &live)
+        .await
+        .unwrap();
+    *answer.lock().unwrap() = quote(MARKER_JUMP, now - 30);
+    let disagreeing = ticker(MARKER_STEADY).await;
+    let err = poller::run_pass(&http, &sources(disagreeing), &live)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("no other source agrees"), "{err}");
+    assert_eq!(live.live().unwrap().mana_usd, Some(MARKER_STEADY));
+    poller::run_pass(&http, &sources(agreeing), &live)
+        .await
+        .unwrap();
+    assert_eq!(
+        live.live().unwrap().mana_usd,
+        Some(MARKER_JUMP),
+        "a corroborated move is published"
     );
     cleanup().await;
 }

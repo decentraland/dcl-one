@@ -799,7 +799,11 @@ pub fn profile_metadata(
     profile: &Value,
     thumbnail_url: Option<&str>,
 ) -> Option<ProfileMetadata> {
-    let avatar = profile.get("avatars")?.as_array()?.first()?;
+    let avatar = profile
+        .get("avatars")?
+        .as_array()?
+        .first()
+        .filter(|avatar| avatar.is_object())?;
     let field = |key: &str| avatar.get(key).cloned();
     let thumbnail_url = thumbnail_url.unwrap_or_else(|| {
         avatar
@@ -1237,6 +1241,13 @@ mod tests {
         assert!(
             profile_metadata("0xabc", &json!({ "avatars": [], "timestamp": 1 }), None).is_none()
         );
+        for first in [json!(null), json!(1), json!("avatar")] {
+            let profile = json!({ "avatars": [first], "timestamp": 1 });
+            assert!(
+                profile_metadata("0xabc", &profile, None).is_none(),
+                "{profile}"
+            );
+        }
     }
 
     #[test]

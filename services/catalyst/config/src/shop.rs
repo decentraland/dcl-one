@@ -220,6 +220,14 @@ pub struct EconomyConfig {
     #[arg(long, env = "MAX_TRANSACTIONS_PER_DAY", default_value_t = 10)]
     pub max_transactions_per_day: i64,
 
+    /// Free meta-transactions (no sale, no credits spend) the relayer pays for per day across every address; 0 is no limit. Sales are never held back by it.
+    #[arg(
+        long,
+        env = "MAX_RELAYED_TRANSACTIONS_PER_DAY",
+        default_value_t = 20_000
+    )]
+    pub max_relayed_transactions_per_day: i64,
+
     /// The dApps' contract-addresses JSON (public https); unset, only the collections mirror admits.
     #[arg(long, env = "CONTRACT_ADDRESSES_URL")]
     pub contract_addresses_url: Option<String>,
@@ -477,6 +485,15 @@ pub struct ShopConfig {
     )]
     pub shop_base_url: String,
 
+    /// Credits' feature service; empty uses explicit node overrides only.
+    #[arg(long, env = "CREDITS_FEATURE_FLAGS_URL", default_value = "")]
+    pub credits_feature_flags_url: String,
+    /// Credits' own Referer context, normalized with https when no scheme is supplied.
+    #[arg(long, env = "CREDITS_SERVER_URL", default_value = "")]
+    pub credits_server_url: String,
+    #[arg(long, env = "CREDITS_FEATURE_FLAGS_REFRESH_SECS", default_value_t = 60)]
+    pub credits_feature_flags_refresh_secs: u64,
+
     /// The feature-flags service the Shop reads decentraland.org's `dapps` rollout flags from (as sites'
     /// `FEATURE_FLAGS_URL`); empty reads only this node's local overrides (`explore_api.feature_flags_local`).
     #[arg(long, env = "SHOP_FEATURE_FLAGS_URL", default_value = "")]
@@ -513,6 +530,14 @@ pub struct ShopConfig {
     /// The first block a full replay reads; unset, the chain's known start (137: 70459461, 80002: 20612932).
     #[arg(long, env = "CREDITS_USAGE_START_BLOCK")]
     pub credits_usage_start_block: Option<u64>,
+
+    /// MANA top-ups mined before this block are refused; unset, any block.
+    #[arg(long, env = "CREDITS_TOPUP_START_BLOCK")]
+    pub credits_topup_start_block: Option<u64>,
+
+    /// Blocks a MANA top-up transfer needs on top of it before it is credited.
+    #[arg(long, env = "CREDITS_TOPUP_MIN_CONFIRMATIONS", default_value_t = 64)]
+    pub credits_topup_min_confirmations: u64,
 
     #[arg(long, env = "CREDITS_USAGE_INDEX_INTERVAL_SECS", default_value_t = 30)]
     pub credits_usage_index_interval_secs: u64,

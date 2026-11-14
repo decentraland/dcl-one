@@ -320,7 +320,9 @@ and `DCL_AUTOMATION_PORT` stand in for the flags). Two methods, none of Bevy's o
 (`{"command": "/teleport 10 20", "token"}` answers `{"id"}`) and `dcl/console_result` (`{"id",
 "token"}` answers `{"done": false}` until the command has answered, then `done`, `ok`, `output`).
 Both need the token. The headless client registers `/world_state`, `/chat_history` and
-`/voice_state`; the HUD, input and screen-position commands do not apply there.
+`/voice_state`, and runs the startup portables (`--portables`, the movement scene by default), so
+`/walk_player_to` walks it through the movement scene, as on the desktop client; the HUD, input
+and screen-position commands do not apply there.
 
 **Trusted input on the web: a stable contract.** A DevTools client that drives the page (the runner
 in `local-harness/web-driver`, or a Playwright or Puppeteer script through `exposeBinding` and its
