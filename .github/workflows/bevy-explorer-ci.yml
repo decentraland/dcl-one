@@ -173,6 +173,14 @@ jobs:
       CEF_EXPORT_VERSION: 139.8.0+139.0.40
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Fetch the landscape assets from Git LFS
+        # The build embeds these files. Only they are fetched: `lfs: true` on the checkout would
+        # download every LFS object in the repository.
+        working-directory: .
+        shell: bash
+        run: |
+          git lfs install --local
+          git lfs pull --include="rendering/bevy-explorer/source/crates/assets/src/assets/landscape/**" --exclude=""
       - name: Reserve disk space on the hosted Linux runner
         if: runner.os == 'Linux'
         working-directory: .
@@ -398,6 +406,14 @@ jobs:
       cancel-in-progress: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Fetch the landscape assets from Git LFS
+        # The build embeds these files. Only they are fetched: `lfs: true` on the checkout would
+        # download every LFS object in the repository.
+        working-directory: .
+        shell: bash
+        run: |
+          git lfs install --local
+          git lfs pull --include="rendering/bevy-explorer/source/crates/assets/src/assets/landscape/**" --exclude=""
       - name: Reserve disk space on the hosted Linux runner
         if: runner.os == 'Linux'
         working-directory: .
@@ -620,6 +636,14 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Fetch the landscape assets from Git LFS
+        # The build embeds these files. Only they are fetched: `lfs: true` on the checkout would
+        # download every LFS object in the repository.
+        working-directory: .
+        shell: bash
+        run: |
+          git lfs install --local
+          git lfs pull --include="rendering/bevy-explorer/source/crates/assets/src/assets/landscape/**" --exclude=""
       - name: Identify compiled engine inputs
         id: engine-inputs
         working-directory: .

@@ -430,6 +430,9 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   show seams between the slices, so here they are radii, borders and gradients with the sprites'
   colours. The canvas scales by the smaller of width and height, as every menu page does, where
   unity-explorer's scales by width.
+- **No satellite floor.** unity-explorer lays the minimap's satellite images flat at 0.205 m under the
+  terrain in Genesis City; here the terrain covers that plane out to the landscape distance, so the
+  floor would never be seen and is not shipped.
 
 ## Deliberate choices that look like mistakes
 
