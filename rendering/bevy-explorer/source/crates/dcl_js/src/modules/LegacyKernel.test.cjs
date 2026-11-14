@@ -89,3 +89,44 @@ test('sandbox runtime failure waits for retained terminal error and reports only
   assert.equal(context.check(), true);
   assert.equal(reports, 1);
 });
+
+test('web preload exposes legacy modules and subscribes only on first SocialController require', async () => {
+  const worker = fs.readFileSync(require.resolve('../../../../deploy/web/engine/sandbox_worker.js'), 'utf8');
+  const start = worker.indexOf('const defer =');
+  const end = worker.indexOf('// the exports scene code runs against:', start);
+  assert.ok(start >= 0 && end > start);
+  let subscriptions = 0;
+  let pulls = 0;
+  const requested = [];
+  const context = {
+    jsPreamble: 'const Deno = globalThis.Deno; const console = globalThis.console;',
+    jsProxy: { Deno: {core: {ops: {
+      op_subscribe_legacy_avatar_events:()=>subscriptions++,
+      op_pull_legacy_avatar_events:async()=>{pulls++; return [];},
+      op_scene_id:()=> 'scene-id',
+      op_get_permissions:async items=>items.map(()=>false)
+    }}}, console: {log:()=>{}, error:()=>{}} }
+  };
+  vm.runInNewContext(worker.slice(start, end) + '\nglobalThis.preload = preloadModules; globalThis.loadModule = require;', context);
+  const names = ['DevTools','ParcelIdentity','Permissions','SocialController'];
+  await context.preload({}, (_state,key)=>{
+    requested.push(key);
+    if (key === '~system/BevyExplorerApi') throw Error('not a super-user scene');
+    const name = key.slice('~system/'.length);
+    return names.includes(name) ? fs.readFileSync(require.resolve(`./${name}.js`), 'utf8') : 'module.exports = {}';
+  });
+  for (const name of names) assert.ok(requested.includes('~system/'+name), name+' was not prefetched');
+  assert.equal(subscriptions, 0, 'prefetch must not register an unused scene');
+  assert.deepEqual(plain(await context.loadModule('~system/ParcelIdentity').getSceneId()), {sceneId:'scene-id'});
+  assert.deepEqual(plain(await context.loadModule('~system/Permissions').hasPermission({permission:2})), {hasPermission:false});
+  assert.deepEqual(plain(await context.loadModule('~system/DevTools').event({type:'Other.event',jsonPayload:'{}'})), {});
+  const social = context.loadModule('~system/SocialController');
+  assert.equal(subscriptions, 1);
+  assert.equal(context.loadModule('~system/SocialController'), social);
+  assert.equal(subscriptions, 1, 'repeated require must reuse the same lifetime');
+  assert.deepEqual(plain(await social.pullAvatarEvents()), {events:[]});
+  assert.deepEqual(plain(await social.pullAvatarEvents()), {events:[]});
+  assert.equal(pulls, 2);
+  assert.throws(()=>context.loadModule('~system/BevyExplorerApi'));
+  assert.throws(()=>context.loadModule('~system/Unknown'));
+});
