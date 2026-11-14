@@ -3,7 +3,7 @@ use std::{borrow::Cow, cell::RefCell, rc::Rc, sync::Arc};
 use alloy_rpc_client::{ClientBuilder, RpcClient, WsConnect};
 use anyhow::anyhow;
 use bevy::log::debug;
-use common::rpc::{RPCSendableMessage, RpcCall, RpcResultSender};
+use common::rpc::{RPCSendableMessage, RpcCall, RpcResultSender, MAX_LEGACY_SIGN_MESSAGE_BYTES};
 use tokio::sync::Mutex;
 
 use super::{runtime::send_immediate_rpc, State};
@@ -24,6 +24,24 @@ pub async fn op_get_user_account(
         RpcCall::GetUserAccount { response },
     )?;
     receiver.await.map_err(|error| anyhow!(error))
+}
+
+pub async fn op_sign_legacy_message(
+    state: Rc<RefCell<impl State>>,
+    message: String,
+) -> Result<serde_json::Value, anyhow::Error> {
+    if message.len() > MAX_LEGACY_SIGN_MESSAGE_BYTES {
+        anyhow::bail!("legacy signing message exceeds {MAX_LEGACY_SIGN_MESSAGE_BYTES} UTF-8 bytes");
+    }
+    let (response, receiver) = RpcResultSender::channel();
+    send_immediate_rpc(
+        &mut *state.borrow_mut(),
+        RpcCall::SignLegacyMessage { message, response },
+    )?;
+    receiver
+        .await
+        .map_err(|error| anyhow!(error))?
+        .map_err(|error| anyhow!(error))
 }
 
 pub async fn op_send_async(

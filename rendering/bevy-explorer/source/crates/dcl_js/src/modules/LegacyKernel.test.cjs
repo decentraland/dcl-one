@@ -51,14 +51,29 @@ test('Permissions preserves enum values, input order and protobuf response names
   assert.deepEqual(calls, [[0],[2,0,2,-1],[0],[]]);
 });
 
-test('deprecated CRDT receive requests and returns the real renderer byte batches', async () => {
-  const sent = [];
-  const api = load('EngineApi', {op_crdt_send_to_renderer:data=>sent.push(data), op_crdt_recv_from_renderer:async()=>[[1,2],[3]]});
-  const response = await api.crdtGetMessageFromRenderer({});
-  assert.equal(sent.length, 1);
-  assert.ok(sent[0] instanceof Uint8Array);
-  assert.equal(sent[0].length, 0);
-  assert.deepEqual(response.data.map(value=>Array.from(value)), [[1,2],[3]]);
+test('deprecated CRDT reads drain available bytes without sending or awaiting a tick', async () => {
+  let ready = [[1,2],[3]];
+  let sends = 0;
+  let receives = 0;
+  const api = load('EngineApi', {
+    op_crdt_send_to_renderer: () => sends++,
+    op_crdt_recv_from_renderer: async () => [[++receives]],
+    op_crdt_recv_ready: async () => { const data = ready; ready = []; return data; }
+  });
+  assert.deepEqual(plain((await api.crdtGetMessageFromRenderer({})).data.map(value => Array.from(value))), [[1,2],[3]]);
+  assert.deepEqual(plain(await api.crdtGetMessageFromRenderer({})), {data:[]});
+  assert.equal(sends, 0);
+  assert.equal(receives, 0);
+  assert.deepEqual(plain((await api.crdtGetState({})).data.map(value => Array.from(value))), [[1]]);
+  for (let frame = 0; frame < 20; frame++) {
+    assert.deepEqual(plain(await api.crdtGetMessageFromRenderer({})), {data:[]});
+    const result = await api.crdtSendToRenderer({data:new Uint8Array([frame])});
+    assert.deepEqual(plain(result.data.map(value => Array.from(value))), [[frame + 2]]);
+    assert.deepEqual(plain(await api.crdtGetMessageFromRenderer({})), {data:[]});
+    assert.deepEqual(plain(await api.crdtGetMessageFromRenderer({})), {data:[]});
+  }
+  assert.equal(sends, 20);
+  assert.equal(receives, 21);
 });
 
 test('SocialController initializes its lifetime and awaits the draining native pull', async () => {

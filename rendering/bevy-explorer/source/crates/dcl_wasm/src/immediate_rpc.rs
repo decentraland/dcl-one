@@ -65,6 +65,10 @@ fn endpoint(call: &RpcCall) -> Result<(u64, Kind), &'static str> {
             response: RpcResultSender::Remote { id, .. },
             ..
         }
+        | RpcCall::SignLegacyMessage {
+            response: RpcResultSender::Remote { id, .. },
+            ..
+        }
         | RpcCall::SendAsync {
             response: RpcResultSender::Remote { id, .. },
             ..
@@ -115,7 +119,8 @@ impl ImmediateRpcWindow {
         if self.ids.contains(&id) {
             return Err("duplicate immediate channel");
         }
-        if self.admitted >= MAX_RPC_CALLS_PER_TICK {
+        let counted = !matches!(kind, Kind::File);
+        if counted && self.admitted >= MAX_RPC_CALLS_PER_TICK {
             return Err("too many rpc calls");
         }
         if bytes > MAX_RETAINED_IMMEDIATE_BYTES.saturating_sub(self.admitted_bytes) {
@@ -132,7 +137,7 @@ impl ImmediateRpcWindow {
             }
             self.subscribed = true;
         }
-        self.admitted += 1;
+        self.admitted += usize::from(counted);
         self.admitted_bytes += bytes;
         self.retained_bytes += bytes;
         self.charges.insert(id, bytes);

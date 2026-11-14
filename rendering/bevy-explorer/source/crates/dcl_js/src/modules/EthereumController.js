@@ -52,16 +52,14 @@ module.exports.requirePayment = async function (_body) {
 }
 
 module.exports.signMessage = async function (body) {
-    const message = '# DCL Signed message\n' + Object.entries(body.message)
+    const fields = Object.entries(body.message)
         .map(([key, value]) => `${key}: ${value}`).join('\n')
+    const message = '# DCL Signed message\n' + fields
     const hexEncodedMessage = '0x' + Array.from(new TextEncoder().encode(message),
         byte => byte.toString(16).padStart(2, '0')).join('')
     let signature = ''
     try {
-        const address = await Deno.core.ops.op_get_user_account()
-        // Rust queues this through the engine's Web3 permission and wallet approval path.
-        const result = await Deno.core.ops.op_send_async('personal_sign',
-            JSON.stringify([hexEncodedMessage, address ?? null]))
+        const result = await Deno.core.ops.op_sign_legacy_message(fields)
         signature = typeof result === 'string' ? result : ''
     } catch (_error) {
         // Rejection and unavailable wallets use the legacy empty-signature response.

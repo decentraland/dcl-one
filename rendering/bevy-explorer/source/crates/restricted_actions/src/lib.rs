@@ -26,6 +26,7 @@ use common::{
     rpc::{
         EntityDefinitionResponse, PortableLocation, RPCSendableMessage, ReadFileResponse, RpcCall,
         RpcCallEvent, RpcEventSender, RpcOrigin, RpcResultSender, SpawnResponse,
+        MAX_LEGACY_SIGN_MESSAGE_BYTES,
     },
     sets::SceneSets,
     structs::{
@@ -1918,6 +1919,36 @@ fn get_user_account(mut events: EventReader<RpcCallEvent>, wallet: Res<Wallet>) 
     }
 }
 
+#[derive(Clone, Debug)]
+pub enum EthereumSigningRequest {
+    SendAsync(RPCSendableMessage),
+    SignLegacyMessage(String),
+}
+
+impl EthereumSigningRequest {
+    fn display_message(&self) -> Option<String> {
+        match self {
+            Self::SignLegacyMessage(message) => Some(format!("# DCL Signed message\n{message}")),
+            Self::SendAsync(_) => None,
+        }
+    }
+
+    fn into_wallet_request(self, address: Address) -> RPCSendableMessage {
+        match self {
+            Self::SignLegacyMessage(_) => RPCSendableMessage {
+                method: "personal_sign".to_owned(),
+                params: vec![
+                    json!(alloy_core::primitives::hex::encode_prefixed(
+                        self.display_message().unwrap().as_bytes()
+                    )),
+                    json!(format!("{address:#x}")),
+                ],
+            },
+            Self::SendAsync(body) => body,
+        }
+    }
+}
+
 #[allow(clippy::type_complexity)]
 pub fn handle_eth_async(
     mut events: EventReader<RpcCallEvent>,
@@ -1930,11 +1961,33 @@ pub fn handle_eth_async(
             Task<Result<serde_json::Value, anyhow::Error>>,
         )>,
     >,
-    mut perms: Permission<(RPCSendableMessage, RpcResultSender<Result<Value, String>>)>,
+    mut perms: Permission<(
+        EthereumSigningRequest,
+        RpcResultSender<Result<Value, String>>,
+    )>,
 ) {
     for (body, scene, response) in events.read().filter_map(|ev| match (&ev.origin, &ev.call) {
-        (RpcOrigin::Scene { entity: scene, .. }, RpcCall::SendAsync { body, response }) => {
-            Some((body, scene, response))
+        (RpcOrigin::Scene { entity: scene, .. }, RpcCall::SendAsync { body, response }) => Some((
+            EthereumSigningRequest::SendAsync(body.clone()),
+            scene,
+            response,
+        )),
+        (
+            RpcOrigin::Scene { entity: scene, .. },
+            RpcCall::SignLegacyMessage { message, response },
+        ) => {
+            if message.len() > MAX_LEGACY_SIGN_MESSAGE_BYTES {
+                response.send(Err(format!(
+                    "legacy signing message exceeds {MAX_LEGACY_SIGN_MESSAGE_BYTES} UTF-8 bytes"
+                )));
+                None
+            } else {
+                Some((
+                    EthereumSigningRequest::SignLegacyMessage(message.clone()),
+                    scene,
+                    response,
+                ))
+            }
         }
         _ => None,
     }) {
@@ -1946,9 +1999,11 @@ pub fn handle_eth_async(
             continue;
         }
 
-        if !RPCSendableMessage::SIGNING_METHODS.contains(&body.method.as_str()) {
-            response.send(Err(format!("method {} is not available", body.method)));
-            continue;
+        if let EthereumSigningRequest::SendAsync(body) = &body {
+            if !RPCSendableMessage::SIGNING_METHODS.contains(&body.method.as_str()) {
+                response.send(Err(format!("method {} is not available", body.method)));
+                continue;
+            }
         }
 
         // Neither persistent nor session guests have a wallet that can approve signing.
@@ -1973,11 +2028,12 @@ pub fn handle_eth_async(
         }
 
         debug!("[{:?}] handle_eth_async {:?}", scene, body);
+        let message = body.display_message();
         perms.check(
             PermissionType::Web3,
             *scene,
-            (body.clone(), response.clone()),
-            None,
+            (body, response.clone()),
+            message,
             false,
         );
     }
@@ -1988,10 +2044,10 @@ pub fn handle_eth_async(
             continue;
         }
 
+        let body = body.into_wallet_request(wallet.address().unwrap());
         tasks.push((
             response.clone(),
-            IoTaskPool::get()
-                .spawn_compat(remote_send_async(body.clone(), wallet.auth_chain().ok())),
+            IoTaskPool::get().spawn_compat(remote_send_async(body, wallet.auth_chain().ok())),
         ));
     }
 

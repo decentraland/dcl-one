@@ -25,6 +25,7 @@ pub fn send_immediate_rpc(state: &mut impl State, call: RpcCall) -> Result<(), a
     // Upper bounds for the named MessagePack fields, without serializing live sender IDs.
     let payload = match &call {
         RpcCall::ReadFile { filename, .. } => filename.len(),
+        RpcCall::SignLegacyMessage { message, .. } => message.len(),
         RpcCall::GetPermissions { permissions, .. } => permissions.len().saturating_mul(5),
         RpcCall::EntityDefinition { urn, .. } => urn.len(),
         RpcCall::SendAsync { body, .. } => body
@@ -38,9 +39,12 @@ pub fn send_immediate_rpc(state: &mut impl State, call: RpcCall) -> Result<(), a
         | RpcCall::PullLegacyAvatarEvents { .. } => 0,
         _ => anyhow::bail!("unsupported immediate scene RPC"),
     };
-    state
-        .borrow_mut::<RpcCalls>()
-        .admit_immediate(payload.saturating_add(128))?;
+    let calls = state.borrow_mut::<RpcCalls>();
+    if matches!(&call, RpcCall::ReadFile { .. }) {
+        calls.admit_read_file(payload.saturating_add(128))?;
+    } else {
+        calls.admit_immediate(payload.saturating_add(128))?;
+    }
     state
         .borrow_mut::<SceneResponseSender>()
         .try_send(SceneResponse::ImmediateRpcCall(call))
@@ -108,10 +112,18 @@ pub fn op_scene_id(state: &impl State) -> String {
     state.borrow::<CrdtContext>().hash.clone()
 }
 
+// Matches the engine permission query boundary.
+const MAX_PERMISSION_QUERIES: usize = 16;
+
 pub async fn op_get_permissions(
     state: Rc<RefCell<impl State>>,
     permissions: Vec<i32>,
 ) -> Result<Vec<bool>, anyhow::Error> {
+    let requested = permissions.len();
+    anyhow::ensure!(
+        requested <= MAX_PERMISSION_QUERIES,
+        "too many permission queries"
+    );
     let (response, receiver) = RpcResultSender::channel();
     send_immediate_rpc(
         &mut *state.borrow_mut(),
@@ -120,7 +132,12 @@ pub async fn op_get_permissions(
             response,
         },
     )?;
-    receiver.await.map_err(|error| anyhow!(error))
+    let response = receiver.await.map_err(|error| anyhow!(error))?;
+    anyhow::ensure!(
+        response.len() == requested,
+        "invalid permission response length"
+    );
+    Ok(response)
 }
 
 pub async fn op_scene_information(
@@ -233,5 +250,50 @@ pub fn get_platform() -> &'static str {
     #[cfg(not(target_arch = "wasm32"))]
     {
         "desktop"
+    }
+}
+
+#[cfg(test)]
+mod admission_tests {
+    use super::*;
+    use crate::test_state::TestState;
+
+    #[test]
+    fn oversized_permission_queries_fail_before_accessing_runtime_state() {
+        let state = Rc::new(RefCell::new(TestState::default()));
+        let error =
+            futures_lite::future::block_on(op_get_permissions(state, vec![0; 17])).unwrap_err();
+        assert!(error.to_string().contains("too many permission queries"));
+    }
+
+    #[test]
+    fn permission_reply_must_match_the_requested_length() {
+        for reply in [vec![], vec![true; 15], vec![true; 16], vec![true; 17]] {
+            let (sender, mut receiver) = dcl_types::scene_response_channel();
+            let mut state = TestState::default();
+            state.put(RpcCalls::default());
+            state.put(SceneResponseSender::new(dcl_types::SceneId::DUMMY, sender));
+            let reply_len = reply.len();
+            let engine = std::thread::spawn(move || {
+                let (
+                    _,
+                    SceneResponse::ImmediateRpcCall(RpcCall::GetPermissions {
+                        permissions,
+                        response,
+                    }),
+                ) = receiver.blocking_recv().unwrap()
+                else {
+                    panic!()
+                };
+                assert_eq!(permissions.len(), 16);
+                response.send(reply);
+            });
+            let result = futures_lite::future::block_on(op_get_permissions(
+                Rc::new(RefCell::new(state)),
+                vec![0; 16],
+            ));
+            assert_eq!(result.is_ok(), reply_len == 16);
+            engine.join().unwrap();
+        }
     }
 }

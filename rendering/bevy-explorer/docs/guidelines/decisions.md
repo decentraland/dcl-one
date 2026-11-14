@@ -498,7 +498,8 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   an `Ask` policy reports false and never opens a prompt. Web Fetch and WebSocket report
   availability for an assigned scene because those browser paths are ungated. Media hostname
   grants report false because the engine has no such grant store. Actions still pass their
-  existing permission and wallet checks. Scene metadata does not create grants.
+  existing permission and wallet checks. Scene metadata does not create grants. A query accepts
+  at most 16 permission items and resolves the scene policy once.
 - **Legacy parcel metadata has no asset-bundle URL.** `ParcelIdentity.getParcel` returns the
   assigned scene's actual identifier, metadata, content mappings and content URL. Its
   `baseUrlBundles` string is empty: the engine's bundle service serves Bevy artifacts and
@@ -516,9 +517,14 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   entity-definition reads, signing, and avatar subscription/pulls use the immediate RPC
   transport, keeping the existing trusted scene identity and action handlers. They do not
   require a CRDT flush from the caller. Immediate and queued requests share the 1000-call
-  budget between renderer flushes; immediate payloads also share an 80 MiB budget. The web
+  budget between renderer flushes, excluding file reads; all immediate payloads share an
+  80 MiB budget. The web
   relay independently enforces these limits and runs at most 32 queries concurrently,
   alongside the existing file-read barrier. Retained payloads remain charged until the engine
   releases their reply channels, even when callers cancel. A pending wallet approval therefore
   does not block unrelated reads. A full renderer queue retains accepted web requests for retry;
-  native IPC waits for bounded queue capacity. File reads retain their existing ordering.
+  native IPC buffers at most 1000 responses and 80 MiB per scene, serves pending scenes in
+  turn, and continues reading channel closes while the renderer queue is full. Overflow
+  terminates that scene and retains a terminal error for the renderer. File reads retain
+  their existing ordering. Deprecated CRDT reads drain already received data without
+  flushing scene state or waiting for another renderer tick.

@@ -102,6 +102,32 @@ fn resolve(
     }
 }
 
+/// The existing permission policy for one scene at the time of a read-only query.
+pub struct ScenePermission<'a> {
+    config: &'a AppConfig,
+    realm: &'a str,
+    hash: &'a str,
+    in_scene: bool,
+    is_portable: bool,
+    is_system: bool,
+    autopilot: bool,
+}
+
+impl ScenePermission<'_> {
+    pub fn is_allowed(&self, ty: PermissionType, allow_out_of_scene: bool) -> bool {
+        self.is_system
+            || resolve(
+                self.autopilot,
+                self.config,
+                ty,
+                self.realm,
+                self.hash,
+                self.is_portable,
+                !allow_out_of_scene && !self.in_scene,
+            ) == PermissionValue::Allow
+    }
+}
+
 impl<T: Send + Sync + 'static> Permission<'_, '_, T> {
     // in scene, hash, title, is_portable
     fn get_scene_info(&self, scene: Entity) -> Option<(bool, &str, &str, bool)> {
@@ -123,25 +149,18 @@ impl<T: Send + Sync + 'static> Permission<'_, '_, T> {
         })
     }
 
-    /// Read the existing policy without changing it or opening a permission prompt.
-    pub fn is_allowed(&self, ty: PermissionType, scene: Entity, allow_out_of_scene: bool) -> bool {
-        let Some((in_scene, hash, _, is_portable)) = self.get_scene_info(scene) else {
-            return false;
-        };
-        self.is_system_scene(hash)
-            || resolve(
-                self.autopilot.is_some(),
-                &self.config,
-                ty,
-                &self.realm.about_url,
-                hash,
-                is_portable,
-                !allow_out_of_scene && !in_scene,
-            ) == PermissionValue::Allow
-    }
-
-    pub fn scene_exists(&self, scene: Entity) -> bool {
-        self.scenes.contains(scene)
+    /// Resolve scene identity and presence once, without changing policy or opening a prompt.
+    pub fn for_scene(&self, scene: Entity) -> Option<ScenePermission<'_>> {
+        let (in_scene, hash, _, is_portable) = self.get_scene_info(scene)?;
+        Some(ScenePermission {
+            config: &self.config,
+            realm: &self.realm.about_url,
+            hash,
+            in_scene,
+            is_portable,
+            is_system: self.is_system_scene(hash),
+            autopilot: self.autopilot.is_some(),
+        })
     }
 
     pub fn check(

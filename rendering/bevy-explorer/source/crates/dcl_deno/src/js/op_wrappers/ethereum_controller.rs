@@ -3,7 +3,11 @@ use std::{cell::RefCell, rc::Rc};
 
 // list of op declarations
 pub fn ops() -> Vec<OpDecl> {
-    vec![op_send_async(), op_get_user_account()]
+    vec![
+        op_send_async(),
+        op_get_user_account(),
+        op_sign_legacy_message(),
+    ]
 }
 
 #[op2(async)]
@@ -20,4 +24,13 @@ async fn op_send_async(
 #[string]
 async fn op_get_user_account(state: Rc<RefCell<OpState>>) -> Result<Option<String>, AnyError> {
     dcl_js::ethereum_controller::op_get_user_account(state).await
+}
+
+#[op2(async)]
+#[serde]
+async fn op_sign_legacy_message(
+    state: Rc<RefCell<OpState>>,
+    #[string] message: String,
+) -> Result<serde_json::Value, AnyError> {
+    dcl_js::ethereum_controller::op_sign_legacy_message(state, message).await
 }

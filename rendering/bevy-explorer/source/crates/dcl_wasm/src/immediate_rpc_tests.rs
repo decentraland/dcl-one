@@ -1,7 +1,6 @@
 use super::*;
 use common::rpc::{
-    rmp_encode, IpcMessage, RPCSendableMessage, RequestContext, ResponseContext,
-    ENGINE_IPC_CONTEXT, SCENE_IPC_CONTEXT,
+    rmp_encode, IpcMessage, RequestContext, ResponseContext, ENGINE_IPC_CONTEXT, SCENE_IPC_CONTEXT,
 };
 use serde_json::json;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
@@ -132,15 +131,12 @@ fn serialized_subscribe_and_pulls_share_one_lifetime_while_slow_signing_allows_r
     let (response, mut signed) = RpcResultSender::channel();
     bridge.admit(
         &mut window,
-        RpcCall::SendAsync {
-            body: RPCSendableMessage {
-                method: "personal_sign".into(),
-                params: vec![],
-            },
+        RpcCall::SignLegacyMessage {
+            message: "name: test".into(),
             response,
         },
     );
-    let RpcCall::SendAsync { response: slow, .. } =
+    let RpcCall::SignLegacyMessage { response: slow, .. } =
         window.next(Bridge::open, Bridge::exists).unwrap()
     else {
         panic!()
@@ -329,11 +325,8 @@ fn admission_and_pending_bytes_remain_bounded_across_tick_resets() {
 fn forwarded_and_caller_cancelled_requests_keep_their_byte_charge_until_engine_release() {
     let mut bridge = Bridge::new();
     let mut window = ImmediateRpcWindow::default();
-    let request = |response| RpcCall::SendAsync {
-        body: RPCSendableMessage {
-            method: "personal_sign".into(),
-            params: vec![json!("x".repeat(MAX_RETAINED_IMMEDIATE_BYTES / 2))],
-        },
+    let request = |response| RpcCall::SignLegacyMessage {
+        message: "x".repeat(MAX_RETAINED_IMMEDIATE_BYTES / 2),
         response,
     };
     let (response, caller) = RpcResultSender::channel();
@@ -631,4 +624,48 @@ fn saturated_renderer_retains_snapshot_allocation_and_terminal_error_without_tic
         assert_eq!(credits, 0);
         assert!(held.is_none());
     }
+}
+
+#[test]
+fn startup_reads_exceed_one_thousand_without_spending_action_calls() {
+    let mut bridge = Bridge::new();
+    let mut window = ImmediateRpcWindow::default();
+    for index in 0..MAX_RPC_CALLS_PER_TICK + 1 {
+        let (response, mut caller) = RpcResultSender::channel();
+        bridge.admit(
+            &mut window,
+            RpcCall::ReadFile {
+                filename: format!("asset-{index}"),
+                response,
+            },
+        );
+        let RpcCall::ReadFile { response, .. } = window.next(Bridge::open, Bridge::exists).unwrap()
+        else {
+            panic!()
+        };
+        response.send(Ok(common::rpc::ReadFileResponse {
+            content: vec![1],
+            hash: index.to_string(),
+        }));
+        drop(response);
+        bridge.pump();
+        assert_eq!(caller.try_recv().unwrap().unwrap().content, vec![1]);
+    }
+    assert_eq!(window.admitted, 0);
+    assert!(window.admitted_bytes > MAX_RPC_CALLS_PER_TICK);
+    let (response, _caller) = RpcResultSender::channel();
+    let (remote, _) = bridge.decode(&RpcCall::ReadFile {
+        filename: "over-budget".into(),
+        response,
+    });
+    assert_eq!(
+        window.admit(
+            remote,
+            MAX_RETAINED_IMMEDIATE_BYTES,
+            Bridge::open,
+            Bridge::exists
+        ),
+        Err("too many immediate rpc bytes per tick")
+    );
+    window.tick(MAX_RPC_CALLS_PER_TICK).unwrap();
 }

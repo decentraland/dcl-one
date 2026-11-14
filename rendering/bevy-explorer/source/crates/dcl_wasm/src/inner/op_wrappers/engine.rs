@@ -49,3 +49,13 @@ pub async fn op_crdt_recv_from_renderer(op_state: &WorkerContext) -> js_sys::Arr
         .map(JsValue::from)
         .collect()
 }
+
+#[wasm_bindgen]
+pub async fn op_crdt_recv_ready(op_state: &WorkerContext) -> js_sys::Array {
+    dcl_js::engine::op_crdt_recv_ready(op_state.rc())
+        .await
+        .into_iter()
+        .map(|v| v.into_boxed_slice())
+        .map(JsValue::from)
+        .collect()
+}

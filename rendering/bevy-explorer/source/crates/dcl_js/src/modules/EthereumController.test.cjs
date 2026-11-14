@@ -8,8 +8,7 @@ function ops(value) { global.Deno = { core: { ops: value } }; }
 test('legacy signing encodes UTF-8 and delegates to the engine wallet RPC', async () => {
   let sent;
   ops({
-    op_get_user_account: async () => '0xabc',
-    op_send_async: async (...args) => { sent = args; return '0xsigned'; },
+    op_sign_legacy_message: async (...args) => { sent = args; return '0xsigned'; },
   });
   const body = { message: { title: 'piñata 🦊', nonce: '42' } };
   const pending = api.signMessage(body);
@@ -17,14 +16,13 @@ test('legacy signing encodes UTF-8 and delegates to the engine wallet RPC', asyn
   const message = '# DCL Signed message\ntitle: piñata 🦊\nnonce: 42';
   const hexEncodedMessage = '0x' + Buffer.from(message).toString('hex');
   assert.deepEqual(await pending, { message, hexEncodedMessage, signature: '0xsigned' });
-  assert.deepEqual(sent, ['personal_sign', JSON.stringify([hexEncodedMessage, '0xabc'])]);
+  assert.deepEqual(sent, ['title: piñata 🦊\nnonce: 42']);
 });
 
 test('wallet denial returns the legacy empty signature without retrying', async () => {
   let attempts = 0;
   ops({
-    op_get_user_account: async () => '0xabc',
-    op_send_async: async () => { attempts++; throw new Error('permission denied'); },
+    op_sign_legacy_message: async () => { attempts++; throw new Error('permission denied'); },
   });
   const result = await api.signMessage({ message: {} });
   assert.equal(result.message, '# DCL Signed message\n');
@@ -32,8 +30,8 @@ test('wallet denial returns the legacy empty signature without retrying', async 
   assert.equal(attempts, 1);
 });
 
-test('identity failure cannot reach the wallet and invalid input rejects', async () => {
-  ops({ op_get_user_account: async () => { throw new Error('Not found'); } });
+test('unavailable signing returns an empty signature and invalid input rejects', async () => {
+  ops({ op_sign_legacy_message: async () => { throw new Error('wallet not connected'); } });
   assert.equal((await api.signMessage({ message: { x: 'y' } })).signature, '');
   await assert.rejects(api.signMessage({ message: null }), TypeError);
 });
@@ -70,6 +68,27 @@ test('sendAsync retains JSON-RPC envelope and rejected methods do not dispatch',
     jsonAnyResponse: '{"id":7,"jsonrpc":"2.0","result":"0xreceipt"}',
   });
   assert.deepEqual(sent, ['eth_sendTransaction', '[]']);
-  await assert.rejects(api.sendAsync({ id: 7, method: 'eth_sign', jsonParams: '[]' }), /not allowed/);
+  for (const method of ['eth_sign', 'personal_sign']) {
+    await assert.rejects(api.sendAsync({ id: 7, method, jsonParams: '[]' }), /not allowed/);
+  }
   assert.deepEqual(sent, ['eth_sendTransaction', '[]']);
+});
+
+test('legacy signing snapshots own entries in JavaScript order with colon and prototype keys', async () => {
+  let sent;
+  ops({ op_sign_legacy_message: async fields => { sent = fields; return '0xsigned'; } });
+  const fields = Object.assign(Object.create({ inherited: 'ignored' }), { z: 'a:b', 2: 'two', 1: 'one' });
+  Object.defineProperty(fields, '__proto__', { value: 'literal', enumerable: true });
+  const signed = await api.signMessage({ message: fields });
+  assert.equal(sent, '1: one\n2: two\nz: a:b\n__proto__: literal');
+  assert.equal(signed.message, '# DCL Signed message\n' + sent);
+  assert.equal(signed.hexEncodedMessage, '0x' + Buffer.from(signed.message).toString('hex'));
+  assert.equal(signed.signature, '0xsigned');
+});
+
+test('non-string wallet responses retain the empty signature envelope', async () => {
+  for (const result of [null, undefined, {}, 42]) {
+    ops({ op_sign_legacy_message: async () => result });
+    assert.equal((await api.signMessage({ message: {} })).signature, '');
+  }
 });

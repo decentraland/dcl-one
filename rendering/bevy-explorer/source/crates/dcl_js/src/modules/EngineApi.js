@@ -1,6 +1,6 @@
 // engine module
 
-const { op_crdt_recv_from_renderer, op_crdt_send_to_renderer, op_subscribe, op_unsubscribe, op_send_batch, op_is_server } = Deno.core.ops;
+const { op_crdt_recv_from_renderer, op_crdt_recv_ready, op_crdt_send_to_renderer, op_subscribe, op_unsubscribe, op_send_batch, op_is_server } = Deno.core.ops;
 
 module.exports.crdtSendToRenderer = async function(messages) {
     op_crdt_send_to_renderer(messages.data);
@@ -11,8 +11,8 @@ module.exports.crdtSendToRenderer = async function(messages) {
 }
 
 module.exports.crdtGetMessageFromRenderer = async function() {
-    // An empty send requests the next renderer batch without changing scene state.
-    return module.exports.crdtSendToRenderer({ data: new Uint8Array() });
+    const data = (await op_crdt_recv_ready()).map((item) => new Uint8Array(item));
+    return { data };
 }
 
 module.exports.crdtGetState = async function() {

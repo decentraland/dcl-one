@@ -86,13 +86,26 @@ impl RpcCalls {
     }
 
     pub fn admit_immediate(&mut self, bytes: usize) -> Result<(), anyhow::Error> {
-        if self.0.len() + self.1 >= MAX_RPC_CALLS_PER_TICK {
+        self.admit_immediate_request(bytes, true)
+    }
+
+    /// Startup content reads retain their byte budget without consuming action calls.
+    pub fn admit_read_file(&mut self, bytes: usize) -> Result<(), anyhow::Error> {
+        self.admit_immediate_request(bytes, false)
+    }
+
+    fn admit_immediate_request(
+        &mut self,
+        bytes: usize,
+        counted: bool,
+    ) -> Result<(), anyhow::Error> {
+        if counted && self.0.len() + self.1 >= MAX_RPC_CALLS_PER_TICK {
             anyhow::bail!("exceeded the per-tick RPC call limit ({MAX_RPC_CALLS_PER_TICK})");
         }
         if bytes > MAX_IMMEDIATE_RPC_BYTES_PER_FLUSH.saturating_sub(self.2) {
             anyhow::bail!("exceeded the immediate RPC payload limit");
         }
-        self.1 += 1;
+        self.1 += usize::from(counted);
         self.2 += bytes;
         Ok(())
     }
@@ -218,6 +231,22 @@ mod rpc_calls_tests {
         let _sent = std::mem::take(&mut calls);
         calls.admit_immediate(1).unwrap();
         calls.push(a_call()).unwrap();
+    }
+
+    #[test]
+    fn file_reads_keep_byte_bounds_without_spending_action_calls() {
+        let mut calls = RpcCalls::default();
+        for _ in 0..MAX_RPC_CALLS_PER_TICK + 1 {
+            calls.admit_read_file(1).unwrap();
+        }
+        for _ in 0..MAX_RPC_CALLS_PER_TICK {
+            calls.admit_immediate(1).unwrap();
+        }
+        assert!(calls.admit_immediate(1).is_err());
+        calls.admit_read_file(1).unwrap();
+        assert!(calls
+            .admit_read_file(MAX_IMMEDIATE_RPC_BYTES_PER_FLUSH)
+            .is_err());
     }
 
     #[test]

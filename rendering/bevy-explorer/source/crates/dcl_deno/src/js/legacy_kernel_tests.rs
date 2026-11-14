@@ -189,7 +189,7 @@ fn legacy_kernel_social_subscription_drains_events_once_and_closes_with_the_scen
 }
 
 #[test]
-fn legacy_kernel_crdt_receive_preserves_renderer_bytes_and_sends_an_empty_update() {
+fn legacy_kernel_crdt_receive_drains_renderer_bytes_without_a_flush() {
     use dcl_component::{DclReader, SceneComponentId, SceneCrdtTimestamp, SceneEntityId};
     let (mut runtime, renderer, mut outbound) = runtime();
     let mut updates = dcl_types::interface::CrdtStore::default();
@@ -230,8 +230,16 @@ fn legacy_kernel_crdt_receive_preserves_renderer_bytes_and_sends_an_empty_update
             Some(&bytes)
         )])
     );
-    let (_, response) = outbound.try_recv().unwrap();
-    assert!(matches!(response, SceneResponse::Ok(..)));
+    assert!(outbound.try_recv().is_err(), "reading never flushes a tick");
+    runtime.execute_script("<repeat>", "require('~system/EngineApi').crdtGetMessageFromRenderer({}).then(reply=>result=reply.data)").unwrap();
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(runtime.run_event_loop(Default::default()))
+        .unwrap();
+    assert_eq!(result(&mut runtime), json!([]));
+    assert!(outbound.try_recv().is_err());
     assert_eq!(
         runtime
             .op_state()
@@ -410,4 +418,104 @@ fn legacy_kernel_full_response_queue_rejects_without_panicking() {
         .as_str()
         .unwrap()
         .contains("scene RPC queue unavailable"));
+}
+
+#[test]
+fn native_startup_reads_more_than_one_thousand_files_without_a_renderer_flush() {
+    let (mut runtime, _renderer, mut outbound) = runtime();
+    let engine = std::thread::spawn(move || {
+        for index in 0..1001 {
+            let (_, SceneResponse::ImmediateRpcCall(RpcCall::ReadFile { filename, response })) =
+                outbound.blocking_recv().unwrap()
+            else {
+                panic!("expected startup file read")
+            };
+            assert_eq!(filename, format!("asset-{index}"));
+            response.send(Ok(common::rpc::ReadFileResponse {
+                content: vec![7],
+                hash: index.to_string(),
+            }));
+        }
+    });
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    rt.block_on(async {
+        runtime.execute_script("<startup-files>", "(async()=>{ const api=require('~system/Runtime'); for(let i=0;i<1001;i++) { const file=await api.readFile({fileName:'asset-'+i}); if(file.content[0]!==7) throw Error('file payload'); } result=1001; })()").unwrap();
+        tokio::time::timeout(Duration::from_secs(10), runtime.run_event_loop(Default::default())).await.unwrap().unwrap();
+    });
+    assert_eq!(result(&mut runtime), json!(1001));
+    engine.join().unwrap();
+}
+
+#[test]
+fn native_legacy_reads_interleave_with_each_renderer_tick_without_extra_flushes() {
+    let (mut runtime, renderer, mut outbound) = runtime();
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime
+        .execute_script("<engine>", "globalThis.engine=require('~system/EngineApi')")
+        .unwrap();
+    for frame in 0..20 {
+        dcl_js::begin_tick(&mut *runtime.op_state().borrow_mut());
+        // A read with no received data resolves even before the next renderer update exists.
+        rt.block_on(async {
+            runtime
+                .execute_script(
+                    "<before-tick>",
+                    "engine.crdtGetMessageFromRenderer({}).then(reply=>result=reply.data)",
+                )
+                .unwrap();
+            tokio::time::timeout(
+                Duration::from_secs(1),
+                runtime.run_event_loop(Default::default()),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        });
+        assert_eq!(result(&mut runtime), json!([]));
+        assert!(outbound.try_recv().is_err());
+        let mut updates = dcl_types::interface::CrdtStore::default();
+        let payload = [frame];
+        updates.try_update(
+            dcl_component::SceneComponentId(1234),
+            dcl_types::interface::CrdtType::LWW_ANY,
+            dcl_component::SceneEntityId::ROOT,
+            dcl_component::SceneCrdtTimestamp(frame as u32 + 1),
+            Some(&mut dcl_component::DclReader::new(&payload)),
+        );
+        renderer
+            .send(RendererResponse::Ok(
+                updates,
+                dcl_types::SceneCensus {
+                    born: Default::default(),
+                    died: Default::default(),
+                },
+                0.016,
+            ))
+            .unwrap();
+        rt.block_on(async {
+            runtime.execute_script("<tick>", "(async()=>{ const tick=await engine.crdtSendToRenderer({data:new Uint8Array()}); const a=await engine.crdtGetMessageFromRenderer({}); const b=await engine.crdtGetMessageFromRenderer({}); result={tick:tick.data.map(bytes=>Array.from(bytes)),a:a.data,b:b.data}; })()").unwrap();
+            tokio::time::timeout(Duration::from_secs(1), runtime.run_event_loop(Default::default())).await.unwrap().unwrap();
+        });
+        let actual = result(&mut runtime);
+        assert_eq!(
+            actual["tick"][0].as_array().unwrap().last().unwrap(),
+            &json!(frame)
+        );
+        assert_eq!(actual["a"], json!([]));
+        assert_eq!(actual["b"], json!([]));
+        assert!(matches!(
+            outbound.try_recv(),
+            Ok((_, SceneResponse::Ok(..)))
+        ));
+        assert!(
+            outbound.try_recv().is_err(),
+            "exactly one renderer credit per frame"
+        );
+    }
 }

@@ -163,12 +163,11 @@ pub struct RPCSendableMessage {
 
 impl RPCSendableMessage {
     /// The methods a scene may ask the user's wallet to sign (`RpcCall::SendAsync`).
-    pub const SIGNING_METHODS: &[&str] = &[
-        "eth_sendTransaction",
-        "eth_signTypedData_v4",
-        "personal_sign",
-    ];
+    pub const SIGNING_METHODS: &[&str] = &["eth_sendTransaction", "eth_signTypedData_v4"];
 }
+
+/// Maximum UTF-8 bytes of legacy fields, excluding the engine-owned fixed signing prefix.
+pub const MAX_LEGACY_SIGN_MESSAGE_BYTES: usize = 16 * 1024;
 
 pub type RpcEventSender = RpcStreamSender<String>;
 
@@ -347,6 +346,11 @@ pub enum RpcCall {
         error: Option<String>,
     },
     TestSnapshot(CompareSnapshot),
+    /// Unprefixed legacy field text; the engine adds the signing prefix and selects the account.
+    SignLegacyMessage {
+        message: String,
+        response: RpcResultSender<Result<serde_json::Value, String>>,
+    },
     SendAsync {
         body: RPCSendableMessage,
         response: RpcResultSender<Result<serde_json::Value, String>>,
