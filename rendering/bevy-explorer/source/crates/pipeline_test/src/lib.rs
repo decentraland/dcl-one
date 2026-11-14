@@ -24,6 +24,14 @@ use assets::EmbedAssetsPlugin;
 /// An app with the default plugins, a renderer with no window and the embedded assets. Add the
 /// plugins under test, then `finish` and `cleanup` it.
 pub fn headless_app() -> App {
+    let mut app = headless_app_without_embedded_assets();
+    app.add_plugins(EmbedAssetsPlugin);
+    app
+}
+
+/// Register `EmbedAssetsPlugin` after the plugins under test to exercise the client's asset
+/// registration order. Shader dependency requests must wait until startup.
+pub fn headless_app_without_embedded_assets() -> App {
     let mut app = App::new();
     app.add_plugins(
         DefaultPlugins
@@ -38,7 +46,6 @@ pub fn headless_app() -> App {
                 close_when_requested: false,
             }),
     );
-    app.add_plugins(EmbedAssetsPlugin);
     app
 }
 
