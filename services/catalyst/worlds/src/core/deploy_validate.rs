@@ -7,6 +7,7 @@ use std::collections::BTreeMap;
 use serde_json::{Value, json};
 
 use crate::auth::{canonicalize_pointer, is_canonical_pointer, parse_pointer};
+use crate::content::create_entity::auth_chain_field_max_index;
 use crate::content::entity::{is_ipfs_v1, is_ipfs_v2};
 
 pub(super) const MAX_ENTITY_FILE_SIZE_BYTES: usize = 5 * 1024 * 1024;
@@ -85,15 +86,7 @@ pub(super) const STRING_EXPECTED: &str = "A string was expected";
 pub(super) fn extract_auth_chain_from_fields(
     fields: &BTreeMap<String, String>,
 ) -> Result<Value, String> {
-    let biggest_index = fields
-        .keys()
-        .filter_map(|key| {
-            let (_, rest) = key.split_once("authChain[")?;
-            let digits = rest.split_once(']')?.0;
-            (!digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()))
-                .then(|| digits.parse::<u64>().unwrap_or(u64::MAX))
-        })
-        .max()
+    let biggest_index = auth_chain_field_max_index(fields.keys())
         .ok_or_else(|| "Missing auth chain".to_string())?;
 
     let mut chain = Vec::new();
@@ -392,6 +385,16 @@ mod tests {
         );
         assert_eq!(
             extract_auth_chain_from_fields(&far),
+            Err(STRING_EXPECTED.to_string())
+        );
+        // The regex finds an index after an earlier `authChain[` that has none.
+        let mut later = BTreeMap::new();
+        later.insert(
+            "authChain[x]authChain[0][type]".to_string(),
+            "SIGNER".to_string(),
+        );
+        assert_eq!(
+            extract_auth_chain_from_fields(&later),
             Err(STRING_EXPECTED.to_string())
         );
     }
