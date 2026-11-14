@@ -56,7 +56,7 @@ test('Should create the main window', async () => {
   }
 });
 
-test('Should keep the main window at least 1080px wide', async () => {
+test('Should keep the main window wide enough for the nav and the inspector toolbar', async () => {
   await restoreOrCreateMainWindow();
 
   const [options] = vi.mocked(BrowserWindow).mock.calls[0];
