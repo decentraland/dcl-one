@@ -871,6 +871,10 @@
           "kind": "directory"
         },
         {
+          "name": "communities",
+          "kind": "directory"
+        },
+        {
           "name": "donate",
           "kind": "directory"
         },
@@ -1300,6 +1304,19 @@
         },
         {
           "name": "symbols.png",
+          "kind": "regular"
+        }
+      ]
+    },
+    {
+      "path": "library/ui/apps/hud/assets/communities",
+      "entries": [
+        {
+          "name": "favourite-outline.png",
+          "kind": "regular"
+        },
+        {
+          "name": "favourite-solid.png",
           "kind": "regular"
         }
       ]
@@ -2590,11 +2607,27 @@
           "kind": "regular"
         },
         {
+          "name": "EmojiButton.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "EmojiButton.tsx",
+          "kind": "regular"
+        },
+        {
           "name": "EmojiPicker.module.css",
           "kind": "regular"
         },
         {
           "name": "EmojiPicker.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "EmojiSuggestList.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "EmojiSuggestList.tsx",
           "kind": "regular"
         },
         {
@@ -2643,6 +2676,14 @@
       "path": "library/ui/apps/hud/features/communities",
       "entries": [
         {
+          "name": "Announcements.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "Announcements.tsx",
+          "kind": "regular"
+        },
+        {
           "name": "CommunitiesPage.module.css",
           "kind": "regular"
         },
@@ -2668,6 +2709,14 @@
         },
         {
           "name": "InviteToCommunity.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "LoadMore.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "LoadMore.tsx",
           "kind": "regular"
         },
         {
@@ -3752,6 +3801,10 @@
           "kind": "regular"
         },
         {
+          "name": "communities.announcements.test.tsx",
+          "kind": "regular"
+        },
+        {
           "name": "communities.clicks.test.tsx",
           "kind": "regular"
         },
@@ -4247,7 +4300,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/communities.ts",
-      "sha256": "11803c812477585a9cffeffe25beb22e7afdb5ce43281bea547cc71737bb1ca5"
+      "sha256": "da029814a9fca28f4b41cbf34a46ba3eb91dcafef06b3357d6a67a5ba1c192b1"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/connectivity.ts",
@@ -4439,7 +4492,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeCommunities.test.ts",
-      "sha256": "29db5e29cf57111a645a1f417b305887d764942f15092200beee74a760df6f38"
+      "sha256": "73a13e5fb2c48bf8c062b946b4f0dc3951a5808f3a1865c21b240f8748f0dfce"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeConnectivity.test.tsx",
@@ -4736,7 +4789,7 @@
     },
     {
       "path": "library/explorer-core/engine/mockBridge.ts",
-      "sha256": "902a69036243b4eee88ffcfb5c0c98155719a746bf216920f177529e5d994eeb"
+      "sha256": "5bbecd5bf0d46073dd9f2b410a72af490147534c0812e53dafcc547ac15959bc"
     },
     {
       "path": "library/explorer-core/engine/mockEvents.ts",
@@ -4764,7 +4817,7 @@
     },
     {
       "path": "library/explorer-core/engine/protocol.ts",
-      "sha256": "ecd4204cf0114b04ffc2bf9160095b43414886d9e9198467120121670890192c"
+      "sha256": "fa61531e508a03fe168ea368ea5861477910988f999ce1a6d966c92286727dde"
     },
     {
       "path": "library/explorer-core/features/auth/authReturn.ts",
@@ -5513,6 +5566,14 @@
     {
       "path": "library/ui/apps/hud/assets/chat/scroll-bottom-solid.png",
       "sha256": "6c1d7ae4d8fdf33951ffe4cae923f029863c7f70095995e1aa51658dfaed4241"
+    },
+    {
+      "path": "library/ui/apps/hud/assets/communities/favourite-outline.png",
+      "sha256": "d0c7df4d6b178d19076e1741164ede12f61e8399c2a111891ba94a13a95cc2d9"
+    },
+    {
+      "path": "library/ui/apps/hud/assets/communities/favourite-solid.png",
+      "sha256": "75eed1719d84c13204a9adf1d1555401427fdf7b1fa7c9274565fae4b7261ff2"
     },
     {
       "path": "library/ui/apps/hud/assets/donate/tip.png",
@@ -6532,11 +6593,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/chat/Chat.module.css",
-      "sha256": "5e3a8edc55d7e376fcded5904dcd0fd410c2a27fd9e4da0c0ca72b3346c71533"
+      "sha256": "0c7ef612411cfff0bd80238eb677baea9572cd01b5d928fa309a30582998dd5e"
     },
     {
       "path": "library/ui/apps/hud/features/chat/Chat.tsx",
-      "sha256": "3b666dfbfabeec74fa8b605dd16a0e968d942315f4f7175364af8c6e62f5d67a"
+      "sha256": "5d8eb9d16ad6c7e962fe78c8e87c863a8a04efd14adb8062155dbe9f3c7c97d0"
     },
     {
       "path": "library/ui/apps/hud/features/chat/CommunityHeader.tsx",
@@ -6555,12 +6616,28 @@
       "sha256": "c791278aa218750954d6b147cf16390c413d564d4f1b5ec6f85a4c6693af27a8"
     },
     {
+      "path": "library/ui/apps/hud/features/chat/EmojiButton.module.css",
+      "sha256": "a3b096510b8830f8f7c891877fbca584831ccfe6cb5d9a7ddb3fc39f03df7164"
+    },
+    {
+      "path": "library/ui/apps/hud/features/chat/EmojiButton.tsx",
+      "sha256": "0e69ffa64e5c33445ca8d6221c09a76fa3573d47fc51ecb9c33c20e2fb3275ed"
+    },
+    {
       "path": "library/ui/apps/hud/features/chat/EmojiPicker.module.css",
       "sha256": "bd9db0fff7d7797cd9e1a2b19705b84005ed175236e1896234d771ce30f71135"
     },
     {
       "path": "library/ui/apps/hud/features/chat/EmojiPicker.tsx",
       "sha256": "f9c07c55334f011ffecbd49ac25faa85a11342349c5bab40fe13fa348fc2cfe3"
+    },
+    {
+      "path": "library/ui/apps/hud/features/chat/EmojiSuggestList.module.css",
+      "sha256": "bf649a0be587aebecd6c6eea59113dc47e80a52e79ed14560a40984ef9297f37"
+    },
+    {
+      "path": "library/ui/apps/hud/features/chat/EmojiSuggestList.tsx",
+      "sha256": "2a1c4b0b4b25cfd24da367b65152dd6b2986cb023bfa8f9793145d2a73f980eb"
     },
     {
       "path": "library/ui/apps/hud/features/chat/ProfileCard.module.css",
@@ -6603,12 +6680,20 @@
       "sha256": "44cfe567f172cb23867002aa774e10ae9a73ad4208d198ea19cd5939091861f9"
     },
     {
+      "path": "library/ui/apps/hud/features/communities/Announcements.module.css",
+      "sha256": "5acf689568ab06d6337e0ace6d249aada1f6c680fa226f6321686a20ec97a993"
+    },
+    {
+      "path": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "sha256": "8c5c56628ede1c581c94d6137b2986fac4d2fe3352ee88d2313f4115d14d6dd4"
+    },
+    {
       "path": "library/ui/apps/hud/features/communities/CommunitiesPage.module.css",
-      "sha256": "87138ff569c44a7a5ef8ac421c68e08b8bba1b6ff927732270336bc49255a253"
+      "sha256": "b569a00f74d353b1def30787e31cce3b127ff1661f3f1ca61386f9546979c387"
     },
     {
       "path": "library/ui/apps/hud/features/communities/CommunitiesPage.tsx",
-      "sha256": "d875558405c81aa0742278a3ff78903a4d732a27d71cb3bb5135ad9c49beddcf"
+      "sha256": "548acb97581b3a5a5e2bac00ac4d2aace9ccf2e5cd94f581a8f86f7887fcce13"
     },
     {
       "path": "library/ui/apps/hud/features/communities/CommunityCreateModal.module.css",
@@ -6620,15 +6705,23 @@
     },
     {
       "path": "library/ui/apps/hud/features/communities/CommunityModal.module.css",
-      "sha256": "8043bc6b64dba1ec68b3f5914c4e454d62c08dc6340c6d5da0b8b8ac211ae184"
+      "sha256": "f1649e8b7ee8cb0948d27046d67bb03af6d258dd8f874b3266417023f6dcd5ff"
     },
     {
       "path": "library/ui/apps/hud/features/communities/CommunityModal.tsx",
-      "sha256": "77069015c8bf38a73e47467bef9e353bc44aaba687858b5a1e2297b7471f19f5"
+      "sha256": "89ca48f32df4e6f6503cb19864e49d26bd3db3ec5ae45c963a45c654618be8ae"
     },
     {
       "path": "library/ui/apps/hud/features/communities/InviteToCommunity.tsx",
       "sha256": "79083e76ee35010981688e3ce6597fc7df7a3113cccfb4137ed7655955542431"
+    },
+    {
+      "path": "library/ui/apps/hud/features/communities/LoadMore.module.css",
+      "sha256": "fb7109279f10465be35393269f9b8040edbfc7d6e941c0bdbdae4e36100f940f"
+    },
+    {
+      "path": "library/ui/apps/hud/features/communities/LoadMore.tsx",
+      "sha256": "ad9e64e470c019288ba1aeb4c7d72ea7b713bbfe1440c2c327ba8ecff2f268a4"
     },
     {
       "path": "library/ui/apps/hud/features/communities/RequestRowActions.tsx",
@@ -7184,7 +7277,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "f20ad6d17f36f5a6c6170b3e80aaab82dda603cdd71099afe223de6874c9faea"
+      "sha256": "4d8382eeeaa33e4d7f7f5ab64a1b83994178984f9d086b016ebb2b6543fab617"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -7360,7 +7453,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/harness.tsx",
-      "sha256": "a26465b08992169fd83c5ecae91b2ecaac704d10f7980a5231c78d8ca3038c22"
+      "sha256": "34464fd952680e0b20b18564597d2a99e297a0c98f5dfe713473254f2af9641c"
     },
     {
       "path": "library/ui/apps/hud/test/host.ts",
@@ -7447,12 +7540,16 @@
       "sha256": "0e29b286a455b4e6206ce2a354c0361891d779a4f1d7aa29001a72e4388423d4"
     },
     {
+      "path": "library/ui/apps/hud/test/hosted/communities.announcements.test.tsx",
+      "sha256": "edd8566f3455f44928b96ebdb7749488eda3566b9fa6657115fee04de403e003"
+    },
+    {
       "path": "library/ui/apps/hud/test/hosted/communities.clicks.test.tsx",
-      "sha256": "c66a35906ff03d458d15712e4a04690996f1b46a061507def51964181c5c3f10"
+      "sha256": "4e435d3b33fbe479ae7b1efe90bafc64aefa9a8cde4399221faec1646a994ad6"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/communities.invites.test.tsx",
-      "sha256": "f9d7611954ef81e75973c82b28ca088c66bc8a6227ac8aa0bff8b46699891a64"
+      "sha256": "e688d2fd84b37ee0a79475db16bef1caf9e9d162e537e5d6eba0add79a9f52be"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/communities.join.test.tsx",
@@ -7460,7 +7557,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/communities.test.tsx",
-      "sha256": "672d1926dbb83423e53ff61aea41d54f735f9c2c95fd6c215625b49b2bf22a1e"
+      "sha256": "bbf9303627796e2e91a80b9bd72af4164bb4d9e610d6d33c12e2396865384816"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/communityChat.render.test.tsx",
@@ -14831,6 +14928,21 @@
     },
     {
       "from": "library/ui/apps/hud/features/chat/Chat.tsx",
+      "to": "library/ui/apps/hud/features/chat/EmojiButton.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/Chat.tsx",
+      "to": "library/ui/apps/hud/features/chat/EmojiButton.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/Chat.tsx",
+      "to": "library/ui/apps/hud/features/chat/EmojiButton.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/Chat.tsx",
       "to": "library/ui/apps/hud/features/chat/EmojiPicker.tsx",
       "kind": "native:runtime"
     },
@@ -14842,6 +14954,21 @@
     {
       "from": "library/ui/apps/hud/features/chat/Chat.tsx",
       "to": "library/ui/apps/hud/features/chat/EmojiPicker.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/Chat.tsx",
+      "to": "library/ui/apps/hud/features/chat/EmojiSuggestList.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/Chat.tsx",
+      "to": "library/ui/apps/hud/features/chat/EmojiSuggestList.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/Chat.tsx",
+      "to": "library/ui/apps/hud/features/chat/EmojiSuggestList.tsx",
       "kind": "test:runtime"
     },
     {
@@ -15370,6 +15497,21 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/apps/hud/features/chat/EmojiButton.tsx",
+      "to": "library/ui/apps/hud/features/chat/EmojiButton.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/EmojiButton.tsx",
+      "to": "library/ui/apps/hud/features/chat/EmojiButton.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/EmojiButton.tsx",
+      "to": "library/ui/apps/hud/features/chat/EmojiButton.module.css",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/apps/hud/features/chat/EmojiPicker.tsx",
       "to": "library/ui/apps/hud/assets/chat/emoji-categories/activities.png",
       "kind": "native:runtime"
@@ -15547,6 +15689,36 @@
     {
       "from": "library/ui/apps/hud/features/chat/EmojiPicker.tsx",
       "to": "library/ui/apps/hud/lib/bindingLabels.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/EmojiSuggestList.tsx",
+      "to": "library/ui/apps/hud/features/chat/EmojiSuggestList.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/EmojiSuggestList.tsx",
+      "to": "library/ui/apps/hud/features/chat/EmojiSuggestList.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/EmojiSuggestList.tsx",
+      "to": "library/ui/apps/hud/features/chat/EmojiSuggestList.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/EmojiSuggestList.tsx",
+      "to": "library/ui/apps/hud/features/chat/emojiData.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/EmojiSuggestList.tsx",
+      "to": "library/ui/apps/hud/features/chat/emojiData.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/EmojiSuggestList.tsx",
+      "to": "library/ui/apps/hud/features/chat/emojiData.ts",
       "kind": "test:runtime"
     },
     {
@@ -15820,6 +15992,171 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "to": "library/explorer-core/lib/identity.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "to": "library/explorer-core/lib/identity.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "to": "library/explorer-core/lib/identity.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "to": "library/ui/apps/hud/assets/communities/favourite-outline.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "to": "library/ui/apps/hud/assets/communities/favourite-outline.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "to": "library/ui/apps/hud/assets/communities/favourite-outline.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "to": "library/ui/apps/hud/assets/communities/favourite-solid.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "to": "library/ui/apps/hud/assets/communities/favourite-solid.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "to": "library/ui/apps/hud/assets/communities/favourite-solid.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "to": "library/ui/apps/hud/features/chat/EmojiButton.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "to": "library/ui/apps/hud/features/chat/EmojiButton.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "to": "library/ui/apps/hud/features/chat/EmojiButton.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "to": "library/ui/apps/hud/features/chat/EmojiPicker.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "to": "library/ui/apps/hud/features/chat/EmojiPicker.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "to": "library/ui/apps/hud/features/chat/EmojiPicker.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "to": "library/ui/apps/hud/features/chat/EmojiSuggestList.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "to": "library/ui/apps/hud/features/chat/EmojiSuggestList.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "to": "library/ui/apps/hud/features/chat/EmojiSuggestList.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "to": "library/ui/apps/hud/features/communities/Announcements.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "to": "library/ui/apps/hud/features/communities/Announcements.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "to": "library/ui/apps/hud/features/communities/Announcements.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "to": "library/ui/apps/hud/features/communities/LoadMore.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "to": "library/ui/apps/hud/features/communities/LoadMore.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "to": "library/ui/apps/hud/features/communities/LoadMore.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "to": "library/ui/apps/hud/features/session/profileStore.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "to": "library/ui/apps/hud/features/session/profileStore.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "to": "library/ui/apps/hud/features/session/profileStore.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "to": "library/ui/apps/hud/lib/bindingLabels.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "to": "library/ui/apps/hud/lib/bindingLabels.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "to": "library/ui/apps/hud/lib/bindingLabels.ts",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/apps/hud/features/communities/CommunitiesPage.tsx",
       "to": "library/explorer-core/lib/identity.ts",
       "kind": "native:runtime"
@@ -15892,6 +16229,21 @@
     {
       "from": "library/ui/apps/hud/features/communities/CommunitiesPage.tsx",
       "to": "library/ui/apps/hud/features/communities/CommunityModal.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/CommunitiesPage.tsx",
+      "to": "library/ui/apps/hud/features/communities/LoadMore.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/CommunitiesPage.tsx",
+      "to": "library/ui/apps/hud/features/communities/LoadMore.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/CommunitiesPage.tsx",
+      "to": "library/ui/apps/hud/features/communities/LoadMore.tsx",
       "kind": "test:runtime"
     },
     {
@@ -16136,6 +16488,21 @@
     },
     {
       "from": "library/ui/apps/hud/features/communities/CommunityModal.tsx",
+      "to": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/CommunityModal.tsx",
+      "to": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/CommunityModal.tsx",
+      "to": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/CommunityModal.tsx",
       "to": "library/ui/apps/hud/features/communities/CommunityCreateModal.tsx",
       "kind": "native:runtime"
     },
@@ -16297,6 +16664,21 @@
     {
       "from": "library/ui/apps/hud/features/communities/InviteToCommunity.tsx",
       "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/LoadMore.tsx",
+      "to": "library/ui/apps/hud/features/communities/LoadMore.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/LoadMore.tsx",
+      "to": "library/ui/apps/hud/features/communities/LoadMore.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/LoadMore.tsx",
+      "to": "library/ui/apps/hud/features/communities/LoadMore.module.css",
       "kind": "test:runtime"
     },
     {
@@ -25926,6 +26308,81 @@
     },
     {
       "from": "library/ui/apps/hud/test/hosted/clicks.test.tsx",
+      "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/communities.announcements.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/communities.announcements.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/communities.announcements.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/communities.announcements.test.tsx",
+      "to": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/communities.announcements.test.tsx",
+      "to": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/communities.announcements.test.tsx",
+      "to": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/communities.announcements.test.tsx",
+      "to": "library/ui/apps/hud/features/communities/CommunityModal.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/communities.announcements.test.tsx",
+      "to": "library/ui/apps/hud/features/communities/CommunityModal.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/communities.announcements.test.tsx",
+      "to": "library/ui/apps/hud/features/communities/CommunityModal.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/communities.announcements.test.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/communities.announcements.test.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/communities.announcements.test.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/communities.announcements.test.tsx",
+      "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/communities.announcements.test.tsx",
+      "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/communities.announcements.test.tsx",
       "to": "library/ui/apps/hud/test/harness.tsx",
       "kind": "test:runtime"
     },
@@ -31271,7 +31728,17 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/features/chat/EmojiButton.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/features/chat/EmojiPicker.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/features/chat/EmojiSuggestList.tsx",
       "kind": "type"
     },
     {
@@ -31321,6 +31788,11 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/features/communities/CommunitiesPage.tsx",
       "kind": "type"
     },
@@ -31337,6 +31809,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/features/communities/InviteToCommunity.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/features/communities/LoadMore.tsx",
       "kind": "type"
     },
     {
@@ -32042,6 +32519,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/test/hosted/clicks.test.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/test/hosted/communities.announcements.test.tsx",
       "kind": "type"
     },
     {
@@ -33897,6 +34379,36 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/hud/assets/chat/scroll-bottom-solid.png",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/communities/favourite-outline.png",
+      "kind": "native:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/communities/favourite-outline.png",
+      "kind": "production:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/communities/favourite-outline.png",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/communities/favourite-solid.png",
+      "kind": "native:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/communities/favourite-solid.png",
+      "kind": "production:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/communities/favourite-solid.png",
       "kind": "test:asset"
     },
     {

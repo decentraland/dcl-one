@@ -103,13 +103,28 @@ async fn posts_page(
     let (posts, total) = queries::list_posts(&state.pool, id, &pagination, signer.as_ref())
         .await
         .map_err(super::http::database_error)?;
+    let official = state.official_wallets();
     Ok((
         posts
             .into_iter()
-            .map(|p| serde_json::to_value(p).unwrap_or(serde_json::Value::Null))
+            .map(|p| {
+                let mut row = serde_json::to_value(p).unwrap_or(serde_json::Value::Null);
+                mark_official(&mut row, &official);
+                row
+            })
             .collect(),
         total,
     ))
+}
+
+/// `isOfficial` (a local field, not upstream's): whether the post's author is one of the
+/// official wallets, which the Explorer marks with the official badge.
+fn mark_official(row: &mut serde_json::Value, official: &std::collections::HashSet<String>) {
+    let author = row["authorAddress"].as_str().map(str::to_lowercase);
+    if let Some(fields) = row.as_object_mut() {
+        let is_official = author.is_some_and(|a| official.contains(&a));
+        fields.insert("isOfficial".into(), serde_json::Value::Bool(is_official));
+    }
 }
 
 pub async fn get_posts(
@@ -611,4 +626,22 @@ pub async fn unlike_post(
         .await
     ));
     StatusCode::NO_CONTENT.into_response()
+}
+
+#[cfg(test)]
+mod official_mark_tests {
+    use super::mark_official;
+    use serde_json::json;
+    use std::collections::HashSet;
+
+    #[test]
+    fn marks_each_row_by_its_author() {
+        let official = HashSet::from(["0xaa".to_string()]);
+        let mut by_official = json!({ "authorAddress": "0xAA" });
+        let mut by_other = json!({ "authorAddress": "0xbb" });
+        mark_official(&mut by_official, &official);
+        mark_official(&mut by_other, &official);
+        assert_eq!(by_official["isOfficial"], json!(true));
+        assert_eq!(by_other["isOfficial"], json!(false));
+    }
 }

@@ -20,6 +20,7 @@ import type { Community, CommunityInvitesMessage, CommunityRequestMember, Commun
 import type { CommunitiesState, ProfileState, VoiceChatSession } from '../session/useEngineSession'
 import { streamLive } from '../voiceChat/callGate'
 import styles from './CommunitiesPage.module.css'
+import { LoadMore } from './LoadMore'
 
 /** The wait after the last keystroke before searching, so typing sends one read. */
 export const SEARCH_DELAY_MS = 1000
@@ -133,25 +134,6 @@ function CommunityCard({ c, live, onOpen, ...actions }: CardActions & { c: Commu
       </div>
     </div>
   )
-}
-
-// Reads the next page when the grid's end comes into view. The observer is made again whenever the
-// grid grows, so a page that leaves the end still in view reads the next one too. jsdom has no
-// IntersectionObserver: the grid then shows the first page only.
-function LoadMore({ count, onVisible }: { count: number; onVisible: () => void }): React.JSX.Element {
-  const ref = useRef<HTMLDivElement>(null)
-  const visible = useRef(onVisible)
-  visible.current = onVisible
-  useEffect(() => {
-    const el = ref.current
-    if (el == null || typeof IntersectionObserver === 'undefined') return
-    const io = new IntersectionObserver((entries) => {
-      if (entries.some((e) => e.isIntersecting)) visible.current()
-    }, { rootMargin: '0px 0px 200px 0px' })
-    io.observe(el)
-    return () => io.disconnect()
-  }, [count])
-  return <div ref={ref} className={styles.loadMore} aria-hidden="true" />
 }
 
 /** The ⋮ menu on a request's row: the member menu without owner actions (View Profile, Chat,

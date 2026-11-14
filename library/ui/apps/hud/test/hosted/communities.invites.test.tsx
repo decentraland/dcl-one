@@ -149,7 +149,7 @@ describe('the browser’s Invites & Requests', () => {
 
 function renderCard(c: Community, sections: Partial<Record<'banned' | 'requests' | 'invites', CommunityMemberSectionMessage>> = {}) {
   const props = { onAcceptInvite: vi.fn(), onRejectInvite: vi.fn(), onLoadSection: vi.fn(), onManageRequest: vi.fn(), onUnban: vi.fn(), onJoin: vi.fn() }
-  const detail = { kind: 'communityDetail' as const, id: c.id, members: [], posts: [], places: [], events: [], photos: [] }
+  const detail = { kind: 'communityDetail' as const, id: c.id, members: [], places: [], events: [], photos: [] }
   render(
     <>
       <CommunityModal

@@ -9,6 +9,8 @@ import type { ChatLine, ChatState, Conversation } from '../session/useEngineSess
 import type { DmUserState, MessageReaction, NearbyMember } from '@explorer-core/engine/protocol'
 import { Avatar, ControlButton, DclLogo, MaskIcon, Tooltip, Translate, VerifiedBadge, VoiceBars } from '../../design'
 import { EmojiPicker } from './EmojiPicker'
+import { EmojiButton } from './EmojiButton'
+import { EmojiSuggestList, emojiSuggestionAt, moveSelection, tokenAtCaret } from './EmojiSuggestList'
 import { AutoTranslateButton } from './AutoTranslateButton'
 import { ConversationMenu } from './ConversationMenu'
 import { ConversationRail } from './ConversationRail'
@@ -16,7 +18,7 @@ import { CommunityHeader } from './CommunityHeader'
 import { clearPingMode } from './ping'
 import { roleLabel } from '@explorer-core/features/communities/roles'
 import { displaySender, isSystem, memberLabel, senderColor, shortAddr, splitName, usePartner } from './chatIdentity'
-import { EMOJI_BY_CODE, EMOJI_BY_GLYPH, QUICK_REACTIONS, loadRecents, searchByShortcode, type Emoji } from './emojiData'
+import { EMOJI_BY_CODE, EMOJI_BY_GLYPH, QUICK_REACTIONS, loadRecents, type Emoji } from './emojiData'
 import { MessageText } from './chatText'
 import { mentionsMe } from '@explorer-core/features/chat/chatParse'
 import { autoTranslates, clearAutoTranslate, getTranslation, hasTranslatableText, languageName, requestTranslation, showOriginal, type Translation } from '@explorer-core/features/chat/translation'
@@ -115,16 +117,6 @@ type Suggestions =
   | { kind: 'emoji'; items: Emoji[]; start: number; end: number; sel: number }
   | { kind: 'mention'; items: NearbyMember[]; start: number; end: number; sel: number }
 
-/** The ":emoji" or "@name" word ending at the caret, if any. */
-export function tokenAtCaret(value: string, caret: number): { kind: 'emoji' | 'mention'; query: string; start: number } | null {
-  const before = value.slice(0, caret)
-  const m = before.match(/(?:^|\s)([@:])(\S*)$/)
-  if (!m) return null
-  const query = m[2]
-  const start = caret - query.length - 1
-  if (m[1] === ':') return /^[\w+-]{2,}$/.test(query) && !/https?$/i.test(before.slice(0, start)) ? { kind: 'emoji', query, start } : null
-  return /^[A-Za-z0-9]{1,15}$/.test(query) ? { kind: 'mention', query, start } : null
-}
 
 function formatTime(ts: number): string {
   return new Date(ts).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
@@ -992,9 +984,8 @@ export function Chat({
     const word = tokenAtCaret(value, caret)
     if (word == null) return setSug(null)
     if (word.kind === 'emoji') {
-      const items = searchByShortcode(word.query, 50)
-      if (items.length > 0) return setSug({ kind: 'emoji', items, start: word.start, end: caret, sel: 0 })
-      return setSug(null)
+      const emoji = emojiSuggestionAt(value, caret)
+      return setSug(emoji == null ? null : { kind: 'emoji', ...emoji })
     }
     const q = word.query.toLowerCase()
     const nearby = new Set(chat.members.map((m) => m.address.toLowerCase()))
@@ -1046,8 +1037,7 @@ export function Chat({
     if (e.nativeEvent.isComposing) return
     if (sug && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
       e.preventDefault()
-      const n = sug.items.length
-      setSug({ ...sug, sel: (sug.sel + (e.key === 'ArrowDown' ? 1 : n - 1)) % n })
+      setSug(moveSelection(sug, e.key === 'ArrowDown' ? 1 : -1))
     } else if (sug && (e.key === 'Enter' || e.key === 'Tab')) {
       e.preventDefault()
       accept(sug, sug.sel)
@@ -1207,24 +1197,12 @@ export function Chat({
         </div>
       )}
 
-      {active && sug && (
-        <div className={`${styles.suggest} ${sug.kind === 'emoji' ? styles.suggestEmoji : styles.suggestPeople}`}>
+      {active && sug?.kind === 'emoji' && <EmojiSuggestList className={styles.suggestAt} suggestion={sug} onAccept={(i) => accept(sug, i)} />}
+
+      {active && sug?.kind === 'mention' && (
+        <div className={`${styles.suggest} ${styles.suggestAt} ${styles.suggestPeople}`}>
           <ul className={styles.suggestList} role="listbox">
-            {sug.kind === 'emoji'
-              ? sug.items.map((e, i) => (
-                  <li key={e.code} role="option" aria-selected={i === sug.sel}>
-                    <button
-                      type="button"
-                      className={`${styles.suggestItem} ${i === sug.sel ? styles.suggestActive : ''}`.trim()}
-                      onMouseDown={(ev) => ev.preventDefault()}
-                      onClick={() => accept(sug, i)}
-                    >
-                      <span className={styles.suggestGlyph}>{e.emoji}</span>
-                      <span className={styles.suggestName}>{e.expression}</span>
-                    </button>
-                  </li>
-                ))
-              : sug.items.map((m, i) => (
+            {sug.items.map((m, i) => (
                   <li key={m.address} role="option" aria-selected={i === sug.sel}>
                     <button
                       type="button"
@@ -1285,14 +1263,7 @@ export function Chat({
         )}
         {focused && draft.length > 0 && <CharRing len={draft.length} />}
         {!bare && blockedState == null && (
-          <button
-            type="button"
-            className={`${styles.emojiBtn} ${picker ? styles.emojiOn : ''}`.trim()}
-            aria-label="Emoji"
-            aria-pressed={picker}
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={toggleEmoji}
-          />
+          <EmojiButton className={styles.emojiBtn} open={picker} onToggle={toggleEmoji} />
         )}
       </form>
 

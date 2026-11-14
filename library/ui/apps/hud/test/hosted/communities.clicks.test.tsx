@@ -209,7 +209,6 @@ describe('community modal clicks', () => {
     kind: 'communityDetail',
     id: 'c1',
     members: [],
-    posts: [],
     places: [],
     events: [],
     photos: [],
@@ -254,7 +253,6 @@ describe('community card places', () => {
     kind: 'communityDetail',
     id: 'c1',
     members: [],
-    posts: [],
     places,
     events: [],
     photos: []
@@ -806,7 +804,7 @@ describe('community card members', () => {
   const plain = { address: '0xabcd1234', name: 'Plain', role: 'member', hasClaimedName: false }
   const me = { address: '0xme', name: 'Me', role: 'member', hasClaimedName: true }
   const members = [owner, mod, plain, me]
-  const withMembers: CommunityDetailMessage = { kind: 'communityDetail', id: 'c1', members, posts: [], places: [], events: [], photos: [] }
+  const withMembers: CommunityDetailMessage = { kind: 'communityDetail', id: 'c1', members, places: [], events: [], photos: [] }
 
   function renderCard(role: string, over: Partial<React.ComponentProps<typeof CommunityModal>> = {}) {
     const spies = {

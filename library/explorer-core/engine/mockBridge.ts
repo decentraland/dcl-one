@@ -14,6 +14,7 @@ import {
   type CommunityChannel,
   type CommunityMember,
   type CommunityMemberSection,
+  type CommunityPost,
   type CommunityRequestMember,
   type DmHistoryEntry,
   type Emote,
@@ -135,6 +136,39 @@ const MOCK_OWNED_PLACES = [
 const mockLinkedPlaces = new Map<string, string[]>()
 // The card places unlinked per community.
 const mockRemovedPlaces = new Map<string, Set<string>>()
+// The Announcements tab's posts by community, newest first: 13 to start with, so a second page loads.
+const MOCK_POSTS_PAGE = 10
+const mockPosts = new Map<string, CommunityPost[]>()
+const MOCK_POST_TEXTS = [
+  'It was TIME for an update. See you all in the new Plaza. Enjoy!',
+  'EPIC Launch Party happening now in the theatre!',
+  'Hey everyone! Happy Epic and Mobile Launch Day!!! Please help us spread the word and get ready to celebrate together on April 2nd! It will be EPIC.'
+]
+function postsOf(id: string): CommunityPost[] {
+  let posts = mockPosts.get(id)
+  if (posts == null) {
+    const day = 24 * 60 * 60 * 1000
+    // the first author is an official wallet; every third post is liked by the mock user
+    posts = Array.from({ length: 13 }, (_, i) => {
+      const official = i % 4 === 0
+      const author = official ? 'Decentraland' : 'Kimbo'
+      return {
+        id: `${id}-p${i}`,
+        author,
+        authorAddress: `0x${(0xd0 + (official ? 0 : 7)).toString(16).padStart(40, '0')}`,
+        authorPicture: `https://i.pravatar.cc/80?u=${author}`,
+        hasClaimedName: true,
+        official,
+        text: MOCK_POST_TEXTS[i % MOCK_POST_TEXTS.length],
+        timestamp: Date.now() - (i * 3 + 1) * day,
+        likes: 13 - i,
+        likedByMe: i % 3 === 0
+      }
+    })
+    mockPosts.set(id, posts)
+  }
+  return posts
+}
 // The card's member actions by community: a member's new role, or null once kicked or banned.
 const mockMemberChanges = new Map<string, Map<string, string | null>>()
 // The Members tab's other sections, by community: join requests received, invites sent and bans.
@@ -1425,6 +1459,36 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       reply({ kind: 'communities', communities: mockMine() })
       return
     }
+    if (msg.kind === 'getCommunityPosts') {
+      const all = postsOf(msg.id)
+      const from = (msg.page - 1) * MOCK_POSTS_PAGE
+      reply({ kind: 'communityPosts', id: msg.id, page: msg.page, posts: all.slice(from, from + MOCK_POSTS_PAGE), total: all.length })
+      return
+    }
+    if (msg.kind === 'createCommunityPost') {
+      const all = postsOf(msg.id)
+      all.unshift({ id: `${msg.id}-new${all.length}`, author: 'Mojito', authorAddress: o.userId, hasClaimedName: true, official: false, text: msg.content, timestamp: Date.now(), likes: 0, likedByMe: false })
+      setTimeout(() => {
+        reply({ kind: 'communityPostCreated', id: msg.id, ok: true })
+        reply({ kind: 'communityPosts', id: msg.id, page: 1, posts: all.slice(0, MOCK_POSTS_PAGE), total: all.length })
+      }, 400)
+      return
+    }
+    if (msg.kind === 'deleteCommunityPost') {
+      const all = postsOf(msg.id).filter((p) => p.id !== msg.postId)
+      mockPosts.set(msg.id, all)
+      reply({ kind: 'communityPosts', id: msg.id, page: 1, posts: all.slice(0, MOCK_POSTS_PAGE), total: all.length })
+      return
+    }
+    if (msg.kind === 'likeCommunityPost') {
+      const post = postsOf(msg.id).find((p) => p.id === msg.postId)
+      if (post != null) {
+        post.likedByMe = msg.like
+        post.likes = Math.max(0, post.likes + (msg.like ? 1 : -1))
+      }
+      setTimeout(() => reply({ kind: 'communityPostLiked', id: msg.id, postId: msg.postId, liked: msg.like, ok: post != null }), 200)
+      return
+    }
     if (msg.kind === 'getCommunityDetail') {
       const addr = memberAddr
       const day = 24 * 60 * 60 * 1000
@@ -1442,11 +1506,6 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
             return role == null ? null : { address: addr(i), name, role, picture: `https://i.pravatar.cc/80?u=${name}`, hasClaimedName: i % 3 !== 2 }
           })
           .filter((m) => m != null),
-        posts: [
-          { id: 'p1', author: 'Kimbo', authorAddress: addr(7), authorPicture: 'https://i.pravatar.cc/80?u=Kimbo', text: 'It was TIME for an update. See you all in the new Plaza. Enjoy!', timestamp: Date.now() - 2 * day, likes: 10 },
-          { id: 'p2', author: 'Kimbo', authorAddress: addr(7), authorPicture: 'https://i.pravatar.cc/80?u=Kimbo', text: 'EPIC Launch Party happening now in the theatre!', timestamp: Date.now() - 16 * day, likes: 4 },
-          { id: 'p3', author: 'Kimbo', authorAddress: addr(7), authorPicture: 'https://i.pravatar.cc/80?u=Kimbo', text: 'Hey everyone! Happy Epic and Mobile Launch Day!!! Please help us spread the word and get ready to celebrate together on April 2nd! It will be EPIC.', timestamp: Date.now() - 18 * day, likes: 1 }
-        ],
         // the mock user owns this one, so an owner or moderator can delete it from the card
         places: [
           { id: 'pl1', title: 'Music Festival Main Stage', thumbnail: 'https://picsum.photos/seed/mfest/420/260', positions: '-66,56', likeRate: 1, isMine: true }

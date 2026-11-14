@@ -1141,6 +1141,9 @@ pub async fn serve(
         .communities
         .set_voice_eviction(comms_stage.gatekeeper.clone());
     social.communities.set_chain_index(market.index.clone());
+    social
+        .communities
+        .set_explorer_flags(explorer_api.flags.clone());
     social.communities.load_flags().await?;
     if let Err(error) = social.communities.refresh_flags(&explorer_api).await {
         tracing::warn!(%error,"initial DAPPS flags refresh failed; retaining the stored document");

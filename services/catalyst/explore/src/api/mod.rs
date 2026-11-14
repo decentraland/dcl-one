@@ -478,7 +478,8 @@ pub struct State {
     pub content: Arc<ContentState>,
     /// Shared with social's referral checks, which read it in place.
     pub denylist: Arc<denylist::Snapshot>,
-    pub flags: feature_flags::Snapshot,
+    /// Shared with social, which marks official posts from it (`communities::features`).
+    pub flags: Arc<feature_flags::Snapshot>,
     pub map: map::MapState,
     pub ab_cdn: ab_cdn::Cache,
     pub satellite: satellite::SatelliteState,
@@ -523,7 +524,7 @@ impl State {
             http,
             content,
             denylist: Arc::default(),
-            flags: feature_flags::Snapshot::default(),
+            flags: Arc::new(feature_flags::Snapshot::default()),
             map: map::MapState::new(),
             ab_cdn,
             satellite: satellite::SatelliteState::new(settings_budget.0, settings_budget.1),
