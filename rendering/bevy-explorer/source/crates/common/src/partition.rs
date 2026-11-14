@@ -39,9 +39,13 @@ impl PartitionData {
 /// band the partition decides.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Tier {
+    /// the player's own body, wearables and the emotes they play: few, small, and what the
+    /// player is waiting on, so ahead of the scenes they stand in
+    OwnAvatar,
     /// the scenes the player stands in, portables and global scenes
     Active,
-    /// avatars' bodies and wearables: all before any other scene, nearest avatar first
+    /// the other avatars' bodies, wearables and emotes: all before any other scene, nearest
+    /// avatar first
     Avatar,
     /// the other scenes in range, nearest first
     Scene,
@@ -63,7 +67,15 @@ pub struct LoadPriority {
 }
 
 impl LoadPriority {
-    /// The player's scenes.
+    /// First: the player's own avatar, whatever its partition.
+    pub const OWN_AVATAR: Self = Self {
+        tier: Tier::OwnAvatar,
+        parcel_distance: 0,
+        is_behind: false,
+        sqr_distance: FloatOrd(0.0),
+    };
+
+    /// The player's scenes: the top of everything but the player's own avatar.
     pub const TOP: Self = Self {
         tier: Tier::Active,
         parcel_distance: 0,
