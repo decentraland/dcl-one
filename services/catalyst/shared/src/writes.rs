@@ -581,7 +581,7 @@ mod tests {
         ("explore/src/api/world_manifest.rs", "mirror"),
         ("explore/src/events/posters.rs", "data"),
         ("shop/src/outfits/mod.rs", "data"),
-        ("social/src/communities/fed.rs", "social"),
+        ("social/src/communities/fed_content.rs", "social"),
         ("social/src/communities/thumbnail.rs", "social"),
         ("social/src/messaging.rs", "social"),
         ("social/src/profile_images/cache.rs", "mirror"),
