@@ -19,7 +19,8 @@ export function sitesNavigationLinks(docsHref: string) {
       caret: true,
       menu: [
         { label: 'Jump in', href: '/play/' },
-        { label: 'Events', href: '/events' }
+        { label: 'Events', href: '/events' },
+        { label: 'Places', href: '/places' }
       ]
     },
     social: { id: 'social', label: 'Social', href: '/social/' },

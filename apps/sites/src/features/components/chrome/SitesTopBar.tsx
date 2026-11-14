@@ -39,9 +39,8 @@ export function sitesNavSections(
         ...item,
         active:
           id === "whatson"
-            ? item.href === "/play/"
-              ? pathname.startsWith("/play")
-              : playActive
+            ? pathname === item.href.replace(/\/$/, "") ||
+              pathname.startsWith(`${item.href.replace(/\/$/, "")}/`)
             : selected && pathname.startsWith(index === 0 ? "/docs" : "/blog"),
       })),
     };

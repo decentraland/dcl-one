@@ -89,6 +89,9 @@ describe("Sites native chrome integration", () => {
     expect(
       screen.getByRole("link", { name: "Events" }).getAttribute("href"),
     ).toBe("/events");
+    expect(
+      screen.getByRole("link", { name: "Places" }).getAttribute("href"),
+    ).toBe("/places");
     expect(screen.getByRole("link", { name: "Sign in" })).toBeTruthy();
     expect(screen.queryByLabelText("Credits")).toBeNull();
   });
@@ -103,6 +106,26 @@ describe("Sites native chrome integration", () => {
     expect(events.getAttribute("aria-current")).toBe("page");
     expect(menu.queryByRole("link", { name: "What's on" })).toBeNull();
   });
+  it.each([false, true])(
+    "keeps Places accessible in the mobile menu with signedIn=%s",
+    (signedIn) => {
+      render(
+        <Host
+          pathname="/places"
+          auth={{ ...baseAuth, signedIn, account: signedIn ? "0xa" : "" }}
+          children={<DclTopBar active="explore" />}
+        />,
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Open menu" }));
+      const menu = within(screen.getByRole("dialog", { name: "Menu" }));
+      const places = menu.getByRole("link", { name: "Places" });
+      expect(places.getAttribute("href")).toBe("/places");
+      expect(places.getAttribute("aria-current")).toBe("page");
+      expect(
+        menu.getByRole("link", { name: "Events" }).getAttribute("aria-current"),
+      ).toBeNull();
+    },
+  );
   it("forwards account and balance slots once and closes mobile callback tabs", async () => {
     const tab = vi.fn();
     render(
@@ -230,11 +253,28 @@ describe("when native navigation uses the shared Sites link definitions", () => 
     expect(sections[0]?.items).toEqual([
       { label: "Jump in", href: "/play/", active: false },
       { label: "Events", href: "/events", active: true },
+      { label: "Places", href: "/places", active: false },
     ]);
     expect(sections[1]?.href).toBe("/shop");
     expect(sections[2]?.href).toBe("/create");
     expect(sections[3]?.href).toBe("/social/");
   });
+  it.each([
+    ["/places", [false, false, true]],
+    ["/places/realm", [false, false, true]],
+    ["/events/detail", [false, true, false]],
+    ["/play/", [true, false, false]],
+    ["/places-extra", [false, false, false]],
+  ] as const)(
+    "should select only the matching Play child for %s",
+    (pathname, selected) => {
+      expect(
+        sitesNavSections("explore", pathname)[0]?.items?.map(
+          ({ active }) => active,
+        ),
+      ).toEqual(selected);
+    },
+  );
   it("should select Docs or Blog without selecting the other Learn child", () => {
     for (const [pathname, expected] of [
       ["/docs/player/", [true, false]],

@@ -1,6 +1,6 @@
 import path from 'node:path'
 import { createServer, type ViteDevServer } from 'vite'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { findBrowser, openSession } from '../figma/review/scripts/capture-browser.mjs'
 
 let server: ViteDevServer
@@ -56,6 +56,21 @@ beforeAll(async () => {
     `(async()=>{for(let n=0;n<100 && document.querySelectorAll('article').length!==5;n++)await new Promise(r=>setTimeout(r,100));await document.fonts.ready})()`
   )
 }, 30_000)
+
+beforeEach(async () => {
+  await session.send('Emulation.setDeviceMetricsOverride', {
+    width: 1440,
+    height: 1000,
+    deviceScaleFactor: 1,
+    mobile: false
+  })
+  await session.send('Emulation.setTouchEmulationEnabled', {
+    enabled: false,
+    configuration: 'desktop'
+  })
+  await evaluate(`document.activeElement?.blur();scrollTo(0,0)`)
+  await session.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 0, y: 0 })
+})
 
 afterAll(async () => {
   try {

@@ -5,7 +5,7 @@ import { ExperienceCardSlot } from '../../apps/sites/events/cards/ExperienceCard
 import '../../foundations/foundations.css'
 const base = {
   id: 'event',
-  title: 'A long event title that wraps',
+  title: 'A long event title that wraps over two full lines on every supported card width',
   image: null,
   href: '/events?id=event',
   creator: { name: 'Creator', href: '/profile/creator' },
