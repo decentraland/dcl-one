@@ -42,6 +42,7 @@ pub(super) fn register(app: &mut App) {
                 ("Outbound packets/s", "sentPackets"),
                 ("Inbound packets/s", "receivedPackets"),
                 ("Resync requests (last 60s)", "resyncs"),
+                ("Subjects awaiting resync", "pendingResyncs"),
                 ("Emote for selected peer", "emote"),
             ],
             actions: &[],
@@ -130,6 +131,7 @@ fn pulse_state(
             "state": state, "authenticated": matches!(session.as_deref().map(|s| &s.state), Some(Connection::Established)),
             "sentBytes": traffic.sent.bytes, "sentPackets": traffic.sent.packets, "receivedBytes": traffic.received.bytes,
             "receivedPackets": traffic.received.packets, "resyncs": resyncs,
+            "pendingResyncs": session.as_ref().map_or(0, |s| s.decoder.pending_resync.len()),
             "wallet": lookup.0.map(|wallet| format!("{wallet:#x}")), "emote": emote,
             "unavailable": unavailable,
         }).to_string());

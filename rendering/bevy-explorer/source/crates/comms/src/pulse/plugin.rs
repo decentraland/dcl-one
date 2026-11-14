@@ -25,6 +25,7 @@
 use std::sync::{Arc, OnceLock};
 
 use alloy_core::primitives::Address;
+use bevy::platform::time::Instant;
 use bevy::prelude::*;
 use bevy::tasks::{IoTaskPool, Task};
 use common::{
@@ -950,7 +951,56 @@ fn pump_pulse(
         profile_version,
         now,
     );
+    retry_resyncs(session, Instant::now(), now);
     flush_listener_aoi(session, now);
+}
+
+fn retry_resyncs(session: &mut PulseSession, now: Instant, stats_now: f64) {
+    if matches!(session.state, Connection::Established) && session.link.is_some() {
+        for event in session.decoder.retry_resyncs(now) {
+            if let PulseEvent::Resync(request) = event {
+                send_resync(
+                    session.link.as_mut(),
+                    &mut session.resyncs,
+                    &mut session.decoder,
+                    request,
+                    stats_now,
+                );
+            }
+        }
+    }
+}
+
+/// Initial requests and timed retries share enqueue accounting. A full queue keeps the decoder's
+/// deadline, so it cannot turn incoming gap bursts into immediate send attempts.
+fn send_resync(
+    link: Option<&mut PulseLink>,
+    resyncs: &mut [(u64, u32); 60],
+    decoder: &mut PulseDecoder,
+    request: pulse::ResyncRequest,
+    now: f64,
+) -> bool {
+    let subject_id = request.subject_id;
+    let message = pulse::ClientMessage {
+        message: Some(pulse::client_message::Message::Resync(request)),
+    };
+    let sent = link.is_some_and(|link| {
+        link.send(PulseFrame {
+            bytes: message.encode_to_vec(),
+            reliability: PulseReliability::Reliable,
+            kind: FrameKind::Control,
+        })
+    });
+    if sent {
+        decoder.resync_sent(subject_id);
+        let second = now as u64;
+        let bucket = &mut resyncs[(second % 60) as usize];
+        if bucket.0 != second {
+            *bucket = (second, 0);
+        }
+        bucket.1 += 1;
+    }
+    sent
 }
 
 /// Deliver a `PulseDecoder::replay` of the realm just entered, the frame after `follow_realm` flagged
@@ -1260,28 +1310,13 @@ fn drain_inbound(
                 }
                 // A sequence gap was detected — ask the server to replay full state, reliably.
                 PulseEvent::Resync(request) => {
-                    let subject_id = request.subject_id;
-                    let message = pulse::ClientMessage {
-                        message: Some(pulse::client_message::Message::Resync(request)),
-                    };
-                    let sent = session.link.as_mut().is_some_and(|link| {
-                        link.send(PulseFrame {
-                            bytes: message.encode_to_vec(),
-                            reliability: PulseReliability::Reliable,
-                            kind: FrameKind::Control,
-                        })
-                    });
-                    if sent {
-                        let second = now as u64;
-                        let bucket = &mut session.resyncs[(second % 60) as usize];
-                        if bucket.0 != second {
-                            *bucket = (second, 0);
-                        }
-                        bucket.1 += 1;
-                    } else {
-                        // Unsent, it would hold back every later request for the subject.
-                        session.decoder.resync_not_sent(subject_id);
-                    }
+                    send_resync(
+                        session.link.as_mut(),
+                        &mut session.resyncs,
+                        &mut session.decoder,
+                        request,
+                        now,
+                    );
                 }
                 // Emote start/stop are delivered natively (`PlayerMessage::EmoteStart` / `EmoteStop`)
                 // rather than as an rfc4 `PlayerEmote`: byte-transport emotes are dropped as
