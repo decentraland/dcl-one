@@ -230,3 +230,110 @@ fn scene_casts_hit_the_heightfield() {
         assert_eq!(all.len(), 1, "avatar all, skip_inside {skip_inside}");
     }
 }
+
+/// A surface on the realm of `surface(extent)` whose heights have not arrived yet, so applying the
+/// targets is a reveal: `snap` is the loading-screen flag for that frame.
+fn reveal(extent: i32, snap: bool) -> (TerrainSurface, f32, f32) {
+    let (targets, settled) = surface(extent);
+    let mut revealed = TerrainSurface {
+        epoch: settled.epoch,
+        enabled: true,
+        ..Default::default()
+    };
+    revealed.set_snap(snap);
+    revealed.apply(&targets, Some(TerrainChange::Full), true);
+    let parcel = IVec2::new(6, 6);
+    let x = parcel.x as f32 * 16.0 + 8.0;
+    let z = parcel.y as f32 * 16.0 + 8.0;
+    assert!(settled.height(x, z) > 5.0);
+    (revealed, x, z)
+}
+
+#[test]
+fn heights_snap_while_loading() {
+    let (mut revealed, x, z) = reveal(12, true);
+    let settled = surface(12).1.height(x, z);
+    revealed.changes = SurfaceChanges::default();
+    revealed.ease(0.01);
+    assert!((revealed.height(x, z) - settled).abs() < 1e-4);
+    assert!(revealed.active.is_empty());
+    // every observer reads the same change rect an ease step reports
+    assert!(revealed.changes.eased.is_some());
+    assert_eq!(revealed.max_steps, revealed.max_steps_target);
+}
+
+#[test]
+fn heights_ease_after_loading() {
+    let (mut revealed, x, z) = reveal(12, false);
+    let settled = surface(12).1.height(x, z);
+    revealed.ease(0.01);
+    let height = revealed.height(x, z);
+    assert!(height < settled - 1.0, "{height} vs {settled}");
+    assert!(!revealed.active.is_empty());
+}
+
+/// Targets that reach `sync` on the frame loading ends snap, targets one frame later ease.
+#[test]
+fn snap_ends_when_loading_ends() {
+    let (mut lift_frame, x, z) = reveal(12, true);
+    let settled = surface(12).1.height(x, z);
+    lift_frame.ease(0.01);
+    assert!((lift_frame.height(x, z) - settled).abs() < 1e-4);
+    assert!(lift_frame.active.is_empty());
+
+    // the same targets one frame later: the flag has dropped, so they ease
+    let (mut later, x, z) = reveal(12, false);
+    later.ease(0.01);
+    assert!(later.height(x, z) < settled - 1.0);
+    assert!(!later.active.is_empty());
+}
+
+/// The real system: snapping through loading and the lift frame, easing the frame after.
+#[test]
+fn snap_flag_follows_the_loading_screen_with_a_one_frame_latch() {
+    let mut app = App::new();
+    app.init_resource::<TerrainSurface>()
+        .add_systems(Update, snap_while_loading);
+    let snap = |app: &App| app.world().resource::<TerrainSurface>().snap;
+    let player = app.world_mut().spawn(PrimaryUser::default()).id();
+
+    app.update();
+    assert!(!snap(&app), "in world");
+
+    app.world_mut().entity_mut(player).insert(OutOfWorld);
+    app.update();
+    assert!(snap(&app), "loading");
+    app.update();
+    assert!(snap(&app), "still loading");
+
+    app.world_mut().entity_mut(player).remove::<OutOfWorld>();
+    app.update();
+    assert!(snap(&app), "the frame loading ends");
+    app.update();
+    assert!(!snap(&app), "the frame after");
+
+    // a lobby holds the world back: no loading screen
+    app.world_mut().insert_resource(WorldHold);
+    app.world_mut().entity_mut(player).insert(OutOfWorld);
+    app.update();
+    app.update();
+    assert!(!snap(&app), "held for a lobby");
+
+    // the lobby releases while still out of world: loading
+    app.world_mut().remove_resource::<WorldHold>();
+    app.update();
+    assert!(snap(&app), "loading again");
+}
+
+#[test]
+fn loading_starting_again_snaps_remaining_eases() {
+    let (mut revealed, x, z) = reveal(12, false);
+    let settled = surface(12).1.height(x, z);
+    revealed.ease(0.01);
+    assert!(revealed.height(x, z) < settled - 1.0);
+    // a teleport brings the loading screen back mid-ease
+    revealed.set_snap(true);
+    revealed.ease(0.01);
+    assert!((revealed.height(x, z) - settled).abs() < 1e-4);
+    assert!(revealed.active.is_empty());
+}

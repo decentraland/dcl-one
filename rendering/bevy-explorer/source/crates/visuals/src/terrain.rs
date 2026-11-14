@@ -21,7 +21,7 @@ use bevy::{
 };
 use common::{
     sets::PostUpdateSets,
-    structs::{CurrentRealm, EngineMovementControl, PrimaryUser},
+    structs::{CurrentRealm, EngineMovementControl, OutOfWorld, PrimaryUser, WorldHold},
     terrain::{
         height, texel_value, uv_size, PlayerTerrainHeight, TerrainChange, TerrainTargets,
         MAX_STEPS, ZERO,
@@ -66,7 +66,12 @@ impl Plugin for TerrainPlugin {
             .add_systems(
                 PostUpdate,
                 (
-                    (sync, ease, (update_texture, player_height))
+                    (
+                        snap_while_loading,
+                        sync,
+                        ease,
+                        (update_texture, player_height),
+                    )
                         .chain()
                         .in_set(TerrainSet)
                         .before(PostUpdateSets::ColliderUpdate),
@@ -207,6 +212,8 @@ pub struct SurfaceChanges {
 pub struct TerrainSurface {
     epoch: Option<u64>,
     enabled: bool,
+    /// The loading screen is up: eased values jump to their targets instead of easing.
+    snap: bool,
     bounds: Option<(IVec2, IVec2)>,
     target: Vec<i8>,
     eased: Vec<f32>,
@@ -226,6 +233,7 @@ impl Default for TerrainSurface {
         Self {
             epoch: None,
             enabled: true,
+            snap: false,
             bounds: None,
             target: Vec::new(),
             eased: Vec::new(),
@@ -345,6 +353,12 @@ impl TerrainSurface {
         })
     }
 
+    /// Whether heights jump to their targets (the loading screen is up) rather than ease. Set
+    /// before `apply` and `ease` each frame, so targets arriving on the frame loading ends ease.
+    pub fn set_snap(&mut self, snap: bool) {
+        self.snap = snap;
+    }
+
     fn activate(&mut self, index: usize) {
         if !self.is_active[index] && self.eased[index] != f32::from(self.target[index]) {
             self.is_active[index] = true;
@@ -425,7 +439,12 @@ impl TerrainSurface {
     /// so leaving `ZERO` jumps straight to step 0: every neighbour of an occupied parcel is at
     /// step 0 or below, so no height changes at the jump.
     fn ease(&mut self, dt: f32) {
-        let step = dt * EASE_STEPS_PER_SECOND;
+        // while snapping, one step is more than any value can still travel
+        let step = if self.snap {
+            f32::INFINITY
+        } else {
+            dt * EASE_STEPS_PER_SECOND
+        };
         let mut changed = self.changes.eased;
         let Self {
             bounds,
@@ -597,6 +616,25 @@ fn sync(
     if coast != surface.coast {
         surface.coast = coast;
         surface.changes.params = true;
+    }
+}
+
+/// Heights jump to their targets behind the loading screen, so the ground has settled when it
+/// lifts. The screen is up while the primary player is out of world and no lobby holds the world
+/// back. The frame it lifts still snaps: the player is let back in on the frame their parcel
+/// resolves, so the first batch of targets reaches `sync` on that frame. Targets that arrive on
+/// later frames ease. Runs before `sync` and `ease`, so the flag is set before they run.
+fn snap_while_loading(
+    mut surface: ResMut<TerrainSurface>,
+    out_of_world: Query<(), (With<PrimaryUser>, With<OutOfWorld>)>,
+    hold: Option<Res<WorldHold>>,
+    mut was_loading: Local<bool>,
+) {
+    let loading = !out_of_world.is_empty() && hold.is_none();
+    let snap = loading || *was_loading;
+    *was_loading = loading;
+    if surface.snap != snap {
+        surface.set_snap(snap);
     }
 }
 
