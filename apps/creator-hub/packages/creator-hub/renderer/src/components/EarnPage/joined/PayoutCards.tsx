@@ -1,32 +1,19 @@
 import { useId, useRef, useState } from 'react';
-import { Tooltip } from 'decentraland-ui2';
+import { Button, Tooltip } from 'decentraland-ui2';
 
 import type { Enrollment, PayoutWallet } from '/shared/types/creator-fund';
 
 import { misc } from '#preload';
 import { t } from '/@/modules/store/translation/utils';
 
+import { CopyToClipboard } from '../../CopyToClipboard';
+
 import { CopyIcon, InfoIcon, WarningIcon } from '../icons';
 
 import { TOOLTIP_SLOTS } from './parts';
-import { InfoButton } from './parts.styled';
-import {
-  AddWalletButton,
-  Address,
-  AddressChip,
-  Card,
-  CardHeader,
-  CardTitle,
-  ContactLabel,
-  ContactText,
-  ContactValue,
-  ContactValues,
-  CornerButton,
-  InfoGroup,
-  LearnMore,
-  UnverifiedBadge,
-} from './PayoutsTab.styled';
 import { shortAddress } from './wallet';
+import parts from './parts.module.css';
+import styles from './PayoutsTab.module.css';
 
 const GET_A_WALLET_URL = 'https://docs.decentraland.org/blockchain-integration/get-a-wallet';
 
@@ -45,8 +32,9 @@ function WalletInfo() {
     return next instanceof Node && !!groupRef.current?.contains(next);
   };
   return (
-    <InfoGroup
+    <span
       ref={groupRef}
+      className={styles.infoGroup}
       onBlur={event => !focusStaysIn(event) && setOpen(false)}
     >
       <Tooltip
@@ -60,7 +48,8 @@ function WalletInfo() {
         title={
           <>
             {t('earn.joined.payouts.wallet.info')}{' '}
-            <LearnMore
+            <a
+              className={styles.learnMore}
               href={GET_A_WALLET_URL}
               onClick={event => {
                 event.preventDefault();
@@ -69,7 +58,7 @@ function WalletInfo() {
             >
               {t('earn.joined.payouts.wallet.learn_more')}
               <span aria-hidden> →</span>
-            </LearnMore>
+            </a>
           </>
         }
         placement="top"
@@ -78,15 +67,16 @@ function WalletInfo() {
         disableInteractive={false}
         slotProps={INFO_TOOLTIP_SLOTS}
       >
-        <InfoButton
+        <button
           ref={buttonRef}
+          className={parts.infoButton}
           type="button"
           aria-label={t('earn.joined.payouts.wallet.info_label')}
         >
           <InfoIcon />
-        </InfoButton>
+        </button>
       </Tooltip>
-    </InfoGroup>
+    </span>
   );
 }
 
@@ -107,42 +97,56 @@ export function WalletCard({
 }) {
   const titleId = useId();
   return (
-    <Card
+    <section
+      className={styles.card}
       aria-labelledby={titleId}
       data-testid="payouts-wallet-card"
     >
-      <CardHeader>
-        <CardTitle id={titleId}>{t('earn.joined.payouts.wallet.title')}</CardTitle>
+      <div className={styles.cardHeader}>
+        <h2
+          className={styles.cardTitle}
+          id={titleId}
+        >
+          {t('earn.joined.payouts.wallet.title')}
+        </h2>
         <WalletInfo />
-      </CardHeader>
+      </div>
       {wallet && (
         <>
-          <AddressChip
+          <CopyToClipboard
+            className={styles.addressChip}
             text={wallet.address}
             label={t('earn.joined.payouts.wallet.copy')}
             showPopup
           >
-            <Address title={wallet.address}>{shortAddress(wallet.address)}</Address>
+            <span
+              className={styles.address}
+              title={wallet.address}
+            >
+              {shortAddress(wallet.address)}
+            </span>
             <CopyIcon />
-          </AddressChip>
-          <CornerButton
+          </CopyToClipboard>
+          <Button
             ref={editRef}
+            className={styles.cornerButton}
             variant="outlined"
             onClick={onChange}
           >
             {t('earn.joined.payouts.wallet.edit')}
-          </CornerButton>
+          </Button>
         </>
       )}
       {wallet === null && (
-        <AddWalletButton
+        <Button
+          className={styles.addWalletButton}
           variant="contained"
           onClick={onAdd}
         >
           {t('earn.joined.payouts.wallet.add')}
-        </AddWalletButton>
+        </Button>
       )}
-    </Card>
+    </section>
   );
 }
 
@@ -159,47 +163,54 @@ export function ContactCard({
   const titleId = useId();
   const unverified = !!enrollment && !enrollment.email_verified_at;
   return (
-    <Card
+    <section
+      className={styles.card}
       aria-labelledby={titleId}
       data-testid="payouts-contact-card"
     >
-      <CardHeader>
-        <CardTitle
+      <div className={styles.cardHeader}>
+        <h2
+          className={styles.cardTitle}
           id={titleId}
           ref={titleRef}
           tabIndex={-1}
         >
           {t('earn.joined.payouts.contact.title')}
-        </CardTitle>
-      </CardHeader>
+        </h2>
+      </div>
       {unverified && (
-        <CornerButton
+        <Button
+          className={styles.cornerButton}
           variant="outlined"
           onClick={onVerify}
         >
           {t('earn.joined.payouts.contact.verify')}
-        </CornerButton>
+        </Button>
       )}
       {enrollment && (
-        <ContactValues>
-          <ContactValue>
-            <ContactLabel>{t('earn.joined.payouts.contact.full_name')}</ContactLabel>
-            <ContactText>{`${enrollment.first_name} ${enrollment.last_name}`}</ContactText>
-          </ContactValue>
-          <ContactValue>
-            <ContactLabel>
+        <div className={styles.contactValues}>
+          <div className={styles.contactValue}>
+            <span className={styles.contactLabel}>
+              {t('earn.joined.payouts.contact.full_name')}
+            </span>
+            <span
+              className={styles.contactText}
+            >{`${enrollment.first_name} ${enrollment.last_name}`}</span>
+          </div>
+          <div className={styles.contactValue}>
+            <span className={styles.contactLabel}>
               {t('earn.joined.payouts.contact.email')}
               {unverified && (
-                <UnverifiedBadge>
+                <span className={styles.unverifiedBadge}>
                   <WarningIcon />
                   {t('earn.joined.payouts.contact.unverified')}
-                </UnverifiedBadge>
+                </span>
               )}
-            </ContactLabel>
-            <ContactText>{enrollment.email}</ContactText>
-          </ContactValue>
-        </ContactValues>
+            </span>
+            <span className={styles.contactText}>{enrollment.email}</span>
+          </div>
+        </div>
       )}
-    </Card>
+    </section>
   );
 }

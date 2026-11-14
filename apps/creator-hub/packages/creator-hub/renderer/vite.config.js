@@ -9,6 +9,14 @@ import { chrome } from '../.electron-vendors.cache.json';
 const PACKAGE_ROOT = __dirname;
 const PACKAGE_DIR = join(PACKAGE_ROOT, '..');
 
+/** happy-dom 14 ends a selector at a line break, so tests see wrapped selectors on one line. */
+const collapseSelectorWhitespace = {
+  postcssPlugin: 'collapse-selector-whitespace',
+  Rule(rule) {
+    rule.selector = rule.selector.replace(/\s+/g, ' ');
+  },
+};
+
 /**
  * @type {import('vite').UserConfig}
  * @see https://vitejs.dev/config/
@@ -26,6 +34,7 @@ const config = {
     },
   },
   base: '',
+  css: process.env.VITEST ? { postcss: { plugins: [collapseSelectorWhitespace] } } : {},
   server: {
     fs: {
       strict: true,
@@ -44,7 +53,6 @@ const config = {
   },
   test: {
     environment: 'happy-dom',
-    // CSS modules are injected into the test document, so a spec can read their computed styles.
     css: { include: /\.module\.css$/ },
     setupFiles: ['./tests/setupTests.ts'],
     include: ['./src/**/*.{test,spec}.{js,mjs,cjs,ts,mts,cts,jsx,tsx}'],

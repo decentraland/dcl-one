@@ -1,0 +1,192 @@
+.modalForm {
+  position: relative;
+  z-index: 1;
+  width: 500px;
+  display: flex;
+  flex-direction: column;
+  gap: 25px;
+}
+
+.modalForm[data-variant="verify"] {
+  gap: 50px;
+}
+
+.modalIntro {
+  display: flex;
+  flex-direction: column;
+  gap: 25px;
+}
+
+.body {
+  font-family: var(--font-family);
+  font-optical-sizing: none;
+  font-size: var(--type-h6-regular-size);
+  font-weight: var(--type-h6-regular-weight);
+  line-height: normal;
+  letter-spacing: var(--type-h6-regular-letter-spacing);
+  margin: 0;
+  color: var(--gray);
+  overflow-wrap: anywhere;
+}
+
+.body b {
+  font-weight: var(--fw-bold);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.fieldLabel {
+  font-family: var(--font-family);
+  font-optical-sizing: none;
+  font-size: var(--type-h6-semi-size);
+  font-weight: var(--type-h6-semi-weight);
+  line-height: normal;
+  letter-spacing: var(--type-h6-semi-letter-spacing);
+  color: var(--white);
+}
+
+.fieldInput.fieldInput[data-filled="true"]
+  :global(.MuiOutlinedInput-root):not(:global(.Mui-focused)):not(:global(.Mui-error))
+  :global(.MuiOutlinedInput-notchedOutline) {
+  border-width: 2px;
+  border-color: var(--palette-whiteTransparent-backdrop);
+}
+
+.fieldError svg {
+  flex-shrink: 0;
+  width: 12px;
+  height: 12px;
+}
+
+.callout {
+  font-family: var(--font-family);
+  font-optical-sizing: none;
+  font-size: var(--type-h7-regular-size);
+  font-weight: var(--type-h7-regular-weight);
+  line-height: normal;
+  letter-spacing: var(--type-h7-regular-letter-spacing);
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: var(--shape-borderRadiusLarge);
+  background-color: var(--palette-whiteTransparent-faint);
+  color: var(--palette-neutral-softWhite);
+}
+
+.callout svg {
+  flex-shrink: 0;
+}
+
+.failureLine {
+  font-family: var(--font-family);
+  font-optical-sizing: none;
+  font-size: var(--type-h7-regular-size);
+  font-weight: var(--type-h7-regular-weight);
+  line-height: normal;
+  letter-spacing: var(--type-h7-regular-letter-spacing);
+  margin: 0;
+  color: var(--error);
+}
+
+.payoutActions.payoutActions {
+  gap: 30px;
+}
+
+.codeArea {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.codeRow {
+  display: flex;
+  gap: 12px;
+}
+
+.codeBox {
+  font-family: var(--font-family);
+  font-optical-sizing: none;
+  box-sizing: border-box;
+  width: 52px;
+  height: 60px;
+  padding: 0;
+  border-radius: var(--shape-borderRadiusLarge);
+  border: 2px solid var(--palette-whiteTransparent-blurry);
+  background-color: transparent;
+  color: var(--palette-neutral-softWhite);
+  font-size: 28px;
+  font-weight: var(--type-h2-semi-weight);
+  line-height: normal;
+  text-align: center;
+  caret-color: var(--palette-neutral-softWhite);
+  outline: none;
+}
+
+.codeBox:hover,
+.codeBox[data-filled="true"] {
+  border-color: var(--palette-whiteTransparent-backdrop);
+}
+
+.codeBox.codeBox[aria-invalid="true"] {
+  border-color: var(--error);
+}
+
+.codeBox.codeBox.codeBox:focus {
+  border-color: var(--palette-neutral-softWhite);
+}
+
+.resendButton {
+  font-family: var(--font-family);
+  font-optical-sizing: none;
+  font-size: var(--type-h7-regular-size);
+  font-weight: var(--type-h7-regular-weight);
+  line-height: normal;
+  letter-spacing: var(--type-h7-regular-letter-spacing);
+  padding: 0;
+  border: 0;
+  border-radius: var(--shape-borderRadiusMedium);
+  background-color: transparent;
+  color: var(--gray);
+  cursor: pointer;
+}
+
+.resendButton:not([aria-disabled="true"]):hover,
+.resendButton:focus-visible {
+  text-decoration: underline;
+}
+
+.resendButton[aria-disabled="true"] {
+  cursor: default;
+}
+
+.resendButton:focus-visible {
+  outline: 2px solid var(--palette-info-light);
+  outline-offset: 2px;
+}
+
+.codeError {
+  font-family: var(--font-family);
+  font-optical-sizing: none;
+  font-size: var(--type-h7-regular-size);
+  font-weight: var(--type-h7-regular-weight);
+  line-height: normal;
+  letter-spacing: var(--type-h7-regular-letter-spacing);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--error);
+  --cf-close-stroke: var(--error);
+}
+
+.codeError svg {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+}

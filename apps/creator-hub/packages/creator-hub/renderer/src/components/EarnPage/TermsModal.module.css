@@ -1,0 +1,329 @@
+.dialog {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  outline: none;
+}
+
+.titleBar {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 20px;
+  background-color: var(--palette-blackTransparent-soft);
+  border-bottom: 1px solid var(--palette-whiteTransparent-subtle);
+}
+
+.titleText {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.title {
+  font-family: var(--font-family);
+  font-optical-sizing: none;
+  font-size: var(--type-h5-semi-size);
+  font-weight: var(--type-h5-semi-weight);
+  line-height: normal;
+  letter-spacing: var(--type-h5-semi-letter-spacing);
+  line-height: 1.7;
+  margin: 0;
+  color: var(--palette-neutral-softWhite);
+}
+
+.subtitle {
+  font-family: var(--font-family);
+  font-optical-sizing: none;
+  font-size: var(--type-h7-regular-size);
+  font-weight: var(--type-h7-regular-weight);
+  line-height: normal;
+  letter-spacing: var(--type-h7-regular-letter-spacing);
+  line-height: 1.7;
+  margin: 0;
+  color: var(--dcl-silver);
+}
+
+.titleBarClose.titleBarClose {
+  width: 30px;
+  height: 30px;
+  border-radius: var(--r-pill);
+  background-color: var(--palette-whiteTransparent-subtle);
+  color: var(--gray);
+}
+
+.titleBarClose.titleBarClose:hover {
+  background-color: var(--palette-whiteTransparent-soft);
+}
+
+.titleBarClose.titleBarClose:focus-visible {
+  outline: 2px solid var(--palette-info-light);
+  outline-offset: 2px;
+}
+
+.glow {
+  position: absolute;
+  width: 824px;
+  height: 257.5px;
+  left: 50%;
+  bottom: -131.5px;
+  transform: translateX(-50%) scaleY(-1);
+  border-radius: 50%;
+  background-color: var(--palette-rarity-mythic);
+  opacity: 0.3;
+  filter: blur(250px);
+  pointer-events: none;
+}
+
+.scrollview {
+  position: relative;
+  z-index: 1;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 25px;
+  padding: 50px;
+}
+
+.scrollview[data-variant="read"] {
+  gap: 50px;
+}
+
+.box {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  box-sizing: border-box;
+  border-radius: var(--shape-borderRadiusLarge);
+  padding: 10px 10px 10px 0;
+  background-color: var(--palette-blackTransparent-blurry);
+  display: flex;
+  flex-direction: column;
+}
+
+.box[data-variant="read"] {
+  background-color: var(--palette-blackTransparent-soft);
+}
+
+.box:has(> :focus-visible) {
+  outline: 2px solid var(--palette-info-light);
+  outline-offset: 2px;
+}
+
+.scroller {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  box-sizing: border-box;
+  padding: 20px 28px 20px 40px;
+  display: flex;
+  flex-direction: column;
+  gap: 30px;
+  outline: none;
+}
+
+.scroller.scroller::-webkit-scrollbar {
+  width: 12px;
+}
+
+.scroller.scroller::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.scroller.scroller::-webkit-scrollbar-thumb {
+  background-color: var(--scrollbar-thumb);
+  border: 1px solid var(--scrollbar-thumb-border);
+  border-radius: var(--r-pill);
+}
+
+.termsText {
+  overflow-wrap: anywhere;
+}
+
+.termsText :global(.MarkdownRenderer) {
+  font-family: var(--font-family);
+  font-optical-sizing: none;
+  font-size: var(--type-h7-regular-size);
+  font-weight: var(--type-h7-regular-weight);
+  line-height: normal;
+  letter-spacing: var(--type-h7-regular-letter-spacing);
+  line-height: 1.7;
+  overflow: visible;
+  padding: 0;
+  color: var(--palette-neutral-softWhite);
+}
+
+.termsText :global(.MarkdownRenderer) :is(h1, h2, h3, h4, h5, h6) {
+  font-family: var(--font-family);
+  font-optical-sizing: none;
+  font-size: var(--type-h5-semi-size);
+  font-weight: var(--type-h5-semi-weight);
+  line-height: normal;
+  letter-spacing: var(--type-h5-semi-letter-spacing);
+  line-height: 1.4;
+  margin: 0;
+}
+
+.termsText :global(.MarkdownRenderer) h1 {
+  font-family: var(--font-family);
+  font-optical-sizing: none;
+  font-size: var(--type-h4-semi-size);
+  font-weight: var(--type-h4-semi-weight);
+  line-height: normal;
+  letter-spacing: var(--type-h4-semi-letter-spacing);
+  line-height: 1.4;
+}
+
+.termsText :global(.MarkdownRenderer) :is(p, ul, ol, blockquote, pre, hr, table) {
+  margin: 0;
+}
+
+.termsText :global(.MarkdownRenderer) :is(ul, ol) {
+  padding-left: 24px;
+}
+
+.termsText :global(.MarkdownRenderer) li {
+  margin-top: 0;
+}
+
+.termsText :global(.MarkdownRenderer) li + li {
+  margin-top: 8px;
+}
+
+.termsText
+  :global(.MarkdownRenderer)
+  :is(p, ul, ol, blockquote, pre, hr, table)
+  + :is(p, ul, ol, blockquote, pre, hr, table) {
+  margin-top: 20px;
+}
+
+.termsText
+  :global(.MarkdownRenderer)
+  :is(p, ul, ol, blockquote, pre, hr, table)
+  + :is(h1, h2, h3, h4, h5, h6) {
+  margin-top: 40px;
+}
+
+.termsText :global(.MarkdownRenderer) :is(h1, h2, h3, h4, h5, h6) + * {
+  margin-top: 10px;
+}
+
+.termsText :global(.MarkdownRenderer) a {
+  color: var(--primary);
+  text-decoration: none;
+}
+
+.termsText :global(.MarkdownRenderer) a:hover {
+  text-decoration: underline;
+}
+
+.termsText :global(.MarkdownRenderer) a:focus-visible {
+  outline: 2px solid var(--palette-info-light);
+  outline-offset: 2px;
+}
+
+.boxState {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  color: var(--gray);
+  font-family: var(--font-family);
+  font-optical-sizing: none;
+  font-size: var(--type-h6-regular-size);
+  font-weight: var(--type-h6-regular-weight);
+  line-height: normal;
+  letter-spacing: var(--type-h6-regular-letter-spacing);
+}
+
+.gate {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 42px;
+  color: var(--dcl-silver);
+}
+
+.gate > svg {
+  flex-shrink: 0;
+}
+
+.gate :global(.MuiFormControlLabel-root) {
+  margin: 0;
+  gap: 10px;
+  padding-block: 1px;
+}
+
+.gate :global(.MuiFormControlLabel-label) {
+  font-family: var(--font-family);
+  font-optical-sizing: none;
+  font-size: var(--type-h7-regular-size);
+  font-weight: var(--type-h7-regular-weight);
+  line-height: normal;
+  letter-spacing: var(--type-h7-regular-letter-spacing);
+  color: var(--dcl-silver);
+}
+
+.gate :global(.MuiCheckbox-root) {
+  padding: 0;
+}
+
+.tickBox {
+  position: relative;
+  box-sizing: border-box;
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+  box-shadow: inset 0 0 0 1px var(--palette-whiteTransparent-blurry);
+}
+
+.tickBox::before {
+  content: "";
+  position: absolute;
+  inset: -6px;
+  z-index: -1;
+  border-radius: 100px;
+}
+
+:global(.MuiFormControlLabel-root):hover .tickBox::before {
+  background-color: var(--palette-whiteTransparent-subtle);
+}
+
+.tickBox[data-checked] {
+  background-color: var(--primary);
+  box-shadow: none;
+}
+
+:global(.MuiFormControlLabel-root):hover .tickBox[data-checked]::before {
+  background-color: color-mix(in srgb, var(--primary) 20%, transparent);
+}
+
+:global(.Mui-focusVisible) > .tickBox {
+  outline: 2px solid var(--palette-info-light);
+  outline-offset: 2px;
+}
+
+.tickBox > svg {
+  position: absolute;
+  left: 4px;
+  top: 5px;
+  color: var(--black);
+}
+
+.hint {
+  font-family: var(--font-family);
+  font-optical-sizing: none;
+  font-size: var(--type-h8-regular-size);
+  font-weight: var(--type-h8-regular-weight);
+  line-height: normal;
+  letter-spacing: var(--type-h8-regular-letter-spacing);
+}

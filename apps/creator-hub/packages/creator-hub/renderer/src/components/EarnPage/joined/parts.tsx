@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { MenuItem, Select, Tooltip } from 'decentraland-ui2';
+import cx from 'classnames';
+import { Button, MenuItem, Select, Skeleton, Tooltip } from 'decentraland-ui2';
 
 import type { CreatorFundPlace, PlaceReason } from '/shared/types/creator-fund';
 
@@ -8,7 +9,6 @@ import { getSceneJumpInDeeplink } from '/@/modules/utils';
 import type { TranslationPath } from '/@/modules/store/translation/types';
 import { t } from '/@/modules/store/translation/utils';
 
-import { ModalCta, VisuallyHidden } from '../EarnModal.styled';
 import {
   ArrowDownIcon,
   CheckmarkIcon,
@@ -17,27 +17,14 @@ import {
   MetricInfoIcon,
   NotEligibleIcon,
 } from '../icons';
-import { StatusLine } from '../Landing.styled';
 import { Spinner } from '../Spinner';
 import { fontFace } from '../tokens';
 
+import modal from '../EarnModal.module.css';
+import landing from '../Landing.module.css';
+
 import { jumpInLocation, placeTitle } from './format';
-import {
-  Chip,
-  CycleSelectBox,
-  ErrorLine,
-  FilterGroup,
-  FilterLabel,
-  JumpIn,
-  Metric,
-  MetricInfoButton,
-  MetricLabel,
-  MetricLabelText,
-  MetricSkeleton,
-  MetricValue,
-  StateBox,
-  TooltipLine,
-} from './parts.styled';
+import styles from './parts.module.css';
 
 const REASONS: Record<PlaceReason, TranslationPath> = {
   content_policy: 'earn.joined.my_places.reasons.content_policy',
@@ -96,13 +83,14 @@ function ExplainedChip({
       describeChild
       slotProps={TOOLTIP_SLOTS}
     >
-      <Chip
+      <span
+        className={styles.chip}
         data-status={status}
         tabIndex={0}
       >
         {icon}
         {t(`earn.joined.my_places.status.${status}`)}
-      </Chip>
+      </span>
     </Tooltip>
   );
 }
@@ -111,10 +99,13 @@ function ExplainedChip({
 export function StatusChip(props: ChipProps) {
   if (props.status === 'in_program') {
     return (
-      <Chip data-status="in_program">
+      <span
+        className={styles.chip}
+        data-status="in_program"
+      >
         <InProgramIcon />
         {t('earn.joined.my_places.status.in_program')}
-      </Chip>
+      </span>
     );
   }
   if (props.status === 'replaced') {
@@ -130,7 +121,12 @@ export function StatusChip(props: ChipProps) {
       status="not_eligible"
       icon={<NotEligibleIcon />}
       title={reasonLines(props.reasons).map(reason => (
-        <TooltipLine key={reason}>{t(reason)}</TooltipLine>
+        <span
+          key={reason}
+          className={styles.tooltipLine}
+        >
+          {t(reason)}
+        </span>
       ))}
     />
   );
@@ -141,21 +137,27 @@ export type MetricReading = { status: 'loading' } | { status: 'ready'; value: st
 function MetricReadingValue({ reading }: { reading: MetricReading }) {
   if (reading.status === 'loading') {
     return (
-      <MetricValue aria-busy="true">
-        <MetricSkeleton aria-hidden />
-        <VisuallyHidden>{t('earn.loading')}</VisuallyHidden>
-      </MetricValue>
+      <dd
+        className={styles.metricValue}
+        aria-busy="true"
+      >
+        <Skeleton
+          className={styles.metricSkeleton}
+          aria-hidden
+        />
+        <span className={modal.visuallyHidden}>{t('earn.loading')}</span>
+      </dd>
     );
   }
   return (
-    <MetricValue>
+    <dd className={styles.metricValue}>
       {reading.value ?? (
         <>
           <span aria-hidden>-</span>
-          <VisuallyHidden>{t('earn.joined.my_places.metrics.no_data')}</VisuallyHidden>
+          <span className={modal.visuallyHidden}>{t('earn.joined.my_places.metrics.no_data')}</span>
         </>
       )}
-    </MetricValue>
+    </dd>
   );
 }
 
@@ -170,12 +172,13 @@ function MetricInfo({ name, tooltip }: MetricExplanation) {
       describeChild
       slotProps={TOOLTIP_SLOTS}
     >
-      <MetricInfoButton
+      <button
+        className={cx(styles.infoButton, styles.metricInfoButton)}
         type="button"
         aria-label={name}
       >
         <MetricInfoIcon />
-      </MetricInfoButton>
+      </button>
     </Tooltip>
   );
 }
@@ -196,14 +199,19 @@ export function MetricStat({
   reading: MetricReading;
 }) {
   return (
-    <Metric>
-      <MetricLabel>
+    <div className={styles.metric}>
+      <dt className={styles.metricLabel}>
         {icon}
-        <MetricLabelText title={label}>{label}</MetricLabelText>
+        <span
+          className={styles.metricLabelText}
+          title={label}
+        >
+          {label}
+        </span>
         {info && <MetricInfo {...info} />}
-      </MetricLabel>
+      </dt>
       <MetricReadingValue reading={reading} />
-    </Metric>
+    </div>
   );
 }
 
@@ -222,7 +230,8 @@ export function JumpInButton({
   onJumpIn?: () => void;
 }) {
   return (
-    <JumpIn
+    <Button
+      className={styles.jumpIn}
       variant="contained"
       disableRipple
       aria-label={t('earn.joined.leaderboard.jump_in_label', { place: placeTitle(place) })}
@@ -235,7 +244,7 @@ export function JumpInButton({
     >
       {t('earn.joined.leaderboard.jump_in')}
       <JumpInIcon />
-    </JumpIn>
+    </Button>
   );
 }
 
@@ -247,28 +256,44 @@ export type ListStateProps =
 /** A list's loading, empty or error state, centred where the rows would be. */
 export function ListState(props: ListStateProps) {
   return (
-    <StateBox data-kind={props.kind}>
+    <div
+      className={styles.stateBox}
+      data-kind={props.kind}
+    >
       {props.kind === 'loading' && (
         <Spinner
           label={t('earn.loading')}
           size={48}
         />
       )}
-      {props.kind === 'empty' && <StatusLine role="status">{props.message}</StatusLine>}
+      {props.kind === 'empty' && (
+        <p
+          className={landing.statusLine}
+          role="status"
+        >
+          {props.message}
+        </p>
+      )}
       {props.kind === 'error' && (
         <>
-          <ErrorLine role="alert">{props.message}</ErrorLine>
-          <ModalCta
+          <p
+            className={styles.errorLine}
+            role="alert"
+          >
+            {props.message}
+          </p>
+          <Button
+            className={modal.modalCta}
             variant="contained"
             color="secondary"
             size="large"
             onClick={props.onRetry}
           >
             {t('earn.errors.retry')}
-          </ModalCta>
+          </Button>
         </>
       )}
-    </StateBox>
+    </div>
   );
 }
 
@@ -331,9 +356,15 @@ export function CycleSelect({
 }) {
   const [keyboard, setKeyboard] = useState(false);
   return (
-    <FilterGroup>
-      <FilterLabel aria-hidden>{t('earn.joined.filter.cycle')}</FilterLabel>
-      <CycleSelectBox
+    <div className={styles.filterGroup}>
+      <span
+        className={styles.filterLabel}
+        aria-hidden
+      >
+        {t('earn.joined.filter.cycle')}
+      </span>
+      <div
+        className={styles.cycleSelectBox}
         onKeyDownCapture={() => setKeyboard(true)}
         onPointerDownCapture={() => setKeyboard(false)}
       >
@@ -357,7 +388,7 @@ export function CycleSelect({
             </MenuItem>
           ))}
         </Select>
-      </CycleSelectBox>
-    </FilterGroup>
+      </div>
+    </div>
   );
 }

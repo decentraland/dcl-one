@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Navigate, useLocation, useNavigate } from 'react-router-dom';
+import cx from 'classnames';
 import { GlobalStyles } from 'decentraland-ui2';
 
 import type { Events } from '/shared/types/analytics';
@@ -17,9 +18,10 @@ import { Navbar, NavbarItem } from '../Navbar';
 import { JoinedPage, type JoinedTab } from './JoinedPage';
 import { IneligibleModal, JoinFlow, type JoinOutcome } from './JoinFlow';
 import { Landing, LandingCtas, LandingLoadError, LandingStatus } from './Landing';
-import { StickyNavbar } from './component.styled';
 import { Spinner } from './Spinner';
 import { TermsModal } from './TermsModal';
+import parts from './joined/parts.module.css';
+import styles from './component.module.css';
 
 const STICKY_NAVBAR_HEIGHT = 130;
 
@@ -234,9 +236,9 @@ export function EarnPage() {
           },
         }}
       />
-      <StickyNavbar>
+      <div className={cx(parts.pageBackdrop, styles.stickyNavbar)}>
         <Navbar active={NavbarItem.EARN} />
-      </StickyNavbar>
+      </div>
       <EarnContent />
     </div>
   );

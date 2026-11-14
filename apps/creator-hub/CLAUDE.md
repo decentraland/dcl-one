@@ -191,7 +191,9 @@ CI lives at the dcl-one root: `.github/workflows/creator-hub-ci.yml` is the entr
 
 ## Styled Components Conventions
 
-Files matching `*.styled.ts` / `*.styled.tsx` must follow these rules:
+New component styles in dcl-one are CSS Modules (`Component.module.css`), per [`docs/ui-standards.md`](../../docs/ui-standards.md); `tooling/ui_standards.py` rejects a new `styled` import. The rules below apply only to `*.styled.ts` files that already exist.
+
+Existing files matching `*.styled.ts` / `*.styled.tsx` must follow these rules:
 
 - Import `styled`, `keyframes`, and MUI components from `decentraland-ui2` (not `@emotion/styled` or `@mui/material`).
 - Use object syntax only (no template literals): `styled(Box)(({ theme }) => ({ ... }))`.

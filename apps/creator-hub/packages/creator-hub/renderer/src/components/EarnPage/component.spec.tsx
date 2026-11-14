@@ -106,7 +106,7 @@ function page(entry: Entry = '/earn') {
 vi.setConfig({ testTimeout: 15_000 });
 
 const HERO_HIDE_RULE =
-  /@media \(max-width: ?1429\.46px\), ?\(max-height: ?597\.5px\)\{\.([\w-]+)\{display:none;?\}\}/;
+  /@media \(max-width: ?1429\.46px\), ?\(max-height: ?597\.5px\)\s*\{\s*\.([\w-]+)\s*\{\s*display: ?none;?\s*\}\s*\}/;
 
 function hidesHeroBelowHalfItsFigmaSize(container: HTMLElement) {
   const art = container.querySelector('img[width="1425"]');

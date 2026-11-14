@@ -1,5 +1,6 @@
 import { useEffect, useId, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { Button } from 'decentraland-ui2';
 
 import type { Events } from '/shared/types/analytics';
 import type { Project } from '/shared/types/projects';
@@ -9,27 +10,12 @@ import { useWorkspace } from '/@/hooks/useWorkspace';
 import { addBase64ImagePrefix } from '/@/modules/image';
 import { t } from '/@/modules/store/translation/utils';
 
-import { ModalCta } from '../EarnModal.styled';
+import modal from '../EarnModal.module.css';
 import { ParcelsIcon } from '../icons';
 
-import {
-  Actions,
-  Body,
-  Card,
-  CardName,
-  CardParcels,
-  CardText,
-  CardThumbnail,
-  Cards,
-  Header,
-  NoScenesState,
-  Scenes,
-  ScenesHeading,
-  Title,
-  UnpublishedState,
-} from './MyPlacesEmpty.styled';
 import { ListState } from './parts';
 import { findPublishedPaths } from './publishedScenes';
+import styles from './MyPlacesEmpty.module.css';
 
 const SHOWN_SCENES = 3;
 
@@ -69,33 +55,36 @@ export function UnpublishedSceneCard({
 }) {
   const nameId = useId();
   return (
-    <Card
+    <button
+      className={styles.card}
       type="button"
       aria-labelledby={nameId}
       onClick={() => onOpen(project)}
     >
-      <CardThumbnail
+      <img
+        className={styles.cardThumbnail}
         src={project.thumbnail ? addBase64ImagePrefix(project.thumbnail) : undefined}
         alt=""
         width={416}
         height={273}
         loading="lazy"
       />
-      <CardText>
-        <CardName
+      <span className={styles.cardText}>
+        <span
+          className={styles.cardName}
           id={nameId}
           title={project.title}
         >
           {project.title}
-        </CardName>
-        <CardParcels>
+        </span>
+        <span className={styles.cardParcels}>
           <ParcelsIcon />
           {t('earn.joined.my_places.unpublished.parcels', {
             parcels: project.scene.parcels.length,
           })}
-        </CardParcels>
-      </CardText>
-    </Card>
+        </span>
+      </span>
+    </button>
   );
 }
 
@@ -103,9 +92,17 @@ function UnpublishedScenes({ projects }: { projects: Project[] }) {
   const { runProject } = useWorkspace();
   const headingId = useId();
   return (
-    <Scenes aria-labelledby={headingId}>
-      <ScenesHeading id={headingId}>{t('earn.joined.my_places.unpublished.heading')}</ScenesHeading>
-      <Cards>
+    <section
+      className={styles.scenes}
+      aria-labelledby={headingId}
+    >
+      <h3
+        className={styles.scenesHeading}
+        id={headingId}
+      >
+        {t('earn.joined.my_places.unpublished.heading')}
+      </h3>
+      <div className={styles.cards}>
         {projects.map(project => (
           <UnpublishedSceneCard
             key={project.path}
@@ -116,8 +113,8 @@ function UnpublishedScenes({ projects }: { projects: Project[] }) {
             }}
           />
         ))}
-      </Cards>
-    </Scenes>
+      </div>
+    </section>
   );
 }
 
@@ -125,11 +122,12 @@ function NoScenes() {
   const navigate = useNavigate();
   const { createProject } = useWorkspace();
   return (
-    <NoScenesState>
-      <Title>{t('earn.joined.my_places.no_scenes.title')}</Title>
-      <Body>{t('earn.joined.my_places.empty_body')}</Body>
-      <Actions>
-        <ModalCta
+    <section className={styles.noScenesState}>
+      <h2 className={styles.title}>{t('earn.joined.my_places.no_scenes.title')}</h2>
+      <p className={styles.body}>{t('earn.joined.my_places.empty_body')}</p>
+      <div className={styles.actions}>
+        <Button
+          className={modal.modalCta}
           variant="contained"
           color="secondary"
           onClick={() => {
@@ -138,8 +136,9 @@ function NoScenes() {
           }}
         >
           {t('earn.joined.my_places.start_from_template')}
-        </ModalCta>
-        <ModalCta
+        </Button>
+        <Button
+          className={modal.modalCta}
           variant="contained"
           color="primary"
           onClick={() => {
@@ -148,9 +147,9 @@ function NoScenes() {
           }}
         >
           {t('earn.joined.my_places.create_scene')}
-        </ModalCta>
-      </Actions>
-    </NoScenesState>
+        </Button>
+      </div>
+    </section>
   );
 }
 
@@ -162,13 +161,13 @@ function PublishPrompt({ projects }: { projects: Project[] }) {
   const unpublished = useUnpublishedProjects(projects);
   if (!unpublished) return <ListState kind="loading" />;
   return (
-    <UnpublishedState>
-      <Header>
-        <Title>{t('earn.joined.my_places.unpublished.title')}</Title>
-        <Body>{t('earn.joined.my_places.empty_body')}</Body>
-      </Header>
+    <section className={styles.unpublishedState}>
+      <div className={styles.header}>
+        <h2 className={styles.title}>{t('earn.joined.my_places.unpublished.title')}</h2>
+        <p className={styles.body}>{t('earn.joined.my_places.empty_body')}</p>
+      </div>
       {unpublished.length > 0 && <UnpublishedScenes projects={unpublished} />}
-    </UnpublishedState>
+    </section>
   );
 }
 
