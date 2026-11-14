@@ -298,6 +298,7 @@ def parse_advisory(markdown):
     return {'id': adv.get('id'), 'package': adv.get('package'), 'date': adv.get('date'), 'aliases': adv.get('aliases', []),
             'categories': adv.get('categories', []), 'keywords': adv.get('keywords', []), 'informational': adv.get('informational'),
             'url': adv.get('url'), 'title': (title.group(1).strip() if title else adv.get('id')),
+            'withdrawn': adv.get('withdrawn'),
             'patched': versions.get('patched', []), 'unaffected': versions.get('unaffected', [])}
 
 
@@ -309,30 +310,50 @@ def affected(version, advisory):
     return True
 
 
+def advisory_files(tree):
+    """Advisory blob shas per crate ({crate: [sha]}, in file-name order) from the recursive git tree
+    of rustsec/advisory-db. The contents API lists at most 1000 entries of a directory and ignores
+    paging, so it cannot list crates/; the tree lists every path unless GitHub truncates it."""
+    if not tree:
+        raise RuntimeError('rustsec/advisory-db tree could not be fetched')
+    if tree.get('truncated'):
+        raise RuntimeError('rustsec/advisory-db tree is truncated: advisories would be missed')
+    files = {}
+    for entry in tree['tree']:
+        parts = entry['path'].split('/')
+        if entry['type'] == 'blob' and len(parts) == 3 and parts[0] == 'crates' and parts[2].endswith('.md'):
+            files.setdefault(parts[1], []).append((parts[2], entry['sha']))
+    return {crate: [sha for _name, sha in sorted(entries)] for crate, entries in files.items()}
+
+
 def collect_advisories(lock_pkgs):
-    listing = gh_pages('repos/rustsec/advisory-db/contents/crates', limit=12)
-    advised = {entry['name'] for entry in listing if entry['type'] == 'dir'}
+    files_by_crate = advisory_files(gh('repos/rustsec/advisory-db/git/trees/main?recursive=1'))
     by_name = {}
     for p in lock_pkgs:
         by_name.setdefault(p['name'], set()).add(p['version'])
-    hits = sorted(advised & set(by_name))
-    findings = []
+    hits = sorted(set(files_by_crate) & set(by_name))
+    findings, withdrawn, unreadable = [], [], []
     for name in hits:
-        files = gh(f'repos/rustsec/advisory-db/contents/crates/{name}') or []
-        for f in files:
-            if not f['name'].endswith('.md'):
+        for sha in files_by_crate[name]:
+            blob = gh(f'repos/rustsec/advisory-db/git/blobs/{sha}')
+            if not blob:
+                unreadable.append({'crate': name, 'sha': sha, 'reason': 'blob not found'})
                 continue
-            content = gh(f'repos/rustsec/advisory-db/contents/crates/{name}/{f["name"]}')
-            if not content:
-                continue
-            advisory = parse_advisory(base64.b64decode(content['content']).decode('utf-8', 'replace'))
+            advisory = parse_advisory(base64.b64decode(blob['content']).decode('utf-8', 'replace'))
             if not advisory:
+                unreadable.append({'crate': name, 'sha': sha, 'reason': 'front matter does not parse'})
+                continue
+            if advisory['withdrawn']:
+                withdrawn.append(advisory['id'])
                 continue
             for version in sorted(by_name[name]):
                 findings.append({**advisory, 'crate': name, 'version': version, 'affected': affected(version, advisory),
                                  'rustsec_url': f'https://rustsec.org/advisories/{advisory["id"]}.html'})
-    print(f'  advisories: {len(hits)} crate(s) in the lock have entries, {sum(1 for f in findings if f["affected"])} affecting the pinned versions', file=sys.stderr)
-    return {'crates_with_entries': hits, 'findings': findings}
+    print(f'  advisories: {len(hits)} crate(s) in the lock have entries, {sum(1 for f in findings if f["affected"])} affecting the pinned versions, '
+          f'{len(withdrawn)} withdrawn skipped, {len(unreadable)} unreadable', file=sys.stderr)
+    for entry in unreadable:
+        print(f'  advisory {entry["crate"]} {entry["sha"]}: {entry["reason"]}', file=sys.stderr)
+    return {'crates_with_entries': hits, 'findings': findings, 'withdrawn': withdrawn, 'unreadable': unreadable}
 
 
 # ---------------------------------------------------------------- direct deps vs crates.io
