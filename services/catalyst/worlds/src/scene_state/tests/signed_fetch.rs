@@ -336,6 +336,21 @@ async fn signed_fetch_pipeline_signs_caps_and_confines_requests() {
     let authoritative = Wallet::from_hex(AUTHORITATIVE_KEY).unwrap();
     let trusted = vec![authoritative.address()];
     let wire_scope = header("x-authoritative-scope").unwrap();
+    let decoded_scope = BASE64.decode(&wire_scope).unwrap();
+    assert_eq!(BASE64.encode(&decoded_scope), wire_scope);
+    let scope: serde_json::Value = serde_json::from_slice(&decoded_scope).unwrap();
+    let expiration = scope["payload"]
+        .as_str()
+        .unwrap()
+        .lines()
+        .find_map(|line| line.strip_prefix("Expiration: "))
+        .unwrap();
+    assert_eq!(
+        chrono::DateTime::parse_from_rfc3339(expiration)
+            .unwrap()
+            .to_rfc3339(),
+        expiration
+    );
     fn target<'a>(
         signer: &'a str,
         world: &'a str,

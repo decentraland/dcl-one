@@ -528,8 +528,21 @@ mod tests {
             Utc::now(),
         )
         .unwrap();
-        let raw: serde_json::Value =
-            serde_json::from_slice(&BASE64.decode(&encoded).unwrap()).unwrap();
+        let decoded = BASE64.decode(&encoded).unwrap();
+        assert_eq!(BASE64.encode(&decoded), encoded);
+        let raw: serde_json::Value = serde_json::from_slice(&decoded).unwrap();
+        let expiration = raw["scope"]["payload"]
+            .as_str()
+            .unwrap()
+            .lines()
+            .find_map(|line| line.strip_prefix("Expiration: "))
+            .unwrap();
+        assert_eq!(
+            DateTime::parse_from_rfc3339(expiration)
+                .unwrap()
+                .to_rfc3339(),
+            expiration
+        );
         assert_eq!(raw["v"], 1);
         assert!(
             raw["ephemeral"]["publicKey"]
@@ -538,6 +551,10 @@ mod tests {
                 .starts_with("0x04")
         );
         let d = parse_storage_delegation(&encoded).unwrap();
+        assert_eq!(
+            BASE64.encode(BASE64.decode(&d.scope_header).unwrap()),
+            d.scope_header
+        );
         assert_eq!(
             (d.world.as_str(), d.scene_id.as_str(), d.parcel.as_str()),
             (WORLD, SCENE_ID, PARCEL)
