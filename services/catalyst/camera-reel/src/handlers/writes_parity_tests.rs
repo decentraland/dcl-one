@@ -248,7 +248,7 @@ async fn headers(
 }
 
 #[tokio::test]
-async fn camera_auth_accepts_current_and_legacy_raw_metadata_without_a_scene_gate() {
+async fn camera_auth_accepts_raw_metadata_and_refuses_the_scene_signer_on_writes() {
     let pool = sqlx::postgres::PgPoolOptions::new()
         .acquire_timeout(Duration::from_millis(20))
         .connect_lazy("postgres://unused:unused@127.0.0.1/unused")
@@ -267,23 +267,33 @@ async fn camera_auth_accepts_current_and_legacy_raw_metadata_without_a_scene_gat
             let (headers, address) =
                 headers(metadata, &timestamp, legacy, "post", "/api/images").await;
             assert_eq!(
-                state.require_auth(&headers, "post", &path).await.unwrap(),
-                address
+                state.optional_auth(&headers, "post", &path).await,
+                Some(address.clone()),
+                "a read serves {metadata:?} as its signer"
             );
+            let write = state.require_auth(&headers, "post", &path).await;
+            if metadata.contains("decentraland-kernel-scene") {
+                assert!(
+                    matches!(write, Err(ApiError::SignedFetchUnauthorized)),
+                    "a scene's write: {metadata:?}"
+                );
+            } else {
+                assert_eq!(write.unwrap(), address);
+            }
         }
     }
     tokio::fs::remove_dir_all(dir).await.unwrap();
 }
 
 #[tokio::test]
-async fn camera_auth_requires_metadata_and_bounds_the_timestamp_to_a_minute_either_side() {
+async fn camera_auth_requires_metadata_and_uses_a_one_minute_one_sided_expiry() {
     let pool = sqlx::postgres::PgPoolOptions::new()
         .acquire_timeout(Duration::from_millis(20))
         .connect_lazy("postgres://unused:unused@127.0.0.1/unused")
         .unwrap();
     let (state, dir) = state(pool).await;
     let path = crate::SignedPath::local("/api/images");
-    for (offset_ms, accepted) in [(-120_000, false), (30_000, true), (86_400_000, false)] {
+    for (offset_ms, accepted) in [(-120_000, false), (30_000, true), (86_400_000, true)] {
         let timestamp = (chrono::Utc::now().timestamp_millis() + offset_ms).to_string();
         let (headers, _) = headers("{}", &timestamp, false, "post", "/api/images").await;
         assert_eq!(

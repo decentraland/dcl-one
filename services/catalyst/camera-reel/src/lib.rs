@@ -10,9 +10,16 @@
 //! `auth::hash_bytes_v1` hash. The wire URLs retain the upload's UUID and
 //! basename under the literal configured `api_url`; reserved filename characters
 //! are not URL-escaped. Rows without a retained basename keep hash URLs.
-//! Signed fetch uses the shared signature primitives with a one-minute
-//! expiration, mandatory raw metadata, the 6.x payload followed by legacy
-//! fallback, and the process's EIP-1654 validator. World names resolve through
+//! Signed fetch goes through the shared verifier under the camera-reel
+//! profiles (`shared::signed_fetch::VerificationProfile::camera_reel_read` and
+//! `camera_reel_write`: upstream's dcl-crypto-middleware-rs rules, a signature
+//! at most 60 s old and never too new, mandatory raw metadata, the 6.x payload
+//! followed by the unguarded legacy one) with the process's EIP-1654
+//! validator; every chain link must carry a signature string, as the source's
+//! parser requires. A write whose metadata names the scene signer
+//! `decentraland-kernel-scene` under any spelling, or whose lowercased bytes
+//! contain it, is refused (upstream never checks it); a read serves a scene's
+//! request as its signer, as upstream does. World names resolve through
 //! local `explore.place_indexed` reads ([`db::Database::world_place_ids`]).
 //!
 //! Every write route goes behind `CREATE_WRITES_ENABLED` ([`writes`];
@@ -123,14 +130,8 @@ use sqlx::PgPool;
 
 use crate::auth::eip1654::Eip1654Validator;
 use crate::content::Denylist;
-use crate::shared::signed_fetch::{self, SignedFetchError};
+use crate::shared::signed_fetch::{self, SignedFetchError, VerificationProfile};
 use crate::storage::Storage;
-
-const SIGNED_TIMESTAMP_FUTURE_SKEW_MS: u128 = 60_000;
-
-fn signed_timestamp_is_too_far_in_future(signed_at_ms: u128, now_ms: u128) -> bool {
-    signed_at_ms > now_ms.saturating_add(SIGNED_TIMESTAMP_FUTURE_SKEW_MS)
-}
 
 use http::ApiError;
 
@@ -253,82 +254,52 @@ impl State {
         headers: &HeaderMap,
         method: &str,
         path: &SignedPath,
+        profile: VerificationProfile,
     ) -> Result<String, SignedFetchError> {
-        use crate::auth::signed_fetch::{LegacyPayload, SignatureRefusal, SignedRequest};
-
-        let chain = signed_fetch::extract_auth_chain(headers)?;
         // The source chain parser requires a string signature on every link,
         // including the SIGNER's normally empty field. Shared extraction is
         // more permissive for other services, so enforce Camera's wire shape here.
+        let chain = signed_fetch::extract_auth_chain(headers)?;
         if chain.iter().any(|link| link.signature.is_none()) {
             return Err(SignedFetchError::MalformedChain {
                 detail: "missing auth link signature".to_owned(),
             });
         }
-        let timestamp = signed_fetch::header_str(headers, signed_fetch::AUTH_TIMESTAMP_HEADER)
-            .ok_or_else(|| SignedFetchError::InvalidTimestamp(String::new()))?;
-        let signed_at = timestamp
-            .parse::<u128>()
-            .map_err(|_| SignedFetchError::InvalidTimestamp(timestamp.to_owned()))?;
-        let metadata = signed_fetch::header_str(headers, signed_fetch::AUTH_METADATA_HEADER)
-            .ok_or_else(|| SignedFetchError::MalformedChain {
-                detail: "missing metadata".to_owned(),
-            })?;
-        let now = chrono::Utc::now();
-        if signed_at.saturating_add(60_000) < now.timestamp_millis() as u128 {
-            return Err(SignedFetchError::Expired {
-                signed_at: (signed_at / 1000).min(i64::MAX as u128) as i64,
-                now: now.timestamp(),
-                window_secs: 60,
-            });
-        }
-        if signed_timestamp_is_too_far_in_future(signed_at, now.timestamp_millis() as u128) {
-            return Err(SignedFetchError::InvalidTimestamp(timestamp.to_owned()));
-        }
-
-        // Camera authorization uses the recovered address only. Metadata is
-        // mandatory signed text; it does not grant or restrict access.
-        let paths = signed_fetch::candidate_paths(headers, path);
-        let request = SignedRequest {
+        let signer = signed_fetch::require_signer_with(
+            headers,
             method,
-            paths: &paths,
-            timestamp,
-            metadata,
-        };
-        crate::auth::signed_fetch::verify_signature(
-            &chain,
-            &request,
-            now.timestamp(),
-            LegacyPayload::Accepted,
+            path,
+            &profile,
             self.eip1654.as_deref(),
         )
-        .await
-        .map_err(|error| match error {
-            SignatureRefusal::Invalid(Some(error)) | SignatureRefusal::Settled(error) => {
-                signed_fetch::map_auth_error(error)
-            }
-            SignatureRefusal::Invalid(None) | SignatureRefusal::LegacyKeysNotCanonical => {
-                SignedFetchError::InvalidSignature("invalid signature".to_owned())
-            }
-        })?;
-        Ok(chain[0].payload.to_lowercase())
+        .await?;
+        Ok(signer.as_str().to_owned())
     }
 
-    /// The verified signer of a write; every refusal is 401.
+    /// The verified signer of a write; every refusal is 401, a request a
+    /// scene signed included.
     pub async fn require_auth(
         &self,
         headers: &HeaderMap,
         method: &str,
         path: &SignedPath,
     ) -> Result<String, ApiError> {
-        self.verify(headers, method, path).await.map_err(|e| {
+        self.verify(
+            headers,
+            method,
+            path,
+            VerificationProfile::camera_reel_write(),
+        )
+        .await
+        .map_err(|e| {
             tracing::debug!(error = %e, "auth chain verification failed");
             ApiError::SignedFetchUnauthorized
         })
     }
 
     /// The signer of a read that widens for its owner: no chain, or one that
-    /// does not verify, reads as anonymous.
+    /// does not verify, reads as anonymous. A scene's request is served as
+    /// its signer, as upstream serves it.
     pub async fn optional_auth(
         &self,
         headers: &HeaderMap,
@@ -336,7 +307,15 @@ impl State {
         path: &SignedPath,
     ) -> Option<String> {
         headers.get(format!("{}0", signed_fetch::AUTH_CHAIN_HEADER_PREFIX))?;
-        match self.verify(headers, method, path).await {
+        match self
+            .verify(
+                headers,
+                method,
+                path,
+                VerificationProfile::camera_reel_read(),
+            )
+            .await
+        {
             Ok(signer) => Some(signer),
             Err(e) => {
                 tracing::debug!(error = %e, "optional auth chain verification failed");
