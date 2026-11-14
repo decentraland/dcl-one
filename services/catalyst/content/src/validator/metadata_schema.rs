@@ -18,6 +18,7 @@ use serde_json::{Map, Value};
 
 use super::error::ValidationResponse;
 use super::types::*;
+use crate::entity::is_ipfs_v2;
 
 type Check = Result<(), String>;
 type Obj = Map<String, Value>;
@@ -213,11 +214,6 @@ fn pattern(v: &Value, p: &str, matches: fn(&str) -> bool) -> Check {
 
 fn is_eth_address(s: &str) -> bool {
     s.len() == 42 && s.starts_with("0x") && s[2..].bytes().all(|b| b.is_ascii_hexdigit())
-}
-
-/// `^(ba)[a-zA-Z0-9]{57}$`
-fn is_snapshot_hash(s: &str) -> bool {
-    s.len() == 59 && s.starts_with("ba") && s.bytes().all(|b| b.is_ascii_alphanumeric())
 }
 
 /// `^(?:https?):\/\/[^\s/$.?#].[^\s]*$` with the JS `u` flag.
@@ -428,8 +424,8 @@ fn avatar_body(v: &Value, p: &str) -> Check {
     })?;
     nullable(m, "snapshots", p, |v, p| {
         let m = obj(v, p)?;
-        required(m, "face256", p, |v, p| pattern(v, p, is_snapshot_hash))?;
-        required(m, "body", p, |v, p| pattern(v, p, is_snapshot_hash))
+        required(m, "face256", p, |v, p| pattern(v, p, is_ipfs_v2))?;
+        required(m, "body", p, |v, p| pattern(v, p, is_ipfs_v2))
     })
 }
 

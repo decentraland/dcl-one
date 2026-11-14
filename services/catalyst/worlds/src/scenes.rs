@@ -14,6 +14,7 @@ use serde_json::{Value, json};
 use super::SharedState;
 use super::queries::{self, SceneFilters};
 use crate::comms::world_identity::Parcel;
+use crate::content::entity::is_ipfs_v2;
 use crate::core::http::{ApiError, QueryPairs, authorized_deployer, pagination, query_param};
 
 #[derive(Debug, Serialize)]
@@ -307,16 +308,11 @@ fn js_number(v: &str) -> Option<f64> {
     t.parse::<f64>().ok().filter(|n| n.is_finite())
 }
 
-/// `IPFSv2.validate`: `^(ba)[a-zA-Z0-9]{57}$`.
-fn is_cid_v1(id: &str) -> bool {
-    id.len() == 59 && id.starts_with("ba") && id.bytes().all(|b| b.is_ascii_alphanumeric())
-}
-
 fn filters(q: &QueryPairs, coordinates: Vec<String>) -> Result<SceneFilters, ApiError> {
     let bounding_box = bounding_box(q)?;
     let authorized_deployer = authorized_deployer(q)?;
     let entity_id = match query_param(q, "entity_id") {
-        Some(id) if !is_cid_v1(id) => {
+        Some(id) if !is_ipfs_v2(id) => {
             return Err(ApiError::bad_request(format!(
                 "Invalid entity_id: {id}. Must be a valid IPFS CIDv1."
             )));

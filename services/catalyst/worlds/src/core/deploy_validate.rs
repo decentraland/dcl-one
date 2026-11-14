@@ -7,6 +7,7 @@ use std::collections::BTreeMap;
 use serde_json::{Value, json};
 
 use crate::auth::{canonicalize_pointer, is_canonical_pointer, parse_pointer};
+use crate::content::entity::{is_ipfs_v1, is_ipfs_v2};
 
 pub(super) const MAX_ENTITY_FILE_SIZE_BYTES: usize = 5 * 1024 * 1024;
 
@@ -117,11 +118,7 @@ pub(super) fn entity_file_too_large_error() -> String {
 
 /// `@dcl/schemas` `IPFSv1` / `IPFSv2`.
 fn is_ipfs_hash(s: &str) -> bool {
-    let tail_ok = |tail: &str, len: usize| {
-        tail.len() == len && tail.bytes().all(|b| b.is_ascii_alphanumeric())
-    };
-    s.strip_prefix("Qm").is_some_and(|t| tail_ok(t, 44))
-        || s.strip_prefix("ba").is_some_and(|t| tail_ok(t, 57))
+    is_ipfs_v1(s) || is_ipfs_v2(s)
 }
 
 /// `uniqueItems` over string items, scanned from the end as ajv does.

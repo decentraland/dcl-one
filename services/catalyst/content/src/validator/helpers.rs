@@ -2,10 +2,6 @@ use std::collections::HashMap;
 
 use super::types::*;
 
-pub(super) fn is_ipfs_v2_hash(hash: &str) -> bool {
-    hash.starts_with("bafy") || hash.starts_with("bafk")
-}
-
 pub(super) fn should_validate_face_thumbnail(
     entity: &Entity,
     files: &HashMap<String, bytes::Bytes>,
