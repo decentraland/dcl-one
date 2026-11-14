@@ -3,7 +3,9 @@ pub mod bevy_variants;
 pub mod content_hash;
 mod debug_panel;
 mod download;
+mod failed_remotes;
 use download::{InFlightDownloads, RequestMetrics};
+use failed_remotes::{FailedRemotes, Repeat};
 mod priority_gate;
 pub use priority_gate::{PriorityGate, Ticket};
 #[cfg(feature = "ipfs_debug")]
@@ -971,7 +973,6 @@ pub struct IpfsContext {
     entities: HashMap<String, IpfsEntity>,
     about: Option<ServerAbout>,
     modifiers: HashMap<String, IpfsModifier>,
-    failed_remotes: HashMap<String, Instant>,
     num_slots: usize,
 }
 
@@ -1068,6 +1069,8 @@ pub struct IpfsIo {
     client: reqwest::Client,
     // downloads under way, by url (`share_download`)
     in_flight: InFlightDownloads,
+    // urls that failed, answered from memory on a repeat request (`failed_remotes`)
+    failed_remotes: std::sync::Mutex<FailedRemotes>,
     pub(crate) bevy_variants: bevy_variants::BevyVariants,
     #[cfg(feature = "ipfs_debug")]
     debug_overlay_sender: tokio::sync::mpsc::UnboundedSender<IpfsDebug>,
@@ -1111,6 +1114,7 @@ impl IpfsIo {
                 .build()
                 .unwrap(),
             in_flight: Default::default(),
+            failed_remotes: Default::default(),
             bevy_variants: Default::default(),
             #[cfg(feature = "ipfs_debug")]
             debug_overlay_sender,
@@ -2101,7 +2105,6 @@ impl IpfsIo {
                 return Ok(Box::new(VecReader::new(data)));
             }
 
-            let fail_time = context.failed_remotes.get(&remote).cloned();
             drop(context);
 
             // loopback content is local already, and a preview server's is mutable: never cached
@@ -2124,20 +2127,34 @@ impl IpfsIo {
                 }
             }
 
-            if let Some(fail_time) = fail_time {
-                // wait 10 secs before retrying failed assets
-                if self.is_preview
-                    || Instant::now()
-                        .checked_duration_since(fail_time)
-                        .unwrap_or_default()
-                        > Duration::from_secs(10)
-                {
-                    self.context.write().await.failed_remotes.remove(&remote);
+            // a failure is answered from memory for the retry window, or for the session when the
+            // server said a content hash's url is wrong; preview always asks again
+            let repeat = {
+                let mut failed = self
+                    .failed_remotes
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                if self.is_preview {
+                    failed.forget(&remote);
+                    None
                 } else {
-                    return ipfs_io_read_state.send_failure(Err(AssetReaderError::Io(Arc::new(
-                        std::io::Error::other(format!("(repeat request for failed `{remote}`)")),
-                    ))));
+                    failed.repeat(
+                        &remote,
+                        Instant::now(),
+                        matches!(cache_key, Some(CacheKey::Content(_))),
+                    )
                 }
+            };
+            if let Some(repeat) = repeat {
+                let message = match repeat {
+                    Repeat::Recent => format!("(repeat request for failed `{remote}`)"),
+                    Repeat::Session(status) => format!(
+                        "(repeat request for `{remote}`, which answered {status} earlier this session)"
+                    ),
+                };
+                return ipfs_io_read_state.send_failure(Err(AssetReaderError::Io(Arc::new(
+                    std::io::Error::other(message),
+                ))));
             }
 
             // the scene the file belongs to decides its place in the request slot queue
