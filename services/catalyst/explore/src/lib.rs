@@ -33,6 +33,7 @@ pub mod mirror_state;
 pub mod moderation_hooks;
 pub mod opensea;
 pub mod places;
+pub mod rate;
 pub mod sanitize;
 pub mod schema_functions;
 pub mod validate;
@@ -179,6 +180,11 @@ pub struct Settings {
     pub jump_in_site_url: String,
     /// Backend asset mount derived from the node public URL, never the events website.
     pub events_asset_base_url: String,
+    /// `PUBLIC_URL`: this node's own origin; issued URLs (report uploads)
+    /// are built on it, never on request headers.
+    pub public_url: String,
+    /// `HTTP_TRUSTED_PROXY_CIDRS`: peers whose `X-Real-IP` names the client.
+    pub trusted_proxy_cidrs: Vec<ipnet::IpNet>,
     /// This node's realm name, the `serverName` a place's `realms_detail`
     /// carries.
     pub realm_name: String,
@@ -252,6 +258,8 @@ impl Settings {
             events_base_url: "https://events.decentraland.org".to_string(),
             jump_in_site_url: "https://decentraland.org/jump".to_string(),
             events_asset_base_url: Self::events_asset_base_for("http://localhost"),
+            public_url: "http://localhost".to_string(),
+            trusted_proxy_cidrs: Vec::new(),
             realm_name: "main".to_string(),
         }
     }
@@ -880,8 +888,16 @@ pub fn router(state: SharedState) -> Router {
         )
         .route("/api/reports", get(pr::get_reports))
         .route("/api/reports/{id}", patch(pr::patch_report))
-        .route("/api/report", post(pr::post_report))
-        .route("/api/report/upload/{filename}", put(pr::put_report_upload))
+        .route(
+            "/api/report",
+            post(pr::post_report)
+                .layer(axum::extract::DefaultBodyLimit::max(pr::REPORT_BODY_LIMIT)),
+        )
+        .route(
+            "/api/report/upload/{filename}",
+            put(pr::put_report_upload)
+                .layer(axum::extract::DefaultBodyLimit::max(pr::UPLOAD_BODY_LIMIT)),
+        )
         .route(
             "/v1/destinations",
             get(pv1::get_v1_destinations_list).post(destinations::post_v1_destinations_list),

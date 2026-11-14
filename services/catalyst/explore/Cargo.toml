@@ -29,6 +29,7 @@ bytes.workspace = true
 uuid.workspace = true
 tokio-util.workspace = true
 dashmap.workspace = true
+ipnet.workspace = true
 parking_lot.workspace = true
 hex.workspace = true
 libc.workspace = true

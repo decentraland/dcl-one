@@ -616,9 +616,57 @@ pub async fn update_request_status(
         return CommError::not_found(format!("Community request not found: {request_id}"))
             .into_response();
     };
-    let self_caller = member_address == signer;
+    if let Some(refused) =
+        request_authority(&state, uuid, &signer, &member_address, &kind, status).await
+    {
+        return refused;
+    }
+    let mut guard = try_resp!(map_db(acquire_membership(&state.pool, uuid).await));
+    if status == "accepted" {
+        let banned: Option<bool> = try_resp!(map_db(
+            sqlx::query_scalar("SELECT active FROM social.community_bans WHERE community_id = $1 AND banned_address = $2")
+                .bind(uuid)
+                .bind(&member_address)
+                .fetch_optional(&mut *guard)
+                .await
+        ));
+        if banned.unwrap_or(false) {
+            return err_json(
+                StatusCode::UNAUTHORIZED,
+                format!("The user {member_address} is banned from the community {uuid}"),
+            );
+        }
+    }
+    try_resp!(transition_request(&mut guard, uuid, req_uuid, &member_address, status).await);
+    drop(guard);
+    request_settled(
+        &state,
+        uuid,
+        (req_uuid, &request_id),
+        &member_address,
+        &kind,
+        status,
+        &signer,
+    )
+    .await;
+    StatusCode::NO_CONTENT.into_response()
+}
+
+/// Who may settle a pending request, shared by the client route and the
+/// federated update: the invitee accepts or rejects an invite and a manager
+/// cancels it; the requester cancels a request to join and a manager accepts
+/// or rejects it. Answers the refusal.
+pub(super) async fn request_authority(
+    state: &super::State,
+    community: CommunityId,
+    signer: &Address,
+    member: &Address,
+    kind: &str,
+    status: &str,
+) -> Option<Response> {
+    let self_caller = member == signer;
     let manager_check = || async {
-        let standing = load_client_standing(&state, uuid, &signer)
+        let standing = load_client_standing(state, community, signer)
             .await
             .map_err(|e| *e)?;
         if standing.has(CommunityPermission::AcceptRequests)
@@ -632,7 +680,7 @@ pub async fn update_request_status(
             ))
         }
     };
-    let auth_err: Option<Response> = match (kind.as_str(), status) {
+    match (kind, status) {
         ("invite", "cancelled") => {
             if self_caller {
                 Some(err_json(
@@ -674,53 +722,42 @@ pub async fn update_request_status(
             }
         }
         _ => None,
-    };
-    if let Some(e) = auth_err {
-        return e;
     }
-    let mut guard = try_resp!(map_db(acquire_membership(&state.pool, uuid).await));
-    if status == "accepted" {
-        let banned: Option<bool> = try_resp!(map_db(
-            sqlx::query_scalar("SELECT active FROM social.community_bans WHERE community_id = $1 AND banned_address = $2")
-                .bind(uuid)
-                .bind(&member_address)
-                .fetch_optional(&mut *guard)
-                .await
-        ));
-        if banned.unwrap_or(false) {
-            return err_json(
-                StatusCode::UNAUTHORIZED,
-                format!("The user {member_address} is banned from the community {uuid}"),
-            );
-        }
-    }
-    try_resp!(transition_request(&mut guard, uuid, req_uuid, &member_address, status).await);
-    drop(guard);
+}
+
+/// What follows a settled request on either route: analytics, the member's
+/// status and the notification.
+pub(super) async fn request_settled(
+    state: &super::State,
+    community: CommunityId,
+    (request_id, request_label): (Uuid, &str),
+    member: &Address,
+    kind: &str,
+    status: &str,
+    caller: &Address,
+) {
     if status == "rejected" || status == "cancelled" {
         let event = if status == "rejected" {
             "REJECT_COMMUNITY_REQUEST"
         } else {
             "CANCEL_COMMUNITY_REQUEST"
         };
-        state.fire_analytics(event,json!({"request_id":request_id,"community_id":uuid.as_uuid(),"type":kind,"member_address":member_address.as_str(),"caller_address":signer.as_str()}));
+        state.fire_analytics(event,json!({"request_id":request_label,"community_id":community.as_uuid(),"type":kind,"member_address":member.as_str(),"caller_address":caller.as_str()}));
     }
 
     if status == "accepted" {
         // upstream `updateRequestStatus`: the member joined, ONLINE to the
         // members
-        state
-            .member_status_changed(uuid, &member_address, true)
-            .await;
+        state.member_status_changed(community, member, true).await;
     }
-    notify_request(&state, uuid, req_uuid, &member_address, &kind, status).await;
-    StatusCode::NO_CONTENT.into_response()
+    notify_request(state, community, request_id, member, kind, status).await;
 }
 
 /// Upstream `notifyStakeholdersAboutRequest` (`logic/community/requests.ts`
 /// at `b6b2cef`): a pending request to join reaches the owner and the
 /// moderators, an accepted one the requester, a pending invite the invitee.
 async fn notify_request(
-    state: &SharedState,
+    state: &super::State,
     community_id: CommunityId,
     request_id: Uuid,
     member: &Address,
@@ -776,7 +813,7 @@ async fn notify_request(
 /// Decide a pending request once, consuming it as upstream does. The delete
 /// serializes competing decisions; acceptance removes every request for the
 /// pair in the same transaction as its membership insert.
-async fn transition_request(
+pub(super) async fn transition_request(
     connection: &mut sqlx::PgConnection,
     community: CommunityId,
     request: Uuid,

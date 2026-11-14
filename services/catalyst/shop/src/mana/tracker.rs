@@ -73,6 +73,63 @@ fn word_u256(word: &[u8]) -> Option<U256> {
     (word.len() == 32).then(|| U256::from_be_slice(word))
 }
 
+/// The settlement key marking a row whose transaction another wallet sent;
+/// the sender's own report may claim the row again.
+pub const SENDER_MISMATCH: &str = "senderMismatch";
+
+/// Whether `actor` sent the transaction: directly, or as the signer of the
+/// meta-transaction it carries.
+pub fn sent_by(actor: Address, from: Address, input: &[u8]) -> bool {
+    from == actor
+        || crate::evm::abi::decode_meta_tx_full(input).is_some_and(|m| m.user_address == actor)
+}
+
+/// `Approval(address,address,uint256)`.
+const TOPIC_APPROVAL: &str = "0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925";
+
+/// Whether the receipt carries an event from the row's own MANA token or
+/// token contract that names `actor`: MANA sent by it, a MANA approval it
+/// owns (`approve_mana`), or the row's token moving from or to it. Logs from
+/// any other contract never count.
+pub fn names_actor(row: &ExecutionRow, receipt: &Receipt, actor: Address) -> bool {
+    // A cancellation emits no event naming the canceller's wallet.
+    if matches!(
+        row.kind.as_str(),
+        "cancel_trade" | "cancel_order" | "cancel_rental"
+    ) {
+        return false;
+    }
+    let proof = proof_of(row, receipt, actor);
+    if !proof.mana_out.is_zero()
+        || proof
+            .token_moves
+            .iter()
+            .any(|(f, t)| *f == actor || *t == actor)
+    {
+        return true;
+    }
+    let mana: Option<Address> = row.mana_token.as_deref().and_then(|m| m.parse().ok());
+    row.kind == "approve_mana"
+        && mana.is_some()
+        && receipt.logs.iter().any(|log| {
+            Some(log.address) == mana
+                && log.topics.len() == 3
+                && log.topics.first().map(topic_hex).as_deref() == Some(TOPIC_APPROVAL)
+                && topic_address(&log.topics[1]) == actor
+        })
+}
+
+/// A transaction another key sent counts for `actor` only when `actor` is a
+/// contract (an EOA cannot delegate) and a trusted event names it.
+pub fn contract_wallet_settles(
+    actor_has_code: bool,
+    row: &ExecutionRow,
+    receipt: &Receipt,
+    actor: Address,
+) -> bool {
+    actor_has_code && names_actor(row, receipt, actor)
+}
+
 /// What a receipt's logs prove about a settlement.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Proof {
@@ -593,7 +650,64 @@ pub async fn step(
         .await?;
         return Ok("reverted");
     }
-    let payer: Address = row.actor.parse().unwrap_or(receipt.from);
+    let actor: Address = row.actor.parse().unwrap_or(receipt.from);
+    if receipt.from != actor {
+        let input = match reader.transaction_input(&row.tx_hash).await {
+            Ok(Some(input)) => input,
+            Ok(None) | Err(_) => {
+                advance(
+                    &state.pool,
+                    row.id,
+                    &row.status,
+                    &stay(Some("the transaction could not be read".into()), "mined"),
+                    now,
+                )
+                .await?;
+                return Ok("rpc-error");
+            }
+        };
+        let accepted = if sent_by(actor, receipt.from, &input) {
+            true
+        } else {
+            // A contract wallet's owner sends for it; only trusted events naming it count.
+            match reader.has_code(actor).await {
+                Ok(has_code) => contract_wallet_settles(has_code, row, &receipt, actor),
+                Err(_) => {
+                    advance(
+                        &state.pool,
+                        row.id,
+                        &row.status,
+                        &stay(Some("the actor's code could not be read".into()), "mined"),
+                        now,
+                    )
+                    .await?;
+                    return Ok("rpc-error");
+                }
+            }
+        };
+        if !accepted {
+            advance(
+                &state.pool,
+                row.id,
+                &row.status,
+                &Advance {
+                    status: "mismatch",
+                    block_number: Some(receipt.block_number as i64),
+                    confirmed_by: Some("receipt"),
+                    settlement: Some(json!({
+                        (SENDER_MISMATCH): true,
+                        "mismatches": ["the transaction was not sent by the reporting wallet"],
+                    })),
+                    error: None,
+                    next_check_at: now,
+                },
+                now,
+            )
+            .await?;
+            return Ok("mismatch");
+        }
+    }
+    let payer = actor;
     let proof = proof_of(row, &receipt, payer);
     let block = receipt.block_number as i64;
     let (confirmed, by) = match index_confirms(&state.pool, &chain, row, block).await? {
@@ -774,6 +888,26 @@ pub type Shared = SharedState;
 mod tests {
     use super::*;
 
+    #[test]
+    fn only_the_sender_or_its_meta_transaction_signer_reported_the_hash() {
+        use alloy_sol_types::SolCall;
+        let (actor, relayer) = (Address::repeat_byte(0xa1), Address::repeat_byte(0xee));
+        assert!(sent_by(actor, actor, &[]));
+        assert!(!sent_by(actor, relayer, &[]));
+        let meta = |user: Address| {
+            crate::evm::abi::executeMetaTransactionCall {
+                userAddress: user,
+                functionSignature: vec![0u8; 4].into(),
+                sigR: Default::default(),
+                sigS: Default::default(),
+                sigV: 27,
+            }
+            .abi_encode()
+        };
+        assert!(sent_by(actor, relayer, &meta(actor)));
+        assert!(!sent_by(actor, relayer, &meta(relayer)));
+    }
+
     fn row(kind: &str, price: Option<&str>) -> ExecutionRow {
         let now = Utc::now().naive_utc();
         ExecutionRow {
@@ -848,6 +982,79 @@ mod tests {
         assert_eq!(backoff(1), Duration::from_secs(10));
         assert_eq!(backoff(3), Duration::from_secs(40));
         assert_eq!(backoff(9), Duration::from_secs(60));
+    }
+
+    fn receipt_from(sender: Address, logs: Vec<ReceiptLog>) -> Receipt {
+        Receipt {
+            tx_hash: format!("0x{}", "11".repeat(32)),
+            status: Some(true),
+            block_number: 100,
+            from: sender,
+            to: Some(Address::repeat_byte(0xee)),
+            gas_used: None,
+            logs,
+        }
+    }
+
+    #[test]
+    fn a_contract_wallet_settles_only_on_a_trusted_event_naming_it() {
+        let r = row("accept_trade", Some("1000"));
+        let wallet = Address::repeat_byte(0xb0);
+        let owner = Address::repeat_byte(0x01);
+        let seller = Address::repeat_byte(0x5e);
+        let mana_from = |emitter: Address| {
+            log(
+                emitter,
+                vec![TOPIC_TRANSFER.into(), topic_of(wallet), topic_of(seller)],
+                U256::from(1000u32).to_be_bytes_vec(),
+            )
+        };
+        // A Safe-like wallet: its owner sends, the MANA token moves the wallet's MANA.
+        let paid = receipt_from(owner, vec![mana_from(Address::repeat_byte(0xaa))]);
+        assert!(contract_wallet_settles(true, &r, &paid, wallet));
+        // The same event from any other contract proves nothing.
+        let forged = receipt_from(owner, vec![mana_from(Address::repeat_byte(0x99))]);
+        assert!(!contract_wallet_settles(true, &r, &forged, wallet));
+        // An EOA actor never delegates to another sender.
+        assert!(!contract_wallet_settles(false, &r, &paid, wallet));
+        // A contract actor the receipt never names stays a mismatch.
+        let silent = receipt_from(owner, vec![]);
+        assert!(!contract_wallet_settles(true, &r, &silent, wallet));
+        assert!(
+            !contract_wallet_settles(true, &row("cancel_trade", None), &paid, wallet),
+            "a kind with no event naming the actor fails closed"
+        );
+
+        let approve = row("approve_mana", None);
+        let approval = |emitter: Address| {
+            receipt_from(
+                owner,
+                vec![log(
+                    emitter,
+                    vec![TOPIC_APPROVAL.into(), topic_of(wallet), topic_of(seller)],
+                    U256::from(5u32).to_be_bytes_vec(),
+                )],
+            )
+        };
+        assert!(contract_wallet_settles(
+            true,
+            &approve,
+            &approval(Address::repeat_byte(0xaa)),
+            wallet
+        ));
+        assert!(!contract_wallet_settles(
+            true,
+            &approve,
+            &approval(Address::repeat_byte(0x99)),
+            wallet
+        ));
+        assert_eq!(
+            TOPIC_APPROVAL,
+            format!(
+                "{:#x}",
+                alloy_primitives::keccak256("Approval(address,address,uint256)")
+            )
+        );
     }
 
     #[test]

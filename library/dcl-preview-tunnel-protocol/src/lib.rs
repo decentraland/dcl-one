@@ -56,6 +56,8 @@ pub enum Control {
     End {
         ch: u32,
     },
+    /// May arrive after the channel's `End`, or for a channel the receiver
+    /// already finished; either is a no-op.
     Close {
         ch: u32,
         #[serde(default, skip_serializing_if = "Option::is_none")]
