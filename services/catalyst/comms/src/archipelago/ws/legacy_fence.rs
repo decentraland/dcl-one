@@ -108,14 +108,18 @@ impl LegacyFence {
             assignment_revision: snapshot.assignment_revision,
             fencing_token: snapshot.fencing_token,
         };
-        socket.bind_pulse(Some(stamp.clone()));
-        socket.bind_island_token_fence(token_fence);
-        socket.bind_fence(Some(&self.owner));
-        if !send_packet(
+        let stamp = stamp.clone();
+        if !super::io::send_outgoing(
             socket,
-            server_packet::Message::IslandChanged(project(assignment)),
+            super::io::Outgoing::ConfiguredAssignment {
+                message: axum::extract::ws::Message::Binary(
+                    super::craft(server_packet::Message::IslandChanged(project(assignment))).into(),
+                ),
+                stamp,
+                token_fence,
+                owner: self.owner.clone(),
+            },
             Some(link),
-            &state.feed,
         )
         .await
         {

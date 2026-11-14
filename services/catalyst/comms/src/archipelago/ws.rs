@@ -167,15 +167,21 @@ async fn send_packet(
     socket: &mut WebSocket,
     message: server_packet::Message,
     owner: Option<&PeerLink>,
-    feed: &FeedCache,
+    _feed: &FeedCache,
 ) -> bool {
-    if matches!(message, server_packet::Message::IslandChanged(_)) {
-        socket.delivery(Some(true), true, true);
-    }
-    if matches!(message, server_packet::Message::Kicked(_)) {
-        socket.kick();
-    }
-    io::send(socket, Message::Binary(craft(message).into()), owner, feed).await
+    let outgoing = match message {
+        server_packet::Message::IslandChanged(assignment) => io::Outgoing::Assignment {
+            message: Message::Binary(
+                craft(server_packet::Message::IslandChanged(assignment)).into(),
+            ),
+            stamp: None,
+        },
+        server_packet::Message::Kicked(kick) => io::Outgoing::Kick(Message::Binary(
+            craft(server_packet::Message::Kicked(kick)).into(),
+        )),
+        other => io::Outgoing::Packet(Message::Binary(craft(other).into())),
+    };
+    io::send_outgoing(socket, outgoing, owner).await
 }
 
 fn kicked_packet() -> server_packet::Message {
@@ -293,7 +299,6 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
     loop {
         if let Some(current) = &registration {
             socket.bind_owner(&current.link);
-            socket.bind_fence(current.fence.as_ref().map(|fence| &fence.owner));
         }
         if registration
             .as_ref()
@@ -532,12 +537,13 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
                             state.feed.on_deduplicated();
                             continue;
                         }
-                        socket.bind_pulse(stamp.clone());
-                        if !send_packet(
+                        if !io::send_outgoing(
                             &mut socket,
-                            server_packet::Message::IslandChanged(assignment.clone()),
+                            io::Outgoing::Assignment {
+                                message: Message::Binary(craft(server_packet::Message::IslandChanged(assignment.clone())).into()),
+                                stamp: stamp.clone(),
+                            },
                             registration.as_ref().map(|current| &current.link),
-                            &state.feed,
                         )
                         .await
                         {
