@@ -118,6 +118,7 @@ impl Config {
             let from_file = std::env::var_os(format!("{name}_FILE")).is_some_and(|p| !p.is_empty());
             Self::refuse_plain_signing_key(name, slot.as_deref(), from_file)?;
             Self::read_secret_file(name, slot)?;
+            Self::refuse_short_operator_secret(name, slot.as_deref())?;
         }
         self.default_rpc_urls();
         self.derive_trade_rpc_urls();
@@ -179,6 +180,59 @@ impl Config {
         if !entries.is_empty() {
             self.marketplace.trade_rpc_urls = Some(entries.join(","));
         }
+    }
+
+    /// The fewest bytes an operator secret (an admin bearer, `SESSION_SECRET`) may have.
+    pub const MIN_OPERATOR_SECRET_BYTES: usize = 32;
+
+    /// The operator-chosen secrets that guard this node's own routes (admin
+    /// bearers, service tokens, the console's session key): a short one is
+    /// guessable or brute-forced offline, so startup refuses it. Bearers this
+    /// node sends elsewhere keep their issuer's length.
+    pub const OPERATOR_SECRETS: [&'static str; 26] = [
+        "SESSION_SECRET",
+        "CATALYRST_CONTENT_ADMIN_TOKEN",
+        "COMMUNITIES_ADMIN_TOKEN",
+        "CATALYRST_SOCIAL_RPC_ADMIN_TOKEN",
+        "CATALYRST_NOTIFICATIONS_ADMIN_TOKEN",
+        "CATALYRST_BADGES_ADMIN_TOKEN",
+        "CATALYRST_EVENTS_ADMIN_TOKEN",
+        "CATALYRST_BUILDER_ADMIN_TOKEN",
+        "CATALYRST_CAMERA_REEL_ADMIN_TOKEN",
+        "CATALYRST_WORLDS_ADMIN_TOKEN",
+        "SCENE_HOST_ADMIN_TOKEN",
+        "MARKET_ADMIN_TOKEN",
+        "PRICE_ADMIN_TOKEN",
+        "CATALYRST_ECONOMY_ADMIN_TOKEN",
+        "CATALYRST_CREDITS_ADMIN_TOKEN",
+        "CATALYRST_RPC_ADMIN_TOKEN",
+        "PLACES_ADMIN_AUTH_TOKEN",
+        "MODERATOR_TOKEN",
+        "COMMS_GATEKEEPER_AUTH_TOKEN",
+        "SCENE_HOST_DEBUGGING_SECRET",
+        "NOTIFICATION_SERVICE_TOKEN",
+        "NOTIFICATIONS_GOVERNANCE_TOKEN",
+        "NOTIFICATIONS_REWARDS_TOKEN",
+        "ONBOARDING_API_KEY",
+        "DATA_TEAM_AUTH_TOKEN",
+        "WKC_METRICS_BEARER_TOKEN",
+    ];
+
+    pub fn is_operator_secret(name: &str) -> bool {
+        Self::OPERATOR_SECRETS.contains(&name)
+    }
+
+    fn refuse_short_operator_secret(name: &str, value: Option<&str>) -> anyhow::Result<()> {
+        let Some(value) = value.map(str::trim).filter(|v| !v.is_empty()) else {
+            return Ok(());
+        };
+        if Self::is_operator_secret(name) && value.len() < Self::MIN_OPERATOR_SECRET_BYTES {
+            anyhow::bail!(
+                "{name} is shorter than {} bytes; set a random value (for example `openssl rand -hex 32`)",
+                Self::MIN_OPERATOR_SECRET_BYTES
+            );
+        }
+        Ok(())
     }
 
     fn refuse_plain_signing_key(
@@ -462,6 +516,14 @@ impl Config {
     pub const NETWORK_DEFAULTED_SECRETS: [&'static str; 2] =
         ["ETH_RPC_URL", "RPC_ENDPOINT_POLYGON"];
 
+    /// One secret outside a parsed config: `<NAME>`, else `<NAME>_FILE`'s trimmed contents,
+    /// with the same refusals as [`Config::resolve_secret_files`].
+    pub fn secret_from_env(name: &str) -> anyhow::Result<Option<String>> {
+        let mut slot = std::env::var(name).ok().filter(|v| !v.is_empty());
+        Self::read_secret_file(name, &mut slot)?;
+        Ok(slot)
+    }
+
     fn read_secret_file(name: &str, slot: &mut Option<String>) -> anyhow::Result<()> {
         let file_var = format!("{name}_FILE");
         let Some(path) = std::env::var_os(&file_var).filter(|p| !p.is_empty()) else {
@@ -731,6 +793,103 @@ mod tests {
     /// slot (read from `<NAME>_FILE`, refused on argv). `DATABASE_URL` is the
     /// one hidden non-slot: a required peer-auth DSN `schema apply` and the
     /// tests pass on the command line.
+    #[test]
+    fn short_operator_secrets_are_refused() {
+        let long = "a".repeat(Config::MIN_OPERATOR_SECRET_BYTES);
+        let short = "a".repeat(Config::MIN_OPERATOR_SECRET_BYTES - 1);
+        for name in Config::OPERATOR_SECRETS {
+            let error = Config::refuse_short_operator_secret(name, Some(&short))
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains(name) && !error.contains(&short), "{error}");
+            assert!(Config::refuse_short_operator_secret(name, Some(&long)).is_ok());
+            assert!(Config::refuse_short_operator_secret(name, None).is_ok());
+            assert!(Config::refuse_short_operator_secret(name, Some(" ")).is_ok());
+        }
+        for other in OTHER_SECRETS {
+            assert!(Config::refuse_short_operator_secret(other, Some("x")).is_ok());
+        }
+    }
+
+    /// Secret slots that are not this node's own inbound operator secrets: credentials it
+    /// sends elsewhere, keys and URLs whose shape another party sets.
+    const OTHER_SECRETS: &[&str] = &[
+        // Inbound HMAC key, but Segment issues it: its length is Segment's.
+        "SEGMENT_SIGNING_KEY",
+        "ETH_RPC_URL",
+        "LIVEKIT_API_KEY",
+        "LIVEKIT_API_SECRET",
+        "SLACK_BOT_TOKEN",
+        "ANALYTICS_API_TOKEN",
+        "OPEN_AI_API_KEY",
+        "SENDGRID_API_KEY",
+        // Signs and checks unsubscribe links: rotating a short key breaks links already sent.
+        "SIGNING_KEY",
+        "SLACK_WEBHOOK",
+        "PLACES_MODERATION_WEBHOOK",
+        "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_5",
+        "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_10",
+        "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_20",
+        "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_25",
+        "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_30",
+        "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_50",
+        "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_60",
+        "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_75",
+        "TURNSTILE_SECRET_KEY",
+        "NEWSLETTER_SERVICE_API_KEY",
+        "BUILDER_POLYGON_RPC_URL",
+        "ENCRYPTION_KEY",
+        "SCENE_HOST_AUTHORITATIVE_KEY",
+        "SCENE_HOST_DELEGATION_MINTER_TOKEN",
+        "SCENE_HOST_STORAGE_DELEGATION",
+        "PULSE_ROOM_AUTHORITY_KEY",
+        "RELAYER_PRIVATE_KEY",
+        "OZ_RELAYER_API_KEY",
+        "RPC_ENDPOINT_POLYGON",
+        "TRADE_RPC_URLS",
+        "CREDITS_CAPTCHA_SECRET",
+        "STRIPE_SECRET_KEY",
+        "STRIPE_WEBHOOK_SECRET",
+        "CREDITS_SIGNER_KEY",
+        "CREDITS_REVOKER_KEY",
+        "CREDITS_TRIAL_BUYERS",
+        "RPC_UPSTREAM_MAINNET",
+        "RPC_UPSTREAM_ETHEREUM",
+        "RPC_UPSTREAM_SEPOLIA",
+        "RPC_UPSTREAM_POLYGON",
+        "RPC_UPSTREAM_MATIC",
+        "RPC_UPSTREAM_AMOY",
+        "RPC_UPSTREAM_MUMBAI",
+        "RPC_UPSTREAM_ARBITRUM",
+        "RPC_UPSTREAM_OPTIMISM",
+        "RPC_UPSTREAM_AVALANCHE",
+        "RPC_UPSTREAM_BINANCE",
+        "RPC_UPSTREAM_FANTOM",
+        "AB_REGISTRY_ADMIN_TOKEN",
+        "TRANSLATE_BACKEND_API_KEY",
+        "TRANSLATE_LLM_API_KEY",
+        "THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL",
+    ];
+
+    /// A new secret slot is classified here: an inbound operator secret is length-checked.
+    #[test]
+    fn every_secret_slot_is_classified_once() {
+        let (mut config, _) =
+            Config::parse_with_matches_for_tests(&["catalyst", "--database-url", "postgres://x/y"])
+                .unwrap();
+        let slots: Vec<&str> = config.secret_slots().into_iter().map(|(n, _)| n).collect();
+        for slot in &slots {
+            let operator = Config::OPERATOR_SECRETS.contains(slot);
+            assert!(
+                operator != OTHER_SECRETS.contains(slot),
+                "{slot}: list it in exactly one of OPERATOR_SECRETS and OTHER_SECRETS"
+            );
+        }
+        for name in Config::OPERATOR_SECRETS.iter().chain(OTHER_SECRETS) {
+            assert!(slots.contains(name), "{name} is a secret slot");
+        }
+    }
+
     #[test]
     fn analytics_token_file_resolves_without_exposing_the_secret() {
         const CHILD: &str = "CATALYST_TEST_ANALYTICS_FILE_CHILD";

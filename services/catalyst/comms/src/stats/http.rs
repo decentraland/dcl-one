@@ -66,9 +66,12 @@ impl Settings {
                 .ok()
                 .filter(|s| !s.is_empty())
                 .unwrap_or(defaults.metrics_path),
-            metrics_bearer_token: std::env::var("WKC_METRICS_BEARER_TOKEN")
-                .ok()
-                .filter(|s| !s.is_empty()),
+            // The `_FILE` form too, read as the config's secret slot reads it.
+            metrics_bearer_token: catalyst_config::config::Config::secret_from_env(
+                "WKC_METRICS_BEARER_TOKEN",
+            )
+            .ok()
+            .flatten(),
             content_url: defaults.content_url,
         }
     }
