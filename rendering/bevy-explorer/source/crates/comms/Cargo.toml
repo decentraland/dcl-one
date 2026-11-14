@@ -73,4 +73,8 @@ web-sys = { workspace = true, features = ["HtmlVideoElement"] }
 js-sys = { workspace = true }
 futures-channel = { workspace = true }
 once_cell = { workspace = true }
+dashmap = { workspace = true }
+# dashmap's shard locks park through parking_lot_core; only its `nightly` feature waits with
+# Atomics.wait instead of panicking on contention.
+parking_lot_core = { version = "0.9", features = ["nightly"] }
 gloo-timers = { version = "0.4", features = ["futures"] }
