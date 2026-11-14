@@ -2038,6 +2038,7 @@ dependencies = [
  "hmac 0.13.0",
  "ipnet",
  "k256",
+ "metrics",
  "parking_lot",
  "rand 0.10.3",
  "regex",
