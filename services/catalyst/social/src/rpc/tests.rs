@@ -1337,9 +1337,11 @@ async fn a_former_owner_cannot_start_or_end_voice_chat_in_a_deleted_community() 
 
 #[tokio::test]
 async fn community_voice_start_join_and_ban_semantics() {
-    let Some(pool) = scratch_pool().await else {
+    // Other fixtures' fake media pollers must not clear this room's generation.
+    let Some(database) = fanout::OwnedDatabase::new().await else {
         return;
     };
+    let pool = database.pool.clone();
     let db = Db::new(pool.clone());
     let voice = Arc::new(FakeVoiceRooms::new(pool.clone()));
     let ctx = test_ctx(db.clone(), voice.clone());
@@ -1518,6 +1520,7 @@ async fn community_voice_start_join_and_ban_semantics() {
     );
 
     drop_community(&pool, community).await;
+    database.close().await;
 }
 
 struct Server {
