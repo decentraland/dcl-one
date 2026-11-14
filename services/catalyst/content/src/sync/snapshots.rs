@@ -252,7 +252,7 @@ pub(crate) fn parse_snapshots_response(
                 discarded += 1;
                 if discarded <= MAX_INVALID_SNAPSHOT_LOGS {
                     let mut preview = item.to_string();
-                    preview.truncate(512);
+                    preview.truncate(preview.floor_char_boundary(512));
                     warn!(server, entry = %preview, "Ignoring invalid snapshot metadata entry");
                 }
             }
