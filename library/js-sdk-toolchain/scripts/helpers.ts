@@ -68,23 +68,26 @@ export function patchJson(file: string, cwd: string, redux: (previous: any) => a
   return writeFileSync(path, JSON.stringify(redux(JSON.parse(readFileSync(path).toString())), null, 2))
 }
 
+// The key stays what the code imports (@dcl/ecs); while the packages publish under another scope,
+// the pinned spec is an npm alias to that name.
 export function itInstallsADependencyFromFolderAndCopiesTheVersion(
   cwd: string,
+  key: string,
   depPath: string,
   devDependency = false
 ) {
   const dependencies = devDependency ? 'devDependencies' : 'dependencies'
 
-  itExecutes(`npm install --silent ${depPath}`, cwd)
+  itExecutes(`npm install --silent ${key}@file:${depPath}`, cwd)
 
   it(`update ${dependencies} version ${depPath} in ${cwd}`, () => {
-    const depPackageJson = readJson('package.json', depPath)
+    const { name, version } = readJson('package.json', depPath)
     patchJson('package.json', cwd, ($) => {
       return {
         ...$,
         [dependencies]: {
           ...($[dependencies] || {}),
-          [depPackageJson.name]: depPackageJson.version
+          [key]: name === key ? version : `npm:${name}@${version}`
         }
       }
     })
@@ -94,7 +97,7 @@ export function itInstallsADependencyFromFolderAndCopiesTheVersion(
           ...$,
           dependencies: {
             ...($[dependencies] || {}),
-            [depPackageJson.name]: undefined
+            [key]: undefined
           }
         }
       })

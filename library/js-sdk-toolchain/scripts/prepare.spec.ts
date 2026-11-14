@@ -4,7 +4,7 @@ import { readFile } from 'fs/promises'
 import { resolve } from 'path'
 import { flow, commonChecks } from './common'
 
-import { itExecutes, itInstallsADependencyFromFolderAndCopiesTheVersion, patchJson } from './helpers'
+import { itExecutes, itInstallsADependencyFromFolderAndCopiesTheVersion } from './helpers'
 
 flow('build-all', () => {
   commonChecks()
@@ -35,7 +35,6 @@ flow('build-all', () => {
     for (const dependency of processWithOptimisticDependencies(graph)) {
       const projectDirectory = resolveProjectPath(dependency)
       installCrossDependencies(projectDirectory)
-      pinProtocol(projectDirectory)
       itExecutes('npm pack', projectDirectory)
     }
   })
@@ -122,6 +121,7 @@ function installCrossDependencies(...paths: string[]) {
         if (pathExistsSync(dependencyRootPath)) {
           itInstallsADependencyFromFolderAndCopiesTheVersion(
             path,
+            key,
             dependencyRootPath,
             (devDependencies && key in devDependencies) || false
           )
@@ -129,28 +129,4 @@ function installCrossDependencies(...paths: string[]) {
       }
     }
   }
-}
-
-// @dcl/protocol is the file: link to library/protocol while developing. A packed manifest names
-// the version published from there, which only the caller knows (PROTOCOL_VERSION: the publish
-// job's value, or a self-describing one for tarballs that are not published); there is no
-// fallback, since the folder's own version is not necessarily on npm.
-function pinProtocol(path: string) {
-  const packageJson = resolve(path, 'package.json')
-  const { dependencies } = JSON.parse(readFileSync(packageJson, 'utf-8'))
-  if (!dependencies || !('@dcl/protocol' in dependencies)) return
-  it(`pin @dcl/protocol in ${path}`, () => {
-    const version = process.env.PROTOCOL_VERSION
-    if (!version) {
-      throw new Error(
-        `PROTOCOL_VERSION is unset: set it to the @dcl/protocol version this build is published with ` +
-          `(or e.g. 0.0.0-unpublished.local for tarballs that are not published), so ${path} never packs ` +
-          `the file: link or a version that is not on npm`
-      )
-    }
-    patchJson('package.json', path, ($) => ({
-      ...$,
-      dependencies: { ...$.dependencies, '@dcl/protocol': version }
-    }))
-  })
 }

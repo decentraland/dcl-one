@@ -18,8 +18,9 @@
   "license": "Apache-2.0",
   "main": "./dist/index.js",
   "repository": {
-    "url": "git+https://github.com/decentraland/js-sdk-toolchain",
-    "directory": "packages/@dcl/ecs"
+    "type": "git",
+    "url": "git+https://github.com/decentraland/dcl-one.git",
+    "directory": "library/js-sdk-toolchain/packages/@dcl/ecs"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json && tsc -p tsconfig.cjs.json",

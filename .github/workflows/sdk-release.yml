@@ -1,0 +1,151 @@
+name: SDK release
+# next on every push to main, and a versioned release from a manual run. Both publish the @dcl/*
+# names, and only through the npm-release environment (main only, a repository setting) that the
+# npm trusted publishers require: no other branch's run can use it, whatever its workflow says.
+on:
+  push:
+    branches: [main]
+    paths:
+      - library/js-sdk-toolchain/**
+      - library/protocol/**
+      - .github/workflows/sdk.yml
+      - .github/workflows/sdk-release.yml
+  workflow_dispatch:
+    inputs:
+      version:
+        description: The version to release the five packages as (e.g. 7.34.0, or 7.34.0-rc.1 for a prerelease)
+        type: string
+        required: true
+      notes:
+        description: Text placed at the top of the release notes (optional)
+        type: string
+        default: ''
+permissions:
+  contents: read
+env:
+  SDK_PACKAGES: ecs js-runtime react-ecs sdk-commands sdk
+jobs:
+  check:
+    name: The release version is valid and new
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - if: github.event_name == 'workflow_dispatch'
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          if [ "$GITHUB_REF" != refs/heads/main ]; then
+            echo "SDK releases are cut from main, not $GITHUB_REF" >&2
+            exit 1
+          fi
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "version must be semver without a v prefix, got '$VERSION'" >&2
+            exit 1
+          fi
+          # a version on npm without its tag is a release that stopped midway: the run completes it
+          if git ls-remote --exit-code --tags "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" "refs/tags/sdk-v$VERSION" > /dev/null; then
+            echo "sdk-v$VERSION already exists; pick a new version" >&2
+            exit 1
+          fi
+  build:
+    needs: check
+    uses: ./.github/workflows/sdk.yml
+    with:
+      version: ${{ inputs.version }}
+    # the most sdk.yml's jobs may ask for; its preview job, the one that does, is skipped here
+    permissions:
+      contents: read
+      pull-requests: write
+      id-token: write
+  publish:
+    name: Publish to npm
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    concurrency:
+      group: sdk-publish-${{ github.event_name }}
+      cancel-in-progress: false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: npm-release
+    permissions:
+      id-token: write # npm OIDC trusted publishing — no token secret
+    outputs:
+      version: ${{ steps.publish.outputs.version }}
+    steps:
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24.16.0
+          registry-url: https://registry.npmjs.org
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: sdk-packages-${{ github.sha }}
+          path: dist
+      - name: Publish in dependency order
+        id: publish
+        env:
+          RELEASE: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          manifest() { tar -xOf "$1" package/package.json | node -p 'const p = JSON.parse(require("fs").readFileSync(0, "utf8")); p.name + "@" + p.version'; }
+          first=$(manifest ./dist/*-js-runtime-[0-9]*.tgz)
+          version=${first##*@}
+          if [ -n "$RELEASE" ]; then
+            case "$version" in *-*) tag=rc ;; *) tag=latest ;; esac
+            [ "$version" = "$RELEASE" ] || { echo "packed $first, expected version $RELEASE" >&2; exit 1; }
+          else
+            tag=next
+            [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+-[0-9]+\.commit-[0-9a-f]+$ ]] || { echo "next needs a snapshot version, got $first" >&2; exit 1; }
+          fi
+          for name in $SDK_PACKAGES; do
+            tgz=./dist/dcl-$name-$version.tgz
+            if [ "$(manifest "$tgz")" != "@dcl/$name@$version" ]; then
+              echo "$tgz is not @dcl/$name@$version" >&2
+              exit 1
+            fi
+          done
+          # a rerun repeats the version, so packages already on npm are skipped
+          for name in $SDK_PACKAGES; do
+            if npm view "@dcl/$name@$version" version > /dev/null 2>&1; then
+              echo "@dcl/$name@$version is already on npm; skipping"
+            else
+              # ./ keeps npm from reading dist/<file> as a GitHub owner/repo shorthand
+              npm publish "./dist/dcl-$name-$version.tgz" --access public --tag "$tag" --registry https://registry.npmjs.org
+            fi
+          done
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+  release:
+    name: Create the tag and the release
+    needs: publish
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.publish.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: sdk-packages-${{ github.sha }}
+          path: dist
+      - name: Create the tag and the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NOTES: ${{ inputs.notes }}
+        run: |
+          set -euo pipefail
+          previous=$(git tag --list 'sdk-v*' --sort=-v:refname | head -1)
+          {
+            if [ -n "$NOTES" ]; then printf '%s\n\n' "$NOTES"; fi
+            echo "Packages: $(for name in $SDK_PACKAGES; do printf '%s@dcl/%s@%s%s ' '`' "$name" "$VERSION" '`'; done)"
+            echo "Protocol: \`library/protocol\` as of $(git log -1 --format=%h -- library/protocol)."
+            echo
+            echo "## Changes${previous:+ since $previous}"
+            git log --format='- %s (%h)' ${previous:+"$previous.."}HEAD -- library/js-sdk-toolchain library/protocol
+          } > notes.md
+          args=(--target "$GITHUB_SHA" --title "SDK $VERSION" --notes-file notes.md --latest=false)
+          case "$VERSION" in *-*) args+=(--prerelease) ;; esac
+          gh release create "sdk-v$VERSION" dist/*.tgz "${args[@]}"

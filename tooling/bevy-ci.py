@@ -65,6 +65,7 @@ IMAGES_INPUTS = (
     'services/catalyst/**',
     'schemas/**',
     'library/**',
+    ':(exclude)library/js-sdk-toolchain',
     '.cargo/**',
     'apps/sites/**',
     'apps/ui3/**',

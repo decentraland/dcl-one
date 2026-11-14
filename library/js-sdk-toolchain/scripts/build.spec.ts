@@ -35,6 +35,8 @@ import {
   runCommand
 } from './helpers'
 import { buildProtobuf, compileEcsComponents } from './protocol-buffer-generation'
+import { PROTO_COMPILER_PATH, TS_PROTO_PLUGIN_PATH } from './protocol-buffer-generation/protoConst'
+import { FileDescriptorStandardOption, runCommand as runProtoc } from './utils/shellCommand'
 import { compileProtoApi } from './rpc-api-generation'
 import { getSnippetsfile } from './utils/getFilePathsSync'
 
@@ -104,7 +106,7 @@ flow('build-all', () => {
 
   flow('@dcl/react-ecs', () => {
     itExecutes('npm i --silent', REACT_ECS)
-    itExecutes(`npm install --silent ${ECS7_PATH}`, REACT_ECS)
+    itExecutes(`npm install --silent @dcl/ecs@file:${ECS7_PATH}`, REACT_ECS)
     itExecutes('npm run build --silent', REACT_ECS)
     it('check file exists', () => {
       ensureFileExists('dist/index.js', REACT_ECS)
@@ -115,6 +117,31 @@ flow('build-all', () => {
   flow('@dcl/sdk-commands build', () => {
     itDeletesFolder('dist', SDK_COMMANDS_PATH)
     itExecutes(`npm i --silent`, SDK_COMMANDS_PATH)
+
+    // the protocol messages the CLI uses at runtime, generated as @dcl/protocol's out-ts is, so the
+    // package ships them instead of depending on a published protocol
+    it('generates the protocol modules', async () => {
+      const generatedPath = path.resolve(SDK_COMMANDS_PATH, 'src/generated')
+      removeSync(generatedPath)
+      mkdirSync(generatedPath, { recursive: true })
+      await runProtoc({
+        command: PROTO_COMPILER_PATH,
+        workingDir: process.cwd(),
+        args: [
+          `--plugin=${TS_PROTO_PLUGIN_PATH}`,
+          '--dcl_ts_proto_opt=esModuleInterop=true,returnObservable=false,outputServices=generic-definitions,fileSuffix=.gen,oneof=unions',
+          `--dcl_ts_proto_out=${generatedPath}`,
+          `--proto_path=${path.resolve('node_modules/@dcl/protocol/proto')}`,
+          'decentraland/sdk/development/local_development.proto',
+          'decentraland/realm/about.proto',
+          'decentraland/common/border_rect.proto',
+          'decentraland/common/vectors.proto'
+        ],
+        fdStandards: FileDescriptorStandardOption.ONLY_IF_THROW
+      })
+      ensureFileExists('src/generated/decentraland/sdk/development/local_development.gen.ts', SDK_COMMANDS_PATH)
+      ensureFileExists('src/generated/decentraland/realm/about.gen.ts', SDK_COMMANDS_PATH)
+    })
 
     // install required dependencies
     itExecutes('npm run build --silent', SDK_COMMANDS_PATH)
@@ -135,10 +162,11 @@ flow('build-all', () => {
     itDeletesGlob('types/*.d.ts', SDK_PATH)
 
     // install required dependencies
-    itExecutes(`npm install --silent ${SDK_COMMANDS_PATH}`, SDK_PATH)
-    itExecutes(`npm install --silent ${JS_RUNTIME}`, SDK_PATH)
-    itExecutes(`npm install --silent ${ECS7_PATH}`, SDK_PATH)
-    itExecutes(`npm install --silent ${REACT_ECS}`, SDK_PATH)
+    // siblings install under the key the code imports, whatever scope their manifests name
+    itExecutes(`npm install --silent @dcl/sdk-commands@file:${SDK_COMMANDS_PATH}`, SDK_PATH)
+    itExecutes(`npm install --silent @dcl/js-runtime@file:${JS_RUNTIME}`, SDK_PATH)
+    itExecutes(`npm install --silent @dcl/ecs@file:${ECS7_PATH}`, SDK_PATH)
+    itExecutes(`npm install --silent @dcl/react-ecs@file:${REACT_ECS}`, SDK_PATH)
 
     itExecutes('npm run build --silent', SDK_PATH)
 
@@ -161,7 +189,7 @@ flow('build-all', () => {
     itExecutes(`npm i --silent`, PLAYGROUND_ASSETS_PATH)
 
     // install required dependencies
-    itExecutes(`npm install --silent ${SDK_PATH}`, PLAYGROUND_ASSETS_PATH)
+    itExecutes(`npm install --silent @dcl/sdk@file:${SDK_PATH}`, PLAYGROUND_ASSETS_PATH)
 
     if (process.env.GITHUB_STEP_SUMMARY) {
       itExecutes('npm run build --silent', PLAYGROUND_ASSETS_PATH)

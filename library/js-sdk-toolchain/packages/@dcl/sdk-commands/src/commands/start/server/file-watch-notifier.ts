@@ -10,7 +10,7 @@ import { b64HashingFunction } from '../../../logic/project-files'
 import {
   WsSceneMessage,
   UpdateModelType
-} from '@dcl/protocol/out-js/decentraland/sdk/development/local_development.gen'
+} from '../../../generated/decentraland/sdk/development/local_development.gen'
 import { debounce } from '../../../logic/debounce'
 
 /**

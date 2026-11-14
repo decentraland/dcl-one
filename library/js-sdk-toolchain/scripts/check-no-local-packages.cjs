@@ -22,9 +22,9 @@ function findPackageJsonFiles(dir, fileList = []) {
 
 const DEPENDENCY_FIELDS = ['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies', 'overrides']
 
-// Only what the registry resolves: a version, a range or a dist-tag. Anything else (a path, a tarball,
-// a link, a workspace, a URL, a git or `user/repo` source, an `npm:` alias) names something unpublished
-// or not under its own name.
+// Only what the registry resolves: a version, a range or a dist-tag, directly or through an `npm:`
+// alias to one (a rescoped sibling). Anything else (a path, a tarball, a link, a workspace, a URL, a
+// git or `user/repo` source) names something unpublished or not under its own name.
 const PUBLISHED_TYPES = ['version', 'range', 'tag']
 
 function unpublishedReason(name, spec) {
@@ -32,7 +32,8 @@ function unpublishedReason(name, spec) {
   // an override's `$name` reuses that direct dependency's spec, which is checked on its own
   if (spec.startsWith('$')) return null
   try {
-    const { type } = npa.resolve(name, spec)
+    const parsed = npa.resolve(name, spec)
+    const type = parsed.type === 'alias' ? parsed.subSpec.type : parsed.type
     return PUBLISHED_TYPES.includes(type) ? null : `is a ${type} dependency, not a published version: ${spec}`
   } catch (error) {
     return `is not a valid dependency spec (${error.message}): ${spec}`
