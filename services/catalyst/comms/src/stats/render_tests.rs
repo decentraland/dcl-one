@@ -108,7 +108,7 @@ fn discovery_uses_absolute_strict_age_and_advertised_count() {
         server_name: "core".into(),
         status: Some(ServiceStatus {
             current_time: 100000,
-            user_count: 777,
+            user_count: u32::MAX,
             commit_hash: None,
         }),
     }
@@ -121,7 +121,7 @@ fn discovery_uses_absolute_strict_age_and_advertised_count() {
     ] {
         assert_eq!(
             render::core_status(&s, now),
-            format!(r#"{{"healthy":{healthy},"userCount":777}}"#)
+            format!(r#"{{"healthy":{healthy},"userCount":4294967295}}"#)
         );
     }
 }
@@ -162,5 +162,68 @@ fn numeric_serialization_uses_javascript_shortest_tie_breaking() {
     assert_eq!(
         render::json(&serde_json::json!({"number":1000000000000000100f64,"text":"x\\\"-1.0 λ"})),
         r#"{"number":1000000000000000100,"text":"x\\\"-1.0 λ"}"#
+    );
+}
+
+#[test]
+fn f32_position_extremes_and_receipt_rounding_keep_exact_public_bytes() {
+    let mut s = Snapshot {
+        peers: [
+            ("negative", [-0.5, 0., 0.], 1_700_000_000_123),
+            (
+                "large",
+                [f64::from(2_f32.powi(35)), 0., 0.],
+                1_700_000_000_123,
+            ),
+            ("zero", [-0., 0., -0.], 1_700_000_000_123),
+            (
+                "extreme",
+                [f64::from(f32::MAX), 0., -f64::from(f32::MAX)],
+                1_700_000_000_123,
+            ),
+            (
+                "nonfinite",
+                [f64::NAN, f64::INFINITY, f64::NEG_INFINITY],
+                1_700_000_000_123,
+            ),
+            // Synthetic receipt-time boundary: public JSON follows JS Number rounding.
+            ("rounding", [0., 0., 16.], 9_007_199_254_740_993),
+        ]
+        .into_iter()
+        .map(|(address, position, time)| Peer {
+            address: address.into(),
+            position,
+            time,
+        })
+        .collect(),
+        ..Default::default()
+    };
+    s.islands = IslandStatusMessage {
+        data: vec![IslandData {
+            id: "supported".into(),
+            max_peers: 0,
+            peers: ["negative", "unknown", "large", "negative", "nonfinite"]
+                .map(str::to_owned)
+                .to_vec(),
+            center: Some(Position {
+                x: f32::NAN,
+                y: 0.,
+                z: f32::INFINITY,
+            }),
+            radius: f64::INFINITY,
+        }],
+    }
+    .encode_to_vec();
+    assert_eq!(
+        render::peers(&s, &[]),
+        r#"{"ok":true,"peers":[{"id":"negative","address":"negative","lastPing":1700000000123,"parcel":[-1,0],"position":[-0.5,0,0]},{"id":"large","address":"large","lastPing":1700000000123,"parcel":[2147483648,0],"position":[34359738368,0,0]},{"id":"zero","address":"zero","lastPing":1700000000123,"parcel":[0,0],"position":[0,0,0]},{"id":"extreme","address":"extreme","lastPing":1700000000123,"parcel":[2.1267646664908054e+37,-2.1267646664908054e+37],"position":[3.4028234663852886e+38,0,-3.4028234663852886e+38]},{"id":"nonfinite","address":"nonfinite","lastPing":1700000000123,"parcel":[null,null],"position":[null,null,null]},{"id":"rounding","address":"rounding","lastPing":9007199254740992,"parcel":[0,1],"position":[0,0,16]}]}"#
+    );
+    assert_eq!(
+        render::parcels(&s),
+        r#"{"parcels":[{"peersCount":1,"parcel":{"x":-1,"y":0}},{"peersCount":1,"parcel":{"x":2147483648,"y":0}},{"peersCount":1,"parcel":{"x":0,"y":0}},{"peersCount":1,"parcel":{"x":2.1267646664908054e+37,"y":-2.1267646664908054e+37}},{"peersCount":1,"parcel":{"x":null,"y":null}},{"peersCount":1,"parcel":{"x":0,"y":1}}]}"#
+    );
+    assert_eq!(
+        render::islands(&s),
+        r#"{"ok":true,"islands":[{"id":"supported","maxPeers":0,"center":[null,0,null],"radius":null,"peers":[{"id":"negative","address":"negative","lastPing":1700000000123,"parcel":[-1,0],"position":[-0.5,0,0]},{"id":"large","address":"large","lastPing":1700000000123,"parcel":[2147483648,0],"position":[34359738368,0,0]},{"id":"negative","address":"negative","lastPing":1700000000123,"parcel":[-1,0],"position":[-0.5,0,0]},{"id":"nonfinite","address":"nonfinite","lastPing":1700000000123,"parcel":[null,null],"position":[null,null,null]}]}]}"#
     );
 }

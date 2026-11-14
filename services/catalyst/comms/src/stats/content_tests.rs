@@ -318,3 +318,19 @@ fn parse_int_uses_ecmascript_whitespace_and_decimal_prefixes() {
         r#"[{"baseCoords":[null,2,0,1,0,9007199254740992],"usersTotalCount":0,"parcels":[]}]"#
     );
 }
+
+#[test]
+fn selected_metadata_keeps_index_key_order_and_distinguishes_omitted_fields() {
+    let scenes = serde_json::from_str::<Vec<crate::content::OrderedJson>>(
+        r#"[{"id":"ordered","metadata":{"scene":{"base":"-1,0","parcels":["-1,0"]},"display":{"title":{"10":10,"2":2,"01":1,"4294967295":5,"0":0,"z":9007199254740993},"description":null},"contact":{"name":""},"source":{"projectId":false}}},{"id":"empty","metadata":{"scene":{"base":"0,0","parcels":[]},"display":{"navmapThumbnail":false}}}]"#,
+    ).unwrap();
+    assert_eq!(
+        content::hot_scenes(
+            &scenes,
+            &[("-1,0".into(), 1)],
+            "https://content.example/content/"
+        )
+        .unwrap(),
+        r#"[{"id":"ordered","name":{"0":0,"2":2,"10":10,"01":1,"4294967295":5,"z":9007199254740992},"baseCoords":[-1,0],"usersTotalCount":1,"parcels":[[-1,0]],"creator":"","projectId":false,"description":null},{"id":"empty","baseCoords":[0,0],"usersTotalCount":0,"parcels":[],"thumbnail":false}]"#
+    );
+}

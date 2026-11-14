@@ -61,6 +61,29 @@ class InventoryTests(unittest.TestCase):
                     with self.subTest(target=target, name=name, changed=changed, ignored=ignored), self.assertRaises(ValueError):
                         guard.verify(required, changed, ignored, str(target))
 
+    def test_statistics_boundary_bodies_remain_required_and_unignored(self):
+        targets = {
+            ("catalyst_comms", "lib"): [
+                "stats::tests::render_tests::f32_position_extremes_and_receipt_rounding_keep_exact_public_bytes",
+                "stats::tests::render_tests::discovery_uses_absolute_strict_age_and_advertised_count",
+                "stats::tests::content_tests::selected_metadata_keeps_index_key_order_and_distinguishes_omitted_fields",
+            ],
+            ("catalyst", "lib"): [
+                "presence::tests::module_sources::numeric_statistics_reach_about_and_realm_routes_without_signed_narrowing",
+                "presence::tests::module_sources::archive_retains_one_statistics_snapshot_while_content_awaits",
+            ],
+        }
+        for target, names in targets.items():
+            required = guard.MANDATORY_ARCHIPELAGO[target]
+            normal = "".join(f"{name}: test\n" for name in required)
+            guard.verify(required, normal, "", str(target))
+            for name in names:
+                self.assertIn(name, required)
+                without = normal.replace(f"{name}: test\n", "")
+                for changed, ignored in [(without, ""), (normal, f"{name}: test\n")]:
+                    with self.subTest(target=target, name=name), self.assertRaises(ValueError):
+                        guard.verify(required, changed, ignored, str(target))
+
     def test_selected_reader_bodies_cannot_disappear_from_the_ordinary_inventory(self):
         for target in [("catalyst_comms", "lib"), ("pulse_cluster_lookup", "test"),
                        ("comms_v4_assignment_fence", "test")]:
