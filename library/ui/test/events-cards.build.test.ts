@@ -51,10 +51,6 @@ beforeAll(async () => {
       '/usr/bin/chromium-browser'
     ])
   )
-  await session.navigate(server.resolvedUrls!.local[0]!)
-  await evaluate(
-    `(async()=>{for(let n=0;n<100 && document.querySelectorAll('article').length!==5;n++)await new Promise(r=>setTimeout(r,100));await document.fonts.ready})()`
-  )
 }, 30_000)
 
 beforeEach(async () => {
@@ -68,6 +64,10 @@ beforeEach(async () => {
     enabled: false,
     configuration: 'desktop'
   })
+  await session.navigate(server.resolvedUrls!.local[0]!)
+  await evaluate(
+    `(async()=>{for(let n=0;n<100 && document.querySelectorAll('article').length!==5;n++)await new Promise(r=>setTimeout(r,100));await document.fonts.ready})()`
+  )
   await evaluate(`document.activeElement?.blur();scrollTo(0,0)`)
   await session.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 0, y: 0 })
 })
