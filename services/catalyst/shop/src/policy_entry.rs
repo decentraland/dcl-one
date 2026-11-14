@@ -472,7 +472,7 @@ fn signed_trade_from_offchain(trade: &offchain::Trade, venue: ContractRef) -> Si
     }
 }
 
-const DISCOUNT_TYPE_RATE: u64 = 1;
+const DISCOUNT_TYPE_RATE: u64 = crate::coupons::signature::DISCOUNT_TYPE_RATE as u64;
 
 /// A CollectionDiscountCoupon's `data` (`abi.encode(discountType, discount,
 /// root)`): the rate discount in parts per million.
@@ -706,6 +706,37 @@ mod tests {
             env!("CARGO_MANIFEST_DIR")
         );
         serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn the_static_and_mana_registries_are_the_land_authz_registries() {
+        use crate::land_authz::{
+            ESTATE_REGISTRY_MAINNET, ESTATE_REGISTRY_SEPOLIA, LAND_REGISTRY_MAINNET,
+            LAND_REGISTRY_SEPOLIA,
+        };
+        let addr = |s: &str| s.parse::<Address>().unwrap();
+        for (chain_id, land, estate) in [
+            (
+                ChainId::ETHEREUM,
+                LAND_REGISTRY_MAINNET,
+                ESTATE_REGISTRY_MAINNET,
+            ),
+            (
+                ChainId::SEPOLIA,
+                LAND_REGISTRY_SEPOLIA,
+                ESTATE_REGISTRY_SEPOLIA,
+            ),
+        ] {
+            assert_eq!(static_role(chain_id, addr(land)), Some(ContractRole::Land));
+            assert_eq!(
+                static_role(chain_id, addr(estate)),
+                Some(ContractRole::Estate)
+            );
+        }
+        let book = crate::mana::venues::Book::production(|_| None);
+        let ethereum = book.chain(ChainId::ETHEREUM).unwrap();
+        assert_eq!(ethereum.land, Some(addr(LAND_REGISTRY_MAINNET)));
+        assert_eq!(ethereum.estate, Some(addr(ESTATE_REGISTRY_MAINNET)));
     }
 
     #[test]

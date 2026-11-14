@@ -105,8 +105,8 @@ pub const RELATED_MAX_LIMIT: i64 = 50;
 /// 1e30 USD wei: rows above it are dropped rather than overflowing the bigint credit cast.
 pub const MAX_USD_WEI: &str = "1000000000000000000000000000000";
 
-const ASSET_TYPE_ERC20: i64 = 1;
-const ASSET_TYPE_USD_PEGGED_MANA: i64 = 2;
+const ASSET_TYPE_ERC20: i64 = crate::types::ASSET_TYPE_ERC20 as i64;
+const ASSET_TYPE_USD_PEGGED_MANA: i64 = crate::types::ASSET_TYPE_USD_PEGGED_MANA as i64;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ShopListingType {

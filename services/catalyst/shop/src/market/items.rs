@@ -41,7 +41,7 @@ use super::{MarketplaceState, SharedState};
 pub const DEFAULT_LIMIT: i64 = 100;
 pub const USD_WEI_PER_CREDIT: u128 = 100_000_000_000_000_000;
 const USD_WEI_PER_CREDIT_SQL: &str = "100000000000000000::numeric";
-const ASSET_TYPE_USD_PEGGED_MANA: i32 = 2;
+use crate::types::ASSET_TYPE_USD_PEGGED_MANA;
 
 pub fn item_types_for(category: NftCategory) -> Vec<&'static str> {
     match category {

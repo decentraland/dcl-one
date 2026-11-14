@@ -700,6 +700,13 @@ pub struct TokenRecord {
     pub owner: EvmAddress,
 }
 
+/// The off-chain marketplace asset type codes as stored (`shop.trade_assets`)
+/// and signed; [`TradeAssetType::from_code`] reads them.
+pub const ASSET_TYPE_ERC20: i32 = 1;
+pub const ASSET_TYPE_USD_PEGGED_MANA: i32 = 2;
+pub const ASSET_TYPE_ERC721: i32 = 3;
+pub const ASSET_TYPE_COLLECTION_ITEM: i32 = 4;
+
 /// The off-chain marketplace asset types (`CreditsManagerPolygon`,
 /// `DecentralandMarketplacePolygonAssetTypes`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -995,6 +1002,18 @@ pub enum SettlementOperation {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_asset_type_codes_are_the_ones_from_code_reads() {
+        for (code, kind) in [
+            (ASSET_TYPE_ERC20, TradeAssetType::Erc20),
+            (ASSET_TYPE_USD_PEGGED_MANA, TradeAssetType::UsdPeggedMana),
+            (ASSET_TYPE_ERC721, TradeAssetType::Erc721),
+            (ASSET_TYPE_COLLECTION_ITEM, TradeAssetType::CollectionItem),
+        ] {
+            assert_eq!(TradeAssetType::from_code(code as u64), kind);
+        }
+    }
 
     #[test]
     fn hex_address_shape_is_0x_and_forty_hex_digits() {

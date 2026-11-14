@@ -24,10 +24,10 @@ pub const OFFCHAIN_MARKETPLACE_EIP712_VERSION: &str = "1.0.0";
 
 pub const MANA_POLYGON: Address = address!("0xA1c57f48F0Deb89f569dFbE6E2B7f46D33606fD4");
 
-pub const ASSET_TYPE_ERC20: i64 = 1;
-pub const ASSET_TYPE_USD_PEGGED_MANA: i64 = 2;
-pub const ASSET_TYPE_ERC721: i64 = 3;
-pub const ASSET_TYPE_COLLECTION_ITEM: i64 = 4;
+pub const ASSET_TYPE_ERC20: i64 = crate::types::ASSET_TYPE_ERC20 as i64;
+pub const ASSET_TYPE_USD_PEGGED_MANA: i64 = crate::types::ASSET_TYPE_USD_PEGGED_MANA as i64;
+pub const ASSET_TYPE_ERC721: i64 = crate::types::ASSET_TYPE_ERC721 as i64;
+pub const ASSET_TYPE_COLLECTION_ITEM: i64 = crate::types::ASSET_TYPE_COLLECTION_ITEM as i64;
 
 sol! {
     #[derive(Debug)]
