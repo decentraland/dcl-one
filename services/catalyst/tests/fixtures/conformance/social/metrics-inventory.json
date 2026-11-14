@@ -44,7 +44,7 @@
       "candidate": [
         {
           "path": "services/catalyst/comms/src/stats/runtime.rs",
-          "line": 68,
+          "line": 73,
           "kind": "histogram",
           "scope": "production_file_inline_test_possible",
           "labels": []
@@ -75,7 +75,7 @@
       "candidate": [
         {
           "path": "services/catalyst/comms/src/stats/runtime.rs",
-          "line": 67,
+          "line": 72,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": []
@@ -106,7 +106,7 @@
       "candidate": [
         {
           "path": "services/catalyst/comms/src/stats/runtime.rs",
-          "line": 71,
+          "line": 76,
           "kind": "histogram",
           "scope": "production_file_inline_test_possible",
           "labels": []
