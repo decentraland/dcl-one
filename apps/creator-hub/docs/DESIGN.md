@@ -68,7 +68,7 @@ Feature files: [Manage (LANDs in Creator Hub)](#manage-lands-in-creator-hub), fr
 
 ## Figma source
 
-Both UIs are specified in one Figma file, **📗️ Design System | Creator Tools** (file key `5ecKgNHjChZEe05LUwKGku`). Node `20420:50646` is its COVER page. Tokens live on the pages under **Tokens** (Colors, Icons, Typography, Tags / Labels); components and screens live on the section pages, so start from the frame URL for the surface you're changing. A page whose name contains `🟡 Outdated` is superseded: don't pull from it.
+Both UIs are specified in one Figma file, **📗️ Design System | Creator Tools**. Node `20420:50646` is its COVER page. Tokens live on the pages under **Tokens** (Colors, Icons, Typography, Tags / Labels); components and screens live on the section pages, so start from the frame URL for the surface you're changing. A page whose name contains `🟡 Outdated` is superseded: don't pull from it.
 
 Feature files extend it. **🧰 Integrate LANDs to CH | Creator Tools | 09/26** (file key `albOLmqF5fUwmRJ7CjBulU`, page `💻 High-fi 🟡` `5660:3959`) specifies Manage's LAND surfaces; see [Manage (LANDs in Creator Hub)](#manage-lands-in-creator-hub). The Creator Hub Analytics detail page is drawn in another (file key `DhBtPn56J6ZlPLrTUDufqp`); its frames are listed under [Analytics detail](#analytics-detail). The Creator Fund flow is drawn in the same file; see [Creator Fund (Creator Hub)](#creator-fund-creator-hub).
 
