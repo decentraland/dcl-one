@@ -162,6 +162,7 @@ pub(super) async fn create_identity(
         peer.map(|axum::Extension(axum::extract::ConnectInfo(p))| p),
         &state.settings.trusted_proxy_cidrs,
     );
+    let admission = state.auth_api.identity_admission.lock();
     let (mut live, mut from_source) = (0usize, 0usize);
     for entry in state.auth_api.identities.iter() {
         let record = entry.value();
@@ -205,6 +206,7 @@ pub(super) async fn create_identity(
         .auth_api
         .identities
         .insert(identity_id.clone(), record);
+    drop(admission);
     if state.auth_api.identity_status.len() < MAX_IDENTITY_TOMBSTONES {
         state.auth_api.identity_status.insert(
             identity_id.clone(),

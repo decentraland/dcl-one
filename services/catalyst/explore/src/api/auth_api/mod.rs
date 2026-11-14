@@ -114,6 +114,10 @@ pub struct AuthApiState {
     pub requests: DashMap<String, ChallengeRecord>,
     pub identities: DashMap<String, IdentityRecord>,
     pub identity_status: DashMap<String, IdentityStatus>,
+    /// Held across a cap check and its insert, so concurrent creates cannot
+    /// overshoot the caps.
+    pub(crate) request_admission: parking_lot::Mutex<()>,
+    pub(crate) identity_admission: parking_lot::Mutex<()>,
 }
 
 impl Default for AuthApiState {
@@ -122,6 +126,8 @@ impl Default for AuthApiState {
             requests: DashMap::new(),
             identities: DashMap::new(),
             identity_status: DashMap::new(),
+            request_admission: parking_lot::Mutex::new(()),
+            identity_admission: parking_lot::Mutex::new(()),
         }
     }
 }
@@ -459,7 +465,7 @@ fn warn_untrusted_internal_peer_once(
 }
 
 /// Refuses a new request once the relay or its network holds too many
-/// unexpired pending ones.
+/// unexpired requests whose outcome has not been delivered.
 fn request_capacity_refusal(
     state: &AppState,
     source: Option<&str>,
@@ -468,15 +474,22 @@ fn request_capacity_refusal(
     if state.auth_api.requests.len() >= MAX_PENDING_REQUESTS {
         sweep_expired_requests(state, now);
     }
+    // Delivered records only answer 410; they go first under pressure.
+    if state.auth_api.requests.len() >= MAX_PENDING_REQUESTS {
+        state
+            .auth_api
+            .requests
+            .retain(|_, record| !matches!(record.status, ChallengeStatus::Fulfilled));
+    }
     let (mut live, mut from_source) = (0usize, 0usize);
     for entry in state.auth_api.requests.iter() {
         let record = entry.value();
-        if record.expiration < now {
+        if record.expiration < now || matches!(record.status, ChallengeStatus::Fulfilled) {
             continue;
         }
         live += 1;
-        // Every unexpired record, answered or not, as the global cap counts:
-        // outcomes need no signature, so a sender could free its own slots.
+        // Answered records count until delivered, as globally: outcomes need
+        // no signature, so a sender could otherwise free its own slots.
         if source.is_some() && record.source.as_deref() == source {
             from_source += 1;
         }
@@ -523,6 +536,7 @@ async fn create_request(
         peer.map(|Extension(ConnectInfo(p))| p),
         &state.settings.trusted_proxy_cidrs,
     );
+    let admission = state.auth_api.request_admission.lock();
     if let Some(refusal) = request_capacity_refusal(&state, source.as_deref(), now) {
         return refusal;
     }
@@ -547,6 +561,7 @@ async fn create_request(
     };
 
     state.auth_api.requests.insert(request_id.clone(), record);
+    drop(admission);
 
     (
         StatusCode::CREATED,
@@ -604,8 +619,12 @@ async fn get_request_outcome(State(state): State<AppState>, Path(id): Path<Strin
     match outcome_opt {
         None => StatusCode::NO_CONTENT.into_response(),
         Some(outcome) => {
+            // Delivered: only the 410 remains, so the record frees its slot
+            // and keeps nothing else.
             if let Some(mut entry) = state.auth_api.requests.get_mut(&id) {
                 entry.status = ChallengeStatus::Fulfilled;
+                entry.params = Vec::new();
+                entry.challenge = String::new();
             }
             (StatusCode::OK, Json(outcome)).into_response()
         }
@@ -1307,14 +1326,49 @@ mod tests {
             );
         }
 
-        for mut entry in state.auth_api.requests.iter_mut() {
-            entry.status = ChallengeStatus::Fulfilled;
+        let ids: Vec<String> = state
+            .auth_api
+            .requests
+            .iter()
+            .filter(|e| e.value().source.as_deref() == Some("203.0.113.5"))
+            .map(|e| e.key().clone())
+            .collect();
+        let outcome = serde_json::to_vec(
+            &json!({ "sender": "0x1234567890123456789012345678901234567890", "error": { "code": 1, "message": "no" } }),
+        )
+        .unwrap();
+        for id in &ids {
+            let (status, _) = call(
+                &app,
+                json_post(
+                    &format!("/auth-api/v2/requests/{id}/outcome"),
+                    outcome.clone(),
+                ),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK);
         }
         let (status, _) = call(&app, post("203.0.113.5:4002")).await;
         assert_eq!(
             status,
             StatusCode::TOO_MANY_REQUESTS,
-            "answered requests still hold their network's slots until they expire"
+            "an answer posted to the request does not free its slot"
+        );
+        for id in &ids {
+            let (status, _) = call(&app, get_req(&format!("/auth-api/requests/{id}"))).await;
+            assert_eq!(status, StatusCode::OK, "the requester picks up its outcome");
+        }
+        let (status, _) = call(&app, post("203.0.113.5:4003")).await;
+        assert_eq!(
+            status,
+            StatusCode::CREATED,
+            "a delivered outcome frees the slot"
+        );
+        let (status, _) = call(&app, get_req(&format!("/auth-api/requests/{}", ids[0]))).await;
+        assert_eq!(
+            status,
+            StatusCode::GONE,
+            "a delivered request still answers 410"
         );
     }
 
@@ -1401,6 +1455,68 @@ mod tests {
         assert_eq!(
             request_capacity_refusal(&state, None, now).map(|r| r.status()),
             Some(StatusCode::SERVICE_UNAVAILABLE)
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    async fn concurrent_creates_never_overshoot_a_network_cap() {
+        let state = crate::api::tests_support::state_without_db().await;
+        let app = Router::new().nest("/auth-api", routes().with_state(state.clone()));
+        let now = Utc::now();
+        for i in 0..MAX_REQUESTS_PER_SOURCE - 3 {
+            let id = format!("r{i}");
+            state.auth_api.requests.insert(
+                id.clone(),
+                record(
+                    &id,
+                    "203.0.113.5",
+                    now + Duration::seconds(REQUEST_TTL_SECONDS),
+                ),
+            );
+        }
+        let ephemeral = alloy_signer_local::PrivateKeySigner::random();
+        let body = serde_json::to_vec(&json!({ "method": "personal_sign", "params": ["hi"], "authChain": delegated(&format!("{:#x}", ephemeral.address())) })).unwrap();
+        let calls: Vec<_> = (0..32)
+            .map(|i| {
+                let app = app.clone();
+                let req = from_peer(
+                    json_post("/auth-api/requests", body.clone()),
+                    &format!("203.0.113.5:{}", 5000 + i),
+                );
+                tokio::spawn(async move { call(&app, req).await.0 })
+            })
+            .collect();
+        let mut created = 0;
+        for call in calls {
+            if call.await.unwrap() == StatusCode::CREATED {
+                created += 1;
+            }
+        }
+        assert_eq!(created, 3, "only the free slots are taken");
+        let held = state
+            .auth_api
+            .requests
+            .iter()
+            .filter(|e| e.value().source.as_deref() == Some("203.0.113.5"))
+            .count();
+        assert_eq!(held, MAX_REQUESTS_PER_SOURCE);
+    }
+
+    #[tokio::test]
+    async fn delivered_requests_go_first_when_the_relay_is_full() {
+        let state = crate::api::tests_support::state_without_db().await;
+        let now = Utc::now();
+        let live = now + Duration::seconds(REQUEST_TTL_SECONDS);
+        for i in 0..MAX_PENDING_REQUESTS {
+            let id = format!("r{i}");
+            let mut r = record(&id, &format!("s{i}"), live);
+            r.status = ChallengeStatus::Fulfilled;
+            state.auth_api.requests.insert(id, r);
+        }
+        assert!(request_capacity_refusal(&state, Some("new"), now).is_none());
+        assert!(
+            state.auth_api.requests.is_empty(),
+            "delivered records are dropped under pressure"
         );
     }
 

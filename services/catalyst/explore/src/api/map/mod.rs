@@ -520,17 +520,29 @@ mod tests {
     }
 
     #[test]
-    fn response_cache_serves_nothing_past_its_ttl_and_reuses_the_room() {
-        let cache = ResponseCache::new(Duration::ZERO, 2, 100);
-        cache.insert("a".into(), Arc::new(vec![0; 60]));
-        assert!(
-            cache.get_fresh("a").is_none(),
-            "an expired body is not served"
+    fn response_cache_drops_every_expired_entry_once_full() {
+        let cache = ResponseCache::new(Duration::from_secs(60), 3, 1 << 20);
+        for k in ["a", "b", "c"] {
+            cache.insert(k.into(), Arc::new(vec![1]));
+        }
+        let long_ago = Instant::now()
+            .checked_sub(Duration::from_secs(120))
+            .expect("a clock past two minutes");
+        for k in ["a", "b"] {
+            cache.entries.lock().map.get_mut(k).unwrap().0 = long_ago;
+        }
+        cache.insert("d".into(), Arc::new(vec![1]));
+        let entries = cache.entries.lock();
+        let mut keys: Vec<&str> = entries.map.keys().map(String::as_str).collect();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            ["c", "d"],
+            "both expired entries go, not just the oldest one"
         );
-        cache.insert("b".into(), Arc::new(vec![0; 60]));
-        assert_eq!(cache.bytes(), 60, "the expired body made room");
-        cache.clear();
-        assert_eq!(cache.bytes(), 0);
+        drop(entries);
+        assert_eq!(cache.bytes(), 2);
+        assert!(cache.get_fresh("c").is_some());
     }
 
     #[test]
