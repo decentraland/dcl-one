@@ -1,4 +1,5 @@
-//! The setup the `#[ignore]`d pipeline-compile tests share (see recipes.md).
+//! The setup the `#[ignore]`d pipeline-compile tests share (see recipes.md). Only ever a
+//! dev-dependency.
 
 use std::time::{Duration, Instant};
 
@@ -18,7 +19,7 @@ use bevy::{
     winit::WinitPlugin,
 };
 
-use crate::EmbedAssetsPlugin;
+use assets::EmbedAssetsPlugin;
 
 /// An app with the default plugins, a renderer with no window and the embedded assets. Add the
 /// plugins under test, then `finish` and `cleanup` it.
