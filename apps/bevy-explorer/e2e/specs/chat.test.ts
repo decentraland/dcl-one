@@ -15,21 +15,11 @@
 // | TestNearbyChannelAndConversationsToolbarPresence | the "<n> nearby" button stands for the Nearby channel; the input and Emoji button; no conversations toolbar, which exists only with a direct message open | Partial |
 // | TestReactToOwnMessage                       | the reaction pill is a button named "you reacted with ..."; the row has no control to hover, so a click just above the input reveals React | Partial |
 import assert from 'node:assert/strict'
-import { spec, until, type ChatHistory, type ChatMessage, type Explorer } from '../driver/index.ts'
+import { spec, until, type Explorer } from '../driver/index.ts'
+import { CLOSE_CHAT, CONTROL_TIMEOUT_MS, EMOJI, INPUT_FOCUSED, INPUT_IDLE, RAIL_CHAT, TEXT_TIMEOUT_MS, closeChat, openChat, sendMessage } from './chat.ts'
 
 const scenario = spec(import.meta.url)
 
-const CONTROL_TIMEOUT_MS = 20_000
-const TEXT_TIMEOUT_MS = 10_000
-/** The most a sent message is given to reach the engine's chat history: a ceiling, the wait ends
- *  when it is there. */
-const SEND_TIMEOUT_MS = 10_000
-
-const RAIL_CHAT = { name: 'Chat', role: 'button' } as const
-const CLOSE_CHAT = { name: 'Close chat', role: 'button' } as const
-const INPUT_FOCUSED = { name: 'Write a message', role: 'textbox' } as const
-const INPUT_IDLE = { name: 'Press Enter to chat', role: 'textbox' } as const
-const EMOJI = { name: 'Emoji', role: 'button' } as const
 const REACT = { name: 'React', role: 'button' } as const
 const REACTION_BAR = { name: 'React', role: 'dialog' } as const
 /** The first of the reaction bar's fixed emoji: the red heart, U+2665 with the variation selector U+FE0F. */
@@ -37,32 +27,6 @@ const FIRST_REACTION = { name: String.fromCodePoint(0x2665, 0xfe0f), role: 'butt
 const REACTION_PILL = /^you reacted(?: with :\S+:)?$/
 /** The input's height in the HUD's design pixels, to read the HUD's scale from its box. */
 const INPUT_HEIGHT = 40
-
-async function ownAddress(explorer: Explorer): Promise<string> {
-  const { address } = await explorer.worldState()
-  assert.ok(address, 'the player should be signed in')
-  return address.toLowerCase()
-}
-
-/** The chat open and its input focused: from the rail when closed, from the input when open and idle. */
-async function openChat(explorer: Explorer): Promise<void> {
-  if ((await explorer.hud.get(RAIL_CHAT)).checked) {
-    const idle = !(await explorer.hud.isVisible(INPUT_FOCUSED))
-    if (idle) await explorer.hud.click(INPUT_IDLE)
-  } else {
-    await explorer.hud.click(RAIL_CHAT)
-  }
-  await explorer.hud.wait(CLOSE_CHAT, { timeoutMs: CONTROL_TIMEOUT_MS })
-  await explorer.hud.wait(INPUT_FOCUSED, { timeoutMs: TEXT_TIMEOUT_MS })
-}
-
-/** The chat closed, with the rail's button; the input it had focused gives the engine the keys back. */
-async function closeChat(explorer: Explorer): Promise<void> {
-  if (!(await explorer.hud.get(RAIL_CHAT)).checked) return
-  await explorer.hud.click(RAIL_CHAT)
-  await explorer.hud.waitHidden(CLOSE_CHAT, CONTROL_TIMEOUT_MS)
-  await explorer.keyboardReleased()
-}
 
 /** The chat closed and no control focused: Enter on a focused button clicks it, which would toggle
  *  the chat again. Closing from the open chat's own button leaves the focus on the page; the input
@@ -73,29 +37,6 @@ async function resetChat(explorer: Explorer): Promise<void> {
   await explorer.hud.click(CLOSE_CHAT)
   await explorer.hud.waitHidden(CLOSE_CHAT, CONTROL_TIMEOUT_MS)
   await explorer.keyboardReleased()
-}
-
-/** Type `text` in the chat input and send it with Enter; the message as /chat_history records it.
- *  The fill returns once the input has the keyboard, so the Enter is the input's: the HUD empties
- *  the input as it hands the message to the engine. */
-async function sendMessage(explorer: Explorer, text: string): Promise<ChatMessage> {
-  const own = await ownAddress(explorer)
-  const before = (await explorer.chatHistory(1)).total
-  const recorded = (history: ChatHistory): ChatMessage | undefined =>
-    history.total > before ? history.messages.find((message) => message.address?.toLowerCase() === own && message.message === text) : undefined
-
-  const typed = await explorer.hud.fill((await explorer.hud.isVisible(INPUT_FOCUSED)) ? INPUT_FOCUSED : INPUT_IDLE, text)
-  assert.equal(typed.value, text, 'the chat input should hold the typed message')
-  await explorer.key('Enter')
-  await waitInputEmptied(explorer, `the chat input to empty as it sends '${text}'`)
-  const history = await until(() => explorer.chatHistory(), (read) => recorded(read) !== undefined, { timeoutMs: SEND_TIMEOUT_MS, what: `'${text}' in the chat history` })
-  return recorded(history)!
-}
-
-/** Wait for the chat input, focused or not, to be empty. */
-function waitInputEmptied(explorer: Explorer, what: string): Promise<string | undefined> {
-  const value = async (): Promise<string | undefined> => ((await explorer.hud.find(INPUT_FOCUSED)) ?? (await explorer.hud.find(INPUT_IDLE)))?.value
-  return until(value, (held) => held === '', { timeoutMs: TEXT_TIMEOUT_MS, what })
 }
 
 /** The newest message's row has no control, so put the pointer on it with a click just above the

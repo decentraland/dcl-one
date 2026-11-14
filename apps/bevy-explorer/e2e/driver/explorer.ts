@@ -38,6 +38,9 @@ export interface WorldState {
   address: string | null
   guest: boolean
   realm: string
+  /** The realm's own name: the catalyst's (`artemis`) in Genesis City, the world's in a world, whose
+   *  `realm` stays the catalyst's URL. */
+  realmName: string
   realmConnected: boolean
   worldHeld: boolean
   outOfWorld: boolean | null
