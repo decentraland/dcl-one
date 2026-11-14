@@ -1,0 +1,35 @@
+# cargo deny for the catalyst workspace, run on pull requests and weekly by
+# .github/workflows/catalyst-deny.yml:
+#   cargo deny --locked --workspace check advisories bans
+
+[graph]
+all-features = true
+
+[advisories]
+version = 2
+yanked = "warn"
+# Unsound advisories default to direct dependencies only; check the whole graph like the others.
+unsound = "all"
+# Baseline of 2026-11-09: every advisory the lock already had, so the gate fails only on new ones.
+# Remove an entry once its crate is bumped or dropped; cargo deny warns about entries that no longer match.
+ignore = [
+  # Vulnerabilities (6)
+  { id = "RUSTSEC-2026-0381", reason = "TODO: bump webpki-roots 1.0.9 (and 0.26.11's parent) to 1.0.10 or newer" },
+  { id = "RUSTSEC-2026-0382", reason = "TODO: bump rustls-webpki 0.103.15 to a patched release" },
+  { id = "RUSTSEC-2026-0383", reason = "TODO: bump webpki-root-certs 1.0.9 to a patched release" },
+  { id = "RUSTSEC-2026-0385", reason = "TODO: bump ctutils 0.4.3 to a patched release" },
+  { id = "RUSTSEC-2026-0387", reason = "TODO: bump crypto-bigint 0.5.5 to a patched release" },
+  { id = "RUSTSEC-2026-0459", reason = "TODO: bump libsqlite3-sys 0.37.0 to a patched release" },
+  # Unmaintained crates (5)
+  { id = "RUSTSEC-2023-0089", reason = "TODO: replace atomic-polyfill 1.0.3 or the crate that pulls it in" },
+  { id = "RUSTSEC-2024-0436", reason = "TODO: replace paste 1.0.15 or the crate that pulls it in" },
+  { id = "RUSTSEC-2025-0134", reason = "TODO: replace rustls-pemfile 2.2.0 or the crate that pulls it in" },
+  { id = "RUSTSEC-2026-0173", reason = "TODO: replace proc-macro-error2 2.0.1 or the crate that pulls it in" },
+  { id = "RUSTSEC-2026-0441", reason = "TODO: replace pin-utils 0.1.1 or the crate that pulls it in" },
+]
+
+[bans]
+multiple-versions = "allow"
+wildcards = "allow"
+# One V8 in the SDK7 scene host: a second v8, or the engine-agnostic v8x backend, links two engines.
+deny = [{ crate = "v8", deny-multiple-versions = true }, { crate = "v8x" }]

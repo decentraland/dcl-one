@@ -5,6 +5,7 @@ on:
   workflow_dispatch: {}
 permissions:
   contents: write
+  issues: write
   pull-requests: write
 concurrency:
   group: bevy-explorer-dependency-drift
@@ -47,4 +48,32 @@ jobs:
             gh pr edit "$branch" --title "$title"
           else
             gh pr create --head "$branch" --title "$title" --body 'Review rendering/bevy-explorer/forks.toml; the dependency drift site is attached to the workflow run.'
+          fi
+      # Last, so a failure here (v8-report fails when neither V8 could be collected) skips nothing.
+      - name: Open, update or close the V8 freshness issue
+        env:
+          TITLE: 'The Explorer or catalyst scene runtime V8 is behind'
+        run: |
+          body=.cache/upstream-drift/v8-issue.md
+          python3 tooling/upstream-drift.py v8-report --body "$body"
+          # Exact title over this workflow's own open issues, oldest first: the search index can lag, and
+          # anyone can open an issue with the same title.
+          numbers=$(gh issue list --state open --limit 1000 --json number,title,author \
+            --jq '[.[] | select(.title == env.TITLE and .author.login == "app/github-actions") | .number] | sort | map(tostring) | join(" ")')
+          set -- $numbers
+          if [ -f "$body" ]; then
+            if [ $# -gt 0 ]; then
+              keep=$1
+              shift
+              gh issue edit "$keep" --body-file "$body"
+              for extra in "$@"; do
+                gh issue close "$extra" --comment "Duplicate of #$keep."
+              done
+            else
+              gh issue create --title "$TITLE" --body-file "$body"
+            fi
+          else
+            for open in "$@"; do
+              gh issue close "$open" --comment 'Neither the Explorer nor the catalyst V8 is behind rusty_v8, deno_core or Chrome any more.'
+            done
           fi
