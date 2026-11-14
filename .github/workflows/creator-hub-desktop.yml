@@ -58,7 +58,7 @@ on:
         type: boolean
     outputs:
       version:
-        description: 'Version of the installers this run built (and, on main, published)'
+        description: 'Version of the installers this run built (and, on a release, published)'
         value: ${{ jobs.build.outputs.version }}
 
 concurrency:
@@ -78,8 +78,9 @@ jobs:
       matrix:
         os: [ macos-latest, windows-latest ]
     runs-on: ${{ matrix.os }}
-    # Signing, notarization and the release-repo token live in the main-only environment.
-    environment: ${{ github.ref == 'refs/heads/main' && 'creator-hub-release' || '' }}
+    # Signing, notarization and the release-repo token live in the main-only environment. Only a
+    # release reads them.
+    environment: ${{ github.ref == 'refs/heads/main' && !inputs.dry-run && 'creator-hub-release' || '' }}
     permissions:
       contents: read
       pull-requests: write
@@ -243,7 +244,7 @@ jobs:
           USE_HARD_LINKS: false
           # Fix C++ standard for native dependencies
           CXXFLAGS: "-std=gnu++17"
-          # On PRs, build only the unsigned .zip (skip the slow .dmg); see electron-builder.cjs
+          # Every run but a release builds only the unsigned .zip (no .dmg); see electron-builder.cjs
           DRY_RUN: ${{ inputs.dry-run }}
           # Code Signing params
           # See https://www.electron.build/code-signing

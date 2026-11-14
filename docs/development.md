@@ -150,4 +150,6 @@ the Rust job goes on that list in the change that adds it; pushes to `main`
 always run the Rust tests. Two more labels work the same way:
 `ci:desktop` builds the Creator Hub desktop app on a PR and attaches its test
 builds, and `ci:preview` publishes the Explorer web preview that the CI status
-comment links.
+comment links. `release:creator-hub` is read after the merge: the push to
+`main` publishes the Creator Hub installers as a pre-release only when its PR
+has the label.
