@@ -5,7 +5,7 @@
 // Like dcl-editor's bus, streams/events are delivered through ONE generic
 // `on(msg => …)` subscription; only request/response (login) is correlated by id.
 
-import { createGuestIdentity } from '../features/auth/guest'
+import { createEmailIdentity, createGuestIdentity } from '../features/auth/guest'
 import { encodeIdentity, type AuthIdentity } from '../features/auth/sso'
 import type { GuestWallet } from '../features/auth/thirdweb'
 import { BridgeChannel } from './bridgeChannel'
@@ -31,7 +31,7 @@ const QUICK_RPC_TIMEOUT_MS: Partial<Record<RpcMethod, number>> = {
 }
 
 // Answered by the bridge scene, not the engine's boot shim.
-const SCENE_RPCS: ReadonlySet<RpcMethod> = new Set(['guestLogin', 'guestSign', 'guestDiscard'])
+const SCENE_RPCS: ReadonlySet<RpcMethod> = new Set(['guestLogin', 'guestSign', 'guestDiscard', 'emailStart', 'emailComplete'])
 
 export class BridgeClient implements LoginDriver {
   private readonly ch: BridgeChannel
@@ -68,6 +68,29 @@ export class BridgeClient implements LoginDriver {
       sign: (token, message) => this.rpc<string>('guestSign', { token, message })
     })
     await this.command(`/login_identity ${encodeIdentity(identity)} --guest${newAccountFlags(pick)}`)
+  }
+
+  // Native email sign-in: as for the guest, the bridge scene makes the thirdweb calls and this page
+  // builds the identity, which goes in through the engine console. The mock has no console: its
+  // identity goes in as the stored sign-in does there.
+  emailSendCode(email: string): Promise<void> {
+    return this.rpc<void>('emailStart', { email })
+  }
+
+  emailVerify(email: string, code: string): Promise<AuthIdentity> {
+    return createEmailIdentity(
+      {
+        complete: (e, c) => this.rpc<GuestWallet>('emailComplete', { email: e, code: c }),
+        sign: (token, message) => this.rpc<string>('guestSign', { token, message })
+      },
+      email,
+      code
+    )
+  }
+
+  async loginEmail(identity: AuthIdentity): Promise<void> {
+    if (!('engine_console_command' in window)) return this.loginWithIdentity(identity)
+    await this.command(`/login_identity ${encodeIdentity(identity)}`)
   }
 
   loginCancel(): Promise<void> {

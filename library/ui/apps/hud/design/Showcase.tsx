@@ -2,6 +2,11 @@
 // the Explorer 2.0 Figma. Open with ?showcase=1. Add every new primitive here.
 
 import { Button } from './Button'
+import { LogoPattern } from './LogoPattern'
+import { SubmitField } from './SubmitField'
+import { CodeInput } from './CodeInput'
+import { Spinner } from './Spinner'
+import { Checkbox } from './Checkbox'
 import { Skeleton } from './Skeleton'
 import { IconButton } from './IconButton'
 import { VoiceBars } from './VoiceBars'
@@ -221,6 +226,23 @@ export function Showcase(): React.JSX.Element {
           <Button size="row" variant="secondary">Row</Button>
           <Button size="md">Medium</Button>
           <Button size="lg">Large</Button>
+        </div>
+      </Section>
+
+      <Section title="Button (start: the sign-in screens' CTA)">
+        <div style={{ ...row, background: 'var(--loading-vignette)', padding: 16 }}>
+          <Button size="start" style={{ width: 300 }}>Play as guest</Button>
+          <Button size="start" variant="darkOutline" style={{ width: 300 }}>Login or signup</Button>
+        </div>
+      </Section>
+
+      <Section title="Sign-in: SubmitField, method buttons, CodeInput, chase spinner">
+        <SignInShowcase />
+      </Section>
+
+      <Section title="Logo pattern (the loading and sign-in backdrop)">
+        <div style={{ position: 'relative', height: 160, background: 'var(--loading-vignette)', overflow: 'hidden' }}>
+          <LogoPattern />
         </div>
       </Section>
 
@@ -705,3 +727,25 @@ function ShowcaseRowScroller(): React.JSX.Element {
     </div>
   )
 }
+
+function SignInShowcase(): React.JSX.Element {
+  const [email, setEmail] = useState('')
+  const [code, setCode] = useState('')
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16, width: 458, padding: 16, background: 'var(--loading-vignette)' }}>
+      <SubmitField aria-label="Email" placeholder="your@email.com" value={email} onChange={setEmail} onSubmit={() => {}} submitLabel="Next" canSubmit={email.includes('@')} />
+      <SubmitField aria-label="Email (invalid)" value="not-an-email" onChange={() => {}} onSubmit={() => {}} submitLabel="Next" canSubmit={false} error="Invalid email" />
+      <Button size="modal" variant="method">Google</Button>
+      <Button size="bare" variant="whisper" style={{ width: 36, height: 36 }} aria-label="whisper">‹</Button>
+      <CodeInput value={code} onChange={setCode} />
+      <CodeInput value="123456" onChange={() => {}} state="success" disabled />
+      <CodeInput value="123456" onChange={() => {}} state="error" disabled />
+      <Spinner size={40} variant="chase" />
+      <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+        <Checkbox variant="light" defaultChecked aria-label="light checkbox" />
+        <span>light checkbox (the sign-in screens')</span>
+      </div>
+    </div>
+  )
+}
+

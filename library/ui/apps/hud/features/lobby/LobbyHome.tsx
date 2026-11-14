@@ -24,6 +24,7 @@ import type { Destination } from '../session/useEngineSession'
 import { FriendCard, LandingCard, LiveEventCard, PlaceCard } from './LobbyCards'
 import { eventPeople, fetchHighlighted, fetchHomePlace, fetchLiveEvents, fetchLivePlaces, fetchRecents, type LiveEvent } from '@explorer-core/features/lobby/lobbyApi'
 import styles from './LobbyHome.module.css'
+import type { EngineViewportRegion } from '@explorer-core/engine/protocol'
 
 type Rect = { x: number; y: number; width: number; height: number }
 
@@ -88,7 +89,7 @@ export function LobbyHome({
   onPick: (dest: Destination) => void
   /** In-world only: the lobby can be closed back to the world (at startup Jump In is the way out). */
   onClose?: () => void
-  setEngineViewport: (region: 'map' | 'avatarPreview' | 'lobby', rect: Rect | null, dpr?: number) => void
+  setEngineViewport: (region: EngineViewportRegion, rect: Rect | null, dpr?: number) => void
 }): React.JSX.Element {
   const session = useSession()
   const profile = session.profile.data

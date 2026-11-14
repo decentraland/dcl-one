@@ -56,6 +56,23 @@ export class EngineDriver implements LoginDriver {
     await this.loginWithIdentity(login.identity, false, true, pick)
   }
 
+  // The shell makes the thirdweb calls and keeps the account's key, like a sign-in page's; the app
+  // gets the public identity. Outside the shell there is nowhere to keep it.
+  readonly emailAvailable = inShell
+  async emailSendCode(email: string): Promise<void> {
+    if (!inShell) throw new Error('email sign-in needs the Explorer page')
+    await shellRequest('emailStart', { email })
+  }
+
+  async emailVerify(email: string, code: string): Promise<AuthIdentity> {
+    if (!inShell) throw new Error('email sign-in needs the Explorer page')
+    return (await shellRequest<StoredLogin>('emailLogin', { email, code }, CREATE_GUEST_TIMEOUT_MS)).identity
+  }
+
+  async loginEmail(identity: AuthIdentity): Promise<void> {
+    await this.loginWithIdentity(identity, false, false)
+  }
+
   async loginCancel(): Promise<void> {
     // SSO login is a redirect/console-command; there is no in-engine flow to cancel.
   }

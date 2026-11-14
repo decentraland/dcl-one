@@ -194,11 +194,12 @@ export function fakeSession(): EngineSession {
     phase: 'world',
     playerReady: true,
     lobbyStageReady: false,
+    signinStageReady: false,
     lobbyPage: { open: false, toggle: vi.fn(), travel: vi.fn() },
     homeScene: () => null,
     avatarPreviewRect: null,
     pickDestination: vi.fn(),
-    welcome: { terms: false, newProfile: false, pending: false, saving: false, error: null, reroll: vi.fn(), showLook: vi.fn(), preloadLook: vi.fn(), lookPending: false, lastLook: null, expectLook: vi.fn(), accept: vi.fn(), openLegal: vi.fn() },
+    welcome: { terms: false, newProfile: false, pending: false, saving: false, error: null, showLook: vi.fn(), accept: vi.fn(), openLegal: vi.fn(), email: null },
     sceneLoading: null,
     connectivity: { state: null, retry: vi.fn() },
     loadingProgress: 0,
@@ -269,13 +270,13 @@ export function fakeSession(): EngineSession {
       authPending: false,
       authCode: null,
       cancelLogin: vi.fn(),
+      cancelSignIn: vi.fn(),
       exploreAsGuest: vi.fn(),
       acceptQueued: false,
-      jumpIn: vi.fn(),
-      profile: {},
-      profileFetchFailed: false,
-      resetProfileAndJumpIn: vi.fn(),
-      useDifferentAccount: vi.fn()
+      emailAvailable: true,
+      sendEmailCode: vi.fn(async () => undefined),
+      verifyEmailCode: vi.fn(async () => undefined),
+      emailQueued: false,
     }
   }
 }

@@ -7,7 +7,10 @@ import { keccak_256 } from '@noble/hashes/sha3.js'
 import { bytesToHex, hexToBytes } from '@noble/hashes/utils.js'
 import { personalSign } from '../../shell/sign'
 import type { AuthIdentity } from './sso'
-import { GUEST_SESSION_KEY, guestLogin, guestSign, type GuestWallet } from './thirdweb'
+import { EmailLoginError, GUEST_SESSION_KEY, guestLogin, guestSign, type GuestWallet } from './thirdweb'
+
+/** An email account's sign-in from the HUD lasts 7 days; the Sites sign-in page's own lasts 30. */
+export const EMAIL_IDENTITY_LIFETIME_MS = 7 * 24 * 3600 * 1000
 
 const IDENTITY_LIFETIME_MS = 30 * 24 * 3600 * 1000
 
@@ -69,11 +72,11 @@ export interface EphemeralDelegation {
   payload: string
 }
 
-export function newEphemeralDelegation(): EphemeralDelegation {
+export function newEphemeralDelegation(lifetimeMs: number = IDENTITY_LIFETIME_MS): EphemeralDelegation {
   const privateKey = secp256k1.utils.randomSecretKey()
   const publicKey = secp256k1.getPublicKey(privateKey, false)
   const address = publicKeyAddress(publicKey)
-  const expiration = new Date(Date.now() + IDENTITY_LIFETIME_MS).toISOString()
+  const expiration = new Date(Date.now() + lifetimeMs).toISOString()
   return {
     ephemeralIdentity: { address, publicKey: `0x${bytesToHex(publicKey)}`, privateKey: `0x${bytesToHex(privateKey)}` },
     expiration,
@@ -102,3 +105,22 @@ export async function createGuestIdentity(backend: GuestBackend): Promise<AuthId
   const signature = await backend.sign(token, delegation.payload)
   return signedIdentity(delegation, walletAddress.toLowerCase(), signature)
 }
+
+/** Where an email sign-in's thirdweb calls run: the shell page on web, the bridge scene on native. */
+export interface EmailBackend {
+  /** Check `code` for `email`: the wallet it opens. */
+  complete(email: string, code: string): Promise<GuestWallet>
+  sign(token: string, message: string): Promise<string>
+}
+
+/** Check the code sent to `email` and sign an identity with the wallet it opens, for 7 days. */
+export async function createEmailIdentity(backend: EmailBackend, email: string, code: string): Promise<AuthIdentity> {
+  const { token, walletAddress } = await backend.complete(email, code)
+  const delegation = newEphemeralDelegation(EMAIL_IDENTITY_LIFETIME_MS)
+  // the code was right, but the wallet won't sign from here: the sign-in page can still sign in
+  const signature = await backend.sign(token, delegation.payload).catch((e: unknown) => {
+    throw new EmailLoginError('sign-refused', e instanceof Error ? e.message.slice(0, 80) : 'thirdweb sign')
+  })
+  return signedIdentity(delegation, walletAddress.toLowerCase(), signature)
+}
+

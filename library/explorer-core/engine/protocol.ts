@@ -67,6 +67,8 @@ export type RpcMethod =
   | 'guestLogin'
   | 'guestSign'
   | 'guestDiscard'
+  | 'emailStart'
+  | 'emailComplete'
 
 // ---- page -> scene ---------------------------------------------------------
 
@@ -251,9 +253,7 @@ export type PageToScene =
   | GetMapRequest
   | GetHomeSceneRequest
   | GetWelcomeRequest
-  | ExpectLookRequest
   | ShowLookRequest
-  | PreloadLookRequest
   | AcceptWelcomeRequest
   | OpenLegalRequest
   | TeleportRequest
@@ -872,25 +872,11 @@ export interface WelcomeMessage extends WelcomeState {
 }
 
 /** Put the curated default look `default<look>` on the lobby stage's avatar, as the page fetched it
- *  (the scene's own fetches are signed, so it can't before sign-in): the guest start page's pick, or
- *  the welcome page's RANDOMIZE. Signed in it is the Backpack's unsaved look, deployed on
- *  `acceptWelcome`; before sign-in the stage wears it as a stand-in. */
+ *  (the scene's own fetches are signed, so it can't before sign-in): a new account's starting look.
+ *  Signed in it is the Backpack's unsaved look, deployed on `acceptWelcome`; before sign-in the
+ *  stage wears it as a stand-in. */
 export interface ShowLookRequest {
   kind: 'showLook'
-  look: number
-  avatar: AvatarLook
-}
-
-/** A `showLook` is on its way (RANDOMIZE was hit; the page is fetching the look): the lobby stage's
- *  avatar turns away now rather than when the look arrives. */
-export interface ExpectLookRequest {
-  kind: 'expectLook'
-}
-
-/** The look the next RANDOMIZE will show: the stage loads it out of sight once the one on show has
- *  loaded, so the swap is instant. */
-export interface PreloadLookRequest {
-  kind: 'preloadLook'
   look: number
   avatar: AvatarLook
 }
@@ -945,11 +931,10 @@ export interface LobbyStageReadyMessage {
   kind: 'lobbyStageReady'
 }
 
-/** The look `default<look>` (a `showLook`) is on the lobby stage, loaded and facing front (scene →
- *  page): the next RANDOMIZE can go. */
-export interface LookShownMessage {
-  kind: 'lookShown'
-  look: number
+/** The sign-in stage (its background and the new account's avatar podium) has been drawn (scene →
+ *  page), so the page's own background can fade out. */
+export interface SigninStageReadyMessage {
+  kind: 'signinStageReady'
 }
 
 export interface SceneInfoMessage {
@@ -1164,6 +1149,11 @@ export interface PermissionResolveRequest {
   realm: string
 }
 
+/** The engine-backed views a page can open: the rich map, the Backpack's avatar preview, the lobby
+ *  stage, and the sign-in stage (the whole screen's background, with a new account's avatar in the
+ *  rect). */
+export type EngineViewportRegion = 'map' | 'avatarPreview' | 'lobby' | 'signin'
+
 /**
  * Tells the scene to render an engine-backed view (the rich map, or the avatar
  * preview) into a screen rectangle that a React page has carved out as transparent.
@@ -1171,7 +1161,7 @@ export interface PermissionResolveRequest {
  */
 export interface EngineViewportRequest {
   kind: 'engineViewport'
-  region: 'map' | 'avatarPreview' | 'lobby'
+  region: EngineViewportRegion
   rect: { x: number; y: number; width: number; height: number } | null
   /** `devicePixelRatio` at the time the rect was measured. The rect is in CSS pixels, so this is
    *  what turns it into the physical pixels the scene should actually render — without it a
@@ -2270,7 +2260,7 @@ export type SceneToPage =
   | RealmInfoMessage
   | SceneInfoMessage
   | LobbyStageReadyMessage
-  | LookShownMessage
+  | SigninStageReadyMessage
   | GalleryMessage
   | GalleryPhotoMessage
   | PermissionRequestMessage

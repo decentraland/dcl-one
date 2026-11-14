@@ -23,7 +23,7 @@ const OWNER = '0x' + '1'.repeat(40)
 const EPHEMERAL = '0x' + '2'.repeat(40)
 const identity = {
   ephemeralIdentity: { address: EPHEMERAL, publicKey: '0x04' },
-  expiration: new Date(Date.now() + 60_000).toISOString(),
+  expiration: new Date(Date.now() + 7 * 86_400_000).toISOString(),
   authChain: [
     { type: 'SIGNER', payload: OWNER, signature: '' },
     { type: 'ECDSA_EPHEMERAL', payload: `Ephemeral address: ${EPHEMERAL}`, signature: '0xowner' }

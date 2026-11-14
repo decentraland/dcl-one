@@ -44,6 +44,10 @@ const SSO_PREFIX = 'single-sign-on-'
 // this origin don't treat it as a sign-in.
 const GUEST_IDENTITY_KEY = 'dcl-guest-identity'
 
+/** A stored sign-in with this long or less to run is not started with: it could expire while the player
+ *  is in-world, where its signed requests would start failing. */
+export const RELOGIN_MARGIN_MS = 24 * 60 * 60 * 1000
+
 // Expiration: prefer the top-level field; fall back to the `Expiration: <date>` line in the
 // ECDSA_EPHEMERAL payload (what `sites` parses), for identities stored without the top field.
 function expirationMs(identity: AuthIdentity): number {
@@ -80,6 +84,9 @@ function parseIdentity(raw: string | null): AuthIdentity | null {
 
 // Scan every `single-sign-on-0x*` entry and the guest, and return the freshest non-expired
 // identity (the most recently created session), mirroring sites' getStoredAddress().
+// One within RELOGIN_MARGIN_MS of expiring is forgotten instead: the player signs in again, and the
+// auth site, which sends a reader with an unexpired sign-in straight back, then asks for a new one. A
+// guest keeps its wallet session, so PLAY AS GUEST signs the same wallet in again.
 export function getStoredLogin(): StoredLogin | null {
   const logins: StoredLogin[] = []
   for (let i = 0; i < localStorage.length; i++) {
@@ -93,14 +100,33 @@ export function getStoredLogin(): StoredLogin | null {
   if (guest) logins.push(guest)
   let best: StoredLogin | null = null
   for (const login of logins) {
+    if (loginExpiresSoon(login)) {
+      localStorage.removeItem(login.guest === true ? GUEST_IDENTITY_KEY : SSO_PREFIX + login.address)
+      continue
+    }
     if (!best || expirationMs(login.identity) > expirationMs(best.identity)) best = login
   }
   return best
 }
 
+export function loginExpiresSoon(login: StoredLogin, now: number = Date.now()): boolean {
+  return expirationMs(login.identity) - now <= RELOGIN_MARGIN_MS
+}
+
 export function getStoredGuestLogin(): StoredLogin | null {
   const identity = parseIdentity(localStorage.getItem(GUEST_IDENTITY_KEY))
   return identity ? { address: rootAddress(identity).toLowerCase(), identity, guest: true } : null
+}
+
+/** Keep an account's sign-in the way the auth site does (`single-sign-on-<address>`), as the only
+ *  account signed in on this origin: the next visit, and the site's own pages, find it. */
+export function storeAccountLogin(identity: AuthIdentity): void {
+  const address = rootAddress(identity).toLowerCase()
+  for (let i = localStorage.length - 1; i >= 0; i--) {
+    const key = localStorage.key(i)
+    if (key?.startsWith(SSO_PREFIX + '0x') && key !== SSO_PREFIX + address) localStorage.removeItem(key)
+  }
+  localStorage.setItem(SSO_PREFIX + address, JSON.stringify(identity))
 }
 
 export function storeGuestLogin(identity: AuthIdentity): void {
@@ -147,11 +173,21 @@ export function rootAddress(identity: AuthIdentity): string {
   return identity.authChain?.[0]?.payload ?? ''
 }
 
+/** The sign-in methods the Explorer's sign-in screen offers besides email, by the auth site's names: the
+ *  site's sign-in page starts the one named in `?loginMethod=`. */
+export const LOGIN_METHODS = ['google', 'metamask', 'discord', 'apple', 'x', 'coinbase', 'wallet-connect'] as const
+export type LoginMethod = (typeof LOGIN_METHODS)[number]
+
+export function isLoginMethod(value: unknown): value is LoginMethod {
+  return typeof value === 'string' && (LOGIN_METHODS as readonly string[]).includes(value)
+}
+
 // Same-origin auth site. Redirecting here keeps us on decentraland.org/.zone/.today so the
 // identity it writes lands in this origin's localStorage.
-export function authLoginUrl(redirectTo: string = location.href, attribution = attributionParams()): string {
+export function authLoginUrl(redirectTo: string = location.href, attribution = attributionParams(), loginMethod?: LoginMethod): string {
   const campaign = attribution.map(([name, value]) => `&${name}=${encodeURIComponent(value)}`).join('')
-  return `/auth/login?redirectTo=${encodeURIComponent(redirectTo)}${campaign}`
+  const method = loginMethod != null ? `&loginMethod=${loginMethod}` : ''
+  return `/auth/login?redirectTo=${encodeURIComponent(redirectTo)}${method}${campaign}`
 }
 
 /** `url` marked as the auth site's return, so the page it lands on knows the sign-in just happened
@@ -170,9 +206,9 @@ const entryUrl = location.href
 
 // Send the browser to the auth site to sign in (fresh account or switch account). Inside the shell
 // the shell navigates, so the auth site gets the top-level page and returns to the shell's URL.
-export function redirectToAuth(redirectTo: string = entryUrl): void {
-  if (inShell) postToShell({ type: 'bevy-shell:auth-login', session: sessionId() })
-  else location.assign(authLoginUrl(authReturnUrl(redirectTo)))
+export function redirectToAuth(redirectTo: string = entryUrl, loginMethod?: LoginMethod): void {
+  if (inShell) postToShell({ type: 'bevy-shell:auth-login', session: sessionId(), ...(loginMethod != null ? { loginMethod } : {}) })
+  else location.assign(authLoginUrl(authReturnUrl(redirectTo), undefined, loginMethod))
 }
 
 // Sign out: drop every SSO identity for this origin (matches sites' disconnect for the

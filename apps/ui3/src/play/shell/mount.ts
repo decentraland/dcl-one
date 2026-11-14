@@ -4,7 +4,7 @@
 // separate processes. The signed-in identity's key stays here: the app asks for the public
 // identity and for signatures, and never reads the origin's localStorage itself.
 import { exitUrl } from '../host'
-import { authLoginUrl, authReturnUrl } from '@explorer-core/features/auth/sso'
+import { authLoginUrl, isLoginMethod, authReturnUrl } from '@explorer-core/features/auth/sso'
 import { ANALYTICS_SESSION_PARAM, ANON_USER_ID_PARAM, dropAttributionParams } from '@explorer-core/lib/analytics'
 import { AUTH_RETURN_PARAM } from '@explorer-core/features/auth/sso'
 import { migratePrefs } from '@explorer-core/lib/prefs'
@@ -168,7 +168,7 @@ export function mountPlayShell(options: PlayShellOptions = {}): void {
       // sign-in: the same-origin auth site, returning here
       case 'bevy-shell:auth-login':
         if (typeof m.session === 'string') sessionStorage.setItem(ANALYTICS_SESSION_KEY, m.session)
-        location.assign(authLoginUrl(authReturnUrl(entryUrl)))
+        location.assign(authLoginUrl(authReturnUrl(entryUrl), undefined, isLoginMethod(m.loginMethod) ? m.loginMethod : undefined))
         break
       // the session's first move in world: the Google Ads conversion (googleTag.ts), and GA4's ids
       // back to the app for Segment

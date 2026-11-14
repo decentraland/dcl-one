@@ -20,36 +20,6 @@
   flex-direction: column;
 }
 
-/* Drifting logo pattern, strongest in the centre, then a glow behind the illustration. */
-.pattern {
-  position: absolute;
-  inset: 0;
-  overflow: hidden;
-  opacity: 0.07;
-  mix-blend-mode: luminosity;
-  mask-image: radial-gradient(ellipse 100% 100% at 50% 50%, var(--black) 16.7%, transparent 66.7%);
-}
-.patternX {
-  position: absolute;
-  inset: 0 -650px 0 -650px;
-  animation: drift-x 5.65s linear infinite;
-}
-.patternY {
-  position: absolute;
-  inset: -650px 0 -650px 0;
-  background: url('../../assets/loading/logo-pattern.webp') 0 0 / 650px 650px repeat;
-  animation: drift-y 8.02s linear infinite;
-}
-@keyframes drift-x {
-  to {
-    transform: translateX(650px);
-  }
-}
-@keyframes drift-y {
-  to {
-    transform: translateY(-650px);
-  }
-}
 .glow {
   position: absolute;
   inset: 0;

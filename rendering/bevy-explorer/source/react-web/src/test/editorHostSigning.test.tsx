@@ -26,7 +26,7 @@ const host = (): DclEditorHostV1 => w.__dclEditorHost!
 const owner = createUnsafeIdentity()
 // The entry the auth site leaves in localStorage, and the profile the engine reports for it.
 async function signIn(): Promise<void> {
-  const identity = await Authenticator.initializeAuthChain(owner.address, createUnsafeIdentity(), 60, async (message) =>
+  const identity = await Authenticator.initializeAuthChain(owner.address, createUnsafeIdentity(), 7 * 24 * 60, async (message) =>
     Authenticator.createSignature(owner, message)
   )
   localStorage.setItem(`single-sign-on-${owner.address.toLowerCase()}`, JSON.stringify(identity))
@@ -57,7 +57,7 @@ describe('editor host signing', () => {
     // a stored login for another wallet than the one in-world signs nothing
     const other = createUnsafeIdentity()
     const otherKey = `single-sign-on-${other.address.toLowerCase()}`
-    const otherIdentity = await Authenticator.initializeAuthChain(other.address, createUnsafeIdentity(), 60, async (message) =>
+    const otherIdentity = await Authenticator.initializeAuthChain(other.address, createUnsafeIdentity(), 7 * 24 * 60, async (message) =>
       Authenticator.createSignature(other, message)
     )
     localStorage.setItem(otherKey, JSON.stringify(otherIdentity))

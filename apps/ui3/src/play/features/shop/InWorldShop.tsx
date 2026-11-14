@@ -23,7 +23,7 @@ import { NAME_MAX_LENGTH, NAME_MIN_LENGTH, sanitizeNameInput } from '@shop/names
 import { Button, Chip, ChevronDown, ChevronLeft, EmptyState, MaskIcon, OptionMenu, Pager, ScrollThumb, SearchField, showConfirm, showToast, Spinner, Tabs, type TabItem } from '@hud/design'
 import { resolveNameColor, userNameColor } from '@explorer-core/engine/nameColor'
 import { addressSuffix } from '@explorer-core/engine/profileEdit'
-import type { PreviewFocus, Wearable } from '@explorer-core/engine/protocol'
+import type { EngineViewportRegion, PreviewFocus, Wearable } from '@explorer-core/engine/protocol'
 import { registerCancelLayer } from '@explorer-core/lib/cancelLayers'
 import { splitName } from '@explorer-core/lib/identity'
 import { subscribeHudScale } from '@explorer-core/lib/hudScale'
@@ -76,7 +76,7 @@ export interface InWorldShopProps {
   shop: ShopState
   profile: ProfileState
   onNavigate: (page: string) => void
-  setEngineViewport: (region: 'map' | 'avatarPreview' | 'lobby', rect: { x: number; y: number; width: number; height: number } | null) => void
+  setEngineViewport: (region: EngineViewportRegion, rect: { x: number; y: number; width: number; height: number } | null) => void
   /** The look the avatar wears now (empty until the engine has sent it): try-on swaps one category of it. */
   equipped: Wearable[]
   /** The Backpack's preview: a wearable set on the preview avatar, never saved; null restores the look. */

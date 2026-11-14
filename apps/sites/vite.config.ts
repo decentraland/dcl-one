@@ -1,4 +1,5 @@
 import { reactRouter } from "@react-router/dev/vite";
+import { spawnSync } from "node:child_process";
 import { createReadStream, existsSync, readdirSync, statSync } from "node:fs";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -231,7 +232,14 @@ function icoTypeLikeServe(): Plugin {
   };
 }
 
+// The short commit /play is built from, "" without a git checkout: the sign-in screens show it.
+function playBuild(): string {
+  const out = spawnSync("git", ["rev-parse", "--short", "HEAD"], { encoding: "utf8" });
+  return out.status === 0 ? out.stdout.trim() : "";
+}
+
 export default defineConfig({
+  define: { __PLAY_BUILD__: JSON.stringify(playBuild()) },
   plugins: [icoTypeLikeServe(), separateDevCaches(), servePlayWeb(), reactRouter(), watchUi3(ui), warmServerBuild()],
   server: {
     // A save is often truncate-then-write, and over the NFS home the two reach the

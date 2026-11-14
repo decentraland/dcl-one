@@ -1,0 +1,173 @@
+.screen {
+  position: absolute;
+  inset: 0;
+}
+/* from the canvas top */
+.back {
+  position: absolute;
+  left: 200px;
+  top: 133px;
+}
+.title {
+  position: absolute;
+  left: 200px;
+  top: 220px;
+  height: 44px;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  font-size: var(--type-36);
+  font-weight: var(--fw-semibold);
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+.description {
+  position: absolute;
+  left: 205px;
+  top: 277px;
+  height: 37px;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  font-size: var(--type-24);
+  white-space: nowrap;
+}
+/* from the canvas middle: the 1080 rows' 365 and 779 */
+.middle {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(50% - 540px);
+  height: 1080px;
+  pointer-events: none;
+}
+.middle > * {
+  pointer-events: auto;
+}
+.slots {
+  position: absolute;
+  left: 200px;
+  top: 365px;
+  display: flex;
+  gap: 24px;
+}
+/* 160x360, radius 24; the picked one ringed */
+.slot {
+  position: relative;
+  width: 160px;
+  height: 360px;
+  padding: 0;
+  border: 0;
+  border-radius: 24px;
+  /* a 40% black blended in linear light reads as about 30% here */
+  background: var(--black-30);
+  cursor: pointer;
+}
+.slot.selected::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border: 4px solid var(--signin-select);
+  border-radius: 24px;
+  pointer-events: none;
+}
+.slot:focus-visible {
+  outline: 2px solid var(--white-50);
+  outline-offset: 3px;
+}
+.picture {
+  position: absolute;
+  left: 0;
+  top: 37.8px;
+  width: 160px;
+  height: 284.4px;
+  pointer-events: none;
+}
+/* body type A's fourth picture is drawn larger, overhanging its slot */
+.pictureLarge {
+  left: -7.8px;
+  top: 29.9px;
+  width: 175.6px;
+  height: 312.2px;
+}
+.continue {
+  position: absolute;
+  left: 200px;
+  top: 779px;
+  width: 372px;
+  height: 70px;
+  gap: 24px;
+  border-radius: var(--r-lg);
+  font-size: var(--type-22);
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0;
+}
+.continue:hover:not(:disabled) {
+  transform: scale(1.04);
+}
+/* from the canvas bottom-right: the button's right edge 447px in, its bottom 58px up */
+.body {
+  position: absolute;
+  right: 447px;
+  bottom: 58px;
+}
+.bodyButton {
+  width: 168px;
+  height: 46px;
+  gap: 8px;
+  padding: 0 12px;
+  border-radius: var(--r-md);
+  font-size: var(--type-14);
+  font-weight: var(--fw-bold);
+  letter-spacing: 0;
+}
+.bodyLabel {
+  flex: 1;
+}
+.chevronUp {
+  transform: rotate(180deg);
+}
+/* opens upwards, 8px above the button, its right edge on the button's */
+.menu {
+  position: absolute;
+  right: 0;
+  bottom: 54px;
+  width: 210px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border-radius: var(--r-md);
+  background: var(--text);
+}
+.option {
+  position: relative;
+  display: flex;
+  align-items: center;
+  height: 46px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--r-md);
+  background: var(--text);
+  color: var(--panel);
+  font: inherit;
+  font-size: var(--type-14);
+  font-weight: var(--fw-bold);
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background-color var(--dur-fast) ease;
+}
+.option:hover {
+  background: var(--signin-option-hover);
+}
+.optionIcon {
+  color: var(--panel);
+}
+.optionLabel {
+  flex: 1;
+  text-align: center;
+}
+.check {
+  position: absolute;
+  right: 12px;
+}
