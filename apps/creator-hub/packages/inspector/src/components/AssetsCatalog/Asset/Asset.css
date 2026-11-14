@@ -32,6 +32,11 @@
   border-color: var(--border-focused);
 }
 
+.assets-catalog-asset:focus-visible {
+  outline: 1px solid var(--focus-ring);
+  outline-offset: -1px;
+}
+
 .assets-catalog-asset img {
   width: 75%;
   height: 75%;
