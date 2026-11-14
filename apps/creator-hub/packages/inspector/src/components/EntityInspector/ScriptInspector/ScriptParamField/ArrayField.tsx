@@ -59,6 +59,9 @@ export function ArrayField({ name, param, getError, onUpdate }: Props) {
             }
           />
           <Button
+            variant="contained"
+            color="secondary"
+            size="small"
             className="ArrayFieldRemove"
             onClick={() => onUpdate((prev: unknown) => asArray(prev).filter((_, i) => i !== index))}
           >

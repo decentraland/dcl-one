@@ -299,6 +299,9 @@ function AssetsInner({ isAssetsPanelCollapsed, onToggleCollapse }: Props) {
         {tab !== AssetsTab.DebugConsole && (
           <div className="Assets-buttons-left">
             <Button
+              variant="contained"
+              color="secondary"
+              size="small"
               className="import-button"
               onClick={handleImportClick}
             >

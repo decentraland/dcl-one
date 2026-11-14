@@ -76,7 +76,10 @@ export const RewardsForm = withSdk<Props>(({ sdk, entity, className = '' }) => {
           onChange={handleCampaignIdChange}
         />
         <Button
-          className="text link"
+          variant="text"
+          color="secondary"
+          size="small"
+          className="link"
           onClick={() =>
             window.open(`${REWARDS_URL}/campaign/?id=${rewardsComponent.campaignId}`, '_blank')
           }
@@ -96,7 +99,9 @@ export const RewardsForm = withSdk<Props>(({ sdk, entity, className = '' }) => {
             masked
           />
           <Button
-            className="text"
+            variant="text"
+            color="secondary"
+            size="small"
             onClick={toggleShowKey}
           >
             {showKey ? 'Hide' : 'Show'}
