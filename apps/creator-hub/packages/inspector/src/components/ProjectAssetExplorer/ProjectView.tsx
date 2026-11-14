@@ -17,6 +17,7 @@ import type { Entity } from '@dcl/ecs';
 
 import { useSdk } from '../../hooks/sdk/useSdk';
 import { Tree } from '../Tree';
+import { TreeRoot } from '../Tree/TreeRoot';
 import type { DropType } from '../Tree/utils';
 import { Modal } from '../Modal';
 import { Button } from '../Button';
@@ -254,10 +255,6 @@ function ProjectView({ folders, thumbnails }: Props) {
     [selection, selectionSet],
   );
 
-  /**
-   * Selection
-   */
-
   const selectOnly = useCallback((path: string) => {
     setSelection(path ? [path] : []);
     setFocusItem(path);
@@ -282,7 +279,6 @@ function ProjectView({ folders, thumbnails }: Props) {
 
   const clearSelection = useCallback(() => selectOnly(''), [selectOnly]);
 
-  // The preview pane follows the focused item: a file previews, a folder (or nothing) clears it.
   useEffect(() => {
     const node = tree.get(focusItem);
     if (node?.type === 'asset') {
@@ -297,10 +293,6 @@ function ProjectView({ folders, thumbnails }: Props) {
       selectPreview(undefined);
     }
   }, [focusItem, tree, selectPreview]);
-
-  /**
-   * Callbacks
-   */
 
   const onSetOpen = useCallback(
     (value: string, isOpen: boolean) => {
@@ -465,9 +457,6 @@ function ProjectView({ folders, thumbnails }: Props) {
     [selectOnly, mentionAsset],
   );
   const handleDragContext = useCallback(() => ({ tree }), [tree]);
-  // Drop targets (renderer, video inputs) read a `value` like the Tile emits; the
-  // tree's default `{ items }` payload was silently ignored, so dragging from the
-  // list did nothing (#1062). `items` stays so the tree's own hover hints keep working.
   const handleDragItem = useCallback(
     (items: string[], context: unknown) => ({ items, value: items[0], context }),
     [],
@@ -513,10 +502,6 @@ function ProjectView({ folders, thumbnails }: Props) {
   const handleFilterClick = useCallback((type: Filter) => {
     setActiveFilter(type);
   }, []);
-
-  /**
-   * File operations (rename, duplicate, move, copy, new folder)
-   */
 
   /** Keeps the selection, the open folders and the empty folders pointing at a renamed path. */
   const followRename = useCallback(
@@ -1019,39 +1004,41 @@ function ProjectView({ folders, thumbnails }: Props) {
               {allExpanded ? <CollapseAllIcon /> : <ExpandAllIcon />}
             </button>
           </div>
-          <FilesTree
-            className="editor-assets-tree"
-            value={ROOT}
-            onAddChild={handleAddChild}
-            onDrop={handleTreeDrop}
-            onRemove={handleRemove}
-            onRename={handleRename}
-            onSelect={onSelect}
-            onDoubleSelect={handleDoubleSelect}
-            onSetOpen={onSetOpen}
-            onDuplicate={handleDuplicate}
-            getId={(value: string) => value.toString()}
-            getChildren={getChildren}
-            getLabel={(val: string) => tree.get(val)?.name ?? val}
-            renderActionArea={renderTreeDecoration}
-            getSelectedItems={getSelectedItems}
-            isOpen={isOpen}
-            isSelected={(val: string) => selectionSet.has(val)}
-            isHidden={(val: string) => val === ROOT}
-            canRename={canRenameNode}
-            canRemove={canRemoveNode}
-            canDrag={canDragNode}
-            canDuplicate={canDuplicateNode}
-            canAddChild={canAddChild}
-            addChildLabel="New Folder"
-            addChildIcon={<NewFolderIcon />}
-            getExtraContextMenu={getExtraContextMenu}
-            contextMenuLabel="Asset Options"
-            getIcon={val => <NodeIcon value={tree.get(val)} />}
-            getDragContext={handleDragContext}
-            getDragItem={handleDragItem}
-            dndType={DRAG_N_DROP_ASSET_KEY}
-          />
+          <TreeRoot label="Local Assets">
+            <FilesTree
+              className="editor-assets-tree"
+              value={ROOT}
+              onAddChild={handleAddChild}
+              onDrop={handleTreeDrop}
+              onRemove={handleRemove}
+              onRename={handleRename}
+              onSelect={onSelect}
+              onDoubleSelect={handleDoubleSelect}
+              onSetOpen={onSetOpen}
+              onDuplicate={handleDuplicate}
+              getId={(value: string) => value.toString()}
+              getChildren={getChildren}
+              getLabel={(val: string) => tree.get(val)?.name ?? val}
+              renderActionArea={renderTreeDecoration}
+              getSelectedItems={getSelectedItems}
+              isOpen={isOpen}
+              isSelected={(val: string) => selectionSet.has(val)}
+              isHidden={(val: string) => val === ROOT}
+              canRename={canRenameNode}
+              canRemove={canRemoveNode}
+              canDrag={canDragNode}
+              canDuplicate={canDuplicateNode}
+              canAddChild={canAddChild}
+              addChildLabel="New Folder"
+              addChildIcon={<NewFolderIcon />}
+              getExtraContextMenu={getExtraContextMenu}
+              contextMenuLabel="Asset Options"
+              getIcon={val => <NodeIcon value={tree.get(val)} />}
+              getDragContext={handleDragContext}
+              getDragItem={handleDragItem}
+              dndType={DRAG_N_DROP_ASSET_KEY}
+            />
+          </TreeRoot>
         </div>
         {showTree && (
           <div
@@ -1169,10 +1156,11 @@ function ProjectView({ folders, thumbnails }: Props) {
 function NodeIcon({ value }: { value?: TreeNode }) {
   if (!value) return null;
   if (value.type === 'folder') {
-    // Not a div: the tree clips every div inside a row (`overflow: hidden` for long names), and
-    // on some machines the line box is shorter than the icon, which cut its bottom edge.
     return (
-      <span className="ProjectView-nodeIcon">
+      <span
+        className="ProjectView-nodeIcon"
+        aria-hidden="true"
+      >
         <FolderIcon />
       </span>
     );
@@ -1198,8 +1186,14 @@ function NodeIcon({ value }: { value?: TreeNode }) {
 
     return (
       <>
-        <svg style={{ width: '4px', height: '4px' }} />
-        <Icon style={{ marginRight: '4px' }} />
+        <svg
+          style={{ width: '4px', height: '4px' }}
+          aria-hidden="true"
+        />
+        <Icon
+          style={{ marginRight: '4px' }}
+          aria-hidden="true"
+        />
       </>
     );
   }
