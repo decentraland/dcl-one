@@ -868,8 +868,7 @@ fn select_listing_for_pair(
 }
 
 fn is_decimal_item_id(item_id: &str) -> bool {
-    let s = item_id.trim();
-    !s.is_empty() && s.len() <= 77 && s.bytes().all(|b| b.is_ascii_digit())
+    crate::types::parse_decimal(item_id.trim()).is_ok()
 }
 
 fn token_matches_item(token_id: &str, item_id: &str) -> bool {
@@ -1096,5 +1095,9 @@ mod tests {
         assert!(ensure_charge_covers_payment("10", "3").is_ok());
         assert!(is_stale(100, 401, 300) && !is_stale(100, 400, 300));
         assert!(is_decimal_item_id("12") && !is_decimal_item_id("0xab") && !is_decimal_item_id(""));
+        let max = alloy_primitives::U256::MAX.to_string();
+        assert_eq!(max.len(), 78);
+        assert!(is_decimal_item_id(&max) && is_decimal_item_id(&format!(" {max} ")));
+        assert!(!is_decimal_item_id(&format!("{max}0")) && !is_decimal_item_id("1_0"));
     }
 }

@@ -640,8 +640,10 @@ pub fn fix_urn(urn: &str) -> String {
     urn.replace("mainnet", "ethereum")
 }
 
-/// A `contract-item` id split at its dash: the wire's item id when the item
-/// part is decimal (an unbounded blockchain id), else `None`.
+/// A `contract-item` id split at its dash, the contract lowercased: `None`
+/// unless the contract is `0x` plus 40 hex digits and the item part is 1 to
+/// 78 decimal digits (a uint256 has at most 78). Every `<contract>-<itemId>`
+/// parameter is read through here.
 pub fn split_item_wire_id(wire: &str) -> Option<(String, String)> {
     let (contract, item) = wire.trim().split_once('-')?;
     let contract = contract.to_ascii_lowercase();
