@@ -333,6 +333,8 @@ jobs:
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
+      - name: Test Explorer UI enums
+        run: node --test crates/dcl_js/src/modules/RestrictedActions.test.cjs
       - name: Test Explorer routes against the gateway
         if: runner.os == 'Linux'
         run: |
