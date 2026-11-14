@@ -4,6 +4,8 @@
 function browserArgs(profile) {
   return [
     '--headless=new',
+    // Headless hosts may have no physical pointer; device emulation starts as a desktop.
+    '--blink-settings=primaryHoverType=2,availableHoverTypes=2,primaryPointerType=4,availablePointerTypes=4',
     '--no-sandbox',
     '--disable-extensions',
     '--disable-background-networking',
