@@ -14,7 +14,7 @@ name: Shared UI library key scan
 # accepted risk).
 on:
   workflow_run:
-    workflows: ["Shared UI library"]
+    workflows: ['Shared UI library']
     types: [completed]
 
 permissions: {}
@@ -125,7 +125,7 @@ jobs:
         id: inputs
         if: steps.trigger.outputs.scan == 'true'
         env:
-          GIT_CONFIG_NOSYSTEM: "1"
+          GIT_CONFIG_NOSYSTEM: '1'
           GIT_CONFIG_GLOBAL: /dev/null
           HEAD_SHA: ${{ steps.trigger.outputs.head }}
           BASE: ${{ steps.trigger.outputs.base }}
@@ -148,7 +148,7 @@ jobs:
             range="$HEAD_SHA"
             required=true
           else
-            files=$(git -C trusted log --format= --name-only --diff-merges=cc "$range" -- library/ui .claude/skills/implement-figma-design .claude/skills/maintain-figma-library .agents .github/workflows/ui-library.yml .github/workflows/ui-library-key-scan.yml .gitattributes)
+            files=$(git -C trusted log --format= --name-only --diff-merges=cc "$range" -- library/ui .claude/skills/implement-figma-design .claude/skills/maintain-figma-library .agents .github/workflows/ui-library.yml .github/workflows/ui-library-key-scan.yml tooling/ui-browser-environment.mjs tooling/tests/ui-browser-environment.test.mjs .gitattributes)
             [ -z "$files" ] || required=true
           fi
           echo "artifact_required=$required" >> "$GITHUB_OUTPUT"
@@ -275,9 +275,9 @@ jobs:
       - name: Scan for the Figma file key
         id: scan
         env:
-          GIT_CONFIG_NOSYSTEM: "1"
+          GIT_CONFIG_NOSYSTEM: '1'
           GIT_CONFIG_GLOBAL: /dev/null
-          GIT_NO_REPLACE_OBJECTS: "1"
+          GIT_NO_REPLACE_OBJECTS: '1'
           FIGMA_FILE_KEY: ${{ secrets.FIGMA_FILE_KEY }}
           TRUSTED_SHA: ${{ github.sha }}
           HEAD_SHA: ${{ needs.prepare.outputs.head }}
