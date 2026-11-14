@@ -107,7 +107,13 @@ admitted under advisory locks (deployer, world, node budget); the per-world
 count and byte sums read `pending_scenes (world_name, created_at)`. The blob
 collector keeps every file a pending row names, and a leased job reclaims
 expired uploads under the exclusive store lock, unlinking only files a
-batch of that upload wrote (`pending_scene_files.written`).
+batch of that upload wrote (`pending_scene_files.written`). Local content
+deploys (`POST /entities` and partial publication) and world scene deploys
+take that lock's shared side in their write transaction and re-check every
+file they name, so an unlink batch never removes a file such a deployment
+references; a content deploy waits at most 5 s for it and answers 503 past
+that. Synced content writes do not take it and rely on the collector's age
+floor.
 
 Genesis storage management requires LAND rights at the requested parcel, using
 the published LAND manager index or its configured document source. Without a
@@ -818,7 +824,7 @@ and redirect Location values, as in the pinned source. To request a complete
 filename containing `?`, `#` or `%`, clients must percent-encode its path segment.
 Alias downloads extract the UUID and use the existing primary key to resolve the
 shared image or thumbnail hash. The nullable column adds no index or backfill:
-existing rows retain their hash URLs. Migration `0040_camera_reel_original_filename`
+existing rows retain their hash URLs. Migration `0045_camera_reel_original_filename`
 adds the column without replacing rows or blob bytes. Local `/api/files` downloads
 apply the camera row's review state and the shared blob denylist. Image redirects
 preserve the requested filename without querying the database. After storing both
@@ -838,7 +844,7 @@ Camera upload MIME is retained per photo in nullable
 including when their detected encoding differs. An upload adds this short string
 to its existing row insert; alias downloads select it with the existing UUID
 primary-key lookup. The column adds no index, table, pool or extra read query.
-Migration `0042_camera_reel_image_content_type` preserves existing rows without
+Migration `0044_camera_reel_image_content_type` preserves existing rows without
 inventing an object MIME backfill. Legacy NULL values and raw hash URLs retain byte-format sniffing. An import
 can populate the per-photo value from object metadata; a raw hash alone does not
 identify which photo's claimed MIME to use.
@@ -1414,7 +1420,7 @@ failure time. Three failures block claims for 24 hours from the last failure;
 a successful solve clears the row. The existing `credits.captcha_challenges`
 table records `generated_at` for the minimum solve-time check and keeps a
 two-hour challenge lifetime. Both challenge and failure updates take the
-same wallet lock. The additive `0041_credits_captcha_generated_at` step
+same wallet lock. The additive `0043_credits_captcha_generated_at` step
 preserves existing challenges and establishes their solve-time baseline.
 
 ## Badges catalog and progress workload

@@ -866,12 +866,12 @@ fn update_url_params(
             realm: Some(server.to_owned()),
             position,
             preview: preview.is_preview,
+            // the default set is omitted so the canonical url stays clean (the page doesn't know it)
+            portables: portables.filter(|p| p != system_api_types::web_params::DEFAULT_PORTABLES),
             ..launched.launch
         },
         client: ClientOptions {
             system_scene,
-            // the default set is omitted so the canonical url stays clean (the page doesn't know it)
-            portables: portables.filter(|p| p != system_api_types::web_params::DEFAULT_PORTABLES),
             editor: editor.0,
             // the host's calls for this load, never a link's
             hold_world: false,

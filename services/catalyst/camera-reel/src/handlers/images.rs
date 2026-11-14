@@ -10,7 +10,7 @@ use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use base64::Engine as _;
 use bytes::Bytes;
-use image::guess_format;
+use image::{ImageFormat, ImageReader, Limits, guess_format};
 use uuid::Uuid;
 
 use crate::db::{BlobVerdict, DeletedImage, NewImage};
@@ -22,8 +22,33 @@ use crate::storage::{Storage, StorageError};
 use crate::{SharedState, signed_path};
 
 pub const MAX_JSON_IMAGE_BYTES: usize = 15 * 1024 * 1024;
-const MAX_MULTIPART_MEMORY_BYTES: usize = 2 * 1024 * 1024;
-static IMAGE_DECODE_PERMITS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
+pub const MAX_MULTIPART_IMAGE_BYTES: usize = 5 * 1024 * 1024;
+const MAX_MULTIPART_MEMORY_BYTES: usize = MAX_MULTIPART_IMAGE_BYTES + 1024 * 1024;
+
+/// Decode bounds: an upload's pixel count, not its byte size, sets the cost.
+pub const MAX_IMAGE_DIMENSION: u32 = 8192;
+pub const MAX_DECODE_ALLOC_BYTES: u64 = 128 * 1024 * 1024;
+
+/// Decodes run off the async workers, a few at a time.
+static DECODES: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
+
+/// Runs `work` on the blocking pool holding a `permits` permit until it
+/// finishes, even when the caller is dropped first.
+pub(crate) async fn decode_with<T: Send + 'static>(
+    permits: &'static tokio::sync::Semaphore,
+    work: impl FnOnce() -> T + Send + 'static,
+) -> Result<T, ApiError> {
+    let permit = permits
+        .acquire()
+        .await
+        .map_err(|_| ApiError::Internal("decoder unavailable".to_string()))?;
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        work()
+    })
+    .await
+    .map_err(|_| ApiError::Internal("couldn't create thumbnail".to_string()))
+}
 
 pub async fn upload_image(
     State(state): State<SharedState>,
@@ -72,7 +97,11 @@ pub async fn upload_image(
             Some("image") if image_bytes.is_none() => {
                 image_content_type = field.content_type().map(str::to_owned);
                 image_file_name = field.file_name().map(str::to_owned);
-                image_bytes = Some(read_form_bytes(field, &mut memory_remaining).await?);
+                let bytes = read_form_bytes(field, &mut memory_remaining).await?;
+                if bytes.len() > MAX_MULTIPART_IMAGE_BYTES {
+                    return Err(multipart_error("Payload reached size limit."));
+                }
+                image_bytes = Some(bytes);
             }
             Some("metadata") if metadata_bytes.is_none() => {
                 metadata_bytes = Some(read_form_bytes(field, &mut memory_remaining).await?);
@@ -211,33 +240,32 @@ pub async fn upload_image_json(
     .await
 }
 
-/// Source codec compatibility corpus; production uploads use the restricted decoder.
-#[cfg(test)]
-pub fn thumbnail_of(image_bytes: &[u8]) -> Result<Bytes, ApiError> {
+/// The 640x360 thumbnail in the image's own format, which must be the
+/// declared one; decode failures and oversized images are the client's (400).
+pub fn thumbnail_of(image_bytes: &[u8], declared: ImageFormat) -> Result<Bytes, ApiError> {
     let format = guess_format(image_bytes)
         .map_err(|_| ApiError::BadRequest("invalid image format".to_string()))?;
-    thumbnail_with_limits(image_bytes, format)
-}
-
-fn thumbnail_for_upload(image_bytes: &[u8]) -> Result<Bytes, ApiError> {
-    let format = guess_format(image_bytes)
-        .map_err(|_| ApiError::BadRequest("invalid image format".to_string()))?;
-    if !matches!(format, image::ImageFormat::Png | image::ImageFormat::Jpeg) {
-        return Err(ApiError::BadRequest("unsupported image format".to_string()));
+    if format != declared {
+        return Err(ApiError::BadRequest("invalid image format".to_string()));
     }
-    thumbnail_with_limits(image_bytes, format)
+    thumbnail_for_format(image_bytes, format)
 }
 
-/// Detection, decoding and encoding failures retain their distinct 400 errors.
-fn thumbnail_with_limits(
-    image_bytes: &[u8],
-    format: image::ImageFormat,
-) -> Result<Bytes, ApiError> {
-    let mut reader = image::io::Reader::with_format(Cursor::new(image_bytes), format);
-    let mut limits = image::io::Limits::default();
-    limits.max_image_width = Some(12_000);
-    limits.max_image_height = Some(12_000);
-    limits.max_alloc = Some(96 * 1024 * 1024);
+/// Exercises the pinned source codec corpus without making those formats
+/// reachable through the upload endpoints.
+#[cfg(test)]
+pub fn thumbnail_source_compat(image_bytes: &[u8]) -> Result<Bytes, ApiError> {
+    let format = guess_format(image_bytes)
+        .map_err(|_| ApiError::BadRequest("invalid image format".to_string()))?;
+    thumbnail_for_format(image_bytes, format)
+}
+
+fn thumbnail_for_format(image_bytes: &[u8], format: ImageFormat) -> Result<Bytes, ApiError> {
+    let mut limits = Limits::default();
+    limits.max_image_width = Some(MAX_IMAGE_DIMENSION);
+    limits.max_image_height = Some(MAX_IMAGE_DIMENSION);
+    limits.max_alloc = Some(MAX_DECODE_ALLOC_BYTES);
+    let mut reader = ImageReader::with_format(Cursor::new(image_bytes), format);
     reader.limits(limits);
     let img = reader.decode().map_err(|e| {
         tracing::error!("failed to parse image: {e}");
@@ -250,22 +278,6 @@ fn thumbnail_with_limits(
         ApiError::BadRequest("couldn't create thumbnail".to_string())
     })?;
     Ok(Bytes::from(buffer.into_inner()))
-}
-
-async fn thumbnail_of_bounded(image_bytes: Bytes) -> Result<Bytes, ApiError> {
-    let permit = IMAGE_DECODE_PERMITS
-        .acquire()
-        .await
-        .map_err(|_| ApiError::Internal("image decoder unavailable".to_string()))?;
-    tokio::task::spawn_blocking(move || {
-        let _permit = permit;
-        thumbnail_for_upload(&image_bytes)
-    })
-    .await
-    .map_err(|error| {
-        tracing::error!(%error, "image decoder task failed");
-        ApiError::Internal("image decoder failed".to_string())
-    })?
 }
 
 /// `hash` must be `auth::hash_bytes_v1(&data)`; an existing blob with that
@@ -289,30 +301,33 @@ async fn finalize_upload(
     if !metadata.screen_rects_are_valid() {
         return Err(ApiError::BadRequest("invalid metadata".to_string()));
     }
-    if metadata.user_address != address {
+    if !metadata.user_address.eq_ignore_ascii_case(address) {
         return Err(ApiError::BadRequest("invalid user address".to_string()));
     }
 
     let content_type = image_content_type
         .ok_or_else(|| ApiError::BadRequest("invalid content type".to_string()))?;
-    match content_type.as_str() {
-        "image/png" | "image/jpeg" => {}
+    let declared = match content_type.as_str() {
+        "image/png" => ImageFormat::Png,
+        "image/jpeg" => ImageFormat::Jpeg,
         _ => return Err(ApiError::BadRequest("unsupported content type".to_string())),
-    }
-    let format = guess_format(&image_bytes)
-        .map_err(|_| ApiError::BadRequest("invalid image format".to_string()))?;
-    let declared_format = if content_type == "image/png" {
-        image::ImageFormat::Png
-    } else {
-        image::ImageFormat::Jpeg
     };
-    if format != declared_format {
-        return Err(ApiError::BadRequest(
-            "image format does not match content type".to_string(),
-        ));
-    }
 
-    let thumbnail = thumbnail_of_bounded(image_bytes.clone()).await?;
+    // JSON uploads too are refused at the cap before the decode; the insert stays the gate.
+    let max_images = state.settings.max_images_per_user;
+    let owned = state
+        .db
+        .get_user_images_count(address, false)
+        .await
+        .map_err(|e| {
+            tracing::error!("failed to count user images: {e}");
+            ApiError::Internal("failed to store image metadata".to_string())
+        })?;
+    if owned >= max_images {
+        return Err(max_limit_reached(max_images));
+    }
+    let bytes = image_bytes.clone();
+    let thumbnail = decode_with(&DECODES, move || thumbnail_of(&bytes, declared)).await??;
 
     if image_file_name.is_some_and(|name| name.contains('/') || name.contains('\\')) {
         return Err(ApiError::BadRequest("invalid file name".to_string()));
@@ -330,7 +345,6 @@ async fn finalize_upload(
 
     // The row is the limit gate, so it lands before the blobs: a refused upload
     // never touches the store, and a failed blob write takes its row back out.
-    let max_images = state.settings.max_images_per_user;
     let current_images = state
         .db
         .insert_image_within_limit_named(

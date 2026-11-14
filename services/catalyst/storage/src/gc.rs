@@ -14,8 +14,9 @@
 //! never the corpus. A scene
 //! whose content list cannot be read exactly aborts the run, a candidate
 //! is re-checked (references and age) right before it is unlinked, under
-//! the exclusive store lock that a world scene deploy takes shared (other
-//! domains rely on the age floor alone), an empty reference set with
+//! the exclusive store lock that local content deploys and world scene deploys
+//! take shared (synced content writes and other domains rely on the age floor
+//! alone), an empty reference set with
 //! candidates is refused unless asked for, and the dry run reports without
 //! deleting.
 //!
@@ -44,9 +45,10 @@ pub const GC_RUN_LOCK_KEY: i64 = 0x5354_4f52_455f_5255;
 /// How long an unlink batch waits for in-flight publishes before deferring.
 pub const STORE_LOCK_TIMEOUT: &str = "30s";
 
-/// Taken by a world scene deploy before it checks that the keys it names exist: an unlink batch
-/// re-checks references and unlinks under the exclusive lock, so either the deploy sees the file
-/// gone or the batch sees the committed reference. Other domains do not take it.
+/// Taken by a local content deploy or a world scene deploy before it checks that the keys it names
+/// exist: an unlink batch re-checks references and unlinks under the exclusive lock, so either the
+/// deploy sees the file gone or the batch sees the committed reference. Synced content writes and
+/// other domains do not take it.
 pub async fn lock_store_shared(conn: &mut sqlx::PgConnection) -> Result<(), sqlx::Error> {
     sqlx::query("SELECT pg_advisory_xact_lock_shared($1)")
         .bind(STORE_LOCK_KEY)
@@ -272,6 +274,10 @@ pub const NOT_STORE_KEYS: &[(&str, &str)] = &[
     (
         "social.community_contents.content_hash",
         "a post body's sha256; its blob is the row's cid",
+    ),
+    (
+        "social.community_content_uploads.content_hash",
+        "a post body's sha256; its blob is social.community_contents.cid",
     ),
     (
         "social.mls_key_packages.ref_hash",

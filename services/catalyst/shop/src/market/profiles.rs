@@ -792,19 +792,27 @@ pub struct ProfileMetadata {
 }
 
 /// `None` for a profile without an avatar, where upstream's mapper would throw.
-pub fn profile_metadata(pointer: &str, profile: &Value) -> Option<ProfileMetadata> {
+/// The thumbnail is `thumbnail_url` when given, else the first avatar's
+/// `face256` snapshot.
+pub fn profile_metadata(
+    pointer: &str,
+    profile: &Value,
+    thumbnail_url: Option<&str>,
+) -> Option<ProfileMetadata> {
     let avatar = profile.get("avatars")?.as_array()?.first()?;
     let field = |key: &str| avatar.get(key).cloned();
+    let thumbnail_url = thumbnail_url.unwrap_or_else(|| {
+        avatar
+            .pointer("/avatar/snapshots/face256")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+    });
     Some(ProfileMetadata {
         pointer: pointer.to_string(),
         has_claimed_name: field("hasClaimedName"),
         name: field("name"),
         name_color: field("nameColor"),
-        thumbnail_url: avatar
-            .pointer("/avatar/snapshots/face256")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string(),
+        thumbnail_url: thumbnail_url.to_string(),
     })
 }
 
@@ -855,7 +863,7 @@ pub async fn profiles_metadata(
         Ok(found) => {
             let compact: Vec<ProfileMetadata> = found
                 .iter()
-                .filter_map(|(pointer, profile)| profile_metadata(pointer, profile))
+                .filter_map(|(pointer, profile)| profile_metadata(pointer, profile, None))
                 .collect();
             Json(compact).into_response()
         }
@@ -1198,7 +1206,7 @@ mod tests {
     }
 
     fn metadata_json(pointer: &str, profile: &Value) -> String {
-        serde_json::to_string(&profile_metadata(pointer, profile).unwrap()).unwrap()
+        serde_json::to_string(&profile_metadata(pointer, profile, None).unwrap()).unwrap()
     }
 
     #[test]
@@ -1226,7 +1234,9 @@ mod tests {
 
     #[test]
     fn profile_metadata_skips_a_profile_without_avatars() {
-        assert!(profile_metadata("0xabc", &json!({ "avatars": [], "timestamp": 1 })).is_none());
+        assert!(
+            profile_metadata("0xabc", &json!({ "avatars": [], "timestamp": 1 }), None).is_none()
+        );
     }
 
     #[test]

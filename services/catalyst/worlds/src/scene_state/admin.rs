@@ -42,10 +42,10 @@ pub async fn kick_all(
     if let Err(forbidden) = authorize(s.settings.admin_token.as_deref(), &headers) {
         return forbidden.into_response();
     }
-    let Some(scene) = SceneKey::parse(&scene_name)
-        .ok()
-        .and_then(|k| s.scenes.get(&k.room_key()))
-    else {
+    let Ok(key) = SceneKey::parse(&scene_name) else {
+        return not_loaded(&scene_name);
+    };
+    let Some(scene) = s.hosted(&key).await else {
         return not_loaded(&scene_name);
     };
     let kicked = scene.kick_all();
@@ -149,10 +149,10 @@ pub async fn inspect_crdt(
     if let Err(forbidden) = authorize(s.settings.admin_token.as_deref(), &headers) {
         return forbidden.into_response();
     }
-    let Some(scene) = SceneKey::parse(&scene_name)
-        .ok()
-        .and_then(|k| s.scenes.get(&k.room_key()))
-    else {
+    let Ok(key) = SceneKey::parse(&scene_name) else {
+        return not_loaded(&scene_name);
+    };
+    let Some(scene) = s.hosted(&key).await else {
         return not_loaded(&scene_name);
     };
     let snapshot = scene.snapshot();
@@ -190,7 +190,7 @@ pub async fn reset_state(
     let Ok(key) = SceneKey::parse(&scene_name) else {
         return not_loaded(&scene_name);
     };
-    let Some(scene) = s.scenes.get(&key.room_key()) else {
+    let Some(scene) = s.hosted(&key).await else {
         return not_loaded(&scene_name);
     };
     let kicked = scene.kick_all();

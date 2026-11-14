@@ -13,7 +13,9 @@ use bevy::tasks::IoTaskPool;
 use bevy::{app::ScheduleRunnerPlugin, log::LogPlugin, prelude::*};
 use clap::Parser;
 use common::{
-    structs::{AppConfig, AppError, IVec2Arg, PreviewMode, SceneLoadDistance},
+    structs::{
+        AppConfig, AppError, IVec2Arg, PreviewMode, SceneLoadDistance, StartupScene, StartupScenes,
+    },
     util::{TaskCompat, TaskExt},
 };
 use comms::{
@@ -26,11 +28,13 @@ use comms::{
 use dcl_deno_ipc::init_runtime;
 use dcl_types::SceneLogMessage;
 use ipfs::{map_realm_name, IpfsAssetServer};
+use restricted_actions::process_startup_scenes;
 use scene_runner::{
     initialize_scene::{PortableScenes, PortableSource, SceneHash, SceneLoading},
     renderer_context::RendererSceneContext,
 };
 use system_api_types::launch_options::{help_heading::HEADLESS, LaunchOptions};
+use user_input::avatar_movement::AvatarMovementPlugin;
 use wallet::{
     delegation::{StorageDelegation, StorageDelegations},
     sign_request, Wallet,
@@ -182,6 +186,9 @@ fn parse_args() -> Args {
         usage_error(
             "--automation-token and --automation-port are for a client run: --server-mode takes no console server",
         );
+    }
+    if args.server_mode && args.launch.portables.is_some() {
+        usage_error("--portables is for a client run: --server-mode runs no startup scenes");
     }
     args
 }
@@ -411,6 +418,24 @@ fn main() -> AppExit {
         if let Some(server) = args.automation.server() {
             app.add_plugins(server);
         }
+        // a client walks like the desktop one: the startup portables (the movement scene by
+        // default) drive the player through the scene movement controller
+        app.add_plugins(AvatarMovementPlugin)
+            .insert_resource(StartupScenes {
+                scenes: args
+                    .launch
+                    .portable_sources()
+                    .map(|source| StartupScene {
+                        source: source.to_owned(),
+                        super_user: false,
+                        preview: false,
+                        hot_reload: None,
+                        hash: None,
+                        failed: false,
+                    })
+                    .collect(),
+            })
+            .add_systems(Update, process_startup_scenes);
     }
     if args.orchestrated {
         // never load by player position — scenes come ONLY from the control channel

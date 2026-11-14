@@ -6,7 +6,7 @@
 use base64::Engine;
 use serde_json::Value;
 
-use super::thumbnail_of;
+use super::thumbnail_source_compat;
 
 // The pinned JPEG decoder selects SSSE3 at runtime, with different rounding
 // from its scalar implementation. Both goldens come from the source pipeline.
@@ -29,7 +29,7 @@ fn source_image_format_and_thumbnail_contract() {
             .decode(case["input"].as_str().unwrap())
             .unwrap();
         let expected = &case["expected"];
-        let result = thumbnail_of(&bytes);
+        let result = thumbnail_source_compat(&bytes);
         if let Some(error) = expected["error"].as_str() {
             assert_eq!(result.unwrap_err().to_string(), error, "{name}");
             continue;

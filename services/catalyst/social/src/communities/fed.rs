@@ -69,8 +69,11 @@ pub const NONCES: &str = "social.community_seen_nonces";
 const DOMAIN: &str = "DecentralandCommunities";
 /// The router's body limit, which the envelope branch reads under.
 const BODY_LIMIT: usize = 512 * 1024;
-/// The old content store's `MAX_BODY_BYTES`.
-pub const MAX_CONTENT_BYTES: usize = 256 * 1024;
+/// A post body: at most `POST_CONTENT_MAX` characters of up to 4 bytes each.
+pub const MAX_CONTENT_BYTES: usize = super::posts::POST_CONTENT_MAX * 4;
+/// Uploaded bodies no post names yet, per uploader and across all of them.
+const MAX_UPLOADER_UNPOSTED_BYTES: i64 = 256 * 1024;
+const MAX_UNPOSTED_CONTENT_BYTES: i64 = 32 * 1024 * 1024;
 const DEFAULT_CHANGES: i64 = 500;
 const MAX_CHANGES: i64 = 5000;
 const SNAPSHOT_COMMUNITIES: i64 = 1000;
@@ -79,6 +82,10 @@ const GC_CHUNK: i64 = 1000;
 /// The old `RateLimiter::new(60, 60 s)`, per signer, process-wide.
 static LIMITER: LazyLock<RateLimiter> =
     LazyLock::new(|| RateLimiter::new(60, Duration::from_secs(60)));
+
+/// Content uploads per signer.
+static CONTENT_LIMITER: LazyLock<RateLimiter> =
+    LazyLock::new(|| RateLimiter::new(30, Duration::from_secs(600)));
 
 fn ec(buf: &mut Vec<u8>, s: &str) {
     buf.extend_from_slice(s.as_bytes());
@@ -302,6 +309,7 @@ pub(super) fn requires_gateway_signer(method: &Method, path: &str) -> bool {
             && matches!(
                 path.split('/').collect::<Vec<_>>().as_slice(),
                 ["", "v1", "communities", _, "requests"]
+                    | ["", "federation", "communities", "content"]
             ))
 }
 
@@ -610,8 +618,11 @@ async fn record(
 ) -> sqlx::Result<bool> {
     let res = sqlx::query(
         "INSERT INTO social.community_signed_actions \
-           (signature_hash, community_id, community_uuid, kind, signer, target, role, action, content_hash, signed_at, payload) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) ON CONFLICT (signature_hash) DO NOTHING",
+           (signature_hash, community_id, community_uuid, kind, signer, target, role, action, content_hash, signed_at, payload, public_at_entry) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, \
+           COALESCE((SELECT NOT c.private FROM social.communities c WHERE c.id = $3), \
+                    NOT COALESCE(($11::jsonb ->> 'private')::boolean, false))) \
+         ON CONFLICT (signature_hash) DO NOTHING",
     )
     .bind(signature_hash)
     .bind(community_hex)
@@ -1389,19 +1400,30 @@ async fn post(ctx: &Ctx<'_>, id: &str) -> Response {
     {
         return *r;
     }
-    let body = registered_body(ctx.state, &m.content_hash.to_ascii_lowercase()).await;
-    if body.is_none() {
-        tracing::debug!(community_id = %m.community_id, content_hash = %m.content_hash, %signer, "CommunityPost accepted before its content body is here");
+    // The logged hash must equal the signed one, and bodies are keyed lowercase.
+    if m.content_hash.bytes().any(|c| c.is_ascii_uppercase()) {
+        return bad("content_hash must be lowercase");
     }
-    let text = body
-        .as_ref()
-        .and_then(|b| std::str::from_utf8(b).ok())
-        .map(str::to_string)
-        .unwrap_or_else(|| m.content_hash.clone());
+    let hash = m.content_hash.clone();
     let signature_hash = signed.signature_hash();
-    let applied: sqlx::Result<()> = async {
+    // Under the uploads lock, so an upload or the collector racing this post
+    // sees it, and it sees them.
+    let applied: sqlx::Result<Result<bool, Response>> = async {
         let mut tx = ctx.state.pool.begin().await?;
-        let entry = Entry { kind: "post", content_hash: Some(m.content_hash.clone()), ..Default::default() };
+        lock_uploads(&mut tx).await?;
+        let body = uploaded_body(ctx.state, &mut tx, &hash, &signer).await?;
+        let text = match body.as_deref().map(std::str::from_utf8) {
+            None => {
+                tracing::debug!(community_id = %m.community_id, content_hash = %hash, %signer, "CommunityPost accepted before its content body is here");
+                hash.clone()
+            }
+            Some(Ok(raw)) => match super::posts::validate_text(raw) {
+                Ok(text) => text,
+                Err(refused) => return Ok(Err(refused)),
+            },
+            Some(Err(_)) => return Ok(Err(bad("content body is not valid UTF-8"))),
+        };
+        let entry = Entry { kind: "post", content_hash: Some(hash.clone()), ..Default::default() };
         if record(&mut tx, &signature_hash, &m.community_id, community, &signer, signed.signed_at, &payload(m), &entry).await? {
             sqlx::query("INSERT INTO social.community_posts (id, community_id, author_address, content) VALUES ($1, $2, $3, $4) ON CONFLICT (id) DO NOTHING")
                 .bind(post_uuid(&signature_hash))
@@ -1410,18 +1432,21 @@ async fn post(ctx: &Ctx<'_>, id: &str) -> Response {
                 .bind(&text)
                 .execute(&mut *tx)
                 .await?;
+            sqlx::query("UPDATE social.community_content_uploads SET posted_at = timezone('UTC', now()) WHERE content_hash = $1 AND uploader = $2 AND posted_at IS NULL")
+                .bind(&hash)
+                .bind(&signer)
+                .execute(&mut *tx)
+                .await?;
         }
-        tx.commit().await
+        tx.commit().await?;
+        Ok(Ok(body.is_some()))
     }
     .await;
-    applied
-        .map(|_| {
-            ok_with(
-                signature_hash,
-                json!({ "content_body_local": body.is_some() }),
-            )
-        })
-        .unwrap_or_else(db_err)
+    match applied {
+        Ok(Ok(local)) => ok_with(signature_hash, json!({ "content_body_local": local })),
+        Ok(Err(refused)) => refused,
+        Err(e) => upload_lock_err(e),
+    }
 }
 
 /// `(community hex id, author)` of a logged post.
@@ -1599,41 +1624,151 @@ async fn request_status(ctx: &Ctx<'_>, id: &str, request: &str) -> Response {
     if m.request_id != request {
         return bad("request_id mismatch");
     }
-    if let Err(r) =
-        require_at_least(ctx.state, community, &signer, CommunityStanding::Moderator).await
-    {
-        return *r;
-    }
     let status = match m.status.as_str() {
         s @ ("accepted" | "rejected" | "cancelled") => s,
         _ => return bad("invalid request status"),
     };
-    let signature_hash = signed.signature_hash();
-    let applied: sqlx::Result<Option<Response>> = async {
-        let mut tx = ctx.state.pool.begin().await?;
-        if let Ok(request_uuid) = Uuid::parse_str(&m.request_id) {
-            let owner: Option<Uuid> = sqlx::query_scalar("SELECT community_id FROM social.community_requests WHERE id = $1").bind(request_uuid).fetch_optional(&mut *tx).await?;
-            if owner.is_some_and(|c| c != community.as_uuid()) {
-                return Ok(Some(err_json(StatusCode::NOT_FOUND, "request does not belong to this community")));
+    let request_uuid = Uuid::parse_str(&m.request_id).ok();
+    let row: Option<(Uuid, Address, String, String)> = match request_uuid {
+        Some(id) => match sqlx::query_as(
+            "SELECT community_id, member_address, type, status FROM social.community_requests WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_optional(&ctx.state.pool)
+        .await
+        {
+            Ok(row) => row,
+            Err(e) => return db_err(e),
+        },
+        None => None,
+    };
+    if row
+        .as_ref()
+        .is_some_and(|(c, ..)| *c != community.as_uuid())
+    {
+        return err_json(
+            StatusCode::NOT_FOUND,
+            "request does not belong to this community",
+        );
+    }
+    // A pending request is settled as the client route settles it; anything
+    // else is only logged, by a moderator.
+    let pending = row
+        .filter(|(.., state)| state.as_str() == "pending")
+        .zip(request_uuid)
+        .map(|((_, member, kind, _), id)| (id, member, kind));
+    let refused = match &pending {
+        Some((_, member, kind)) => {
+            let banned = if *member == signer {
+                Ok(false)
+            } else {
+                is_banned(ctx.state, community, &signer).await
+            };
+            match banned {
+                Ok(true) => Some(err_json(
+                    StatusCode::FORBIDDEN,
+                    "Forbidden: banned from this community",
+                )),
+                Ok(false) => {
+                    super::requests::request_authority(
+                        ctx.state, community, &signer, member, kind, status,
+                    )
+                    .await
+                }
+                Err(r) => Some(*r),
             }
-            sqlx::query("UPDATE social.community_requests SET status = $2, updated_at = timezone('UTC', now()) WHERE id = $1 AND community_id = $3 AND status = 'pending'")
-                .bind(request_uuid)
-                .bind(status)
-                .bind(community)
-                .execute(&mut *tx)
-                .await?;
         }
-        let entry = Entry { kind: "request_status", target: Some(m.request_id.clone()), action: Some(status.to_string()), ..Default::default() };
-        record(&mut tx, &signature_hash, &m.community_id, community, &signer, signed.signed_at, &payload(m), &entry).await?;
+        None => require_at_least(ctx.state, community, &signer, CommunityStanding::Moderator)
+            .await
+            .err()
+            .map(|r| *r),
+    };
+    if let Some(refused) = refused {
+        return refused;
+    }
+    let signature_hash = signed.signature_hash();
+    let applied: sqlx::Result<Result<bool, Response>> = async {
+        let mut guard =
+            super::write_support::acquire_membership(&ctx.state.pool, community).await?;
+        let mut tx = guard.begin().await?;
+        let entry = Entry {
+            kind: "request_status",
+            target: Some(m.request_id.clone()),
+            action: Some(status.to_string()),
+            ..Default::default()
+        };
+        let fresh = record(
+            &mut tx,
+            &signature_hash,
+            &m.community_id,
+            community,
+            &signer,
+            signed.signed_at,
+            &payload(m),
+            &entry,
+        )
+        .await?;
+        let mut settled = false;
+        if let Some((request_uuid, member, _)) = pending.as_ref().filter(|_| fresh) {
+            if status == "accepted" && is_banned_on(&mut tx, community, member).await? {
+                return Ok(Err(err_json(
+                    StatusCode::UNAUTHORIZED,
+                    format!("The user {member} is banned from the community {community}"),
+                )));
+            }
+            // Settled meanwhile by the client route: the entry is still logged.
+            match super::requests::transition_request(
+                &mut tx,
+                community,
+                *request_uuid,
+                member,
+                status,
+            )
+            .await
+            {
+                Ok(()) => settled = true,
+                Err(refused) if refused.status() == StatusCode::NOT_FOUND => {}
+                Err(refused) => return Ok(Err(*refused)),
+            }
+        }
         tx.commit().await?;
-        Ok(None)
+        drop(guard);
+        Ok(Ok(settled))
     }
     .await;
     match applied {
-        Ok(Some(refused)) => refused,
-        Ok(None) => ok(signature_hash),
+        Ok(Ok(settled)) => {
+            if let Some((request_uuid, member, kind)) = pending.as_ref().filter(|_| settled) {
+                super::requests::request_settled(
+                    ctx.state,
+                    community,
+                    (*request_uuid, &m.request_id),
+                    member,
+                    kind,
+                    status,
+                    &signer,
+                )
+                .await;
+            }
+            ok(signature_hash)
+        }
+        Ok(Err(refused)) => refused,
         Err(e) => db_err(e),
     }
+}
+
+async fn is_banned_on(
+    conn: &mut PgConnection,
+    community: CommunityId,
+    member: &Address,
+) -> sqlx::Result<bool> {
+    sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM social.community_bans WHERE community_id = $1 AND banned_address = $2 AND active)",
+    )
+    .bind(community)
+    .bind(member)
+    .fetch_one(conn)
+    .await
 }
 
 fn hash_all(hashes: &[String]) -> String {
@@ -1644,10 +1779,14 @@ fn hash_all(hashes: &[String]) -> String {
     hex::encode(h.finalize())
 }
 
+/// The feeds and bodies peers pull publish only entries written while their
+/// community was public; a later change of privacy changes neither way.
+const PUBLIC_ONLY: &str = "a.public_at_entry";
+
 pub async fn snapshot_view(pool: &PgPool) -> sqlx::Result<Value> {
     let latest = |kinds: &'static [&'static str]| async move {
         sqlx::query_scalar::<_, Option<i64>>(
-            "SELECT max(seq) FROM social.community_signed_actions WHERE kind = ANY($1)",
+            "SELECT max(seq) FROM social.community_signed_actions a WHERE kind = ANY($1) AND a.public_at_entry",
         )
         .bind(kinds)
         .fetch_one(pool)
@@ -1660,13 +1799,15 @@ pub async fn snapshot_view(pool: &PgPool) -> sqlx::Result<Value> {
         latest(&["place"]).await?,
     );
     let communities: Vec<(String, String, Option<String>, i64)> = sqlx::query_as(
-        "SELECT a.community_id, a.signer, COALESCE(c.name, a.payload->>'name'), a.signed_at FROM social.community_signed_actions a \
-         LEFT JOIN social.communities c ON c.id = a.community_uuid WHERE a.kind = 'create' ORDER BY a.seq LIMIT $1",
+        "SELECT a.community_id, a.signer, \
+           CASE WHEN COALESCE(c.private, false) THEN a.payload->>'name' ELSE COALESCE(c.name, a.payload->>'name') END, a.signed_at \
+         FROM social.community_signed_actions a \
+         LEFT JOIN social.communities c ON c.id = a.community_uuid WHERE a.kind = 'create' AND a.public_at_entry ORDER BY a.seq LIMIT $1",
     )
     .bind(SNAPSHOT_COMMUNITIES)
     .fetch_all(pool)
     .await?;
-    let role_hashes: Vec<String> = sqlx::query_scalar("SELECT signature_hash FROM social.community_signed_actions WHERE kind IN ('create', 'role') ORDER BY signature_hash").fetch_all(pool).await?;
+    let role_hashes: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT signature_hash FROM social.community_signed_actions a WHERE kind IN ('create', 'role') AND {PUBLIC_ONLY} ORDER BY signature_hash"))).fetch_all(pool).await?;
     Ok(json!({
         "latest_role_seq": role,
         "latest_posts_seq": posts,
@@ -1695,10 +1836,10 @@ pub struct ChangesQuery {
 pub async fn changes_view(pool: &PgPool, since: i64, limit: i64) -> sqlx::Result<Value> {
     let limit = limit.clamp(1, MAX_CHANGES);
     let rows = |kinds: &'static [&'static str]| async move {
-        sqlx::query(
+        sqlx::query(sqlx::AssertSqlSafe(format!(
             "SELECT signature_hash, community_id, kind, signer, target, role, action, content_hash, signed_at, payload, seq \
-             FROM social.community_signed_actions WHERE kind = ANY($1) AND seq > $2 ORDER BY seq ASC LIMIT $3",
-        )
+             FROM social.community_signed_actions a WHERE kind = ANY($1) AND seq > $2 AND {PUBLIC_ONLY} ORDER BY seq ASC LIMIT $3"
+        )))
         .bind(kinds)
         .bind(since)
         .bind(limit)
@@ -1770,30 +1911,94 @@ fn content_hash(body: &[u8]) -> String {
     hex::encode(Sha256::digest(body))
 }
 
-/// The blob a registered body is stored as (the ONE store keys by CID).
-async fn registered_cid(pool: &PgPool, hash: &str) -> sqlx::Result<Option<String>> {
-    sqlx::query_scalar("SELECT cid FROM social.community_contents WHERE content_hash = $1")
-        .bind(hash)
-        .fetch_optional(pool)
-        .await
+/// The blob of a body a public-at-entry post names and its signer uploaded.
+async fn published_cid(pool: &PgPool, hash: &str) -> sqlx::Result<Option<String>> {
+    sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "SELECT cc.cid FROM social.community_contents cc WHERE cc.content_hash = $1 \
+           AND EXISTS (SELECT 1 FROM social.community_signed_actions a \
+                       JOIN social.community_content_uploads u \
+                         ON u.content_hash = a.content_hash AND u.uploader = a.signer \
+                       WHERE a.content_hash = cc.content_hash AND a.kind = 'post' AND {PUBLIC_ONLY})"
+    )))
+    .bind(hash)
+    .fetch_optional(pool)
+    .await
 }
 
-async fn registered_body(state: &CommunitiesState, hash: &str) -> Option<Bytes> {
+/// A body `uploader` uploaded, the only one their post may take.
+async fn uploaded_body(
+    state: &CommunitiesState,
+    conn: &mut PgConnection,
+    hash: &str,
+    uploader: &Address,
+) -> sqlx::Result<Option<Bytes>> {
     if !is_valid_hash(hash) {
-        return None;
+        return Ok(None);
     }
-    let cid = registered_cid(&state.pool, hash).await.ok().flatten()?;
-    state.storage.retrieve(&cid).await.ok().flatten()
+    let cid: Option<String> = sqlx::query_scalar(
+        "SELECT cc.cid FROM social.community_contents cc \
+         JOIN social.community_content_uploads u ON u.content_hash = cc.content_hash \
+         WHERE cc.content_hash = $1 AND u.uploader = $2",
+    )
+    .bind(hash)
+    .bind(uploader)
+    .fetch_optional(conn)
+    .await?;
+    Ok(match cid {
+        Some(cid) => state.storage.retrieve(&cid).await.ok().flatten(),
+        None => None,
+    })
 }
 
-/// `POST /federation/communities/content`: stores a post body (<= 256 KiB)
-/// and registers its sha256 (the wire's content hash) against the blob.
-pub async fn put_content(State(state): State<SharedState>, body: Bytes) -> Response {
+/// `POST /federation/communities/content` (signed by a community owner or
+/// moderator): stores a post body and registers its sha256 (the wire's
+/// content hash) against the blob. Bodies no post names are collected by
+/// `community-content-gc`.
+pub async fn put_content(
+    State(state): State<SharedState>,
+    caller: super::auth::Caller,
+    headers: HeaderMap,
+    original: OriginalUri,
+    body: Bytes,
+) -> Response {
+    let signer = match caller
+        .require_signer(
+            &state,
+            &headers,
+            "post",
+            &super::signed_path(&original, "/federation/communities/content"),
+        )
+        .await
+    {
+        Ok(signer) => signer,
+        Err(e) => return e.into_response(),
+    };
     if body.len() > MAX_CONTENT_BYTES {
         return err_json(
             StatusCode::PAYLOAD_TOO_LARGE,
             format!("body exceeds {MAX_CONTENT_BYTES} bytes"),
         );
+    }
+    match std::str::from_utf8(&body) {
+        Ok(raw) => {
+            if let Err(refused) = super::posts::validate_text(raw) {
+                return refused;
+            }
+        }
+        Err(_) => return bad("content body is not valid UTF-8"),
+    }
+    match is_poster(&state.pool, &signer).await {
+        Ok(true) => {}
+        Ok(false) => {
+            return err_json(
+                StatusCode::FORBIDDEN,
+                "only a community owner or moderator may upload post content",
+            );
+        }
+        Err(e) => return db_err(e),
+    }
+    if CONTENT_LIMITER.check(signer.as_str()) == RateLimitDecision::Deny {
+        return err_json(StatusCode::TOO_MANY_REQUESTS, "rate limit exceeded");
     }
     let (hash, size) = (content_hash(&body), body.len());
     let for_cid = body.clone();
@@ -1803,36 +2008,123 @@ pub async fn put_content(State(state): State<SharedState>, body: Bytes) -> Respo
         Ok(cid) => cid,
         Err(_) => return err_json(StatusCode::INTERNAL_SERVER_ERROR, "io error"),
     };
-    let stored = async {
-        if !state.storage.exist(&cid).await? {
-            state.storage.store(&cid, body).await?;
-        }
-        Ok::<_, crate::storage::StorageError>(())
+    match register_upload(&state, &hash, &cid, body, &signer).await {
+        Ok(None) => Json(json!({ "ok": true, "content_hash": hash, "size": size })).into_response(),
+        Ok(Some(refused)) => refused,
+        Err(e) => match e.downcast::<sqlx::Error>() {
+            Ok(db) => upload_lock_err(db),
+            Err(e) => {
+                tracing::error!(error = %e, "community content store io error");
+                err_json(StatusCode::INTERNAL_SERVER_ERROR, "io error")
+            }
+        },
     }
-    .await;
-    if let Err(e) = stored {
-        tracing::error!(error = %e, "community content store io error");
-        return err_json(StatusCode::INTERNAL_SERVER_ERROR, "io error");
-    }
-    let registered = sqlx::query("INSERT INTO social.community_contents (content_hash, cid, size) VALUES ($1, $2, $3) ON CONFLICT (content_hash) DO NOTHING")
-        .bind(&hash)
-        .bind(&cid)
-        .bind(size as i32)
-        .execute(&state.pool)
-        .await;
-    if let Err(e) = registered {
-        return db_err(e);
-    }
-    Json(json!({ "ok": true, "content_hash": hash, "size": size })).into_response()
 }
 
-/// `GET /federation/communities/content/{hash}`: the registered body.
+/// A wait on the uploads lock past its timeout is a retryable 503.
+fn upload_lock_err(e: sqlx::Error) -> Response {
+    if e.as_database_error()
+        .and_then(|d| d.code())
+        .is_some_and(|code| code == "55P03")
+    {
+        return err_json(StatusCode::SERVICE_UNAVAILABLE, "content store busy; retry");
+    }
+    db_err(e)
+}
+
+/// Serializes uploads with the collector's deletes until the transaction ends.
+/// The wait is bounded so queued writers cannot hold pool connections long.
+async fn lock_uploads(conn: &mut PgConnection) -> sqlx::Result<()> {
+    sqlx::query("SET LOCAL lock_timeout = '2s'")
+        .execute(&mut *conn)
+        .await?;
+    sqlx::query(
+        "SELECT pg_advisory_xact_lock(hashtextextended('social.community_content_uploads', 0))",
+    )
+    .execute(conn)
+    .await
+    .map(|_| ())
+}
+
+/// Stores and registers the body and binds it to its uploader under the
+/// collector's lock, within the per-uploader and global budgets of unposted
+/// bodies. A repeated upload re-stores a lost blob and refreshes both rows;
+/// a body whose post by this uploader arrived first is bound as posted.
+async fn register_upload(
+    state: &CommunitiesState,
+    hash: &str,
+    cid: &str,
+    body: Bytes,
+    uploader: &Address,
+) -> anyhow::Result<Option<Response>> {
+    let size = i32::try_from(body.len())?;
+    let mut tx = state.pool.begin().await?;
+    lock_uploads(&mut tx).await?;
+    let (mine, all): (i64, i64) = sqlx::query_as(
+        "SELECT COALESCE(sum(size) FILTER (WHERE uploader = $1), 0)::bigint, COALESCE(sum(size), 0)::bigint \
+         FROM social.community_content_uploads \
+         WHERE posted_at IS NULL AND NOT (content_hash = $2 AND uploader = $1)",
+    )
+    .bind(uploader)
+    .bind(hash)
+    .fetch_one(&mut *tx)
+    .await?;
+    let size_i64 = i64::from(size);
+    if mine + size_i64 > MAX_UPLOADER_UNPOSTED_BYTES || all + size_i64 > MAX_UNPOSTED_CONTENT_BYTES
+    {
+        return Ok(Some(err_json(
+            StatusCode::TOO_MANY_REQUESTS,
+            "content upload budget exhausted; retry later",
+        )));
+    }
+    if !state.storage.exist(cid).await? {
+        state.storage.store(cid, body).await?;
+    }
+    sqlx::query(
+        "INSERT INTO social.community_contents (content_hash, cid, size) VALUES ($1, $2, $3) \
+                 ON CONFLICT (content_hash) DO UPDATE SET stored_at = timezone('UTC', now())",
+    )
+    .bind(hash)
+    .bind(cid)
+    .bind(size)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query(
+        "INSERT INTO social.community_content_uploads (content_hash, uploader, size, posted_at) \
+         VALUES ($1, $2, $3, CASE WHEN EXISTS (SELECT 1 FROM social.community_signed_actions a \
+                 WHERE a.content_hash = $1 AND a.kind = 'post' AND a.signer = $2) THEN timezone('UTC', now()) END) \
+         ON CONFLICT (content_hash, uploader) DO UPDATE SET uploaded_at = timezone('UTC', now()), \
+           posted_at = COALESCE(social.community_content_uploads.posted_at, EXCLUDED.posted_at)",
+    )
+        .bind(hash)
+        .bind(uploader)
+        .bind(size)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(None)
+}
+
+/// Only a wallet that may post somewhere uploads.
+async fn is_poster(pool: &PgPool, signer: &Address) -> sqlx::Result<bool> {
+    sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM social.community_members m \
+           JOIN social.communities c ON c.id = m.community_id \
+           WHERE m.member_address = $1 AND m.role IN ('owner', 'moderator') \
+             AND c.active AND NOT c.suspended)",
+    )
+    .bind(signer)
+    .fetch_one(pool)
+    .await
+}
+
+/// `GET /federation/communities/content/{hash}`: the body of a public post.
 pub async fn get_content(State(state): State<SharedState>, Path(hash): Path<String>) -> Response {
     let hash = hash.to_ascii_lowercase();
     if !is_valid_hash(&hash) {
         return bad(format!("invalid content hash: {hash}"));
     }
-    let cid = match registered_cid(&state.pool, &hash).await {
+    let cid = match published_cid(&state.pool, &hash).await {
         Ok(Some(cid)) => cid,
         Ok(None) => return err_json(StatusCode::NOT_FOUND, "content not found"),
         Err(e) => return db_err(e),
@@ -1843,6 +2135,10 @@ pub async fn get_content(State(state): State<SharedState>, Path(hash): Path<Stri
             headers.insert(
                 header::CONTENT_TYPE,
                 HeaderValue::from_static("application/octet-stream"),
+            );
+            headers.insert(
+                header::X_CONTENT_TYPE_OPTIONS,
+                HeaderValue::from_static("nosniff"),
             );
             if let Ok(v) = HeaderValue::from_str(&hash) {
                 headers.insert("x-content-hash", v);
@@ -1880,26 +2176,38 @@ async fn collect(state: &CommunitiesState) -> anyhow::Result<Value> {
         .fetch_one(&state.pool)
         .await?;
     let referenced: i64 = sqlx::query_scalar("SELECT count(DISTINCT content_hash) FROM social.community_signed_actions WHERE content_hash IS NOT NULL").fetch_one(&state.pool).await?;
+    let mut tx = state.pool.begin().await?;
+    lock_uploads(&mut tx).await?;
+    sqlx::query(
+        "DELETE FROM social.community_content_uploads WHERE posted_at IS NULL AND uploaded_at < $1",
+    )
+    .bind(floor)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
     let mut removed = 0i64;
     loop {
+        let mut tx = state.pool.begin().await?;
+        lock_uploads(&mut tx).await?;
         let dropped: Vec<String> = sqlx::query_scalar(
             "DELETE FROM social.community_contents WHERE content_hash IN ( \
                SELECT cc.content_hash FROM social.community_contents cc \
                WHERE cc.stored_at < $1 \
                  AND NOT EXISTS (SELECT 1 FROM social.community_signed_actions a WHERE a.content_hash = cc.content_hash) \
+                 AND NOT EXISTS (SELECT 1 FROM social.community_content_uploads u WHERE u.content_hash = cc.content_hash) \
                ORDER BY cc.content_hash LIMIT $2) \
              RETURNING cid",
         )
         .bind(floor)
         .bind(GC_CHUNK)
-        .fetch_all(&state.pool)
+        .fetch_all(&mut *tx)
         .await?;
         if dropped.is_empty() {
             break;
         }
         removed += dropped.len() as i64;
-        let held = crate::storage::gc::referenced_among(
-            &state.pool,
+        let held = crate::storage::gc::referenced_among_on(
+            &mut tx,
             crate::storage::gc::Pins::new(&state.storage, &[]),
             &dropped,
         )
@@ -1909,20 +2217,33 @@ async fn collect(state: &CommunitiesState) -> anyhow::Result<Value> {
                 "SELECT EXISTS (SELECT 1 FROM social.community_contents WHERE cid = $1)",
             )
             .bind(cid)
-            .fetch_one(&state.pool)
+            .fetch_one(&mut *tx)
             .await?;
             if !registered_again {
                 state.storage.delete_strict(cid).await?;
             }
         }
+        tx.commit().await?;
     }
     Ok(
         json!({ "ok": true, "scanned": scanned, "kept": scanned - removed, "removed": removed, "referenced": referenced }),
     )
 }
 
-/// `community-nonce-sweep`: drops the nonces whose replay window closed.
+/// `community-nonce-sweep`: drops the nonces whose replay window closed;
+/// `community-content-gc`: drops bodies no post names (see [`collect`]).
 pub fn spawn_job(state: &SharedState, jobs: &Jobs) {
+    let content = state.clone();
+    let cfg = PeriodicCfg::every(Duration::from_secs(900))
+        .with_jitter(Duration::from_secs(60))
+        .with_error_backoff(Duration::from_secs(1800));
+    jobs.spawn_periodic_leased("community-content-gc", cfg, move |_ctx| {
+        let state = content.clone();
+        async move {
+            collect(&state).await?;
+            Ok(())
+        }
+    });
     let pool = state.pool.clone();
     let cfg = PeriodicCfg::every(Duration::from_secs(300))
         .with_jitter(Duration::from_secs(30))
@@ -2017,6 +2338,20 @@ mod tests {
             Body::from(serde_json::to_vec(signed).unwrap()),
         )
         .await
+    }
+
+    async fn upload(app: &Router, w: &PrivateKeySigner, body: &str) -> (StatusCode, Value) {
+        let path = "/federation/communities/content";
+        let headers = signed_headers_by(
+            w,
+            "post",
+            path,
+            "{}",
+            true,
+            &chrono::Utc::now().timestamp_millis().to_string(),
+        )
+        .await;
+        call(app, "POST", path, headers, Body::from(body.to_string())).await
     }
 
     fn env<T: TypedMessage>(w: &PrivateKeySigner, message: T) -> Signed<T> {
@@ -3360,7 +3695,7 @@ mod tests {
         assert_eq!(places, ["p-1"]);
 
         // A post whose body was uploaded first lands with its text.
-        let (status, stored) = call(
+        let (status, _) = call(
             &app,
             "POST",
             "/federation/communities/content",
@@ -3368,10 +3703,16 @@ mod tests {
             Body::from("hello peers"),
         )
         .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "an unsigned upload");
+        let (status, _) = upload(&app, &PrivateKeySigner::random(), "hello peers").await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "a wallet that posts nowhere");
+        let (status, _) = upload(&app, &owner, &"a".repeat(MAX_CONTENT_BYTES + 1)).await;
+        assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+        let (status, stored) = upload(&app, &owner, "hello peers").await;
         assert_eq!(status, StatusCode::OK, "{stored}");
         let content = stored["content_hash"].as_str().unwrap().to_string();
         assert_eq!(content, hex::encode(Sha256::digest(b"hello peers")));
-        let (status, got) = call(
+        let (status, _) = call(
             &app,
             "GET",
             &format!("/federation/communities/content/{content}"),
@@ -3379,10 +3720,14 @@ mod tests {
             Body::empty(),
         )
         .await;
-        assert_eq!(
-            (status, got),
-            (StatusCode::OK, Value::String("hello peers".into()))
-        );
+        assert_eq!(status, StatusCode::NOT_FOUND, "no post names it yet");
+
+        // A body over the post limit is refused at upload.
+        let (status, _) = upload(&app, &owner, &"a".repeat(1001)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "1001 characters");
+        let (status, _) = upload(&app, &owner, "   ").await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "blank");
+
         let post_env = env(
             &owner,
             CommunityPost {
@@ -3404,6 +3749,18 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(text, "hello peers");
+        let (status, got) = call(
+            &app,
+            "GET",
+            &format!("/federation/communities/content/{content}"),
+            HeaderMap::new(),
+            Body::empty(),
+        )
+        .await;
+        assert_eq!(
+            (status, got),
+            (StatusCode::OK, Value::String("hello peers".into()))
+        );
 
         let (status, _) = send(
             &app,
@@ -3523,13 +3880,76 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::OK);
-        let settled: String =
-            sqlx::query_scalar("SELECT status FROM social.community_requests WHERE id = $1")
+        let left: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM social.community_requests WHERE id = $1")
                 .bind(request)
                 .fetch_one(&pool)
                 .await
                 .unwrap();
-        assert_eq!(settled, "rejected", "a settled request is not reopened");
+        assert_eq!(left, 0, "settled as the client route settles it");
+        assert_eq!(
+            role_of(&pool, id, &other).await,
+            None,
+            "a late accept is only logged"
+        );
+
+        // A request of another community is not this community's to settle.
+        let elsewhere = Uuid::new_v4();
+        sqlx::query("INSERT INTO social.communities (id, name, description, owner_address, private, unlisted) VALUES ($1, 'Elsewhere', 'd', $2, FALSE, FALSE)").bind(elsewhere).bind(address(&other)).execute(&pool).await.unwrap();
+        let foreign = Uuid::new_v4();
+        sqlx::query("INSERT INTO social.community_requests (id, community_id, member_address, type) VALUES ($1, $2, $3, 'request_to_join')").bind(foreign).bind(elsewhere).bind(address(&member)).execute(&pool).await.unwrap();
+        let (status, _) = send(
+            &app,
+            &owner,
+            "PATCH",
+            &format!("{base}/requests/{foreign}"),
+            &env(
+                &owner,
+                CommunityRequestStatusUpdate {
+                    community_id: hex_id.clone(),
+                    request_id: foreign.to_string(),
+                    status: "accepted".into(),
+                },
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+
+        // Only the invitee settles an invite, and accepting it adds them.
+        let invitee = PrivateKeySigner::random();
+        let invite = Uuid::new_v4();
+        sqlx::query("INSERT INTO social.community_requests (id, community_id, member_address, type) VALUES ($1, $2, $3, 'invite')").bind(invite).bind(id).bind(address(&invitee)).execute(&pool).await.unwrap();
+        let accept_invite = |w: &PrivateKeySigner| {
+            env(
+                w,
+                CommunityRequestStatusUpdate {
+                    community_id: hex_id.clone(),
+                    request_id: invite.to_string(),
+                    status: "accepted".into(),
+                },
+            )
+        };
+        let invite_path = format!("{base}/requests/{invite}");
+        let (status, _) = send(&app, &owner, "PATCH", &invite_path, &accept_invite(&owner)).await;
+        assert_eq!(
+            status,
+            StatusCode::UNAUTHORIZED,
+            "a manager cannot accept for the invitee"
+        );
+        assert_eq!(role_of(&pool, id, &invitee).await, None);
+        let (status, body) = send(
+            &app,
+            &invitee,
+            "PATCH",
+            &invite_path,
+            &accept_invite(&invitee),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(
+            role_of(&pool, id, &invitee).await.as_deref(),
+            Some("member")
+        );
 
         let (status, body) = send(
             &app,
@@ -3651,6 +4071,56 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::UNAUTHORIZED, "the owner cannot leave");
 
+        // A private community's actions and bodies stay out of the feeds.
+        let private_name = format!("fed private {}", &Uuid::new_v4().simple().to_string()[..8]);
+        let (status, created) = send(
+            &app,
+            &owner,
+            "POST",
+            "/v1/communities",
+            &env(
+                &owner,
+                CommunityCreate {
+                    name: private_name,
+                    description: "d".into(),
+                    private: true,
+                    unlisted: false,
+                    flags: vec![],
+                },
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{created}");
+        let private_hex = created["community_id"].as_str().unwrap().to_string();
+        let private_id = created["id"].as_str().unwrap().to_string();
+        let (status, secret) = upload(&app, &owner, "members only").await;
+        assert_eq!(status, StatusCode::OK, "{secret}");
+        let secret = secret["content_hash"].as_str().unwrap().to_string();
+        let (status, body) = send(
+            &app,
+            &owner,
+            "POST",
+            &format!("/v1/communities/{private_id}/posts"),
+            &env(
+                &owner,
+                CommunityPost {
+                    community_id: private_hex.clone(),
+                    content_hash: secret.clone(),
+                },
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let (status, _) = call(
+            &app,
+            "GET",
+            &format!("/federation/communities/content/{secret}"),
+            HeaderMap::new(),
+            Body::empty(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "a private community's body");
+
         // The feeds peers pull.
         let (_, snap) = call(
             &app,
@@ -3672,6 +4142,13 @@ mod tests {
             (json!(address(&owner)), json!(format!("{name} 2")))
         );
         assert_eq!(snap["role_log_hash"].as_str().map(str::len), Some(64));
+        assert!(
+            !snap["communities"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|c| c["community_id"] == json!(private_hex))
+        );
         let (_, feed) = call(
             &app,
             "GET",
@@ -3680,6 +4157,16 @@ mod tests {
             Body::empty(),
         )
         .await;
+        for kind in ["role", "posts", "places"] {
+            assert!(
+                !feed[kind]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|r| r["community_id"] == json!(private_hex)),
+                "{kind}"
+            );
+        }
         let mine: Vec<&Value> = feed["role"]
             .as_array()
             .unwrap()
@@ -3791,6 +4278,277 @@ mod tests {
             .0,
             StatusCode::BAD_REQUEST
         );
+
+        // A re-upload repairs a lost blob and refreshes the body's age.
+        let cid: String =
+            sqlx::query_scalar("SELECT cid FROM social.community_contents WHERE content_hash = $1")
+                .bind(&content)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        sqlx::query("UPDATE social.community_contents SET stored_at = stored_at - interval '2 hours' WHERE content_hash = $1")
+            .bind(&content)
+            .execute(&pool)
+            .await
+            .unwrap();
+        state.storage.delete_strict(&cid).await.unwrap();
+        let (status, _) = upload(&app, &owner, "hello peers").await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(state.storage.exist(&cid).await.unwrap());
+        let fresh: bool = sqlx::query_scalar("SELECT stored_at > timezone('UTC', now()) - interval '1 minute' FROM social.community_contents WHERE content_hash = $1")
+            .bind(&content)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert!(fresh);
+
+        // A body is taken only by its uploader's post: another public
+        // community naming a private body gets the hash, not the text.
+        let mallory = PrivateKeySigner::random();
+        claimed_name(&pool, &state, &mallory).await;
+        let (status, theirs) = send(
+            &app,
+            &mallory,
+            "POST",
+            "/v1/communities",
+            &env(
+                &mallory,
+                CommunityCreate {
+                    name: format!("fed open {}", &Uuid::new_v4().simple().to_string()[..8]),
+                    description: "d".into(),
+                    private: false,
+                    unlisted: false,
+                    flags: vec![],
+                },
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{theirs}");
+        let theirs_hex = theirs["community_id"].as_str().unwrap().to_string();
+        let copy = env(
+            &mallory,
+            CommunityPost {
+                community_id: theirs_hex.clone(),
+                content_hash: secret.clone(),
+            },
+        );
+        let (status, body) = send(
+            &app,
+            &mallory,
+            "POST",
+            &format!("/v1/communities/{}/posts", theirs["id"].as_str().unwrap()),
+            &copy,
+        )
+        .await;
+        assert_eq!(
+            (status, body["content_body_local"].clone()),
+            (StatusCode::OK, json!(false)),
+            "{body}"
+        );
+        let text: String =
+            sqlx::query_scalar("SELECT content FROM social.community_posts WHERE id = $1")
+                .bind(post_uuid(&copy.signature_hash()))
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(text, secret);
+        let get = |hash: String| {
+            let app = app.clone();
+            async move {
+                call(
+                    &app,
+                    "GET",
+                    &format!("/federation/communities/content/{hash}"),
+                    HeaderMap::new(),
+                    Body::empty(),
+                )
+                .await
+                .0
+            }
+        };
+        assert_eq!(get(secret.clone()).await, StatusCode::NOT_FOUND);
+
+        // Privacy is the entry's: turning public publishes only what follows.
+        let private_seq: i64 = sqlx::query_scalar(
+            "SELECT seq FROM social.community_signed_actions WHERE kind = 'post' AND content_hash = $1 AND NOT public_at_entry",
+        )
+        .bind(&secret)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let (_, snap) = call(
+            &app,
+            "GET",
+            "/federation/communities/snapshot",
+            HeaderMap::new(),
+            Body::empty(),
+        )
+        .await;
+        assert_ne!(snap["latest_posts_seq"].as_i64(), Some(private_seq));
+        sqlx::query("UPDATE social.communities SET private = false WHERE id = $1")
+            .bind(Uuid::parse_str(&private_id).unwrap())
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            get(secret.clone()).await,
+            StatusCode::NOT_FOUND,
+            "an earlier private body"
+        );
+        let (status, opened) = upload(&app, &owner, "after opening").await;
+        assert_eq!(status, StatusCode::OK, "{opened}");
+        let opened = opened["content_hash"].as_str().unwrap().to_string();
+        let (status, body) = send(
+            &app,
+            &owner,
+            "POST",
+            &format!("/v1/communities/{private_id}/posts"),
+            &env(
+                &owner,
+                CommunityPost {
+                    community_id: private_hex.clone(),
+                    content_hash: opened.clone(),
+                },
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(get(opened.clone()).await, StatusCode::OK);
+        let (_, feed) = call(
+            &app,
+            "GET",
+            &format!("/federation/communities/changes?since={since}"),
+            HeaderMap::new(),
+            Body::empty(),
+        )
+        .await;
+        let published: Vec<&Value> = feed["posts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|p| p["community_id"] == json!(private_hex))
+            .collect();
+        assert_eq!(
+            published
+                .iter()
+                .map(|p| p["content_hash"].clone())
+                .collect::<Vec<_>>(),
+            [json!(opened)]
+        );
+
+        // A body arriving after its post is bound as posted, so it stays
+        // served past the collector; an upper-case hash is refused.
+        let late = hex::encode(Sha256::digest(b"late body"));
+        let late_post = |hash: String| {
+            env(
+                &owner,
+                CommunityPost {
+                    community_id: private_hex.clone(),
+                    content_hash: hash,
+                },
+            )
+        };
+        let posts_path = format!("/v1/communities/{private_id}/posts");
+        let (status, _) = send(
+            &app,
+            &owner,
+            "POST",
+            &posts_path,
+            &late_post(late.to_ascii_uppercase()),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "an upper-case hash");
+        let (status, body) =
+            send(&app, &owner, "POST", &posts_path, &late_post(late.clone())).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let (status, _) = upload(&app, &owner, "late body").await;
+        assert_eq!(status, StatusCode::OK);
+        for table in [
+            "community_content_uploads SET uploaded_at = uploaded_at",
+            "community_contents SET stored_at = stored_at",
+        ] {
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "UPDATE social.{table} - interval '2 hours' WHERE content_hash = $1"
+            )))
+            .bind(&late)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        collect(&state).await.unwrap();
+        assert_eq!(
+            get(late.clone()).await,
+            StatusCode::OK,
+            "the collector keeps it"
+        );
+
+        // The collector drops unposted bodies past the age floor.
+        let (status, stale) = upload(&app, &owner, "never posted").await;
+        assert_eq!(status, StatusCode::OK, "{stale}");
+        let stale = stale["content_hash"].as_str().unwrap().to_string();
+        for table in [
+            "community_content_uploads SET uploaded_at = uploaded_at",
+            "community_contents SET stored_at = stored_at",
+        ] {
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "UPDATE social.{table} - interval '2 hours' WHERE content_hash = $1"
+            )))
+            .bind(&stale)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        collect(&state).await.unwrap();
+        let left: i64 = sqlx::query_scalar(
+            "SELECT (SELECT count(*) FROM social.community_contents WHERE content_hash = $1) \
+                  + (SELECT count(*) FROM social.community_content_uploads WHERE content_hash = $1)",
+        )
+        .bind(&stale)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(left, 0);
+
+        // Upload budgets: per uploader, then the per-signer rate.
+        let poster = PrivateKeySigner::random();
+        let uploads_community = Uuid::new_v4();
+        sqlx::query("INSERT INTO social.communities (id, name, description, owner_address, private, unlisted) VALUES ($1, 'Uploads', 'd', $2, FALSE, FALSE)")
+            .bind(uploads_community)
+            .bind(address(&poster))
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO social.community_members (community_id, member_address, role) VALUES ($1, $2, 'owner')")
+            .bind(uploads_community)
+            .bind(address(&poster))
+            .execute(&pool)
+            .await
+            .unwrap();
+        let filler = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
+        sqlx::query("INSERT INTO social.community_content_uploads (content_hash, uploader, size) VALUES ($1, $2, $3)")
+            .bind(&filler)
+            .bind(address(&poster))
+            .bind(MAX_UPLOADER_UNPOSTED_BYTES as i32)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let (status, _) = upload(&app, &poster, "over budget").await;
+        assert_eq!(
+            status,
+            StatusCode::TOO_MANY_REQUESTS,
+            "the uploader's budget"
+        );
+        sqlx::query("DELETE FROM social.community_content_uploads WHERE content_hash = $1")
+            .bind(&filler)
+            .execute(&pool)
+            .await
+            .unwrap();
+        for _ in 1..30 {
+            let (status, _) = upload(&app, &poster, "again").await;
+            assert_eq!(status, StatusCode::OK);
+        }
+        let (status, _) = upload(&app, &poster, "again").await;
+        assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "the signer's rate");
 
         let (status, _) = send(
             &app,

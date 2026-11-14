@@ -507,6 +507,46 @@ impl Builder {
     }
 }
 
+/// The chains this node's trade readers serve, installed once by the binary.
+static SERVED: std::sync::OnceLock<(i64, i64)> = std::sync::OnceLock::new();
+
+/// Installs the served chains (`MARKETPLACE_INDEX_CHAIN_ID_*`) for the
+/// process; the first call wins. Without it the readers serve mainnet (1, 137).
+pub fn install_served_chains(indexes: &super::chain_walk::IndexSettings) {
+    use super::chain_walk::ChainNet;
+    let _ = SERVED.set((
+        indexes.chain_id(ChainNet::Ethereum),
+        indexes.chain_id(ChainNet::Matic),
+    ));
+}
+
+/// `(ethereum, matic)`.
+pub fn served_chains() -> (i64, i64) {
+    SERVED.get().copied().unwrap_or((1, 137))
+}
+
+/// `alias`'s trade is on the chain this node serves for its network.
+pub fn served_chain_sql(alias: &str) -> String {
+    let (eth, matic) = served_chains();
+    format!(
+        "{alias}.chain_id = CASE lower({alias}.network) WHEN 'ethereum' THEN {eth} ELSE {matic} END"
+    )
+}
+
+/// `alias`'s trade is one this node serves: on its chain for the network, and
+/// an item order only when the item's creator signed it.
+pub fn served_trade_sql(alias: &str) -> String {
+    format!(
+        "{served} AND ({alias}.type <> 'public_item_order' OR EXISTS ( \
+           SELECT 1 FROM shop.trade_assets sa \
+           JOIN shop.trade_assets_item si ON si.asset_id = sa.id \
+           JOIN shop.items ci ON ci.network = lower({alias}.network) \
+             AND ci.contract_address = lower(sa.contract_address) AND ci.item_id = si.item_id::numeric \
+           WHERE sa.trade_id = {alias}.id AND sa.direction = 'sent' AND lower(ci.creator) = lower({alias}.signer)))",
+        served = served_chain_sql(alias),
+    )
+}
+
 /// `unified_trades`: the open off-chain listings of `shop.trades` as
 /// one row per trade with its sent asset resolved to `(contract, item_id,
 /// token_id)` and its received amount. Open = effective, not expired at
@@ -536,7 +576,13 @@ pub fn unified_trades_cte(now_p: &str, since_p: &str) -> String {
              AND NOT EXISTS (SELECT 1 FROM shop.trade_cancellations c WHERE c.target_hashed_signature = t.hashed_signature) \
              AND NOT {closed} \
              AND {counted} \
+             AND {served} \
+             AND (t.type <> 'public_item_order' OR EXISTS ( \
+                   SELECT 1 FROM shop.items ci \
+                   WHERE ci.network = lower(t.network) AND ci.contract_address = lower(sent.contract_address) \
+                     AND ci.item_id = sent_item.item_id::numeric AND lower(ci.creator) = lower(t.signer))) \
          )",
+        served = served_chain_sql("t"),
         shift = ITEM_ID_SHIFT,
         closed = super::trade_events::closed_on_chain_sql("t", now_p),
         counted = super::trades::counted_sql("t.", since_p)

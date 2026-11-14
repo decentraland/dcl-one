@@ -257,7 +257,7 @@ async fn filename_migration_preserves_existing_hash_urls_and_can_be_reapplied() 
     s.db().insert_image(&old).await.unwrap();
     const MIGRATION: &str = include_str!(concat!(
         env!("DCL_ONE_ROOT"),
-        "/schemas/migrations/0043_camera_reel_original_filename.sql"
+        "/schemas/migrations/0045_camera_reel_original_filename.sql"
     ));
     sqlx::raw_sql(MIGRATION)
         .execute(s.db().pool())
@@ -810,7 +810,7 @@ async fn content_type_migration_preserves_legacy_rows_and_retained_metadata() {
         .unwrap();
     const MIGRATION: &str = include_str!(concat!(
         env!("DCL_ONE_ROOT"),
-        "/schemas/migrations/0042_camera_reel_image_content_type.sql"
+        "/schemas/migrations/0044_camera_reel_image_content_type.sql"
     ));
     sqlx::raw_sql(MIGRATION)
         .execute(s.db().pool())

@@ -705,7 +705,10 @@ pub fn router(state: SharedState) -> Router {
         )
         .route("/federation/communities/snapshot", get(fed::snapshot))
         .route("/federation/communities/changes", get(fed::changes))
-        .route("/federation/communities/content", post(fed::put_content))
+        .route(
+            "/federation/communities/content",
+            post(fed::put_content).layer(DefaultBodyLimit::max(fed::MAX_CONTENT_BYTES)),
+        )
         .route("/federation/communities/content/gc", post(fed::gc_content))
         .route(
             "/federation/communities/content/{hash}",

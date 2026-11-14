@@ -98,7 +98,7 @@ pub async fn mana_usd_rates(pool: &sqlx::PgPool) -> Result<QuoteRates, sqlx::Err
 /// The newest price snapshot within its freshness budget.
 async fn mana_usd_spot(pool: &sqlx::PgPool) -> Result<Option<ManaUsdRate>, sqlx::Error> {
     let row: Option<(String, chrono::NaiveDateTime)> = sqlx::query_as(
-        "SELECT mana_usd::text, taken_at FROM economy.price_snapshots ORDER BY taken_at DESC LIMIT 1",
+        "SELECT mana_usd::text, LEAST(taken_at, COALESCE(source_updated_at, taken_at)) FROM economy.price_snapshots ORDER BY taken_at DESC LIMIT 1",
     )
     .fetch_optional(pool)
     .await?;

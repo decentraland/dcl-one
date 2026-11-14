@@ -2391,7 +2391,8 @@ fn abr_capture(name: &str) -> Value {
 /// The boot reads apply the Registry's pointer rule before any backend call,
 /// with and without a source: `ids` is not read, an absent or empty
 /// `pointers` is the captured 400 (keys in the Registry's order), a body
-/// that is not JSON the http-commons 500, and the pointers are not capped.
+/// that is not JSON or is `null` the http-commons 500, and the pointers are
+/// not capped.
 #[tokio::test]
 async fn registry_boot_reads_take_the_registry_pointer_rule() {
     let mock = mock();
@@ -2417,6 +2418,7 @@ async fn registry_boot_reads_take_the_registry_pointer_rule() {
                 r#"{"pointers":[]}"#,
                 r#"{"pointers":null}"#,
                 r#"{"pointers":""}"#,
+                r#"{"pointers":{"length":0}}"#,
                 r#"{"ids":["bafkreiexample"]}"#,
             ] {
                 let response = app
@@ -2448,7 +2450,8 @@ async fn registry_boot_reads_take_the_registry_pointer_rule() {
                         .unwrap()
                 );
             }
-            for body in ["", "{"] {
+            // `null.pointers` throws in the Registry's handler.
+            for body in ["", "{", "null"] {
                 let response = app
                     .clone()
                     .oneshot(Request::post(&path).body(Body::from(body)).unwrap())
@@ -2509,4 +2512,144 @@ async fn registry_active_entities_leave_out_the_content_denylist() {
     node.state.content.denylist.add("bafkreikept");
     let (status, rest) = call_json(&app, "POST", path, request).await;
     assert_eq!((status, rest), (StatusCode::OK, json!([])));
+}
+
+/// A backend that answers every read with cache validators and a `304` to
+/// any conditional request, as an HTTP cache-aware Registry would; its
+/// `/entities/active` answer is a fixed two-entity list.
+async fn serve_validating_backend() -> SocketAddr {
+    async fn answer(uri: axum::http::Uri, headers: HeaderMap) -> Response {
+        let validators = [
+            ("etag", "\"backend\""),
+            ("last-modified", "Tue, 10 Nov 2026 00:00:00 GMT"),
+            ("cache-control", "public, max-age=60"),
+        ];
+        if headers.contains_key("if-none-match") || headers.contains_key("if-modified-since") {
+            return (StatusCode::NOT_MODIFIED, validators).into_response();
+        }
+        let body = if uri.path() == "/entities/active" {
+            json!([{"id": "bafkreikept"}, {"id": "bafkreilisted"}])
+        } else {
+            json!({})
+        };
+        (validators, Json(body)).into_response()
+    }
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(axum::serve(listener, Router::new().fallback(answer)).into_future());
+    addr
+}
+
+/// The backend's `ETag` and `Last-Modified` describe its unfiltered answer:
+/// `/entities/active` never sends it the client's conditional headers (its
+/// `304` would skip the denylist), keeps the validators while the denylist
+/// drops nothing and removes them when it does. `Cache-Control` stays, and
+/// the other reads still forward the conditional headers.
+#[tokio::test]
+async fn registry_active_entities_validators_describe_the_filtered_answer() {
+    let addr = serve_validating_backend().await;
+    let node = node_without_db(Settings::for_tests(sources_at(addr))).await;
+    let app = router(node.state.clone());
+    let conditional = |request: axum::http::request::Builder| {
+        request
+            .header("if-none-match", "\"backend\"")
+            .header("if-modified-since", "Tue, 10 Nov 2026 00:00:00 GMT")
+    };
+    let active = |app: Router| async move {
+        let response = app
+            .oneshot(
+                conditional(Request::post("/asset-bundle-registry/entities/active"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"pointers":["1,1","2,2"]}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = response.status();
+        let headers = response.headers().clone();
+        let body: Value = serde_json::from_slice(
+            &axum::body::to_bytes(response.into_body(), 4096)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        (status, headers, body)
+    };
+
+    let (status, h, body) = active(app.clone()).await;
+    assert_eq!(status, StatusCode::OK, "no conditional header reached it");
+    assert_eq!(
+        body,
+        json!([{"id": "bafkreikept"}, {"id": "bafkreilisted"}])
+    );
+    assert_eq!(h["etag"], "\"backend\"");
+    assert_eq!(h["last-modified"], "Tue, 10 Nov 2026 00:00:00 GMT");
+    assert_eq!(h["cache-control"], "public, max-age=60");
+
+    node.state.content.denylist.add("bafkreilisted");
+    let (status, h, body) = active(app.clone()).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, json!([{"id": "bafkreikept"}]));
+    assert!(h.get("etag").is_none(), "{h:?}");
+    assert!(h.get("last-modified").is_none(), "{h:?}");
+    assert_eq!(h["cache-control"], "public, max-age=60");
+
+    let response = app
+        .oneshot(
+            conditional(Request::get("/asset-bundle-registry/entities/status/bafy"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_MODIFIED);
+    assert_eq!(response.headers()["etag"], "\"backend\"");
+}
+
+/// The boot reads cap their body at 1 MiB, with or without a source and
+/// before any backend call: unity-explorer's largest read (every parcel of a
+/// world at the coordinate bound) fits, a body just over the cap is a 413.
+#[tokio::test]
+async fn registry_boot_reads_cap_the_request_body() {
+    let mock = mock();
+    let addr = serve_mock(mock.clone()).await;
+    let empty = Sources {
+        registry: String::new(),
+        ..sources_at(addr)
+    };
+    let grid: Vec<String> = (-150..=150)
+        .flat_map(|x| (-150..=150).map(move |y| format!("{x},{y}")))
+        .collect();
+    let world = json!({ "pointers": grid }).to_string();
+    assert_eq!(world.len(), 865_088);
+    let over = format!(
+        r#"{{"pointers":["0,0"],"pad":"{}"}}"#,
+        "x".repeat(1024 * 1024)
+    );
+    for sources in [sources_at(addr), empty] {
+        let node = node_without_db(Settings::for_tests(sources)).await;
+        let app = router(node.state.clone());
+        for path in ["/entities/active", "/entities/versions"] {
+            let path = format!("/asset-bundle-registry{path}");
+            for (body, expected) in [
+                (world.clone(), StatusCode::OK),
+                (over.clone(), StatusCode::PAYLOAD_TOO_LARGE),
+            ] {
+                let response = app
+                    .clone()
+                    .oneshot(
+                        Request::post(&path)
+                            .header("content-type", "application/json")
+                            .body(Body::from(body))
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+                assert_eq!(response.status(), expected, "{path}");
+            }
+        }
+    }
+    // Only the in-limit reads with a source reached the backend.
+    assert_eq!(mock.hits("entities/active"), 1);
+    assert_eq!(mock.hits("entities/versions"), 1);
 }

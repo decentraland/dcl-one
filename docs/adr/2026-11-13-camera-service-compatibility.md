@@ -12,10 +12,11 @@ Its image dependency is the separately named `image-camera` package, pinned to
 `image` 0.24.9 with the codecs in the captured source corpus. The workspace's
 general image dependency remains independent. Uploads accept only PNG and JPEG,
 and their signatures must match the declared MIME; decoding is bounded to
-12,000 pixels per dimension and 96 MiB, and runs on blocking workers behind a
+8,192 pixels per dimension and 128 MiB, and runs on blocking workers behind a
 two-permit semaphore. The broader codec set remains for source compatibility
-fixtures and is not reachable from the upload path. Codec changes require comparisons of accepted inputs,
-error classes, thumbnail dimensions, decoded pixels and output media types;
+fixtures and is not reachable from the upload path. Codec changes require
+comparisons of accepted inputs, error classes, thumbnail dimensions, decoded
+pixels and output media types;
 enabling the same format names alone does not establish equivalent behavior.
 The bounded world-place cache uses Moka with explicit capacity and expiry.
 
