@@ -104,7 +104,7 @@ export const FONT_OPTIONS: EnumOption[] = [
 ];
 
 export const TEXTURE_MODE_OPTIONS: EnumOption[] = [
-  { value: 1, label: 'Crop' },
+  { value: 1, label: 'Cropped' },
   { value: 0, label: 'Sliced' },
   { value: 2, label: 'Stretched' },
 ];

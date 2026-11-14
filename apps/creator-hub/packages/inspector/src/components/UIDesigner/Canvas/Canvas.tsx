@@ -2,6 +2,7 @@ import React, {
   useCallback,
   useContext,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -84,7 +85,14 @@ import {
 } from './group-drag';
 import type { Box, Flow, InsertionSlot } from './reorder';
 import { flowFrom, insertionSlot } from './reorder';
-import { hiddenStyle, nodeStyle, rendersText, TEXT_VALUE_FIELD, textureStyle } from './node-style';
+import {
+  hiddenStyle,
+  nodeStyle,
+  rendersText,
+  TEXT_VALUE_FIELD,
+  textureStyle,
+  tintMatrix,
+} from './node-style';
 import { renderTextMarkup } from './text-markup';
 import { MobileHudPreview } from './MobileHudPreview';
 import { SafeAreaOverlay } from './SafeAreaOverlay';
@@ -136,6 +144,35 @@ const toBox = (r: DOMRect): Box => ({
   right: r.right,
   bottom: r.bottom,
 });
+
+/** A node's background texture, tinted by an exact per-channel multiply when its colour isn't opaque white. */
+const TextureLayer: React.FC<{ style: React.CSSProperties; matrix: string | undefined }> = ({
+  style,
+  matrix,
+}) => {
+  const filterId = useId();
+  return (
+    <span
+      className="ui-designer-canvas-texture"
+      aria-hidden
+      style={matrix ? { ...style, filter: `url("#${filterId}")` } : style}
+    >
+      {matrix ? (
+        <svg className="ui-designer-canvas-texture-filter">
+          <filter
+            id={filterId}
+            colorInterpolationFilters="sRGB"
+          >
+            <feColorMatrix
+              type="matrix"
+              values={matrix}
+            />
+          </filter>
+        </svg>
+      ) : null}
+    </span>
+  );
+};
 
 function captureReorderDrag(el: HTMLElement): ReorderDrag | null {
   const parentEl = el.parentElement;
@@ -300,6 +337,7 @@ const CanvasNode: React.FC<CanvasNodeProps> = ({ node, hidden }) => {
     'Input';
 
   const background = (previewNode.uiBackground ?? {}) as {
+    color?: { r: number; g: number; b: number; a?: number };
     texture?: { tex?: { $case: string; texture?: { src?: string } } };
     textureMode?: number;
     uvs?: number[];
@@ -844,10 +882,6 @@ const CanvasNode: React.FC<CanvasNodeProps> = ({ node, hidden }) => {
     if (optimisticPos.marginLeft !== undefined) style.marginLeft = `${optimisticPos.marginLeft}px`;
   }
 
-  if (texUrl) {
-    style = { ...style, ...textureStyle(texUrl, background.textureMode, background.uvs) };
-  }
-
   if (isRoot) {
     style = {
       ...style,
@@ -875,6 +909,7 @@ const CanvasNode: React.FC<CanvasNodeProps> = ({ node, hidden }) => {
         reordering: isReordering,
         resizing: isResizing,
         movable: canDragMove,
+        textured: !!texUrl,
       })}
       style={hiddenStyle(style, hidden)}
       onClick={handleClick}
@@ -885,6 +920,12 @@ const CanvasNode: React.FC<CanvasNodeProps> = ({ node, hidden }) => {
       data-type={node.type}
       data-entity={String(node.entity)}
     >
+      {texUrl ? (
+        <TextureLayer
+          style={textureStyle(texUrl, background.textureMode, background.uvs)}
+          matrix={tintMatrix(background.color)}
+        />
+      ) : null}
       {node.type === 'Input' ? <span className="ui-designer-canvas-input">{inputText}</span> : null}
       {node.type === 'Dropdown' ? (
         <span className="ui-designer-canvas-dropdown">

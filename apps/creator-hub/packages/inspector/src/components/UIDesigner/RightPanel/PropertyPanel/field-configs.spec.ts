@@ -374,6 +374,32 @@ describe('buildGroups', () => {
     });
   });
 
+  describe('and the node is an Image', () => {
+    const scaleType = () => fieldsIn('UiEntity', 'Style').find(f => f.label === 'Scale Type');
+    const TEXTURE = { tex: { $case: 'texture', texture: { src: 'a.png' } } };
+
+    it('should show Scale Type while it awaits a texture, and once it has one', () => {
+      expect(scaleType()?.hiddenWhen?.({ textureMode: 1 })).toBe(false);
+      expect(scaleType()?.hiddenWhen?.({ textureMode: 0 })).toBe(false);
+      expect(scaleType()?.hiddenWhen?.({ texture: TEXTURE })).toBe(false);
+    });
+
+    it('should hide Scale Type for an avatar fill and for No fill', () => {
+      const avatar = { tex: { $case: 'avatarTexture', avatarTexture: { userId: 'u' } } };
+      expect(scaleType()?.hiddenWhen?.({ texture: avatar })).toBe(true);
+      expect(scaleType()?.hiddenWhen?.({ textureMode: 1, texture: avatar })).toBe(true);
+      expect(scaleType()?.hiddenWhen?.({ textureMode: 1, color: { r: 0, g: 0, b: 0, a: 0 } })).toBe(
+        true,
+      );
+    });
+
+    it('should hide Scale Type on a Container, and on an Image painting a solid colour', () => {
+      expect(scaleType()?.hiddenWhen?.({})).toBe(true);
+      expect(scaleType()?.hiddenWhen?.({ color: { r: 1, g: 0, b: 0 } })).toBe(true);
+      expect(scaleType()?.hiddenWhen?.({ textureMode: 1, color: { r: 1, g: 0, b: 0 } })).toBe(true);
+    });
+  });
+
   describe('and the node is a Dropdown', () => {
     const emptyLabel = () => fieldsIn('Dropdown', 'Dropdown').find(f => f.label === 'Empty Label');
 

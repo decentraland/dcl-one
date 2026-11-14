@@ -40,10 +40,11 @@ export interface UINode {
 /** What a node reads as in the UI (UiEntity splits into Container / Image). */
 export type WidgetKind = Exclude<UINodeType, 'UiEntity'> | 'Container' | 'Image';
 
+/** A UiEntity is an Image when its background has a texture, or a texture mode awaiting one. */
 export function classifyNode(node: Pick<UINode, 'type' | 'uiBackground'>): WidgetKind {
   if (node.type !== 'UiEntity') return node.type;
-  const texture = (node.uiBackground as { texture?: unknown } | undefined)?.texture;
-  return texture ? 'Image' : 'Container';
+  const bg = node.uiBackground as { texture?: unknown; textureMode?: number } | undefined;
+  return bg?.texture || bg?.textureMode !== undefined ? 'Image' : 'Container';
 }
 
 /** The entities of a shift-click range, in visible pre-order, with the clicked row last. */

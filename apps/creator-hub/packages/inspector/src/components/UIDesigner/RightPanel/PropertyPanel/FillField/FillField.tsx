@@ -22,6 +22,15 @@ const REACT_ECS_DEFAULT_COLOUR: Color4 = { r: 1, g: 1, b: 1, a: 1 };
 
 const OPAQUE_TINT: Color4 = { r: 1, g: 1, b: 1, a: 1 };
 
+const TEXTURE_MODE_CENTER = 1;
+
+const CLEAR: Color4 = { r: 0, g: 0, b: 0, a: 0 };
+
+const isClear = (c: Color4 | undefined): boolean => !!c && (c.a ?? 1) === 0;
+
+const isNoFill = (c: Color4 | undefined): boolean =>
+  !!c && c.r === 0 && c.g === 0 && c.b === 0 && c.a === 0;
+
 const MODES: { value: FillMode; label: string; hint: string }[] = [
   {
     value: 'colour',
@@ -60,6 +69,7 @@ const BIND_TARGET: Record<FillMode, { path: string; kind: FieldKind } | null> = 
 interface FillFieldProps {
   color: Color4 | undefined;
   texture: TextureUnion | undefined;
+  textureMode?: number;
   entity: Entity;
   bindings?: Record<string, string>;
   onPatch: (patch: Record<string, unknown>) => void;
@@ -68,6 +78,7 @@ interface FillFieldProps {
 const FillFieldComponent: React.FC<FillFieldProps> = ({
   color,
   texture,
+  textureMode,
   entity,
   bindings,
   onPatch,
@@ -84,7 +95,13 @@ const FillFieldComponent: React.FC<FillFieldProps> = ({
   const tex = texture?.tex;
   const authored: FillMode | undefined =
     tex?.$case === 'avatarTexture' ? 'avatar' : tex ? 'file' : undefined;
-  const mode: FillMode = authored ?? picked ?? (color ? 'colour' : 'none');
+  const awaitingImage = textureMode !== undefined;
+  const isImage = awaitingImage || !!tex;
+  const keepImage = isImage && !awaitingImage ? { textureMode: TEXTURE_MODE_CENTER } : {};
+  const visibleColor = isClear(color) ? undefined : color;
+  const unauthored: FillMode =
+    awaitingImage && isNoFill(color) ? 'none' : color ? 'colour' : awaitingImage ? 'file' : 'none';
+  const mode: FillMode = authored ?? picked ?? unauthored;
 
   const handleModeChange = (next: FillMode) => {
     setFileError(undefined);
@@ -92,20 +109,32 @@ const FillFieldComponent: React.FC<FillFieldProps> = ({
     if (next === mode) return;
     switch (next) {
       case 'colour':
-        onPatch({ texture: undefined, color: color ?? REACT_ECS_DEFAULT_COLOUR });
+        onPatch({
+          texture: undefined,
+          color: (isImage ? visibleColor : color) ?? REACT_ECS_DEFAULT_COLOUR,
+          ...keepImage,
+        });
         break;
       case 'avatar':
         onPatch({
           texture: { tex: { $case: 'avatarTexture', avatarTexture: { userId: '' } } },
-          ...(color ? {} : { color: OPAQUE_TINT }),
+          ...(visibleColor ? {} : { color: OPAQUE_TINT }),
         });
         break;
       case 'file':
-        onPatch({ texture: undefined });
+        onPatch({
+          texture: undefined,
+          textureMode: textureMode ?? TEXTURE_MODE_CENTER,
+          ...(isClear(color) ? { color: undefined } : {}),
+        });
         break;
       case 'none':
       default:
-        onPatch({ texture: undefined, color: undefined });
+        onPatch(
+          isImage
+            ? { texture: undefined, color: CLEAR, ...keepImage }
+            : { texture: undefined, color: undefined },
+        );
         break;
     }
   };
