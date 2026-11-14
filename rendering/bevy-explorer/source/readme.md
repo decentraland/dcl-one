@@ -109,6 +109,7 @@ just native-release --places http://localhost:5000 --realm-provider http://local
 Doing it by hand instead of via `just`:
 
 ```bash
+python3 ../../../tooling/patched-sources.py materialise   # Bevy and the forked crates cargo reads
 ./scripts/gen-ts-bindings.sh                     # TS types for the system API (library/ui/apps/hud, tracked)
 cd react-web && npm ci && (cd bridge-scene && npm ci) && npm run bundle:native && cd ..
 cargo build --release --package dcl_deno_ipc     # scene runtime sidecar
@@ -116,7 +117,7 @@ cargo build --release                            # decentra-bevy + decentra-bevy
 cargo run --release
 ```
 
-To build without CEF at all (the engine's own bevy-ui HUD instead of React):
+To build without CEF at all (the engine's own bevy-ui HUD instead of React), after the same `materialise`:
 
 ```bash
 cargo run --release --no-default-features --features "livekit,ffmpeg,inspect,social"
@@ -133,6 +134,7 @@ npx @dcl-regenesislabs/bevy-headless-server --realm http://localhost:8000
 From source (the binary is feature-gated out of default builds, and execs the sidecar from its own directory, so both land in `target/release`):
 
 ```bash
+python3 ../../../tooling/patched-sources.py materialise   # Bevy and the forked crates cargo reads
 cargo build --release -p dcl_deno_ipc
 cargo build --release --bin headless --no-default-features --features headless,livekit
 ./target/release/headless --realm <url> --location 0,0 --server-mode
@@ -214,6 +216,7 @@ Console commands:
 ## Testing
 
 ```bash
+python3 ../../../tooling/patched-sources.py materialise   # Bevy and the forked crates cargo reads
 cargo test --all                      # engine
 npm test --prefix react-web           # HUD, deterministic (vitest, no engine)
 npm run test:e2e --prefix react-web   # HUD against a real engine (playwright, needs a GPU)

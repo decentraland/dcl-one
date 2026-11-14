@@ -11,6 +11,11 @@
       - tooling/bevy-ci.py
       - tooling/ci_paths.py
       - tooling/bevy-mtimes.py
+      - tooling/patched-sources.py
+      - tooling/vendor-provenance.py
+      - tooling/enet-provenance.py
+      - tooling/upstream-drift*.py
+      - tooling/tests/test_upstream_*.py
       - tooling/play-artifact.py
       - tooling/hud_shared_inputs.py
       - tooling/tests/test_hud_shared_inputs.py
@@ -22,6 +27,7 @@
       - .github/workflows/bevy-explorer-*.yml
       - .github/actions/bevy-explorer-ci-status/**
       - .github/actions/bevy-explorer-tools/**
+      - .github/actions/bevy-explorer-sources/**
       - flake.*
       - rendering/bevy-explorer/**
       - .github/workflows/bevy-explorer-ci.yml
@@ -49,6 +55,11 @@
       - tooling/bevy-ci.py
       - tooling/ci_paths.py
       - tooling/bevy-mtimes.py
+      - tooling/patched-sources.py
+      - tooling/vendor-provenance.py
+      - tooling/enet-provenance.py
+      - tooling/upstream-drift*.py
+      - tooling/tests/test_upstream_*.py
       - tooling/play-artifact.py
       - tooling/hud_shared_inputs.py
       - tooling/tests/test_hud_shared_inputs.py
@@ -60,6 +71,7 @@
       - .github/workflows/bevy-explorer-*.yml
       - .github/actions/bevy-explorer-ci-status/**
       - .github/actions/bevy-explorer-tools/**
+      - .github/actions/bevy-explorer-sources/**
       - flake.*
       - rendering/bevy-explorer/**
       - .github/workflows/bevy-explorer-ci.yml
@@ -112,9 +124,27 @@ jobs:
           python3 -m unittest discover -s tooling/tests -p 'test_hud_shared_inputs.py' -v
           python3 -m unittest discover -s tooling/tests -p 'test_bevy_*.py' -v
           python3 -m unittest discover -s tooling/tests -p 'test_play_*.py' -v
+          python3 -m unittest discover -s tooling/tests -p 'test_upstream_*.py' -v
       - name: Check the CI status comment scripts
         run: |
           for test in .github/actions/bevy-explorer-ci-status/test-*.sh; do bash "$test"; done
+      # The two online guards run for what the change touches; the daily upstream workflow runs
+      # both for the whole tree.
+      - name: Select the online guards from the change
+        id: guards
+        env:
+          # Fallback only on a pull request: bevy-ci.py compares the merge tree with the main tip it was merged onto.
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: python3 tooling/bevy-ci.py guards-plan
+      - name: Prove each changed pin is on the ref it names
+        if: steps.guards.outputs.pins != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PINS: ${{ steps.guards.outputs.pins }}
+        run: python3 tooling/upstream-drift.py check $PINS
+      - name: Prove the in-tree crates against their public repositories
+        if: steps.guards.outputs.provenance == 'true'
+        run: python3 tooling/vendor-provenance.py
       - name: Verify the vendored texture decoder bytes and patch replay
         run: python3 rendering/bevy-explorer/source/vendor/basisu/verify.py
   changes:
@@ -187,12 +217,14 @@ jobs:
           toolchain: 1.99.1
       - name: Prepare the pinned native toolchain for caching
         run: python ../../../apps/bevy-explorer/prepare-native-cache.py
+      - name: Rebuild the patched sources
+        uses: ./.github/actions/bevy-explorer-sources
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           save-if: ${{ github.ref == 'refs/heads/main' && github.run_attempt == '1' }}
           workspaces: rendering/bevy-explorer/source -> target
           key: bevy-explorer-native-ci-test
-      - name: Restore the vendored Bevy's cached file times
+      - name: Restore the rebuilt Bevy tree's cached file times
         run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" restore target
       - name: Install protoc from the flake
         if: runner.os == 'Linux'
@@ -294,12 +326,12 @@ jobs:
           key: ${{ steps.compiler-cache-tool.outputs.cache-primary-key }}
       - name: Test the texture decoder boundaries
         run: cargo test --manifest-path vendor/basisu/Cargo.toml --locked --lib --target-dir target
-      # the vendored Bevy crates are path dependencies, not workspace members, so `cargo test --all`
+      # the patched Bevy crates are path dependencies, not workspace members, so `cargo test --all`
       # never compiles their tests, and cargo tests a non-member with dev-dependencies only from
       # its own workspace, which has no lock file: it starts from this one, so the dependencies
       # both share keep their versions. These are the crates the explorer patches for KTX2 and
       # glTF loading, with the features the explorer enables on them.
-      - name: Test the patched vendored Bevy crates
+      - name: Test the patched Bevy crates
         run: |
           cp Cargo.lock ../bevy/Cargo.lock
           cargo test --manifest-path ../bevy/Cargo.toml -p bevy_image -p bevy_gltf --lib \
@@ -370,7 +402,7 @@ jobs:
             export RUSTC_WRAPPER=
             cargo build --package benchmark --release --locked
           fi
-      - name: Record the vendored Bevy's file times for the cache
+      - name: Record the rebuilt Bevy tree's file times for the cache
         run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" record target
       - name: Name the benchmark runner
         id: benchmark
@@ -426,12 +458,14 @@ jobs:
           toolchain: 1.99.1
       - name: Prepare the pinned native toolchain for caching
         run: python ../../../apps/bevy-explorer/prepare-native-cache.py
+      - name: Rebuild the patched sources
+        uses: ./.github/actions/bevy-explorer-sources
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: bevy-explorer-headless-linux-x64
           save-if: ${{ github.ref == 'refs/heads/main' && github.run_attempt == '1' }}
           workspaces: rendering/bevy-explorer/source -> target
-      - name: Restore the vendored Bevy's cached file times
+      - name: Restore the rebuilt Bevy tree's cached file times
         run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" restore target
       - name: Install protoc from the flake
         uses: ./.github/actions/bevy-explorer-tools
@@ -444,7 +478,7 @@ jobs:
         uses: ./.github/actions/bevy-explorer-clang
       - name: Build headless engine and sidecar
         run: python3 ../../../apps/bevy-explorer/build-headless.py
-      - name: Record the vendored Bevy's file times for the cache
+      - name: Record the rebuilt Bevy tree's file times for the cache
         run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" record target
       - name: Strip the Linux distribution before testing
         run: strip ../../../apps/bevy-explorer/dist/headless/native/headless ../../../apps/bevy-explorer/dist/headless/native/dcl_deno_ipc
@@ -575,12 +609,14 @@ jobs:
       - run: rustup component add clippy
       - name: Prepare the pinned native toolchain for caching
         run: python ../../../apps/bevy-explorer/prepare-native-cache.py
+      - name: Rebuild the patched sources
+        uses: ./.github/actions/bevy-explorer-sources
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           save-if: ${{ github.ref == 'refs/heads/main' && github.run_attempt == '1' }}
           workspaces: rendering/bevy-explorer/source -> target
           key: bevy-explorer-native
-      - name: Restore the vendored Bevy's cached file times
+      - name: Restore the rebuilt Bevy tree's cached file times
         run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" restore target
       - name: Install protoc from the flake
         uses: ./.github/actions/bevy-explorer-tools
@@ -594,7 +630,7 @@ jobs:
         uses: ./.github/actions/bevy-explorer-clang
       - run: cargo clippy --locked -- -D warnings
         shell: bash
-      - name: Record the vendored Bevy's file times for the cache
+      - name: Record the rebuilt Bevy tree's file times for the cache
         run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" record target
     defaults:
       run:
@@ -693,6 +729,9 @@ jobs:
         run: |
           d=$(rustc -vV | sed -n 's/^commit-date: //p')
           find "$(rustc --print sysroot)/lib/rustlib/src" -type f -exec touch -t "${d//-/}0000" {} +
+      - name: Rebuild the patched sources
+        if: steps.engine-cache.outputs.cache-matched-key == ''
+        uses: ./.github/actions/bevy-explorer-sources
       - name: Restore wasm target cache
         if: steps.engine-cache.outputs.cache-matched-key == ''
         id: wasm-cache
@@ -704,9 +743,9 @@ jobs:
             ~/.cargo/git/db/
             rendering/bevy-explorer/source/target/
           key: bevy-explorer-web-${{ hashFiles('rendering/bevy-explorer/source/Cargo.lock', 'rendering/bevy-explorer/source/Cargo.toml',
-            'rendering/bevy-explorer/source/.cargo/config.toml', 'rendering/bevy-explorer/bevy/**') }}
+            'rendering/bevy-explorer/source/.cargo/config.toml', 'rendering/bevy-explorer/patches/**', 'rendering/bevy-explorer/vendor/**') }}
           restore-keys: bevy-explorer-web-
-      - name: Restore the vendored Bevy's cached file times
+      - name: Restore the rebuilt Bevy tree's cached file times
         if: steps.engine-cache.outputs.cache-matched-key == ''
         run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" restore target
       - name: Install the web build tools from the flake
@@ -721,7 +760,7 @@ jobs:
         run: python3 ../../../apps/bevy-explorer/build-web.py --engine-cache ../../../.cache/bevy-engine ${{ env.BEVY_WEB_OPT == 'unoptimized' && '--no-opt' || '' }} --shared-build
       - name: Test the checked shared-input generator
         run: npm run test:shared-inputs --prefix react-web
-      - name: Record the vendored Bevy's file times for the cache
+      - name: Record the rebuilt Bevy tree's file times for the cache
         if: steps.engine-cache.outputs.cache-matched-key == ''
         run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" record target
       - name: Save wasm target cache

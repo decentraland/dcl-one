@@ -91,7 +91,7 @@ of the compiled engine's cache key, so that build recompiles the WASM.
 | `apis-sites-images.yml` | Reusable image builds after the web producer; publish after complete CI | Tested AMD64/ARM64 APIs and Sites images |
 | `bevy-explorer-images.yml` | Images from a successful main CI run | Web (Linux AMD64/ARM64), headless (Linux AMD64) |
 | `bevy-explorer-rollout-manual.yml` | Roll out a CDN version at `decentraland.zone/play` or `decentraland.org/play` by hand | Rollout records |
-| `bevy-explorer-upstream.yml` | Daily fork check and drift report | `upstream/forks` PR; drift artifact |
+| `bevy-explorer-upstream.yml` | Daily upstream check and drift report | Run summary; drift artifact |
 
 `tooling/bevy-ci.py` selects engine and image jobs per changed input. Unknown engine inputs and
 manual Explorer dispatch select all engine checks. Image-only edits reuse a matching completed
@@ -256,6 +256,7 @@ windows through OTLP; receive-timed legacy observations cannot establish CPU
 utilization. Metrics serialization, execution baselines and CPU bucket tests run with:
 
 ```sh
-cd rendering/bevy-explorer/source # from the repository root
+python3 tooling/patched-sources.py materialise # from the repository root: the trees cargo reads
+cd rendering/bevy-explorer/source
 cargo test --locked --no-default-features --features headless --lib headless::stats
 ```

@@ -145,8 +145,8 @@ difference of two timestamps that empty compute passes write with `timestamp_wri
 `wgpu::Features::TIMESTAMP_QUERY` on the render device. The engine sets no `WgpuSettings` of its
 own (the web render worker uses the default too), so Bevy's default `Functionality` priority
 requests every feature the adapter reports, and the feature is on wherever the backend exposes
-it. Without it the engine logs one info line under `gpu_time` and has no GPU time. In the fork's
-wgpu (`robtfm/wgpu` `e25f3d4`, 24.0.5):
+it. Without it the engine logs one info line under `gpu_time` and has no GPU time. In the
+Explorer's wgpu (upstream `v24.0.5` plus the series in `rendering/bevy-explorer/patches/wgpu`):
 
 | Backend | `TIMESTAMP_QUERY` | Tick period | Checked on hardware |
 |---|---|---|---|

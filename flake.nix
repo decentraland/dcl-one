@@ -14,19 +14,30 @@
     let
       systems = [ "aarch64-darwin" "aarch64-linux" "x86_64-linux" ];
       eachSystem = nixpkgs.lib.genAttrs systems;
-    in {
-      packages = nixpkgs.lib.genAttrs [ "aarch64-linux" "x86_64-linux" ] (system:
+      rustPackages = system:
         let
           pkgs = import nixpkgs { inherit system; overlays = [ (import rust-overlay) ]; };
           rust = pkgs.rust-bin.fromRustupToolchainFile ./services/catalyst/rust-toolchain.toml;
-        in import ./infra/packages {
-          inherit pkgs;
-          craneLib = (crane.mkLib pkgs).overrideToolchain rust;
+        in { inherit pkgs; craneLib = (crane.mkLib pkgs).overrideToolchain rust; };
+      # Three chained layers: third-party crates, Bevy and the crates that use it, the Explorer.
+      bevy-explorer = import ./infra/packages/bevy-explorer.nix (rustPackages "x86_64-linux");
+    in {
+      packages = nixpkgs.lib.genAttrs [ "aarch64-linux" "x86_64-linux" ] (system:
+        import ./infra/packages (rustPackages system // {
           revision = self.rev or self.dirtyRev or "unversioned";
-        }) // {
+        })) // {
           # The tool environments alone: the macOS CI legs take ffmpeg from here.
           aarch64-darwin = import ./infra/packages/tools.nix { pkgs = import nixpkgs { system = "aarch64-darwin"; }; };
         };
+
+      # `nix build .#bevy-explorer` and `.#bevy-explorer.tests`. An evaluation of the Explorer
+      # builds its patched sources, and `nix flake check` evaluates every attribute of
+      # `packages` and `checks`, so the Explorer is in neither.
+      legacyPackages.x86_64-linux = {
+        inherit bevy-explorer;
+        bevy-explorer-deps = bevy-explorer.deps;
+        bevy-explorer-bevy = bevy-explorer.bevy;
+      };
 
       checks.x86_64-linux.dev-service = import ./infra/dev/service-test {
         pkgs = import nixpkgs { system = "x86_64-linux"; };

@@ -1,6 +1,6 @@
 # ADR: The Explorer's Bevy is vendored in this repository
 
-- Status: Accepted
+- Status: Superseded by [2026-11-14](2026-11-14-explorer-sources-as-patches.md)
 - Date: 2026-11-05
 
 ## Context

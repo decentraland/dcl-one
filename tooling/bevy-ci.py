@@ -27,10 +27,13 @@ _ARTIFACT.loader.exec_module(_artifact)
 # The flake's tool packages (bevy-tools: protoc, taplo and wasm-pack for the Linux lanes; bevy-ffmpeg
 # for the macOS Test Suite) and the action that delivers them; Windows, headless packaging and
 # scenes run install-protoc.py instead.
+PATCHES = 'rendering/bevy-explorer/patches'
+# The in-tree exact-bytes crates and the tools that prove them against their public repositories.
+PROVENANCE_INPUTS = ('rendering/bevy-explorer/vendor', 'tooling/vendor-provenance.py', 'tooling/enet-provenance.py')
 TOOLS_INPUTS = ('flake.nix', 'flake.lock', 'infra/packages/default.nix', 'infra/packages/tools.nix', '.github/actions/bevy-explorer-tools')
-INPUTS = ('rendering/bevy-explorer/source', 'rendering/bevy-explorer/bevy', 'library/vendor/rusty_enet', 'tooling/dev-regressions*', 'library/protocol/proto', 'apps/bevy-explorer',
+INPUTS = ('rendering/bevy-explorer/source', 'rendering/bevy-explorer/patches', 'rendering/bevy-explorer/vendor', 'library/vendor/rusty_enet', 'tooling/dev-regressions*', 'library/protocol/proto', 'apps/bevy-explorer',
           'infra/gateway', *GATEWAY_HUD_INPUTS, *TOOLS_INPUTS,
-          'tooling/bevy-ci.py', 'tooling/hud_shared_inputs.py', 'tooling/ci_paths.py', 'tooling/bevy-mtimes.py', 'tooling/play-artifact.py', 'tooling/tests/test_play_*.py',
+          'tooling/bevy-ci.py', 'tooling/hud_shared_inputs.py', 'tooling/ci_paths.py', 'tooling/bevy-mtimes.py', 'tooling/patched-sources.py', '.github/actions/bevy-explorer-sources', 'tooling/play-artifact.py', 'tooling/tests/test_play_*.py',
           'tooling/tests/test_bevy_*.py', 'tooling/tests/test_hud_shared_inputs.py', 'tooling/tests/hud_manifest_fixture.py', 'tooling/tests/hud_manifest_invalid_cases.json', 'tooling/tests/check_hud_manifest_nix.py', WORKFLOW, SCENES_WORKFLOW,
           '.github/workflows/bevy-explorer-images.yml',
           '.github/workflows/bevy-explorer-headless.yml',
@@ -46,14 +49,17 @@ HARNESS_WEB_READS = ('rendering/bevy-explorer/source/deploy/web/engine/perf_stre
 IMAGES_INPUTS = (
     'flake.*',
     'rendering/bevy-explorer/source/**',
-    'rendering/bevy-explorer/bevy/**',
+    'rendering/bevy-explorer/patches/**',
+    'rendering/bevy-explorer/vendor/**',
     'apps/bevy-explorer/build-web.py',
     'apps/bevy-explorer/install-*',
     '.github/workflows/bevy-explorer-ci.yml',
     '.github/actions/bevy-explorer-tools/**',
+    '.github/actions/bevy-explorer-sources/**',
     'tooling/fetch-play.py',
     'tooling/bevy-ci.py',
     'tooling/play-artifact.py',
+    'tooling/patched-sources.py',
     'tooling/hud_shared_inputs.py',
     'tooling/tests/hud_manifest_fixture.py',
     'tooling/tests/hud_manifest_invalid_cases.json',
@@ -349,6 +355,34 @@ def plan(event, base, head, repo):
         return full_selection('Comparison unavailable; full run')
 
 
+def pin_names(paths):
+    """The patched sources whose pin file, patches/<name>/source.toml, is among the paths."""
+    pin = re.compile(re.escape(PATCHES) + r'/([A-Za-z0-9_.-]+)/source\.toml')
+    return sorted({match.group(1) for match in map(pin.fullmatch, paths) if match})
+
+
+def guards_plan(event, base, head):
+    """The online guards of the `source` job that a change needs. `pins`: the patched sources whose
+    source.toml the change adds or edits; each is then proved to be on the ref it names.
+    `provenance`: whether the change touches an in-tree crate or the tools that prove them against
+    their public repositories. Without a comparison every guard runs; the daily upstream workflow
+    runs both for the whole tree."""
+    try:
+        if event not in ('push', 'pull_request', 'local'):
+            raise ValueError('No comparison for this event')
+        ensure_commit(base)
+        ensure_commit(head)
+        pins = pin_names(git('diff', '--name-only', '--no-renames', '--diff-filter=d', '-z', base, head, '--', PATCHES).split('\0'))
+        provenance = bool(git('diff', '--name-only', '--no-renames', '-z', base, head, '--', *PROVENANCE_INPUTS).strip('\0'))
+        reason = (f'{len(pins)} changed pin(s) to prove on their refs; '
+                  f'in-tree crates {"changed" if provenance else "unchanged"}')
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        print(f'Every online guard runs: {exc}')
+        pins = pin_names(git('ls-files', '--', PATCHES).splitlines())
+        provenance, reason = True, 'Comparison unavailable; every online source guard runs'
+    return {'pins': ' '.join(pins), 'provenance': provenance, 'reason': reason}
+
+
 def scenes_plan(event, base, head):
     if event == 'workflow_dispatch':
         return {'scenes': True, 'sha': head, 'reason': 'Manual or nightly graphical run'}
@@ -514,7 +548,7 @@ def write_outputs(values):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('command', choices=('plan', 'source', 'scenes-plan', 'consumer-plan',
+    parser.add_argument('command', choices=('plan', 'source', 'scenes-plan', 'consumer-plan', 'guards-plan',
                                             'scene-suite', 'scene-summary'))
     parser.add_argument('--consumer', choices=('images', 'headless'))
     parser.add_argument('--base', default=os.environ.get('BASE_SHA', ''))
@@ -539,6 +573,9 @@ def main():
             print(f'Comparing with {base} (BASE_SHA {args.base or "unset"})')
         if args.command == 'consumer-plan':
             write_outputs(consumer_plan(event, base, head, os.environ.get('GH_REPO', '')))
+            return
+        if args.command == 'guards-plan':
+            write_outputs(guards_plan(event, base, head))
             return
         result = (scenes_plan(event, base, head) if args.command == 'scenes-plan' else
                   plan(event, base, head, os.environ.get('GH_REPO', '')))
