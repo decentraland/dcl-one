@@ -8,6 +8,7 @@
 .ui-designer-roots-tree {
   flex: 1;
   min-height: 0;
+  padding: 2px 0;
   overflow: auto;
 }
 

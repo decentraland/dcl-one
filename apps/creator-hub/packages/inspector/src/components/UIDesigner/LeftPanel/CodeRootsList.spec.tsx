@@ -274,3 +274,21 @@ describe('when the rows draw their glyphs', () => {
     expect(document.querySelector('.ui-designer-mobile-hud-row svg')!.outerHTML).toBe(mobile);
   });
 });
+
+describe('when the search term filters the MobileHUD row', () => {
+  afterEach(cleanup);
+
+  const hudRow = () => document.querySelector('.ui-designer-mobile-hud-row');
+
+  it.each(['zzz', 'ma'])('should hide it when "mobilehud" does not contain %j', term => {
+    render(<CodeRootsList filter={term} />);
+
+    expect(hudRow()).toBeNull();
+  });
+
+  it.each(['mobile', 'HUD', ' bileh '])('should keep it when "mobilehud" contains %j', term => {
+    render(<CodeRootsList filter={term} />);
+
+    expect(hudRow()).not.toBeNull();
+  });
+});

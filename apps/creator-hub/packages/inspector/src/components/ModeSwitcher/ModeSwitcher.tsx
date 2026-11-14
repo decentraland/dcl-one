@@ -8,6 +8,7 @@ import { useAppDispatch, useAppSelector } from '../../redux/hooks';
 import { getHiddenPanels, togglePanel } from '../../redux/ui';
 import { PanelName } from '../../redux/ui/types';
 
+import '../../theme/tab-bar.css';
 import './ModeSwitcher.css';
 
 const ModeSwitcherComponent: React.FC = () => {
@@ -38,7 +39,7 @@ const ModeSwitcherComponent: React.FC = () => {
 
   return (
     <div
-      className="ModeSwitcher"
+      className="ModeSwitcher TabBar"
       role="tablist"
       aria-label="Editor mode"
     >
@@ -46,7 +47,7 @@ const ModeSwitcherComponent: React.FC = () => {
         type="button"
         role="tab"
         aria-selected={is2D}
-        className={cx('ModeSwitcher-tab', { active: is2D })}
+        className={cx('ModeSwitcher-tab', 'TabBar-tab', { active: is2D })}
         onClick={handleSelect2D}
         title="Edit UI"
       >
@@ -56,7 +57,7 @@ const ModeSwitcherComponent: React.FC = () => {
         type="button"
         role="tab"
         aria-selected={is3D}
-        className={cx('ModeSwitcher-tab', { active: is3D })}
+        className={cx('ModeSwitcher-tab', 'TabBar-tab', { active: is3D })}
         onClick={handleSelect3D}
         title="Edit scene"
       >

@@ -229,7 +229,7 @@ export const CodeRootsList: React.FC<{ filter?: string }> = ({ filter = '' }) =>
         </div>
       ) : null}
       <div className="ui-designer-roots-tree">
-        {roots.length > 0 ? <MobileHudRow /> : null}
+        {roots.length > 0 && 'mobilehud'.includes(term) ? <MobileHudRow /> : null}
         {shown.map(root => (
           <RootRow
             key={root.filename}
