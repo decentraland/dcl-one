@@ -54,6 +54,9 @@ class AssetsPageObject {
 
   async search(term: string) {
     await page.fill('.Assets .assets-catalog-header-search input', term);
+    await page
+      .locator('.Assets .assets-catalog-header-title', { hasText: `Results for "${term}"` })
+      .waitFor();
     await page.waitForSelector(`.Assets .assets-catalog-asset[data-test-label="${term}"]`);
   }
 
