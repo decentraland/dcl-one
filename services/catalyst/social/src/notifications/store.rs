@@ -888,38 +888,8 @@ pub(crate) mod test_support {
     /// tests whose subject is a whole-table pass: the outbox claim takes
     /// every due row it can see, so two such tests on one database race.
     pub async fn private_pool(tag: &str) -> Option<PgPool> {
-        use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
-        let base = std::env::var("CATALYST_TEST_DATABASE_URL").ok()?;
-        let opts: PgConnectOptions = base
-            .parse()
-            .expect("CATALYST_TEST_DATABASE_URL must be a postgres DSN");
-        let admin = PgPoolOptions::new()
-            .max_connections(1)
-            .connect_with(opts.clone().database("postgres"))
-            .await
-            .expect("admin connect");
-        let name = format!(
-            "catalyst_test_lib_{}_{tag}_{}",
-            std::process::id(),
-            &Uuid::new_v4().simple().to_string()[..8]
-        );
-        sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE \"{name}\"")))
-            .execute(&admin)
-            .await
-            .expect("create database");
-        let mut url = url::Url::parse(&base).expect("URL");
-        url.set_path(&format!("/{name}"));
-        let pool = crate::db::connect_pool(
-            url.as_str(),
-            &crate::db::PoolSettings {
-                max_connections: 4,
-                ..Default::default()
-            },
-        )
-        .await
-        .expect("connect private database");
-        crate::db::apply_schema(&pool).await.expect("apply schema");
-        Some(pool)
+        use crate::db::scratch::{OwnedDatabase, Schema};
+        Some(OwnedDatabase::new(tag, Schema::Full, 4).await?.pool)
     }
 
     pub async fn seed_notification(
