@@ -4202,8 +4202,12 @@
       "sha256": "b014219d7251931e4a6659010ef816f433c63f88b7af990d8d69d54e01a884d7"
     },
     {
+      "path": "rendering/bevy-explorer/source/deploy/web/engine/content_cache.js",
+      "sha256": "ef0b7bb27c67a68ecbab80763a4992f90b8e1bb6ef1a642efaadc577f344016a"
+    },
+    {
       "path": "rendering/bevy-explorer/source/deploy/web/engine/engine.js",
-      "sha256": "0086f2a09c38a4c5f66bd0e9e719cec6d3227d8ae909a48e0310c6e4108c9c24"
+      "sha256": "25d9ae1992bcaa15d3a01ca12b77731cf5553b54422c9e3d272051604e0b7578"
     },
     {
       "path": "rendering/bevy-explorer/source/deploy/web/engine/perf_stream.js",
@@ -4502,6 +4506,10 @@
       "sha256": "e6072c8cb90b4e661c6a4c8aa6f64d3a70284b5db99b7451fff5a9a7f10543ab"
     },
     {
+      "path": "rendering/bevy-explorer/source/react-web/src/test/contentCache.test.ts",
+      "sha256": "4b98ba64109ff816c1cfd60ba93427a2616c86cda821123bbfbc7496f6eda317"
+    },
+    {
       "path": "rendering/bevy-explorer/source/react-web/src/test/editorHost.test.tsx",
       "sha256": "b75918cb7e4371dd7c1a0c59c4e207793c5d7ccb8b795aa39582e4c814046f4e"
     },
@@ -4556,6 +4564,10 @@
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/serviceWorkerCache.test.ts",
       "sha256": "8ff57c92f31bcda6cd80c01e9dc849b0f0d2e0fa447c7bc709acd23bdface10c"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/src/test/serviceWorkerContentCache.test.ts",
+      "sha256": "3b8805c5f697e3e40564fb4f0febc4ee9b2c4f46c807e3bf365d2a6bc886cc6e"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/session.test.tsx",
@@ -4659,6 +4671,7 @@
     "rendering/bevy-explorer/source/react-web/src/test/bridgeVoice.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeVoiceChat.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/connectivityApi.test.ts",
+    "rendering/bevy-explorer/source/react-web/src/test/contentCache.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/editorHost.test.tsx",
     "rendering/bevy-explorer/source/react-web/src/test/editorHostSigning.test.tsx",
     "rendering/bevy-explorer/source/react-web/src/test/editorScene.test.ts",
@@ -4673,6 +4686,7 @@
     "rendering/bevy-explorer/source/react-web/src/test/realmTravel.test.tsx",
     "rendering/bevy-explorer/source/react-web/src/test/recoverSigner.ts",
     "rendering/bevy-explorer/source/react-web/src/test/serviceWorkerCache.test.ts",
+    "rendering/bevy-explorer/source/react-web/src/test/serviceWorkerContentCache.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/session.test.tsx",
     "rendering/bevy-explorer/source/react-web/src/test/setup.ts",
     "rendering/bevy-explorer/source/react-web/src/test/sharedUi.test.tsx",

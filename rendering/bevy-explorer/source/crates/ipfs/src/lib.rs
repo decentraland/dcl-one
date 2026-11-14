@@ -12,6 +12,8 @@ pub mod ipfs_path;
 mod request_metrics;
 #[cfg(any(target_arch = "wasm32", test))]
 pub mod web_cache;
+#[cfg(target_arch = "wasm32")]
+mod web_cache_plugin;
 
 use std::{
     borrow::Cow,
@@ -667,6 +669,10 @@ impl Plugin for IpfsIoPlugin {
         app.add_console_command::<ChangeRealmCommand, _>(change_realm_command);
         debug_panel::register(app, self.preview);
         bevy_variants::build(app);
+        #[cfg(target_arch = "wasm32")]
+        app.add_plugins(web_cache_plugin::WebCachePlugin {
+            preview: self.preview,
+        });
 
         app.register_diagnostic(Diagnostic::new(IPFS_IN_FLIGHT_DIAGNOSTIC_PATH));
         app.register_diagnostic(Diagnostic::new(IPFS_SUCCESS_DIAGNOSTIC_PATH));
