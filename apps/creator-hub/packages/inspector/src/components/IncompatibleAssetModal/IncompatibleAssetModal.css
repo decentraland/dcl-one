@@ -59,9 +59,15 @@
   margin-left: 4px;
 }
 
+.IncompatibleAssetModalBody p.IncompatibleAssetModalError {
+  margin: 16px 0 0;
+  color: var(--error-light);
+}
+
 .IncompatibleAssetModalFooter {
   display: flex;
   justify-content: flex-end;
+  gap: 12px;
   margin-top: 24px;
 }
 

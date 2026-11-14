@@ -1,10 +1,11 @@
 import type { Transport } from '@dcl/mini-rpc';
 import { RPC } from '@dcl/mini-rpc';
 
-import { fs, editor, consoleWindow, misc } from '#preload';
+import { fs, editor, consoleWindow, misc, pkg } from '#preload';
 
 import { type Project } from '/shared/types/projects';
 import type { AiAssetMention } from '/shared/types/ai';
+import { PACKAGES } from '/shared/types/pkg';
 import { getPath } from '../';
 import type { Severity } from '../../store/snackbar/types';
 import { store } from '../../store';
@@ -31,6 +32,7 @@ export enum Method {
   BROADCAST_MOBILE_DEBUG_COMMAND = 'broadcast_mobile_debug_command',
   GET_FEATURE_FLAGS = 'get_feature_flags',
   UPDATE_SDK = 'update_sdk',
+  GET_SDK_VERSION = 'get_sdk_version',
   SET_UI_DESIGNER_MODE = 'set_ui_designer_mode',
   INSTALL_MULTIPLAYER = 'install_multiplayer',
   UNINSTALL_MULTIPLAYER = 'uninstall_multiplayer',
@@ -51,6 +53,7 @@ export type Params = {
   [Method.BROADCAST_MOBILE_DEBUG_COMMAND]: { cmd: string; args: Record<string, unknown> };
   [Method.GET_FEATURE_FLAGS]: Record<string, never>;
   [Method.UPDATE_SDK]: Record<string, never>;
+  [Method.GET_SDK_VERSION]: Record<string, never>;
   [Method.SET_UI_DESIGNER_MODE]: { open: boolean };
   [Method.INSTALL_MULTIPLAYER]: Record<string, never>;
   [Method.UNINSTALL_MULTIPLAYER]: Record<string, never>;
@@ -74,6 +77,7 @@ export type Result = {
   };
   [Method.GET_FEATURE_FLAGS]: { flags: Record<string, boolean> };
   [Method.UPDATE_SDK]: { ok: boolean };
+  [Method.GET_SDK_VERSION]: { version: string | null };
   [Method.SET_UI_DESIGNER_MODE]: void;
   [Method.INSTALL_MULTIPLAYER]: { ok: boolean };
   [Method.UNINSTALL_MULTIPLAYER]: { ok: boolean };
@@ -182,6 +186,19 @@ export class SceneRpcServer extends RPC<Method, Params, Result> {
       } catch (error) {
         console.error('[SceneRpc] Failed to update the scene SDK', error);
         return { ok: false };
+      }
+    });
+
+    // Read from disk on every call: the version changes under an open editor whenever the
+    // scene's packages are updated.
+    this.handle('get_sdk_version', async () => {
+      const currentProject = store.getState().editor.project ?? project;
+      try {
+        const version = await pkg.getPackageVersion(currentProject.path, PACKAGES.SDK_PACKAGE);
+        return { version: version ?? null };
+      } catch (error) {
+        console.error('[SceneRpc] Failed to read the scene SDK version', error);
+        return { version: null };
       }
     });
 

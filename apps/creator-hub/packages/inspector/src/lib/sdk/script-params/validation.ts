@@ -6,6 +6,7 @@ const SUPPORTED_PARAM_TYPES: Record<ScriptParamUnion['type'], true> = {
   boolean: true,
   string: true,
   enum: true,
+  color: true,
   entity: true,
   action: true,
   object: true,

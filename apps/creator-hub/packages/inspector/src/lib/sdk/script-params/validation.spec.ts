@@ -10,6 +10,7 @@ describe('findUnsupportedParams', () => {
   it('accepts every type this editor renders, nested ones included', () => {
     const supported = layout({
       a: { type: 'number', value: 1 },
+      tint: { type: 'color', value: { r: 1, g: 1, b: 1 } },
       b: {
         type: 'object',
         value: {},
@@ -22,7 +23,7 @@ describe('findUnsupportedParams', () => {
   it('reports the path of each unknown type, at any depth and in actions', () => {
     const fromNewerEditor = layout(
       {
-        color: { type: 'color', value: '#fff' },
+        rotation: { type: 'quaternion', value: {} },
         cfg: {
           type: 'object',
           value: {},
@@ -31,9 +32,13 @@ describe('findUnsupportedParams', () => {
           },
         },
       },
-      [{ methodName: 'paint', params: { tint: { type: 'color', value: '#000' } } }],
+      [{ methodName: 'spin', params: { axis: { type: 'quaternion', value: {} } } }],
     );
-    expect(findUnsupportedParams(fromNewerEditor)).toEqual(['color', 'cfg.rows[]', 'paint(tint)']);
+    expect(findUnsupportedParams(fromNewerEditor)).toEqual([
+      'rotation',
+      'cfg.rows[]',
+      'spin(axis)',
+    ]);
   });
 });
 

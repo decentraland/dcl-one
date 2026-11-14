@@ -1,11 +1,28 @@
 import { beforeEach, describe, it, expect, vi } from 'vitest';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 
-import type { ScriptParamArray, ScriptParamObject } from '../types';
+import type {
+  ScriptParamArray,
+  ScriptParamColor,
+  ScriptParamObject,
+  ScriptParamString,
+} from '../types';
+import ImportAsset from '../../../ImportAsset';
 import { ScriptParamField } from './ScriptParamField';
 
 // Container pulls SDK clipboard context we don't need here; a passthrough keeps the test
 // focused on the new object/array editors (field iteration, add/remove, onUpdate bubbling).
+// The real file field needs the asset catalog store and drag and drop; the stub shows what the
+// script field hands it.
+vi.mock('../../../ImportAsset', () => ({
+  default: vi.fn((props: { label?: React.ReactNode }) => (
+    <div className="ImportAssetStub">{props.label}</div>
+  )),
+}));
+vi.mock('../../../../hooks/useAssetOptions', () => ({
+  useAssetOptions: (accept: string[]) => [{ label: `options for ${accept}`, value: '' }],
+}));
+
 vi.mock('../../../Container', () => ({
   Container: ({ label, children }: { label?: string; children?: React.ReactNode }) => (
     <div data-testid="container">
@@ -202,17 +219,241 @@ describe('when a string nested in an object list names a missing file', () => {
   });
 });
 
+describe('when rendering a colour param', () => {
+  const pickColor = (container: HTMLElement, hex: string) =>
+    fireEvent.change(container.querySelector('input[type="color"]') as HTMLInputElement, {
+      target: { value: hex },
+    });
+
+  describe('and it holds a custom Color3', () => {
+    const tint: ScriptParamColor = { type: 'color', value: { r: 0.2, g: 0.4, b: 0.6 } };
+
+    it('should show the colour picker with its hex value', () => {
+      const { container } = render(
+        <ScriptParamField
+          name="tint"
+          param={tint}
+          onUpdate={vi.fn()}
+        />,
+      );
+      const picker = container.querySelector('input[type="color"]') as HTMLInputElement;
+      expect(picker.value).toBe('#336699');
+    });
+
+    it('should emit the picked colour as a Color3', () => {
+      const onUpdate = vi.fn();
+      const { container } = render(
+        <ScriptParamField
+          name="tint"
+          param={tint}
+          onUpdate={onUpdate}
+        />,
+      );
+      pickColor(container, '#ff0000');
+      expect(onUpdate).toHaveBeenCalledWith({ r: 1, g: 0, b: 0 });
+    });
+  });
+
+  describe('and it holds one of the stock colours', () => {
+    let container: HTMLElement;
+
+    beforeEach(() => {
+      ({ container } = render(
+        <ScriptParamField
+          name="tint"
+          param={{ type: 'color', value: { r: 1, g: 1, b: 1 } }}
+          onUpdate={vi.fn()}
+        />,
+      ));
+    });
+
+    it('should show only the colour picker, with no colour list to choose from', () => {
+      expect(container.querySelector('input[type="color"]')).not.toBeNull();
+      expect(container.querySelector('.Dropdown')).toBeNull();
+    });
+
+    it('should show the param name as the label', () => {
+      expect(screen.getByText(/^tint$/i)).toBeTruthy();
+    });
+  });
+
+  describe('and its value changes from outside the picker', () => {
+    it('should show the new colour', () => {
+      const tint: ScriptParamColor = { type: 'color', value: { r: 0.2, g: 0.4, b: 0.6 } };
+      const { container, rerender } = render(
+        <ScriptParamField
+          name="tint"
+          param={tint}
+          onUpdate={vi.fn()}
+        />,
+      );
+      rerender(
+        <ScriptParamField
+          name="tint"
+          param={{ ...tint, value: { r: 1, g: 0, b: 0 } }}
+          onUpdate={vi.fn()}
+        />,
+      );
+      const preview = container.querySelector('.ColorPickerTextField input') as HTMLInputElement;
+      expect(preview.value.toLowerCase()).toBe('#ff0000');
+    });
+  });
+
+  describe('and it holds a Color4', () => {
+    const tint: ScriptParamColor = { type: 'color', value: { r: 0.2, g: 0.4, b: 0.6, a: 0.3 } };
+
+    it('should keep the alpha when a new colour is picked', () => {
+      const onUpdate = vi.fn();
+      const { container } = render(
+        <ScriptParamField
+          name="tint"
+          param={tint}
+          onUpdate={onUpdate}
+        />,
+      );
+      pickColor(container, '#00ff00');
+      expect(onUpdate).toHaveBeenCalledWith({ r: 0, g: 1, b: 0, a: 0.3 });
+    });
+  });
+});
+
+describe('when a param is tied to a sibling with @enabledIf', () => {
+  const sunHeight = {
+    type: 'slider' as const,
+    value: 45,
+    min: 0,
+    max: 90,
+    step: 1,
+    enabledIf: 'fixSunPosition',
+  };
+
+  function renderSunHeight(siblings: Record<string, unknown>, enabledIf = sunHeight.enabledIf) {
+    const { container } = render(
+      <ScriptParamField
+        name="sunHeight"
+        param={{ ...sunHeight, enabledIf }}
+        siblings={siblings}
+        onUpdate={vi.fn()}
+      />,
+    );
+    return container;
+  }
+
+  describe('and the sibling is off', () => {
+    it('should grey out the field and lock its inputs', () => {
+      const container = renderSunHeight({ fixSunPosition: false });
+      const fieldset = container.querySelector('fieldset[disabled]');
+      expect(fieldset?.hasAttribute('disabled')).toBe(true);
+      const inputs = Array.from(container.querySelectorAll('input'));
+      expect(inputs.length).toBeGreaterThan(0);
+      expect(inputs.every(input => input.disabled)).toBe(true);
+    });
+  });
+
+  describe('and the sibling is on', () => {
+    it('should leave the field editable', () => {
+      const container = renderSunHeight({ fixSunPosition: true });
+      expect(container.querySelector('fieldset')).toBeNull();
+      expect((container.querySelector('input[type="range"]') as HTMLInputElement).disabled).toBe(
+        false,
+      );
+    });
+  });
+
+  describe('and the tag is negated', () => {
+    it('should lock the field while the sibling is on', () => {
+      const container = renderSunHeight({ fixSunPosition: true }, '!fixSunPosition');
+      expect(container.querySelector('fieldset[disabled]')).not.toBeNull();
+    });
+  });
+});
+
+describe('when a string param is tagged @format image', () => {
+  const skyboxTexture: ScriptParamString = {
+    type: 'string',
+    value: 'assets/scene/Images/sky.png',
+    format: 'image',
+    tooltip: 'A panorama',
+  };
+  let onUpdate: ReturnType<typeof vi.fn>;
+  const importAsset = {
+    get props() {
+      // React also records calls without props on the mock, so take the last real render.
+      const calls = vi.mocked(ImportAsset).mock.calls.filter(([props]) => props?.mode === 'field');
+      return calls[calls.length - 1][0] as any;
+    },
+  };
+
+  function renderTexture(param: ScriptParamString = skyboxTexture) {
+    onUpdate = vi.fn();
+    return render(
+      <ScriptParamField
+        name="skyboxTexture"
+        param={param}
+        onUpdate={onUpdate}
+      />,
+    );
+  }
+
+  it('should render the file field for images, labelled with the param name', () => {
+    const { container } = renderTexture();
+    expect(container.querySelector('.ImportAssetStub')?.textContent).toBe('Skybox Texture ');
+    expect(importAsset.props).toMatchObject({
+      mode: 'field',
+      value: 'assets/scene/Images/sky.png',
+      accept: ['.png', '.jpg', '.jpeg'],
+      options: [{ label: 'options for .png,.jpg,.jpeg', value: '' }],
+      error: undefined,
+    });
+  });
+
+  it('should store the picked path as the param value', () => {
+    renderTexture();
+    importAsset.props.onChange({ target: { value: 'assets/scene/Images/night.jpg' } });
+    expect(onUpdate).toHaveBeenCalledWith('assets/scene/Images/night.jpg');
+  });
+
+  it('should only take image files from the file tree', () => {
+    renderTexture();
+    const node = (name: string) => ({ type: 'asset', name, parent: null, src: name });
+    expect(importAsset.props.isValidFile(node('Sky.JPG'))).toBe(true);
+    expect(importAsset.props.isValidFile(node('sky.glb'))).toBe(false);
+  });
+
+  it('should flag a stored path that is not an image', () => {
+    renderTexture({ ...skyboxTexture, value: 'assets/scene/models/sky.glb' });
+    expect(importAsset.props.error).toBe('Invalid file type');
+  });
+
+  it('should accept an empty value', () => {
+    renderTexture({ ...skyboxTexture, value: '' });
+    expect(importAsset.props.error).toBeUndefined();
+  });
+
+  it('should be disabled while its @enabledIf sibling is off', () => {
+    render(
+      <ScriptParamField
+        name="skyboxTexture"
+        param={{ ...skyboxTexture, enabledIf: 'useTexture' }}
+        siblings={{ useTexture: false }}
+        onUpdate={vi.fn()}
+      />,
+    );
+    expect(importAsset.props.disabled).toBe(true);
+  });
+});
+
 // A layout written by a newer editor can carry a type this one doesn't know (#1765).
 describe('a param type this editor does not know', () => {
   it('shows a notice instead of an editable text box', () => {
     const { container } = render(
       <ScriptParamField
-        name="tintColor"
-        param={{ type: 'color', value: { r: 1 } } as unknown as ScriptParamObject}
+        name="spinAxis"
+        param={{ type: 'vector3', value: { x: 1 } } as unknown as ScriptParamObject}
         onUpdate={vi.fn()}
       />,
     );
-    expect(screen.getByText(/Tint Color: this setting needs a newer version/)).toBeTruthy();
+    expect(screen.getByText(/Spin Axis: this setting needs a newer version/)).toBeTruthy();
     expect(container.querySelector('input')).toBeNull();
     expect(container.textContent).not.toContain('[object Object]');
   });
