@@ -128,7 +128,7 @@ class WorkflowTest(unittest.TestCase):
         workflow = (ci.ROOT / ci.WORKFLOW).read_text()
         job = workflow.split('  build-deploy-web:', 1)[1].split('  headless-packages:', 1)[0]
         build = job.index('run: python3 ../../../apps/bevy-explorer/build-web.py')
-        tests = job.index('run: npm run test:shared-inputs --prefix react-web')
+        tests = job.index('run: cd react-web && pnpm run test:shared-inputs')
         upload = job.index('- name: Upload the complete web app')
         self.assertLess(build, tests)
         self.assertLess(tests, upload)
@@ -305,7 +305,7 @@ class SelectionTest(unittest.TestCase):
 
     def test_source_and_integration_inputs_select_builds(self):
         for name in ('rendering/bevy-explorer/source/src/lib.rs',
-                     'rendering/bevy-explorer/source/react-web/package-lock.json',
+                     'rendering/bevy-explorer/source/react-web/pnpm-lock.yaml',
                      'apps/bevy-explorer/build-web.py', 'apps/bevy-explorer/Dockerfile.web',
                      'tooling/bevy-ci.py', 'tooling/ci_paths.py', ci.WORKFLOW,
                      '.github/workflows/bevy-explorer-images.yml'):
@@ -384,7 +384,7 @@ class SelectionTest(unittest.TestCase):
         self.assertTrue(all(result[lane] for lane in ci.LANES))
 
     def test_web_assets_validate_web_without_recompiling_native_targets(self):
-        for name in ('react-web/src/App.tsx', 'react-web/package-lock.json',
+        for name in ('react-web/src/App.tsx', 'react-web/pnpm-lock.yaml',
                      'react-web/bridge-scene/src/index.ts', 'deploy/web/engine/boot.js',
                      'deploy/web/service_worker.js'):
             with self.subTest(path=name):

@@ -4439,12 +4439,12 @@
       "sha256": "166bbb9cb41c0b98dbbc970791ff2227f673814773947adab66ea3f22c887076"
     },
     {
-      "path": "rendering/bevy-explorer/source/react-web/package-lock.json",
-      "sha256": "fdc8e5c2c85df27b95e2dbdea7d531aef8b8edb11a553c0873772ca70270dac6"
+      "path": "rendering/bevy-explorer/source/react-web/package.json",
+      "sha256": "915298c4c41811c8c6d029cd6a40b01861506a22ece4cbf9ce9bd5b42075d0e5"
     },
     {
-      "path": "rendering/bevy-explorer/source/react-web/package.json",
-      "sha256": "7489c23e7dc87c0b3967864e56c1c13970e97fac518e9e4b6500847106960540"
+      "path": "rendering/bevy-explorer/source/react-web/pnpm-lock.yaml",
+      "sha256": "d9455d0665084e10809a0975c53a9eeb6932bf17979f7ca8457cca85331c0103"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/scripts/shared-inputs.d.mts",
@@ -4452,7 +4452,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/scripts/shared-inputs.mjs",
-      "sha256": "e4d4b363c729f018930449d614493675bdf77d7abb7fb7f8a2d81f664f1863dc"
+      "sha256": "391cdf1699d614589ff6c97a5fe696aecf01256d907ad442d03c9ef043c423aa"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/App.tsx",
@@ -4724,7 +4724,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "sha256": "9e3940ff6f67a581d0af247464154961fbf8fdfbc4f223a483af9728f142cf69"
+      "sha256": "04eb2dffd9934a2d8a1fb5bc4f8e72361f417b19fb92c4ec148c52c2cc7819a4"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/vite.shared.ts",
