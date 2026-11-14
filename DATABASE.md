@@ -564,7 +564,8 @@ catalyst schema status
 
 `--release` refuses while any other client session is connected to the database,
 including sessions of roles whose activity the migrator cannot read, and reports
-their count and application names; it changes nothing then. It is a best-effort
+their count and application names; it changes nothing then. Server processes,
+such as autovacuum workers, are not sessions and do not block it. It is a best-effort
 guard: the release locks its own tables, not every table. A connection pooler or
 monitoring agent that holds sessions open also blocks it. Exit 5 reflects the
 stamp only; the release's own checks (mixed layout, receipts, destination,
