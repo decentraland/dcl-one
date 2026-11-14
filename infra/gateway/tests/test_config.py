@@ -43,9 +43,17 @@ class ConfigurationTest(unittest.TestCase):
         maps = nginx_map.parse(text)
         gated = ["/admin/api/jobs", "/server.data", "/metabase/", "/telemetry/dash/sql",
                  "/telemetry/dash/SQL.data", "/telemetry/dash/flag", "/telemetry/dash/group/target.data",
-                 "/telemetry/dash/admin", "/telemetry/dash/admin.data", "/telemetry/dash/admin/users"]
+                 "/telemetry/dash/admin", "/telemetry/dash/admin.data", "/telemetry/dash/admin/users",
+                 "/rpc/admin/rpc/config", "/v1/admin/names/approve-mana", "/shop-api/v1/admin/names/approve-mana",
+                 "/shop-api/admin/campaigns/1/collections", "/marketplace-api/v1/admin/audit",
+                 "/transactions-api/v1/admin/relayer", "/credits/admin/flags", "/CREDITS/Admin.data",
+                 "/social-rpc/admin/x", "/places/api/admin/x", "/events/v1/admin/x",
+                 "/market/v1/admin/audit", "/camera-reel/admin/images/1", "/scene-state/admin/scene/x/reset",
+                 "/worlds-content-server/gc", "/WORLDS-CONTENT-SERVER/reprocess-ab"]
         public = ["/telemetry/dash", "/telemetry/dash/overview", "/telemetry/dash/sqlx",
-                  "/telemetry/dash/administrator", "/telemetry"]
+                  "/telemetry/dash/administrator", "/telemetry", "/events/admin/pending-events",
+                  "/events/admin/users", "/docs/creator/images/editor/admin/activate.webp",
+                  "/credits/administrator", "/v1/moderation/communities", "/shop-api/v1/users"]
         for uri, expected in [(uri, "1") for uri in gated] + [(uri, "0") for uri in public]:
             with self.subTest(uri=uri):
                 self.assertEqual(nginx_map.Request(maps, uri=uri)["operator_path"], expected)

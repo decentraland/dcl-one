@@ -192,6 +192,9 @@ pub async fn validate_profile_access(
                         ));
                     }
                 }
+                Err(e @ ValidatorError::TooManyItems(_)) => {
+                    return ValidationResponse::fail(format!("Error checking name ownership: {e}"));
+                }
                 Err(e) => {
                     return undecided("name ownership", "Error checking name ownership.", &e);
                 }
@@ -407,6 +410,9 @@ pub async fn validate_outfits_access(
                             deployer_address.to_lowercase()
                         ));
                     }
+                }
+                Err(e @ ValidatorError::TooManyItems(_)) => {
+                    return ValidationResponse::fail(format!("Error checking name ownership: {e}"));
                 }
                 Err(e) => {
                     return undecided("name ownership", "Error checking name ownership.", &e);

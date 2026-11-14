@@ -5,7 +5,8 @@
 //! gates and wire answers:
 //!
 //! - [`extract_auth_chain`] reads the chain and checks its shape;
-//! - [`check_symmetric_skew`] bounds the timestamp to a window around now,
+//! - [`check_timestamp_window`] bounds the timestamp to a window around now
+//!   (the future side capped at [`MAX_FUTURE_SKEW_SECS`]),
 //!   [`check_past_window`] only how old it may be;
 //! - [`parse_metadata`] reads the metadata object, over which
 //!   [`field_is_canonical`] and [`is_refused_signer`] are upstream's `signer`
@@ -32,6 +33,9 @@ pub const ORIGINAL_PATH_HEADER: &str = "x-original-path";
 
 /// Upstream's freshness window.
 pub const FIVE_MINUTES: i64 = 5 * 60;
+
+/// How far ahead of now a signed timestamp may be, whatever the window.
+pub const MAX_FUTURE_SKEW_SECS: i64 = 60;
 
 /// The `signer` an explorer sets on an auth chain it signed on a scene's behalf.
 pub const SCENE_SIGNER: &str = "decentraland-kernel-scene";
@@ -132,15 +136,20 @@ pub enum SkewError {
     },
 }
 
-/// A millisecond `timestamp` is fresh when `(now - signed_at).abs() <=
-/// window_secs`, both in seconds; a non-numeric one is refused rather than
-/// skipping the window.
-pub fn check_symmetric_skew(timestamp: &str, now: i64, window_secs: i64) -> Result<(), SkewError> {
+/// A millisecond `timestamp` is fresh when it is at most `window_secs` old and
+/// at most `min(window_secs, MAX_FUTURE_SKEW_SECS)` ahead, both in seconds; a
+/// non-numeric one is refused rather than skipping the window.
+pub fn check_timestamp_window(
+    timestamp: &str,
+    now: i64,
+    window_secs: i64,
+) -> Result<(), SkewError> {
     let signed_at = timestamp
         .parse::<i64>()
         .map_err(|_| SkewError::InvalidTimestamp(timestamp.to_string()))?
         / 1000;
-    if (now - signed_at).abs() > window_secs {
+    let age = now.saturating_sub(signed_at);
+    if age > window_secs || -age > window_secs.min(MAX_FUTURE_SKEW_SECS) {
         return Err(SkewError::Expired {
             signed_at,
             now,
@@ -501,18 +510,23 @@ mod tests {
     }
 
     #[test]
-    fn skew_is_symmetric_and_refuses_garbage() {
-        assert_eq!(check_symmetric_skew("1000000", 1000, 0), Ok(()));
-        assert_eq!(check_symmetric_skew("1300000", 1000, 300), Ok(()));
+    fn the_window_caps_the_future_side_and_refuses_garbage() {
+        assert_eq!(check_timestamp_window("1000000", 1000, 0), Ok(()));
+        assert_eq!(check_timestamp_window("700000", 1000, 300), Ok(()));
+        assert!(check_timestamp_window("699000", 1000, 300).is_err());
+        assert_eq!(check_timestamp_window("1060000", 1000, 300), Ok(()));
+        assert!(check_timestamp_window("1061000", 1000, 300).is_err());
+        assert_eq!(check_timestamp_window("1030000", 1000, 30), Ok(()));
+        assert!(check_timestamp_window("1031000", 1000, 30).is_err());
         assert!(matches!(
-            check_symmetric_skew("1301000", 1000, 300),
+            check_timestamp_window("1301000", 1000, 300),
             Err(SkewError::Expired {
                 signed_at: 1301,
                 ..
             })
         ));
         assert_eq!(
-            check_symmetric_skew("soon", 1000, 300),
+            check_timestamp_window("soon", 1000, 300),
             Err(SkewError::InvalidTimestamp("soon".into()))
         );
         assert_eq!(timestamp_or_zero(Some("")), "0");

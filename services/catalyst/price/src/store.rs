@@ -33,10 +33,13 @@ pub struct PriceSnapshot {
 }
 
 impl PriceSnapshot {
-    /// Since the poller took it (`taken_at`: this node's own liveness, not
-    /// the provider's quote time).
+    /// Since the provider quoted it (`source_updated_at`), or since the
+    /// poller took it when that is earlier or unknown.
     pub fn age_at(&self, now: DateTime<Utc>) -> Duration {
-        (now - self.taken_at).to_std().unwrap_or_default()
+        let quoted = self
+            .source_updated_at
+            .map_or(self.taken_at, |q| q.min(self.taken_at));
+        (now - quoted).to_std().unwrap_or_default()
     }
 
     pub fn is_fresh_at(&self, now: DateTime<Utc>) -> bool {

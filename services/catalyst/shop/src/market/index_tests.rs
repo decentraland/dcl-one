@@ -626,10 +626,23 @@ async fn trade_events_walk_under_a_budget_resume_after_a_kill_fold_the_verdicts_
          VALUES ('matic', $1, 0, 137, 'wearable_v2', 'urn:decentraland:matic:collections-v2:0xc1:0', $2, 'epic', 1, 10, 9, 1000, 'https://img/0', 'Hat', 'hat', 1, 1, 1, timezone('UTC', now()))",
     )
     .bind(item)
-    .bind(CARL)
+    .bind(ALICE)
     .execute(&db.pool)
     .await
     .unwrap();
+    // Each item order is its creator's primary sale, so every verdict is read.
+    for (item_id, creator) in [(1, ALICE), (2, ALICE), (3, BOB), (4, ALICE)] {
+        sqlx::query(
+            "INSERT INTO shop.items (network, contract_address, item_id, chain_id, item_type, urn, creator, rarity, total_supply, max_supply, available, price, image, name, category, created_at, updated_at, reviewed_at, mirrored_at) \
+             VALUES ('matic', $1, $2::int4, 137, 'wearable_v2', 'urn:decentraland:matic:collections-v2:0xc1:' || $2::int4::text, $3, 'epic', 1, 10, 9, 1000, 'https://img/0', 'Hat', 'hat', 1, 1, 1, timezone('UTC', now()))",
+        )
+        .bind(item)
+        .bind(item_id)
+        .bind(creator)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    }
     let s = start;
     let logs = vec![
         traded(s + 100, 0, market, CARL, ALICE, &sold.1),
@@ -779,7 +792,7 @@ async fn trade_events_walk_under_a_budget_resume_after_a_kill_fold_the_verdicts_
     .await
     .unwrap();
     assert!(
-        open_ids.contains(&sold.0),
+        open_ids.contains(&sold.0) && open_ids.contains(&index_moved.0),
         "an unpublished verdict is ignored: {open_ids:?}"
     );
     db.drop().await;
