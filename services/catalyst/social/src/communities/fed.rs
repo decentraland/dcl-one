@@ -1624,41 +1624,151 @@ async fn request_status(ctx: &Ctx<'_>, id: &str, request: &str) -> Response {
     if m.request_id != request {
         return bad("request_id mismatch");
     }
-    if let Err(r) =
-        require_at_least(ctx.state, community, &signer, CommunityStanding::Moderator).await
-    {
-        return *r;
-    }
     let status = match m.status.as_str() {
         s @ ("accepted" | "rejected" | "cancelled") => s,
         _ => return bad("invalid request status"),
     };
-    let signature_hash = signed.signature_hash();
-    let applied: sqlx::Result<Option<Response>> = async {
-        let mut tx = ctx.state.pool.begin().await?;
-        if let Ok(request_uuid) = Uuid::parse_str(&m.request_id) {
-            let owner: Option<Uuid> = sqlx::query_scalar("SELECT community_id FROM social.community_requests WHERE id = $1").bind(request_uuid).fetch_optional(&mut *tx).await?;
-            if owner.is_some_and(|c| c != community.as_uuid()) {
-                return Ok(Some(err_json(StatusCode::NOT_FOUND, "request does not belong to this community")));
+    let request_uuid = Uuid::parse_str(&m.request_id).ok();
+    let row: Option<(Uuid, Address, String, String)> = match request_uuid {
+        Some(id) => match sqlx::query_as(
+            "SELECT community_id, member_address, type, status FROM social.community_requests WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_optional(&ctx.state.pool)
+        .await
+        {
+            Ok(row) => row,
+            Err(e) => return db_err(e),
+        },
+        None => None,
+    };
+    if row
+        .as_ref()
+        .is_some_and(|(c, ..)| *c != community.as_uuid())
+    {
+        return err_json(
+            StatusCode::NOT_FOUND,
+            "request does not belong to this community",
+        );
+    }
+    // A pending request is settled as the client route settles it; anything
+    // else is only logged, by a moderator.
+    let pending = row
+        .filter(|(.., state)| state.as_str() == "pending")
+        .zip(request_uuid)
+        .map(|((_, member, kind, _), id)| (id, member, kind));
+    let refused = match &pending {
+        Some((_, member, kind)) => {
+            let banned = if *member == signer {
+                Ok(false)
+            } else {
+                is_banned(ctx.state, community, &signer).await
+            };
+            match banned {
+                Ok(true) => Some(err_json(
+                    StatusCode::FORBIDDEN,
+                    "Forbidden: banned from this community",
+                )),
+                Ok(false) => {
+                    super::requests::request_authority(
+                        ctx.state, community, &signer, member, kind, status,
+                    )
+                    .await
+                }
+                Err(r) => Some(*r),
             }
-            sqlx::query("UPDATE social.community_requests SET status = $2, updated_at = timezone('UTC', now()) WHERE id = $1 AND community_id = $3 AND status = 'pending'")
-                .bind(request_uuid)
-                .bind(status)
-                .bind(community)
-                .execute(&mut *tx)
-                .await?;
         }
-        let entry = Entry { kind: "request_status", target: Some(m.request_id.clone()), action: Some(status.to_string()), ..Default::default() };
-        record(&mut tx, &signature_hash, &m.community_id, community, &signer, signed.signed_at, &payload(m), &entry).await?;
+        None => require_at_least(ctx.state, community, &signer, CommunityStanding::Moderator)
+            .await
+            .err()
+            .map(|r| *r),
+    };
+    if let Some(refused) = refused {
+        return refused;
+    }
+    let signature_hash = signed.signature_hash();
+    let applied: sqlx::Result<Result<bool, Response>> = async {
+        let mut guard =
+            super::write_support::acquire_membership(&ctx.state.pool, community).await?;
+        let mut tx = guard.begin().await?;
+        let entry = Entry {
+            kind: "request_status",
+            target: Some(m.request_id.clone()),
+            action: Some(status.to_string()),
+            ..Default::default()
+        };
+        let fresh = record(
+            &mut tx,
+            &signature_hash,
+            &m.community_id,
+            community,
+            &signer,
+            signed.signed_at,
+            &payload(m),
+            &entry,
+        )
+        .await?;
+        let mut settled = false;
+        if let Some((request_uuid, member, _)) = pending.as_ref().filter(|_| fresh) {
+            if status == "accepted" && is_banned_on(&mut tx, community, member).await? {
+                return Ok(Err(err_json(
+                    StatusCode::UNAUTHORIZED,
+                    format!("The user {member} is banned from the community {community}"),
+                )));
+            }
+            // Settled meanwhile by the client route: the entry is still logged.
+            match super::requests::transition_request(
+                &mut tx,
+                community,
+                *request_uuid,
+                member,
+                status,
+            )
+            .await
+            {
+                Ok(()) => settled = true,
+                Err(refused) if refused.status() == StatusCode::NOT_FOUND => {}
+                Err(refused) => return Ok(Err(*refused)),
+            }
+        }
         tx.commit().await?;
-        Ok(None)
+        drop(guard);
+        Ok(Ok(settled))
     }
     .await;
     match applied {
-        Ok(Some(refused)) => refused,
-        Ok(None) => ok(signature_hash),
+        Ok(Ok(settled)) => {
+            if let Some((request_uuid, member, kind)) = pending.as_ref().filter(|_| settled) {
+                super::requests::request_settled(
+                    ctx.state,
+                    community,
+                    (*request_uuid, &m.request_id),
+                    member,
+                    kind,
+                    status,
+                    &signer,
+                )
+                .await;
+            }
+            ok(signature_hash)
+        }
+        Ok(Err(refused)) => refused,
         Err(e) => db_err(e),
     }
+}
+
+async fn is_banned_on(
+    conn: &mut PgConnection,
+    community: CommunityId,
+    member: &Address,
+) -> sqlx::Result<bool> {
+    sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM social.community_bans WHERE community_id = $1 AND banned_address = $2 AND active)",
+    )
+    .bind(community)
+    .bind(member)
+    .fetch_one(conn)
+    .await
 }
 
 fn hash_all(hashes: &[String]) -> String {
@@ -3770,13 +3880,76 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::OK);
-        let settled: String =
-            sqlx::query_scalar("SELECT status FROM social.community_requests WHERE id = $1")
+        let left: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM social.community_requests WHERE id = $1")
                 .bind(request)
                 .fetch_one(&pool)
                 .await
                 .unwrap();
-        assert_eq!(settled, "rejected", "a settled request is not reopened");
+        assert_eq!(left, 0, "settled as the client route settles it");
+        assert_eq!(
+            role_of(&pool, id, &other).await,
+            None,
+            "a late accept is only logged"
+        );
+
+        // A request of another community is not this community's to settle.
+        let elsewhere = Uuid::new_v4();
+        sqlx::query("INSERT INTO social.communities (id, name, description, owner_address, private, unlisted) VALUES ($1, 'Elsewhere', 'd', $2, FALSE, FALSE)").bind(elsewhere).bind(address(&other)).execute(&pool).await.unwrap();
+        let foreign = Uuid::new_v4();
+        sqlx::query("INSERT INTO social.community_requests (id, community_id, member_address, type) VALUES ($1, $2, $3, 'request_to_join')").bind(foreign).bind(elsewhere).bind(address(&member)).execute(&pool).await.unwrap();
+        let (status, _) = send(
+            &app,
+            &owner,
+            "PATCH",
+            &format!("{base}/requests/{foreign}"),
+            &env(
+                &owner,
+                CommunityRequestStatusUpdate {
+                    community_id: hex_id.clone(),
+                    request_id: foreign.to_string(),
+                    status: "accepted".into(),
+                },
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+
+        // Only the invitee settles an invite, and accepting it adds them.
+        let invitee = PrivateKeySigner::random();
+        let invite = Uuid::new_v4();
+        sqlx::query("INSERT INTO social.community_requests (id, community_id, member_address, type) VALUES ($1, $2, $3, 'invite')").bind(invite).bind(id).bind(address(&invitee)).execute(&pool).await.unwrap();
+        let accept_invite = |w: &PrivateKeySigner| {
+            env(
+                w,
+                CommunityRequestStatusUpdate {
+                    community_id: hex_id.clone(),
+                    request_id: invite.to_string(),
+                    status: "accepted".into(),
+                },
+            )
+        };
+        let invite_path = format!("{base}/requests/{invite}");
+        let (status, _) = send(&app, &owner, "PATCH", &invite_path, &accept_invite(&owner)).await;
+        assert_eq!(
+            status,
+            StatusCode::UNAUTHORIZED,
+            "a manager cannot accept for the invitee"
+        );
+        assert_eq!(role_of(&pool, id, &invitee).await, None);
+        let (status, body) = send(
+            &app,
+            &invitee,
+            "PATCH",
+            &invite_path,
+            &accept_invite(&invitee),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(
+            role_of(&pool, id, &invitee).await.as_deref(),
+            Some("member")
+        );
 
         let (status, body) = send(
             &app,

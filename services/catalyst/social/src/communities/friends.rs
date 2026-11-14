@@ -119,7 +119,17 @@ async fn require_accepted_friend(
 ) -> Result<(), CommError> {
     let statuses =
         friendship_statuses(pool, me, std::slice::from_ref(&peer.as_str().to_string())).await;
-    if statuses.get(peer.as_str()).copied() == Some(friendship_status::ACCEPTED) {
+    let blocked: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM social.blocks \
+         WHERE (blocker_address = $1 AND blocked_address = $2) \
+            OR (blocker_address = $2 AND blocked_address = $1))",
+    )
+    .bind(me)
+    .bind(peer)
+    .fetch_one(pool)
+    .await
+    .map_err(super::http::database_error)?;
+    if !blocked && statuses.get(peer.as_str()).copied() == Some(friendship_status::ACCEPTED) {
         Ok(())
     } else {
         Err(CommError::status(
