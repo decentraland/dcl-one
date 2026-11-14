@@ -16,8 +16,9 @@ pub const MAX_DEPLOY_FILES: usize = 10_000;
 /// No per-file cap below the request's payload cap, as the old service.
 pub const MAX_DEPLOY_FILE_BYTES: usize = super::deploy::MAX_UPLOAD_SIZE_BYTES;
 
-const MIN_PARCEL_COORDINATE: i64 = -150;
-const MAX_PARCEL_COORDINATE: i64 = 150;
+/// The world parcel bounds, for scene pointers and the settings spawn coordinates.
+pub(super) const MIN_PARCEL_COORDINATE: i64 = -150;
+pub(super) const MAX_PARCEL_COORDINATE: i64 = 150;
 /// Every in-bounds parcel once; a longer pointer list can never be valid.
 pub(super) const MAX_SCENE_POINTERS: usize = ((MAX_PARCEL_COORDINATE - MIN_PARCEL_COORDINATE + 1)
     * (MAX_PARCEL_COORDINATE - MIN_PARCEL_COORDINATE + 1))
