@@ -24,8 +24,8 @@ use chrono::{DateTime, Duration as ChronoDuration, NaiveDateTime, Utc};
 use serde_json::{Value, json};
 use sqlx::{PgConnection, PgPool};
 
-use crate::land_authz::indexer::{
-    BlockHeader, IndexError, Rpc, RpcLog, hex_to_i64, is_address_limit,
+use crate::chain_index::rpc::{
+    BlockHeader, Rpc, RpcError as IndexError, RpcLog, hex_to_i64, is_address_limit,
 };
 
 pub(crate) fn topic_address(topic: &str) -> Option<String> {

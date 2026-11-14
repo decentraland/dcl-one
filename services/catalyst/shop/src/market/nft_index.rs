@@ -30,14 +30,13 @@ use crate::market::chain_walk::{topic_address, topic_u256};
 use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 
-use alloy_primitives::U256;
 use alloy_sol_types::{SolType, sol_data};
 use anyhow::Context;
 use serde_json::json;
 use sqlx::{PgConnection, PgPool, Row};
 
 use super::chain_walk::{self, ChainIndex, ChainNet, INDEXER_NFT, LogGroup};
-use crate::land_authz::indexer::{Rpc, RpcLog};
+use crate::chain_index::rpc::{Rpc, RpcLog};
 use crate::land_authz::{ESTATE_REGISTRY_MAINNET, LAND_REGISTRY_MAINNET, LAND_START_BLOCK_MAINNET};
 
 pub const TOPIC_TRANSFER: &str =
@@ -1076,7 +1075,7 @@ pub async fn ready_networks(
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use alloy_primitives::{Address, FixedBytes, keccak256};
+    use alloy_primitives::{Address, FixedBytes, U256, keccak256};
     use alloy_sol_types::SolValue;
     use std::str::FromStr;
 

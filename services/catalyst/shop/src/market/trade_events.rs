@@ -26,7 +26,7 @@ use crate::market::chain_walk::{topic_address, topic_u256};
 use std::collections::HashMap;
 use std::str::FromStr;
 
-use alloy_primitives::{Address, U256};
+use alloy_primitives::Address;
 use alloy_sol_types::{SolType, sol};
 use anyhow::Context;
 use axum::Json;
@@ -43,7 +43,7 @@ use super::listings::{
 };
 use super::wire::format_ether;
 use super::{MarketplaceState, SharedState, Source, unavailable};
-use crate::land_authz::indexer::RpcLog;
+use crate::chain_index::rpc::RpcLog;
 
 pub const TOPIC_TRADED: &str = "0xaaecdfa7e74e704650fcb273f630f42f68974eff42bfffc1732cf30db9e4685b";
 /// V3 adds `bytes32 indexed _tradeDigest`; the data is the same Trade tuple.
@@ -1202,7 +1202,7 @@ pub fn parse_address(s: &str) -> Option<Address> {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use alloy_primitives::{B256, FixedBytes, keccak256};
+    use alloy_primitives::{B256, FixedBytes, U256, keccak256};
     use alloy_sol_types::SolValue;
 
     #[test]
