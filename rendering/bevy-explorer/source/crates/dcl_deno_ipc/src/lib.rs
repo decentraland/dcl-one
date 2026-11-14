@@ -18,10 +18,11 @@ use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::{
     cell::RefCell,
+    collections::{HashMap, VecDeque},
     process::{Command, Stdio},
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
-        RwLock,
+        Arc, RwLock,
     },
 };
 use system_bridge::SystemApi;
@@ -59,6 +60,8 @@ pub enum SceneToEngine {
 }
 
 thread_local! {
+    static SCENE_FORWARDING: RefCell<SceneForwarding> = RefCell::new(SceneForwarding::default());
+    static FAILURE_NOTIFY: Arc<tokio::sync::Notify> = Arc::new(tokio::sync::Notify::new());
     static RENDERER_SENDER: RefCell<Option<TaggedSceneResponseSender>> = const { RefCell::new(None) };
     static SYSTEM_API_SENDER: RefCell<Option<tokio::sync::mpsc::UnboundedSender<SystemApi>>> = const { RefCell::new(None) };
 }
@@ -243,8 +246,15 @@ pub async fn renderer_ipc_out(
         tokio::sync::broadcast::Receiver<GlobalCrdtStateUpdate>,
     > = Default::default();
 
+    let failure_notify = FAILURE_NOTIFY.with(Clone::clone);
     loop {
         tokio::select! {
+            _ = failure_notify.notified() => {
+                let failed = SCENE_FORWARDING.with_borrow_mut(|scenes| scenes.take_failures());
+                for id in failed {
+                    write_msg(&mut stream, &EngineToScene::KillScene(id.0.to_bits())).await;
+                }
+            }
             new_scene = new_scene.recv() => {
                 let Some(NewSceneCommand{id,info,mut renderer_channel, global_channel, response_channel, system_api_sender }) = new_scene else {
                     warn!("renderer_ipc_out exit on new scene closed");
@@ -252,6 +262,9 @@ pub async fn renderer_ipc_out(
                 };
 
                 RENDERER_SENDER.set(Some(response_channel.channel().clone()));
+                SCENE_FORWARDING.with_borrow_mut(|scenes| {
+                    scenes.register(SceneId(bevy::ecs::entity::Entity::from_bits(id)));
+                });
 
                 if let Some(system_api_sender) = system_api_sender {
                     SYSTEM_API_SENDER.set(Some(system_api_sender));
@@ -289,6 +302,11 @@ pub async fn renderer_ipc_out(
                     warn!("renderer_ipc_out exit on inbound closed");
                     return;
                 };
+                if let EngineToScene::KillScene(id) = &engine_to_scene {
+                    SCENE_FORWARDING.with_borrow_mut(|scenes| {
+                        scenes.remove(SceneId(bevy::ecs::entity::Entity::from_bits(*id)));
+                    });
+                }
                 write_msg(&mut stream, &engine_to_scene).await;
             }
             (presence_context, received) = next_global_update(&mut global_receivers) => {
@@ -347,30 +365,128 @@ async fn next_global_update(
     futures_util::future::select_all(recvs).await.0
 }
 
-pub async fn renderer_ipc_in(mut stream: RecvHalf) {
-    while let Ok(len) = stream.read_u64_le().await {
-        let mut buffer = vec![0u8; len as usize];
-        stream.read_exact(&mut buffer).await.unwrap();
-        let msg: SceneToEngine = rmp_serde::from_slice(&buffer).unwrap();
+// Match the maximum scene RPC batch while bounding retained transport memory per scene.
+const MAX_PENDING_SCENE_RESPONSES: usize = 1000;
+const MAX_PENDING_SCENE_BYTES: usize = 80 * 1024 * 1024;
 
-        match msg {
-            SceneToEngine::SceneResponse(id, scene_response) => RENDERER_SENDER.with(|sender| {
-                let mut sender = sender.borrow_mut();
-                let sender = sender.as_mut().unwrap();
-                // HEADLESS-ONLY: EXIT_ON_SIDECAR_LOSS marks the orchestrated headless server,
-                // where every scene shares one engine. There, a panic in this IPC task ends
-                // the loop and trips the process exit above — killing the whole engine and
-                // every co-tenant scene. So shed the response instead of panicking: a scene
-                // that outruns the bevy-side drain only stalls itself. Desktop and tests
-                // (flag unset) keep the original panic-on-failure behavior unchanged.
-                if EXIT_ON_SIDECAR_LOSS.load(Ordering::SeqCst) {
-                    if let Err(e) = sender.try_send((id, scene_response)) {
-                        warn!("dropping scene response: renderer channel unavailable ({e})");
+#[derive(Default)]
+struct ScenePending {
+    responses: VecDeque<(SceneResponse, usize)>,
+    bytes: usize,
+    failed: bool,
+    kill_pending: bool,
+}
+
+#[derive(Default)]
+struct SceneForwarding {
+    scenes: HashMap<SceneId, ScenePending>,
+    ready: VecDeque<SceneId>,
+}
+
+impl SceneForwarding {
+    fn register(&mut self, id: SceneId) {
+        self.remove(id);
+        self.scenes.insert(id, ScenePending::default());
+    }
+
+    fn remove(&mut self, id: SceneId) {
+        self.scenes.remove(&id);
+        self.ready.retain(|queued| *queued != id);
+    }
+
+    /// Overflow terminates only the sender; its terminal error remains deliverable.
+    fn enqueue(&mut self, id: SceneId, response: SceneResponse, bytes: usize) -> bool {
+        let Some(scene) = self.scenes.get_mut(&id) else {
+            return false;
+        };
+        if scene.failed {
+            return false;
+        }
+        let was_empty = scene.responses.is_empty();
+        let overflow = scene.responses.len() >= MAX_PENDING_SCENE_RESPONSES
+            || bytes > MAX_PENDING_SCENE_BYTES.saturating_sub(scene.bytes);
+        if overflow {
+            scene.responses.clear();
+            scene.bytes = 0;
+            scene.failed = true;
+            scene.kill_pending = true;
+            scene.responses.push_back((
+                SceneResponse::Error("scene exceeded its pending renderer response limit".into()),
+                0,
+            ));
+        } else {
+            scene.bytes += bytes;
+            scene.responses.push_back((response, bytes));
+        }
+        if was_empty {
+            self.ready.push_back(id);
+        }
+        overflow
+    }
+
+    fn pop(&mut self) -> Option<(SceneId, SceneResponse)> {
+        let id = self.ready.pop_front()?;
+        let scene = self.scenes.get_mut(&id).expect("registered pending scene");
+        let (response, bytes) = scene.responses.pop_front().expect("pending response");
+        scene.bytes -= bytes;
+        if !scene.responses.is_empty() {
+            self.ready.push_back(id);
+        }
+        Some((id, response))
+    }
+
+    fn take_failures(&mut self) -> Vec<SceneId> {
+        self.scenes
+            .iter_mut()
+            .filter_map(|(id, scene)| std::mem::take(&mut scene.kill_pending).then_some(*id))
+            .collect()
+    }
+}
+
+async fn read_scene_message(stream: &mut RecvHalf) -> Option<(SceneToEngine, usize)> {
+    let len = stream.read_u64_le().await.ok()?;
+    let mut buffer = vec![0u8; len as usize];
+    stream.read_exact(&mut buffer).await.ok()?;
+    Some((rmp_serde::from_slice(&buffer).ok()?, buffer.len()))
+}
+
+pub async fn renderer_ipc_in(mut stream: RecvHalf) {
+    loop {
+        // Keep the partial socket read alive while a renderer slot becomes available.
+        let read = read_scene_message(&mut stream);
+        tokio::pin!(read);
+        let received = loop {
+            let sender = RENDERER_SENDER.with_borrow(Clone::clone);
+            let pending = SCENE_FORWARDING.with_borrow(|scenes| !scenes.ready.is_empty());
+            let capacity = async {
+                if pending {
+                    if let Some(sender) = sender {
+                        return sender.reserve_owned().await.ok();
                     }
-                } else {
-                    sender.try_send((id, scene_response)).unwrap();
                 }
-            }),
+                std::future::pending().await
+            };
+            tokio::select! {
+                message = &mut read => break message,
+                permit = capacity => {
+                    let Some(permit) = permit else { return; };
+                    if let Some(response) = SCENE_FORWARDING.with_borrow_mut(SceneForwarding::pop) {
+                        permit.send(response);
+                    }
+                }
+            }
+        };
+        let Some((msg, bytes)) = received else {
+            break;
+        };
+        match msg {
+            SceneToEngine::SceneResponse(id, scene_response) => {
+                let overflow = SCENE_FORWARDING
+                    .with_borrow_mut(|scenes| scenes.enqueue(id, scene_response, bytes));
+                if overflow {
+                    FAILURE_NOTIFY.with(|notify| notify.notify_one());
+                }
+            }
             SceneToEngine::IpcMessage(id, ipc_message) => {
                 let IpcMessage::Closed = ipc_message else {
                     warn!("ignoring unexpected ipc data message for channel {id}");
@@ -457,4 +573,108 @@ pub async fn write_msg<T: Serialize>(stream: &mut SendHalf, value: &T) {
         .await
         .unwrap();
     stream.write_all(&bytes).await.unwrap();
+}
+
+#[cfg(test)]
+mod response_backpressure_tests {
+    use super::*;
+    use common::rpc::{RpcCall, RpcResultSender};
+    use std::time::Duration;
+
+    fn scene(index: u32) -> SceneId {
+        SceneId(bevy::ecs::entity::Entity::from_raw(index))
+    }
+
+    #[test]
+    fn per_scene_byte_overflow_releases_requests_and_preserves_one_terminal_failure() {
+        let mut forwarding = SceneForwarding::default();
+        forwarding.register(scene(1));
+        forwarding.register(scene(2));
+        let (response, mut reply) = RpcResultSender::channel();
+        assert!(!forwarding.enqueue(
+            scene(1),
+            SceneResponse::ImmediateRpcCall(RpcCall::GetUserAccount { response }),
+            MAX_PENDING_SCENE_BYTES
+        ));
+        assert!(forwarding.enqueue(scene(1), SceneResponse::WaitingForInspector, 1));
+        assert!(matches!(
+            reply.try_recv(),
+            Err(tokio::sync::oneshot::error::TryRecvError::Closed)
+        ));
+        assert!(!forwarding.enqueue(scene(1), SceneResponse::WaitingForInspector, 1));
+        assert!(!forwarding.enqueue(scene(2), SceneResponse::WaitingForInspector, 1));
+        assert_eq!(forwarding.take_failures(), vec![scene(1)]);
+        assert!(forwarding.take_failures().is_empty());
+        assert!(matches!(forwarding.pop(), Some((id, SceneResponse::Error(_))) if id == scene(1)));
+        assert!(
+            matches!(forwarding.pop(), Some((id, SceneResponse::WaitingForInspector)) if id == scene(2))
+        );
+        assert!(forwarding.pop().is_none());
+        forwarding.remove(scene(1));
+        assert!(!forwarding.enqueue(scene(1), SceneResponse::WaitingForInspector, 1));
+        assert!(forwarding.pop().is_none());
+    }
+
+    #[test]
+    fn pending_scenes_take_turns_without_reordering_their_responses() {
+        let mut forwarding = SceneForwarding::default();
+        for id in [scene(1), scene(2)] {
+            forwarding.register(id);
+        }
+        for text in ["first", "second"] {
+            forwarding.enqueue(scene(1), SceneResponse::Error(text.into()), 1);
+        }
+        forwarding.enqueue(scene(2), SceneResponse::WaitingForInspector, 1);
+        assert!(
+            matches!(forwarding.pop(), Some((id, SceneResponse::Error(text))) if id == scene(1) && text == "first")
+        );
+        assert!(
+            matches!(forwarding.pop(), Some((id, SceneResponse::WaitingForInspector)) if id == scene(2))
+        );
+        assert!(
+            matches!(forwarding.pop(), Some((id, SceneResponse::Error(text))) if id == scene(1) && text == "second")
+        );
+    }
+
+    #[test]
+    fn full_renderer_does_not_block_ipc_closes_or_healthy_scene_delivery() {
+        tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+            let name_string = ipc_socket_name();
+            let name = name_string.to_fs_name::<GenericFilePath>().unwrap();
+            let listener = ListenerOptions::new().name(name.clone()).create_tokio().unwrap();
+            let (peer, engine) = futures_util::future::join(
+                interprocess::local_socket::tokio::Stream::connect(name), listener.accept()).await;
+            let (_, mut peer_out) = peer.unwrap().split();
+            let (engine_in, _engine_out) = engine.unwrap().split();
+            let (sender, mut receiver) = tokio::sync::mpsc::channel(1);
+            sender.try_send((scene(0), SceneResponse::WaitingForInspector)).unwrap();
+            RENDERER_SENDER.set(Some(sender));
+            SCENE_FORWARDING.with_borrow_mut(|forwarding| {
+                *forwarding = SceneForwarding::default();
+                forwarding.register(scene(1));
+                forwarding.register(scene(2));
+            });
+            let (ipc_router, _replies) = tokio::sync::mpsc::unbounded_channel();
+            ENGINE_IPC_CONTEXT.set(Some(ResponseContext { ipc_channel_registry: Default::default(), ipc_router, max_channels: None, parent_token: None }));
+            let token = ENGINE_IPC_CONTEXT.with_borrow_mut(|context| context.as_mut().unwrap().ipc_channel_registry.entry(7).or_default().clone());
+            let input = tokio::spawn(renderer_ipc_in(engine_in));
+            tokio::time::timeout(Duration::from_secs(5), async {
+                for _ in 0..=MAX_PENDING_SCENE_RESPONSES {
+                    write_msg(&mut peer_out, &SceneToEngine::SceneResponse(scene(1), SceneResponse::WaitingForInspector)).await;
+                }
+                write_msg(&mut peer_out, &SceneToEngine::SceneResponse(scene(2), SceneResponse::WaitingForInspector)).await;
+                write_msg(&mut peer_out, &SceneToEngine::IpcMessage(7, IpcMessage::Closed)).await;
+                while !token.is_cancelled() { tokio::task::yield_now().await; }
+                assert_eq!(SCENE_FORWARDING.with_borrow_mut(SceneForwarding::take_failures), vec![scene(1)]);
+                assert_eq!(receiver.recv().await.unwrap().0, scene(0));
+                assert!(matches!(receiver.recv().await, Some((id, SceneResponse::Error(_))) if id == scene(1)));
+                assert!(matches!(receiver.recv().await, Some((id, SceneResponse::WaitingForInspector)) if id == scene(2)));
+            }).await.unwrap();
+            input.abort();
+            let _ = input.await;
+            SCENE_FORWARDING.with_borrow_mut(|forwarding| *forwarding = SceneForwarding::default());
+            RENDERER_SENDER.set(None);
+            ENGINE_IPC_CONTEXT.set(None);
+        });
+    }
 }

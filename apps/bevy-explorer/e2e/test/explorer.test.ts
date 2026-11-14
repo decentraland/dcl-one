@@ -24,6 +24,13 @@ const control = (extra: Record<string, unknown> = {}) =>
   JSON.stringify({ found: true, role: 'button', name: 'Backpack', text: 'Backpack', disabled: false, visible: true, actionable: true, x: 10, y: 20, width: 40, height: 30, ...extra })
 
 describe('Explorer', () => {
+  test('legacy avatar diagnostics expose bounded scene queues and recovery counts', async () => {
+    const state = { subscribedScenes: 2, queuedEvents: 1024, resyncScenes: 1, trackedPeers: 3 }
+    const fake = new FakeConsole({ legacy_social: JSON.stringify(state) })
+    assert.deepEqual(await new Explorer(fake).legacySocial(), state)
+    assert.deepEqual(fake.lines, ['/legacy_social'])
+  })
+
   test('connectivity reads safe status and requests immediate engine recovery', async () => {
     const fake = new FakeConsole({
       connectivity_state: JSON.stringify({ connectionLost: true, probing: false, everConnected: true, suppressed: false, rooms: [{ scope: 'scene', state: 'denied', retryAt: null }] }),

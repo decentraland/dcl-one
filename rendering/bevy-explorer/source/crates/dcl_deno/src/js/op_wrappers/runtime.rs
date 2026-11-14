@@ -9,6 +9,8 @@ pub fn ops() -> Vec<OpDecl> {
     vec![
         op_read_file(),
         op_scene_information(),
+        op_scene_id(),
+        op_get_permissions(),
         op_realm_information(),
         op_world_time(),
         op_camera_fov(),
@@ -61,4 +63,19 @@ fn op_get_platform(state: &mut OpState) -> String {
 #[string]
 fn op_get_player_language(state: &mut OpState) -> Option<String> {
     dcl_js::runtime::op_get_player_language(state)
+}
+
+#[op2]
+#[string]
+fn op_scene_id(state: &mut OpState) -> String {
+    dcl_js::runtime::op_scene_id(state)
+}
+
+#[op2(async)]
+#[serde]
+async fn op_get_permissions(
+    state: Rc<RefCell<OpState>>,
+    #[serde] permissions: Vec<i32>,
+) -> Result<Vec<bool>, AnyError> {
+    dcl_js::runtime::op_get_permissions(state, permissions).await
 }

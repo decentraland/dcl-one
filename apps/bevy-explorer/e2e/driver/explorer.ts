@@ -48,6 +48,13 @@ export interface WorldState {
   keyboardClaimed?: boolean | null
 }
 
+export interface LegacySocialState {
+  subscribedScenes: number
+  queuedEvents: number
+  resyncScenes: number
+  trackedPeers: number
+}
+
 /**
  * What `/hover_entity` and `/click_entity` report. A hit on an avatar or on another scene's
  * entity reports `entity` and `container` as 4294967295.
@@ -524,6 +531,10 @@ export class Explorer {
 
   worldState(): Promise<WorldState> {
     return this.json<WorldState>('/world_state')
+  }
+
+  legacySocial(): Promise<LegacySocialState> {
+    return this.json<LegacySocialState>('/legacy_social')
   }
 
   // --- photo mode ---------------------------------------------------------------------------

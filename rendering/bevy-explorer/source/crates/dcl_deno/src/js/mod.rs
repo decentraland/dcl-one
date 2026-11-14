@@ -613,6 +613,26 @@ fn op_require(
         "~system/CommsApi" => {
             Ok(include_str!("../../../dcl_js/src/modules/CommsApi.js").to_owned())
         }
+        "~system/DevTools" => Ok(include_str!(concat!(
+            env!("DCL_ONE_ROOT"),
+            "/rendering/bevy-explorer/source/crates/dcl_js/src/modules/DevTools.js"
+        ))
+        .to_owned()),
+        "~system/ParcelIdentity" => Ok(include_str!(concat!(
+            env!("DCL_ONE_ROOT"),
+            "/rendering/bevy-explorer/source/crates/dcl_js/src/modules/ParcelIdentity.js"
+        ))
+        .to_owned()),
+        "~system/Permissions" => Ok(include_str!(concat!(
+            env!("DCL_ONE_ROOT"),
+            "/rendering/bevy-explorer/source/crates/dcl_js/src/modules/Permissions.js"
+        ))
+        .to_owned()),
+        "~system/SocialController" => Ok(include_str!(concat!(
+            env!("DCL_ONE_ROOT"),
+            "/rendering/bevy-explorer/source/crates/dcl_js/src/modules/SocialController.js"
+        ))
+        .to_owned()),
         "~system/EngineApi" => {
             Ok(include_str!("../../../dcl_js/src/modules/EngineApi.js").to_owned())
         }
@@ -662,6 +682,12 @@ fn op_error(state: Rc<RefCell<OpState>>, #[string] message: String) {
 
 #[cfg(test)]
 mod tests {
+    mod legacy_kernel {
+        include!("legacy_kernel_tests.rs");
+    }
+    mod ethereum_controller {
+        include!("ethereum_controller_tests.rs");
+    }
     mod system_scene_network {
         include!("system_scene_network_tests.rs");
     }
