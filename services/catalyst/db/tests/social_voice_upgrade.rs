@@ -88,8 +88,9 @@ impl Database {
             .await
             .unwrap();
         let name = format!(
-            "catalyst_test_social_voice_{}",
-            uuid::Uuid::new_v4().simple()
+            "catalyst_test_lib_{}_social_voice_{}",
+            std::process::id(),
+            &uuid::Uuid::new_v4().simple().to_string()[..12]
         );
         sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE \"{name}\"")))
             .execute(&admin)
@@ -657,7 +658,7 @@ async fn the_release_guard_counts_sessions_of_roles_it_cannot_inspect() {
     let password = format!(
         "{}{}",
         uuid::Uuid::new_v4().simple(),
-        uuid::Uuid::new_v4().simple()
+        &uuid::Uuid::new_v4().simple().to_string()[..12]
     );
     for statement in [
         format!("CREATE ROLE {migrator} LOGIN PASSWORD '{password}'"),
