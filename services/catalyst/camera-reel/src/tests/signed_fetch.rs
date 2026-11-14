@@ -1,7 +1,7 @@
 //! The camera-reel signed-fetch profile at the routes: a signature at most
 //! 60 s old and never too new, `x-identity-metadata` required but unread,
-//! and the scene signer served on the owner reads and refused on every write
-//! with the same 401.
+//! every chain link carrying a signature string, and the scene signer served
+//! on the owner reads and refused on every write with the source's 401.
 
 use axum::http::StatusCode;
 use serde_json::{Value, json};
@@ -11,8 +11,8 @@ use super::{
     wallet,
 };
 use crate::Settings;
-use crate::shared::signed_fetch::AUTH_METADATA_HEADER;
 use crate::shared::signed_fetch::test_support::signed_headers_by;
+use crate::shared::signed_fetch::{AUTH_CHAIN_HEADER_PREFIX, AUTH_METADATA_HEADER};
 
 const SCENE: &str = r#"{"signer":"decentraland-kernel-scene","sceneId":"bafkscene"}"#;
 
@@ -42,7 +42,17 @@ async fn signed_as(
     }
     headers
         .iter()
-        .map(|(name, value)| (name.to_string(), value.to_str().unwrap().to_string()))
+        .map(|(name, value)| {
+            let mut value = value.to_str().unwrap().to_string();
+            // The source's chain parser wants a signature string on every
+            // link, the SIGNER's empty one included.
+            if name.as_str() == format!("{AUTH_CHAIN_HEADER_PREFIX}0") {
+                let mut link: Value = serde_json::from_str(&value).unwrap();
+                link["signature"] = json!("");
+                value = link.to_string();
+            }
+            (name.to_string(), value)
+        })
         .collect()
 }
 
@@ -67,11 +77,9 @@ fn with_metadata(mut headers: Vec<(String, String)>, metadata: &str) -> Vec<(Str
     headers
 }
 
-fn unauthorized() -> (StatusCode, Value) {
-    (
-        StatusCode::UNAUTHORIZED,
-        json!({ "message": "Unauthorized" }),
-    )
+/// The source's refusal: 401 with its text/plain `Unathorized` body.
+fn unauthorized() -> (StatusCode, Vec<u8>) {
+    (StatusCode::UNAUTHORIZED, b"Unathorized".to_vec())
 }
 
 #[tokio::test]
@@ -129,7 +137,7 @@ async fn a_scene_signed_write_is_refused_on_every_write_route() {
     );
     let headers = signed(&w, "post", &upload, Some(SCENE), 0).await;
     let (status, _, resp) = send(s.app(), "POST", &upload, headers, Some((body, &ct))).await;
-    assert_eq!((status, json_of(&resp)), unauthorized(), "multipart upload");
+    assert_eq!((status, resp), unauthorized(), "multipart upload");
 
     let upload_json = format!("{PREFIX}/api/images-json");
     let body = {
@@ -151,7 +159,7 @@ async fn a_scene_signed_write_is_refused_on_every_write_route() {
         Some((body, "application/json")),
     )
     .await;
-    assert_eq!((status, json_of(&resp)), unauthorized(), "json upload");
+    assert_eq!((status, resp), unauthorized(), "json upload");
     assert_eq!(s.count(&owner).await, 1, "no upload landed");
 
     let vis = format!("{PREFIX}/api/images/{}/visibility", private.id);
@@ -166,14 +174,14 @@ async fn a_scene_signed_write_is_refused_on_every_write_route() {
             Some((flip.clone(), "application/json")),
         )
         .await;
-        assert_eq!((status, json_of(&resp)), unauthorized(), "{metadata}");
+        assert_eq!((status, resp), unauthorized(), "{metadata}");
     }
     assert_eq!(s.is_public(private.id).await, Some(false));
 
     let del = format!("{PREFIX}/api/images/{}", private.id);
     let headers = signed(&w, "delete", &del, Some(SCENE), 0).await;
     let (status, _, resp) = send(s.app(), "DELETE", &del, headers, None).await;
-    assert_eq!((status, json_of(&resp)), unauthorized(), "delete");
+    assert_eq!((status, resp), unauthorized(), "delete");
     assert_eq!(s.count(&owner).await, 1, "the row stays");
 
     // A legacy-signed scene request replayed with a literal uppercased: the
@@ -198,7 +206,7 @@ async fn a_scene_signed_write_is_refused_on_every_write_route() {
         Some((flip.clone(), "application/json")),
     )
     .await;
-    assert_eq!((status, json_of(&resp)), unauthorized(), "replayed legacy");
+    assert_eq!((status, resp), unauthorized(), "replayed legacy");
     assert_eq!(s.is_public(private.id).await, Some(false));
 
     // Metadata that does not parse and names no scene is the user's.
@@ -243,7 +251,7 @@ async fn the_timestamp_window_and_the_metadata_header_are_upstreams() {
                 Some((body, "application/json")),
             )
             .await;
-            (status, json_of(&resp))
+            (status, resp)
         }
     };
     let listed = |headers| {
