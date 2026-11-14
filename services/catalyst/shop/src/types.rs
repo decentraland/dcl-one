@@ -61,6 +61,13 @@ pub enum ParseError {
     Name,
 }
 
+/// Whether `text` is `0x` followed by exactly 40 hex digits (either case).
+/// `0X` is refused; callers trim or lowercase before asking.
+pub fn is_hex_address(text: &str) -> bool {
+    text.strip_prefix("0x")
+        .is_some_and(|hex| hex.len() == 40 && hex.bytes().all(|b| b.is_ascii_hexdigit()))
+}
+
 /// An EVM address, compared by its bytes and always printed lowercase.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct EvmAddress(Address);
@@ -983,4 +990,24 @@ pub enum SettlementOperation {
     CreditListing { trade: SignedTrade },
     /// The buyer pays MANA directly; no credit is touched.
     Mana { call: ExternalCall },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hex_address_shape_is_0x_and_forty_hex_digits() {
+        let lower = format!("0x{}", "ab".repeat(20));
+        assert!(is_hex_address(&lower));
+        assert!(is_hex_address(
+            &lower.to_ascii_uppercase().replacen("0X", "0x", 1)
+        ));
+        assert!(!is_hex_address(&lower.replacen("0x", "0X", 1)));
+        assert!(!is_hex_address(&lower[..41]));
+        assert!(!is_hex_address(&format!("{lower}0")));
+        assert!(!is_hex_address(&format!(" {lower}")));
+        assert!(!is_hex_address(&format!("0x{}g", "a".repeat(39))));
+        assert!(!is_hex_address(""));
+    }
 }
