@@ -134,7 +134,7 @@ jobs:
 
       - name: install
         if: steps.setup.outputs.node-modules-cache-hit != 'true'
-        run: npm i --silent && make install-inspector
+        run: make install-inspector
         env:
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
 
@@ -149,10 +149,14 @@ jobs:
 
           if [[ "${{ github.ref }}" == "refs/heads/main" || ${{ inputs.asset_packs_changed }} == "false" ]]; then
             echo "Installing latest asset-packs version: ${{ inputs.asset_packs_version }}"
-            # The asset-packs job published this version seconds ago and npm serves a CDN-cached
-            # packument for 300s, so resolution needs a forced revalidate and a wait longer than that.
+            # The asset-packs job published this version seconds ago and the registry serves a
+            # CDN-cached packument for 300s, so resolution retries for longer than that.
             for ((i = 1; i <= 10; i++)); do
-              npm install --prefer-online "@dcl/asset-packs@${{ inputs.asset_packs_version }}" && exit 0
+              if pnpm add "@dcl/asset-packs@${{ inputs.asset_packs_version }}"; then
+                # pnpm saves the exact version; the published manifest carries the caret range.
+                npm pkg set "dependencies.@dcl/asset-packs=^${{ inputs.asset_packs_version }}"
+                exit 0
+              fi
               echo "@dcl/asset-packs@${{ inputs.asset_packs_version }} not resolvable yet (attempt $i); retrying in 30s"
               sleep 30
             done
@@ -160,11 +164,11 @@ jobs:
             exit 1
           elif [[ -n "$ASSET_PACKS_S3_KEY" ]]; then
             echo "Installing asset-packs version from S3 bucket: $ASSET_PACKS_S3_KEY"
-            npm install "$S3_BASE_URL/$ASSET_PACKS_S3_KEY"
+            pnpm add "$S3_BASE_URL/$ASSET_PACKS_S3_KEY"
           else
             # No S3 package (fork or Dependabot PR): build against the last published asset-packs.
             echo "::warning::No asset-packs package for this PR; building against @dcl/asset-packs@latest"
-            npm install @dcl/asset-packs@latest
+            pnpm add @dcl/asset-packs@latest
           fi
 
       - name: protoc

@@ -1,6 +1,9 @@
 const { execSync } = require('child_process');
 const path = require('path');
 
+// electron-builder picks how it lists the app's dependencies from this; "traversal" follows Node's own lookup.
+process.env.npm_config_user_agent = 'traversal';
+
 // Every build but a release is a dry run: it skips the slow .dmg build and ships only the unsigned
 // .zip, so a pull request gets a downloadable build for a fraction of the time. electron-builder
 // skips code signing on a pull request by itself; `identity: null` makes it skip on the other dry

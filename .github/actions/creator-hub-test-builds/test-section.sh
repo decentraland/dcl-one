@@ -43,7 +43,7 @@ pass "desktop section shows the platform that failed"
 OUT=$(SECTION=inspector VERSION=1.0.0 PACKAGE_KEY=creator-hub/branch/x/dcl-inspector-1.0.0.tgz PREVIEW_PATH=creator-hub/branch/x/inspector/index.html bash "$SECTION_SH")
 has "$OUT" 'Inspector-Success!-3fb950?logo=npm' || fail "inspector: badge"
 has "$OUT" '(https://bucket.example/creator-hub/branch/x/inspector/index.html)' || fail "inspector: preview link"
-has "$OUT" '`npm install "https://bucket.example/creator-hub/branch/x/dcl-inspector-1.0.0.tgz"`' || fail "inspector: install line"
+has "$OUT" '`pnpm add "https://bucket.example/creator-hub/branch/x/dcl-inspector-1.0.0.tgz"`' || fail "inspector: install line"
 has "$OUT" "$RUN"' · Version: `1.0.0-42-abcdef1`</sub>' || fail "inspector: footer"
 OUT=$(SECTION=inspector VERSION=1.0.0 PACKAGE_KEY=k.tgz bash "$SECTION_SH")
 has "$OUT" '| Preview |' && fail "inspector: preview row without a preview"
@@ -52,7 +52,7 @@ pass "inspector section"
 # --- asset packs ------------------------------------------------------------------------------
 OUT=$(SECTION=asset-packs VERSION=2.0.0 PACKAGE_KEY=creator-hub/branch/x/dcl-asset-packs-2.0.0.tgz bash "$SECTION_SH")
 has "$OUT" 'Asset%20packs-Success!-3fb950?logo=npm' || fail "asset packs: badge"
-has "$OUT" '`npm install "https://bucket.example/creator-hub/branch/x/dcl-asset-packs-2.0.0.tgz"`' || fail "asset packs: install line"
+has "$OUT" '`pnpm add "https://bucket.example/creator-hub/branch/x/dcl-asset-packs-2.0.0.tgz"`' || fail "asset packs: install line"
 has "$OUT" 'are not on the CDN until it merges' || fail "asset packs: CDN note"
 has "$OUT" "$RUN"' · Version: `2.0.0-42-abcdef1`</sub>' || fail "asset packs: footer"
 pass "asset packs section"

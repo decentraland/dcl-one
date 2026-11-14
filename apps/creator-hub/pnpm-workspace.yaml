@@ -1,0 +1,43 @@
+packages:
+  - packages/*
+  - packages/inspector/agents/protocol
+# A flat node_modules: the app's packaging, the SDK's types and the published source maps read one.
+nodeLinker: hoisted
+overrides:
+  '@babylonjs/serializers': 8.7.0
+  ws: ^8.18.0
+  yauzl: ^3.3.1
+  # @dcl/quests-client asks for the "latest" @dcl/sdk; this keeps it on the workspace's version.
+  '@dcl/quests-client>@dcl/sdk': 7.29.0
+  # decentraland-ui2 depends on React 17 outright; it and the libraries under it run on the app's React.
+  'decentraland-ui2>react': 18.3.1
+  'decentraland-ui2>react-dom': 18.3.1
+  # The versions npm installed for these dependents, which the packaged app ships.
+  '@dcl/single-sign-on-client>@dcl/crypto': 3.4.5
+  'dcl-catalyst-client>@dcl/crypto': 3.4.5
+  '@dcl/sdk-commands>@dcl/crypto': 3.4.5
+  '@dcl/mini-comms>@dcl/crypto': 3.4.5
+  '@dcl/crypto@3.4.5>@dcl/schemas': 9.15.0
+  '@dcl/crypto@3.4.5>ethereum-cryptography': 1.2.0
+  'electron-updater>semver': 7.6.3
+  'glob@11.1.0>minimatch': 10.2.2
+  'minimatch@10.2.2>brace-expansion': 5.0.2
+  'brace-expansion@5.0.2>balanced-match': 4.0.3
+  'path-scurry@2.0.2>lru-cache': 11.2.6
+  '@types/glob>@types/node': 20.14.9
+  '@types/node-fetch>@types/node': 20.14.9
+allowBuilds:
+  # Writes the .env and package.json that ship in @dcl/inspector's public/bevy-engine.
+  '@dcl-regenesislabs/bevy-explorer-web': true
+  # Compiles on Linux, where it has no prebuilt binary.
+  node-pty: true
+  '@dcl/sdk-commands': false
+  '@sentry/cli': false
+  electron-winstaller: false
+  esbuild: false
+  protobufjs: false
+  sharp: false
+# The release publishes these two and installs them into the next package minutes later.
+minimumReleaseAgeExclude:
+  - '@dcl/asset-packs'
+  - '@dcl/inspector'
