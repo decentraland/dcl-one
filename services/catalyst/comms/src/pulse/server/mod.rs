@@ -118,9 +118,10 @@ enum Admission {
     Deny(Box<Action>),
 }
 
-/// Packets a peer may send while its handshake answer waits for the replay journal; later ones
-/// are dropped.
+/// What a peer may send while its handshake answer waits for the replay journal. A peer that
+/// sends more is refused once the answer is released, and nothing more of it is kept.
 const MAX_HELD_PACKETS: usize = 64;
+const MAX_HELD_BYTES: usize = 16 * 1024;
 
 /// A handshake outcome held until the replay journal has synced every job up to `journaled`,
 /// with the packets its peer sent meanwhile, replayed in order once it is applied.
@@ -131,6 +132,8 @@ struct HeldHandshake {
     action: Action,
     now: u32,
     packets: Vec<HeldPacket>,
+    held_bytes: usize,
+    overflowed: bool,
 }
 
 #[derive(Debug)]
@@ -1494,14 +1497,26 @@ impl PulseServer {
             .iter_mut()
             .find(|held| held.peer == peer)
         {
-            if held.packets.len() < MAX_HELD_PACKETS {
-                held.packets.push(HeldPacket {
-                    channel,
-                    data: data.to_vec(),
-                    now_ms,
-                    now,
-                });
+            if held.overflowed {
+                return None;
             }
+            held.held_bytes += data.len();
+            if held.packets.len() >= MAX_HELD_PACKETS || held.held_bytes > MAX_HELD_BYTES {
+                held.overflowed = true;
+                held.packets = Vec::new();
+                crate::pulse::metrics::handshake("legacy", "held_packets_overflow");
+                tracing::debug!(
+                    peer,
+                    "Pulse peer sent too much while its handshake was held"
+                );
+                return None;
+            }
+            held.packets.push(HeldPacket {
+                channel,
+                data: data.to_vec(),
+                now_ms,
+                now,
+            });
             return None;
         }
         let issued = self.replay_policy.journal_issued();
@@ -1516,12 +1531,15 @@ impl PulseServer {
             action,
             now,
             packets: Vec::new(),
+            held_bytes: 0,
+            overflowed: false,
         });
         None
     }
 
     /// Removes the held outcomes the journal has made durable, in order. Once the journal has
-    /// failed, the rest become a `ServerFull` refusal without a reply.
+    /// failed, the rest become a `ServerFull` refusal without a reply. A peer that overflowed
+    /// its held packets is refused with `InputRateExceeded` and no reply.
     fn take_journaled(&mut self) -> Vec<HeldHandshake> {
         let progress = self.replay_policy.journal_progress();
         let mut ready = Vec::new();
@@ -1537,6 +1555,14 @@ impl PulseServer {
                 held.action = Action::Reject {
                     reply: None,
                     reason: DisconnectReason::ServerFull,
+                };
+            } else if held.overflowed {
+                if let Some(state) = self.peers.get_mut(&held.peer) {
+                    state.connection_state = PeerConnectionState::PendingDisconnect;
+                }
+                held.action = Action::Reject {
+                    reply: None,
+                    reason: DisconnectReason::InputRateExceeded,
                 };
             }
             ready.push(held);

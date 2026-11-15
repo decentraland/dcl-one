@@ -621,13 +621,17 @@ impl HandshakeReplayPolicy {
             .map_or_else(JournalProgress::default, ReplayJournal::progress)
     }
 
-    /// Resolves when the journal writer reports progress; never without a running writer.
+    /// Resolves when the journal writer reports progress, including its last report after it
+    /// stopped; never once that report has been seen, nor without a journal.
     pub async fn journal_progressed(&mut self) {
         match self.journal.as_mut() {
-            Some(journal) if journal.progress.has_changed().is_ok() => {
-                let _ = journal.progress.changed().await;
+            // `changed` yields an unseen value before it reports the writer gone.
+            Some(journal) => {
+                if journal.progress.changed().await.is_err() {
+                    std::future::pending::<()>().await;
+                }
             }
-            _ => std::future::pending().await,
+            None => std::future::pending().await,
         }
     }
 
@@ -1466,6 +1470,35 @@ mod tests {
             policy.try_admit(SIGNED + 1, None, "other", &(SIGNED + 1).to_string()),
             Err(ReplayRejection::Storage)
         );
+    }
+
+    #[tokio::test]
+    async fn a_writer_that_failed_and_stopped_still_wakes_the_event_loop() {
+        let path = ReplayPath::new("failed-wakes");
+        let (mut policy, gate) = HandshakeReplayPolicy::durable_gated(SKEW, 4, &path.0, SIGNED);
+        assert_eq!(
+            policy.try_admit(SIGNED, None, "wallet", &SIGNED.to_string()),
+            Ok(())
+        );
+        gate.send(Err(std::io::Error::other("injected write failure")))
+            .unwrap();
+        // The writer reports the failure and exits before the event loop looks.
+        assert!(
+            crate::shared::test_wait::until(async || {
+                policy
+                    .journal
+                    .as_ref()
+                    .is_some_and(|journal| journal.progress.has_changed().is_err())
+            })
+            .await
+        );
+        tokio::time::timeout(
+            crate::shared::test_wait::HANG_GUARD,
+            policy.journal_progressed(),
+        )
+        .await
+        .expect("the failure wakes the event loop so held handshakes are refused");
+        assert!(policy.journal_progress().failed);
     }
 
     #[tokio::test]
