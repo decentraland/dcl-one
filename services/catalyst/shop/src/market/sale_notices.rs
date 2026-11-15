@@ -7,14 +7,18 @@
 //! marketplace-server's accept events for trades (the `trade_events`
 //! builders), events-notifier's sales poller for legacy orders.
 //!
+//! The `sales` index (`shop.sale_event`, Polygon) adds the rest of that
+//! poller's L2 sales: a CollectionStore mint tells the item's creator
+//! (once per transaction, as the old `txHash` key did), an ERC721BidV2
+//! `BidAccepted` tells its bidder "Bid Accepted" (events-notifier's bids
+//! poller) and its seller "Item Sold". A zero-price sale is no sale there,
+//! so it sells nothing here. The Ethereum ERC721Bid was never polled.
+//!
 //! Each (source, network) reads only up to its index's `folded_block` while
 //! `chain_walk::is_ready`; its first pass starts at that published block, so
 //! history is never replayed. Progress is `shop.notification_cursor` (`sales:{source}:{network}`), advanced
 //! with each page's notifications in one transaction; the id is reorg-stable
 //! (`notice_cursor`), so a retried page inserts nothing twice.
-
-// TODO: primary sales (CollectionStore `Bought`) are not indexed, so mints never notify `item_sold`.
-// TODO: on-chain ERC721Bid `BidAccepted` is not indexed (needs `nft_event_kind_known` widened), so bid sales give no `bid_accepted` or `item_sold`.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -26,10 +30,11 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use super::MarketplaceState;
-use super::chain_walk::{self, ChainNet, INDEXER_NFT, INDEXER_TRADE_EVENTS};
+use super::chain_walk::{self, ChainNet, INDEXER_NFT, INDEXER_SALES, INDEXER_TRADE_EVENTS};
 use super::notice_cursor;
 use super::trade_events::{self, AssetMeta, StoredTrade};
 use crate::shared::identity::Address;
+use crate::social::notifications::templates::format_mana;
 use crate::social::notifications::{NewNotification, insert_notifications};
 use crate::types::{
     ASSET_TYPE_COLLECTION_ITEM, ASSET_TYPE_ERC20, ASSET_TYPE_ERC721, ASSET_TYPE_USD_PEGGED_MANA,
@@ -66,17 +71,31 @@ const BID_ACCEPTED_FIELDS: &[&str] = &[
     "network",
 ];
 
+/// 2^216: a v2 collection token id is `item << 216 | issued`.
+const ITEM_SHIFT: &str = "105312291668557186697918027683670432318895095400549111254310977536";
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Source {
     Traded,
     OrderSuccessful,
+    Mint,
+    BidAccepted,
 }
 
 impl Source {
+    const ALL: [Source; 4] = [
+        Source::Traded,
+        Source::OrderSuccessful,
+        Source::Mint,
+        Source::BidAccepted,
+    ];
+
     fn db_name(self) -> &'static str {
         match self {
             Source::Traded => "traded",
             Source::OrderSuccessful => "order_successful",
+            Source::Mint => "mint",
+            Source::BidAccepted => "bid_accepted",
         }
     }
 
@@ -84,14 +103,15 @@ impl Source {
         match self {
             Source::Traded => INDEXER_TRADE_EVENTS,
             Source::OrderSuccessful => INDEXER_NFT,
+            Source::Mint | Source::BidAccepted => INDEXER_SALES,
         }
     }
 
-    /// Legacy orders only on Polygon: the old poller read the L2 sales only.
+    /// Only Traded on Ethereum: the old poller read the L2 sales only.
     fn networks(self) -> &'static [ChainNet] {
         match self {
             Source::Traded => &ChainNet::ALL,
-            Source::OrderSuccessful => &[ChainNet::Matic],
+            _ => &[ChainNet::Matic],
         }
     }
 
@@ -100,6 +120,8 @@ impl Source {
             (Source::Traded, ChainNet::Ethereum) => notice_cursor::SALES_TRADED_ETHEREUM,
             (Source::Traded, ChainNet::Matic) => notice_cursor::SALES_TRADED_MATIC,
             (Source::OrderSuccessful, _) => notice_cursor::SALES_ORDER_SUCCESSFUL_MATIC,
+            (Source::Mint, _) => notice_cursor::SALES_MINT_MATIC,
+            (Source::BidAccepted, _) => notice_cursor::SALES_BID_ACCEPTED_MATIC,
         }
     }
 
@@ -107,7 +129,7 @@ impl Source {
         match self {
             Source::Traded => format!(
                 "SELECT {key} AS id_key, e.block_number, e.log_index, e.block_time, e.signer AS recipient, e.caller AS counterparty, e.assets, \
-                        NULL::text AS contract_address, NULL::text AS token_id \
+                        NULL::text AS contract_address, NULL::text AS token_id, NULL::text AS item_id, NULL::text AS price, NULL::text AS tx_hash \
                  FROM shop.trade_event e \
                  WHERE e.network = $1 AND e.kind = 'traded' AND (e.block_number, e.log_index) > ($2, $3) AND e.block_number <= $4 \
                  ORDER BY e.block_number, e.log_index LIMIT $5",
@@ -119,23 +141,48 @@ impl Source {
             ),
             Source::OrderSuccessful => format!(
                 "SELECT {key} AS id_key, e.block_number, e.log_index, e.block_time, e.from_address AS recipient, e.to_address AS counterparty, NULL::jsonb AS assets, \
-                        e.contract_address::text AS contract_address, e.token_id::text AS token_id \
+                        e.contract_address::text AS contract_address, e.token_id::text AS token_id, NULL::text AS item_id, NULL::text AS price, NULL::text AS tx_hash \
                  FROM shop.nft_event e \
                  WHERE e.network = $1 AND e.kind = 'order_successful' AND (e.block_number, e.log_index) > ($2, $3) AND e.block_number <= $4 \
                  ORDER BY e.block_number, e.log_index LIMIT $5",
                 key = notice_cursor::token_log_key("e")
             ),
+            // The mint's price is the item's (the store sells at it).
+            Source::Mint => format!(
+                "SELECT {key} AS id_key, e.block_number, e.log_index, e.block_time, NULL::text AS recipient, e.buyer AS counterparty, NULL::jsonb AS assets, \
+                        e.contract_address::text AS contract_address, e.token_id::text AS token_id, e.item_id::text AS item_id, i.price::text AS price, e.tx_hash::text AS tx_hash \
+                 FROM shop.sale_event e \
+                 LEFT JOIN shop.items i ON i.network = e.network AND i.contract_address = e.contract_address AND i.item_id = e.item_id \
+                 WHERE e.network = $1 AND e.kind = 'mint' AND (e.block_number, e.log_index) > ($2, $3) AND e.block_number <= $4 \
+                 ORDER BY e.block_number, e.log_index LIMIT $5",
+                key = notice_cursor::tx_log_key("sale_event", "e", SALE_CONTENT)
+            ),
+            Source::BidAccepted => format!(
+                "SELECT {key} AS id_key, e.block_number, e.log_index, e.block_time, e.buyer AS recipient, e.seller AS counterparty, NULL::jsonb AS assets, \
+                        e.contract_address::text AS contract_address, e.token_id::text AS token_id, div(e.token_id, {ITEM_SHIFT})::text AS item_id, e.price::text AS price, e.tx_hash::text AS tx_hash \
+                 FROM shop.sale_event e \
+                 WHERE e.network = $1 AND e.kind = 'bid_accepted' AND (e.block_number, e.log_index) > ($2, $3) AND e.block_number <= $4 \
+                 ORDER BY e.block_number, e.log_index LIMIT $5",
+                key = notice_cursor::tx_log_key("sale_event", "e", SALE_CONTENT)
+            ),
         }
     }
 }
 
-/// Over the log's [`notice_cursor::tx_log_key`] (Traded) or
-/// [`notice_cursor::token_log_key`] (OrderSuccessful).
+/// What a `shop.sale_event` id keys on beside its transaction.
+const SALE_CONTENT: &str =
+    "(e.kind || ':' || e.contract_address || ':' || e.token_id || ':' || coalesce(e.bid_id, ''))";
+
+/// Over the log's [`notice_cursor::tx_log_key`] (Traded, the sales
+/// index) or [`notice_cursor::token_log_key`] (OrderSuccessful); a mint's
+/// key is its transaction and creator.
 pub fn notification_id(source: &str, network: &str, key: &str) -> Uuid {
-    let prefix = if source == "traded" {
-        "traded"
-    } else {
-        "order-successful"
+    let prefix = match source {
+        "traded" => "traded",
+        "mint" => "mint-sold",
+        "bid_accepted" => "bid-accepted",
+        "bid_sold" => "bid-sold",
+        _ => "order-successful",
     };
     notice_cursor::notification_id(prefix, network, key)
 }
@@ -158,6 +205,9 @@ struct LogRow {
     assets: Option<Value>,
     contract_address: Option<String>,
     token_id: Option<String>,
+    item_id: Option<String>,
+    price: Option<String>,
+    tx_hash: Option<String>,
 }
 
 /// (assetType, contract, value) of one side of a Traded log's trade.
@@ -199,9 +249,16 @@ fn trade_network(net: ChainNet) -> &'static str {
 }
 
 /// The single good a log names: (is an nft, contract, token or item id).
+/// A sales-index log is described by its item, linked to its token.
 fn wanted(source: Source, row: &LogRow) -> Option<(bool, String, String)> {
-    if source == Source::OrderSuccessful {
-        return Some((true, row.contract_address.clone()?, row.token_id.clone()?));
+    match source {
+        Source::OrderSuccessful => {
+            return Some((true, row.contract_address.clone()?, row.token_id.clone()?));
+        }
+        Source::Mint | Source::BidAccepted => {
+            return Some((false, row.contract_address.clone()?, row.item_id.clone()?));
+        }
+        Source::Traded => {}
     }
     let assets = row.assets.as_ref()?;
     let goods: Vec<_> = side(assets, "sent")
@@ -259,20 +316,122 @@ impl Metas {
     }
 }
 
-/// The notification of one log; `None` when it names no single described asset.
-fn notice(
+/// events-notifier's L2 sale for its seller: its own wording, network `polygon`.
+fn polygon_item_sold(links: &Links, seller: &str, buyer: &str, asset: &AssetMeta) -> Value {
+    let trade = StoredTrade {
+        id: String::new(),
+        network: "polygon".into(),
+        signer: seller.to_string(),
+        trade_type: String::new(),
+        contract: String::new(),
+        sent_amount: None,
+        assets: Vec::new(),
+    };
+    let asset = AssetMeta {
+        seller: seller.to_string(),
+        ..asset.clone()
+    };
+    let mut event = trade_events::item_sold_event(&trade, &asset, buyer, &links.marketplace);
+    event["metadata"]["description"] = json!(format!(
+        "You just sold this {}.",
+        asset.name.as_deref().unwrap_or_default()
+    ));
+    project(&event, ITEM_SOLD_FIELDS)
+}
+
+/// A positive integer amount (a sale the old index recorded).
+fn is_paid(price: Option<&str>) -> bool {
+    price.is_some_and(|p| {
+        p.bytes().all(|b| b.is_ascii_digit()) && !p.trim_start_matches('0').is_empty()
+    })
+}
+
+/// One notification: recipient, kind, metadata and id.
+type Notice = (String, &'static str, Value, Uuid);
+
+/// The notifications of one log; `None` when it names no single described asset.
+fn notices(
     links: &Links,
     source: Source,
     net: ChainNet,
     row: &LogRow,
     metas: &Metas,
-) -> Option<(String, &'static str, Value)> {
-    let recipient = row.recipient.as_deref()?.to_ascii_lowercase();
+) -> Option<Vec<Notice>> {
+    let id = |prefix: &str, key: &str| notification_id(prefix, net.db_name(), key);
     let counterparty = row
         .counterparty
         .as_deref()
         .unwrap_or_default()
         .to_ascii_lowercase();
+    let (nft, contract, value) = wanted(source, row)?;
+    let asset = metas.get(nft, contract, value)?;
+    match source {
+        Source::Mint => {
+            if !is_paid(row.price.as_deref()) {
+                return None;
+            }
+            // The store pays the creator; one notice per (transaction, creator).
+            let creator = asset.seller.to_ascii_lowercase();
+            let asset = AssetMeta {
+                token_id: row.token_id.clone(),
+                ..asset
+            };
+            let key = format!("{}:{creator}", row.tx_hash.as_deref()?);
+            let metadata = polygon_item_sold(links, &creator, &counterparty, &asset);
+            return Some(vec![(creator, KIND_ITEM_SOLD, metadata, id("mint", &key))]);
+        }
+        Source::BidAccepted => {
+            let bidder = row.recipient.as_deref()?.to_ascii_lowercase();
+            let price = row.price.clone()?;
+            let asset = AssetMeta {
+                seller: counterparty.clone(),
+                token_id: row.token_id.clone(),
+                ..asset
+            };
+            let trade = StoredTrade {
+                id: String::new(),
+                network: "polygon".into(),
+                signer: bidder.clone(),
+                trade_type: String::new(),
+                contract: String::new(),
+                sent_amount: Some(price.clone()),
+                assets: Vec::new(),
+            };
+            let mut event = trade_events::bid_accepted_event(&trade, &asset, &links.marketplace);
+            event["metadata"]["description"] = json!(format!(
+                "Your bid for {} MANA for this {} was accepted.",
+                format_mana(&json!(price)),
+                asset.name.as_deref().unwrap_or_default()
+            ));
+            let mut out = vec![(
+                bidder.clone(),
+                KIND_BID_ACCEPTED,
+                project(&event, BID_ACCEPTED_FIELDS),
+                id("bid_accepted", &row.id_key),
+            )];
+            if is_paid(Some(&price)) {
+                out.push((
+                    counterparty.clone(),
+                    KIND_ITEM_SOLD,
+                    polygon_item_sold(links, &counterparty, &bidder, &asset),
+                    id("bid_sold", &row.id_key),
+                ));
+            }
+            return Some(out);
+        }
+        Source::OrderSuccessful => {
+            let seller = row.recipient.as_deref()?.to_ascii_lowercase();
+            let metadata = polygon_item_sold(links, &seller, &counterparty, &asset);
+            return Some(vec![(
+                seller,
+                KIND_ITEM_SOLD,
+                metadata,
+                id(source.db_name(), &row.id_key),
+            )]);
+        }
+        Source::Traded => {}
+    }
+    let recipient = row.recipient.as_deref()?.to_ascii_lowercase();
     let mut trade = StoredTrade {
         id: String::new(),
         network: trade_network(net).to_string(),
@@ -282,23 +441,6 @@ fn notice(
         sent_amount: None,
         assets: Vec::new(),
     };
-    let (nft, contract, value) = wanted(source, row)?;
-    let asset = metas.get(nft, contract, value)?;
-    if source == Source::OrderSuccessful {
-        // events-notifier's sale: the log's seller and its own wording.
-        let asset = AssetMeta {
-            seller: recipient.clone(),
-            ..asset
-        };
-        trade.network = "polygon".into();
-        let mut event =
-            trade_events::item_sold_event(&trade, &asset, &counterparty, &links.marketplace);
-        event["metadata"]["description"] = json!(format!(
-            "You just sold this {}.",
-            asset.name.as_deref().unwrap_or_default()
-        ));
-        return Some((recipient, KIND_ITEM_SOLD, project(&event, ITEM_SOLD_FIELDS)));
-    }
     let sent = side(row.assets.as_ref()?, "sent");
     let bid = !sent.iter().any(|a| is_good(a.0));
     trade.sent_amount = sent
@@ -314,18 +456,25 @@ fn notice(
         },
         ..asset
     };
-    Some(if bid {
+    let id = id(source.db_name(), &row.id_key);
+    Some(vec![if bid {
         let event = trade_events::bid_accepted_event(&trade, &asset, &links.marketplace);
         (
             recipient,
             KIND_BID_ACCEPTED,
             project(&event, BID_ACCEPTED_FIELDS),
+            id,
         )
     } else {
         let event =
             trade_events::item_sold_event(&trade, &asset, &counterparty, &links.marketplace);
-        (recipient, KIND_ITEM_SOLD, project(&event, ITEM_SOLD_FIELDS))
-    })
+        (
+            recipient,
+            KIND_ITEM_SOLD,
+            project(&event, ITEM_SOLD_FIELDS),
+            id,
+        )
+    }])
 }
 
 /// Every published log of one (source, network) after its cursor, a page
@@ -357,30 +506,36 @@ async fn drain(
         };
         let (last_block, last_log) = (last.block_number, last.log_index);
         let metas = Metas::fetch(pool, links, source, net, &rows).await?;
-        let mut batch = Vec::with_capacity(rows.len());
+        let mut batch: Vec<NewNotification> = Vec::with_capacity(rows.len());
         for row in &rows {
-            let Some((recipient, kind, metadata)) = notice(links, source, net, row, &metas) else {
+            let found = notices(links, source, net, row, &metas).unwrap_or_default();
+            if found.is_empty() {
                 tracing::debug!(
                     source = source.db_name(),
                     network = net.db_name(),
                     block = row.block_number,
                     log = row.log_index,
-                    "sale without a single described asset: no notification"
+                    "sale without a single described, paid asset: no notification"
                 );
-                continue;
-            };
-            let Ok(address) = Address::parse(&recipient) else {
-                continue;
-            };
-            batch.push(NewNotification {
-                id: notification_id(source.db_name(), net.db_name(), &row.id_key),
-                address,
-                kind: kind.to_string(),
-                metadata,
-                occurred_at: DateTime::from_timestamp(row.block_time, 0)
-                    .unwrap_or_default()
-                    .naive_utc(),
-            });
+            }
+            for (recipient, kind, metadata, id) in found {
+                let Ok(address) = Address::parse(&recipient) else {
+                    continue;
+                };
+                // A mint's later item in the same transaction: the first wins.
+                if batch.iter().any(|n| n.id == id) {
+                    continue;
+                }
+                batch.push(NewNotification {
+                    id,
+                    address,
+                    kind: kind.to_string(),
+                    metadata,
+                    occurred_at: DateTime::from_timestamp(row.block_time, 0)
+                        .unwrap_or_default()
+                        .naive_utc(),
+                });
+            }
         }
         emitted += insert_notifications(&mut *txn, &batch).await?;
         notice_cursor::advance(&mut txn, producer, None, last_block, last_log).await?;
@@ -402,7 +557,7 @@ pub struct Pass {
 /// One pass over every (source, network) whose index is published at `now`.
 pub async fn run_once(pool: &PgPool, links: &Links, now: DateTime<Utc>) -> anyhow::Result<Pass> {
     let mut pass = Pass::default();
-    for source in [Source::Traded, Source::OrderSuccessful] {
+    for source in Source::ALL {
         for net in source.networks() {
             match chain_walk::ready_cursor(pool, source.indexer(), *net, now).await {
                 Some(c) => {
@@ -428,7 +583,8 @@ pub fn spawn(state: &Arc<MarketplaceState>, jobs: &crate::jobs::Jobs) {
     tracing::info!(
         trade_events = ix.trade_events_enabled,
         nft = ix.nft_enabled,
-        "item_sold/bid_accepted producer up: it reads the trade_events and nft indexes once published"
+        sales = ix.sales_enabled,
+        "item_sold/bid_accepted producer up: it reads the trade_events, nft and sales indexes once published"
     );
     jobs.spawn_periodic_leased(
         "sale-notifications",
@@ -626,7 +782,7 @@ mod tests {
         order_successful(&pool, "matic", 50, "7").await;
         let pass = run_once(&pool, &links, Utc::now()).await.unwrap();
         assert_eq!(pass.emitted, 0, "an unpublished index is not read");
-        assert_eq!(pass.waiting.len(), 3);
+        assert_eq!(pass.waiting.len(), 5, "traded x2, orders, mints, bids");
 
         publish(&pool, INDEXER_TRADE_EVENTS, 100).await;
         publish(&pool, INDEXER_NFT, 100).await;
@@ -751,6 +907,213 @@ mod tests {
             names
                 .iter()
                 .all(|n| notice_cursor::PRODUCERS.contains(&n.as_str()))
+        );
+
+        pool.close().await;
+        let _ = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "DROP DATABASE \"{name}\" WITH (FORCE)"
+        )))
+        .execute(&admin)
+        .await;
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn sale_event(
+        pool: &PgPool,
+        block: i64,
+        log: i32,
+        kind: &str,
+        token: &str,
+        item: Option<&str>,
+        buyer: &str,
+        seller: Option<&str>,
+        price: Option<&str>,
+        tx: u8,
+    ) {
+        let bid = (kind != "mint").then(|| format!("0x{:064x}", block * 100 + i64::from(log)));
+        let emitter = if kind == "mint" {
+            COLLECTION
+        } else {
+            super::super::sales_index::BID_V2_MATIC
+        };
+        sqlx::query(
+            "INSERT INTO shop.sale_event (network, block_number, log_index, block_time, kind, emitter, contract_address, token_id, item_id, bid_id, buyer, seller, price, tx_hash) \
+             VALUES ('matic', $1, $2, 1700000000, $3, $4, $5, $6::numeric, $7::numeric, $8, $9, $10, $11::numeric, $12)",
+        )
+        .bind(block)
+        .bind(log)
+        .bind(kind)
+        .bind(emitter)
+        .bind(COLLECTION)
+        .bind(token)
+        .bind(item)
+        .bind(bid)
+        .bind(buyer)
+        .bind(seller)
+        .bind(price)
+        .bind(format!("0x{tx:064x}"))
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    async fn publish_sales(pool: &PgPool, block: i64) {
+        sqlx::query(
+            "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, fold_through, folded_block, folded_at, full_history) \
+             VALUES ('sales', 'matic', 1, $1, $1, $1, timezone('UTC', now()), true) \
+             ON CONFLICT (indexer, network) DO UPDATE SET last_block = $1, fold_through = $1, folded_block = $1, folded_at = timezone('UTC', now())",
+        )
+        .bind(block)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    /// The sales index's store mints tell the creator once per transaction
+    /// and a zero-price item nothing; a BidV2 acceptance tells its bidder
+    /// "Bid Accepted" and, when paid, its seller "Item Sold", all with
+    /// events-notifier's L2 metadata; history and replays notify nothing.
+    #[tokio::test]
+    async fn store_mints_and_bid_acceptances_notify_like_the_l2_pollers() {
+        let Ok(base_url) = std::env::var("CATALYST_TEST_DATABASE_URL") else {
+            return;
+        };
+        let opts: PgConnectOptions = base_url.parse().unwrap();
+        let admin = PgPoolOptions::new()
+            .max_connections(1)
+            .connect_with(opts.database("postgres"))
+            .await
+            .unwrap();
+        let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
+            return;
+        };
+        let name = pool.connect_options().get_database().unwrap().to_string();
+        seed_assets(&pool).await;
+        sqlx::query(
+            "INSERT INTO shop.items (network, contract_address, item_id, chain_id, item_type, urn, creator, rarity, total_supply, max_supply, available, price, image, name, category, body_shapes, search_is_collection_approved, created_at, updated_at, reviewed_at, mirrored_at) \
+             VALUES ('matic', $1, 1, 137, 'emote_v1', 'urn:coll:1', $2, 'rare', 1, 100, 99, 0, 'https://img/1', 'Wave', 'dance', ARRAY['BaseMale'], true, 1, 1, 1, timezone('UTC', now()))",
+        )
+        .bind(COLLECTION)
+        .bind(CREATOR)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let links = Links {
+            marketplace: "https://market.example".into(),
+            land_images: "https://api.example".into(),
+        };
+        // Item 1's token 2^216 + 3.
+        let item1_token = "105312291668557186697918027683670432318895095400549111254310977539";
+
+        sale_event(&pool, 90, 0, "mint", "7", Some("0"), BUYER, None, None, 1).await;
+        publish_sales(&pool, 100).await;
+        assert_eq!(
+            run_once(&pool, &links, Utc::now()).await.unwrap().emitted,
+            0,
+            "the first pass starts at the published block"
+        );
+
+        // Two store mints of the creator's item in one transaction.
+        sale_event(&pool, 101, 0, "mint", "8", Some("0"), BUYER, None, None, 2).await;
+        sale_event(&pool, 101, 1, "mint", "9", Some("0"), BUYER, None, None, 2).await;
+        // A free item's mint, a paid bid, a zero-price bid, a mint past the head.
+        sale_event(
+            &pool,
+            102,
+            0,
+            "mint",
+            item1_token,
+            Some("1"),
+            BUYER,
+            None,
+            None,
+            3,
+        )
+        .await;
+        sale_event(
+            &pool,
+            103,
+            0,
+            "bid_accepted",
+            "7",
+            None,
+            BUYER,
+            Some(SELLER),
+            Some("1500000000000000000"),
+            4,
+        )
+        .await;
+        sale_event(
+            &pool,
+            104,
+            0,
+            "bid_accepted",
+            item1_token,
+            None,
+            BUYER,
+            Some(SELLER),
+            Some("0"),
+            5,
+        )
+        .await;
+        sale_event(&pool, 150, 0, "mint", "10", Some("0"), BUYER, None, None, 6).await;
+        publish_sales(&pool, 120).await;
+
+        assert_eq!(
+            run_once(&pool, &links, Utc::now()).await.unwrap().emitted,
+            4
+        );
+        assert_eq!(
+            run_once(&pool, &links, Utc::now()).await.unwrap().emitted,
+            0,
+            "nothing twice"
+        );
+
+        let sold = stored(&pool, KIND_ITEM_SOLD).await;
+        assert_eq!(sold.len(), 2);
+        let mint = sold.iter().find(|(a, _)| a == CREATOR).unwrap();
+        assert_eq!(
+            mint.1,
+            json!({
+                "image": "https://img/0", "seller": CREATOR, "category": "wearable", "rarity": "epic",
+                "link": format!("https://market.example/contracts/{COLLECTION}/tokens/8"), "nftName": "Shoes",
+                "title": "Item Sold", "description": "You just sold this Shoes.", "network": "polygon",
+            })
+        );
+        let bid_sale = sold.iter().find(|(a, _)| a == SELLER).unwrap();
+        assert_eq!(bid_sale.1["seller"], SELLER);
+        assert_eq!(bid_sale.1["description"], "You just sold this Shoes.");
+        assert_eq!(
+            bid_sale.1["link"],
+            format!("https://market.example/contracts/{COLLECTION}/tokens/7")
+        );
+
+        let bids = stored(&pool, KIND_BID_ACCEPTED).await;
+        assert_eq!(bids.len(), 2);
+        assert!(bids.iter().all(|(a, _)| a == BUYER));
+        let paid = bids.iter().find(|(_, m)| m["price"] != "0").unwrap();
+        let free = bids.iter().find(|(_, m)| m["price"] == "0").unwrap();
+        assert_eq!(
+            paid.1,
+            json!({
+                "image": "https://img/0", "seller": SELLER, "category": "wearable", "rarity": "epic",
+                "link": format!("https://market.example/contracts/{COLLECTION}/tokens/7"), "nftName": "Shoes",
+                "price": "1500000000000000000", "title": "Bid Accepted",
+                "description": "Your bid for 1.50 MANA for this Shoes was accepted.", "network": "polygon",
+            })
+        );
+        assert_eq!(free.1["category"], "emote");
+
+        sqlx::query(
+            "UPDATE shop.notification_cursor SET block_number = 100, log_index = 2147483647 WHERE producer LIKE 'sales:%'",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            run_once(&pool, &links, Utc::now()).await.unwrap().emitted,
+            0,
+            "a replayed page inserts nothing twice"
         );
 
         pool.close().await;
