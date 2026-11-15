@@ -7,6 +7,11 @@ import { rendererExpose } from '../preload/expose-plugin.js';
 const PACKAGE_ROOT = import.meta.dirname;
 const PACKAGE_DIR = join(PACKAGE_ROOT, '..');
 
+// The renderer tests run in UTC, so a date that code makes in local time does not depend on the
+// zone of the machine. This file runs before Vitest starts a worker, which is where Vitest says to
+// set the zone: a worker thread does not apply a `TZ` that a setup file or `test.env` gives it.
+if (process.env.VITEST) process.env.TZ = 'UTC';
+
 /**
  * @type {import('vite').UserConfig}
  * @see https://vitejs.dev/config/

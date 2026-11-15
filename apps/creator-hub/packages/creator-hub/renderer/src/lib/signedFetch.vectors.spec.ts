@@ -27,6 +27,12 @@ import { signedFetchFactory, signedHeaders } from './signedFetch';
  * the methods, paths, queries and metadata this app sends. `validSignature` records that
  * `Authenticator.validateSignature` accepted the chain.
  *
+ * Time zone: the replaced packages add the minutes of an expiration to the local clock, and
+ * `createIdentity` does the same. The script set `TZ=UTC` for its own process (`clock.timeZone`),
+ * so the vectors do not depend on the zone of the machine that made them, and the renderer tests
+ * run in UTC (`renderer/vite.config.js`). The `localTime` cases are the exception: the script made
+ * each one in the zone it names, to record how the expiration moves when the clocks change.
+ *
  * The keys are throwaway test keys made for the fixture. Nothing here uses a real wallet or a
  * server. The suite runs in Node so `Headers`, `Request` and `URL` are the platform ones.
  */
@@ -54,6 +60,16 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers();
+});
+
+describe('when the suite reads the local clock', () => {
+  it('should be in the time zone of the vectors', () => {
+    const longest = Math.max(...vectors.identities.map(vector => vector.minutes ?? 0));
+
+    expect(vectors.clock.timeZone).toEqual('UTC');
+    expect(new Date().getTimezoneOffset()).toBe(0);
+    expect(new Date(vectors.clock.now + longest * 60_000).getTimezoneOffset()).toBe(0);
+  });
 });
 
 describe('when making the keys of an identity', () => {
@@ -96,6 +112,38 @@ describe('when making an identity', () => {
     expect(signer).toHaveBeenCalledWith(vector.signedMessage);
     expect(JSON.stringify(identity)).toEqual(JSON.stringify(vector.identity));
   });
+});
+
+/**
+ * The expiration is the local clock plus the minutes. When the clocks of the zone change in that
+ * span, the expiration is not `minutes` after now: it moves by the change. The replaced packages
+ * did the same, and each case records what they gave in its zone. The test changes the zone of its
+ * own process, so it needs a pool that gives each worker a process (`forks`, the default).
+ */
+describe('when the clocks of the time zone change before the expiration', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it.each(vectors.localTime)(
+    'should move the expiration by that change for "$name"',
+    async vector => {
+      vi.stubEnv('TZ', vector.timeZone);
+      const minutesLater = vectors.clock.now + vector.minutes * 60_000;
+
+      const { expiration } = await createIdentity(
+        keysNamed('owner').address,
+        keysNamed(vector.ephemeralKey),
+        vector.minutes,
+        async () => vectors.contractWalletSignature,
+      );
+
+      const change = expiration.getTimezoneOffset() - new Date().getTimezoneOffset();
+      expect(change).toEqual(vector.shiftMinutes);
+      expect(expiration.getTime() - minutesLater).toEqual(change * 60_000);
+      expect(expiration.toISOString()).toEqual(vector.expiration);
+    },
+  );
 });
 
 describe('when signing a payload', () => {

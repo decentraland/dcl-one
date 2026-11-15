@@ -119,6 +119,18 @@ promise) then hangs to the 5s test timeout with no indication why.
 `debounce` and `debounceByKey` suites enable them and never restore, so anything
 added below needs its own `beforeEach(() => vi.useRealTimers())`.
 
+### The renderer tests run in UTC
+
+`packages/creator-hub/renderer/vite.config.js` sets `TZ=UTC` before Vitest
+starts a worker, so a date that code makes in local time is the same on every
+machine. `createIdentity` (`renderer/src/lib/identity.ts`) is the live case: it
+adds the minutes of an expiration to the local clock, so a span that crosses a
+clock change gives another instant in each zone. A test that needs another zone
+sets it for itself with `vi.stubEnv('TZ', …)` and restores it with
+`vi.unstubAllEnvs()`, as `renderer/src/lib/signedFetch.vectors.spec.ts` does.
+That works only where each worker is a process (`forks`, the default pool). The
+main, preload and shared suites do not set a zone.
+
 ### `getByRole` does not work inside the shared `Block` wrapper
 
 Under happy-dom the whole subtree reports "There are no accessible roles", and

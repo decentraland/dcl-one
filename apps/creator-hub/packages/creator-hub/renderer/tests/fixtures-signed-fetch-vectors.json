@@ -7,7 +7,8 @@
   },
   "clock": {
     "now": 1773500966535,
-    "iso": "2026-03-14T15:09:26.535Z"
+    "iso": "2026-03-14T15:09:26.535Z",
+    "timeZone": "UTC"
   },
   "throwawayTestKeys": {
     "owner": {
@@ -67,14 +68,14 @@
       "ephemeralKey": "otherEphemeral",
       "minutes": 44640,
       "ownerSignsWith": "owner key",
-      "signedMessage": "Decentraland Login\nEphemeral address: 0xfcd9076AbAF038FFCb05F06509C688c687F4b9AE\nExpiration: 2026-04-14T14:09:26.535Z",
+      "signedMessage": "Decentraland Login\nEphemeral address: 0xfcd9076AbAF038FFCb05F06509C688c687F4b9AE\nExpiration: 2026-04-14T15:09:26.535Z",
       "identity": {
         "ephemeralIdentity": {
           "privateKey": "fa8f4c5ddcca512e85388e46f9f9f23acb05fa278a38d37ba1338e3291c5709d",
           "publicKey": "ebd12cced3c37789224fa8369d1d9c2d2ab2a13c80e3abd7de342f5d82e1b68a2df4e455eda1767230417675fde6588bfabca611f21f4b30fdcc688f67992398",
           "address": "0xfcd9076AbAF038FFCb05F06509C688c687F4b9AE"
         },
-        "expiration": "2026-04-14T14:09:26.535Z",
+        "expiration": "2026-04-14T15:09:26.535Z",
         "authChain": [
           {
             "type": "SIGNER",
@@ -83,8 +84,8 @@
           },
           {
             "type": "ECDSA_EPHEMERAL",
-            "payload": "Decentraland Login\nEphemeral address: 0xfcd9076AbAF038FFCb05F06509C688c687F4b9AE\nExpiration: 2026-04-14T14:09:26.535Z",
-            "signature": "0xe2152f9e3bb779a3625e9329505eb09a13bb57b8e9971ee76c65ae8c354e84c9675e89c847d02214c4c38f98ddcb4fc5edde39a0222a970b30420d3d6d8c99321c"
+            "payload": "Decentraland Login\nEphemeral address: 0xfcd9076AbAF038FFCb05F06509C688c687F4b9AE\nExpiration: 2026-04-14T15:09:26.535Z",
+            "signature": "0x92a74287f479a9d1d10c2dc8b5abf2836a2e1bb2365cd735aeec88fd5247844226e8490997d7afbe1b5b51b1ce48289cd103f4da64785d7b3d5ad259582aaa7e1b"
           }
         ]
       }
@@ -142,6 +143,24 @@
           }
         ]
       }
+    }
+  ],
+  "localTime": [
+    {
+      "name": "clocks go forward in the span",
+      "timeZone": "Europe/Berlin",
+      "ephemeralKey": "otherEphemeral",
+      "minutes": 44640,
+      "shiftMinutes": -60,
+      "expiration": "2026-04-14T14:09:26.535Z"
+    },
+    {
+      "name": "clocks go back by half an hour in the span",
+      "timeZone": "Australia/Lord_Howe",
+      "ephemeralKey": "otherEphemeral",
+      "minutes": 44640,
+      "shiftMinutes": 30,
+      "expiration": "2026-04-14T15:39:26.535Z"
     }
   ],
   "payloads": [
@@ -225,8 +244,8 @@
         },
         {
           "type": "ECDSA_EPHEMERAL",
-          "payload": "Decentraland Login\nEphemeral address: 0xfcd9076AbAF038FFCb05F06509C688c687F4b9AE\nExpiration: 2026-04-14T14:09:26.535Z",
-          "signature": "0xe2152f9e3bb779a3625e9329505eb09a13bb57b8e9971ee76c65ae8c354e84c9675e89c847d02214c4c38f98ddcb4fc5edde39a0222a970b30420d3d6d8c99321c"
+          "payload": "Decentraland Login\nEphemeral address: 0xfcd9076AbAF038FFCb05F06509C688c687F4b9AE\nExpiration: 2026-04-14T15:09:26.535Z",
+          "signature": "0x92a74287f479a9d1d10c2dc8b5abf2836a2e1bb2365cd735aeec88fd5247844226e8490997d7afbe1b5b51b1ce48289cd103f4da64785d7b3d5ad259582aaa7e1b"
         },
         {
           "type": "ECDSA_SIGNED_ENTITY",
@@ -578,7 +597,7 @@
         ],
         [
           "x-identity-auth-chain-1",
-          "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0xfcd9076AbAF038FFCb05F06509C688c687F4b9AE\\nExpiration: 2026-04-14T14:09:26.535Z\",\"signature\":\"0xe2152f9e3bb779a3625e9329505eb09a13bb57b8e9971ee76c65ae8c354e84c9675e89c847d02214c4c38f98ddcb4fc5edde39a0222a970b30420d3d6d8c99321c\"}"
+          "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0xfcd9076AbAF038FFCb05F06509C688c687F4b9AE\\nExpiration: 2026-04-14T15:09:26.535Z\",\"signature\":\"0x92a74287f479a9d1d10c2dc8b5abf2836a2e1bb2365cd735aeec88fd5247844226e8490997d7afbe1b5b51b1ce48289cd103f4da64785d7b3d5ad259582aaa7e1b\"}"
         ],
         [
           "x-identity-auth-chain-2",
