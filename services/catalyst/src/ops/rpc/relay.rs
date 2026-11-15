@@ -23,6 +23,10 @@ const MAX_UPSTREAM_BODY: usize = 16 * 1024 * 1024;
 /// slots unanswered.
 const FALLBACK_CONCURRENCY: usize = 8;
 
+/// How long the per-element fallback of one batch may run; slots still
+/// unanswered then get a `-32603` error.
+const FALLBACK_BUDGET: Duration = UPSTREAM_TIMEOUT;
+
 fn rpc_error(id: Value, code: i64, message: &str) -> Value {
     json!({
         "jsonrpc": "2.0",
@@ -113,6 +117,9 @@ fn remember(state: &State, memo: Option<(String, Duration)>, body: &Value) {
 #[derive(Debug)]
 enum PostError {
     Transport(String),
+    /// The answer could not be read whole: over `MAX_UPSTREAM_BODY` or cut
+    /// off. Never retried per element.
+    Unreadable(String),
     InvalidJson(String),
 }
 
@@ -120,6 +127,7 @@ impl std::fmt::Display for PostError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Transport(error) => write!(f, "Upstream request failed: {error}"),
+            Self::Unreadable(error) => write!(f, "Upstream response unreadable: {error}"),
             Self::InvalidJson(error) => write!(f, "Upstream returned invalid JSON: {error}"),
         }
     }
@@ -151,7 +159,7 @@ async fn post_json(state: &State, upstream: &str, body: &Value) -> Result<Value,
     };
     let bytes = crate::http::read_body_capped(resp, MAX_UPSTREAM_BODY)
         .await
-        .map_err(|e| PostError::InvalidJson(e.to_string()))?;
+        .map_err(|e| PostError::Unreadable(e.to_string()))?;
     serde_json::from_slice(&bytes)
         .map_err(|_| PostError::InvalidJson("error decoding response body".into()))
 }
@@ -177,8 +185,13 @@ async fn forward(state: &State, upstream: &str, id: Value, req: Value) -> Value 
 
 /// One upstream batch with ids rewritten to slot indexes; anything the batch
 /// does not answer falls back to per-element forwards, at most
-/// `FALLBACK_CONCURRENCY` at a time.
-async fn forward_batch(state: &Shared, upstream: &str, items: &[Forward]) -> Vec<Value> {
+/// `FALLBACK_CONCURRENCY` at a time and for at most `budget` in all.
+async fn forward_batch(
+    state: &Shared,
+    upstream: &str,
+    items: &[Forward],
+    budget: Duration,
+) -> Vec<Value> {
     if items.len() == 1 {
         return vec![forward(state, upstream, items[0].id.clone(), items[0].req.clone()).await];
     }
@@ -195,7 +208,7 @@ async fn forward_batch(state: &Shared, upstream: &str, items: &[Forward]) -> Vec
         .collect();
     let body = match post_json(state, upstream, &Value::Array(wire)).await {
         Ok(body) => Some(body),
-        Err(error @ PostError::Transport(_)) => {
+        Err(error @ (PostError::Transport(_) | PostError::Unreadable(_))) => {
             let message = error.to_string();
             return items
                 .iter()
@@ -231,10 +244,18 @@ async fn forward_batch(state: &Shared, upstream: &str, items: &[Forward]) -> Vec
             )
         })
         .buffer_unordered(FALLBACK_CONCURRENCY);
-    while let Some((i, body)) = retries.next().await {
+    let deadline = tokio::time::Instant::now() + budget;
+    while let Ok(Some((i, body))) = tokio::time::timeout_at(deadline, retries.next()).await {
         out[i] = Some(body);
     }
-    out.into_iter().flatten().collect()
+    out.into_iter()
+        .zip(items)
+        .map(|(body, item)| {
+            body.unwrap_or_else(|| {
+                rpc_error(item.id.clone(), -32603, "Upstream did not answer in time")
+            })
+        })
+        .collect()
 }
 
 pub async fn handle_payload(state: &Shared, network: &str, payload: Value) -> Value {
@@ -265,8 +286,13 @@ pub async fn handle_payload(state: &Shared, network: &str, payload: Value) -> Va
                 }
             }
             if !forwards.is_empty() {
-                let bodies =
-                    forward_batch(state, upstream.as_deref().unwrap_or(""), &forwards).await;
+                let bodies = forward_batch(
+                    state,
+                    upstream.as_deref().unwrap_or(""),
+                    &forwards,
+                    FALLBACK_BUDGET,
+                )
+                .await;
                 for ((slot, item), body) in slots.into_iter().zip(forwards).zip(bodies) {
                     remember(state, item.memo, &body);
                     out[slot] = Some(body);
@@ -399,6 +425,8 @@ pub(super) mod tests {
         Complete,
         Unsupported,
         Body(axum::http::StatusCode, &'static str),
+        /// Batches as `Unsupported`; single requests are never answered.
+        Hang,
     }
 
     async fn mock_upstream_with_reply(batch_reply: BatchReply) -> (String, Upstream) {
@@ -424,7 +452,11 @@ pub(super) mod tests {
                     k.fetch_max(f.fetch_add(1, Ordering::SeqCst) + 1, Ordering::SeqCst);
                     if payload.is_object() {
                         // Hold single requests briefly so overlapping ones are seen.
-                        tokio::time::sleep(Duration::from_millis(10)).await;
+                        let hold = match batch_reply {
+                            BatchReply::Hang => Duration::from_secs(3600),
+                            _ => Duration::from_millis(10),
+                        };
+                        tokio::time::sleep(hold).await;
                     }
                     f.fetch_sub(1, Ordering::SeqCst);
                     let reply = match &payload {
@@ -432,7 +464,7 @@ pub(super) mod tests {
                             BatchReply::Complete => {
                                 Value::Array(items.iter().map(answer).collect())
                             }
-                            BatchReply::Unsupported => json!({
+                            BatchReply::Unsupported | BatchReply::Hang => json!({
                                 "jsonrpc": "2.0", "id": null,
                                 "error": { "code": -32600, "message": "batch not supported" }
                             }),
@@ -556,6 +588,66 @@ pub(super) mod tests {
             (1..=FALLBACK_CONCURRENCY).contains(&peak),
             "{peak} requests in flight"
         );
+    }
+
+    #[tokio::test]
+    async fn the_per_element_fallback_stops_at_its_budget() {
+        let (url, upstream) = mock_upstream_with_reply(BatchReply::Hang).await;
+        let state = test_state(&[("polygon", &url)]);
+        let items: Vec<Forward> = (0..3)
+            .map(|i| Forward {
+                id: json!(i),
+                req: json!({ "id": i, "method": "eth_getBalance", "params": ["0x1", "latest"] }),
+                memo: None,
+            })
+            .collect();
+        let started = std::time::Instant::now();
+        let out = forward_batch(&state, &url, &items, Duration::from_millis(200)).await;
+        assert!(started.elapsed() < Duration::from_secs(5));
+        assert_eq!(upstream.posts.load(Ordering::SeqCst), 4);
+        for (i, item) in out.iter().enumerate() {
+            assert_eq!(item["id"], json!(i));
+            assert_eq!(item["error"]["code"], json!(-32603));
+        }
+    }
+
+    /// An answer over the cap fails every slot after the one batch call,
+    /// with no per-element retry.
+    #[tokio::test]
+    async fn an_over_cap_batch_answer_is_not_retried_per_element() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/", listener.local_addr().unwrap());
+        let posts = Arc::new(AtomicUsize::new(0));
+        let received = posts.clone();
+        let server = tokio::spawn(async move {
+            loop {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut buffer = [0; 4096];
+                assert!(socket.read(&mut buffer).await.unwrap() > 0);
+                received.fetch_add(1, Ordering::SeqCst);
+                let head = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n",
+                    MAX_UPSTREAM_BODY + 1
+                );
+                socket.write_all(head.as_bytes()).await.unwrap();
+                socket.shutdown().await.unwrap();
+            }
+        });
+        let state = test_state(&[("polygon", &url)]);
+        let out = handle_payload(&state, "polygon", balance_batch(3)).await;
+        server.abort();
+        assert_eq!(posts.load(Ordering::SeqCst), 1);
+        for (i, item) in out.as_array().unwrap().iter().enumerate() {
+            assert_eq!(item["id"], json!(i));
+            assert_eq!(item["error"]["code"], json!(-32603));
+            let message = item["error"]["message"].as_str().unwrap();
+            assert!(
+                message.starts_with("Upstream response unreadable"),
+                "{message}"
+            );
+        }
     }
 
     #[tokio::test]

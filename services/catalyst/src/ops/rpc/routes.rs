@@ -50,6 +50,7 @@ async fn ws_upgrade(
     ws: WebSocketUpgrade,
 ) -> Response {
     ws.max_message_size(MAX_WS_MESSAGE_BYTES)
+        .max_frame_size(MAX_WS_MESSAGE_BYTES)
         .on_upgrade(move |socket| handle_socket(socket, state, network))
 }
 
@@ -334,5 +335,31 @@ mod tests {
         assert_eq!(replies[2][0]["id"], json!("b"));
         assert_eq!(replies[2][0]["result"], json!("0x10"));
         ws.close(None).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn the_websocket_refuses_a_message_over_the_limit() {
+        let (url, upstream) = mock_upstream(true).await;
+        let app = crate::ops::rpc::router(test_state(&[("polygon", &url)]));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(axum::serve(listener, app).into_future());
+        let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/polygon"))
+            .await
+            .unwrap();
+        let oversized = " ".repeat(MAX_WS_MESSAGE_BYTES + 1);
+        // The server may drop the socket while the frame is still being written.
+        let _ = ws
+            .send(tokio_tungstenite::tungstenite::Message::Text(
+                oversized.into(),
+            ))
+            .await;
+        while let Some(Ok(message)) = ws.next().await {
+            assert!(
+                !message.is_text(),
+                "an oversized message must not be answered"
+            );
+        }
+        assert_eq!(upstream.posts.load(std::sync::atomic::Ordering::SeqCst), 0);
     }
 }
