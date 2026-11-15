@@ -115,18 +115,31 @@ describe("TurnstileWidget", () => {
     });
 
     describe("and it loads without defining the API", () => {
+      let failed: Element;
+      let render: Mock<TurnstileApi["render"]>;
+
       beforeEach(async () => {
         renderWidget();
+        failed = scripts()[0]!;
+        act(() => {
+          failed.dispatchEvent(new Event("load"));
+        });
+        await waitFor(() => expect(onLoadError).toHaveBeenCalledOnce());
+        cleanup();
+        render = vi.fn();
+        renderWidget();
+      });
+
+      it("should add a new script on the next mount", () => {
+        expect(scripts()[0]).not.toBe(failed);
+      });
+
+      it("should render the challenge once the new script defines the API", async () => {
+        window.turnstile = { render, remove: vi.fn() };
         act(() => {
           scripts()[0]!.dispatchEvent(new Event("load"));
         });
-        await waitFor(() => expect(onLoadError).toHaveBeenCalledOnce());
-      });
-
-      it("should load the script again on the next mount", () => {
-        cleanup();
-        renderWidget();
-        expect(scripts()).toHaveLength(1);
+        await waitFor(() => expect(render).toHaveBeenCalledOnce());
       });
     });
   });
