@@ -1,6 +1,7 @@
 //! One round trip that claims an idempotency key before a broadcast:
 //! `claimed` when this call inserted the row, `rearmed` when a prior 'error'
-//! row was reset to 'pending', otherwise the pre-existing row's
+//! row (or, for a broker purchase, a stale 'pending' one; see
+//! [`claim_broker_purchase`]) was reset to 'pending', otherwise the pre-existing row's
 //! `status`/`tx_hash`. Both `None` with nothing claimed means another claim
 //! landed concurrently, read as in flight. `$now` is the request clock.
 
@@ -65,33 +66,59 @@ pub async fn claim_escrow_action(
     .await
 }
 
-pub struct NamePurchaseClaim<'a> {
+/// A `shop.broker_purchases` claim (a wearable buy or a NAME buy; a NAME
+/// buy keeps the registrar in `collection` and the label in `item_id`).
+pub struct BrokerPurchaseClaim<'a> {
     pub key: &'a str,
-    pub registrar: &'a str,
-    pub name: Option<&'a str>,
+    pub collection: &'a str,
+    pub item_id: Option<&'a str>,
     pub token_id: Option<&'a str>,
     pub buyer_address: &'a str,
-    pub custody_address: &'a str,
+    pub escrow_address: &'a str,
     pub price_wei: &'a str,
     pub chain_id: i64,
     pub mode: &'a str,
+    pub trade_hashed_signature: Option<&'a str>,
+    pub usd_amount_wei: Option<&'a str>,
+    pub mana_usd_rate_wei: Option<&'a str>,
 }
 
-pub async fn claim_name_purchase(
+/// How long a broker claim may stay `pending` before a new caller may take
+/// it over: longer than one signing (estimate, nonce, fees) under the send
+/// lock. Taking over is safe at any age, because a transaction is sent only
+/// after its record, which is fenced on the claim's `status = 'pending'` and
+/// `updated_at`; the delay only spares an in-flight caller.
+pub const BROKER_PENDING_TAKEOVER_SECS: i64 = 120;
+
+/// Claims a broker purchase. Every claim this binary makes is `write_ahead`:
+/// its transaction is recorded before it is broadcast, so a `write_ahead`
+/// claim with no recorded `tx_hash` provably sent nothing. Only such a claim
+/// is re-armed: one marked `error` (its signing failed), or one left
+/// `pending` for [`BROKER_PENDING_TAKEOVER_SECS`] (its caller stopped before
+/// recording). A re-armed row takes this request's columns, so the row
+/// describes the transaction it will record. The claimant fences its writes
+/// on `updated_at = $now`.
+pub async fn claim_broker_purchase(
     pool: &PgPool,
-    claim: &NamePurchaseClaim<'_>,
+    claim: &BrokerPurchaseClaim<'_>,
     now: NaiveDateTime,
 ) -> Result<Claim, sqlx::Error> {
     sqlx::query_as(
         "WITH claim AS (\
            INSERT INTO shop.broker_purchases \
-           (idempotency_key, collection, item_id, token_id, buyer_address, escrow_address, price_wei, chain_id, mode, status, created_at, updated_at) \
-           VALUES ($1, $2, $3, $4, $5, $6, $7::numeric, $8, $9, 'pending', $10, $10) \
+           (idempotency_key, collection, item_id, token_id, buyer_address, escrow_address, price_wei, chain_id, mode, \
+            trade_hashed_signature, usd_amount_wei, mana_usd_rate_wei, status, write_ahead, created_at, updated_at) \
+           VALUES ($1, $2, $3, $4, $5, $6, $7::numeric, $8, $9, $10, $11::numeric, $12::numeric, 'pending', true, $13, $13) \
            ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING \
            RETURNING id\
          ), rearm AS (\
-           UPDATE shop.broker_purchases SET status = 'pending', updated_at = $10 \
-           WHERE idempotency_key = $1 AND status = 'error' AND NOT EXISTS (SELECT 1 FROM claim) \
+           UPDATE shop.broker_purchases SET status = 'pending', updated_at = $13, \
+             collection = $2, item_id = $3, token_id = $4, buyer_address = $5, escrow_address = $6, \
+             price_wei = $7::numeric, chain_id = $8, mode = $9, trade_hashed_signature = $10, \
+             usd_amount_wei = $11::numeric, mana_usd_rate_wei = $12::numeric \
+           WHERE idempotency_key = $1 AND write_ahead AND tx_hash IS NULL \
+             AND (status = 'error' OR (status = 'pending' AND updated_at < $13 - make_interval(secs => $14))) \
+             AND NOT EXISTS (SELECT 1 FROM claim) \
            RETURNING id\
          ) \
          SELECT EXISTS (SELECT 1 FROM claim) AS claimed, EXISTS (SELECT 1 FROM rearm) AS rearmed, \
@@ -100,15 +127,19 @@ pub async fn claim_name_purchase(
          LEFT JOIN shop.broker_purchases AS prior ON prior.idempotency_key = $1",
     )
     .bind(claim.key)
-    .bind(claim.registrar)
-    .bind(claim.name)
+    .bind(claim.collection)
+    .bind(claim.item_id)
     .bind(claim.token_id)
     .bind(claim.buyer_address)
-    .bind(claim.custody_address)
+    .bind(claim.escrow_address)
     .bind(claim.price_wei)
     .bind(claim.chain_id)
     .bind(claim.mode)
+    .bind(claim.trade_hashed_signature)
+    .bind(claim.usd_amount_wei)
+    .bind(claim.mana_usd_rate_wei)
     .bind(now)
+    .bind(BROKER_PENDING_TAKEOVER_SECS as f64)
     .fetch_one(pool)
     .await
 }

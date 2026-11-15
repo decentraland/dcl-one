@@ -111,6 +111,13 @@ enum Fees {
     },
 }
 
+/// A signed transaction ready to send: its hash and its raw bytes as `0x` hex.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SignedTx {
+    pub hash: String,
+    pub raw: String,
+}
+
 pub struct DirectSigner {
     chain: Arc<ChainComponent>,
     signer: PrivateKeySigner,
@@ -333,7 +340,83 @@ impl DirectSigner {
         log_msg: &'static str,
     ) -> Result<String, ApiError> {
         let _guard = self.send_lock.lock().await;
+        let signed = self.sign_call(to, data).await?;
+        let tx_hash = self.send_raw(&signed.raw).await.map_err(|e| {
+            if e.is_execution_revert() {
+                ApiError::RelayReverted(format!("transaction reverted: {}", e.message()))
+            } else {
+                ApiError::RelayerFailed(format!("eth_sendRawTransaction failed: {e}"))
+            }
+        })?;
+        tracing::info!(tx_hash = %tx_hash, relayer = %self.relayer_address, "{log_msg}");
+        Ok(tx_hash)
+    }
 
+    /// Signs a contract call and hands it to `record` before anything is
+    /// sent: the caller persists the hash and the raw bytes, and only then
+    /// does the transaction go out. An `Err` from signing or from `record`
+    /// means nothing was broadcast. Once `record` succeeds, a failed send is
+    /// indeterminate (the node may hold the transaction) and answers
+    /// `RelayerTimeout`; the recorded bytes are re-sent with
+    /// [`Self::rebroadcast`], never replaced by a newly signed transaction.
+    /// The send lock is held from the nonce read through the send, so the
+    /// record step stays inside the nonce's critical section.
+    pub async fn send_direct_call_recorded<F, Fut>(
+        &self,
+        to: Address,
+        data: Bytes,
+        record: F,
+    ) -> Result<String, ApiError>
+    where
+        F: FnOnce(SignedTx) -> Fut,
+        Fut: std::future::Future<Output = Result<(), ApiError>>,
+    {
+        let _guard = self.send_lock.lock().await;
+        let signed = self.sign_call(to, data).await?;
+        let tx_hash = signed.hash.clone();
+        let raw = signed.raw.clone();
+        record(signed).await?;
+        if let Err(e) = self.send_raw(&raw).await {
+            tracing::warn!(tx_hash = %tx_hash, error = %e, "recorded transaction's broadcast failed; a resume re-sends it");
+            return Err(ApiError::RelayerTimeout(format!(
+                "transaction {tx_hash} is recorded but its broadcast failed ({e}); retry with the \
+                 same key to re-send it"
+            )));
+        }
+        tracing::info!(tx_hash = %tx_hash, relayer = %self.relayer_address, "broadcast recorded contract call via JSON-RPC");
+        Ok(tx_hash)
+    }
+
+    /// Re-sends a recorded transaction's exact bytes unless a receipt for
+    /// `tx_hash` already exists. A send error is logged, not returned: the
+    /// node answering "already known" or "nonce too low" is expected, and the
+    /// receipt alone decides the outcome.
+    pub async fn rebroadcast(&self, tx_hash: &str, raw_hex: &str) -> Result<(), ApiError> {
+        let (outcome, _) = self.fetch_receipt_once(tx_hash).await?;
+        if outcome != ReceiptOutcome::Pending {
+            return Ok(());
+        }
+        let raw = decode_hex(raw_hex.trim()).ok_or_else(|| {
+            ApiError::Internal(format!("recorded transaction {tx_hash} is not hex"))
+        })?;
+        let own = format!("{:#x}", alloy_primitives::keccak256(&raw));
+        if !own.eq_ignore_ascii_case(tx_hash.trim()) {
+            return Err(ApiError::Internal(format!(
+                "recorded transaction bytes hash to {own}, not {tx_hash}; not re-sending"
+            )));
+        }
+        match self.send_raw(raw_hex.trim()).await {
+            Ok(_) => tracing::info!(tx_hash = %tx_hash, "re-sent recorded transaction"),
+            Err(e) => {
+                tracing::warn!(tx_hash = %tx_hash, error = %e, "re-send of recorded transaction refused; its receipt decides")
+            }
+        }
+        Ok(())
+    }
+
+    /// Estimates, reads the pending nonce and the fees, and signs. Callers
+    /// hold `send_lock`.
+    async fn sign_call(&self, to: Address, data: Bytes) -> Result<SignedTx, ApiError> {
         let estimate = self
             .chain
             .estimate_gas(Some(self.relayer_address), to, &data)
@@ -374,22 +457,21 @@ impl DirectSigner {
         }
 
         let raw = self.sign(nonce, estimate, fees, to, data)?;
-        let hash = rpc
-            .call_hex(
-                "eth_sendRawTransaction",
-                json!([format!("0x{}", hex::encode(&raw))]),
-            )
-            .await
-            .map_err(|e| {
-                if e.is_execution_revert() {
-                    ApiError::RelayReverted(format!("transaction reverted: {}", e.message()))
-                } else {
-                    ApiError::RelayerFailed(format!("eth_sendRawTransaction failed: {e}"))
-                }
-            })?;
+        Ok(SignedTx {
+            hash: format!("{:#x}", alloy_primitives::keccak256(&raw)),
+            raw: format!("0x{}", hex::encode(&raw)),
+        })
+    }
+
+    /// `eth_sendRawTransaction`; the answer is our own hash or an error.
+    async fn send_raw(&self, raw_hex: &str) -> Result<String, RpcError> {
+        let hash = self
+            .chain
+            .rpc()
+            .call_hex("eth_sendRawTransaction", json!([raw_hex]))
+            .await?;
         let tx_hash = parse_tx_hash(&hash)
-            .map_err(|_| ApiError::RelayerFailed(format!("node answered a non-hash {hash:?}")))?;
-        tracing::info!(tx_hash = %tx_hash, relayer = %self.relayer_address, "{log_msg}");
+            .map_err(|_| RpcError::Transport(format!("node answered a non-hash {hash:?}")))?;
         Ok(format!("{tx_hash:#x}"))
     }
 

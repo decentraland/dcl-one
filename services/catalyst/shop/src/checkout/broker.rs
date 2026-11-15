@@ -2,6 +2,7 @@ use alloy_primitives::{Address, U256};
 use axum::Json;
 use axum::extract::State;
 use axum::http::HeaderMap;
+use chrono::NaiveDateTime;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -9,6 +10,9 @@ use crate::checkout::calls::{
     BrokerCall, PurchaseMode, build_forward_to_escrow, build_mana_approve, build_primary,
     build_secondary, minted_token_id_from_logs, parse_address, parse_item_id, parse_token_id,
     parse_wei, parse_wei_allow_zero,
+};
+use crate::checkout::claims::{
+    BROKER_PENDING_TAKEOVER_SECS, BrokerPurchaseClaim, claim_broker_purchase,
 };
 use crate::checkout::trade::{
     TradeDelivery, TradeExpectations, TradeIn, ValidatedTrade, build_trade_accept,
@@ -20,7 +24,7 @@ use crate::evm::errors::ApiError;
 use crate::evm::handlers::admin::require_admin;
 use crate::evm::handlers::{idempotency_key, require_broadcast_enabled};
 use crate::evm::oracle::{UsdPeggedExpectation, fetch_mana_usd_rate};
-use crate::evm::signer::{DirectSigner, ReceiptOutcome};
+use crate::evm::signer::{DirectSigner, ReceiptOutcome, SignedTx};
 use crate::types::ASSET_TYPE_USD_PEGGED_MANA;
 
 #[derive(Debug, Deserialize)]
@@ -272,30 +276,28 @@ pub async fn buy(
         .as_ref()
         .map(|v| format!("{:#x}", v.hashed_signature));
 
-    let claim = sqlx::query(
-        "INSERT INTO shop.broker_purchases \
-         (idempotency_key, collection, item_id, token_id, buyer_address, escrow_address, price_wei, chain_id, mode, trade_hashed_signature, usd_amount_wei, mana_usd_rate_wei, status) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7::numeric, $8, $9, $10, $11::numeric, $12::numeric, 'pending') \
-         ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING",
+    let claimed_at = crate::evm::now();
+    let claim = claim_broker_purchase(
+        &state.pool,
+        &BrokerPurchaseClaim {
+            key: &key,
+            collection: &collection_hex,
+            item_id: item_id_text.as_deref(),
+            token_id: token_id_text.as_deref(),
+            buyer_address: &buyer_hex,
+            escrow_address: &escrow_hex,
+            price_wei: &price_text,
+            chain_id: chain_id as i64,
+            mode: mode.as_str(),
+            trade_hashed_signature: trade_sig_hash.as_deref(),
+            usd_amount_wei: usd_amount_text.as_deref(),
+            mana_usd_rate_wei: usd_rate_text.as_deref(),
+        },
+        claimed_at,
     )
-    .bind(&key)
-    .bind(&collection_hex)
-    .bind(item_id_text.as_deref())
-    .bind(token_id_text.as_deref())
-    .bind(&buyer_hex)
-    .bind(&escrow_hex)
-    .bind(&price_text)
-    .bind(chain_id as i64)
-    .bind(mode.as_str())
-    .bind(trade_sig_hash.as_deref())
-    .bind(usd_amount_text.as_deref())
-    .bind(usd_rate_text.as_deref())
-    .execute(&state.pool)
     .await
     .map_err(|e| match &e {
-        sqlx::Error::Database(db)
-            if db.constraint() == Some("broker_purchases_trade_sig_uidx") =>
-        {
+        sqlx::Error::Database(db) if db.constraint() == Some("broker_purchases_trade_sig_uidx") => {
             ApiError::InvalidTransaction(
                 "this signed trade is already being (or has been) purchased under another \
                  request; a 1-use trade listing cannot be sold twice"
@@ -316,10 +318,10 @@ pub async fn buy(
         relayer,
         trade: validated_trade.as_ref(),
     };
-    let outcome = if claim.rows_affected() == 0 {
-        resume_existing(ctx).await?
+    let outcome = if claim.claimed || claim.rearmed {
+        drive_buy_then_forward(ctx, buy_call, token_id_for_secondary, claimed_at).await?
     } else {
-        drive_buy_then_forward(ctx, buy_call, token_id_for_secondary).await?
+        resume_existing(ctx).await?
     };
 
     tracing::info!(
@@ -432,22 +434,19 @@ struct BuyContext<'a> {
     trade: Option<&'a ValidatedTrade>,
 }
 
+/// Buys under the claim made at `claimed_at`: the buy is recorded ('sent',
+/// its hash and signed bytes) before it is broadcast, then confirmed and
+/// forwarded to escrow.
 async fn drive_buy_then_forward(
     ctx: BuyContext<'_>,
     buy_call: BrokerCall,
     token_id_secondary: Option<U256>,
+    claimed_at: NaiveDateTime,
 ) -> Result<BuyOutcome, ApiError> {
     let BuyContext {
         state, signer, key, ..
     } = ctx;
-    let buy_tx = match signer.send_direct_call(buy_call.to, buy_call.data).await {
-        Ok(h) => h,
-        Err(e) => {
-            mark_error(state, key).await;
-            return Err(e);
-        }
-    };
-    set_buy_sent(state, key, &buy_tx).await?;
+    let buy_tx = send_recorded_buy(state, signer, key, claimed_at, buy_call).await?;
 
     let token_id = confirm_buy(ctx, &buy_tx, token_id_secondary).await?;
     drive_forward(ctx, token_id).await
@@ -512,8 +511,12 @@ async fn drive_forward(ctx: BuyContext<'_>, token_id: U256) -> Result<BuyOutcome
         ..
     } = ctx;
     let fwd = build_forward_to_escrow(collection, relayer, escrow, token_id, buyer);
-    let fwd_tx = signer.send_direct_call(fwd.to, fwd.data).await?;
-    set_forwarding(state, key, &fwd_tx, &token_id.to_string()).await?;
+    let token_id_text = token_id.to_string();
+    let fwd_tx = signer
+        .send_direct_call_recorded(fwd.to, fwd.data, |signed| {
+            record_forward(state, key, signed, token_id_text)
+        })
+        .await?;
 
     let outcome = signer.await_receipt(&fwd_tx).await?;
     match outcome {
@@ -626,7 +629,8 @@ async fn resume_existing(ctx: BuyContext<'_>) -> Result<BuyOutcome, ApiError> {
         ..
     } = ctx;
     let row: ExistingRow = sqlx::query_as(
-        "SELECT status, tx_hash, forward_tx_hash, token_id, minted_token_id \
+        "SELECT status, tx_hash, forward_tx_hash, token_id, minted_token_id, signed_tx, \
+                forward_signed_tx, write_ahead \
          FROM shop.broker_purchases WHERE idempotency_key = $1",
     )
     .bind(key)
@@ -648,27 +652,26 @@ async fn resume_existing(ctx: BuyContext<'_>) -> Result<BuyOutcome, ApiError> {
         "reverted" => Err(ApiError::RelayReverted(format!(
             "broker buy {key:?} reverted on a prior attempt; not re-broadcasting"
         ))),
-        "error" => {
-            let rearmed = sqlx::query(
-                "UPDATE shop.broker_purchases SET status = 'pending', updated_at = timezone('UTC', now()) \
-                 WHERE idempotency_key = $1 AND status = 'error'",
-            )
-            .bind(key)
-            .execute(&state.pool)
-            .await?;
-            if rearmed.rows_affected() == 0 {
-                return Err(ApiError::Conflict(format!(
-                    "broker buy {key:?} changed state concurrently; retry"
-                )));
-            }
-            Err(ApiError::Conflict(format!(
-                "broker buy {key:?} previously failed before broadcast and was re-armed; retry to re-broadcast"
-            )))
-        }
+        // A `write_ahead` claim is re-armed by the claim in [`buy`], which
+        // has the request to build the transaction from; reaching here, it
+        // was taken by a concurrent caller, or it is a claim kept from before
+        // transactions were recorded ahead of their broadcast, whose failure
+        // cannot prove that nothing was sent.
+        "error" if row.write_ahead => Err(ApiError::Conflict(format!(
+            "broker buy {key:?} failed before broadcast; retry the buy request to buy it again"
+        ))),
+        "error" => Err(ApiError::Conflict(format!(
+            "broker buy {key:?} failed under a claim that did not record its transaction \
+             before sending; it may have been broadcast, so it is not bought again \u{2014} \
+             reconcile manually"
+        ))),
         "sent" => {
-            let buy_tx = row.tx_hash.ok_or_else(|| {
+            let buy_tx = row.tx_hash.clone().ok_or_else(|| {
                 ApiError::Internal(format!("broker buy {key:?} is 'sent' without a tx_hash"))
             })?;
+            if let Some(raw) = row.signed_tx.as_deref() {
+                signer.rebroadcast(&buy_tx, raw).await?;
+            }
             let token_id_secondary = match (mode, row.token_id.as_deref()) {
                 (PurchaseMode::Secondary, Some(t)) | (PurchaseMode::Trade, Some(t)) => {
                     Some(parse_token_id(t)?)
@@ -688,6 +691,9 @@ async fn resume_existing(ctx: BuyContext<'_>) -> Result<BuyOutcome, ApiError> {
                     "broker buy {key:?} is 'forwarding' without a forward_tx_hash"
                 ))
             })?;
+            if let Some(raw) = row.forward_signed_tx.as_deref() {
+                signer.rebroadcast(&fwd_tx, raw).await?;
+            }
             let outcome = signer.await_receipt(&fwd_tx).await?;
             match outcome {
                 ReceiptOutcome::Confirmed => {
@@ -710,9 +716,17 @@ async fn resume_existing(ctx: BuyContext<'_>) -> Result<BuyOutcome, ApiError> {
                 }
             }
         }
-        "pending" => Err(ApiError::Conflict(format!(
-            "broker buy {key:?} is in flight (status 'pending'); not re-broadcasting \u{2014} retry once it settles"
-        ))),
+        "pending" => {
+            if release_stale_pending(state, key).await? {
+                return Err(ApiError::Conflict(format!(
+                    "broker buy {key:?} stopped before its transaction was recorded, so nothing \
+                     was sent; it is marked failed and the next buy request buys it"
+                )));
+            }
+            Err(ApiError::Conflict(format!(
+                "broker buy {key:?} is in flight (status 'pending'); not re-broadcasting \u{2014} retry once it settles"
+            )))
+        }
         other => Err(ApiError::Conflict(format!(
             "broker buy {key:?} has unexpected status {other:?}; reconcile manually"
         ))),
@@ -789,43 +803,127 @@ struct ExistingRow {
     forward_tx_hash: Option<String>,
     token_id: Option<String>,
     minted_token_id: Option<String>,
+    signed_tx: Option<String>,
+    forward_signed_tx: Option<String>,
+    write_ahead: bool,
 }
 
-pub(crate) async fn set_buy_sent(
+/// Signs the claim's buy, records it (`sent`, its hash and signed bytes)
+/// and only then broadcasts it. The record is fenced on the claim made at
+/// `claimed_at` still being `pending`, so a caller whose claim was taken over
+/// sends nothing. A failure before the record leaves nothing sent and marks
+/// the claim `error`, which the next claim re-arms; after the record, the
+/// claim stays `sent` and a resume re-sends the recorded bytes.
+pub(crate) async fn send_recorded_buy(
+    state: &SharedState,
+    signer: &DirectSigner,
+    key: &str,
+    claimed_at: NaiveDateTime,
+    call: BrokerCall,
+) -> Result<String, ApiError> {
+    let sent = signer
+        .send_direct_call_recorded(call.to, call.data, |signed| {
+            record_buy(state, key, claimed_at, signed)
+        })
+        .await;
+    if sent.is_err() {
+        // Fenced on `pending` and the claim's clock: a no-op once recorded.
+        mark_error(state, key, claimed_at).await;
+    }
+    sent
+}
+
+async fn record_buy(
     state: &SharedState,
     key: &str,
-    buy_tx: &str,
+    claimed_at: NaiveDateTime,
+    signed: SignedTx,
 ) -> Result<(), ApiError> {
-    sqlx::query(
-        "UPDATE shop.broker_purchases SET tx_hash = $2, status = 'sent', updated_at = timezone('UTC', now()) \
-         WHERE idempotency_key = $1",
+    let recorded = sqlx::query(
+        "UPDATE shop.broker_purchases SET status = 'sent', tx_hash = $2, signed_tx = $3, \
+         updated_at = timezone('UTC', now()) \
+         WHERE idempotency_key = $1 AND status = 'pending' AND tx_hash IS NULL AND updated_at = $4",
     )
     .bind(key)
-    .bind(buy_tx)
+    .bind(&signed.hash)
+    .bind(&signed.raw)
+    .bind(claimed_at)
     .execute(&state.pool)
     .await?;
+    if recorded.rows_affected() == 0 {
+        return Err(ApiError::Conflict(format!(
+            "broker buy {key:?} was taken over before its transaction was recorded; nothing was \
+             sent by this request"
+        )));
+    }
     Ok(())
 }
 
-/// Records the forward leg together with the token it moves: the buy receipt is not
-/// written on its own ('bought' is left to the reconciler), so one write covers both.
-async fn set_forwarding(
+/// Records the forward leg (its hash, signed bytes and the token it moves)
+/// before it is broadcast; only one forward is ever recorded per claim.
+async fn record_forward(
     state: &SharedState,
     key: &str,
-    fwd_tx: &str,
-    token_id: &str,
+    signed: SignedTx,
+    token_id: String,
 ) -> Result<(), ApiError> {
-    sqlx::query(
+    let recorded = sqlx::query(
         "UPDATE shop.broker_purchases SET status = 'forwarding', forward_tx_hash = $2, \
-         minted_token_id = $3, updated_at = timezone('UTC', now()) \
-         WHERE idempotency_key = $1",
+         forward_signed_tx = $3, minted_token_id = $4, updated_at = timezone('UTC', now()) \
+         WHERE idempotency_key = $1 AND status IN ('sent', 'bought') AND forward_tx_hash IS NULL",
     )
     .bind(key)
-    .bind(fwd_tx)
-    .bind(token_id)
+    .bind(&signed.hash)
+    .bind(&signed.raw)
+    .bind(&token_id)
     .execute(&state.pool)
     .await?;
+    if recorded.rows_affected() == 0 {
+        return Err(ApiError::Conflict(format!(
+            "broker buy {key:?} already has a forward recorded or changed state; nothing was \
+             sent by this request"
+        )));
+    }
     Ok(())
+}
+
+/// Re-sends the buy leg recorded under `key`, unless it already has a
+/// receipt; a claim recorded without its bytes is left to its receipt.
+pub(crate) async fn rebroadcast_recorded_buy(
+    state: &SharedState,
+    signer: &DirectSigner,
+    key: &str,
+    tx_hash: &str,
+) -> Result<(), ApiError> {
+    let raw: Option<String> = sqlx::query_scalar(
+        "SELECT signed_tx FROM shop.broker_purchases WHERE idempotency_key = $1",
+    )
+    .bind(key)
+    .fetch_optional(&state.pool)
+    .await?
+    .flatten();
+    match raw {
+        Some(raw) => signer.rebroadcast(tx_hash, &raw).await,
+        None => Ok(()),
+    }
+}
+
+/// Marks a `write_ahead` claim `error` once it has stayed `pending` with no
+/// recorded transaction past the takeover delay: its caller stopped before
+/// recording, so nothing was sent. Fenced like the record, so an in-flight
+/// caller's record then fails and it sends nothing.
+async fn release_stale_pending(state: &SharedState, key: &str) -> Result<bool, ApiError> {
+    let released = sqlx::query(
+        "UPDATE shop.broker_purchases SET status = 'error', updated_at = $2 \
+         WHERE idempotency_key = $1 AND status = 'pending' AND write_ahead AND tx_hash IS NULL \
+           AND updated_at < $2 - make_interval(secs => $3)",
+    )
+    .bind(key)
+    .bind(crate::evm::now())
+    .bind(BROKER_PENDING_TAKEOVER_SECS as f64)
+    .execute(&state.pool)
+    .await?;
+    Ok(released.rows_affected() > 0)
 }
 
 async fn set_confirmed(state: &SharedState, key: &str) -> Result<(), ApiError> {
@@ -878,12 +976,13 @@ async fn reverted_or_pending_error(
     }
 }
 
-pub(crate) async fn mark_error(state: &SharedState, key: &str) {
+async fn mark_error(state: &SharedState, key: &str, claimed_at: NaiveDateTime) {
     if let Err(e) = sqlx::query(
         "UPDATE shop.broker_purchases SET status = 'error', updated_at = timezone('UTC', now()) \
-         WHERE idempotency_key = $1 AND status = 'pending'",
+         WHERE idempotency_key = $1 AND status = 'pending' AND tx_hash IS NULL AND updated_at = $2",
     )
     .bind(key)
+    .bind(claimed_at)
     .execute(&state.pool)
     .await
     {

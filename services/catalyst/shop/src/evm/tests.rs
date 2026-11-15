@@ -30,8 +30,8 @@ use super::meta_tx::{MetaTxStruct, meta_tx_digest};
 use super::transaction::{MetaTxSender, TransactionComponent};
 use super::{Settings, SharedState, State, now};
 use crate::checkout::claims::{
-    Claim, EscrowActionClaim, NamePurchaseClaim, NameTransferClaim, claim_escrow_action,
-    claim_name_purchase, claim_name_transfer,
+    BrokerPurchaseClaim, Claim, EscrowActionClaim, NameTransferClaim, claim_broker_purchase,
+    claim_escrow_action, claim_name_transfer,
 };
 use crate::http::Outbound;
 
@@ -969,25 +969,28 @@ async fn escrow_action_claims_cover_every_replay_state() {
 }
 
 #[tokio::test]
-async fn name_purchase_claims_cover_every_replay_state() {
+async fn broker_purchase_claims_cover_every_replay_state() {
     let Some(pool) = scratch_pool().await else {
         return;
     };
     let key = exercise(&pool, "broker_purchases", |key| {
         let pool = pool.clone();
         async move {
-            claim_name_purchase(
+            claim_broker_purchase(
                 &pool,
-                &NamePurchaseClaim {
+                &BrokerPurchaseClaim {
                     key: &key,
-                    registrar: ESCROW,
-                    name: Some("alice"),
+                    collection: ESCROW,
+                    item_id: Some("alice"),
                     token_id: None,
                     buyer_address: BUYER,
-                    custody_address: BUYER,
+                    escrow_address: BUYER,
                     price_wei: "100000000000000000000",
                     chain_id: 1,
                     mode: "name-mint",
+                    trade_hashed_signature: None,
+                    usd_amount_wei: None,
+                    mana_usd_rate_wei: None,
                 },
                 now(),
             )
@@ -3160,4 +3163,432 @@ async fn a_trial_relays_meta_transactions_for_its_buyers_only() {
     assert_eq!(raws.lock().unwrap().len(), 1);
     cleanup_user(&pool, &buyer_address).await;
     cleanup_user(&pool, &stranger_address).await;
+}
+
+/// A JSON-RPC chain whose failures a test scripts: the next `fail_nonce_reads`
+/// nonce reads fail (a failure before signing), the next `drop_sends`
+/// `eth_sendRawTransaction` calls fail without the node taking the
+/// transaction (as a crash between the record and the send leaves it). An
+/// accepted transaction mines at once; its receipt carries a mint of
+/// [`SCRIPTED_TOKEN`] on `mint`'s collection to its recipient when set.
+#[derive(Default)]
+struct ScriptedChain {
+    fail_nonce_reads: std::sync::atomic::AtomicU32,
+    drop_sends: std::sync::atomic::AtomicU32,
+    accepted: Mutex<Vec<Vec<u8>>>,
+    mint: Mutex<Option<(Address, Address)>>,
+}
+
+const SCRIPTED_TOKEN: u64 = 42;
+
+impl ScriptedChain {
+    fn take(counter: &std::sync::atomic::AtomicU32) -> bool {
+        use std::sync::atomic::Ordering;
+        let mut n = counter.load(Ordering::SeqCst);
+        while n > 0 {
+            match counter.compare_exchange(n, n - 1, Ordering::SeqCst, Ordering::SeqCst) {
+                Ok(_) => return true,
+                Err(now) => n = now,
+            }
+        }
+        false
+    }
+
+    fn accepted_hashes(&self) -> Vec<String> {
+        self.accepted
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|raw| format!("{:#x}", alloy_primitives::keccak256(raw)))
+            .collect()
+    }
+}
+
+async fn spawn_scripted_chain(chain: Arc<ScriptedChain>) -> String {
+    async fn handle(
+        axum::extract::State(chain): axum::extract::State<Arc<ScriptedChain>>,
+        Json(req): Json<Value>,
+    ) -> Json<Value> {
+        let id = req.get("id").cloned().unwrap_or(json!(1));
+        let ok = |v: Value| Json(json!({ "jsonrpc": "2.0", "id": id, "result": v }));
+        let fail = |message: &str| {
+            Json(
+                json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32000, "message": message } }),
+            )
+        };
+        match req.get("method").and_then(|m| m.as_str()).unwrap_or("") {
+            "eth_chainId" => ok(json!("0x89")),
+            "eth_estimateGas" => ok(json!("0x5208")),
+            "eth_gasPrice" => ok(json!("0x3b9aca00")),
+            "eth_maxPriorityFeePerGas" => ok(json!("0x59682f00")),
+            "eth_getBlockByNumber" => ok(
+                json!({ "number": "0x1", "baseFeePerGas": "0x3b9aca00", "timestamp": "0x6553f100" }),
+            ),
+            "eth_blockNumber" => ok(json!("0x50")),
+            "eth_getTransactionCount" => {
+                if ScriptedChain::take(&chain.fail_nonce_reads) {
+                    return fail("header not found");
+                }
+                ok(json!(format!(
+                    "{:#x}",
+                    chain.accepted.lock().unwrap().len()
+                )))
+            }
+            "eth_sendRawTransaction" => {
+                if ScriptedChain::take(&chain.drop_sends) {
+                    return fail("upstream request timeout");
+                }
+                let raw = req["params"][0].as_str().unwrap_or("");
+                let bytes = hex::decode(raw.trim_start_matches("0x")).unwrap_or_default();
+                let mut accepted = chain.accepted.lock().unwrap();
+                if accepted.contains(&bytes) {
+                    return fail("already known");
+                }
+                let hash = alloy_primitives::keccak256(&bytes);
+                accepted.push(bytes);
+                ok(json!(format!("{hash:#x}")))
+            }
+            "eth_getTransactionReceipt" => {
+                let hash = req["params"][0].as_str().unwrap_or("").to_lowercase();
+                if !chain.accepted_hashes().contains(&hash) {
+                    return ok(Value::Null);
+                }
+                let logs = match *chain.mint.lock().unwrap() {
+                    Some((collection, to)) => json!([{
+                        "address": format!("{collection:#x}"),
+                        "topics": [
+                            format!("0x{}", hex::encode(alloy_primitives::keccak256("Transfer(address,address,uint256)"))),
+                            format!("0x{}", "0".repeat(64)),
+                            format!("0x{:0>64}", hex::encode(to)),
+                            format!("0x{SCRIPTED_TOKEN:064x}"),
+                        ],
+                        "data": "0x",
+                    }]),
+                    None => json!([]),
+                };
+                ok(json!({ "status": "0x1", "blockNumber": "0x10", "logs": logs }))
+            }
+            _ => Json(
+                json!({ "jsonrpc": "2.0", "id": id, "error": { "code": 3, "message": "execution reverted" } }),
+            ),
+        }
+    }
+    let app = axum::Router::new()
+        .route("/", post(handle))
+        .with_state(chain);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind scripted chain");
+    let addr = listener.local_addr().expect("chain addr");
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+    format!("http://{addr}")
+}
+
+/// The economy state over a scripted chain, serving both the Polygon and the
+/// NAMEs signer with one relayer key.
+async fn scripted_state(pool: &PgPool, chain: Arc<ScriptedChain>) -> (SharedState, Address) {
+    let url = spawn_scripted_chain(chain).await;
+    let relayer = PrivateKeySigner::random();
+    let settings = Settings {
+        polygon_rpc_url: Some(url.clone()),
+        eth_rpc_url: Some(url),
+        meta_tx_broadcast_enabled: true,
+        relayer_private_key: Some(hex::encode(relayer.to_bytes())),
+        admin_token: Some(ADMIN.into()),
+        ..Settings::for_tests()
+    };
+    (state(pool.clone(), settings), relayer.address())
+}
+
+async fn keyed_post(app: &axum::Router, path: &str, key: &str, body: &Value) -> (u16, Value) {
+    let bearer = format!("Bearer {ADMIN}");
+    let (status, text) = send(
+        app,
+        "POST",
+        path,
+        Some(body.to_string()),
+        &[("authorization", &bearer), ("idempotency-key", key)],
+    )
+    .await;
+    (status, serde_json::from_str(&text).unwrap_or_default())
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct RecordedPurchase {
+    status: String,
+    tx_hash: Option<String>,
+    signed_tx: Option<String>,
+    forward_tx_hash: Option<String>,
+    forward_signed_tx: Option<String>,
+    write_ahead: bool,
+}
+
+async fn recorded_purchase(pool: &PgPool, key: &str) -> RecordedPurchase {
+    sqlx::query_as(
+        "SELECT status, tx_hash, signed_tx, forward_tx_hash, forward_signed_tx, write_ahead \
+         FROM shop.broker_purchases WHERE idempotency_key = $1",
+    )
+    .bind(key)
+    .fetch_one(pool)
+    .await
+    .expect("broker purchase row")
+}
+
+fn hash_of_hex(raw: &str) -> String {
+    let bytes = hex::decode(raw.trim_start_matches("0x")).expect("recorded hex");
+    format!("{:#x}", alloy_primitives::keccak256(bytes))
+}
+
+/// A crash between recording a NAME buy and broadcasting it (here: the send
+/// never reaches the node) leaves the claim `sent` with the hash of the
+/// recorded bytes. The retry re-sends those same bytes instead of signing a
+/// new purchase, and one transaction is all the chain ever sees.
+#[tokio::test]
+async fn a_name_buy_recorded_but_not_broadcast_resumes_by_resending_the_same_transaction() {
+    let Some(pool) = scratch_pool().await else {
+        return;
+    };
+    let chain = Arc::new(ScriptedChain::default());
+    chain
+        .drop_sends
+        .store(1, std::sync::atomic::Ordering::SeqCst);
+    let (state, _) = scripted_state(&pool, chain.clone()).await;
+    let app = router(state);
+    let key = format!("names-{}", Uuid::new_v4());
+    let body = json!({ "mode": "mint", "name": "resent", "buyerAddress": BUYER });
+
+    let (status, reply) = keyed_post(&app, "/v1/broker/names/buy", &key, &body).await;
+    assert_eq!(
+        status, 504,
+        "a recorded transaction whose send failed is indeterminate: {reply}"
+    );
+    let row = recorded_purchase(&pool, &key).await;
+    assert_eq!(row.status, "sent", "{row:?}");
+    assert!(row.write_ahead);
+    let recorded_hash = row
+        .tx_hash
+        .clone()
+        .expect("the hash is recorded before the send");
+    assert_eq!(
+        hash_of_hex(
+            row.signed_tx
+                .as_deref()
+                .expect("the signed bytes are recorded")
+        ),
+        recorded_hash
+    );
+    assert!(
+        chain.accepted_hashes().is_empty(),
+        "nothing reached the node"
+    );
+
+    let (status, reply) = keyed_post(&app, "/v1/broker/names/buy", &key, &body).await;
+    assert_eq!(status, 200, "the retry re-sends and confirms: {reply}");
+    assert_eq!(reply["txHash"], recorded_hash.as_str());
+    assert_eq!(chain.accepted_hashes(), vec![recorded_hash.clone()]);
+    assert_eq!(recorded_purchase(&pool, &key).await.status, "confirmed");
+
+    let (status, reply) = keyed_post(&app, "/v1/broker/names/buy", &key, &body).await;
+    assert_eq!(
+        (status, reply["txHash"].as_str()),
+        (200, Some(recorded_hash.as_str()))
+    );
+    assert_eq!(chain.accepted_hashes().len(), 1, "a replay sends nothing");
+    delete_key(&pool, "broker_purchases", &key).await;
+}
+
+/// A NAME buy whose signing failed (nothing recorded, nothing sent) is
+/// `error`, and the next request with the same key re-arms it and buys in
+/// that same call instead of answering 409.
+#[tokio::test]
+async fn a_name_buy_that_failed_before_its_record_is_bought_by_the_next_request() {
+    let Some(pool) = scratch_pool().await else {
+        return;
+    };
+    let chain = Arc::new(ScriptedChain::default());
+    chain
+        .fail_nonce_reads
+        .store(1, std::sync::atomic::Ordering::SeqCst);
+    let (state, _) = scripted_state(&pool, chain.clone()).await;
+    let app = router(state);
+    let key = format!("names-{}", Uuid::new_v4());
+    let body = json!({ "mode": "mint", "name": "rearmed", "buyerAddress": BUYER });
+
+    let (status, reply) = keyed_post(&app, "/v1/broker/names/buy", &key, &body).await;
+    assert_eq!(status, 500, "{reply}");
+    let row = recorded_purchase(&pool, &key).await;
+    assert_eq!(
+        (row.status.as_str(), row.tx_hash.as_deref()),
+        ("error", None)
+    );
+
+    let (status, reply) = keyed_post(&app, "/v1/broker/names/buy", &key, &body).await;
+    assert_eq!(
+        status, 200,
+        "the re-armed claim buys in the same call: {reply}"
+    );
+    let row = recorded_purchase(&pool, &key).await;
+    assert_eq!(row.status, "confirmed");
+    assert_eq!(chain.accepted_hashes(), vec![row.tx_hash.unwrap()]);
+    delete_key(&pool, "broker_purchases", &key).await;
+}
+
+/// A wearable broker buy whose signing failed is re-armed and bought by the
+/// next request, and both of its legs record their signed transaction before
+/// it is sent.
+#[tokio::test]
+async fn a_broker_buy_that_failed_before_its_record_is_bought_by_the_next_request() {
+    let _mirror_rows = crate::market::tests::support::MIRROR_STATE_LOCK
+        .lock()
+        .await;
+    let Some(pool) = scratch_pool().await else {
+        return;
+    };
+    seed_collection(&pool, COLLECTION).await;
+    let creator = PrivateKeySigner::random();
+    seed_item(
+        &pool,
+        COLLECTION,
+        4,
+        "wearable_v2",
+        &format!("{:#x}", creator.address()),
+    )
+    .await;
+    let chain = Arc::new(ScriptedChain::default());
+    chain
+        .fail_nonce_reads
+        .store(1, std::sync::atomic::Ordering::SeqCst);
+    let (state, relayer) = scripted_state(&pool, chain.clone()).await;
+    *chain.mint.lock().unwrap() = Some((COLLECTION.parse().unwrap(), relayer));
+    let app = router(state);
+    let key = format!("broker-{}", Uuid::new_v4());
+    let body = json!({ "collection": COLLECTION, "priceWei": "1000000000000000000", "escrowAddress": RULE_ESCROW, "buyerAddress": BUYER, "mode": "primary", "itemId": "4" });
+
+    let (status, reply) = keyed_post(&app, "/v1/broker/buy", &key, &body).await;
+    assert_eq!(status, 500, "{reply}");
+    let row = recorded_purchase(&pool, &key).await;
+    assert_eq!(
+        (row.status.as_str(), row.tx_hash.as_deref()),
+        ("error", None)
+    );
+    assert!(chain.accepted_hashes().is_empty());
+
+    let (status, reply) = keyed_post(&app, "/v1/broker/buy", &key, &body).await;
+    assert_eq!(status, 200, "the re-armed claim buys and forwards: {reply}");
+    let row = recorded_purchase(&pool, &key).await;
+    assert_eq!(row.status, "confirmed", "{row:?}");
+    let buy = row.tx_hash.unwrap();
+    let forward = row.forward_tx_hash.unwrap();
+    assert_eq!(hash_of_hex(row.signed_tx.as_deref().unwrap()), buy);
+    assert_eq!(
+        hash_of_hex(row.forward_signed_tx.as_deref().unwrap()),
+        forward
+    );
+    assert_eq!(reply["txHash"], forward.as_str());
+    assert_eq!(chain.accepted_hashes(), vec![buy, forward]);
+    delete_key(&pool, "broker_purchases", &key).await;
+    clear_items_pass(&pool).await;
+}
+
+/// A crash between the claim and the record leaves the claim `pending` with
+/// nothing recorded, so nothing was sent. While it is fresh another request
+/// is refused (the first may still be signing); once stale, a request takes
+/// it over and buys. The stalled caller's record is fenced on its own claim,
+/// so it can never send a second transaction, and a claim kept from before
+/// transactions were recorded is never bought again.
+#[tokio::test]
+async fn a_claim_left_pending_before_its_record_is_taken_over_once_stale() {
+    let Some(pool) = scratch_pool().await else {
+        return;
+    };
+    let chain = Arc::new(ScriptedChain::default());
+    let (state, relayer) = scripted_state(&pool, chain.clone()).await;
+    let app = router(state.clone());
+    let key = format!("names-{}", Uuid::new_v4());
+    let body = json!({ "mode": "mint", "name": "takenover", "buyerAddress": BUYER });
+    let registrar = format!(
+        "{:#x}",
+        super::contracts_addrs::NameContracts::for_chain(state.settings.names_chain_id)
+            .unwrap()
+            .registrar
+    );
+    let stalled_at = now() - chrono::Duration::minutes(10);
+    let stalled = claim_broker_purchase(
+        &pool,
+        &BrokerPurchaseClaim {
+            key: &key,
+            collection: &registrar,
+            item_id: Some("takenover"),
+            token_id: None,
+            buyer_address: BUYER,
+            escrow_address: &format!("{relayer:#x}"),
+            price_wei: "100000000000000000000",
+            chain_id: state.settings.names_chain_id as i64,
+            mode: "name-mint",
+            trade_hashed_signature: None,
+            usd_amount_wei: None,
+            mana_usd_rate_wei: None,
+        },
+        now(),
+    )
+    .await
+    .unwrap();
+    assert!(stalled.claimed);
+
+    let (status, reply) = keyed_post(&app, "/v1/broker/names/buy", &key, &body).await;
+    assert_eq!(
+        status, 409,
+        "a fresh pending claim may still be signing: {reply}"
+    );
+    assert!(chain.accepted_hashes().is_empty());
+
+    sqlx::query("UPDATE shop.broker_purchases SET updated_at = $2 WHERE idempotency_key = $1")
+        .bind(&key)
+        .bind(stalled_at)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (status, reply) = keyed_post(&app, "/v1/broker/names/buy", &key, &body).await;
+    assert_eq!(
+        status, 200,
+        "a stale claim with nothing recorded is taken over: {reply}"
+    );
+    let row = recorded_purchase(&pool, &key).await;
+    assert_eq!(chain.accepted_hashes(), vec![row.tx_hash.clone().unwrap()]);
+
+    let signer = state.eth_signer.as_ref().unwrap();
+    let call = crate::checkout::calls::BrokerCall {
+        to: Address::repeat_byte(0x11),
+        data: Bytes::new(),
+    };
+    let late =
+        crate::checkout::broker::send_recorded_buy(&state, signer, &key, stalled_at, call).await;
+    assert!(
+        matches!(late, Err(ApiError::Conflict(_))),
+        "the stalled caller's record is fenced: {late:?}"
+    );
+    assert_eq!(
+        chain.accepted_hashes().len(),
+        1,
+        "one transaction for the claim"
+    );
+    assert_eq!(recorded_purchase(&pool, &key).await.tx_hash, row.tx_hash);
+
+    sqlx::query(
+        "UPDATE shop.broker_purchases SET status = 'error', tx_hash = NULL, write_ahead = false \
+         WHERE idempotency_key = $1",
+    )
+    .bind(&key)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let (status, reply) = keyed_post(&app, "/v1/broker/names/buy", &key, &body).await;
+    assert_eq!(
+        status, 409,
+        "an earlier claim's failure is not proof nothing was sent: {reply}"
+    );
+    assert_eq!(chain.accepted_hashes().len(), 1);
+    delete_key(&pool, "broker_purchases", &key).await;
 }
