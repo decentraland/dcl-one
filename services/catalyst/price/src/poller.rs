@@ -20,7 +20,7 @@ use chrono::{DateTime, TimeZone, Utc};
 use serde::Deserialize;
 use sqlx::postgres::PgPool;
 
-use super::handlers::MANA_ID;
+use super::MANA_ID;
 use super::store::{PriceSnapshot, Prices, SOURCE_COINGECKO, snapshot_columns, snapshot_from_row};
 use crate::http::{Outbound, read_body_capped};
 use serde_json::Value;
