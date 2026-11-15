@@ -15,18 +15,19 @@
   font-variant-numeric: tabular-nums;
 }
 
-.HeroStat .Value .MuiTypography-root {
+.HeroStat .Value .Figure,
+.HeroStat .Value .Unit {
   color: inherit;
   font-size: inherit;
   line-height: inherit;
   letter-spacing: inherit;
 }
 
-.HeroStat .Value .MuiTypography-h4 {
+.HeroStat .Value .Figure {
   font-weight: var(--type-h1-semi-weight);
 }
 
-.HeroStat .Unit.MuiTypography-root {
+.HeroStat .Value .Unit {
   font-weight: var(--type-h6-regular-weight);
 }
 

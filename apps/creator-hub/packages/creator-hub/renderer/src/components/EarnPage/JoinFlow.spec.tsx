@@ -2,13 +2,13 @@ import { Provider } from 'react-redux';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { flatten } from '/@/modules/store/translation/flatten';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { dark, ThemeProvider } from 'decentraland-ui2/dist/theme';
 
 import { en } from '/@/modules/store/translation/locales';
 import { setCurrentLocale } from '/@/modules/store/translation/utils';
 import * as api from '/@/lib/creatorFundApi';
 
 import { tracked, trackedAnyOf } from '../../../tests/utils/analytics';
+import { TestProviders } from '../../../tests/utils/TestProviders';
 import { createTestStore } from '../../../tests/utils/testStore';
 import { JoinFlow } from './JoinFlow';
 
@@ -60,9 +60,9 @@ const renderFlow = () => {
   const store = createTestStore();
   render(
     <Provider store={store}>
-      <ThemeProvider theme={dark}>
+      <TestProviders>
         <JoinFlow onExit={onExit} />
-      </ThemeProvider>
+      </TestProviders>
     </Provider>,
   );
   return { onExit, store };
@@ -262,6 +262,29 @@ describe('JoinFlow', () => {
         last_name: 'Doe',
         email: 'jane.doe@example.com',
       });
+    });
+
+    it('should show one dialog, named by the welcome title', async () => {
+      renderFlow();
+      await acceptTerms();
+      fillContact();
+      await screen.findByRole('heading', { name: 'Welcome to the Creator Fund' });
+
+      const dialogs = screen.getAllByRole('dialog');
+      expect(dialogs).toHaveLength(1);
+      expect(screen.getByRole('dialog', { name: 'Welcome to the Creator Fund' })).toBe(dialogs[0]);
+      expect(screen.queryByRole('alertdialog')).toBeNull();
+    });
+
+    it('should land on My Places from Escape', async () => {
+      const { onExit } = renderFlow();
+      await acceptTerms();
+      fillContact();
+      await screen.findByRole('heading', { name: 'Welcome to the Creator Fund' });
+
+      fireEvent.keyDown(screen.getByText("Let's go"), { key: 'Escape' });
+
+      expect(onExit).toHaveBeenCalledWith('joined');
     });
 
     it.each([["Let's go"], ['Close']])('should land on My Places from %s', async name => {

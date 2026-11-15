@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { Snackbar } from 'decentraland-ui2';
+import { cx } from '/@/lib/cx';
+
+import { Toast } from '@ui/atoms/Toast';
 
 import { analytics } from '#preload';
 import { useDispatch, useSelector } from '#store';
@@ -7,16 +9,16 @@ import { actions } from '/@/modules/store/creatorFund';
 import type { TranslationPath } from '/@/modules/store/translation/types';
 import { t } from '/@/modules/store/translation/utils';
 
-import { VisuallyHidden } from '../EarnModal.styled';
+import modalStyles from '../EarnModal.module.css';
 import { SnackbarCheckIcon } from '../icons';
 
 import { ListState } from './parts';
 import { ContactCard, WalletCard } from './PayoutCards';
 import { PayoutsEmpty } from './PayoutsEmpty';
-import { CardsRow, EmptyPanel, Notice, Panel } from './PayoutsTab.styled';
 import { PayoutsTable } from './PayoutsTable';
 import { VerifyEmailModal } from './VerifyEmailModal';
 import { WalletModal } from './WalletModal';
+import styles from './PayoutsTab.module.css';
 
 const SNACKBAR_MS = 5_000;
 
@@ -41,7 +43,7 @@ export function PayoutsTab() {
     [payouts, wallet, enrollment].every(resource => resource.status === 'succeeded'),
   );
   const [modal, setModal] = useState<OpenModal | null>(null);
-  const [notice, setNotice] = useState<{ message: TranslationPath; open: boolean } | null>(null);
+  const [notice, setNotice] = useState<TranslationPath | null>(null);
   const [focusTarget, setFocusTarget] = useState<FocusTarget | null>(null);
   const editRef = useRef<HTMLButtonElement>(null);
   const contactTitleRef = useRef<HTMLHeadingElement>(null);
@@ -74,7 +76,7 @@ export function PayoutsTab() {
   const done = (message: TranslationPath) => {
     if (modal) setFocusTarget(FOCUS_AFTER[modal]);
     setModal(null);
-    setNotice({ message, open: true });
+    setNotice(message);
   };
 
   const retry = () => {
@@ -88,7 +90,6 @@ export function PayoutsTab() {
 
   const failed = [payouts, wallet, enrollment].some(resource => resource.status === 'failed');
   const empty = loaded && !failed && payouts.data?.payouts.length === 0;
-  const Shell = empty ? EmptyPanel : Panel;
 
   let body: React.ReactNode;
   if (!loaded) {
@@ -107,7 +108,7 @@ export function PayoutsTab() {
     else if (payouts.data) list = <PayoutsTable payouts={payouts.data.payouts} />;
     body = (
       <>
-        <CardsRow>
+        <div className={styles.cardsRow}>
           <WalletCard
             wallet={wallet.status === 'succeeded' ? wallet.data : undefined}
             editRef={editRef}
@@ -122,14 +123,14 @@ export function PayoutsTab() {
               setModal('verify_email');
             }}
           />
-        </CardsRow>
+        </div>
         {list}
       </>
     );
   }
 
   return (
-    <Shell>
+    <div className={cx(styles.panel, empty && styles.emptyPanel)}>
       {body}
       {(modal === 'add_wallet' || modal === 'change_wallet') && (
         <WalletModal
@@ -145,22 +146,28 @@ export function PayoutsTab() {
           onDone={done}
         />
       )}
-      <VisuallyHidden role="status">{notice?.open && t(notice.message)}</VisuallyHidden>
-      <Snackbar
-        open={!!notice?.open}
-        autoHideDuration={SNACKBAR_MS}
-        onClose={(_, reason) =>
-          reason !== 'clickaway' && setNotice(current => current && { ...current, open: false })
-        }
-        TransitionProps={{ onExited: () => setNotice(null) }}
-        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
-        sx={{ '&&': { bottom: 20 } }}
+      <span
+        className={modalStyles.visuallyHidden}
+        role="status"
       >
-        <Notice aria-hidden>
+        {notice && t(notice)}
+      </span>
+      <Toast
+        open={!!notice}
+        duration={SNACKBAR_MS}
+        onClose={() => setNotice(null)}
+        placement="bottom-center"
+        role="none"
+        className={styles.toast}
+      >
+        <div
+          className={styles.notice}
+          aria-hidden
+        >
           <SnackbarCheckIcon />
-          {notice && t(notice.message)}
-        </Notice>
-      </Snackbar>
-    </Shell>
+          {notice && t(notice)}
+        </div>
+      </Toast>
+    </div>
   );
 }

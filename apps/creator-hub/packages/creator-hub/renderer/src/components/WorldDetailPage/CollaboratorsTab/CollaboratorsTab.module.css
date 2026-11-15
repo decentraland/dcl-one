@@ -1,0 +1,50 @@
+.streamNote {
+  margin: 0;
+  color: var(--gray);
+  font-size: 0.875rem;
+  font-weight: 400;
+}
+
+.description.description {
+  white-space: nowrap;
+}
+
+.list.list > div,
+.list.list li {
+  grid-template-columns: 524px 200px 80px minmax(0, 1fr) 30px;
+}
+
+.list.list li > :global(.Note) {
+  grid-column: 3;
+  justify-self: center;
+}
+
+.list.list > div > :global(.StreamHeader) {
+  justify-self: center;
+}
+
+.list.list li > :global(.Trash) {
+  grid-column: 5;
+}
+
+/* Focus stays on the select while its list is open. The row has its focus look only after the list closes, as
+   before, when the open list took the focus out of the row. */
+.list.list li:has([data-open]) {
+  background-color: transparent;
+}
+
+.list.list li:has([data-open]) > :global(.Trash) {
+  opacity: 0;
+}
+
+.parcels.parcels.parcels {
+  width: 200px;
+}
+
+.parcels.parcels.parcels > span[aria-hidden="true"] {
+  color: var(--palette-whiteTransparent-blurry);
+}
+
+.parcelsMenu {
+  --field-menu-gap: 0px;
+}

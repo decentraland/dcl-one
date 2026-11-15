@@ -1,7 +1,10 @@
-import CloseIcon from '@mui/icons-material/Close';
-import DownloadIcon from '@mui/icons-material/FileDownloadOutlined';
-import GridIcon from '@mui/icons-material/GridViewOutlined';
-import { IconButton, Tooltip } from 'decentraland-ui2';
+import {
+  CloseIcon,
+  FileDownloadOutlinedIcon as DownloadIcon,
+  GridViewOutlinedIcon as GridIcon,
+} from '/@/components/Icons/material';
+import IconButton from '@ui/atoms/IconButton';
+import Tooltip from '@ui/atoms/Tooltip';
 
 import type { LandScene } from '/@/modules/store/management/utils';
 import { t } from '/@/modules/store/translation/utils';
@@ -78,7 +81,12 @@ export function SceneRow(props: Props) {
       </td>
       <td>
         <Meta>
-          <Tooltip title={date.long}>
+          <Tooltip
+            label={date.long}
+            side="bottom"
+            portal
+            labelChild
+          >
             <UpdatedAt
               dateTime={date.iso}
               tabIndex={0}

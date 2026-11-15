@@ -82,7 +82,7 @@
   margin-top: 10px;
 }
 
-.ChartCaption .MuiTypography-root {
+.ChartCaption .ChartCaptionText.ChartCaptionText {
   color: var(--dcl-silver);
   font-size: var(--type-h7-regular-size);
   font-weight: var(--type-h7-regular-weight);
@@ -98,7 +98,7 @@
   color: var(--dcl-silver);
 }
 
-.ChartEmpty .MuiTypography-root {
+.ChartEmpty .ChartEmptyText.ChartEmptyText {
   font-size: var(--type-h7-regular-size);
   font-weight: var(--type-h7-regular-weight);
   letter-spacing: var(--type-h7-regular-letter-spacing);
@@ -130,12 +130,20 @@
   cursor: help;
 }
 
+/* Axes and grid stay recessive so the data is the only loud thing. */
+.AnalyticsChart {
+  --chart-grid: var(--palette-whiteTransparent-soft);
+  --chart-axis-text: var(--dcl-silver);
+  --chart-surface: var(--black);
+  --chart-label: var(--palette-neutral-softWhite);
+}
+
 /*
- * The 2px surface-colored separation between stacked segments. x-charts has no
- * gap of its own, and the stroke sits in the surface color so it reads as the
- * card showing through rather than as an outline on the mark.
+ * The 2px surface-colored separation between stacked segments. The stroke sits
+ * in the surface color so it reads as the card showing through rather than as
+ * an outline on the mark.
  */
-.StackedBars .MuiBarElement-root {
-  stroke: var(--card);
-  stroke-width: 2;
+.StackedBars {
+  --chart-bar-gap-color: var(--card);
+  --chart-bar-gap: 2;
 }

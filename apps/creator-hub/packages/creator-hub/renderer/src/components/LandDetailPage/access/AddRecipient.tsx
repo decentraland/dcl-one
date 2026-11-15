@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import AddIcon from '@mui/icons-material/Add';
+import { AddIcon } from '/@/components/Icons/material';
 
 import { useAuth } from '/@/hooks/useAuth';
 import { t } from '/@/modules/store/translation/utils';

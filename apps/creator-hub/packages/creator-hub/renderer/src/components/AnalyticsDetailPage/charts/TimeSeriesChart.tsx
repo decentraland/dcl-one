@@ -1,6 +1,6 @@
 import { useId } from 'react';
-import { Box, Typography } from 'decentraland-ui2';
-import { ChartsReferenceLine, LineChart } from '@mui/x-charts';
+import LineChart from '@ui/atoms/LineChart';
+import Text from '@ui/atoms/Text';
 
 import type { TimeSeriesPoint } from '/shared/types/place-analytics';
 
@@ -13,18 +13,13 @@ import {
   CHART_HEIGHT,
   CHART_MARGIN,
   FINAL_SERIES_ID,
-  LABEL_COLOR,
-  REFERENCE_COLOR,
   REFERENCE_HEADROOM,
   SERIES_COLOR,
   SETTLING_SERIES_ID,
-  chartSx,
   fortnightlyTicks,
   percentTicks,
   seriesPaint,
   tickDateFormat,
-  xAxisChrome,
-  yAxisChrome,
 } from './theme';
 
 import './styles.css';
@@ -45,9 +40,14 @@ export function TimeSeriesChart({ points, seriesName, formatValue, maxValue, ref
 
   if (points.length === 0) {
     return (
-      <Box className="ChartEmpty">
-        <Typography variant="body2">{t('analytics.detail.charts.no_data')}</Typography>
-      </Box>
+      <div className="ChartEmpty">
+        <Text
+          variant="body2"
+          className="ChartEmptyText"
+        >
+          {t('analytics.detail.charts.no_data')}
+        </Text>
+      </div>
     );
   }
 
@@ -61,48 +61,33 @@ export function TimeSeriesChart({ points, seriesName, formatValue, maxValue, ref
   const hasSettling = points.some(point => point.settling);
   const paint = seriesPaint(gradientId);
   const formatPoint = (value: number | null) => (value === null ? '-' : formatValue(value));
-  const line = {
-    label: seriesName,
-    color: SERIES_COLOR,
-    curve: 'linear' as const,
-    showMark: false,
-    valueFormatter: formatPoint,
-  };
+  const dates = points.map(point => point.date);
+  const line = { label: seriesName, color: SERIES_COLOR, paint };
 
   return (
     <>
       <LineChart
+        className="AnalyticsChart"
+        aria-label={seriesName}
+        dates={dates}
         height={CHART_HEIGHT}
         margin={CHART_MARGIN}
-        sx={chartSx(gradientId)}
-        grid={{ horizontal: true }}
-        skipAnimation
-        axisHighlight={{ x: 'none', y: 'none' }}
-        tooltip={{ trigger: 'axis' }}
-        xAxis={[
-          {
-            ...xAxisChrome,
-            data: points.map(point => new Date(point.date)),
-            scaleType: 'time',
-            tickInterval: fortnightlyTicks(points.map(point => point.date)),
-            valueFormatter: (date: Date) => tickDateFormat.format(date),
-          },
-        ]}
-        yAxis={[
-          {
-            ...yAxisChrome,
-            min: 0,
-            max: yMax,
-            tickInterval: percentTicks(maxValue),
-            valueFormatter: (value: number) => formatValue(value),
-          },
-        ]}
+        yMin={0}
+        yMax={yMax}
+        yTicks={percentTicks(maxValue)}
+        yTickCount={5}
+        xTicks={fortnightlyTicks(dates)}
+        formatX={date => tickDateFormat.format(date)}
+        formatY={formatValue}
+        reference={reference}
         series={[
           ...(hasSettling
             ? [
                 {
                   ...line,
                   id: SETTLING_SERIES_ID,
+                  dash: '0 6',
+                  mark: 'hollow' as const,
                   data: points.map((point, index) =>
                     point.settling || index === lastFinalIndex ? point.value : null,
                   ),
@@ -115,58 +100,63 @@ export function TimeSeriesChart({ points, seriesName, formatValue, maxValue, ref
             data: points.map(point => (point.settling ? null : point.value)),
           },
         ]}
-        slots={{ axisContent: ChartTooltipContent }}
-        slotProps={{ legend: { hidden: true } }}
-      >
-        <SeriesGradient
-          id={gradientId}
-          values={values}
-        />
-        {reference && (
-          <ChartsReferenceLine
-            y={reference.value}
-            label={reference.label}
-            labelAlign="end"
-            lineStyle={{ stroke: REFERENCE_COLOR, strokeWidth: 1.5, strokeDasharray: '4 4' }}
-            labelStyle={{ fill: LABEL_COLOR, fontSize: 14, fontWeight: 600 }}
+        renderTooltip={hover => (
+          <ChartTooltipContent
+            {...hover}
+            formatValue={formatPoint}
           />
         )}
-        {lastPoint?.value != null &&
-          (lastPoint.settling ? (
-            <SettlingEndMarks
-              end={{ date: lastPoint.date, value: lastPoint.value }}
-              lastFinal={
-                lastFinal?.value != null
-                  ? {
-                      date: lastFinal.date,
-                      value: lastFinal.value,
-                      text: formatValue(lastFinal.value),
-                    }
-                  : undefined
-              }
-              paint={paint}
+      >
+        {scales => (
+          <>
+            <SeriesGradient
+              id={gradientId}
+              values={values}
+              scales={scales}
             />
-          ) : (
-            <EndOfLineLabels
-              labels={[
-                {
-                  key: seriesName,
-                  date: lastPoint.date,
-                  value: lastPoint.value,
-                  color: paint,
-                  text: formatValue(lastPoint.value),
-                },
-              ]}
-            />
-          ))}
+            {lastPoint?.value != null &&
+              (lastPoint.settling ? (
+                <SettlingEndMarks
+                  end={{ date: lastPoint.date, value: lastPoint.value }}
+                  lastFinal={
+                    lastFinal?.value != null
+                      ? {
+                          date: lastFinal.date,
+                          value: lastFinal.value,
+                          text: formatValue(lastFinal.value),
+                        }
+                      : undefined
+                  }
+                  paint={paint}
+                  scales={scales}
+                />
+              ) : (
+                <EndOfLineLabels
+                  labels={[
+                    {
+                      key: seriesName,
+                      date: lastPoint.date,
+                      value: lastPoint.value,
+                      color: paint,
+                      text: formatValue(lastPoint.value),
+                    },
+                  ]}
+                  scales={scales}
+                />
+              ))}
+          </>
+        )}
       </LineChart>
       {hasSettling && (
-        <Box className="ChartCaption">
+        <div className="ChartCaption">
           <span className="ChartSwatch Dotted" />
-          <Typography variant="body2">
+          <Text
+            variant="body2"
+            className="ChartCaptionText"
+          >
             {t('analytics.detail.retention.day_7_cohort.settling.caption')}
-          </Typography>
-        </Box>
+          </Text>
+        </div>
       )}
     </>
   );

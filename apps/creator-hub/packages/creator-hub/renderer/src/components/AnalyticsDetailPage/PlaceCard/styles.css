@@ -22,7 +22,7 @@
   border-bottom: 1px solid var(--dark-gray);
 }
 
-.PlaceCard .Details .MuiTypography-h5 {
+.PlaceCard .Details .Name {
   font-weight: 600;
 }
 
@@ -39,7 +39,7 @@
   gap: 4px;
 }
 
-.PlaceCard .Field .MuiTypography-body2 {
+.PlaceCard .Field .FieldLabel {
   color: var(--secondary-text);
 }
 
@@ -50,9 +50,25 @@
 }
 
 .PlaceCard .PublisherAvatar {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
   width: 24px;
   height: 24px;
+  border-radius: 50%;
+  background-color: #757575;
+  color: var(--black);
   font-size: 12px;
+  line-height: 1;
+  overflow: hidden;
+  user-select: none;
+}
+
+.PlaceCard .PublisherAvatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .PlaceCard .Actions {
@@ -62,25 +78,52 @@
   padding: 16px 8px;
 }
 
-/* The disabled action is wrapped in a span so its tooltip still fires. */
+/* The disabled action sits in the tooltip's span so its tooltip still fires. */
 .PlaceCard .Actions > span {
   display: flex;
   flex: 1 1 0;
   min-width: 0;
 }
 
-.PlaceCard .Action {
+/* The actions keep the grey text button of before: its ink, its spacing and no hover fill. */
+.PlaceCard .Action.Action {
   display: flex;
   flex-direction: column;
   gap: 8px;
   flex: 1 1 0;
   min-width: 0;
-  font-size: 12px;
-  line-height: 1.2;
+  padding: 6px 8px;
+  color: var(--btn-neutral-ink);
+  letter-spacing: 0.4px;
   text-align: center;
 }
 
-.PlaceCard .JumpIn {
+.PlaceCard .Action.Action:not(:disabled):hover {
+  background: transparent;
+}
+
+.PlaceCard .Action.Action:disabled {
+  color: var(--ctl-disabled-ink);
+}
+
+/* Jump In keeps the brand button of before: its fill, its hover and its 20px end icon. */
+.PlaceCard .JumpIn.JumpIn {
+  --btn-icon-margin: 0 -4px 0 0;
+
   margin: 0 24px 24px;
   height: 48px;
+  background: var(--brand);
+  letter-spacing: 0.4px;
+}
+
+.PlaceCard .JumpIn.JumpIn:not(:disabled):hover {
+  background: #f26276;
+  box-shadow:
+    0 3px 1px -2px rgba(0, 0, 0, 0.2),
+    0 2px 2px 0 rgba(0, 0, 0, 0.14),
+    0 1px 5px 0 rgba(0, 0, 0, 0.12);
+}
+
+.PlaceCard .JumpIn.btn svg {
+  font-size: 20px;
 }

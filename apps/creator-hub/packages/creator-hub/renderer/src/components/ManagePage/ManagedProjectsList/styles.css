@@ -5,18 +5,28 @@
   margin-top: 16px;
 }
 
-.ManagedProjectsList .LoadMoreContainer .MuiButton-root {
+/* White in every state. The old theme gave the text its own grey and the app font. */
+.ManagedProjectsList .LoadMoreContainer .LoadMore,
+.ManagedProjectsList .LoadMoreContainer .LoadMore:hover,
+.ManagedProjectsList .LoadMoreContainer .LoadMore:disabled {
   height: 40px;
+  min-width: 64px;
   background-color: var(--white);
-  color: var(--black);
+  color: var(--light-gray);
   padding: 8px 22px;
+  font-family: var(--text-font);
+  font-size: 0.875rem;
+  font-weight: 600;
+  line-height: 24px;
+  letter-spacing: 0.4px;
+}
+
+/* The old theme gave the disabled text the disabled colour of the dark theme. */
+.ManagedProjectsList .LoadMoreContainer .LoadMore:disabled {
+  color: rgba(255, 255, 255, 0.38);
 }
 
 .UnpublishConfirmationModal {
   max-width: 500px;
   margin: 0 auto;
-}
-
-.UnpublishConfirmationModal .MuiButton-root {
-  height: 40px;
 }

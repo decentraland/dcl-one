@@ -1,0 +1,12 @@
+.title.title {
+  margin-bottom: 48px;
+}
+
+/* Three classes, so the size and weight win over the page rule for the same button. */
+.seeAll.seeAll.seeAll {
+  min-width: 64px;
+  padding: 6px 8px;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+}

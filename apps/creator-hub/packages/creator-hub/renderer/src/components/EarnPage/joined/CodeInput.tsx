@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 
 import { t } from '/@/modules/store/translation/utils';
 
-import { CodeBox, CodeRow } from './PayoutModals.styled';
+import styles from './PayoutModals.module.css';
 
 const LENGTH = 6;
 
@@ -44,13 +44,15 @@ export function CodeInput({
   };
 
   return (
-    <CodeRow
+    <div
+      className={styles.codeRow}
       role="group"
       aria-labelledby={labelledBy}
     >
       {value.map((digit, index) => (
-        <CodeBox
+        <input
           key={index}
+          className={styles.codeBox}
           ref={element => {
             boxes.current[index] = element;
           }}
@@ -82,6 +84,6 @@ export function CodeInput({
           }}
         />
       ))}
-    </CodeRow>
+    </div>
   );
 }

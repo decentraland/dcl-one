@@ -4,7 +4,7 @@
   gap: 10px;
 }
 
-.TabHeading .MuiTypography-h5 {
+.TabHeading .Title.Title {
   color: var(--palette-neutral-softWhite);
   font-size: var(--type-h3-semi-size);
   font-weight: var(--type-h3-semi-weight);
@@ -12,7 +12,7 @@
   letter-spacing: var(--type-h3-semi-letter-spacing);
 }
 
-.TabHeading .Description {
+.TabHeading .Description.Description {
   color: var(--dcl-silver);
   font-size: var(--type-h6-regular-size);
   font-weight: var(--type-h6-regular-weight);

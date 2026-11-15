@@ -1,0 +1,124 @@
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 30px;
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.entry {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  min-height: 118px;
+  box-sizing: border-box;
+  background-color: var(--palette-whiteTransparent-faint);
+  border-radius: var(--shape-borderRadiusLarge);
+  overflow: hidden;
+}
+
+.entry::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border: 1px solid var(--palette-whiteTransparent-faint);
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+@media (max-width: 1411.04px) {
+  .entry {
+    flex-wrap: wrap;
+    row-gap: 0;
+  }
+}
+
+.thumbnail {
+  width: auto;
+  height: 118px;
+  aspect-ratio: 16 / 9;
+  flex-shrink: 0;
+  object-fit: cover;
+  border-radius: var(--shape-borderRadiusLarge);
+  background-color: var(--gray);
+}
+
+.sceneData {
+  flex: 1;
+  min-width: 240px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.nameBlock {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: 24px auto;
+  min-width: 0;
+}
+
+.name {
+  font-family: var(--font-family);
+  font-optical-sizing: none;
+  font-size: var(--type-h4-semi-size);
+  font-weight: var(--type-h4-semi-weight);
+  line-height: normal;
+  letter-spacing: var(--type-h4-semi-letter-spacing);
+  margin: 0;
+  color: var(--palette-neutral-softWhite);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.where {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.5;
+  color: var(--dcl-silver);
+}
+
+.where svg {
+  flex-shrink: 0;
+}
+
+.whereText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stats {
+  flex: 0 1 800px;
+  padding: 10px;
+}
+
+@media (max-width: 1411.04px) {
+  .stats {
+    flex-basis: 100%;
+    padding: 10px;
+  }
+}
+
+.statsList {
+  display: flex;
+  gap: 40px;
+  box-sizing: border-box;
+  height: 98px;
+  margin: 0;
+  padding: 19px;
+  background-color: var(--palette-blackTransparent-blurry);
+  border: 1px solid var(--palette-whiteTransparent-faint);
+  border-radius: var(--ui-radius);
+}

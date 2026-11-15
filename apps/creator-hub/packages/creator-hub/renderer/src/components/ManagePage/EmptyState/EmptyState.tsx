@@ -6,8 +6,10 @@ import EmptyWorlds from '/assets/images/empty-worlds.svg';
 import { t } from '/@/modules/store/translation/utils';
 
 import { Button } from '../../Button';
+import { ExternalLink } from '../../ExternalLink';
 import { InfoTip } from '../InfoTip';
-import { Body, Illustration, ReadMore, Root, Title, TitleRow } from './EmptyState.styled';
+
+import styles from './EmptyState.module.css';
 
 type EmptyStateIcon = 'wave' | 'world' | 'land';
 
@@ -38,22 +40,29 @@ type Props = {
 /** The Manage page's empty, signed-out and error views. */
 export function EmptyState({ icon, title, info, description, action }: Props) {
   return (
-    <Root>
+    <section className={styles.root}>
       {icon && (
-        <Illustration
+        <img
+          className={styles.illustration}
           src={EMPTY_STATE_ICONS[icon]}
           alt=""
         />
       )}
-      <TitleRow>
-        <Title>{title}</Title>
+      <div className={styles.titleRow}>
+        <h2 className={styles.title}>{title}</h2>
         {info && (
           <InfoTip label={info.label}>
-            {info.text} <ReadMore href={info.readMoreUrl}>{t('manage.read_more')}</ReadMore>
+            {info.text}{' '}
+            <ExternalLink
+              className={styles.readMore}
+              href={info.readMoreUrl}
+            >
+              {t('manage.read_more')}
+            </ExternalLink>
           </InfoTip>
         )}
-      </TitleRow>
-      {description && <Body>{description}</Body>}
+      </div>
+      {description && <p className={styles.body}>{description}</p>}
       {action && (
         <Button
           size="large"
@@ -63,6 +72,6 @@ export function EmptyState({ icon, title, info, description, action }: Props) {
           {action.label}
         </Button>
       )}
-    </Root>
+    </section>
   );
 }

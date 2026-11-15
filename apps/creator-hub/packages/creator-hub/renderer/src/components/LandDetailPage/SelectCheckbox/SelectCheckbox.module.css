@@ -1,0 +1,140 @@
+.root {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background-color: transparent;
+  color: var(--brand);
+  cursor: pointer;
+  user-select: none;
+  vertical-align: middle;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.root:hover {
+  background-color: rgba(255, 45, 85, 0.08);
+}
+
+.root[data-disabled] {
+  pointer-events: none;
+  cursor: default;
+}
+
+.root:has(.input:focus-visible) {
+  outline: 2px solid var(--palette-info-light);
+  outline-offset: 2px;
+  border-radius: 5px;
+}
+
+/* The focus mark of the old checkbox: a soft disc over the box. It shows through the tick. */
+.root:has(.input:focus-visible)::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background-color: rgba(240, 240, 240, 0.7);
+  opacity: 0.3;
+  pointer-events: none;
+  animation: focusPulse 2500ms ease-in-out 200ms infinite;
+}
+
+.root[data-checked]:has(.input:focus-visible)::after,
+.root:has(.input[data-indeterminate="true"]:focus-visible)::after {
+  background-color: currentColor;
+}
+
+@keyframes focusPulse {
+  50% {
+    transform: scale(0.92);
+  }
+}
+
+.input {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  opacity: 0;
+  cursor: inherit;
+}
+
+.root svg {
+  font-size: 26.67px;
+  margin: -3.33px;
+}
+
+.tick {
+  display: inline-block;
+  flex-shrink: 0;
+  width: 1em;
+  height: 1em;
+  fill: currentColor;
+  user-select: none;
+}
+
+.off {
+  display: block;
+  box-sizing: border-box;
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+  border: 1px solid var(--palette-whiteTransparent-blurry);
+}
+
+.on,
+.fixedOn,
+.mixed {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+}
+
+.on {
+  border: 1px solid var(--brand);
+  color: var(--brand);
+}
+
+.fixedOn {
+  border: 1px solid var(--light-gray);
+  background-color: var(--light-gray);
+  color: var(--panel);
+}
+
+.root .on svg,
+.root .fixedOn svg {
+  font-size: 16px;
+  margin: 0;
+}
+
+.mixed {
+  border: 1px solid var(--brand);
+  background-color: var(--brand);
+}
+
+.dash,
+.mixedDash {
+  width: 10px;
+  height: 2px;
+  border-radius: 1px;
+}
+
+.dash {
+  background-color: var(--brand);
+}
+
+.mixedDash {
+  background-color: var(--panel);
+}

@@ -1,0 +1,55 @@
+.tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  height: 36px;
+  padding: 8px 16px;
+  border-radius: 100px;
+  border: 1px solid var(--palette-whiteTransparent-subtle);
+  box-shadow: inset 0 0 0 0.5px var(--palette-whiteTransparent-subtle);
+  background-color: transparent;
+  color: var(--palette-whiteTransparent-backdrop);
+  /* The font the tabs had: the default of the old theme, not the app font. */
+  font-family: "Roboto", "Helvetica", "Arial", sans-serif;
+  font-size: 0.875rem;
+  font-weight: 600;
+  line-height: 1;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.tab svg {
+  font-size: 1.25rem;
+  opacity: 0.6;
+}
+
+.tab:hover {
+  border-color: var(--palette-whiteTransparent-blurry);
+  box-shadow: inset 0 0 0 0.5px var(--palette-whiteTransparent-blurry);
+}
+
+.tab[aria-selected="true"] {
+  border: none;
+  box-shadow: none;
+  background-color: var(--palette-whiteTransparent-subtle);
+  color: var(--palette-neutral-softWhite);
+}
+
+.tab[aria-selected="true"] svg {
+  opacity: 1;
+}
+
+.tab[aria-selected="true"]:hover {
+  background-color: var(--palette-whiteTransparent-soft);
+}
+
+.tab:focus-visible {
+  outline: 2px solid var(--palette-info-light);
+  outline-offset: 2px;
+}
+
+.tabList {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}

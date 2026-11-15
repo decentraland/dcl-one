@@ -1,6 +1,8 @@
-import ArrowDownIcon from '@mui/icons-material/ArrowDownward';
-import ArrowUpIcon from '@mui/icons-material/ArrowUpward';
-import { Box, Typography } from 'decentraland-ui2';
+import {
+  ArrowDownwardIcon as ArrowDownIcon,
+  ArrowUpwardIcon as ArrowUpIcon,
+} from '/@/components/Icons/material';
+import Text from '@ui/atoms/Text';
 
 import './styles.css';
 
@@ -15,33 +17,34 @@ type Props = {
 /** The figure a card leads with, plus how it moved. */
 export function HeroStat({ value, unit, delta }: Props) {
   return (
-    <Box className="HeroStat">
-      <Box className="Value">
-        <Typography
+    <div className="HeroStat">
+      <div className="Value">
+        <Text
           variant="h4"
-          component="p"
+          as="p"
+          className="Figure"
         >
           {value}
-        </Typography>
+        </Text>
         {unit && (
-          <Typography
+          <Text
             variant="body1"
             className="Unit"
           >
             {unit}
-          </Typography>
+          </Text>
         )}
-      </Box>
+      </div>
       {delta && delta.direction !== 'flat' && (
-        <Box className={`Delta ${delta.direction === 'up' ? 'Up' : 'Down'}`}>
+        <div className={`Delta ${delta.direction === 'up' ? 'Up' : 'Down'}`}>
           {delta.direction === 'up' ? (
             <ArrowUpIcon fontSize="small" />
           ) : (
             <ArrowDownIcon fontSize="small" />
           )}
-          <Typography variant="body2">{delta.text}</Typography>
-        </Box>
+          <Text variant="body2">{delta.text}</Text>
+        </div>
       )}
-    </Box>
+    </div>
   );
 }

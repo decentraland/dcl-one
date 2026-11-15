@@ -1,0 +1,126 @@
+.form {
+  position: relative;
+  z-index: 1;
+  width: 500px;
+  display: flex;
+  flex-direction: column;
+  gap: 25px;
+}
+
+.intro {
+  font-family: var(--font-family);
+  font-optical-sizing: none;
+  font-size: var(--type-h7-regular-size);
+  font-weight: var(--type-h7-regular-weight);
+  line-height: normal;
+  letter-spacing: var(--type-h7-regular-letter-spacing);
+  margin: 0;
+  color: var(--palette-neutral-softWhite);
+}
+
+.fields {
+  display: flex;
+  flex-direction: column;
+  gap: 25px;
+}
+
+.nameRow {
+  display: flex;
+  gap: 20px;
+}
+
+.nameRow > * {
+  flex: 1;
+  min-width: 0;
+}
+
+.fieldGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.label {
+  font-family: var(--font-family);
+  font-optical-sizing: none;
+  font-size: var(--type-h6-semi-size);
+  font-weight: var(--type-h6-semi-weight);
+  line-height: normal;
+  letter-spacing: var(--type-h6-semi-letter-spacing);
+  color: var(--palette-neutral-softWhite);
+}
+
+.required {
+  color: var(--primary);
+}
+
+.input.input[data-tone] > div {
+  position: relative;
+  box-sizing: border-box;
+  height: 46px;
+  padding: 0;
+  gap: 0;
+  border-radius: var(--shape-borderRadiusLarge);
+  color: var(--palette-neutral-softWhite);
+  font-family: var(--font-family);
+  font-optical-sizing: none;
+  font-size: var(--type-h6-regular-size);
+  font-weight: var(--type-h6-regular-weight);
+  line-height: normal;
+  letter-spacing: var(--type-h6-regular-letter-spacing);
+}
+
+/* The outline is a border on a layer, as it is today: a 1.5px border draws as one pixel, a 1.5px shadow does not. */
+.input.input.input[data-tone] > div {
+  box-shadow: none;
+}
+
+.input.input[data-tone] > div::after {
+  position: absolute;
+  inset: 0;
+  border: 1px solid var(--palette-whiteTransparent-blurry);
+  border-radius: inherit;
+  pointer-events: none;
+  content: "";
+}
+
+.input.input[data-tone] > div:hover::after {
+  border-color: var(--palette-whiteTransparent-backdrop);
+}
+
+.input.input[data-tone] > div:focus-within::after {
+  border-color: var(--palette-neutral-softWhite);
+  border-width: 1.5px;
+}
+
+.input.input[data-tone][data-error] > div::after {
+  border-color: var(--error);
+  border-width: 1.5px;
+}
+
+.input.input[data-tone] input {
+  width: 100%;
+  height: 1.4375em;
+  padding: 14px 16px;
+  font: inherit;
+  letter-spacing: inherit;
+}
+
+.input.input[data-tone] input::placeholder {
+  color: var(--palette-whiteTransparent-blurry);
+  opacity: 1;
+}
+
+.fieldError {
+  font-family: var(--font-family);
+  font-optical-sizing: none;
+  font-size: var(--type-h7-regular-size);
+  font-weight: var(--type-h7-regular-weight);
+  line-height: normal;
+  letter-spacing: var(--type-h7-regular-letter-spacing);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 15px;
+  color: var(--error);
+}

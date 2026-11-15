@@ -4,7 +4,6 @@ import { MemoryRouter } from 'react-router-dom';
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { flatten } from '/@/modules/store/translation/flatten';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { dark, ThemeProvider } from 'decentraland-ui2/dist/theme';
 
 import { useAuth } from '/@/hooks/useAuth';
 import type { WorldScene } from '/@/lib/worlds';
@@ -12,6 +11,7 @@ import type * as WorldsModule from '/@/lib/worlds';
 import { en } from '/@/modules/store/translation/locales';
 import { setCurrentLocale } from '/@/modules/store/translation/utils';
 
+import { TestProviders } from '../../../../tests/utils/TestProviders';
 import { createTestStore } from '../../../../tests/utils/testStore';
 import { ScenesTab } from '.';
 
@@ -65,11 +65,6 @@ vi.mock('/@/lib/auth', async importOriginal => ({
 vi.mock('/@/hooks/useAuth', () => ({ useAuth: vi.fn() }));
 vi.mock('/@/lib/profile', () => ({
   default: { fetchProfile: () => Promise.resolve(undefined) },
-}));
-vi.mock('decentraland-ui2', async importOriginal => ({
-  ...(await importOriginal<object>()),
-  AvatarFace: () => null,
-  Address: ({ value }: { value: string }) => <span>{value}</span>,
 }));
 vi.mock('/@/components/WorldAtlas', async importOriginal => ({
   ...(await importOriginal<object>()),
@@ -162,12 +157,12 @@ async function renderTab(
   render(
     <Provider store={store as never}>
       <MemoryRouter>
-        <ThemeProvider theme={dark}>
+        <TestProviders>
           <ScenesTab
             worldName="plaza.dcl.eth"
             mode={access === 'owner' ? 'manage' : 'view'}
           />
-        </ThemeProvider>
+        </TestProviders>
       </MemoryRouter>
     </Provider>,
   );
@@ -226,8 +221,8 @@ describe('World ScenesTab', () => {
     it('should show Multi-Scene World as on, read-only, for a World with several scenes', async () => {
       await renderTab([PLAZA, STAGE]);
 
-      const toggle = screen.getByRole('checkbox', { name: 'Multi-Scene World' });
-      expect(toggle).toHaveProperty('checked', true);
+      const toggle = screen.getByRole('switch', { name: 'Multi-Scene World' });
+      expect(toggle.getAttribute('aria-checked')).toBe('true');
       expect(toggle).toHaveProperty('disabled', true);
       expect(screen.getByRole('button', { name: 'About Multi-Scene World' })).toBeTruthy();
     });
@@ -235,8 +230,8 @@ describe('World ScenesTab', () => {
     it('should show Multi-Scene World as off, still read-only, for a World with one scene', async () => {
       await renderTab([PLAZA]);
 
-      const toggle = screen.getByRole('checkbox', { name: 'Multi-Scene World' });
-      expect(toggle).toHaveProperty('checked', false);
+      const toggle = screen.getByRole('switch', { name: 'Multi-Scene World' });
+      expect(toggle.getAttribute('aria-checked')).toBe('false');
       expect(toggle).toHaveProperty('disabled', true);
     });
 
@@ -298,7 +293,7 @@ describe('World ScenesTab', () => {
       expect(stats.textContent).toContain('3×1 Parcels');
       expect(stats.textContent).not.toContain('used');
       expect(screen.queryByRole('button', { name: 'Manage Storage' })).toBeNull();
-      expect(screen.queryByRole('checkbox', { name: 'Multi-Scene World' })).toBeNull();
+      expect(screen.queryByRole('switch', { name: 'Multi-Scene World' })).toBeNull();
       expect(screen.queryByRole('checkbox', { name: 'Select all scenes' })).toBeNull();
       expect(screen.queryByRole('button', { name: 'Unpublish Stage' })).toBeNull();
       expect(screen.getByRole('button', { name: 'Download Stage' })).toBeTruthy();

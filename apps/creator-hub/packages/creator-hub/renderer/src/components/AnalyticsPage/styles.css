@@ -17,7 +17,7 @@
   gap: 16px;
 }
 
-.AnalyticsPage .FiltersBar .right .MuiTypography-root {
+.AnalyticsPage .FiltersBar .right .FilterText {
   color: var(--secondary-text);
   white-space: nowrap;
 }
@@ -37,7 +37,7 @@
   margin-bottom: 8px;
 }
 
-.AnalyticsPage .EmptyContainer .MuiTypography-body1 {
+.AnalyticsPage .EmptyContainer .Description {
   max-width: 480px;
   color: var(--secondary-text);
 }

@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
-import { Checkbox, FormControlLabel } from 'decentraland-ui2';
+import Button from '@ui/atoms/HubButton';
+import Checkbox from '@ui/atoms/Checkbox';
+import IconButton from '@ui/atoms/IconButton';
 
 import { analytics } from '#preload';
 import { useDispatch, useSelector } from '#store';
@@ -7,28 +9,13 @@ import { actions } from '/@/modules/store/creatorFund';
 import { t } from '/@/modules/store/translation/utils';
 
 import MarkdownRenderer from '../Modals/AppSettings/MarkdownRenderer/MarkdownRenderer';
+import { Modal } from '../Modals';
 
-import { Actions, ErrorLine, ModalCta, TermsShell, VisuallyHidden } from './EarnModal.styled';
 import { openMarkdownLink } from './markdownLinks';
 import { Spinner } from './Spinner';
-import {
-  Box,
-  BoxState,
-  Dialog,
-  Gate,
-  Glow,
-  Hint,
-  Scroller,
-  Scrollview,
-  Subtitle,
-  Title,
-  TitleBar,
-  TitleBarClose,
-  TermsText,
-  TickBox,
-  TitleText,
-} from './TermsModal.styled';
 import { CheckboxTickIcon, CloseIcon, InfoIcon } from './icons';
+import modal from './EarnModal.module.css';
+import styles from './TermsModal.module.css';
 
 const BOTTOM_TOLERANCE_PX = 4;
 
@@ -152,31 +139,51 @@ export function TermsModal(props: TermsModalProps) {
         });
 
   return (
-    <TermsShell open>
-      <Dialog
+    <Modal
+      className={modal.termsShell}
+      open
+    >
+      <div
+        className={styles.dialog}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
         onKeyDown={handleKeyDown}
       >
-        <TitleBar>
-          <TitleText>
-            <Title id={titleId}>{heading}</Title>
-            {subtitle && <Subtitle>{subtitle}</Subtitle>}
-          </TitleText>
+        <div className={styles.titleBar}>
+          <div className={styles.titleText}>
+            <h2
+              className={styles.title}
+              id={titleId}
+            >
+              {heading}
+            </h2>
+            {subtitle && <p className={styles.subtitle}>{subtitle}</p>}
+          </div>
           {variant !== 'reaccept' && (
-            <TitleBarClose
+            <IconButton
+              className={styles.titleBarClose}
               aria-label={t('earn.close')}
               onClick={() => decline('close')}
             >
               <CloseIcon />
-            </TitleBarClose>
+            </IconButton>
           )}
-        </TitleBar>
-        <Glow aria-hidden />
-        <Scrollview data-variant={variant}>
-          <Box data-variant={variant}>
-            <Scroller
+        </div>
+        <div
+          className={styles.glow}
+          aria-hidden
+        />
+        <div
+          className={styles.scrollview}
+          data-variant={variant}
+        >
+          <div
+            className={styles.box}
+            data-variant={variant}
+          >
+            <div
+              className={styles.scroller}
               ref={scrollerRef}
               role="region"
               aria-label={t('earn.terms.region')}
@@ -184,79 +191,94 @@ export function TermsModal(props: TermsModalProps) {
               onScroll={checkBottom}
             >
               {terms.data ? (
-                <TermsText onClick={openMarkdownLink}>
+                <div
+                  className={styles.termsText}
+                  onClick={openMarkdownLink}
+                >
                   <MarkdownRenderer
                     content={terms.data.content}
                     overrides={TERMS_OVERRIDES}
                   />
-                </TermsText>
+                </div>
               ) : terms.status === 'failed' ? (
-                <BoxState>
+                <div className={styles.boxState}>
                   <span role="alert">{t('earn.terms.load_error')}</span>
-                  <ModalCta
-                    variant="contained"
-                    color="secondary"
-                    size="large"
+                  <Button
+                    className={modal.modalCta}
+                    variant="secondary"
+                    size="lg"
                     onClick={loadTerms}
                   >
                     {t('earn.errors.retry')}
-                  </ModalCta>
-                </BoxState>
+                  </Button>
+                </div>
               ) : (
-                <BoxState>
+                <div className={styles.boxState}>
                   <Spinner label={t('earn.loading')} />
-                </BoxState>
+                </div>
               )}
-            </Scroller>
-          </Box>
+            </div>
+          </div>
           {variant !== 'read' && (
-            <Gate>
+            <div className={styles.gate}>
               {atBottom ? (
-                <FormControlLabel
-                  control={
-                    <Checkbox
-                      color="primary"
-                      disableRipple
-                      icon={<TickBox />}
-                      checkedIcon={
-                        <TickBox data-checked>
-                          <CheckboxTickIcon />
-                        </TickBox>
-                      }
-                      checked={checked}
-                      onChange={event => setChecked(event.target.checked)}
-                    />
+                <Checkbox
+                  className={styles.accept}
+                  icon={<span className={styles.tickBox} />}
+                  checkedIcon={
+                    <span
+                      className={styles.tickBox}
+                      data-checked
+                    >
+                      <CheckboxTickIcon />
+                    </span>
                   }
-                  label={t('earn.terms.accept_checkbox')}
-                />
+                  checked={checked}
+                  onChange={setChecked}
+                >
+                  {t('earn.terms.accept_checkbox')}
+                </Checkbox>
               ) : (
                 <>
                   <InfoIcon />
-                  <Hint id={hintId}>{t('earn.terms.hint')}</Hint>
+                  <span
+                    className={styles.hint}
+                    id={hintId}
+                  >
+                    {t('earn.terms.hint')}
+                  </span>
                 </>
               )}
-              <VisuallyHidden aria-live="polite">
+              <span
+                className={modal.visuallyHidden}
+                aria-live="polite"
+              >
                 {atBottom ? t('earn.terms.gate_open') : ''}
-              </VisuallyHidden>
-            </Gate>
+              </span>
+            </div>
           )}
           {props.variant !== 'read' && props.error && (
-            <ErrorLine role="alert">{props.error}</ErrorLine>
+            <p
+              className={modal.errorLine}
+              role="alert"
+            >
+              {props.error}
+            </p>
           )}
-          <Actions>
-            <ModalCta
-              variant="contained"
-              color="secondary"
-              size="large"
+          <div className={modal.actions}>
+            <Button
+              className={modal.modalCta}
+              variant="secondary"
+              size="lg"
               onClick={() => decline('not_now')}
             >
               {variant === 'read' ? t('earn.terms.close') : t('earn.terms.not_now')}
-            </ModalCta>
+            </Button>
             {props.variant !== 'read' && (
-              <ModalCta
-                variant="contained"
-                color="primary"
-                size="large"
+              <Button
+                className={modal.modalCta}
+                variant="primary"
+                size="lg"
                 disabled={!checked || !terms.data || props.status === 'submitting'}
                 aria-busy={props.status === 'submitting' || undefined}
                 aria-describedby={atBottom ? undefined : hintId}
@@ -265,11 +287,11 @@ export function TermsModal(props: TermsModalProps) {
                 {variant === 'reaccept'
                   ? t('earn.reaccept.accept')
                   : t('earn.terms.accept_and_join')}
-              </ModalCta>
+              </Button>
             )}
-          </Actions>
-        </Scrollview>
-      </Dialog>
-    </TermsShell>
+          </div>
+        </div>
+      </div>
+    </Modal>
   );
 }

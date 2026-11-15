@@ -1,5 +1,7 @@
 import { useState } from 'react';
-import { AvatarFace, type AvatarFaceProps, IconButton } from 'decentraland-ui2';
+import { cx } from '/@/lib/cx';
+import AvatarFace, { type AvatarFaceProps } from '@ui/atoms/AvatarFace';
+import IconButton from '@ui/atoms/IconButton';
 
 import { useCommunities } from '/@/hooks/useCommunities';
 import { useProfile } from '/@/hooks/useProfile';
@@ -12,7 +14,8 @@ import { BulkTrash } from '../../../LandDetailPage/access/BulkTrash';
 import { useDisplayName } from '../../../LandDetailPage/access/useDisplayName';
 import { SelectCheckbox } from '../../../LandDetailPage/SelectCheckbox';
 import { DefaultModal } from '../../../Modals/DefaultModal';
-import { Empty, List, Who } from './Access.styled';
+
+import styles from './Access.module.css';
 
 type Invite = { kind: 'wallet' | 'community'; id: string; name: string };
 type Removal = { wallets: string[]; communities: string[] };
@@ -31,6 +34,7 @@ function WalletFace({ address }: { address: string }) {
   return (
     <AvatarFace
       avatar={avatar as AvatarFaceProps['avatar']}
+      className={styles.avatar}
       size="small"
       inline
     />
@@ -86,7 +90,7 @@ export function InvitedList({ wallets, communities, disabled, onRemove }: Props)
   };
 
   return (
-    <List>
+    <div className={styles.list}>
       <ListHeader>
         <span className="Lead">
           {invites.length > 0 && (
@@ -115,7 +119,7 @@ export function InvitedList({ wallets, communities, disabled, onRemove }: Props)
                     'aria-label': t('world_detail.settings.access.select', { name: invite.name }),
                   }}
                 />
-                <Who>
+                <span className={styles.who}>
                   {invite.kind === 'wallet' ? (
                     <WalletFace address={invite.id} />
                   ) : (
@@ -124,11 +128,11 @@ export function InvitedList({ wallets, communities, disabled, onRemove }: Props)
                       alt=""
                     />
                   )}
-                  <span className="Name">{invite.name}</span>
-                </Who>
+                  <span className={cx('Name', styles.name)}>{invite.name}</span>
+                </span>
               </span>
               <IconButton
-                className="Trash"
+                className={cx('Trash', styles.trash)}
                 aria-label={t('world_detail.settings.access.remove', { name: invite.name })}
                 disabled={disabled}
                 onClick={() => setRemoving([invite])}
@@ -139,7 +143,7 @@ export function InvitedList({ wallets, communities, disabled, onRemove }: Props)
           ))}
         </Rows>
       ) : (
-        <Empty>{t('world_detail.settings.access.invited_empty')}</Empty>
+        <p className={styles.empty}>{t('world_detail.settings.access.invited_empty')}</p>
       )}
       <DefaultModal
         open={!!removing}
@@ -157,6 +161,6 @@ export function InvitedList({ wallets, communities, disabled, onRemove }: Props)
           onClick: () => void confirm(),
         }}
       />
-    </List>
+    </div>
   );
 }

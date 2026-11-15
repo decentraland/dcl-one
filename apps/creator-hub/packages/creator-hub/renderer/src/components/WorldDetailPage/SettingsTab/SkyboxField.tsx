@@ -1,11 +1,15 @@
 import { useEffect, useId, useState } from 'react';
+import { cx } from '/@/lib/cx';
 
 import { t } from '/@/modules/store/translation/utils';
 
 import { FieldTitle } from '../../LandDetailPage/DetailsTab/DetailsTab.styled';
 import { SelectCheckbox } from '../../LandDetailPage/SelectCheckbox';
+import { TextInput } from '../../TextInput';
+import { CheckRow } from './CheckRow';
 import { formatTime, MIDDAY_SECONDS, parseTime } from './settings';
-import { CheckRow, Row, SectionBlock, Slider, SmallInput } from './SettingsTab.styled';
+
+import styles from './SettingsTab.module.css';
 
 const STEP_SECONDS = 900;
 const LAST_MINUTE_SECONDS = 86340;
@@ -36,7 +40,7 @@ export function SkyboxField({
   useEffect(() => setTyped(formatTime(seconds)), [seconds]);
 
   return (
-    <SectionBlock className="Loose">
+    <div className={cx(styles.section, styles.loose)}>
       <FieldTitle
         as="span"
         id={titleId}
@@ -50,8 +54,9 @@ export function SkyboxField({
         />
         {t('world_detail.settings.skybox_auto')}
       </CheckRow>
-      <Row>
-        <Slider
+      <div className={styles.row}>
+        <input
+          className={styles.slider}
           type="range"
           min={0}
           max={LAST_MINUTE_SECONDS}
@@ -68,7 +73,8 @@ export function SkyboxField({
             onChange(clamp(step(seconds)));
           }}
         />
-        <SmallInput
+        <TextInput
+          className={styles.smallInput}
           value={typed}
           disabled={value === null}
           inputProps={{ 'aria-labelledby': titleId }}
@@ -79,7 +85,7 @@ export function SkyboxField({
           }}
           onBlur={() => setTyped(formatTime(seconds))}
         />
-      </Row>
-    </SectionBlock>
+      </div>
+    </div>
   );
 }

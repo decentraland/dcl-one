@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Switch } from 'decentraland-ui2';
+import Toggle from '@ui/atoms/Toggle';
 
 import { useSelector } from '#store';
 import { toMB } from '/@/modules/file';
@@ -17,9 +17,10 @@ import { Loader } from '../../Loader';
 import { EmptyState } from '../../ManagePage/EmptyState';
 import { InfoTip } from '../../ManagePage/InfoTip';
 import { WorldsYourStorageModal } from '../../Modals/WorldsYourStorageModal';
-import { MultiScene, StorageLink } from './ScenesTab.styled';
 import { useWorldScenes } from './useWorldScenes';
 import { usedBytes } from './worldScenes';
+
+import styles from './ScenesTab.module.css';
 
 type Props = { worldName: string; mode: RowMode };
 
@@ -81,12 +82,13 @@ export function ScenesTab({ worldName, mode }: Props) {
             {isOwner && (
               <Meta>
                 {t('world_detail.scenes.used', { size: `${used} MB` })}
-                <StorageLink
+                <button
                   type="button"
+                  className={styles.storageLink}
                   onClick={() => setStorageOpen(true)}
                 >
                   {t('world_detail.scenes.manage_storage')}
-                </StorageLink>
+                </button>
               </Meta>
             )}
           </>
@@ -94,17 +96,18 @@ export function ScenesTab({ worldName, mode }: Props) {
         controls={
           <>
             {isOwner && (
-              <MultiScene>
-                <Switch
+              <span className={styles.multiScene}>
+                <Toggle
+                  className={styles.switch}
                   checked={all.length > 1}
                   disabled
-                  inputProps={{ 'aria-label': t('world_detail.scenes.multi_scene_title') }}
+                  ariaLabel={t('world_detail.scenes.multi_scene_title')}
                 />
                 {t('world_detail.scenes.multi_scene_title')}
                 <InfoTip label={t('world_detail.scenes.multi_scene_info')}>
                   {t('world_detail.scenes.multi_scene_description')}
                 </InfoTip>
-              </MultiScene>
+              </span>
             )}
             <Button
               variant="contained"

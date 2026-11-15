@@ -1,5 +1,7 @@
 import { useNavigate } from 'react-router-dom';
-import { Button, Typography } from 'decentraland-ui2';
+import { cx } from '/@/lib/cx';
+import Button from '@ui/atoms/HubButton';
+import Text from '@ui/atoms/Text';
 import { t } from '/@/modules/store/translation/utils';
 import { tutorials } from '/@/modules/tutorials';
 import { misc } from '#preload';
@@ -7,6 +9,8 @@ import { misc } from '#preload';
 import { Container } from '../Container';
 import { Navbar, NavbarItem } from '../Navbar';
 import { Image } from '../Image';
+import styles from './component.module.css';
+
 import './styles.css';
 
 function Video(props: { id: string; list: string; title: string }) {
@@ -46,12 +50,12 @@ export function LearnPage() {
       <Navbar active={NavbarItem.LEARN} />
       <Container>
         <div className="content">
-          <Typography
+          <Text
             variant="h3"
-            mb="48px"
+            className={styles.title}
           >
             {t('learn.header.title')}
-          </Typography>
+          </Text>
           <div className="sections">
             <div className="section videos">
               <div
@@ -72,8 +76,8 @@ export function LearnPage() {
                 ))}
               </div>
               <Button
-                className="see-all"
-                disableRipple
+                className={cx('see-all', styles.seeAll)}
+                variant="text"
                 onClick={() => navigate('/learn/videos')}
               >
                 {t('learn.see_all')}
@@ -114,9 +118,9 @@ export function LearnPage() {
                 />
               </div>
               <Button
-                className="see-all"
+                className={cx('see-all', styles.seeAll)}
+                variant="text"
                 onClick={() => navigate('/learn/docs')}
-                disableRipple
               >
                 {t('learn.see_all')}
               </Button>

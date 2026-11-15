@@ -1,31 +1,30 @@
 import { useId, useState } from 'react';
-import { MenuItem } from 'decentraland-ui2';
 
 import { useSnackbar } from '/@/hooks/useSnackbar';
 import { MAX_COORDINATE, MIN_COORDINATE } from '/@/modules/world';
 import { t } from '/@/modules/store/translation/utils';
 
-import { menuSurfaceStyles } from '../../Dropdown/component.styled';
-import { ChevronDownIcon } from '../../Icons';
 import { AccessRow } from '../../LandDetailPage/access/AccessRow';
 import { AddRecipient } from '../../LandDetailPage/access/AddRecipient';
 import { BulkTrash } from '../../LandDetailPage/access/BulkTrash';
 import {
   AddBlock,
+  Description,
+  ListBlock,
   ListHeader,
-  ParcelSelect,
   Root,
   Rows,
 } from '../../LandDetailPage/access/access.styled';
 import { useDisplayName } from '../../LandDetailPage/access/useDisplayName';
 import { SelectCheckbox } from '../../LandDetailPage/SelectCheckbox';
 import { EmptyState } from '../../ManagePage/EmptyState';
-import { selectRowStyles } from '../../ManagePage/ViewBar/ViewBar.styled';
 import { DefaultModal } from '../../Modals/DefaultModal';
 import { ParcelPickerModal } from '../../ParcelPicker';
-import { StreamNote, WorldDescription, WorldListBlock } from './CollaboratorsTab.styled';
+import { FieldSelect, SelectOption } from '../FieldSelect';
 import { useWorldCollaborators } from './useWorldCollaborators';
 import { MAX_COLLABORATORS, removalKind, type WorldCollaborator } from './worldCollaborators';
+
+import styles from './CollaboratorsTab.module.css';
 
 const ALL = 'all';
 const SOME = 'some';
@@ -126,9 +125,16 @@ export function CollaboratorsTab({ worldName }: { worldName: string }) {
   return (
     <Root>
       <AddBlock>
-        <WorldDescription>{t('world_detail.collaborators.description')}</WorldDescription>
+        <Description className={styles.description}>
+          {t('world_detail.collaborators.description')}
+        </Description>
         {world.streamOpen && (
-          <StreamNote id={noteId}>{t('world_detail.collaborators.stream_open')}</StreamNote>
+          <p
+            id={noteId}
+            className={styles.streamNote}
+          >
+            {t('world_detail.collaborators.stream_open')}
+          </p>
         )}
         <AddRecipient
           onAdd={recipient =>
@@ -149,7 +155,7 @@ export function CollaboratorsTab({ worldName }: { worldName: string }) {
         />
       </AddBlock>
       {collaborators.length ? (
-        <WorldListBlock>
+        <ListBlock className={styles.list}>
           <ListHeader>
             <span className="Lead">
               <SelectCheckbox
@@ -196,31 +202,28 @@ export function CollaboratorsTab({ worldName }: { worldName: string }) {
                     />
                   }
                   scope={
-                    <ParcelSelect
+                    <FieldSelect
+                      className={styles.parcels}
+                      menuClassName={styles.parcelsMenu}
                       value={value}
-                      IconComponent={ChevronDownIcon}
-                      inputProps={{
-                        'aria-label': t('land_detail.collaborators.parcels_label', { name }),
-                      }}
-                      onChange={event => changeDeploy(row, String(event.target.value))}
-                      MenuProps={{
-                        sx: [
-                          theme => menuSurfaceStyles({ theme }),
-                          theme => selectRowStyles({ theme }),
-                        ],
-                      }}
+                      aria-label={t('land_detail.collaborators.parcels_label', { name })}
+                      onChange={next => changeDeploy(row, next)}
                     >
-                      <MenuItem value={ALL}>{t('land_detail.collaborators.all_parcels')}</MenuItem>
+                      <SelectOption value={ALL}>
+                        {t('land_detail.collaborators.all_parcels')}
+                      </SelectOption>
                       {row.deploy.kind === 'parcels' && (
-                        <MenuItem value={SOME}>
+                        <SelectOption value={SOME}>
                           {t('land_detail.collaborators.n_parcels', { count: row.deploy.count })}
-                        </MenuItem>
+                        </SelectOption>
                       )}
-                      <MenuItem value={NONE}>{t('world_detail.collaborators.none')}</MenuItem>
-                      <MenuItem value={CUSTOM}>
+                      <SelectOption value={NONE}>
+                        {t('world_detail.collaborators.none')}
+                      </SelectOption>
+                      <SelectOption value={CUSTOM}>
                         {t('land_detail.collaborators.custom_parcels')}
-                      </MenuItem>
-                    </ParcelSelect>
+                      </SelectOption>
+                    </FieldSelect>
                   }
                   note={
                     <SelectCheckbox
@@ -237,7 +240,7 @@ export function CollaboratorsTab({ worldName }: { worldName: string }) {
               );
             })}
           </Rows>
-        </WorldListBlock>
+        </ListBlock>
       ) : (
         <EmptyState
           title={t('land_detail.collaborators.empty')}

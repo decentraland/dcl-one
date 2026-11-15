@@ -14,7 +14,7 @@
   flex: 0 0 280px;
 }
 
-.StatsRow .Footnote {
+.StatsRow .Footnote.Footnote {
   color: var(--dcl-silver);
   font-size: var(--type-h8-regular-size);
   font-weight: var(--type-h8-regular-weight);

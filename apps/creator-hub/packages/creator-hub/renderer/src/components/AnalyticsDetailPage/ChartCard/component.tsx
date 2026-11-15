@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { Box, Typography } from 'decentraland-ui2';
+import Text from '@ui/atoms/Text';
 
 import './styles.css';
 
@@ -12,19 +12,24 @@ type Props = {
 /** A titled panel wrapping one chart or stat block. */
 export function ChartCard({ title, description, children }: Props) {
   return (
-    <Box className="ChartCard">
-      <Box className="ChartCardHeader">
-        <Typography variant="h6">{title}</Typography>
+    <div className="ChartCard">
+      <div className="ChartCardHeader">
+        <Text
+          variant="h6"
+          className="Title"
+        >
+          {title}
+        </Text>
         {description && (
-          <Typography
+          <Text
             variant="body2"
             className="Description"
           >
             {description}
-          </Typography>
+          </Text>
         )}
-      </Box>
-      <Box className="ChartCardBody">{children}</Box>
-    </Box>
+      </div>
+      <div className="ChartCardBody">{children}</div>
+    </div>
   );
 }

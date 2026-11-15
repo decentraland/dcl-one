@@ -2,7 +2,6 @@ import { Provider } from 'react-redux';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { flatten } from '/@/modules/store/translation/flatten';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { dark, ThemeProvider } from 'decentraland-ui2/dist/theme';
 
 import { en } from '/@/modules/store/translation/locales';
 import { setCurrentLocale } from '/@/modules/store/translation/utils';
@@ -11,6 +10,7 @@ import { actions } from '/@/modules/store/creatorFund';
 import { misc } from '#preload';
 
 import { tracked } from '../../../tests/utils/analytics';
+import { TestProviders } from '../../../tests/utils/TestProviders';
 import { createTestStore } from '../../../tests/utils/testStore';
 import { TermsModal } from './TermsModal';
 
@@ -39,7 +39,7 @@ const TERMS = {
 const renderModal = (ui: React.ReactElement) =>
   render(
     <Provider store={createTestStore()}>
-      <ThemeProvider theme={dark}>{ui}</ThemeProvider>
+      <TestProviders>{ui}</TestProviders>
     </Provider>,
   );
 
@@ -286,13 +286,13 @@ describe('TermsModal', () => {
       const onAccept = vi.fn();
       render(
         <Provider store={store}>
-          <ThemeProvider theme={dark}>
+          <TestProviders>
             <TermsModal
               variant="accept"
               onAccept={onAccept}
               onClose={vi.fn()}
             />
-          </ThemeProvider>
+          </TestProviders>
         </Provider>,
       );
       fireEvent.click(await screen.findByRole('checkbox'));

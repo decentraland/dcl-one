@@ -4,7 +4,8 @@ import { t } from '/@/modules/store/translation/utils';
 import type { ManagedProject } from '/shared/types/manage';
 
 import type { RoleTagVariant } from './types';
-import { Tag } from './RoleTag.styled';
+
+import styles from './RoleTag.module.css';
 
 const TAG_BY_ROLE: Partial<Record<ManagedProject['role'], RoleTagVariant>> = {
   [RoleType.OPERATOR]: 'collaborator',
@@ -24,5 +25,12 @@ export function getRoleTag(role: ManagedProject['role']): RoleTagVariant | undef
 }
 
 export function RoleTag({ variant }: { variant: RoleTagVariant }) {
-  return <Tag variant={variant}>{t(LABELS[variant])}</Tag>;
+  return (
+    <span
+      className={styles.tag}
+      data-variant={variant}
+    >
+      {t(LABELS[variant])}
+    </span>
+  );
 }

@@ -1,6 +1,7 @@
 import { useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Box, MenuItem, type SelectChangeEvent, Typography } from 'decentraland-ui2';
+import { SelectOption } from '@ui/atoms/Select';
+import Text from '@ui/atoms/Text';
 
 import { SortBy } from '/shared/types/place-analytics';
 
@@ -18,6 +19,7 @@ import { Loader } from '../Loader';
 import { Navbar, NavbarItem } from '../Navbar';
 import { Search } from '../Search';
 import { Select } from '../Select';
+import type { SelectChangeEvent } from '../Select/component';
 import { SignInCard } from '../SignInCard';
 
 import { PlacesTable } from './PlacesTable';
@@ -86,7 +88,7 @@ export function AnalyticsPage() {
     <main className="AnalyticsPage">
       <Navbar active={NavbarItem.ANALYTICS} />
       <Container>
-        <Typography variant="h3">{t('analytics.header.title')}</Typography>
+        <Text variant="h3">{t('analytics.header.title')}</Text>
         {/* Before the loading branch: with nothing in flight, `idle` is not a wait. */}
         {!isSignedIn && !isSigningIn ? (
           <SignInCard
@@ -97,47 +99,62 @@ export function AnalyticsPage() {
           <Loader size={70} />
         ) : status === 'failed' ? (
           /* Without this a failed request reads as "you have no Places yet". */
-          <Box className="EmptyContainer">
-            <Typography variant="h5">{t('analytics.error.title')}</Typography>
-            <Typography variant="body1">{error}</Typography>
-          </Box>
+          <div className="EmptyContainer">
+            <Text variant="h5">{t('analytics.error.title')}</Text>
+            <Text
+              variant="body1"
+              className="Description"
+            >
+              {error}
+            </Text>
+          </div>
         ) : places.length === 0 ? (
-          <Box className="EmptyContainer">
+          <div className="EmptyContainer">
             <img
               src={emptyAnalytics}
               alt=""
             />
-            <Typography variant="h5">{t('analytics.empty_list.title')}</Typography>
-            <Typography variant="body1">{t('analytics.empty_list.description')}</Typography>
-          </Box>
+            <Text variant="h5">{t('analytics.empty_list.title')}</Text>
+            <Text
+              variant="body1"
+              className="Description"
+            >
+              {t('analytics.empty_list.description')}
+            </Text>
+          </div>
         ) : (
           <>
             <FiltersBar className="FiltersBar">
-              <Typography variant="h6">
+              <Text variant="h6">
                 {t('analytics.list.places', { count: visiblePlaces.length })}
-              </Typography>
+              </Text>
               <>
                 {/* The export's own stamp: an "as of" date is a different answer from silence. */}
                 {exportedAt && (
-                  <Typography
+                  <Text
                     variant="body2"
-                    className="ExportedAt"
+                    className="ExportedAt FilterText"
                   >
                     {t('analytics.exported_at', { date: formatExportDate(exportedAt) })}
-                  </Typography>
+                  </Text>
                 )}
-                <Typography variant="body1">{t('analytics.list.sort.title')}</Typography>
+                <Text
+                  variant="body1"
+                  className="FilterText"
+                >
+                  {t('analytics.list.sort.title')}
+                </Text>
                 <Select
                   value={sortBy}
                   onChange={handleSortChange}
                 >
                   {SORT_OPTIONS.map(option => (
-                    <MenuItem
+                    <SelectOption
                       key={option.value}
                       value={option.value}
                     >
                       {option.label}
-                    </MenuItem>
+                    </SelectOption>
                   ))}
                 </Select>
                 <Search
@@ -148,12 +165,15 @@ export function AnalyticsPage() {
               </>
             </FiltersBar>
             {visiblePlaces.length === 0 ? (
-              <Box className="EmptyContainer">
-                <Typography variant="h5">{t('analytics.empty_list.search.title')}</Typography>
-                <Typography variant="body1">
+              <div className="EmptyContainer">
+                <Text variant="h5">{t('analytics.empty_list.search.title')}</Text>
+                <Text
+                  variant="body1"
+                  className="Description"
+                >
                   {t('analytics.empty_list.search.description')}
-                </Typography>
-              </Box>
+                </Text>
+              </div>
             ) : (
               <PlacesTable
                 places={visiblePlaces}

@@ -1,4 +1,4 @@
-import { Action, Message, Snackbar } from './StatusSnackbar.styled';
+import styles from './StatusSnackbar.module.css';
 
 /**
  * An EARN snackbar in place of the landing CTAs: an icon and a message, then its actions.
@@ -20,16 +20,17 @@ export function StatusSnackbar({
   children: React.ReactNode;
 }) {
   return (
-    <Snackbar
+    <div
+      className={styles.snackbar}
       data-tone={tone}
       role={role}
     >
-      <Message>
+      <p className={styles.message}>
         {icon}
         {message}
-      </Message>
+      </p>
       {children}
-    </Snackbar>
+    </div>
   );
 }
 
@@ -44,12 +45,13 @@ export function SnackbarAction({
   children: React.ReactNode;
 }) {
   return (
-    <Action
+    <button
+      className={styles.action}
       type="button"
       data-emphasis={emphasis}
       onClick={onClick}
     >
       {children}
-    </Action>
+    </button>
   );
 }

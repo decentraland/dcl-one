@@ -3,12 +3,12 @@ import { Provider } from 'react-redux';
 import { MemoryRouter } from 'react-router-dom';
 import { render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { dark, ThemeProvider } from 'decentraland-ui2/dist/theme';
 
 import { metrics } from '#preload';
 import { AuthServerProvider } from '/@/lib/auth';
 import { actions as placeAnalyticsActions, selectors } from '/@/modules/store/placeAnalytics';
 
+import { TestProviders } from '../../../tests/utils/TestProviders';
 import { createTestStore, type TestStore } from '../../../tests/utils/testStore';
 
 const TEST_ADDRESS = '0x1234567890123456789012345678901234567890';
@@ -27,13 +27,11 @@ vi.mock('/@/lib/auth', () => ({
 
 vi.mock('/@/hooks/useAuth', () => ({ useAuth: () => ({ isSignedIn: true }) }));
 
-/** The navbar's avatar reads theme tokens this environment does not populate, and
- * nothing here is about the navbar. `NavbarItem` stays real — it is an enum the
- * page reads. */
-vi.mock('../Navbar', async importOriginal => ({
-  ...((await importOriginal()) as object),
-  Navbar: () => null,
-}));
+/** Nothing here is about the navbar or the sign-in card (the wallet is signed in).
+ * The stubs keep their modules out of the load, which is most of the time of the page test. */
+vi.mock('../Navbar', () => ({ Navbar: () => null, NavbarItem: { ANALYTICS: 'analytics' } }));
+
+vi.mock('../SignInCard', () => ({ SignInCard: () => null }));
 
 vi.mock('@dcl/single-sign-on-client', () => ({
   localStorageGetIdentity: () => ({
@@ -235,9 +233,9 @@ describe('the analytics page at full scale', () => {
 
   const wrapper = ({ children }: { children: ReactNode }) => (
     <Provider store={store as never}>
-      <ThemeProvider theme={dark}>
+      <TestProviders>
         <MemoryRouter>{children}</MemoryRouter>
-      </ThemeProvider>
+      </TestProviders>
     </Provider>
   );
 

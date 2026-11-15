@@ -1,4 +1,8 @@
 import { useEffect, useId, useRef, useState } from 'react';
+import { cx } from '/@/lib/cx';
+
+import Button from '@ui/atoms/HubButton';
+import TextField from '@ui/atoms/TextField';
 
 import { analytics } from '#preload';
 import { useDispatch } from '#store';
@@ -7,22 +11,13 @@ import type { TranslationPath } from '/@/modules/store/translation/types';
 import { t } from '/@/modules/store/translation/utils';
 
 import { EarnDialog } from '../EarnDialog';
-import { ModalCta, ModalTitle } from '../EarnModal.styled';
+import modal from '../EarnModal.module.css';
+import contact from '../ContactInfoForm.module.css';
 import { WarningIcon } from '../icons';
 
-import {
-  Body,
-  Callout,
-  FailureLine,
-  Field,
-  FieldError,
-  FieldInput,
-  FieldLabel,
-  ModalForm,
-  ModalIntro,
-  PayoutActions,
-} from './PayoutModals.styled';
 import { isWalletAddress } from './wallet';
+import parts from './parts.module.css';
+import styles from './PayoutModals.module.css';
 
 export type WalletModalVariant = 'add' | 'change';
 
@@ -66,25 +61,29 @@ function WalletField({
   useEffect(() => inputRef.current?.focus(), []);
 
   return (
-    <Field>
-      <FieldLabel htmlFor={id}>{t('earn.joined.payouts.wallet_field.label')}</FieldLabel>
-      <FieldInput
+    <div className={styles.field}>
+      <label
+        className={styles.fieldLabel}
+        htmlFor={id}
+      >
+        {t('earn.joined.payouts.wallet_field.label')}
+      </label>
+      <TextField
+        className={styles.fieldInput}
         id={id}
         inputRef={inputRef}
         value={value}
         placeholder={t('earn.joined.payouts.wallet_field.placeholder')}
         autoComplete="off"
+        spellCheck={false}
         error={invalid}
+        aria-describedby={invalid ? errorId : undefined}
         data-filled={value ? 'true' : undefined}
         onChange={event => onChange(event.target.value.trim())}
         onBlur={onBlur}
-        inputProps={{
-          spellCheck: false,
-          'aria-invalid': invalid || undefined,
-          'aria-describedby': invalid ? errorId : undefined,
-        }}
       />
-      <FieldError
+      <span
+        className={cx(contact.fieldError, styles.fieldError)}
         id={errorId}
         aria-live="polite"
       >
@@ -94,8 +93,8 @@ function WalletField({
             {t('earn.joined.payouts.wallet_field.invalid')}
           </>
         )}
-      </FieldError>
-    </Field>
+      </span>
+    </div>
   );
 }
 
@@ -148,14 +147,20 @@ export function WalletModal({
       labelledBy={titleId}
       onClose={onClose}
     >
-      <ModalForm
+      <form
+        className={styles.modalForm}
         noValidate
         onSubmit={submit}
       >
-        <ModalIntro>
-          <ModalTitle id={titleId}>{t(copy.title)}</ModalTitle>
-          <Body>{t(copy.body)}</Body>
-        </ModalIntro>
+        <div className={styles.modalIntro}>
+          <h2
+            className={modal.modalTitle}
+            id={titleId}
+          >
+            {t(copy.title)}
+          </h2>
+          <p className={styles.body}>{t(copy.body)}</p>
+        </div>
         <WalletField
           value={address}
           invalid={invalid}
@@ -166,35 +171,41 @@ export function WalletModal({
           }}
           onBlur={() => setBlurred(true)}
         />
-        <Callout role="note">
+        <div
+          className={styles.callout}
+          role="note"
+        >
           <WarningIcon />
           {t('earn.joined.payouts.erc20')}
-        </Callout>
+        </div>
         {submission === 'failed' && (
-          <FailureLine role="alert">{t('earn.errors.generic')}</FailureLine>
+          <p
+            className={styles.failureLine}
+            role="alert"
+          >
+            {t('earn.errors.generic')}
+          </p>
         )}
-        <PayoutActions>
-          <ModalCta
-            type="button"
-            variant="contained"
-            color="secondary"
-            size="large"
+        <div className={cx(modal.actions, styles.payoutActions)}>
+          <Button
+            className={cx(parts.cta, parts.ctaSecondary)}
+            variant="secondary"
+            size="lg"
             onClick={onClose}
           >
             {t('earn.joined.payouts.cancel')}
-          </ModalCta>
-          <ModalCta
+          </Button>
+          <Button
+            className={parts.cta}
             type="submit"
-            variant="contained"
-            color="primary"
-            size="large"
+            size="lg"
             disabled={!valid || submission === 'saving'}
             aria-busy={submission === 'saving' || undefined}
           >
             {t(copy.submit)}
-          </ModalCta>
-        </PayoutActions>
-      </ModalForm>
+          </Button>
+        </div>
+      </form>
     </EarnDialog>
   );
 }

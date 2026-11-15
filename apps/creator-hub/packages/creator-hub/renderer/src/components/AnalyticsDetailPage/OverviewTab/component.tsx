@@ -1,5 +1,3 @@
-import { Box } from 'decentraland-ui2';
-
 import type { PlaceOverviewMetrics } from '/shared/types/place-analytics';
 
 import { t } from '/@/modules/store/translation/utils';
@@ -28,12 +26,12 @@ function minutes(value: number | null) {
 
 export function OverviewTab({ overview }: Props) {
   return (
-    <Box className="OverviewTab">
+    <div className="OverviewTab">
       <TabHeading
         title={t('analytics.detail.overview.title')}
         description={t('analytics.detail.overview.description')}
       />
-      <Box className="Cards">
+      <div className="Cards">
         <MetricsCard
           headline={{
             label: t('analytics.metrics.total_visits.label'),
@@ -99,7 +97,7 @@ export function OverviewTab({ overview }: Props) {
             },
           ]}
         />
-      </Box>
-    </Box>
+      </div>
+    </div>
   );
 }

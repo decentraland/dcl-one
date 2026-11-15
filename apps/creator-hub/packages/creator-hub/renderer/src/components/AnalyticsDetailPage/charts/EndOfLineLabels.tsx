@@ -1,4 +1,4 @@
-import { useDrawingArea, useXScale, useYScale } from '@mui/x-charts/hooks';
+import type { LineChartScales } from '@ui/atoms/LineChart';
 
 import { END_MARKER_RADIUS } from './theme';
 
@@ -22,16 +22,20 @@ const MIN_LABEL_GAP = 18;
  * label back to its own line, so a nudged label never reads as belonging to
  * the wrong series.
  */
-export function EndOfLineLabels({ labels }: { labels: EndLabel[] }) {
-  const xScale = useXScale();
-  const yScale = useYScale();
-  const { left, width, top, height } = useDrawingArea();
+export function EndOfLineLabels({
+  labels,
+  scales,
+}: {
+  labels: EndLabel[];
+  scales: LineChartScales;
+}) {
+  const { left, width, top, height } = scales.area;
 
   const positioned = labels
     .map(label => ({
       ...label,
-      x: (xScale as (value: Date) => number)(new Date(label.date)),
-      y: (yScale as (value: number) => number)(label.value),
+      x: scales.x(label.date),
+      y: scales.y(label.value),
     }))
     .filter(label => Number.isFinite(label.x) && Number.isFinite(label.y))
     .sort((a, b) => a.y - b.y);
@@ -93,14 +97,14 @@ export function SettlingEndMarks({
   end,
   lastFinal,
   paint,
+  scales,
 }: {
   end: SeriesPoint;
   lastFinal?: SeriesPoint & { text: string };
   paint: string;
+  scales: LineChartScales;
 }) {
-  const xScale = useXScale() as (value: Date) => number;
-  const yScale = useYScale() as (value: number) => number;
-  const at = ({ date, value }: SeriesPoint) => ({ x: xScale(new Date(date)), y: yScale(value) });
+  const at = ({ date, value }: SeriesPoint) => ({ x: scales.x(date), y: scales.y(value) });
   const endAt = at(end);
   const finalAt = lastFinal && at(lastFinal);
 

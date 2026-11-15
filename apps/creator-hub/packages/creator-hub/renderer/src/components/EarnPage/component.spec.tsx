@@ -4,7 +4,6 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { flatten } from '/@/modules/store/translation/flatten';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { dark, ThemeProvider } from 'decentraland-ui2/dist/theme';
 
 import { misc } from '#preload';
 import { en } from '/@/modules/store/translation/locales';
@@ -13,6 +12,7 @@ import * as api from '/@/lib/creatorFundApi';
 import { actions } from '/@/modules/store/creatorFund';
 
 import { tracked, trackedAnyOf } from '../../../tests/utils/analytics';
+import { TestProviders } from '../../../tests/utils/TestProviders';
 import { createTestStore } from '../../../tests/utils/testStore';
 import { EarnPage } from '.';
 
@@ -79,7 +79,7 @@ function page(entry: Entry = '/earn') {
   const store = createTestStore();
   const tree = () => (
     <Provider store={store}>
-      <ThemeProvider theme={dark}>
+      <TestProviders>
         <MemoryRouter initialEntries={[entry]}>
           <Routes>
             <Route
@@ -92,7 +92,7 @@ function page(entry: Entry = '/earn') {
             />
           </Routes>
         </MemoryRouter>
-      </ThemeProvider>
+      </TestProviders>
     </Provider>
   );
   const view = render(tree());
@@ -100,13 +100,13 @@ function page(entry: Entry = '/earn') {
 }
 
 /*
- * Each case renders MUI modals and queries them by role and accessible name, which takes seconds
+ * Each case renders modals and queries them by role and accessible name, which takes seconds
  * on a loaded CI runner; vitest's default 5 s cut cases off there while they were passing.
  */
 vi.setConfig({ testTimeout: 15_000 });
 
 const HERO_HIDE_RULE =
-  /@media \(max-width: ?1429\.46px\), ?\(max-height: ?597\.5px\)\{\.([\w-]+)\{display:none;?\}\}/;
+  /@media \(max-width: ?1429\.46px\), ?\(max-height: ?597\.5px\)\s*\{\s*\.([\w-]+)\s*\{\s*display: ?none;?\s*\}\s*\}/;
 
 function hidesHeroBelowHalfItsFigmaSize(container: HTMLElement) {
   const art = container.querySelector('img[width="1425"]');
@@ -226,7 +226,7 @@ describe('EarnPage', () => {
       render(
         <StrictMode>
           <Provider store={createTestStore()}>
-            <ThemeProvider theme={dark}>
+            <TestProviders>
               <MemoryRouter
                 initialEntries={[{ pathname: '/earn', state: { joinAfterSignIn: true } }]}
               >
@@ -237,7 +237,7 @@ describe('EarnPage', () => {
                   />
                 </Routes>
               </MemoryRouter>
-            </ThemeProvider>
+            </TestProviders>
           </Provider>
         </StrictMode>,
       );

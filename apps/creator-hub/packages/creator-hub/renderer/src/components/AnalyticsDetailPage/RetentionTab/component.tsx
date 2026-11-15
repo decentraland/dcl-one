@@ -1,5 +1,3 @@
-import { Box } from 'decentraland-ui2';
-
 import type {
   MetricsWindow,
   PlaceRetentionMetrics,
@@ -32,12 +30,12 @@ function platformStats(values: PlatformBreakdown, tooltipKey: 'platforms' | 'day
 
 export function RetentionTab({ retention, window }: Props) {
   return (
-    <Box className="RetentionTab">
+    <div className="RetentionTab">
       <TabHeading
         title={t('analytics.detail.retention.title')}
         description={t('analytics.detail.retention.description')}
       />
-      <Box className="Cards">
+      <div className="Cards">
         <ChartCard
           title={t('analytics.detail.retention.platforms.title')}
           description={t('analytics.detail.retention.platforms.description', {
@@ -95,7 +93,7 @@ export function RetentionTab({ retention, window }: Props) {
             maxValue={100}
           />
         </ChartCard>
-      </Box>
-    </Box>
+      </div>
+    </div>
   );
 }

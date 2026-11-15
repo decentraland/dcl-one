@@ -1,7 +1,10 @@
 import { useId, useState, type ReactNode } from 'react';
-import VisibilityIcon from '@mui/icons-material/VisibilityOutlined';
-import VisibilityOffIcon from '@mui/icons-material/VisibilityOffOutlined';
-import WarningIcon from '@mui/icons-material/WarningAmber';
+import {
+  VisibilityOutlinedIcon as VisibilityIcon,
+  VisibilityOffOutlinedIcon as VisibilityOffIcon,
+  WarningAmberIcon as WarningIcon,
+} from '/@/components/Icons/material';
+import IconButton from '@ui/atoms/IconButton';
 
 import { t } from '/@/modules/store/translation/utils';
 
@@ -9,16 +12,8 @@ import { DialogButton } from '../../../DialogButton';
 import { InfoIcon } from '../../../Icons';
 import { TitleBarModal } from '../../../Modals/TitleBarModal';
 import { FormTextInput } from '../../../TextInput';
-import {
-  Actions,
-  ErrorBlock,
-  EyeButton,
-  Field,
-  FieldLabel,
-  Footer,
-  Info,
-  Mismatch,
-} from './PasswordModal.styled';
+
+import styles from './PasswordModal.module.css';
 
 const MIN_LENGTH = 8;
 const MIN_NUMBERS = 2;
@@ -43,8 +38,13 @@ function PasswordField({ label, value, error, autoFocus, onChange }: FieldProps)
   const errorId = useId();
   const [shown, setShown] = useState(false);
   return (
-    <Field>
-      <FieldLabel htmlFor={inputId}>{label}</FieldLabel>
+    <div className={styles.field}>
+      <label
+        className={styles.fieldLabel}
+        htmlFor={inputId}
+      >
+        {label}
+      </label>
       <FormTextInput
         id={inputId}
         type={shown ? 'text' : 'password'}
@@ -54,26 +54,27 @@ function PasswordField({ label, value, error, autoFocus, onChange }: FieldProps)
         onChange={event => onChange(event.target.value)}
         inputProps={{ 'aria-describedby': error ? errorId : undefined, 'aria-invalid': !!error }}
         endAdornment={
-          <EyeButton
-            disableRipple
+          <IconButton
+            className={styles.eyeButton}
             aria-label={t(
               shown ? 'world_detail.settings.password.hide' : 'world_detail.settings.password.show',
             )}
             onClick={() => setShown(current => !current)}
           >
             {shown ? <VisibilityIcon /> : <VisibilityOffIcon />}
-          </EyeButton>
+          </IconButton>
         }
       />
       {error && (
-        <ErrorBlock
+        <div
+          className={styles.errorBlock}
           id={errorId}
           role="alert"
         >
           {error}
-        </ErrorBlock>
+        </div>
       )}
-    </Field>
+    </div>
   );
 }
 
@@ -118,20 +119,20 @@ export function PasswordModal({ open, mode, onCancel, onConfirm }: Props) {
         value={repeat}
         error={
           mismatch && (
-            <Mismatch>
+            <span className={styles.mismatch}>
               <WarningIcon />
               {t('world_detail.settings.password.mismatch')}
-            </Mismatch>
+            </span>
           )
         }
         onChange={setRepeat}
       />
-      <Footer>
-        <Info>
+      <div className={styles.footer}>
+        <p className={styles.info}>
           <InfoIcon />
           {t('world_detail.settings.password.info')}
-        </Info>
-        <Actions>
+        </p>
+        <div className={styles.actions}>
           <DialogButton
             type="button"
             tone="secondary"
@@ -147,8 +148,8 @@ export function PasswordModal({ open, mode, onCancel, onConfirm }: Props) {
           >
             {t('modal.confirm')}
           </DialogButton>
-        </Actions>
-      </Footer>
+        </div>
+      </div>
     </TitleBarModal>
   );
 }

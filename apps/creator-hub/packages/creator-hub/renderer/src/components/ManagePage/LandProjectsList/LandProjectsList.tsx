@@ -3,7 +3,7 @@ import { getLandName } from '/@/modules/store/management/utils';
 import { t } from '/@/modules/store/translation/utils';
 import type { ManagedProject } from '/shared/types/manage';
 
-import { Grid } from '../Grid.styled';
+import grid from '../Grid.module.css';
 import { PlaceCard } from '../PlaceCard';
 import { getRoleTag } from '../RoleTag';
 import { getLandMenuOptions } from './landMenu';
@@ -20,7 +20,7 @@ export function LandProjectsList({ projects, onViewScenes, onTransfer }: Props) 
   const onUrlCopied = () => pushGeneric('success', t('snackbar.generic.url_copied'));
 
   return (
-    <Grid>
+    <div className={grid.grid}>
       {projects.flatMap(project =>
         project.place
           ? [
@@ -42,6 +42,6 @@ export function LandProjectsList({ projects, onViewScenes, onTransfer }: Props) 
             ]
           : [],
       )}
-    </Grid>
+    </div>
   );
 }

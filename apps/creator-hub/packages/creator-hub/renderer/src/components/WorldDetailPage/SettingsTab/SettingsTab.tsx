@@ -1,4 +1,4 @@
-import { InputAdornment } from 'decentraland-ui2';
+import { cx } from '/@/lib/cx';
 
 import type { WorldSettings } from '/@/lib/worlds';
 import { t } from '/@/modules/store/translation/utils';
@@ -6,13 +6,16 @@ import { t } from '/@/modules/store/translation/utils';
 import { FieldTitle } from '../../LandDetailPage/DetailsTab/DetailsTab.styled';
 import { SelectCheckbox } from '../../LandDetailPage/SelectCheckbox';
 import { Loader } from '../../Loader';
+import { TextInput } from '../../TextInput';
 import { useWorldSettings } from '../useWorldSettings';
 import { useWorldSettingsDraft } from '../useWorldSettingsDraft';
 import type { WorldPermissions } from '../worldPermissions';
 import { AccessSection } from './Access';
+import { CheckRow } from './CheckRow';
 import { settingsChanges, settingsValid, toSettingsDraft } from './settings';
-import { CheckRow, Note, Root, Row, SectionBlock, SmallInput } from './SettingsTab.styled';
 import { SkyboxField } from './SkyboxField';
+
+import styles from './SettingsTab.module.css';
 
 type Props = { worldName: string; access: WorldPermissions['access'] };
 
@@ -27,35 +30,29 @@ function SettingsForm({ worldName, access, saved }: Props & { saved: WorldSettin
   const edit = (patch: Partial<typeof draft>) => setDraft(current => ({ ...current, ...patch }));
 
   const coordinate = (axis: 'x' | 'y') => (
-    <SmallInput
+    <TextInput
+      className={styles.smallInput}
       value={draft[axis]}
-      startAdornment={
-        <InputAdornment
-          position="start"
-          className="Prefix"
-        >
-          {axis.toUpperCase()}
-        </InputAdornment>
-      }
+      startAdornment={<span className={styles.prefix}>{axis.toUpperCase()}</span>}
       inputProps={{ 'aria-label': axis.toUpperCase(), inputMode: 'numeric' }}
       onChange={event => edit({ [axis]: event.target.value.trim() })}
     />
   );
 
   return (
-    <Root>
-      <SectionBlock>
+    <div className={styles.root}>
+      <div className={styles.section}>
         <FieldTitle as="span">{t('world_detail.settings.spawn')}</FieldTitle>
-        <Row className="Tight">
+        <div className={cx(styles.row, styles.tight)}>
           {coordinate('x')}
           {coordinate('y')}
-        </Row>
-      </SectionBlock>
+        </div>
+      </div>
       <SkyboxField
         value={draft.skyboxTime}
         onChange={skyboxTime => edit({ skyboxTime })}
       />
-      <SectionBlock>
+      <div className={styles.section}>
         <FieldTitle as="span">{t('world_detail.settings.general')}</FieldTitle>
         <CheckRow>
           <SelectCheckbox
@@ -64,7 +61,7 @@ function SettingsForm({ worldName, access, saved }: Props & { saved: WorldSettin
           />
           {t('world_detail.settings.single_player')}
         </CheckRow>
-        <Note>{t('world_detail.settings.single_player_streaming_note')}</Note>
+        <p className={styles.note}>{t('world_detail.settings.single_player_streaming_note')}</p>
         <CheckRow>
           <SelectCheckbox
             checked={draft.showInPlaces}
@@ -72,9 +69,9 @@ function SettingsForm({ worldName, access, saved }: Props & { saved: WorldSettin
           />
           {t('world_detail.settings.discoverable')}
         </CheckRow>
-      </SectionBlock>
+      </div>
       {access === 'manage' && <AccessSection worldName={worldName} />}
-    </Root>
+    </div>
   );
 }
 

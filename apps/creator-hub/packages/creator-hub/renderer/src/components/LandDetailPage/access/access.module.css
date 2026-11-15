@@ -1,0 +1,211 @@
+/* Two classes: over the rules of the Button wrapper. */
+.addButton.addButton :global(.Button.btn[data-size="small"]) {
+  height: 26px;
+  min-width: 0;
+  padding: 2px 6px;
+  border-radius: 6px;
+  gap: 6px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+.addButton.addButton :global(.Button):disabled {
+  opacity: 0.2;
+}
+
+.addButton.addButton :global(.Button.btn) svg {
+  font-size: 23.14px;
+  margin: -2.57px;
+}
+
+.addBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 700px;
+  max-width: 100%;
+}
+
+.addRow {
+  width: 100%;
+}
+
+.addRow.addRow :global(.TextInput.TextInput) > div {
+  padding-right: 7px;
+}
+
+.bulkTrash.bulkTrash {
+  box-sizing: border-box;
+  width: 30px;
+  height: 30px;
+  padding: 6px;
+  border-radius: 100px;
+  color: var(--palette-whiteTransparent-blurry);
+}
+
+.bulkTrash.bulkTrash svg {
+  width: 18px;
+  height: 18px;
+}
+
+.bulkTrash.bulkTrash:hover:not(:disabled) {
+  background-color: var(--palette-whiteTransparent-subtle);
+}
+
+.bulkTrash.bulkTrash:focus-visible {
+  outline: 2px solid var(--palette-info-light);
+  outline-offset: 2px;
+}
+
+.description {
+  margin: 0;
+  color: var(--palette-neutral-softWhite);
+  font-size: 1rem;
+  line-height: 1.1875rem;
+}
+
+.listHeader,
+.row {
+  display: grid;
+  grid-template-columns: 524px 200px minmax(0, 1fr) 30px;
+  column-gap: 10px;
+  align-items: center;
+}
+
+.listHeader {
+  height: 40px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--palette-whiteTransparent-soft);
+  color: var(--gray);
+  font-size: 0.875rem;
+  line-height: 1;
+}
+
+.listHeader > :global(.Lead) {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.listHeader :global(.Selected) {
+  color: var(--palette-neutral-softWhite);
+  font-weight: 600;
+}
+
+.listBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: 40px;
+  padding-top: 9px;
+}
+
+.notice {
+  margin: 8px 0 0;
+  color: var(--gray);
+  font-size: 0.875rem;
+}
+
+/* Three classes: over the width and the chevron colour of the domain select. */
+.parcelSelect.parcelSelect.parcelSelect {
+  width: 200px;
+}
+
+.parcelSelect.parcelSelect.parcelSelect > span[aria-hidden="true"] {
+  color: var(--palette-whiteTransparent-blurry);
+}
+
+.row {
+  padding: 10px;
+  box-shadow: inset 0 -1px 0 var(--palette-whiteTransparent-soft);
+}
+
+.row > :global(.Lead) {
+  grid-column: 1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.row > :global(.Scope) {
+  grid-column: 2;
+}
+
+.row > :global(.Note) {
+  grid-column: 3;
+  justify-self: end;
+}
+
+/* The avatar of the old library, and the face of the AvatarFace atom. */
+.row :global(.Who .MuiAvatar-root),
+.row :global(.Who .Avatar) > span[data-size] > span {
+  width: 28px;
+  height: 28px;
+  margin: 2px;
+}
+
+.row :global(.Who .Avatar .Paragraph .Name) {
+  display: inline-block;
+  max-width: 230px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+  color: var(--palette-neutral-softWhite);
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+/* Not doubled: the World list moves the button to its own last column. */
+.row > :global(.Trash) {
+  grid-column: 4;
+}
+
+.row.row > :global(.Trash) {
+  box-sizing: border-box;
+  width: 30px;
+  height: 30px;
+  padding: 6px;
+  border-radius: 100px;
+  opacity: 0;
+  color: var(--dcl-silver);
+}
+
+.row.row > :global(.Trash) svg {
+  width: 18px;
+  height: 18px;
+}
+
+.row.row > :global(.Trash):hover:not(:disabled) {
+  background-color: var(--palette-whiteTransparent-subtle);
+}
+
+/* An open select keeps the focus on its field; the old one moved it to the list, out of the row. */
+.row:hover,
+.row:focus-within:not(:has([data-open])) {
+  background-color: var(--palette-whiteTransparent-subtle);
+}
+
+.row.row:hover > :global(.Trash),
+.row.row:focus-within:not(:has([data-open])) > :global(.Trash) {
+  opacity: 1;
+}
+
+/* Not the select of the row: its focus shows as the border, with no ring. */
+.row.row button:not([role="combobox"]):focus-visible {
+  outline: 2px solid var(--palette-info-light);
+  outline-offset: 2px;
+}
+
+.rows {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}

@@ -1,4 +1,4 @@
-import { Box, Typography } from 'decentraland-ui2';
+import Text from '@ui/atoms/Text';
 
 import './styles.css';
 
@@ -9,14 +9,19 @@ type Props = {
 
 export function TabHeading({ title, description }: Props) {
   return (
-    <Box className="TabHeading">
-      <Typography variant="h5">{title}</Typography>
-      <Typography
+    <div className="TabHeading">
+      <Text
+        variant="h5"
+        className="Title"
+      >
+        {title}
+      </Text>
+      <Text
         variant="body1"
         className="Description"
       >
         {description}
-      </Typography>
-    </Box>
+      </Text>
+    </div>
   );
 }

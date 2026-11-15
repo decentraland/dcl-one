@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
 import type { Hex } from 'viem';
-import { IconButton, MenuItem } from 'decentraland-ui2';
+import IconButton from '@ui/atoms/IconButton';
+import { SelectOption } from '@ui/atoms/Select';
 
 import { useDispatch, useSelector } from '#store';
 import { useAuth } from '/@/hooks/useAuth';
@@ -13,12 +14,10 @@ import { getLandName } from '/@/modules/store/management/utils';
 import { t } from '/@/modules/store/translation/utils';
 import type { ManagedProject } from '/shared/types/manage';
 
-import { menuSurfaceStyles } from '../../Dropdown/component.styled';
 import { CLAIM_NAME_URL } from '../../ManagePage/manageEmptyState';
-import { selectRowStyles } from '../../ManagePage/ViewBar/ViewBar.styled';
 import { DefaultModal } from '../../Modals/DefaultModal';
 import { TxState, txCorner } from '../../Modals/TxState';
-import { ChevronDownIcon, EditIcon } from '../../Icons';
+import { EditIcon } from '../../Icons';
 import { getDomainState, toLandIdByParcel } from './details';
 import {
   ClaimLink,
@@ -120,31 +119,25 @@ export function DomainName({ land, project }: { land: Land; project: ManagedProj
       {domain.kind !== 'empty' && (domain.kind !== 'set' || editing) && (
         <DomainSelect
           value=""
-          displayEmpty
-          IconComponent={ChevronDownIcon}
+          placeholder={t('land_detail.details.domain_placeholder')}
           defaultOpen={editing}
-          inputProps={{ 'aria-label': t('land_detail.details.domain') }}
-          renderValue={() => t('land_detail.details.domain_placeholder')}
-          onChange={event => {
-            const value = String(event.target.value);
+          aria-label={t('land_detail.details.domain')}
+          onChange={value => {
             if (value === REMOVE && domain.kind === 'set') {
               setChange({ kind: 'remove', name: domain.name });
             } else if (value) setChange({ kind: 'set', name: value });
           }}
-          MenuProps={{
-            sx: [theme => menuSurfaceStyles({ theme }), theme => selectRowStyles({ theme })],
-          }}
         >
           {domain.kind === 'set' && (
-            <MenuItem
+            <SelectOption
               value={REMOVE}
               className="Danger"
             >
               {t('land_detail.details.domain_remove')}
-            </MenuItem>
+            </SelectOption>
           )}
           {domain.options.map(option => (
-            <MenuItem
+            <SelectOption
               key={option.subdomain}
               value={option.subdomain}
               disabled={!!option.usedBy}
@@ -152,7 +145,7 @@ export function DomainName({ land, project }: { land: Land; project: ManagedProj
               {option.subdomain}
               {option.usedBy &&
                 ` · ${t('land_detail.details.domain_used', { target: option.usedBy })}`}
-            </MenuItem>
+            </SelectOption>
           ))}
         </DomainSelect>
       )}

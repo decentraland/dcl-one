@@ -1,5 +1,3 @@
-import { Box } from 'decentraland-ui2';
-
 import type { PlaceVisitsMetrics } from '/shared/types/place-analytics';
 
 import { t } from '/@/modules/store/translation/utils';
@@ -18,12 +16,12 @@ type Props = {
 
 export function VisitsTab({ visits }: Props) {
   return (
-    <Box className="VisitsTab">
+    <div className="VisitsTab">
       <TabHeading
         title={t('analytics.detail.visits.title')}
         description={t('analytics.detail.visits.description')}
       />
-      <Box className="Cards">
+      <div className="Cards">
         <ChartCard title={t('analytics.detail.visits.unique.title')}>
           <StatsRow
             stats={[
@@ -107,7 +105,7 @@ export function VisitsTab({ visits }: Props) {
           />
         </ChartCard>
         */}
-      </Box>
-    </Box>
+      </div>
+    </div>
   );
 }

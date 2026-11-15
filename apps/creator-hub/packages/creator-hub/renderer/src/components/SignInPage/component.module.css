@@ -1,0 +1,40 @@
+.page {
+  box-sizing: border-box;
+  display: flex;
+  flex-flow: row wrap;
+  align-items: center;
+  width: 100%;
+}
+
+.content {
+  box-sizing: border-box;
+  margin: 0;
+}
+
+@media (min-width: 768px) {
+  .content {
+    flex-basis: 75%;
+    flex-grow: 0;
+    max-width: 75%;
+  }
+}
+
+.gutter.gutter {
+  margin-bottom: 0.35em;
+}
+
+.back.back {
+  gap: 0;
+  min-width: 64px;
+  background: var(--brand);
+  letter-spacing: 0.4px;
+}
+
+/* The selector is longer than the hover rule of the button atom. */
+.page .content .back:not(:disabled):hover {
+  background: #f26276;
+  box-shadow:
+    0 3px 1px -2px rgba(0, 0, 0, 0.2),
+    0 2px 2px 0 rgba(0, 0, 0, 0.14),
+    0 1px 5px 0 rgba(0, 0, 0, 0.12);
+}

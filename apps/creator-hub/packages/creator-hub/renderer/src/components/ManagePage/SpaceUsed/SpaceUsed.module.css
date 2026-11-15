@@ -1,0 +1,72 @@
+.detailsButton {
+  margin-top: 8px;
+  padding: 0;
+  border: none;
+  background-color: transparent;
+  color: var(--palette-neutral-softWhite);
+  font-family: inherit;
+  font-size: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.detailsButton:focus-visible {
+  outline: 2px solid var(--palette-info-light);
+  outline-offset: 2px;
+}
+
+.fill {
+  display: block;
+  height: 12px;
+  border-radius: 100px;
+  background: linear-gradient(90deg, #ff2d55, #ffbc5b);
+}
+
+.label {
+  color: var(--palette-neutral-softWhite);
+  font-size: 1.125rem;
+  line-height: 1.375rem;
+}
+
+.labelRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 22px;
+}
+
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.track {
+  box-sizing: border-box;
+  width: 501px;
+  max-width: 100%;
+  height: 16px;
+  padding: 2px;
+  border-radius: 100px;
+  background-color: var(--palette-whiteTransparent-subtle);
+}
+
+.value {
+  color: var(--dcl-silver);
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.value b {
+  color: var(--palette-neutral-softWhite);
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+
+.valueRow {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  height: 24px;
+}

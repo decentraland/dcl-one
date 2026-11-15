@@ -14,7 +14,7 @@
   gap: 10px;
 }
 
-.ChartCard .ChartCardHeader .MuiTypography-h6 {
+.ChartCard .ChartCardHeader .Title {
   color: var(--palette-neutral-softWhite);
   font-size: var(--type-h5-semi-size);
   font-weight: var(--type-h5-semi-weight);
@@ -22,7 +22,7 @@
   letter-spacing: var(--type-h5-semi-letter-spacing);
 }
 
-.ChartCard .Description {
+.ChartCard .Description.Description {
   color: var(--dcl-silver);
   font-size: var(--type-h7-regular-size);
   font-weight: var(--type-h7-regular-weight);
