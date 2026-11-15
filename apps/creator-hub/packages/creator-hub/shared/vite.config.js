@@ -1,5 +1,3 @@
-/* eslint-env node */
-
 /**
  * @type {import('vite').UserConfig}
  * @see https://vitejs.dev/config/

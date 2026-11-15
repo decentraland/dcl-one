@@ -1,9 +1,9 @@
 import { join } from 'node:path';
 import { sentryVitePlugin } from '@sentry/vite-plugin';
-import { preload } from 'unplugin-auto-expose';
-import { chrome } from '../.electron-vendors.cache.json';
+import vendors from '../.electron-vendors.cache.json' with { type: 'json' };
+import { preloadExpose } from './expose-plugin.js';
 
-const PACKAGE_ROOT = __dirname;
+const PACKAGE_ROOT = import.meta.dirname;
 const PACKAGE_DIR = join(PACKAGE_ROOT, '..');
 
 /**
@@ -22,7 +22,7 @@ const config = {
   build: {
     ssr: true,
     sourcemap: 'inline',
-    target: `chrome${chrome}`,
+    target: `chrome${vendors.chrome}`,
     outDir: 'dist',
     assetsDir: '.',
     minify: process.env.MODE !== 'development',
@@ -30,18 +30,20 @@ const config = {
       entry: 'src/index.ts',
       formats: ['es'],
     },
-    rollupOptions: {
+    rolldownOptions: {
       output: {
         // ESM preload scripts must have the .mjs extension
         // https://www.electronjs.org/docs/latest/tutorial/esm#esm-preload-scripts-must-have-the-mjs-extension
         entryFileNames: '[name].mjs',
+        // Keep one output file. Without this, rolldown writes a runtime chunk next to the entry.
+        codeSplitting: false,
       },
     },
     emptyOutDir: true,
     reportCompressedSize: false,
   },
   plugins: [
-    preload.vite(),
+    preloadExpose(),
     sentryVitePlugin({
       org: 'decentraland',
       project: 'creator-hub',

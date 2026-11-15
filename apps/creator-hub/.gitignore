@@ -6,7 +6,6 @@ thumbs.db
 .cursor/
 !.cursor/skills
 
-.eslintcache
 .browserslistrc
 .electron-vendors.cache.json
 .vscode/settings.json

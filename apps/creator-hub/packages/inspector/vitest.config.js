@@ -8,6 +8,8 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'happy-dom',
+    // happy-dom 21 gives an iframe a window only when page loading is on. Specs read `contentWindow`.
+    environmentOptions: { happyDOM: { settings: { enableIframePageLoading: true } } },
     setupFiles: ['./test/setup.ts'],
     include: ['src/**/*.spec.ts', 'src/**/*.spec.tsx'],
     exclude: ['e2e/**/*.spec.ts'],

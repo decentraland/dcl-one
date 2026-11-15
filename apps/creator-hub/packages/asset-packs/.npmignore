@@ -3,7 +3,6 @@ packs
 scene.json
 tsconfig.json
 tsconfig.lib.json
-tsconfig.scripts.json
 README.md
 .env.example
 scripts

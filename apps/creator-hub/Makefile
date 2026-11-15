@@ -26,7 +26,6 @@ ASSET_PACKS_PATH = packages/asset-packs
 # own node_modules pinned to the engine's companion SDK. The inspector build
 # exports it into public/bevy-agent, so it must be installed + built first.
 BEVY_AGENT_PATH = packages/inspector/agents/bevy
-SYNC_PACK = node_modules/.bin/syncpack
 # One install covers every workspace package; CI installs exactly what the lock records.
 PNPM_INSTALL = pnpm install $(if $(CI),--frozen-lockfile)
 
@@ -121,16 +120,10 @@ lint:
 	pnpm run lint
 
 lint-fix:
-	make sync-deps
 	pnpm run lint:fix
 
-sync-deps:
-	pnpm run syncpack:format
-	pnpm run syncpack:fix
-
 lint-packages:
-	pnpm run syncpack:list-mismatches
-	pnpm run syncpack:format
+	node scripts/check-dep-versions.js
 
 typecheck:
 	pnpm run typecheck
