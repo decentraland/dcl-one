@@ -443,6 +443,7 @@ async fn a_pass_copies_the_listing_read_only_and_resumes_sweeps_and_fuses() {
     assert_eq!(shared.lock().unwrap().offsets, vec![100]);
     assert_eq!(out.failed_pages, 0, "the resumed run itself saw no failure");
     assert!(!out.complete, "a resumed pass never counts as complete");
+    assert!(out.fetched_all && !pass_failed(&out), "{out:?}");
     assert!(!out.sweep_refused && out.deactivated == 0, "{out:?}");
     assert_eq!(last_complete_pass_at(&pool, &cfg).await, before);
     let (pass_complete, error): (Option<bool>, Option<String>) = sqlx::query_as(
@@ -479,12 +480,38 @@ async fn a_pass_copies_the_listing_read_only_and_resumes_sweeps_and_fuses() {
         .unwrap();
     assert_eq!(renamed, format!("{tag} renamed"));
 
+    // A resumed pass that stops at the offset ceiling saw no failed page,
+    // but it did not reach the listing's end: the job reports it.
+    sqlx::query(
+        "UPDATE social.community_mirror_state SET pass_started_at = $2, next_offset = $3, pass_rows = 100 \
+         WHERE source_url = $1",
+    )
+    .bind(cfg.source.base())
+    .bind(Utc::now().naive_utc())
+    .bind(MAX_OFFSET)
+    .execute(&pool)
+    .await
+    .unwrap();
+    shared.lock().unwrap().offsets.clear();
+    let out = run_pass(&client, &pool, &cfg, Duration::ZERO, &cancel)
+        .await
+        .unwrap();
+    assert_eq!(out.resumed_from, Some(MAX_OFFSET));
+    assert!(shared.lock().unwrap().offsets.is_empty());
+    assert_eq!(out.failed_pages, 0);
+    assert!(
+        !out.complete && !out.fetched_all && pass_failed(&out),
+        "{out:?}"
+    );
+    assert!(!out.sweep_refused && out.deactivated == 0, "{out:?}");
+
     // 6. An upstream fault: incomplete, nothing deactivated.
     shared.lock().unwrap().fail = true;
     let out = run_pass(&client, &pool, &cfg, Duration::ZERO, &cancel)
         .await
         .unwrap();
     assert!(!out.complete && out.failed_pages > 0 && out.deactivated == 0);
+    assert!(!out.fetched_all && pass_failed(&out));
     let error: Option<String> = sqlx::query_scalar(
         "SELECT last_error FROM social.community_mirror_state WHERE source_url = $1",
     )
