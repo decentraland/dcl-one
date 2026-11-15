@@ -189,7 +189,7 @@ describe('EarnPage', () => {
       rerenderPage();
 
       expect(await screen.findByRole('progressbar', { name: 'Checking eligibility' })).toBeTruthy();
-      expect(api.getEligibility).toHaveBeenCalledTimes(1);
+      await waitFor(() => expect(api.getEligibility).toHaveBeenCalledTimes(1));
     });
 
     it('should hide the hero art below half its Figma size', () => {

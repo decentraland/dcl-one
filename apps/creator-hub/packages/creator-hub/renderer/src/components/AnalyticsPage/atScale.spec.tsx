@@ -27,13 +27,11 @@ vi.mock('/@/lib/auth', () => ({
 
 vi.mock('/@/hooks/useAuth', () => ({ useAuth: () => ({ isSignedIn: true }) }));
 
-/** The navbar's avatar reads theme tokens this environment does not populate, and
- * nothing here is about the navbar. `NavbarItem` stays real — it is an enum the
- * page reads. */
-vi.mock('../Navbar', async importOriginal => ({
-  ...((await importOriginal()) as object),
-  Navbar: () => null,
-}));
+/** Nothing here is about the navbar or the sign-in card (the wallet is signed in).
+ * The stubs keep their modules out of the load, which is most of the time of the page test. */
+vi.mock('../Navbar', () => ({ Navbar: () => null, NavbarItem: { ANALYTICS: 'analytics' } }));
+
+vi.mock('../SignInCard', () => ({ SignInCard: () => null }));
 
 vi.mock('@dcl/single-sign-on-client', () => ({
   localStorageGetIdentity: () => ({
