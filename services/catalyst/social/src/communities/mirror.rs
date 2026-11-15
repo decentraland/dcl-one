@@ -5,7 +5,10 @@
 //! events (`crate::explore::events::mirror`): a durable cursor per source
 //! (`social.community_mirror_state`) so a killed pass resumes at its page
 //! with the same start, and a sweep gated on a complete pass behind a volume
-//! fuse.
+//! fuse. A failed page is skipped and the cursor moves past it, and the
+//! cursor does not record that skip, so a resumed pass never counts as
+//! complete: it neither advances `last_complete_pass_at` nor sweeps, and the
+//! next fresh pass restores the marker.
 //!
 //! A mirrored community (`communities.origin = 'upstream'`) is not local
 //! authority. The pass writes no owner or moderator row for it, so no wallet
@@ -102,7 +105,9 @@ pub struct PassOutcome {
     pub sweep_refused: bool,
     pub resumed_from: Option<i64>,
     pub cancelled: bool,
-    /// Every page fetched and stored; the sweep runs only then.
+    /// Every page fetched and stored; the sweep runs only then. A resumed
+    /// pass is never complete: what it skipped before the interruption is not
+    /// persisted.
     pub complete: bool,
 }
 
@@ -305,11 +310,15 @@ async fn record_error(pool: &PgPool, source: &str, error: &str) {
 
 async fn finish_pass(pool: &PgPool, source: &str, out: &PassOutcome) -> sqlx::Result<()> {
     let error = (!out.complete).then(|| {
-        format!(
+        let mut reason = format!(
             "{} failed pages{}",
             out.failed_pages,
             if out.cancelled { ", cancelled" } else { "" }
-        )
+        );
+        if let Some(offset) = out.resumed_from {
+            reason.push_str(&format!("; resumed at offset {offset}"));
+        }
+        reason
     });
     sqlx::query(
         "UPDATE social.community_mirror_state SET \
@@ -359,7 +368,9 @@ pub async fn run_pass(
     let base = cfg.source.base();
     let start = begin_pass(pool, base, Utc::now().naive_utc()).await?;
     let mut out = PassOutcome {
-        complete: true,
+        // The cursor does not record the pages skipped before the
+        // interruption, so a resumed pass never counts as complete.
+        complete: !start.resumed,
         resumed_from: start.resumed.then_some(start.offset),
         upserted: start.rows as usize,
         ..Default::default()
@@ -648,7 +659,10 @@ pub fn spawn_job(state: SharedState, client: Outbound, cfg: MirrorConfig, jobs: 
                 out.upserted, out.deactivated, out.failed_pages, out.complete
             ));
             tracing::info!(?out, "communities mirrored from upstream");
-            if !out.complete && !out.cancelled {
+            // A resumed pass that fetched every page it saw is incomplete
+            // only for want of proof, not an upstream fault.
+            let resumed_cleanly = out.resumed_from.is_some() && out.failed_pages == 0;
+            if !out.complete && !out.cancelled && !resumed_cleanly {
                 anyhow::bail!(
                     "communities pass incomplete: {} failed pages",
                     out.failed_pages
