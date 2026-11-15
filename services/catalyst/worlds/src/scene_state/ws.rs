@@ -313,6 +313,9 @@ async fn handle_socket(
             _ = client.cancel.cancelled() => {
                 tracing::debug!(scene = %scene.name, index, "ws closed by the host");
                 let _ = sink.close().await;
+                // A no-op after a host removal; after the runtime stopped, this
+                // removal is what frees the index.
+                scene.remove_connection(index, client.id);
                 return;
             }
 

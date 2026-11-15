@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use parking_lot::Mutex;
 use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
 
 use crate::scene_state::crdt::{CrdtEngine, decode_batch};
 use crate::scene_state::runtime::{
@@ -60,8 +61,15 @@ pub struct SharedState {
     pub running: AtomicBool,
 
     /// Bounded, recycled client indices. Shared with the scene thread, which
-    /// releases a slot only once it has reclaimed that client's entity range.
+    /// releases a slot only once it has reclaimed that client's entity range;
+    /// once the runtime stopped, `JsRuntime::on_client_close` releases it. A
+    /// slot is never freed while its client's socket may still be open.
     pub slots: Arc<ClientSlots>,
+
+    /// Each connected client's close request (its `Client::cancel`). A runtime
+    /// that stops cancels them all, so the host closes every socket and frees
+    /// each slot through its normal removal.
+    pub closes: dashmap::DashMap<u32, CancellationToken>,
 
     /// Client bytes queued toward the scene thread and not yet read.
     pub inbound: Arc<InboundBudget>,
@@ -74,6 +82,17 @@ pub struct SharedState {
 
     /// Clients this scene closed after too many dropped frames.
     pub desynced_closes: AtomicU64,
+}
+
+impl SharedState {
+    /// Asks the host to close every client of a stopped runtime. Called after
+    /// `running` is cleared: a client opened concurrently either is seen here
+    /// or sees the runtime stopped (`JsRuntime::on_client_open`).
+    pub(super) fn close_clients(&self) {
+        for close in self.closes.iter() {
+            close.cancel();
+        }
+    }
 }
 
 pub(super) struct Watchdog {
@@ -216,6 +235,7 @@ pub fn spawn(
         outbound_meters: dashmap::DashMap::new(),
         running: AtomicBool::new(true),
         slots: Arc::clone(&slots),
+        closes: dashmap::DashMap::new(),
         inbound: Arc::new(InboundBudget::new(&limits)),
         parked: AtomicBool::new(false),
         inbound_drops: AtomicU64::new(0),
@@ -366,7 +386,7 @@ unsafe extern "C" fn scene_oom(location: *const std::ffi::c_char, _details: &v8:
             PARKED.add(scene);
             shared.parked.store(true, Ordering::SeqCst);
             shared.running.store(false, Ordering::SeqCst);
-            shared.slots.clear();
+            shared.close_clients();
             watchdog.stopped.store(true, Ordering::SeqCst);
         }
         None => {
@@ -388,7 +408,7 @@ pub(super) fn finish(
     shared.running.store(false, Ordering::SeqCst);
     watchdog.stopped.store(true, Ordering::SeqCst);
 
-    shared.slots.clear();
+    shared.close_clients();
 
     *watchdog.isolate.lock() = None;
     if let Some(j) = wd_thread {

@@ -725,7 +725,8 @@ impl SceneHostState {
     /// The lookup and the add happen under the membership lock unloads take,
     /// so a client never lands in an unloaded scene; only a missing scene
     /// waits, on its own key's load lock. A scene that is no longer hosted is
-    /// loaded again only if it sets `authoritativeMultiplayer`; a different
+    /// loaded again only if it sets `authoritativeMultiplayer`, as is one
+    /// whose runtime stopped; a different
     /// deployment now hosted under the key refuses the join (the client was
     /// admitted for the old one).
     pub async fn join<R>(
@@ -757,6 +758,9 @@ impl SceneHostState {
     ) -> anyhow::Result<Option<(Arc<scene::Scene>, R)>> {
         let _membership = self.loads.membership.lock();
         match self.scenes.get(&identity.key.room_key()) {
+            // A stopped runtime is not joined: the load that follows replaces
+            // it, kicking whoever is left through `remove_hosted`.
+            Some(scene) if !scene.runtime.is_running() => Ok(None),
             Some(scene) if scene.identity.scene_id() == identity.scene_id() => {
                 let add = add.take().ok_or_else(|| anyhow!("client already added"))?;
                 let added = add(&scene);
