@@ -390,7 +390,10 @@ impl DirectSigner {
     /// Re-sends a recorded transaction's exact bytes unless a receipt for
     /// `tx_hash` already exists. A send error is logged, not returned: the
     /// node answering "already known" or "nonce too low" is expected, and the
-    /// receipt alone decides the outcome.
+    /// receipt alone decides the outcome. A transaction whose nonce another
+    /// transaction took can never mine: that is logged at error level and
+    /// answered `Conflict`, and the claim is left for manual reconciliation,
+    /// never replaced by a new transaction.
     pub async fn rebroadcast(&self, tx_hash: &str, raw_hex: &str) -> Result<(), ApiError> {
         let (outcome, _) = self.fetch_receipt_once(tx_hash).await?;
         if outcome != ReceiptOutcome::Pending {
@@ -405,6 +408,27 @@ impl DirectSigner {
                 "recorded transaction bytes hash to {own}, not {tx_hash}; not re-sending"
             )));
         }
+        if let Some(nonce) = signed_nonce(&raw)
+            && self.nonce_taken(nonce).await?
+        {
+            // The relayer's mined nonce passed ours, so the slot went to another
+            // transaction; re-reading the receipt after the count rules out ours.
+            let (outcome, _) = self.fetch_receipt_once(tx_hash).await?;
+            if outcome == ReceiptOutcome::Pending {
+                tracing::error!(
+                    tx_hash = %tx_hash,
+                    nonce,
+                    relayer = %self.relayer_address,
+                    "recorded transaction can never mine: another transaction took its nonce; \
+                     its claim needs manual reconciliation"
+                );
+                return Err(ApiError::Conflict(format!(
+                    "recorded transaction {tx_hash} can never mine (nonce {nonce} was taken by \
+                     another transaction); not re-sending \u{2014} reconcile manually"
+                )));
+            }
+            return Ok(());
+        }
         match self.send_raw(raw_hex.trim()).await {
             Ok(_) => tracing::info!(tx_hash = %tx_hash, "re-sent recorded transaction"),
             Err(e) => {
@@ -412,6 +436,22 @@ impl DirectSigner {
             }
         }
         Ok(())
+    }
+
+    /// Whether the relayer's mined transaction count (`latest`) has passed
+    /// `nonce`, so a transaction signed with it either mined or never will.
+    async fn nonce_taken(&self, nonce: u64) -> Result<bool, ApiError> {
+        let count = self
+            .chain
+            .rpc()
+            .call_hex(
+                "eth_getTransactionCount",
+                json!([format!("{:#x}", self.relayer_address), "latest"]),
+            )
+            .await
+            .and_then(|hex| parse_quantity_u64(&hex))
+            .map_err(|e| ApiError::RelayerFailed(format!("eth_getTransactionCount failed: {e}")))?;
+        Ok(count > nonce)
     }
 
     /// Estimates, reads the pending nonce and the fees, and signs. Callers
@@ -554,6 +594,15 @@ impl DirectSigner {
             max_priority_fee_per_gas: tip,
         })
     }
+}
+
+/// The nonce a signed EIP-2718 transaction carries.
+fn signed_nonce(raw: &[u8]) -> Option<u64> {
+    use alloy_consensus::Transaction;
+    use alloy_eips::eip2718::Decodable2718;
+    alloy_consensus::TxEnvelope::decode_2718(&mut &raw[..])
+        .ok()
+        .map(|tx| tx.nonce())
 }
 
 fn parse_tx_hash(tx_hash_hex: &str) -> Result<TxHash, ApiError> {

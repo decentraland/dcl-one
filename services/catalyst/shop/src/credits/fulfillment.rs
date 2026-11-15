@@ -379,8 +379,11 @@ impl OutboxWorker {
     /// Refunds the undelivered portion of a frozen checkout (one idempotent
     /// refund per checkout) and resolves it to `reversed` (nothing delivered)
     /// or `failed` (partial). A line is refunded only when its buy spent no
-    /// MANA: never claimed, no transaction recorded (`pending`, `error`), or
-    /// reverted on the buy leg. While a pending line's buy is unsettled the checkout stays
+    /// MANA: never claimed, no transaction recorded (`pending`, `error`) under
+    /// a claim that records its transaction before broadcasting it
+    /// (`write_ahead`), or reverted on the buy leg. A `pending` or `error`
+    /// claim kept from before that rule may have broadcast, so it is held.
+    /// While a pending line's buy is unsettled the checkout stays
     /// `reversing` (the tick resumes that line); a line whose buy spent MANA
     /// without reaching escrow is held out of the refund for reconciliation.
     #[tracing::instrument(skip(self, buyer))]
@@ -393,7 +396,8 @@ impl OutboxWorker {
                     count(*) FILTER (WHERE status <> 'confirmed' AND NOT refundable AND NOT awaiting) AS held \
              FROM ( \
                  SELECT o.status, o.unit_price_credits, \
-                        o.status <> 'confirmed' AND (b.status IS NULL OR b.status IN ('pending', 'error') \
+                        o.status <> 'confirmed' AND (b.status IS NULL \
+                            OR (b.status IN ('pending', 'error') AND b.write_ahead) \
                             OR (b.status = 'reverted' AND b.forward_tx_hash IS NULL)) AS refundable, \
                         o.status = 'pending' AND COALESCE(b.status IN \
                             ('sent', 'bought', 'forwarding', 'confirmed'), false) AS awaiting \

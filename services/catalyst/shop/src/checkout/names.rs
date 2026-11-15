@@ -292,13 +292,29 @@ async fn resume_name_buy(
         "reverted" => Err(ApiError::RelayReverted(format!(
             "name buy {key:?} reverted on a prior attempt; not re-broadcasting"
         ))),
-        // A claim that recorded its transaction before sending is re-armed
-        // by the claim itself; an `error` reaching here is a claim kept from
-        // before that rule, whose failure cannot prove nothing was sent.
-        "error" => Err(ApiError::Conflict(format!(
-            "name buy {key:?} failed under a claim that did not record its transaction before \
-             sending; it may have been broadcast, so it is not bought again \u{2014} reconcile manually"
-        ))),
+        // A claim that records its transaction before sending is re-armed by
+        // the claim itself; an `error` reaching here lost a concurrent re-arm,
+        // or is a claim kept from before that rule, whose failure cannot
+        // prove nothing was sent.
+        "error" => {
+            let write_ahead: bool = sqlx::query_scalar(
+                "SELECT write_ahead FROM shop.broker_purchases WHERE idempotency_key = $1",
+            )
+            .bind(key)
+            .fetch_optional(&state.pool)
+            .await?
+            .unwrap_or(false);
+            if write_ahead {
+                return Err(ApiError::Conflict(format!(
+                    "name buy {key:?} is being re-armed by a concurrent request; retry"
+                )));
+            }
+            Err(ApiError::Conflict(format!(
+                "name buy {key:?} failed under a claim that did not record its transaction \
+                 before sending; it may have been broadcast, so it is not bought again \u{2014} \
+                 reconcile manually"
+            )))
+        }
         "sent" => {
             let tx = tx_hash.ok_or_else(|| {
                 ApiError::Internal(format!("name buy {key:?} is 'sent' without a tx_hash"))

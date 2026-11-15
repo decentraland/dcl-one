@@ -259,14 +259,14 @@ impl Broker for MockBroker {
 }
 
 /// Records a broker buy claimed under `key` in `status`, as the broker's
-/// claim and broadcast leave it.
+/// claim and broadcast leave it (`write_ahead`, as every claim it makes is).
 async fn claim_broker_buy(pool: &PgPool, key: &str, status: &str, forward_tx_hash: Option<&str>) {
     sqlx::query(
         "INSERT INTO shop.broker_purchases \
          (idempotency_key, tx_hash, forward_tx_hash, collection, buyer_address, escrow_address, \
-          price_wei, chain_id, mode, status) \
+          price_wei, chain_id, mode, status, write_ahead) \
          VALUES ($1, '0xbuy', $2, $3, $3, '0x0000000000000000000000000000000000000001', 1, 137, \
-                 'primary', $4) \
+                 'primary', $4, true) \
          ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL \
          DO UPDATE SET status = EXCLUDED.status, forward_tx_hash = EXCLUDED.forward_tx_hash",
     )
@@ -6284,6 +6284,28 @@ async fn compensation_refunds_only_lines_whose_buy_spent_no_mana() {
     assert_eq!(checkout_status(&pool, checkout).await, "reversed");
     assert_eq!(available(&pool, &addr).await, "7");
     assert_reconciles(&pool, &addr, "after refunding the buy-leg revert").await;
+
+    // A claim that failed under a binary sending before it recorded may have
+    // broadcast: it is held out of the refund, not refunded.
+    let checkout = debited_checkout(&state, &addr, &["1"]).await;
+    let line = outbox_lines(&pool, checkout).await[0].0;
+    let legacy_key = format!("checkout:{checkout}:{line}");
+    claim_broker_buy(&pool, &legacy_key, "error", None).await;
+    sqlx::query("UPDATE shop.broker_purchases SET write_ahead = false WHERE idempotency_key = $1")
+        .bind(&legacy_key)
+        .execute(&pool)
+        .await
+        .unwrap();
+    freeze(checkout, line).await;
+    assert_eq!(available(&pool, &addr).await, "4");
+    worker.run_once().await.unwrap();
+    assert_eq!(checkout_status(&pool, checkout).await, "failed");
+    assert_eq!(
+        available(&pool, &addr).await,
+        "4",
+        "the legacy claim is held"
+    );
+    assert_reconciles(&pool, &addr, "after holding the legacy claim").await;
 
     cleanup(&pool, &addr).await;
 }
