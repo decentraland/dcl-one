@@ -779,6 +779,6 @@ describe('in-world shop', () => {
     renderShop()
     const nav = screen.getAllByRole('navigation').find((n) => n.getAttribute('aria-label') !== 'Pages')!
     const labels = within(nav).getAllByRole('button').map((b) => b.textContent?.replace(/\s*\[.*\]$/, ''))
-    expect(labels.slice(0, 3)).toEqual(['Places', 'Shop', 'Events'])
+    expect(labels).toEqual(['Events', 'Places', 'Shop', 'Communities', 'Map', 'Backpack', 'Gallery', 'Settings'])
   })
 })

@@ -7,6 +7,9 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 const shop = vi.hoisted(() => ({ request: vi.fn() }))
 vi.mock('../shell/shop/purchase', () => ({ createShellShop: () => ({ request: shop.request }) }))
 vi.mock('../shell/shop/overlay', () => ({ createShopOverlay: () => ({}) }))
+// jsdom has no navigation
+const page = vi.hoisted(() => ({ reload: vi.fn() }))
+vi.mock('@explorer-core/lib/reloadPage', () => ({ reloadPage: page.reload }))
 
 import { SHOP_BUSY, shopBusy } from '../lib/shopProtocol'
 import { mountPlayShell } from '../shell/mount'
@@ -38,6 +41,8 @@ beforeAll(async () => {
 
 afterEach(() => {
   shop.request.mockReset()
+  page.reload.mockReset()
+  localStorage.clear()
   vi.restoreAllMocks()
 })
 
@@ -63,5 +68,53 @@ describe('the shell’s answers to the app', () => {
   it('posts back any other failure as its message alone', async () => {
     shop.request.mockRejectedValue(new Error('this item is not sold here'))
     expect(await ask('shop.buy')).toEqual({ type: 'bevy-shell:response', id: expect.any(Number), error: 'this item is not sold here' })
+  })
+})
+
+// The Me panel's Sign Out in world (library/ui/apps/hud/features/gate/signOutOfWorld.ts).
+describe('the app’s sign-out in world', () => {
+  const ACCOUNT_KEY = 'single-sign-on-0x00000000000000000000000000000000000000aa'
+  const signOut = (source: Window): void => {
+    window.dispatchEvent(new MessageEvent('message', { data: { type: 'bevy-shell:sign-out' }, origin: location.origin, source }))
+  }
+
+  const urlSync = (search: string): void => {
+    window.dispatchEvent(new MessageEvent('message', { data: { type: 'bevy-shell:url', search }, origin: location.origin, source: app }))
+  }
+
+  // in this order: after a sign-out from the app this shell takes no more of that app's URL sync
+  it('takes it only from the app’s frame', async () => {
+    localStorage.setItem(ACCOUNT_KEY, '{}')
+    signOut(window)
+    await Promise.resolve()
+    expect(page.reload).not.toHaveBeenCalled()
+    expect(localStorage.getItem(ACCOUNT_KEY)).toBe('{}')
+  })
+
+  it('keeps the session and the URL sync when the stored sign-in cannot be removed', async () => {
+    localStorage.setItem(ACCOUNT_KEY, '{}')
+    const failed = vi.spyOn(console, 'error').mockImplementation(() => {})
+    vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(() => {
+      throw new Error('storage is blocked')
+    })
+    signOut(app)
+    await vi.waitFor(() => expect(failed).toHaveBeenCalledTimes(1))
+    expect(page.reload).not.toHaveBeenCalled()
+    urlSync('?realm=main&position=9%2C20')
+    expect(location.search).toBe('?realm=main&position=9%2C20')
+  })
+
+  it('removes the stored account sign-in and the place in the address, then loads the page again once', async () => {
+    localStorage.setItem(ACCOUNT_KEY, '{}')
+    urlSync('?realm=main&position=10%2C20&preview=1')
+    expect(location.search).toBe('?realm=main&position=10%2C20&preview=1')
+    page.reload.mockImplementation(() => expect(location.search).toBe('?preview=1'))
+    signOut(app)
+    // the engine still runs until the page loads again: its place must not come back
+    urlSync('?realm=main&position=11%2C20&preview=1')
+    await vi.waitFor(() => expect(page.reload).toHaveBeenCalledTimes(1))
+    expect(localStorage.getItem(ACCOUNT_KEY)).toBeNull()
+    urlSync('?realm=main&position=12%2C20&preview=1')
+    expect(location.search).toBe('?preview=1')
   })
 })

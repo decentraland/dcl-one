@@ -4,16 +4,19 @@
 // listing the scenes for the selected category (with their pins on the map), and a place-detail
 // panel (places.decentraland.org/api/places) when a parcel/pin is clicked. Teleport via the bridge.
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useContext, useEffect, useRef, useState } from 'react'
 import { serviceUrl } from '@hud-host'
 import { MainMenuShell } from '../menu/MainMenuShell'
+import { MenuPresentationContext } from '../menu/MenuPresentation'
 import { Button } from '../../design'
+import { GeneralGrid, GeneralJumpIn, GeneralLike, GeneralMapPin, GeneralPlayers } from '../../../../foundations/icons/general'
 import { useDonate } from '../donate/useDonate'
 import { CAT_ICONS, CAT_PINS, WORLD_ICON } from './mapArt'
 import { GRID, ORIGIN_X, ORIGIN_Y, PARCELS_PER_TILE, SIZE, SPAN, tileUrl } from '@explorer-core/features/map/atlas'
 import type { MapState, ProfileState } from '../session/useEngineSession'
 import { openWorldVisit } from '../../components/WorldVisitModal'
 import { isCancelKey } from '../../lib/bindingLabels'
+import { Mark } from '../../design/Glyphs'
 import styles from './MapPage.module.css'
 
 const PLACES_API = `${serviceUrl('places')}/api/places`
@@ -103,29 +106,51 @@ function PlacePanel({ place, onClose, onJump }: { place: Place; onClose: () => v
   const donate = useDonate(Number.isInteger(Number(bx)) && Number.isInteger(Number(by)) ? { parcel: { x: Number(bx), y: Number(by) } } : null)
   return (
     <aside className={styles.place}>
-      <button type="button" className={styles.placeClose} aria-label="Back" onClick={onClose}>‹</button>
+      <div className={styles.placeBar}>
+        <button type="button" className={styles.placeClose} aria-label="Back" onClick={onClose}>‹</button>
+        <span className={styles.placeBarName}>{place.title}</span>
+        <button type="button" className={styles.placeBarClose} aria-label="Close place" onClick={onClose}><Mark name="close" /></button>
+      </div>
       <div className={styles.placeImg} style={{ backgroundImage: place.image ? `url(${place.image})` : undefined }} />
       <div className={styles.placeBody}>
         <h2 className={styles.placeTitle}>{place.title}</h2>
-        {place.owner && <div className={styles.placeOwner}>created by {place.owner}</div>}
+        {place.owner && (
+          <div className={styles.placeOwner}>
+            created by <b>{place.owner}</b>
+          </div>
+        )}
         <div className={styles.placeStats}>
-          <span>👤 {place.user_count}</span>
-          {place.like_rate != null && <span>👍 {Math.round(place.like_rate * 100)}%</span>}
+          <span>
+            <i className={styles.placeLive} />
+            <GeneralPlayers size={18} /> {place.user_count}
+          </span>
+          {place.like_rate != null && (
+            <span>
+              <GeneralLike size={18} /> {Math.round(place.like_rate * 100)}%
+            </span>
+          )}
         </div>
-        <button type="button" className={styles.jumpBtn} onClick={onJump}>JUMP IN</button>
+        <div className={styles.placeActions}>
+          <button type="button" className={styles.jumpBtn} onClick={onJump}>
+            JUMP IN <GeneralJumpIn size={22} />
+          </button>
+        </div>
         {donate.visible && (
           <Button variant="outline" size="sm" onClick={(e) => donate.open(e.detail === 0 ? 'keyboard' : 'pointer')}>
             DONATE
           </Button>
         )}
+        <div className={styles.placeTabs}>
+          <span>OVERVIEW</span>
+        </div>
         <div className={styles.placeMetaRow}>
           <div>
             <div className={styles.placeMetaLabel}>LOCATION</div>
-            <div className={styles.placeMetaValue}>{bx}, {by}</div>
+            <div className={styles.placeMetaValue}><GeneralMapPin size={18} /> {bx},{by}</div>
           </div>
           <div>
             <div className={styles.placeMetaLabel}>PARCELS</div>
-            <div className={styles.placeMetaValue}>{place.positions.length}</div>
+            <div className={styles.placeMetaValue}><GeneralGrid size={18} /> {place.positions.length}</div>
           </div>
         </div>
         <div className={styles.placeMetaLabel}>DESCRIPTION</div>
@@ -158,7 +183,7 @@ function CategorySidebar({
       <div className={styles.sidebarHead}>
         <img className={styles.sidebarIcon} src={catIcon(category.key)} alt="" />
         <span className={styles.sidebarTitle}>{category.label}</span>
-        <button type="button" className={styles.sidebarClose} aria-label="Close" onClick={onClose}>✕</button>
+        <button type="button" className={styles.sidebarClose} aria-label="Close" onClick={onClose}><Mark name="close" /></button>
       </div>
       <div className={styles.sorts}>
         {SORTS.map((s) => (
@@ -331,8 +356,7 @@ export function MapPage({
     setQuery('')
   }
   const visitWorld = (w: World): void => {
-    map.changeRealm(w.world_name)
-    map.toggle()
+    if (map.changeRealm(w.world_name) === 'sent') map.toggle()
   }
   const askVisitWorld = (w: World): void => {
     closeVisitRef.current = openWorldVisit({
@@ -343,8 +367,7 @@ export function MapPage({
   }
   const jumpTo = (pl: Place): void => {
     const [x, y] = pl.base_position.split(',').map(Number)
-    map.teleportToPlace(x, y)
-    map.toggle()
+    if (map.teleportToPlace(x, y) === 'sent') map.toggle()
   }
 
   // The whole menu overlay is rendered inside `transform: scale(--ui-scale)` (DPI scaling),
@@ -401,6 +424,7 @@ export function MapPage({
   })
 
   const p = profile.data
+  const inCard = useContext(MenuPresentationContext) === 'lobbyCard'
   return (
     <MainMenuShell
       active="map"
@@ -412,7 +436,7 @@ export function MapPage({
       onClose={map.toggle}
     >
       <div className={styles.wrap}>
-        <div className={styles.chips}>
+        <div className={`${styles.chips} ${inCard ? styles.chipsCard : ''}`.trim()}>
           {CATEGORIES.map((c) => (
             <button
               key={c.key}
@@ -528,8 +552,22 @@ export function MapPage({
           )}
 
           <div className={styles.zoom}>
-            <button type="button" onClick={() => setZoom((z) => Math.min(4, z + 0.3))}>+</button>
-            <button type="button" onClick={() => setZoom((z) => Math.max(0.6, z - 0.3))}>−</button>
+            <button type="button" aria-label="Go to Genesis Plaza" onClick={() => centerOn(0, 0)}>
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" aria-hidden="true">
+                <path d="M4 11.5 12 4l8 7.5V20h-5v-5H9v5H4z" />
+              </svg>
+            </button>
+            <button type="button" aria-label="Centre on me" onClick={() => centerOn(map.x, map.y)}>
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+                <circle cx="12" cy="12" r="7" />
+                <circle cx="12" cy="12" r="2.5" fill="currentColor" />
+                <path d="M12 2v3M12 19v3M2 12h3M19 12h3" strokeLinecap="round" />
+              </svg>
+            </button>
+            <span className={styles.zoomPair}>
+              <button type="button" onClick={() => setZoom((z) => Math.min(4, z + 0.3))}>+</button>
+              <button type="button" onClick={() => setZoom((z) => Math.max(0.6, z - 0.3))}>−</button>
+            </span>
           </div>
 
           <div className={styles.minimap}>

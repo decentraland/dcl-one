@@ -43,6 +43,8 @@ export function ago(ts: string): string {
   if (h < 24) return `${h}h`
   const d = Math.floor(h / 24)
   if (d < 7) return `${d}d`
+  // an old one reads in whole months
+  if (d >= 30) return Math.floor(d / 30) === 1 ? '1 month ago' : `${Math.floor(d / 30)} months ago`
   return new Date(t).toLocaleDateString([], { month: 'short', day: 'numeric' })
 }
 

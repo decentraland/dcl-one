@@ -5,7 +5,7 @@
 // of fetchWearablesPage; equipping goes back through setAvatar.
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Button, Chip, ColorPicker, HintsButton, KeyCap, MaskIcon, OptionMenu, Pager, SearchField, Skeleton, Tabs, WearableCard, rarityPanel, rarityTile, type Rarity, type TabItem } from '../../design'
+import { Button, Chip, ColorPicker, HintsButton, KeyCap, MaskIcon, OptionMenu, Pager, SearchField, Skeleton, Tabs, WearableCard, rarityPanel, rarityTile, type Rarity, type TabItem, NameSeal } from '../../design'
 import allIcon from '../../assets/category-icons/all.png'
 import arrowLeftIcon from '../../assets/backpack/icon-arrow-left.webp'
 import emptySearchArt from '../../assets/backpack/empty-search.webp'
@@ -213,7 +213,8 @@ function EmptyResults({ search }: { search: boolean }): React.JSX.Element {
   )
 }
 
-function DetailPanel({ item }: { item: Wearable | Emote | null }): React.JSX.Element {
+// `onClose` is set where the panel lies over the avatar (the lobby's modal): it puts the selection away.
+function DetailPanel({ item, onClose }: { item: Wearable | Emote | null; onClose?: () => void }): React.JSX.Element {
   if (!item) {
     return (
       <aside className={`${styles.detail} ${styles.detailEmpty}`} style={{ '--panel-art': `url(${rarityPanel(null)})` } as React.CSSProperties}>
@@ -225,6 +226,11 @@ function DetailPanel({ item }: { item: Wearable | Emote | null }): React.JSX.Ele
   const category = 'category' in item ? item.category : 'emote'
   return (
     <aside className={styles.detail} style={{ '--panel-art': `url(${rarityPanel(rarity)})` } as React.CSSProperties}>
+      {onClose != null && (
+        <Button size="bare" radius="md" variant="shade" className={styles.detailClose} aria-label="Close item details" onClick={onClose}>
+          <MaskIcon src={closeIcon} size={10} />
+        </Button>
+      )}
       <div className={styles.detailImage}>
         <CatalystImg src={item.thumbnail} urn={item.urn} />
       </div>
@@ -299,19 +305,15 @@ function OutfitSlotCard({
   return (
     <div className={`${styles.outfitSlot} ${styles.outfitFull} ${equipped ? styles.outfitEquipped : ''}`.trim()}>
       <span className={styles.outfitHover} aria-hidden="true" />
-      <button
-        type="button"
-        className={styles.outfitThumbs}
-        style={{ backgroundImage: `url(${outfitArt})` }}
-        onDoubleClick={onEquip}
-        aria-label={`Outfit ${index + 1}`}
-      >
+      <span className={styles.outfitArt} style={{ backgroundImage: `url(${outfitArt})` }} aria-hidden="true">
         {thumbnail != null ? (
           <img className={styles.outfitPicture} src={thumbnail} alt="" />
         ) : (
-          <span className={styles.outfitNoPicture} style={{ maskImage: `url(${silhouette1})`, WebkitMaskImage: `url(${silhouette1})` }} aria-hidden="true" />
+          <span className={styles.outfitNoPicture} style={{ maskImage: `url(${silhouette1})`, WebkitMaskImage: `url(${silhouette1})` }} />
         )}
-      </button>
+      </span>
+      {/* the card's own button starts under the delete button's strip: the two never share an area */}
+      <button type="button" className={styles.outfitThumbs} onDoubleClick={onEquip} aria-label={`Outfit ${index + 1}`} />
       <span className={styles.outfitRing} aria-hidden="true" />
       <button type="button" className={styles.outfitDelete} onClick={onDelete} aria-label={`Delete Outfit ${index + 1}`}>
         <MaskIcon src={deleteIcon} size={24} />
@@ -321,17 +323,21 @@ function OutfitSlotCard({
   )
 }
 
+// The outlined seal with a tick on the NAME buttons.
 function NameBanner(): React.JSX.Element {
   return (
     <div className={styles.nameBanner}>
       <div className={styles.nameBannerText}>
         <h2 className={styles.nameBannerTitle}>Unlock 5 more Outfit slots by getting a NAME!</h2>
         <p className={styles.nameBannerBody}>
-          NAMEs are unique Decentraland usernames that come with a World, the ability to create Communities, 5 more Outfits slots,
+          NAMEs are unique Decentraland usernames that come with a <em>World</em>, the ability to create Communities, 5 more Outfits slots,
           and 100 Voting Power in the DAO.
         </p>
         <p className={styles.nameBannerBody}>Get your own for the full Decentraland experience!</p>
-        <a className={styles.nameBannerCta} href={NAMES_URL} target="_blank" rel="noopener noreferrer">GET A NAME</a>
+        <a className={styles.nameBannerCta} href={NAMES_URL} target="_blank" rel="noopener noreferrer">
+          <NameSeal />
+          GET A NAME
+        </a>
       </div>
       <img className={styles.nameBannerArt} src={nameBannerArt} alt="" />
     </div>
@@ -827,7 +833,7 @@ export function BackpackPage({
             )}
 
           {/* Right: the selected wearable/emote. Not in Saved Outfits, nor beside an empty wearables grid. */}
-          {!inOutfits && !(tab === 'wearables' && !backpack.loading && pageItems.length === 0) && <DetailPanel item={selected} />}
+          {!inOutfits && !(tab === 'wearables' && !backpack.loading && pageItems.length === 0) && <DetailPanel item={selected} onClose={modal ? () => setSelected(null) : undefined} />}
           </section>
           </div>
         </div>

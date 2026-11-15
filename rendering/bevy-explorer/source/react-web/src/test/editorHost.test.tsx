@@ -3,7 +3,7 @@ import { expectConsoleOutput } from '@explorer-core/test/console'
 // available, loads it only when the Create page opens, and what it hands the editor keeps the
 // engine on a short leash. What it signs for the editor is in editorHostSigning.test.tsx.
 import { describe, it, expect, vi } from 'vitest'
-import { act, renderHook, screen } from '@testing-library/react'
+import { act, renderHook, screen, within } from '@testing-library/react'
 import { ToastHost } from '@hud/design'
 import userEvent from '@testing-library/user-event'
 import { editorFeatures, editorOffered, PINNED_EDITOR } from '@explorer-core/features/editorHost/config'
@@ -146,8 +146,9 @@ describe('editor host', () => {
     expect(source!.base).toMatch(/^https:\/\/cdn\.jsdelivr\.net\/npm\/@dcl-regenesislabs\/web-editor@\d+\.\d+\.\d+\/$/)
   })
 
-  it('offers Create in the rail and the menu top bar only where an editor is available; both open the Create page', async () => {
+  it('offers Create in the rail\'s System panel and the menu top bar only where an editor is available; both open the Create page', async () => {
     const navigate = vi.fn()
+    const system = (): HTMLElement => within(screen.getByRole('navigation', { name: 'Main navigation' })).getByRole('button', { name: 'System' })
     const s = fakeSession()
     const surfaces = (
       <>
@@ -158,14 +159,16 @@ describe('editor host', () => {
       </>
     )
     const plain = await renderSettled(surfaces)
+    await userEvent.click(system())
     expect(screen.queryAllByRole('button', { name: /Create/ })).toEqual([])
     plain.unmount()
 
     await renderSettled(<EditorOffered.Provider value>{surfaces}</EditorOffered.Provider>)
-    const [rail, topBar] = screen.getAllByRole('button', { name: /Create/ })
-    await userEvent.click(rail)
+    await userEvent.click(system())
+    await userEvent.click(within(screen.getByRole('dialog', { name: 'System' })).getByRole('button', { name: 'Create' }))
     expect(s.create.toggle).toHaveBeenCalledTimes(1)
-    await userEvent.click(topBar)
+    // the row closed its panel: the top bar's tab is the one Create left
+    await userEvent.click(screen.getByRole('button', { name: /Create/ }))
     expect(navigate).toHaveBeenCalledWith('create')
   })
 

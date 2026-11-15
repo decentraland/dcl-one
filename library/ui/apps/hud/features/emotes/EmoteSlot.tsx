@@ -79,7 +79,8 @@ export function EmoteSlot({
   rarity = 'base',
   number,
   width = 174,
-  rotate = 0
+  rotate = 0,
+  wheel = false
 }: {
   thumbnail?: string
   rarity?: string
@@ -87,6 +88,8 @@ export function EmoteSlot({
   width?: number
   /** Radial rotation for the wheel — the card tilts, the silhouette/number stay upright. */
   rotate?: number
+  /** On the emotes wheel: a light card under the glows and a lighter, smaller slot number. */
+  wheel?: boolean
 }): React.JSX.Element {
   const id = useId().replace(/:/g, '')
   const src = thumbnail
@@ -94,7 +97,7 @@ export function EmoteSlot({
   const counter = rotate ? `rotate(${-rotate} ${THUMB_CX} ${THUMB_CY})` : undefined
   // Number scales with the card and counter-rotates to stay upright in the wheel.
   const numStyle: React.CSSProperties = {
-    fontSize: Math.round(width * 0.19),
+    fontSize: Math.round(width * (wheel ? 0.15 : 0.19)),
     transform: `translateX(-50%)${rotate ? ` rotate(${-rotate}deg)` : ''}`
   }
   return (
@@ -112,7 +115,7 @@ export function EmoteSlot({
         </defs>
 
         {/* Purple base + the two rarity glows (main colour, then lighter accent). */}
-        <path d={FILL_PATH} fill="#691FA9" />
+        <path d={FILL_PATH} fill={wheel ? '#E4E2E9' : '#691FA9'} />
         <g clipPath={`url(#clip-${id})`}>
           {spec.glows.map((g, i) => (
             <circle key={i} cx={g.cx} cy={g.cy} r={g.r} fill={g.c} opacity={g.o ?? 1} filter={`url(#blur-${id}-${i})`} />
@@ -133,7 +136,7 @@ export function EmoteSlot({
 
         <path d={BORDER_PATH} fill="none" stroke="#f1eff5" strokeWidth="4" />
       </svg>
-      {number != null && <span className={styles.num} style={numStyle}>{number}</span>}
+      {number != null && <span className={`${styles.num} ${wheel ? styles.numWheel : ''}`.trim()} style={numStyle}>{number}</span>}
     </div>
   )
 }

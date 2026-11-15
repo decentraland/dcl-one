@@ -92,7 +92,7 @@ describe('community chat panel', () => {
     await userEvent.click(screen.getByRole('menuitemradio', { name: 'Default' }))
     expect(pingModeFor('community:c1')).toBe('none')
     await userEvent.click(options())
-    await userEvent.click(screen.getByText('Delete chat history'))
+    await userEvent.click(screen.getByText('Delete Chat History'))
     expect(vi.mocked(chat.deleteHistory)).toHaveBeenCalledWith('community:c1')
     await userEvent.click(options())
     await userEvent.click(screen.getByText('Close conversation'))

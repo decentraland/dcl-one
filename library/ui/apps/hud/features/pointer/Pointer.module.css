@@ -46,7 +46,7 @@
   position: absolute;
   top: calc(50% + 24px);
   left: 50%;
-  max-width: 60vw;
+  max-width: calc(60vw / var(--ui-scale));
   display: flex;
   flex-wrap: wrap;
   justify-content: center;

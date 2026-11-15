@@ -66,7 +66,7 @@ describe('when the sidebar offers the Shop', () => {
     vi.restoreAllMocks()
   })
 
-  it('should open the in-world Shop page by default, not a web tab', async () => {
+  it('should open the Shop panel by default, whose EXPLORE WEARABLES opens the in-world Shop page, not a web tab', async () => {
     window.history.replaceState({}, '', '/')
     vi.resetModules()
     const { Sidebar } = await import('@hud/features/sidebar/Sidebar')
@@ -74,6 +74,7 @@ describe('when the sidebar offers the Shop', () => {
     const session = fakeSession()
     render(<Sidebar session={session} />)
     await userEvent.click(screen.getByRole('button', { name: 'Shop' }))
+    await userEvent.click(screen.getByRole('button', { name: 'EXPLORE WEARABLES' }))
     expect(session.shop.toggle).toHaveBeenCalled()
     expect(open).not.toHaveBeenCalled()
   })

@@ -1,12 +1,15 @@
-// The minimap's gear menu: rotation mode, visualisation style, and which place categories get
-// markers — the same three sections the SDK7 HUD's minimap settings had.
+// The menu behind the minimap panel's three dots: Copy Link, then, below a separator, "Minimap
+// settings", which opens the three sections the SDK7 HUD's minimap settings had: rotation mode,
+// visualisation style, and which place categories get markers.
 //
 // Markers are modelled as the full category list even though the menu only offers three
 // presets, so per-category toggles stay a UI change rather than a data change.
 
-import { Check } from '../../design'
+import { useState } from 'react'
+import { Check, ChevronDown, ChevronRight } from '../../design'
 import { ALL_MARKER_CATEGORIES } from '@explorer-core/features/minimap/minimapPrefs'
 import type { MinimapRotation, MinimapStyle } from '@explorer-core/engine/protocol'
+import { LinkMark } from './icons'
 import styles from './MinimapSettings.module.css'
 
 const ROTATION_LABELS: Array<{ value: MinimapRotation; label: string }> = [
@@ -42,7 +45,8 @@ export function MinimapSettings({
   onStyle,
   hideStyle,
   markers,
-  onMarkers
+  onMarkers,
+  onCopyLink
 }: {
   rotation: MinimapRotation
   onRotation: (r: MinimapRotation) => void
@@ -52,34 +56,55 @@ export function MinimapSettings({
   hideStyle: boolean
   markers: string[]
   onMarkers: (categories: string[]) => void
+  /** Copy the link to the place the player stands in; absent where the place has none. */
+  onCopyLink?: () => void
 }): React.JSX.Element {
   const preset = presetOf(markers)
+  const [settingsOpen, setSettingsOpen] = useState(false)
 
   return (
     <div className={styles.menu} role="menu" aria-label="Minimap settings">
-      <p className={styles.section}>Rotation mode</p>
-      {ROTATION_LABELS.map((o) => (
-        <Option key={o.value} label={o.label} selected={rotation === o.value} onSelect={() => onRotation(o.value)} />
-      ))}
-
-      {!hideStyle && (
+      {onCopyLink != null && (
         <>
-          <p className={styles.section}>Visualization style</p>
-          {STYLE_LABELS.map((o) => (
-            <Option key={o.value} label={o.label} selected={style === o.value} onSelect={() => onStyle(o.value)} />
+          <button type="button" className={styles.entry} role="menuitem" onClick={onCopyLink}>
+            <LinkMark />
+            Copy Link
+          </button>
+          <div className={styles.separator} />
+        </>
+      )}
+      <button type="button" className={styles.more} role="menuitem" aria-expanded={settingsOpen} onClick={() => setSettingsOpen((v) => !v)}>
+        Minimap settings
+        {settingsOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+      </button>
+
+      {settingsOpen && (
+        <>
+          <p className={styles.section}>Rotation mode</p>
+          {ROTATION_LABELS.map((o) => (
+            <Option key={o.value} label={o.label} selected={rotation === o.value} onSelect={() => onRotation(o.value)} />
+          ))}
+
+          {!hideStyle && (
+            <>
+              <p className={styles.section}>Visualization style</p>
+              {STYLE_LABELS.map((o) => (
+                <Option key={o.value} label={o.label} selected={style === o.value} onSelect={() => onStyle(o.value)} />
+              ))}
+            </>
+          )}
+
+          <p className={styles.section}>Markers</p>
+          {MARKER_PRESETS.map((o) => (
+            <Option
+              key={o.value}
+              label={o.label}
+              selected={preset === o.value}
+              onSelect={() => onMarkers([...o.categories])}
+            />
           ))}
         </>
       )}
-
-      <p className={styles.section}>Markers</p>
-      {MARKER_PRESETS.map((o) => (
-        <Option
-          key={o.value}
-          label={o.label}
-          selected={preset === o.value}
-          onSelect={() => onMarkers([...o.categories])}
-        />
-      ))}
     </div>
   )
 }

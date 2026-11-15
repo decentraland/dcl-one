@@ -85,3 +85,100 @@
   background: var(--row-press);
   mask: url('../assets/voice/slider-handle.webp') center / contain no-repeat;
 }
+
+/* pin: the settings slider. A 30px track, a pin handle whose centre runs from one end of the
+   track to the other, and bare chevrons for the steppers. */
+.pinRow {
+  gap: 15px;
+  /* the track sits at the slot's top, 4px above where a select's middle is */
+  align-self: flex-start;
+  margin-top: 1px;
+}
+.pin {
+  height: 30px;
+  margin: 0;
+  border-radius: 6px;
+  background: linear-gradient(to right, var(--brand) var(--pct), var(--control-track) var(--pct));
+}
+.pin::-webkit-slider-thumb {
+  width: 22px;
+  height: 42px;
+  border-radius: 5px 5px 0 0;
+  /* a pin: square shoulders, chamfered to a blunt point */
+  clip-path: polygon(0 0, 100% 0, 100% 84%, 70% 100%, 30% 100%, 0 84%);
+  box-shadow: none;
+  /* the handle's centre runs from one end of the track to the other, half of it past each end */
+  transform: translate(calc(var(--pct) - 50%), 2px);
+}
+.pin::-moz-range-thumb {
+  width: 22px;
+  height: 42px;
+  border-radius: 5px 5px 0 0;
+  /* a pin: square shoulders, chamfered to a blunt point */
+  clip-path: polygon(0 0, 100% 0, 100% 84%, 70% 100%, 30% 100%, 0 84%);
+  box-shadow: none;
+  transform: translate(calc(var(--pct) - 50%), 2px);
+}
+.pinArrow {
+  position: relative;
+  /* a 10px chevron in an 18px target: the margins give the extra width back to the row */
+  width: 18px;
+  margin: 0 -4px;
+  height: 30px;
+  padding: 0;
+  border-radius: 0;
+  background: none;
+  font-size: 0;
+}
+.pinArrow:hover:not(:disabled) {
+  background: none;
+}
+.pinArrow::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 9px;
+  height: 9px;
+  border: solid var(--text);
+  border-width: 0 0 3px 3px;
+  border-radius: 1px;
+  transform: translate(-25%, -50%) rotate(45deg);
+}
+.pinNext::before {
+  transform: translate(-75%, -50%) rotate(-135deg);
+}
+.pinArrow:disabled {
+  opacity: 0.5;
+}
+
+/* rail: a navigation popover's slider (Volume, Nearby Voice). A 12px track, Ruby up to the pin's
+   centre, and a 12x26 pin with round shoulders and a blunt point, 7px taller than the track on
+   both sides. */
+.rail {
+  --rail-pin: path('M0 3.98C0 1.78 1.78 0 3.98 0H8.02C10.22 0 12 1.78 12 3.98V18.9C12 19.94 11.59 20.94 10.87 21.69L7.9 24.73C6.86 25.79 5.14 25.79 4.1 24.73L1.13 21.69C0.41 20.94 0 19.94 0 18.9Z');
+  height: 12px;
+  margin: 0;
+  border-radius: var(--r-xs);
+  background: linear-gradient(
+    to right,
+    var(--brand) calc(6px + (100% - 12px) * var(--frac)),
+    var(--slider-rail-track, var(--fill-4)) calc(6px + (100% - 12px) * var(--frac))
+  );
+}
+.rail::-webkit-slider-thumb {
+  width: 12px;
+  height: 26px;
+  border-radius: 0;
+  background: var(--text);
+  box-shadow: none;
+  clip-path: var(--rail-pin);
+}
+.rail::-moz-range-thumb {
+  width: 12px;
+  height: 26px;
+  border-radius: 0;
+  background: var(--text);
+  box-shadow: none;
+  clip-path: var(--rail-pin);
+}

@@ -1,11 +1,10 @@
 // A community chat's title bar: the community (its thumbnail and name), how many of its members
-// are online (opens the members list), auto-translation, and the conversation menu: View
-// Community, Notification Ping, Delete chat history, Close.
+// are online (opens the members list), and the conversation menu: Notification Ping,
+// Auto-Translate, View Community, Delete Chat History, Close.
 
 import type { CommunityConversation } from '../session/useEngineSession'
 import { Avatar, ControlButton, MaskIcon } from '../../design'
 import { openCommunityModal } from '../communities/CommunityModal'
-import { AutoTranslateButton } from './AutoTranslateButton'
 import { ConversationMenu } from './ConversationMenu'
 import playersIcon from '../../assets/chat/players.png'
 import styles from './Chat.module.css'
@@ -32,7 +31,6 @@ export function CommunityHeader({
         <span className={styles.navTitle} title={community.name}>{community.name}</span>
       </div>
       <div className={styles.navRight}>
-        <AutoTranslateButton channel={community.key} />
         <ControlButton
           variant="faint"
           shape="pill"
@@ -48,7 +46,7 @@ export function CommunityHeader({
           channel={community.key}
           entries={[
             { label: 'View Community', onClick: () => openCommunityModal(community.id, () => undefined) },
-            { label: 'Delete chat history', danger: true, onClick: onDelete },
+            { label: 'Delete Chat History', danger: true, onClick: onDelete },
             { label: 'Close conversation', onClick: onClose }
           ]}
         />

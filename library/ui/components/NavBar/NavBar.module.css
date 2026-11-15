@@ -291,6 +291,13 @@
     object-fit: cover;
   }
 
+  /* Face snapshots crop at the crown: seat a smaller one on the circle's bottom so the head and eyes clear the curve. */
+  img.avatarImage {
+    width: 84%;
+    height: 84%;
+    margin: auto auto 0;
+  }
+
   .accountName {
     composes: text626f64792f6d642d7374726f6e67 from '../../foundations/typography/text-styles.module.css';
     overflow: hidden;

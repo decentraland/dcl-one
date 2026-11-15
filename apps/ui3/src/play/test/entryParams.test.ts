@@ -1,6 +1,7 @@
 // DOMAIN: the entry url's accepted-parameter set (lib/entryParams.ts) and the dialog that names
 // what a link carried that nothing reads (features/gate/EntryParamsDialog.tsx).
 
+import { MOCK_SWITCHES } from '@explorer-core/engine/mockBridge'
 import { describe, expect, it } from 'vitest'
 import { WEB_PARAMS } from '@explorer-core/engine/generated'
 import { acceptedEntryParams, entryRealm, unrecognisedEntryParams } from '../lib/entryParams'
@@ -50,5 +51,12 @@ describe('entryRealm', () => {
     expect(entryRealm(new URLSearchParams('?world=boedo&realm=https://r'))).toBe('https://r')
     expect(entryRealm(new URLSearchParams('?world=https://evil.example'))).toBeNull()
     expect(entryRealm(new URLSearchParams('?position=1,2'))).toBeNull()
+  })
+
+  it('accepts every switch the mock bridge reads, the same list in both hosts, and no longer the retired mocksettings', () => {
+    const link = new URLSearchParams(MOCK_SWITCHES.map((name) => `${name}=1`).join('&'))
+    expect(unrecognisedEntryParams(link)).toEqual([])
+    expect([...MOCK_SWITCHES]).toEqual(expect.arrayContaining(['previousLogin', 'welcome', 'mockhold', 'mockworld', 'mockaccount', 'mockplayers', 'mockcall', 'mockstream', 'mockportables']))
+    expect(unrecognisedEntryParams(new URLSearchParams('?mocksettings=long'))).toEqual(['mocksettings'])
   })
 })

@@ -13,13 +13,15 @@ import * as boot from '../lib/bootMode'
 afterEach(() => vi.restoreAllMocks())
 
 describe('Sidebar on react-web', () => {
-  it('Shop opens the shop with the web client utm source, between Backpack and Camera', async () => {
+  it('Shop opens the shop with the web client utm source, between Discover and System, and opens no panel', async () => {
     const open = vi.spyOn(window, 'open').mockReturnValue(null)
     await renderSettled(<Sidebar session={fakeSession()} />)
     const labels = screen.getAllByRole('button').map((b) => b.getAttribute('aria-label'))
-    expect(labels.slice(labels.indexOf('Backpack'), labels.indexOf('Camera') + 1)).toEqual(['Backpack', 'Shop', 'Camera'])
+    expect(labels.slice(labels.indexOf('Discover'), labels.indexOf('System') + 1)).toEqual(['Discover', 'Shop', 'System'])
     await userEvent.click(screen.getByRole('button', { name: 'Shop' }))
     expect(open).toHaveBeenCalledWith('https://decentraland.org/shop?utm_source=bevy-web-client', '_blank', 'noopener')
+    expect(screen.queryByRole('dialog', { name: 'Shop' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Shop' })).toHaveAttribute('aria-pressed', 'false')
   })
 
 })

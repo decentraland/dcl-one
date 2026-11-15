@@ -1,0 +1,5 @@
+/* The region is a name, not a box: the minimap inside is fixed to the screen, and an empty box
+   here would take a slot (and a gap) in whatever lays the navigation bar out. */
+.root {
+  display: contents;
+}

@@ -15,6 +15,8 @@ interface TooltipProps {
   variant?: 'default' | 'rail'
   /** A paragraph rather than a name: wraps, keeps line breaks, hangs from the trigger's left edge. */
   multiline?: boolean
+  /** Keep the wrapper but show no tip (the trigger's own panel is open in its place). */
+  quiet?: boolean
   className?: string
   children: React.ReactNode
 }
@@ -25,6 +27,7 @@ export function Tooltip({
   side = 'right',
   variant = 'default',
   multiline = false,
+  quiet = false,
   className = '',
   children
 }: TooltipProps): React.JSX.Element {
@@ -32,10 +35,12 @@ export function Tooltip({
   return (
     <span className={`${styles.wrap} ${className}`.trim()}>
       {children}
-      <span className={tip} role="tooltip">
-        {label}
-        {shortcut && <span className={styles.shortcut}>[{shortcut}]</span>}
-      </span>
+      {!quiet && (
+        <span className={tip} role="tooltip">
+          {label}
+          {shortcut && <span className={styles.shortcut}>[{shortcut}]</span>}
+        </span>
+      )}
     </span>
   )
 }

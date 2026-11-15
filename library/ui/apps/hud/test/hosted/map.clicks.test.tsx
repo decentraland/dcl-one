@@ -6,7 +6,7 @@ import type { MapState } from '../../features/session/useEngineSession'
 import { fakeProfileState, fakeSession } from '../harness'
 
 function renderMap(): MapState {
-  const map: MapState = { ...fakeSession().map, open: true, teleportToPlace: vi.fn(), toggle: vi.fn() }
+  const map: MapState = { ...fakeSession().map, open: true, teleportToPlace: vi.fn(() => 'sent' as const), toggle: vi.fn() }
   render(<MapPage map={map} profile={fakeProfileState()} onNavigate={vi.fn()} />)
   return map
 }

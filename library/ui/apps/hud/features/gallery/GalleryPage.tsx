@@ -6,6 +6,7 @@
 import { useMemo, useState } from 'react'
 import { EmptyState, Icon, Spinner } from '../../design'
 import { MainMenuShell } from '../menu/MainMenuShell'
+import { MenuBackdrop } from '../menu/MenuBackdrop'
 import { PhotoDetail } from './PhotoDetail'
 import { photoTime, type GalleryState, type ProfileState } from '../session/useEngineSession'
 import type { GalleryPhoto } from '@explorer-core/engine/protocol'
@@ -65,17 +66,20 @@ export function GalleryPage({
       profileClaimed={p?.hasClaimedName}
       onNavigate={onNavigate}
       onClose={gallery.toggle}
+      transparentBody
     >
+      <div className={styles.page}>
+      <MenuBackdrop />
       <div className={styles.head}>
         <h1 className={styles.title}>Gallery</h1>
         {gallery.loaded && gallery.max > 0 && (
           <div className={styles.storage} title={`${gallery.current} of ${gallery.max} photos used`}>
+            <span className={styles.storageText}>
+              Storage {gallery.current}/{gallery.max} photos taken
+            </span>
             <div className={styles.storageBar}>
               <div className={styles.storageFill} style={{ width: `${pct}%` }} />
             </div>
-            <span className={styles.storageText}>
-              {gallery.current} / {gallery.max} photos
-            </span>
           </div>
         )}
       </div>
@@ -89,8 +93,8 @@ export function GalleryPage({
           variant="screen"
           iconWash
           icon={<Icon name="gallery" size={56} />}
-          title="No photos yet"
-          subtitle="Snap photos in-world with the camera and they'll show up here."
+          title="There are no photos yet"
+          subtitle="Use the camera to save incredible memories with your friends!"
         />
       ) : (
         <div className={styles.scroll}>
@@ -108,6 +112,7 @@ export function GalleryPage({
           ))}
         </div>
       )}
+      </div>
 
       {selected && index != null && (
         <PhotoDetail

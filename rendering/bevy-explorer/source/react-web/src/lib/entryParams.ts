@@ -7,6 +7,7 @@
 import { AUTH_RETURN_PARAM } from '@explorer-core/features/auth/authReturn'
 import type { AcceptedParam } from '@explorer-core/hostContract'
 import { WEB_PARAMS } from '@explorer-core/engine/generated'
+import { MOCK_SWITCHES } from '@explorer-core/engine/mockSwitches'
 import { ANALYTICS_SESSION_PARAM, isAttributionParam } from '@explorer-core/lib/analytics'
 import { BENCHMARK_PARAMS } from './bootMode'
 
@@ -51,12 +52,10 @@ const INTERNAL_PARAMS = [
   'bundled',
   'simerror',
   'simhover',
-  'mockcall',
-  'mockstream',
-  'previousLogin',
+  // the mock bridge's own switches, the same in both hosts
+  ...MOCK_SWITCHES,
   'perm',
   'worldpw',
-  'mockportables',
   ANALYTICS_SESSION_PARAM,
   AUTH_RETURN_PARAM,
   // dev only (lib/systemScene.ts)

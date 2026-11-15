@@ -4,9 +4,12 @@
 // (parcel) or visits (world) and closes the page.
 
 import { MainMenuShell } from '../menu/MainMenuShell'
+import { MenuBackdrop } from '../menu/MenuBackdrop'
+import { openDestinationCard, placeInfo } from './DestinationCard'
 import { PlacesBrowser } from './PlacesBrowser'
 import { placeTeleport, type DiscoverPlace } from '@explorer-core/features/places/placesApi'
-import type { ProfileState } from '../session/useEngineSession'
+import type { ProfileState, TravelOutcome } from '../session/useEngineSession'
+import styles from './PlacesPage.module.css'
 
 export interface PlacesState {
   open: boolean
@@ -25,17 +28,18 @@ export function PlacesPage({
   account?: string | null
   profile: ProfileState
   onNavigate: (page: string) => void
-  onTeleport: (x: number, y: number) => void
-  onVisitWorld: (realm: string) => void
+  onTeleport: (x: number, y: number) => TravelOutcome
+  onVisitWorld: (realm: string) => TravelOutcome
 }): React.JSX.Element | null {
   if (!places.open) return null
 
   const visit = (place: DiscoverPlace): void => {
     const t = placeTeleport(place)
     if (!t) return
-    if (t.kind === 'world') onVisitWorld(t.realm)
-    else onTeleport(t.x, t.y)
-    places.toggle()
+    openDestinationCard(placeInfo(place), () => {
+      const outcome = t.kind === 'world' ? onVisitWorld(t.realm) : onTeleport(t.x, t.y)
+      if (outcome === 'sent') places.toggle()
+    })
   }
 
   const p = profile.data
@@ -48,8 +52,12 @@ export function PlacesPage({
       profileClaimed={p?.hasClaimedName}
       onNavigate={onNavigate}
       onClose={places.toggle}
+      transparentBody
     >
-      <PlacesBrowser account={account} onPick={visit} />
+      <div className={styles.page}>
+        <MenuBackdrop />
+        <PlacesBrowser account={account} onPick={visit} />
+      </div>
     </MainMenuShell>
   )
 }

@@ -126,3 +126,47 @@
   color: var(--brand);
   font-size: 12px;
 }
+
+/* sheet: a flat menu over the chat. 41px rows, 20px icons, a rule from edge to edge of the rows,
+   and a 40x24 switch that is grey while off. */
+.sheet {
+  width: 258px;
+  max-width: none;
+  box-sizing: border-box;
+  padding: 6px 9px 7px;
+  border: none;
+  background: var(--menu-sheet);
+  box-shadow: none;
+  --toggle-w: 40px;
+  --toggle-h: 24px;
+  --toggle-pad: 2px;
+  --toggle-off: var(--switch-off-menu);
+}
+.sheet .item {
+  gap: 10px;
+  height: 41px;
+  padding: 0 12px 0 10px;
+  font-family: var(--font-family);
+  font-size: var(--type-14);
+  font-weight: var(--fw-bold);
+}
+.sheet .icon {
+  display: flex;
+  justify-content: center;
+  width: 20px;
+  opacity: 1;
+}
+.sheet .sep {
+  margin: 6px 0;
+  background: var(--chat-divider);
+}
+/* the switch ends 12px from the sheet's edge */
+.sheet .itemToggle {
+  padding-right: 3px;
+}
+.sheet .chev {
+  font-weight: var(--fw-regular);
+}
+.sheet .itemDanger {
+  color: var(--brand);
+}

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { screen } from '@testing-library/react'
+import { fireEvent, screen } from '@testing-library/react'
 import { Minimap } from '../../features/minimap/Minimap'
 import { fakeSession, renderSettled } from '../harness'
 
@@ -26,5 +26,24 @@ describe('minimap header', () => {
   it('says the parcel is empty where nothing is deployed, not that the place is unknown', async () => {
     await renderMinimap('')
     expect(screen.getByText('Empty parcel')).toBeInTheDocument()
+  })
+})
+
+describe('minimap menu', () => {
+  async function openMenu(donatePlace: { parcel: { x: number; y: number } } | null): Promise<void> {
+    const session = fakeSession()
+    await renderSettled(<Minimap minimap={{ ...session.minimap, donatePlace }} map={session.map} sceneTitle="Genesis Plaza" setEngineViewport={vi.fn()} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Minimap settings' }))
+  }
+
+  it('offers Copy Link where the place has a link', async () => {
+    await openMenu({ parcel: { x: 0, y: 0 } })
+    expect(screen.getByRole('menuitem', { name: 'Copy Link' })).toBeEnabled()
+  })
+
+  it('leaves Copy Link out where the place has none', async () => {
+    await openMenu(null)
+    expect(screen.getByRole('menu', { name: 'Minimap settings' })).toBeInTheDocument()
+    expect(screen.queryByRole('menuitem', { name: 'Copy Link' })).toBeNull()
   })
 })

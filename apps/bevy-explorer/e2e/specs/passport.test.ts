@@ -2,14 +2,14 @@
 // header and modules, and its name and bio can be edited and restored.
 //
 // | Unity test                           | Here                                                                         | Class   |
-// | TestOpenOwnPassportFromSidebar       | the rail's Profile button opens the passport, Close closes it                | Port    |
+// | TestOpenOwnPassportFromSidebar       | the rail's Me panel has a Profile row that opens the passport, Close closes it | Port  |
 // | TestPassportOverviewShowsCoreContent | the header's controls, the engine's name and address, and the module titles   | Partial |
 // | TestEditUserNameAndRevert            | rename twice through Edit Username and back, reading the engine's name       | Partial |
 // | TestEditAboutMeAndRestore            | edit the bio, reopen to check it persisted, restore it                       | Partial |
 // | TestEquippedItemsShownInPassport     | the Equipped Wearables module is on screen and the avatar wears something    | Partial |
 //
-// Port, TestOpenOwnPassportFromSidebar: the rail's `Profile` button opens the passport itself;
-// there is no profile menu and no "View PROFILE" step.
+// Port, TestOpenOwnPassportFromSidebar: the rail's `Me` button opens the profile menu (a dialog
+// named `Me`) and its `Profile` row opens the passport, as Unity's "View PROFILE" step does.
 //
 // The passport's header text (name, `#` tag, address snippet), bio text and equipped tiles are
 // plain `span`, `p` and `div` in the HUD: they have no role, so `/hud_list` and `/hud_read` cannot
@@ -31,6 +31,7 @@
 // The rename and bio scenarios put the name and the bio back afterwards, whatever the outcome.
 import assert from 'node:assert/strict'
 import { spec, until, type Explorer, type Selector } from '../driver/index.ts'
+import { pressRailRow } from './pages.ts'
 
 const scenario = spec(import.meta.url)
 
@@ -52,7 +53,7 @@ const BIO = 'Automated passport test bio'
 const baseOf = (name: string): string => name.split('#')[0] ?? name
 
 async function openOwnPassport(explorer: Explorer): Promise<void> {
-  await explorer.hud.click({ name: 'Profile', role: 'button' })
+  await pressRailRow(explorer, { button: 'Me', row: 'Profile' })
   await explorer.hud.wait(PASSPORT, { timeoutMs: READY_TIMEOUT_MS })
   // The edit controls arrive with the session's profile.
   await explorer.hud.wait({ name: 'Edit name', role: 'button' }, { timeoutMs: READY_TIMEOUT_MS })
@@ -111,9 +112,9 @@ async function saveBio(explorer: Explorer, text: string): Promise<void> {
   await until(() => explorer.profileVersion(), (version) => version > before, { timeoutMs: 15_000, what: 'the profile version to grow after the bio was saved' })
 }
 
-scenario('the rail Profile button opens the own passport and Close closes it', async ({ explorer }) => {
+scenario("the Profile row of the rail's Me panel opens the own passport and Close closes it", async ({ explorer }) => {
   await openOwnPassport(explorer)
-  assert.ok(await explorer.hud.isVisible(PASSPORT), 'the passport should be open after the Profile button')
+  assert.ok(await explorer.hud.isVisible(PASSPORT), 'the passport should be open after the Profile row')
   await closePassport(explorer)
   assert.equal(await explorer.hud.isVisible(PASSPORT), false, 'the passport should be closed after Close')
 })

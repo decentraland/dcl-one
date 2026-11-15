@@ -1,6 +1,6 @@
 .host {
   position: fixed;
-  top: 16px;
+  top: calc(16px * var(--ui-scale));
   left: 50%;
   z-index: var(--z-popup);
   display: flex;

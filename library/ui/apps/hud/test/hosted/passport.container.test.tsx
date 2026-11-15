@@ -60,6 +60,16 @@ describe('Passport container', () => {
     })
     expect(screen.getByText('gm from the plaza')).toBeTruthy()
   })
+
+  it('openPassport opens on the tab it is given', async () => {
+    receiveProfile('0xabc', RICH)
+    await renderWithSession(<PopupHost />)
+    act(() => {
+      openPassport('0xabc', 'badges')
+    })
+    expect(screen.getByRole('tab', { name: 'BADGES' }).getAttribute('aria-selected')).toBe('true')
+    expect(screen.getByRole('tab', { name: 'OVERVIEW' }).getAttribute('aria-selected')).toBe('false')
+  })
 })
 
 describe('Passport block & report', () => {

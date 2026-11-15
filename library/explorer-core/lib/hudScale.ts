@@ -4,6 +4,12 @@
 // expands along the longer axis. Viewport sizes are logical px, so
 // this is DPI-correct as-is: a 1512x945 MacBook viewport → ~0.79.
 //
+// The scale follows the viewport with no clamp over every size a window takes: nothing is hidden
+// or wrapped at a small size, everything shrinks. MIN and
+// MAX only keep the value finite: the HUD's layout boxes divide by it (`100% / var(--ui-scale)`),
+// so it must not reach 0 in a collapsed or hidden frame, and MAX bounds those boxes on a display
+// wall. MIN is under the scale of a 640x480 window (0.333); MAX is an 8K screen.
+//
 // It is a store rather than a hook because the scale has a SUBSCRIBER that is not a React render:
 // the engine cutouts (minimap, avatar preview) report their on-screen rect to the scene, and the
 // HUD is scaled with a CSS transform — which changes no border box, so a ResizeObserver never
@@ -15,12 +21,16 @@
 //
 // So `apply` writes the custom property and THEN wakes subscribers, all in the same task: the
 // subscriber's getBoundingClientRect() forces the style recalc, so it sees the new layout without
-// deferring to a frame.
+// deferring further.
+//
+// A window being dragged fires `resize` many times between two paints. They are coalesced: the
+// first asks for a frame, and that frame reads the viewport once, writes the property and wakes the
+// subscribers, in that order, so each painted size costs one style recalc and one round of rects.
 
 const REFERENCE_WIDTH = 1920
 const REFERENCE_HEIGHT = 1080
-const MIN = 0.6
-const MAX = 1.3
+const MIN = 0.25
+const MAX = 4
 
 let scale = 0
 const listeners = new Set<() => void>()
@@ -30,14 +40,21 @@ function apply(): void {
   const next = Math.min(MAX, Math.max(MIN, expand))
   if (next === scale) return
   scale = next
-  document.documentElement.style.setProperty('--ui-scale', next.toFixed(3))
+  document.documentElement.style.setProperty('--ui-scale', next.toFixed(4))
   listeners.forEach((l) => l())
 }
 
 /** Install the scale at boot (see main.tsx) and keep it in sync with the viewport. */
 export function installHudScale(): void {
   apply()
-  window.addEventListener('resize', apply)
+  let frame: number | null = null
+  window.addEventListener('resize', () => {
+    if (frame != null) return
+    frame = requestAnimationFrame(() => {
+      frame = null
+      apply()
+    })
+  })
 }
 
 export function getHudScale(): number {

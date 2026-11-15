@@ -4,6 +4,7 @@
 import { useState, type ReactNode } from 'react'
 import { Toggle } from './Toggle'
 import { Submenu } from './Submenu'
+import { Mark } from './Glyphs'
 import styles from './ContextMenu.module.css'
 
 export type ContextMenuItem =
@@ -21,6 +22,8 @@ interface ContextMenuProps {
   items: ContextMenuItem[]
   /** Scroll past a long list's maximum height (a submenu's list of names). */
   scroll?: boolean
+  /** sheet: a flat sheet with taller rows (the chat's conversation menu). */
+  variant?: 'default' | 'sheet'
 }
 
 function shortAddress(a: string): string {
@@ -28,9 +31,9 @@ function shortAddress(a: string): string {
   return `${a.slice(0, 6)}…${a.slice(-4)}`
 }
 
-export function ContextMenu({ items, scroll = false }: ContextMenuProps): React.JSX.Element {
+export function ContextMenu({ items, scroll = false, variant = 'default' }: ContextMenuProps): React.JSX.Element {
   return (
-    <div className={`${styles.ctx} ${scroll ? styles.scroll : ''}`.trim()} role="menu">
+    <div className={`${styles.ctx} ${scroll ? styles.scroll : ''} ${variant === 'sheet' ? styles.sheet : ''}`.trim()} role="menu">
       {items.map((it, i) => {
         if (it.kind === 'separator') return <div className={styles.sep} key={i} />
 
@@ -80,7 +83,7 @@ export function ContextMenu({ items, scroll = false }: ContextMenuProps): React.
             >
               {it.icon != null && <span className={styles.icon}>{it.icon}</span>}
               <span className={styles.label}>{it.label}</span>
-              <span className={styles.check} aria-hidden="true">{it.checked ? '✓' : ''}</span>
+              <span className={styles.check} aria-hidden="true">{it.checked ? <Mark name="check" /> : null}</span>
             </button>
           )
         }

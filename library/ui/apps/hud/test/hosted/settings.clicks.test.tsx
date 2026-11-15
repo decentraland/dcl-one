@@ -42,8 +42,10 @@ function renderPanel(): SettingsState {
 
 describe('settings panel controls', () => {
   let settings: SettingsState
-  beforeEach(() => {
+  // the panel opens on Graphics; the toggle and the slider are in the engine's General category
+  beforeEach(async () => {
     settings = renderPanel()
+    await userEvent.click(screen.getByRole('tab', { name: 'General' }))
   })
 
   it('toggle control sets 1 when turned on', async () => {

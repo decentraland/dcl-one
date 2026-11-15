@@ -70,8 +70,13 @@ export async function failureEvidence(console_: Console, timeoutMs = EVIDENCE_TI
 
 /** The rail buttons of the panels that open beside the rail, which leave it uncovered: each reads
  *  pressed while its panel is open. (The rail's top button, `WORLD_HUD`, takes a click only with
- *  nothing over the world: a page hides the rail, a popup such as the passport covers it.) */
-export const RAIL_PANELS = ['Profile', 'Notifications', 'Skybox', 'Emotes', 'Friends'] as const
+ *  nothing over the world: a page hides the rail, a popup such as the passport covers it.) The
+ *  rail's Map button is not one: it reads pressed for as long as the minimap shows, which is a
+ *  HUD at rest. */
+export const RAIL_PANELS = ['Notifications', 'Skybox', 'Emotes', 'Friends'] as const
+/** The rail buttons whose panel is a list of rows beside the rail, one open at a time: each panel
+ *  is a `dialog` named as its button, and Escape closes it. */
+export const RAIL_MENUS = ['Me', 'Discover', 'Shop', 'System', 'Volume', 'Camera'] as const
 /** The rail's own settings popover, which its button shows through `aria-expanded`, not as pressed. */
 export const RAIL_SETTINGS: Selector = { name: 'Sidebar settings', role: 'dialog' }
 /** The chat input while it has the focus, and with it the keys, which then never reach the engine. */
@@ -118,7 +123,8 @@ function relaying(before: Layers, now: Layers): boolean {
 
 /** The rail, the panels beside it, the chat input, the layers inside a page, and the engine's
  *  word on whether a field holds the keyboard. At rest the rail takes a click, no panel beside it
- *  is open and no field holds the keys (the chat comes up with its input focused). */
+ *  is open (neither one its button shows as pressed nor one of the rail's lists of rows) and no
+ *  field holds the keys (the chat comes up with its input focused). */
 async function hudLayers(explorer: Explorer): Promise<Layers> {
   let rail: HudRead
   try {
@@ -134,6 +140,9 @@ async function hudLayers(explorer: Explorer): Promise<Layers> {
     for (const name of RAIL_PANELS) {
       if ((await explorer.hud.find({ name, role: 'button' }))?.checked) pressed.push(name)
     }
+  }
+  for (const name of RAIL_MENUS) {
+    if (shown.some((entry) => entry.role === 'dialog' && entry.name === name)) pressed.push(name)
   }
   const typing = await explorer.hud.isVisible(CHAT_TYPING)
   const settings = await explorer.hud.isVisible(RAIL_SETTINGS)

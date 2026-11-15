@@ -19,3 +19,8 @@
   font-weight: 800;
   color: rgba(15, 12, 22, 0.72);
 }
+.numWheel {
+  bottom: 9%;
+  font-weight: 500;
+  color: rgba(15, 12, 22, 0.85);
+}

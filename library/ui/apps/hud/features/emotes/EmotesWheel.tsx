@@ -5,13 +5,15 @@
 import { useState } from 'react'
 import { catalystThumbUrl } from '@explorer-core/lib/identity'
 import { useWindowKeyDown } from '../../lib/useWindowKeyDown'
+import { MaskIcon } from '../../design'
 import { EmoteSlot } from './EmoteSlot'
 import type { EmotesState } from '../session/useEngineSession'
+import closeIcon from '../../assets/chat/close-thin.png'
 import styles from './EmotesWheel.module.css'
 
-const CENTER = 215 // wheel viewport is 430×430 (then HUD-scaled)
-const RADIUS = 152 // centre → slot centre
-const CARD_W = 112
+const CENTER = 257 // wheel viewport is 514×514 (then HUD-scaled)
+const RADIUS = 182 // centre → slot centre
+const CARD_W = 134
 
 export function EmotesWheel({
   emotes,
@@ -47,7 +49,7 @@ export function EmotesWheel({
     <div className={styles.backdrop} onClick={emotes.toggle}>
       <div className={styles.wheel} onClick={(e) => e.stopPropagation()}>
         <button type="button" className={styles.close} aria-label="Close emotes" onClick={emotes.toggle}>
-          ×
+          <MaskIcon src={closeIcon} size={14} />
         </button>
 
         {slots.map(({ num, deg, emote }) => {
@@ -71,6 +73,7 @@ export function EmotesWheel({
                 number={num}
                 rotate={deg + 90}
                 width={CARD_W}
+                wheel
               />
             </div>
           )
@@ -83,7 +86,7 @@ export function EmotesWheel({
             Customise [E]
           </button>
           <div className={styles.hint}>
-            Press [B+num] to run an emote
+            Hold <b>[b+num]</b> to run an emote while the wheel is closed
           </div>
         </div>
       </div>

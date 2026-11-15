@@ -54,7 +54,7 @@ describe('GalleryPage', () => {
 
   it('shows the empty state when loaded with no photos', () => {
     renderPage(gallery({ loaded: true, list: [] }))
-    expect(screen.getByText(/No photos yet/i)).toBeInTheDocument()
+    expect(screen.getByText(/There are no photos yet/i)).toBeInTheDocument()
   })
 
   it('groups photos by month and shows storage usage', () => {
@@ -62,7 +62,7 @@ describe('GalleryPage', () => {
     expect(screen.getByRole('heading', { name: 'February 2024' })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'January 2024' })).toBeInTheDocument()
     expect(screen.getAllByRole('button', { name: 'Open photo' })).toHaveLength(2)
-    expect(screen.getByText('2 / 500 photos')).toBeInTheDocument()
+    expect(screen.getByText('Storage 2/500 photos taken')).toBeInTheDocument()
   })
 
   it('opening a photo shows the detail with the full-res image and requests its metadata', async () => {

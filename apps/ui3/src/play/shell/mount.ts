@@ -12,6 +12,8 @@ import { currentLogin, request } from './login'
 import { onInWorld } from '@explorer-core/shell/googleTag'
 import { PAGE_DIR } from '../lib/publicUrl'
 import { loadOnce } from '../lib/loadOnce'
+import { reloadPage } from '@explorer-core/lib/reloadPage'
+import { dropDestination } from '@explorer-core/lib/startScreenUrl'
 import { shellResponse } from '@explorer-core/lib/shellReply'
 import type { ShellShop, ShellShopWallet } from './shop/purchase'
 import type { ShellDonate } from './donate/donation'
@@ -49,6 +51,20 @@ export function mountPlayShell(options: PlayShellOptions = {}): void {
 
   let frame: HTMLIFrameElement | null = null
   let mounting = false
+  // Set by the app's sign-out: the old app's URL sync must not write its place back before the reload.
+  let signedOut = false
+  // Back, a closed tab or a typed address would drop the session: once the app runs, the browser
+  // asks first. The page's own exits (sign-in, the untrusted-link gate) go through leave().
+  let leaving = false
+  function leave(go: () => void): void {
+    leaving = true
+    go()
+  }
+  function confirmLeave(e: BeforeUnloadEvent): void {
+    if (leaving) return
+    e.preventDefault()
+    e.returnValue = ''
+  }
   function mount(): void {
     if (mounting) return
     mounting = true
@@ -87,6 +103,7 @@ export function mountPlayShell(options: PlayShellOptions = {}): void {
     f.addEventListener('load', () => f.focus())
     document.body.appendChild(f)
     frame = f
+    addEventListener('beforeunload', confirmLeave)
     dropAttributionParams([AUTH_RETURN_PARAM])
   }
 
@@ -104,7 +121,7 @@ export function mountPlayShell(options: PlayShellOptions = {}): void {
         ui: overlay.createShopOverlay(() => frame?.focus()),
         post: (event) => frame?.contentWindow?.postMessage(event, location.origin),
         openExternal: (url) => void window.open(url, '_blank', 'noopener'),
-        signIn: () => location.assign(authLoginUrl(authReturnUrl(entryUrl))),
+        signIn: () => leave(() => location.assign(authLoginUrl(authReturnUrl(entryUrl)))),
         otherDialogOpen: () => loadedDonate?.dialogOpen() === true
       })
       return loadedShop
@@ -161,14 +178,16 @@ export function mountPlayShell(options: PlayShellOptions = {}): void {
       }
       // the engine's URL sync (engine/boot.js set_url_params), mirrored into the address bar
       case 'bevy-shell:url':
-        if (typeof m.search === 'string' && (m.search === '' || m.search[0] === '?')) {
+        if (!signedOut && typeof m.search === 'string' && (m.search === '' || m.search[0] === '?')) {
           history.replaceState(null, '', location.pathname + m.search + location.hash)
         }
         break
       // sign-in: the same-origin auth site, returning here
       case 'bevy-shell:auth-login':
         if (typeof m.session === 'string') sessionStorage.setItem(ANALYTICS_SESSION_KEY, m.session)
-        location.assign(authLoginUrl(authReturnUrl(entryUrl), undefined, isLoginMethod(m.loginMethod) ? m.loginMethod : undefined))
+        leave(() =>
+          location.assign(authLoginUrl(authReturnUrl(entryUrl), undefined, isLoginMethod(m.loginMethod) ? m.loginMethod : undefined))
+        )
         break
       // the session's first move in world: the Google Ads conversion (googleTag.ts), and GA4's ids
       // back to the app for Segment
@@ -178,8 +197,26 @@ export function mountPlayShell(options: PlayShellOptions = {}): void {
       // the untrusted-link gate's exit (library/ui/apps/hud/features/gate/UntrustedLaunchGate.tsx), to the
       // host's fixed address
       case 'bevy-shell:exit':
-        window.close()
-        location.replace(exitUrl())
+        leave(() => {
+          window.close()
+          location.replace(exitUrl())
+        })
+        break
+      // the Me panel's Sign Out in world (library/ui/apps/hud/features/gate/signOutOfWorld.ts): the stored
+      // sign-in and the place in the address bar go, and the page loads again on the start screen,
+      // which ends the engine session
+      case 'bevy-shell:sign-out':
+        signedOut = true
+        try {
+          await request('logout', undefined)
+        } catch (error) {
+          // the stored sign-in is still there, so a reload would sign the same account in again
+          signedOut = false
+          console.error('sign-out: the stored sign-in could not be removed', error)
+          break
+        }
+        dropDestination()
+        leave(reloadPage)
         break
     }
   })

@@ -352,6 +352,16 @@ export function TriangleDown({ size = 16, className }: GlyphProps): React.JSX.El
   )
 }
 
+/** The seal on a claimed name: a scalloped badge with a tick. */
+export function NameSeal({ size = 16, className }: GlyphProps): React.JSX.Element {
+  return (
+    <svg width={size} height={size} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden="true" style={{ flex: 'none' }}>
+      <path d="M8 1.3l1.6 1.1 1.9-.2.9 1.7 1.8.8-.5 1.9.9 1.7-1.5 1.3.1 1.9-1.9.6-1 1.7-1.8-.7-1.8.7-1-1.7-1.9-.6.1-1.9L2.4 8.3l.9-1.7-.5-1.9 1.800-.8.9-1.7 1.900.2z" />
+      <path d="M5.600 8.100l1.600 1.600 3.300-3.400" />
+    </svg>
+  )
+}
+
 export function Kebab({
   size = 18,
   className,
@@ -601,6 +611,44 @@ export function VerifiedBadge({ size = 14, className }: GlyphProps): React.JSX.E
         fill={`url(#${id})`}
       />
       <path d="M5.5 8l1.7 1.7L10.8 6" stroke="#fff" strokeWidth="1.4" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
+// Marks: the signs Inter's bundled ranges lack (↺ ● ⋮ ✕ ✓ ▾ ▴ ▸), which a browser would otherwise
+// take from whatever system font has them, a different one on each OS. Each is drawn on the text's
+// own em box (16 units high, the middle of a lowercase line at y = 8), so it takes the place, size
+// and colour its character had: `size` is in em.
+const MARKS = {
+  close: { w: 12, d: 'M2.2 4.2l7.6 7.6M9.8 4.2l-7.6 7.6', stroke: 1.5 },
+  check: { w: 12, d: 'M1.6 8.6l3 3 5.8-7', stroke: 1.5 },
+  reset: { w: 14, d: 'M3.3 5.6A4.7 4.7 0 1 1 2.5 10M3.4 2.5l-.1 3.1 3.1.2', stroke: 1.3 },
+  dot: { w: 10, d: 'M5 3.6a4.4 4.4 0 1 0 0 8.8 4.4 4.4 0 0 0 0-8.8z', stroke: 0 },
+  kebab: { w: 6, d: 'M3 2.3a1.2 1.2 0 1 0 0 2.4 1.2 1.2 0 0 0 0-2.4zM3 6.8a1.2 1.2 0 1 0 0 2.4 1.2 1.2 0 0 0 0-2.4zM3 11.3a1.2 1.2 0 1 0 0 2.4 1.2 1.2 0 0 0 0-2.4z', stroke: 0 },
+  down: { w: 10, d: 'M1.5 6h7L5 10.8z', stroke: 0 },
+  up: { w: 10, d: 'M1.5 10.4h7L5 5.6z', stroke: 0 },
+  right: { w: 10, d: 'M2.6 4.5v7L8 8z', stroke: 0 },
+} as const
+
+export type MarkName = keyof typeof MARKS
+
+export function Mark({ name, size = 1, className }: { name: MarkName; size?: number; className?: string }): React.JSX.Element {
+  const { w, d, stroke } = MARKS[name]
+  return (
+    <svg
+      viewBox={`0 0 ${w} 16`}
+      width={`${(w / 16) * size}em`}
+      height={`${size}em`}
+      aria-hidden="true"
+      className={className}
+      style={{ verticalAlign: '-0.125em', flex: 'none' }}
+      fill={stroke ? 'none' : 'currentColor'}
+      stroke={stroke ? 'currentColor' : 'none'}
+      strokeWidth={stroke || undefined}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d={d} />
     </svg>
   )
 }

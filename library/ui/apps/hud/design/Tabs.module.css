@@ -63,7 +63,8 @@
 .underline .tab {
   position: relative;
   padding: 12px 2px;
-  color: var(--ink-6);
+  /* a host on a dark card sets --tab-ink for brighter idle labels */
+  color: var(--tab-ink, var(--ink-6));
   letter-spacing: 0.04em;
   text-transform: uppercase;
   transition: color var(--dur-fast) ease;

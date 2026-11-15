@@ -129,7 +129,7 @@ describe('profile passport', () => {
     it('lists every badge as a card with its unlock month, a dash while locked', async () => {
       await open()
       const cards = screen.getAllByRole('button').filter((b) => b.hasAttribute('aria-pressed'))
-      expect(cards.map((c) => c.textContent)).toEqual(['Festive TrailDec. 2024', 'Traveler · StarterNov. 2024', 'Vertical Voyager—'])
+      expect(cards.map((c) => c.textContent)).toEqual(['Festive TrailDec. 2024', 'TravelerNov. 2024', 'Vertical Voyager—'])
       expect(screen.getByText('Dec. 2024')).toHaveAttribute('dateTime', '2024-12-04T14:16:34.000Z')
     })
 
@@ -162,7 +162,9 @@ describe('profile passport', () => {
       expect(screen.getByText('Locked')).toBeInTheDocument()
       expect(screen.getByText('50 scenes explored', { selector: 'p' })).toBeInTheDocument()
       expect(screen.getByText('NEXT TIER: Bronze')).toBeInTheDocument()
-      expect(screen.getAllByText('5/50')).toHaveLength(2) // the card's bar and the detail's
+      // The card carries the bar alone; the detail adds the count.
+      expect(screen.getAllByText('5/50')).toHaveLength(1)
+      expect(screen.getAllByRole('progressbar')).toHaveLength(2)
     })
   })
 
@@ -180,7 +182,7 @@ describe('profile passport', () => {
   it('switches tabs (Photos shows empty state)', async () => {
     render(<ProfilePassport profile={profile} onClose={vi.fn()} />)
     await userEvent.click(screen.getByRole('tab', { name: 'PHOTOS' }))
-    expect(screen.getByText(/No photos shared yet/i)).toBeInTheDocument()
+    expect(screen.getByText(/No photos here yet!/i)).toBeInTheDocument()
   })
 })
 
@@ -213,10 +215,9 @@ const equippedProfile: Profile = {
 }
 
 describe('passport equipped items', () => {
-  it('renders both sections with a tile per item', () => {
+  it('renders one Equipped Items section with a tile per item, wearables then emotes', () => {
     render(<ProfilePassport profile={equippedProfile} onClose={vi.fn()} />)
-    expect(screen.getByRole('heading', { name: 'Equipped Wearables' })).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: 'Equipped Emotes' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Equipped Items' })).toBeInTheDocument()
     for (const name of ['Neon Tiara', 'Casual Hair', 'Disco', 'Wave']) {
       expect(screen.getByText(name)).toBeInTheDocument()
     }
@@ -253,13 +254,13 @@ describe('passport equipped items', () => {
   it('orders the Overview as About Me → Equipped → Badges', () => {
     render(<ProfilePassport profile={equippedProfile} onClose={vi.fn()} />)
     const titles = screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent)
-    expect(titles).toEqual(['About Me', 'Equipped Wearables', 'Equipped Emotes', 'Badges'])
+    expect(titles).toEqual(['About Me', 'Equipped Items', 'Badges'])
   })
 
-  it('omits a section when nothing is equipped in it', () => {
+  it('keeps the section while either kind is equipped', () => {
     render(<ProfilePassport profile={{ ...equippedProfile, equippedEmotes: [] }} onClose={vi.fn()} />)
-    expect(screen.getByRole('heading', { name: 'Equipped Wearables' })).toBeInTheDocument()
-    expect(screen.queryByRole('heading', { name: 'Equipped Emotes' })).toBeNull()
+    expect(screen.getByRole('heading', { name: 'Equipped Items' })).toBeInTheDocument()
+    expect(screen.queryByText('Disco')).toBeNull()
   })
 
   it('counts as Overview content on its own (no empty state)', () => {
@@ -273,7 +274,7 @@ describe('passport equipped items', () => {
   })
 
   it('a body-shape-only equipped set leaves no section behind', () => {
-    render(<ProfilePassport profile={{ ...equippedProfile, equippedWearables: [BODY_SHAPE] }} onClose={vi.fn()} />)
-    expect(screen.queryByRole('heading', { name: 'Equipped Wearables' })).toBeNull()
+    render(<ProfilePassport profile={{ ...equippedProfile, equippedWearables: [BODY_SHAPE], equippedEmotes: [] }} onClose={vi.fn()} />)
+    expect(screen.queryByRole('heading', { name: 'Equipped Items' })).toBeNull()
   })
 })

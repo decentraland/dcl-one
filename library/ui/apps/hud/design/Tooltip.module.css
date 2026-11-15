@@ -10,8 +10,9 @@
   align-items: center;
   gap: 4px;
   white-space: nowrap;
-  padding: 8px 12px;
-  border-radius: 12px;
+  /* a caller's container may set --tooltip-pad and --tooltip-radius for the tips inside it */
+  padding: var(--tooltip-pad, 8px 12px);
+  border-radius: var(--tooltip-radius, 12px);
   background: var(--panel); /* DCL/Shadow */
   color: var(--text); /* DCL/Snow */
   font-family: var(--font-family);
@@ -92,13 +93,13 @@
 }
 
 .rail {
-  border-radius: var(--r-button);
+  border-radius: var(--tooltip-radius, var(--r-button));
   box-shadow: none;
   transition: none;
 }
 .rail.right,
 .wrap:hover .rail.right {
-  transform: translate(18px, -50%);
+  transform: translate(10px, -50%);
 }
 .rail.top,
 .wrap:hover .rail.top {

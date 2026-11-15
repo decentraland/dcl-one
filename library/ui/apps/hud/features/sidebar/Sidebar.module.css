@@ -1,18 +1,15 @@
-/* Nav rail — Explorer 2.0 spec: 46px wide, rgba(0,0,0,0.7), full height, with a
-   top group (nav/menus) and a bottom group (world tools + social) pinned to the
-   ends. translateZ(0)/contain isolate hover paints from the engine's per-frame
-   work on the shared main thread (same document). */
+/* The navigation column: 42px circles at x=10 with 8px between them, a top group and a bottom
+   group pinned to the ends, on no surface of its own. translateZ(0)/contain isolate hover paints
+   from the engine's per-frame work on the shared main thread (same document). */
 .root {
   position: fixed;
   left: 0;
   top: 0;
-  width: 46px;
-  /* DPI scaling like MainMenuShell: a reference-height box scaled by --ui-scale so the rail
-     width + icons track the viewport (Unity CanvasScaler) instead of staying a fixed 46px at
-     1x — keeps the rail consistent with the scaled chat/floating panels beside it. */
+  width: 52px;
+  /* A reference-height box scaled by --ui-scale, so the column and what opens beside it track
+     the viewport together. */
   height: calc(100% / var(--ui-scale));
-  background: var(--rail-bg);
-  /* Above the minimap and chat, so the tooltips aren't covered. */
+  /* Above the minimap and chat, so the hover labels aren't covered. */
   z-index: calc(var(--z-hud) + 1);
   transform: scale(var(--ui-scale)) translateZ(0);
   transform-origin: top left;
@@ -20,9 +17,24 @@
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  align-items: center;
-  padding: 4px 0 16px;
+  align-items: flex-start;
+  padding: 3px 0 10px 10px;
   box-sizing: border-box;
+  /* the world between the two groups takes the pointer */
+  pointer-events: none;
+  /* the hover labels: 36px high, 13px from the edge to the text, 12px corners (design/Tooltip
+     reads these) */
+  --tooltip-pad: 9.5px 13px;
+  --tooltip-radius: var(--r-md);
+  /* Auto-hide: slide the column off-screen; `translate` composes with the scale transform. */
+  transition: translate 0.2s ease;
+}
+.root[data-hidden='true'] {
+  translate: -100% 0;
+}
+/* With auto-hide on, the whole column takes the pointer: entering and leaving it drive the hide. */
+.root[data-autohide='true'] {
+  pointer-events: auto;
 }
 
 .group {
@@ -30,9 +42,20 @@
   flex-direction: column;
   align-items: center;
   gap: 8px;
+  width: 42px;
+  pointer-events: auto;
+}
+/* The bell closes the top group, 3px further from System than the pitch. */
+.top > :last-child {
+  margin-top: 3px;
+}
+/* Chat closes the bottom group; its badge sits lower than the bell's (IconButton reads these). */
+.group:not(.top) > :last-child {
+  --rail-badge-top: 7.4px;
+  --rail-badge-right: 5.5px;
 }
 
-/* Unity's standalone debug-container button for development play. */
+/* The development build's debug launcher, at the screen's bottom right. */
 button.debugLauncher {
   position: fixed;
   right: calc(8px * var(--ui-scale));
@@ -47,30 +70,37 @@ button.debugLauncher {
   transform-origin: bottom right;
 }
 
-/* 40px hairline divider — DCL/White10%. */
-.divider {
-  width: 40px;
-  height: 0;
-  border-top: 1px solid var(--rail-divider);
+/* The second copy of a raster glyph, over the first (see RasterButton). */
+.root button > .overlay {
+  position: absolute;
+  inset: 0;
+  margin: auto;
 }
 
-/* Auto-hide (Unity MainUIController): slide the rail off-screen; `translate` composes with the
-   scale transform above. */
-.root {
-  transition: translate 0.2s ease;
-}
-.root[data-hidden='true'] {
-  translate: -100% 0;
-}
-/* Unity's ••• is a slim pill above the profile, smaller than a rail button. */
-.root .configButton {
-  width: 36px;
-  height: 16px;
-  background: var(--rail-bg);
+/* The "..." handle: a 42x26 target holding a 42x12 pill 7px down, 3px above the Me button. The
+   pill looks the same at rest, under the pointer and while its menu is open. */
+.root button.handle,
+.root button.handle:hover:not(:disabled) {
+  width: 42px;
+  height: 26px;
   min-height: 0;
+  margin-bottom: -5px;
   padding: 0;
+  border-radius: 0;
+  background: transparent;
 }
-/* Invisible strip on the screen edge that brings a hidden rail back. */
+.handlePill {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 12px;
+  border-radius: var(--r-xs);
+  background: var(--rail-bg);
+  color: var(--text);
+}
+
+/* Invisible strip on the screen edge that brings a hidden column back. */
 .reveal {
   position: fixed;
   left: 0;
@@ -79,26 +109,123 @@ button.debugLauncher {
   width: 8px;
   z-index: var(--z-hud);
 }
-.config {
+
+/* What a button opens beside the column. useRailPopover sets top and left: 14px right of the
+   button, the top a panel's own rise above the button's top. */
+.panelHost {
   position: fixed;
-  left: 54px;
-  top: 8px;
   z-index: calc(var(--z-hud) + 1);
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 12px 14px;
-  font-size: var(--fs-sm);
-  color: var(--text);
-  box-shadow: var(--shadow-panel);
   transform: scale(var(--ui-scale));
   transform-origin: top left;
 }
+/* without a rise the hook hands the button's centre line */
+.centred {
+  transform: translateY(-50%) scale(var(--ui-scale));
+  transform-origin: left center;
+}
 
-/* Speaking bars on the voice button: 2px dots while quiet, a ping-pong wave while heard. */
-.bars {
+/* The Volume popover: the label over its slider, 192 wide inside 16px of padding. */
+div.volume {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  box-sizing: border-box;
+  width: 224px;
+  padding: 16px;
+  border: 0;
+  border-radius: var(--r-md);
+  background: var(--panel);
+  box-shadow: var(--shadow-rail-panel);
+  color: var(--text);
+  font-family: var(--font-family);
+}
+.volumeLabel {
+  font-size: var(--type-14);
+  font-weight: var(--fw-semibold);
+  line-height: 17px;
+}
+/* the slider's 26px pin stands 7px past its 12px track on both sides */
+.volumeSlider {
+  display: flex;
+  align-items: center;
+  height: 27px;
+  --slider-rail-track: var(--slider-track-solid);
+}
+
+/* The "..." menu: 255x40 beside the handle, one 36px row inside 2px of padding. */
+div.config {
+  position: fixed;
+  left: calc(64px * var(--ui-scale));
+  top: calc(10px * var(--ui-scale));
+  z-index: calc(var(--z-hud) + 1);
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  box-sizing: border-box;
+  width: 255px;
+  padding: 2px 0;
+  border: 0;
+  border-radius: var(--r-md);
+  background: var(--panel);
+  font-family: var(--font-family);
+  font-size: var(--type-14);
+  font-weight: var(--fw-semibold);
+  line-height: 17px;
+  color: var(--text);
+  box-shadow: none;
+  transform: scale(var(--ui-scale));
+  transform-origin: top left;
+}
+/* The label starts 12px in and the switch ends 13px from the right edge, which leaves about 7px
+   between them: the gap is only the least they keep. */
+.configRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  box-sizing: border-box;
+  height: 36px;
+  padding: 0 13px 0 12px;
+  white-space: nowrap;
+  /* the 39x24 switch with a 19px knob (design/Toggle reads these) */
+  --toggle-pad: 2.5px;
+  --toggle-off: var(--switch-off-rail);
+  --toggle-knob: var(--text);
+  --toggle-knob-shadow: none;
+}
+/* Under the open menu: a press outside it closes the menu and goes no further, so the menu's rows
+   never share a hit area with what they lie over. */
+.configBackdrop {
+  position: fixed;
+  inset: 0;
+  z-index: calc(var(--z-hud) + 1);
+}
+/* The debug row, a row like the switch's. */
+.configExtra {
+  height: 36px;
+  margin: 0 2px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.configExtra:hover {
+  background: var(--fill-3);
+}
+
+/* Nearby Voice while the player hears nobody: the glyph steps back. */
+.root .voiceOff > img {
+  opacity: 0.5;
+}
+/* Speaking bars on the voice button, where the glyph's sound waves are: 2px dots while quiet, a
+   ping-pong wave while heard. */
+.root .bars {
   position: absolute;
-  left: 20.4px;
+  left: 27px;
   top: 50%;
   display: flex;
   align-items: center;

@@ -102,7 +102,7 @@
   border: none;
   border-radius: 10.9px;
   background: var(--fill-5);
-  color: var(--ink-7);
+  color: rgba(255, 255, 255, 0.8);
   cursor: pointer;
 }
 .bug:hover {

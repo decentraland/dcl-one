@@ -68,7 +68,7 @@ export function ProfileChip({
   address?: string
   claimed?: boolean
   onViewProfile: () => void
-  /** Only the startup lobby can sign out: once in world the account is fixed for the session. */
+  /** Sign out from this chip; the in-world menu passes none: there the bar's Me panel has the Sign Out row, for an account on the web. */
   onSignOut?: () => void
   /** Absent in the lobby, which has no menu page to exit. */
   onExit?: () => void
@@ -109,7 +109,7 @@ export function ProfileChip({
         </HeaderButton>
       ) : (
         <button type="button" className={styles.chip} onClick={() => setOpen((o) => !o)}>
-          <Avatar src={picture} name={name} color={color} size={32} />
+          <Avatar src={picture} name={name} color={color} size={42} />
           <span className={styles.chipName}>{name}</span>
         </button>
       )}

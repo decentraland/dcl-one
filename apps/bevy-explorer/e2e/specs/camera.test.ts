@@ -1,14 +1,15 @@
-// explorer-automation `CameraTests` (3): photo mode (C or the sidebar's camera button) and the
-// capture. The engine owns the camera and the capture (`/photo_mode`, `/take_photo`); the HUD opens
-// and closes the mode (C reaches it through the engine's action stream) and shows its overlay
-// (the frame, Shoot, Gallery, Close) while it is on.
+// explorer-automation `CameraTests` (3): photo mode (C or the Take A Shot row of the sidebar's
+// Camera panel) and the capture. The engine owns the camera and the capture (`/photo_mode`,
+// `/take_photo`); the HUD opens and closes the mode (C reaches it through the engine's action
+// stream) and shows its overlay (the frame, Shoot, Gallery, Close) while it is on.
 //
 // | Unity test                    | Here                                                    | Class   |
 // | TestToggleCameraWithShortcut  | C opens photo mode, C again closes it                   | Port    |
-// | TestOpenCameraFromSidebar     | the rail's Camera button opens it; its Close closes it, once the right button frees the cursor | Port    |
+// | TestOpenCameraFromSidebar     | the rail's Camera panel has a Take A Shot row that opens it; its Close closes it, once the right button frees the cursor | Port    |
 // | TestTakePhoto                 | Space captures and uploads; the counters, the photo id  | Port    |
 import assert from 'node:assert/strict'
 import { spec } from '../driver/index.ts'
+import { pressRailRow } from './pages.ts'
 
 const scenario = spec(import.meta.url)
 
@@ -34,7 +35,7 @@ scenario('the rail opens photo mode', async ({ explorer, restore }) => {
   restore(async () => {
     await explorer.photoMode('off')
   })
-  await explorer.hud.click({ name: 'Camera', role: 'button' })
+  await pressRailRow(explorer, { button: 'Camera', row: 'Take A Shot' })
   const opened = await explorer.waitPhotoMode(true)
   const shoot = await explorer.hud.wait(SHOOT, { timeoutMs: PAGE_TIMEOUT_MS })
   // photo mode takes the pointer for the camera, and every click goes to the camera until the

@@ -1,5 +1,5 @@
-// Skybox menu — Unity's sidebar SkyboxMenu (DCL/UI/Skybox): a time-of-day slider, locked while
-// "Time progression" lets the engine's day cycle run.
+// Skybox menu — the sidebar's NIGHT/DAY panel: "Auto" lets the engine's day cycle
+// run; the "Custom" time-of-day slider is locked meanwhile.
 
 import { useEffect } from 'react'
 import { Panel, Slider, Toggle, hasOpenPopup } from '../../design'
@@ -27,15 +27,20 @@ export function SkyboxMenu({ skybox }: { skybox: SkyboxState }): React.JSX.Eleme
   if (!open) return null
   return (
     <Panel className={styles.root} role="dialog" aria-label="Skybox">
-      <div className={styles.head}>
-        <span className={styles.heading}>Skybox</span>
-        <span className={styles.time}>{formatHours(skybox.hours)}</span>
-      </div>
-      <Slider value={skybox.hours} min={0} max={24} step={0.25} onChange={skybox.setHours} disabled={skybox.progressing} />
+      <div className={styles.title}>NIGHT/DAY</div>
+      <div className={styles.divider} />
       <label className={styles.row}>
-        <span>Time progression</span>
-        <Toggle checked={skybox.progressing} onChange={skybox.setProgressing} />
+        <span>Auto</span>
+        <Toggle size="sm" checked={skybox.progressing} onChange={skybox.setProgressing} />
       </label>
+      <div className={styles.divider} />
+      <div className={styles.custom} data-locked={skybox.progressing}>
+        <div className={styles.head}>
+          <span>Custom</span>
+          <span className={styles.time}>{formatHours(skybox.hours)}</span>
+        </div>
+        <Slider variant="thick" arrows value={skybox.hours} min={0} max={24} step={0.25} onChange={skybox.setHours} disabled={skybox.progressing} />
+      </div>
     </Panel>
   )
 }

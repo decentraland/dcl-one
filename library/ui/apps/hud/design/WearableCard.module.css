@@ -141,6 +141,16 @@
   display: none;
   pointer-events: none;
 }
+/* Firefox has neither mask-border nor -webkit-mask-box-image and would paint the ring's fill as a
+   solid square over the tile: there the outline is a plain border. */
+@supports not ((mask-border: none) or (-webkit-mask-box-image: none)) {
+  .ring {
+    box-sizing: border-box;
+    border: 3px solid var(--accent);
+    border-radius: 18px;
+    background: none;
+  }
+}
 .equipped .ring {
   display: block;
 }

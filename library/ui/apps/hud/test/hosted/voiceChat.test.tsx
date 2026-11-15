@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { SessionProvider } from '../../features/session/SessionContext'
 import { VoiceChatPanel } from '../../features/voiceChat/VoiceChatPanel'
@@ -92,6 +92,21 @@ describe('voice call panel', () => {
     expect(mic).toHaveAttribute('aria-pressed', 'true')
     await userEvent.click(mic)
     expect(vi.mocked(s.voiceChat.act)).toHaveBeenLastCalledWith({ op: 'setMic', enabled: false })
+  })
+
+  it('a connected call names the peer while nobody talks', () => {
+    seedProfiles([{ address: PEER, name: 'Mojito' }])
+    renderPanel({ status: 'inCall', kind: 'private', callId: 'c1', peer: PEER, connection: 'connected', participants: [participant(PEER, '')] })
+    const call = screen.getByRole('dialog', { name: 'Voice call' })
+    expect(within(call).getAllByText('Mojito')).toHaveLength(1)
+    expect(call).toHaveTextContent('*Crickets*')
+  })
+
+  it('a call that connects names the peer once, under its state', () => {
+    seedProfiles([{ address: PEER, name: 'Mojito' }])
+    renderPanel({ status: 'inCall', kind: 'private', callId: 'c1', peer: PEER, connection: 'connecting', participants: [participant(PEER, '')] })
+    expect(screen.getByRole('status')).toHaveTextContent(/^Connecting with$/)
+    expect(within(screen.getByRole('dialog', { name: 'Voice call' })).getAllByText('Mojito')).toHaveLength(1)
   })
 
   it('busy and errors are shown and dismissed', async () => {

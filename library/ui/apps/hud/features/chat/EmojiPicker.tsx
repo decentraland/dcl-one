@@ -41,7 +41,11 @@ function Grid({ emojis, onPick }: { emojis: Emoji[]; onPick: (e: Emoji) => void 
 
 const COLS = 8
 const CELL = 36
-const GAP = 1.5
+const GAP = 2
+// The scrollbar's thumb: it starts 10px down the scroll area (the CSS's top), stops 3px short of
+// its end and is never shorter than 33px.
+const THUMB_PAD = 13
+const THUMB_MIN = 33
 const CHUNK_ROWS = 10
 
 /** A block of rows that mounts its buttons only once it nears the visible area; until then it
@@ -65,7 +69,7 @@ function Section({ name, emojis, onPick, root, eager }: { name: string; emojis: 
   const chunks = useMemo(() => Array.from({ length: Math.ceil(emojis.length / per) }, (_, i) => emojis.slice(i * per, (i + 1) * per)), [emojis, per])
   return (
     <section className={styles.section} data-section={name}>
-      <div className={styles.sectionHeader}>{name}</div>
+      <div className={styles.sectionHeader}>{name === 'Smileys & Emotion' ? 'Smileys and emotions' : name.replace(' & ', ' and ')}</div>
       <div className={styles.rows}>
         {chunks.map((c, i) => (
           <LazyRows key={i} emojis={c} onPick={onPick} root={root} eager={eager && i === 0} />
@@ -97,12 +101,44 @@ export function EmojiPicker({ onPick, onClose }: { onPick: (glyph: string) => vo
     })
   }
 
+  // The thumb's height and place follow the scroll area; `travel` is how far it can move.
+  const thumbRef = useRef<HTMLDivElement>(null)
+  const travel = useRef(0)
+  const placeThumb = (): void => {
+    const body = bodyRef.current
+    const thumb = thumbRef.current
+    if (!body || !thumb) return
+    const range = body.scrollHeight - body.clientHeight
+    thumb.style.display = range > 0 ? '' : 'none'
+    if (range <= 0) return
+    const track = body.clientHeight - THUMB_PAD
+    const height = Math.max(THUMB_MIN, (track * body.clientHeight) / body.scrollHeight)
+    travel.current = track - height
+    thumb.style.height = `${height}px`
+    thumb.style.transform = `translateY(${(travel.current * body.scrollTop) / range}px)`
+  }
+  useEffect(placeThumb)
+  const drag = useRef<{ y: number; top: number } | null>(null)
+  const onThumbDown = (e: React.PointerEvent<HTMLDivElement>): void => {
+    if (!bodyRef.current) return
+    e.currentTarget.setPointerCapture(e.pointerId)
+    drag.current = { y: e.clientY, top: bodyRef.current.scrollTop }
+  }
+  const onThumbMove = (e: React.PointerEvent<HTMLDivElement>): void => {
+    const body = bodyRef.current
+    if (!drag.current || !body || travel.current <= 0) return
+    // the panel is scaled with the HUD: the thumb's drawn width over its 8px gives the scale
+    const scale = e.currentTarget.getBoundingClientRect().width / 8 || 1
+    body.scrollTop = drag.current.top + ((e.clientY - drag.current.y) / scale) * ((body.scrollHeight - body.clientHeight) / travel.current)
+  }
+
   // The toggle follows the section at the top of the scroll (read once per frame).
   const scrollFrame = useRef(0)
   const onScroll = (): void => {
     if (scrollFrame.current !== 0) return
     scrollFrame.current = requestAnimationFrame(() => {
       scrollFrame.current = 0
+      placeThumb()
       trackSection()
     })
   }
@@ -143,6 +179,7 @@ export function EmojiPicker({ onPick, onClose }: { onPick: (glyph: string) => vo
         <SearchField variant="light" size="sm" value={query} onChange={setQuery} placeholder="Search emoji" />
       </div>
 
+      <div className={styles.scroll}>
       <div ref={bodyRef} className={styles.body} onScroll={onScroll}>
         {q ? (
           results.length > 0 ? (
@@ -158,6 +195,17 @@ export function EmojiPicker({ onPick, onClose }: { onPick: (glyph: string) => vo
             ))}
           </>
         )}
+      </div>
+      <div
+        ref={thumbRef}
+        className={styles.thumb}
+        aria-hidden="true"
+        onMouseDown={(e) => e.preventDefault()}
+        onPointerDown={onThumbDown}
+        onPointerMove={onThumbMove}
+        onPointerUp={() => (drag.current = null)}
+        onPointerCancel={() => (drag.current = null)}
+      />
       </div>
     </div>
   )

@@ -1,16 +1,54 @@
-/* Popover for the minimap's gear button, anchored to its right so it never covers the map. */
+/* The menu of the minimap's menu button: beside the panel, level with its top, so it never covers
+   the map. The button stands one panel padding (--minimap-pad) inside the panel's corner. */
 
 .menu {
   position: absolute;
-  top: 0;
-  left: calc(100% + 6px);
+  top: calc(-1 * var(--minimap-pad));
+  left: calc(100% + var(--minimap-pad) + 4px);
   z-index: 1;
-  min-width: 168px;
-  padding: 8px 0;
-  border: 1px solid var(--white-10);
-  border-radius: var(--r-card);
-  background: var(--panel);
-  box-shadow: var(--shadow-panel);
+  box-sizing: border-box;
+  width: 185px;
+  padding: 0 0 5px;
+  border: 0;
+  border-radius: 12px;
+  background: #161616;
+  color: #ecebed;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 17px;
+}
+
+.separator {
+  height: 1px;
+  margin: 0 7px 5px;
+  background: #454545;
+}
+
+/* Icon rows, 37px: a 20px mark, then the label 12px after it. */
+.entry,
+.more {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  height: 37px;
+  padding: 0 15px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.more {
+  justify-content: space-between;
+  height: 32px;
+}
+
+.entry:hover,
+.more:hover {
+  background: var(--fill-3);
 }
 
 .section {
@@ -32,7 +70,8 @@
   border: 0;
   background: transparent;
   color: var(--text);
-  font-size: var(--fs-sm);
+  font-size: 14px;
+  font-weight: 600;
   text-align: left;
   cursor: pointer;
 }
