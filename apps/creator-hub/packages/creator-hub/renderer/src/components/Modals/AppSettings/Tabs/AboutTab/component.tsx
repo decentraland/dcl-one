@@ -1,4 +1,4 @@
-import { Box, Link, Typography } from 'decentraland-ui2';
+import Text from '@ui/atoms/Text';
 
 import { t } from '/@/modules/store/translation/utils';
 import { UpdateSettings } from '../../UpdateSettings';
@@ -9,41 +9,41 @@ import './styles.css';
 
 const AboutTab: React.FC<AboutTabProps> = ({ version, onViewChangelog, autoCheckForUpdates }) => {
   return (
-    <Box className="AboutTabContainer">
-      <Box className="AboutHeader">
+    <div className="AboutTabContainer">
+      <div className="AboutHeader">
         <img
           src={logo}
           alt="Decentraland Creator Hub"
           className="AboutLogo"
         />
-        <Box className="AboutInfo">
-          <Typography
+        <div className="AboutInfo">
+          <Text
             variant="h5"
             className="AboutTitle"
           >
             {t('modal.app_settings.about.title')}
-          </Typography>
+          </Text>
           {version && (
-            <Box className="AboutVersionRow">
-              <Typography variant="body2">{`v${version}`}</Typography>
-              <Link
-                component="button"
+            <div className="AboutVersionRow">
+              <Text variant="body2">{`v${version}`}</Text>
+              <button
+                type="button"
                 onClick={onViewChangelog}
                 className="AboutChangelogLink"
               >
                 {t('modal.app_settings.about.view_changelog')}
-              </Link>
-            </Box>
+              </button>
+            </div>
           )}
-        </Box>
-      </Box>
-      <Box className="AboutUpdateSection">
+        </div>
+      </div>
+      <div className="AboutUpdateSection">
         <UpdateSettings
           className="AboutUpdateSettings"
           autoCheck={autoCheckForUpdates}
         />
-      </Box>
-    </Box>
+      </div>
+    </div>
   );
 };
 

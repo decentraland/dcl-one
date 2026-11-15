@@ -1,5 +1,5 @@
 import { useCallback, useMemo } from 'react';
-import { Typography } from 'decentraland-ui2';
+import Text from '@ui/atoms/Text';
 
 import { t } from '/@/modules/store/translation/utils';
 import { useDeploy } from '/@/hooks/useDeploy';
@@ -13,18 +13,8 @@ import { ExpandMore } from '/@/components/ExpandMore';
 import { Modal } from '..';
 
 import type { Props } from './types';
-import {
-  Container,
-  CurrentBadge,
-  DeploymentCard,
-  DeploymentMeta,
-  ErrorMessage,
-  Header,
-  HeaderLeft,
-  NoDeployments,
-  StepsContainer,
-  Title,
-} from './styled';
+
+import styles from './DeploymentHistory.module.css';
 
 export function DeploymentHistory({ open, projectPath, onClose }: Props) {
   const { getDeployment, getDeploymentHistory } = useDeploy();
@@ -41,13 +31,13 @@ export function DeploymentHistory({ open, projectPath, onClose }: Props) {
       open={open}
       title={t('modal.deployment_history.title')}
       onClose={onClose}
-      size="large"
+      size="medium"
     >
-      <Container>
+      <div className={styles.container}>
         {sortedDeployments.length === 0 ? (
-          <NoDeployments>
-            <Typography variant="body2">{t('modal.deployment_history.no_deployments')}</Typography>
-          </NoDeployments>
+          <div className={styles.noDeployments}>
+            <Text variant="body2">{t('modal.deployment_history.no_deployments')}</Text>
+          </div>
         ) : (
           sortedDeployments.map(deployment => (
             <Deployment
@@ -57,7 +47,7 @@ export function DeploymentHistory({ open, projectPath, onClose }: Props) {
             />
           ))
         )}
-      </Container>
+      </div>
     </Modal>
   );
 }
@@ -127,19 +117,19 @@ function Deployment({
   }, [overallStatus]);
 
   return (
-    <DeploymentCard>
-      <Header>
-        <HeaderLeft>
-          <Title>
+    <div className={styles.card}>
+      <div className={styles.header}>
+        <div className={styles.headerLeft}>
+          <div className={styles.title}>
             {overallStatus === 'failed' ? (
               <div className="Warning" />
             ) : overallStatus === 'pending' ? (
               <Loader />
             ) : null}
-            <Typography variant="h5">{title}</Typography>
-          </Title>
+            <Text variant="h5">{title}</Text>
+          </div>
           {error && (
-            <ErrorMessage>
+            <span className={styles.error}>
               {error.message}
               {error.cause && (
                 <ExpandMore
@@ -147,18 +137,20 @@ function Deployment({
                   text={error.cause}
                 />
               )}
-            </ErrorMessage>
+            </span>
           )}
-          <DeploymentMeta>
+          <div className={styles.meta}>
             <span>{formatDate(lastUpdated)}</span>
             <span>{getTargetLabel(deployment)}</span>
-          </DeploymentMeta>
-        </HeaderLeft>
-        {isCurrent && <CurrentBadge>{t('modal.deployment_history.current')}</CurrentBadge>}
-      </Header>
-      <StepsContainer>
+          </div>
+        </div>
+        {isCurrent && (
+          <div className={styles.currentBadge}>{t('modal.deployment_history.current')}</div>
+        )}
+      </div>
+      <div className={styles.steps}>
         <ConnectedSteps steps={steps} />
-      </StepsContainer>
-    </DeploymentCard>
+      </div>
+    </div>
   );
 }

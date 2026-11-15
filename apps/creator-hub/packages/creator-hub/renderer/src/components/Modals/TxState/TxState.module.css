@@ -1,0 +1,57 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.step {
+  color: #a09ba8;
+  font-size: 14px;
+}
+
+.stateRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--palette-neutral-softWhite);
+  font-size: 16px;
+  line-height: 1.3;
+}
+
+.stateRow > :global(.Loader) {
+  width: auto;
+  height: auto;
+  flex-shrink: 0;
+}
+
+.stateRow.stateRow > svg {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  font-size: 24px;
+  color: var(--palette-neutral-softWhite);
+}
+
+.stateRow.stateRow[data-tone="success"] > svg {
+  color: #34ce77;
+}
+
+.stateRow.stateRow[data-tone="warning"] > svg {
+  color: #fe9c2a;
+}
+
+.stateRow.stateRow[data-tone="error"] > svg {
+  color: #fb3b3b;
+}
+
+.link {
+  align-self: flex-start;
+  color: #ff2d55;
+  font-size: 16px;
+  text-decoration: underline;
+}
+
+.link:focus-visible {
+  outline: 2px solid var(--palette-info-light);
+  outline-offset: 2px;
+}

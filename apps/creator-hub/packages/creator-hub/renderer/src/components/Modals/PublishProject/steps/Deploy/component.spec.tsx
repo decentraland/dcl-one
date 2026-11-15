@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import { MemoryRouter } from 'react-router-dom';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { dark, ThemeProvider } from 'decentraland-ui2/dist/theme';
+import { TestProviders } from '../../../../../../tests/utils/TestProviders';
 
 import { feedback, misc } from '#preload';
 
@@ -123,9 +123,9 @@ describe('Deploy step', () => {
   const mount = () => {
     const ui = () => (
       <MemoryRouter>
-        <ThemeProvider theme={dark}>
+        <TestProviders>
           <Deploy {...props} />
-        </ThemeProvider>
+        </TestProviders>
       </MemoryRouter>
     );
     const result = render(ui());

@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react';
+import Checkbox from '@ui/atoms/Checkbox';
 
-import { Checkbox } from 'decentraland-ui2';
 import { t } from '/@/modules/store/translation/utils';
 
 import { Modal } from '..';
@@ -13,11 +13,6 @@ import './styles.css';
 export function DeleteProject({ open, project, onClose, onSubmit }: Props) {
   const [shouldDeleteFiles, setShouldDeleteFiles] = useState(false);
 
-  const handleCheckboxChange = useCallback(
-    (_event: React.ChangeEvent<HTMLInputElement>, checked: boolean) =>
-      setShouldDeleteFiles(checked),
-    [],
-  );
   const handleSubmit = useCallback(() => {
     onSubmit(project, shouldDeleteFiles);
   }, [shouldDeleteFiles, onSubmit, project]);
@@ -40,13 +35,13 @@ export function DeleteProject({ open, project, onClose, onSubmit }: Props) {
         </>
       }
     >
-      <label className="delete-files">
-        <Checkbox
-          value={shouldDeleteFiles}
-          onChange={handleCheckboxChange}
-        />
-        <span>{t('modal.delete_project.files_checkbox')}</span>
-      </label>
+      <Checkbox
+        className="delete-files"
+        checked={shouldDeleteFiles}
+        onChange={setShouldDeleteFiles}
+      >
+        {t('modal.delete_project.files_checkbox')}
+      </Checkbox>
 
       {shouldDeleteFiles && (
         <p className="delete-files-warning">{t('modal.delete_project.files_warning')}</p>

@@ -5,7 +5,8 @@ import type { LandScene } from '/@/modules/store/management/utils';
 import { t } from '/@/modules/store/translation/utils';
 
 import { DefaultModal } from '../DefaultModal';
-import { ErrorText, Notice, Progress } from './UnpublishSceneModal.styled';
+
+import styles from './UnpublishSceneModal.module.css';
 
 export type UnpublishTarget =
   | { kind: 'one'; scene: LandScene }
@@ -90,14 +91,22 @@ export function UnpublishSceneModal({
         onClick: () => void unpublish(),
       }}
     >
-      {notice && <Notice>{notice}</Notice>}
+      {notice && <p className={styles.notice}>{notice}</p>}
       {progress !== null && count > 1 && (
-        <Progress role="status">
+        <p
+          className={styles.progress}
+          role="status"
+        >
           {t('unpublish_scene.progress', { done: progress, count })}
-        </Progress>
+        </p>
       )}
       {failed && (
-        <ErrorText role="alert">{t('unpublish_scene.error', { scene: failed.title })}</ErrorText>
+        <p
+          className={styles.errorText}
+          role="alert"
+        >
+          {t('unpublish_scene.error', { scene: failed.title })}
+        </p>
       )}
     </DefaultModal>
   );

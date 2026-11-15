@@ -1,14 +1,9 @@
 import { useCallback, useState } from 'react';
-import FolderIcon from '@mui/icons-material/Folder';
-import {
-  Box,
-  IconButton,
-  OutlinedInput,
-  Typography,
-  FormGroup,
-  InputAdornment,
-  CircularProgress as Loader,
-} from 'decentraland-ui2';
+import IconButton from '@ui/atoms/IconButton';
+import { FolderIcon } from '@ui/atoms/icons-material';
+import Spinner from '@ui/atoms/HubSpinner';
+import Text from '@ui/atoms/Text';
+import TextField from '@ui/atoms/TextField';
 
 import { t } from '/@/modules/store/translation/utils';
 
@@ -85,53 +80,64 @@ export function CreateProject({ open, initialValue, onClose, onSubmit }: Props) 
             onClick={handleSubmit}
             disabled={loading || !!error}
           >
-            {loading ? <Loader size={20} /> : t('modal.create_project.actions.create')}
+            {loading ? (
+              <Spinner
+                size={20}
+                color="primary"
+                role="progressbar"
+              />
+            ) : (
+              t('modal.create_project.actions.create')
+            )}
           </Button>
         </>
       }
     >
-      <Box
+      <div
         className="CreateProjectModal"
         data-testid="create-project-modal"
       >
-        <FormGroup className="CreateProjectFormControl">
-          <Typography variant="body1">{t('modal.create_project.fields.name')}</Typography>
-          <OutlinedInput
-            color="secondary"
+        <div className="CreateProjectFormControl">
+          <Text variant="body1">{t('modal.create_project.fields.name')}</Text>
+          <TextField
+            className="CreateProjectField"
+            tone="neutral"
+            fullWidth
             data-testid="create-project-modal-name-input"
             value={value.name}
             onChange={handleChange('name')}
             onBlur={validate}
           />
-          <Typography variant="body1">{t('modal.create_project.fields.path')}</Typography>
-          <OutlinedInput
-            color="secondary"
+          <Text variant="body1">{t('modal.create_project.fields.path')}</Text>
+          <TextField
+            className="CreateProjectField"
+            tone="neutral"
+            fullWidth
             data-testid="create-project-modal-path-input"
             value={value.path}
             onChange={handleChange('path')}
             onBlur={validate}
             endAdornment={
-              <InputAdornment position="end">
-                <IconButton
-                  onClick={handleOpenFolder}
-                  edge="end"
-                >
-                  <FolderIcon />
-                </IconButton>
-              </InputAdornment>
+              <IconButton
+                aria-label={t('modal.app_settings.fields.scenes_folder.change_button')}
+                onClick={handleOpenFolder}
+                edge="end"
+              >
+                <FolderIcon />
+              </IconButton>
             }
           />
           {error && (
-            <Typography
+            <Text
               variant="body1"
               className="error"
               data-testid="create-project-modal-error"
             >
               {error}
-            </Typography>
+            </Text>
           )}
-        </FormGroup>
-      </Box>
+        </div>
+      </div>
     </Modal>
   );
 }

@@ -1,4 +1,9 @@
-.CreateProjectModal .MuiInputBase-root + .MuiTypography-root {
+.CreateProjectModal .CreateProjectFormControl {
+  display: flex;
+  flex-direction: column;
+}
+
+.CreateProjectModal .CreateProjectField + * {
   margin-top: 16px;
 }
 

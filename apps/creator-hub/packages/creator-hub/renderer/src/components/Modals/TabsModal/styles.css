@@ -1,17 +1,12 @@
 /* Modal Container Styles */
-.MuiBackdrop-root:has(.TabsModal) {
-  transition: none !important;
+.TabsModalBackdrop.TabsModalBackdrop {
+  animation: none;
 }
 
-.MuiPaper-root:has(.TabsModal) {
-  background-image: none;
-  background-color: var(--black);
-  padding: 0;
-  width: max-content;
-}
-
-.MuiPaper-root .MuiBox-root:has(.TabsModal) {
-  padding: 0;
+.TabsModalPaper {
+  --dialog-surface: var(--black);
+  --dialog-width: max-content;
+  --modal-radius: 12px;
 }
 
 .TabsModal {
@@ -43,10 +38,6 @@
   color: var(--light-gray);
 }
 
-.TabsModal .MuiBox-root.TabsModalHeader .MuiBox-root.TabsModalTitle {
-  padding: 0;
-}
-
 .TabsModal .TabsModalTitle h6 {
   font-size: 16px;
   font-weight: 400;
@@ -74,6 +65,9 @@
 }
 
 /* TabsList Styles */
+.TabsModal .TabsList {
+  --tabs-line: transparent;
+}
 
 .TabsModal .Vertical .TabsList {
   flex-shrink: 0;
@@ -105,7 +99,7 @@
   color: rgba(255, 255, 255, 0.8);
 }
 
-.TabsModal .TabsModalTab.Mui-selected {
+.TabsModal .TabsModalTab[aria-selected="true"] {
   color: var(--dcl);
   background-color: var(--darker-gray);
 }

@@ -1,7 +1,7 @@
 import { cleanup, render, screen } from '@testing-library/react';
 import { flatten } from '/@/modules/store/translation/flatten';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { dark, ThemeProvider } from 'decentraland-ui2/dist/theme';
+import { TestProviders } from '../../../../../tests/utils/TestProviders';
 
 import { en } from '/@/modules/store/translation/locales';
 import { setCurrentLocale } from '/@/modules/store/translation/utils';
@@ -10,9 +10,9 @@ import { PlaceContinuityWarning } from './component';
 
 function renderWarning(props: Parameters<typeof PlaceContinuityWarning>[0]) {
   return render(
-    <ThemeProvider theme={dark}>
+    <TestProviders>
       <PlaceContinuityWarning {...props} />
-    </ThemeProvider>,
+    </TestProviders>,
   );
 }
 

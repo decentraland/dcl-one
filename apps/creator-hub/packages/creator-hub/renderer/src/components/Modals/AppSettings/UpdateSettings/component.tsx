@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Box, Typography, Button, type ButtonProps } from 'decentraland-ui2';
-import { InfoOutlined } from '@mui/icons-material';
+import Button from '@ui/atoms/HubButton';
+import Text from '@ui/atoms/Text';
+import { InfoOutlinedIcon as InfoOutlined } from '/@/components/Icons/material';
 import { t } from '/@/modules/store/translation/utils';
 import { useDispatch, useSelector } from '#store';
 import { checkForUpdates, downloadUpdate, installUpdate } from '/@/modules/store/settings/slice';
@@ -14,7 +15,7 @@ interface UpdateButtonProps {
   action: () => void;
   text: string;
   disabled?: boolean;
-  color: ButtonProps['color'];
+  color: 'primary' | 'secondary' | 'inherit';
 }
 
 export const UpdateSettings: React.FC<{ className?: string; autoCheck?: boolean }> = ({
@@ -133,21 +134,21 @@ export const UpdateSettings: React.FC<{ className?: string; autoCheck?: boolean 
   const renderStatusMessage = () => {
     if (shouldShowUpdateAvailable && releaseNotes) {
       return (
-        <Typography
+        <Text
           variant="h6"
           className="update-settings__release-notes-header"
         >
           {t('modal.app_settings.update.update_available')}: v{releaseNotes.version}
-        </Typography>
+        </Text>
       );
     }
 
     if (progress > 0 && !finished) {
       return (
-        <Box className="update-settings__progress-container">
-          <Typography variant="body2">{t('modal.app_settings.update.applying')}</Typography>
-          <Typography variant="body2">{t('modal.app_settings.update.dont_close')}</Typography>
-        </Box>
+        <div className="update-settings__progress-container">
+          <Text variant="body2">{t('modal.app_settings.update.applying')}</Text>
+          <Text variant="body2">{t('modal.app_settings.update.dont_close')}</Text>
+        </div>
       );
     }
 
@@ -157,12 +158,12 @@ export const UpdateSettings: React.FC<{ className?: string; autoCheck?: boolean 
       checkForUpdatesStatus === 'succeeded'
     ) {
       return (
-        <Typography
+        <Text
           variant="subtitle1"
           className="update-settings__up-to-date-message"
         >
           {t('modal.app_settings.version.up_to_date')}
-        </Typography>
+        </Text>
       );
     }
 
@@ -175,28 +176,29 @@ export const UpdateSettings: React.FC<{ className?: string; autoCheck?: boolean 
     }
 
     return (
-      <Box className="update-settings__release-notes">
-        <Box className="update-settings__release-notes-content">
+      <div className="update-settings__release-notes">
+        <div className="update-settings__release-notes-content">
           {releaseNotes.content.length > 0 && (
-            <Box className="update-settings__release-notes-section">
+            <div className="update-settings__release-notes-section">
               <MarkdownRenderer content={releaseNotes.content} />
-            </Box>
+            </div>
           )}
-        </Box>
-      </Box>
+        </div>
+      </div>
     );
   };
 
   return (
     <Column className={`update-settings ${className}`}>
-      <Box className="update-settings__status-area">
+      <div className="update-settings__status-area">
         {renderStatusMessage()}
         {renderReleaseNotes()}
-      </Box>
-      <Box className="update-settings__button-area">
+      </div>
+      <div className="update-settings__button-area">
         <Button
-          variant="contained"
-          color={buttonProps.color}
+          variant="primary"
+          tone={buttonProps.color === 'primary' ? undefined : 'neutral'}
+          data-color={buttonProps.color}
           onClick={buttonProps.action}
           disabled={buttonProps.disabled}
           fullWidth
@@ -206,10 +208,10 @@ export const UpdateSettings: React.FC<{ className?: string; autoCheck?: boolean 
         {canInstallNewVersion && (
           <Row className="update-settings__message-container">
             <InfoOutlined />
-            <Typography variant="body2">{t('modal.app_settings.update.auto_restart')}</Typography>
+            <Text variant="body2">{t('modal.app_settings.update.auto_restart')}</Text>
           </Row>
         )}
-      </Box>
+      </div>
     </Column>
   );
 };

@@ -1,5 +1,5 @@
-.InstallClientModal > .MuiPaper-root:first-child {
-  background-color: var(--secondary);
+.InstallClientModal {
+  --dialog-surface: var(--secondary);
 }
 
 .InstallClientBox {
@@ -19,11 +19,16 @@
   height: 64px;
 }
 
-.InstallClientModal .Title {
+.InstallClientModal .Title.Title {
   font-weight: 500;
   margin-bottom: 32px;
   font-size: 24px;
   line-height: 32px;
+}
+
+.InstallClientModal .AppleIcon {
+  margin-top: -3px;
+  color: #fff;
 }
 
 .InstallClientModal .Actions {

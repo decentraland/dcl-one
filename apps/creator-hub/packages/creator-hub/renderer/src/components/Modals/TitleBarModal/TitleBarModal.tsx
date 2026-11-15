@@ -1,9 +1,11 @@
 import { useId, type ReactNode } from 'react';
-import CloseIcon from '@mui/icons-material/Close';
+import Dialog from '@ui/atoms/Dialog';
+import IconButton from '@ui/atoms/IconButton';
+import { CloseIcon } from '@ui/atoms/icons-material';
 
 import { t } from '/@/modules/store/translation/utils';
 
-import { Bar, BarTitle, Body, CloseButton, Frame, Panel } from './TitleBarModal.styled';
+import styles from './TitleBarModal.module.css';
 
 type Props = {
   open: boolean;
@@ -16,24 +18,32 @@ type Props = {
 export function TitleBarModal({ open, title, onClose, children }: Props) {
   const titleId = useId();
   return (
-    <Panel
+    <Dialog
+      bare
       open={open}
       onClose={onClose}
+      className={styles.paper}
+      backdropClassName={styles.backdrop}
       aria-labelledby={titleId}
-      PaperProps={{ 'aria-modal': true }}
     >
-      <Frame>
-        <Bar>
-          <BarTitle id={titleId}>{title}</BarTitle>
-          <CloseButton
+      <div className={styles.frame}>
+        <header className={styles.bar}>
+          <h2
+            id={titleId}
+            className={styles.barTitle}
+          >
+            {title}
+          </h2>
+          <IconButton
+            className={styles.close}
             aria-label={t('modal.close')}
             onClick={onClose}
           >
             <CloseIcon />
-          </CloseButton>
-        </Bar>
-        <Body>{children}</Body>
-      </Frame>
-    </Panel>
+          </IconButton>
+        </header>
+        <div className={styles.body}>{children}</div>
+      </div>
+    </Dialog>
   );
 }

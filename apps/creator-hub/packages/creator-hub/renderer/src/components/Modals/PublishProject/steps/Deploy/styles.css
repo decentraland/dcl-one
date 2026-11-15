@@ -313,4 +313,23 @@
 .Deploy .publish-warning .dont-show-again {
   display: flex;
   align-items: center;
+  gap: 0;
+  color: inherit;
+  font-size: inherit;
+  line-height: inherit;
+}
+
+/* The box keeps the 24px glyph in a round 42px area. */
+.Deploy .publish-warning .dont-show-again .checkbox__icon {
+  padding: 9px;
+  border-radius: 50%;
+  color: var(--text-tone-secondary);
+}
+
+.Deploy .publish-warning .dont-show-again .checkbox__icon:hover {
+  background-color: color-mix(in srgb, var(--brand) 4%, transparent);
+}
+
+.Deploy .publish-warning .dont-show-again .checkbox__input:checked + .checkbox__icon {
+  color: var(--brand);
 }

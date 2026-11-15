@@ -11,6 +11,13 @@
   flex-shrink: 0;
 }
 
+/* The reset button keeps its grey text and its 6px 8px padding. */
+.AppSettingsModal .ResetScenesFolderButton.btn {
+  min-width: 64px;
+  padding: 6px 8px;
+  color: var(--light-gray);
+}
+
 .AppSettingsModal .error {
   color: var(--error);
 }

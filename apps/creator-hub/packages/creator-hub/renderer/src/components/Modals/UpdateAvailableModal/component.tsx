@@ -1,6 +1,7 @@
-import CloseIcon from '@mui/icons-material/Close';
-import { Box, Button, IconButton, Typography } from 'decentraland-ui2';
-import { InfoOutlined } from '@mui/icons-material';
+import Button from '@ui/atoms/HubButton';
+import IconButton from '@ui/atoms/IconButton';
+import { CloseIcon, InfoOutlinedIcon } from '@ui/atoms/icons-material';
+import Text from '@ui/atoms/Text';
 
 import { t } from '/@/modules/store/translation/utils';
 import InfluencePng from '/assets/images/influence.png';
@@ -24,27 +25,30 @@ export function UpdateAvailableModal({ open, onClose, version }: Props) {
       size="tiny"
       open={open}
     >
-      <Box className="UpdateAvailableModal">
+      <div className="UpdateAvailableModal">
         <div className="CloseButtonContainer">
-          <IconButton onClick={onClose}>
+          <IconButton
+            aria-label={t('modal.close')}
+            onClick={onClose}
+          >
             <CloseIcon fontSize="medium" />
           </IconButton>
         </div>
-        <Typography variant="h5">{t('modal.app_settings.update.update_available')}</Typography>
-        <Typography
+        <Text variant="h5">{t('modal.app_settings.update.update_available')}</Text>
+        <Text
           variant="body1"
           className="version"
         >
           {t('modal.app_settings.version.label', { version })}
-        </Typography>
-        <Box className="ImageButtonContainer">
+        </Text>
+        <div className="ImageButtonContainer">
           <img
             src={InfluencePng}
             alt="Update available"
           />
-          <Box className="ButtonContainer">
+          <div className="ButtonContainer">
             <Button
-              variant="contained"
+              variant="primary"
               className="actionButton"
               onClick={() => {
                 dispatch(actions.installUpdate());
@@ -53,12 +57,12 @@ export function UpdateAvailableModal({ open, onClose, version }: Props) {
               {t('modal.app_settings.update.install')}
             </Button>
             <Row className="update-settings__message-container">
-              <InfoOutlined />
-              <Typography variant="body2">{t('modal.app_settings.update.auto_restart')}</Typography>
+              <InfoOutlinedIcon />
+              <Text variant="body2">{t('modal.app_settings.update.auto_restart')}</Text>
             </Row>
-          </Box>
-        </Box>
-      </Box>
+          </div>
+        </div>
+      </div>
     </Modal>
   );
 }

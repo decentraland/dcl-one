@@ -4,7 +4,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { flatten } from '/@/modules/store/translation/flatten';
 import type { ChainId, Scene } from '@dcl/schemas';
-import { dark, ThemeProvider } from 'decentraland-ui2/dist/theme';
+import { TestProviders } from '../../../../../../tests/utils/TestProviders';
 
 import type { Project } from '/shared/types/projects';
 import { editor, scene } from '#preload';
@@ -82,7 +82,7 @@ describe('PublishToWorld', () => {
     render(
       <Provider store={store}>
         <MemoryRouter>
-          <ThemeProvider theme={dark}>
+          <TestProviders>
             <AuthContext.Provider value={{ wallet: WALLET, chainId: 11155111 as ChainId } as never}>
               <PublishToWorld
                 open
@@ -91,7 +91,7 @@ describe('PublishToWorld', () => {
                 onStep={onStep}
               />
             </AuthContext.Provider>
-          </ThemeProvider>
+          </TestProviders>
         </MemoryRouter>
       </Provider>,
     );

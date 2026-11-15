@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
-import { dark, ThemeProvider } from 'decentraland-ui2/dist/theme';
+import { TestProviders } from '../../../../../../../tests/utils/TestProviders';
 
 import type { DeployUpload } from '/@/lib/deploy';
 import type { CancelRejection } from '/@/modules/store/deployment/deploy-api';
@@ -17,12 +17,12 @@ const MB = 1024 * 1024;
 
 const renderProgress = (props: Partial<Parameters<typeof DeployProgress>[0]> = {}) =>
   render(
-    <ThemeProvider theme={dark}>
+    <TestProviders>
       <DeployProgress
         cancel={{ kind: 'hidden' }}
         {...props}
       />
-    </ThemeProvider>,
+    </TestProviders>,
   );
 
 describe('DeployProgress', () => {

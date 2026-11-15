@@ -1,10 +1,12 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { flatten } from '/@/modules/store/translation/flatten';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { dark, ThemeProvider } from 'decentraland-ui2/dist/theme';
 
 import { en } from '/@/modules/store/translation/locales';
 import { setCurrentLocale, t } from '/@/modules/store/translation/utils';
+
+import { expectFocusTrap, pressBackdrop, pressEscape } from '../../../../tests/utils/modalContract';
+import { TestProviders } from '../../../../tests/utils/TestProviders';
 
 import { InstallClient } from './component';
 
@@ -26,12 +28,12 @@ function setPlatform(platform: string) {
 function renderModal() {
   const onClose = vi.fn();
   render(
-    <ThemeProvider theme={dark}>
+    <TestProviders>
       <InstallClient
         open
         onClose={onClose}
       />
-    </ThemeProvider>,
+    </TestProviders>,
   );
   return { onClose };
 }
@@ -50,6 +52,28 @@ describe('InstallClient', () => {
     Reflect.deleteProperty(navigator, 'userAgentData');
     vi.restoreAllMocks();
     vi.clearAllMocks();
+  });
+
+  it('should be a dialog named by its heading', () => {
+    renderModal();
+
+    expect(screen.getByRole('dialog', { name: t('modal.install_client.title') })).toBeTruthy();
+  });
+
+  it('should keep focus in the dialog', () => {
+    renderModal();
+
+    expectFocusTrap();
+  });
+
+  it('should stay open on Escape and on a press on the backdrop', () => {
+    const { onClose } = renderModal();
+
+    pressEscape();
+    pressBackdrop();
+
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.getByRole('dialog')).toBeTruthy();
   });
 
   it('should open the download page and close from the download button', () => {
@@ -81,5 +105,13 @@ describe('InstallClient', () => {
     expect(
       screen.getByRole('button', { name: t('modal.install_client.download_macos') }),
     ).toBeTruthy();
+  });
+
+  it('should close from Cancel', () => {
+    const { onClose } = renderModal();
+
+    fireEvent.click(screen.getByRole('button', { name: t('modal.install_client.cancel') }));
+
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 });

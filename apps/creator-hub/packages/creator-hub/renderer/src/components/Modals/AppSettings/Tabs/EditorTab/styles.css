@@ -4,16 +4,56 @@
   gap: 16px;
 }
 
-.MuiSelect-select .menu-only {
+[role="combobox"] .menu-only {
   display: none;
 }
 
-.MuiList-root .menu-only {
+[role="listbox"] .menu-only {
   display: flex;
+}
+
+[role="listbox"] .custom-editor {
+  display: flex;
+  align-items: center;
+  min-height: 36px;
+  box-sizing: border-box;
+  padding: 6px 16px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+[role="listbox"] .custom-editor:hover {
+  background: var(--fill-3);
 }
 
 .CodeEditorFormGroup {
   gap: 16px;
+}
+
+/* The select keeps its 56px height, its text 14px from the outline, its white arrow 12px from the right
+   and the full text colour when no editor is set. */
+.CodeEditorSelect [role="combobox"] {
+  padding: 15.5px 37px 15.5px 13px;
+  letter-spacing: 0.00938em;
+}
+
+.CodeEditorSelect [role="combobox"] [data-placeholder] {
+  color: inherit;
+}
+
+.CodeEditorSelect > span[aria-hidden="true"] {
+  right: 13px;
+  color: var(--white);
+}
+
+/* The list opens against the select. The chosen editor keeps one colour until the pointer is on it. */
+.CodeEditorMenu {
+  margin-top: -4px;
+  letter-spacing: 0.00938em;
+}
+
+.CodeEditorMenu [role="option"][aria-selected="true"]:not(:hover) {
+  background: color-mix(in srgb, var(--brand) 16%, transparent);
 }
 
 .PreviewOptionsFormGroup {
@@ -24,9 +64,10 @@
   gap: 16px;
 }
 
-.AppWarningsFormGroup .MuiCheckbox-root {
-  padding-top: 0;
-  align-self: flex-start;
+/* The box sits at the top of the row, on the first line of the text. */
+.AppSettingsModal .AppWarningsFormGroup .SettingsCheckbox {
+  min-height: 33px;
+  align-items: flex-start;
 }
 
 .EditorActionsBox {

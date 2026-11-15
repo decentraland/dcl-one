@@ -11,7 +11,6 @@
 }
 
 .AiHint {
-  margin-left: 44px;
   max-width: 480px;
 }
 
@@ -27,7 +26,7 @@
   width: 100%;
   margin: 4px 0;
   border: none;
-  border-top: 1px solid var(--mui-palette-divider);
+  border-top: 1px solid var(--fill-5);
 }
 
 .SettingsAccordion {
@@ -53,7 +52,7 @@
 }
 
 .SettingsAccordionChevron {
-  color: var(--mui-palette-text-secondary);
+  color: var(--text-tone-secondary);
   transform: rotate(-90deg);
   transition: transform 0.15s ease;
 }
@@ -81,9 +80,9 @@
   justify-content: space-between;
   gap: 8px;
   padding: 4px 8px 4px 12px;
-  border: 1px solid var(--mui-palette-divider);
+  border: 1px solid var(--fill-5);
   border-radius: 8px;
-  background-color: var(--mui-palette-background-default);
+  background-color: var(--bg);
 }
 
 .CommandField code {
@@ -115,7 +114,7 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  color: var(--mui-palette-text-secondary);
+  color: var(--text-tone-secondary);
   font-size: 13px;
 }
 
@@ -127,7 +126,7 @@
 }
 
 .AgentStatusDot.warning {
-  background-color: var(--mui-palette-warning-main);
+  background-color: var(--warning);
 }
 
 .AgentSignLink {
@@ -138,7 +137,7 @@
   padding: 0;
   border: none;
   background: none;
-  color: var(--mui-palette-text-secondary);
+  color: var(--text-tone-secondary);
   font: inherit;
   font-size: 12px;
   font-weight: 600;

@@ -1,0 +1,20 @@
+/* The look of the contained and text buttons this modal had before the move to the shared atoms. */
+
+.contained.contained {
+  min-width: 64px;
+  letter-spacing: 0.4px;
+}
+
+.primary.primary {
+  background: var(--brand);
+}
+
+.primary.primary:not(:disabled):hover {
+  background: #f26276;
+}
+
+.text.text {
+  min-width: 64px;
+  padding: 6px 8px;
+  letter-spacing: 0.4px;
+}

@@ -1,20 +1,14 @@
 import { useId, type ReactNode } from 'react';
-import CloseIcon from '@mui/icons-material/Close';
+import Dialog from '@ui/atoms/Dialog';
+import IconButton from '@ui/atoms/IconButton';
+import { CloseIcon } from '@ui/atoms/icons-material';
 
 import { t } from '/@/modules/store/translation/utils';
 
 import { DialogButton } from '../../DialogButton';
 import { Loader } from '../../Loader';
-import {
-  Actions,
-  Body,
-  CloseButton,
-  Content,
-  Frame,
-  Group,
-  StyledDialog,
-  Title,
-} from './DefaultModal.styled';
+
+import styles from './DefaultModal.module.css';
 
 type Action = { label: string; onClick: () => void };
 
@@ -52,31 +46,48 @@ export function DefaultModal({
   const busy = primary?.state === 'busy';
 
   return (
-    <StyledDialog
+    <Dialog
+      bare
       open={open}
       onClose={onClose}
+      width={700}
+      className={styles.paper}
+      backdropClassName={styles.backdrop}
       aria-labelledby={titleId}
       aria-describedby={body ? bodyId : undefined}
     >
-      <Frame>
+      <div className={styles.frame}>
         {corner === 'close' && (
-          <CloseButton
+          <IconButton
+            className={styles.close}
             aria-label={t('modal.close')}
             onClick={onClose}
           >
             <CloseIcon />
-          </CloseButton>
+          </IconButton>
         )}
-        <Content>
-          <Title id={titleId}>{title}</Title>
+        <div className={styles.content}>
+          <h2
+            id={titleId}
+            className={styles.title}
+          >
+            {title}
+          </h2>
           {(body || children) && (
-            <Group>
-              {body && <Body id={bodyId}>{body}</Body>}
+            <div className={styles.group}>
+              {body && (
+                <div
+                  id={bodyId}
+                  className={styles.body}
+                >
+                  {body}
+                </div>
+              )}
               {children}
-            </Group>
+            </div>
           )}
           {(secondary || primary) && (
-            <Actions>
+            <div className={styles.actions}>
               {secondary && (
                 <DialogButton
                   type="button"
@@ -98,10 +109,10 @@ export function DefaultModal({
                   {busy ? <Loader size={24} /> : primary.label}
                 </DialogButton>
               )}
-            </Actions>
+            </div>
           )}
-        </Content>
-      </Frame>
-    </StyledDialog>
+        </div>
+      </div>
+    </Dialog>
   );
 }
