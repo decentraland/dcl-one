@@ -658,7 +658,7 @@ async fn the_release_guard_counts_sessions_of_roles_it_cannot_inspect() {
     let password = format!(
         "{}{}",
         uuid::Uuid::new_v4().simple(),
-        &uuid::Uuid::new_v4().simple().to_string()[..12]
+        uuid::Uuid::new_v4().simple()
     );
     for statement in [
         format!("CREATE ROLE {migrator} LOGIN PASSWORD '{password}'"),
