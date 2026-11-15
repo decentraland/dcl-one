@@ -2128,6 +2128,50 @@ mod tests {
         .unwrap();
         assert_eq!(places, ["p-1"]);
 
+        // A federated add holds the REST bounds: 1 to 100 ids of at most 256 characters.
+        let actions_sql =
+            "SELECT count(*) FROM social.community_signed_actions WHERE community_uuid = $1";
+        let actions_before: i64 = sqlx::query_scalar(actions_sql)
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        for (place_ids, case) in [
+            (Vec::new(), "no ids"),
+            ((0..101).map(|i| format!("q-{i}")).collect(), "101 ids"),
+            (vec!["q".repeat(257)], "a 257-character id"),
+        ] {
+            let (status, _) = send(
+                &app,
+                &member,
+                "POST",
+                &format!("{base}/places"),
+                &env(
+                    &member,
+                    CommunityPlacesAdd {
+                        community_id: hex_id.clone(),
+                        place_ids,
+                    },
+                ),
+            )
+            .await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{case}");
+        }
+        let places: Vec<String> = sqlx::query_scalar(
+            "SELECT place_id FROM social.community_places WHERE community_id = $1",
+        )
+        .bind(id)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(places, ["p-1"]);
+        let actions_after: i64 = sqlx::query_scalar(actions_sql)
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(actions_after, actions_before);
+
         // A post whose body was uploaded first lands with its text.
         let (status, _) = call(
             &app,

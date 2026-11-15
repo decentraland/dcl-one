@@ -21,6 +21,20 @@ use super::posts::require_membership_of_a_private_community;
 use super::write_support::{ClientCommunityWriteAuthority, map_db, parse_community_id};
 use super::{SharedState, State as CommunitiesState, queries, signed_path};
 
+/// Most place ids one add request may carry, over REST or federation.
+pub(super) const MAX_PLACE_IDS: usize = 100;
+/// Longest place id, in characters, one add request may carry.
+pub(super) const MAX_PLACE_ID_CHARS: usize = 256;
+
+/// The `placeIds` bounds of the REST add route, applied to a federated add:
+/// 1 to [`MAX_PLACE_IDS`] ids of at most [`MAX_PLACE_ID_CHARS`] characters.
+pub(super) fn place_ids_within_bounds(place_ids: &[String]) -> bool {
+    (1..=MAX_PLACE_IDS).contains(&place_ids.len())
+        && place_ids
+            .iter()
+            .all(|id| id.chars().count() <= MAX_PLACE_ID_CHARS)
+}
+
 macro_rules! try_resp {
     ($e:expr) => {
         match $e {
@@ -195,8 +209,8 @@ pub async fn add_places(
             "placeIds",
             Kind::Strings {
                 min: 1,
-                max: 100,
-                element_max: 256,
+                max: MAX_PLACE_IDS,
+                element_max: MAX_PLACE_ID_CHARS,
                 uuid: false,
             },
         )],
