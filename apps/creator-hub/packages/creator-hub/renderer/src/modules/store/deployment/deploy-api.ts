@@ -23,7 +23,7 @@ const STREAM_IDLE_TIMEOUT_MS = seconds(45);
 export const MAX_POLL_FAILURES = 10;
 
 // Authorizes cancelling the deployment of the CLI main runs (one at a time). Kept out of the
-// store, whose actions and states redux-logger prints to the console.
+// store, whose actions and states the store logger prints to the console.
 let current: { url: string; token: string } | undefined;
 
 /**

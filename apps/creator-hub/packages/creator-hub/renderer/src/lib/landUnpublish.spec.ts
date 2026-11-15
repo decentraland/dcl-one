@@ -40,11 +40,8 @@ vi.mock('@dcl/single-sign-on-client', () => ({
   localStorageGetIdentity: (address: string) => getIdentityMock(address),
 }));
 
-vi.mock('@dcl/crypto', async importOriginal => ({
-  ...((await importOriginal()) as object),
-  Authenticator: {
-    signPayload: (identity: unknown, entityId: string) => signPayloadMock(identity, entityId),
-  },
+vi.mock('./identity', () => ({
+  signPayload: async (identity: unknown, entityId: string) => signPayloadMock(identity, entityId),
 }));
 
 const { pickUnpublishParcel, clearLandScene } = await import('./landUnpublish');

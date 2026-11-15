@@ -1,7 +1,7 @@
 import React, { useCallback, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
-import cx from 'classnames';
+import { cx } from '/@/lib/cx';
 import ChevronRightIcon from '@mui/icons-material/ChevronRight';
 import MovieOutlinedIcon from '@mui/icons-material/MovieOutlined';
 import MenuBookOutlinedIcon from '@mui/icons-material/MenuBookOutlined';

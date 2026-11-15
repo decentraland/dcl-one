@@ -1,16 +1,16 @@
-import equal from 'fast-deep-equal';
+import { deepEqual as equal } from '/shared/deep-equal';
 import { getCatalystServersFromCache } from 'dcl-catalyst-client/dist/contracts-snapshots';
 import { type SerializedError } from '@reduxjs/toolkit';
 import { captureException } from '@sentry/electron/renderer';
-import { type AuthChain, Authenticator } from '@dcl/crypto';
 import { ChainId } from '@dcl/schemas';
-import type { AuthIdentity } from 'decentraland-crypto-fetch';
 
 import { minutes, seconds } from '/shared/time';
 import { delay } from '/shared/utils';
 import { fetch } from '/shared/fetch';
 
 import { config } from '/@/config';
+import type { AuthChain, AuthIdentity } from '/@/lib/identity';
+import { signedHeaders } from '/@/lib/signedFetch';
 import { WORLD_LIMITS_TIMEOUT_MS, Worlds } from '/@/lib/worlds';
 import { t } from '/@/modules/store/translation/utils';
 import {
@@ -179,32 +179,6 @@ export const retryDelayInMs = seconds(10);
 // Estimated time as of 5/12/2024 for a full deployment is around 60 minutes.
 export const maxRetries = minutes(60) / retryDelayInMs; // Total number of retries calculated based on a X-minute retry window
 
-export const AUTH_CHAIN_HEADER_PREFIX = 'x-identity-auth-chain-';
-export const AUTH_TIMESTAMP_HEADER = 'x-identity-timestamp';
-export const AUTH_METADATA_HEADER = 'x-identity-metadata';
-
-export function getAuthHeaders(
-  method: string,
-  path: string,
-  chainProvider: (payload: string) => AuthChain,
-): Record<string, string> {
-  const timestamp = Date.now().toString();
-  const metadata = JSON.stringify({}); // needed for the fetch to work...
-  const payloadToSign = `${method.toLowerCase()}:${path.toLowerCase()}:${timestamp}:${metadata}`;
-
-  const chain = chainProvider(payloadToSign);
-  const headers = chain.reduce<Record<string, string>>((acc, link, index) => {
-    acc[`${AUTH_CHAIN_HEADER_PREFIX}${index}`] = JSON.stringify(link);
-    return acc;
-  }, {});
-
-  return {
-    ...headers,
-    [AUTH_TIMESTAMP_HEADER]: timestamp,
-    [AUTH_METADATA_HEADER]: metadata,
-  };
-}
-
 /**
  * Validates a status string against known values.
  *
@@ -287,11 +261,9 @@ export async function fetchDeploymentStatus(
     `/entities/status/${sceneId}`,
     useAbgenRegistry ? ASSET_BUNDLE_REGISTRY_ABGEN : ASSET_BUNDLE_REGISTRY,
   );
-  const headers = getAuthHeaders('get', url.pathname, payload =>
-    Authenticator.signPayload(identity, payload),
-  );
+  const headers = await signedHeaders(identity, 'get', url.pathname);
 
-  const status = await fetchEntityStatus(url, headers);
+  const status = await fetchEntityStatus(url, Object.fromEntries(headers.entries()));
 
   return {
     catalyst: validateStatus(status.catalyst),

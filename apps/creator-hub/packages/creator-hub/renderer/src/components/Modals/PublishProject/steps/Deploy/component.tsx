@@ -1,5 +1,5 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import cx from 'classnames';
+import { cx } from '/@/lib/cx';
 import { Typography, Checkbox } from 'decentraland-ui2';
 
 import { misc } from '#preload';

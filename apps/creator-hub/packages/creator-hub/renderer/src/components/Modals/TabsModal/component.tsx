@@ -1,4 +1,4 @@
-import cx from 'classnames';
+import { cx } from '/@/lib/cx';
 import CloseIcon from '@mui/icons-material/CloseRounded';
 import Tabs from '@mui/material/Tabs';
 import Tab from '@mui/material/Tab';

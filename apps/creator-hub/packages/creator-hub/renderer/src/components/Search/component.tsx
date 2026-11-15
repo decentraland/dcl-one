@@ -1,5 +1,5 @@
 import React, { useCallback } from 'react';
-import cx from 'classnames';
+import { cx } from '/@/lib/cx';
 import SearchIcon from '@mui/icons-material/Search';
 import { OutlinedInput } from 'decentraland-ui2';
 import type { OutlinedInputProps } from 'decentraland-ui2';

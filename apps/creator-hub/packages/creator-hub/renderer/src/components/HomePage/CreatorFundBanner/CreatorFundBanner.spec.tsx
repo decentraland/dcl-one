@@ -1,6 +1,6 @@
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { flatten } from 'flat';
+import { flatten } from '/@/modules/store/translation/flatten';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { en } from '/@/modules/store/translation/locales';
@@ -112,8 +112,10 @@ describe('CreatorFundBanner', () => {
     });
 
     it('should still show, and still close', () => {
-      const getItem = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(denied);
-      const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(denied);
+      // happy-dom 21 binds the Storage methods to each storage object, so a spy on
+      // Storage.prototype does not see these calls.
+      const getItem = vi.spyOn(localStorage, 'getItem').mockImplementation(denied);
+      const setItem = vi.spyOn(localStorage, 'setItem').mockImplementation(denied);
 
       renderHome();
       expect(getItem).toHaveBeenCalledWith(BANNER_DISMISSED_KEY);

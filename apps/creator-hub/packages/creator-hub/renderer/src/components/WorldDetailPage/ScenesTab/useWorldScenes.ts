@@ -14,11 +14,12 @@ import { isWorldWideDeployer, type LandScene } from '/@/modules/store/management
 import type { RowMode } from '../../LandDetailPage/ScenesTab/SceneRow';
 import { scenesOnParcels, toWorldScenes } from './worldScenes';
 
-/** The World's scenes (all of them, and the rows the account may see), their deployers, and how to unpublish one. */
+/** The World's scenes (all of them, and the rows the account may see), their deployers, how to unpublish one, and how to read them again after a failure. */
 export function useWorldScenes(worldName: string, mode: RowMode) {
   const dispatch = useDispatch();
   const { wallet } = useAuth();
-  const [loaded, setLoaded] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  const [answered, setAnswered] = useState<string>();
   const settings = useSelector(state => state.management.worldSettings);
   const permissions = useSelector(state => state.management.worldPermissions);
   const all = useMemo(
@@ -26,13 +27,20 @@ export function useWorldScenes(worldName: string, mode: RowMode) {
     [settings.worldName, settings.scenes, worldName],
   );
 
+  // The store keeps the scenes and the status of the last visit, and a refresh after an unpublish
+  // reads as loading, so the first render waits for the answer to this tab's own request.
+  const request = `${attempt}:${worldName}`;
   useEffect(() => {
-    void dispatch(fetchWorldScenes({ worldName })).finally(() => setLoaded(true));
-  }, [dispatch, worldName]);
+    let latest = true;
+    void dispatch(fetchWorldScenes({ worldName })).finally(() => latest && setAnswered(request));
+    return () => {
+      latest = false;
+    };
+  }, [dispatch, worldName, request]);
 
   useEffect(() => {
     if (mode === 'view') void dispatch(fetchWorldPermissions({ worldName }));
-  }, [dispatch, worldName, mode]);
+  }, [dispatch, worldName, mode, attempt]);
 
   const summary = permissions.worldName === worldName ? permissions.summary : undefined;
   const deployment = wallet
@@ -58,7 +66,7 @@ export function useWorldScenes(worldName: string, mode: RowMode) {
           walletAddress: wallet,
         }),
       );
-  }, [dispatch, worldName, wallet, parcelsWanted]);
+  }, [dispatch, worldName, wallet, parcelsWanted, attempt]);
 
   const allowed: 'all' | Set<string> | undefined =
     mode === 'manage' || worldWide || (listedDeployer && !deployment)
@@ -66,12 +74,16 @@ export function useWorldScenes(worldName: string, mode: RowMode) {
       : parcels?.status === 'succeeded'
         ? new Set(parcels.parcels)
         : undefined;
+  const sameWorld = settings.worldName === worldName;
+  // A failed scenes request leaves an empty list behind: it must not read as a World with no scenes.
   const failed =
-    mode === 'view' &&
-    permissions.worldName === worldName &&
-    (permissions.status === 'failed' || (parcelsWanted && parcels?.status === 'failed'));
+    (sameWorld && settings.scenesStatus === 'failed') ||
+    (mode === 'view' &&
+      permissions.worldName === worldName &&
+      (permissions.status === 'failed' || (parcelsWanted && parcels?.status === 'failed')));
   const ready =
-    loaded &&
+    answered === request &&
+    sameWorld &&
     (mode === 'manage' ||
       failed ||
       (permissions.worldName === worldName &&
@@ -91,5 +103,7 @@ export function useWorldScenes(worldName: string, mode: RowMode) {
     [dispatch, worldName],
   );
 
-  return { all, scenes, deployers, ready, failed, unpublishScene };
+  const retry = useCallback(() => setAttempt(count => count + 1), []);
+
+  return { all, scenes, deployers, ready, failed, retry, unpublishScene };
 }

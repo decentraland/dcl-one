@@ -1,4 +1,4 @@
-import cx from 'classnames';
+import { cx } from '/@/lib/cx';
 import { type SelectProps, Select as SelectUI } from 'decentraland-ui2';
 import './styles.css';
 

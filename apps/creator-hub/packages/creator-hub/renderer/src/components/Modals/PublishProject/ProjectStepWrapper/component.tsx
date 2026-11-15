@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import cx from 'classnames';
+import { cx } from '/@/lib/cx';
 import PinIcon from '@mui/icons-material/Place';
 import ParcelsIcon from '@mui/icons-material/GridViewRounded';
 import { ChainId } from '@dcl/schemas';

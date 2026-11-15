@@ -1,5 +1,5 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { flatten } from 'flat';
+import { flatten } from '/@/modules/store/translation/flatten';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { dark, ThemeProvider } from 'decentraland-ui2/dist/theme';
 
@@ -13,7 +13,7 @@ import { setCurrentLocale } from '/@/modules/store/translation/utils';
 import { HELP_FAQ_URL } from '/@/modules/utils';
 
 const mocks = vi.hoisted(() => ({
-  send: vi.fn<[FeedbackReport], Promise<FeedbackDelivery>>(),
+  send: vi.fn<(report: FeedbackReport) => Promise<FeedbackDelivery>>(),
   openExternal: vi.fn(),
   track: vi.fn(),
 }));

@@ -7,10 +7,10 @@ import type * as DeploymentUtils from '/@/modules/store/deployment/utils';
 import { type SceneSizeLimit, useSceneSizeLimit } from './useSceneSizeLimit';
 
 const fetchWorldSceneSizeLimitMock = vi.fn();
-const cryptoFetchMock = vi.fn();
+const signedFetchMock = vi.fn();
 
-vi.mock('decentraland-crypto-fetch', () => ({
-  default: (...args: unknown[]) => cryptoFetchMock(...args),
+vi.mock('/@/lib/signedFetch', () => ({
+  signedFetch: (...args: unknown[]) => signedFetchMock(...args),
 }));
 
 vi.mock('/@/modules/store/deployment/utils', async importOriginal => ({
@@ -266,7 +266,7 @@ describe('useSceneSizeLimit', () => {
         '/@/modules/store/deployment/utils',
       );
       fetchWorldSceneSizeLimitMock.mockImplementationOnce(fetchWorldSceneSizeLimit);
-      cryptoFetchMock.mockImplementationOnce(
+      signedFetchMock.mockImplementationOnce(
         (_url: string, init: { signal: AbortSignal }) =>
           new Promise((_, reject) => {
             init.signal.addEventListener('abort', () => reject(init.signal.reason));

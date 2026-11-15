@@ -42,10 +42,8 @@ vi.mock('@sentry/electron/renderer', () => ({
   captureException: vi.fn(() => 'sentry-event-id'),
 }));
 
-vi.mock('@dcl/crypto', () => ({
-  Authenticator: {
-    signPayload: vi.fn().mockResolvedValue({}),
-  },
+vi.mock('/@/lib/identity', () => ({
+  signPayload: vi.fn().mockResolvedValue({}),
 }));
 
 vi.mock('./utils', async () => {

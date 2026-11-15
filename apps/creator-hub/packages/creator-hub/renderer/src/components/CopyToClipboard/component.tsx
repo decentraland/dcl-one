@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
-import cx from 'classnames';
+import { cx } from '/@/lib/cx';
 import { Popper } from 'decentraland-ui2';
 import { misc } from '#preload';
 import { t } from '/@/modules/store/translation/utils';

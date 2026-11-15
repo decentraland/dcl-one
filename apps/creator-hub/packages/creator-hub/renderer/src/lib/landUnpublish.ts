@@ -1,7 +1,7 @@
-import { Authenticator } from '@dcl/crypto';
 import { localStorageGetIdentity } from '@dcl/single-sign-on-client';
 import { landUnpublish } from '#preload';
 
+import { signPayload } from './identity';
 import type { Land } from './land';
 import { RoleType, coordsToId, ownedCoords } from './land';
 
@@ -34,6 +34,6 @@ export async function clearLandScene(
   if (!parcel) throw new Error('The account can no longer deploy on any parcel of this scene');
 
   const { entityId, timestamp } = await landUnpublish.prepare(parcel);
-  const authChain = Authenticator.signPayload(identity, entityId);
+  const authChain = await signPayload(identity, entityId);
   await landUnpublish.deploy({ parcel, timestamp, authChain });
 }

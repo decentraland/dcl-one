@@ -2,7 +2,7 @@ import type { ButtonHTMLAttributes } from 'react';
 import { Provider } from 'react-redux';
 import { MemoryRouter } from 'react-router-dom';
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
-import { flatten } from 'flat';
+import { flatten } from '/@/modules/store/translation/flatten';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { Dispatch } from '@reduxjs/toolkit';
 import { dark, ThemeProvider } from 'decentraland-ui2/dist/theme';

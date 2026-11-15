@@ -1,5 +1,5 @@
 import { type PropsWithChildren } from 'react';
-import cx from 'classnames';
+import { cx } from '/@/lib/cx';
 import { Popper as DclPopper, ClickAwayListener } from 'decentraland-ui2';
 
 import type { Props } from './types';

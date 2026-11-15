@@ -1,5 +1,4 @@
-import { useCallback, useMemo } from 'react';
-import { useAdvancedUserAgentData } from '@dcl/hooks';
+import { useCallback } from 'react';
 import {
   DownloadButtonAppleIcon,
   DownloadButtonWindowsIcon,
@@ -15,24 +14,22 @@ import type { Props } from './types';
 
 import './styles.css';
 
+function isMacOS() {
+  const { userAgentData } = navigator as Navigator & { userAgentData?: { platform?: string } };
+  const platform = userAgentData?.platform;
+  return platform ? platform === OperativeSystem.MACOS : navigator.userAgent.includes('Macintosh');
+}
+
 export function InstallClient({ open, onClose }: Props) {
-  const [_, agent] = useAdvancedUserAgentData();
   const dispatch = useDispatch();
 
-  const handleDownload = useCallback(async () => {
-    if (!agent) return;
+  const handleDownload = useCallback(() => {
     dispatch(actions.openExternalURL('https://decentraland.org/download/'));
     onClose();
-  }, [agent, onClose]);
-  const { icon, text } = useMemo(() => {
-    if (!agent) {
-      return { text: t('modal.install_client.download'), icon: <div /> };
-    }
-    if (agent.os.name === OperativeSystem.MACOS) {
-      return { icon: <DownloadButtonAppleIcon />, text: t('modal.install_client.download_macos') };
-    }
-    return { icon: <DownloadButtonWindowsIcon />, text: t('modal.install_client.download_win') };
-  }, [agent]);
+  }, [dispatch, onClose]);
+  const { icon, text } = isMacOS()
+    ? { icon: <DownloadButtonAppleIcon />, text: t('modal.install_client.download_macos') }
+    : { icon: <DownloadButtonWindowsIcon />, text: t('modal.install_client.download_win') };
 
   return (
     <Modal

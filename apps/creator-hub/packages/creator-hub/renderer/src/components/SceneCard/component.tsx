@@ -1,4 +1,4 @@
-import classNames from 'classnames';
+import { cx as classNames } from '/@/lib/cx';
 import { Badge } from 'decentraland-ui2';
 
 import { useVideo } from '/@/hooks/useVideo';

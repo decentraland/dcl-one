@@ -2,7 +2,7 @@ import type { ButtonHTMLAttributes } from 'react';
 import { Provider } from 'react-redux';
 import { MemoryRouter } from 'react-router-dom';
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
-import { flatten } from 'flat';
+import { flatten } from '/@/modules/store/translation/flatten';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { dark, ThemeProvider } from 'decentraland-ui2/dist/theme';
 
@@ -107,10 +107,22 @@ const STAGE = worldScene('bafb', 'Stage', ['2,0'], '2026-10-20T12:00:00Z', '5242
 
 type Access = 'owner' | { worldWide: true; noSummary?: boolean } | { parcels: string[] };
 
-async function renderTab(scenes: WorldScene[], access: Access = 'owner') {
+const PENDING = new Promise<never>(() => {});
+const ERROR = 'Something went wrong.';
+
+/** Renders the tab over a scenes request that answers `scenes`, fails (`'failed'`) or has no answer yet (`'pending'`). */
+async function renderTab(
+  scenes: WorldScene[] | 'failed' | 'pending',
+  access: Access = 'owner',
+  store = createTestStore(),
+) {
   const wallet = access === 'owner' ? OWNER : COLLABORATOR;
   vi.mocked(useAuth).mockReturnValue({ wallet } as unknown as ReturnType<typeof useAuth>);
-  api.fetchWorldScenes.mockResolvedValue({ scenes, total: scenes.length });
+  if (scenes === 'pending') api.fetchWorldScenes.mockReturnValue(PENDING);
+  else
+    api.fetchWorldScenes.mockResolvedValue(
+      scenes === 'failed' ? null : { scenes, total: scenes.length },
+    );
   api.unpublishWorldScene.mockResolvedValue(true);
   api.getPermissions.mockResolvedValue({
     owner: OWNER,
@@ -138,7 +150,6 @@ async function renderTab(scenes: WorldScene[], access: Access = 'owner') {
     parcels: access !== 'owner' && 'parcels' in access ? access.parcels : [],
     total: access !== 'owner' && 'parcels' in access ? access.parcels.length : 0,
   });
-  const store = createTestStore();
   store.dispatch({
     type: 'management/fetchStorageStats/pending',
     meta: { requestId: 'r' },
@@ -162,6 +173,7 @@ async function renderTab(scenes: WorldScene[], access: Access = 'owner') {
   );
   await act(async () => {});
   await act(async () => {});
+  return store;
 }
 
 const rows = () => screen.getAllByRole('row').slice(1);
@@ -312,7 +324,16 @@ describe('World ScenesTab', () => {
       api.getPermissions.mockRejectedValueOnce(new Error('Unavailable'));
       await renderTab([PLAZA], { parcels: ['0,0'] });
 
-      expect(screen.getByRole('heading', { name: 'An unknown error occurred' })).toBeTruthy();
+      expect(screen.getByRole('heading', { name: ERROR })).toBeTruthy();
+    });
+
+    it('should list the scenes after Try again reads the permissions', async () => {
+      api.getPermissions.mockRejectedValueOnce(new Error('Unavailable'));
+      await renderTab([PLAZA, STAGE], { parcels: ['0,0'] });
+
+      await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Try again' })));
+
+      expect(rowNames()).toEqual(['Plaza']);
     });
   });
 
@@ -321,7 +342,96 @@ describe('World ScenesTab', () => {
       api.fetchParcelsPermission.mockRejectedValueOnce(new Error('Unavailable'));
       await renderTab([PLAZA], { parcels: ['0,0'] });
 
-      expect(screen.getByRole('heading', { name: 'An unknown error occurred' })).toBeTruthy();
+      expect(screen.getByRole('heading', { name: ERROR })).toBeTruthy();
+    });
+  });
+
+  describe('when the scenes fail to load', () => {
+    it('should show the owner an error with Try again, not the empty view', async () => {
+      await renderTab('failed');
+
+      expect(await screen.findByRole('heading', { name: ERROR })).toBeTruthy();
+      expect(screen.getByText('Please, try again.')).toBeTruthy();
+      expect(screen.getByRole('button', { name: 'Try again' })).toBeTruthy();
+      expect(
+        screen.queryByRole('heading', { name: 'No scenes published in this World.' }),
+      ).toBeNull();
+      expect(screen.queryByRole('button', { name: 'View Scenes' })).toBeNull();
+    });
+
+    it('should show a collaborator the error, not the empty view', async () => {
+      await renderTab('failed', { parcels: ['0,0'] });
+
+      expect(await screen.findByRole('heading', { name: ERROR })).toBeTruthy();
+      expect(screen.queryByRole('heading', { name: 'No scenes on your parcels yet.' })).toBeNull();
+    });
+
+    it('should read the scenes again from Try again and list them', async () => {
+      await renderTab('failed');
+      await screen.findByRole('heading', { name: ERROR });
+      api.fetchWorldScenes.mockClear();
+      api.fetchWorldScenes.mockResolvedValue({ scenes: [PLAZA], total: 1 });
+
+      await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Try again' })));
+
+      expect(api.fetchWorldScenes).toHaveBeenCalledWith('plaza.dcl.eth', expect.anything());
+      expect(rowNames()).toEqual(['Plaza']);
+      expect(screen.queryByRole('heading', { name: ERROR })).toBeNull();
+    });
+
+    it('should show the loader while Try again waits for its answer', async () => {
+      await renderTab('failed');
+      await screen.findByRole('heading', { name: ERROR });
+      api.fetchWorldScenes.mockReturnValue(PENDING);
+
+      await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Try again' })));
+
+      expect(screen.getByRole('progressbar')).toBeTruthy();
+      expect(screen.queryByRole('heading', { name: ERROR })).toBeNull();
+      expect(
+        screen.queryByRole('heading', { name: 'No scenes published in this World.' }),
+      ).toBeNull();
+    });
+  });
+
+  describe('when the World is opened again', () => {
+    it("should show the loader, not the last visit's scenes, until the new answer", async () => {
+      const store = await renderTab([PLAZA]);
+      cleanup();
+
+      await renderTab('pending', 'owner', store);
+
+      expect(screen.getByRole('progressbar')).toBeTruthy();
+      expect(screen.queryByRole('table')).toBeNull();
+    });
+
+    it("should show the loader, not the last visit's error, until the new answer", async () => {
+      const store = await renderTab('failed');
+      await screen.findByRole('heading', { name: ERROR });
+      cleanup();
+
+      await renderTab('pending', 'owner', store);
+
+      expect(screen.getByRole('progressbar')).toBeTruthy();
+      expect(screen.queryByRole('heading', { name: ERROR })).toBeNull();
+    });
+  });
+
+  describe('when the list refreshes after an unpublish', () => {
+    it('should keep the list and the dialog on screen', async () => {
+      await renderTab([PLAZA, STAGE]);
+      api.fetchWorldScenes.mockReturnValue(PENDING);
+      fireEvent.click(screen.getByRole('button', { name: 'Unpublish Stage' }));
+
+      await act(async () =>
+        fireEvent.click(
+          within(screen.getByRole('dialog')).getByRole('button', { name: 'Unpublish' }),
+        ),
+      );
+
+      expect(api.unpublishWorldScene).toHaveBeenCalledWith(OWNER, 'plaza.dcl.eth', '2,0');
+      expect(screen.getByRole('table', { hidden: true })).toBeTruthy();
+      expect(screen.getByRole('dialog')).toBeTruthy();
     });
   });
 

@@ -1,6 +1,6 @@
 import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { flatten } from 'flat';
+import { flatten } from '/@/modules/store/translation/flatten';
 import { dark, ThemeProvider } from 'decentraland-ui2/dist/theme';
 
 import type { File } from '/@/lib/deploy';

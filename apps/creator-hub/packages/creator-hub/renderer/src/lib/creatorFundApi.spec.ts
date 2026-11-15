@@ -5,9 +5,11 @@ const BASE = 'http://localhost:8788';
 const ADDRESS = '0xdeadbeef';
 const WALLET = '0x0000000000000000000000000000000000000001';
 
-const signedHeaders = vi.fn(() => new Headers({ 'x-identity-auth-chain-0': '{"type":"SIGNER"}' }));
+const signedHeaders = vi.fn(
+  async () => new Headers({ 'x-identity-auth-chain-0': '{"type":"SIGNER"}' }),
+);
 
-vi.mock('decentraland-crypto-fetch', () => ({ signedHeaderFactory: () => signedHeaders }));
+vi.mock('./signedFetch', () => ({ signedHeaders }));
 vi.mock('@dcl/single-sign-on-client', () => ({
   localStorageGetIdentity: vi.fn(() => ({ ephemeralIdentity: {}, authChain: [] })),
 }));

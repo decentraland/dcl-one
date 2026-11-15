@@ -1,5 +1,5 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { dark, ThemeProvider } from 'decentraland-ui2/dist/theme';
 
 import { CreateProject } from './component';
@@ -53,7 +53,7 @@ const pressCreateWhileNameIsFocused = () => {
 };
 
 describe('CreateProject', () => {
-  let onSubmit: ReturnType<typeof vi.fn>;
+  let onSubmit: Mock;
 
   afterEach(cleanup);
 

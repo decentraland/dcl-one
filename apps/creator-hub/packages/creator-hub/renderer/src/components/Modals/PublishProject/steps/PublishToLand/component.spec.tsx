@@ -2,7 +2,7 @@ import { Provider } from 'react-redux';
 import { MemoryRouter } from 'react-router-dom';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
-import { flatten } from 'flat';
+import { flatten } from '/@/modules/store/translation/flatten';
 import type { ChainId, Scene } from '@dcl/schemas';
 import { dark, ThemeProvider } from 'decentraland-ui2/dist/theme';
 
@@ -90,8 +90,8 @@ describe('PublishToLand', () => {
   let order: string[];
   let sceneJson: Scene;
   let deployedSceneJson: Scene | undefined;
-  let saveScene: Mock<[], Promise<void>>;
-  let setSceneSettings: Mock<[{ layout: EditorLayout }], Promise<{ settings: object }>>;
+  let saveScene: Mock<() => Promise<void>>;
+  let setSceneSettings: Mock<(settings: { layout: EditorLayout }) => Promise<{ settings: object }>>;
   let onStep: Mock;
 
   const renderStep = () =>

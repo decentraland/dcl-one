@@ -1,5 +1,5 @@
 import React from 'react';
-import cx from 'classnames';
+import { cx } from '/@/lib/cx';
 import { Box, Button, Card, CardContent, Container, Grid, Typography } from 'decentraland-ui2';
 
 import { misc } from '#preload';

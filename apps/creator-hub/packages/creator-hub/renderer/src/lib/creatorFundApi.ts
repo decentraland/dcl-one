@@ -48,7 +48,7 @@ async function send<T>(
   let headers: Record<string, string> | undefined;
   if (signed) {
     try {
-      headers = buildSignedHeaders(
+      headers = await buildSignedHeaders(
         CREATOR_FUND_API_URL,
         path,
         method.toLowerCase() as Lowercase<Method>,

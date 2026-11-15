@@ -93,10 +93,10 @@ describe('DeployProgress', () => {
   });
 
   describe('when the deployment can be cancelled', () => {
-    let onCancel: Mock<[], Promise<CancelRejection | null>>;
+    let onCancel: Mock<() => Promise<CancelRejection | null>>;
 
     beforeEach(() => {
-      onCancel = vi.fn<[], Promise<CancelRejection | null>>().mockResolvedValue(null);
+      onCancel = vi.fn<() => Promise<CancelRejection | null>>().mockResolvedValue(null);
       renderProgress({ upload, cancel: { kind: 'available', onCancel } });
       fireEvent.click(
         screen.getByRole('button', {

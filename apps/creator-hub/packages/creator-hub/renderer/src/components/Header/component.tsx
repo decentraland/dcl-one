@@ -1,4 +1,4 @@
-import cx from 'classnames';
+import { cx } from '/@/lib/cx';
 import { useAuth } from '/@/hooks/useAuth';
 import { UserMenu } from './UserMenu';
 import type { Props } from './types';

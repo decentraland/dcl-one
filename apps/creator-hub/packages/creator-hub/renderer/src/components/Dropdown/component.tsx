@@ -1,5 +1,5 @@
 import React, { useCallback, useState, type MouseEvent } from 'react';
-import cx from 'classnames';
+import { cx } from '/@/lib/cx';
 import { MenuItem, useMediaQuery } from 'decentraland-ui2';
 
 import { KebabIcon } from '../Icons';

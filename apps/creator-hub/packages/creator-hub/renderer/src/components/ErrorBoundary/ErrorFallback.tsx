@@ -1,5 +1,5 @@
 import { type ReactNode } from 'react';
-import { flatten } from 'flat';
+import { flatten } from '/@/modules/store/translation/flatten';
 import { Typography } from 'decentraland-ui2';
 
 import { en } from '/@/modules/store/translation/locales';

@@ -15,8 +15,8 @@ vi.mock('@sentry/electron/renderer', () => ({
   captureException: (...args: unknown[]) => captureExceptionMock(...args),
 }));
 
-vi.mock('decentraland-crypto-fetch', () => ({
-  default: (...args: unknown[]) => fetchMock(...args),
+vi.mock('./signedFetch', () => ({
+  signedFetch: (...args: unknown[]) => fetchMock(...args),
 }));
 
 const { Worlds } = await import('./worlds');

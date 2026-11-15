@@ -1,18 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { Authenticator } from '@dcl/crypto';
-import { createUnsafeIdentity } from '@dcl/crypto/dist/crypto';
-import { signedHeaderFactory } from 'decentraland-crypto-fetch';
+
+import { createIdentity, createIdentityKeys, signWithKeys } from './identity';
+import { signedHeaders } from './signedFetch';
 
 /**
  * Pins the ADR-44 payload format this app signs.
  *
- * `decentraland-crypto-fetch` 2.0.1 lowercased the whole joined string before signing while sending
- * `x-identity-metadata` verbatim, which left the metadata's casing outside the signature. Services
- * on `@dcl/crypto-middleware` 6 sign the metadata bytes as delivered, so anything this app sends
- * with uppercase in it -- a world access password, an uppercase community id -- stopped verifying.
- *
- * Asserted against the installed package rather than a restated copy of the format, so downgrading
- * the dependency fails here instead of in production.
+ * The services check the signature against the metadata bytes as delivered. So the metadata goes
+ * into the signed text with its case: a world access password or a community id with capitals in
+ * it must not be changed. Only the method and the path go in lower case.
  */
 describe('when signing a request with metadata', () => {
   /** The payload the signature covers is the last auth-chain link's `payload`. */
@@ -21,16 +17,16 @@ describe('when signing a request with metadata', () => {
     path: string,
     metadata: Record<string, unknown>,
   ): Promise<string> {
-    const ephemeralIdentity = createUnsafeIdentity();
-    const realAccount = createUnsafeIdentity();
-    const identity = await Authenticator.initializeAuthChain(
-      realAccount.address,
+    const ephemeralIdentity = createIdentityKeys();
+    const throwawayAccount = createIdentityKeys();
+    const identity = await createIdentity(
+      throwawayAccount.address,
       ephemeralIdentity,
       10,
-      async message => Authenticator.createSignature(realAccount, message),
+      message => signWithKeys(throwawayAccount, message),
     );
 
-    const headers = signedHeaderFactory()(identity, method, path, metadata);
+    const headers = await signedHeaders(identity, method, path, metadata);
     const links: { payload: string }[] = [];
     headers.forEach((value, name) => {
       if (name.startsWith('x-identity-auth-chain-')) {
@@ -61,8 +57,7 @@ describe('when signing a request with metadata', () => {
   });
 
   it('should distinguish metadata differing only in case', async () => {
-    // Under the previous fold these collapsed to one string, which is what let a re-cased field ride
-    // an otherwise valid signature.
+    // If the two gave one signed text, a field with changed case would pass with the same signature.
     const path = '/world/foo.dcl.eth/permissions/access';
 
     const lower = await signedPayloadFor('POST', path, {

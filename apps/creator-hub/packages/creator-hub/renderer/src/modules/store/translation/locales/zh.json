@@ -729,7 +729,6 @@
     },
     "install_client": {
       "title": "要输入，您需要首先安装分散",
-      "download": "下载",
       "download_macos": "下载",
       "download_win": "下载",
       "cancel": "暂不安装"

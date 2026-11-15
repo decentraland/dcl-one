@@ -1,5 +1,5 @@
 import { createIntl, createIntlCache, FormattedMessage } from 'react-intl';
-import { flatten } from 'flat';
+import { flatten } from './flatten';
 
 import type { Locale } from '/shared/types/translation';
 

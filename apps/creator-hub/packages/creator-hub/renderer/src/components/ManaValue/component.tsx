@@ -1,4 +1,4 @@
-import cx from 'classnames';
+import { cx } from '/@/lib/cx';
 import { Box, ManaMaticIcon } from 'decentraland-ui2';
 
 import './styles.css';

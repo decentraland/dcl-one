@@ -1,7 +1,6 @@
 import { createPublicClient, http } from 'viem';
 import { type Socket, io } from 'socket.io-client';
 import { ChainId, ProviderType } from '@dcl/schemas';
-import { type AuthIdentity, type AuthChain } from '@dcl/crypto';
 import * as sso from '@dcl/single-sign-on-client';
 import { analytics } from '#preload';
 import {
@@ -9,6 +8,7 @@ import {
   createSignInVerifier,
   deriveSignInRequestId,
 } from './signInVerifier';
+import type { AuthChain, AuthIdentity } from './identity';
 
 const STORAGE_KEY_ADDRESS = 'auth-server-provider-address';
 const STORAGE_KEY_CHAIN_ID = 'auth-server-provider-chain-id';

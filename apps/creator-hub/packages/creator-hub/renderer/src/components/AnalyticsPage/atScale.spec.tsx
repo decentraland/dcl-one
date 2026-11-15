@@ -41,14 +41,10 @@ vi.mock('@dcl/single-sign-on-client', () => ({
   }),
 }));
 
-/**
- * `lib/worlds` imports this module's *default* export as its fetch, so the mock
- * has to keep one — a factory replaces the whole module, and an absent default
- * leaves `worlds.ts` calling undefined.
- */
-vi.mock('decentraland-crypto-fetch', () => ({
-  default: (input: RequestInfo | URL, init?: RequestInit) => globalThis.fetch(input, init),
-  signedHeaderFactory: () => () => new Map([['x-identity-auth-chain-0', 'stub']]),
+/** No signing here: the fetch of `lib/worlds` is the global one and the signed headers are a stub. */
+vi.mock('/@/lib/signedFetch', () => ({
+  signedFetch: (input: RequestInfo | URL, init?: RequestInit) => globalThis.fetch(input, init),
+  signedHeaders: async () => new Headers({ 'x-identity-auth-chain-0': 'stub' }),
 }));
 
 /**
