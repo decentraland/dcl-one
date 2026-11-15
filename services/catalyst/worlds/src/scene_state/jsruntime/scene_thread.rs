@@ -376,11 +376,27 @@ pub(super) fn run_scene_thread(
                                 c.inbound_shared_bytes += kept.len();
                                 c.inbound_bytes += kept.len();
                                 c.inbound.push_back((kept, true));
-                            } else if budget.hold(kept.len()) {
-                                c.inbound_bytes += kept.len();
-                                c.inbound.push_back((kept, false));
                             } else {
-                                budget.release(index, kept.len(), 1);
+                                // The newest early frame wins: make room from this
+                                // client's own oldest held frames first.
+                                let (max_bytes, max_frames) = early.unwrap_or_default();
+                                loop {
+                                    let fits = c.inbound_bytes + kept.len() <= max_bytes
+                                        && c.inbound.len() < max_frames;
+                                    if fits && budget.hold(kept.len()) {
+                                        c.inbound_bytes += kept.len();
+                                        c.inbound.push_back((kept, false));
+                                        break;
+                                    }
+                                    let Some((old, was_shared)) = c.inbound.pop_front() else {
+                                        budget.release(index, kept.len(), 1);
+                                        break;
+                                    };
+                                    let shared_bytes = if was_shared { old.len() } else { 0 };
+                                    c.inbound_bytes -= old.len();
+                                    c.inbound_shared_bytes -= shared_bytes;
+                                    budget.release_parts(index, old.len(), 1, shared_bytes);
+                                }
                             }
                         }
                         if let Some((max_bytes, max_frames)) = early {

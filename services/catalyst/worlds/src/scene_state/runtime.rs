@@ -356,12 +356,14 @@ struct InboundUsage {
     per_client: std::collections::HashMap<u32, (usize, usize)>,
     total: usize,
     held: usize,
-    /// Consecutive frames per client dropped because the scene was full.
+    /// Frames per client dropped because the scene was full, since that
+    /// client connected (its last resync).
     drops: std::collections::HashMap<u32, u32>,
 }
 
-/// Dropped frames leave the sender out of sync; after this many in a row it
-/// is closed so it reconnects and resyncs from the snapshot.
+/// Dropped frames leave the sender out of sync; after this many since it
+/// connected, a client holding at least its fair share of the readable
+/// budget is closed so it reconnects and resyncs from the snapshot.
 pub const SCENE_FULL_DROPS_BEFORE_CLOSE: u32 = 8;
 
 impl InboundBudget {
@@ -391,15 +393,19 @@ impl InboundBudget {
             return Err(InboundRefusal::Client);
         }
         if s.total.saturating_add(bytes) > self.scene_max_bytes {
+            // Closing a client that holds little frees nothing: only one
+            // holding its fair share of the full budget is made to resync.
+            let fair_share = self.scene_max_bytes / s.per_client.len().max(1);
             let drops = s.drops.entry(index).or_default();
-            *drops += 1;
-            return Err(if *drops >= SCENE_FULL_DROPS_BEFORE_CLOSE {
-                InboundRefusal::Desynced
-            } else {
-                InboundRefusal::Scene
-            });
+            *drops = drops.saturating_add(1);
+            return Err(
+                if *drops >= SCENE_FULL_DROPS_BEFORE_CLOSE && used >= fair_share {
+                    InboundRefusal::Desynced
+                } else {
+                    InboundRefusal::Scene
+                },
+            );
         }
-        s.drops.remove(&index);
         s.per_client.insert(index, (used + bytes, frames + 1));
         s.total += bytes;
         Ok(())
@@ -470,8 +476,8 @@ pub enum InboundRefusal {
     Client,
     /// The scene-wide budget: the frame is dropped, no one is closed.
     Scene,
-    /// The scene-wide budget, for the sender's
-    /// [`SCENE_FULL_DROPS_BEFORE_CLOSE`]th frame in a row: it is closed.
+    /// The scene-wide budget, for a sender holding its fair share with
+    /// [`SCENE_FULL_DROPS_BEFORE_CLOSE`] drops since it connected: it is closed.
     Desynced,
 }
 
@@ -784,6 +790,10 @@ impl SceneRuntime for JsRuntime {
                     );
                 }
                 if refusal == InboundRefusal::Desynced {
+                    self.handle
+                        .shared
+                        .desynced_closes
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     tracing::info!(
                         scene = %self.handle.scene_hash,
                         index = client_index,
@@ -1311,9 +1321,10 @@ mod tests {
     }
 
     #[test]
-    fn a_sender_dropped_repeatedly_is_closed_to_resync() {
+    fn only_a_sender_holding_its_fair_share_is_closed_to_resync() {
         let limits = RuntimeLimits {
-            client_inbound_max_bytes: 100,
+            client_inbound_max_bytes: 120,
+            // 150 readable: a fair share is 75 with two clients holding bytes.
             scene_inbound_max_bytes: 200,
             ..RuntimeLimits::default()
         };
@@ -1322,24 +1333,135 @@ mod tests {
         assert!(rt.on_client_crdt(a, &put_frame(1100, 66)).is_ok());
         assert!(rt.on_client_crdt(b, &put_frame(1600, 26)).is_ok());
         let dropped = put_frame(1601, 0);
-        for _ in 1..SCENE_FULL_DROPS_BEFORE_CLOSE {
+        for _ in 0..2 * SCENE_FULL_DROPS_BEFORE_CLOSE {
             assert_eq!(
                 rt.on_client_crdt(b, &dropped),
                 Ok(vec![]),
-                "dropped, still connected"
+                "b holds less than its share: dropped, never closed"
             );
         }
+        let dropped = put_frame(1101, 0);
+        for _ in 1..SCENE_FULL_DROPS_BEFORE_CLOSE {
+            assert_eq!(rt.on_client_crdt(a, &dropped), Ok(vec![]));
+        }
         assert_eq!(
-            rt.on_client_crdt(b, &dropped),
+            rt.on_client_crdt(a, &dropped),
             Err(InboundOverBudget),
-            "after a run of drops the sender is closed so it resyncs"
+            "a holds its share and is closed so it resyncs"
+        );
+        let shared = &rt.handle.shared;
+        assert_eq!(
+            shared
+                .desynced_closes
+                .load(std::sync::atomic::Ordering::Relaxed),
+            1
         );
         assert_eq!(
-            rt.handle
-                .shared
+            shared
                 .inbound_drops
                 .load(std::sync::atomic::Ordering::Relaxed),
-            u64::from(SCENE_FULL_DROPS_BEFORE_CLOSE)
+            u64::from(3 * SCENE_FULL_DROPS_BEFORE_CLOSE)
+        );
+    }
+
+    fn budget_150() -> InboundBudget {
+        InboundBudget::new(&RuntimeLimits {
+            client_inbound_max_bytes: 120,
+            scene_inbound_max_bytes: 200,
+            ..RuntimeLimits::default()
+        })
+    }
+
+    #[test]
+    fn drops_count_since_the_client_connected_not_in_a_row() {
+        let budget = budget_150();
+        budget.reserve(0, 90).unwrap();
+        budget.reserve(1, 50).unwrap();
+        for _ in 0..5 {
+            assert_eq!(budget.reserve(0, 24), Err(InboundRefusal::Scene));
+        }
+        // Room frees up and a frame fits: the count is kept.
+        budget.release(1, 50, 1);
+        budget.reserve(0, 24).unwrap();
+        budget.reserve(1, 36).unwrap();
+        assert_eq!(budget.reserve(0, 6), Err(InboundRefusal::Scene));
+        assert_eq!(budget.reserve(0, 6), Err(InboundRefusal::Scene));
+        assert_eq!(
+            budget.reserve(0, 6),
+            Err(InboundRefusal::Desynced),
+            "the eighth drop since connecting, across runs"
+        );
+    }
+
+    #[test]
+    fn a_reused_slot_starts_with_no_drops() {
+        let budget = budget_150();
+        budget.reserve(0, 90).unwrap();
+        budget.reserve(1, 60).unwrap();
+        for _ in 1..SCENE_FULL_DROPS_BEFORE_CLOSE {
+            assert_eq!(budget.reserve(0, 1), Err(InboundRefusal::Scene));
+        }
+        budget.forget_drops(0);
+        for _ in 1..SCENE_FULL_DROPS_BEFORE_CLOSE {
+            assert_eq!(budget.reserve(0, 1), Err(InboundRefusal::Scene));
+        }
+        assert_eq!(budget.reserve(0, 1), Err(InboundRefusal::Desynced));
+    }
+
+    #[test]
+    fn held_bytes_return_when_the_client_closes() {
+        let limits = RuntimeLimits {
+            client_inbound_max_bytes: 3200,
+            ..RuntimeLimits::default()
+        };
+        let rt = js_runtime("module.exports.onUpdate = function (dt) {};", limits);
+        let index = js_open(&rt);
+        assert!(rt.on_client_crdt(index, &put_frame(1100, 26)).is_ok());
+        let budget = &rt.handle.shared.inbound;
+        assert!(crate::shared::test_wait::until_blocking(
+            || budget.held() == 50
+        ));
+        let _ = rt.on_client_close(index);
+        assert!(
+            crate::shared::test_wait::until_blocking(
+                || budget.held() == 0 && budget.client_usage(index) == (0, 0)
+            ),
+            "a closed client's held frames are released"
+        );
+    }
+
+    #[test]
+    fn held_bytes_return_once_a_late_observer_reads_them() {
+        let js = r#"
+            var clients = {};
+            var ticks = 0;
+            module.exports.onUpdate = function (dt) {
+              ticks++;
+              if (ticks === 15) {
+                registerScene(
+                  { reservedLocalEntities: 512, networkEntitiesLimit: { serverLimit: 512, clientLimit: 512 } },
+                  function (ev) { if (ev.type === 'open') { clients[ev.clientId] = ev.client; } }
+                );
+              }
+              for (var id in clients) { clients[id].getMessages(); }
+            };
+        "#;
+        let limits = RuntimeLimits {
+            client_inbound_max_bytes: 3200,
+            ..RuntimeLimits::default()
+        };
+        let rt = js_runtime(js, limits);
+        let index = js_open(&rt);
+        assert!(rt.on_client_crdt(index, &put_frame(1100, 26)).is_ok());
+        let budget = &rt.handle.shared.inbound;
+        assert!(crate::shared::test_wait::until_blocking(
+            || budget.held() == 50
+        ));
+        assert!(
+            crate::shared::test_wait::until_blocking(
+                || budget.held() == 0 && budget.client_usage(index) == (0, 0)
+            ),
+            "held frames read after registration leave the budget"
         );
     }
 

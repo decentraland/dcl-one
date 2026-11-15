@@ -1140,6 +1140,15 @@ mod key_tests {
         assert!(!ok(
             |r| r.scene_inbound_max_bytes = r.client_inbound_max_bytes
         ));
+        // The boundary: three quarters of the scene bound hold exactly one client.
+        assert!(ok(|r| {
+            r.client_inbound_max_bytes = 3 << 20;
+            r.scene_inbound_max_bytes = 4 << 20;
+        }));
+        assert!(!ok(|r| {
+            r.client_inbound_max_bytes = 3 << 20;
+            r.scene_inbound_max_bytes = (4 << 20) - 4;
+        }));
     }
 
     #[test]

@@ -71,6 +71,9 @@ pub struct SharedState {
 
     /// Client frames this scene dropped because its inbound budget was full.
     pub inbound_drops: AtomicU64,
+
+    /// Clients this scene closed after too many dropped frames.
+    pub desynced_closes: AtomicU64,
 }
 
 pub(super) struct Watchdog {
@@ -216,6 +219,7 @@ pub fn spawn(
         inbound: Arc::new(InboundBudget::new(&limits)),
         parked: AtomicBool::new(false),
         inbound_drops: AtomicU64::new(0),
+        desynced_closes: AtomicU64::new(0),
     });
 
     let watchdog = Arc::new(Watchdog {
@@ -314,13 +318,13 @@ impl ParkedScenes {
 
 static PARKED: ParkedScenes = ParkedScenes(Mutex::new(Vec::new()));
 
-/// Isolates parked by an OOM; they count against the scene cap.
 /// Counts a park the way the OOM handler does.
 #[cfg(test)]
 pub fn record_park_for_tests(scene_hash: &str) {
     PARKED.add(scene_hash);
 }
 
+/// Isolates parked by an OOM; they count against the scene cap.
 pub fn parked_isolates() -> usize {
     PARKED.count()
 }
