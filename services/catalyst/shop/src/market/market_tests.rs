@@ -2275,6 +2275,92 @@ async fn a_second_open_order_or_bid_on_the_same_asset_is_refused() {
     cleanup_mirror(&pool, &[contract]).await;
 }
 
+/// An open NFT order blocks only its own signer's second order: another
+/// wallet's still-open order (a previous owner's, never executed) does not
+/// block the current owner, and a cancelled order releases the token.
+#[tokio::test]
+async fn an_open_nft_order_blocks_only_its_signers_second_order() {
+    let Some(state) = state_with_db(Settings::for_tests()).await else {
+        return;
+    };
+    let pool = state.pool.clone();
+    let t = tag();
+    let contract = contract_of(&t, 5);
+    let marketplace = listings::offchain_marketplace_v3(137).unwrap();
+    let signer = listings::test_support::signer().address().to_checksum(None);
+    let order = |token_id: &str, salt: &str, by: &str| {
+        let mut trade = listings::test_support::parse(
+            &listings::test_support::trade_json_on(&signer, "0x00", 137)
+                .replace(r#""salt": "0x1234""#, &format!(r#""salt": "{salt}""#)),
+        );
+        trade.sent[0].contract_address = contract.clone();
+        trade.sent[0].token_id = Some(token_id.to_string());
+        listings::test_support::sign(&mut trade, &marketplace);
+        trade.signer = by.to_string();
+        trade
+    };
+    let now = chrono::Utc::now().naive_utc();
+    let check = |trade: listings::TradeCreation| {
+        let pool = pool.clone();
+        async move {
+            let mut tx = pool.begin().await.unwrap();
+            let out = listings::refuse_duplicate_open(&mut tx, &trade, "MATIC", None, now).await;
+            tx.rollback().await.unwrap();
+            out
+        }
+    };
+    let mine = listings::insert_trade(
+        &pool,
+        &order("5", "0x31", &signer),
+        "MATIC",
+        marketplace.address,
+    )
+    .await
+    .unwrap();
+    let previous_owner = listings::insert_trade(
+        &pool,
+        &order("6", "0x32", WALLET_A),
+        "MATIC",
+        marketplace.address,
+    )
+    .await
+    .unwrap();
+
+    let err = check(order("5", "0x33", &signer)).await.unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "There is already an open order for this NFT"
+    );
+    check(order("5", "0x33", WALLET_A))
+        .await
+        .expect("another wallet's order is not this signer's duplicate");
+    check(order("6", "0x34", &signer))
+        .await
+        .expect("a previous owner's open order does not block the current owner");
+
+    let hashed: String =
+        sqlx::query_scalar("SELECT hashed_signature FROM shop.trades WHERE id = $1::uuid")
+            .bind(&mine)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    sqlx::query(
+        "INSERT INTO shop.trade_cancellations (target_hashed_signature, kind, signer, signature) VALUES ($1, 'signer', lower($2), '0x00')",
+    )
+    .bind(&hashed)
+    .bind(&signer)
+    .execute(&pool)
+    .await
+    .unwrap();
+    check(order("5", "0x33", &signer))
+        .await
+        .expect("a cancelled order releases the token");
+
+    for id in [mine, previous_owner] {
+        delete_trade(&pool, &id).await;
+    }
+}
+
 /// A token or item id stored before the create path checked it (an empty
 /// string, a hex spelling) is left out of the open bids and listings, never a
 /// cast error that fails the whole read.

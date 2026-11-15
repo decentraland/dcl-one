@@ -1035,34 +1035,43 @@ async fn verify_estate_fingerprint(
 
 /// marketplace-server ae872a4a `validateTradeByType`'s duplicate refusals,
 /// over the trades this node counts as open (unexpired, not cancelled, not
-/// closed on chain): one open bid per bidder and asset, one open order per
-/// NFT, one open order per collection item. Run inside the insert's
-/// transaction under a lock on the asset, so two concurrent posts cannot
-/// both pass. The same signature is left to the insert's own 409.
-async fn refuse_duplicate_open(
+/// closed on chain), each scoped to the signer: one open bid per bidder and
+/// asset, one open order per NFT and one per collection item. Upstream
+/// counts any signer's open order, so a previous owner's order that was
+/// never executed would block the new owner until it expired; here the
+/// signer has just been checked as the NFT's owner (`ownerOf`) or the item's
+/// creator, and an order signed by anyone else cannot execute, so only the
+/// signer's own open orders count. Run inside the insert's transaction under
+/// a lock on the asset, so two concurrent posts cannot both pass. The same
+/// signature is left to the insert's own 409.
+///
+/// Workload: one lookup per trade post (rate limited per signer and per
+/// client). It is driven by `idx_trades_signer_created` (signer, then the
+/// signer's trades) and joins each candidate's assets by
+/// `idx_trade_assets_trade`; both writers store `contract_address`
+/// lowercase, so it is compared as stored.
+pub(crate) async fn refuse_duplicate_open(
     tx: &mut sqlx::PgConnection,
     trade: &TradeCreation,
     network: &str,
     since: Option<chrono::NaiveDateTime>,
     now: chrono::NaiveDateTime,
 ) -> Result<(), TradeCreationError> {
-    let (asset, bidder, message) = match trade.trade_type.as_str() {
+    let (asset, message) = match trade.trade_type.as_str() {
         TRADE_TYPE_BID => (
             &trade.received[0],
-            Some(trade.signer.to_lowercase()),
             "There is already a bid with the same parameters",
         ),
         TRADE_TYPE_PUBLIC_NFT_ORDER => (
             &trade.sent[0],
-            None,
             "There is already an open order for this NFT",
         ),
         _ => (
             &trade.sent[0],
-            None,
             "There is already an open order for this Item",
         ),
     };
+    let signer = trade.signer.to_lowercase();
     let side = if trade.trade_type == TRADE_TYPE_BID {
         "received"
     } else {
@@ -1077,7 +1086,7 @@ async fn refuse_duplicate_open(
         network.to_ascii_lowercase(),
         token_id.unwrap_or_default(),
         item_id.unwrap_or_default(),
-        bidder.as_deref().unwrap_or_default(),
+        signer,
     );
     sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1))")
         .bind(&key)
@@ -1089,9 +1098,9 @@ async fn refuse_duplicate_open(
            LEFT JOIN shop.trade_assets_erc721 e ON e.asset_id = a.id \
            LEFT JOIN shop.trade_assets_item i ON i.asset_id = a.id \
           WHERE t.type = $1::shop.trade_type AND lower(t.network) = lower($2) \
-            AND lower(a.contract_address) = $4 \
+            AND a.contract_address = $4 \
             AND e.token_id IS NOT DISTINCT FROM $5 AND i.item_id IS NOT DISTINCT FROM $6 \
-            AND ($7::text IS NULL OR t.signer = $7) \
+            AND t.signer = $7 \
             AND t.hashed_signature <> $8 AND t.expires_at > $9 \
             AND NOT EXISTS (SELECT 1 FROM shop.trade_cancellations c WHERE c.target_hashed_signature = t.hashed_signature) \
             AND NOT {closed} AND {counted})",
@@ -1105,7 +1114,7 @@ async fn refuse_duplicate_open(
         .bind(&contract)
         .bind(token_id)
         .bind(item_id)
-        .bind(bidder)
+        .bind(&signer)
         .bind(hashed_signature(&trade.signature.to_lowercase()))
         .bind(now)
         .bind(since)
@@ -1981,5 +1990,28 @@ mod tests {
             err,
             TradeCreationError::OwnershipUnverifiable(ETHEREUM_MAINNET)
         ));
+    }
+
+    /// The create path and checkout read MANA from two tables; they agree on
+    /// every chain a venue book settles on.
+    #[test]
+    fn the_mana_token_matches_every_venue_books_chain() {
+        use crate::mana::venues::Book;
+        use crate::types::ChainId;
+        let production = Book::production(|_| None);
+        let testnet = Book::testnet(|_| None);
+        for (book, chain) in [
+            (&production, ChainId::ETHEREUM),
+            (&production, ChainId::POLYGON),
+            (&testnet, ChainId::AMOY),
+        ] {
+            let mana = book.chain(chain).expect("a chain of the book").mana;
+            assert_eq!(
+                mana_token(chain.0 as i64),
+                Some(format!("{mana:#x}").as_str()),
+                "chain {}",
+                chain.0
+            );
+        }
     }
 }

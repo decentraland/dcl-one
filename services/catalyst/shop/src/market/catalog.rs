@@ -541,9 +541,10 @@ pub fn served_trade_sql(alias: &str) -> String {
            SELECT 1 FROM shop.trade_assets sa \
            JOIN shop.trade_assets_item si ON si.asset_id = sa.id \
            JOIN shop.items ci ON ci.network = lower({alias}.network) \
-             AND ci.contract_address = lower(sa.contract_address) AND ci.item_id = si.item_id::numeric \
+             AND ci.contract_address = lower(sa.contract_address) AND ci.item_id = {item_num} \
            WHERE sa.trade_id = {alias}.id AND sa.direction = 'sent' AND lower(ci.creator) = lower({alias}.signer)))",
         served = served_chain_sql(alias),
+        item_num = uint_or_null("si.item_id"),
     )
 }
 
