@@ -473,9 +473,9 @@ pub enum Bounded {
     Overflow,
 }
 
-/// Every row of `p`'s order when there are at most `max` (itself at most
-/// [`DEEP_WINDOW`]), else [`Bounded::Overflow`]: [`top_rows`] plus one probe
-/// row past the bound, which a list page never reads.
+/// Every row of `p`'s order when there are at most `max`, else
+/// [`Bounded::Overflow`]: [`top_rows`] plus one probe row past the bound,
+/// which a list page never reads. `max` must be at most [`DEEP_WINDOW`].
 pub async fn bounded_rows(
     state: &MarketplaceState,
     network: Network,
@@ -484,7 +484,10 @@ pub async fn bounded_rows(
     p: &GraphPage<'_>,
     max: i64,
 ) -> Result<Bounded, String> {
-    let max = max.min(DEEP_WINDOW);
+    debug_assert!(
+        (0..=DEEP_WINDOW).contains(&max),
+        "an aggregate bound of {max} is outside 0..={DEEP_WINDOW}"
+    );
     let rows = read_top(state, network, url, ttl, p, max + 1).await?;
     Ok(if rows.len() as i64 > max {
         Bounded::Overflow

@@ -720,50 +720,87 @@ mod tests {
 
     const MAX: i64 = SUMMARY_MAX_SALES;
 
+    /// The bound decided on a small `max`: every row up to it, the overflow
+    /// at one row past it, on untied and tied orders.
     #[tokio::test]
-    async fn a_seller_past_the_bound_on_either_network_is_unavailable() {
-        assert_eq!(MAX, 25_000);
+    async fn bounded_rows_overflow_one_row_past_the_bound() {
+        use super::super::graph::Network;
+        const SMALL: i64 = 12;
         for ties in [1, 7] {
-            for (eth, matic) in [(MAX - 1, MAX), (MAX, MAX - 1), (0, 3)] {
-                let (state, _, server) = bounded_source(sales(eth, ties), sales(matic, ties)).await;
-                let rows = bounded_sales_rows(&state, json!({}), SUMMARY_FIELDS, "/test")
-                    .await
-                    .unwrap_or_else(|_| panic!("{eth}/{matic} (ties {ties}) is complete"));
-                let on = |name: &str| rows.iter().filter(|(n, _)| n.db_name() == name).count();
-                assert_eq!(
-                    (on("ethereum") as i64, on("matic") as i64),
-                    (eth, matic),
-                    "ties {ties}"
-                );
-                let ids: std::collections::HashSet<_> = rows
-                    .iter()
-                    .map(|(n, r)| (n.db_name(), readers::str_of(r, "id")))
-                    .collect();
-                assert_eq!(ids.len(), rows.len(), "no row read twice (ties {ties})");
-                server.abort();
-            }
-            for (eth, matic, over, var) in [
-                (MAX + 1, MAX, "ethereum", "ETH_COLLECTIONS_SUBGRAPH_URL"),
-                (MAX, MAX + 1, "matic", "MATIC_COLLECTIONS_SUBGRAPH_URL"),
-                (0, MAX + 1, "matic", "MATIC_COLLECTIONS_SUBGRAPH_URL"),
-                (MAX + 1, 0, "ethereum", "ETH_COLLECTIONS_SUBGRAPH_URL"),
+            for (count, complete) in [
+                (0, true),
+                (SMALL - 1, true),
+                (SMALL, true),
+                (SMALL + 1, false),
+                (3 * SMALL, false),
             ] {
-                let (state, _, server) = bounded_source(sales(eth, ties), sales(matic, ties)).await;
-                match bounded_sales_rows(&state, json!({}), SUMMARY_FIELDS, "/test").await {
-                    Ok(_) => panic!("{eth}/{matic} (ties {ties}) was presented as complete"),
-                    Err(response) => assert_over_limit(response, over, var).await,
+                let (state, logs, server) =
+                    bounded_source(sales(count, ties), sales(0, ties)).await;
+                let url = Network::Ethereum.url(&state.index).unwrap();
+                let page = GraphPage {
+                    entity: "sales",
+                    filter_type: "Sale_filter",
+                    fields: SUMMARY_FIELDS,
+                    where_: json!({}),
+                    order_by: "timestamp",
+                    direction: "desc",
+                    first: 0,
+                    skip: 0,
+                };
+                let read =
+                    readers::bounded_rows(&state, Network::Ethereum, url, Ttl::M5, &page, SMALL)
+                        .await
+                        .unwrap();
+                match read {
+                    readers::Bounded::Complete(rows) => {
+                        assert!(
+                            complete,
+                            "{count} rows (ties {ties}) were presented as complete"
+                        );
+                        let ids: Vec<_> = rows.iter().map(|r| readers::str_of(r, "id")).collect();
+                        let expected: Vec<_> = (0..count).map(|i| format!("s{i:06}")).collect();
+                        assert_eq!(ids, expected, "ties {ties}");
+                    }
+                    readers::Bounded::Overflow => {
+                        assert!(!complete, "{count} rows (ties {ties}) overflowed");
+                    }
                 }
+                assert_eq!(
+                    *logs[0].lock().unwrap(),
+                    vec![(SMALL + 1, 0, false)],
+                    "one request for the bound and its probe row (ties {ties})"
+                );
                 server.abort();
             }
         }
     }
 
     #[tokio::test]
+    async fn a_seller_past_the_bound_on_either_network_is_unavailable() {
+        assert_eq!(MAX, 25_000);
+        let (state, _, server) = bounded_source(sales(MAX, 7), sales(MAX + 1, 7)).await;
+        match bounded_sales_rows(&state, json!({}), SUMMARY_FIELDS, "/test").await {
+            Ok(_) => panic!("a seller past the bound was presented as complete"),
+            Err(response) => {
+                assert_over_limit(response, "matic", "MATIC_COLLECTIONS_SUBGRAPH_URL").await
+            }
+        }
+        server.abort();
+    }
+
+    #[tokio::test]
     async fn an_in_limit_seller_reads_the_same_pages_and_the_bound_one_probe_more() {
         let (state, logs, server) = bounded_source(sales(MAX - 1, 7), sales(MAX, 7)).await;
-        bounded_sales_rows(&state, json!({}), SUMMARY_FIELDS, "/test")
+        let rows = bounded_sales_rows(&state, json!({}), SUMMARY_FIELDS, "/test")
             .await
             .unwrap_or_else(|_| panic!("in limit"));
+        let on = |name: &str| rows.iter().filter(|(n, _)| n.db_name() == name).count();
+        assert_eq!((on("ethereum") as i64, on("matic") as i64), (MAX - 1, MAX));
+        let ids: std::collections::HashSet<_> = rows
+            .iter()
+            .map(|(n, r)| (n.db_name(), readers::str_of(r, "id")))
+            .collect();
+        assert_eq!(ids.len(), rows.len(), "no row read twice");
         let below = logs[0].lock().unwrap().clone();
         assert_eq!(below.len(), 25, "six skip pages, then keyset pages");
         assert!(below.iter().all(|(first, _, _)| *first == 1000));
