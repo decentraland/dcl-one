@@ -211,9 +211,9 @@ pub fn charge_basis_for_usd_pegged(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_primitives::I256;
 
     const WAD: U256 = U256::from_limbs([1_000_000_000_000_000_000u64, 0, 0, 0]);
-    use alloy_primitives::I256;
 
     fn wei(n: u64) -> U256 {
         U256::from(n)
