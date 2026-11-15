@@ -1,0 +1,15 @@
+.root {
+  display: flex; align-items: center; justify-content: center;
+  width: inherit; height: inherit; vertical-align: middle;
+}
+.root[data-inline] { display: inline-flex; }
+.face {
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+  width: 32px; height: 32px; overflow: hidden; border-radius: 50%; user-select: none;
+  background: var(--avatar-face-bg, var(--fill-5)); color: var(--avatar-face-ink, var(--text));
+}
+.root[data-size="tiny"] .face { width: 20px; height: 20px; }
+.root[data-size="medium"] .face { width: 48px; height: 48px; }
+.root[data-size="large"] .face { width: 108px; height: 108px; }
+.img { width: 100%; height: 100%; object-fit: cover; }
+.glyph { width: 75%; height: 75%; fill: currentColor; }

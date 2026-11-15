@@ -1,0 +1,20 @@
+.root {
+  display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto;
+  padding: 8px; border: 0; border-radius: 50%; background: transparent;
+  color: var(--icon-btn-ink, var(--text)); font-size: 1.5rem; cursor: pointer;
+  transition: background-color .15s ease;
+}
+.root[data-tone="inherit"] { color: inherit; }
+.root[data-tone="primary"] { color: var(--brand); }
+.root[data-size="small"] { padding: 5px; font-size: 1.125rem; }
+.root[data-size="large"] { padding: 12px; font-size: 1.75rem; }
+.root[data-edge="start"] { margin-left: -12px; }
+.root[data-edge="end"] { margin-right: -12px; }
+.root[data-size="small"][data-edge="start"] { margin-left: -3px; }
+.root[data-size="small"][data-edge="end"] { margin-right: -3px; }
+.root:hover:not(:disabled) { background: var(--fill-3); }
+.root:focus-visible {
+  outline: var(--focus-ring-width, 2px) solid var(--focus-ring-color, var(--brand));
+  outline-offset: var(--focus-ring-offset, 2px);
+}
+.root:disabled { color: var(--ctl-disabled-ink, var(--ink-45)); cursor: default; }

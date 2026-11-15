@@ -1,0 +1,20 @@
+/* What HubSpinner adds to spinner.css: the wide ring. In the 50 unit box of the spinner it is the radius 20.2
+   and the stroke 3.6 of a 44 unit box, with butt ends, one turn in 1.4 s and an arc that grows and shrinks.
+   The first rule sets a property spinner.css also sets, so it names the class of spinner.css too and wins in
+   any load order. */
+:global(.spinner).wide svg { animation-duration: 1.4s; }
+
+.wide circle {
+  r: 22.955px;
+  stroke-width: 4.091px;
+  stroke-linecap: butt;
+  stroke-dasharray: 90.91px, 227.27px;
+  stroke-dashoffset: 0;
+  animation: hub-spinner-dash 1.4s ease-in-out infinite;
+}
+
+@keyframes hub-spinner-dash {
+  0% { stroke-dasharray: 1.136px, 227.27px; stroke-dashoffset: 0; }
+  50% { stroke-dasharray: 113.64px, 227.27px; stroke-dashoffset: -17.05px; }
+  100% { stroke-dasharray: 113.64px, 227.27px; stroke-dashoffset: -142.05px; }
+}

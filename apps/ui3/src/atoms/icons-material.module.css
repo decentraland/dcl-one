@@ -1,0 +1,16 @@
+.root {
+  display: inline-block;
+  flex-shrink: 0;
+  width: 1em;
+  height: 1em;
+  fill: currentColor;
+  user-select: none;
+}
+.root[data-size="inherit"] { font-size: inherit; }
+.root[data-size="small"] { font-size: 1.25rem; }
+.root[data-size="medium"] { font-size: 1.5rem; }
+.root[data-size="large"] { font-size: 2.1875rem; }
+.root[data-tone="primary"] { color: var(--brand); }
+.root[data-tone="secondary"] { color: var(--icon-secondary, var(--text)); }
+.root[data-tone="error"] { color: var(--error); }
+.root[data-tone="disabled"] { color: var(--ctl-disabled-ink, var(--ink-45)); }

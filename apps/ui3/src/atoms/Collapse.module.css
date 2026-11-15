@@ -1,0 +1,12 @@
+.root {
+  display: grid; grid-template-rows: 1fr;
+  transition: grid-template-rows .3s ease, display .3s allow-discrete;
+}
+.root[hidden] { display: none; grid-template-rows: 0fr; }
+@starting-style {
+  .root:not([hidden]) { grid-template-rows: 0fr; }
+}
+.inner { min-height: 0; overflow: hidden; }
+@media (prefers-reduced-motion: reduce) {
+  .root { transition: none; }
+}
