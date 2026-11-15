@@ -545,12 +545,17 @@ fn trade_delivered_token_id(
     trade: Option<&ValidatedTrade>,
     expected_token: Option<U256>,
 ) -> Result<U256, ApiError> {
-    let trade = trade.ok_or_else(|| {
-        ApiError::Internal("trade buy confirmed without the validated trade context".into())
-    })?;
-    let from = match trade.delivery {
-        TradeDelivery::Nft { .. } => trade.signer,
-        TradeDelivery::Item { .. } => Address::ZERO,
+    // Resumed from the recorded row alone, the trade is known by what the
+    // row kept: an NFT trade recorded the token it delivers, taken on the
+    // confirmed receipt as a secondary buy's is; an item trade recorded none
+    // and mints.
+    let from = match (trade, expected_token) {
+        (Some(trade), _) => match trade.delivery {
+            TradeDelivery::Nft { .. } => trade.signer,
+            TradeDelivery::Item { .. } => Address::ZERO,
+        },
+        (None, Some(expected)) => return Ok(expected),
+        (None, None) => Address::ZERO,
     };
     let delivered =
         transferred_token_id_from_logs(logs, collection, from, relayer).ok_or_else(|| {
@@ -568,6 +573,48 @@ fn trade_delivered_token_id(
         )));
     }
     Ok(delivered)
+}
+
+/// Drives the buy already claimed under `key` from its recorded row alone,
+/// with no request body and no catalogue, trade or price re-check: the buy
+/// may already have mined, closing the trade or using up the item's supply,
+/// so a fresh validation would refuse a purchase that has spent MANA. `Ok` is
+/// the forward transaction hash once the token is in escrow custody; the
+/// row's status decides the rest exactly as a repeated [`buy`] does.
+pub async fn resume(state: &SharedState, key: &str) -> Result<String, ApiError> {
+    require_broadcast_enabled(state, "broker buys")?;
+    let Some(signer) = state.transaction.direct_signer() else {
+        return Err(ApiError::RelayerUnavailable(
+            "resuming a broker buy requires the direct JSON-RPC signer".into(),
+        ));
+    };
+    let signer: &DirectSigner = signer.as_ref();
+    let row: Option<(String, String, String, Option<String>)> = sqlx::query_as(
+        "SELECT mode, collection, escrow_address, buyer_address \
+         FROM shop.broker_purchases WHERE idempotency_key = $1",
+    )
+    .bind(key)
+    .fetch_optional(&state.pool)
+    .await?;
+    let Some((mode, collection, escrow, buyer)) = row else {
+        return Err(ApiError::NotFound(format!(
+            "no broker buy was claimed under {key:?}"
+        )));
+    };
+    let buyer = buyer
+        .ok_or_else(|| ApiError::Internal(format!("broker buy {key:?} has no buyer_address")))?;
+    let ctx = BuyContext {
+        state,
+        signer,
+        key,
+        mode: PurchaseMode::parse_wearable(&mode)?,
+        collection: parse_address("collection", &collection)?,
+        escrow: parse_address("escrowAddress", &escrow)?,
+        buyer: parse_address("buyerAddress", &buyer)?,
+        relayer: signer.relayer_address(),
+        trade: None,
+    };
+    Ok(resume_existing(ctx).await?.forward_tx_hash)
 }
 
 async fn resume_existing(ctx: BuyContext<'_>) -> Result<BuyOutcome, ApiError> {
