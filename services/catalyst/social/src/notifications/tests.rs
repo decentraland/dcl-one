@@ -1627,7 +1627,7 @@ async fn only_mark_read_accepts_the_pre_6_signed_payload() {
 mod ingest {
     use super::*;
     use crate::notifications::ingest::{
-        MAX_BODY_BYTES, MAX_ITEMS, MAX_METADATA_BYTES, Producer, dedup, validate,
+        MAX_BODY_BYTES, MAX_METADATA_BYTES, Producer, dedup, validate,
     };
     use crate::notifications::store::test_support::delivery_state;
 
@@ -1791,10 +1791,6 @@ mod ingest {
                 with("metadata", json!({ "pad": "x".repeat(MAX_METADATA_BYTES) })),
                 "\"[0].metadata\" must be less than or equal to 16384 bytes",
             ),
-            (
-                json!(vec![ok.clone(); MAX_ITEMS + 1]),
-                "\"value\" must contain less than or equal to 10000 items",
-            ),
         ] {
             assert_eq!(
                 validate(&body, Producer::Governance, NOW).unwrap_err(),
@@ -1818,7 +1814,7 @@ mod ingest {
         assert!(validate(&at_skew, Producer::Governance, NOW).is_ok());
         let mut big = ok.clone();
         big["metadata"] = json!({ "pad": "x".repeat(MAX_METADATA_BYTES - 10) });
-        assert!(validate(&json!(vec![big; MAX_ITEMS]), Producer::Governance, NOW).is_ok());
+        assert!(validate(&json!(vec![big; 20_000]), Producer::Governance, NOW).is_ok());
     }
 
     #[test]
@@ -1983,6 +1979,42 @@ mod ingest {
             Some((json!({ "title": "new" }), 1_700_000_500_000, true))
         );
         assert_eq!(delivery_state(state.store.pool(), id).await, None);
+    }
+
+    #[tokio::test]
+    async fn upsert_counts_new_and_updated_notifications() {
+        use crate::notifications::ingest::{Upserted, upsert};
+        let Some(state) = producers().await else {
+            return;
+        };
+        let (a, b) = (fresh_address(), fresh_address());
+        let kind = "governance_proposal_enacted";
+        let key = format!("count-{}", Uuid::new_v4());
+        let batch = |ts: i64| {
+            validate(
+                &json!([entry(kind, &a, &key, ts), entry(kind, &b, &key, ts)]),
+                Producer::Governance,
+                NOW,
+            )
+            .unwrap()
+        };
+        let pool = state.store.pool();
+        let first = upsert(pool, batch(1_700_000_000_000)).await.unwrap();
+        assert_eq!(
+            first,
+            Upserted {
+                inserted: 2,
+                updated: 0
+            }
+        );
+        let again = upsert(pool, batch(1_700_000_100_000)).await.unwrap();
+        assert_eq!(
+            again,
+            Upserted {
+                inserted: 0,
+                updated: 2
+            }
+        );
     }
 
     #[tokio::test]
