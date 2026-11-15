@@ -4,7 +4,6 @@
   "dependencies": {
     "@babel/parser": "7.28.5",
     "@dcl/asset-packs": "file:../asset-packs",
-    "@noble/hashes": "2.4.0",
     "@protobufjs/utf8": "1.1.2",
     "@well-known-components/pushable-channel": "^1.0.3",
     "ajv": "8.18.0",
@@ -30,6 +29,7 @@
     "@dcl/rpc": "^1.1.1",
     "@dcl/schemas": "26.5.0",
     "@dcl/sdk": "7.29.0",
+    "@noble/hashes": "2.4.0",
     "@oxc-parser/wasm": "^0.60.0",
     "@playwright/test": "1.62.0",
     "@reduxjs/toolkit": "2.2.6",
