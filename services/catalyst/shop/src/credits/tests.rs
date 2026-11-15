@@ -168,9 +168,10 @@ pub(crate) struct MockBroker {
     pub configured: bool,
     pub buys: Arc<parking_lot::Mutex<Vec<BuyRequest>>>,
     pub buy_answer: parking_lot::Mutex<Result<(), BrokerError>>,
-    /// When set, a buy claims its key in `shop.broker_purchases` as `sent`
-    /// before answering, as a broadcast buy does.
-    pub claims: Option<PgPool>,
+    /// When set, a buy leaves its key's `shop.broker_purchases` claim in
+    /// this status before answering (`sent`: it broadcast; `pending`: it
+    /// re-armed a claim that failed before broadcast).
+    pub claims: Option<(PgPool, &'static str)>,
     pub resumes: Arc<parking_lot::Mutex<Vec<String>>>,
     pub resume_answer: Arc<parking_lot::Mutex<Result<(), BrokerError>>>,
     pub verifications: HashMap<String, ManaPaymentVerification>,
@@ -210,8 +211,8 @@ impl Broker for MockBroker {
 
     async fn buy(&self, req: &BuyRequest) -> Result<String, BrokerError> {
         self.buys.lock().push(req.clone());
-        if let Some(pool) = &self.claims {
-            claim_broker_buy(pool, &req.idempotency_key, "sent", None).await;
+        if let Some((pool, status)) = &self.claims {
+            claim_broker_buy(pool, &req.idempotency_key, status, None).await;
         }
         self.buy_answer
             .lock()
@@ -6089,7 +6090,7 @@ async fn a_buy_that_mined_after_its_attempt_timed_out_is_resumed_not_refunded() 
 
     // The first attempt broadcasts the buy, then gives up waiting for its receipt.
     let mut broker = MockBroker::configured();
-    broker.claims = Some(pool.clone());
+    broker.claims = Some((pool.clone(), "sent"));
     *broker.buy_answer.lock() = Err(BrokerError::Retryable(
         "broker status 504: broker buy tx not yet mined".into(),
     ));
@@ -6143,6 +6144,59 @@ async fn a_buy_that_mined_after_its_attempt_timed_out_is_resumed_not_refunded() 
     assert_eq!(checkout_status(&pool, checkout).await, "fulfilled");
     assert_eq!(available(&pool, &addr).await, "7", "no refund");
     assert_reconciles(&pool, &addr, "after the resumed buy").await;
+
+    cleanup(&pool, &addr).await;
+}
+
+#[tokio::test]
+async fn a_buy_that_failed_before_broadcast_counts_its_attempts_and_is_refunded() {
+    let _serial = OUTBOX_SERIAL.lock().await;
+    let Some(pool) = pool().await else { return };
+    let addr = scratch_wallet().address;
+    seed_wallet(&pool, &addr, "0", "10").await;
+    // The claim failed before broadcast; each buy re-arms it to `pending`
+    // and answers 409 without broadcasting, so no transaction is recorded.
+    let mut broker = MockBroker::configured();
+    broker.claims = Some((pool.clone(), "pending"));
+    *broker.buy_answer.lock() = Err(BrokerError::Retryable(
+        "broker status 409: previously failed before broadcast and was re-armed".into(),
+    ));
+    let (buys, resumes) = (broker.buys.clone(), broker.resumes.clone());
+    let state = state_with(
+        pool.clone(),
+        StateCfg {
+            fulfillment_mode: "auto",
+            ..StateCfg::default()
+        },
+        market_for_checkout(),
+        broker,
+    );
+    let checkout = debited_checkout(&state, &addr, &["1"]).await;
+    let line = outbox_lines(&pool, checkout).await[0].0;
+    claim_broker_buy(&pool, &format!("checkout:{checkout}:{line}"), "error", None).await;
+
+    let worker = state.outbox_worker();
+    for expected_attempts in 1..5 {
+        assert_eq!(worker.run_once().await.unwrap(), 1);
+        assert_eq!(outbox_lines(&pool, checkout).await[0].2, expected_attempts);
+    }
+    assert_eq!(
+        worker.run_once().await.unwrap(),
+        1,
+        "the fifth attempt freezes"
+    );
+    assert_eq!(checkout_status(&pool, checkout).await, "reversed");
+    assert_eq!(
+        available(&pool, &addr).await,
+        "10",
+        "nothing was sent: refunded"
+    );
+    assert_eq!(buys.lock().len(), 5, "every attempt is a checked buy");
+    assert!(
+        resumes.lock().is_empty(),
+        "a claim without a transaction is never resumed"
+    );
+    assert_reconciles(&pool, &addr, "after refunding the unsent claim").await;
 
     cleanup(&pool, &addr).await;
 }

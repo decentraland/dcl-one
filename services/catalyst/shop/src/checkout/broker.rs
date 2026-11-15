@@ -893,8 +893,47 @@ pub(crate) async fn mark_error(state: &SharedState, key: &str) {
 
 #[cfg(test)]
 mod tests {
-    use super::collections_spender;
+    use super::{collections_spender, trade_delivered_token_id};
     use crate::evm::contracts_addrs::DclContracts;
+    use crate::evm::signer::ReceiptLog;
+    use alloy_primitives::{Address, B256, Bytes, U256};
+
+    fn transfer(collection: Address, from: Address, to: Address, token: u64) -> ReceiptLog {
+        let word = |a: Address| B256::left_padding_from(a.as_slice());
+        ReceiptLog {
+            address: collection,
+            topics: vec![
+                B256::from(crate::evm::abi::ERC721_TRANSFER_TOPIC0),
+                word(from),
+                word(to),
+                B256::from(U256::from(token)),
+            ],
+            data: Bytes::new(),
+        }
+    }
+
+    #[test]
+    fn a_trade_resumed_without_its_payload_takes_the_token_the_row_recorded() {
+        let collection = Address::repeat_byte(0xc0);
+        let relayer = Address::repeat_byte(0x11);
+        let seller = Address::repeat_byte(0x22);
+        let nft = [transfer(collection, seller, relayer, 7)];
+        assert_eq!(
+            trade_delivered_token_id(&nft, collection, relayer, None, Some(U256::from(7))).unwrap(),
+            U256::from(7),
+            "an NFT trade forwards the token its row recorded"
+        );
+        let minted = [transfer(collection, Address::ZERO, relayer, 9)];
+        assert_eq!(
+            trade_delivered_token_id(&minted, collection, relayer, None, None).unwrap(),
+            U256::from(9),
+            "an item trade with no recorded token forwards the one it minted"
+        );
+        assert!(
+            trade_delivered_token_id(&nft, collection, relayer, None, None).is_err(),
+            "an item trade whose receipt shows no mint to the relayer forwards nothing"
+        );
+    }
 
     #[test]
     fn collections_spender_resolves_store_and_marketplace_only() {
