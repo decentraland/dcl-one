@@ -67,7 +67,7 @@ Browser playback uses one mixer, and room teardown disposes its remote handles a
 playback independently of asynchronous SDK disconnect events. Private chat remains data-only.
 Browser proximity microphones have one gain writer, combining spatial attenuation,
 voice volume and any transmitter multiplier. Call audio uses its own voice-chat
-volume; other tracks use the scene-volume path.
+volume; other tracks use the streaming-volume path.
 
 ## Connectivity feedback
 

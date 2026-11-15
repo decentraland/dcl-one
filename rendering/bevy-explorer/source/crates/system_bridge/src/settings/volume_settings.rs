@@ -77,6 +77,13 @@ volume_setting!(
     |cfg: &AudioSettings| cfg.scene
 );
 volume_setting!(
+    StreamingVolumeSetting,
+    "Streaming",
+    "The volume of videos, audio streams and livestreams played by scenes in the world.",
+    |cfg: &mut AudioSettings, val: i32| cfg.streaming = val,
+    |cfg: &AudioSettings| cfg.streaming
+);
+volume_setting!(
     VoiceVolumeSetting,
     "Voice",
     "The volume of nearby players' voices.",

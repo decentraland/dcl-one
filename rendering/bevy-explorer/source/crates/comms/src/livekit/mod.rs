@@ -82,8 +82,8 @@ pub(crate) fn standalone_room_components(
     )
 }
 
-/// The native output of the rooms' flat audio: casts and streams on `scene_track` at the scene
-/// volume, a call's voices on `voice_track` at the voice chat volume (nearby voice is spatial and
+/// The native output of the rooms' flat audio: casts and streams on `scene_track` at the
+/// streaming volume, a call's voices on `voice_track` at the voice chat volume (nearby voice is spatial and
 /// played by `av`).
 #[derive(Resource, Deref, DerefMut)]
 pub struct LivekitAudioManager {
