@@ -1025,6 +1025,44 @@ async fn legacy_orders_count_per_transaction_and_resolve_relays() {
     assert_eq!(progress(&pool, relay, "emotionista").await, None);
 }
 
+#[tokio::test]
+async fn credits_manager_legacy_orders_credit_the_credits_user() {
+    let Some(pool) = private_pool("badges_sales_credits_manager").await else {
+        return;
+    };
+    let p = pass(&pool);
+    chain_ready(&pool, "nft", 100).await;
+    sales::batch(&p, Log::Order).await.unwrap();
+    let c = contract();
+    item(&pool, &c, 1, "wearable_v2", fresh_address().as_str()).await;
+    // useCredits: the order pays the seller and hands the token to the
+    // CreditsManager, which forwards it to the user later in the transaction
+    let credits_manager = "0x8b3a40ca1b6f5cafc99d112a4d02e897d1fd8cc5";
+    let user = fresh_address();
+    let tx = format!("0x{}", "d".repeat(64));
+    nft_event(&pool, 101, 0, "transfer", &c, 1, credits_manager, None).await;
+    nft_event(
+        &pool,
+        101,
+        1,
+        "order_successful",
+        &c,
+        1,
+        credits_manager,
+        Some(&tx),
+    )
+    .await;
+    nft_event(&pool, 101, 2, "transfer", &c, 1, user.as_str(), None).await;
+    chain_ready(&pool, "nft", 101).await;
+    sales::batch(&p, Log::Order).await.unwrap();
+    let bought = progress(&pool, user.as_str(), "fashionista").await.unwrap();
+    assert_eq!(
+        bought.1["transactions_wearable_purchase"],
+        json!([{"transactionHash": tx, "saleAt": 1_700_000_000_000_i64}])
+    );
+    assert_eq!(progress(&pool, credits_manager, "fashionista").await, None);
+}
+
 async fn mirror_ready(pool: &PgPool, mirror: &str) {
     sqlx::query(
         "INSERT INTO shop.mirror_state (mirror, network, source_url, last_complete_pass_at) \
