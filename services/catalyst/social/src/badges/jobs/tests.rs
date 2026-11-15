@@ -720,6 +720,76 @@ async fn a_rolled_back_id_is_a_gap_until_no_transaction_can_hold_it() {
     assert_eq!(progress(&pool, a.as_str(), "vertical_voyager").await, None);
 }
 
+/// Two runners of one source (the second taking the lease while the first
+/// still runs its batch): the batch that finds the cursor moved since it read
+/// it comes back idle and writes nothing, so no step is counted twice.
+#[tokio::test]
+async fn a_batch_that_finds_the_cursor_moved_by_another_runner_writes_nothing() {
+    let Some(pool) = private_pool("badges_cursor_fence").await else {
+        return;
+    };
+    let p = pass(&pool);
+    client_events::batch(&p).await.unwrap();
+    let (start, _) = cursor(&pool, client_events::SOURCE).await.unwrap();
+    let a = fresh_address();
+    client_event(
+        &pool,
+        a.as_str(),
+        "vertical-height-reached",
+        None,
+        now(),
+        json!({"height": 600}),
+    )
+    .await;
+    let head: i64 = sqlx::query_scalar(client_events::READ.head)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(head > start);
+
+    // The other runner holds the cursor while it finishes the same rows.
+    let mut other = pool.begin().await.unwrap();
+    let other_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut *other)
+        .await
+        .unwrap();
+    super::lock_cursor(&mut other, client_events::SOURCE)
+        .await
+        .unwrap();
+    let late = tokio::spawn({
+        let p = p.clone();
+        async move { client_events::batch(&p).await }
+    });
+    // The late batch has read the cursor and the rows and waits on the lock.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        let waiting: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))",
+        )
+        .bind(other_pid)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        if waiting > 0 {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the batch never waited on the cursor"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    super::advance(&mut other, client_events::SOURCE, head, 0)
+        .await
+        .unwrap();
+    other.commit().await.unwrap();
+
+    assert_eq!(late.await.unwrap().unwrap(), (0, false));
+    assert_eq!(progress(&pool, a.as_str(), "vertical_voyager").await, None);
+    assert_eq!(cursor(&pool, client_events::SOURCE).await, Some((head, 0)));
+    assert!(gaps(&pool, client_events::SOURCE).await.is_empty());
+}
+
 fn gap(lo: i64, hi: i64) -> Gap {
     Gap {
         lo,

@@ -16,6 +16,16 @@
 //! with [`Jobs::with_fleet_jobs`] false stands every fleet-wide job down (an
 //! API replica); one built with [`Jobs::new`] and no leases (tests, a node
 //! that never runs a second process) runs them unconditionally.
+//!
+//! The lease keeps a fleet-wide job to one runner at a time only up to its
+//! cancellation point. Every lease statement and the keeper's wait for the
+//! lease session are bounded by [`LeaseSettings::keepalive`], so this process
+//! notices a lost lease within a few keepalives. Cancellation is cooperative:
+//! a periodic job stops between passes, and the pass already running when
+//! the lease is lost finishes while another process may already have taken
+//! the lease and started its own. Advisory locks carry no fencing token, so a
+//! fleet-wide job whose durable effects must not be applied twice fences them
+//! itself (a row lock, a claim, or a compare against a stamp it read).
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -280,7 +290,10 @@ impl Jobs {
     /// A fleet-wide job: `body` runs while this process holds the lease
     /// named `name` and is called again after every standby. It is cancelled
     /// (through its context's token) when the lease is lost, and its helpers
-    /// spawned with [`Jobs::spawn_scoped`] end with it. An `Err` releases the
+    /// spawned with [`Jobs::spawn_scoped`] end with it. Cancellation does not
+    /// interrupt the body: the job returns to standby only once the body
+    /// returns, and another process may run the job meanwhile (see the module
+    /// docs on fencing). An `Err` releases the
     /// lease and retries after a backoff, so a fleet-wide job never stays
     /// dead while a process could run it; `Ok` finishes the job. Without
     /// leases the body runs once, as [`Jobs::spawn`] would run it.
@@ -611,11 +624,18 @@ impl Default for LeaseSettings {
 /// connection beside the pool's), and its TCP keepalives are short, so a
 /// backend whose client died releases the locks within seconds. Losing the
 /// session (a failed or slow keepalive) cancels every holder's `lost` token
-/// and forgets the leases; the next acquire reconnects.
+/// and forgets the leases; the next acquire reconnects. Every statement on the
+/// session runs under [`LeaseSettings::keepalive`], and one that overruns it
+/// counts as a lost session: a connection that went silent never stalls the
+/// keeper.
 pub struct Leases {
     pool: PgPool,
     settings: LeaseSettings,
     conn: tokio::sync::Mutex<Option<PgConnection>>,
+    /// Set when the keeper gave the leases up because another call held the
+    /// session past the keepalive: the next call to take the session drops it,
+    /// so no lock taken on it survives the leases this process forgot.
+    conn_stale: std::sync::atomic::AtomicBool,
     held: Mutex<HashMap<String, CancellationToken>>,
     pending_release: Mutex<Vec<String>>,
 }
@@ -655,6 +675,7 @@ impl Leases {
             pool,
             settings,
             conn: tokio::sync::Mutex::new(None),
+            conn_stale: std::sync::atomic::AtomicBool::new(false),
             held: Mutex::new(HashMap::new()),
             pending_release: Mutex::new(Vec::new()),
         }
@@ -675,6 +696,36 @@ impl Leases {
         names
     }
 
+    /// The lease session, dropped (losing every lease) first if the keeper
+    /// marked it stale.
+    async fn session(&self) -> tokio::sync::MutexGuard<'_, Option<PgConnection>> {
+        let mut slot = self.conn.lock().await;
+        if self
+            .conn_stale
+            .swap(false, std::sync::atomic::Ordering::SeqCst)
+            && slot.take().is_some()
+        {
+            self.lose_all("the lease connection was given up while busy");
+        }
+        slot
+    }
+
+    /// `statement` under the keepalive bound; overrunning it is an error, so
+    /// the caller drops the session as it does on any failure.
+    async fn bounded<T>(
+        &self,
+        statement: impl Future<Output = sqlx::Result<T>>,
+    ) -> sqlx::Result<T> {
+        tokio::time::timeout(self.settings.keepalive, statement)
+            .await
+            .unwrap_or_else(|_| {
+                Err(sqlx::Error::Io(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "the lease statement outlasted the keepalive",
+                )))
+            })
+    }
+
     async fn connect(&self) -> sqlx::Result<PgConnection> {
         let mut conn = self.pool.acquire().await?.detach();
         for statement in [
@@ -682,7 +733,8 @@ impl Leases {
             "SET tcp_keepalives_interval = 2",
             "SET tcp_keepalives_count = 3",
         ] {
-            sqlx::query(statement).execute(&mut conn).await?;
+            self.bounded(sqlx::query(statement).execute(&mut conn))
+                .await?;
         }
         Ok(conn)
     }
@@ -693,17 +745,19 @@ impl Leases {
         if self.held.lock().contains_key(name) {
             return Ok(None);
         }
-        let mut slot = self.conn.lock().await;
+        let mut slot = self.session().await;
         if slot.is_none() {
             *slot = Some(self.connect().await?);
         }
         let conn = slot.as_mut().expect("connected above");
-        let taken: Result<bool, sqlx::Error> =
-            sqlx::query_scalar("SELECT pg_try_advisory_lock(hashtext($1), hashtext($2))")
-                .bind(&self.settings.namespace)
-                .bind(name)
-                .fetch_one(&mut *conn)
-                .await;
+        let taken: Result<bool, sqlx::Error> = self
+            .bounded(
+                sqlx::query_scalar("SELECT pg_try_advisory_lock(hashtext($1), hashtext($2))")
+                    .bind(&self.settings.namespace)
+                    .bind(name)
+                    .fetch_one(&mut *conn),
+            )
+            .await;
         match taken {
             Ok(true) => {
                 let lost = CancellationToken::new();
@@ -725,13 +779,16 @@ impl Leases {
     }
 
     async fn release(&self, name: &str) {
-        let mut slot = self.conn.lock().await;
+        let mut slot = self.session().await;
         self.held.lock().remove(name);
         if let Some(conn) = slot.as_mut() {
-            let unlocked = sqlx::query("SELECT pg_advisory_unlock(hashtext($1), hashtext($2))")
-                .bind(&self.settings.namespace)
-                .bind(name)
-                .execute(&mut *conn)
+            let unlocked = self
+                .bounded(
+                    sqlx::query("SELECT pg_advisory_unlock(hashtext($1), hashtext($2))")
+                        .bind(&self.settings.namespace)
+                        .bind(name)
+                        .execute(&mut *conn),
+                )
                 .await;
             if let Err(err) = unlocked {
                 tracing::warn!(lease = %name, error = %err, "releasing the lease failed; dropping the lease connection");
@@ -753,9 +810,16 @@ impl Leases {
     }
 
     /// One keeper pass: unlocks leases whose guards were dropped, then proves
-    /// the session alive with a bounded `SELECT 1`.
+    /// the session alive with a bounded `SELECT 1`. A session another call
+    /// holds past the keepalive counts as lost.
     pub async fn keepalive_once(&self) {
-        let mut slot = self.conn.lock().await;
+        let Ok(mut slot) = tokio::time::timeout(self.settings.keepalive, self.session()).await
+        else {
+            self.conn_stale
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+            self.lose_all("the lease connection is busy past the keepalive");
+            return;
+        };
         let Some(conn) = slot.as_mut() else {
             if self.held_count() > 0 {
                 self.lose_all("no lease connection");
@@ -765,10 +829,13 @@ impl Leases {
         let pending: Vec<String> = std::mem::take(&mut *self.pending_release.lock());
         for name in pending {
             self.held.lock().remove(&name);
-            let unlocked = sqlx::query("SELECT pg_advisory_unlock(hashtext($1), hashtext($2))")
-                .bind(&self.settings.namespace)
-                .bind(&name)
-                .execute(&mut *conn)
+            let unlocked = self
+                .bounded(
+                    sqlx::query("SELECT pg_advisory_unlock(hashtext($1), hashtext($2))")
+                        .bind(&self.settings.namespace)
+                        .bind(&name)
+                        .execute(&mut *conn),
+                )
                 .await;
             if let Err(err) = unlocked {
                 tracing::warn!(lease = %name, error = %err, "releasing a dropped lease failed");
@@ -803,7 +870,7 @@ impl Leases {
     /// The Postgres backend pid of the lease session, if open (tests end it
     /// with `pg_terminate_backend`).
     pub async fn backend_pid(&self) -> Option<i32> {
-        let mut slot = self.conn.lock().await;
+        let mut slot = self.session().await;
         let conn = slot.as_mut()?;
         sqlx::query_scalar("SELECT pg_backend_pid()")
             .fetch_one(&mut *conn)
@@ -1470,6 +1537,122 @@ mod lease_tests {
         );
         let aborted = jobs.shutdown(Duration::from_secs(5)).await;
         assert!(aborted.is_empty(), "{aborted:?}");
+    }
+
+    #[tokio::test]
+    async fn a_lease_session_held_past_the_keepalive_loses_the_lease_and_is_replaced() {
+        let Some(pool) = catalyst_db::scratch::pool(6).await else {
+            return;
+        };
+        let settings = settings("busy");
+        let jobs = Jobs::with_leases(pool.clone(), settings.clone());
+        let runs = Arc::new(AtomicUsize::new(0));
+        let cancelled = Arc::new(AtomicUsize::new(0));
+        jobs.spawn_leased("tick", {
+            let (runs, cancelled) = (runs.clone(), cancelled.clone());
+            move |ctx: JobContext| {
+                runs.fetch_add(1, Ordering::SeqCst);
+                let cancelled = cancelled.clone();
+                async move {
+                    ctx.cancel.cancelled().await;
+                    cancelled.fetch_add(1, Ordering::SeqCst);
+                    Ok(())
+                }
+            }
+        });
+        wait_until("first run", || runs.load(Ordering::SeqCst) == 1).await;
+        let leases = jobs.leases().unwrap();
+        let pid = leases.backend_pid().await.expect("connected");
+
+        // A call stuck on the session (a statement on a silent connection)
+        // must not keep the keeper from giving the lease up.
+        let busy = leases.conn.lock().await;
+        wait_until("the holder is cancelled while the session is busy", || {
+            cancelled.load(Ordering::SeqCst) == 1
+        })
+        .await;
+        assert_eq!(leases.held_count(), 0);
+        drop(busy);
+
+        wait_until("the lease is taken again", || {
+            runs.load(Ordering::SeqCst) == 2
+        })
+        .await;
+        let again = leases.backend_pid().await.unwrap();
+        assert_ne!(again, pid, "the busy session is replaced, not reused");
+        let aborted = jobs.shutdown(Duration::from_secs(5)).await;
+        assert!(aborted.is_empty(), "{aborted:?}");
+    }
+
+    /// A TCP relay to Postgres that can go silent: once frozen it keeps both
+    /// sockets open and forwards nothing, as a connection dropped without a
+    /// reset looks to the client.
+    async fn silent_relay(upstream: (String, u16)) -> (u16, Arc<std::sync::atomic::AtomicBool>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let frozen = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let relay_frozen = frozen.clone();
+        tokio::spawn(async move {
+            while let Ok((client, _)) = listener.accept().await {
+                let Ok(server) = tokio::net::TcpStream::connect(upstream.clone()).await else {
+                    continue;
+                };
+                let (client_rd, client_wr) = client.into_split();
+                let (server_rd, server_wr) = server.into_split();
+                for (mut rd, mut wr) in [
+                    (
+                        Box::new(client_rd) as Box<dyn tokio::io::AsyncRead + Unpin + Send>,
+                        Box::new(server_wr) as Box<dyn tokio::io::AsyncWrite + Unpin + Send>,
+                    ),
+                    (Box::new(server_rd) as _, Box::new(client_wr) as _),
+                ] {
+                    let frozen = relay_frozen.clone();
+                    tokio::spawn(async move {
+                        let mut buf = vec![0u8; 16 * 1024];
+                        loop {
+                            let n = match rd.read(&mut buf).await {
+                                Ok(0) | Err(_) => return,
+                                Ok(n) => n,
+                            };
+                            while frozen.load(Ordering::SeqCst) {
+                                tokio::time::sleep(Duration::from_millis(10)).await;
+                            }
+                            if wr.write_all(&buf[..n]).await.is_err() {
+                                return;
+                            }
+                        }
+                    });
+                }
+            }
+        });
+        (port, frozen)
+    }
+
+    #[tokio::test]
+    async fn a_lease_statement_on_a_silent_connection_times_out_and_loses_every_lease() {
+        let Some(pool) = catalyst_db::scratch::pool(2).await else {
+            return;
+        };
+        let options = (*pool.connect_options()).clone();
+        let (port, frozen) =
+            silent_relay((options.get_host().to_string(), options.get_port())).await;
+        let relayed = sqlx::postgres::PgPoolOptions::new()
+            .max_connections(2)
+            .connect_with(options.host("127.0.0.1").port(port))
+            .await
+            .unwrap();
+        let leases = Arc::new(Leases::new(relayed, settings("silent")));
+        let held = leases.try_acquire("a").await.unwrap().expect("free lease");
+
+        frozen.store(true, Ordering::SeqCst);
+        let polled = tokio::time::timeout(Duration::from_secs(5), leases.try_acquire("b")).await;
+        assert!(
+            matches!(polled, Ok(Err(_))),
+            "the lock statement must fail within the keepalive"
+        );
+        assert!(held.lost().is_cancelled(), "the held lease is lost");
+        assert_eq!(leases.held_count(), 0);
     }
 
     #[tokio::test]
