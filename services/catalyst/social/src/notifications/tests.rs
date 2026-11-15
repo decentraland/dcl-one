@@ -2069,6 +2069,72 @@ mod ingest {
         }
     }
 
+    #[tokio::test]
+    async fn a_legacy_community_opt_out_in_another_spelling_drops_the_row() {
+        let Some(state) = producers().await else {
+            return;
+        };
+        let kind = "reward_assignment";
+        for key in ["upper", "simple"] {
+            let to = fresh_address();
+            let community = Uuid::new_v4();
+            let legacy = match key {
+                "upper" => community.to_string().to_uppercase(),
+                _ => community.simple().to_string(),
+            };
+            // Rows written before `create_opt_out` canonicalised the id.
+            sqlx::query(
+                "INSERT INTO social.subscription_opt_outs (address, scope, scope_id, created_at) \
+                 VALUES ($1, 'community', $2, now())",
+            )
+            .bind(&to)
+            .bind(&legacy)
+            .execute(state.store.pool())
+            .await
+            .unwrap();
+            let mut scoped = entry(kind, &to, key, 1_700_000_000_000);
+            scoped["optOutScope"] =
+                json!({ "scope": "community", "scopeId": community.to_string() });
+            let (status, _) = send(
+                app(state.clone()),
+                "POST",
+                PATH,
+                bearer("rew"),
+                Some(json!([scoped])),
+            )
+            .await;
+            assert_eq!(status, StatusCode::NO_CONTENT);
+            assert!(row(&state, id_of(kind, &to, key)).await.is_none(), "{key}");
+
+            // The settings API reads and removes the same legacy row.
+            let canonical = community.to_string();
+            assert!(
+                state
+                    .store
+                    .is_opted_out(&to, "community", &canonical)
+                    .await
+                    .unwrap(),
+                "{key}"
+            );
+            assert!(
+                state
+                    .store
+                    .delete_opt_out(&to, "community", &canonical)
+                    .await
+                    .unwrap(),
+                "{key}"
+            );
+            assert!(
+                !state
+                    .store
+                    .is_opted_out(&to, "community", &canonical)
+                    .await
+                    .unwrap(),
+                "{key}"
+            );
+        }
+    }
+
     /// Broadcasts show in every inbox, so these tests use a private database.
     async fn private_state(tag: &str) -> Option<SharedState> {
         let pool = crate::notifications::store::test_support::private_pool(tag).await?;
