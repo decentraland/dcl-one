@@ -342,6 +342,14 @@ async fn toolkit_world_scene_colons_reach_write_authorization_and_matching_get_s
     let mut state = comms_state(pool, Settings::for_tests());
     state.scenes = Arc::new(ToolkitScenes);
     let app = super::super::router(Arc::new(state));
+    let mut authorized = comms_state(lazy_pool(), Settings::for_tests());
+    authorized.scenes = Arc::new(ToolkitScenes);
+    authorized.policy = Arc::new(ActorPolicy {
+        pool: None,
+        unavailable: false,
+        protected: BTreeSet::new(),
+    });
+    let authorized = super::super::router(Arc::new(authorized));
     let exact = metadata("CoLoN.dcl.eth", "Cid:Case", "2,2");
     let mut no_parcel = exact.clone();
     no_parcel.as_object_mut().unwrap().remove("parcel");
@@ -368,12 +376,24 @@ async fn toolkit_world_scene_colons_reach_write_authorization_and_matching_get_s
                 "valid world scene must reach actor authorization: {meta} {method} {path}: {value}"
             );
         }
-        for path in ["/scene-admin", "/scene-bans", "/scene-bans/addresses"] {
+        let (status, value) = call(&app, "GET", "/scene-admin", &meta, Value::Null, KEY).await;
+        assert_eq!(
+            status,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "valid signed world scene must reach the deliberately closed store: {meta}: {value}"
+        );
+        for path in ["/scene-bans", "/scene-bans/addresses"] {
             let (status, value) = call(&app, "GET", path, &meta, Value::Null, KEY).await;
             assert_eq!(
                 status,
+                StatusCode::UNAUTHORIZED,
+                "valid signed world scene must reach actor authorization: {meta} {path}: {value}"
+            );
+            let (status, value) = call(&authorized, "GET", path, &meta, Value::Null, KEY).await;
+            assert_eq!(
+                status,
                 StatusCode::INTERNAL_SERVER_ERROR,
-                "valid signed world scene must reach the deliberately closed store: {meta} {path}: {value}"
+                "an authorized signer must reach the deliberately closed store: {meta} {path}: {value}"
             );
         }
         let (status, value) = call(
@@ -797,6 +817,53 @@ async fn toolkit_ban_listings_bind_unsigned_selectors_to_the_signed_scene() {
     ] {
         let (status, value) = call(&app, "GET", path, &meta, Value::Null, KEY).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{path}: {value}");
+    }
+}
+
+/// Both ban listings, on a world scene and a Genesis scene: an authorized
+/// signer reaches the (closed) store, any other signer gets the upstream 401,
+/// and an authority that cannot be decided stays 503.
+#[tokio::test]
+async fn toolkit_ban_listings_need_the_scene_owner_or_an_admin() {
+    let app = |unavailable| {
+        let mut state = comms_state(lazy_pool(), Settings::for_tests());
+        state.scenes = Arc::new(ToolkitScenes);
+        state.policy = Arc::new(ActorPolicy {
+            pool: None,
+            unavailable,
+            protected: BTreeSet::new(),
+        });
+        super::super::router(Arc::new(state))
+    };
+    let (decided, undetermined) = (app(false), app(true));
+    for meta in [
+        metadata("MiXeD.dcl.eth", "SceneB", "1,1"),
+        metadata("main", "GenesisA", "42,42"),
+    ] {
+        for path in ["/scene-bans", "/scene-bans/addresses"] {
+            let (status, value) = call(&decided, "GET", path, &meta, Value::Null, KEY).await;
+            assert_eq!(
+                status,
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "{meta} {path}: {value}"
+            );
+            let (status, value) =
+                call(&decided, "GET", path, &meta, Value::Null, OUTSIDER_KEY).await;
+            assert_eq!(
+                (status, value),
+                (
+                    StatusCode::UNAUTHORIZED,
+                    json!({"error":"User does not have permission to list scene bans"})
+                ),
+                "{meta} {path}"
+            );
+            let (status, value) = call(&undetermined, "GET", path, &meta, Value::Null, KEY).await;
+            assert_eq!(
+                status,
+                StatusCode::SERVICE_UNAVAILABLE,
+                "{meta} {path}: {value}"
+            );
+        }
     }
 }
 

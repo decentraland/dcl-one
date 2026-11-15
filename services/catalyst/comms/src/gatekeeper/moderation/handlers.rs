@@ -391,13 +391,13 @@ pub async fn list_bans(
     )
     .await?;
     let context = Context::resolve(&state, &sf.metadata).await?;
-    ensure_can_list_bans(&state, &context.place, &sf.signer).await?;
     let place_id = context.place.place_id();
     if q.place_id.as_deref().is_some_and(|id| id != place_id) {
         return Err(ApiError::bad_request(
             "place_id does not match the signed scene",
         ));
     }
+    ensure_can_list_bans(&state, &context.place, &sf.signer).await?;
     let (limit, offset) = pagination(q.limit, q.offset);
     let (addresses, total) = state
         .moderation
@@ -432,13 +432,13 @@ pub async fn list_ban_addresses(
     )
     .await?;
     let context = Context::resolve(&state, &sf.metadata).await?;
-    ensure_can_list_bans(&state, &context.place, &sf.signer).await?;
     let place_id = context.place.place_id();
     if q.place_id.as_deref().is_some_and(|id| id != place_id) {
         return Err(ApiError::bad_request(
             "place_id does not match the signed scene",
         ));
     }
+    ensure_can_list_bans(&state, &context.place, &sf.signer).await?;
     let (limit, offset) = pagination(q.limit, q.offset);
     let (addresses, total) = state
         .moderation
