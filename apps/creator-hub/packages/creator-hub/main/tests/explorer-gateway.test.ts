@@ -27,11 +27,16 @@ const mocks = vi.hoisted(() => {
 });
 
 vi.mock('electron-log/main', () => ({ default: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } }));
+// The code calls these two mocks with `new`, so each needs a `function`, not an arrow function.
 vi.mock('@modelcontextprotocol/sdk/client/index.js', () => ({
-  Client: vi.fn(() => mocks.client),
+  Client: vi.fn(function () {
+    return mocks.client;
+  }),
 }));
 vi.mock('@modelcontextprotocol/sdk/client/streamableHttp.js', () => ({
-  StreamableHTTPClientTransport: vi.fn(() => ({ close: mocks.transportClose })),
+  StreamableHTTPClientTransport: vi.fn(function () {
+    return { close: mocks.transportClose };
+  }),
 }));
 vi.mock('../src/modules/cli', () => ({
   start: mocks.start,

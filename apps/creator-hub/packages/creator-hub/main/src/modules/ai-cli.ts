@@ -205,7 +205,7 @@ function loginEnv(): Record<string, string> {
 // text we surface aren't polluted by cursor moves, colors, and terminal hyperlinks (claude wraps
 // its sign-in URL in one, which otherwise glues the link target onto the visible URL).
 const ANSI_RE =
-  // eslint-disable-next-line no-control-regex
+  // oxlint-disable-next-line no-control-regex
   /\u001b\[[0-9;?]*[A-Za-z]|\u009b[0-9;?]*[A-Za-z]|\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)/g;
 const URL_RE = /(https?:\/\/[^\s'"]+)/g;
 

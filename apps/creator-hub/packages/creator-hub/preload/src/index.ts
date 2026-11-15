@@ -10,10 +10,10 @@ export const workspace = initializeWorkspace(services);
 /**
  * The filesystem functions the renderer can call.
  *
- * `unplugin-auto-expose` puts every export of this module on `window.__electron_preload__*`,
- * so re-exporting the whole service module would also expose the ones only preload itself
- * uses: `cp`, `isWritable`, `rename`, and `openPath`. The `#preload` virtual module is
- * generated from this list, so renderer imports are unaffected.
+ * The `preloadExpose` plugin in `../expose-plugin.js` puts every export of this module on
+ * `window.__electron_preload__*`, so re-exporting the whole service module would also expose
+ * the ones only preload itself uses: `cp`, `isWritable`, `rename`, and `openPath`. The
+ * `#preload` virtual module is generated from this list, so renderer imports are unaffected.
  *
  * Note this list is a surface, not a boundary — the entries below still take absolute paths.
  * `resolveWithin` is the boundary, and the RPC layer routes Inspector-supplied paths through

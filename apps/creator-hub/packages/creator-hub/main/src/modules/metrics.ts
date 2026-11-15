@@ -11,7 +11,7 @@ const REQUEST_TIMEOUT_MS = 15_000;
 
 /**
  * The only headers the renderer gets to set: the full ADR-44 signed-fetch set
- * `signedHeaderFactory` produces. The server rebuilds the signed payload from
+ * `signedHeaders` of the renderer produces. The server rebuilds the signed payload from
  * the timestamp and metadata headers, so dropping either fails verification
  * with "Expired signature: signature timestamp: 0".
  */

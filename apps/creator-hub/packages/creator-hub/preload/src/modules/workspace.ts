@@ -255,7 +255,7 @@ export function initializeWorkspace(services: Services) {
               if (await isDCL(projectDir)) {
                 promises.push(safeGetProject(projectDir));
               }
-              // eslint-disable-next-line no-empty
+              // oxlint-disable-next-line no-empty
             } catch (_) {}
           }
         }

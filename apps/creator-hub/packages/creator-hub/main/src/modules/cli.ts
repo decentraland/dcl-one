@@ -3,7 +3,6 @@ import { join } from 'path';
 import fs from 'fs/promises';
 import log from 'electron-log/main';
 import { shell } from 'electron';
-import QRCode from 'qrcode';
 
 import type { PreviewOptions } from '/shared/types/settings';
 import { PREVIEW_CLIENT } from '/shared/types/settings';
@@ -21,6 +20,7 @@ import { getProjectId, track } from './analytics';
 import { install } from './npm';
 import { downloadGithubRepo } from './download-github-folder';
 import { startMobileDebugServer } from './mobile-debug-server';
+import { qrCodeDataUrl } from './qr-code';
 import { getLanIp } from './network';
 
 // `mobile` marks a preview that was started for the mobile-QR flow (`--mobile`): the
@@ -231,7 +231,7 @@ export async function getMobilePreview(path: string): Promise<{ url: string; qr:
         }
 
         // Regenerate QR with the modified URL
-        qr = await QRCode.toDataURL(url, { width: 512, margin: 2 });
+        qr = qrCodeDataUrl(url);
 
         log.info(`[mobile-debug] WS at ws://0.0.0.0:${wsPort}, mobile URL updated`);
       } catch (wsError: unknown) {

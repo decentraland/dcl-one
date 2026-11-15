@@ -2,15 +2,14 @@ import { promisify } from 'util';
 import { exec as execSync, spawn } from 'child_process';
 import log from 'electron-log/main';
 import { shell, utilityProcess } from 'electron';
-import treeKill from 'tree-kill';
-import { future, type IFuture } from 'fp-future';
-import isRunning from 'is-running';
 import { ErrorBase } from '/shared/types/error';
 import { createCircularBuffer } from '/shared/circular-buffer';
+import { future, type IFuture } from '/shared/future';
 
 import { CLIENT_NOT_INSTALLED_ERROR } from '/shared/types/client';
 import { ClientError } from '/shared/types/client';
 import { APP_UNPACKED_PATH } from './path';
+import { killProcessTree } from './process-tree';
 import { setupNodeBinary } from './setup-node';
 import { getChildEnv, resolveBin, resolveNodeRuntime } from './node-runtime';
 
@@ -23,7 +22,7 @@ const exec = promisify(execSync);
 const MAX_BUFFER_SIZE = 2048;
 
 // Window for a child to exit gracefully before the kill escalates.
-// On Windows, tree-kill already issues taskkill /F /T so a long graceful wait just delays
+// On Windows, killProcessTree already issues taskkill /F /T so a long graceful wait just delays
 // NSIS-triggered update installs; 500 ms is sufficient for the process tree to collapse.
 // The quit budget in index.ts is derived from this value and must stay above it.
 export const FORCE_KILL_TIMEOUT_MS = process.platform === 'win32' ? 500 : 5000;
@@ -95,6 +94,18 @@ type RunOptions = {
   env?: Record<string, string>; // this are the env vars that should be added to the command's env
   workspace?: string; // this is the path where the node_modules that should be used are located, it defaults to the app path.
 };
+
+/**
+ * Tells if a process with this pid exists. A process that this user is not allowed to
+ * signal (EPERM) exists, thus it is running.
+ */
+export function isProcessRunning(pid: number): boolean {
+  try {
+    return process.kill(pid, 0);
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
 
 /**
  * Runs a javascript bin script in a child process, provides helpers to wait for the process to finish, listen for outputs, etc.
@@ -295,7 +306,7 @@ export function run(pkg: string, bin: string, options: RunOptions = {}): Child {
       log.info(`[UtilityProcess] Killing process "${name}" with pid=${pid}...`);
 
       // kill child gracefully
-      treeKill(pid);
+      killProcessTree(pid);
 
       let forced = false;
 
@@ -317,7 +328,7 @@ export function run(pkg: string, bin: string, options: RunOptions = {}): Child {
 
       // interval to check if child still running and flag it as dead when is not running anymore
       const interval = setInterval(() => {
-        if (!isRunning(pid)) {
+        if (!isProcessRunning(pid)) {
           die();
         }
       }, 100);
@@ -328,7 +339,7 @@ export function run(pkg: string, bin: string, options: RunOptions = {}): Child {
       const timeout = setTimeout(() => {
         if (alive) {
           forced = true;
-          treeKill(pid, 'SIGKILL');
+          killProcessTree(pid, 'SIGKILL');
         }
       }, FORCE_KILL_TIMEOUT_MS);
 
@@ -375,7 +386,7 @@ function processData(data: string, opts: EventOptions | undefined) {
   // remove control characters from data
   const text = sanitize
     ? data.replace(
-        // eslint-disable-next-line no-control-regex
+        // oxlint-disable-next-line no-control-regex
         /[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g,
         '',
       )

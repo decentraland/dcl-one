@@ -5,13 +5,13 @@ import path from 'path';
 import { Readable } from 'stream';
 import { pipeline } from 'stream/promises';
 import type { ReadableStream } from 'stream/web';
-import archiver, { type ZipEntryData } from 'archiver';
+import { zip, type ZipEntry } from '@dcl/zip-extract/write.js';
 import { net } from 'electron';
-import pLimit from 'p-limit';
 import DCLIGNORE from './scene-export-template/template.dclignore?raw';
 import PACKAGE_JSON from './scene-export-template/template.package.json?raw';
 import TSCONFIG_JSON from './scene-export-template/template.tsconfig.json?raw';
 
+import { createLimit } from '/shared/limit';
 import type { SceneExportProgress, SceneExportResult } from '/shared/types/scene-export';
 
 import { getPeerUrl, getWorldsContentUrl } from './catalyst';
@@ -325,7 +325,7 @@ export async function exportScene(
       hashes.add(hash);
     }
 
-    const limit = pLimit(DOWNLOAD_CONCURRENCY);
+    const limit = createLimit(DOWNLOAD_CONCURRENCY);
     let downloaded = 0;
     const downloads = [...hashes].map(hash =>
       limit(async () => {
@@ -356,26 +356,19 @@ export async function exportScene(
     const pointers = Array.isArray(entity.pointers) ? entity.pointers : [];
     const root =
       slugify(entity.metadata?.display?.title) || slugify(`scene ${pointers[0]}`) || 'scene';
-    const archive = archiver('zip');
-    archive.on('progress', ({ entries }) =>
-      onProgress({ entityId, phase: 'zip', done: entries.processed, total: entries.total }),
-    );
-    for (const { name: file, source } of files.values()) {
+    const entries = [...files.values()].map(({ name: file, source }): ZipEntry => {
       const name = `${root}/${file}`;
-      if ('hash' in source) {
-        const entry: ZipEntryData = {
-          name,
-          store: STORED_EXTENSIONS.has(path.posix.extname(file).toLowerCase()),
-        };
-        archive.file(path.join(tmp, source.hash), entry);
-      } else {
-        archive.append(source.content, { name });
-      }
-    }
-    await Promise.all([
-      pipeline(archive, createWriteStream(partialPath), { signal }),
-      archive.finalize(),
-    ]);
+      return 'hash' in source
+        ? {
+            name,
+            file: path.join(tmp, source.hash),
+            store: STORED_EXTENSIONS.has(path.posix.extname(file).toLowerCase()),
+          }
+        : { name, content: source.content };
+    });
+    const onEntry = (_entry: ZipEntry, done: number) =>
+      onProgress({ entityId, phase: 'zip', done, total: entries.length });
+    await pipeline(zip(entries, { onEntry }), createWriteStream(partialPath), { signal });
     await fs.rename(partialPath, outputPath);
 
     const { size } = await fs.stat(outputPath);

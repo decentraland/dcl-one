@@ -1,9 +1,9 @@
 import path from 'path';
 import fs from 'fs/promises';
 import log from 'electron-log/main';
-import { future } from 'fp-future';
 import { captureException } from '@sentry/electron/main';
 
+import { future } from '/shared/future';
 import { SCENES_DIRECTORY } from '/shared/paths';
 import { FileSystemStorage, type IFileSystemStorage } from '/shared/types/storage';
 import { type Config, CURRENT_CONFIG_VERSION, mergeConfig } from '/shared/types/config';

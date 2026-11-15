@@ -97,7 +97,7 @@ export function mimeForPath(filePath: string): string | null {
 // filesystem-hostile set, drop the URL-reserved characters (`#` fragment, `%` escape, `&`, `+`,
 // `;`, `=`) rather than percent-encode them, since not every explorer decodes consistently.
 export function sanitizeFilename(name: string): string {
-  // eslint-disable-next-line no-control-regex -- control chars are intentionally stripped from filenames
+  // oxlint-disable-next-line no-control-regex -- control chars are intentionally stripped from filenames
   return name.replace(/[<>:"/\\|?*#%&+;=\x00-\x1f]/g, '_').replace(/\s+/g, '_');
 }
 

@@ -9,7 +9,7 @@ type OutdatedInfo = Outdated[string];
  * an update prompt.
  *
  * `npm outdated` only knows about the `latest` dist-tag, so it flags any installed
- * version that differs from it — including auth-server/experimental commit builds
+ * version that differs from it — including experimental and commit builds
  * such as `7.24.3-28199504206.commit-1a6c780`, where "updating" to `latest` would
  * pull the scene off the line it was deliberately pinned to (and may even be a
  * downgrade). A version string alone can't tell which dist-tag such a build came

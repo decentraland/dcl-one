@@ -2,7 +2,6 @@ import path from 'node:path';
 import log from 'electron-log/main';
 
 import { FileSystemStorage, type IFileSystemStorage } from '/shared/types/storage';
-import deepmerge from 'deepmerge';
 import { SETTINGS_DIRECTORY, CONFIG_FILE_NAME, getFullScenesPath } from '/shared/paths';
 import {
   DEFAULT_CONFIG,
@@ -23,7 +22,7 @@ export const CONFIG_PATH = path.join(getUserDataPath(), SETTINGS_DIRECTORY, CONF
 let configStorage: IFileSystemStorage<Config> | undefined;
 
 export function getDefaultConfig(): Config {
-  const defaultConfig = deepmerge({}, DEFAULT_CONFIG);
+  const defaultConfig = structuredClone(DEFAULT_CONFIG);
   defaultConfig.settings.scenesPath = getFullScenesPath(getUserDataPath());
   return defaultConfig;
 }

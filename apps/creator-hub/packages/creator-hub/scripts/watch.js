@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 
 import { spawn } from 'child_process';
+// Before 'vite': it sets the allocator option that Rolldown reads when it loads.
+import '../../../scripts/rolldown-env.js';
 import { build, createServer } from 'vite';
 import electronPath from 'electron';
 

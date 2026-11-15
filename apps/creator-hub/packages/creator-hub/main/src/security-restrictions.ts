@@ -6,7 +6,7 @@
  * `self.crossOriginIsolated` — which the Bevy engine's `SharedArrayBuffer` requires — is only
  * true when the top-level document AND every ancestor frame are isolated via COOP: same-origin
  * plus COEP. The engine runs three frames deep: creator-hub renderer, inspector iframe,
- * bevy-engine iframe. The inspector and engine come from our http-server, which already stamps
+ * bevy-engine iframe. The inspector and engine come from our static server, which already stamps
  * these headers, but the top document loads from `file://` in production (mainWindow's
  * `loadFile`), which carries no HTTP headers, leaving the whole chain un-isolated and the
  * engine's asset-loader worker throwing `SharedArrayBuffer transfer requires
@@ -17,7 +17,7 @@
  * studios are left alone, since a blanket COEP would block their cross-origin subresources. The
  * frames listed under "Frames the app embeds" below get COEP alone, and nothing else. COEP is
  * `credentialless` rather than `require-corp` so the inspector iframe's cross-origin
- * subresources load without needing CORP on every one, matching the inspector http-server and
+ * subresources load without needing CORP on every one, matching the inspector static server and
  * the engine's own service worker.
  *
  * ## Frames the app embeds

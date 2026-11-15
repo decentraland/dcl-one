@@ -1,5 +1,6 @@
 import net, { type AddressInfo } from 'net';
-import { future } from 'fp-future';
+
+import { future } from '/shared/future';
 
 export function getAvailablePort(): Promise<number> {
   const promise = future<number>();

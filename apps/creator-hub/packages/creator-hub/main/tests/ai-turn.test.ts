@@ -12,7 +12,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('cross-spawn', () => ({ default: Object.assign(mocks.crossSpawn, { sync: vi.fn() }) }));
-vi.mock('tree-kill', () => ({ default: mocks.treeKill }));
+vi.mock('../src/modules/process-tree', () => ({ killProcessTree: mocks.treeKill }));
 vi.mock('electron-log/main', () => ({ default: { info: vi.fn(), warn: vi.fn() } }));
 vi.mock('../src/modules/analytics', () => ({
   track: vi.fn(),

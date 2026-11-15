@@ -6,10 +6,13 @@ import { trackLifecycleEvent } from '../src/modules/analytics';
 const trackSpy = vi.fn();
 
 vi.mock('@segment/analytics-node', () => ({
-  Analytics: vi.fn().mockImplementation(() => ({
-    track: trackSpy,
-    identify: vi.fn(),
-  })),
+  // The code calls this mock with `new`, so it needs a `function`, not an arrow function.
+  Analytics: vi.fn().mockImplementation(function () {
+    return {
+      track: trackSpy,
+      identify: vi.fn(),
+    };
+  }),
 }));
 
 vi.mock('electron-log', () => ({

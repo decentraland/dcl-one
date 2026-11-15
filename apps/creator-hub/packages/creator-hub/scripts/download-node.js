@@ -89,9 +89,13 @@ function extract(archive, archiveName, destDir, isWindows) {
     }
 
     // Headers and docs are a third of the download and are never read at runtime; node-gyp
-    // fetches its own headers when something has to be compiled. `lib` / `node_modules` stay —
-    // that is where npm lives, and npm's prefix resolution expects to find it there.
-    for (const junk of ['include', 'share']) {
+    // fetches its own headers when something has to be compiled. Nothing the Hub spawns uses
+    // corepack. `lib` / `node_modules` stay — that is where npm lives, and npm's prefix
+    // resolution expects to find it there. LICENSE stays with the binary.
+    const corepack = isWindows
+      ? ['corepack', 'corepack.cmd', path.join('node_modules', 'corepack')]
+      : [path.join('bin', 'corepack'), path.join('lib', 'node_modules', 'corepack')];
+    for (const junk of ['include', 'share', 'CHANGELOG.md', 'README.md', ...corepack]) {
       fs.rmSync(path.join(destDir, junk), { recursive: true, force: true });
     }
 
@@ -102,6 +106,27 @@ function extract(archive, archiveName, destDir, isWindows) {
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
+}
+
+/**
+ * The Linux binary ships with its symbol table and debug info, which only a native debugger
+ * reads: native addons bind through the dynamic symbol table, and `strip` keeps that one.
+ * Only called once the archive has passed its checksum. macOS and Windows binaries are signed,
+ * and a strip would change the signed bytes, so they stay as downloaded. A failure (no `strip`
+ * on the build machine, or one built for another architecture) ships the binary as downloaded.
+ */
+function stripLinuxBinary(binary, platform) {
+  if (platform !== 'linux' || process.platform !== 'linux') return;
+  const before = fs.statSync(binary).size;
+  try {
+    execFileSync('strip', [binary], { stdio: ['ignore', 'ignore', 'pipe'] });
+  } catch (error) {
+    console.warn(
+      `download-node: strip failed, shipping the binary as downloaded: ${error.message}`,
+    );
+    return;
+  }
+  console.log(`download-node: stripped ${binary} (${before} -> ${fs.statSync(binary).size} bytes)`);
 }
 
 /**
@@ -171,6 +196,7 @@ export default async function downloadNode(context) {
   }
 
   const dest = extract(archive, archiveName, destDir, isWindows);
+  stripLinuxBinary(dest, platform);
   copyVendoredPrebuilds(path.dirname(dest), electronPlatform, arch);
   console.log(`download-node: installed ${NODE_VERSION} ${platform}-${arch} at ${dest}`);
 }

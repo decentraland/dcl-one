@@ -1,6 +1,23 @@
-import { describe, expect, it } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
-import { isCatalogAsset } from './project-watcher';
+import type * as Chokidar from 'chokidar';
+import { watch } from 'chokidar';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { PROJECT_ASSETS_CHANGED_EVENT } from '/shared/types/ipc';
+
+import { isCatalogAsset, startProjectWatcher, stopProjectWatcher } from './project-watcher';
+import { getWindow } from './window';
+
+vi.mock('chokidar', async importOriginal => {
+  const chokidar = await importOriginal<typeof Chokidar>();
+  return { ...chokidar, watch: vi.fn(chokidar.watch) };
+});
+vi.mock('./window', () => ({ getWindow: vi.fn() }));
+vi.mock('../mainWindow', () => ({ MAIN_WINDOW_ID: 'main' }));
+vi.mock('electron-log/main', () => ({ default: { info: vi.fn(), warn: vi.fn() } }));
 
 const ROOT = '/scenes/demo';
 const under = (rel: string) => `${ROOT}/${rel}`;
@@ -52,5 +69,75 @@ describe('project-watcher isCatalogAsset', () => {
 
   it('ignores the project root itself', () => {
     expect(isCatalogAsset(ROOT, ROOT)).toBe(false);
+  });
+});
+
+describe('startProjectWatcher', () => {
+  let project: string;
+  let send: ReturnType<typeof vi.fn>;
+
+  async function watchedFolders(): Promise<string[]> {
+    const watcher = vi.mocked(watch).mock.results[0].value;
+    await new Promise(resolve => watcher.once('ready', resolve));
+    return Object.keys(watcher.getWatched())
+      .map(folder => path.relative(project, folder).replace(/\\/g, '/'))
+      .sort();
+  }
+
+  beforeEach(() => {
+    project = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'project-watcher-')));
+    for (const folder of [
+      'assets/models',
+      'src',
+      'node_modules/pkg/assets',
+      '.git/objects',
+      'bin',
+    ]) {
+      fs.mkdirSync(path.join(project, folder), { recursive: true });
+    }
+    fs.writeFileSync(path.join(project, 'node_modules/pkg/assets/model.glb'), 'model');
+    send = vi.fn();
+    vi.mocked(getWindow).mockReturnValue({
+      isDestroyed: () => false,
+      webContents: { send },
+    } as unknown as ReturnType<typeof getWindow>);
+  });
+
+  afterEach(async () => {
+    await stopProjectWatcher(project);
+    fs.rmSync(project, { recursive: true, force: true });
+    vi.mocked(watch).mockClear();
+  });
+
+  describe('when the project has folders that the watcher ignores', () => {
+    it('should watch the other folders only', async () => {
+      startProjectWatcher(project);
+
+      const folders = await watchedFolders();
+
+      expect(folders).toEqual(expect.arrayContaining(['', 'assets', 'assets/models', 'src']));
+      expect(folders.filter(folder => /^(node_modules|\.git|bin)(\/|$)/.test(folder))).toEqual([]);
+    });
+  });
+
+  describe('when a model is added below assets after the start', () => {
+    it('should tell the main window that the assets of the project changed', async () => {
+      startProjectWatcher(project);
+      await watchedFolders();
+
+      fs.writeFileSync(path.join(project, 'assets/models/tree.glb'), 'model');
+
+      await vi.waitFor(() => expect(send).toHaveBeenCalled(), { timeout: 10000, interval: 50 });
+      expect(send).toHaveBeenCalledWith(PROJECT_ASSETS_CHANGED_EVENT, { path: project });
+    });
+  });
+
+  describe('when the same project is started two times', () => {
+    it('should keep one watcher', () => {
+      startProjectWatcher(project);
+      startProjectWatcher(project);
+
+      expect(watch).toHaveBeenCalledTimes(1);
+    });
   });
 });
