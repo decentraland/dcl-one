@@ -632,7 +632,7 @@ pub struct Leases {
     pool: PgPool,
     settings: LeaseSettings,
     conn: tokio::sync::Mutex<Option<PgConnection>>,
-    /// Set when the keeper gave the leases up because another call held the
+    /// Set when the keeper gave held leases up because another call held the
     /// session past the keepalive: the next call to take the session drops it,
     /// so no lock taken on it survives the leases this process forgot.
     conn_stale: std::sync::atomic::AtomicBool,
@@ -727,7 +727,7 @@ impl Leases {
     }
 
     async fn connect(&self) -> sqlx::Result<PgConnection> {
-        let mut conn = self.pool.acquire().await?.detach();
+        let mut conn = self.bounded(self.pool.acquire()).await?.detach();
         for statement in [
             "SET tcp_keepalives_idle = 5",
             "SET tcp_keepalives_interval = 2",
@@ -798,15 +798,18 @@ impl Leases {
         }
     }
 
-    fn lose_all(&self, why: &str) {
+    /// Cancels and forgets every held lease; `true` when there was one.
+    fn lose_all(&self, why: &str) -> bool {
         let held: Vec<(String, CancellationToken)> = self.held.lock().drain().collect();
         if !held.is_empty() {
             tracing::warn!(leases = ?held.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(), "{why}: every lease of this process is lost");
         }
+        let any = !held.is_empty();
         for (_, lost) in held {
             lost.cancel();
         }
         self.pending_release.lock().clear();
+        any
     }
 
     /// One keeper pass: unlocks leases whose guards were dropped, then proves
@@ -815,9 +818,13 @@ impl Leases {
     pub async fn keepalive_once(&self) {
         let Ok(mut slot) = tokio::time::timeout(self.settings.keepalive, self.session()).await
         else {
-            self.conn_stale
-                .store(true, std::sync::atomic::Ordering::SeqCst);
-            self.lose_all("the lease connection is busy past the keepalive");
+            // Forget the leases first, then mark the session: a lock taken in
+            // between is on the session the mark drops. A session that held
+            // no lease (one still connecting) is kept.
+            if self.lose_all("the lease connection is busy past the keepalive") {
+                self.conn_stale
+                    .store(true, std::sync::atomic::Ordering::SeqCst);
+            }
             return;
         };
         let Some(conn) = slot.as_mut() else {
@@ -1580,6 +1587,35 @@ mod lease_tests {
         .await;
         let again = leases.backend_pid().await.unwrap();
         assert_ne!(again, pid, "the busy session is replaced, not reused");
+        let aborted = jobs.shutdown(Duration::from_secs(5)).await;
+        assert!(aborted.is_empty(), "{aborted:?}");
+    }
+
+    #[tokio::test]
+    async fn a_busy_session_holding_no_lease_is_kept() {
+        let Some(pool) = catalyst_db::scratch::pool(6).await else {
+            return;
+        };
+        let jobs = Jobs::with_leases(pool.clone(), settings("busy-idle"));
+        let leases = jobs.leases().unwrap();
+        leases
+            .try_acquire("x")
+            .await
+            .unwrap()
+            .unwrap()
+            .release()
+            .await;
+        let pid = leases.backend_pid().await.expect("connected");
+
+        // The keeper times out on the session several times, with no lease to lose.
+        let busy = leases.conn.lock().await;
+        tokio::time::sleep(leases.settings.keepalive * 5).await;
+        drop(busy);
+
+        let held = leases.try_acquire("y").await.unwrap().expect("free lease");
+        assert_eq!(leases.backend_pid().await, Some(pid), "the session is kept");
+        assert!(!held.lost().is_cancelled());
+        held.release().await;
         let aborted = jobs.shutdown(Duration::from_secs(5)).await;
         assert!(aborted.is_empty(), "{aborted:?}");
     }
