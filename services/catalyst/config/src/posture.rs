@@ -291,6 +291,11 @@ const ROWS: &[Row] = &[
         "https://api.openai.com/v1",
     ),
     upstream(
+        "notification email",
+        "SENDGRID_API_URL",
+        "https://api.sendgrid.com",
+    ),
+    upstream(
         "mirrors",
         "EXPLORER_MAP_SOURCE_URL",
         "https://api.decentraland.org",
@@ -1147,7 +1152,11 @@ const THIRD_PARTY_SECRETS: &[(&str, Option<&str>, &str)] = &[
         Some("OPENAI_BASE_URL"),
         "community compliance Responses API",
     ),
-    ("SENDGRID_API_KEY", None, "SendGrid's mail API"),
+    (
+        "SENDGRID_API_KEY",
+        Some("SENDGRID_API_URL"),
+        "SendGrid's mail API",
+    ),
     ("SLACK_BOT_TOKEN", None, "Slack Web API"),
     (
         "ANALYTICS_API_TOKEN",

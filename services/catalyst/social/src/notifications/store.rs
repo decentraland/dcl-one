@@ -535,12 +535,14 @@ impl NotificationsStore {
     }
 
     /// The subscription row (the defaults without one) and, read on its own,
-    /// the pending email, as upstream's two lookups.
+    /// the pending email, as upstream's two lookups. A row set-email wrote only to
+    /// track its workflow (empty details, no email) counts as none: upstream had no row.
     pub async fn get_subscription(&self, address: &Address) -> Result<Subscription, ApiError> {
         let (has_row, email, details, unconfirmed_email) =
             sqlx::query_as::<_, (bool, Option<String>, Option<Json>, Option<String>)>(
                 r#"
-                SELECT s.address IS NOT NULL, s.email, s.details,
+                SELECT COALESCE(s.email IS NOT NULL OR s.details <> '{}'::jsonb, FALSE),
+                       s.email, s.details,
                        (SELECT u.email FROM social.unconfirmed_emails u WHERE u.address = $1)
                 FROM (SELECT 1) one
                 LEFT JOIN social.subscriptions s ON s.address = $1
@@ -1160,8 +1162,8 @@ mod pg_tests {
         let sub = c.get_subscription(&a).await.unwrap();
         assert_eq!(
             (sub.email, sub.unconfirmed_email.as_deref()),
-            (Some(None), Some(unique.as_str())),
-            "the row exists while pending: email null"
+            (None, Some(unique.as_str())),
+            "set-email's own row is not a subscription: email absent"
         );
         let credits: bool = sqlx::query_scalar(
             "SELECT is_credits_workflow FROM social.subscriptions WHERE address = $1",
