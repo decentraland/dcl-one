@@ -380,23 +380,6 @@ mod tests {
         .unwrap();
     }
 
-    /// Drops the legacy layout, the rows a test adopted and the activation.
-    async fn remove_legacy_layout(pool: &PgPool, prefix: &str) {
-        sqlx::raw_sql("DROP TABLE explore.event_moderation_hooks; DROP TABLE explore.event_moderation_hook_activation")
-            .execute(pool)
-            .await
-            .unwrap();
-        sqlx::query("DELETE FROM explore.moderation_hooks WHERE subject LIKE $1")
-            .bind(format!("{prefix}-%"))
-            .execute(pool)
-            .await
-            .unwrap();
-        sqlx::query("DELETE FROM explore.moderation_hook_activation")
-            .execute(pool)
-            .await
-            .unwrap();
-    }
-
     #[tokio::test]
     async fn the_earlier_layouts_pending_rows_are_adopted_on_every_pass_with_their_activation() {
         let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
@@ -528,7 +511,6 @@ mod tests {
         .await
         .unwrap();
         assert_eq!((adopted_late, left_late), (1, 0), "every pass adopts");
-        remove_legacy_layout(&pool, &prefix).await;
     }
 
     #[tokio::test]
@@ -562,6 +544,5 @@ mod tests {
         .unwrap();
         assert!(eligible, "the adopted row sits above the cutoff");
         assert!(earlier, "the cutoff is the earlier layout's activation");
-        remove_legacy_layout(&pool, &prefix).await;
     }
 }

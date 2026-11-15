@@ -1132,33 +1132,6 @@ mod tests {
             vec![("disabled".into(), 2)],
             "a deliverable retry outlives retention; completed and exhausted rows do not"
         );
-
-        sqlx::query(
-            "DELETE FROM explore.moderation_hooks WHERE channel = 'places' AND subject = $1",
-        )
-        .bind(&id)
-        .execute(&pool)
-        .await
-        .unwrap();
-        sqlx::query("DELETE FROM explore.moderation_hook_activation")
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query("DELETE FROM explore.place_content_ratings WHERE entity_id = $1")
-            .bind(&id)
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query("DELETE FROM explore.place_moderation WHERE place_id = $1")
-            .bind(&id)
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query("DELETE FROM explore.place WHERE id = $1")
-            .bind(&id)
-            .execute(&pool)
-            .await
-            .unwrap();
         server.abort();
     }
 }

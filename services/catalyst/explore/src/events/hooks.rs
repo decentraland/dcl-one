@@ -872,23 +872,6 @@ mod tests {
         let clock_eligible:bool=sqlx::query_scalar("SELECT h.created_at=a.activated_at FROM explore.moderation_hooks h CROSS JOIN explore.moderation_hook_activation a WHERE h.subject=$1")
             .bind(format!("{prefix}-clock")).fetch_one(&mut *tx).await.unwrap();
         tx.rollback().await.unwrap();
-        sqlx::query("DROP TRIGGER test_hook_capture_barrier ON explore.moderation_hook_activation")
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query("DROP FUNCTION explore.test_hook_capture_barrier()")
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query("DELETE FROM explore.moderation_hooks WHERE subject LIKE $1")
-            .bind(format!("{prefix}-%"))
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query("DELETE FROM explore.moderation_hook_activation")
-            .execute(&pool)
-            .await
-            .unwrap();
         assert!(
             concurrent_eligible,
             "a delayed first writer must not fall behind another writer's activation"
@@ -944,15 +927,6 @@ mod tests {
             "first captured intent is not discarded on leader activation"
         );
         assert_eq!(completed, None);
-        sqlx::query("DELETE FROM explore.moderation_hooks WHERE subject=$1")
-            .bind(id)
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query("DELETE FROM explore.moderation_hook_activation")
-            .execute(&pool)
-            .await
-            .unwrap();
     }
 
     #[tokio::test]
@@ -1314,15 +1288,6 @@ mod tests {
         );
         held.rollback().await.unwrap();
         assert_eq!(cleanup(&pool, now).await.unwrap(), 1);
-        sqlx::query("DELETE FROM explore.moderation_hooks WHERE subject LIKE $1")
-            .bind(format!("{prefix}-%"))
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query("DELETE FROM explore.moderation_hook_activation")
-            .execute(&pool)
-            .await
-            .unwrap();
     }
 
     #[tokio::test]
