@@ -552,8 +552,7 @@
         "consequences_title": "Lo que se queda en la ficha anterior",
         "consequences": {
           "engagement": "Sus me gusta, favoritos y posición en los rankings de Places.",
-          "analytics": "Sus analíticas de escena. La ficha nueva empieza desde cero.",
-          "storage": "Los datos de su almacenamiento del servidor multijugador, que podrían borrarse."
+          "analytics": "Sus analíticas de escena. La ficha nueva empieza desde cero."
         },
         "tip": "Para conservar la ficha actual, publica en la misma parcela base o en el mismo conjunto de parcelas que antes.",
         "world_tip": "Para conservar la ficha actual, ubica la escena de modo que reemplace exactamente una escena existente de este World.",
@@ -795,8 +794,6 @@
       "delete_scene": "Borrando escena...",
       "delete_scene_failed": "Error al borrar escena",
       "dependencies_updated": "Las dependencias de la escena fueron actualizadas",
-      "multiplayer_sdk_installed": "SDK de Multiplayer Server instalado.",
-      "multiplayer_sdk_uninstalled": "SDK de Multiplayer Server quitado. Última versión del SDK instalada.",
       "updating_sdk_skills": "Instalando las últimas habilidades de IA...",
       "sdk_skills_updated": "Las habilidades de IA están al día",
       "sdk_skills_update_failed": "No se pudieron instalar las habilidades de IA",

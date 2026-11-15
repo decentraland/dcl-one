@@ -6,7 +6,7 @@ import { t } from '/@/modules/store/translation/utils';
 
 import './styles.css';
 
-const CONSEQUENCES = ['engagement', 'analytics', 'storage'] as const;
+const CONSEQUENCES = ['engagement', 'analytics'] as const;
 
 type Props =
   | { kind: 'land' }

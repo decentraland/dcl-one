@@ -60,8 +60,7 @@ const config = {
       filter: ['**/*'],
     },
     // Real Node.js binary, fetched by the beforePack hook. Scene tooling is spawned on this
-    // instead of Electron so the multiplayer server gets a runtime whose ABI matches the
-    // native builds it depends on. TEMPORARY: remove with the Bevy migration.
+    // instead of Electron: the optimizer's native tools ship builds for Node's ABIs only.
     {
       from: 'node-bin',
       to: 'node-bin',

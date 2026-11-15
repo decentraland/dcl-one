@@ -86,9 +86,9 @@ export async function killPreview(path: string) {
 // Bumped by every deliberate stop (leaving the scene, app quit). A start captures the
 // value on entry and gives up — killing whatever it spawned, with no reinstall-retry — once
 // it moves: a start still pending when the user left would otherwise finish (or retry)
-// after the stop and leave a preview no editor owns, holding its port and the scene's
-// authoritative-server seat. Internal kills (replacing a preview, the retry) go through
-// killPreview and don't bump it, so a real start failure still retries.
+// after the stop and leave a preview no editor owns, holding its port. Internal kills
+// (replacing a preview, the retry) go through killPreview and don't bump it, so a real
+// start failure still retries.
 const stopGenerations = new Map<string, number>();
 
 function stopGeneration(path: string) {

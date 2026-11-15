@@ -2,18 +2,9 @@ import type { LastWriteWinElementSetComponentDefinition, OnChangeFunction } from
 import { ReadWriteByteBuffer } from '@dcl/ecs/dist/serialization/ByteBuffer';
 import { feededFileSystem } from '../client/feeded-local-fs';
 import type { EditorComponentsTypes } from '../../sdk/components';
-import type * as ConfigModule from '../../logic/config';
 import { EditorComponentNames } from '../../sdk/components';
 import { initRpcMethods } from './rpc-methods';
 import { createEngineContext } from './utils/engine';
-
-vi.mock('../../logic/config', async orig => {
-  const actual = await orig<typeof ConfigModule>();
-  return {
-    ...actual,
-    getConfig: () => ({ ...actual.getConfig(), authServerSupported: true }),
-  };
-});
 
 async function mockedRpcInit() {
   const callbackFunctions: OnChangeFunction[] = [];

@@ -2,17 +2,10 @@
  * Downloads a real Node.js binary into `node-bin/` so the packaged app can spawn scene
  * tooling on it instead of on Electron.
  *
- * Why: the Hub runs `sdk-commands` in an Electron utility process, where `process.execPath`
- * is the Electron Helper and `process.versions.electron` is set. sdk-commands passes that
- * same execPath down when it spawns the multiplayer server, so the server ends up on
- * Electron's module ABI (143) — and `isolated-vm`, which it depends on, only ships builds
- * for Node's ABIs. Handing it a real Node makes sdk-commands take its plain-Node code paths
- * on its own, with no changes needed on that side.
- *
- * Node 22 is pinned because its ABI (127) matches an `isolated-vm` prebuild, and because
- * @dcl/hammurabi-server refuses to run on any major other than 22 or 24.
- *
- * TEMPORARY: goes away once the multiplayer server drops `isolated-vm` (Bevy migration).
+ * Why: the Hub runs `sdk-commands`, npm and the scene optimizer as child processes. On
+ * Electron, `process.execPath` is the Electron Helper and native modules load against
+ * Electron's module ABI. The optimizer toolchain (sharp) ships builds for Node's ABIs only,
+ * so the optimizer refuses to run without a real Node (`main/src/modules/optimizer`).
  *
  * Runs as part of the electron-builder `beforePack` hook, once per target arch.
  */
@@ -129,40 +122,6 @@ function stripLinuxBinary(binary, platform) {
   console.log(`download-node: stripped ${binary} (${before} -> ${fs.statSync(binary).size} bytes)`);
 }
 
-/**
- * `isolated-vm` ships prebuilt binaries for every platform the Hub targets EXCEPT Intel Mac,
- * where it would otherwise try to compile from source (needs Xcode and a C++20 compiler,
- * which creators do not have). We vendor a cross-compiled one.
- *
- * node-gyp-build looks for a `prebuilds/` directory next to the running node binary once the
- * package's own lookup comes up empty, so dropping the file beside the binary is all it takes —
- * nothing has to patch the copy that npx installs at runtime. Note "beside the binary" means the
- * directory holding the executable itself, not the top of the install.
- *
- * Built with: npx node-gyp rebuild --release --arch=x64 --target=<NODE_VERSION minus the v>
- * from inside node_modules/isolated-vm, on any Mac. Rebuild if NODE_VERSION crosses a major.
- */
-function copyVendoredPrebuilds(binaryDir, platform, arch) {
-  if (platform !== 'darwin' || arch !== 'x64') return;
-
-  const src = path.join(
-    import.meta.dirname,
-    'vendor',
-    'isolated-vm',
-    'darwin-x64',
-    'isolated-vm.abi127.node',
-  );
-  if (!fs.existsSync(src)) {
-    console.warn('download-node: vendored Intel Mac isolated-vm build missing, skipping:', src);
-    return;
-  }
-
-  const prebuildDir = path.join(binaryDir, 'prebuilds', 'darwin-x64');
-  fs.mkdirSync(prebuildDir, { recursive: true });
-  fs.copyFileSync(src, path.join(prebuildDir, 'isolated-vm.abi127.node'));
-  console.log('download-node: added vendored isolated-vm build for darwin-x64');
-}
-
 export default async function downloadNode(context) {
   const appDir = context.appDir ?? context.packager?.info?.appDir;
   if (!appDir) {
@@ -197,6 +156,5 @@ export default async function downloadNode(context) {
 
   const dest = extract(archive, archiveName, destDir, isWindows);
   stripLinuxBinary(dest, platform);
-  copyVendoredPrebuilds(path.dirname(dest), electronPlatform, arch);
   console.log(`download-node: installed ${NODE_VERSION} ${platform}-${arch} at ${dest}`);
 }

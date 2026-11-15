@@ -11,7 +11,6 @@ function baseInput(overrides: Partial<InspectorUrlInput> = {}): InspectorUrlInpu
     inspectorPort: 8000,
     useBevy: false,
     supportsUiDesigner: true,
-    supportsAuthServer: false,
     bevyRealm: null,
     project: undefined,
     userId: null,
@@ -63,18 +62,6 @@ describe('buildInspectorUrl', () => {
   describe("when the scene's sdk supports the UI designer", () => {
     it('should report the UI editor as supported', () => {
       expect(buildParams({ supportsUiDesigner: true }).get('uiEditorSupported')).toBe('true');
-    });
-  });
-
-  describe("when the scene's sdk ships the auth server", () => {
-    it('should report the auth server as supported', () => {
-      expect(buildParams({ supportsAuthServer: true }).get('authServerSupported')).toBe('true');
-    });
-  });
-
-  describe("when the scene's sdk does not ship the auth server", () => {
-    it('should report the auth server as unsupported', () => {
-      expect(buildParams({ supportsAuthServer: false }).get('authServerSupported')).toBe('false');
     });
   });
 

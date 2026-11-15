@@ -78,7 +78,7 @@ describe('editor slice preview state', () => {
 });
 
 describe('editor slice SDK capability flags', () => {
-  const AUTH_SERVER_SDK_VERSION = '7.29.1-35154657340.commit-e2bbcc9';
+  const SDK_VERSION = '7.29.1-35154657340.commit-e2bbcc9';
   const PROJECT: Project = {
     id: 'test-project',
     path: TEST_PATH,
@@ -93,9 +93,9 @@ describe('editor slice SDK capability flags', () => {
     dependencyAvailableUpdates: {},
     info: { id: 'test-project', skipPublishWarning: false },
   };
-  const fetchVersionFulfilled = (hasAuthServer: boolean) =>
+  const fetchVersionFulfilled = () =>
     workspaceActions.fetchSdkCommandsVersion.fulfilled(
-      { version: AUTH_SERVER_SDK_VERSION, hasAuthServer },
+      { version: SDK_VERSION },
       'request-id',
       TEST_PATH,
     );
@@ -106,46 +106,27 @@ describe('editor slice SDK capability flags', () => {
     store = createTestStore();
   });
 
-  describe('when the version fetch reports the auth-server runtime', () => {
+  describe('when the version fetch resolves', () => {
     beforeEach(() => {
-      store.dispatch(fetchVersionFulfilled(true));
+      store.dispatch(fetchVersionFulfilled());
     });
 
-    it('should support the auth server', () => {
-      expect(store.getState().editor.supportsAuthServer).toBe(true);
-    });
-
-    it('should still derive the UI designer support from the version', () => {
+    it('should derive the UI designer support from the version', () => {
       expect(store.getState().editor.supportsUiDesigner).toBe(true);
     });
 
-    it('should drop the auth server support when another scene starts running', () => {
+    it('should drop the UI designer support when another scene starts running', () => {
       store.dispatch(workspaceActions.runProject.pending('request-id', PROJECT));
 
-      expect(store.getState().editor.supportsAuthServer).toBe(false);
-    });
-  });
-
-  describe('when the version fetch reports no auth-server runtime', () => {
-    beforeEach(() => {
-      store.dispatch(fetchVersionFulfilled(false));
-    });
-
-    it('should not support the auth server', () => {
-      expect(store.getState().editor.supportsAuthServer).toBe(false);
-    });
-
-    it('should still derive the UI designer support from the version', () => {
-      expect(store.getState().editor.supportsUiDesigner).toBe(true);
+      expect(store.getState().editor.supportsUiDesigner).toBe(false);
     });
   });
 
   describe('when a project is opened', () => {
     it('should enable the flags from a version fetch for that project', () => {
       store.dispatch(workspaceActions.runProject.pending('request-id', PROJECT));
-      store.dispatch(fetchVersionFulfilled(true));
+      store.dispatch(fetchVersionFulfilled());
 
-      expect(store.getState().editor.supportsAuthServer).toBe(true);
       expect(store.getState().editor.supportsUiDesigner).toBe(true);
     });
 
@@ -153,13 +134,12 @@ describe('editor slice SDK capability flags', () => {
       store.dispatch(workspaceActions.runProject.pending('request-id', PROJECT));
       store.dispatch(
         workspaceActions.fetchSdkCommandsVersion.fulfilled(
-          { version: AUTH_SERVER_SDK_VERSION, hasAuthServer: true },
+          { version: SDK_VERSION },
           'other-request',
           '/some/other/scene',
         ),
       );
 
-      expect(store.getState().editor.supportsAuthServer).toBe(false);
       expect(store.getState().editor.supportsUiDesigner).toBe(false);
     });
   });

@@ -64,7 +64,6 @@ export const fetchSdkCommandsVersion = createAsyncThunk(
   'workspace/fetchSdkCommandsVersion',
   async (path: string) => ({
     version: (await pkg.getPackageVersion(path, PACKAGES.SDK_PACKAGE)) ?? null,
-    hasAuthServer: await pkg.hasModuleEntry(path, PACKAGES.SDK_PACKAGE, 'server/index.js'),
   }),
 );
 
@@ -107,22 +106,6 @@ export const updatePackages = createAsyncThunk(
       ([pkg, { latest }]) => `${pkg}@${latest}`,
     );
     await dispatch(installProject({ path: project.path, packages: latestPackages })).unwrap();
-  },
-);
-const MULTIPLAYER_PACKAGES = ['@dcl/sdk@auth-server', '@dcl/js-runtime@auth-server'];
-const LATEST_SDK_PACKAGES = ['@dcl/sdk@latest', '@dcl/js-runtime@latest'];
-
-export const installMultiplayerSdk = createAsyncThunk(
-  'workspace/installMultiplayerSdk',
-  async (project: Project, { dispatch }) => {
-    await dispatch(installProject({ path: project.path, packages: MULTIPLAYER_PACKAGES })).unwrap();
-  },
-);
-
-export const uninstallMultiplayerSdk = createAsyncThunk(
-  'workspace/uninstallMultiplayerSdk',
-  async (project: Project, { dispatch }) => {
-    await dispatch(installProject({ path: project.path, packages: LATEST_SDK_PACKAGES })).unwrap();
   },
 );
 export const updateAvailableDependencyUpdates = createAsyncThunk(
