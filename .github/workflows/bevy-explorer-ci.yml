@@ -47,6 +47,7 @@
       - tooling/tests/test_ci_publication.py
       - tooling/tests/test_image_publish.py
       - .github/workflows/apis-sites-images.yml
+      - .github/workflows/apis-sites-compile.yml
   pull_request:
     types: [opened, synchronize, reopened, closed]
     paths:
@@ -93,6 +94,7 @@
       - tooling/tests/test_ci_publication.py
       - tooling/tests/test_image_publish.py
       - .github/workflows/apis-sites-images.yml
+      - .github/workflows/apis-sites-compile.yml
   # Manual run of the full workflow on any ref. On a branch, setting `publish-tag`
   # also publishes the web package (as 0.1.0-<runId>.commit-<sha>, under that npm
   # dist-tag) and uploads it to the CDN, ready for a manual rollout. oddish ignores a
@@ -1084,14 +1086,26 @@ jobs:
           {"platform": "macos-amd64", "npm_platform": "darwin-x64", "runner": "macos-15", "target": "x86_64-apple-darwin"},
           {"platform": "windows-amd64", "npm_platform": "win32-x64", "runner": "windows-2025", "target": "x86_64-pc-windows-msvc"}
         ]}
-  images:
-    name: APIs + Sites
-    needs: [source, changes, build-deploy-web]
-    # A skipped web lane means inputs are unchanged: fetch-play imports a matching
-    # main producer once its upload passed. Failed/canceled producers never qualify.
+  images-compile:
+    name: APIs + Sites compile
+    needs: [source, changes]
+    # Beside the web build: the compiled packages read nothing from it. The image job below
+    # restores them from the cache.
     if: >-
       !cancelled() && needs.source.result == 'success' && needs.changes.result == 'success' &&
-      needs.changes.outputs.images == 'true' &&
+      needs.changes.outputs.images == 'true'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/apis-sites-compile.yml
+  images:
+    name: APIs + Sites
+    needs: [source, changes, build-deploy-web, images-compile]
+    # A skipped web lane means inputs are unchanged: fetch-play imports a matching
+    # main producer once its upload passed. Failed/canceled producers never qualify.
+    # After a failed compile job this job is skipped: it would fail on the same step.
+    if: >-
+      !cancelled() && needs.source.result == 'success' && needs.changes.result == 'success' &&
+      needs.changes.outputs.images == 'true' && needs.images-compile.result == 'success' &&
       (needs.build-deploy-web.result == 'success' || needs.build-deploy-web.result == 'skipped')
     permissions:
       contents: read
