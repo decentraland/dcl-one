@@ -198,7 +198,7 @@ impl State {
         let last_held = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         if !configured {
             tracing::warn!(
-                "SENDGRID_API_KEY, SENDGRID_FROM_EMAIL or SENDGRID_NOTIFICATION_TEMPLATE_ID unset: notification emails stay pending until they are set"
+                "SENDGRID_API_KEY, SENDGRID_FROM_EMAIL or SENDGRID_NOTIFICATION_TEMPLATE_ID unset, or SENDGRID_API_URL empty: notification emails stay pending until they are set"
             );
         } else if !self.email.has_signing_key() {
             tracing::error!(

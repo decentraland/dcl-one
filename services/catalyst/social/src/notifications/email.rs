@@ -28,7 +28,7 @@ const DISPOSABLE_REFRESH: Duration = Duration::from_secs(3600);
 const DISPOSABLE_RETRY: Duration = Duration::from_secs(60);
 const DISPOSABLE_TIMEOUT: Duration = Duration::from_secs(30);
 const DISPOSABLE_MAX_BYTES: usize = 4 * 1024 * 1024;
-/// Fewer domains than this is a broken download, not the list (it holds thousands).
+/// `DISPOSABLE_EMAIL_DOMAINS_MIN`'s default: the upstream list holds thousands, so fewer is a broken download.
 pub const DISPOSABLE_MIN_DOMAINS: usize = 1000;
 /// The `dapps` flag that turns the confirm-email challenge on.
 pub const TURNSTILE_FLAG: &str = "turnstile-verification";
@@ -65,6 +65,8 @@ pub struct EmailConfig {
     pub api_url: String,
     /// `DISPOSABLE_EMAIL_DOMAINS_URL`; empty fetches no list.
     pub disposable_list_url: String,
+    /// `DISPOSABLE_EMAIL_DOMAINS_MIN`: a download with fewer domains keeps the previous list.
+    pub disposable_min_domains: usize,
     pub from_email: Option<String>,
     /// The generic dynamic template (old `SENDGRID_EMAIL_TEMPLATE_ID`): the
     /// outbox's `email` channel, the confirmation and the ad-hoc email; unset,
@@ -278,21 +280,26 @@ impl EmailSender {
             return false;
         }
         let sender = self.clone();
+        let min = self.cfg.disposable_min_domains;
+        // Warn on the first failure, debug while it lasts, info on recovery.
+        let failing = Arc::new(std::sync::atomic::AtomicBool::new(false));
         jobs.spawn_periodic(
             "notification-disposable-domains",
             PeriodicCfg::every(DISPOSABLE_RETRY),
             move |_ctx| {
-                let (sender, url) = (sender.clone(), url.clone());
+                let (sender, url, failing) = (sender.clone(), url.clone(), failing.clone());
                 async move {
                     if !sender.disposable_due() {
                         return Ok(());
                     }
-                    match sender
-                        .refresh_disposable_domains(&url, DISPOSABLE_MIN_DOMAINS)
-                        .await
-                    {
-                        Ok(count) => tracing::info!(count, "disposable email domains refreshed"),
-                        Err(error) => tracing::warn!(%error, "disposable email domains refresh failed; keeping the last list"),
+                    let result = sender.refresh_disposable_domains(&url, min).await;
+                    let was_failing =
+                        failing.swap(result.is_err(), std::sync::atomic::Ordering::Relaxed);
+                    match (result, was_failing) {
+                        (Ok(count), true) => tracing::info!(count, "disposable email domains recovered"),
+                        (Ok(count), false) => tracing::debug!(count, "disposable email domains refreshed"),
+                        (Err(error), false) => tracing::warn!(%error, "disposable email domains refresh failed; keeping the last list"),
+                        (Err(error), true) => tracing::debug!(%error, "disposable email domains still failing"),
                     }
                     Ok(())
                 }
@@ -955,6 +962,7 @@ mod tests {
         let s = EmailSender::new(
             EmailConfig {
                 disposable_list_url: serve_list(200, list).await,
+                disposable_min_domains: DISPOSABLE_MIN_DOMAINS,
                 ..Default::default()
             },
             Outbound::for_tests(),
@@ -994,10 +1002,17 @@ mod tests {
             s.refresh_disposable_domains(&short, 2).await.is_err(),
             "an implausibly small list is refused"
         );
-        let huge = serve_list(200, "a.io\n".repeat(DISPOSABLE_MAX_BYTES / 4)).await;
+        let huge: String = (0..DISPOSABLE_MAX_BYTES / 8)
+            .map(|i| format!("{i:07}\n"))
+            .collect::<String>()
+            + "overflow.io\n";
+        let err = s
+            .refresh_disposable_domains(&serve_list(200, huge).await, 2)
+            .await
+            .unwrap_err();
         assert!(
-            s.refresh_disposable_domains(&huge, 2).await.is_err(),
-            "the download is capped"
+            err.to_string().contains("bytes"),
+            "the download is capped: {err}"
         );
         assert!(
             s.is_domain_blacklisted("x@mailinator.com"),

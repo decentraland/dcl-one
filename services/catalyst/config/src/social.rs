@@ -639,6 +639,11 @@ pub struct SocialConfig {
     #[arg(long, env = "DISPOSABLE_EMAIL_DOMAINS_URL", default_value = "")]
     pub disposable_email_domains_url: String,
 
+    /// A disposable list download with fewer domains is treated as broken and the previous list
+    /// kept. The upstream list holds thousands; lower it for a shorter list of your own.
+    #[arg(long, env = "DISPOSABLE_EMAIL_DOMAINS_MIN", default_value_t = 1000)]
+    pub disposable_email_domains_min: usize,
+
     /// Comma-separated email domains refused by set-email and confirm-email, on top of the
     /// disposable-domain list and the `dapps-credits-blacklisted-domains` flag variant.
     #[arg(long, env = "EMAIL_DOMAIN_BLACKLIST", default_value = "")]

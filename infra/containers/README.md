@@ -142,7 +142,7 @@ retention and token-remint behavior.
 - `NOTIFICATIONS_BROADCAST_HORIZON_DAYS` now defaults to 0: producer broadcasts are kept and listed forever, as upstream. Set it to 90 to keep the previous hide-and-prune behaviour.
 - Without `SENDGRID_API_KEY`, a sender, a template or `SENDGRID_API_URL`, notification emails stay pending (expiring after `NOTIFICATION_DELIVERY_MAX_AGE_SECS`) instead of ending skipped. `SENDGRID_EMAIL_FROM` and `SENDGRID_EMAIL_TEMPLATE_ID` are accepted as fallbacks.
 - confirm-email runs Turnstile only while `TURNSTILE_SECRET_KEY` is set and the `dapps-turnstile-verification` flag is on (`FF_URL` or a local flag override); the node warns at start when the secret is set and the flag is off.
-- set-email and confirm-email refuse the domains of `DISPOSABLE_EMAIL_DOMAINS_URL` (empty under island and journey) and the `dapps-credits-blacklisted-domains` flag variant.
+- set-email and confirm-email refuse the domains of `DISPOSABLE_EMAIL_DOMAINS_URL` and the `dapps-credits-blacklisted-domains` flag variant. Only `NODE_POSTURE=mirror` sets the URL; under island, journey or no posture it is empty and no disposable domain is refused unless the URL is set. A download with fewer than `DISPOSABLE_EMAIL_DOMAINS_MIN` (1000) domains keeps the previous list; lower it for a shorter list of your own.
 
 ### Pulse assignment upgrade
 
