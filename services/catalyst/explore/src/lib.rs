@@ -587,12 +587,14 @@ impl ExploreState {
                         cancelled = out.cancelled,
                         "world catalogue mirrored from upstream"
                     );
-                    if !out.complete && !out.cancelled {
-                        anyhow::bail!(
-                            "worlds pass incomplete: {} failed pages, {} failed rows",
-                            out.failed_pages,
-                            out.failed_rows
-                        );
+                    if let Some(error) = mirror_pass_failure(
+                        "worlds",
+                        out.complete || out.cancelled,
+                        out.resumed_from,
+                        out.failed_pages,
+                        out.failed_rows,
+                    ) {
+                        anyhow::bail!(error);
                     }
                     Ok(())
                 }
@@ -638,12 +640,14 @@ impl ExploreState {
                         cancelled = out.cancelled,
                         "event catalogue mirrored from upstream"
                     );
-                    if !out.complete && !out.cancelled {
-                        anyhow::bail!(
-                            "events pass incomplete: {} failed pages, {} failed rows",
-                            out.failed_pages,
-                            out.failed_rows
-                        );
+                    if let Some(error) = mirror_pass_failure(
+                        "events",
+                        out.complete || out.cancelled,
+                        out.resumed_from,
+                        out.failed_pages,
+                        out.failed_rows,
+                    ) {
+                        anyhow::bail!(error);
                     }
                     Ok(())
                 }
@@ -665,6 +669,29 @@ impl ExploreState {
             });
         }
     }
+}
+
+/// The error a finished fail-open mirror pass reports to its job, if any. A
+/// resumed pass is incomplete by design (its cursor cannot prove the
+/// interrupted run skipped nothing), so one that saw no failure itself is not
+/// a job failure; its incompleteness stays on `explore.mirror_state`.
+fn mirror_pass_failure(
+    leg: &str,
+    complete_or_cancelled: bool,
+    resumed_from: Option<i64>,
+    failed_pages: usize,
+    failed_rows: usize,
+) -> Option<String> {
+    let resumed_cleanly = resumed_from.is_some() && failed_pages == 0 && failed_rows == 0;
+    if complete_or_cancelled || resumed_cleanly {
+        return None;
+    }
+    let resumed = resumed_from
+        .map(|offset| format!("; resumed at offset {offset}"))
+        .unwrap_or_default();
+    Some(format!(
+        "{leg} pass incomplete: {failed_pages} failed pages, {failed_rows} failed rows{resumed}"
+    ))
 }
 
 /// `GET /openapi.json`: the events document under `/events`, the places one elsewhere.
@@ -1018,6 +1045,21 @@ pub fn router(state: SharedState) -> Router {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_cleanly_resumed_mirror_pass_is_not_a_job_failure() {
+        use super::mirror_pass_failure;
+        assert_eq!(mirror_pass_failure("worlds", true, None, 0, 0), None);
+        assert_eq!(mirror_pass_failure("worlds", false, Some(100), 0, 0), None);
+        assert_eq!(
+            mirror_pass_failure("events", false, None, 1, 0).as_deref(),
+            Some("events pass incomplete: 1 failed pages, 0 failed rows")
+        );
+        assert_eq!(
+            mirror_pass_failure("worlds", false, Some(100), 0, 2).as_deref(),
+            Some("worlds pass incomplete: 0 failed pages, 2 failed rows; resumed at offset 100")
+        );
+    }
+
     #[test]
     fn settings_debug_redacts_the_optional_webhook_and_other_credentials() {
         let mut settings = super::Settings::for_tests();
