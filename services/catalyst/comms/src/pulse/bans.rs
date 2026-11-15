@@ -1,5 +1,5 @@
 //! Full moderation snapshots over the existing moderator HTTP route.
-use crate::shared::identity::Address;
+use crate::Address;
 use futures::StreamExt;
 use reqwest::header::{AUTHORIZATION, ETAG, HeaderValue, IF_NONE_MATCH};
 use serde::Deserialize;
