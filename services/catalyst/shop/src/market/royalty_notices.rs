@@ -34,8 +34,7 @@ pub const KIND: &str = notice_cursor::ROYALTIES_EARNED;
 pub const MARKETPLACE_V2: &str = "0x480a0f4e360e8964e68858dd231c2922f1df45ef";
 /// `royaltiesCutPerMillion()` of MarketplaceV2 and ERC721BidV2: 25000 on chain (2026-11-05, `shop.sale_venue`) and on every royalty sale the subgraph recorded since their deployment.
 pub const ROYALTIES_CUT_PER_MILLION: i64 = 25_000;
-/// 2^216: a v2 collection token id is `item << 216 | issued`.
-const ITEM_SHIFT: &str = "105312291668557186697918027683670432318895095400549111254310977536";
+use crate::shared::collections::{ITEM_SHIFT, ITEM_WAIT_SECS};
 const NET: ChainNet = ChainNet::Matic;
 const PAGE_SIZE: i64 = 200;
 const POLL_SECS: u64 = 60;
@@ -119,7 +118,7 @@ impl Venue {
                     div({price} * $6, 1000000)::text AS cut, \
                     lower(CASE WHEN i.beneficiary IS NOT NULL AND i.beneficiary <> $7 THEN i.beneficiary ELSE i.creator END) AS collector, \
                     lower({seller}) AS seller, \
-                    i.image, i.name, i.rarity, i.item_type \
+                    i.image, i.name, i.rarity, i.item_type, i.item_id IS NOT NULL AS mirrored \
              FROM {from} \
              LEFT JOIN shop.items i ON {item} \
              WHERE e.network = $1 AND (e.block_number, e.log_index) > ($2, $3) AND e.block_number <= $4 \
@@ -144,6 +143,7 @@ struct SaleRow {
     name: Option<String>,
     rarity: Option<String>,
     item_type: Option<String>,
+    mirrored: bool,
 }
 
 fn metadata(row: &SaleRow, cut: &str, collector: &str, base: &str) -> Value {
@@ -225,7 +225,24 @@ async fn drain(pool: &PgPool, base: &str, venue: Venue) -> anyhow::Result<Pass> 
             .bind(PAGE_SIZE)
             .fetch_all(&mut *txn)
             .await?;
-        let batch: Vec<NewNotification> = rows
+        // A bid sale of an item the mirror lacks holds the cursor, as the
+        // badge processor's do, until a complete pass ITEM_WAIT_SECS after it.
+        let items_pass: Option<i64> = sqlx::query_scalar(
+            "SELECT extract(epoch FROM last_complete_pass_at)::bigint FROM shop.mirror_state \
+             WHERE mirror = 'items' AND network = $1",
+        )
+        .bind(NET.db_name())
+        .fetch_optional(&mut *txn)
+        .await?
+        .flatten();
+        let held = rows.iter().position(|row| {
+            venue == Venue::Bids
+                && !row.mirrored
+                && !items_pass
+                    .is_some_and(|done| done >= row.block_time.saturating_add(ITEM_WAIT_SECS))
+        });
+        let ready = &rows[..held.unwrap_or(rows.len())];
+        let batch: Vec<NewNotification> = ready
             .iter()
             .filter_map(|row| {
                 let cut = row.cut.as_deref().filter(|c| *c != "0")?;
@@ -248,9 +265,11 @@ async fn drain(pool: &PgPool, base: &str, venue: Venue) -> anyhow::Result<Pass> 
             })
             .collect();
         emitted += insert_notifications(&mut *txn, &batch).await?;
-        let full = rows.len() == PAGE_SIZE as usize;
-        let (to_block, to_log) = match rows.last() {
-            Some(last) if full => (last.block_number, last.log_index),
+        let full = held.is_none() && rows.len() == PAGE_SIZE as usize;
+        let (to_block, to_log) = match (held, ready.last()) {
+            (Some(_), Some(last)) => (last.block_number, last.log_index),
+            (Some(_), None) => (since_block, since_log),
+            (None, Some(last)) if full => (last.block_number, last.log_index),
             _ => (published, i32::MAX),
         };
         if (to_block, to_log) > (since_block, since_log) {
@@ -284,25 +303,31 @@ pub fn spawn(
         move |ctx| {
             let (pool, base) = (pool.clone(), base.clone());
             async move {
-                let orders = run_once(&pool, &base).await?;
-                let bids = run_bids_once(&pool, &base).await?;
+                // One venue's failure never starves the other.
+                let orders = run_once(&pool, &base).await;
+                let bids = run_bids_once(&pool, &base).await;
+                for (venue, pass) in [("orders", &orders), ("bids", &bids)] {
+                    if let Err(e) = pass {
+                        tracing::warn!(venue, error = %e, "royalties_earned pass failed");
+                    }
+                }
                 let emitted: u64 = [&orders, &bids]
                     .iter()
                     .map(|p| match p {
-                        Pass::Emitted(n) => *n,
-                        Pass::NotReady => 0,
+                        Ok(Pass::Emitted(n)) => *n,
+                        _ => 0,
                     })
                     .sum();
                 if emitted > 0 {
                     tracing::info!(emitted, "royalties_earned notifications emitted");
                 }
                 let mut waiting = Vec::new();
-                if orders == Pass::NotReady {
+                if matches!(orders, Ok(Pass::NotReady)) {
                     waiting.push(format!(
                         "the matic nft index (enabled: {nft_index_enabled})"
                     ));
                 }
-                if bids == Pass::NotReady {
+                if matches!(bids, Ok(Pass::NotReady)) {
                     waiting.push(format!(
                         "the matic sales index (enabled: {sales_index_enabled})"
                     ));
@@ -315,6 +340,8 @@ pub fn spawn(
                     };
                     ctx.progress(format!("{emitted} emitted{waiting}"));
                 }
+                orders?;
+                bids?;
                 Ok(())
             }
         },
@@ -585,13 +612,37 @@ mod tests {
             "the first pass replays no history"
         );
 
+        // A zero-address string beneficiary pays the creator.
+        item(
+            &pool,
+            3,
+            &token(3),
+            Some(super::super::nft_index::ZERO_ADDRESS),
+        )
+        .await;
         bid_sale(&pool, 101, &token(1), seller, "20000000000000000000").await;
         bid_sale(&pool, 102, &token(2), CREATOR, "1000000000000000000").await;
-        sqlx::query("UPDATE shop.chain_cursor SET last_block = 105, fold_through = 105, folded_block = 105 WHERE indexer = 'sales'")
+        bid_sale(&pool, 103, &token(1), seller, "0").await;
+        bid_sale(&pool, 104, &token(3), seller, "4000000000000000000").await;
+        // An item the mirror does not hold yet holds the cursor.
+        bid_sale(&pool, 105, &token(7), seller, "4000000000000000000").await;
+        sqlx::query("UPDATE shop.chain_cursor SET last_block = 106, fold_through = 106, folded_block = 106 WHERE indexer = 'sales'")
             .execute(&pool)
             .await
             .unwrap();
+        assert_eq!(run_bids_once(&pool, BASE).await.unwrap(), Pass::Emitted(2));
+        let cursor = || async {
+            sqlx::query_as::<_, (i64, i32)>(
+                "SELECT block_number, log_index FROM shop.notification_cursor WHERE producer = 'royalties:bid_accepted:matic'",
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        };
+        assert_eq!(cursor().await, (104, 0), "held at the unmirrored item");
+        item(&pool, 7, &token(7), Some(BENEFICIARY)).await;
         assert_eq!(run_bids_once(&pool, BASE).await.unwrap(), Pass::Emitted(1));
+        assert_eq!(cursor().await, (106, i32::MAX));
         assert_eq!(
             run_bids_once(&pool, BASE).await.unwrap(),
             Pass::Emitted(0),
@@ -611,19 +662,26 @@ mod tests {
                 .unwrap();
         assert_eq!(
             rows.len(),
-            1,
-            "the creator selling their own item hears no royalty"
+            3,
+            "no royalty for a zero price or to a creator selling their own item"
         );
-        assert_eq!(rows[0].0, BENEFICIARY);
-        assert_eq!(rows[0].1["royaltiesCut"], "500000000000000000");
+        let first = rows.iter().find(|(_, m)| m["nftName"] == "Hat 1").unwrap();
+        assert_eq!(first.0, BENEFICIARY);
+        assert_eq!(first.1["royaltiesCut"], "500000000000000000");
         assert_eq!(
-            rows[0].1["description"],
+            first.1["description"],
             "You earned 0.50 MANA for this Hat 1."
         );
         assert_eq!(
-            rows[0].1["link"],
+            first.1["link"],
             format!("{BASE}/contracts/{COLLECTION}/tokens/{}", token(1))
         );
+        let zero = rows.iter().find(|(_, m)| m["nftName"] == "Hat 3").unwrap();
+        assert_eq!(
+            zero.0, CREATOR,
+            "the zero-address beneficiary falls back to the creator"
+        );
+        assert_eq!(zero.1["royaltiesCollector"], CREATOR);
 
         pool.close().await;
         let _ = sqlx::query(sqlx::AssertSqlSafe(format!(

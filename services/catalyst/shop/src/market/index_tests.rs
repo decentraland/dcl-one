@@ -2141,6 +2141,13 @@ async fn the_sales_walk_keeps_store_mints_folds_the_bids_and_checks_the_venues()
             transfer(c1, ZERO, ALICE, t1, s + 100, 1),
             sales_index::tests::issue_log(c1, CARL, t2, 0, CARL, s + 100, 2),
             transfer(c1, ZERO, CARL, t2, s + 100, 3),
+            // The store's Bought prices its mint (same transaction).
+            sales_index::tests::bought_log(
+                &[(c1, 0, 3_000_000_000_000_000_000, ALICE)],
+                &format!("0x{:064x}", (s + 100) * 100),
+                s + 100,
+                4,
+            ),
             // BOB, CARL and DAVE bid on t1; ALICE accepts CARL's, which
             // drops DAVE's without an event; BOB cancels.
             sales_index::tests::bid_created_log(c1, t1, BOB, 0x11, 7, 1_700_000_000, b, 0),
@@ -2210,15 +2217,20 @@ async fn the_sales_walk_keeps_store_mints_folds_the_bids_and_checks_the_venues()
         ],
         "the creator's own Issue is not a sale"
     );
-    let (buyer, item, tx): (String, String, String) = sqlx::query_as(
-        "SELECT buyer, item_id::text, tx_hash FROM shop.sale_event WHERE network = 'matic' AND kind = 'mint'",
+    let (buyer, item, tx, price): (String, String, String, Option<String>) = sqlx::query_as(
+        "SELECT buyer, item_id::text, tx_hash, price::text FROM shop.sale_event WHERE network = 'matic' AND kind = 'mint'",
     )
     .fetch_one(&db.pool)
     .await
     .unwrap();
     assert_eq!(
-        (buyer.as_str(), item.as_str(), tx),
-        (ALICE, "0", format!("0x{:064x}", (s + 100) * 100))
+        (buyer.as_str(), item.as_str(), tx, price.as_deref()),
+        (
+            ALICE,
+            "0",
+            format!("0x{:064x}", (s + 100) * 100),
+            Some("3000000000000000000")
+        )
     );
     assert_eq!(
         bids_of(&db.pool).await,

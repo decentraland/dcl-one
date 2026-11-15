@@ -16785,8 +16785,9 @@ CREATE INDEX tip_claim_created_at ON shop.tip_claim (created_at);
 -- The sales log on Polygon (the `sales` chain index,
 -- src/shop/market/sales_index.rs): a primary mint through the
 -- CollectionStore (`mint`: a mirrored collection's Issue whose `_caller` is
--- the store; `buyer` the beneficiary, `item_id` the item sold at the item's
--- price, `shop.items`) and the ERC721BidV2 lifecycle (`bid_created` with the
+-- the store; `buyer` the beneficiary, `item_id` the item sold, `price` what
+-- the store's `Bought` in the same transaction charged for it, NULL on rows
+-- indexed before it was read) and the ERC721BidV2 lifecycle (`bid_created` with the
 -- bidder in `buyer`, the price and the expiry in unix seconds;
 -- `bid_accepted` with the seller and the price; `bid_cancelled`), each with
 -- the venue in `emitter`, the asset and its transaction. Workload: one row
