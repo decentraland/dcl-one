@@ -237,7 +237,10 @@ pub type SharedState = Arc<State>;
 impl State {
     pub fn new(pool: PgPool, http: Outbound, settings: Settings) -> Self {
         Self {
-            prices: store::Prices::new(pool.clone(), settings.poll_enabled),
+            prices: store::Prices::new(
+                pool.clone(),
+                settings.poll_enabled.then_some(settings.poll_interval),
+            ),
             overrides: store::Overrides::new(pool),
             http,
             settings,
