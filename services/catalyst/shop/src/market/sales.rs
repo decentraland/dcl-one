@@ -778,14 +778,17 @@ mod tests {
     #[tokio::test]
     async fn a_seller_past_the_bound_on_either_network_is_unavailable() {
         assert_eq!(MAX, 25_000);
-        let (state, _, server) = bounded_source(sales(MAX, 7), sales(MAX + 1, 7)).await;
-        match bounded_sales_rows(&state, json!({}), SUMMARY_FIELDS, "/test").await {
-            Ok(_) => panic!("a seller past the bound was presented as complete"),
-            Err(response) => {
-                assert_over_limit(response, "matic", "MATIC_COLLECTIONS_SUBGRAPH_URL").await
+        for (eth, matic, network, configure) in [
+            (MAX + 1, 0, "ethereum", "ETH_COLLECTIONS_SUBGRAPH_URL"),
+            (MAX, MAX + 1, "matic", "MATIC_COLLECTIONS_SUBGRAPH_URL"),
+        ] {
+            let (state, _, server) = bounded_source(sales(eth, 7), sales(matic, 7)).await;
+            match bounded_sales_rows(&state, json!({}), SUMMARY_FIELDS, "/test").await {
+                Ok(_) => panic!("a seller past the bound on {network} was presented as complete"),
+                Err(response) => assert_over_limit(response, network, configure).await,
             }
+            server.abort();
         }
-        server.abort();
     }
 
     #[tokio::test]
