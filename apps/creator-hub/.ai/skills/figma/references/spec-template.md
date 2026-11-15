@@ -37,13 +37,13 @@ One row per variant × state: default, hover, press, active or selected, focus, 
 
 ## §3 Tokens per world
 
-| Literal | Inspector token (`vars.css`) | Creator Hub token (ui2 / `theme.css`) | `DESIGN.md` row | Status |
+| Literal | Inspector token (`vars.css`) | Creator Hub token (`theme.css` / `ui3-bridge.css`) | `DESIGN.md` row | Status |
 | --- | --- | --- | --- | --- |
-| `<hex / px>` | `--<token>` | `<ui2 path or --token>` | <section → row> | match / new / ships in #<PR> / ✱ |
+| `<hex / px>` | `--<token>` | `--<token>` | <section → row> | match / new / ships in #<PR> / ✱ |
 
 ## §4 Reuse
 
-- Existing control: <path under `src/components/`, `ui/` first, or a ui2 component>.
+- Existing control: <path under `src/components/`, `ui/` first, or a ui3 atom>.
 - New CSS: <"zero new CSS", or each rule and why no existing rule covers it>.
 
 ## §5 API

@@ -77,18 +77,15 @@ their own exports. A barrel that re-exports with `export *` (`../Navbar`,
 `modules/store/land`) fails `TS2709: Cannot use namespace as a type`; there,
 drop the generic and spread `(await importOriginal()) as object`.
 
-### Rendering a page component needs a theme, and no navbar
+### Rendering a page component needs a router
 
-`decentraland-ui2` components read theme tokens through emotion, so a bare
-`render()` throws before the page under test appears. Wrap in
-`ThemeProvider theme={dark}` from `decentraland-ui2/dist/theme`, plus
-`MemoryRouter` for anything calling `useNavigate`.
+The app root has no theme provider, so a bare `render()` shows a component.
+Wrap in `MemoryRouter` for anything calling `useNavigate`. A provider that the
+app root adds later goes in `tests/utils/TestProviders.tsx`, which the specs
+already render through.
 
-That is still not enough for a page carrying the navbar: `AvatarFace` reads a
-palette slice this environment does not populate and throws
-`Cannot read properties of undefined (reading 'secondary')` from
-`AvatarFace.styled.ts` — a stack that names neither your test nor your page.
-Stub the component and keep the enum:
+A page carrying the navbar also pulls in its store slices. To leave it out,
+stub the component and keep the enum:
 
 ```ts
 vi.mock('../Navbar', async importOriginal => ({
@@ -139,10 +136,10 @@ Under happy-dom the whole subtree reports "There are no accessible roles", and
 `querySelector('[role="…"]')` — see `FlowField.spec.tsx`, `CallbackField.spec.tsx`.
 `getByRole` is fine on a bare control (`Pill.spec.tsx`).
 
-### Named `getByRole` queries are slow inside MUI modals
+### Named `getByRole` queries are slow inside modals
 
 `getByRole(role, { name })` computes the accessible name of every candidate in
-the tree on each call, and a ui2 `Modal` puts a lot of tree under one query. The
+the tree on each call, and a modal puts a lot of tree under one query. The
 Creator Fund join-flow specs took about 2.5 s each alone and hit the 5 s timeout
 on a loaded CI runner. A flow helper that steps through a modal finds fields with
 `getByLabelText` and buttons with `getByText`, which brought each test under
@@ -459,7 +456,7 @@ runs ever hit this.
 
 ### Wait out the install `Backdrop` before driving the inspector iframe
 
-The app shows a MUI `<Backdrop>` over a freshly created scene while it installs. Asserting
-`toHaveCount(0)` on `.MuiBackdrop-root` never passes — MUI keeps the node mounted and only toggles
-visibility — so the backdrop silently swallows clicks routed to the in-iframe file input. Gate on
+The app shows a backdrop over a freshly created scene while it installs (`Snackbar/component.tsx`;
+the element keeps the `MuiBackdrop-root` class name). It swallows clicks routed to the in-iframe file
+input. Gate on
 `.MuiBackdrop-root:visible` reaching count 0 instead.
