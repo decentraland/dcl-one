@@ -11,7 +11,7 @@ use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions};
 use catalyst::schema_migrate::{self, MigrateError};
 
 /// The steps a prepared version-2 database has not recorded.
-const PREPARED_PENDING_STEPS: [&str; 24] = [
+const PREPARED_PENDING_STEPS: [&str; 26] = [
     "0018_event_hook_compatibility",
     "0019_event_hook_admin_priority",
     "0023_social_referral_pending_reward",
@@ -36,6 +36,8 @@ const PREPARED_PENDING_STEPS: [&str; 24] = [
     "0043_credits_captcha_generated_at",
     "0044_camera_reel_image_content_type",
     "0045_camera_reel_original_filename",
+    "0046_player_report_evidence_source_key",
+    "0047_shop_sale_notification_producers",
 ];
 type LedgerRow = (String, String, bool, chrono::NaiveDateTime);
 /// id, category, is_tier, criteria_steps, published, created_at
@@ -156,7 +158,11 @@ async fn with_schema(schema: &str) -> Option<Old> {
         .connect_with(base.clone().database("postgres"))
         .await
         .unwrap();
-    let name = format!("catalyst_test_{}", uuid::Uuid::new_v4().simple());
+    let name = format!(
+        "catalyst_test_lib_{}_closure_{}",
+        std::process::id(),
+        &uuid::Uuid::new_v4().simple().to_string()[..12]
+    );
     sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE \"{name}\"")))
         .execute(&admin)
         .await

@@ -193,6 +193,7 @@ class InventoryTests(unittest.TestCase):
         required = {(entry["target"]["name"], entry["target"]["kind"][0]): [f"required_{index}"]
                     for index, entry in enumerate(artifacts) if entry["executable"] not in ("root-bin", "retry-lib", "engine-lib")}
         with mock.patch.object(guard, "MANDATORY_ARCHIPELAGO", required), \
+             mock.patch.dict(guard.os.environ, {}, clear=True), \
              mock.patch.object(guard, "external_prerequisites", return_value="nats"), \
              mock.patch.object(guard.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "nats fixture")), \
              mock.patch.object(guard, "run", return_value=output) as build, \
@@ -208,6 +209,7 @@ class InventoryTests(unittest.TestCase):
         for absent, kind in (("content", "lib"), ("root", "lib"), ("retry", "test"), ("engine", "test")):
             incomplete = "\n".join(json.dumps(entry) for entry in artifacts if entry["executable"] != absent)
             with self.subTest(absent=absent), mock.patch.object(guard, "MANDATORY_ARCHIPELAGO", required), \
+                 mock.patch.dict(guard.os.environ, {}, clear=True), \
                  mock.patch.object(guard, "external_prerequisites", return_value="nats"), \
                  mock.patch.object(guard.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "nats fixture")), \
                  mock.patch.object(guard, "run", return_value=incomplete), \
@@ -215,10 +217,70 @@ class InventoryTests(unittest.TestCase):
                  self.assertRaisesRegex(ValueError, f"missing provisioned {kind} target"):
                 guard.check_external()
             execute.assert_not_called()
-        with mock.patch.object(guard, "external_prerequisites", return_value="nats"), \
+        with mock.patch.dict(guard.os.environ, {}, clear=True), \
+             mock.patch.object(guard, "external_prerequisites", return_value="nats"), \
              mock.patch.object(guard.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "nats fixture")), \
              mock.patch.object(guard, "run", return_value=""), self.assertRaisesRegex(ValueError, "missing provisioned"):
             guard.check_external()
+
+    def test_one_shard_of_a_run_executes_the_provisioned_tests(self):
+        setting = guard.EXTERNAL_SHARD
+        self.assertEqual(guard.external_shard({}), (True, "1/1"))
+        self.assertEqual(guard.external_shard({"CATALYST_TEST_SHARD": "", setting: ""}), (True, "1/1"))
+        # A run that sets neither variable executes them.
+        for total in range(1, 6):
+            for chosen in range(1, total + 1):
+                owners = [guard.external_shard({"CATALYST_TEST_SHARD": f"{index}/{total}", setting: str(chosen)})
+                          for index in range(1, total + 1)]
+                self.assertEqual([index for index, (execute, _) in enumerate(owners, 1) if execute], [chosen])
+                self.assertEqual({owner for _, owner in owners}, {f"{chosen}/{total}"})
+            # Without the setting the first shard executes them.
+            self.assertEqual([guard.external_shard({"CATALYST_TEST_SHARD": f"{index}/{total}"})[0]
+                              for index in range(1, total + 1)], [True] + [False] * (total - 1))
+        for environment in [{"CATALYST_TEST_SHARD": "1/3", setting: "4"}, {"CATALYST_TEST_SHARD": "3/3", setting: "0"},
+                            {"CATALYST_TEST_SHARD": "2/3", setting: "2/3"}, {"CATALYST_TEST_SHARD": "1/3", setting: " 2"},
+                            {setting: "2"}, {"CATALYST_TEST_SHARD": "4/3", setting: "2"},
+                            {"CATALYST_TEST_SHARD": "0/3"}, {"CATALYST_TEST_SHARD": "2"}]:
+            with self.subTest(environment=environment), self.assertRaises(ValueError):
+                guard.external_shard(environment)
+
+    def test_the_other_shards_check_the_provisioned_tests_and_do_not_run_them(self):
+        import json
+        artifacts = [{"reason": "compiler-artifact", "executable": executable, "profile": {"test": True},
+                      "target": {"name": name, "kind": [kind]}}
+                     for executable, name, kind in [("unit", "catalyst_comms", "lib"), ("socket", "archipelago_socket_bounds", "test")]]
+        output = "\n".join(map(json.dumps, artifacts))
+        names = [entry[2] for entry in guard.EXTERNAL]
+
+        def check(environment, listed):
+            with mock.patch.object(guard, "MANDATORY_ARCHIPELAGO", {("catalyst_comms", "lib"): ["required"]}), \
+                 mock.patch.dict(guard.os.environ, environment, clear=True), \
+                 mock.patch.object(guard, "external_prerequisites", return_value="nats"), \
+                 mock.patch.object(guard.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "nats fixture")) as process, \
+                 mock.patch.object(guard, "run", side_effect=lambda command, *rest: output if command[0] == "cargo" else listed) as called, \
+                 mock.patch.object(guard, "check_executable") as mandatory, \
+                 mock.patch.object(guard, "run_external") as execute:
+                guard.check_external()
+            return called, mandatory, execute, process
+
+        listed = "".join(name + ": test\n" for name in names)
+        for shard in ("1/3", "3/3"):
+            called, mandatory, execute, process = check({"CATALYST_TEST_SHARD": shard, guard.EXTERNAL_SHARD: "2"}, listed)
+            execute.assert_not_called()
+            # Only the version probe of the broker starts a process; no test body runs.
+            self.assertEqual([call.args[0] for call in process.call_args_list], [["nats", "--version"]])
+            self.assertEqual(mandatory.call_count, 1)
+            self.assertEqual([call.args[0] for call in called.call_args_list[1:]],
+                             [[executable, "--list", *ignored, "--format", "terse"]
+                              for executable in ("unit", "socket", "socket") for ignored in ([], ["--ignored"])])
+        called, mandatory, execute, _ = check({"CATALYST_TEST_SHARD": "2/3", guard.EXTERNAL_SHARD: "2"}, listed)
+        self.assertEqual([call.args for call in execute.call_args_list], list(zip(("unit", "socket", "socket"), names)))
+        self.assertEqual(mandatory.call_count, 1)
+        # A shard that does not run the tests still fails when one is renamed or no longer ignored.
+        with self.assertRaisesRegex(ValueError, "absent/renamed or annotation changed"):
+            check({"CATALYST_TEST_SHARD": "1/3", guard.EXTERNAL_SHARD: "2"}, listed.replace(names[1], "renamed"))
+        with self.assertRaisesRegex(ValueError, guard.EXTERNAL_SHARD):
+            check({"CATALYST_TEST_SHARD": "1/3", guard.EXTERNAL_SHARD: "4"}, listed)
 
     def test_runtime_rejects_missing_filtered_or_conditional_external_checks(self):
         script = (ROOT / "tooling/dev-test.sh").read_text()
@@ -415,6 +477,59 @@ class InventoryTests(unittest.TestCase):
                 guard.validate_runtime_script(bad)
 
 
+    def test_the_shards_of_the_actual_test_script_run_every_binary_once(self):
+        script = (ROOT / "tooling/catalyst-test.sh").read_text()
+        select = script[script.index('shard="${CATALYST_TEST_SHARD:-1/1}"'):script.index('cores=')]
+        # "B" sorts before "a" in byte order and after it in a language locale.
+        keys = [(f"tests/{name}.rs", "test") for name in "gfeDcBa"] + [("src/lib.rs", "lib"), ("src/main.rs", "bin")]
+
+        def run(value, hashes, keys=keys, locale="C"):
+            # One line per test binary, as the build step writes it: source file, kind, executable.
+            rows = [f"{source}\t{kind}\t/target/debug/deps/{hashed}\n" for (source, kind), hashed in zip(keys, hashes)]
+            with tempfile.TemporaryDirectory() as logs:
+                Path(logs, "binaries").write_text("".join(rows))
+                env = {**os.environ, "logs": logs, "LC_ALL": locale}
+                env.pop("CATALYST_TEST_SHARD", None)
+                if value is not None:
+                    env["CATALYST_TEST_SHARD"] = value
+                result = subprocess.run(["bash", "-euo", "pipefail", "-c", select], env=env,
+                                        capture_output=True, text=True)
+                return (result.returncode, Path(logs, "shard").read_text().split() if result.returncode == 0 else [],
+                        result.stderr)
+
+        # Two machines give one binary two hashes; the lib and the bin of one crate share a name.
+        here = [f"catalyst-{index:02x}" if source.startswith("src/") else f"{source[6]}-{index:02x}"
+                for index, (source, _) in enumerate(keys)]
+        there = [name[:-2] + f"{255 - index:02x}" for index, name in enumerate(here)]
+        in_byte_order = [hashed for _, hashed in sorted(zip(keys, here))]
+        self.assertEqual(run(None, here)[:2], (0, [f"/target/debug/deps/{name}" for name in in_byte_order]))
+        # The other locale must give plain sort another order here, or this test cannot see a list that follows it.
+        language = "en_US.UTF-8"
+        lines = "tests/B.rs\ntests/a.rs\n"
+        sorted_there = subprocess.run(["sort"], input=lines, env={**os.environ, "LC_ALL": language},
+                                      capture_output=True, text=True).stdout
+        other_order = sorted_there != lines
+        for total in (1, 2, 3, 4, 7, 9):
+            shards = [run(f"{index}/{total}", here) for index in range(1, total + 1)]
+            self.assertEqual([code for code, _, _ in shards], [0] * total)
+            self.assertEqual(sorted(name for _, shard, _ in shards for name in shard),
+                             sorted(f"/target/debug/deps/{name}" for name in here))
+            # A shard on another machine, with other hashes and another locale, takes the same targets.
+            for index, (_, shard, _) in enumerate(shards if other_order else [], 1):
+                other = run(f"{index}/{total}", there, locale=language)[1]
+                self.assertEqual([here[there.index(name.rsplit("/", 1)[1])] for name in other],
+                                 [name.rsplit("/", 1)[1] for name in shard])
+        code, _, error = run("1/3", here + ["catalyst-ff"], keys=keys + [("src/lib.rs", "lib")])
+        self.assertEqual(code, 1)
+        self.assertIn("one source file and kind: src/lib.rs\tlib", error)
+        # A tab inside the path of a binary stays in the list.
+        self.assertEqual(run(None, ["a\tb"], keys=[("tests/a.rs", "test")])[1], ["/target/debug/deps/a", "b"])
+        for bad in ("3", "0/3", "4/3", "1/0", "a/b", "1/3/3", "/3", "2/3x", " 2/3", "02/03", "-1/3"):
+            with self.subTest(bad=bad):
+                self.assertEqual(run(bad, here)[0], 1)
+        if not other_order:
+            self.skipTest(f"sort does not follow {language} on this machine: the other locale was not checked")
+
     def test_actual_test_script_rejects_filters_skipped_binaries_and_early_exit(self):
         script = (ROOT / "tooling/catalyst-test.sh").read_text()
         guard.validate_test_script(script)
@@ -423,10 +538,17 @@ class InventoryTests(unittest.TestCase):
                     script.replace("set -euo pipefail", "set -uo pipefail"),
                     script.replace('"$@" --no-run', '"$@" --test unrelated --no-run'),
                     script.replace('"$1" > "$log"', '"$1" --skip required > "$log"'),
-                    script.replace('run "$jobs" < "$logs/binaries"', 'run "$jobs" < <(head -n 1 "$logs/binaries")'),
+                    script.replace('run "$jobs" < "$logs/shard"', 'run "$jobs" < <(head -n 1 "$logs/shard")'),
+                    script.replace("'NR % n == i % n'", "'NR == 1'"),
+                    script.replace('${CATALYST_TEST_SHARD:-1/1}', '${CATALYST_TEST_SHARD:-1/2}'),
+                    script.replace('[[ "$shard" =~ ^[1-9][0-9]*/[1-9][0-9]*$ ]] && ', ''),
                     script.replace('< "$logs/others"', '< <(head -n 1 "$logs/others")'),
                     script.replace('run "$socket_jobs" < "$logs/sockets"\n', ''),
-                    script.replace('print(artifact["executable"])', 'print(artifact["executable"]) if "comms" not in artifact["executable"] else None'),
+                    script.replace('artifact["executable"], sep="\\t")', 'artifact["executable"], sep="\\t") if "comms" not in artifact["executable"] else None'),
+                    script.replace('LC_ALL=C sort "$logs/binaries" | cut -f3-', 'sort -k3 "$logs/binaries" | cut -f3-'),
+                    script.replace('LC_ALL=C sort "$logs/binaries" | cut -f3-', 'sort "$logs/binaries" | cut -f3-'),
+                    script.replace('[ -z "$same" ] || ', ''),
+                    script.replace('same=$(cut -f1,2 "$logs/binaries" | LC_ALL=C sort | LC_ALL=C uniq -d)\n', 'same=\n'),
                     script.replace('cargo test --locked "$@" --doc\n', ''),
                     script.replace("cores=", "exit 0\ncores=")]:
             with self.subTest(bad=bad[-100:]), self.assertRaisesRegex(ValueError, "catalyst-test.sh"):

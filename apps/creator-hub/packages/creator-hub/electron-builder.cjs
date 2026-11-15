@@ -4,9 +4,11 @@ const path = require('path');
 // electron-builder picks how it lists the app's dependencies from this; "traversal" follows Node's own lookup.
 process.env.npm_config_user_agent = 'traversal';
 
-// On PRs (dry-run) skip the slow .dmg build and ship only the unsigned .zip; electron-builder
-// already skips code signing on PRs, so this keeps a downloadable per-PR build for a fraction
-// of the time. Release builds (not dry-run) still produce the signed, notarized dmg + zip.
+// Every build but a release is a dry run: it skips the slow .dmg build and ships only the unsigned
+// .zip, so a pull request gets a downloadable build for a fraction of the time. electron-builder
+// skips code signing on a pull request by itself; `identity: null` makes it skip on the other dry
+// runs (main, manual), where it would stop on the empty certificate. Release builds (not dry-run)
+// still produce the signed, notarized dmg + zip.
 const isDryRun = process.env.DRY_RUN === 'true';
 
 const config = {
@@ -126,6 +128,7 @@ const config = {
   mac: {
     // Electron 45 does not start on macOS 12. With this value macOS refuses to open the app there and says why.
     minimumSystemVersion: '13.0',
+    ...(isDryRun ? { identity: null } : {}),
     target: isDryRun
       ? [
           { target: 'zip', arch: 'arm64' },
