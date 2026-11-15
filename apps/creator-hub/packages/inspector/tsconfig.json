@@ -20,8 +20,12 @@
     "jsx": "react-jsx",
     "sourceMap": true,
     "rootDir": "src/",
-    "types": ["node"]
+    "types": ["node"],
+    "paths": {
+      "@ui/*": ["../../../ui3/src/*"]
+    }
   },
   "exclude": ["**/*.spec.ts"],
-  "include": ["src"]
+  "include": ["src"],
+  "references": [{ "path": "./tsconfig.ui3.json" }]
 }

@@ -4,5 +4,6 @@
     "noEmit": true,
     "emitDeclarationOnly": false,
     "incremental": true
-  }
+  },
+  "references": [{ "path": "./tsconfig.ui3.json" }]
 }

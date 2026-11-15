@@ -18,7 +18,10 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': resolve(__dirname, './src'),
+      '@ui': resolve(__dirname, '../../../ui3/src'),
     },
+    // The ui3 sources sit outside this workspace and must use the React installed here.
+    dedupe: ['react', 'react-dom'],
   },
   optimizeDeps: {
     exclude: [

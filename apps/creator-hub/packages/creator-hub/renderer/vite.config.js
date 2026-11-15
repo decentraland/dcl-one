@@ -1,11 +1,15 @@
 import { join } from 'node:path';
 import { sentryVitePlugin } from '@sentry/vite-plugin';
 import react from '@vitejs/plugin-react';
+import { searchForWorkspaceRoot } from 'vite';
 import vendors from '../.electron-vendors.cache.json' with { type: 'json' };
 import { rendererExpose } from '../preload/expose-plugin.js';
 
 const PACKAGE_ROOT = import.meta.dirname;
 const PACKAGE_DIR = join(PACKAGE_ROOT, '..');
+const UI3_SRC = join(PACKAGE_ROOT, '../../../../ui3/src').replaceAll('\\', '/');
+// The ui3 LAND map imports the shared Shop model through ui3's `@shop` alias.
+const SHOP_SRC = join(PACKAGE_ROOT, '../../../../../library/shop').replaceAll('\\', '/');
 
 // The renderer tests run in UTC, so a date that code makes in local time does not depend on the
 // zone of the machine. This file runs before Vitest starts a worker, which is where Vitest says to
@@ -26,18 +30,17 @@ const config = {
       '/shared/': join(PACKAGE_ROOT, '../shared').replaceAll('\\', '/') + '/',
       '/assets/': join(PACKAGE_ROOT, 'assets').replaceAll('\\', '/') + '/',
       '#store': join(PACKAGE_ROOT, 'src', 'modules', 'store').replaceAll('\\', '/') + '/',
-      // @mui/icons-material 5 has no exports map, so a deep import resolves to its CommonJS file. Vite 8
-      // gives a default import of that file the module object, not the component. The esm folder holds ES modules.
-      '@mui/icons-material': '@mui/icons-material/esm',
-      // decentraland-ui2 imports `@dcl/hooks` in a component that Creator Hub does not use. The workspace
-      // removes that package, because it brings ua-parser-js 2 (AGPL) into the bundle.
-      '@dcl/hooks': join(PACKAGE_ROOT, 'src', 'lib', 'dcl-hooks-stub.ts').replaceAll('\\', '/'),
+      '@ui': UI3_SRC,
+      '@shop': SHOP_SRC,
     },
+    // The ui3 sources sit outside this workspace and must use the React installed here.
+    dedupe: ['react', 'react-dom'],
   },
   base: '',
   server: {
     fs: {
       strict: true,
+      allow: [searchForWorkspaceRoot(PACKAGE_ROOT), UI3_SRC, SHOP_SRC],
     },
   },
   build: {

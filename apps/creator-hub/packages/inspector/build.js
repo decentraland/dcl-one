@@ -12,6 +12,14 @@ const PRODUCTION = process.argv.includes('--production');
 
 const externalModulesArray = getNotBundledModules();
 
+// The shared ui3 components are bundled from source. Their files sit outside this
+// workspace, so `react` is pinned to the copy installed here: one React per bundle.
+const UI3_ALIAS = {
+  '@ui': path.resolve(__dirname, '../../../ui3/src'),
+  react: path.dirname(require.resolve('react/package.json')),
+  'react-dom': path.dirname(require.resolve('react-dom/package.json')),
+};
+
 async function main() {
   // A one-shot build runs the type checker beside the bundles: it reads the sources only.
   const typeChecker = WATCH_MODE ? undefined : runTypeChecker();
@@ -22,6 +30,7 @@ async function main() {
     bundle: true,
     platform: 'browser',
     outfile: 'public/bundle.js',
+    alias: UI3_ALIAS,
     sourcemap: 'linked',
     minify: PRODUCTION,
     loader: {
@@ -257,6 +266,9 @@ function runTsc(args) {
 
 async function runTypeChecker() {
   console.time('> Running typechecker');
+  // tsconfig.json reads the types of the shared ui3 files from this referenced project.
+  await runTsc(['-p', 'tsconfig.ui3.json']);
+
   if (WATCH_MODE) {
     // Runs until the build stops and prints its own errors.
     runTsc(['-p', 'tsconfig.json', '--watch']).catch(() => {});

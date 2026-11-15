@@ -12,12 +12,6 @@ overrides:
   '@dcl/quests-client>@dcl/sdk': 7.29.0
   # @dcl/sdk-commands only starts `typescript/lib/tsc` as a process. The tree must have one TypeScript.
   '@dcl/sdk-commands>typescript': 7.0.2
-  # decentraland-ui2 depends on React 17 outright; it and the libraries under it run on the app's React.
-  'decentraland-ui2>react': 18.3.1
-  'decentraland-ui2>react-dom': 18.3.1
-  # Only the DownloadButton of decentraland-ui2 imports @dcl/hooks, and Creator Hub does not use that button.
-  # @dcl/hooks brings ua-parser-js 2, which has the AGPL-3.0-or-later licence.
-  'decentraland-ui2>@dcl/hooks': '-'
   # extract-zip 2 makes the links of an archive, and a later entry can then write outside the target folder.
   # It has no fixed release. packages/zip-extract has the same call and makes no link.
   extract-zip: file:packages/zip-extract

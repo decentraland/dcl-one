@@ -42,8 +42,6 @@
     "@types/react-modal": "^3.16.0",
     "@types/redux-saga": "^0.10.5",
     "babylonjs-gltf2interface": "8.7.0",
-    "decentraland-ui": "^6.5.3",
-    "decentraland-ui2": "0.23.1",
     "esbuild": "^0.28.0",
     "happy-dom": "21.0.4",
     "hotkeys-js": "^3.13.5",
@@ -94,7 +92,7 @@
     "test": "npm run test:unit",
     "test:e2e": "playwright test",
     "test:unit": "node ../../scripts/rolldown.js vitest run",
-    "typecheck": "tsc -p tsconfig.check.json && tsc --noEmit -p test/tsconfig.json"
+    "typecheck": "tsc -p tsconfig.ui3.json && tsc -p tsconfig.check.json && tsc --noEmit -p test/tsconfig.json"
   },
   "types": "dist/tooling-entrypoint.d.ts",
   "typings": "dist/tooling-entrypoint.d.ts"
