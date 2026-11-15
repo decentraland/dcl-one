@@ -134,6 +134,9 @@ CREATE INDEX account_right_operator_idx ON land_authz.account_right (operator, k
 -- Durable progress per network: `last_block` advances per inserted chunk,
 -- `folded_block` is the publish marker (set only after the three folds
 -- committed on a row whose full replay ran); a repair scan rewinds it.
+-- `last_block_hash` is the hash `last_block` had when it was indexed (NULL
+-- until recorded); a pass whose cursor block hash changed rewinds a bounded
+-- window, deletes the log past it and refolds.
 CREATE TABLE land_authz.index_cursor (
     network text PRIMARY KEY,
     land_registry varchar(42) NOT NULL,
@@ -145,6 +148,7 @@ CREATE TABLE land_authz.index_cursor (
     -- Set only after the indexer repairs legacy missing block timestamps.
     history_timestamps_ready boolean NOT NULL DEFAULT false,
     updated_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    last_block_hash text,
     CONSTRAINT index_cursor_network_known CHECK (network IN ('ethereum-mainnet', 'ethereum-sepolia')),
     CONSTRAINT index_cursor_folded_within_indexed CHECK (folded_block IS NULL OR folded_block <= last_block)
 );

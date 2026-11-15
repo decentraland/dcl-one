@@ -717,7 +717,7 @@ async fn index_land_events(pool: &PgPool, grants: &[(&'static str, (i32, i32), &
         .collect();
     let mut conn = pool.acquire().await.unwrap();
     indexer::insert_events(&mut conn, &events).await.unwrap();
-    indexer::set_cursor(&mut conn, &settings, start + 100)
+    indexer::set_cursor(&mut conn, &settings, start + 100, None)
         .await
         .unwrap();
     drop(conn);

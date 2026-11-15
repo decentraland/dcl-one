@@ -6,10 +6,14 @@
 //! RPC requests per pass (the backpressure: a full replay is many passes,
 //! each leaving a durable `last_block`), then the fold of the touched keys
 //! into `token_right` / `estate_land` / `account_right` and, only when the
-//! chain head is within [`HEAD_LAG_BLOCKS`] of what was indexed, the publish
-//! marker `folded_block`. Readers trust the fold through [`index_ready`]:
-//! `folded_block = last_block` and `folded_at` at most [`READY_WINDOW`] old,
-//! the old server's rule.
+//! confirmed head is within [`HEAD_LAG_BLOCKS`] of what was indexed, the
+//! publish marker `folded_block`. The index stays `Settings::confirmations`
+//! blocks behind the head, and every pass first compares the cursor block's
+//! stored hash with the chain: on a mismatch (a reorg past that depth) it
+//! rewinds [`REORG_REWIND_BLOCKS`], deletes the log past the rewind and the
+//! rights it decided, and the next passes re-index and refold. Readers
+//! trust the fold through [`index_ready`]: `folded_block = last_block` and
+//! `folded_at` at most [`READY_WINDOW`] old, the old server's rule.
 //!
 //! The fold is deterministic over the log (DATABASE.md rule 5): every leg is
 //! decided by the single latest event that touches its key, so a rebuild is
@@ -41,9 +45,13 @@ impl From<RpcError> for IndexError {
     }
 }
 
-/// Publish a fold only when the head has not moved further than this past
-/// the indexed block: a fold of an old snapshot is not "current rights".
+/// Publish a fold only when the confirmed head (the head less
+/// `Settings::confirmations`) has not moved further than this past the
+/// indexed block: a fold of an old snapshot is not "current rights".
 pub const HEAD_LAG_BLOCKS: u64 = 25;
+/// How far below the cursor a reorg rewind re-reads: past Ethereum's
+/// finality (two epochs, 64 blocks) on top of the confirmation depth.
+pub const REORG_REWIND_BLOCKS: u64 = 128;
 /// How old a published fold may be before readers fall back (a stopped indexer).
 pub const READY_WINDOW: ChronoDuration = ChronoDuration::minutes(30);
 /// Rows per `INSERT ... UNNEST` statement.
@@ -536,22 +544,25 @@ pub async fn ensure_cursor(pool: &PgPool, settings: &Settings) -> Result<Cursor,
     Ok(row)
 }
 
-/// Advances the cursor of the configured registries' log. A cursor rebound
-/// to other registries meanwhile is not this pass's: no row matches, and the
-/// range's transaction rolls back.
+/// Advances the cursor of the configured registries' log to `block`, whose
+/// hash was `hash` when its logs were read (`None`: not known; the next pass
+/// records the chain's). A cursor rebound to other registries meanwhile is
+/// not this pass's: no row matches, and the range's transaction rolls back.
 pub async fn set_cursor(
     conn: &mut PgConnection,
     settings: &Settings,
     block: i64,
+    hash: Option<&str>,
 ) -> Result<(), sqlx::Error> {
     let updated = sqlx::query(
-        "UPDATE land_authz.index_cursor SET last_block = $2, updated_at = timezone('UTC', now()) \
+        "UPDATE land_authz.index_cursor SET last_block = $2, last_block_hash = $5, updated_at = timezone('UTC', now()) \
          WHERE network = $1 AND land_registry = $3 AND estate_registry = $4",
     )
     .bind(&settings.network)
     .bind(block)
     .bind(&settings.land_registry)
     .bind(&settings.estate_registry)
+    .bind(hash)
     .execute(conn)
     .await?;
     if updated.rows_affected() != 1 {
@@ -691,6 +702,7 @@ async fn rewind_for_replay(
 /// before `from`, `$5` whether it is a full replay, `$6` whether it switches
 /// registries (`$2`, `$3`).
 const REWIND_SET: &str = "last_block = CASE WHEN $6 THEN $4 ELSE LEAST(c.last_block, $4) END, \
+     last_block_hash = CASE WHEN $6 OR $4 < c.last_block THEN NULL ELSE c.last_block_hash END, \
      folded_block = NULL, folded_at = NULL, \
      full_replay_started = c.full_replay_started OR $5, \
      history_timestamps_ready = c.history_timestamps_ready AND NOT $6, \
@@ -1063,6 +1075,9 @@ pub struct PassOutcome {
     pub paused: bool,
     pub folded: Option<FoldCounts>,
     pub published: bool,
+    /// The cursor block's hash changed (a reorg): the cursor was rewound to
+    /// this block and the pass ended.
+    pub reorg_rewound_to: Option<i64>,
 }
 
 /// Indexes `[from, to]` with at most `max(request_budget, 2)` RPC requests, each
@@ -1154,9 +1169,24 @@ pub async fn sync_range(
             logs.retain(|log| hex_to_i64(&log.block_number).is_some_and(|n| n < unresolved as i64));
         }
         let events = decode_logs(&logs)?;
+        // The cursor block's hash, recorded with the advance: the next pass
+        // compares it with the chain ([`check_cursor_block`]). A log of that
+        // block from another fork means the chain moved under this read.
+        let header = rpc.block_header(reached).await?;
+        if logs.iter().any(|log| {
+            hex_to_i64(&log.block_number) == Some(reached as i64)
+                && log
+                    .block_hash
+                    .as_deref()
+                    .is_some_and(|hash| !hash.eq_ignore_ascii_case(&header.hash))
+        }) {
+            return Err(IndexError::Rpc(format!(
+                "block {reached} changed while its logs were read"
+            )));
+        }
         let mut tx = state.pool.begin().await?;
         let written = insert_events(&mut tx, &events).await?;
-        set_cursor(&mut tx, &state.settings, reached as i64).await?;
+        set_cursor(&mut tx, &state.settings, reached as i64, Some(&header.hash)).await?;
         tx.commit().await?;
         outcome.events_written += written;
         outcome.indexed_to = reached as i64;
@@ -1172,6 +1202,138 @@ pub async fn sync_range(
     }
     Ok(())
 }
+
+/// Compares the cursor block's recorded hash with the chain's. A cursor
+/// without one (a row from before the hash was kept, or just rewound)
+/// records the chain's. On a mismatch, the blocks the log holds past it
+/// came from a fork the chain abandoned: [`rewind_reorg`] moves the cursor
+/// [`REORG_REWIND_BLOCKS`] back (never before the start block) and answers
+/// the block it now stands on.
+async fn check_cursor_block(
+    state: &LandAuthzState,
+    rpc: &Rpc<'_>,
+    last_block: i64,
+) -> Result<Option<i64>, IndexError> {
+    let settings = &state.settings;
+    if last_block < settings.start_block as i64 {
+        return Ok(None);
+    }
+    let Some(stored): Option<Option<String>> = sqlx::query_scalar(
+        "SELECT last_block_hash FROM land_authz.index_cursor \
+         WHERE network = $1 AND land_registry = $2 AND estate_registry = $3 AND last_block = $4",
+    )
+    .bind(&settings.network)
+    .bind(&settings.land_registry)
+    .bind(&settings.estate_registry)
+    .bind(last_block)
+    .fetch_optional(&state.pool)
+    .await?
+    else {
+        // Moved or rebound since it was read: the next pass checks it.
+        return Ok(None);
+    };
+    let header = rpc.block_header(last_block as u64).await?;
+    match stored {
+        None => {
+            sqlx::query(
+                "UPDATE land_authz.index_cursor SET last_block_hash = $5 \
+                 WHERE network = $1 AND land_registry = $2 AND estate_registry = $3 \
+                   AND last_block = $4 AND last_block_hash IS NULL",
+            )
+            .bind(&settings.network)
+            .bind(&settings.land_registry)
+            .bind(&settings.estate_registry)
+            .bind(last_block)
+            .bind(&header.hash)
+            .execute(&state.pool)
+            .await?;
+            Ok(None)
+        }
+        Some(stored) if stored.eq_ignore_ascii_case(&header.hash) => Ok(None),
+        Some(stored) => {
+            let to = (last_block - REORG_REWIND_BLOCKS as i64).max(settings.start_block as i64 - 1);
+            if !rewind_reorg(&state.pool, settings, last_block, to).await? {
+                return Ok(None);
+            }
+            tracing::warn!(network = %settings.network, block = last_block, stored, chain = %header.hash, rewound_to = to, "land-authz: the cursor block's hash changed (a reorg past the confirmation depth); rewound and re-indexing");
+            Ok(Some(to))
+        }
+    }
+}
+
+/// Undoes the log past `to` after a reorg, in one transaction: the cursor
+/// moves back to `to` with no recorded hash and no publish marker (readers
+/// fall back until the refold publishes), the configured registries'
+/// events past `to` are deleted, and so are the rights rows those events
+/// decided. The next fold is the rebuild (`folded_block` is NULL), which
+/// writes back every key a remaining event touches; a key whose events
+/// were all on the abandoned fork keeps no row. `false` when the cursor
+/// moved from `from` meanwhile (nothing written). The row is locked
+/// `FOR UPDATE`, so a fold still writing rights from the old log commits
+/// first.
+pub async fn rewind_reorg(
+    pool: &PgPool,
+    settings: &Settings,
+    from: i64,
+    to: i64,
+) -> Result<bool, sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    sqlx::query("SELECT set_config('lock_timeout', $1, true)")
+        .bind(REBIND_LOCK_TIMEOUT)
+        .execute(&mut *tx)
+        .await?;
+    let locked: Option<i32> = sqlx::query_scalar(
+        "SELECT 1 FROM land_authz.index_cursor \
+         WHERE network = $1 AND land_registry = $2 AND estate_registry = $3 AND last_block = $4 FOR UPDATE",
+    )
+    .bind(&settings.network)
+    .bind(&settings.land_registry)
+    .bind(&settings.estate_registry)
+    .bind(from)
+    .fetch_optional(&mut *tx)
+    .await?;
+    if locked.is_none() {
+        return Ok(false);
+    }
+    sqlx::query(REORG_DELETE_SQL)
+        .bind(to)
+        .bind(&settings.land_registry)
+        .bind(&settings.estate_registry)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query(
+        "UPDATE land_authz.index_cursor SET last_block = $2, last_block_hash = NULL, \
+             folded_block = NULL, folded_at = NULL, updated_at = timezone('UTC', now()) \
+         WHERE network = $1",
+    )
+    .bind(&settings.network)
+    .bind(to)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(true)
+}
+
+/// The configured registries' (`$2` LAND, `$3` Estate) events past block
+/// `$1`, and the rights rows each decided, by the fold legs' keys.
+const REORG_DELETE_SQL: &str = "
+WITH gone AS (
+    DELETE FROM land_authz.authz_event
+    WHERE block_number > $1 AND token_address IN ($2, $3)
+    RETURNING token_address, kind, token_id, account, operator
+),
+tokens AS (
+    DELETE FROM land_authz.token_right r USING gone g
+    WHERE g.kind IN ('approval', 'transfer', 'update_operator') AND g.token_id IS NOT NULL
+      AND (r.token_address, r.token_id) = (g.token_address, g.token_id)
+),
+accounts AS (
+    DELETE FROM land_authz.account_right r USING gone g
+    WHERE g.kind IN ('update_manager', 'approved_for_all')
+      AND (r.token_address, r.account, r.operator, r.kind) = (g.token_address, g.account, g.operator, g.kind)
+)
+DELETE FROM land_authz.estate_land el USING gone g
+WHERE g.token_address = $3 AND g.kind IN ('add_land', 'remove_land') AND el.land_token_id = g.token_id";
 
 /// Whether the requested replay is now durable, so the pass goes on; it is
 /// then consumed. A deferred one stays requested and ends the pass without
@@ -1197,9 +1359,10 @@ fn replay_begun(state: &LandAuthzState, started: ReplayStart) -> anyhow::Result<
     }
 }
 
-/// One periodic pass: replay if requested, catch up under the request
+/// One periodic pass: replay if requested, check the cursor block's hash
+/// ([`check_cursor_block`]), catch up to the confirmed head under the request
 /// budget, and when caught up fold and (within [`HEAD_LAG_BLOCKS`] of the
-/// head, with no `stop_block` holding the index short) publish.
+/// confirmed head, with no `stop_block` holding the index short) publish.
 pub async fn run_pass(state: &LandAuthzState, ctx: &JobContext) -> anyhow::Result<PassOutcome> {
     let settings = &state.settings;
     let Some(rpc_url) = settings.rpc_url.as_deref() else {
@@ -1252,8 +1415,19 @@ pub async fn run_pass(state: &LandAuthzState, ctx: &JobContext) -> anyhow::Resul
         tracing::warn!(network = %settings.network, from, "land-authz: replay started; readers use the subgraph until it is folded at head. Unset LAND_AUTHZ_REPLAY_FROM_BLOCK once it has published: while it is set, every restart replays again");
     }
     let rpc = Rpc::at(&state.http, rpc_url);
+    if let Some(to) = check_cursor_block(state, &rpc, row.last_block)
+        .await
+        .context("checking the cursor block's hash")?
+    {
+        return Ok(PassOutcome {
+            indexed_to: to,
+            reorg_rewound_to: Some(to),
+            ..Default::default()
+        });
+    }
     let head = rpc.head_block().await.context("eth_blockNumber")?;
-    let target = settings.stop_block.map_or(head, |s| s.min(head));
+    let confirmed = head.saturating_sub(settings.confirmations);
+    let target = settings.stop_block.map_or(confirmed, |s| s.min(confirmed));
     let mut outcome = PassOutcome {
         head,
         indexed_to: row.last_block,
@@ -1285,12 +1459,13 @@ pub async fn run_pass(state: &LandAuthzState, ctx: &JobContext) -> anyhow::Resul
         .head_block()
         .await
         .context("eth_blockNumber after the fold")?;
-    let held_short = settings.stop_block.is_some_and(|s| s < latest);
+    let latest_confirmed = latest.saturating_sub(settings.confirmations);
+    let held_short = settings.stop_block.is_some_and(|s| s < latest_confirmed);
     if held_short {
         ctx.progress(format!("indexed to {target}, head {latest}: LAND_AUTHZ_STOP_BLOCK holds the index short, not published"));
         return Ok(outcome);
     }
-    if latest.saturating_sub(target) > HEAD_LAG_BLOCKS {
+    if latest_confirmed.saturating_sub(target) > HEAD_LAG_BLOCKS {
         ctx.progress(format!(
             "folded at {target} but the head moved to {latest}; publishing after the next catch-up"
         ));

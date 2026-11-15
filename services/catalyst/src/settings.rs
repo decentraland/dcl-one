@@ -123,6 +123,7 @@ pub(crate) fn land_settings(config: &Config) -> anyhow::Result<land_authz::Setti
     land_settings.requests_per_pass = config.land_authz.land_authz_index_requests_per_pass.max(1);
     land_settings.replay_from_block = config.land_authz.land_authz_replay_from_block;
     land_settings.stop_block = config.land_authz.land_authz_stop_block;
+    land_settings.confirmations = config.land_authz.land_authz_confirmations;
     Ok(land_settings)
 }
 
@@ -138,11 +139,13 @@ mod tests {
         config.land_authz.land_authz_index_requests_per_pass = 0;
         config.land_authz.land_authz_replay_from_block = Some(42);
         config.land_authz.land_authz_stop_block = Some(99);
+        config.land_authz.land_authz_confirmations = 3;
         let settings = land_settings(&config).unwrap();
         assert_eq!(settings.interval, Duration::from_secs(30));
         assert_eq!(settings.requests_per_pass, 1);
         assert_eq!(settings.replay_from_block, Some(42));
         assert_eq!(settings.stop_block, Some(99));
+        assert_eq!(settings.confirmations, 3);
     }
 
     #[test]

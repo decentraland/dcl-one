@@ -1331,7 +1331,7 @@ async fn present(pool: &PgPool) -> bool {
 
 async fn set(pool: &PgPool, block: i64) {
     let mut conn = pool.acquire().await.unwrap();
-    set_cursor(&mut conn, &Settings::for_tests(), block)
+    set_cursor(&mut conn, &Settings::for_tests(), block, None)
         .await
         .unwrap();
 }
@@ -1595,7 +1595,13 @@ struct FakeChain {
     batch_reverse: AtomicBool,
     batch_omit: AtomicU64,
     logs_reverse: AtomicBool,
+    /// Header requests for blocks in `header_block_from..header_block_until`
+    /// wait for `header_release`.
     header_block_from: AtomicU64,
+    header_block_until: AtomicU64,
+    /// Blocks from this one on are of another fork: their headers answer
+    /// [`forked_hash`] (a reorg).
+    fork_from: AtomicU64,
     header_started: tokio::sync::Notify,
     header_release: tokio::sync::Notify,
 }
@@ -1618,6 +1624,8 @@ impl FakeChain {
             batch_omit: AtomicU64::new(u64::MAX),
             logs_reverse: AtomicBool::new(false),
             header_block_from: AtomicU64::new(u64::MAX),
+            header_block_until: AtomicU64::new(u64::MAX),
+            fork_from: AtomicU64::new(u64::MAX),
             header_started: tokio::sync::Notify::new(),
             header_release: tokio::sync::Notify::new(),
         })
@@ -1630,6 +1638,25 @@ impl FakeChain {
     fn answered_logs(&self) -> Vec<(u64, u64)> {
         self.calls.lock().clone()
     }
+
+    fn header_gated(&self, number: u64) -> bool {
+        (self.header_block_from.load(Ordering::SeqCst)
+            ..self.header_block_until.load(Ordering::SeqCst))
+            .contains(&number)
+    }
+
+    fn header_hash(&self, number: u64) -> String {
+        if number >= self.fork_from.load(Ordering::SeqCst) {
+            forked_hash(number)
+        } else {
+            format!("0x{number:064x}")
+        }
+    }
+}
+
+/// A block's hash on the fork a reorg switches to.
+fn forked_hash(number: u64) -> String {
+    format!("0x{:064x}", number | 1 << 60)
 }
 
 fn block_of(v: &Value) -> u64 {
@@ -1647,8 +1674,7 @@ async fn rpc(
     chain.requests.fetch_add(1, Ordering::SeqCst);
     if let Some(batch) = body.as_array() {
         if batch.iter().any(|request| {
-            hex_to_i64(request["params"][0].as_str().unwrap()).unwrap() as u64
-                >= chain.header_block_from.load(Ordering::SeqCst)
+            chain.header_gated(hex_to_i64(request["params"][0].as_str().unwrap()).unwrap() as u64)
         }) {
             chain.header_started.notify_one();
             chain.header_release.notified().await;
@@ -1666,7 +1692,7 @@ async fn rpc(
             .map(|request| {
                 let number = hex_to_i64(request["params"][0].as_str().unwrap()).unwrap();
                 json!({"jsonrpc": "2.0", "id": request["id"], "result": {
-                    "number": format!("0x{number:x}"), "hash": format!("0x{:064x}", number),
+                    "number": format!("0x{number:x}"), "hash": chain.header_hash(number as u64),
                     "timestamp": format!("0x{:x}", if chain.header_time.load(Ordering::SeqCst) == u64::MAX { 1_500_000_000 + number as u64 * 12 } else { chain.header_time.load(Ordering::SeqCst) })
                 }})
             })
@@ -1684,11 +1710,11 @@ async fn rpc(
                 return reply(Value::Null).into_response();
             }
             let number = hex_to_i64(body["params"][0].as_str().unwrap()).unwrap();
-            if number as u64 >= chain.header_block_from.load(Ordering::SeqCst) {
+            if chain.header_gated(number as u64) {
                 chain.header_started.notify_one();
                 chain.header_release.notified().await;
             }
-            reply(json!({"number": format!("0x{number:x}"), "hash": format!("0x{number:064x}"),
+            reply(json!({"number": format!("0x{number:x}"), "hash": chain.header_hash(number as u64),
                 "timestamp": format!("0x{:x}", if chain.header_time.load(Ordering::SeqCst) == u64::MAX { 1_500_000_000 + number as u64 * 12 } else { chain.header_time.load(Ordering::SeqCst) })
             })).into_response()
         }
@@ -2225,8 +2251,8 @@ async fn the_indexer_catches_up_under_a_budget_resumes_after_a_kill_and_publishe
     assert!(out.published && out.requests == 0, "{out:?}");
     assert_eq!(
         chain.requests.load(Ordering::SeqCst) - requests_before,
-        2,
-        "two eth_blockNumber calls, no eth_getLogs"
+        3,
+        "the cursor block's header and two eth_blockNumber calls, no eth_getLogs"
     );
     assert!(
         can_deploy(&s2, (37, 55), ALICE)
@@ -2312,6 +2338,145 @@ async fn the_indexer_catches_up_under_a_budget_resumes_after_a_kill_and_publishe
     let out = indexer::run_pass(&replay, &ctx2).await.unwrap();
     assert!(out.paused && out.requests == 0, "{out:?}");
     jobs2.shutdown(std::time::Duration::from_secs(1)).await;
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn the_index_stays_the_confirmation_depth_behind_the_head_and_publishes_there() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let (chain, total_logs) = fixture_chain();
+    let url = serve(chain.clone()).await;
+    let state = state_over(
+        db.pool.clone(),
+        Settings {
+            rpc_url: Some(url),
+            index_enabled: true,
+            confirmations: 12,
+            ..Settings::for_tests()
+        },
+        None,
+    );
+    let (_jobs, ctx) = job_ctx().await;
+    // The last filler mint sits at START + 490; one more log lands within
+    // the confirmation depth and stays out of the log until confirmed.
+    chain.push(transfer(START + 995, 0, LAND, ALICE, BOB, TOKEN_37_55));
+    let out = indexer::run_pass(&state, &ctx).await.unwrap();
+    assert!(out.published, "{out:?}");
+    assert_eq!(out.indexed_to, (START + 1_000 - 12) as i64);
+    assert_eq!(event_count(&db.pool).await, total_logs as i64);
+    assert_eq!(
+        token_leg(&db.pool, TOKEN_37_55, "owner").await.as_deref(),
+        Some(ALICE)
+    );
+    chain.head.store(START + 1_010, Ordering::SeqCst);
+    let out = indexer::run_pass(&state, &ctx).await.unwrap();
+    assert!(out.published, "{out:?}");
+    assert_eq!(
+        token_leg(&db.pool, TOKEN_37_55, "owner").await.as_deref(),
+        Some(BOB)
+    );
+    db.drop().await;
+}
+
+/// Replaces every log from `block` on with `logs`, on the fork whose
+/// headers answer [`forked_hash`].
+fn reorg_from(chain: &FakeChain, block: u64, logs: Vec<Log>) {
+    chain.fork_from.store(block, Ordering::SeqCst);
+    let mut held = chain.logs.lock();
+    held.retain(|log| block_of(log) < block);
+    for log in logs {
+        let mut value = log.json();
+        value["blockHash"] = json!(forked_hash(log.block));
+        held.push(value);
+    }
+}
+
+#[tokio::test]
+async fn a_reorg_past_the_confirmation_depth_rewinds_and_the_canonical_event_is_folded() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let (chain, total_logs) = fixture_chain();
+    let url = serve(chain.clone()).await;
+    let state = state_over(
+        db.pool.clone(),
+        Settings {
+            rpc_url: Some(url),
+            index_enabled: true,
+            ..Settings::for_tests()
+        },
+        None,
+    );
+    let (_jobs, ctx) = job_ctx().await;
+    // The head block carries a transfer to BOB and a grant only it ever made.
+    chain.push(transfer(START + 1_000, 0, LAND, ALICE, BOB, TOKEN_37_55));
+    chain.push(account_grant(
+        START + 1_000,
+        1,
+        LAND,
+        TOPIC_APPROVAL_FOR_ALL,
+        BOB,
+        DANA,
+        true,
+    ));
+    let out = indexer::run_pass(&state, &ctx).await.unwrap();
+    assert!(out.published, "{out:?}");
+    assert_eq!(
+        token_leg(&db.pool, TOKEN_37_55, "owner").await.as_deref(),
+        Some(BOB)
+    );
+    assert_eq!(
+        account_leg(&db.pool, BOB, "approved_for_all").await,
+        vec![DANA]
+    );
+    let row = cursor(&db.pool, NETWORK_MAINNET).await.unwrap().unwrap();
+    assert_eq!(row.last_block, (START + 1_000) as i64);
+
+    // The chain replaces that block: the same position now holds a transfer
+    // to CARL, and the grant was never mined.
+    reorg_from(
+        &chain,
+        START + 1_000,
+        vec![transfer(START + 1_000, 0, LAND, ALICE, CARL, TOKEN_37_55)],
+    );
+    chain.head.store(START + 1_005, Ordering::SeqCst);
+    let out = indexer::run_pass(&state, &ctx).await.unwrap();
+    let rewound = (START + 1_000 - indexer::REORG_REWIND_BLOCKS) as i64;
+    assert_eq!(out.reorg_rewound_to, Some(rewound), "{out:?}");
+    let row = cursor(&db.pool, NETWORK_MAINNET).await.unwrap().unwrap();
+    assert_eq!(row.last_block, rewound);
+    assert!(
+        !index_ready(&row, Utc::now()),
+        "readers fall back until the refold publishes"
+    );
+    assert_eq!(
+        account_leg(&db.pool, BOB, "approved_for_all").await,
+        Vec::<String>::new(),
+        "a right only the abandoned fork decided is gone"
+    );
+
+    let out = indexer::run_pass(&state, &ctx).await.unwrap();
+    assert!(out.published && out.reorg_rewound_to.is_none(), "{out:?}");
+    assert_eq!(out.indexed_to, (START + 1_005) as i64);
+    assert_eq!(event_count(&db.pool).await, total_logs as i64 + 1);
+    assert_eq!(
+        token_leg(&db.pool, TOKEN_37_55, "owner").await.as_deref(),
+        Some(CARL),
+        "the canonical event at the same position is folded"
+    );
+    assert_eq!(
+        can_deploy(&state, (37, 55), CARL).await.unwrap().verdict,
+        Verdict::Granted(LandRightLeg::Owner)
+    );
+    assert_eq!(
+        can_deploy(&state, (37, 55), BOB).await.unwrap().verdict,
+        Verdict::Denied
+    );
+    // The next pass finds the recorded hash on the chain and goes on.
+    let out = indexer::run_pass(&state, &ctx).await.unwrap();
+    assert!(out.published && out.reorg_rewound_to.is_none(), "{out:?}");
     db.drop().await;
 }
 
@@ -2550,7 +2715,7 @@ async fn a_fold_in_flight_holds_the_rebind_until_it_commits_and_its_links_are_dr
     // by a lost lease can run for many minutes).
     let advanced = tokio::time::timeout(std::time::Duration::from_secs(5), async {
         let mut conn = pool.acquire().await.unwrap();
-        set_cursor(&mut conn, &old, (START + 20) as i64).await
+        set_cursor(&mut conn, &old, (START + 20) as i64, None).await
     })
     .await;
     assert!(
@@ -2808,7 +2973,7 @@ async fn a_registry_switch_starts_the_new_log_at_its_start_and_a_partial_rewind_
     // Nor can a pass for other registries advance or publish this cursor.
     let mut conn = pool.acquire().await.unwrap();
     assert!(matches!(
-        set_cursor(&mut conn, &other, base + 900).await,
+        set_cursor(&mut conn, &other, base + 900, None).await,
         Err(sqlx::Error::RowNotFound)
     ));
     drop(conn);
@@ -3508,7 +3673,7 @@ async fn repair_uses_spare_batches_scopes_registries_and_never_starves_live_head
     settings.requests_per_pass = 1;
     indexer::ensure_cursor(&db.pool, &settings).await.unwrap();
     let mut conn = db.pool.acquire().await.unwrap();
-    set_cursor(&mut conn, &Settings::for_tests(), START as i64 + 204)
+    set_cursor(&mut conn, &Settings::for_tests(), START as i64 + 204, None)
         .await
         .unwrap();
     drop(conn);
@@ -3968,6 +4133,10 @@ async fn slow_repair_publishes_first_and_keeps_committed_chunks_on_cancel_or_dea
             u64::MAX,
         );
         chain.header_block_from.store(START + 100, Ordering::SeqCst);
+        // Only the legacy repair waits; the cursor-block headers answer.
+        chain
+            .header_block_until
+            .store(START + 200, Ordering::SeqCst);
         let mut settings = Settings::for_tests();
         settings.rpc_url = Some(serve(chain.clone()).await);
         settings.requests_per_pass = 8;
